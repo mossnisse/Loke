@@ -1,0 +1,107 @@
+// design.md "Weakening and reborrows": what is read back from where a carrier was stored
+// reborrows it, however the store and the read reach that place. Each of these left a copy
+// of `other` beside it with no link between them. What is free beside such a store is in
+// tests/run/store_read_back_elsewhere.loke.
+package main;
+
+Link :: struct { to: ^mut int }
+Holder :: struct { links: []mut Link }
+
+through_a_copy_of_the_view :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	t := s;
+	t[0].to = other;
+	x := s[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+through_a_pointer_to_an_element :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	p^.to = other;
+	x := s[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+through_a_view_in_a_record :: proc(@(escape=stored) holder: Holder, @(escape=stored) other: ^mut int) {
+	holder.links[0].to = other;
+	x := holder.links[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+through_a_view_behind_a_pointer :: proc(@(escape=stored) p: ^mut []mut Link, @(escape=stored) other: ^mut int) {
+	p^[0].to = other;
+	x := p^[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+appended :: proc(d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
+	d^.append(Link{other});
+	x := d^[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+appended_then_viewed :: proc(d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
+	d^.append(Link{other});
+	view := &mut d^[:];
+	x := view[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+appended_behind_two_pointers :: proc(p: ^mut ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
+	p^^.append(Link{other});
+	x := p^^[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+inserted :: proc(d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
+	d^.insert(0, Link{other});
+	x := d^[0].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+put_in_a_map :: proc(m: ^mut map[int]^mut int, @(escape=stored) other: ^mut int) {
+	_ = m^.try_insert(0, other);
+	x := m^[0];
+	other^ = 1;
+	x^ = 2;
+}
+
+spread :: proc(d: ^mut [dynamic]Link, @(escape=stored) links: []mut Link) {
+	d^.append(..links);
+	x := d^[0].to;
+	y := links[0].to;
+	x^ = 1;
+	y^ = 2;
+}
+
+removed :: proc(d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
+	d^.append(Link{other});
+	l := d^.remove(0);
+	other^ = 1;
+	l.to^ = 2;
+}
+
+popped :: proc(d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int) {
+	d^.append(other);
+	popped := d^.pop();
+	other^ = 1;
+	switch (popped) { case .some(p): p^ = 2; case .none: }
+}
+
+// A removal hands out what the element held, but a copy of it is still a copy.
+removed_after_a_copy :: proc(d: ^mut [dynamic]^mut int) {
+	d^[1] = d^[0];
+	x := d^.remove(0);
+	y := d^.remove(0);
+	x^ = 1;
+	y^ = 2;
+}
+
+main :: proc() {}

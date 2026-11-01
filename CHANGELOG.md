@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- A carrier stored through carriers is now a reborrow wherever it is read back from.
+  `t := s; t[0].to = other; x := s[0].to; other^ = 1; x^ = 2;` compiled with two live
+  mutable paths to `other`, and so did the same stored through a pointer to an element, a
+  view in a record, or a view behind a pointer, and `d^.append(Link{other})` followed by a
+  read, `remove`, or `pop` through `d`, with `insert`, a spread, or a map's `try_insert`
+  or `find_or_insert` alike. Each is now `L0641`. Upgrade by ending the use of the copy
+  before using what it copies. A store through a pointer to one element of a view parameter
+  now also conflicts with a read of another element
+  ([known gap](known-gaps.md#a-pointer-to-one-element-of-a-view-parameter-stands-for-each)):
+  read the other element first.
 - Passing a record by value now uses what its carriers point to, as passing the carrier
   does ([Weakening and reborrows](design.md#weakening-and-reborrows)). `copy :=
   holder.links[0].to; take(holder); copy^ = 1;` compiled with two live mutable paths to
@@ -1180,6 +1190,9 @@ checklist.
 
 ### Fixed
 
+- Two values removed from a local dynamic array or map can be live together:
+  `x := d.remove(0); y := d.remove(0); x^ = 1; y^ = 2;` was `L0641`, though the same through
+  a pointer compiled and neither leaves the container anything of what it hands out.
 - A conversion of a slice or pointer to plain data to a read-only carrier, as
   `(dyn Shape)(box)` or `(^int)(carrier)`, now only reads a mutable carrier, as an
   implicit one does, so two such views may be live together

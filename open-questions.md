@@ -54,11 +54,6 @@ the compiler, is the oracle for any of them.
   index's syntax where the global effects already say what a call writes. Asking
   them would accept more rather than simplify, and a call may also write through
   an argument, which those effects do not cover.
-- **Places the matrices lack.** A slice literal's array, a view parameter's
-  caller storage reached twice, a store at an unknown index between two uses, a
-  call that copies, and a dynamically backed view. Neither the [borrow
-  matrix](tests/borrow_matrix_test.odin) nor the [store
-  matrix](tests/carrier_store_matrix_test.odin) covers these.
 
 ### What counts as a fresh borrow of a range
 
@@ -83,6 +78,12 @@ Such a slice reborrows the pointer. `prov_slice` in
 rather than a fresh range loan, and `prov_note_view` leaves its start unknown.
 Clarify whether that exclusion is intended; this is a question of scope rather
 than a confirmed divergence.
+
+The wording does not name a slice literal either, whose hidden array nothing else can
+reach ([Slice literals](design.md#slice-literals)), and the compiler treats its elements
+as apart, as for a fresh borrow of the whole array. The
+[store matrix](tests/carrier_store_matrix_test.odin) pins that. Adding it to the wording
+would settle both together.
 
 ## A public type's private `format`
 

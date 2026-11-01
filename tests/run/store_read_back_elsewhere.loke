@@ -1,0 +1,59 @@
+// design.md "Weakening and reborrows", "Places and overlap": a store lands along the place it
+// names, a copy read back before the store is its own, and a removal leaves the container
+// nothing of what it hands out. What conflicts is in tests/err/store_read_back_elsewhere.loke.
+package main;
+
+import "core:fmt";
+
+Two :: struct { a: ^mut int, b: ^mut int }
+
+// Another field of the element.
+another_field :: proc(s: []mut Two, @(escape=stored) other: ^mut int) {
+	t := s;
+	t[0].a = other;
+	y := s[0].b;
+	other^ += 1;
+	y^ += 10;
+}
+
+// Done with the copy before using what it copies.
+done_in_turn :: proc(d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int) {
+	d^.append(other);
+	x := d^[d^.len() - 1];
+	x^ += 100;
+	other^ += 1000;
+}
+
+// Two values taken out, through a pointer and from a local.
+removed_twice :: proc(d: ^mut [dynamic]^mut int) {
+	x := d^.remove(0);
+	y := d^.remove(0);
+	x^ += 10000;
+	y^ += 100000;
+}
+
+removed_twice_from_a_local :: proc(a: ^mut int, b: ^mut int) {
+	d := [dynamic]^mut int{};
+	d.append(a);
+	d.append(b);
+	x := d.remove(0);
+	y := d.remove(0);
+	x^ += 1000000;
+	y^ += 10000000;
+}
+
+main :: proc() {
+	a := 0; b := 0; c := 0;
+	pairs := [1]Two{Two{&mut a, &mut b}};
+	another_field(&mut pairs[:], &mut c);
+	fmt.println(a, b, c);
+	d := [dynamic]^mut int{};
+	done_in_turn(&mut d, &mut c);
+	fmt.println(c);
+	e := 0; f := 0;
+	g := [dynamic]^mut int{&mut e, &mut f};
+	removed_twice(&mut g);
+	fmt.println(e, f);
+	removed_twice_from_a_local(&mut e, &mut f);
+	fmt.println(e, f);
+}

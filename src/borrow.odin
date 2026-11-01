@@ -322,8 +322,8 @@ Prov_Slot :: struct {
 	// Stands for one element of a view parameter's caller storage, which only
 	// a store naming that element lands in and replaces (`prov_view_element`).
 	caller_element: bool,
-	// Read by a reordering, whose reborrow of what it read is a move
-	// (`Prov_Reborrow.moved`).
+	// Read by a reordering, or handed back by a container's removal, whose reborrow
+	// of what it read is a move (`Prov_Reborrow.moved`).
 	moved_out:      bool,
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
@@ -489,8 +489,9 @@ Prov_Reborrow :: struct {
 	// the `Prov_Event.store_id` of that store or call, before which it holds nothing here.
 	from_store: int,
 	// `derived` took the carrier from `source` in a reordering (`prov_assign_permutes`),
-	// which leaves `source` a carrier of its own, so `source` is not suspended, while
-	// what `source` was itself derived from goes on to where the carrier went.
+	// which leaves `source` a carrier of its own, or a container's removal, which leaves
+	// the next element there, so `source` is not suspended, while what `source` was
+	// itself derived from goes on to where the carrier went.
 	moved: bool,
 }
 
@@ -4823,16 +4824,16 @@ publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan_index: int, even
 		}
 	} else {
 		switch lands in event.store {
+		case nil:
+			// It names no one element or place of what the loan's slots stand for,
+			// so it replaces none of them, and its copy is linked to each.
+			if caller && event.linked &&
+			   publish_into_caller(state, reach, slots[:], loan, event.path, INVALID_TYPE, carrier_loss, linked, by_type) {
+				return
+			}
 		case Prov_Element_Slots:
 			if one && Loan_Id(loan_index) == lands.loan &&
 			   publish_into_caller(state, reach, lands.slots, loan, event.path, stored, carrier_loss, linked, by_type) {
-				return
-			}
-		case Prov_Store_Any_Element:
-			// It names no one element of the view, so it replaces none of them,
-			// and its copy is linked to each.
-			if caller && Loan_Id(loan_index) == lands.loan &&
-			   publish_into_caller(state, reach, slots[:], loan, event.path, INVALID_TYPE, carrier_loss, linked, by_type) {
 				return
 			}
 		case Prov_Store_Retained:

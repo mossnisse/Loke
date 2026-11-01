@@ -20,6 +20,8 @@ STORE_MATRIX_DIR :: TMP + "/carrier_store_matrix"
 STORE_MATRIX_PRELUDE :: `package main;
 Link :: struct { to: ^mut int }
 Pair :: struct { x: Link, y: Link }
+Holder :: struct { links: []mut Link }
+Items :: struct { items: [dynamic]Link }
 flip :: proc() -> bool { return true; }
 `
 
@@ -33,6 +35,8 @@ Store_Place :: struct {
 STORE_NAMED_ARRAY :: "v0 := 1; v1 := 2; ls := [2]Link{Link{&mut v0}, Link{&mut v1}};"
 @(private = "file")
 STORE_NAMED_RECORD :: "v0 := 1; v1 := 2; pr := Pair{Link{&mut v0}, Link{&mut v1}};"
+@(private = "file")
+STORE_DYNAMIC :: "v0 := 1; v1 := 2; d := [dynamic]Link{Link{&mut v0}, Link{&mut v1}};"
 
 @(private = "file")
 STORE_PLACES := [?]Store_Place {
@@ -44,6 +48,14 @@ STORE_PLACES := [?]Store_Place {
 	{"named_array", "", STORE_NAMED_ARRAY, "ls[0]", "ls[1]"},
 	{"named_record", "", STORE_NAMED_RECORD, "pr.x", "pr.y"},
 	{"pointer_to_named", "", STORE_NAMED_RECORD + " p := &mut pr;", "p^.x", "p^.y"},
+	// A slice literal is a hidden array and a fresh view of all of it (design.md "Slice
+	// literals"; open-questions.md "What counts as a fresh borrow of a range").
+	{"slice_literal", "", "v0 := 1; v1 := 2; s := []mut Link{Link{&mut v0}, Link{&mut v1}};", "s[0]", "s[1]"},
+	{"dynamic_array", "", STORE_DYNAMIC, "d[0]", "d[1]"},
+	{"dynamic_view", "", STORE_DYNAMIC + " view := &mut d[:];", "view[0]", "view[1]"},
+	{"dynamic_pointer", "d: ^mut [dynamic]Link", "", "d^[0]", "d^[1]"},
+	{"dynamic_in_record", "rec: ^mut Items", "", "rec^.items[0]", "rec^.items[1]"},
+	{"dynamic_in_local_record", "", "v0 := 1; v1 := 2; rec := Items{[dynamic]Link{Link{&mut v0}, Link{&mut v1}}};", "rec.items[0]", "rec.items[1]"},
 }
 
 // `$A` and `$B` are the two records, `$a` and `$b` their carriers, and `other` a
@@ -105,40 +117,92 @@ store_case_over_rejected :: proc(place: Store_Place, entry: Store_Case) -> bool 
 	return place.name == "view_parameter" && entry.name == "swap_temp_copies_of_each"
 }
 
+// One procedure for each of `STORE_CASES` at `place`.
+@(private = "file")
+store_place_source :: proc(place: Store_Place) -> string {
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, STORE_MATRIX_PRELUDE)
+	for entry in STORE_CASES {
+		text, _ := strings.replace_all(entry.body, "$A", place.first, context.temp_allocator)
+		text, _ = strings.replace_all(text, "$B", place.second, context.temp_allocator)
+		text, _ = strings.replace_all(text, "$a", fmt.tprintf("%s.to", place.first), context.temp_allocator)
+		text, _ = strings.replace_all(text, "$b", fmt.tprintf("%s.to", place.second), context.temp_allocator)
+		params := place.params
+		if strings.contains(text, "other") {
+			params = fmt.tprintf("%s%s@(escape=stored) other: ^mut int", params, params == "" ? "" : ", ")
+		}
+		// Every case takes up four lines, which the checks count on.
+		fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t%s\n\t%s\n}}\n", entry.name, params, place.setup, text)
+	}
+	strings.write_string(&source, "main :: proc() {}\n")
+	return strings.to_string(source)
+}
+
 @(test)
 carrier_store_matrix :: proc(t: ^testing.T) {
 	names := make([dynamic]string, context.temp_allocator)
 	sources := make([dynamic]string, context.temp_allocator)
-	first_lines := make([dynamic]int, context.temp_allocator)
 	for place in STORE_PLACES {
-		source := strings.builder_make(context.temp_allocator)
-		strings.write_string(&source, STORE_MATRIX_PRELUDE)
-		append(&first_lines, strings.count(STORE_MATRIX_PRELUDE, "\n") + 1)
-		for entry in STORE_CASES {
-			text, _ := strings.replace_all(entry.body, "$A", place.first, context.temp_allocator)
-			text, _ = strings.replace_all(text, "$B", place.second, context.temp_allocator)
-			text, _ = strings.replace_all(text, "$a", fmt.tprintf("%s.to", place.first), context.temp_allocator)
-			text, _ = strings.replace_all(text, "$b", fmt.tprintf("%s.to", place.second), context.temp_allocator)
-			params := place.params
-			if strings.contains(text, "other") {
-				params = fmt.tprintf("%s%s@(escape=stored) other: ^mut int", params, params == "" ? "" : ", ")
-			}
-			// Every case takes up four lines, which the check below counts on.
-			fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t%s\n\t%s\n}}\n", entry.name, params, place.setup, text)
-		}
-		strings.write_string(&source, "main :: proc() {}\n")
 		append(&names, place.name)
-		append(&sources, strings.to_string(source))
+		append(&sources, store_place_source(place))
 	}
 	errors, compiled := store_matrix_compile(t, names[:], sources[:])
 	if !compiled {
 		return
 	}
+	first_line := strings.count(STORE_MATRIX_PRELUDE, "\n") + 1
 	for place, index in STORE_PLACES {
 		for entry, at in STORE_CASES {
-			first := first_lines[index] + 4 * at
+			first := first_line + 4 * at
 			expected := entry.rejected || store_case_over_rejected(place, entry)
 			store_matrix_expect(t, place.name, entry.name, first, errors[index], expected)
+		}
+	}
+}
+
+// Places whose two records may be one element: the view is no fresh borrow of a range, or the
+// indices no constants (design.md "Weakening and reborrows"). So what is read from one is
+// suspended by reading the other, and a store to one replaces nothing the other may be.
+@(private = "file")
+STORE_OVERLAPPING_PLACES := [?]Store_Place {
+	{"view_copied", "s: []mut Link", "t := s;", "t[0]", "t[1]"},
+	{"view_in_record_param", "@(escape=stored) rec: Holder", "", "rec.links[0]", "rec.links[1]"},
+	{"literal_in_record", "", "v0 := 1; v1 := 2; rec := Holder{[]mut Link{Link{&mut v0}, Link{&mut v1}}};", "rec.links[0]", "rec.links[1]"},
+	{"view_behind_pointer", "@(escape=stored) p: ^mut []mut Link", "", "p^[0]", "p^[1]"},
+	{"unknown_indices", "s: []mut Link, m: int, n: int", "", "s[m]", "s[n]"},
+}
+
+// What the rules say at such a place, or `settled` false where they leave it open: whether a
+// store through a view that may be any element replaces what the same path stored.
+@(private = "file")
+store_overlapping_rejected :: proc(entry: Store_Case) -> (rejected, settled: bool) {
+	switch entry.name {
+	case "carrier_stored_copy_done", "reader_done_before_store":
+		return false, true
+	case "carrier_stored_replaced", "loop_store_replaces":
+		return false, false
+	}
+	return true, true
+}
+
+@(test)
+store_overlapping_matrix :: proc(t: ^testing.T) {
+	names := make([dynamic]string, context.temp_allocator)
+	sources := make([dynamic]string, context.temp_allocator)
+	for place in STORE_OVERLAPPING_PLACES {
+		append(&names, place.name)
+		append(&sources, store_place_source(place))
+	}
+	errors, compiled := store_matrix_compile(t, names[:], sources[:])
+	if !compiled {
+		return
+	}
+	first := strings.count(STORE_MATRIX_PRELUDE, "\n") + 1
+	for place, index in STORE_OVERLAPPING_PLACES {
+		for entry, at in STORE_CASES {
+			if rejected, settled := store_overlapping_rejected(entry); settled {
+				store_matrix_expect(t, place.name, entry.name, first + 4 * at, errors[index], rejected)
+			}
 		}
 	}
 }
@@ -1068,6 +1132,207 @@ record_by_value_matrix :: proc(t: ^testing.T) {
 	}
 	for entry, at in RECORD_BY_VALUE_CASES {
 		expected := entry.rejected || record_by_value_over_rejected(entry)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+	}
+}
+
+// Where a carrier stored one way is read back another (design.md "Weakening and reborrows",
+// "Places and overlap"). Each verdict is worked out by hand as above: wherever a store lands,
+// what is read back there reborrows what it copied.
+@(private = "file")
+STORE_LANDING_PRELUDE :: `package main;
+Link :: struct { to: ^mut int }
+Pair :: struct { x: Link, y: Link }
+Two :: struct { a: ^mut int, b: ^mut int }
+Outer :: struct { two: Two, c: ^mut int }
+Holder :: struct { links: []mut Link }
+Items :: struct { items: [dynamic]Link }
+Wrap :: struct { links: [dynamic]Link }
+flip :: proc() -> bool { return true; }
+poke :: proc(links: []mut Link) {}
+`
+
+@(private = "file")
+STORE_LANDING_CASES := [?]Stored_Reach_Case {
+	// A store at an unknown index between two uses, a view parameter reached twice, a slice
+	// literal's array, and a dynamically backed view.
+	{"unknown_store_old_copy", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "x := s[0].to; s[i].to = other; x^ = 1;", false},
+	{"unknown_store_old_copy_record", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "x := s[0].to; s[i] = Link{other}; x^ = 1;", false},
+	{"unknown_store_read_back_constant", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"unknown_store_read_back_other_constant", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"unknown_store_read_back_same_index", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[i].to; other^ = 1; y^ = 2;", true},
+	{"unknown_store_read_back_done", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[1].to; y^ = 2; other^ = 1;", false},
+	{"unknown_store_source_then_read", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; other^ = 1; y := s[0].to; y^ = 2;", true},
+	{"unknown_store_source_not_read", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; other^ = 1;", false},
+	{"unknown_store_does_not_end_constant", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[0].to = other; s[i].to = s[1].to; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"constant_store_does_not_end_unknown", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; s[0].to = s[1].to; y := s[i].to; other^ = 1; y^ = 2;", true},
+	{"constant_store_ends_what_it_replaced", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[0].to = other; s[0].to = s[1].to; other^ = 1;", false},
+	{"unknown_copy_other_constant_live", "s: []mut Link, i: int", "x := s[1].to; s[i] = s[1]; x^ = 1;", true},
+	{"unknown_copy_distinct_constant_live", "s: []mut Link, i: int", "x := s[0].to; s[i] = s[1]; x^ = 1;", false},
+	{"unknown_copy_then_both", "s: []mut Link, i: int", "s[i] = s[0]; x := s[0].to; y := s[1].to; x^ = 1; y^ = 2;", true},
+	{"unknown_copy_derived_done_first", "s: []mut Link, i: int", "s[i] = s[0]; y := s[1].to; y^ = 2; x := s[0].to; x^ = 1;", false},
+	{"unknown_copy_source_used_first", "s: []mut Link, i: int", "s[i] = s[0]; x := s[0].to; x^ = 1; y := s[1].to; y^ = 2;", true},
+	{"unknown_read_live_across_constant", "s: []mut Link, i: int", "x := s[i].to; y := s[0].to; x^ = 1; y^ = 2;", true},
+	{"unknown_store_in_branch", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "if (flip()) { s[i].to = other; } y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"unknown_store_in_loop", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "for (k := 0; k < 2; k += 1) { s[k].to = other; } y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"unknown_store_between_uses_of_copy", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "x := other; s[i].to = other; x^ = 1; y := s[0].to; y^ = 2;", true},
+	{"unknown_store_whole_view_call", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "x := s[0].to; s[i].to = other; poke(s); x^ = 1;", true},
+	{"unknown_store_then_call_conflict", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; x := other; poke(s); x^ = 1;", true},
+	{"pointer_to_element_copy_other", "s: []mut Link", "p := &mut s[0]; x := p^.to; y := s[1].to; x^ = 1; y^ = 2;", false},
+	{"pointer_to_element_copy_same", "s: []mut Link", "p := &mut s[0]; x := p^.to; y := s[0].to; x^ = 1; y^ = 2;", true},
+	{"pointer_to_element_live_across_same", "s: []mut Link", "p := &mut s[0]; y := s[0].to; p^.to^ = 1; y^ = 2;", true},
+	{"pointer_to_element_live_other", "s: []mut Link", "p := &mut s[0]; y := s[1].to; p^.to^ = 1; y^ = 2;", false},
+	{"store_then_read_by_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "s[0].to = other; p := &mut s[0]; y := p^.to; other^ = 1; y^ = 2;", true},
+	{"store_by_pointer_then_read_by_name", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"store_by_pointer_then_read_other", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"store_by_copy_then_read_by_name", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; t[0].to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"store_by_copy_then_read_other", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; t[0].to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"read_by_copy_then_name_live", "s: []mut Link", "t := s; x := t[0].to; y := s[1].to; x^ = 1; y^ = 2;", true},
+	{"two_copies_of_the_view", "s: []mut Link", "t := s; u := s; x := t[0].to; y := u[1].to; x^ = 1; y^ = 2;", true},
+	{"copy_of_the_view_done", "s: []mut Link", "t := s; x := t[0].to; x^ = 1; y := s[0].to; y^ = 2;", false},
+	{"two_views_apart", "s: []mut Link, t: []mut Link", "x := s[0].to; y := t[0].to; x^ = 1; y^ = 2;", false},
+	{"two_views_store_apart", "s: []mut Link, t: []mut Link, @(escape=stored) other: ^mut int", "s[0].to = other; y := t[0].to; other^ = 1; y^ = 2;", false},
+	{"two_views_copied_across", "s: []mut Link, @(escape=stored) t: []mut Link", "s[0] = t[0]; x := s[0].to; y := t[0].to; x^ = 1; y^ = 2;", true},
+	{"two_views_copied_across_in_turn", "s: []mut Link, @(escape=stored) t: []mut Link", "s[0] = t[0]; x := s[0].to; x^ = 1; y := t[0].to; y^ = 2;", false},
+	{"two_pointers_to_elements", "s: []mut Link", "p := &mut s[0]; q := &mut s[1]; x := p^.to; y := q^.to; x^ = 1; y^ = 2;", false},
+	{"two_pointers_store_across", "s: []mut Link", "p := &mut s[0]; q := &mut s[1]; p^ = q^; x := s[0].to; y := s[1].to; x^ = 1; y^ = 2;", true},
+	{"literal_holds_argument_conflict", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; x := s[0].to; other^ = 1; x^ = 2;", true},
+	{"literal_holds_argument_done", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; x := s[0].to; x^ = 2; other^ = 1;", false},
+	{"literal_source_then_read", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; other^ = 1; x := s[0].to; x^ = 2;", true},
+	{"literal_not_read_again", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; other^ = 1;", false},
+	{"literal_temporary_call_then_source", "@(escape=stored) other: ^mut int", "poke([]mut Link{Link{other}}); other^ = 1;", false},
+	{"literal_copy_across_call", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; x := s[0].to; poke(s); x^ = 1;", true},
+	{"literal_copy_done_before_call", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; x := s[0].to; x^ = 1; poke(s);", false},
+	{"literal_store_conflict", "@(escape=stored) other: ^mut int", "v0 := 1; v1 := 2; s := []mut Link{Link{&mut v0}}; s[0].to = other; x := s[0].to; other^ = 1; x^ = 2;", true},
+	{"literal_read_only_view", "@(escape=stored) other: ^mut int", "s := []Link{Link{other}}; x := s[0].to; other^ = 1; x^ = 2;", true},
+	{"literal_holds_one_twice", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}, Link{other}}; x := s[0].to; y := s[1].to; x^ = 1; y^ = 2;", true},
+	{"literal_of_a_record", "l: Link", "s := []mut Link{l}; y := s[0].to; l.to^ = 1; y^ = 2;", true},
+	{"literal_of_a_record_done", "l: Link", "s := []mut Link{l}; y := s[0].to; y^ = 2; l.to^ = 1;", false},
+	{"literal_in_record_conflict", "@(escape=stored) other: ^mut int", "h := Holder{[]mut Link{Link{other}}}; x := h.links[0].to; other^ = 1; x^ = 2;", true},
+	{"literal_in_record_done", "@(escape=stored) other: ^mut int", "h := Holder{[]mut Link{Link{other}}}; x := h.links[0].to; x^ = 2; other^ = 1;", false},
+	{"literal_two_views", "@(escape=stored) other: ^mut int", "s := []mut Link{Link{other}}; t := s; x := t[0].to; y := s[0].to; x^ = 1; y^ = 2;", true},
+	{"dynamic_holds_argument", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); x := d^[0].to; other^ = 1; x^ = 2;", true},
+	{"dynamic_holds_argument_done", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); x := d^[0].to; x^ = 2; other^ = 1;", false},
+	{"dynamic_view_holds_argument", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); v := &mut d^[:]; x := v[0].to; other^ = 1; x^ = 2;", true},
+	{"dynamic_view_holds_argument_done", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); v := &mut d^[:]; x := v[0].to; x^ = 2; other^ = 1;", false},
+	{"dynamic_view_store_read_by_name", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "v := &mut d^[:]; v[0].to = other; x := d^[0].to; other^ = 1; x^ = 2;", true},
+	{"dynamic_name_store_read_by_view", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^[0].to = other; v := &mut d^[:]; x := v[0].to; other^ = 1; x^ = 2;", true},
+	{"dynamic_literal_holds_argument", "@(escape=stored) other: ^mut int", "d := [dynamic]Link{Link{other}}; x := d[0].to; other^ = 1; x^ = 2;", true},
+	{"dynamic_literal_view", "@(escape=stored) other: ^mut int", "d := [dynamic]Link{Link{other}}; v := &mut d[:]; x := v[0].to; other^ = 1; x^ = 2;", true},
+	{"dynamic_view_live_across_append", "d: ^mut [dynamic]Link, l: Link", "v := &mut d^[:]; d^.append(l); w := v[0].to;", true},
+	{"dynamic_view_live_across_name", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "v := &mut d^[:]; d^[0].to = other; y := v[0].to;", true},
+	{"dynamic_view_done_then_name", "d: ^mut [dynamic]Link", "v := &mut d^[:]; x := v[0].to; x^ = 1; y := d^[0].to; y^ = 2;", false},
+	{"dynamic_copy_across_append", "d: ^mut [dynamic]Link, l: Link", "x := d^[0].to; d^.append(l); x^ = 1;", true},
+	{"dynamic_copy_across_clear", "d: ^mut [dynamic]Link", "x := d^[0].to; d^.clear(); x^ = 1;", true},
+	{"dynamic_copy_across_view_of_it", "d: ^mut [dynamic]Link", "x := d^[0].to; v := &mut d^[:]; y := v[1].to; x^ = 1; y^ = 2;", true},
+	{"dynamic_remove_keeps_what_it_held", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); l := d^.remove(0); other^ = 1; l.to^ = 2;", true},
+	{"dynamic_remove_then_done", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); l := d^.remove(0); l.to^ = 2; other^ = 1;", false},
+	{"dynamic_view_passed_across", "d: ^mut [dynamic]Link", "x := d^[0].to; poke(&mut d^[:]); x^ = 1;", true},
+	{"dynamic_view_passed_done", "d: ^mut [dynamic]Link", "x := d^[0].to; x^ = 1; poke(&mut d^[:]);", false},
+	// Stored by a container operation.
+	{"container_local_record", "@(escape=stored) other: ^mut int", "d := [dynamic]Link{}; d.append(Link{other}); x := d[0].to; other^ = 1; x^ = 2;", true},
+	{"container_local_carrier", "@(escape=stored) other: ^mut int", "d := [dynamic]^mut int{}; d.append(other); x := d[0]; other^ = 1; x^ = 2;", true},
+	{"container_param_carrier", "d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int", "d^.append(other); x := d^[0]; other^ = 1; x^ = 2;", true},
+	{"container_param_record", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); x := d^[0].to; other^ = 1; x^ = 2;", true},
+	{"container_param_insert", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.insert(0, Link{other}); x := d^[0].to; other^ = 1; x^ = 2;", true},
+	{"container_param_map", "d: ^mut map[int]^mut int, @(escape=stored) other: ^mut int", "_ = d^.try_insert(0, other); x := d^[0]; other^ = 1; x^ = 2;", true},
+	{"container_param_in_record", "r: ^mut Items, @(escape=stored) other: ^mut int", "r^.items.append(Link{other}); x := r^.items[0].to; other^ = 1; x^ = 2;", true},
+	{"container_done", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); x := d^[0].to; x^ = 2; other^ = 1;", false},
+	{"container_by_auto_deref", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d.append(Link{other}); x := d^[0].to; other^ = 1; x^ = 2;", true},
+	{"container_through_inout", "d: inout [dynamic]Link, @(escape=stored) other: ^mut int", "d.append(Link{other}); x := d[0].to; other^ = 1; x^ = 2;", true},
+	{"container_map_value_done", "d: ^mut map[int]^mut int, @(escape=stored) other: ^mut int", "_ = d^.try_insert(0, other); x := d^[0]; x^ = 2; other^ = 1;", false},
+	{"container_through_view", "s: []mut [dynamic]Link, @(escape=stored) other: ^mut int", "s[0].append(Link{other}); x := s[0][0].to; other^ = 1; x^ = 2;", true},
+	{"container_two_appends_done", "d: ^mut [dynamic]Link, @(escape=stored) a: ^mut int, @(escape=stored) b: ^mut int", "d^.append(Link{a}); d^.append(Link{b}); x := d^[0].to; x^ = 2; a^ = 1;", false},
+	{"container_append_view_keeps", "d: ^mut [dynamic][]mut int, @(escape=stored) other: []mut int", "d^.append(other); x := d^[0]; other[0] = 1; x[0] = 2;", true},
+	{"container_read_only_copy_stored", "d: ^mut [dynamic]^int, @(escape=stored) other: ^mut int", "d^.append(other); x := d^[0]; y := other^; z := x^;", false},
+	// Maps, spreads, removals, and traversals.
+	{"form_map_store", "m: ^mut map[int]^mut int, @(escape=stored) other: ^mut int", "m^[0] = other; x := m^[0]; other^ = 1; x^ = 2;", true},
+	{"form_map_find_or_insert", "m: ^mut map[int]^mut int, @(escape=stored) other: ^mut int", "_ = m^.find_or_insert(0, other); x := m^[0]; other^ = 1; x^ = 2;", true},
+	{"form_map_key", "m: ^mut map[^mut int]int, @(escape=stored) other: ^mut int", "_ = m^.try_insert(other, 1); y := m^.keys(); other^ = 1; foreach (k in y) { k^ = 1; }", true},
+	{"form_map_remove", "m: ^mut map[int]^mut int, @(escape=stored) other: ^mut int", "_ = m^.try_insert(0, other); x := m^.remove(0); other^ = 1; switch (x) { case .some(y): y^ = 2; case .none: }", true},
+	{"form_append_two", "d: ^mut [dynamic]^mut int, @(escape=stored) a: ^mut int, @(escape=stored) b: ^mut int", "d^.append(a, b); x := d^[0]; b^ = 1; x^ = 2;", true},
+	{"form_append_spread", "d: ^mut [dynamic]Link, @(escape=stored) ls: []mut Link", "d^.append(..ls); x := d^[0].to; y := ls[0].to; x^ = 1; y^ = 2;", true},
+	{"form_pop_kept", "d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int", "d^.append(other); x := d^.pop(); other^ = 1; switch (x) { case .some(y): y^ = 2; case .none: }", true},
+	{"form_remove_unordered_kept", "d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int", "d^.append(other); x := d^.remove_unordered(0); other^ = 1; x^ = 2;", true},
+	{"form_foreach_store", "s: []mut Link, @(escape=stored) other: ^mut int", "foreach (&mut e in s) { e.to = other; } x := s[0].to; other^ = 1; x^ = 2;", true},
+	{"form_foreach_store_copy", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; foreach (&mut e in t) { e.to = other; } x := s[0].to; other^ = 1; x^ = 2;", true},
+	{"form_foreach_dynamic", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "foreach (&mut e in d^) { e.to = other; } x := d^[0].to; other^ = 1; x^ = 2;", true},
+	{"form_wrapped_append", "w: ^mut Wrap, @(escape=stored) other: ^mut int", "w^.links.append(Link{other}); v := &mut w^.links[:]; x := v[0].to; other^ = 1; x^ = 2;", true},
+	{"form_two_hops", "p: ^mut ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "p^^.append(Link{other}); x := p^^[0].to; other^ = 1; x^ = 2;", true},
+	{"form_view_of_view", "s: []mut Link, @(escape=stored) other: ^mut int", "t := &mut s[0:]; t[0].to = other; x := s[0].to; other^ = 1; x^ = 2;", true},
+	{"form_store_view_local_copy_read", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; u := t; u[0].to = other; x := t[0].to; other^ = 1; x^ = 2;", true},
+	{"form_ok_map_done", "m: ^mut map[int]^mut int, @(escape=stored) other: ^mut int", "m^[0] = other; x := m^[0]; x^ = 2; other^ = 1;", false},
+	{"form_ok_append_two", "d: ^mut [dynamic]^mut int, @(escape=stored) a: ^mut int, @(escape=stored) b: ^mut int", "d^.append(a); x := d^[0]; x^ = 2; d^.append(b); b^ = 1;", false},
+	{"form_ok_pop_twice", "d: ^mut [dynamic]^mut int", "x := d^.pop(); y := d^.pop(); switch (x) { case .some(a): a^ = 1; case .none: } switch (y) { case .some(a): a^ = 1; case .none: }", false},
+	{"form_ok_pop_twice_local", "a: ^mut int, b: ^mut int", "d := [dynamic]^mut int{}; d.append(a); d.append(b); x := d.pop(); y := d.pop(); switch (x) { case .some(p): p^ = 1; case .none: } switch (y) { case .some(p): p^ = 1; case .none: }", false},
+	{"form_ok_store_old_kept", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; x := t[0].to; t[0].to = other; x^ = 1;", false},
+	{"form_ok_store_and_use_source_unread", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; t[0].to = other; other^ = 1;", false},
+	{"form_ok_foreach_read", "d: ^mut [dynamic]Link", "foreach (&mut e in d^) { e.to^ = 1; } d^[0].to^ = 2;", false},
+	{"form_ok_remove_then_read_container", "d: ^mut [dynamic]^mut int", "x := d^.remove(0); y := d^[0]; x^ = 1; y^ = 2;", false},
+	{"form_ok_remove_then_read_local", "a: ^mut int, b: ^mut int", "d := [dynamic]^mut int{}; d.append(a); d.append(b); x := d.remove(0); y := d[0]; x^ = 1; y^ = 2;", false},
+	{"form_dup_removed_twice", "d: ^mut [dynamic]^mut int", "d^[1] = d^[0]; x := d^.remove(0); y := d^.remove(0); x^ = 1; y^ = 2;", true},
+	{"form_dup_removed_twice_local", "a: ^mut int, b: ^mut int", "d := [dynamic]^mut int{}; d.append(a); d.append(b); d[1] = d[0]; x := d.remove(0); y := d.remove(0); x^ = 1; y^ = 2;", true},
+	{"form_same_appended_twice_removed", "@(escape=stored) a: ^mut int", "d := [dynamic]^mut int{}; d.append(a); d.append(a); x := d.remove(0); y := d.remove(0); x^ = 1; y^ = 2;", true},
+	// A value taken back out.
+	{"removal_local_remove", "@(escape=stored) other: ^mut int", "d := [dynamic]Link{}; d.append(Link{other}); l := d.remove(0); other^ = 1; l.to^ = 2;", true},
+	{"removal_local_carrier_remove", "@(escape=stored) other: ^mut int", "d := [dynamic]^mut int{}; d.append(other); l := d.remove(0); other^ = 1; l^ = 2;", true},
+	{"removal_param_carrier_remove", "d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int", "d^.append(other); l := d^.remove(0); other^ = 1; l^ = 2;", true},
+	{"removal_param_remove_done", "d: ^mut [dynamic]^mut int, @(escape=stored) other: ^mut int", "d^.append(other); l := d^.remove(0); l^ = 2; other^ = 1;", false},
+	{"removal_param_record_remove", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); l := d^.remove(0); other^ = 1; l.to^ = 2;", true},
+	{"removal_param_record_read", "d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "d^.append(Link{other}); l := d^[0]; other^ = 1; l.to^ = 2;", true},
+	{"removal_param_element_removed_twice", "d: ^mut [dynamic]Link", "l := d^.remove(0); m := d^.remove(0); l.to^ = 1; m.to^ = 2;", false},
+	{"removal_param_element_read_then_removed", "d: ^mut [dynamic]Link", "x := d^[0].to; l := d^.remove(0); x^ = 1; l.to^ = 2;", true},
+	// Removals leave the rest.
+	{"removal_local_twice", "d: inout [dynamic]^mut int", "l := d.remove(0); m := d.remove(0); l^ = 1; m^ = 2;", false},
+	{"removal_local_named_twice", "a: ^mut int, b: ^mut int", "d := [dynamic]^mut int{}; d.append(a); d.append(b); l := d.remove(0); m := d.remove(0); l^ = 1; m^ = 2;", false},
+	{"removal_param_twice", "d: ^mut [dynamic]^mut int", "l := d^.remove(0); m := d^.remove(0); l^ = 1; m^ = 2;", false},
+	// Behind two pointers.
+	{"hop_two_hop_store", "p: ^mut ^mut [2]Link, @(escape=stored) other: ^mut int", "p^^[0].to = other; x := p^^[0].to; other^ = 1; x^ = 2;", true},
+	{"hop_two_hop_store_dyn", "p: ^mut ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "p^^[0].to = other; x := p^^[0].to; other^ = 1; x^ = 2;", true},
+	{"hop_two_hop_append", "p: ^mut ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "p^^.append(Link{other}); x := p^^[0].to; other^ = 1; x^ = 2;", true},
+	{"hop_two_hop_append_by_local", "p: ^mut ^mut [dynamic]Link, @(escape=stored) other: ^mut int", "q := p^; q^.append(Link{other}); x := q^[0].to; other^ = 1; x^ = 2;", true},
+	// A store lands only along the place it names.
+	{"field_ok_unknown_other_field", "s: []mut Two, i: int, @(escape=stored) other: ^mut int", "s[i].a = other; y := s[0].b; other^ = 1; y^ = 2;", false},
+	{"field_ok_copy_other_field", "s: []mut Two, @(escape=stored) other: ^mut int", "t := s; t[0].a = other; y := s[0].b; other^ = 1; y^ = 2;", false},
+	{"field_ok_copy_other_field_nested", "s: []mut Outer, @(escape=stored) other: ^mut int", "t := s; t[0].two.a = other; y := s[0].c; other^ = 1; y^ = 2;", false},
+	{"field_ok_pointer_other_field", "s: []mut Two, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.a = other; y := s[0].b; other^ = 1; y^ = 2;", false},
+	{"field_ok_view_in_record_other_field", "@(escape=stored) r: []mut Two, @(escape=stored) other: ^mut int", "q := &mut r[0]; q^.a = other; y := q^.b; other^ = 1; y^ = 2;", false},
+	{"field_ok_dynamic_other_field", "d: ^mut [dynamic]Two, @(escape=stored) other: ^mut int", "d^[0].a = other; y := d^[0].b; other^ = 1; y^ = 2;", false},
+	{"field_unknown_same_field", "s: []mut Two, i: int, @(escape=stored) other: ^mut int", "s[i].a = other; y := s[0].a; other^ = 1; y^ = 2;", true},
+	{"field_copy_same_field", "s: []mut Two, @(escape=stored) other: ^mut int", "t := s; t[0].a = other; y := s[0].a; other^ = 1; y^ = 2;", true},
+	{"field_copy_whole_then_field", "s: []mut Two, @(escape=stored) other: ^mut int", "t := s; t[0] = Two{other, other}; y := s[0].b; other^ = 1; y^ = 2;", true},
+	{"field_pointer_same_field", "s: []mut Two, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.a = other; y := s[0].a; other^ = 1; y^ = 2;", true},
+	{"field_dynamic_same_field", "d: ^mut [dynamic]Two, @(escape=stored) other: ^mut int", "d^[0].a = other; y := d^[0].a; other^ = 1; y^ = 2;", true},
+}
+
+// known-gaps.md "A pointer to one element of a view parameter stands for each".
+@(private = "file")
+store_landing_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
+	switch entry.name {
+	case "pointer_to_element_copy_other", "pointer_to_element_live_other", "store_by_pointer_then_read_other", "two_pointers_to_elements":
+		return true
+	}
+	return false
+}
+
+@(test)
+store_landing_matrix :: proc(t: ^testing.T) {
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, STORE_LANDING_PRELUDE)
+	first := strings.count(STORE_LANDING_PRELUDE, "\n") + 1
+	for entry in STORE_LANDING_CASES {
+		// Every case takes up four lines, which the check below counts on.
+		fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t\n\t%s\n}}\n", entry.name, entry.params, entry.body)
+	}
+	strings.write_string(&source, "main :: proc() {}\n")
+	names := []string{"store_landing"}
+	sources := []string{strings.to_string(source)}
+	errors, compiled := store_matrix_compile(t, names, sources)
+	if !compiled {
+		return
+	}
+	for entry, at in STORE_LANDING_CASES {
+		expected := entry.rejected || store_landing_over_rejected(entry)
 		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
 	}
 }

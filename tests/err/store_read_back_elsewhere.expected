@@ -1,0 +1,42 @@
+L0641
+@14:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@22:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@36:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@43:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@51:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@58:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@65:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@72:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@79:7
+`links` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@87:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@94:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@101:7
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@102:7
+`d` cannot be used here: a mutable reborrow of it is still in use

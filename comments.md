@@ -3493,6 +3493,25 @@ corpus nor the first version of a table of 69 task programs contained two such
 conversions. The two extra errors in `parallel_indirect_calls` are on a line `L0729`
 already rejects: a shared callable with a mutable capture is not a plain view.
 
+### A store lands wherever its carriers may name
+
+A review of what the matrices lacked ran the store cases at a slice literal, dynamic arrays,
+and views reached other ways, with verdicts worked out by hand. Of 526 programs, 43 were wrongly accepted, for two reasons.
+
+A store through a carrier joined into that carrier's own parameter unless the walk could say
+it was the view parameter's own element, so `t := s; t[0].to = other; x := s[0].to;` left `x`
+holding `other`'s loan with no link between them, and the solver takes a shared loan without a
+link for no conflict. Landing it in what the loan's slots stand for, joining into all and
+replacing none, is what `s[i]` already did, so that case (`Prov_Store_Any_Element`) is gone
+along with the walk's test of which it was. The price is the known gap of a pointer to one
+element: that store now also reaches the others, where before it reached none.
+
+A container operation on a receiver behind a carrier published nothing, so what `d^.append(x)`
+stored was not there to read back. It is now a store through carriers. What a removal hands
+back needed more: as a plain copy it would conflict with the next removal, which is why a local
+rejected two of them. It is a `Prov_Reborrow.moved` link, as a reordering's is, which leaves the
+container free and still lets a copy's source reach the value.
+
 ### A record by value hands over what it reaches
 
 Passing a carrier has long used what it points to (`prov_use_reached`), so a copy read out

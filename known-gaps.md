@@ -388,6 +388,35 @@ main :: proc() {}
 
 Read the other element before the call, or end its use before using `other`.
 
+### A pointer to one element of a view parameter stands for each
+
+A store by hand of `s[0].to = other` leaves `s[1].to` free, and so does
+`first := &mut s[0]` ([Weakening and reborrows](design.md#weakening-and-reborrows)). The
+pointer names that element, but what is stored or read through it counts for every element
+of the view, as the solve knows only that it names the caller's storage:
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+stored :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+    p := &mut s[0];
+    p^.to = other;
+    y := s[1].to;
+    other^ = 1; // L0641; should be accepted
+    y^ = 2;
+}
+read :: proc(s: []mut Link) {
+    p := &mut s[0];
+    x := p^.to;
+    y := s[1].to; // L0641; should be accepted
+    x^ = 1;
+    y^ = 2;
+}
+main :: proc() {}
+```
+
+Write through `s[0]` by name, or end the use of one before the other.
+
 ### A receiver written `self: ^` behind a carrier conflicts with a read-only copy
 
 A read-only copy of a mutable carrier does not suspend a read of it

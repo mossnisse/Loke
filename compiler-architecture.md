@@ -482,11 +482,11 @@ Keep these contracts:
   so the parameter itself holds nothing stored. A view parameter's slots
   stand for every element, so only a store into one element, `s[k]` with a
   constant `k`, lands in slots of that element (`prov_view_element`) and
-  replaces what they hold. A carrier stored into a view parameter where the
-  store names no one element, as `s[k]` with a variable `k`, lands in the
-  slots standing for every element and in those of each constant element,
-  and replaces none (`prov_view_any_element_store`, `Prov_Store_Any_Element`);
-  any other store through a view also joins into the parameter itself. A record
+  replaces what they hold. Any other store through a view parameter's loan, as
+  `s[k]` with a variable `k`, or through another carrier that names it, lands
+  in the slots standing for every element and in those of each constant element,
+  and replaces none (`publish_into_loan`). A container operation on a receiver
+  behind a carrier stores the same way (`prov_publish_contained`). A record
   whose carriers each have one type on their path lands as they would. Once reach
   has settled, each carrier the store copies is linked as a reborrow to the slots it
   landed in (`link_landed_stores`, `prov_link_landed`), from that store on
