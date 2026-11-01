@@ -1052,7 +1052,7 @@ check_generic_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, template: ^Gener
 		case:
 			continue
 		}
-		mark_generic_hook_reported(k, d)
+		k.c.reported_generic_hooks[generic_hook_key(d)] = true
 	}
 }
 
@@ -1065,7 +1065,7 @@ validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 	for member in item.members {
 		d, is_decl := member.(^Decl)
-		if !is_decl || generic_hook_reported(k, d) {
+		if !is_decl || k.c.reported_generic_hooks[generic_hook_key(d)] {
 			continue
 		}
 		role := decl_hook_kind(d)
@@ -1085,7 +1085,7 @@ validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
 			errors := k.c.error_count
 			validate_semantic_hook(k, item, d, sym, symbol_id)
 			if k.c.error_count != errors {
-				mark_generic_hook_reported(k, d)
+				k.c.reported_generic_hooks[generic_hook_key(d)] = true
 			}
 		}
 	}
@@ -1094,16 +1094,6 @@ validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
 @(private = "file")
 generic_hook_key :: proc(d: ^Decl) -> u64 {
 	return u64(d.span.file) << 32 | u64(d.span.lo)
-}
-
-@(private = "file")
-generic_hook_reported :: proc(k: ^Checker, d: ^Decl) -> bool {
-	return k.c.reported_generic_hooks[generic_hook_key(d)]
-}
-
-@(private = "file")
-mark_generic_hook_reported :: proc(k: ^Checker, d: ^Decl) {
-	k.c.reported_generic_hooks[generic_hook_key(d)] = true
 }
 
 // The written shape of `proc(self: inout T)`, for a block with no instance to

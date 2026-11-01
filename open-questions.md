@@ -24,14 +24,6 @@ an internal backend diagnostic, has also been fixed. It was confirmed with a
 compiler built from `bf5cb393`, so it was an adjacent existing gap, not a regression
 from `46cf2aa8`.
 
-One small simplification remains open (P3): in
-[src/hooks.odin](src/hooks.odin), `generic_hook_reported` and
-`mark_generic_hook_reported` wrap a single map read or write, and all their
-callers are in that file. Keep `generic_hook_key` and read/write
-`reported_generic_hooks[generic_hook_key(d)]` directly. This removes two trivial
-wrappers, about ten lines, while keeping source-position key construction in
-one place.
-
 The overall structure is appropriate: copy decisions validate declarations
 without adding another lifecycle representation or emitter path; instantiated
 hooks reuse `validate_semantic_hook`; and the early generic check handles the
@@ -51,7 +43,6 @@ copy-decision gaps, their rejecting controls, and the older excluded-drop
 failure. The language-server suite was rerun from a binary beside the bundled
 libraries after an initial custom output directory made it unable to locate
 `base:runtime`. No implementation fixes are included in this review.
-Estimated simplification: net: -10 lines possible.
 
 ## Review of variadic dyn views and any_view removal (2026-11-01)
 
