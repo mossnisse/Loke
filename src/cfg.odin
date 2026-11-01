@@ -1622,6 +1622,9 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	}
 	if graph.mode != .Lifecycle {
 		prov_note_declared_procs(graph, d)
+		if d.destructure.active {
+			prov_destructure_copy_effects(graph, &d.destructure, d.values[0])
+		}
 		prov_declare(graph, d, value_loans)
 		return
 	}
@@ -1774,6 +1777,9 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 	}
 	if graph.mode != .Lifecycle {
+		if s.destructure.active {
+			prov_destructure_copy_effects(graph, &s.destructure, s.rhs[0])
+		}
 		prov_assign(graph, s, value_loans)
 		if !s.destructure.active {
 			for target, index in s.lhs {

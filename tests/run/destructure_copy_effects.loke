@@ -1,0 +1,76 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Destructuring", "Global write effects": a discarded field is not
+// copied, so its hook runs no read, and the containing record's hook is not
+// called. `Pair` is the record whose hook reads `counter`, and `Plain` the one
+// that has none. Each read would conflict with `p`, and what a retained `Tagged`
+// does is in tests/err/destructure_copy_effects.loke.
+
+counter: int;
+
+Tagged :: struct { n: int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		return .ok(Tagged{self.n + counter});
+	}
+}
+
+Pair :: struct { tag: Tagged, text: string }
+impl Pair {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Pair, Allocator_Error) {
+		return .ok(Pair{Tagged{self.tag.n + counter}, self.text});
+	}
+}
+
+Plain :: struct { tag: Tagged, text: string }
+
+discards_the_tag :: proc(pair: Pair) {
+	p := &mut counter;
+	_, text := pair;
+	p^ = text.len();
+}
+
+discards_from_a_plain_record :: proc(plain: Plain) {
+	p := &mut counter;
+	_, text := plain;
+	p^ += text.len();
+}
+
+assigns_only_the_text :: proc(pair: Pair) {
+	p := &mut counter;
+	text := "";
+	_, text = pair;
+	p^ += text.len();
+}
+
+// A summary of a procedure that discards it reads nothing either.
+length_of :: proc(pair: Pair) -> int {
+	_, text := pair;
+	return text.len();
+}
+through_a_call :: proc(pair: Pair) {
+	p := &mut counter;
+	n := length_of(pair);
+	p^ += n;
+}
+
+// Clones the field, running its hook once, with no borrow of `counter` in use.
+retained_with_no_conflict :: proc(pair: Pair) -> int {
+	tag, _ := pair;
+	return tag.n;
+}
+
+main :: proc() {
+	pair := Pair{Tagged{1}, "hello"};
+	discards_the_tag(pair);
+	fmt.println(counter);
+	discards_from_a_plain_record(Plain{Tagged{1}, "ab"});
+	fmt.println(counter);
+	assigns_only_the_text(pair);
+	fmt.println(counter);
+	through_a_call(pair);
+	fmt.println(counter);
+	fmt.println(retained_with_no_conflict(pair));
+}

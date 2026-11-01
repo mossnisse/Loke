@@ -683,8 +683,6 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
 			continue
 		}
 		report_copy_cost(k, .Binding, expr_span(operand), operand, field.type)
-		// Every field it clones, not only the last one.
-		expr_base(operand).copied_as = expr_base(operand).type
 		if type_clone_disabled(k.c, field.type) {
 			errorf(
 				k.c, expr_span(operand), "L0503",
@@ -700,6 +698,9 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
 		clones[index] = true
 	}
 	plan.clones = clones
+	// The operand itself is not copied: its effects are its cloned fields'
+	// (`prov_destructure_copy_effects`), and its own hook does not run.
+	expr_base(operand).copied_as = INVALID_TYPE
 }
 
 // --------------------------------------------------------- storage duration --

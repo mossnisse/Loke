@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A place destructure now counts the reads of the copy hooks of the fields it clones
+  ([Destructuring](design.md#destructuring),
+  [Global write effects](design.md#global-write-effects)), not those of the containing
+  record's hook, which never runs. `tag, _ := pair` with `tag`'s hook reading `counter`
+  compiled while `p := &mut counter` was in use, whatever `pair`'s own hook read. It
+  is now `L0511`. Upgrade by destructuring before taking the borrow, or by ending the
+  borrow first. A discarded field no longer counts, so `_, text := pair` is accepted
+  there, where it was `L0511` when the discarded field's hook read the global.
 - A value printed through a mutable call result is now held until printing ends
   ([Built-in procedures](design.md#built-in-procedures)).
   `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the

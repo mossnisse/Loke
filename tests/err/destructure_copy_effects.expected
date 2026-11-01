@@ -1,0 +1,12 @@
+L0511
+@29:12
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@37:14
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@43:12
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@54:7
+`counter` cannot be read by `takes_the_tag` here: a mutable pointer of it is still in use

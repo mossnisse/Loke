@@ -624,6 +624,16 @@ prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	}
 }
 
+// design.md "Destructuring": a place destructure copies each retained field and
+// never calls the containing record's hook, so each cloned field counts alone.
+prov_destructure_copy_effects :: proc(graph: ^Flow_Graph, plan: ^Destructure, operand: Expr) {
+	for cloned, index in plan.clones {
+		if field := symbol_of(graph.k.c, plan.fields[index]); cloned && field != nil {
+			prov_copy_effects(graph, field.type, expr_span(operand))
+		}
+	}
+}
+
 // design.md "Built-in procedures": an `assert` or `panic` report prints `type`
 // through its `format` methods and any `dyn` view in it. As for a failure `main`
 // returns, the slot may reach any `format` method. A value printed with no method

@@ -1,0 +1,64 @@
+package main;
+
+// design.md "Destructuring", "Global write effects": a place destructure copies
+// each retained field and never calls the containing record's hook, so what it
+// reads is what those fields' hooks read. `Pair`'s own hook reads nothing, and
+// `Tagged`'s reads `counter`. What stays accepted, a discarded `Tagged`, is in
+// tests/run/destructure_copy_effects.loke.
+
+counter: int;
+
+Tagged :: struct { n: int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		return .ok(Tagged{self.n + counter});
+	}
+}
+
+Pair :: struct { tag: Tagged, text: string }
+impl Pair {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Pair, Allocator_Error) {
+		return .ok(Pair{Tagged{self.tag.n}, self.text});
+	}
+}
+
+Plain :: struct { tag: Tagged, text: string }
+
+declared :: proc(pair: Pair) {
+	p := &mut counter;
+	tag, _ := pair;
+	p^ = tag.n;
+}
+
+assigned :: proc(pair: Pair) {
+	p := &mut counter;
+	tag := Tagged{0};
+	text := "";
+	tag, text = pair;
+	p^ = tag.n + text.len();
+}
+
+without_a_record_hook :: proc(plain: Plain) {
+	p := &mut counter;
+	tag, _ := plain;
+	p^ = tag.n;
+}
+
+// A summary carries the read to the caller.
+takes_the_tag :: proc(pair: Pair) -> int {
+	tag, _ := pair;
+	return tag.n;
+}
+through_a_call :: proc(pair: Pair) {
+	p := &mut counter;
+	n := takes_the_tag(pair);
+	p^ = n;
+}
+
+main :: proc() {
+	pair := Pair{Tagged{1}, "hello"};
+	declared(pair);
+	assigned(pair);
+	without_a_record_hook(Plain{Tagged{1}, "hello"});
+	through_a_call(pair);
+}

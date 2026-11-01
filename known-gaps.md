@@ -89,47 +89,6 @@ unknown, or distinguish provisional bounds from a genuinely unknown offset.
 Confirmed at `51bceeb4` and on the merged `1b7845aa` during review on
 2026-11-01 (P2, remaining precision gap).
 
-### Destructuring records counts the containing copy hook instead of the fields
-
-[Destructuring](design.md#destructuring) copies each retained field of a place,
-without calling the containing record's copy hook. [Global write
-effects](design.md#global-write-effects) must therefore include those fields'
-copy-hook reads:
-
-```loke
-package main;
-counter: int;
-Tagged :: struct { n: int }
-impl Tagged {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
-        return .ok(Tagged{self.n + counter});
-    }
-}
-Pair :: struct { tag: Tagged, text: string }
-impl Pair {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Pair, Allocator_Error) {
-        return .ok(Pair{Tagged{self.tag.n}, self.text});
-    }
-}
-use :: proc(pair: Pair) {
-    p := &mut counter;
-    tag, _ := pair;
-    p^ = tag.n;
-}
-main :: proc() { use(Pair{Tagged{1}, "hello"}); }
-```
-
-This compiles, though `Tagged.duplicate` reads `counter` while `p` borrows it
-mutably. The emitted IR calls `Tagged.clone` at the destructure. In
-[src/lifecycle.odin](src/lifecycle.odin), `classify_destructure` sets the operand's
-`copied_as` to the whole record. `type_copy_hooks` in [src/hooks.odin](src/hooks.odin)
-then stops at `Pair.duplicate`, missing the hook that actually runs. The same
-annotation over-rejects a discarded field: remove `Pair`'s hook and change the
-body to `_, text := pair; p^ = text.len();`, and it reports `L0511` even though
-the discarded `tag` is never cloned. Record effects per retained cloned field.
-Introduced in `edb4eb2e`; confirmed on `1b7845aa` during review on 2026-11-01 (P2).
-
-
 ### Repeated array elements count copy reads before creating their loans
 
 [Fixed arrays](design.md#fixed-arrays) evaluate a repeated initializer before
@@ -162,7 +121,6 @@ the fresh loan does not yet exist at the read event. Emit the effects after
 evaluating the repeated initializer, in the order its copies run. Introduced
 in `edb4eb2e`; confirmed on `1b7845aa` during review on 2026-11-01 (P2).
 
-
 ### Reports count a public type's private formatter that printing never calls
 
 [Interface bodies](design.md#interface-bodies) excludes a public type's private
@@ -191,7 +149,6 @@ method. `prints_through_method_walk` in [src/format.odin](src/format.odin) tests
 can run user formatting code, then inspect the default formatter's parts.
 Introduced in `a28b7aac`; the same program is accepted by its parent. Confirmed
 on `1b7845aa` during review on 2026-11-01 (P2).
-
 
 ### A lifecycle question asked before a record's hooks are in place loses them
 
@@ -281,6 +238,47 @@ array's element whatever its length, as `drop_hooks_walk` used to. The checker a
 asks that walk what a type requires, so the fix belongs in the two effect readers or
 in a separate query. Found while fixing the empty slice literal's drop effects on
 2026-11-01 at `46cf2aa8` (P3, over-rejection).
+
+### An owned `next` counts a copy of its element that no step makes
+
+[Global write effects](design.md#global-write-effects) count the copies that may
+run. A protocol `next` that returns its element hands it over, and no step of the
+traversal clones it, yet `Tagged.duplicate`'s read of `counter` is counted:
+
+```loke
+package main;
+counter: int;
+Tagged :: struct { n: int }
+impl Tagged {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+        return .ok(Tagged{self.n + counter});
+    }
+}
+It :: struct { done: bool }
+impl It {
+    Element :: Tagged;
+    Iterator :: It;
+    iter :: proc(self) -> It { return self; }
+    next :: proc(self: inout It) -> Option(Tagged) {
+        if (self.done) { return .none; }
+        self.done = true;
+        return .some(Tagged{1});
+    }
+}
+main :: proc() {
+    p := &mut counter;
+    foreach (t in It{false}) { p^ = t.n; }
+}
+```
+
+This reports `L0511` at `It{false}`, though with `p` removed the emitted loop calls
+only `It.next`, and no `Tagged.clone`. `walk_flow_foreach` in
+[src/cfg.odin](src/cfg.odin) calls `prov_copy_effects` for any step that does not lend
+its element. `in_a_copying_traversal` in
+[tests/err/global_read_effects.loke](tests/err/global_read_effects.loke) pins `L0511`
+for `items.copied()`, so a fix must keep that read counted, as a clone inside `next`
+or otherwise. Found while fixing destructuring's copy effects on 2026-11-01 (P3,
+over-rejection).
 
 ### A map entry reached through a pointer is not held
 
