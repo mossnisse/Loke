@@ -331,6 +331,7 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 		symbol := symbol_of(c, id)
 		if symbol == nil || symbol.bound_excluded || symbol.superseded || (methods && !symbol.has_receiver) { return }
 		if symbol.pkg != m.observer && !symbol.public { return }
+		if hidden, _ := standard_format_hidden(c, symbol, m.observer); hidden { return }
 		name := identifier_text(c, symbol.name)
 		if m.seen[name] || !identifier_spelling(name) { return }
 		m.seen[name] = true

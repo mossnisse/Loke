@@ -1056,6 +1056,10 @@ checklist.
   member. A selection such as `Box(type).Hidden`, which names no `$` name, is read
   at its declaration
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- Editor completion no longer offers a type's generated `format` where a use
+  could not call it, on a public type with a private `format`, and shows a local
+  extension's `format` rather than the generated one it hides
+  ([Language server](compiler-architecture.md#language-server)).
 - `time.local_zone` on Windows no longer panics for a zone set without a
   registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
   dynamic daylight saving is disabled keeps its fixed annual transitions
