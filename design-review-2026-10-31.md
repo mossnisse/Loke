@@ -769,8 +769,7 @@ reduction, a separately named operation says so, for example
   possible"). Move the second kind into a conformance appendix with its own
   heading structure. The appendix stays normative: minimum provenance
   precision is what makes a program accepted today accepted tomorrow and by
-  another implementation, and known-gaps.md holds the compiler to it
-  ([Reaching-definition limits weaken the per-storage chosen-place guarantee](known-gaps.md#reaching-definition-limits-weaken-the-per-storage-chosen-place-guarantee)).
+  another implementation, and known-gaps.md holds the compiler to it.
   compiler-architecture.md is the place only for how this implementation goes
   beyond it. The programmer-facing text would be about half the length.
 - **State each mechanism once.** The effect rules

@@ -398,11 +398,10 @@ structure. Two findings remain:
   (P2).** The new 63-definition and 256-block bounds reintroduce the
   repointed-carrier rejection while each storage remains within its promised
   eight places. The diagnostic names the place and storage limits rather
-  than the bound that caused the fallback. The
-  [known gap](known-gaps.md#reaching-definition-limits-weaken-the-per-storage-chosen-place-guarantee)
-  contains a reproduction for each bound, verified against a compiler built
-  from `68504095` itself. Keeping only a block's last definition would avoid
-  much redundant history; large control-flow graphs still need to retain the
+  than the bound that caused the fallback. The known gap, since closed, had a
+  reproduction for each bound, verified against a compiler built from
+  `68504095` itself. Keeping only a block's last definition would avoid much
+  redundant history; large control-flow graphs still need to retain the
   specified precision.
 - **Remove the redundant per-definition merge flag (P3, shrink).**
   `Prov_Offset_Def.merged` in [src/borrow.odin](src/borrow.odin) and its
@@ -413,6 +412,7 @@ structure. Two findings remain:
   `prov_carrier_offsets` always joins the slot flag into its result. Remove
   the field, its initializer, and `merged ||= def.merged`; retain the flag
   for merges performed while joining reaching offsets. Net: two lines fewer.
+  Done since, as the walk no longer keeps definitions.
 
 The local-view load fix shares the existing element-loan and reaching-view
 helpers, and no additional correctness finding was found in it. The offset

@@ -430,10 +430,14 @@ Keep these contracts:
   is taken where a borrow goes through it to point where the definitions
   reaching there do (`prov_reaching_offsets`), keeping any place of the
   gathered offsets those do not cover. The definitions reaching are found
-  walking back over the blocks linked so far, and what reaches a finished
-  block's end is kept for later walks (`Prov_Reach`) until a block walked
-  gains a predecessor, as a loop's head its back edge. Past 63 definitions of
-  the slot, or 256 blocks walked anew, the borrow takes the gathered offsets.
+  walking back over the blocks linked so far, carrying the set of places they
+  point at rather than the definitions themselves, so neither how many there
+  are nor how many blocks lie between them is limited. What reaches a finished
+  block's end is kept for later walks (`Prov_Reach`), and each borrow walks only
+  blocks none kept. A block gaining a predecessor, as a loop's head its back
+  edge, or a definition drops only what was kept for it and the blocks after it
+  (`prov_reach_invalidate`). Past 127 places of the slot, above the 64 the
+  specification asks for, the borrow takes the gathered offsets.
   Alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated path carries the
   precision marker, so `L0646`, `L0647`, and `L0730` say the borrow *may* be
   there, and recursive cursors converge. A place loan or `.Through` event made

@@ -302,26 +302,25 @@ Prov_Offset :: struct {
 	storage: int,
 }
 
-// One definition of a named slot, emitted in `block`, and what it may point
-// at (`prov_note_offset`): nil `offsets` when it names no storage. A slot's
-// definitions are kept in the order emitted.
-Prov_Offset_Def :: struct {
-	block:   Block_Id,
-	offsets: []Prov_Offset,
-	merged:  bool,
-}
-
-// Which definitions of named slots reach where (`prov_reaching_offsets`):
-// each slot's definitions, and per slot and finished block the set reaching
-// its end, bit `i` standing for definition `i` and `PROV_REACH_UNKNOWN` for
-// one that names no storage or for the procedure's entry. The rest is the
-// walk's scratch, kept to be reused.
+// Which places a named slot's definitions may have left it pointing at where,
+// for `prov_reaching_offsets`. A definition overwritten in its own block can
+// reach nothing, and two pointing at the same place need not be told apart, so
+// what the walk carries is a set of places rather than of definitions: bit `i`
+// of a mask stands for place `i` of the slot's `places`, and
+// `PROV_REACH_UNKNOWN` for a definition that names no storage or for the
+// procedure's entry. `defined` is what the last definition in a block left, and
+// `exits` what reaches a walked block's end, for as long as its `epoch` is the
+// block's. The rest is the walk's scratch, kept to be reused.
 Prov_Reach :: struct {
-	defs:   map[int][dynamic]Prov_Offset_Def,
-	exits:  map[Prov_Reach_Key]u64,
-	frames: [dynamic]Prov_Reach_Frame,
-	seen:   map[Block_Id]Prov_Reach_Seen,
-	scc:    [dynamic]Block_Id,
+	places:  map[int][dynamic]Prov_Offset,
+	defined: map[Prov_Reach_Key]u128,
+	exits:   map[Prov_Reach_Key]Prov_Reach_Exit,
+	frames:  [dynamic]Prov_Reach_Frame,
+	blocks:  [dynamic]Prov_Reach_Block,
+	scc:     [dynamic]Block_Id,
+	stale:   [dynamic]Block_Id,
+	walk:    int,
+	visit:   int,
 }
 
 Prov_Reach_Key :: struct {
@@ -329,21 +328,32 @@ Prov_Reach_Key :: struct {
 	block: Block_Id,
 }
 
-// A block the walk is in: the next of its predecessors to take, the
-// definitions found so far, and its order of discovery and the lowest one it
-// reaches back to.
+Prov_Reach_Exit :: struct {
+	mask:  u128,
+	epoch: int,
+}
+
+// A block the walk is in: the next of its predecessors to take, the places
+// found so far, and its order of discovery and the lowest one it reaches back
+// to.
 Prov_Reach_Frame :: struct {
 	block:        Block_Id,
 	next:         int,
-	mask:         u64,
+	mask:         u128,
 	index, low:   int,
 }
 
-// A block the walk has taken: what reaches its end, its order of discovery,
-// and whether it waits on a block still being walked, which closes a cycle.
-Prov_Reach_Seen :: struct {
-	mask:    u64,
+// A block as the walks know it. `epoch` counts what may have changed what
+// reaches its end. In the walk numbered `walk` it was taken: `mask` reaches its
+// end, it was discovered `index`th, and `waiting` when it waits on a block
+// still being walked, which closes a cycle. `visit` numbers the last
+// invalidation to reach it (`prov_reach_invalidate`).
+Prov_Reach_Block :: struct {
+	mask:    u128,
 	index:   int,
+	walk:    int,
+	visit:   int,
+	epoch:   int,
 	waiting: bool,
 }
 

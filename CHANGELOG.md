@@ -965,6 +965,12 @@ checklist.
 
 ### Fixed
 
+- A carrier repointed between choices, as `p` in `p := s; ...; p = t; ...`, now
+  counts its places against only the storage it names there however many
+  definitions of it, or blocks between them, the procedure has. Past 63
+  definitions or 256 blocks, a place of `t` still counted against `s`, so a
+  disjoint write was `L0641` although each storage was within its eight places
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
 - A reslice in a loop that never moves a local view's start, as
   `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
   beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
