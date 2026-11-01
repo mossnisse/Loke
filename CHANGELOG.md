@@ -1166,6 +1166,10 @@ checklist.
 
 ### Fixed
 
+- A carrier loaded out of a place and passed as a `stored` argument no longer conflicts
+  with itself in that call. `keep(l, m^.to); x := l^.to; x^ = 2; m^.to^ = 1;` was
+  `L0641` at the call, though `x` is done by the last statement
+  ([Retaining a borrow](design.md#retaining-a-borrow)).
 - A swap of carriers written with a temporary through a pointer or view, `held :=
   links[0]; links[0] = links[1]; links[1] = held;`, no longer conflicts with itself,
   and copies out of elements reordered whole through a view parameter no longer

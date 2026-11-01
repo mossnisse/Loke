@@ -487,7 +487,8 @@ Prov_Reborrow :: struct {
 	// (`prov_link_copied_carriers`).
 	copied_within: bool,
 	// Links a carrier to where a store through carriers landed it: the
-	// `Prov_Event.store_id` of that store, before which it holds nothing here.
+	// `Prov_Event.store_id` of that store, or what a call left, before which it holds
+	// nothing here.
 	from_store: int,
 	// `derived` took the carrier from `source` in a reordering (`prov_assign_permutes`),
 	// which leaves `source` a carrier of its own, so `source` is not suspended, while
@@ -1886,7 +1887,7 @@ graph_may_move_carriers :: proc(graph: ^Flow_Graph) -> bool {
 	for block in graph.blocks {
 		for event in block.prov {
 			switch {
-			case event.kind == .Publish && len(event.sources) > 0, event.kind == .Rearrange:
+			case event.kind == .Publish && len(event.sources) > 0 && len(event.into) > 0, event.kind == .Rearrange:
 				return true
 			case event.kind == .Def && len(event.sources) > 0:
 				if slot_stores_in_inout(graph, event.slot) {
@@ -3420,7 +3421,8 @@ link_landed_stores :: proc(state: ^Prov_State) {
 		copy(state.precision, block.precision_entry)
 		copy(state.ended, block.ended_entry)
 		for &event in block.prov {
-			if event.kind != .Publish || !event.links_copies {
+			retained, is_retained := event.store.(Prov_Store_Retained)
+			if event.kind != .Publish || !event.links_copies && !is_retained {
 				run_prov_event(state, event, state.reach, state.ended)
 				continue
 			}
@@ -3431,7 +3433,11 @@ link_landed_stores :: proc(state: ^Prov_State) {
 			stores += 1
 			event.store_id = stores
 			taken := len(graph.reborrows)
-			prov_link_landed(graph, event, landed[:])
+			if is_retained {
+				prov_link_retained(graph, event, retained, landed[:])
+			} else {
+				prov_link_landed(graph, event, landed[:])
+			}
 			for &reborrow in graph.reborrows[taken:] {
 				reborrow.from_store = stores
 			}
@@ -4845,7 +4851,7 @@ publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan_index: int, even
 			}
 		case Prov_Store_Retained:
 			// What a call leaves in a view may be in any element, each of which
-			// these slots stand for, and which `prov_reborrow_retained` links.
+			// these slots stand for, and which `prov_link_retained` links.
 			if caller {
 				publish_into_caller(state, reach, slots[:], loan, event.path, INVALID_TYPE, carrier_loss, INVALID_TYPE, by_type)
 			}

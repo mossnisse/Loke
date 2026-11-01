@@ -338,6 +338,56 @@ main :: proc() {}
 (`prov_assign_permutes`). Found on 2026-11-01 while deriving a store's links in the
 solve (P3, over-rejection).
 
+### A carrier a call may have left stays after its place is replaced
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a store to one place
+replaces what it held, and a local's record already does after a call that may have
+stored there. Through a parameter's pointer to a record of one carrier, through a
+pointer to a carrier, or at one element of a view parameter, it does not. In the
+reproduction, the call's carrier is joined into a caller slot of no path or type as well
+as the typed one, the store replaces only the typed one, and the load reads both.
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+replaced :: proc(l: ^mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+    keep(l, other);
+    l^.to = fresh;
+    x := l^.to;
+    other^ = 1; // L0641; should be accepted
+    x^ = 2;
+}
+main :: proc() {}
+```
+
+[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) lists each place
+form this holds for, and a record of two carriers through a pointer is already accepted.
+End the use of `x` before using `other`.
+
+### What a call leaves through a pointer to one element counts for each
+
+A call given `&mut s[0]` can write only through that element, and a store by hand of
+`s[0].to = other` leaves `s[1].to` free (design.md
+[Weakening and reborrows](design.md#weakening-and-reborrows)). What a call may leave
+there lands in the slots standing for every element, so a copy out of any other element
+conflicts with the argument:
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+other_element :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+    keep(&mut s[0], other);
+    x := s[1].to;
+    other^ = 1; // L0641; should be accepted
+    x^ = 2;
+}
+main :: proc() {}
+```
+
+Read the other element before the call, or end its use before using `other`.
+
 ### A reordering of fields through a traversal binding is rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves

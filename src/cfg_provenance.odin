@@ -125,8 +125,13 @@ Prov_Store_Any_Element :: struct {
 }
 
 // What a call leaves of a `stored` argument, each carrier of which
-// `prov_reborrow_retained` links to every slot it may land in.
-Prov_Store_Retained :: struct {}
+// `prov_link_retained` links to every slot it may land in: those of what the carriers
+// name, and `places`, of a destination the argument names itself. `mutable` when the
+// parameter it is passed as can carry a mutable borrow.
+Prov_Store_Retained :: struct {
+	mutable: bool,
+	places:  []int,
+}
 
 // Where in what its carriers name a `Publish` lands, when the walk knows more
 // than that they name it (`publish_into_loan`). `Prov_Element_Slots` applies
@@ -3538,8 +3543,8 @@ prov_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (Prov_Element_Slot
 }
 
 // The element slots of a view parameter stand for part of what the slots
-// standing for every element do, so what a call left may be in one: each
-// reborrow linking a carrier to one of those (`prov_reborrow_retained`) links
+// standing for every element do, so what a call copied may be in one: each
+// reborrow linking a carrier to one of those (`prov_link_copied_carriers`) links
 // it to the element's slot at the same path too.
 @(private = "file")
 prov_reborrow_element :: proc(graph: ^Flow_Graph, own: Loan_Id, elements: []int) {
@@ -8946,15 +8951,13 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 		if destinations == nil {
 			destinations = prov_writable_arguments(graph, v, proc_type)
 		}
+		mutable := type_carries_borrow(graph.k.c, prov_parameter_type(graph, v, index)).mutable
 		for target in destinations {
 			if target == index {
-				prov_retain_into_self(graph, v, index, slots)
+				prov_retain_into_self(graph, v, index, slots, mutable)
 			} else {
-				prov_retain_into_argument(graph, v, target, actuals[target], slots, retained = true)
+				prov_retain_into_argument(graph, v, target, actuals[target], slots, retained = true, retained_mutable = mutable)
 			}
-		}
-		if len(destinations) > 0 {
-			prov_reborrow_retained(graph, slots, type_carries_borrow(graph.k.c, prov_parameter_type(graph, v, index)).mutable, v.span)
 		}
 	}
 }
@@ -9275,6 +9278,7 @@ prov_retain_into_argument :: proc(
 	sources: []int,
 	mutable_only := false,
 	retained := false,
+	retained_mutable := false,
 ) {
 	argument := v.bound[index]
 	// A variadic pack is a slice over its operands, which no place names.
@@ -9290,7 +9294,7 @@ prov_retain_into_argument :: proc(
 		} else {
 			through = prov_with_content(graph, carrier, v.span)
 		}
-		prov_publish_through(graph, through, sources, v.span, retained)
+		prov_publish_through(graph, through, sources, v.span, retained, retained_mutable)
 		return
 	}
 	// `inout p` with `p: ^mut T`: through `p` as well as into it.
@@ -9302,7 +9306,7 @@ prov_retain_into_argument :: proc(
 		} else {
 			through = prov_with_content(graph, held, v.span)
 		}
-		prov_publish_through(graph, through, sources, v.span, retained)
+		prov_publish_through(graph, through, sources, v.span, retained, retained_mutable)
 	}
 	root, path, ok := prov_place_of(graph, argument)
 	if !ok {
@@ -9322,22 +9326,37 @@ prov_retain_into_argument :: proc(
 		slots = prov_one(graph, slot)
 	}
 	// What a call leaves of a `stored` argument is linked to where it may land
-	// from what the call lent it from (`prov_reborrow_retained`), since the
+	// from what the call lent it from (`prov_link_retained`), since the
 	// call itself still uses the carrier it lends the argument through.
 	for slot in slots {
 		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), sources), v.span, reborrows = !retained)
 	}
+	if retained {
+		prov_link_retained_places(graph, sources, slots, retained_mutable, v.span)
+	}
+}
+
+// What a call leaves of a `stored` argument in slots the walk can name, for the solve
+// to link (`prov_link_retained`).
+@(private = "file")
+prov_link_retained_places :: proc(graph: ^Flow_Graph, sources, places: []int, mutable: bool, span: Span) {
+	if len(places) == 0 {
+		return
+	}
+	graph.has_linked_store = true
+	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, store = Prov_Store_Retained{mutable = mutable, places = places}})
 }
 
 @(private = "file")
-prov_publish_through :: proc(graph: ^Flow_Graph, carriers, sources: []int, span: Span, retained := false) {
+prov_publish_through :: proc(graph: ^Flow_Graph, carriers, sources: []int, span: Span, retained := false, retained_mutable := false) {
 	if len(carriers) == 0 {
 		return
 	}
 	prov_emit(graph, Prov_Event{kind = .Retain, span = span, sources = sources, root = NO_ROOT, into = carriers})
 	lands: Prov_Store_Target
 	if retained {
-		lands = Prov_Store_Retained{}
+		lands = Prov_Store_Retained{mutable = retained_mutable}
+		graph.has_linked_store = true
 	}
 	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, into = carriers, store = lands})
 }
@@ -9346,22 +9365,20 @@ prov_publish_through :: proc(graph: ^Flow_Graph, carriers, sources: []int, span:
 // holds, or a borrow taken through it, into any mutable destination it
 // receives, and a carrier copied out of that storage then reborrows the
 // argument (design.md "Weakening and reborrows"). So each carrier among
-// `sources`, the argument's own and what it reaches, is linked as a
-// reborrow to every slot a destination may stand for, as a store's copy is
-// (`prov_assign`): a local's, an `inout` parameter's, and one standing for
-// a parameter's caller storage. Which of them it lands in is known only to
-// the solve, and one stays suspended only while it holds the argument's
-// loan. A read-only destination, or a read-only argument, holds a
-// read-only reborrow. A parameter's own binding is no destination: no call
-// can write it. The carrier a call lends its argument through
+// the store's `sources`, the argument's own and what it reaches, is linked as a
+// reborrow to the slots the solve found a destination may stand for, `landed`
+// and `places`: a local's, an `inout` parameter's, and one standing for a
+// parameter's caller storage. A read-only destination, or a
+// read-only argument, holds a read-only reborrow. A parameter's own binding is no
+// destination: no call can write it. The carrier a call lends its argument through
 // (`prov_lend_carrier`) is used by the call itself, after what it leaves is
 // published, so what it was lent from is linked instead.
-@(private = "file")
-prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool, span: Span) {
+@(private)
+prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov_Store_Retained, landed: []int) {
 	c := graph.k.c
-	linked := make([dynamic]int, 0, len(sources), context.temp_allocator)
-	pending := make([dynamic]int, 0, len(sources), context.temp_allocator)
-	append(&pending, ..sources)
+	linked := make([dynamic]int, 0, len(event.sources), context.temp_allocator)
+	pending := make([dynamic]int, 0, len(event.sources), context.temp_allocator)
+	append(&pending, ..event.sources)
 	for len(pending) > 0 {
 		source := pop(&pending)
 		if slice.contains(linked[:], source) {
@@ -9389,29 +9406,37 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 		// read-only carrier loaded out through a pointer, is not itself
 		// suspended by what the call leaves of it: that only extends it.
 		passes_on := !mutable_source && (prov_slot_is_stored(entry) || prov_slot_is_loaded_read_only(graph, source))
-		for candidate, into in graph.prov_slots {
+		link := proc(graph: ^Flow_Graph, source, into: int, mutable, passes_on: bool, span: Span) {
+			c := graph.k.c
 			if into == source {
-				continue
+				return
 			}
+			candidate := graph.prov_slots[into]
 			type := candidate.content_type
 			if candidate.symbol != INVALID_SYMBOL {
 				sym := symbol_of(c, candidate.symbol)
 				if sym == nil || sym.kind == .Parameter && sym.immutable {
-					continue
+					return
 				}
 				if type == INVALID_TYPE && len(candidate.path) == 0 {
 					type = sym.type
 				}
 				if !type_is_carrier(c, type) || type_is_region_provider(c, type) {
-					continue
+					return
 				}
 			} else if candidate.kind == .Temporary || type != INVALID_TYPE && type_is_region_provider(c, type) {
-				continue
+				return
 			}
 			held := type == INVALID_TYPE ? candidate.caller_mutable : carrier_is_mutable(c, type)
 			append(&graph.reborrows, Prov_Reborrow {
 				source = source, derived = into, span = span, mutable = mutable && held, passes_on = passes_on,
 			})
+		}
+		for into in landed {
+			link(graph, source, into, retained.mutable, passes_on, event.span)
+		}
+		for into in retained.places {
+			link(graph, source, into, retained.mutable, passes_on, event.span)
 		}
 	}
 }
@@ -9421,12 +9446,12 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 // gets a new borrow of it, weakened to that slot's capability; the argument's
 // own loan keeps its. Any other carrier publishes its loans as they are.
 @(private = "file")
-prov_retain_into_self :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, carrier: []int) {
+prov_retain_into_self :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, carrier: []int, mutable: bool) {
 	place := v.bound[index]
 	if !prov_argument_is_place(graph, v, index) {
 		unary, is_unary := place.(^Expr_Unary)
 		if !is_unary || unary.op != .Amp {
-			prov_retain_into_argument(graph, v, index, carrier, carrier)
+			prov_retain_into_argument(graph, v, index, carrier, carrier, retained = true, retained_mutable = mutable)
 			return
 		}
 		place = unary.operand
@@ -9438,11 +9463,13 @@ prov_retain_into_self :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, car
 	// design.md "Escape levels": the callee may store any of the argument's
 	// content into any compatible part of it, so each part keeps its own
 	// sources, gains every other part's, and borrows the argument's own root.
-	for slot in prov_content_at(graph, root, path) {
+	slots := prov_content_at(graph, root, path)
+	for slot in slots {
 		own := prov_borrow(graph, root, path, true, v.span, "borrow")
 		kept := prov_join(graph, prov_one(graph, slot), carrier)
 		prov_define_one_content(graph, slot, prov_join(graph, kept, own), v.span)
 	}
+	prov_link_retained_places(graph, carrier, slots, mutable, v.span)
 }
 
 // Whether this argument names the destination itself rather than pointing at it.

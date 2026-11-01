@@ -1,0 +1,25 @@
+// design.md "Retaining a borrow": a call leaves a copy of a `stored` argument only in the
+// destinations it receives, so what the argument was loaded from is free again once
+// the last copy of it there is done.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+
+copy_done_first :: proc(l: ^mut Link, @(escape=stored) m: ^mut Link) {
+	keep(l, m^.to);
+	x := l^.to;
+	x^ += 10;
+	m^.to^ += 100;
+}
+
+main :: proc() {
+	a := 1; b := 2;
+	l := Link{&mut a};
+	m := Link{&mut b};
+	copy_done_first(&mut l, &mut m);
+	fmt.println(a, b);
+}

@@ -23,13 +23,13 @@ the compiler, is the oracle for any of them.
 
 - **Mutable exclusivity is kept by hand-built links (P2).** The solver knows
   which loans a slot may hold; whether two slots holding one mutable loan may
-  both be used is decided by the reborrow graph. A store through carriers now
-  [links where it lands](comments.md#a-stores-links-come-from-where-it-lands), and
+  both be used is decided by the reborrow graph. A store through carriers and a
+  `stored` argument now
+  [link where they land](comments.md#a-stores-links-come-from-where-it-lands), and
   the walk still builds the rest a link at a time: `prov_reborrow` for a copy into a
-  slot, `prov_reborrow_retained` for a `stored` argument, which links every slot by
-  type as stores did, `prov_link_copied_carriers` with `copied_within` for a call
+  slot, `prov_link_copied_carriers` with `copied_within` for a call
   that copies, and `prov_reborrow_loaded` with `pending` and `prov_activate_copies`
-  for a copy read through a pointer, settled after the solve. A `stored` argument is
+  for a copy read through a pointer, settled after the solve. A call that copies is
   the next to move. Two genuine rules remain underneath: a carrier stored
   back through what it was loaded from replaces that carrier (`via`), and a
   read-only reborrow is not suspended by its copies (`passes_on`). The may-sets a

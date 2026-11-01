@@ -3446,6 +3446,19 @@ comparison is not enough here, and a later change should first extend the verdic
 worked out by hand in
 [carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin).
 
+What a call leaves of a `stored` argument was the next to move, linked the same way
+(`prov_link_retained`) and for the same reason. The callee's body says nothing to the
+caller about where it stores, so it lands wherever a destination may stand for. An
+argument that is its own destination needs its own event: the walk's old link ran
+after every destination and so covered it. Without that event `keep_self(n); h :=
+n^.next; n^.v = 1; h^.v = 2;` is accepted, and neither a fixture nor the comparison
+with the old compiler notices, while
+[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) does. Landing
+stops a loaded argument conflicting with itself. Two over-rejections of the old rule
+are left, as both come from what a call's landing joins rather than from the links
+(known-gaps.md, "A carrier a call may have left stays after its place is replaced"
+and "What a call leaves through a pointer to one element counts for each").
+
 ### Provenance slots and regions stay apart
 
 A review of the provenance checker on 2026-11-01 proposed two generalizations. One
