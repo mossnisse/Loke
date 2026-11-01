@@ -1,0 +1,102 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": an `inout` receiver reached through a carrier
+// is a borrow of that place, for the call's other arguments and for as long as what
+// it returns is in use.
+
+clearing :: proc(m: inout map[int]int) -> int { m.clear(); return 0; }
+clearing_through :: proc(m: ^mut map[int]int) -> int { m^.clear(); return 0; }
+grow :: proc(d: ^mut [dynamic]map[int]int) -> int { d^.append(map[int]int{}); return 0; }
+
+Record :: struct { items: map[int]int, count: int }
+
+impl Record {
+	count_of :: proc(self: inout) -> ^mut int { return &mut self.count; }
+	reset :: proc(self: inout) { self.count = 0; }
+}
+
+cleared :: proc(p: ^mut map[int]int) {
+	entry := p^.find_or_insert(3, 7);
+	p^.clear();
+	fmt.println(entry^);
+}
+
+cleared_by_inout :: proc(p: ^mut map[int]int) {
+	entry := p^.find_or_insert(3, 7);
+	clearing(inout p^);
+	fmt.println(entry^);
+}
+
+cleared_by_a_call_handed_the_pointer :: proc(p: ^mut map[int]int) {
+	entry := p^.find_or_insert(3, 7);
+	clearing_through(p);
+	fmt.println(entry^);
+}
+
+cleared_by_the_pointee :: proc() {
+	map_value := map[int]int{};
+	defer drop(map_value);
+	p := &mut map_value;
+	entry := p^.find_or_insert(3, 7);
+	map_value.clear();
+	fmt.println(entry^);
+}
+
+cleared_through_two_pointers :: proc(p: ^mut ^mut map[int]int) {
+	entry := p^^.find_or_insert(3, 7);
+	p^^.clear();
+	fmt.println(entry^);
+}
+
+cleared_as_a_field :: proc(r: ^mut Record) {
+	entry := r^.items.find_or_insert(3, 7);
+	r^.items.clear();
+	fmt.println(entry^);
+}
+
+cleared_as_an_element :: proc(rows: []mut map[int]int, i: int) {
+	entry := rows[i].find_or_insert(3, 7);
+	rows[i].clear();
+	fmt.println(entry^);
+}
+
+read_while_in_use :: proc(p: ^mut map[int]int) {
+	entry := p^.find_or_insert(3, 7);
+	fmt.println(p^.len());
+	entry^ += 1;
+}
+
+a_user_method :: proc(r: ^mut Record) {
+	count := r^.count_of();
+	r^.reset();
+	count^ += 1;
+}
+
+// `grow` may move what the receiver names, after the receiver was evaluated.
+an_argument_invalidating_the_receiver :: proc(d: ^mut [dynamic]map[int]int) {
+	d^[0].find_or_insert(grow(d), 7);
+}
+
+an_argument_reading_the_receiver :: proc(d: ^mut [dynamic]int) {
+	d^.append(d^.len());
+}
+
+cleared_while_printed :: proc(p: ^mut map[int]int) {
+	fmt.println(p^.find_or_insert(3, 7)^, clearing(inout p^));
+}
+
+// A removal hands back what the element held, not a borrow of the container.
+popped_loan :: proc() {
+	x := 1;
+	y := 2;
+	d := [dynamic]^mut int{&mut x};
+	defer drop(d);
+	p := &mut d;
+	last := p^.pop() or_else &mut y;
+	x = 5;
+	last^ += 1;
+}
+
+main :: proc() {}

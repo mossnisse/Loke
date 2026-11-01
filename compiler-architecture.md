@@ -389,7 +389,7 @@ behavioral controls for all of it.
 | Concept | Owner |
 | --- | --- |
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
-| Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
+| Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin`; `prov_reborrow_retained` in `cfg_provenance.odin` |
 | What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `Prov_Reborrow.copied_within` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `cfg_provenance.odin` |
@@ -417,7 +417,7 @@ Keep these contracts:
   the solvers.
 - **A place reached through carriers takes a place loan, not a root loan.**
   Which storage the carriers name is known only to the solve, so a borrow,
-  slice, traversal, or switch of such a place snapshots the carriers and is
+  slice, traversal, switch, or `inout` receiver of such a place snapshots the carriers and is
   checked against later accesses by path overlap (`check_place_loans`); a
   borrow's conflict is `L0641`, a switch's `L0511`. A view's paths name no
   element, so a place loan or `.Through` event in `s[k]`, with `s` a named
@@ -536,7 +536,7 @@ Keep these contracts:
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further
-  mutable borrow (`prov_view_through_carrier`).
+  mutable borrow (`prov_view_through_carrier`, `place_loan_use`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

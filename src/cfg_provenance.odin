@@ -574,12 +574,15 @@ prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offsets: []Prov_
 // compound assignment or an `inout` receiver does. That walk only read the
 // carriers, so they are read again as written through, which a reborrow of
 // the place suspends (design.md "Weakening and reborrows"); the subscripts
-// below the last carrier were walked already.
+// below the last carrier were walked already. Returns what
+// `prov_read_through_carrier` does.
 @(private = "file")
-prov_write_through_place :: proc(graph: ^Flow_Graph, place: Expr, span: Span) {
-	if carriers, below, through := prov_read_through_carrier(graph, place, store = true); through {
+prov_write_through_place :: proc(graph: ^Flow_Graph, place: Expr, span: Span) -> (carriers: []int, below: []Proj_Step, through: bool) {
+	carriers, below, through = prov_read_through_carrier(graph, place, store = true)
+	if through {
 		prov_write_through(graph, carriers, below, span, "write", place)
 	}
+	return
 }
 
 
@@ -6726,14 +6729,14 @@ prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind, r
 }
 
 @(private = "file")
-prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) {
+prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) -> (carriers: []int, below: []Proj_Step, through: bool) {
 	if root, path, ok := prov_place_of(graph, place); ok {
 		prov_walk_subscripts(graph, place)
 		prov_access(graph, root, path, .Invalidate, span, verb)
 		return
 	}
 	walk_flow_expr(graph, place)
-	prov_write_through_place(graph, place, span)
+	return prov_write_through_place(graph, place, span)
 }
 
 @(private)
@@ -8350,7 +8353,7 @@ prov_call_argument :: proc(
 		// An `inout` receiver invalidates borrows of it (design.md), and its held
 		// borrows stay live through the call, as `iterator.next()` reads its slice.
 		borrowed^ = prov_join(graph, borrowed^, prov_carrier_slots(graph, argument))
-		prov_invalidate(graph, argument, v.span, "modified")
+		carriers, below, through := prov_invalidate(graph, argument, v.span, "modified")
 		// design.md "Borrowing iteration": a result derived from a view the
 		// receiver holds names that view's source, not the receiver, so
 		// advancing the receiver cannot invalidate an element already handed
@@ -8374,6 +8377,15 @@ prov_call_argument :: proc(
 			} else {
 				actual = prov_join(graph, prov_carrier_slots(graph, argument),
 					prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
+			}
+			borrowed^ = prov_join(graph, borrowed^, actual)
+		} else if through {
+			// design.md "Weakening and reborrows": a receiver behind a carrier is
+			// borrowed as `&mut p^` is, for that place only.
+			if prov_op_removes_element(container_op) {
+				actual = prov_load_deep(graph, carriers, v.span, path = prov_element_path(graph, v, below, container_op))
+			} else {
+				actual = prov_place_loan(graph, carriers, below, true, "borrow", argument, borrows = true)
 			}
 			borrowed^ = prov_join(graph, borrowed^, actual)
 		}

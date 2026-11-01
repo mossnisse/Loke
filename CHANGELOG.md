@@ -48,6 +48,16 @@ checklist.
   Upgrade by binding the whole value. A block in a `when` whose condition names a
   constant declared after the record is `L0488` once the record has been used. Upgrade
   by declaring the constant first, or by moving the use after the block.
+- An `inout` receiver reached through a pointer or slice is now a borrow of that
+  place ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
+  `p := &mut m; entry := p^.find_or_insert(3, 7);`, `p^.clear()` before a read of
+  `entry` compiled and read the cleared map. It is now `L0641`, as is any use of `p`
+  that reaches the place while `entry` is in use, and the same goes for a
+  user method's `self: inout` result. So is an argument using the receiver:
+  `d^[0].find_or_insert(grow(d), 7)` wrote into the storage `grow` had moved, and
+  `d^.append(d^.len())` is now rejected as `a.append(a.len())` already was. Upgrade
+  by reading the argument into a local first. What `p^.pop()` or `p^.remove(key)`
+  hands back now also keeps the loans the element held.
 - A value printed through a mutable call result is now held until printing ends
   ([Built-in procedures](design.md#built-in-procedures)).
   `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the

@@ -208,30 +208,6 @@ initializer with a `.Live` event after the read (`prov_repeated_element_effects`
 the same would newly reject `u := t` with no later use. Found while fixing repeated
 elements' copy effects on 2026-11-01 (P3).
 
-### A map entry reached through a pointer is not held
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) suspends a carrier while
-what was reborrowed through it is in use, and a map's entry is invalidated by a
-`clear`. A result of `find_or_insert` on a map reached through a local pointer holds
-neither the pointer nor the map, so this compiles and reads the cleared map:
-
-```loke
-package main;
-import "core:fmt";
-main :: proc() {
-    q: map[int]int = {};
-    p := &mut q;
-    e := p^.find_or_insert(3, 7);
-    p^.clear();
-    fmt.println(e^); // should be rejected
-}
-```
-
-`clear` may be written `clearing(inout p^)`, or a call handed `p`, with the same
-result. The same steps on `q` directly report `L0511`, and a user procedure returning
-`&mut d^[0]` from `p` reports `L0641`. The cause has not been traced. Found on
-2026-11-01 while holding a printed value through a mutable call result (P2).
-
 ### Printing a mutable slice field suspends it for a later read
 
 `fmt.println` takes a read-only view of what it prints, so a later read of the same

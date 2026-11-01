@@ -1,0 +1,39 @@
+L0641
+@22:2
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@28:17
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@34:19
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@43:2
+`map_value` cannot be modified here: a mutable pointer of it is still in use
+L0641
+@49:2
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:2
+`r` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@61:2
+`rows` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@67:14
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@73:2
+`r` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@79:28
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@83:12
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@87:55
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@98:2
+`x` cannot be assigned here: a mutable pointer of it is still in use

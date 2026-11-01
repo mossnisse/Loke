@@ -8255,9 +8255,11 @@ bump :: proc(xs: []mut int) {
 ```
 
 A borrow of a place reached through a carrier, as `&h^.count` or
-`h^.items[:]`, or a traversal of one, as `foreach (item in h^.items)`,
-reborrows that carrier, and each carrier loaded on the way, as `p^` for
-`&p^^.count`, for that place only. While the borrow is in
+`h^.items[:]`, a traversal of one, as `foreach (item in h^.items)`, or an
+`inout` receiver, as in `h^.items.append(1)`, reborrows that carrier, and each
+carrier loaded on the way, as `p^` for `&p^^.count`, for that place only. A
+receiver's reborrow lasts through the call's other arguments and through what
+the call returns from it. While the borrow is in
 use, the carrier may still be used for a place that does not
 [overlap](#places-and-overlap) it, such as another field. Copying the carrier,
 or passing it to a procedure, uses all of what it points to:

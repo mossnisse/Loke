@@ -1576,16 +1576,17 @@ place_bit :: proc(state: ^Prov_State, place_loan: int) -> int {
 }
 
 // The later use keeping a place loan lent: of its snapshot, or else of a live
-// slot carrying its bit. False when nothing live carries it.
+// slot carrying its bit. False when nothing live carries it. A read conflicts
+// with no slot holding only a read-only view (`Prov_Slot.read_only_hold`).
 @(private = "file")
-place_loan_use :: proc(state: ^Prov_State, place_loan: int, live: []Slot_Use, uses: []Span) -> (Span, bool) {
+place_loan_use :: proc(state: ^Prov_State, place_loan: int, live: []Slot_Use, uses: []Span, read: bool) -> (Span, bool) {
 	snapshot := state.graph.place_loans[place_loan].slot
 	if live[snapshot] != .None {
 		return uses[snapshot], true
 	}
 	bit := place_bit(state, place_loan)
 	for slot in 0 ..< state.slots {
-		if live[slot] != .None && bit_get(reach_row(state, state.reach, slot), bit) {
+		if live[slot] != .None && !(read && state.graph.prov_slots[slot].read_only_hold) && bit_get(reach_row(state, state.reach, slot), bit) {
 			return uses[slot], true
 		}
 	}
@@ -6148,7 +6149,7 @@ check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Us
 		if (event.access == .Read && !loan.mutable) || !place_loan_overlaps(loan, event.path) {
 			continue
 		}
-		later, lent := place_loan_use(state, index, live, uses)
+		later, lent := place_loan_use(state, index, live, uses, event.access == .Read)
 		if !lent {
 			continue
 		}
