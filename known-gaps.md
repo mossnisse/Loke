@@ -7,6 +7,88 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A qualified local alias hides a result's generic dependence
+
+[One result](design.md#one-result) and
+[Success returns](design.md#success-returns) read a result through a local alias
+as what that alias names. `045dcbce` follows a bare identifier, but not an alias
+selected from an implementation block on a type declared in the same generic
+body:
+
+```loke
+package main;
+outer :: proc(value: $T) {
+    Local :: struct {}
+    impl Local { Outcome :: Result(T, int); }
+    inner :: proc() -> Local.Outcome { return; }
+    _ = inner();
+}
+main :: proc() { outer(Unit{}); }
+```
+
+This compiles. Moving the same `Outcome :: Result(T, int)` directly into
+`outer` and returning `Outcome` reports `L0326`, as does spelling the result
+`Result(T, int)`. An associated `Payload :: T` selected in
+`Result(Local.Payload, int)` has the same omission. With `T` equal to `int`,
+`inner :: proc(x: T) -> Result(Local.Payload, int) { return x; }` also compiles,
+implicitly wrapping a value beside an error payload where the direct alias
+reports `L0310`.
+
+`type_syntax_any_name` in [src/ast.odin](src/ast.odin) visits only the operand of
+a selector. The operand `Local` defines a nominal type, so
+`local_alias_target` in [src/check.odin](src/check.odin) correctly does not
+follow it, but the selected constant's initializer is never inspected.
+Follow the selected alias in its declaration scope for both dependence and
+success-payload analysis, preserving bare returns for
+`Local.Outcome :: Result(Unit, T)`, whose success is explicitly `Unit`.
+Confirmed at `045dcbce` and on the merged `1b7845aa` during review on
+2026-11-01 (P2, remaining coverage gap).
+
+### Provisional short lengths hide a zero-offset view cycle's known start
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) preserves a local
+view's known start when every repeated reslice starts at zero. The fixed point
+in `51bceeb4` can still lose it when mutually dependent views contribute
+different lengths:
+
+```loke
+package main;
+import "core:fmt";
+Holder :: struct { p: ^mut int }
+run :: proc(flag: bool) {
+    a, b, c := 1, 2, 3;
+    arr := [3]Holder{{&mut a}, {&mut b}, {&mut c}};
+    base := arr[:];
+    s := base[:1];
+    t := base[:];
+    for (i := 0; i < 2; i += 1) {
+        if (flag) { s = t[:]; }
+        t = s[:2];
+    }
+    first := s[0].p;
+    s[1].p^ += 1;
+    first^ += 1;
+    fmt.println(a, b, c);
+}
+main :: proc() { run(true); }
+```
+
+This reports `L0641` at `s[1].p^`. Replacing the loop with a single block, or
+initializing `s` with `base[:2]` or `base[:]`, compiles; the block and full-length
+controls both print `2 3 3`. Every reslice starts at zero. The false branch can
+panic because the source is too short, but cannot make the two surviving
+element accesses overlap.
+
+`publish_view_def` in [src/borrow.odin](src/borrow.odin) produces an unknown
+start when its current source length is less than the requested constant end.
+During the new fixed point that length can still grow as other definitions
+contribute. Joining this provisional answer with the previous state through
+`publish_view_agree` makes unknown permanent, even after the longer source
+arrives. Settle the length information before concluding that the start is
+unknown, or distinguish provisional bounds from a genuinely unknown offset.
+Confirmed at `51bceeb4` and on the merged `1b7845aa` during review on
+2026-11-01 (P2, remaining precision gap).
+
 ### Destructuring records counts the containing copy hook instead of the fields
 
 [Destructuring](design.md#destructuring) copies each retained field of a place,

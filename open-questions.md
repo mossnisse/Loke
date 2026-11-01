@@ -206,6 +206,49 @@ Two `&mut c` written in turn reported `L0511`; the same two around a store at an
 index a call returns, or one `&mut c` in a loop storing at such an index,
 compiled. Beyond the liveness fix above, no implementation change was made.
 
+## Review of local result aliases, view cycles, and hook review notes (2026-11-01)
+
+Reviewed `045dcbce`, `166fdfab`, and `51bceeb4` for correctness,
+simplification, and structure. These are sibling commits based on `46cf2aa8`,
+so the two implementation changes were built and tested independently at their
+original revisions. Two remaining gaps are recorded with reproductions:
+
+- [Qualified local aliases hide generic dependence](known-gaps.md#a-qualified-local-alias-hides-a-results-generic-dependence).
+  The new initializer walk handles a bare `Outcome`, but a local implementation
+  block's `Local.Outcome` still permits a bare return, and `Local.Payload` still
+  permits implicit success wrapping beside an error payload (P2).
+- [Provisional short lengths lose a known start in zero-offset cycles](known-gaps.md#provisional-short-lengths-hide-a-zero-offset-view-cycles-known-start).
+  A reslice can become permanently unknown before another reaching definition
+  contributes its longer length. A safe loop still reports `L0641`; removing
+  the loop or lengthening only the initial view makes it compile (P2).
+
+The documentation-only `166fdfab` accurately recorded the hook review's three
+confirmed divergences and distinguished the older excluded-hook failure from
+the two new copy-decision gaps. Those findings have since been fixed by
+`41c0cae6`, `2ca91fce`, and `d5e1dd6d`; they are not reopened here.
+
+One small simplification remains open (P3): `local_alias_target` in
+[src/check.odin](src/check.odin) scans `decl.symbols` and indexes parallel
+initializers even though [a constant declaration](grammar.md#declarations)
+has exactly one name and initializer. Guard the one binding and inspect index
+zero directly, keeping the checks needed for incomplete declarations. This
+removes about three lines and the unnecessary multi-binding path.
+
+The overall structure is appropriate: aliases are inspected in their declaring
+scopes, and nominal local type definitions remain opaque. The view analysis
+uses an explicit dependency walk and a fixed point, with a single pass for an
+acyclic graph; that machinery serves actual cycles and long reslice chains.
+Its abstract states need to distinguish incomplete bounds from a final loss of
+offset information, as the remaining precision gap demonstrates.
+
+Validation: each original implementation revision passed all 179 compiler unit
+tests, with the existing toolchain-test allocation warnings. Four integration
+suites passed per revision: run programs and diagnostics in both; packages and
+tutorials for the alias change; LLVM shapes and trapping programs for the view
+change. Focused probes confirmed both gaps and their controls on the original
+revisions and the current merged compiler. No implementation fixes are included
+in this review. Estimated simplification: net: -3 lines possible.
+
 ## Review of drop-hook copy decisions and generic hook validation (2026-11-01)
 
 Reviewed `3a5b4f7b`, `bf5cb393`, and `46cf2aa8` for correctness,
