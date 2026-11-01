@@ -4264,6 +4264,13 @@ iterator advances or is dropped.** That holds on every exit, `break` and
 [`chunks_mut`](#chunks-of-a-mutable-slice) is the one traversal that hands out
 mutable views which outlive their step, which no user-written iterator can.
 
+An `&mut` binding names the element, so what it holds is what the element
+holds, and [a copy of a carrier in it](#weakening-and-reborrows) reborrows the
+carrier stored there. What is stored through the binding is stored in the
+source: a borrow or an owner put there is
+[carried by the source](#values-that-contain-borrows) after the step, and may be
+in any element, so it joins what each of them holds rather than replacing it.
+
 #### Temporary roots
 
 A temporary root lives for the complete `foreach` statement and lends its

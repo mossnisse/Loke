@@ -3097,6 +3097,12 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 			state.merged_precision |= state.precision[source]
 			bytes_or(state.merged, reach_row(state, reach, source))
 		}
+		for slot in event.strips {
+			row := reach_row(state, reach, slot)
+			for &byte, index in state.merged {
+				byte &= ~row[index]
+			}
+		}
 		one := publish_one_loan(state, event, reach, ended)
 		for slot in event.into {
 			row := reach_row(state, reach, slot)

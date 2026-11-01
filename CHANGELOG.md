@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- What is stored through a `foreach` loop's `&mut` binding is now seen in the
+  source ([By-reference iteration](design.md#by-reference-iteration)). A carrier
+  stored as `list.head = &mut c`, or an owner stored as
+  `item = fmt.to_string(arena.allocator(), 42)`, used to stay in the binding, so
+  `c` could be written, or `arena` dropped, while a later `lists[1].head` or
+  `items[0]` still held it; these are now `L0511`, `L0641`, `L0537`, or `L0536`
+  like the same store through `lists[i]`. Upgrade by ending the use of what was
+  stored before changing what it points at, or by keeping the source apart from
+  it.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator
@@ -965,6 +974,14 @@ checklist.
 
 ### Fixed
 
+- A mutable carrier held by an element is now usable through a `foreach` loop's
+  `&mut` binding, as in `foreach (&mut list in lists) { list.head^.value = 3; }`,
+  and `&mut list` may be taken there. Any use of it was `L0641`, as the binding
+  counted as a copy of the carrier, and using the binding as a use of that
+  copy's source. It now names the element
+  ([By-reference iteration](design.md#by-reference-iteration)), and a copy out of
+  it reborrows the stored carrier, over a view as well, where the copy used to
+  keep only the view's borrows.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

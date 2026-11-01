@@ -1,0 +1,260 @@
+// design.md "Values that contain borrows", "By-reference iteration": a `&mut`
+// binding names an element of the source, so what is stored through it is in
+// the source afterwards, in whichever element.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strings";
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+Ro :: struct { head: ^Node }
+Pair :: struct { p: ^Node, q: ^Node }
+Grid :: struct { rows: [2]Ro, other: ^Node }
+Many :: struct { heads: [dynamic]^Node }
+Doc :: struct { items: [2]string }
+
+see :: proc(node: ^Node) {}
+set_ro :: proc(list: ^mut Ro, @(escape=stored) node: ^Node) { list^.head = node; }
+
+// The reproduction, whose `&mut c` is taken at one site, so only the last
+// write of `c` conflicts.
+stored_mutable :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head = &mut c; }
+	node := lists[1].head;
+	c.value = 5;
+	node^.value = 1;
+}
+
+stored_in_dynamic :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head = &mut c; }
+	node := lists[1].head;
+	c.value = 5;
+	node^.value = 1;
+}
+
+whole_element :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	foreach (&mut list in lists) { list = Ro{&c}; }
+	node := lists[1].head;
+	c.value = 5;
+	see(node);
+}
+
+carrier_element :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	nodes := [2]^Node{&a, &b};
+	foreach (&mut node in nodes) { node = &c; }
+	held := nodes[1];
+	c.value = 5;
+	see(held);
+}
+
+through_a_view :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	view := &mut lists[:];
+	foreach (&mut list in view) { list.head = &c; }
+	node := lists[1].head;
+	c.value = 5;
+	see(node);
+}
+
+seen_through_the_view :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	view := &mut lists[:];
+	foreach (&mut list in view) { list.head = &c; }
+	node := view[1].head;
+	c.value = 5;
+	see(node);
+}
+
+through_a_pointer :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	grid := Grid{[2]Ro{Ro{&a}, Ro{&b}}, &a};
+	pointer := &mut grid;
+	foreach (&mut list in pointer^.rows) { list.head = &c; }
+	node := grid.rows[1].head;
+	c.value = 5;
+	see(node);
+}
+
+in_a_field :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	grid := Grid{[2]Ro{Ro{&a}, Ro{&b}}, &a};
+	foreach (&mut list in grid.rows) { list.head = &c; }
+	node := grid.rows[1].head;
+	c.value = 5;
+	see(node);
+}
+
+nested_traversals :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	grids := [2]Grid{Grid{[2]Ro{Ro{&a}, Ro{&b}}, &a}, Grid{[2]Ro{Ro{&a}, Ro{&b}}, &a}};
+	foreach (&mut grid in grids) { foreach (&mut list in grid.rows) { list.head = &c; } }
+	node := grids[1].rows[0].head;
+	c.value = 5;
+	see(node);
+}
+
+an_indexed_view :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	view := &mut lists[:];
+	foreach (&mut list, index in view.indexed()) { list.head = &c; }
+	node := lists[1].head;
+	c.value = 5;
+	see(node);
+}
+
+a_destructured_field :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	pairs := [2]Pair{Pair{&a, &b}, Pair{&a, &b}};
+	foreach (first, &mut second in pairs) { second = &c; }
+	node := pairs[1].q;
+	c.value = 5;
+	see(node);
+}
+
+a_map_value :: proc() {
+	a := Node{1}; c := Node{3};
+	table := make(map[int]^Node);
+	table[1] = &a;
+	foreach (key, &mut value in table) { value = &c; }
+	node := table[1];
+	c.value = 5;
+	see(node);
+}
+
+appended_through_the_binding :: proc() {
+	c := Node{3};
+	many := [2]Many{};
+	foreach (&mut entry in many) { entry.heads.append(&c); }
+	node := many[1].heads[0];
+	c.value = 5;
+	see(node);
+}
+
+through_a_pointer_to_it :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	foreach (&mut list in lists) { pointer := &mut list; pointer^.head = &c; }
+	node := lists[1].head;
+	c.value = 5;
+	see(node);
+}
+
+left_by_a_call :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	foreach (&mut list in lists) { set_ro(&mut list, &c); }
+	node := lists[1].head;
+	c.value = 5;
+	see(node);
+}
+
+a_copy_reborrows_where_it_lands :: proc() {
+	a := Node{1}; c := Node{3};
+	other := List{&mut c};
+	lists := [1]List{List{&mut a}};
+	foreach (&mut list in lists) { list.head = other.head; }
+	node := lists[0].head;
+	other.head^.value = 5;
+	node^.value = 1;
+}
+
+a_copy_into_every_element :: proc(lists: []mut List, @(escape=stored) node: ^mut Node) {
+	foreach (&mut list in lists) { list.head = node; }
+}
+
+outlives_the_parameter :: proc(lists: []mut List) {
+	c := Node{3};
+	foreach (&mut list in lists) { list.head = &mut c; }
+}
+
+// What the element held is still what the binding holds.
+copied_out_of_the_binding :: proc() {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) {
+		copy := list.head;
+		a.value = 2;
+		copy^.value = 3;
+	}
+}
+
+copied_out_over_a_view :: proc() {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	view := &mut lists[:];
+	foreach (&mut list in view) {
+		copy := list.head;
+		a.value = 2;
+		copy^.value = 3;
+	}
+}
+
+a_copy_suspends_the_stored_carrier :: proc() {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) {
+		copy := list.head;
+		list.head^.value = 2;
+		copy^.value = 3;
+	}
+}
+
+// design.md "Allocator regions and region provenance": an owner stored through
+// the binding is in the source's regions.
+owner_in_a_fixed_array :: proc() {
+	items := [2]string{strings.copy("a"), strings.copy("b")};
+	{
+		arena := mem.Arena.init();
+		foreach (&mut item in items) { item = fmt.to_string(arena.allocator(), 42); }
+	}
+	fmt.println(items[0]);
+}
+
+owner_in_a_dynamic_array :: proc() {
+	items := make([dynamic]string);
+	items.append(strings.copy("a"));
+	{
+		arena := mem.Arena.init();
+		foreach (&mut item in items) { item = fmt.to_string(arena.allocator(), 42); }
+	}
+	fmt.println(items[0]);
+}
+
+owner_through_a_view :: proc() {
+	items := [2]string{strings.copy("a"), strings.copy("b")};
+	{
+		arena := mem.Arena.init();
+		view := &mut items[:];
+		foreach (&mut item in view) { item = fmt.to_string(arena.allocator(), 42); }
+	}
+	fmt.println(items[0]);
+}
+
+owner_through_a_pointer :: proc() {
+	doc := Doc{[2]string{strings.copy("a"), strings.copy("b")}};
+	{
+		arena := mem.Arena.init();
+		pointer := &mut doc;
+		foreach (&mut item in pointer^.items) { item = fmt.to_string(arena.allocator(), 42); }
+	}
+	fmt.println(doc.items[0]);
+}
+
+owner_past_the_parameter :: proc(items: []mut string) {
+	arena := mem.Arena.init();
+	foreach (&mut item in items) { item = fmt.to_string(arena.allocator(), 42); }
+}
+
+main :: proc() {}
