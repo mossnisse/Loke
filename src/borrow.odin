@@ -4024,6 +4024,14 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 			if event.kind == .Load {
 				reads := make([dynamic]int, 0, 4, state.graph.alloc)
 				load_pointee_content(state, event, state.reach, &reads)
+				if event.at_once {
+					// A record or array passed by value is no carrier to read through.
+					for slot in event.into {
+						if prov_slot_is_stored(state.graph.prov_slots[slot]) && !slice.contains(reads[:], slot) {
+							append(&reads, slot)
+						}
+					}
+				}
 				event.sources = reads[:]
 				prov_reborrow_loaded(state.graph, event)
 			} else {
@@ -4947,7 +4955,9 @@ report_provenance :: proc(state: ^Prov_State) {
 			placed := event.span != Span{}
 			if !placed || !reported[at] {
 				before := len(state.k.c.diagnostics)
-				check_prov_event(state, event, live_after[index], use_after[index])
+				if !event.at_once || !reported_within(reported, event.span) {
+					check_prov_event(state, event, live_after[index], use_after[index])
+				}
 				if placed && len(state.k.c.diagnostics) > before {
 					reported[at] = true
 				}
@@ -4958,6 +4968,18 @@ report_provenance :: proc(state: ^Prov_State) {
 			run_severing_event(state, event)
 		}
 	}
+}
+
+// Whether a diagnostic was reported inside `span`, as for an argument of the call
+// `span` is.
+@(private = "file")
+reported_within :: proc(reported: map[[2]u32]bool, span: Span) -> bool {
+	for at in reported {
+		if at[0] == span.file && at[1] >= span.lo && at[1] < span.hi {
+			return true
+		}
+	}
+	return false
 }
 
 // --------------------------------------------------------- task window --
@@ -5986,7 +6008,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use
 		// of whatever was reborrowed from it in turn.
 		for source in event.sources {
 			if reborrow, derived, found := live_reborrow_of(state, source, live, event); found {
-				report_suspended_reborrow(state, event, reborrow, uses[derived])
+				report_suspended_reborrow(state, event, reborrow, event.span if event.at_once else uses[derived])
 				state.diagnostic_precision |= state.precision[derived]
 				return
 			}
@@ -6123,7 +6145,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 		for carrier in reborrow.via {
 			visited[carrier] = true
 		}
-		if use.kind == .Load {
+		if use.kind == .Load && !use.at_once {
 			for carrier in use.into {
 				visited[carrier] = true
 			}
@@ -6140,7 +6162,8 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 			// afresh, as a loop's `list^.head` loads its temporary again, so that
 			// slot's later uses are of the new value, not the one reborrowed here.
 			fresh := use.kind == .Load && slot == use.slot
-			if live[slot] == .Used && !fresh && !(use.reads_only && graph.prov_slots[slot].read_only_hold) && prov_slots_overlap(state, source, slot) {
+			in_use := slice.contains(use.sources, slot) && at_once_reaches(state, use, source) if use.at_once else live[slot] == .Used
+			if in_use && !fresh && !(use.reads_only && graph.prov_slots[slot].read_only_hold) && prov_slots_overlap(state, source, slot) {
 				return reborrow, slot, true
 			}
 			for next in reborrows_of(state, slot) {
@@ -6148,11 +6171,61 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 				if graph.reborrows[next].copied_within && next < len(state.severed) && state.severed[next] {
 					continue
 				}
+				// A slot standing for many places holds the copy too, whichever it is.
+				if use.at_once && graph.reborrows[next].copied_within && graph.reborrows[next].derived == source &&
+				   slot_stands_for_many(graph.prov_slots[source]) && prov_slots_overlap(state, source, source) && at_once_reaches(state, use, source) {
+					return reborrow, source, true
+				}
 				append(&pending, graph.reborrows[next].derived)
 			}
 		}
 	}
 	return {}, -1, false
+}
+
+// Whether a call's `at_once` load reaches `source` by other than what was reborrowed
+// from it. A copy points where `source` does, so what it reaches is not `source` in
+// any program that keeps one mutable path to each place: finding `source` that way
+// only says the copy's loan names storage holding `source` too, as a value split out
+// of a view borrows the view (design.md "Weakening and reborrows").
+@(private = "file")
+at_once_reaches :: proc(state: ^Prov_State, use: Prov_Event, source: int) -> bool {
+	graph := state.graph
+	if slice.contains(use.into, source) {
+		return true
+	}
+	derived := make([dynamic]int, 0, 8, context.temp_allocator)
+	append(&derived, source)
+	for at := 0; at < len(derived); at += 1 {
+		for next in reborrows_of(state, derived[at]) {
+			if !(graph.reborrows[next].copied_within && next < len(state.severed) && state.severed[next]) &&
+			   !slice.contains(derived[:], graph.reborrows[next].derived) {
+				append(&derived, graph.reborrows[next].derived)
+			}
+		}
+	}
+	saved := make([]u8, state.row_bytes * len(derived), context.temp_allocator)
+	for slot, at in derived[1:] {
+		row := reach_row(state, state.reach, slot)
+		copy(saved[at * state.row_bytes:], row)
+		mem.zero_slice(row)
+	}
+	reads := make([dynamic]int, 0, 8, context.temp_allocator)
+	load_pointee_content(state, use, state.reach, &reads)
+	for slot, at in derived[1:] {
+		copy(reach_row(state, state.reach, slot), saved[at * state.row_bytes:][:state.row_bytes])
+	}
+	return slice.contains(reads[:], source)
+}
+
+// Whether a slot stands for more than one place, as for every element of a view
+// parameter or of a dynamic array.
+@(private = "file")
+slot_stands_for_many :: proc(entry: Prov_Slot) -> bool {
+	if entry.kind == .Caller {
+		return !entry.caller_one && !entry.caller_element
+	}
+	return !path_is_exact(entry.path)
 }
 
 // The indices of the reborrows of `slot`, in `graph.reborrows` order. The

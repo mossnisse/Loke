@@ -83,15 +83,6 @@ fields_stay_apart :: proc() -> int {
 	return x + y;
 }
 
-// Two copying calls with nothing kept after them.
-two_copying_calls :: proc() -> int {
-	x := 1; y := 2;
-	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
-	duplicate(&mut links[:]);
-	return x + y;
-}
-
 // Before a call that copies, both are their own.
 used_before_the_copy :: proc() -> int {
 	x := 1; y := 2;
@@ -162,7 +153,6 @@ main :: proc() {
 	fmt.println(two_calls_that_reorder());
 	fmt.println(two_calls_that_only_write_through());
 	fmt.println(fields_stay_apart());
-	fmt.println(two_copying_calls());
 	fmt.println(used_before_the_copy());
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};

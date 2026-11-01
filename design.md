@@ -8328,7 +8328,9 @@ argument reaches, which its signature does not say. What the call may run
 decides, as a call through a procedure value may run any body of its type. After
 a call that may move carriers within an argument, each carrier there that could
 hold a moved one may hold what any of them held. After a call that may leave a
-mutable carrier in two places, each of them is also a reborrow of the others. A
+mutable carrier in two places, each of them is also a reborrow of the others, and a
+later call reaching two of them uses both at once, so it is rejected even if neither
+is used afterwards. A
 carrier read from below the place it is stored in replaces the one it was read
 through, as `list^.head = list^.head^.next` does, and reordering, as `swap`,
 `sort`, or `a[0], a[1] = a[1], a[0]`, leaves each carrier in one place; neither

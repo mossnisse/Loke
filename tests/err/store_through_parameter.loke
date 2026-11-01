@@ -57,9 +57,9 @@ replaced :: proc(p: ^mut ^mut List) {
 	x^.value = 2;
 }
 
-replaced_before_call :: proc(p: ^mut ^mut List) {
+replaced_before_call :: proc(p: ^mut ^mut List, @(escape=stored) fresh: ^mut Node) {
 	old := p^^.head;
-	p^^.head = p^^.tail;
+	p^^.head = fresh;
 	touch(p^);
 	old^.value = 1;
 }

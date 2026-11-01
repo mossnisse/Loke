@@ -92,8 +92,7 @@ one_after_the_other :: proc() {
 	second^ = 2;
 }
 
-// A use of the view keeps the elements' borrows, and reads no element, so it does
-// not make a call that copied between them a second use of either.
+// A later call reaching both uses them at once, unlike a measure of the view.
 two_copying_calls :: proc() {
 	x := 1; y := 2;
 	links := []mut Link{Link{&mut x}, Link{&mut y}};

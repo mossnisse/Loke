@@ -139,6 +139,9 @@ Prov_Event :: struct {
 	// `Live`: the carrier is only read, so a live read-only reborrow of it does
 	// not conflict (design.md "Weakening and reborrows").
 	reads_only:    bool,
+	// A `Load` of all a call's arguments reach: a live reborrow of what it reads is
+	// also one it reads itself (`prov_use_reached_at_once`).
+	at_once:       bool,
 	// `Live`: what the storage a call's arguments lend holds, which stays live for
 	// the call, though it may read one element and is no use of the others
 	// (`with_held_content`, `Slot_Use`).
@@ -7993,6 +7996,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_call_effects(graph, v)
 	prov_argument_drop_effects(graph, v)
 	graph.task_effects = false
+	prov_use_reached_at_once(graph, v, container_op, borrowed)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span, hands_on = true})
 	}
@@ -8603,6 +8607,49 @@ prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, s
 		reads_only = !carrier_is_mutable(c, parameter),
 	})
 	return slot
+}
+
+// design.md "Weakening and reborrows": a call uses every mutable carrier reachable
+// through its arguments at once, so one of them and a live reborrow of it are never
+// both left to it, however the arguments reach them (`Prov_Event.at_once`). An
+// operation of the compiler's own runs nothing that uses them, unless it compares
+// elements with an operator a program wrote.
+@(private = "file")
+prov_use_reached_at_once :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op: Container_Op, borrowed: []int) {
+	c := graph.k.c
+	if len(borrowed) == 0 {
+		return
+	}
+	if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
+		#partial switch callee.synth {
+		case .None, .Dyn_Forward, .Dyn_Proc_Adapter:
+		case .Container_Op:
+			if container_op != .Sort && container_op != .Reverse_Sort {
+				return
+			}
+		case:
+			return
+		}
+	}
+	reaches := false
+	into := borrowed
+	for argument, index in v.bound {
+		parameter := prov_parameter_type(graph, v, index)
+		info := underlying_info(c, parameter)
+		held := parameter
+		if info != nil && type_is_carrier(c, parameter) {
+			held = info.element
+		} else if argument != nil {
+			// A record passed by value hands over the carriers its place holds.
+			into = prov_join(graph, into, prov_carrier_slots(graph, argument))
+		}
+		reaches ||= type_carries_borrow(c, held).mutable
+	}
+	if !reaches {
+		return
+	}
+	graph.has_content_load = true
+	prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = into, deep = true, at_once = true, span = v.span})
 }
 
 // design.md "Weakening and reborrows": copying carriers out of storage, named

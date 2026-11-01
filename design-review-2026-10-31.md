@@ -625,7 +625,7 @@ into undefined behavior that the optimizer exploits, so they come last:
   elements or fields and a borrow stored through a mutable traversal binding were
   accepted with two live mutable carriers to one place; both have since been
   fixed, and [known-gaps.md](known-gaps.md#gaps) lists what remains, such as
-  [A call given a carrier and its copy in one use is not rejected](known-gaps.md#a-call-given-a-carrier-and-its-copy-in-one-use-is-not-rejected).
+  [A whole element copied through a view parameter is not seen by a call](known-gaps.md#a-whole-element-copied-through-a-view-parameter-is-not-seen-by-a-call).
   Accepted programs like those alias as C code would; with `noalias` at
   `-opt=speed` they can miscompile.
 - State an aliasing rule for unchecked code in design.md.

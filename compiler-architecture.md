@@ -532,8 +532,7 @@ Keep these contracts:
   carrier there, and keeps those slots live without using them
   (`Prov_Event.keeps_live`, `Slot_Use`). What they borrow lasts, and no reborrow of
   what they came from is suspended by it, so reading one element is no use of
-  another, and a call that copied between them is no second use when the view is
-  next handed on. Other uses of a carrier keep nothing held there live: a load reads
+  another. Other uses of a carrier keep nothing held there live: a load reads
   the slots it names, and a copy reads none.
 - **A printed slice or pointer to plain data is only read.** Wherever it is held, a
   field, an element, or behind a carrier, printing it takes a read-only reborrow of
@@ -542,6 +541,13 @@ Keep these contracts:
   (`prov_project_content`, `prov_reborrow_loaded`). A distinct pointer may have a
   `format` that writes through it, and one whose pointee holds borrows lets what
   prints it write through those, so both stay lent.
+- **A call uses at once what its arguments reach.** After its arguments, a call that
+  may run a program's code emits one deep `Load` of all of them
+  (`prov_use_reached_at_once`, `Prov_Event.at_once`). Being later than each argument,
+  it keeps what it reads live for them, whatever their order, and `live_reborrow_of`
+  also counts what it reads itself as in use. A source found only through what was
+  reborrowed from it does not count (`at_once_reaches`): a copy points where its
+  source does, so that only says the copy's loan names storage holding the source.
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further

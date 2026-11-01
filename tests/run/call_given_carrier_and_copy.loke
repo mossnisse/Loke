@@ -1,0 +1,182 @@
+// design.md "Weakening and reborrows": a call uses at once what its arguments reach,
+// which is only a conflict where one of them is a live reborrow of another. Each
+// carrier in one place, however it got there, is none, and what a copy reaches is
+// not the carrier it was copied from.
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+Link :: struct { to: ^mut int }
+Node :: struct { value: int, next: Option(^mut Node) }
+Holder :: struct { node: ^mut Node }
+View :: struct { links: []mut Link }
+
+bump_both :: proc(links: []mut Link) { links[0].to^ += 1; links[1].to^ += 2; }
+bump_inout :: proc(links: inout [2]Link) { links[0].to^ += 1; links[1].to^ += 2; }
+bump_by_value :: proc(links: [2]Link) { links[0].to^ += 1; links[1].to^ += 2; }
+bump_held :: proc(holder: ^mut Holder) { holder^.node^.value += 1; }
+bump_held_by_value :: proc(holder: Holder) { holder.node^.value += 1; }
+bump_view :: proc(view: ^mut View) { view^.links[0].to^ += 1; }
+bump_node :: proc(node: ^mut Node) { node^.value += 1; }
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+next_of :: proc(node: ^mut Node) -> ^mut Node {
+	switch (node^.next) {
+	case .some(next): return next;
+	case .none: return node;
+	}
+}
+
+distinct_carriers :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	bump_both(&mut links[:]);
+	bump_both(&mut links[:]);
+	bump_inout(inout links);
+	bump_by_value(links);
+	return x * 100 + y;
+}
+
+reordered :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0], links[1] = links[1], links[0];
+	bump_both(&mut links[:]);
+	return x * 100 + y;
+}
+
+swapped :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	view.swap(0, 1);
+	bump_both(view);
+	exchange(view);
+	bump_both(view);
+	slice.reverse(view);
+	bump_both(view);
+	return x * 100 + y;
+}
+
+reordered_in_a_parameter :: proc(links: []mut Link) {
+	links[0], links[1] = links[1], links[0];
+	bump_both(links);
+	links.swap(0, 1);
+	bump_both(links);
+	exchange(links);
+	bump_both(links);
+}
+
+// What a copy left is gone again.
+source_replaced :: proc() -> int {
+	x := 0; y := 0; z := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	links[1] = Link{&mut z};
+	bump_both(&mut links[:]);
+	return x * 10000 + y * 100 + z;
+}
+
+copy_replaced :: proc() -> int {
+	x := 0; y := 0; z := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	links[0] = Link{&mut z};
+	bump_both(&mut links[:]);
+	return x * 10000 + y * 100 + z;
+}
+
+// A copy that nothing else reaches beside its source.
+copy_used_before_the_call :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	copy := links[0].to;
+	copy^ += 1;
+	bump_both(&mut links[:]);
+	return x * 100 + y;
+}
+
+// What a copy reaches is not what it was copied from.
+copy_handed_on :: proc(node: ^mut Node) {
+	held := Holder{next_of(node)};
+	bump_held(&mut held);
+	bump_held(&mut held);
+	bump_held_by_value(held);
+	held.node^.value += 1;
+}
+
+copy_out_of_a_parameter :: proc(holder: ^mut Holder) {
+	again := Holder{holder^.node};
+	bump_held(&mut again);
+	bump_held(&mut again);
+	bump_held_by_value(again);
+	again.node^.value += 1;
+}
+
+view_held_in_a_record :: proc(links: []mut Link) {
+	view := View{&mut links[1:]};
+	bump_view(&mut view);
+	bump_view(&mut view);
+	view.links[0].to^ += 1;
+}
+
+view_copied_out :: proc(outer: ^mut View) {
+	again := View{outer^.links};
+	bump_view(&mut again);
+	bump_view(&mut again);
+}
+
+cursor :: proc(node: ^mut Node) -> int {
+	cur := node;
+	steps := 0;
+	for (steps < 2) {
+		held := Holder{cur};
+		bump_held(&mut held);
+		cur = next_of(cur);
+		steps += 1;
+	}
+	bump_node(cur);
+	return steps;
+}
+
+// The compiler's own operations use nothing they hold.
+operations_on_a_copy :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	view := &mut links[:];
+	view.swap(0, 1);
+	return view.len() + x + y;
+}
+
+through_links :: proc() -> int {
+	a := 0; b := 0;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	reordered_in_a_parameter(&mut links[:]);
+	view_held_in_a_record(&mut links[:]);
+	outer := View{&mut links[:]};
+	view_copied_out(&mut outer);
+	return a * 100 + b;
+}
+
+through_nodes :: proc() -> int {
+	last := Node{0, .none};
+	first := Node{0, .some(&mut last)};
+	copy_handed_on(&mut first);
+	holder := Holder{&mut first};
+	copy_out_of_a_parameter(&mut holder);
+	steps := cursor(&mut first);
+	return steps * 10000 + first.value * 100 + last.value;
+}
+
+main :: proc() {
+	fmt.println(distinct_carriers());
+	fmt.println(reordered());
+	fmt.println(swapped());
+	fmt.println(source_replaced());
+	fmt.println(copy_replaced());
+	fmt.println(copy_used_before_the_call());
+	fmt.println(through_links());
+	fmt.println(through_nodes());
+	fmt.println(operations_on_a_copy());
+}

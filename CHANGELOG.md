@@ -63,6 +63,19 @@ checklist.
   `d^.append(d^.len())` is now rejected as `a.append(a.len())` already was. Upgrade
   by reading the argument into a local first. What `p^.pop()` or `p^.remove(key)`
   hands back now also keeps the loans the element held.
+- A call can no longer be left both a mutable carrier and a copy of it
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
+  `links[0] = links[1];` or a call that may copy between elements,
+  `poke_both(&mut links[:]);` compiled when neither carrier was used afterwards,
+  and the callee could write through both. It is now `L0641`, however the
+  arguments reach the two: through a view, a pointer, `inout`, a receiver, by value,
+  or one through each of two arguments, which depended on their order. A second call
+  to a copying procedure counts, as only its signature is known there, so
+  `duplicate(links); duplicate(links);` and `duplicate(links); touch(links);` are
+  rejected. Reordering leaves each carrier in one place, and the compiler's own
+  operations other than sorting use nothing, so `swap` and `len` stay allowed. Upgrade
+  by replacing one of the two first, as `links[1] = Link{&mut z};`, or by using each
+  through its own call: `first := links[0].to; first^ = 1;`.
 - A value printed through a mutable call result is now held until printing ends
   ([Built-in procedures](design.md#built-in-procedures)).
   `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the

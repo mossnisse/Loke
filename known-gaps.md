@@ -242,37 +242,35 @@ another is treated the same way, for the same reason. Resetting `allowed` itself
 the same thing. Telling them apart takes region facts by program point. Found while
 fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### A call given a carrier and its copy in one use is not rejected
+### A whole element copied through a view parameter is not seen by a call
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) suspends all use of
-the source of a mutable reborrow until the reborrow's last use, and a call uses
-each mutable carrier reachable through it, but a call reached with both a carrier
-and its copy behind one argument is accepted when neither is used afterwards,
-though the body writes through both:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a call uses each
+mutable carrier reachable through it, so a carrier and its copy cannot both be left
+to one call, but a body that copies a whole element through its view parameter and
+then hands the view on compiles, and the callee writes through both:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
 poke_both :: proc(links: []mut Link) { links[0].to^ = 1; links[1].to^ = 2; }
-duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
-written_out :: proc() {
-    x := 1; y := 2;
-    links := [2]Link{Link{&mut x}, Link{&mut y}};
+at_constants :: proc(links: []mut Link) {
     links[0] = links[1];
-    poke_both(&mut links[:]); // should be rejected
+    poke_both(links); // should be rejected
 }
-copied_by_a_call :: proc() {
-    x := 1; y := 2;
-    links := [2]Link{Link{&mut x}, Link{&mut y}};
-    duplicate(&mut links[:]);
-    poke_both(&mut links[:]); // should be rejected
+at_variables :: proc(links: []mut Link, i: int, j: int) {
+    links[i] = links[j];
+    poke_both(links); // should be rejected
 }
 main :: proc() {}
 ```
 
-Liveness finds the copy dead once the call has used the source, since a use of
-both in one event comes after nothing. Found while making a call that copies
-carriers within an argument link them on 2026-11-01.
+The same store of the carrier field, `links[0].to = links[1].to`, is rejected, as is
+the same call after `duplicate(links)`. A record stored through a view parameter
+joins into the parameter itself (`prov_view_element`), and nothing links its carriers
+to the slots of the elements, so the call reads no carrier and reborrow of it
+together. Linking them as a field store does needs the copy told from a value that
+came from elsewhere, and from a swap written by hand. Found on 2026-11-01 while
+making a call use what its arguments reach at once.
 
 ### A reordering of fields through a view parameter is rejected
 

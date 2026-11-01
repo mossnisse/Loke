@@ -1,0 +1,168 @@
+// design.md "Weakening and reborrows": a call uses each mutable carrier reachable
+// through it, all at once, so a carrier and a reborrow of it cannot both be left to
+// one call, however its arguments reach them. It does not matter that neither is
+// used afterwards.
+package main;
+
+Link :: struct { to: ^mut int }
+Pair :: struct { a: ^mut int, b: ^mut int }
+Mixed :: struct { a: ^mut int, b: ^int }
+Wrap :: struct { links: []mut Link }
+
+poke_both :: proc(links: []mut Link) { links[0].to^ = 1; links[1].to^ = 2; }
+poke_read_only_view :: proc(links: []Link) { links[0].to^ = 1; links[1].to^ = 2; }
+poke_two :: proc(a: ^mut Link, b: ^mut Link) { a^.to^ = 1; b^.to^ = 2; }
+poke_inout :: proc(links: inout [2]Link) { links[0].to^ = 1; links[1].to^ = 2; }
+poke_array :: proc(links: [2]Link) { links[0].to^ = 1; links[1].to^ = 2; }
+poke_pair :: proc(pair: ^mut Pair) { pair^.a^ = 1; pair^.b^ = 2; }
+poke_pair_inout :: proc(pair: inout Pair) { pair.a^ = 1; pair.b^ = 2; }
+poke_pair_value :: proc(pair: Pair) { pair.a^ = 1; pair.b^ = 2; }
+poke_mixed :: proc(mixed: ^Mixed) { mixed^.a^ = 1; }
+poke_carrier_and_link :: proc(link: ^mut Link, to: ^mut int) { link^.to^ = 1; to^ = 2; }
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+
+impl Pair {
+	poke :: proc(self: inout Pair) { self.a^ = 1; self.b^ = 2; }
+}
+impl Wrap {
+	poke :: proc(self: Wrap) { self.links[0].to^ = 1; self.links[1].to^ = 2; }
+}
+
+// The reproduction.
+written_out :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	poke_both(&mut links[:]);
+}
+
+copied_by_a_call :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	poke_both(&mut links[:]);
+}
+
+// Reached through a read-only view, whose mutable carriers keep their capability.
+through_a_read_only_view :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	poke_read_only_view(links[:]);
+}
+
+// Each argument reaches one, in either order.
+copy_argument_second :: proc() {
+	x := 1;
+	a := Link{&mut x};
+	b := a;
+	poke_two(&mut a, &mut b);
+}
+
+copy_argument_first :: proc() {
+	x := 1;
+	a := Link{&mut x};
+	b := a;
+	poke_two(&mut b, &mut a);
+}
+
+// One given directly, its copy reached through the other argument.
+source_given_directly :: proc() {
+	x := 1;
+	p := &mut x;
+	link := Link{p};
+	poke_carrier_and_link(&mut link, p);
+}
+
+// `inout`, a receiver, and by value.
+inout_array :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	poke_inout(inout links);
+}
+
+array_by_value :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	poke_array(links);
+}
+
+through_a_pointer :: proc() {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	pair.b = pair.a;
+	poke_pair(&mut pair);
+}
+
+inout_record :: proc() {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	pair.b = pair.a;
+	poke_pair_inout(inout pair);
+}
+
+record_by_value :: proc() {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	pair.b = pair.a;
+	poke_pair_value(pair);
+}
+
+inout_receiver :: proc() {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	pair.b = pair.a;
+	pair.poke();
+}
+
+value_receiver_holding_a_view :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	wrap := Wrap{&mut links[:]};
+	wrap.poke();
+}
+
+// A read-only copy is read beside the mutable carrier the call may write through.
+weakened_copy :: proc() {
+	x := 1; y := 2;
+	mixed := Mixed{&mut x, &y};
+	mixed.b = mixed.a;
+	poke_mixed(&mixed);
+}
+
+// Through what else a call may run.
+through_a_procedure_value :: proc(callback: proc(values: []mut Link)) {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	callback(&mut links[:]);
+}
+
+// At indices that are not constants the two may be different elements.
+at_variable_indices :: proc(i: int, j: int) {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[i] = links[j];
+	poke_both(&mut links[:]);
+}
+
+// In a body, of what its parameter holds.
+fields_of_a_parameter :: proc(pair: ^mut Pair) {
+	pair^.b = pair^.a;
+	poke_pair(pair);
+}
+
+copied_in_a_view_parameter :: proc(links: []mut Link) {
+	duplicate(links);
+	poke_both(links);
+}
+
+carrier_field_in_a_view_parameter :: proc(links: []mut Link) {
+	links[0].to = links[1].to;
+	poke_both(links);
+}
+
+main :: proc() {}
