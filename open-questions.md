@@ -56,10 +56,9 @@ Estimated simplification: net: -10 lines possible.
 ## Review of variadic dyn views and any_view removal (2026-11-01)
 
 Reviewed `9337076b`, `03d04d34`, `701846e9`, `b73dfa55`, and `426f1a13` for
-correctness, simplification, and structure. One correctness regression remains
-open: [assert and panic arguments do not borrow the places they
-print](known-gaps.md#assert-and-panic-arguments-do-not-borrow-the-places-they-print)
-(P1), allowing a later argument to free storage the report will read.
+correctness, simplification, and structure. One correctness regression, since
+fixed: assert and panic arguments did not borrow the places they print (P1),
+allowing a later argument to free storage the report will read.
 The two newer fixes, `210f1131` and `5580637f`, are outside this review's
 scope and address the unrelated divergences these commits recorded.
 
@@ -104,16 +103,15 @@ net: -25 lines possible.
 ## Review of slice-literal cleanup and received allocator unwrapping (2026-11-01)
 
 Reviewed `210f1131` and `5580637f` for correctness, simplification, and
-structure. Three issues remain in their fixes:
+structure. Three issues in their fixes, all since fixed:
 
-- [Slice cleanup reads an initial snapshot](known-gaps.md#a-slice-literals-drop-keeps-only-its-initial-element-borrows)
-  rather than the backing array's current content. Later stores can leave a
-  hook reading freed data, and replacing an initially borrowed element causes
-  a new false rejection.
-- [Empty literals contribute element hook effects](known-gaps.md#an-empty-slice-literal-contributes-nonexistent-element-drop-effects)
-  despite containing no element to drop.
-- [A conditional write hides an incoming allocator](known-gaps.md#a-conditional-write-hides-a-received-allocator-payloads-region)
-  because the parameter fallback is conditional on the merged set being empty.
+- Slice cleanup read an initial snapshot rather than the backing array's current
+  content. Later stores could leave a hook reading freed data, and replacing an
+  initially borrowed element caused a new false rejection.
+- Empty literals contributed element hook effects despite containing no element
+  to drop.
+- A conditional write hid an incoming allocator because the parameter fallback
+  was conditional on the merged set being empty.
 
 The existing cleanup and normalized region-query machinery are appropriate
 places for these fixes; no additional analysis framework is needed. The main
@@ -121,11 +119,11 @@ structural changes should be to read mutable backing storage at cleanup and
 retain incoming allocator facts when parameter storage is initialized, so all
 readers observe them alongside possible writes.
 
-One concrete simplification is available in `prov_region_of` in
+One concrete simplification, since made, was in `prov_region_of` in
 [src/cfg_provenance.odin](src/cfg_provenance.odin): return the new projected
 struct-field query directly instead of merging it into a whole-record read.
-This removes one line and a redundant query, and fixes a
-[pre-existing sibling-region false rejection](known-gaps.md#a-temporary-record-field-also-carries-sibling-allocator-regions).
+This removed one line and a redundant query, and fixed a pre-existing
+sibling-region false rejection.
 An isolated compiler with that change accepted the sibling-field control and
 still rejected nested and copied received allocator payloads. No production
 implementation changes are included in this review.
@@ -144,14 +142,11 @@ against their target headings.
 ## Review of Unit successes, parametric aliases, Status, and enum variants (2026-10-31)
 
 Reviewed `e4d9c207`, `0ae279da`, `99057210`, and `3b49d840` for correctness,
-simplification, and structure. Five implementation divergences are recorded
-with reproductions in [known-gaps.md](known-gaps.md#gaps): a
-[local alias hiding a generic success dependency](known-gaps.md#a-local-alias-hides-a-generic-dependent-unit-success),
-[resolution-order-dependent recursive aliases](known-gaps.md#recursive-records-through-parametric-aliases-depend-on-resolution-order),
-[dependently typed value arguments](known-gaps.md#parametric-aliases-cannot-bind-a-dependently-typed-value-argument),
-[nested computed types](known-gaps.md#nested-computed-types-evade-parametric-alias-binding-validation),
-and private type exposure warnings, since fixed. The others remain open, along
-with two smaller findings:
+simplification, and structure. Five implementation divergences were found, all
+since fixed: a local alias hiding a generic success dependency,
+resolution-order-dependent recursive aliases, dependently typed value arguments,
+nested computed types, and private type exposure warnings. Two smaller findings
+remain:
 
 - **Delete the unreachable payloadless allocation-success branch (P3,
   simplification).** `eval_alloc_ok` in [src/eval.odin](src/eval.odin) still
@@ -416,7 +411,7 @@ were applied during review.
 ## Review of local-view loads and repointed-carrier places (2026-10-31)
 
 Reviewed `e6719c8d` and `68504095` for correctness, simplification, and
-structure. Two findings remain:
+structure. Two findings, both since closed:
 
 - **Preserve the chosen-place guarantee past the reaching-analysis limits
   (P2).** The new 63-definition and 256-block bounds reintroduce the
@@ -459,13 +454,11 @@ were applied during review.
 Reviewed `d16a9a2d` ("Print a public type with a private format by the
 generated default") and `404acdcb` ("Record a bound generic's direct
 format call as an open question") for correctness, simplification, and
-structure. Two findings remain:
+structure. Two findings, of which the second remains:
 
-- **Keep hidden defaults out of completion (P2).** The checker hides the
-  generated default from ordinary lookup, but the editor still offers it
-  to an importer. Calling the suggested method produces `L0363`. The
-  [reproduction and cause](known-gaps.md#editor-completion-offers-a-hidden-generated-formatter)
-  include a check through the LSP completion entry point.
+- **Keep hidden defaults out of completion (P2), since fixed.** The checker
+  hid the generated default from ordinary lookup, but the editor still offered
+  it to an importer, and calling the suggested method produced `L0363`.
 - **Reuse the written-formatter search (P3, shrink).** The new
   `written_format_member` in [src/format.odin](src/format.odin) performs
   the same member walk and filtering as `formatter_of` immediately below

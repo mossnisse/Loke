@@ -621,12 +621,13 @@ today and need neither.
 into undefined behavior that the optimizer exploits, so they come last:
 
 - Close the soundness gaps first, or emit the attributes only behind an option
-  until they are closed. known-gaps.md lists accepted programs that leave two
-  live mutable carriers to one place
-  ([A call that moves carriers between elements or fields is not seen](known-gaps.md#a-call-that-moves-carriers-between-elements-or-fields-is-not-seen),
-  [A borrow stored through a mutable traversal binding is not seen in the container](known-gaps.md#a-borrow-stored-through-a-mutable-traversal-binding-is-not-seen-in-the-container)).
-  Today those alias as C code would; with `noalias` at `-opt=speed` they can
-  miscompile.
+  until they are closed. When this was written, a call moving carriers between
+  elements or fields and a borrow stored through a mutable traversal binding were
+  accepted with two live mutable carriers to one place; both have since been
+  fixed, and [known-gaps.md](known-gaps.md#gaps) lists what remains, such as
+  [A call given a carrier and its copy in one use is not rejected](known-gaps.md#a-call-given-a-carrier-and-its-copy-in-one-use-is-not-rejected).
+  Accepted programs like those alias as C code would; with `noalias` at
+  `-opt=speed` they can miscompile.
 - State an aliasing rule for unchecked code in design.md.
   [What is not checked](design.md#what-is-not-checked) makes raw pointers the
   programmer's responsibility but says nothing about aliasing, and the
