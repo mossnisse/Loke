@@ -973,6 +973,9 @@ checklist.
 
 ### Fixed
 
+- Dropping a zero-length array, as an empty slice literal's backing, no longer
+  counts as running its element type's `hook(drop)`, so `[]Clear{}` beside a borrow
+  of a global that hook writes is no longer `L0512`.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

@@ -261,7 +261,12 @@ drop_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool
 		append(hooks, hook)
 	}
 	#partial switch info.kind {
-	case .Array, .Dynamic_Array, .Box:
+	case .Array:
+		// A zero-length array has no element to drop (design.md "Slice literals").
+		if info.count > 0 {
+			drop_hooks_walk(c, info.element, visiting, hooks)
+		}
+	case .Dynamic_Array, .Box:
 		drop_hooks_walk(c, info.element, visiting, hooks)
 	case .Map:
 		drop_hooks_walk(c, info.key, visiting, hooks)

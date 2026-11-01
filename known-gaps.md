@@ -43,6 +43,37 @@ and `noalias` on `^mut T` parameters depends on it
 Found while checking the alias-attribute proposal on 2026-11-01 with the
 compiler at `5580637f`.
 
+### Comparing zero-length arrays contributes nonexistent element effects
+
+[Global write effects](design.md#global-write-effects) count the calls that run. A
+structural `==` of a `[0]T` compares no element, but still counts `T`'s `==`:
+
+```loke
+package main;
+import "core:fmt";
+values: [dynamic]int = {};
+Clears :: struct { id: int }
+impl Clears {
+    equal :: operator(==) proc(a, b: Clears) -> bool { values = {}; return true; }
+}
+main :: proc() {
+    values.append(7);
+    borrowed := values[:];
+    a: [0]Clears = {};
+    b: [0]Clears = {};
+    fmt.println(a == b);
+    fmt.println(borrowed[0]);
+}
+```
+
+This reports `L0512` at `a == b`. `prov_equality_effects` and `prov_hash_effects` in
+[src/global_effects.odin](src/global_effects.odin) take their parts from
+`own_equalities_within` in [src/hash.odin](src/hash.odin), which descends into an
+array's element whatever its length, as `drop_hooks_walk` used to. The checker also
+asks that walk what a type requires, so the fix belongs in the two effect readers or
+in a separate query. Found while fixing the empty slice literal's drop effects on
+2026-11-01 at `46cf2aa8` (P3, over-rejection).
+
 ### A printed value through a mutable call result is not held
 
 [Built-in procedures](design.md#built-in-procedures) and
@@ -130,39 +161,6 @@ defines `root.content` from the original elements only, and
 `prov_extended_drop` reads that snapshot. Track the backing array's current
 content through element and field writes instead. Confirmed on `5580637f`
 during review on 2026-11-01 (P1).
-
-### An empty slice literal contributes nonexistent element drop effects
-
-An empty [slice literal](design.md#slice-literals) has no elements whose
-hooks can run. Since `210f1131`, its cleanup nevertheless applies the element
-type's global write effects:
-
-```loke
-package main;
-import "core:fmt";
-values: [dynamic]int = {};
-Clear :: move_only struct { id: int }
-impl Clear {
-    retire :: hook(drop) proc(self: inout Clear) { values = {}; }
-}
-main :: proc() {
-    values.append(7);
-    borrowed := values[:];
-    {
-        view := []Clear{};
-        fmt.println(view.len());
-    }
-    fmt.println(borrowed[0]);
-}
-```
-
-This reports `L0512` at `[]Clear{}`, claiming that `retire` writes `values`
-when the slice literal is dropped. At `426f1a13` it compiles and prints `0`
-and `7`; the zero-length backing array runs no hook. `prov_slice_literal`
-now records its backing type for `prov_extended_drop`, but `type_drop_hooks`
-in [src/hooks.odin](src/hooks.odin) descends into the element type of a fixed
-array even when its length is zero. Exclude those nonexistent element effects.
-Confirmed on `5580637f` during review on 2026-11-01 (P2).
 
 ### A conditional write hides a received allocator payload's region
 

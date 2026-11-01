@@ -87,7 +87,9 @@ prints_through_method_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[T
 	#partial switch info.kind {
 	case .Dyn:
 		return true
-	case .Array, .Simd, .Slice, .Dynamic_Array, .Box, .Pointer:
+	case .Array:
+		return info.count > 0 && prints_through_method_walk(c, info.element, visiting)
+	case .Simd, .Slice, .Dynamic_Array, .Box, .Pointer:
 		return prints_through_method_walk(c, info.element, visiting)
 	case .Map:
 		return prints_through_method_walk(c, info.key, visiting) || prints_through_method_walk(c, info.element, visiting)
