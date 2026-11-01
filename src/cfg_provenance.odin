@@ -43,6 +43,9 @@ Prov_Kind :: enum u8 {
 	Publish,
 	// A value read through a carrier; its content slots resolve while solving.
 	Load,
+	// A call may have stored what `into` lead to among each other, as `rearranged`
+	// says (`Carrier_Move`).
+	Rearrange,
 	// Storage at `path` below the pointee of the carriers in `into` is read or
 	// written, as `access` says, or handed to a call that may, as `verb` says.
 	// Checked against the loans of places reached through carriers
@@ -164,6 +167,14 @@ Prov_Event :: struct {
 	// which `prov_reborrow_retained` links to every slot it may land in, so it
 	// lands as a linked store does.
 	retained:      bool,
+	// `Publish`: the type stored, or INVALID_TYPE when not known
+	// (`Carrier_Move`).
+	carried:       Type_Id,
+	// `Publish`: part of an assignment that only reorders its targets' values
+	// (`prov_assign_permutes`).
+	permutes:      bool,
+	// `Rearrange`: see `Prov_Kind`.
+	rearranged:    Carrier_Move,
 	// `Publish`: the slots holding the source's own loans, as a traversal's do,
 	// which what is stored holds only for having been read through them: the
 	// source does not come to borrow itself (`prov_publish_traversal`).
@@ -2346,7 +2357,7 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 	if len(traversal.into) == 0 {
 		return
 	}
-	publish := Prov_Event{kind = .Publish, span = span, sources = stored[:], into = traversal.into, strips = traversal.into}
+	publish := Prov_Event{kind = .Publish, span = span, sources = stored[:], into = traversal.into, strips = traversal.into, carried = type}
 	if traversal.known {
 		publish.path = prov_concat_path(graph, traversal.path, at)
 	}
@@ -2420,7 +2431,7 @@ prov_publish_view_content :: proc(
 			return
 		}
 	}
-	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, into = through})
+	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, into = through, carried = type})
 }
 
 // design.md "defer statement": a result is taken before its exit path's
@@ -3381,6 +3392,9 @@ prov_reborrow_element :: proc(graph: ^Flow_Graph, own: Loan_Id, elements: []int)
 			for index in 0 ..< count {
 				if reborrow := graph.reborrows[index]; reborrow.derived == every {
 					reborrow.derived = element
+					append(&graph.reborrows, reborrow)
+				} else if reborrow.source == every && reborrow.copied_within {
+					reborrow.source = element
 					append(&graph.reborrows, reborrow)
 				}
 			}
@@ -7222,7 +7236,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					publish := Prov_Event {
 						kind = .Publish, span = expr_span(target), sources = sources, into = through,
 						linked = prov_store_linked(graph.k.c, stored), element_loan = element_loan, elements = elements,
-						any_element = any_element,
+						any_element = any_element, carried = stored, permutes = prov_assign_permutes(graph, s),
 					}
 					publish.view_slot, publish.view_index = prov_local_view_element(graph, target)
 					// design.md "Evaluation order": a destination is evaluated before an
@@ -7281,6 +7295,31 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			prov_write_through_place(graph, target, expr_span(target))
 		}
 	}
+}
+
+// Whether a multiple assignment only reorders its targets' values, as
+// `a[0], a[1] = a[1], a[0]`: each value ends in one place, so nothing is copied
+// (`Carrier_Move`).
+@(private = "file")
+prov_assign_permutes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> bool {
+	if len(s.lhs) < 2 || len(s.lhs) != len(s.rhs) || s.op != .Assign {
+		return false
+	}
+	text :: proc(graph: ^Flow_Graph, e: Expr) -> string {
+		span := expr_span(e)
+		return graph.k.c.sources[span.file].text[span.lo:span.hi]
+	}
+	used := make([]bool, len(s.lhs), graph.alloc)
+	next: for value in s.rhs {
+		for target, index in s.lhs {
+			if !used[index] && text(graph, value) == text(graph, target) {
+				used[index] = true
+				continue next
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // design.md "Operator declarations": a user operator is a call to the procedure
@@ -7615,6 +7654,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if len(borrowed) > 0 {
 			prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 		}
+		prov_call_carrier_moves(graph, v, .None, actuals)
 		return prov_store_call_results(graph, v, actuals)
 	}
 	actuals := make([][]int, len(v.bound), graph.alloc)
@@ -7666,6 +7706,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	// their use in the call: the operation's own read of an argument is not a
 	// use of it while the stored copy lives.
 	prov_container_content(graph, v, container_op, actuals)
+	prov_call_carrier_moves(graph, v, container_op, actuals)
 	if v == graph.spawning {
 		graph.spawn_held = prov_join(graph, graph.spawn_held, borrowed)
 		for actual in actuals {
@@ -8332,6 +8373,99 @@ prov_lend_carrier :: proc(graph: ^Flow_Graph, carriers, held: []int, span: Span)
 		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span})
 	}
 	return lent
+}
+
+// design.md "Values that contain borrows": what a call may do to the carriers
+// its arguments lead to, as what it may run says (`Carrier_Move`) and, for a
+// contributed operation that reorders its receiver's elements, as that does.
+// Each stays where it is for any other call, so two calls passing the same
+// storage do not conflict. What it may leave in two places is linked as a
+// reborrow of the other there, in each direction, as which place it was read
+// from is not known; the links hold only while the two hold the same loan.
+@(private = "file")
+prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op: Container_Op, actuals: [][]int) {
+	c := graph.k.c
+	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	moves := call_carrier_moves(c, v, graph.literal.symbol, len(actuals), &consulted, graph.alloc)
+	for target in consulted {
+		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
+	}
+	#partial switch container_op {
+	case .Swap, .Sort, .Reverse_Sort:
+		if len(actuals) > 0 {
+			if moves == nil {
+				moves = make([]Carrier_Move, len(actuals), graph.alloc)
+			}
+			receiver := underlying_info(c, prov_parameter_type(graph, v, 0))
+			element := receiver == nil ? INVALID_TYPE : receiver.element
+			if type_carries_borrow(c, element).any {
+				moves[0].types, moves[0].any = carried_types(c, element, graph.alloc)
+			}
+		}
+	}
+	for move, index in moves {
+		if !move.any && len(move.types) == 0 || index >= len(actuals) || len(actuals[index]) == 0 {
+			continue
+		}
+		slot := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Rearrange, slot = slot, into = actuals[index], span = v.span, rearranged = move})
+		if move.copied {
+			prov_link_copied_carriers(graph, slot, move, v.span)
+		}
+	}
+}
+
+// Every named slot, or slot standing for caller storage, that holds a carrier a
+// call may have copied there is linked to the others through `hub`, the slot of
+// the call's `Rearrange`, as there may be many. The links hold from that event
+// on, for the slots it reaches (`run_severing_event`).
+@(private = "file")
+prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Move, span: Span) {
+	c := graph.k.c
+	link :: proc(graph: ^Flow_Graph, hub, candidate: int, type: Type_Id, span: Span) {
+		// Only a mutable one suspends a read of it.
+		mutable := type == INVALID_TYPE || carrier_is_mutable(graph.k.c, type)
+		append(&graph.reborrows, Prov_Reborrow{source = candidate, derived = hub, span = span, mutable = mutable, copied_within = true})
+		append(&graph.reborrows, Prov_Reborrow{source = hub, derived = candidate, span = span, mutable = true, copied_within = true})
+	}
+	may_hold :: proc(c: ^Compiler, type: Type_Id, move: Carrier_Move) -> bool {
+		if type == INVALID_TYPE || move.any {
+			return true
+		}
+		for moved in move.types {
+			if carrier_may_land_in(c, moved, type) {
+				return true
+			}
+		}
+		return false
+	}
+	for entry, candidate in graph.prov_slots {
+		sym := symbol_of(c, entry.symbol)
+		if sym == nil || sym.kind == .Parameter && sym.immutable {
+			continue
+		}
+		type := entry.content_type
+		if type == INVALID_TYPE && !entry.content_truncated && len(entry.path) == 0 {
+			type = sym.type
+		}
+		if type != INVALID_TYPE && (!type_is_carrier(c, type) || type_is_region_provider(c, type)) {
+			continue
+		}
+		if may_hold(c, type, move) {
+			link(graph, hub, candidate, type, span)
+		}
+	}
+	for _, slots in graph.caller_slots {
+		for candidate in slots {
+			type := graph.prov_slots[candidate].content_type
+			if type != INVALID_TYPE && type_is_region_provider(c, type) {
+				continue
+			}
+			if may_hold(c, type, move) {
+				link(graph, hub, candidate, type, span)
+			}
+		}
+	}
 }
 
 // The caller's half of `@(escape=...)`. `static` must outlive the process;

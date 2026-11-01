@@ -3259,6 +3259,41 @@ positions that a particular analysis should ignore. Implementation details belon
 with the [semantic architecture](compiler-architecture.md#semantic-architecture);
 historical fix lists and test counts are available in Git history.
 
+### Calls that rearrange what an argument holds
+
+A body that stores into its argument's own storage retains nothing, so nothing
+in a signature or a retention summary shows it. The call could treat every
+writable argument as if it rearranged its carriers, which needs no summary, but
+that gives up what makes a view useful: `touch(xs); touch(xs);` with one element
+kept between the calls would be rejected, for a body that stored no carrier at
+all. Hence `Carrier_Move`, whose cost is one more per-symbol summary in the
+worklist.
+
+A move and a copy need different treatment. After a move, each carrier may hold
+what any held, and joining says so: two `exchange` calls in a row join again and
+nothing conflicts. A copy leaves two live mutable carriers, which the reborrow
+rule forbids using together, and the two places must therefore be linked. Linking
+every element to every other for every call that writes would make those same
+two `exchange` calls conflict, so the summary says separately whether a body may
+copy. The linking is flow-sensitive in the callee as well as in the caller: a
+body reading `links[0].to` before its own call to `duplicate` holds a carrier
+nothing has copied yet.
+
+A chain is the case that keeps a copy from being any store of a held carrier:
+`list^.head = list^.head^.next` reads a carrier below the place it lands, and
+what it replaces is the only path to that carrier, so the body is `Rearrange`
+without the links. Marking it as a copy would reject every traversal that pops.
+A reordering assignment is also not a copy, recognized by the values being the
+targets' own spelling; a reordering written with a temporary is not recognized,
+and [a hand-written swap in a body](known-gaps.md#a-swap-written-with-a-temporary-is-rejected)
+is rejected before the summary is reached.
+
+The same copy used through a later call is rejected. After `duplicate(v);`,
+another `touch(v)` uses what both elements hold while a copy taken before it may
+still be live, as `links[0] = links[1]; touch(view);` written out in the caller
+always was. A summary could say that a body uses only one element, but that is a
+per-path effect summary that nothing else needs yet.
+
 ### Provenance replay and precise publication
 
 Provenance analysis reads a

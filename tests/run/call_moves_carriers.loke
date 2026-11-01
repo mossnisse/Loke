@@ -1,0 +1,173 @@
+// design.md "Values that contain borrows": only a call that may store what an
+// argument holds elsewhere in it says each carrier may hold the others', and only
+// one that may leave one in two places links them, from that call on: two calls
+// passing the same storage do not otherwise conflict.
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+Link :: struct { to: ^mut int }
+Pair :: struct { a: ^mut int, b: ^mut int }
+Named :: struct { a: ^mut int, b: ^mut int, name: string_view }
+Read_Only :: struct { to: ^int }
+Node :: struct { next: ^mut Node, value: int }
+Chain :: struct { head: ^mut Node }
+
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+by_assignment :: proc(links: []mut Link) { links[0], links[1] = links[1], links[0]; }
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+touch :: proc(links: []mut Link) { links[0].to^ += 1; }
+touch_pair :: proc(pair: ^mut Pair) { pair^.a^ += 1; }
+share :: proc(pair: ^mut Named) { pair^.a = pair^.b; }
+read_only :: proc(links: []mut Read_Only) { links[0] = links[1]; }
+pop :: proc(chain: ^mut Chain) { chain^.head = chain^.head^.next; }
+
+// The false conflict that linking every carrier to every other would make.
+two_calls_that_move :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	exchange(&mut links[:]);
+	exchange(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+two_calls_in_the_library :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	slice.reverse(&mut links[:]);
+	slice.reverse(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+// Reordering by assignment copies nothing either.
+two_calls_that_reorder :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	by_assignment(&mut links[:]);
+	by_assignment(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+// A call that stores nothing leaves each carrier its own.
+two_calls_that_only_write_through :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	touch(&mut links[:]);
+	touch(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ += 10;
+	return x + y;
+}
+
+fields_stay_apart :: proc() -> int {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	touch_pair(&mut pair);
+	held := pair.a;
+	y = 5;
+	held^ += 10;
+	return x + y;
+}
+
+// Two copying calls with nothing kept after them.
+two_copying_calls :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	duplicate(&mut links[:]);
+	return x + y;
+}
+
+// Before a call that copies, both are their own.
+used_before_the_copy :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	duplicate(&mut links[:]);
+	return x + y;
+}
+
+used_before_the_copy_in_a_body :: proc(links: []mut Link) -> int {
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	total := first^ + second^;
+	duplicate(links);
+	return total;
+}
+
+// One place used after the copy is no second use.
+one_place_after_the_copy :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	links[0].to^ += 10;
+	return y;
+}
+
+// What it does not name stays apart: another type of carrier, and read-only
+// carriers, which a copy does not suspend.
+other_type_of_carrier :: proc() -> int {
+	x := 1; y := 2;
+	named := Named{&mut x, &mut y, "name"};
+	share(&mut named);
+	text := named.name;
+	x = 5;
+	return text.len() + x;
+}
+
+read_only_copies :: proc() -> int {
+	x := 1; y := 2;
+	links := [2]Read_Only{Read_Only{&x}, Read_Only{&y}};
+	read_only(&mut links[:]);
+	read_only(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	return first^ + second^;
+}
+
+// A carrier read from below where it lands replaces the one it was read through.
+// (Compiled only: a chain of `^mut Node` has no end to build at run time.)
+advance_twice :: proc(end: ^mut Node) -> int {
+	middle := Node{end, 2};
+	start := Node{&mut middle, 3};
+	chain := Chain{&mut start};
+	pop(&mut chain);
+	pop(&mut chain);
+	chain.head^.value = 7;
+	return chain.head^.value;
+}
+
+main :: proc() {
+	fmt.println(two_calls_that_move());
+	fmt.println(two_calls_in_the_library());
+	fmt.println(two_calls_that_reorder());
+	fmt.println(two_calls_that_only_write_through());
+	fmt.println(fields_stay_apart());
+	fmt.println(two_copying_calls());
+	fmt.println(used_before_the_copy());
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	fmt.println(used_before_the_copy_in_a_body(&mut links[:]));
+	fmt.println(one_place_after_the_copy());
+	fmt.println(other_type_of_carrier());
+	fmt.println(read_only_copies());
+}

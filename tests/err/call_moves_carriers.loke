@@ -1,0 +1,341 @@
+// design.md "Values that contain borrows": a call may store what an argument
+// holds elsewhere in the storage it names, which no signature says, so a carrier
+// there may afterwards hold what any other held, and one the call may leave in
+// two places is a reborrow of the other (design.md "Weakening and reborrows").
+package main;
+
+import "core:slice";
+
+Link :: struct { to: ^mut int }
+Pair :: struct { a: ^mut int, b: ^mut int }
+Holder :: struct { links: []mut Link }
+Mixed :: struct { a: ^mut int, b: ^int }
+Read_Only :: struct { to: ^int }
+Slots :: struct { items: [2]Link }
+Shuffler :: interface($Self: type) { slot shuffle: proc(self: inout Self); }
+
+see :: proc(pointer: ^int) {}
+
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+share :: proc(pair: ^mut Pair) { pair^.a = pair^.b; }
+forward :: proc(links: []mut Link) { duplicate(links); }
+forward_exchange :: proc(links: []mut Link) { exchange(links); }
+in_an_array :: proc(links: inout [2]Link) { links[0] = links[1]; }
+in_a_holder :: proc(holder: ^mut Holder) { holder^.links[0] = holder^.links[1]; }
+by_value_holder :: proc(holder: Holder) { holder.links[0] = holder.links[1]; }
+behind_a_pointer :: proc(links: ^mut [2]Link) { links^[0] = links^[1]; }
+through_a_local_view :: proc(links: []mut Link) { view := &mut links[1:]; view[0].to = view[1].to; }
+through_a_pointer :: proc(links: []mut Link) { pointer := &mut links[0]; pointer^ = links[1]; }
+at_variable_indices :: proc(links: []mut Link, i: int, j: int) { links[i] = links[j]; }
+one_field :: proc(links: []mut Link) { links[0].to = links[1].to; }
+weakened :: proc(mixed: ^mut Mixed) { mixed^.b = mixed^.a; }
+read_only :: proc(links: []mut Read_Only) { links[0] = links[1]; }
+generic_copy :: proc(values: []mut $T) { values[0] = values[1]; }
+recurse_a :: proc(links: []mut Link) { links.swap(0, 1); recurse_b(links); }
+recurse_b :: proc(links: []mut Link) { if (links.len() > 3) { recurse_a(links); } }
+apply :: proc(links: []mut Link, callback: proc(values: []mut Link)) { callback(links); }
+
+impl Slots {
+	rotate :: proc(self: inout Slots) { view := &mut self.items[:]; view.swap(0, 1); }
+	shuffle :: proc(self: inout Slots) { self.items[0] = self.items[1]; }
+}
+
+// A body that copies carriers between two arguments retains the other's.
+between_arguments :: proc(a: []mut Link, b: []mut Link) { a[0] = b[0]; }
+
+// The reproduction.
+view_swapped :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	view.swap(0, 1);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+call_exchanges :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	exchange(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+call_copies :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+between_fields :: proc() {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	share(&mut pair);
+	held := pair.a;
+	y = 5;
+	held^ = 4;
+}
+
+// What a copy leaves in two places, whichever is used first.
+copy_used_as_either :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+copy_in_a_field_used_as_either :: proc() {
+	x := 1; y := 2;
+	pair := Pair{&mut x, &mut y};
+	share(&mut pair);
+	first := pair.a;
+	second := pair.b;
+	first^ = 1;
+	second^ = 2;
+}
+
+// A body sees what its own call does to its parameter.
+in_a_body :: proc(links: []mut Link) {
+	duplicate(links);
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+// Through what else a call may run.
+forwarded_copy :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	forward(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+forwarded_exchange :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	forward_exchange(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+recursive :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	recurse_b(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+generic_instance :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	generic_copy(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+library_swap :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	slice.swap(&mut links[:], 0, 1);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+library_reverse :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	slice.reverse(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+through_a_procedure_value :: proc(callback: proc(values: []mut Link)) {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	callback(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+through_a_local_value :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	callee := exchange;
+	callee(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+through_a_callback :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	apply(&mut links[:], exchange);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+method :: proc() {
+	x := 1; y := 2;
+	slots := Slots{[2]Link{Link{&mut x}, Link{&mut y}}};
+	slots.rotate();
+	held := slots.items[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+through_a_dyn_view :: proc() {
+	x := 1; y := 2;
+	slots := Slots{[2]Link{Link{&mut x}, Link{&mut y}}};
+	view := (dyn mut Shuffler)(&mut slots);
+	view.shuffle();
+	held := slots.items[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+// Each place the storage may be reached by.
+inout_array :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	in_an_array(inout links);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+held_in_a_record :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	holder := Holder{&mut links[:]};
+	in_a_holder(&mut holder);
+	held := holder.links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+record_passed_by_value :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	by_value_holder(Holder{&mut links[:]});
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+pointer_to_an_array :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	behind_a_pointer(&mut links);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+local_view_in_the_body :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	through_a_local_view(&mut links[:]);
+	held := links[1].to;
+	x = 5;
+	held^ = 4;
+}
+
+pointer_in_the_body :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	through_a_pointer(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+variable_indices :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	at_variable_indices(&mut links[:], 0, 1);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+only_the_carrier :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	one_field(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+in_a_loop :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	for (i := 0; i < 2; i += 1) { view.swap(0, 1); }
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+// A read-only carrier joins as well, and one stored weakened is a reborrow of
+// the mutable one it came from.
+read_only_moved :: proc() {
+	x := 1; y := 2;
+	links := [2]Read_Only{Read_Only{&x}, Read_Only{&y}};
+	read_only(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	see(held);
+}
+
+weakened_holds_the_target :: proc() {
+	x := 1; y := 2;
+	mixed := Mixed{&mut x, &y};
+	weakened(&mut mixed);
+	held := mixed.b;
+	x = 5;
+	see(held);
+}
+
+weakened_suspends_the_source :: proc() {
+	x := 1; y := 2;
+	mixed := Mixed{&mut x, &y};
+	weakened(&mut mixed);
+	held := mixed.b;
+	mixed.a^ = 5;
+	see(held);
+}
+
+// As after the same store written out, a later call uses the carrier a copy
+// came from.
+used_by_a_later_call :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	duplicate(&mut links[:]);
+	held := links[0].to;
+	held^ = 4;
+}
+
+main :: proc() {}

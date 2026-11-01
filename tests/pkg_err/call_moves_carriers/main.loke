@@ -1,0 +1,49 @@
+package main;
+
+// design.md "Values that contain borrows": a call that may store what an argument
+// holds elsewhere in it is seen across a package and in each generic instance.
+
+import "links";
+
+moved_in_another_package :: proc() {
+	x := 1; y := 2;
+	items := [2]links.Link{links.Link{to = &mut x}, links.Link{to = &mut y}};
+	links.exchange(&mut items[:]);
+	held := items[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+copied_in_another_package :: proc() {
+	x := 1; y := 2;
+	items := [2]links.Link{links.Link{to = &mut x}, links.Link{to = &mut y}};
+	links.duplicate(&mut items[:]);
+	first := items[0].to;
+	second := items[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+moved_in_a_generic_instance :: proc() {
+	x := 1; y := 2;
+	items := [2]links.Link{links.Link{to = &mut x}, links.Link{to = &mut y}};
+	links.generic_exchange(&mut items[:]);
+	held := items[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+// An instance that moves nothing, and a call that only writes through, leave
+// each carrier its own: neither of these is reported.
+moved_by_no_instance :: proc() {
+	x := 1; y := 2;
+	items := [2]links.Link{links.Link{to = &mut x}, links.Link{to = &mut y}};
+	links.generic_touch(&mut items[:]);
+	links.touch(&mut items[:]);
+	links.touch(&mut items[:]);
+	held := items[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+main :: proc() {}

@@ -323,6 +323,10 @@ Compiler :: struct {
 	// The same regions per parameter at the paths the body leaves them, below
 	// what the argument names, so a call keeps unrelated fields apart.
 	written_region_content: map[Symbol_Id][][]Prov_Region_Content,
+	// Per parameter, what a body may store in the storage that argument names
+	// out of what that same argument held (design.md "Values that contain
+	// borrows").
+	carrier_moves: map[Symbol_Id][]Carrier_Move,
 	// Per parameter, a `thread_local` global whose borrow a body may leave in
 	// the storage that argument names, or INVALID_SYMBOL (design.md "Borrows
 	// crossing between tasks").

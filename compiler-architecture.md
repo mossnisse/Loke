@@ -383,6 +383,7 @@ behavioral controls for all of it.
 | Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin`; `prov_reborrow_retained` in `cfg_provenance.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `Prov_Reborrow.copied_within` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `cfg_provenance.odin` |
 | Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -481,6 +482,15 @@ Keep these contracts:
   the same way, linked to every slot a destination may stand for
   (`prov_reborrow_retained`); as for a copy, a named read-only reborrow
   linked there is extended rather than suspended (`Prov_Reborrow.passes_on`).
+  Publishing into a parameter's own storage what it already holds retains
+  nothing, so `summarize_body` records it instead: `Compiler.carrier_moves` says
+  per parameter which carrier types may move there and whether a mutable one
+  may be left in two places. A call emits a `Rearrange` joining what the
+  argument's carriers hold (`rearrange_carriers`). A copy also links those
+  carriers as reborrows of each other through a hub; these links stay severed
+  until a `Rearrange` activates them, so an earlier use conflicts with nothing,
+  and they are never severed again, as what a copy left in two places stays
+  there (`Prov_Reborrow.copied_within`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

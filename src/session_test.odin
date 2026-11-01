@@ -722,7 +722,7 @@ session_body_effect_changes_match_fresh_checks :: proc(t: ^testing.T) {
 	defer destroy_session(&s)
 	config := session_test_config()
 	if !testing.expect(t, init_session(&s, config)) { return }
-	for scenario in 0 ..< 2 {
+	for scenario in 0 ..< 3 {
 		for edit in 0 ..< 3 {
 			text := ""
 			if scenario == 0 {
@@ -732,6 +732,20 @@ values: [dynamic]int;
 reset :: proc() { BODY }
 first :: proc(input: []int) -> int { reset(); return input[0]; }
 main :: proc() { values.append(1); assert(first(values) == 1); }`
+				text, _ = strings.replace_all(template, "BODY", body, context.temp_allocator)
+			} else if scenario == 2 {
+				body := edit == 1 ? "pair^.a = pair^.b;" : ""
+				template := `package main;
+Pair :: struct { a: ^mut int, b: ^mut int }
+share :: proc(pair: ^mut Pair) { BODY }
+main :: proc() {
+    x := 1; y := 2;
+    pair := Pair{&mut x, &mut y};
+    share(&mut pair);
+    held := pair.a;
+    y = 5;
+    held^ = 4;
+}`
 				text, _ = strings.replace_all(template, "BODY", body, context.temp_allocator)
 			} else {
 				result := edit == 1 ? "b" : "a"

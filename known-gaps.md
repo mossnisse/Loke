@@ -519,74 +519,90 @@ parameter's constant elements get caller slots of their own
 Found while making copies out of a local view's element read that element
 alone on 2026-10-31.
 An attempt on 2026-10-31 gave a dynamic array's first elements paths of their
-own and joined the carriers of elements a call may rearrange. It made
-`duplicate` in
-[A call that moves carriers between elements or fields is not seen](#a-call-that-moves-carriers-between-elements-or-fields-is-not-seen)
-unsound over a dynamic array as it already is over a fixed one, so this gap
-waits on that one.
+own and joined the carriers of elements a call may rearrange. It made a call
+that copies between elements unsound over a dynamic array, as it then was over a
+fixed one, since nothing said a body had copied.
 
-### A call that moves carriers between elements or fields is not seen
+### A call given a carrier and its copy in one use is not rejected
 
-[Values that contain borrows](design.md#values-that-contain-borrows) makes a
-container carry every borrow stored in it, and
-[Weakening and reborrows](design.md#weakening-and-reborrows) makes a copy of a
-mutable carrier a reborrow that suspends the carrier copied. A call that
-swaps or copies carriers between the elements of a fixed array, or between
-fields, leaves each element or field with the provenance it had before, so
-all four of these are accepted:
+[Weakening and reborrows](design.md#weakening-and-reborrows) suspends all use of
+the source of a mutable reborrow until the reborrow's last use, and a call uses
+each mutable carrier reachable through it, but a call reached with both a carrier
+and its copy behind one argument is accepted when neither is used afterwards,
+though the body writes through both:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
-Pair :: struct { a: ^mut int, b: ^mut int }
+poke_both :: proc(links: []mut Link) { links[0].to^ = 1; links[1].to^ = 2; }
 duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
-exchange :: proc(links: []mut Link) { links.swap(0, 1); }
-share :: proc(pair: ^mut Pair) { pair^.a = pair^.b; }
-view_swapped :: proc() {
+written_out :: proc() {
     x := 1; y := 2;
     links := [2]Link{Link{&mut x}, Link{&mut y}};
-    view := &mut links[:];
-    view.swap(0, 1);
-    held := links[0].to;
-    y = 5; // should be rejected: `held` points at `y`
-    held^ = 4;
+    links[0] = links[1];
+    poke_both(&mut links[:]); // should be rejected
 }
-call_exchanges :: proc() {
-    x := 1; y := 2;
-    links := [2]Link{Link{&mut x}, Link{&mut y}};
-    exchange(&mut links[:]);
-    held := links[0].to;
-    y = 5; // should be rejected
-    held^ = 4;
-}
-call_copies :: proc() {
+copied_by_a_call :: proc() {
     x := 1; y := 2;
     links := [2]Link{Link{&mut x}, Link{&mut y}};
     duplicate(&mut links[:]);
-    held := links[0].to;
-    y = 5; // should be rejected
-    held^ = 4;
-}
-between_fields :: proc() {
-    x := 1; y := 2;
-    pair := Pair{&mut x, &mut y};
-    share(&mut pair);
-    held := pair.a;
-    y = 5; // should be rejected
-    held^ = 4;
+    poke_both(&mut links[:]); // should be rejected
 }
 main :: proc() {}
 ```
 
-Each callee body is accepted on its own: it stores into its argument's own
-storage, which is no retention, and its reborrows end when it returns. A
-dynamic array's elements share one path, so the same calls over one are
-rejected. Joining the carriers of every element or field a call may write
-catches a move; a copy also leaves two live mutable carriers, which needs a
-summary saying which arguments a body copies a mutable carrier within, since
-linking every element as a reborrow of every other would make two calls
-passing the same array conflict. Found while telling a dynamic array's
-constant elements apart on 2026-10-31.
+Liveness finds the copy dead once the call has used the source, since a use of
+both in one event comes after nothing. Found while making a call that copies
+carriers within an argument link them on 2026-11-01.
+
+### A borrow taken once and stored at two places in a loop is not linked
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) makes a mutable
+borrow's second use conflict with a live first one, but one `&mut c` stored in
+two elements by a loop leaves both usable, so `c` has two live mutable carriers:
+
+```loke
+package main;
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+stored_twice :: proc() {
+    a := Node{1}; b := Node{2}; c := Node{3};
+    lists := [2]List{List{&mut a}, List{&mut b}};
+    for (i := 0; i < 2; i += 1) { lists[i].head = &mut c; }
+    node := lists[0].head;
+    other := lists[1].head; // should be rejected
+    node^.value = 1;
+    other^.value = 1;
+}
+main :: proc() {}
+```
+
+Each store is one event taking one loan, so the two iterations are one borrow of
+`c` however many places hold it. The same happens through a `foreach (&mut list
+in lists)` binding. Found while making what is stored through a traversal binding
+reach the source on 2026-11-01.
+
+### A swap written with a temporary is rejected
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier leave
+its place, and a body reordering what it holds ends with each carrier in one
+place. Written with a temporary, the reordering is `L0641` at the second store,
+though `links[0], links[1] = links[1], links[0]` and `links.swap(0, 1)` are
+accepted:
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+swap_by_hand :: proc(links: []mut Link) {
+    held := links[0];
+    links[0] = links[1]; // L0641; should be accepted
+    links[1] = held;
+}
+main :: proc() {}
+```
+
+Found while separating calls that move carriers from calls that copy them on
+2026-11-01. The cause has not been traced; it does not depend on those summaries.
 
 ### A mutable carrier copied back through its traversal binding is rejected
 

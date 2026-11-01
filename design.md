@@ -8293,6 +8293,44 @@ relink :: proc(list: ^mut List) {
 }
 ```
 
+A call may also store what an argument holds elsewhere in the storage that
+argument reaches, which its signature does not say. What the call may run
+decides, as a call through a procedure value may run any body of its type. After
+a call that may move carriers within an argument, each carrier there that could
+hold a moved one may hold what any of them held. After a call that may leave a
+mutable carrier in two places, each of them is also a reborrow of the others. A
+carrier read from below the place it is stored in replaces the one it was read
+through, as `list^.head = list^.head^.next` does, and reordering, as `swap`,
+`sort`, or `a[0], a[1] = a[1], a[0]`, leaves each carrier in one place; neither
+is a copy. A call that stores no carrier leaves each one its own:
+
+```loke
+Link :: struct { to: ^mut int }
+
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+
+after_a_move :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	exchange(&mut links[:]);
+	exchange(&mut links[:]);   // OK: nothing is in two places
+	held := links[0].to;       // may point at `x` or `y`
+	y = 5;                     // ERROR: `held` may point at `y`
+	held^ = 4;
+}
+
+after_a_copy :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	first := links[0].to;      // ERROR: `links[1].to` may be the same carrier
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+```
+
 #### Places and overlap
 
 Borrow compatibility is decided for **places**, not only for variable names. A

@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A call that moves or copies carriers within the storage an argument reaches is
+  now seen ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  After `exchange(&mut links[:])` over a fixed array or `share(&mut pair)` between
+  fields, each carrier there kept what it held before the call, so a copy
+  `held := links[0].to` still allowed writing what it now pointed at; that is now
+  `L0512`, `L0511`, or `L0641`, whether the store is in a body, a generic instance,
+  another package, a call through a procedure value, or a built-in `swap`, `sort`,
+  or `reverse_sort`. After a call that may leave a mutable carrier in two places,
+  using both is `L0641`, as is using one after another call passing them, as for
+  the same store written out. Upgrade by ending the use of what was rearranged
+  before changing its target, or by reading the carriers before the call.
 - What is stored through a `foreach` loop's `&mut` binding is now seen in the
   source ([By-reference iteration](design.md#by-reference-iteration)). A carrier
   stored as `list.head = &mut c`, or an owner stored as
