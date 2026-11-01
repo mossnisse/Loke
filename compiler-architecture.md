@@ -495,7 +495,10 @@ Keep these contracts:
   holds (`Prov_Traversal`, `prov_publish_traversal`): by path into a source that
   is a named place, otherwise as a `Publish` through what the traversal holds,
   which leaves out those loans so the source does not come to borrow itself
-  (`Prov_Event.strips`). What a call leaves of a `stored` argument publishes
+  (`Prov_Event.strips`). A user's iterator says nothing of where it lends, so a store
+  through its binding lands by type (`Prov_Traversal.lent`,
+  `Prov_Event.lands_by_type`): in any slot of the source that could hold it, and in
+  any such slot where the source's mutable carriers lead. What a call leaves of a `stored` argument publishes
   the same way, linked to every slot a destination may stand for
   (`prov_reborrow_retained`); as for a copy, a named read-only reborrow
   linked there is extended rather than suspended (`Prov_Reborrow.passes_on`).

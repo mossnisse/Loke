@@ -1,0 +1,156 @@
+// design.md "By-reference iteration": what is stored through a `&mut` binding is
+// stored in the source. A user's iterator says nothing of where it lends, so it may
+// be where any mutable carrier the source holds leads, as much as in the source.
+package main;
+
+Node :: struct { value: int }
+Ro :: struct { head: ^Node }
+Rw :: struct { head: ^mut Node }
+
+Lender :: struct { values: []mut Ro, count: int }
+Cursor :: struct { values: []mut Ro, at: int }
+impl Lender {
+	Element :: Ro;
+	Mut_Iterator :: Cursor;
+	iter_mut :: proc(self: inout Lender) -> Cursor { return {self.values, 0}; }
+}
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(^mut Ro) {
+		if (self.at >= self.values.len()) { return .none; }
+		value := &mut self.values[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+// Elements the source holds itself.
+Inline :: struct { rows: [2]Ro }
+Inline_Cursor :: struct { rows: []mut Ro, at: int }
+impl Inline {
+	Element :: Ro;
+	Mut_Iterator :: Inline_Cursor;
+	iter_mut :: proc(self: inout Inline) -> Inline_Cursor { return {&mut self.rows[:], 0}; }
+}
+impl Inline_Cursor {
+	next :: proc(self: inout Inline_Cursor) -> Option(^mut Ro) {
+		if (self.at >= self.rows.len()) { return .none; }
+		value := &mut self.rows[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+// Elements two carriers away.
+Deep :: struct { inner: ^mut Lender }
+impl Deep {
+	Element :: Ro;
+	Mut_Iterator :: Cursor;
+	iter_mut :: proc(self: inout Deep) -> Cursor { return {self.inner^.values, 0}; }
+}
+
+Lender_Rw :: struct { values: []mut Rw }
+Cursor_Rw :: struct { values: []mut Rw, at: int }
+impl Lender_Rw {
+	Element :: Rw;
+	Mut_Iterator :: Cursor_Rw;
+	iter_mut :: proc(self: inout Lender_Rw) -> Cursor_Rw { return {self.values, 0}; }
+}
+impl Cursor_Rw {
+	next :: proc(self: inout Cursor_Rw) -> Option(^mut Rw) {
+		if (self.at >= self.values.len()) { return .none; }
+		value := &mut self.values[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+// The reproduction: the array behind the slice never learned of the stored borrow.
+backing_storage :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	foreach (&mut list in source) { list.head = &c; }
+	node := lists[0].head;
+	c.value = 5;
+	_ = node^.value;
+}
+
+whole_element :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	foreach (&mut list in source) { list = Ro{&c}; }
+	node := lists[0].head;
+	c.value = 5;
+	_ = node^.value;
+}
+
+through_a_pointer :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	pointer := &mut source;
+	foreach (&mut list in pointer^) { list.head = &c; }
+	node := lists[0].head;
+	c.value = 5;
+	_ = node^.value;
+}
+
+in_the_source_itself :: proc() {
+	a := Node{1}; c := Node{3};
+	source := Inline{[2]Ro{Ro{&a}, Ro{&a}}};
+	foreach (&mut list in source) { list.head = &c; }
+	node := source.rows[0].head;
+	c.value = 5;
+	_ = node^.value;
+}
+
+two_carriers_away :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	inner := Lender{&mut lists[:], 0};
+	source := Deep{&mut inner};
+	foreach (&mut list in source) { list.head = &c; }
+	node := lists[0].head;
+	c.value = 5;
+	_ = node^.value;
+}
+
+// As over a view: each step's `&mut c` conflicts with what an earlier step left.
+mutable_element :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Rw{Rw{&mut a}};
+	source := Lender_Rw{&mut lists[:]};
+	foreach (&mut list in source) { list.head = &mut c; }
+	node := lists[0].head;
+	c.value = 5;
+	node^.value = 1;
+}
+
+// What a call does through its parameter reaches the caller the same way.
+stores_in_a_parameter :: proc(source: inout Lender, @(escape=stored) node: ^Node) {
+	foreach (&mut list in source) { list.head = node; }
+}
+
+across_a_call :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	stores_in_a_parameter(inout source, &c);
+	node := lists[0].head;
+	c.value = 5;
+	_ = node^.value;
+}
+
+// A call handed the view keeps what the storage it views holds live, as it does
+// without the traversal (design.md "Values that contain borrows").
+measured_afterwards :: proc() {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	foreach (&mut list in source) { list.head = &c; }
+	c.value = 5;
+	_ = source.values.len();
+}
+
+main :: proc() {}

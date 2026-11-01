@@ -1,0 +1,74 @@
+// design.md "By-reference iteration": what is stored through a `&mut` binding of a
+// user's iterator lands where a carrier of its type may be, so the slice the source
+// holds does not come to hold it, nor does a field beside the elements.
+package main;
+
+import "core:fmt";
+
+Node :: struct { value: int }
+Ro :: struct { head: ^Node }
+
+Lender :: struct { values: []mut Ro, count: int }
+Cursor :: struct { values: []mut Ro, at: int }
+impl Lender {
+	Element :: Ro;
+	Mut_Iterator :: Cursor;
+	iter_mut :: proc(self: inout Lender) -> Cursor { return {self.values, 0}; }
+}
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(^mut Ro) {
+		if (self.at >= self.values.len()) { return .none; }
+		value := &mut self.values[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+// The slice is copied, which reads nothing it views.
+copied_afterwards :: proc() -> int {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	foreach (&mut list in source) { list.head = &c; }
+	c.value = 5;
+	again := source.values;
+	_ = again;
+	return c.value;
+}
+
+through_a_pointer :: proc() -> int {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 7};
+	pointer := &mut source;
+	foreach (&mut list in pointer^) { list.head = &c; }
+	c.value = 5;
+	return source.count * 10 + c.value;
+}
+
+field_beside_the_elements :: proc() -> int {
+	a := Node{1}; c := Node{3};
+	lists := [1]Ro{Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	foreach (&mut list in source) { list.head = &c; }
+	c.value = 5;
+	source.count = 2;
+	return source.count * 10 + c.value;
+}
+
+// A later store leaves the earlier one in the join, and reads what was stored.
+stored_twice :: proc() -> int {
+	a := Node{1}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&a}};
+	source := Lender{&mut lists[:], 0};
+	foreach (&mut list in source) { list.head = &c; }
+	foreach (&mut list in source) { list.head = &a; }
+	return lists[0].head^.value + lists[1].head^.value;
+}
+
+main :: proc() {
+	fmt.println(copied_afterwards());
+	fmt.println(through_a_pointer());
+	fmt.println(field_beside_the_elements());
+	fmt.println(stored_twice());
+}

@@ -63,6 +63,15 @@ checklist.
   `d^.append(d^.len())` is now rejected as `a.append(a.len())` already was. Upgrade
   by reading the argument into a local first. What `p^.pop()` or `p^.remove(key)`
   hands back now also keeps the loans the element held.
+- What is stored through a `&mut` binding of a user's iterator now reaches the
+  storage the iterator may lend from
+  ([By-reference iteration](design.md#by-reference-iteration)). With a source holding
+  `values: []mut Ro`, `foreach (&mut list in source) { list.head = &c; }` left the
+  array behind `values` not knowing of the borrow, so `node := lists[0].head;
+  c.value = 5; _ = node^.value;` compiled. It is now `L0511`. Upgrade by ending the
+  use of what was stored before the write. The borrow no longer lands in `values`
+  itself, which was never where it went, so `c.value = 5; again := source.values;`
+  compiles, where it was rejected.
 - A call can no longer be left both a mutable carrier and a copy of it
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
   `links[0] = links[1];` or a call that may copy between elements,

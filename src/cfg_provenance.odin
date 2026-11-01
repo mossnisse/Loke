@@ -188,6 +188,10 @@ Prov_Event :: struct {
 	// which what is stored holds only for having been read through them: the
 	// source does not come to borrow itself (`prov_publish_traversal`).
 	strips:        []int,
+	// `Publish`: of a store through a user's iterator's binding, which says nothing
+	// of where it lands, so it lands only in slots that could hold `carried`
+	// (`Prov_Traversal.lent`).
+	lands_by_type: bool,
 	// `Publish`, `Load`: for a store of one carrier into, or a load out of,
 	// one element of a view parameter, `s[k]` with a constant `k`, one more
 	// than the parameter's own loan, and the caller slots standing for that
@@ -2395,13 +2399,17 @@ Prov_Traversal :: struct {
 	into:  []int,
 	known: bool,
 	view:  Symbol_Id,
+	// A user's iterator lends it: `root` and `path` are the source, and `into`
+	// the storage it may reach through carriers.
+	lent:  bool,
 }
 
 // design.md "Values that contain borrows": a `&mut` binding names an element
 // of the source, so a carrier stored through it is in the source too. `below`
 // is where the binding is inside the element, and `element` where it is below
 // the source, nil for a user's iterator, which says nothing of where it lends,
-// so a store lands anywhere there. Which element is not known, so what is
+// so a store lands anywhere a carrier of its type may be: in the source or
+// where its mutable carriers lead. Which element is not known, so what is
 // stored joins what every element holds.
 @(private)
 prov_note_traversal :: proc(
@@ -2412,7 +2420,7 @@ prov_note_traversal :: proc(
 	}
 	protocol := s.kind == .Protocol
 	carrier := type_is_carrier(graph.k.c, prov_type(graph, s.iterable))
-	traversal := Prov_Traversal{root = NO_ROOT, view = INVALID_SYMBOL}
+	traversal := Prov_Traversal{root = NO_ROOT, view = INVALID_SYMBOL, lent = protocol}
 	if carrier && !protocol && len(elements) > 0 {
 		// What a view lends is below its loans, at no step of its own.
 		traversal.into, traversal.path, traversal.known = elements, below, true
@@ -2425,8 +2433,14 @@ prov_note_traversal :: proc(
 		if paths := prov_offset_paths(graph, entry.offsets); !protocol && len(through) == 1 && !entry.offsets_merged && len(paths) == 1 {
 			traversal.path, traversal.known = prov_concat_path(graph, paths[0], element), true
 		}
+		if protocol {
+			traversal.into = prov_join(graph, through, prov_load_writable(graph, through, expr_span(s.iterable)))
+		}
 	} else if root, path, named := prov_place_of(graph, s.iterable); named && !carrier {
 		traversal.root, traversal.path = root, prov_concat_path(graph, path, element)
+		if protocol {
+			traversal.into = prov_mutable_reach(graph, prov_content_at(graph, root, path), prov_type(graph, s.iterable), expr_span(s.iterable))
+		}
 	} else {
 		traversal.into = iterated
 	}
@@ -2447,7 +2461,13 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 		return
 	}
 	at := graph.prov_slots[slot].path
-	if traversal.root != NO_ROOT {
+	if traversal.root != NO_ROOT && traversal.lent {
+		for held in prov_content_at(graph, traversal.root, traversal.path) {
+			if carrier_may_land_in(graph.k.c, slot_carrier_type(graph, held), type) {
+				prov_define_one_content(graph, held, prov_join(graph, prov_one(graph, held), stored[:]), span)
+			}
+		}
+	} else if traversal.root != NO_ROOT {
 		written := prov_concat_path(graph, traversal.path, at)
 		prov_define_content(graph, prov_content_at(graph, traversal.root, written), stored[:], span, written, type, preserve_previous = true)
 		return
@@ -2455,7 +2475,7 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 	if len(traversal.into) == 0 {
 		return
 	}
-	publish := Prov_Event{kind = .Publish, span = span, sources = stored[:], into = traversal.into, strips = traversal.into, carried = type}
+	publish := Prov_Event{kind = .Publish, span = span, sources = stored[:], into = traversal.into, strips = traversal.into, carried = type, lands_by_type = traversal.lent}
 	if traversal.known {
 		publish.path = prov_concat_path(graph, traversal.path, at)
 	}

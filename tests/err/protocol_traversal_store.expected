@@ -1,0 +1,27 @@
+L0511
+@74:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@84:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@95:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@104:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@115:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@124:46
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@126:2
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@141:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@152:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use

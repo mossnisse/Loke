@@ -2147,7 +2147,7 @@ carrier_may_land_in :: proc(c: ^Compiler, destination, source: Type_Id) -> bool 
 
 // The carrier type a slot holds, or INVALID_TYPE for one standing for every
 // carrier below its path.
-@(private = "file")
+@(private)
 slot_carrier_type :: proc(graph: ^Flow_Graph, index: int) -> Type_Id {
 	slot := graph.prov_slots[index]
 	if slot.content_truncated || slot.content_type != INVALID_TYPE {
@@ -3574,6 +3574,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 					state, reach, index, event.path, event.stored if index == one else INVALID_TYPE, state.precision[slot], event.linked,
 					event.retained, event.elements if index == one && index + 1 == event.element_loan else nil,
 					publish_view_loan(graph, event, index).path if index == one else nil, index + 1 == event.any_element,
+					event.carried if event.lands_by_type else INVALID_TYPE,
 				)
 			}
 		}
@@ -4682,11 +4683,13 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 // which names no one element of a view parameter, every caller slot standing
 // for one (`prov_view_any_element_store`). `linked` is the type stored when
 // each carrier it copies is linked as a reborrow to the slots it may land in
-// (`Prov_Event.linked`).
+// (`Prov_Event.linked`). `by_type`, when known, is what a store that may land anywhere
+// along `path` holds, so it lands only in a slot that could hold that
+// (`Prov_Event.lands_by_type`).
 @(private = "file")
 publish_into_loan :: proc(
 	state: ^Prov_State, reach: []u8, loan_index: int, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
-	linked: Type_Id, retained: bool, elements: []int, view: []Proj_Step, any_element: bool,
+	linked: Type_Id, retained: bool, elements: []int, view: []Proj_Step, any_element: bool, by_type: Type_Id,
 ) {
 	graph := state.graph
 	loan := graph.loans[loan_index]
@@ -4698,27 +4701,29 @@ publish_into_loan :: proc(
 	// by every later load through the parameter, which then reborrows what
 	// it copied from.
 	if len(elements) > 0 {
-		if publish_into_caller(state, reach, elements, loan, path, stored, carrier_loss, linked) || retained {
+		if publish_into_caller(state, reach, elements, loan, path, stored, carrier_loss, linked, by_type) || retained {
 			return
 		}
 	} else if slots, caller := graph.caller_slots[Loan_Id(loan_index)]; caller && graph.prov_slots[slots[0]].caller_one {
-		if publish_into_caller(state, reach, slots[:], loan, path, stored, carrier_loss, linked) || retained {
+		if publish_into_caller(state, reach, slots[:], loan, path, stored, carrier_loss, linked, by_type) || retained {
 			return
 		}
 	} else if caller && retained {
 		// What a call leaves in a view may be in any element, each of which
 		// these slots stand for, and which `prov_reborrow_retained` links.
-		publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, INVALID_TYPE)
+		publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, INVALID_TYPE, by_type)
 	} else if caller && any_element {
 		// So may a carrier stored where the store names no one element of a
 		// view parameter, which replaces none of them, and whose copy is
 		// linked to each (`prov_view_any_element_store`).
-		if publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, linked) {
+		if publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, linked, by_type) {
 			return
 		}
 	}
 	for index in root_own_slots(graph, root) {
-		publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
+		if carrier_may_land_in(graph.k.c, slot_carrier_type(graph, index), by_type) {
+			publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
+		}
 	}
 }
 
@@ -4751,7 +4756,7 @@ publish_into_slot :: proc(
 @(private = "file")
 publish_into_caller :: proc(
 	state: ^Prov_State, reach: []u8, slots: []int, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id,
-	carrier_loss: Precision_Loss, linked: Type_Id,
+	carrier_loss: Precision_Loss, linked: Type_Id, by_type: Type_Id,
 ) -> bool {
 	c := state.graph.k.c
 	// A value holding carriers is linked only where it lands in a slot.
@@ -4759,7 +4764,7 @@ publish_into_caller :: proc(
 	landed, found := linked != INVALID_TYPE, carrier
 	for index in slots {
 		slot := state.graph.prov_slots[index]
-		if !paths_overlap(slot.path, path) {
+		if !paths_overlap(slot.path, path) || !carrier_may_land_in(c, slot_carrier_type(state.graph, index), by_type) {
 			continue
 		}
 		found = true
