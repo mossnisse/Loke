@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A borrow stored through a slice literal's slice is now seen
+  ([Slice literals](design.md#slice-literals)). After `view := []mut []int{{}};
+  view[0] = values[:];`, `drop(values)` used to compile while `view[0][0]` read the
+  dropped array, and a hooked element's `hook(drop)` read it at the end of the block;
+  both are now `L0512`, and an element holding a local that ends first is `L0513`.
+  Upgrade by replacing the element before ending what it borrows, or by ending the
+  source after the literal's block.
 - An `assert` or `panic` report now borrows what it prints
   ([Built-in procedures](design.md#built-in-procedures)), as `fmt.println` does.
   `panic("stop", values[0], consume(move(values)))` used to print freed memory and
@@ -973,6 +980,9 @@ checklist.
 
 ### Fixed
 
+- An element of a slice literal replaced through its slice no longer keeps what it
+  borrowed before, so `view[0] = Read{{}}; drop(values);` is no longer `L0512` after
+  `view := []mut Read{Read{values[:]}};`.
 - Dropping a zero-length array, as an empty slice literal's backing, no longer
   counts as running its element type's `hook(drop)`, so `[]Clear{}` beside a borrow
   of a global that hook writes is no longer `L0512`.

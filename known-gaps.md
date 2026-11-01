@@ -127,40 +127,36 @@ plain-slice read. The over-rejection predates the fix to report borrows, which
 gives a report its own walk and so does not reach it. Found on 2026-11-01 at
 `46cf2aa8` (P3).
 
-### A slice literal's drop keeps only its initial element borrows
+### A view of a named array does not hold what its elements borrow
 
-[Slice literals](design.md#slice-literals) have a hidden owner whose elements
-are dropped at the end of the block. A hook must therefore keep the elements'
-current borrows live until that cleanup, including borrows stored later:
+[Values that contain borrows](design.md#values-that-contain-borrows) carry a borrow
+through whatever holds it. A slice of a local array in use does not keep in use what
+the array's elements borrow, so a call can read a stale one:
 
 ```loke
 package main;
 import "core:fmt";
-Read :: move_only struct { data: []int }
-impl Read {
-    retire :: hook(drop) proc(self: inout Read) {
-        if (self.data.len() > 0) { fmt.println(self.data[0]); }
-    }
-}
+Plain :: struct { data: []int }
+first :: proc(view: []Plain) -> int { return view[0].data[0]; }
 main :: proc() {
     values := [dynamic]int{7};
-    view := []mut Read{Read{{}}};
-    view[0] = Read{values[:]};
-    view = {};
+    arr := [1]Plain{Plain{values[:]}};
+    view := arr[:];
     drop(values);
+    fmt.println(first(view));
 }
 ```
 
-This compiles, and the element's hook reads freed storage at block exit.
-Conversely, initializing the literal with `Read{values[:]}` and replacing the
-element with `Read{{}}` reports `L0512` at `drop(values)`, although the hook
-that read that borrow already ran during replacement. The latter is a
-regression from `426f1a13`; the former remains unfixed by `210f1131`.
-In [src/cfg_provenance.odin](src/cfg_provenance.odin), `prov_slice_literal`
-defines `root.content` from the original elements only, and
-`prov_extended_drop` reads that snapshot. Track the backing array's current
-content through element and field writes instead. Confirmed on `5580637f`
-during review on 2026-11-01 (P1).
+This compiles, and `first` reads the dropped array. `fmt.println(view)` in place of
+the call compiles too, and so does `first(arr[:])` with no local view. A load in the
+same body, `view[0].data[0]`, is rejected, since `load_through_loan` in
+[src/borrow.odin](src/borrow.odin) reads the element's slot at that point; only a use
+of the view that hands it on goes unseen. A slice literal's array has the same shape
+and is held, by `with_literal_content` extending each use of the slice with the
+slots of the array it views. Giving a named root the same treatment closes this, at
+the cost of also rejecting `drop(values); view.len()` for a named array, as a slice
+literal already does. Found while fixing a slice literal's drop on 2026-11-01 at
+`46cf2aa8` (P1).
 
 ### A conditional write hides a received allocator payload's region
 

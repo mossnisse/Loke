@@ -1556,7 +1556,7 @@ prov_existing_content_root :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symb
 // Each literal element's borrows go to its own place; an element whose slot
 // can't be resolved joins into every path.
 @(private)
-prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int) -> []int {
+prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int, literal_type: Type_Id) -> []int {
 	// One part per element value, and for a map one more per key (design.md
 	// "Values that contain borrows": a map carries its keys' borrows too).
 	Part :: struct {
@@ -1566,7 +1566,6 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		known:  bool,
 	}
 	parts := make([dynamic]Part, 0, 2 * len(v.elements), graph.alloc)
-	literal_type := prov_type(graph, v)
 	is_map := underlying_kind(graph.k.c, literal_type) == .Map
 	// What earlier elements hold, used again as each later mutable carrier is
 	// lent, as `prov_call` does for arguments.
@@ -2114,10 +2113,11 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 @(private)
 prov_extended_drop :: proc(graph: ^Flow_Graph, root: Prov_Root, effects_at, span: Span) {
 	prov_drop_effects(graph, root.dropped, effects_at, root.name, unnamed = true)
-	if root.content < 0 {
+	held := root.slots if root.content < 0 else prov_one(graph, root.content)
+	if len(held) == 0 || !type_drop_runs_hook(graph.k.c, root.dropped) {
 		return
 	}
-	prov_emit(graph, Prov_Event{kind = .Live, sources = prov_one(graph, root.content), span = span})
+	prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span})
 	if graph.scope_drops == nil {
 		graph.scope_drops = make(map[Span]bool, graph.alloc)
 	}
@@ -6602,26 +6602,31 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 }
 
 // design.md "Slice literals": the hidden array is always extended, an owner
-// ending with its block, and a slice of it also carries its elements' loans.
+// ending with its block, and a named array's `&mut a[:]` lends as this literal
+// lends it. Its content is held by slots of the array's shape, so a store through
+// the slice lands in or replaces one element's, and a load reads what it holds
+// now. A slice of it holds only its loan.
 @(private)
-prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable: bool, elements: []int) -> []int {
+prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable: bool) -> []int {
 	span := literal.span
-	storage := prov_storage_id(graph, Written_Storage{temporary = &literal.base, type = prov_repr(graph, literal).backing}, .Slice_Literal)
+	backing := prov_repr(graph, literal).backing
+	storage := prov_storage_id(graph, Written_Storage{temporary = &literal.base, type = backing}, .Slice_Literal)
 	root := prov_root_for_storage(graph, storage)
 	graph.roots[int(root)].kind = .Slice_Literal
 	graph.roots[int(root)].name = "this slice literal"
+	slots := graph.roots[int(root)].slots
+	if slots == nil {
+		slots = prov_temp_content(graph, backing)
+		graph.roots[int(root)].slots = slots
+		graph.has_content_load ||= len(slots) > 0
+	}
+	prov_composite_content(graph, literal, slots, backing)
 	// Its elements are dropped with the block's locals, so their drop hooks run
 	// there and read what the elements borrow then, even after the slice
 	// that viewed them was overwritten (design.md "Temporaries and procedure
 	// boundaries").
-	backing := prov_repr(graph, literal).backing
 	graph.roots[int(root)].extended = true
 	graph.roots[int(root)].dropped = backing
-	if len(elements) > 0 && type_drop_runs_hook(graph.k.c, backing) {
-		slot := prov_temp_slot(graph)
-		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = elements, span = span})
-		graph.roots[int(root)].content = slot
-	}
 	for element, index in literal.elements {
 		if element.value == nil { continue }
 		step, _ := prov_element_step(graph, literal, backing, true, index)
@@ -6629,7 +6634,10 @@ prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable
 		prov_define_value_regions(graph, root, {step}, prov_input_value(graph, element.value), copies = copies)
 	}
 	append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
-	return prov_join(graph, elements, prov_borrow(graph, root, nil, mutable, span, "slice"))
+	// All of the array, as `a[:]` lends it, which tells the elements apart.
+	count := underlying_info(graph.k.c, backing).count
+	path := count > 0 ? prov_extend(graph, nil, proj_range(0, i64(count))) : nil
+	return prov_borrow(graph, root, path, mutable, span, "slice")
 }
 
 // Iterating a place borrows it, mutably for a `ref` binding.
@@ -8472,10 +8480,10 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 			out = prov_join(graph, out, below)
 			continue
 		}
-		// design.md "Slice literals": a slice also carries its elements' loans,
-		// as a variadic pack does its operands', so what it holds may be an
-		// element as well as the storage it views. That storage is searched by
-		// its own carriers' types, since an element's loan names no element.
+		// design.md "Variadic parameters": a pack also carries its operands'
+		// loans, so what it holds may be an element as well as the storage it
+		// views. That storage is searched by its own carriers' types, since an
+		// element's loan names no element.
 		if info.kind == .Slice {
 			chain[info.element] = true
 			out = prov_join(graph, out, prov_mutable_reach(graph, selected, info.element, span, chain))
