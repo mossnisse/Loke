@@ -124,36 +124,21 @@ written_format_member :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
 	return nil
 }
 
-// A type's inherent `format`, or INVALID_SYMBOL when the compiler generates one.
+// design.md gives the name to the protocol, so a type's `format` that cannot
+// serve it is a mistake, not an unrelated procedure. Reported once per written
+// declaration, not per generic instance.
 @(private = "file")
-formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id, reported: ^map[Span]bool) -> Symbol_Id {
-	info := type_of(c, type)
-	if info == nil {
-		return INVALID_SYMBOL
+check_formatter :: proc(c: ^Compiler, type, writer, options: Type_Id, reported: ^map[Span]bool) {
+	sym := written_format_member(c, type)
+	if sym == nil || formatter_signature_ok(c, sym, type, writer, options) || reported[sym.span] {
+		return
 	}
-	for member in info.members {
-		sym := symbol_of(c, member)
-		if sym == nil || sym.synth != .None || sym.bound_excluded || identifier_text(c, sym.name) != "format" {
-			continue
-		}
-		if formatter_signature_ok(c, sym, type, writer, options) {
-			return member
-		}
-		// design.md gives the name to the protocol, so a `format` that cannot
-		// serve it is a mistake, not an unrelated procedure. Reported once per
-		// written declaration, not per generic instance.
-		if reported[sym.span] {
-			return INVALID_SYMBOL
-		}
-		reported[sym.span] = true
-		errorf(
-			c, sym.span, "L0572",
-			"`format` on `%s` is what erased printing calls, so it is written `proc(self, w: fmt.Writer, o: fmt.Options)`",
-			type_name(c, type),
-		)
-		return INVALID_SYMBOL
-	}
-	return INVALID_SYMBOL
+	reported[sym.span] = true
+	errorf(
+		c, sym.span, "L0572",
+		"`format` on `%s` is what erased printing calls, so it is written `proc(self, w: fmt.Writer, o: fmt.Options)`",
+		type_name(c, type),
+	)
 }
 
 // Checks every type's `format`, printed or not, so a wrong one is an error in
@@ -172,7 +157,7 @@ discover_formatters :: proc(c: ^Compiler) {
 	reported := make(map[Span]bool, context.temp_allocator)
 	for index in 0 ..< len(c.types) {
 		type := Type_Id(index)
-		_ = formatter_of(c, type, writer, options, &reported)
+		check_formatter(c, type, writer, options, &reported)
 	}
 	k := Checker{c = c}
 	for pkg in c.packages {
@@ -191,21 +176,6 @@ discover_formatters :: proc(c: ^Compiler) {
 	}
 }
 
-// design.md "String format printing": the view printing dispatches through,
-// which effects and thread transfers ask about, recorded once `core:fmt`'s
-// bodies are checked.
-record_printing_view :: proc(c: ^Compiler) {
-	for pkg in c.packages {
-		if pkg.key != STD_FMT { continue }
-		k := Checker{c = c}
-		k.pkg, k.lookup_pkg, k.scope = pkg.id, pkg.id, pkg.scope
-		if view, exists := package_type_named(&k, package_of(c, pkg.id), "Format_View"); exists {
-			c.runtime_types["Format_View"] = view
-		}
-		return
-	}
-}
-
 // Whether `element` is printing's `dyn fmt.Formattable`.
 dyn_views_printing :: proc(c: ^Compiler, element: Type_Id) -> bool {
 	info := underlying_info(c, element)
@@ -217,7 +187,7 @@ dyn_views_printing :: proc(c: ^Compiler, element: Type_Id) -> bool {
 }
 
 // Whether `type` writes a `format` that cannot serve printing, which
-// `formatter_of` reports once at its declaration rather than at every print.
+// `check_formatter` reports once at its declaration rather than at every print.
 format_misdeclared :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	writer, has_writer := c.runtime_types["Writer"]
 	options, has_options := c.runtime_types["Options"]

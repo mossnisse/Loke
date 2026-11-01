@@ -303,10 +303,13 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 
 	// Every symbol has its kind and its constant its type.
 	check_private_names(k, package_id)
-	// Packages that print are checked after `core:fmt`, and their effects and
-	// thread transfers ask about printing's view.
+	// design.md "String format printing": packages that print are checked after
+	// `core:fmt`, and their effects and thread transfers ask about the view
+	// printing dispatches through.
 	if pkg.key == STD_FMT {
-		record_printing_view(k.c)
+		if view, exists := package_type_named(k, pkg, "Format_View"); exists {
+			k.c.runtime_types["Format_View"] = view
+		}
 	}
 }
 

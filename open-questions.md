@@ -53,16 +53,6 @@ allowing a later argument to free storage the report will read.
 The two newer fixes, `210f1131` and `5580637f`, are outside this review's
 scope and address the unrelated divergences these commits recorded.
 
-One smaller simplification remains open:
-
-- **Use the fmt package the caller already has (P3, simplification).**
-  `check_package_bodies` in [src/check.odin](src/check.odin) calls
-  `record_printing_view` only after recognizing `pkg.key == STD_FMT`.
-  The new helper in [src/format.odin](src/format.odin) searches every package
-  for that same package and constructs another checker. Resolve `Format_View`
-  with the caller's checker and package there, removing the search and helper,
-  about ten lines.
-
 The overall separation is appropriate: the new conversion is confined to pack
 elements rather than ordinary assignment, library printers call ordinary slots,
 and the removed type and extraction node are deleted across compiler phases.
@@ -80,8 +70,7 @@ path stopped in Odin's runner with exception `0xC000001D`. Focused probes
 confirmed the regression and its pre-change rejection, as well as generic and
 overloaded variadic calls and formatting through existing views. All 2,876
 specification citations resolved before the review notes were added. No
-implementation fixes are included in this review. Estimated simplification:
-net: -25 lines possible.
+implementation fixes are included in this review.
 
 ## Review of slice-literal cleanup and received allocator unwrapping (2026-11-01)
 
@@ -437,17 +426,14 @@ were applied during review.
 Reviewed `d16a9a2d` ("Print a public type with a private format by the
 generated default") and `404acdcb` ("Record a bound generic's direct
 format call as an open question") for correctness, simplification, and
-structure. Two findings, of which the second remains:
+structure. Two findings, both since closed:
 
 - **Keep hidden defaults out of completion (P2), since fixed.** The checker
   hid the generated default from ordinary lookup, but the editor still offered
   it to an importer, and calling the suggested method produced `L0363`.
-- **Reuse the written-formatter search (P3, shrink).** The new
-  `written_format_member` in [src/format.odin](src/format.odin) performs
-  the same member walk and filtering as `formatter_of` immediately below
-  it. The latter's only caller discards its `Symbol_Id` result. Make it
-  a validation procedure using `written_format_member`, removing the
-  duplicate search and unused return contract; about 14 lines can go.
+- **Reuse the written-formatter search (P3, shrink), since done.**
+  `check_formatter` in [src/format.odin](src/format.odin) now asks
+  `written_format_member` rather than repeating its member walk.
 
 The printed-form policy is consistent across erased printing, explicit
 interface views, nesting, and public generic instances. The defining
