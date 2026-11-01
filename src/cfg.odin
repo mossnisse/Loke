@@ -341,10 +341,13 @@ Prov_State :: struct {
 	summary_callees: [dynamic]Symbol_Id,
 	// Calls through a procedure type with no result contract, for notes.
 	plain_calls: [dynamic]^Expr_Call,
-	// design.md "Global write effects": this body's own writes of globals, and
-	// its calls while the effects are still settling.
+	// design.md "Global write effects": this body's own writes and reads of
+	// globals, and its calls while the effects are still settling.
 	effect_writes: [dynamic]Symbol_Id,
+	effect_reads:  [dynamic]Symbol_Id,
 	effect_calls:  [dynamic]Effect_Call,
+	// The `hook(copy)`s this body's copies may run, which only read.
+	effect_copy_hooks: [dynamic]Symbol_Id,
 	// Procedures this body uses as values, and the callee being walked, which is
 	// a call rather than a use.
 	effect_values: [dynamic]Symbol_Id,
@@ -482,6 +485,8 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.summary_callees = make([dynamic]Symbol_Id, allocator)
 		graph.plain_calls = make([dynamic]^Expr_Call, allocator)
 		graph.effect_writes = make([dynamic]Symbol_Id, allocator)
+		graph.effect_reads = make([dynamic]Symbol_Id, allocator)
+		graph.effect_copy_hooks = make([dynamic]Symbol_Id, allocator)
 		graph.effect_calls = make([dynamic]Effect_Call, allocator)
 		graph.effect_values = make([dynamic]Symbol_Id, allocator)
 		graph.effect_stores = make([dynamic]Effect_Store, allocator)
@@ -1945,6 +1950,10 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 		})
 	}
 	if graph.mode != .Lifecycle {
+		// A step that does not lend its element clones it out of the source.
+		if !s.borrows && !place_loop && s.element_type != INVALID_TYPE {
+			prov_copy_effects(graph, s.element_type, expr_span(s.iterable))
+		}
 		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements, through)
 	}
 	// design.md "By-reference iteration": a `&mut` binding's loan ends with its
@@ -2267,8 +2276,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	// An extended temporary keeps what it carries live until its drop, though
 	// the borrow extending it may name only a field of it.
 	defer if prov {
-		if base := expr_base(e); base != nil && graph.extended[base] {
-			graph.extended_content[base] = carried
+		if base := expr_base(e); base != nil {
+			if graph.extended[base] {
+				graph.extended_content[base] = carried
+			}
+			if base.copied_as != INVALID_TYPE {
+				prov_copy_effects(graph, base.copied_as, base.span)
+			}
 		}
 	}
 	// design.md "Variadic parameters", "Borrowed callable views": an implicit view
@@ -2477,6 +2491,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			if v.resolution.kind == .User_Operator {
 				return prov_call(graph, prov_operator_call(graph, v))
 			}
+			// Reading a map's element clones it out, which writing one does not.
+			if len(v.bound) == 0 && underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map {
+				prov_copy_effects(graph, prov_type(graph, v), v.span)
+			}
 			if root, path, ok := prov_place_of(graph, v); ok {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
@@ -2521,6 +2539,14 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		held := 0
 		if prov { held = len(graph.held_owners) }
 		defer if prov { resize(&graph.held_owners, held) }
+		// design.md "Fixed arrays": a range of slots holds copies of one element.
+		if prov {
+			for element, index in v.elements {
+				if first, end := composite_element_slots(v, index); end - first > 1 && element.value != nil {
+					prov_copy_effects(graph, expr_base(element.value).type, expr_span(element.value))
+				}
+			}
+		}
 		// A non-empty container literal evaluates its destination's `via` first.
 		if len(v.elements) > 0 {
 			walk_flow_expr(graph, v.via)
@@ -2670,6 +2696,8 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if graph.mode == .Lifecycle {
 			return nil
 		}
+		// It clones the payload out.
+		prov_copy_effects(graph, union_variant_payload(graph.k.c, prov_type(graph, v.bound[0]), operation.index), v.span)
 		return prov_project_content(graph, loans, prov_type(graph, v.bound[0]), nil, prov_type(graph, v), v.span)
 	case Call_Union_Construct:
 		loans: []int

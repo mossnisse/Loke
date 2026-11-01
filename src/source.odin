@@ -352,10 +352,12 @@ Compiler :: struct {
 	// Direct summary dependencies, discovered while building each body's first
 	// provenance graph. The solver schedules only callers of a changed callee.
 	result_summary_dependencies: map[Symbol_Id][]Symbol_Id,
-	// design.md "Global write effects": the globals each body may write, and what
-	// an indirect call may reach, settled before provenance runs.
+	// design.md "Global write effects": the globals each body may write or read,
+	// and what an indirect call may reach, settled before provenance runs.
 	global_writes:       map[Symbol_Id][]Symbol_Id,
 	indirect_writes:     map[string][]Symbol_Id,
+	global_reads:        map[Symbol_Id][]Symbol_Id,
+	indirect_reads:      map[string][]Symbol_Id,
 	// Per body that calls a procedure value it received, its summaries apart
 	// from that value, which each call substitutes; and every body of a
 	// procedure type used as a value, once that is settled.

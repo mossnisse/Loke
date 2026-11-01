@@ -569,9 +569,9 @@ be written through any other path, and a mutable borrow excludes every other
 access. For the duration of a call, then:
 
 - a `^mut T` or `inout T` parameter is the only live path to its pointee:
-  `noalias`. The global effects do not yet enforce this for a callee that
-  reads a global by name while holding a mutable borrow of it
-  ([A callee may read a global its mutable parameter borrows](known-gaps.md#a-callee-may-read-a-global-its-mutable-parameter-borrows));
+  `noalias`. The global effects enforce this for a callee that reads a global
+  by name while holding a mutable borrow of it, through the
+  [read effect](design.md#global-write-effects);
 - a `^T` parameter's pointee is not written by anyone, unless its type reaches
   a [`@(synchronized)`](design.md#synchronized) field, as `Atomic(T)`,
   `Mutex(T)`, and `Monitor(T)` do: `noalias readonly`. `readonly` alone says
@@ -651,9 +651,8 @@ into undefined behavior that the optimizer exploits, so they come last:
   the hosted default, most programs would get the attributes only by opting
   in.
 - Give the global effects a read component, so that a call passing a mutable
-  borrow of a global conflicts with a callee that reads that global
-  ([A callee may read a global its mutable parameter borrows](known-gaps.md#a-callee-may-read-a-global-its-mutable-parameter-borrows)).
-  Thread-affine values in globals, under
+  borrow of a global conflicts with a callee that reads that global. This is
+  done: see the [read effect](design.md#global-write-effects). Thread-affine values in globals, under
   [Later concurrency extensions](open-questions.md#later-concurrency-extensions),
   would need the same effect.
 - Measure before building. After
@@ -1160,8 +1159,7 @@ In the optimized IR of the second build, the `store i64 3` before the call to
 `loke_rt_v1_panic` is gone. Both builds also show `readonly captures(none)`
 on internal procedures that the emitter wrote without them, inferred by LLVM.
 
-**A callee reading a global it holds `^mut` to** is accepted by the same
-compiler; see
-[A callee may read a global its mutable parameter borrows](known-gaps.md#a-callee-may-read-a-global-its-mutable-parameter-borrows).
+**A callee reading a global it holds `^mut` to** was accepted by the same
+compiler; the [read effect](design.md#global-write-effects) now rejects it.
 With `noalias` added by hand it still printed `1` and `2` at `-O2`, so the
 probe shows a broken contract, not a miscompilation.

@@ -566,6 +566,7 @@ classify_copy :: proc(k: ^Checker, value: Expr, destination: Type_Id, site: Copy
 		return false
 	}
 	contribute_lifecycle_members(k, type)
+	expr_base(value).copied_as = type
 	return true
 }
 
@@ -682,6 +683,8 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
 			continue
 		}
 		report_copy_cost(k, .Binding, expr_span(operand), operand, field.type)
+		// Every field it clones, not only the last one.
+		expr_base(operand).copied_as = expr_base(operand).type
 		if type_clone_disabled(k.c, field.type) {
 			errorf(
 				k.c, expr_span(operand), "L0503",
@@ -791,6 +794,9 @@ report_copy_cost :: proc(
 	k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id,
 	held := Held_Copy_Report{},
 ) {
+	if base := expr_base(source); base != nil {
+		base.copied_as = type
+	}
 	if !k.c.copy_cost_enabled {
 		return
 	}

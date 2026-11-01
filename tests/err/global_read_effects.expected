@@ -1,0 +1,131 @@
+L0511
+@17:28
+`counter` cannot be read by `bump` here: a mutable pointer of it is still in use
+L0511
+@25:7
+`counter` cannot be read by `deep` here: a mutable pointer of it is still in use
+L0511
+@30:7
+`counter` cannot be read by `view_of_it` here: a mutable pointer of it is still in use
+L0511
+@34:34
+`counter` cannot be read by `as_inout` here: a mutable borrow of it is still in use
+L0511
+@44:7
+`pair` cannot be read by `read_pair_a` here: a mutable pointer of it is still in use
+L0511
+@49:7
+`pair` cannot be read by `read_pair_b` here: a mutable pointer of it is still in use
+L0511
+@57:7
+`counter` cannot be read by `peek` here: a mutable pointer of it is still in use
+L0511
+@65:8
+`counter` cannot be read by `peek` here: a mutable pointer of it is still in use
+L0511
+@75:7
+`items` cannot be read by `item_count` here: a mutable slice of it is still in use
+L0511
+@80:11
+`items` cannot be read by `item_count` here: a mutable iterator of it is still in use
+L0511
+@91:32
+`bag` cannot be read by `refill` here: a mutable borrow of it is still in use
+L0511
+@103:4
+`hooked` cannot be read by `release` when `guard` is dropped here: a mutable pointer of it is still in use
+L0511
+@109:2
+`hooked` cannot be read by `release` here: a mutable pointer of it is still in use
+L0511
+@120:7
+`converted` cannot be read by `from_int` here: a mutable pointer of it is still in use
+L0511
+@132:2
+`shown` cannot be read by `println` here: a mutable pointer of it is still in use
+L0511
+@144:7
+`called` cannot be read by `call_it` here: a mutable pointer of it is still in use
+L0511
+@150:7
+`called` cannot be read by a procedure this call may reach here: a mutable pointer of it is still in use
+L0511
+@161:7
+`any_value` cannot be read by a procedure this call may reach here: a mutable pointer of it is still in use
+L0511
+@170:7
+`sized` cannot be read by a procedure this call may reach here: a mutable pointer of it is still in use
+L0511
+@186:6
+`compared` cannot be read by `same` here: a mutable pointer of it is still in use
+L0511
+@193:7
+`counter` cannot be read by `generic_read(int)` here: a mutable pointer of it is still in use
+L0511
+@200:7
+`local_state` cannot be read by `read_local_state` here: a mutable pointer of it is still in use
+L0511
+@218:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this binding clones `t`, which may allocate
+@223:7
+L0511
+@223:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this assignment clones `t`, which may allocate
+@228:6
+L0511
+@228:6
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this binding clones `o`, which may allocate
+@233:7
+L0511
+@233:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@238:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this binding clones `o`, which may allocate
+@243:14
+L0511
+@243:14
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this variadic argument clones `t`, which may allocate
+@248:14
+L0511
+@248:14
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@253:2
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@258:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@263:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@277:2
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@282:6
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@287:19
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@293:25
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this aggregate literal clones `t`, which may allocate
+@298:13
+L0511
+@298:13
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@310:7
+`copied` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+warning[L0507]: this binding clones `t`, which may allocate
+@313:52
+L0511
+@316:7
+`copied` cannot be read by `reading_copied` here: a mutable pointer of it is still in use

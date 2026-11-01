@@ -2822,6 +2822,8 @@ prov_new_loan :: proc(
 		}
 		// Whatever is written through the loan, the variable may now hold.
 		prov_note_proc_store(graph, descriptor.symbol, nil)
+	} else {
+		prov_note_static_read(graph, root)
 	}
 	append(&graph.loans, Prov_Loan{root = root, path = path, mutable = mutable, span = span, what = what})
 	return Loan_Id(len(graph.loans) - 1)
@@ -2867,6 +2869,8 @@ prov_access :: proc(
 	}
 	if kind != .Read {
 		prov_note_static_write(graph, root, span)
+	} else {
+		prov_note_static_read(graph, root)
 	}
 	// design.md "@(synchronized)": a synchronizing operation may write the
 	// field through any read-only borrow, so even reading it conflicts with one.
@@ -6241,6 +6245,7 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 		}
 		// Assigning through a map place may insert its key; an existing equal key
 		// stays, so the key dependency joins.
+		prov_copy_effects(graph, info.key, v.span)
 		prov_retain_escape(graph, v.operand, key_sources, v.span)
 		root, path, ok := prov_place_of(graph, v.operand)
 		if !ok {

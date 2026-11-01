@@ -8676,7 +8676,7 @@ Implicit calls contribute where they run:
 - every `format` method printing may reach, since erased types are known only
   at runtime.
 
-Copy hooks cannot write globals and add no effect; see
+Copy hooks cannot write globals and add no write effect; see
 [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types).
 Foreign writes and writes through pointers or views stored in globals are
 excluded; see [What is not checked](#what-is-not-checked).
@@ -8715,7 +8715,36 @@ is not part of its type. Since no variable is [public](#public), a caller
 borrows another package's storage only through a procedure's result, whose
 [result contract](#procedure-result-contracts) shows the static provenance.
 
-The same effect warns about likely data races. Passing a named procedure that
+Each procedure also has an inferred **read effect** listing the same kinds of
+storage it may read, or borrow read-only, by name, directly or through calls.
+It follows implicit calls, procedure values, and `dyn` calls as the write effect
+does. It also takes in each `hook(copy)` a copy in the procedure may run: a copy
+hook may read a global, and how many implicit copies run is unspecified, so every
+place a value is copied counts, including one [last-use
+transfer](#last-use-transfer) may turn into a move. Foreign reads and reads
+through pointers or views stored in globals are excluded, as such writes are.
+
+A call counts as a read of every global in its read effect, after its arguments
+have been borrowed. Under [the one rule](#capabilities-and-the-one-rule) only a
+mutable borrow conflicts with a read, so a mutable borrow of the global still
+live across the call is an error, while a read-only borrow beside the call, and
+a mutable borrow whose last use came before it, are not. Both effects name whole
+globals, so a mutable borrow of one field conflicts with a callee that reads
+another:
+
+```loke
+counter: int;
+
+bump :: proc(p: ^mut int) { p^ = counter + 1; }
+peek :: proc() -> int { return counter; }
+
+bump(&mut counter);             // ERROR: `counter` cannot be read by `bump` here
+shared := &counter;
+n := peek();                    // a read beside a read-only borrow
+fmt.println(shared^ + n);
+```
+
+The write effect also warns about likely data races. Passing a named procedure that
 may write file-scope or `static` storage to a
 [`@(cross_thread)`](#cross_thread) parameter produces a warning. This applies to
 the entry of `core:thread`'s `spawn` and to other marked parameters, since the
@@ -8777,8 +8806,8 @@ responsibility:
   therefore which thread runs `T`'s `drop` and uses the control block's
   allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
-- a global written through a pointer or view to it that was itself stored in a
-  global, or by foreign code, while a borrow of it is live.
+- a global written or read through a pointer or view to it that was itself
+  stored in a global, or by foreign code, while a borrow of it is live.
 - the validity of bits an unchecked route hands back as a value, and whether
   storage declared with `---` has been written before it is read; see [Invalid
   representations](#invalid-representations).

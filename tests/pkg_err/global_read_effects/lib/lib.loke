@@ -1,0 +1,9 @@
+@(public) package lib;
+
+state: int;
+total: int;
+
+get_mut :: proc() -> ^mut int { return &mut state; }
+peek :: proc() -> int { return state; }
+slot :: proc(n: int) -> int { return n + total; }
+apply :: proc(f: proc(n: int) -> int) -> int { return f(1); }

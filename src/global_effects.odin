@@ -8,7 +8,9 @@ import "core:slice"
 // storage its callee may write, directly or through its own callees. Each body's
 // set is settled over the whole program before provenance runs, and a call then
 // counts as a write to every global in its callee's set, so a borrow of one that
-// is still in use across the call conflicts exactly as a local write would.
+// is still in use across the call conflicts exactly as a local write would. A
+// read settles the same way and counts as a read there, which only a mutable
+// borrow conflicts with.
 
 // What one call may reach: a direct procedure, a `dyn` slot, or any procedure of
 // a compatible type called through a value.
@@ -97,9 +99,13 @@ Body_Effects :: struct {
 	symbol: Symbol_Id,
 	type:   Type_Id,
 	// Its own part, apart from the callbacks it calls, then all of it.
-	own:    [dynamic]Symbol_Id,
-	writes: [dynamic]Symbol_Id,
-	calls:  []Effect_Call,
+	own:       [dynamic]Symbol_Id,
+	writes:    [dynamic]Symbol_Id,
+	own_reads: [dynamic]Symbol_Id,
+	reads:     [dynamic]Symbol_Id,
+	calls:     []Effect_Call,
+	// The `hook(copy)`s it may run, which take no part in the other summaries.
+	copy_hooks: []Symbol_Id,
 }
 
 // A write, invalidation, or mutable borrow of a global's storage.
@@ -112,12 +118,19 @@ prov_note_static_write :: proc(graph: ^Flow_Graph, root: Root_Id, span: Span) {
 		return
 	}
 	prov_note_shared_effect(graph, entry.symbol, .Write, span)
-	for existing in graph.effect_writes {
-		if existing == entry.symbol {
-			return
-		}
+	add_global_symbol(&graph.effect_writes, entry.symbol)
+}
+
+// A read of a global's storage by name, or a read-only borrow of it, kept only
+// while the effects settle.
+prov_note_static_read :: proc(graph: ^Flow_Graph, root: Root_Id) {
+	if root == NO_ROOT || graph.k.c.global_writes_ready {
+		return
 	}
-	append(&graph.effect_writes, entry.symbol)
+	entry := graph.roots[int(root)]
+	if (entry.kind == .Static || entry.kind == .Thread_Local) && entry.symbol != INVALID_SYMBOL {
+		add_global_symbol(&graph.effect_reads, entry.symbol)
+	}
 }
 
 // A procedure named anywhere but as a direct callee may be called through a
@@ -274,7 +287,8 @@ converted_view_call :: proc(c: ^Compiler, view: Expr, slot: int) -> (Effect_Call
 }
 
 // Records the call while the effects settle; once they have, the callee's
-// writes become accesses at the call, after its arguments' loans are taken.
+// writes and reads become accesses at the call, after its arguments' loans are
+// taken.
 prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
 	prov_implicit_call_effects(graph, v)
@@ -491,11 +505,25 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 	subject := expr_base(v.bound[0]).type
 	#partial switch sym.synth {
+	case .Clone, .Try_Clone, .Iterator_Copy:
+		prov_copy_effects(graph, subject, v.span)
+	case .Indexed_Next, .Copied_Next, .Array_Next, .Slice_Next:
+		// What an iterator's `next` hands back by value, it clones out.
+		prov_copy_effects(graph, sym.result, v.span)
 	case .Standard_Hash:
 		prov_hash_effects(graph, subject, v.span)
 	case .Container_Op:
 		if sym.container_op in KEY_HASHING_OPS {
 			prov_key_effects(graph, subject, v.span)
+		}
+		// An `append` keeps a copy of what a lone spread lends it, and a lookup
+		// hands back a copy of what it finds.
+		if sym.container_op == .Map_Lookup_Value || sym.container_op == .Append && v.variadic_forwards {
+			prov_copy_effects(graph, container_element(c, subject), v.span)
+		}
+		// An insertion keeps a copy of its key.
+		if sym.container_op == .Map_Find_Or_Insert || sym.container_op == .Map_Try_Insert {
+			prov_copy_effects(graph, container_key(c, subject), v.span)
 		}
 	}
 }
@@ -541,7 +569,7 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 	if sym == nil {
 		return
 	}
-	described := "modified by printing a failure `main` returns"
+	described := "printing a failure `main` returns"
 	switch c.build_mode {
 	case .Exe:
 		// The entry point is validated after this pass, so it is found by name.
@@ -555,7 +583,7 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 		if !sym.is_test || sym.pkg != c.root_package {
 			return
 		}
-		described = "modified by printing a failure a test returns"
+		described = "printing a failure a test returns"
 	case .Obj:
 		return
 	}
@@ -570,6 +598,30 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 		graph, Effect_Call{dyn_interface = underlying_info(c, view).dyn_interface}, span,
 		described = described,
 	)
+}
+
+// design.md "Global write effects": a copy may run the `hook(copy)` of what it
+// copies, whose writes are rejected, so what remains is what it reads. How many
+// copies run is unspecified, so each copy site counts, and a copy last-use
+// transfer turns into a move counts as well.
+prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
+	c := graph.k.c
+	for hook in type_copy_hooks(c, type) {
+		if !c.global_writes_ready {
+			add_global_symbol(&graph.effect_copy_hooks, hook)
+			continue
+		}
+		reads := c.global_reads[hook]
+		if len(reads) == 0 {
+			continue
+		}
+		name := effect_call_description(c, Effect_Call{callee = hook}, "read", "", "", false)
+		for global in reads {
+			if !graph.task_effects || !global_is_thread_local(c, global) {
+				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Read, span, name)
+			}
+		}
+	}
 }
 
 // A built-in `==` or `!=` compares structurally, and `in` looks a key up in a
@@ -668,11 +720,13 @@ Called_Parameter :: struct {
 // What a body that calls a procedure value it received does apart from that
 // value, so each call of the body takes in what its caller passes instead of
 // every procedure of the parameter's type. The whole summaries
-// (`Compiler.global_writes`, `reach_effects`, `allocator_uses`) add that union.
+// (`Compiler.global_writes`, `global_reads`, `reach_effects`, `allocator_uses`)
+// add that union.
 // `regions` is, per `called`, the regions of what the body passes the callback.
 Callback_Summary :: struct {
 	called:  []Called_Parameter,
 	writes:  []Symbol_Id,
+	reads:   []Symbol_Id,
 	reach:   []Global_Effect,
 	use:     Allocator_Use,
 	regions: []Region_Set,
@@ -1025,22 +1079,32 @@ prov_effect_call :: proc(
 		prov_window_effect_use(graph, target, span)
 	}
 	writes := effect_call_writes(c, graph_body(graph), target)
-	if len(writes) == 0 {
-		return
-	}
+	reads := effect_call_reads(c, graph_body(graph), target)
 	// Described only for the accesses below, which most calls make none of.
-	name := effect_call_description(c, target, dropped, described, unnamed)
-	graph.effect_name = name
-	defer graph.effect_name = ""
-	for global in writes {
-		// A task's `thread_local` writes are never the parent's at its spawn:
-		// a bare block's task has a thread of its own, and a pooled one runs
-		// on the parent's thread only at the join, which counts them there.
-		if graph.task_effects && global_is_thread_local(c, global) {
-			continue
+	if len(writes) > 0 {
+		name := effect_call_description(c, target, "modified", dropped, described, unnamed)
+		graph.effect_name = name
+		defer graph.effect_name = ""
+		for global in writes {
+			// A task's `thread_local` writes are never the parent's at its spawn:
+			// a bare block's task has a thread of its own, and a pooled one runs
+			// on the parent's thread only at the join, which counts them there.
+			if graph.task_effects && global_is_thread_local(c, global) {
+				continue
+			}
+			root := prov_root_for_symbol(graph, global)
+			prov_access(graph, root, nil, .Invalidate, span, name)
 		}
-		root := prov_root_for_symbol(graph, global)
-		prov_access(graph, root, nil, .Invalidate, span, name)
+	}
+	if len(reads) > 0 {
+		name := effect_call_description(c, target, "read", dropped, described, unnamed)
+		for global in reads {
+			// A write above already conflicts with every loan a read would.
+			if slice.contains(writes, global) || graph.task_effects && global_is_thread_local(c, global) {
+				continue
+			}
+			prov_access(graph, prov_root_for_symbol(graph, global), nil, .Read, span, name)
+		}
 	}
 }
 
@@ -1067,8 +1131,8 @@ Pool_Task :: struct {
 // pool, so the join writes the `thread_local` storage they may write. A
 // spawned call's summary counts what it calls and the pooled tasks it spawns
 // in turn, but not a bare block's, which never run on this thread: exactly
-// the tasks a helping join may run. Their other writes are the window's
-// concern, wherever they run.
+// the tasks a helping join may run, whose `thread_local` reads count as well.
+// Their other writes are the window's concern, wherever they run.
 prov_pool_join_effects :: proc(graph: ^Flow_Graph, tasks: []Pool_Task, span: Span) {
 	c := graph.k.c
 	if !c.global_writes_ready || c.thread_facts_pending {
@@ -1076,9 +1140,16 @@ prov_pool_join_effects :: proc(graph: ^Flow_Graph, tasks: []Pool_Task, span: Spa
 	}
 	for task in tasks {
 		name := fmt.tprintf("modified by `%s`, which this join may run on this thread,", task.name)
-		for global in effect_call_writes(c, INVALID_SYMBOL, Effect_Call{callee = task.runs}) {
+		writes := effect_call_writes(c, INVALID_SYMBOL, Effect_Call{callee = task.runs})
+		for global in writes {
 			if global_is_thread_local(c, global) {
 				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Invalidate, span, name)
+			}
+		}
+		name = fmt.tprintf("read by `%s`, which this join may run on this thread,", task.name)
+		for global in effect_call_reads(c, INVALID_SYMBOL, Effect_Call{callee = task.runs}) {
+			if global_is_thread_local(c, global) && !slice.contains(writes, global) {
+				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Read, span, name)
 			}
 		}
 	}
@@ -1117,6 +1188,15 @@ part_writes :: proc(c: ^Compiler, part: Call_Part) -> []Symbol_Id {
 		return summary.writes
 	}
 	return c.global_writes[symbol]
+}
+
+@(private = "file")
+part_reads :: proc(c: ^Compiler, part: Call_Part) -> []Symbol_Id {
+	symbol := c.effect_program.bodies[part.body].symbol
+	if summary := c.callback_summaries[symbol]; summary != nil && !part.whole {
+		return summary.reads
+	}
+	return c.global_reads[symbol]
 }
 
 @(private = "file")
@@ -1169,18 +1249,18 @@ region_through :: proc(into: ^Region_Set, set: Region_Set, regions: []Region_Set
 
 // What a call reached through `target` is said to do in a diagnostic.
 @(private = "file")
-effect_call_description :: proc(c: ^Compiler, target: Effect_Call, dropped, described: string, unnamed: bool) -> string {
+effect_call_description :: proc(c: ^Compiler, target: Effect_Call, verb, dropped, described: string, unnamed: bool) -> string {
 	name := ""
 	if described != "" {
-		name = described
+		name = fmt.tprintf("%s by %s", verb, described)
 	} else if sym := symbol_of(c, target.callee); sym != nil && dropped != "" && unnamed {
-		name = fmt.tprintf("modified by `%s` when %s is dropped", identifier_text(c, sym.name), dropped)
+		name = fmt.tprintf("%s by `%s` when %s is dropped", verb, identifier_text(c, sym.name), dropped)
 	} else if sym != nil && dropped != "" {
-		name = fmt.tprintf("modified by `%s` when `%s` is dropped", identifier_text(c, sym.name), dropped)
+		name = fmt.tprintf("%s by `%s` when `%s` is dropped", verb, identifier_text(c, sym.name), dropped)
 	} else if sym != nil {
-		name = fmt.tprintf("modified by `%s`", identifier_text(c, sym.name))
+		name = fmt.tprintf("%s by `%s`", verb, identifier_text(c, sym.name))
 	} else {
-		name = "modified by a procedure this call may reach"
+		name = fmt.tprintf("%s by a procedure this call may reach", verb)
 	}
 	return name
 }
@@ -1192,7 +1272,7 @@ effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) ->
 	out := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
 	for part in call_parts(c, body, target, open = true) {
 		for reached in part_reach(c, part) {
-			add_global_write(&out, reached.global)
+			add_global_symbol(&out, reached.global)
 		}
 	}
 	return out[:]
@@ -1250,33 +1330,43 @@ substituted_region :: proc(graph: ^Flow_Graph, from: Allocator_Use, call: Effect
 // slot it goes through may run. A union is settled once per key.
 @(private = "file")
 effect_call_writes :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Symbol_Id {
+	return effect_call_globals(c, body, target, c.global_writes, &c.indirect_writes, part_writes)
+}
+
+// The settled reads of one call, resolved as its writes are.
+@(private = "file")
+effect_call_reads :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Symbol_Id {
+	return effect_call_globals(c, body, target, c.global_reads, &c.indirect_reads, part_reads)
+}
+
+@(private = "file")
+effect_call_globals :: proc(
+	c: ^Compiler, body: Symbol_Id, target: Effect_Call, whole: map[Symbol_Id][]Symbol_Id, indirect: ^map[string][]Symbol_Id,
+	part_globals: proc(c: ^Compiler, part: Call_Part) -> []Symbol_Id,
+) -> []Symbol_Id {
 	switch {
 	case target.callee != INVALID_SYMBOL:
 		if c.callback_summaries[target.callee] == nil {
-			return c.global_writes[target.callee]
+			return whole[target.callee]
 		}
 	case target.held == INVALID_SYMBOL && target.variable == INVALID_SYMBOL:
 		key := effect_key(target, context.temp_allocator)
-		if writes, found := c.indirect_writes[key]; found {
-			return writes
+		if globals, found := indirect[key]; found {
+			return globals
 		}
-		writes := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+		globals := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 		for reached in effect_targets(c, target, &c.effect_program) {
-			for global in c.global_writes[c.effect_program.bodies[reached].symbol] {
-				add_global_write(&writes, global)
+			for global in whole[c.effect_program.bodies[reached].symbol] {
+				add_global_symbol(&globals, global)
 			}
 		}
-		settled := clone_symbols(c, writes[:])
-		c.indirect_writes[effect_key(target, c.semantic_allocator)] = settled
+		settled := clone_symbols(c, globals[:])
+		indirect[effect_key(target, c.semantic_allocator)] = settled
 		return settled
 	}
 	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	for part in call_parts(c, body, target, open = true) {
-		for global in part_writes(c, part) {
-			if !part.elsewhere || !global_is_thread_local(c, global) {
-				add_global_write(&out, global)
-			}
-		}
+		add_part_globals(c, &out, part_globals(c, part), part)
 	}
 	return out[:]
 }
@@ -1290,8 +1380,9 @@ effect_key :: proc(target: Effect_Call, allocator: mem.Allocator) -> string {
 	return fmt.aprintf("t%d", int(target.type), allocator = allocator)
 }
 
-// Every clean body's own writes and calls, then the fixed point: a body writes
-// what it writes itself and what anything it may call writes. A direct call
+// Every clean body's own writes, reads, and calls, then the fixed point: a body
+// writes what it writes itself and what anything it may call writes, and reads
+// likewise. A direct call
 // takes its callee's own part and, for each callback the callee calls, what
 // this call passes there (`call_parts`). A value nothing followed may be every
 // body of a compatible type that is used as a value, and a `dyn` slot every
@@ -1300,6 +1391,8 @@ compute_global_writes :: proc(k: ^Checker) {
 	c := k.c
 	c.global_writes = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.indirect_writes = make(map[string][]Symbol_Id, c.semantic_allocator)
+	c.global_reads = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
+	c.indirect_reads = make(map[string][]Symbol_Id, c.semantic_allocator)
 	c.callback_summaries = make(map[Symbol_Id]^Callback_Summary, c.semantic_allocator)
 	c.type_unions = nil
 	// Kept for the thread summaries, which settle over the same calls.
@@ -1317,6 +1410,9 @@ compute_global_writes :: proc(k: ^Checker) {
 		}
 		effects.own = make([dynamic]Symbol_Id, 0, len(graph.effect_writes), context.temp_allocator)
 		append(&effects.own, ..graph.effect_writes[:])
+		effects.own_reads = make([dynamic]Symbol_Id, 0, len(graph.effect_reads), context.temp_allocator)
+		append(&effects.own_reads, ..graph.effect_reads[:])
+		effects.copy_hooks = slice.clone(graph.effect_copy_hooks[:], context.temp_allocator)
 		effects.calls = make([]Effect_Call, len(graph.effect_calls), context.temp_allocator)
 		copy(effects.calls, graph.effect_calls[:])
 		// The graph's storage is reset below; what each call's values may be is
@@ -1367,6 +1463,11 @@ compute_global_writes :: proc(k: ^Checker) {
 		for call in body.calls {
 			append(&list, ..call_parts(c, body.symbol, call, open = false))
 		}
+		for hook in body.copy_hooks {
+			if target, found := program.index_of[hook]; found {
+				append(&list, Call_Part{body = target, whole = true, via = -1, callback = -1})
+			}
+		}
 		parts[index] = list[:]
 		closing[index] = closing_parts(c, index)
 	}
@@ -1375,6 +1476,7 @@ compute_global_writes :: proc(k: ^Checker) {
 	readers := part_readers(parts, closing)
 	for &body in bodies {
 		body.writes = make([dynamic]Symbol_Id, 0, len(body.own), context.temp_allocator)
+		body.reads = make([dynamic]Symbol_Id, 0, len(body.own_reads), context.temp_allocator)
 	}
 	queued := make([]bool, len(bodies), context.temp_allocator)
 	pending := make([dynamic]int, 0, len(bodies), context.temp_allocator)
@@ -1388,22 +1490,19 @@ compute_global_writes :: proc(k: ^Checker) {
 		body := &bodies[index]
 		grew := false
 		for part in parts[index] {
-			from := bodies[part.body].writes if part.whole else bodies[part.body].own
-			for global in from {
-				if !part.elsewhere || !global_is_thread_local(c, global) {
-					grew |= add_global_write(&body.own, global)
-				}
-			}
+			reached := &bodies[part.body]
+			grew |= add_part_globals(c, &body.own, reached.writes[:] if part.whole else reached.own[:], part)
+			grew |= add_part_globals(c, &body.own_reads, reached.reads[:] if part.whole else reached.own_reads[:], part)
 		}
 		for global in body.own {
-			grew |= add_global_write(&body.writes, global)
+			grew |= add_global_symbol(&body.writes, global)
+		}
+		for global in body.own_reads {
+			grew |= add_global_symbol(&body.reads, global)
 		}
 		for part in closing[index] {
-			for global in bodies[part.body].writes {
-				if !part.elsewhere || !global_is_thread_local(c, global) {
-					grew |= add_global_write(&body.writes, global)
-				}
-			}
+			grew |= add_part_globals(c, &body.writes, bodies[part.body].writes[:], part)
+			grew |= add_part_globals(c, &body.reads, bodies[part.body].reads[:], part)
 		}
 		if !grew {
 			continue
@@ -1421,8 +1520,12 @@ compute_global_writes :: proc(k: ^Checker) {
 		if len(body.writes) > 0 {
 			c.global_writes[body.symbol] = clone_symbols(c, body.writes[:])
 		}
+		if len(body.reads) > 0 {
+			c.global_reads[body.symbol] = clone_symbols(c, body.reads[:])
+		}
 		if summary := c.callback_summaries[body.symbol]; summary != nil {
 			summary.writes = clone_symbols(c, body.own[:])
+			summary.reads = clone_symbols(c, body.own_reads[:])
 		}
 	}
 	c.global_writes_ready = true
@@ -1532,14 +1635,27 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, program: ^Effect_Program
 }
 
 @(private = "file")
-add_global_write :: proc(writes: ^[dynamic]Symbol_Id, global: Symbol_Id) -> bool {
-	for existing in writes {
+add_global_symbol :: proc(globals: ^[dynamic]Symbol_Id, global: Symbol_Id) -> bool {
+	for existing in globals {
 		if existing == global {
 			return false
 		}
 	}
-	append(writes, global)
+	append(globals, global)
 	return true
+}
+
+// What one part of a call adds: a bare block's task's `thread_local` storage
+// is its own thread's, not the caller's.
+@(private = "file")
+add_part_globals :: proc(c: ^Compiler, into: ^[dynamic]Symbol_Id, from: []Symbol_Id, part: Call_Part) -> bool {
+	grew := false
+	for global in from {
+		if !part.elsewhere || !global_is_thread_local(c, global) {
+			grew |= add_global_symbol(into, global)
+		}
+	}
+	return grew
 }
 
 @(private = "file")
