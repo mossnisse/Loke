@@ -980,6 +980,9 @@ checklist.
 
 ### Fixed
 
+- `free_all` of a field read off a temporary record, as in `(Pair{allowed, other}
+  if flag else Pair{allowed, other}).a`, is no longer `L0538` for the region its
+  sibling `.b` is in.
 - An element of a slice literal replaced through its slice no longer keeps what it
   borrowed before, so `view[0] = Read{{}}; drop(values);` is no longer `L0512` after
   `view := []mut Read{Read{values[:]}};`.

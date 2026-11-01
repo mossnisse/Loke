@@ -185,31 +185,6 @@ writes; seeding allocator leaves at parameter entry would also avoid repeating
 this fallback in individual readers. Confirmed on `5580637f` during review on
 2026-11-01 (P2); the conditional-write case also compiles at `426f1a13`.
 
-### A temporary record field also carries sibling allocator regions
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-keeps a record's fields separate when projecting a temporary result:
-
-```loke
-package main;
-Pair :: struct { a, b: Allocator }
-reset :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
-    free_all((Pair{allowed, other} if flag else Pair{allowed, other}).a);
-}
-main :: proc() {}
-```
-
-This reports `L0538`, although both possible values of `.a` are `allowed`.
-The failure predates the reviewed commits and reproduces at `426f1a13`.
-The projected query added in `5580637f` now obtains the correct field region,
-but `prov_region_of` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-merges it with `prov_read_region`'s whole-record result, retaining `.b`'s
-unmarked region. Return the projected query directly for a struct field and
-keep `prov_read_region` as the fallback. A scratch compiler with that
-one-line reduction accepts this case while still rejecting the received
-allocator payload probes. Confirmed on `5580637f` during review on 2026-11-01
-(P2, pre-existing; also a simplification opportunity).
-
 ### A local alias hides a generic-dependent Unit success
 
 [One result](design.md#one-result) permits a bare success return only when its

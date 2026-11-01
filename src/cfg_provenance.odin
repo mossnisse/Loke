@@ -4333,14 +4333,15 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			}
 			return set
 		}
-		set := prov_read_region(graph, id)
 		// A field of a temporary is in what produced it, each alternative of a
-		// conditional or `or_else` included.
+		// conditional or `or_else` included, and not in what its siblings are
+		// (design.md "Allocator regions and region provenance"). One read through a
+		// carrier is in what the carrier views.
 		if selector, is_selector := form.(Prov_Form_Selector); is_selector && selector.field && selector.operand != 0 &&
-		   underlying_kind(c, prov_value(graph, selector.operand).type) == .Struct {
-			region_merge(&set, prov_result_region_at(graph, selector.operand, {selector.step}, .All))
+		   underlying_kind(c, prov_value(graph, selector.operand).type) == .Struct && prov_place_carrier(graph, id) == 0 {
+			return prov_result_region_at(graph, selector.operand, {selector.step}, .All)
 		}
-		return set
+		return prov_read_region(graph, id)
 	case Prov_Form_Binary, Prov_Form_Unary, Prov_Form_Slice:
 		if call := prov_operator_value(graph, id); call != 0 {
 			return prov_result_region(graph, call)
