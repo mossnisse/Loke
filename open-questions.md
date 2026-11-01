@@ -79,11 +79,11 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   that its path overlaps and nothing else. `prov_caller_slots` already builds
   such slots; it keys them by loan rather than by root. Whether a path names
   one place, which `caller_one` and `caller_element` record, is a property of
-  the path. This would not by itself close the two gaps cited: the named array's
-  also needs a decision on rejecting `drop(values); view.len()`, and the protocol
-  traversal's is about where an iterator lends from. A `Param` root also stands for
-  several storages, one per load depth, which would have to become roots first, so
-  the proposal is unproven until tried.
+  the path. This would not by itself close the protocol traversal's gap, which is
+  about where an iterator lends from, and the named array's was closed without it. A
+  `Param` root also stands for several storages, one per load depth, which would have
+  to become roots first. The [outcome](#outcome-of-the-slot-vector-trial) below stops
+  short of this.
 
 - **Region facts are a second alias analysis with another lattice (P2,
   largest).** Root provenance is a per-block dataflow over loan bits,
@@ -99,20 +99,20 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   ([rationale](comments.md#provenance-replay-and-precise-publication)). Every
   store site records twice: `prov_assign`, `prov_container_content`, and the
   `Exchange` and `Unsafe_Write` builtins each call a loan path and a region
-  path. Two gaps follow from the lattice itself,
-  [a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
-  and
-  [a swap of owners is not seen](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen),
+  path. One gap follows from the lattice itself,
+  [a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region),
   while the specification states its rules for what is live and until cleanup,
-  which is flow-sensitive. Proposal: carry a region set per slot in the same
+  which is flow-sensitive. A second was first blamed on it, but
+  [a swap of owners is not seen](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
+  has another cause, as the [outcome](#outcome-of-the-region-measurement) below says.
+  Proposal: carry a region set per slot in the same
   per-block dataflow as the loan bits, joined at block entry, replaced by a
   `Def`, joined by a `Publish`. `Prov_Facts` then shrinks to what crosses
   bodies, the summaries; the replay rounds, the two replay arenas, the phase
   rules under
   [normalized provenance input](compiler-architecture.md#normalized-provenance-input),
   and the [cost of normalization](#normalized-input-for-provenance-analysis)
-  question change with it. Decide this after the previous item, since the
-  region set wants the one slot vector to sit on.
+  question change with it.
 
 - **Mutable exclusivity is kept by hand-built links (P2).** The solver knows
   which loans a slot may hold; whether two slots holding one mutable loan may
@@ -190,8 +190,7 @@ Order: fix the small soundness gaps as they are found, as the liveness, slice
 literal, and permutation fixes were. Try one slot vector per root on a throwaway
 branch, time-boxed, and compare diagnostics over the inputs the
 [architecture](compiler-architecture.md#normalized-provenance-input) lists before
-committing to it. Decide on regions only after that, on a measured cost: per-block
-region sets have no prototype, and their memory cost is not known. The local
+committing to it. Decide on regions only after that, on a measured cost. The local
 refactors can wait, as they fix nothing and accept nothing new, apart from a table
 of each `Container_Op`'s provenance, which is cheap. Estimates here have been poor:
 the one-line liveness fix took a second rule, and the slice literal's link took six
@@ -201,8 +200,9 @@ since its model is written apart from the compiler; it wants places for a
 slice literal's array, a view parameter's caller storage reached twice, a
 store at an unknown index between two uses, and a call that copies.
 
-Outcome of the slot vector trial (2026-11-01). The trial built the half that could
-be checked quickly. `Prov_Slot.kind` says whether a slot is a temporary, a local's, a
+### Outcome of the slot vector trial
+
+The trial, on 2026-11-01, built the half that could be checked quickly. `Prov_Slot.kind` says whether a slot is a temporary, a local's, a
 slice literal's, or a caller's, replacing `literal_content`, a map of caller slots,
 and a second loop in `prov_link_copied_carriers`. `root_own_slots` and
 `loan_own_slots` replace `content_by_symbol`, a condition duplicated in both loads,
@@ -252,12 +252,48 @@ follows the same rule rather than extending on every use. Literal and named form
 agree on every form probed.
 
 Recommendation: stop here. Moving caller slots onto roots has no measured benefit,
-and the trial says nothing about regions, which stay undecided.
+and the trial says nothing about regions.
+
+### Outcome of the region measurement
+
+Per-block region sets had no prototype, so their cost was measured with a shadow, on
+2026-11-01, which was then removed. Each block visit in `solve_reaching` also joined,
+transferred through `Def` and `Publish`, compared, and copied a vector of one 24-byte
+region set per slot, for bodies with region facts. Nothing read the result, so the
+fixed point was the loans' own. Checking time is the best of 15 runs at `-o:speed`:
+
+| Input | Check today | Replay and materialization today | Shadow's added check time | Largest body's vectors | Peak build today |
+| --- | --- | --- | --- | --- | --- |
+| `bench/provenance.loke` | 8.2 ms | 0.6 ms | 0.1 ms | 12 KiB | 347 KiB |
+| `bench/workspace` | 114.8 ms | 8.2 ms | 3.2 ms | 91 KiB | 873 KiB |
+| `bench/dense.loke` | 295.7 ms | 17.8 ms | 6.5 ms | 336 KiB | 2,757 KiB |
+| `examples/corpus_runner.loke` | 164.4 ms | 15.0 ms | 4.5 ms | 288 KiB | 1,992 KiB |
+
+This is a lower bound. It keeps no region per path beyond the slots, walks no loans
+for a `Publish`, and no event reads a set. Skipping bodies without region facts saves
+little, as 75% to 92% of the bodies solved have some. The cost does not rule the
+proposal out: it is the same order as the replay it could remove, and the construction
+walk, most of what is measured as normalization, stays either way.
+
+The benefit is what is small. Of the gaps cited, only the
+[received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
+needs facts by program point, and it is an over-rejection. The
+[swap of owners](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
+would stay open in a flow-sensitive design, unless a swap's effect on regions is
+stated and `Carrier_Move` says owners moved, and both can be added to today's facts.
+That last point is reasoned from the code, and no fix was tried. Against that, the
+change moves 70 procedures in the construction walk and 28 places that set an event's
+region, since what the walk now reads from settled facts would be known only to the
+solve.
+
+Recommendation: leave region facts as they are. Reconsider if a real program meets
+the over-rejection, or if a soundness gap turns up that does need facts by program
+point. Fix the swap of owners as a soundness gap on its own.
 
 Validation: the review's probes were compiled with the checked-in `lokec.exe`.
 Two `&mut c` written in turn reported `L0511`; the same two around a store at an
 index a call returns, or one `&mut c` in a loop storing at such an index,
-compiled. Beyond the liveness fix above, no implementation change was made.
+compiled. Each outcome above states its own measurements.
 
 ## Review of local result aliases, view cycles, and hook review notes (2026-11-01)
 
