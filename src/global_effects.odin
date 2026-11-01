@@ -636,7 +636,7 @@ prov_report_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	}
 	prov_effect_call(
 		graph, Effect_Call{dyn_interface = underlying_info(c, view).dyn_interface}, span,
-		described = "modified by printing an argument of this report",
+		described = "printing an argument of this report",
 	)
 }
 
