@@ -1,0 +1,6 @@
+L0436
+@8:41
+exceeds the compiler's generic instantiation limit (64 deep)
+L0432
+@8:41
+a generic `type` parameter needs a type argument

@@ -1,0 +1,12 @@
+// design.md "Parametric aliases" and "Generic types": an alias reached through a
+// record with new arguments each time never finishes, so the instantiation limit
+// still stops it. tests/err/parametric_alias_recursive.loke holds the same record
+// by value, and tests/run/parametric_alias_recursive.loke what stays accepted.
+package main;
+
+Grow :: ^Wrap($T);
+Wrap :: struct($T: type) { next: Option(Grow(Wrap(T))) }
+
+main :: proc() {
+	_ = size_of(Grow(int));
+}

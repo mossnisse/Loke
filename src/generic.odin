@@ -55,8 +55,8 @@ Generic_Template :: struct {
 	instances:   [dynamic]^Instance,
 	// Its declaration was rejected and reported; a use reports nothing more.
 	rejected:    bool,
-	// Alias templates only: an application is being resolved, so reaching it
-	// again from inside is a cycle.
+	// Alias templates only: the view of an application is being built, so one
+	// reached again from inside stays an application (`alias_view_of_application`).
 	expanding:   bool,
 }
 
@@ -1339,7 +1339,12 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 		mark_alias_application(v, template, cached)
 		return cached
 	}
-	if template.expanding || len(k.c.instantiation_stack) >= MAX_INSTANTIATION_DEPTH {
+	// Reaching this template again from inside its own expansion is no cycle: an
+	// alias cannot refer to itself except through a record (L0745), whose instance
+	// already exists when it is reached again with the same arguments, as a
+	// reference in `Node(T)` to `Link(T)` that was reached from `Link :: ^Node($T)`
+	// does (design.md "Generic types"). New arguments each time are this limit's.
+	if len(k.c.instantiation_stack) >= MAX_INSTANTIATION_DEPTH {
 		if report && !k.c.instantiation_limit_hit {
 			k.c.instantiation_limit_hit = true
 			errorf(
@@ -1351,8 +1356,6 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 		}
 		return INVALID_TYPE
 	}
-	template.expanding = true
-	defer template.expanding = false
 	name := generic_instance_name(k.c, template.symbol, bindings[:])
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = v.span, silent = !report})
 	defer pop(&k.c.instantiation_stack)

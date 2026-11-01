@@ -1,0 +1,67 @@
+// design.md "Parametric aliases" and "Generic types": a generic type may recurse
+// through a reference, and through an alias of that reference, whichever of the
+// two is reached first. tests/err/parametric_alias_recursive.loke holds what is
+// rejected.
+package main;
+
+import "core:fmt";
+
+Link :: ^Node($T);
+Node :: struct($T: type) { value: T, next: Option(Link(T)) }
+
+// The record is reached first here.
+Back :: ^Forward($T);
+Forward :: struct($T: type) { next: Option(Back(T)) }
+
+// Two records, each through its own alias.
+A_Ref :: ^A($T);
+A :: struct($T: type) { value: T, b: Option(B_Ref(T)) }
+B_Ref :: ^B($T);
+B :: struct($T: type) { a: A_Ref(T) }
+
+// Through a container, and through an alias of the record itself.
+Children :: [dynamic]Tree($T);
+Tree :: struct($T: type) { value: T, children: Children(T) }
+Same :: Parent($T);
+Parent :: struct($T: type) { above: Option(^Same(T)), value: T }
+
+// An alias of an alias.
+Outer :: Inner($T);
+Inner :: ^Chain($T);
+Chain :: struct($T: type) { next: Option(Outer(T)) }
+
+sum :: proc(link: Link($T)) -> T {
+	total := link^.value;
+	switch (link^.next) {
+	case .none:
+	case .some(rest): total += sum(rest);
+	}
+	return total;
+}
+
+which :: proc { which_any, which_int }
+which_any :: proc(link: Link($T)) -> string { return "any"; }
+which_int :: proc(link: ^Node(int)) -> string { return "int"; }
+
+static_assert(Link(int) == (^Node(int)));
+static_assert(Outer(string) == (^Chain(string)));
+
+main :: proc() {
+	fmt.println(size_of(Link(int)) == size_of(rawptr));
+	fmt.println(size_of(Forward(int)) == size_of(Back(int)));
+	fmt.println(size_of(A_Ref(int)) == size_of(rawptr), size_of(B_Ref(string)) == size_of(rawptr));
+	fmt.println(size_of(Outer(int)) == size_of(rawptr));
+
+	last := Node(int){value = 2, next = .none};
+	first := Node(int){value = 1, next = .some(&last)};
+	fmt.println(sum(&first));
+	other := Node(string){value = "x", next = .none};
+	fmt.println(which(&first), which(&other));
+
+	tree := Tree(int){value = 3};
+	fmt.println(tree.value);
+	top := Same(int){above = .none, value = 4};
+	below := Same(int){above = .some(&top), value = 5};
+	fmt.println((below.above or_else panic("none"))^.value);
+	fmt.println(typeid_of(Link(i8)));
+}

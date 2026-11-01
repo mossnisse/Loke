@@ -1,0 +1,13 @@
+// design.md "Parametric aliases" and "Generic types": reaching an alias again
+// through a record is no cycle by itself, so what is wrong with this one is
+// reported as what it is, a record containing itself by value, and not as an
+// instantiation limit. tests/run/parametric_alias_recursive.loke holds what stays
+// accepted.
+package main;
+
+Infinite :: Whole($T);
+Whole :: struct($T: type) { next: Option(Infinite(T)) }
+
+main :: proc() {
+	_ = size_of(Infinite(int));
+}

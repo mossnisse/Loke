@@ -977,6 +977,12 @@ checklist.
 
 ### Fixed
 
+- A generic record may recurse through a [parametric
+  alias](design.md#parametric-aliases) of a reference to it however the two are
+  reached first: `Link :: ^Node($T)` with a `Link(T)` field in `Node` reported a
+  false `L0436` for `Link(int)` unless `Node(int)` had been resolved already. A
+  record that contains itself by value through an alias is now `L0364`, as it is
+  written out.
 - A [parametric alias](design.md#parametric-aliases) can bind a constant whose
   type an earlier argument decides: `Alias :: Value($T, $V)` over
   `Value :: struct($T: type, $V: T)` reported an internal `L0405`, and now

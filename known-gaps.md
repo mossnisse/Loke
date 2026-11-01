@@ -197,31 +197,6 @@ one-line reduction accepts this case while still rejecting the received
 allocator payload probes. Confirmed on `5580637f` during review on 2026-11-01
 (P2, pre-existing; also a simplification opportunity).
 
-### Recursive records through parametric aliases depend on resolution order
-
-A [parametric alias](design.md#parametric-aliases) has its expansion's identity,
-and a [generic type](design.md#generic-types) may recurse through a reference.
-An alias of that reference can nevertheless be rejected while its record is
-being resolved:
-
-```loke
-package main;
-Link :: ^Node($T);
-Node :: struct($T: type) { next: Option(Link(T)) }
-main :: proc() { _ = size_of(Link(int)); }
-```
-
-This reports `L0436`, claiming to exceed the 64-deep instantiation limit when
-only `Link(int)` and `Node(int)` are on the stack. Resolving `Node(int)` first,
-by adding `_ = size_of(Node(int));` before the use, makes the program compile.
-The alias body has no alias cycle; the record's reference breaks the size
-recursion. In [src/generic.odin](src/generic.odin),
-`resolve_alias_application` rejects any reentry of the same template through
-`template.expanding`, before the existing record instance can finish the
-expansion. Permit finite record-mediated reentry while retaining the alias
-cycle and actual depth checks. Confirmed on `3b49d840` during review on
-2026-10-31 (P2).
-
 ### A nested `distinct` gives a parametric alias's application a new type
 
 A [parametric alias](design.md#parametric-aliases)'s body is not "a `distinct`
