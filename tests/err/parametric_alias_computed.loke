@@ -1,0 +1,34 @@
+// design.md "Parametric aliases": a `$` name inside a call that computes a type
+// is where no argument can bind it, at any depth, since a type cannot be read
+// backwards through the procedure that computed it. The alias is rejected at
+// its declaration, used or not, and an application reports nothing more.
+// tests/run/parametric_alias_computed.loke holds what stays accepted.
+package main;
+
+Identity :: proc($T: type) -> type { return T; }
+Second :: proc($T: type, $U: type) -> type { return U; }
+Plain :: struct { value: int }
+Pair :: struct($A, $B: type) { a: A, b: B }
+Fixed :: struct($N: int) { values: [N]int }
+
+In_Option :: Option(Identity($T));
+Through_Pointer :: ^Identity($T);
+Through_Slice :: []Identity($T);
+Through_Map :: map[string]Identity($T);
+Through_Proc :: proc(x: Identity($T));
+Through_Record :: (Identity($T), int);
+Through_Array :: [2]Identity($T);
+Generic_Callee :: Option(Second(int, $T));
+Beside_A_Binding :: Pair($T, Identity($T));
+Constant_Argument :: Fixed(size_of($T));
+Deeper :: Option(Option(Identity($T)));
+Not_Generic :: Option(Plain($T));
+
+read :: proc(value: In_Option($T)) -> T {
+	return value or_else panic("none");
+}
+
+main :: proc() {
+	value: In_Option(int) = .some(3);
+	_ = read(value);
+}

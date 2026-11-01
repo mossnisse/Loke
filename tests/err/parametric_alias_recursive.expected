@@ -1,0 +1,4 @@
+L0364
+@9:1
+`Whole(int)` contains itself by value: Whole(int) -> Option(Whole(int)) -> Whole(int)
+!L0436

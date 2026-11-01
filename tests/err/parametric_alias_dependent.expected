@@ -1,0 +1,22 @@
+L0306
+@10:36
+unknown type `Unknown`
+L0743
+@13:38
+`$V` is bound by a type here and by a constant whose type an earlier argument decides earlier
+L0743
+@14:39
+`$V` is bound by a constant whose type an earlier argument decides here and by a type earlier
+L0432
+@15:27
+`"text"` is not representable by the generic parameter's type `int`
+L0432
+@18:33
+`3` is not representable by the generic parameter's type `string`
+L0432
+@19:27
+`"x"` is not representable by the generic parameter's type `int`
+L0431
+@20:10
+`Alias` takes 2 generic arguments, found 1
+!L0405

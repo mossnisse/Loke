@@ -3,6 +3,7 @@
 // Annotations are written back onto the AST nodes (decision A1).
 package lokec
 
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 
@@ -2888,6 +2889,16 @@ success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success:
 		return false
 	}
 	#partial switch v in syntax {
+	case ^Expr_Ident:
+		// An alias means what it names, so `Outcome :: Result(Unit, E)` leaves the
+		// success as `Unit` as written, and `Outcome :: Result(T, E)` does not.
+		id := lookup_symbol(scope, identifier_of(k.c, v))
+		if target, target_scope := local_alias_target(k, id); target != nil {
+			saved := k.scope
+			k.scope = target_scope
+			defer k.scope = saved
+			return success_names_generic(k, target_scope, target, success)
+		}
 	case ^Expr_Call:
 		template := generic_template_of_callee(k, v.callee, .Record)
 		if template == nil {
@@ -2918,27 +2929,60 @@ success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success:
 // walked.
 @(private = "file")
 type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
-	in_instance := false
-	for enclosing := scope; enclosing != nil && !in_instance; enclosing = enclosing.parent {
-		in_instance = enclosing.instance != nil
-	}
-	if !in_instance {
+	if !scope_in_instance(scope) {
 		return false
 	}
-	lookup := Generic_Lookup{k = k, scope = scope}
+	lookup := Generic_Lookup{k = k, scope = scope, followed = make([dynamic]Symbol_Id, context.temp_allocator)}
 	return type_syntax_any_name(e, &lookup, names_generic_binding)
 }
 
 @(private = "file")
+scope_in_instance :: proc(scope: ^Scope) -> bool {
+	for enclosing := scope; enclosing != nil; enclosing = enclosing.parent {
+		if enclosing.instance != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// What a constant declared in a generic body stands for wherever it is named,
+// and the scope that reads it: `Result(T, E)` for `Outcome :: Result(T, E)`, or
+// `N * 2` for `Twice :: N * 2`. A package-scope constant cannot name a binding,
+// and a declaration that defines something, such as `Local :: struct { x: T }`,
+// is one type in each instance rather than a spelling of its arguments.
+@(private = "file")
+local_alias_target :: proc(k: ^Checker, id: Symbol_Id) -> (target: Expr, scope: ^Scope) {
+	symbol := symbol_of(k.c, id)
+	if symbol == nil || symbol.generic || symbol.decl == nil || symbol.decl.kind != .Const || !scope_in_instance(symbol.def_scope) {
+		return nil, nil
+	}
+	for declared, index in symbol.decl.symbols {
+		if declared != id || index >= len(symbol.decl.values) {
+			continue
+		}
+		#partial switch _ in symbol.decl.values[index] {
+		case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator:
+			return nil, nil
+		}
+		return symbol.decl.values[index], symbol.def_scope
+	}
+	return nil, nil
+}
+
+@(private = "file")
 Generic_Lookup :: struct {
-	k:     ^Checker,
-	scope: ^Scope,
+	k:        ^Checker,
+	scope:    ^Scope,
+	// The aliases already read, since each answers once and a cyclic one, which
+	// its declaration reports, must not be read forever.
+	followed: [dynamic]Symbol_Id,
 }
 
 // A `$` name is a generic argument. An inline definition depends on one only
 // through the types and values written inside it, such as `struct { x: T }` in
-// `size_of`, so those are walked rather than assumed (design.md "Success
-// returns").
+// `size_of`, so those are walked rather than assumed, and a local alias through
+// what it names (design.md "Success returns").
 @(private = "file")
 names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	lookup := (^Generic_Lookup)(data)
@@ -2947,8 +2991,23 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	}
 	#partial switch v in node {
 	case ^Expr_Ident:
-		symbol := symbol_of(lookup.k.c, lookup_symbol(lookup.scope, identifier_of(lookup.k.c, v)))
-		return symbol != nil && symbol.generic_binding
+		id := lookup_symbol(lookup.scope, identifier_of(lookup.k.c, v))
+		symbol := symbol_of(lookup.k.c, id)
+		if symbol == nil {
+			return false
+		}
+		if symbol.generic_binding {
+			return true
+		}
+		target, target_scope := local_alias_target(lookup.k, id)
+		if target == nil || slice.contains(lookup.followed[:], id) {
+			return false
+		}
+		append(&lookup.followed, id)
+		saved := lookup.scope
+		lookup.scope = target_scope
+		defer lookup.scope = saved
+		return any_of(target, data)
 	case ^Type_Poly:
 		return true
 	case ^Type_Record:

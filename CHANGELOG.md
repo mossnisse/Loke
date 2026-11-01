@@ -10,6 +10,18 @@ checklist.
 
 ### Breaking changes
 
+- A parametric alias with a `$` name inside a nested call that computes a type,
+  `Alias :: Option(Identity($T))`, is now `L0742` at its declaration
+  ([Parametric aliases](design.md#parametric-aliases)). It used to be accepted, and
+  a pattern written through it could never match (`L0392`). Upgrade by writing the
+  type the call computes where the `$` name stands, as `Option($T)`.
+- A result written through an alias declared in a generic body now depends on a
+  generic argument as the same result written out does
+  ([One result](design.md#one-result)). `Outcome :: Result(T, E)` as a result used
+  to allow a bare `return;` in the instance where `T` is `Unit` and an implicitly
+  wrapped `return value;` beside an error payload, each now `L0326`, `L0365`, or
+  `L0310` as for `Result(T, E)`. Upgrade by writing `return .ok;` or
+  `return .ok(value);`.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator
@@ -965,6 +977,18 @@ checklist.
 
 ### Fixed
 
+- A generic record may recurse through a [parametric
+  alias](design.md#parametric-aliases) of a reference to it however the two are
+  reached first: `Link :: ^Node($T)` with a `Link(T)` field in `Node` reported a
+  false `L0436` for `Link(int)` unless `Node(int)` had been resolved already. A
+  record that contains itself by value through an alias is now `L0364`, as it is
+  written out.
+- A [parametric alias](design.md#parametric-aliases) can bind a constant whose
+  type an earlier argument decides: `Alias :: Value($T, $V)` over
+  `Value :: struct($T: type, $V: T)` reported an internal `L0405`, and now
+  `Alias(int, 3)` is `Value(int, 3)`. An alias can also bind a constant argument
+  of a `dyn` interface, as `dyn Window($N)`, which was bound as a type, and a
+  generic parameter type that does not resolve is reported at the alias.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

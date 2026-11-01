@@ -1,0 +1,24 @@
+// design.md "Parametric aliases": a constant whose type an earlier argument
+// decides is still a constant, so a `$` name cannot also be a type there; its
+// argument is checked where the application is written; and a parameter type
+// that resolves to nothing rejects the alias with a report.
+// tests/run/parametric_alias_dependent.loke holds what stays accepted.
+package main;
+
+Value :: struct($T: type, $V: T) { item: T }
+Triple :: struct($T: type, $A: T, $B: T) { item: T }
+Unresolved :: struct($T: type, $V: Unknown) { item: T }
+
+Alias :: Value($T, $V);
+Type_After :: (Value($T, $V), Option($V));
+Type_Before :: (Option($V), Value($T, $V));
+Bad_Prefix :: Triple(int, "text", $B);
+Over_Unresolved :: Unresolved($T, $V);
+
+wrong_for_string: Alias(string, 3);
+wrong_for_int: Alias(int, "x");
+too_few: Alias(int);
+bad_prefix: Bad_Prefix(2);
+unresolved: Over_Unresolved(int, 3);
+
+main :: proc() {}
