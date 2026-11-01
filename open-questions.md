@@ -1315,19 +1315,6 @@ and compare complete callers before touching arrays, maps, or the allocation
 built-ins; keeping the convenience forms is defensible if the caller burden
 outweighs the smaller API.
 
-## Pure procedures
-
-Should there be a form of procedure, distinct from `proc`, that is guaranteed by
-the compiler to be free of side effects?
-
-Compile-time evaluation no longer requires a second procedure kind: an ordinary
-procedure is evaluated contextually when its executed path is admissible. A
-separate purity contract could still permit safe runtime reordering, parallel
-reactive evaluation, and clearer contracts on operations such as `hash` and
-`compare`. The cost remains an effect system, especially once useful pure code
-is allowed local mutation and result allocation. It is not required by the
-current compile-time or interface design.
-
 ## Callable records, procedures, and closures
 
 A record with a `call` method is the callable convention: `x(args)` calls it
