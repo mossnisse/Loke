@@ -34,6 +34,13 @@ A later revision replaced the `any_view` lowering with deleting `any_view`
 ([2.4](#24-existentials-dyn-alone)). That makes the lifetime finding moot,
 and the block-end `any_view` local is counted as lost.
 
+A check of the alias-attribute step on 2026-11-01 linked hand-edited IR at
+`-O2` and found that `noalias` is unsound under the default `unwind`
+strategy, that a callee may read a global it holds `^mut` to, and that LLVM
+already infers the capture attributes; [6.1](#61-alias-attributes-from-facts-the-checker-already-proves)
+and step 8 of the [Suggested order](#8-suggested-order) are narrowed
+accordingly.
+
 ## Contents
 
 - [Summary](#summary)
@@ -87,8 +94,8 @@ lost, in rough priority order:
 7. **Generated-code performance.** Mark the panic entry `cold noreturn`; inline
    the container fast paths, first by linking the runtime as bitcode; trim the
    unwind bookkeeping; prove common index arithmetic overflow-free and indexed
-   views' bounds stable; and emit `noalias` once its soundness prerequisites
-   hold. Capture attributes need their own proof
+   views' bounds stable; and emit `noalias` under `-panic=abort` once its
+   soundness prerequisites hold, if a measurement then justifies it
    ([6](#6-performance-of-the-generated-code)).
 
 Except where a section's **What is lost** says otherwise, none of these changes
@@ -761,7 +768,8 @@ it to Clang at `-O0` through `-O3`, so cross-package inlining is free and the
 optimizer sees everything but the runtime. Within that design these are the
 opportunities, largest first. None changes a specified result of a program the
 checker rightly accepts; [6.1](#61-alias-attributes-from-facts-the-checker-already-proves)
-also needs design.md to state what unchecked code may do during a call.
+also needs design.md to state what unchecked code may do during a call, and
+holds only under the `abort` panic strategy.
 
 ### 6.1 Alias attributes from facts the checker already proves
 
@@ -777,7 +785,9 @@ be written through any other path, and a mutable borrow excludes every other
 access. For the duration of a call, then:
 
 - a `^mut T` or `inout T` parameter is the only live path to its pointee:
-  `noalias`;
+  `noalias`. The global effects do not yet enforce this for a callee that
+  reads a global by name while holding a mutable borrow of it
+  ([A callee may read a global its mutable parameter borrows](known-gaps.md#a-callee-may-read-a-global-its-mutable-parameter-borrows));
 - a `^T` parameter's pointee is not written by anyone, unless its type reaches
   a [`@(synchronized)`](design.md#synchronized) field, as `Atomic(T)`,
   `Mutex(T)`, and `Monitor(T)` do: `noalias readonly`. `readonly` alone says
@@ -801,13 +811,27 @@ may escape, `captures(address)` is a candidate only after proving that
 provenance cannot escape, including through unchecked operations. Otherwise
 omit the capture attribute.
 
+That proof is not worth building. Every Loke procedure is `internal` in one
+module, and LLVM's own attribute inference already writes `readonly` and
+`captures(none)` on internal procedures where they hold ([Probes](#probes)).
+The emitter would add capture attributes only where LLVM cannot see both
+sides, at `@(export)` and foreign boundaries. `noalias` on an argument is the
+one fact the checker knows that LLVM cannot infer.
+
 To attach pointer parameter attributes to slices, expose their data pointer and
 length as separate scalar LLVM parameters in the `loke` convention, which is
 private to the compiler. This is distinct from machine register passing, which
 already handles the example slice ([6.5](#65-union-layout-and-small-values)).
 The gain is the usual one for `noalias`: loads hoisted out of loops
 across stores, vectorization of loops that write through one slice and read
-another, and fewer reloads around calls.
+another, and fewer reloads around calls. Expect it to be modest: the
+checked-arithmetic branches of [6.4](#64-checked-arithmetic-and-bounds-in-loops)
+block vectorization first, and LLVM's loop vectorizer already versions a loop
+with a runtime overlap check, so on slices `noalias` mostly saves that check.
+Scoped `!alias.scope` and `!noalias` metadata on the body's accesses would
+express the same fact without changing the calling convention. Start with
+`^mut T`, `inout`, and `self: ^mut` parameters, which are single pointers
+today and need neither.
 
 **Prerequisites.** The attributes turn a borrow the checker wrongly accepts
 into undefined behavior that the optimizer exploits, so they come last:
@@ -828,12 +852,30 @@ into undefined behavior that the optimizer exploits, so they come last:
   The rule would be that while a `^mut T` parameter is live nothing else
   accesses its pointee, and while a `^T` parameter is live nothing writes it,
   by any route; each such cast in the library is then checked against it.
-- Measure with and without unwind frames. Where a frame is pushed, the
-  addresses stored in `%uenv` reach the runtime, which limits what LLVM may
-  assume about those locals and may cancel some of the gain
-  ([6.3](#63-unwind-bookkeeping)).
-- Prove capture attributes independently. Closing the borrow-checker gaps and
-  stating an aliasing rule do not rule out observable address capture.
+- Emit them only under `-panic=abort`. With `unwind`, the runtime runs every
+  frame's registered cleanup inside the panic call, without unwinding the
+  native stack ([6.3](#63-unwind-bookkeeping)), so a caller's drop hooks and
+  `defer`s read the caller's locals while the callee holding the `noalias`
+  pointer is still executing. LLVM may then treat a store through the
+  parameter before a panic as dead, and a cleanup sees the old value: in the
+  probe a drop hook prints `0` where [Panic strategy](design.md#panic-strategy)
+  requires `3` ([Probes](#probes)). For an `inout` dynamic array that the
+  callee grows before panicking, the drop would free the old buffer a second
+  time. Keeping the store would need every call that may panic to be treated
+  as reading every `noalias` pointee, which cancels most of the gain. Since
+  `unwind` is the hosted default, most programs would get the attributes only
+  by opting in.
+- Give the global effects a read component, so that a call passing a mutable
+  borrow of a global conflicts with a callee that reads that global
+  ([A callee may read a global its mutable parameter borrows](known-gaps.md#a-callee-may-read-a-global-its-mutable-parameter-borrows)).
+  Thread-affine values in globals, under
+  [Later concurrency extensions](open-questions.md#later-concurrency-extensions),
+  would need the same effect.
+- Measure before building. After [6.3](#63-unwind-bookkeeping) and
+  [6.4](#64-checked-arithmetic-and-bounds-in-loops), add the attributes by hand
+  to the `bench/` kernels' IR, as the probe does, and build the emitter
+  support only if the gain under `-panic=abort` justifies a second set of
+  optimization semantics.
 
 ### 6.2 Container operations in IR, not through an operation table
 
@@ -1052,9 +1094,14 @@ compiler, test, and changelog change in one commit as AGENTS.md requires.
    account for reassigned slices, aliases, and calls. Then measure the dense
    kernels again; container fast paths in IR if step 2 left them hot.
 8. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
-   after the soundness gaps they depend on are closed and design.md states the
-   aliasing rule for unchecked code. Capture attributes require a separate
-   proof covering address observation and provenance escape.
+   in this order. First the prerequisites, which are correctness work in their
+   own right: close the borrow-checker gaps 6.1 lists, add a read component to
+   the global effects, and state the aliasing rule for unchecked code in
+   design.md. Then, after steps 2 and 7, measure by adding `noalias` by hand to
+   the `bench/` kernels' IR. Only if that pays, emit `noalias` (and
+   `noalias readonly` for `^T`) under `-panic=abort`, starting with `^mut T`,
+   `inout`, and `self: ^mut` parameters. No capture attributes: LLVM infers
+   them for internal procedures.
 9. If `inout` is folded into `^mut T` at all ([2.9](#29-one-capability-axis)),
    last: it is the largest surface change, and it needs the formatter able to
    rewrite call sites and receivers mechanically. The explanation in
@@ -1135,6 +1182,14 @@ outweighs its gain, and none is recommended.
   [2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision).
 - **Give every payloadless union `enum`'s integer mapping and ordering**, for
   the reasons in [2.1](#21-sums-enum-and-union).
+- **Capture attributes from a separate proof.** LLVM already infers
+  `captures(none)` and `readonly` for internal procedures, so the proof would
+  add nothing inside the program
+  ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+- **`noalias` under the `unwind` strategy.** Cleanup runs inside the panic
+  call while the callee is still executing, and the probe shows a drop hook
+  reading a stale value
+  ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
 
 ## Probes
 
@@ -1256,3 +1311,48 @@ the `sum(xs: []int)` procedure above receives the slice's two words in `rcx`
 and `rdx`. A procedure taking `Option(^int)` received its single word in
 `rcx`. These observations check the small-argument ABI claim; they are not
 performance measurements or a claim about every aggregate shape.
+
+**`noalias` under the `unwind` strategy.** On 2026-11-01 the `lokec.exe` in
+the repository root, at `5580637f`, emitted IR for this program with
+`-emit-ll`:
+
+```loke
+package main;
+import "core:fmt";
+
+Box :: struct { n: int }
+
+impl Box {
+	release :: hook(drop) proc(self: inout Box) { fmt.println("drop sees", self.n); }
+}
+
+fill :: proc(b: ^mut Box, xs: []int) {
+	foreach (x in xs) { b^.n += x; }
+}
+
+main :: proc() {
+	b := Box{0};
+	values := [3]int{1, 2, 9223372036854775807};
+	fill(&mut b, values[:]);
+}
+```
+
+The third addition overflows, so the default `unwind` strategy runs the drop
+hook after two additions. The IR was linked with Clang at `-O2` with the
+runtime's C sources twice, once as emitted and once with `noalias` added by
+hand to `fill`'s first parameter:
+
+```text
+as emitted:     drop sees 3
+with noalias:   drop sees 0
+```
+
+In the optimized IR of the second build, the `store i64 3` before the call to
+`loke_rt_v1_panic` is gone. Both builds also show `readonly captures(none)`
+on internal procedures that the emitter wrote without them, inferred by LLVM.
+
+**A callee reading a global it holds `^mut` to** is accepted by the same
+compiler; see
+[A callee may read a global its mutable parameter borrows](known-gaps.md#a-callee-may-read-a-global-its-mutable-parameter-borrows).
+With `noalias` added by hand it still printed `1` and `2` at `-O2`, so the
+probe shows a broken contract, not a miscompilation.

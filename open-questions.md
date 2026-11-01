@@ -1505,7 +1505,10 @@ specified result:
   promise that memory cannot change, since atomics write through read-only
   receivers and foreign or unchecked aliases need their own contract, so each
   attribute needs [LLVM's precise obligations](https://llvm.org/docs/LangRef.html#parameter-attributes)
-  shown to hold.
+  shown to hold. `noalias` is unsound under the `unwind` strategy, whose
+  cleanup reads callers' locals while the callee is still executing, and LLVM
+  already infers the capture attributes; see
+  [design review 6.1](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves).
 - **Explicit reductions.** A floating-point sum is ordered, and the default
   arithmetic stays strict. Separately named reassociating or tree reductions,
   with their numerical differences documented, would let a kernel ask for the
