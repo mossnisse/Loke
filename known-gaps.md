@@ -7,6 +7,110 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Destructuring records counts the containing copy hook instead of the fields
+
+[Destructuring](design.md#destructuring) copies each retained field of a place,
+without calling the containing record's copy hook. [Global write
+effects](design.md#global-write-effects) must therefore include those fields'
+copy-hook reads:
+
+```loke
+package main;
+counter: int;
+Tagged :: struct { n: int }
+impl Tagged {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+        return .ok(Tagged{self.n + counter});
+    }
+}
+Pair :: struct { tag: Tagged, text: string }
+impl Pair {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Pair, Allocator_Error) {
+        return .ok(Pair{Tagged{self.tag.n}, self.text});
+    }
+}
+use :: proc(pair: Pair) {
+    p := &mut counter;
+    tag, _ := pair;
+    p^ = tag.n;
+}
+main :: proc() { use(Pair{Tagged{1}, "hello"}); }
+```
+
+This compiles, though `Tagged.duplicate` reads `counter` while `p` borrows it
+mutably. The emitted IR calls `Tagged.clone` at the destructure. In
+[src/lifecycle.odin](src/lifecycle.odin), `classify_destructure` sets the operand's
+`copied_as` to the whole record. `type_copy_hooks` in [src/hooks.odin](src/hooks.odin)
+then stops at `Pair.duplicate`, missing the hook that actually runs. The same
+annotation over-rejects a discarded field: remove `Pair`'s hook and change the
+body to `_, text := pair; p^ = text.len();`, and it reports `L0511` even though
+the discarded `tag` is never cloned. Record effects per retained cloned field.
+Introduced in `edb4eb2e`; confirmed on `1b7845aa` during review on 2026-11-01 (P2).
+
+
+### Repeated array elements count copy reads before creating their loans
+
+[Fixed arrays](design.md#fixed-arrays) evaluate a repeated initializer before
+copying it into the remaining slots. A copy hook's [global read
+effect](design.md#global-write-effects) must be checked with the loans that
+initializer created still in use:
+
+```loke
+package main;
+counter: int;
+Tagged :: struct { p: ^mut int }
+impl Tagged {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+        _ = counter;
+        return .ok(Tagged{self.p});
+    }
+}
+main :: proc() {
+    copies := [2]Tagged{0..=1 = Tagged{&mut counter}};
+    copies[0].p^ = 10;
+}
+```
+
+This compiles; the emitted IR takes the pointer and then calls `Tagged.clone`,
+whose hook reads `counter`. Naming `p := &mut counter` before the literal and
+using `Tagged{p}` instead reports the expected `L0511`. The `Expr_Composite`
+case of `walk_flow_expr` in [src/cfg.odin](src/cfg.odin) emits every repeated
+element's `prov_copy_effects` before walking the allocator or any element, so
+the fresh loan does not yet exist at the read event. Emit the effects after
+evaluating the repeated initializer, in the order its copies run. Introduced
+in `edb4eb2e`; confirmed on `1b7845aa` during review on 2026-11-01 (P2).
+
+
+### Reports count a public type's private formatter that printing never calls
+
+[Interface bodies](design.md#interface-bodies) excludes a public type's private
+`format` from its coherent printed representation. [Built-in
+procedures](design.md#built-in-procedures) print report arguments through that
+representation:
+
+```loke
+package sample;
+import "core:fmt";
+data: [dynamic]int = {};
+@(public) Hidden :: struct { n: int }
+impl Hidden {
+    format :: proc(self, writer: fmt.Writer, options: fmt.Options) { data = {}; }
+}
+report :: proc() { data.append(7); panic("stop", data[0], Hidden{1}); }
+```
+
+Compile with `lokec sample.loke -build-mode=obj -emit-ll`. This reports `L0512`
+at `Hidden{1}`, claiming printing may modify `data`, although its generated
+formatter prints only its integer field. Removing `data[0]` permits emission,
+and the witness calls the generated `Hidden.format`, not the written private
+method. `prints_through_method_walk` in [src/format.odin](src/format.odin) tests
+`written_format_member` without the visibility rule already implemented by
+`type_has_written_format`. Apply that rule before deciding whether a report
+can run user formatting code, then inspect the default formatter's parts.
+Introduced in `a28b7aac`; the same program is accepted by its parent. Confirmed
+on `1b7845aa` during review on 2026-11-01 (P2).
+
+
 ### A call copying carriers in a slice literal leaves no reborrow links
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) treats carriers a call
@@ -221,6 +325,26 @@ pack operand that `type_carries_borrow` calls mutable with a mutable
 plain-slice read. The over-rejection predates the fix to report borrows, which
 gives a report its own walk and so does not reach it. Found on 2026-11-01 at
 `46cf2aa8` (P3).
+
+Mutable pointer fields have the analogous problem in reports too:
+
+```loke
+package main;
+Holder :: struct { p: ^mut int }
+test :: proc(ok: bool) {
+    x := 1;
+    held := Holder{&mut x};
+    assert(ok, "stop", held.p, held.p);
+}
+main :: proc() { test(true); }
+```
+
+This reports `L0641` at the second `held.p`. A local `p := &mut x` printed twice
+is accepted. `prov_printed_argument` falls back to `walk_flow_expr` for the
+pointer field, which takes a mutable reborrow before borrowing the field
+read-only. The plain-slice case above has a separate read-only path. This
+pointer-field rejection is present in both `a28b7aac`'s parent and `1b7845aa`,
+so it predates the report-borrow fix. Confirmed during review on 2026-11-01.
 
 ### A view of a named array does not hold what its elements borrow
 
