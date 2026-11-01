@@ -1,0 +1,55 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Fixed arrays", "Global write effects": each repeated element's copies
+// run before the next element is evaluated, so its hook's read of `counter` does
+// not meet a loan a later element creates. One slot per element copies nothing.
+// tests/err/repeated_element_copy_effects.loke holds what conflicts.
+
+counter: int;
+other: int;
+
+Tagged :: struct { p: ^mut int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		_ = counter;
+		return .ok(Tagged{self.p});
+	}
+}
+
+a_later_elements_loan :: proc() {
+	copies := [3]Tagged{0..=1 = Tagged{&mut other}, 2 = Tagged{&mut counter}};
+	copies[2].p^ = 10;
+}
+one_slot_per_element :: proc() {
+	copies := [2]Tagged{0 = Tagged{&mut counter}, 1 = Tagged{&mut other}};
+	copies[0].p^ += 1;
+}
+one_slot_range :: proc() {
+	copies := [1]Tagged{0..=0 = Tagged{&mut counter}};
+	copies[0].p^ += 1;
+}
+a_loan_of_another_global :: proc() {
+	copies := [2]Tagged{0..=1 = Tagged{&mut other}};
+	copies[0].p^ = 5;
+}
+a_borrow_ended_before_it :: proc() {
+	p := &mut counter;
+	p^ += 1;
+	copies := [2]Tagged{0..=1 = Tagged{&mut other}};
+	copies[1].p^ += 1;
+}
+
+main :: proc() {
+	a_later_elements_loan();
+	fmt.println(counter);
+	one_slot_per_element();
+	fmt.println(counter);
+	one_slot_range();
+	fmt.println(counter);
+	a_loan_of_another_global();
+	fmt.println(other);
+	a_borrow_ended_before_it();
+	fmt.println(counter, other);
+}

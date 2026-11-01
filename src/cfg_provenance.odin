@@ -1684,6 +1684,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		element_type := prov_element_type(graph, v, literal_type, index)
 		loans := prov_walk_stored(graph, element.value, element_type)
 		prov_hold_owner(graph, element.value)
+		prov_repeated_element_effects(graph, v, literal_type, index, loans)
 		// design.md "Weakening and reborrows": a mutable carrier stored in an element is a reborrow of it, live
 		// until the literal is built, so no later element may use the same
 		// carrier: `Pair{xs, xs}` would hold two mutable views of one sequence.

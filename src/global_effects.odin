@@ -624,6 +624,23 @@ prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	}
 }
 
+// design.md "Fixed arrays": an element filling a range of slots is evaluated once
+// and then copied into the rest, before the next element is evaluated. Each copy's
+// hook is handed that evaluation, so what it holds (`loans`) is in use across the
+// hook's reads, whether or not the array is used again.
+prov_repeated_element_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, literal_type: Type_Id, index: int, loans: []int) {
+	first, end := composite_element_slots(v, index)
+	if end - first <= 1 || v.elements[index].value == nil {
+		return
+	}
+	type := prov_element_type(graph, v, literal_type, index)
+	span := expr_span(v.elements[index].value)
+	prov_copy_effects(graph, type, span)
+	if len(loans) > 0 && len(type_copy_hooks(graph.k.c, type)) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = loans, span = span})
+	}
+}
+
 // design.md "Destructuring": a place destructure copies each retained field and
 // never calls the containing record's hook, so each cloned field counts alone.
 prov_destructure_copy_effects :: proc(graph: ^Flow_Graph, plan: ^Destructure, operand: Expr) {

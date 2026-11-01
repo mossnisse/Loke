@@ -89,38 +89,6 @@ unknown, or distinguish provisional bounds from a genuinely unknown offset.
 Confirmed at `51bceeb4` and on the merged `1b7845aa` during review on
 2026-11-01 (P2, remaining precision gap).
 
-### Repeated array elements count copy reads before creating their loans
-
-[Fixed arrays](design.md#fixed-arrays) evaluate a repeated initializer before
-copying it into the remaining slots. A copy hook's [global read
-effect](design.md#global-write-effects) must be checked with the loans that
-initializer created still in use:
-
-```loke
-package main;
-counter: int;
-Tagged :: struct { p: ^mut int }
-impl Tagged {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
-        _ = counter;
-        return .ok(Tagged{self.p});
-    }
-}
-main :: proc() {
-    copies := [2]Tagged{0..=1 = Tagged{&mut counter}};
-    copies[0].p^ = 10;
-}
-```
-
-This compiles; the emitted IR takes the pointer and then calls `Tagged.clone`,
-whose hook reads `counter`. Naming `p := &mut counter` before the literal and
-using `Tagged{p}` instead reports the expected `L0511`. The `Expr_Composite`
-case of `walk_flow_expr` in [src/cfg.odin](src/cfg.odin) emits every repeated
-element's `prov_copy_effects` before walking the allocator or any element, so
-the fresh loan does not yet exist at the read event. Emit the effects after
-evaluating the repeated initializer, in the order its copies run. Introduced
-in `edb4eb2e`; confirmed on `1b7845aa` during review on 2026-11-01 (P2).
-
 ### Reports count a public type's private formatter that printing never calls
 
 [Interface bodies](design.md#interface-bodies) excludes a public type's private
@@ -279,6 +247,39 @@ its element. `in_a_copying_traversal` in
 for `items.copied()`, so a fix must keep that read counted, as a clone inside `next`
 or otherwise. Found while fixing destructuring's copy effects on 2026-11-01 (P3,
 over-rejection).
+
+### A copy's source is not held across its hook's reads
+
+[Global write effects](design.md#global-write-effects) make a mutable borrow still
+live across a call an error, and count every place a value is copied. A borrow the
+copied value itself holds is not seen as live across the hook, unless the source is
+used again:
+
+```loke
+package main;
+counter: int;
+Tagged :: struct { p: ^mut int }
+impl Tagged {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+        _ = counter;
+        return .ok(Tagged{self.p});
+    }
+}
+main :: proc() {
+    t := Tagged{&mut counter};
+    u := t;
+    u.p^ = 1;
+}
+```
+
+This compiles, though `duplicate` reads `counter` while `t` hands it a pointer that
+`u.p^ = 1` then writes through. Adding `t.p^ = 2;` afterwards reports the expected
+`L0511`. In [src/cfg.odin](src/cfg.odin), `walk_flow_expr` checks `copied_as` as it
+leaves the operand, so the read comes before the binding's definition takes `t`'s
+content, and that definition is not a use, so nothing holds `t` at the read. A repeated array element holds its
+initializer with a `.Live` event after the read (`prov_repeated_element_effects`), and
+the same would newly reject `u := t` with no later use. Found while fixing repeated
+elements' copy effects on 2026-11-01 (P3).
 
 ### A map entry reached through a pointer is not held
 

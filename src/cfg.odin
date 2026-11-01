@@ -2609,14 +2609,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		held := 0
 		if prov { held = len(graph.held_owners) }
 		defer if prov { resize(&graph.held_owners, held) }
-		// design.md "Fixed arrays": a range of slots holds copies of one element.
-		if prov {
-			for element, index in v.elements {
-				if first, end := composite_element_slots(v, index); end - first > 1 && element.value != nil {
-					prov_copy_effects(graph, expr_base(element.value).type, expr_span(element.value))
-				}
-			}
-		}
 		// A non-empty container literal evaluates its destination's `via` first.
 		if len(v.elements) > 0 {
 			walk_flow_expr(graph, v.via)
@@ -2633,13 +2625,16 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			}
 		}
 		is_map := underlying_kind(graph.k.c, prov_type(graph, v)) == .Map
-		for element in v.elements {
+		for element, index in v.elements {
 			if is_map {
 				walk_flow_expr(graph, element.key)
 				if prov { prov_hold_owner(graph, element.key) }
 			}
-			walk_flow_expr(graph, element.value)
-			if prov { prov_hold_owner(graph, element.value) }
+			loans := walk_flow_expr(graph, element.value)
+			if prov {
+				prov_hold_owner(graph, element.value)
+				prov_repeated_element_effects(graph, v, prov_type(graph, v), index, loans)
+			}
 		}
 		if prov && is_map && len(v.elements) > 0 {
 			prov_key_effects(graph, prov_type(graph, v), v.span)

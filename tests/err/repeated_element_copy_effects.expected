@@ -1,0 +1,21 @@
+L0511
+@24:30
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@29:30
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@34:30
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@37:29
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@41:56
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@46:26
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@51:30
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use

@@ -1,0 +1,55 @@
+package main;
+
+// design.md "Fixed arrays", "Global write effects": a repeated initializer is
+// evaluated once and then copied into the remaining slots, so its copy hook's reads
+// happen with the loans that initializer created in use, and with those of the
+// elements before it. The hook is handed the initializer, so a later use of the
+// array is not needed. What stays accepted, the loans of later elements, is in
+// tests/run/repeated_element_copy_effects.loke.
+
+counter: int;
+other: int;
+
+Tagged :: struct { p: ^mut int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		_ = counter;
+		return .ok(Tagged{self.p});
+	}
+}
+Mixed :: struct { n: int, tag: Tagged }
+
+// The gap's own program, and the same without the fresh loan.
+a_fresh_loan :: proc() {
+	copies := [2]Tagged{0..=1 = Tagged{&mut counter}};
+	copies[0].p^ = 10;
+}
+a_named_pointer :: proc() {
+	p := &mut counter;
+	copies := [2]Tagged{0..=1 = Tagged{p}};
+	copies[0].p^ = 10;
+}
+
+no_later_use :: proc() {
+	copies := [2]Tagged{0..=1 = Tagged{&mut counter}};
+}
+inside_a_record :: proc() {
+	copies := [2]Mixed{0..=1 = Mixed{1, Tagged{&mut counter}}};
+	copies[0].tag.p^ = 10;
+}
+an_earlier_elements_loan :: proc() {
+	copies := [3]Tagged{0 = Tagged{&mut counter}, 1..=2 = Tagged{&mut other}};
+	copies[0].p^ = 10;
+}
+takes :: proc(copies: [2]Tagged) { copies[0].p^ = 10; }
+as_an_argument :: proc() {
+	takes([2]Tagged{0..=1 = Tagged{&mut counter}});
+}
+// An unrelated mutable borrow still in use conflicts as it did.
+a_borrow_across_it :: proc() {
+	p := &mut counter;
+	copies := [2]Tagged{0..=1 = Tagged{&mut other}};
+	p^ = copies[0].p^;
+}
+
+main :: proc() {}

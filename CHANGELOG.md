@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A repeated array element's copy hook now counts its reads after the initializer
+  is evaluated ([Fixed arrays](design.md#fixed-arrays),
+  [Global write effects](design.md#global-write-effects)), with what the initializer
+  and earlier elements hold in use. `[2]Tagged{0..=1 = Tagged{&mut counter}}` with
+  `Tagged`'s hook reading `counter` compiled. It is now `L0511`. Upgrade by building
+  the elements one at a time, or by not borrowing what the hook reads.
 - A place destructure now counts the reads of the copy hooks of the fields it clones
   ([Destructuring](design.md#destructuring),
   [Global write effects](design.md#global-write-effects)), not those of the containing
