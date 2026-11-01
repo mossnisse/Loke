@@ -213,11 +213,7 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 		if place.name != "param_slice_indexed" {
 			return ""
 		}
-		for candidate in MATRIX_USES {
-			if candidate.name == same {
-				return matrix_expected(place, take, candidate, shape, later)
-			}
-		}
+		return matrix_expected(place, take, Matrix_Use{name = same}, shape, later)
 	}
 	if (place.name == "local_chosen" || place.name == "param_slice_indexed") && take == .Copy && use.name == "replace_head" &&
 	   shape == .Loop_Whole {

@@ -191,6 +191,14 @@ remain open:
    records and accessor. This is a maintainability finding; the reviewed
    corpora exposed no missed replay read.
 
+   Not taken on 2026-11-01. The scan cannot miss a read: whatever the replay's
+   text names is loaded, whichever emitter path wrote it. Tracking would have
+   about eight sites that read `e.names` mark each use, where a site that forgets
+   leaves an undefined name in a thunk only a panic path exercises, and its spans
+   would have to survive `without_unpushed_pops`. The saving is an estimate, and
+   the spelling the scan depends on is the compiler's own. Worth revisiting if
+   the emitter stops producing text.
+
 3. **Give the new bitcode-command unit test a temporary allocator (P3).**
    `runtime_bitcode_keeps_the_cpu_check_native` in
    [src/emit_llvm_test.odin](src/emit_llvm_test.odin) calls toolchain discovery,
@@ -529,7 +537,7 @@ applied during review.
 ## Review of constant view elements and the wider borrow matrix (2026-10-31)
 
 Reviewed `72431f48` for correctness, simplification, and structure. Two
-findings were recorded, and the first is fixed:
+findings were recorded, and both are fixed:
 
 - **Keep known starts when lengths vary (P2).** Shortening a view on one
   branch left its start unchanged, but accesses to different constant
@@ -540,11 +548,8 @@ findings were recorded, and the first is fixed:
   known start (`Prov_View_Def.open`).
 - **Remove the matrix's lookup loop (P3, shrink).** `matrix_expected` in
   [tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin) only reads
-  the operation's name. After `matrix_same_element` has remapped it, replace
-  the five-line scan of `MATRIX_USES` with
-  `return matrix_expected(place, take, Matrix_Use{name = same}, shape, later)`.
-  The fixture's source text is not needed by the expected-result model.
-  Net: four lines fewer.
+  the operation's name, so it no longer scans `MATRIX_USES` for the fixture
+  `matrix_same_element` remaps to.
 
 `Prov_View_At` is a focused record, and sharing the start computation between
 publication and place checks avoids duplicate walkers. The precision gap
