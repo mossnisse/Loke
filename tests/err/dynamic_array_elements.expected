@@ -37,6 +37,9 @@ L0512
 L0512
 @149:2
 `z` cannot be assigned here: a mutable pointer of it is still in use
+L0511
+@156:43
+this write of `z` is not compatible with the mutable pointer of it that is still in use
 L0512
 @158:2
 `z` cannot be assigned here: a mutable pointer of it is still in use

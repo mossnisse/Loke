@@ -3350,7 +3350,8 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.rearranged = make([dynamic]int, graph.alloc)
 	severable := make([dynamic]int, 0, 4, graph.alloc)
 	for reborrow, index in graph.reborrows {
-		if reborrow.copied_within || graph.fresh_slots[reborrow.source] || prov_slot_is_loaded_temporary(graph, reborrow.source) {
+		if reborrow.copied_within || graph.fresh_slots[reborrow.source] || prov_slot_is_loaded_temporary(graph, reborrow.source) ||
+		   prov_slot_is_stored_temporary(graph, reborrow) {
 			append(&severable, index)
 		}
 	}
@@ -3468,7 +3469,10 @@ run_severing_event :: proc(state: ^Prov_State, event: Prov_Event) {
 		} else if event.kind == .Rearrange {
 			continue
 		} else if reborrow.source == event.slot {
-			state.severed[index] = true
+			// A definition joining the slot's own value does not end it.
+			if event.kind != .Def || !slice.contains(event.sources, event.slot) {
+				state.severed[index] = true
+			}
 		} else if reborrow.derived == event.slot {
 			state.severed[index] = false
 		}
@@ -4812,7 +4816,12 @@ paths_overlap_joined :: proc(a, prefix, rest: []Proj_Step) -> bool {
 run_live_event :: proc(event: Prov_Event, live: []bool, uses: []Span) {
 	#partial switch event.kind {
 	case .Def:
-		live[event.slot] = false
+		// A definition joining the slot's own value, as a store that may have
+		// left what the slot held does, does not end that value (design.md
+		// "Places and overlap").
+		if !slice.contains(event.sources, event.slot) {
+			live[event.slot] = false
+		}
 	case .Publish:
 		for slot in event.replaces {
 			live[slot] = false
@@ -6208,6 +6217,14 @@ place_loans_overlap :: proc(a, b: Prov_Place_Loan) -> bool {
 prov_slot_is_loaded_temporary :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 	entry := graph.prov_slots[slot]
 	return entry.loaded && entry.symbol == INVALID_SYMBOL
+}
+
+// A temporary stored into a named slot. Only its own expression reads it, before
+// the store, and what an earlier evaluation left there, which a store that joins
+// keeps, is no reborrow of its new value: a loop's `held.append(rows)`.
+@(private = "file")
+prov_slot_is_stored_temporary :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) -> bool {
+	return graph.prov_slots[reborrow.source].symbol == INVALID_SYMBOL && graph.prov_slots[reborrow.derived].symbol != INVALID_SYMBOL
 }
 
 // The source is suspended only while both slots' current values share a valid

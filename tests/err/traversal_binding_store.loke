@@ -18,8 +18,8 @@ Doc :: struct { items: [2]string }
 see :: proc(node: ^Node) {}
 set_ro :: proc(list: ^mut Ro, @(escape=stored) node: ^Node) { list^.head = node; }
 
-// The reproduction, whose `&mut c` is taken at one site, so only the last
-// write of `c` conflicts.
+// The reproduction: each step's `&mut c` conflicts with the one an earlier step
+// left in an element, and the last write of `c` with the one kept.
 stored_mutable :: proc() {
 	a := Node{1}; b := Node{2}; c := Node{3};
 	lists := [2]List{List{&mut a}, List{&mut b}};

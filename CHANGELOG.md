@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- A store or call that may leave what a place held no longer ends the borrow held
+  there ([Places and overlap](design.md#places-and-overlap)). A second `&mut c`
+  stored at an index that is no constant, in a loop, or through a
+  `foreach (&mut x in xs)` binding used to compile beside a first one still in use,
+  and is now `L0511` or `L0641`. A call given `inout held` while `held` may still
+  hold a borrow left by an earlier `@(escape=stored)` argument whose root has ended
+  used to compile and hand the callee ended storage, and is now `L0513`
+  ([Retaining a borrow](design.md#retaining-a-borrow)). Upgrade by giving each
+  element its own borrow, or by declaring what is stored before what holds it, so
+  it outlives every use.
 - A parametric alias with a `$` name inside a nested call that computes a type,
   `Alias :: Option(Identity($T))`, is now `L0742` at its declaration
   ([Parametric aliases](design.md#parametric-aliases)). It used to be accepted, and

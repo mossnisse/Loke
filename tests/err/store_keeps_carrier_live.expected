@@ -1,0 +1,12 @@
+L0511
+@17:18
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@27:48
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@37:45
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0513
+@87:2
+this slice is used after `numbers`, the local it borrows, has ended

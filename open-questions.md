@@ -11,6 +11,192 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the provenance architecture (2026-11-01)
+
+Reviewed the root and region provenance implementation for structure rather
+than for one change: construction in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) and the walk it shares with
+lifecycle analysis in [src/cfg.odin](src/cfg.odin), the solvers, summaries, and
+diagnostics in [src/borrow.odin](src/borrow.odin), and the normalized input in
+the `provenance_*.odin` files. The question was where its special cases come
+from, and which generalizations would remove classes of them rather than
+instances. One defect was confirmed with the checked-in compiler and fixed since;
+the rest are design questions, ordered by the payoff of a change against its
+risk.
+
+Some measure of the subject, so the questions carry their weight. The checker
+is about 25,000 lines, 10,400 of them construction in `cfg_provenance.odin` and
+6,700 solving, summaries, and diagnostics in `borrow.odin`. 378 of the
+repository's 1,459 commits touch these files, and 223 of the 533 `src` commits
+since 2026-10-01. 13 of the 25 gaps then open in [known-gaps.md](known-gaps.md)
+were in it. `Prov_State` holds 27 maps, 13 of which answer some form of "what does
+this storage hold, or view". `Prov_Event` has 46 fields, and what a `Publish`
+means depends on 13 of them; `publish_into_loan` takes 11 parameters.
+`Prov_Reborrow` carries 5 modifier flags, each a rule of its own in
+`live_reborrow_of`. `prov_call_argument` is 250 lines of shape tests whose
+order matters, and `prov_assign` is the most edited procedure in the checker,
+55 hunks in the last 120 commits to its file.
+
+- **A joining `Def` ended liveness (P1, fixed).** `run_live_event` ended the
+  slot of every `Def`, including a store at an indistinct path, whose `Def`
+  joins the slot's own value into its sources because the store may have left
+  it in place. The old borrow was then dead at the next conflicting access.
+  The gap's earlier record blamed a loop and the loan's identity, but two stores
+  at one variable index in straight-line code did the same. A `Def` now ends its
+  slot only when the slot is not among its sources, and
+  [tests/err/store_keeps_carrier_live.loke](tests/err/store_keeps_carrier_live.loke)
+  holds the cases. It was not the one line this review first expected. It also
+  closed a hole nothing had recorded: a call emits what a `stored` argument
+  leaves before its own use of the arguments, so that store hid from liveness
+  what an `inout` argument still held, and a callee could be handed ended
+  storage. And it exposed the
+  [value identity](#compositional-loan-construction) question: a reborrow edge is
+  flow-insensitive, so `held.append(rows)` in a loop compared the new temporary
+  with what an earlier iteration left in `held`. Another rule took care of that
+  by extending severing (`prov_slot_is_stored_temporary`), which is more evidence
+  for the exclusivity item below.
+
+- **What storage holds has six representations (P1 class).** A named local's
+  carriers are content slots (`content_by_symbol`), or one slot
+  (`slot_by_symbol`); a slice literal's hidden array has `Prov_Root.slots`; a
+  parameter's caller storage has `caller_slots` keyed by loan, told apart by
+  `caller_mutable`, `caller_one`, and `caller_element`; one element of a view
+  parameter has `view_elements`; a temporary has `prov_temp_content`; a loaded
+  value a `loaded` slot. Every consumer that must visit all the slots a carrier
+  may be in enumerates these by hand, and each misses some:
+  `prov_link_copied_carriers` visits named and caller slots but not a
+  literal's
+  ([gap](known-gaps.md#a-call-copying-carriers-in-a-slice-literal-leaves-no-reborrow-links));
+  `with_literal_content` extends a use with a literal's content but not a
+  named array's
+  ([gap](known-gaps.md#a-view-of-a-named-array-does-not-hold-what-its-elements-borrow));
+  `prov_note_traversal` takes a named-root branch for a protocol iterable
+  ([gap](known-gaps.md#a-mutable-protocol-traversal-publishes-into-the-iterable-instead-of-its-elements));
+  `load_through_loan` branches four ways and `publish_into_loan` five.
+  Proposal: every root owns one slot vector by carrier path, a parameter's
+  caller storage and a literal's array included, and a loan names a root and a
+  path, so a load, store, link, or use addresses the slots of the loan's root
+  that its path overlaps and nothing else. `prov_caller_slots` already builds
+  such slots; it keys them by loan rather than by root. Whether a path names
+  one place, which `caller_one` and `caller_element` record, is a property of
+  the path.
+
+- **Region facts are a second alias analysis with another lattice (P2,
+  largest).** Root provenance is a per-block dataflow over loan bits,
+  flow-sensitive. Region provenance is `Prov_Facts`: `region_of`,
+  `region_content`, `written_aliases`, `lent_locals`, and `provider_parents`,
+  flow-insensitive sets that only grow, carried between replay rounds.
+  `written_aliases` answers for regions the question the loan rows answer for
+  roots, what a local's carriers may point at. The replay machinery exists
+  only because these facts grow: `build_provenance_replay` returns the
+  construction graph when their weight is zero, and otherwise replays the
+  recorded fact operations to a fixed point and materializes the
+  fact-dependent events again
+  ([rationale](comments.md#provenance-replay-and-precise-publication)). Every
+  store site records twice: `prov_assign`, `prov_container_content`, and the
+  `Exchange` and `Unsafe_Write` builtins each call a loan path and a region
+  path. Two gaps follow from the lattice itself,
+  [a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
+  and
+  [a swap of owners is not seen](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen),
+  while the specification states its rules for what is live and until cleanup,
+  which is flow-sensitive. Proposal: carry a region set per slot in the same
+  per-block dataflow as the loan bits, joined at block entry, replaced by a
+  `Def`, joined by a `Publish`. `Prov_Facts` then shrinks to what crosses
+  bodies, the summaries; the replay rounds, the two replay arenas, the phase
+  rules under
+  [normalized provenance input](compiler-architecture.md#normalized-provenance-input),
+  and the [cost of normalization](#normalized-input-for-provenance-analysis)
+  question change with it. Decide this after the previous item, since the
+  region set wants the one slot vector to sit on.
+
+- **Mutable exclusivity is kept by hand-built links (P2).** The solver knows
+  which loans a slot may hold; whether two slots holding one mutable loan may
+  both be used is decided by the reborrow graph, which the walk builds a link
+  at a time: `prov_reborrow` for a copy into a slot, `prov_link_stored_carrier`
+  and `prov_reborrow_stored_content` for a store through carriers,
+  `prov_view_any_element_links` for a store at an unknown view index,
+  `prov_reborrow_retained` for a `stored` argument, `prov_link_copied_carriers`
+  with `copied_within` for a call that copies, and `prov_reborrow_loaded` with
+  `pending` and `prov_activate_copies` for a copy read through a pointer,
+  settled after the solve. [Compositional loan
+  construction](#compositional-loan-construction) asked for explicit reaching
+  definitions "if another loop or branch form needs a fourth" rule; `pending`
+  and `copied_within` are the fourth and fifth. Two genuine rules remain
+  underneath: a carrier stored back through what it was loaded from replaces
+  that carrier (`via`), and a read-only reborrow is not suspended by its copies
+  (`passes_on`). The may-sets a permuting `Rearrange` leaves mean the solver
+  cannot by itself tell a copy from a move, so `Carrier_Move.copied` stays;
+  what one rule could replace is the per-shape linking: a `Def` whose sources
+  hold a mutable loan that another live slot holds, outside the chain the new
+  slot derives from, is the conflict. The
+  [borrow matrix](tests/borrow_matrix_test.odin) is the oracle for whether such
+  a rule rejects what the links let through.
+
+- **Place loans beside root loans (P3).** A borrow of a named place is a loan
+  of its root and path; one through carriers is a `Prov_Place_Loan`, a
+  snapshot slot with a bit of its own, because which storage the carriers name
+  is known only to the solve. So there are two conflict checks,
+  `access_conflicts` on `.Access` and `check_place_loans` on `.Through`, two
+  kinds of liveness bit, the marker slots of `prov_through_marker`, and ten
+  fields of `Prov_Slot` (`fresh_*`, `through_*`, `walk_reads`) that let
+  `prov_reborrow` weaken each kind separately. The
+  [rationale](comments.md#local-borrow-checking) kept them apart to spare every
+  loan the places it is at; the offsets machinery (`Prov_Slot.offsets`,
+  `prov_reaching_offsets`) now records those places anyway. The solve could
+  resolve a place loan to loans of the roots its carriers reach, as
+  `resolve_content_reads` already materializes loaded reborrows after the
+  forward pass, leaving one check.
+
+- **Flags stand in for kinds, and order for rules (P3, local).** `Publish`'s
+  modifiers (`stored`, `linked`, `retained`, `carried`, `permutes`, `strips`,
+  `element_loan`, `elements`, `any_element`, `view_slot`, `view_index`,
+  `view_reaching`, `replaces`) and `Load`'s (`deep`, `writable`, `walked`,
+  `element`) are each a destination or load form the walk worked out and the
+  solver works out again from the flags. A sum type for the store's target,
+  computed once by the walk, and one for the load's kind would let
+  `run_prov_event` and `publish_into_loan` dispatch once. `prov_call_argument`
+  tests twelve argument shapes in an order that matters, with nine callee
+  names checked by hand (`Slice_Ref_Next`, `indexed_next_lends`,
+  `Standard_Len`, `Standard_Cap`, `Standard_Hash`, `Adapter_Iter`,
+  `Iterator_Copy`, `Adapter_View`, `clone_copies_receiver`); the two printing
+  gaps
+  ([one](known-gaps.md#a-printed-value-through-a-mutable-call-result-is-not-held),
+  [two](known-gaps.md#printing-a-mutable-slice-field-suspends-it-for-a-later-read))
+  are `prov_erase` and `prov_printed_argument` taking a path those tests do
+  not. A `Container_Op`'s provenance is spread over eight predicates and tables
+  (`prov_op_returns_view`, `prov_op_lends_receiver`,
+  `prov_op_removes_element`, three switches in `prov_container_content`, the
+  list in `prov_call_carrier_moves`, `STORING_CONTAINER_OPS`,
+  `DROPPING_CONTAINER_OPS`, `ALLOCATING_OPS`).
+  [provenance_call.odin](src/provenance_call.odin) is where a per-argument mode
+  and a per-operation row belong, and a compiler-known body with no source to
+  summarize should carry a written result contract rather than a name test in
+  the walk.
+
+- **Syntax as evidence (P3).** `prov_assign_permutes` compares source text
+  ([gap](known-gaps.md#textually-equal-destinations-do-not-prove-a-carrier-permutation)),
+  where the normalized `Prov_Place` gives place identity;
+  `prov_indices_may_write` reads an index's syntax where the global effects
+  already say what a call writes; and what counts as a fresh borrow of a range
+  for `Prov_View_Def` is
+  [open](#review-of-constant-view-elements-and-the-wider-borrow-matrix-2026-10-31).
+
+Order: the local refactors first, which change no acceptance and can be checked
+by the diagnostics comparison the
+[architecture](compiler-architecture.md#normalized-provenance-input)
+prescribes. Then one slot vector per root, which closes three gaps by
+construction; then regions on it; then the loan rule and place loans. The
+[borrow matrix](tests/borrow_matrix_test.odin) is the right oracle throughout,
+since its model is written apart from the compiler; it wants places for a
+slice literal's array, a view parameter's caller storage reached twice, a
+store at an unknown index between two uses, and a call that copies.
+
+Validation: the review's probes were compiled with the checked-in `lokec.exe`.
+Two `&mut c` written in turn reported `L0511`; the same two around a store at an
+index a call returns, or one `&mut c` in a loop storing at such an index,
+compiled. Beyond the liveness fix above, no implementation change was made.
+
 ## Review of drop-hook copy decisions and generic hook validation (2026-11-01)
 
 Reviewed `3a5b4f7b`, `bf5cb393`, and `46cf2aa8` for correctness,

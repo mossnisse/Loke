@@ -1,5 +1,11 @@
 L0511
+@26:45
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
 @28:2
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@35:45
 this write of `c` is not compatible with the mutable pointer of it that is still in use
 L0511
 @37:2
@@ -43,6 +49,9 @@ this write of `c` is not compatible with the read-only pointer of it that is sti
 L0511
 @159:2
 this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0641
+@167:45
+`other` cannot be used here: a mutable reborrow of it is still in use
 L0641
 @169:2
 `other` cannot be used here: a mutable reborrow of it is still in use

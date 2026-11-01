@@ -625,33 +625,6 @@ Liveness finds the copy dead once the call has used the source, since a use of
 both in one event comes after nothing. Found while making a call that copies
 carriers within an argument link them on 2026-11-01.
 
-### A borrow taken once and stored at two places in a loop is not linked
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) makes a mutable
-borrow's second use conflict with a live first one, but one `&mut c` stored in
-two elements by a loop leaves both usable, so `c` has two live mutable carriers:
-
-```loke
-package main;
-Node :: struct { value: int }
-List :: struct { head: ^mut Node }
-stored_twice :: proc() {
-    a := Node{1}; b := Node{2}; c := Node{3};
-    lists := [2]List{List{&mut a}, List{&mut b}};
-    for (i := 0; i < 2; i += 1) { lists[i].head = &mut c; }
-    node := lists[0].head;
-    other := lists[1].head; // should be rejected
-    node^.value = 1;
-    other^.value = 1;
-}
-main :: proc() {}
-```
-
-Each store is one event taking one loan, so the two iterations are one borrow of
-`c` however many places hold it. The same happens through a `foreach (&mut list
-in lists)` binding. Found while making what is stored through a traversal binding
-reach the source on 2026-11-01.
-
 ### A swap written with a temporary is rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier leave

@@ -1,0 +1,100 @@
+package main;
+
+// design.md "Places and overlap": a borrow is live to its last use. A store that
+// may have left what a place held does not end that use, so the first `&mut c`
+// is still live at the second, wherever the store may land.
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+
+pick :: proc() -> int { return 0; }
+
+unknown_index :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	i := pick();
+	lists[i].head = &mut c;
+	lists[i].head = &mut c;
+	node := lists[0].head;
+	other := lists[1].head;
+	node^.value = 1;
+	other^.value = 1;
+}
+
+in_a_loop :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	for (i := 0; i < 2; i += 1) { lists[i].head = &mut c; }
+	node := lists[0].head;
+	other := lists[1].head;
+	node^.value = 1;
+	other^.value = 1;
+}
+
+through_a_binding :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head = &mut c; }
+	node := lists[0].head;
+	other := lists[1].head;
+	node^.value = 1;
+	other^.value = 1;
+}
+
+// Each store below replaces what it may have left, or nothing uses it again.
+
+same_constant_index :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	for (i := 0; i < 2; i += 1) { lists[0].head = &mut c; }
+	node := lists[0].head;
+	node^.value = 1;
+}
+
+never_used_again :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	i := pick();
+	lists[i].head = &mut c;
+	lists[i].head = &mut c;
+}
+
+carrier_stored_into_itself :: proc() {
+	values := [4]int{1, 2, 3, 4};
+	view := &mut values[:];
+	for (i := 0; i < 2; i += 1) { view = &mut view[1:]; }
+	view[0] = 2;
+	values[0] = 3;
+}
+
+// design.md "Retaining a borrow": a call may leave `values` in `destination`, or
+// not, so what `destination` held still stands, and the next call is handed it.
+// The call's own store comes before its use of the argument, and does not end
+// what that use reads.
+Holder :: struct { view: []int }
+
+keep :: proc(destination: inout Holder, @(escape=stored) values: []int, store: bool) {
+	if (store) { destination.view = values; }
+}
+
+handed_on_after_its_root_ended :: proc() {
+	held: Holder = {};
+	{
+		numbers := [3]int{1, 2, 3};
+		keep(inout held, numbers[:], true);
+	}
+	others := [3]int{4, 5, 6};
+	keep(inout held, others[:], false);
+	_ = held.view[0];
+}
+
+root_outlives_every_use :: proc() {
+	numbers := [3]int{1, 2, 3};
+	others := [3]int{4, 5, 6};
+	held: Holder = {};
+	keep(inout held, numbers[:], true);
+	keep(inout held, others[:], false);
+	_ = held.view[0];
+}
+
+main :: proc() {}
