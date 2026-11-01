@@ -8349,9 +8349,9 @@ overlap. Within one root, a path overlaps itself and every prefix or descendant
 of itself.
 
 Distinct struct fields and distinct constant indices or ranges of a fixed or
-dynamic array may be treated as disjoint. Union fields, dynamic indices or ranges, opaque
-dereferences, and user-defined indexing or slicing conservatively overlap every
-path that might name the same storage.
+dynamic array may be treated as disjoint. Union fields, non-constant indices or
+ranges, opaque dereferences, and user-defined indexing or slicing conservatively
+overlap every path that might name the same storage.
 
 An operation on a complete root or container header overlaps every descendant.
 Consequently, proving two element paths disjoint can permit simultaneous loans

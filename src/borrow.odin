@@ -5628,13 +5628,25 @@ report_parent_write :: proc(state: ^Prov_State, event: Prov_Event, window: u64, 
 	add_notef(c, sym.span, "declared here; write it before the first `spawn` or after the block, or make it an `Atomic` or a `thread.Mutex`")
 }
 
+// A printed argument is reached where it is read and again by the call that
+// holds it, and the argument's report already names that reach.
+@(private = "file")
+reach_reported_within :: proc(shared: ^Shared_Reports, span: Span, global: Symbol_Id) -> bool {
+	for report in shared.seen {
+		if report.global == global && report.span.file == span.file && span.lo <= report.span.lo && report.span.hi <= span.hi {
+			return true
+		}
+	}
+	return false
+}
+
 @(private = "file")
 report_shared_reach :: proc(
 	state: ^Prov_State, global: Symbol_Id, span: Span, window: u64, shared: ^Shared_Reports, callee := "",
 ) {
 	c := state.k.c
 	hazard := shared_carrier_hazard(c, global)
-	if hazard.type == INVALID_TYPE || !first_report(shared, span, global) {
+	if hazard.type == INVALID_TYPE || reach_reported_within(shared, span, global) || !first_report(shared, span, global) {
 		return
 	}
 	who := "this" if callee == "" else callee
