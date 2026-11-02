@@ -40,9 +40,9 @@ impl Broken {
 	close :: hook(drop) proc(self) {}
 }
 
-// Structs alone, in the type position.
+// Structs alone.
 Either :: union @(fieldwise_copy) { a: int, b: bool }
-@(fieldwise_copy) Declared :: struct { fd: int }
+@(fieldwise_copy) Declared :: int;
 
 // It takes no value.
 Valued :: struct @(fieldwise_copy=true) { fd: int }

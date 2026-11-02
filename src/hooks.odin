@@ -974,7 +974,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 		// bound excluded is what made the instance move-only, so it is not a
 		// second declaration of anything.
 		if sym.hook == .Copy && !sym.bound_excluded && type_clone_disabled(k.c, subject) {
-			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
+			errorf(k.c, sym.span, "L0488", "a move-only type cannot also declare `hook(copy)`")
 			// Which arguments make it so is the block's to say, by a bound on the hook.
 			if info := type_of(k.c, subject); info != nil && info.instance_of != INVALID_SYMBOL && !info.move_only {
 				add_notef(k.c, no_span(), "a field makes `%s` move-only; a bound on the hook, such as `where is_copyable(T)`, leaves it out of this instance", type_name(k.c, subject))
@@ -1226,7 +1226,7 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 		switch {
 		case record.move_only:
 			if claim_copy_failure(k, d, .Opted_Move_Only) {
-				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but a `move_only` record has none")
+				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but a `@(move_only)` record has none")
 			}
 		case copy_written:
 			if claim_copy_failure(k, d, .Opted_Copy_Hook) {
@@ -1239,7 +1239,7 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 			}
 		case template == nil && type_clone_disabled(k.c, subject):
 			if claim_copy_failure(k, d, .Opted_Move_Only_Field) {
-				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but `%s` holds a move-only field and has none; write `move_only`", name)
+				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but `%s` holds a move-only field and has none; write `@(move_only)`", name)
 			}
 		}
 		return
@@ -1251,10 +1251,10 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 	add_notef(k.c, drop_span, "`hook(drop)` is declared here")
 	// A generic record has no answer of its own here: it depends on the instance.
 	if template == nil && type_clone_disabled(k.c, subject) {
-		add_notef(k.c, no_span(), "`%s` is already move-only through a field; write `move_only` before `struct` to say so", name)
+		add_notef(k.c, no_span(), "`%s` is already move-only through a field; write `@(move_only)` on its declaration to say so", name)
 		return
 	}
-	add_notef(k.c, no_span(), "if a copy would release what the hook releases a second time, write `move_only` before `struct`")
+	add_notef(k.c, no_span(), "if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration")
 	add_notef(k.c, no_span(), "if a copy must do more than copy each field, declare `hook(copy)`")
-	add_notef(k.c, no_span(), "if copying each field is right, write `@(fieldwise_copy)` after `struct`")
+	add_notef(k.c, no_span(), "if copying each field is right, write `@(fieldwise_copy)` on its declaration")
 }

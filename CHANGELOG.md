@@ -730,6 +730,13 @@ checklist.
 
 ### Added
 
+- A struct's or union's attributes can now be written on its declaration, beside those
+  about its name: `@(public, packed) Header :: struct { ... }` and
+  `@(zero=none) Maybe :: union { none, some: int }`
+  ([Attributes](design.md#attributes)). `@(move_only)` is the attribute spelling of
+  `move_only struct`, and applies to a union too, which could be move-only only through a
+  move-only payload before ([`@(move_only)`](design.md#move_only)). `move_only` is now
+  reserved only directly before `struct`. The earlier spellings still compile.
 - [`@(fieldwise_copy)`](design.md#fieldwise_copy) keeps the generated field-wise
   copy of a record with a `hook(drop)`, for a hook that adds a step each value
   needs once.

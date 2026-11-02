@@ -10412,9 +10412,21 @@ main :: proc() {
 
 An attribute specifies a property of a declaration, parameter, statement, block,
 or type literal. Use `@(name)` for an attribute without a value. Use
-`@(name=value, ...)` for attributes with values. Layout attributes on struct and
-union types use the same syntax. The grammar also admits attributes on
-statements and blocks, but this specification defines none for those positions.
+`@(name=value, ...)` for attributes with values. The grammar also admits
+attributes on statements and blocks, but this specification defines none for
+those positions.
+
+A struct's or union's attributes are written on its declaration, those about the
+type beside those about the name: `@(public, packed) Header :: struct { ... }`.
+An attribute that describes a struct or union, such as `@(packed)` or
+`@(move_only)`, is an error on a declaration whose value is anything else, as in
+`@(packed) Alias :: Header;`. The value of [`@(align=N)`](#alignn) may name a
+generic parameter of the definition it describes, though that parameter is
+written to its right.
+
+Two earlier spellings are still accepted, and mean the same as the attribute on
+the declaration: an attribute list after a `struct` or `union` and its generic
+parameters, and `move_only` directly before `struct`.
 
 ### Attribute categories
 
@@ -10435,6 +10447,7 @@ statements and blocks, but this specification defines none for those positions.
 | `@(zero=<variant>)`, `@(failure=<variant>)` | union types | [designate the zero and failure variants](#zerovariant-and-failurevariant) |
 | `@(initialized=<field>)` | a fixed array field of a struct | [only a counted prefix holds values](#initializedfield) |
 | `@(synchronized)` | struct fields, and file-scope and `static` variables | [its package synchronizes every access](#synchronized) |
+| `@(move_only)` | struct and union types | [removes the generated copy operations](#move_only) |
 | `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
 | `@(wakes_on_drop)` | struct and union types | [a drop may wake threads waiting on what the value borrows](#wakes_on_drop) |
 | `@(fieldwise_copy)` | struct types with a `hook(drop)` | [keeps the generated field-wise copy beside the hook](#fieldwise_copy) |
@@ -10803,6 +10816,19 @@ the declaring package reaches one directly.
 `sync.Atomic(T).value`, `thread.Mutex(T).value`, and `thread.Monitor(T).value`
 are synchronized, and so is the variable through which `core:log` publishes the
 selected logging provider.
+
+#### `@(move_only)`
+
+Marks a struct or union as having no copy operations, so a value moves and is
+never copied: see [Lifecycle hooks and resource
+types](#lifecycle-hooks-and-resource-types). It takes no value. A record or union
+holding a move-only part is move-only without it, and a generic type's mark holds
+for all of its instances.
+
+```loke
+@(move_only) Ticket :: struct { id: int }
+@(move_only) Claim :: union { none, ticket: int }
+```
 
 #### `@(thread_affine)`
 

@@ -1,0 +1,32 @@
+// design.md "Attributes": a type attribute describes a `struct` or `union`
+// definition, so a declaration whose value is anything else cannot carry one.
+package main;
+
+Header :: struct { a: u8 }
+@(packed) Alias :: Header;
+@(move_only) Number :: int;
+@(move_only) Kind :: enum { A }
+@(zero=A) Other :: enum { A }
+@(move_only) Value :: 3;
+
+// Each one still applies only to the records it describes.
+@(packed) Bad_Union :: union { a: int }
+@(zero=a) Bad_Struct :: struct { a: int }
+@(move_only=true) Valued :: struct { a: int }
+
+// Written twice, even across the earlier spelling.
+@(move_only, move_only) Twice :: struct { a: int }
+@(move_only) Both :: move_only struct { a: int }
+@(packed) Packed_Twice :: struct @(packed) { a: int }
+
+// A union is move-only like a struct.
+@(move_only) Held :: union { none, id: int }
+
+main :: proc() {
+	h := Held.id(7);
+	a := h;
+	_ = a;
+	c := Held.id(1);
+	d := c.clone();
+	_ = d;
+}

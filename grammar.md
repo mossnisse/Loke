@@ -62,8 +62,8 @@ Reserved in every position:
 break       case       continue   default    defer      distinct   dyn
 else        enum       errdefer   for        foreach    foreign    if
 impl        import     in         inout      interface  map        move
-move_only   mut        or_else    or_return  package    proc       return
-struct      switch     type       union      when
+mut         or_else    or_return  package    proc       return     struct
+switch      type       union      when
 ```
 
 A production writes any of them as `Keyword`. A reserved word is still a
@@ -82,6 +82,7 @@ Contextual keywords, reserved only in the positions given:
 | `self` | the first parameter name of a procedure declared in an `impl` block, or of an interface `slot` |
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
+| `move_only` | directly before `struct`, the earlier spelling of [`@(move_only)`](design.md#move_only) |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
 | `capture` | directly after a procedure signature, followed by `(` |
 | `convert`, `copy`, `drop` | as the role inside `hook(...)` |

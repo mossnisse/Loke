@@ -24,7 +24,7 @@ L0488
 
 L0488
 @44:2
-a `move_only` type cannot also declare `hook(copy)`
+a move-only type cannot also declare `hook(copy)`
 
 L0487
 @51:2
@@ -40,7 +40,7 @@ L0411
 
 L0488
 @75:2
-a `move_only` type cannot also declare `hook(copy)`
+a move-only type cannot also declare `hook(copy)`
 a field makes `Holds(Token)` move-only; a bound on the hook, such as `where is_copyable(T)`, leaves it out of this instance
 
 L0488

@@ -456,6 +456,10 @@ api_decl :: proc(
 	}
 	item.private = !decl_is_public(c, b.file, d, block)
 	for attribute in d.attributes {
+		// One written in the type is in the type's text already.
+		if attribute.span.lo > d.names[0].span.lo {
+			continue
+		}
 		spelled := text[attribute.span.lo:attribute.span.hi]
 		if spelled != "public" && spelled != "private" {
 			append(&item.attributes, spelled)
@@ -463,7 +467,15 @@ api_decl :: proc(
 	}
 	w := Ref_Walk{b = b, subject = owner}
 	append(&w.bound, ..bound)
+	// `@(align=N)` may name a generic parameter of the record it describes.
+	mark := len(w.bound)
+	if len(d.values) == 1 {
+		if record, is_record := d.values[0].(^Type_Record); is_record {
+			bind_generic_params(&w.bound, record.generic_params)
+		}
+	}
 	attribute_refs(&w, d.attributes)
+	resize(&w.bound, mark)
 	api_refs(&w, d.declared_type)
 	lo, hi := d.names[0].span.lo, d.span.hi
 	if literal := decl_proc_literal(d); literal != nil {
@@ -493,7 +505,6 @@ api_decl :: proc(
 		if record := decl_struct(d); record != nil {
 			item.text = public_struct(b, record, lo)
 			bind_generic_params(&w.bound, record.generic_params)
-			attribute_refs(&w, record.attributes)
 			for parameter in record.generic_params {
 				api_refs(&w, parameter.type)
 			}
@@ -682,7 +693,9 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 	case ^Type_Record:
 		mark := len(w.bound)
 		bind_generic_params(&w.bound, v.generic_params)
-		attribute_refs(w, v.attributes)
+		if !v.declared {
+			attribute_refs(w, v.attributes)
+		}
 		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)
@@ -1089,7 +1102,10 @@ write_doc_lines :: proc(b: ^strings.Builder, doc: string, indent := "") {
 written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
 	start := lo
 	for attribute in attributes {
-		start = min(start, u32(strings.last_index_byte(text[:attribute.span.lo], '@')))
+		// One written in the type starts after the name.
+		if attribute.span.lo < lo {
+			start = min(start, u32(strings.last_index_byte(text[:attribute.span.lo], '@')))
+		}
 	}
 	return start
 }

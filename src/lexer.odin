@@ -387,8 +387,6 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Map
 	case "move":
 		kind = .Move
-	case "move_only":
-		kind = .Move_Only
 	case "mut":
 		kind = .Mut
 	case "or_else":

@@ -1,5 +1,5 @@
 L0607
-`@(packed)` cannot appear on a union type
+`@(packed)` cannot appear on a union declaration
 @9:22
 
 L0614

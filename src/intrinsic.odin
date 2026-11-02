@@ -219,6 +219,11 @@ validate_intrinsic_attributes :: proc(k: ^Checker, d: ^Decl) {
 	}
 	literal := decl_proc_literal(d)
 	position := literal != nil ? Attr_Pos.Proc_Decl : Attr_Pos.Type_Decl
+	if len(d.values) == 1 {
+		if record, is_record := d.values[0].(^Type_Record); is_record {
+			position = record_attr_position(record)
+		}
+	}
 	validate_attribute_list(k, rest[:], position)
 	reject_described_attributes(k, rest[:], true, "an `@(intrinsic)` declaration")
 	if literal != nil {
@@ -230,7 +235,6 @@ validate_intrinsic_attributes :: proc(k: ^Checker, d: ^Decl) {
 	if len(d.values) == 1 {
 		if record, is_record := d.values[0].(^Type_Record); is_record {
 			validate_record_attributes(k, record)
-			reject_described_attributes(k, record.attributes, false, "an `@(intrinsic)` struct")
 			for field in record.fields {
 				reject_described_attributes(k, field.attributes, true, "a field of an `@(intrinsic)` struct")
 			}

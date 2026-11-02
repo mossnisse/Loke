@@ -1,6 +1,6 @@
 L0748
 @6:28
-`@(fieldwise_copy)` keeps a generated copy, but a `move_only` record has none
+`@(fieldwise_copy)` keeps a generated copy, but a `@(move_only)` record has none
 
 L0748
 @11:20
@@ -16,7 +16,7 @@ L0748
 
 L0748
 @28:20
-`@(fieldwise_copy)` keeps a generated copy, but `Holder` holds a move-only field and has none; write `move_only`
+`@(fieldwise_copy)` keeps a generated copy, but `Holder` holds a move-only field and has none; write `@(move_only)`
 
 L0749
 @34:19
@@ -32,11 +32,11 @@ L0488
 
 L0607
 @44:19
-`@(fieldwise_copy)` cannot appear on a union type
+`@(fieldwise_copy)` cannot appear on a union declaration
 
 L0607
 @45:3
-`@(fieldwise_copy)` cannot appear on a type declaration
+`@(fieldwise_copy)` cannot appear on a constant declaration
 
 L0608
 @48:20

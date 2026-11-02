@@ -73,6 +73,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 		tokens    = tokens,
 		allocator = allocator,
 	}
+	tag_written_move_only(&p)
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
 	result.parallels = p.parallels[:]
@@ -248,6 +249,17 @@ take_as :: proc(p: ^Parser, kind: Token_Kind) -> Token {
 		p.tokens[p.index].kind = kind
 	}
 	return advance(p)
+}
+
+// `move_only` is a name, and only before `struct` the earlier spelling of
+// `@(move_only)`; no name can be followed by `struct`.
+@(private = "file")
+tag_written_move_only :: proc(p: ^Parser) {
+	for index := 0; index + 1 < len(p.tokens); index += 1 {
+		if p.tokens[index].kind == .Ident && p.tokens[index + 1].kind == .Struct && text_of(p, p.tokens[index]) == "move_only" {
+			p.tokens[index].kind = .Move_Only
+		}
+	}
 }
 
 // A contextual keyword is lexed as `Ident`; a probe the parser rolled back may
@@ -1094,6 +1106,9 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	}
 
 	value := parse_constant_value(p)
+	if record, is_record := value.(^Type_Record); is_record {
+		adopt_record_attributes(p, d, record)
+	}
 	values := make([]Expr, 1, p.allocator)
 	values[0] = value
 	d.values = values
@@ -1160,6 +1175,22 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	d.span = span_to_here(p, start)
 	d.has_error = !terminated
 	return d, true
+}
+
+// design.md "Attributes": a record's attributes are its declaration's. Those
+// written inside the type, the earlier spelling, join the list after the
+// declaration's own, so both spellings parse to one tree.
+@(private = "file")
+adopt_record_attributes :: proc(p: ^Parser, d: ^Decl, record: ^Type_Record) {
+	if len(record.attributes) > 0 {
+		merged := make([]Attribute, len(d.attributes) + len(record.attributes), p.allocator)
+		copy(merged, d.attributes)
+		copy(merged[len(d.attributes):], record.attributes)
+		d.attributes = merged
+	}
+	record.attributes = d.attributes
+	record.declared = true
+	record.move_only = has_attribute(d.attributes, "move_only")
 }
 
 @(private = "file")
@@ -2912,12 +2943,15 @@ parse_type :: proc(p: ^Parser) -> Expr {
 
 	case .Move_Only:
 		keyword := advance(p)
-		if !at(p, .Struct) {
-			parse_error(p, span_of(p, current(p)), "L0210", fmt_found(p, current(p)), "`move_only` must be followed by `struct`")
-			return error_expr(p, span_of(p, keyword))
-		}
 		record := parse_record(p)
 		if value, ok := record.(^Type_Record); ok {
+			// The earlier spelling of `@(move_only)`, in the list as that would be.
+			path := make([]Name, 1, p.allocator)
+			path[0] = name_of(p, keyword)
+			attributes := make([]Attribute, len(value.attributes) + 1, p.allocator)
+			attributes[0] = Attribute{path = path, span = span_of(p, keyword)}
+			copy(attributes[1:], value.attributes)
+			value.attributes = attributes
 			value.move_only = true
 			value.span.lo = keyword.lo
 		}
@@ -3763,6 +3797,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	e.kind = keyword.kind == .Union ? .Union : .Struct
 	e.generic_params = generics
 	e.attributes = attributes
+	e.move_only = has_attribute(attributes, "move_only")
 	e.where_clauses = where_clauses
 	e.fields = fields
 	e.variants = variants

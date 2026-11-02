@@ -1,0 +1,53 @@
+// design.md "Attributes": a type's attributes are written on its declaration,
+// beside the ones about its name, and an `@(align=N)` may name a generic parameter
+// of the definition to its right. design.md "@(move_only)": on a union as on a struct.
+package main;
+
+import "core:fmt";
+
+@(public, packed) Header :: struct { a: u8, b: u32 }
+@(align=N) Aligned :: struct($N: int) { x: int }
+@(align=8) Aligned_Union :: union { a: u8, b: u16 }
+@(zero=none, failure=none) Maybe :: union($T: type) { none, some: T }
+@(move_only, thread_affine) Window :: struct { handle: int }
+
+@(move_only) Held :: union { none, id: int }
+@(move_only) Generic_Held :: union($T: type) { none, value: T }
+Holder :: struct { held: Held }
+
+// The in-type spelling is still accepted, and joins the declaration's list.
+@(public) Older :: struct @(packed) { a: u8, b: u32 }
+Older_Token :: move_only struct @(thread_affine) { id: int }
+
+static_assert(!is_copyable(Held));
+static_assert(!is_copyable(Generic_Held(int)));
+static_assert(!is_copyable(Holder));
+static_assert(!is_copyable(Window));
+static_assert(!is_copyable(Older_Token));
+static_assert(is_copyable(Header));
+
+take :: proc(h: Held) -> int {
+	switch (h) {
+	case .id(n): return n;
+	case .none: return 0;
+	}
+	return 0;
+}
+
+main :: proc() {
+	fmt.println(size_of(Header), align_of(Aligned(16)), align_of(Aligned_Union));
+	m: Maybe(int) = .none;
+	fmt.println(m);
+
+	@(packed) Local :: struct { a: u8, b: u32 }
+	fmt.println(size_of(Local), size_of(Older));
+
+	h := Held.id(7);
+	fmt.println(take(move(h)));
+	g := Generic_Held(int).value(9);
+	moved := move(g);
+	switch (moved) {
+	case .value(n): fmt.println(n);
+	case .none: fmt.println("none");
+	}
+}

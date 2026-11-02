@@ -29,8 +29,8 @@
   (const names=["element_set"]
     (operator "[]=" (proc (proc-type (param ["a"] (ident "int"))) ---))
   )
-  (const names=["Move_Only"]
-    (move-only-struct (field ["id"] (ident "int")))
+  (const names=["Move_Only"] @[move_only]
+    (struct (field ["id"] (ident "int")))
   )
   (var names=["counter"] static type=(ident "int")
     (int "0")

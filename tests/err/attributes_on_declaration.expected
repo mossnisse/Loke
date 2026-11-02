@@ -1,0 +1,51 @@
+L0607
+@6:3
+`@(packed)` cannot appear on a constant declaration
+
+L0607
+@7:3
+`@(move_only)` cannot appear on a constant declaration
+
+L0607
+@8:3
+`@(move_only)` cannot appear on a type declaration
+
+L0607
+@9:3
+`@(zero)` cannot appear on a type declaration
+
+L0607
+@10:3
+`@(move_only)` cannot appear on a constant declaration
+
+L0607
+@13:3
+`@(packed)` cannot appear on a union declaration
+
+L0607
+@14:3
+`@(zero)` cannot appear on a struct declaration
+
+L0608
+@15:3
+`@(move_only)` takes no value
+
+L0609
+@18:14
+`@(move_only)` is written more than once here
+
+L0609
+@19:22
+`@(move_only)` is written more than once here
+
+L0609
+@20:36
+`@(packed)` is written more than once here
+
+L0503
+@27:7
+`Held` is move-only
+
+L0363
+@30:7
+`Held` has no field or member `clone`

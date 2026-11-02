@@ -327,7 +327,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		}
 		if v.result != nil { index_query_expr(index, v.result.type) }
 	case ^Type_Record:
-		index_query_attributes(index, v.attributes)
+		if !v.declared { index_query_attributes(index, v.attributes) }
 		for parameter in v.generic_params { index_query_expr(index, parameter.type) }
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		for field in v.fields {

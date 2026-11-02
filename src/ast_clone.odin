@@ -499,6 +499,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Type_Record, &v.base)
 		n.kind = v.kind
 		n.move_only = v.move_only
+		n.declared = v.declared
 		n.generic_params = clone_generic_params(c, v.generic_params)
 		n.attributes = clone_attributes(c, v.attributes)
 		n.where_clauses = clone_exprs(c, v.where_clauses)

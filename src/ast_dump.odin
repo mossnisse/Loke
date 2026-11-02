@@ -686,8 +686,10 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Type_Record:
-		fmt.sbprint(b, node.kind == .Union ? "(union" : node.move_only ? "(move-only-struct" : "(struct")
-		dump_attributes(b, node.attributes)
+		fmt.sbprint(b, node.kind == .Union ? "(union" : "(struct")
+		if !node.declared {
+			dump_attributes(b, node.attributes)
+		}
 		dump_generic_params(b, node.generic_params, depth)
 		dump_where_clauses(b, node.where_clauses, depth)
 		for field in node.fields {
