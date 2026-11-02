@@ -737,6 +737,10 @@ checklist.
   `move_only struct`, and applies to a union too, which could be move-only only through a
   move-only payload before ([`@(move_only)`](design.md#move_only)). `move_only` is now
   reserved only directly before `struct`. The earlier spellings still compile.
+- `lokec -migrate` rewrites the earlier spellings of a record's attributes into the
+  declaration form, in a file or a directory's `.loke` files, and leaves everything else as
+  written; `-migrate-check` lists the files it would change
+  ([Common options](compiler-guide.md#common-options)).
 - [`@(fieldwise_copy)`](design.md#fieldwise_copy) keeps the generated field-wise
   copy of a record with a `hook(drop)`, for a hook that adds a step each value
   needs once.

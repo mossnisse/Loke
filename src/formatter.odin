@@ -17,16 +17,8 @@ import "core:strings"
 // files, in place; with `check`, only lists the ones that would change. The
 // exit status is 1 when a file does not parse or, with `check`, would change.
 format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
-	// Listed as a package's sources are, never as a pattern, so a directory
-	// name holding `[` or `*` is only a name.
-	paths: []string
-	if is_directory(input) {
-		paths = package_sources(c, input)
-	} else {
-		paths = []string{input}
-	}
 	status := 0
-	for path in paths {
+	for path in input_sources(c, input) {
 		file, loaded := load_source(c, path)
 		if !loaded {
 			status = 1
@@ -50,6 +42,17 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 		}
 	}
 	return status
+}
+
+// `input` as a list of files. Listed as a package's sources are, never as a
+// pattern, so a directory name holding `[` or `*` is only a name.
+input_sources :: proc(c: ^Compiler, input: string) -> []string {
+	if is_directory(input) {
+		return package_sources(c, input)
+	}
+	paths := make([]string, 1, context.temp_allocator)
+	paths[0] = input
+	return paths
 }
 
 // An editor's unsaved `text` for `path`, laid out as `-fmt` would write the

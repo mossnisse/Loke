@@ -47,6 +47,11 @@ options:
                   the canonical layout, and stop
     -fmt-check    list the files -fmt would change, exit 1 if there are any,
                   and stop
+    -migrate      rewrite spellings an earlier release accepted in the input
+                  file, or a directory's .loke files, and stop
+    -migrate-check
+                  list the files -migrate would change, exit 1 if there are
+                  any, and stop
     -collection name=path
     -collection:name=path
                   register an import-path prefix; base: and core: are seeded
@@ -97,6 +102,8 @@ Options :: struct {
 	api_check:  bool,
 	fmt:        bool,
 	fmt_check:  bool,
+	migrate:       bool,
+	migrate_check: bool,
 	run_tests:  bool,
 	defines:    [dynamic]string,
 	collections: [dynamic]string,
@@ -176,6 +183,11 @@ run :: proc() -> int {
 	}
 	if opts.fmt || opts.fmt_check {
 		status := format_files(c, opts.input, opts.fmt_check)
+		report(c)
+		return status
+	}
+	if opts.migrate || opts.migrate_check {
+		status := migrate_files(c, opts.input, opts.migrate_check)
 		report(c)
 		return status
 	}
@@ -299,6 +311,10 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.fmt = true
 		case arg == "-fmt-check":
 			opts.fmt_check = true
+		case arg == "-migrate":
+			opts.migrate = true
+		case arg == "-migrate-check":
+			opts.migrate_check = true
 		case arg == "-g":
 			opts.debug_info = true
 		case arg == "-debug":

@@ -873,6 +873,7 @@ be file-private. Paths below are relative to `src/`.
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
+| `migrate.odin` | `-migrate` and `-migrate-check`: rewrites earlier spellings, proving each result parses to the same tree. |
 | `doc.odin` | `-doc` Markdown and `-api` interface files for the checked root and imported project packages, from one model of each package's API. |
 | `semantic.odin`, `universe.odin` | Semantic stores, interning, predeclared names, and compiler-contributed members. |
 

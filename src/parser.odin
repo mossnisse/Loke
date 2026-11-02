@@ -48,6 +48,7 @@ Parser :: struct {
 	probed:         Probed_Literal,
 	// Some statement is a `parallel` block.
 	parallels:      [dynamic]u32, // each `parallel` keyword's offset
+	earlier_spellings: [dynamic]Earlier_Spelling,
 	allocator:      mem.Allocator,
 }
 
@@ -77,6 +78,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
 	result.parallels = p.parallels[:]
+	result.earlier_spellings = p.earlier_spellings[:]
 	return result
 }
 
@@ -1191,6 +1193,26 @@ adopt_record_attributes :: proc(p: ^Parser, d: ^Decl, record: ^Type_Record) {
 	record.attributes = d.attributes
 	record.declared = true
 	record.move_only = has_attribute(d.attributes, "move_only")
+	for &spelling in p.earlier_spellings {
+		if spelling.record == record {
+			spelling.declaration = d
+		}
+	}
+}
+
+// The entry for `record`, added at its first earlier spelling.
+@(private = "file")
+earlier_spelling_of :: proc(p: ^Parser, record: ^Type_Record) -> ^Earlier_Spelling {
+	if p.earlier_spellings == nil {
+		p.earlier_spellings = make([dynamic]Earlier_Spelling, 0, 2, p.allocator)
+	}
+	for &spelling in p.earlier_spellings {
+		if spelling.record == record {
+			return &spelling
+		}
+	}
+	append(&p.earlier_spellings, Earlier_Spelling{record = record})
+	return &p.earlier_spellings[len(p.earlier_spellings) - 1]
 }
 
 @(private = "file")
@@ -2954,6 +2976,7 @@ parse_type :: proc(p: ^Parser) -> Expr {
 			value.attributes = attributes
 			value.move_only = true
 			value.span.lo = keyword.lo
+			earlier_spelling_of(p, value).keyword = span_of(p, keyword)
 		}
 		return record
 
@@ -3749,7 +3772,11 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	lo := keyword.lo
 
 	generics, generics_ok := parse_generic_params(p)
+	groups := Span{file = p.file, lo = current(p).lo, hi = current(p).lo}
 	attributes := parse_attributes(p)
+	if len(attributes) > 0 {
+		groups.hi = p.last.hi
+	}
 	where_clauses := parse_where_clause(p)
 
 	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the body")
@@ -3802,6 +3829,9 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	e.fields = fields
 	e.variants = variants
 	e.has_error = !opened || !closed || !generics_ok || !members_ok
+	if len(attributes) > 0 {
+		earlier_spelling_of(p, e).groups = groups
+	}
 	return e
 }
 

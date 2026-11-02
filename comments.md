@@ -2404,6 +2404,16 @@ of writing. [tests/corpus_test.odin](tests/corpus_test.odin) keeps `core/` and
 `base/` formatted and formats every program corpus to a layout that formats to
 itself.
 
+`-migrate` ([src/migrate.odin](src/migrate.odin)) is the one tool that changes
+tokens, and a separate flag for that reason: a formatter that only moves whitespace
+is safe to run on save, which an editor does through the same code. It rewrites
+what an earlier release accepted and leaves every other byte alone, so it does not
+lay a file out; a file that was formatted stays formatted. It has no such token
+check to lean on, so it compares trees instead: a spelling it moves parses to the
+same tree in both places, the result must hold nothing left to rewrite, and its
+`-dump-ast` text must equal the input's, or it reports an internal error instead of
+writing.
+
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
 
 ## Standard-library API choices
