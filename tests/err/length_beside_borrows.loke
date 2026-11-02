@@ -1,0 +1,91 @@
+// A call to `len` or `cap` reads a carrier, or an owner's header, and nothing else. It is
+// still a call, so a mutable reborrow of a carrier suspends it, a mutable borrow of the
+// place conflicts, and what the receiver holds must last for it.
+package main;
+Pair :: struct { a: ^mut int, n: int }
+make_from :: proc(p: ^mut int, a: Allocator) -> [dynamic]int { return make([dynamic]int, a); }
+HH :: struct { d: [dynamic]Pair, other: int, s: []mut Pair }
+Field_View :: struct { s: []mut Pair }
+Holds_View :: struct { s: []int }
+
+dyn_append_conflicts :: proc(d: ^mut [dynamic]Pair, p: Pair) { y: ^int = d^[0].a; d^.append(p); z := y^; }
+dyn_clear_conflicts :: proc(d: ^mut [dynamic]Pair) { y: ^int = d^[0].a; d^.clear(); z := y^; }
+dyn_element_view_clear_conflicts :: proc(d: ^mut [dynamic]Pair) { y := &d^[0]; d^.clear(); z := y^.n; }
+dyn_whole_borrow_mutable :: proc(d: ^mut [dynamic]Pair) { y := &mut d^; n := d^.len(); y^.clear(); }
+local_dyn_whole_borrow_mutable :: proc(a: Allocator) {
+	d := make([dynamic]Pair, a);
+	y := &mut d;
+	n := d.len();
+	y^.clear();
+}
+view_mutable_copy_suspends :: proc(s: []mut Pair) { y := s; n := s.len(); y[0].n = 1; }
+pointer_to_view_mutable :: proc(q: ^mut []mut Pair) { y := &mut q^; n := q^.len(); y^[0].n = 1; }
+temporary_receiver_is_still_walked :: proc(x: ^mut int, a: Allocator) {
+	y := x;
+	n := make_from(x, a).len();
+	y^ = 1;
+}
+field_borrowed_mutably :: proc(h: ^mut HH) { y := &mut h^.d; n := h^.d.len(); y^.clear(); }
+two_pointers_field_borrowed :: proc(h: ^mut HH) { q := h; y := &mut q^.d; n := h^.d.len(); y^.clear(); }
+view_element_dyn_borrowed :: proc(s: []mut [dynamic]Pair) { y := &mut s[0]; n := s[0].len(); y^.clear(); }
+view_element_dyn_unknown_index :: proc(s: []mut [dynamic]Pair, i: int) { y := &mut s[0]; n := s[i].len(); y^.clear(); }
+chain_borrowed_mutably :: proc(pp: ^mut ^mut [dynamic]Pair) { y := &mut pp^^; n := pp^^.len(); y^.clear(); }
+dyn_len_beside_whole_borrow :: proc(d: ^mut [dynamic]Pair) { y := &mut d^; n := d^.len(); y^.clear(); }
+dyn_len_beside_a_copy_of_the_pointer :: proc(d: ^mut [dynamic]Pair) { y := d; n := d^.len(); y^.clear(); }
+view_len_through_pointer_beside_whole_borrow :: proc(q: ^mut []mut Pair) { y := &mut q^; n := q^.len(); y^[0].n = 1; }
+pointer_view_copy_len :: proc(q: ^mut []mut Pair) { y := q^; n := q^.len(); y[0].n = 1; }
+field_view_copy_len :: proc(h: Field_View) { y := h.s; n := h.s.len(); y[0].n = 1; }
+owner_length_after_drop :: proc(a: Allocator) {
+	values := [dynamic]int{7};
+	d := make([dynamic]Holds_View, a);
+	d.append(Holds_View{values[:]});
+	drop(values);
+	n := d.len();
+}
+owner_behind_pointer_after_drop :: proc(a: Allocator) {
+	values := [dynamic]int{7};
+	d := make([dynamic]Holds_View, a);
+	d.append(Holds_View{values[:]});
+	p := &mut d;
+	drop(values);
+	n := p^.len();
+}
+view_length_after_drop :: proc() {
+	values := [dynamic]int{7};
+	view := []Holds_View{Holds_View{values[:]}};
+	drop(values);
+	n := view.len();
+}
+view_behind_pointer_after_drop :: proc() {
+	values := [dynamic]int{7};
+	view := []Holds_View{Holds_View{values[:]}};
+	p := &view;
+	drop(values);
+	n := p^.len();
+}
+field_view_after_drop :: proc() {
+	values := [dynamic]int{7};
+	h := Holds_View{values[:]};
+	drop(values);
+	n := h.s.len();
+}
+plain_view_after_drop :: proc() {
+	values := [dynamic]int{7};
+	view := values[:];
+	drop(values);
+	n := view.len();
+}
+owner_after_it_ended :: proc(a: Allocator) {
+	d := make([dynamic]int, a);
+	v: []int = d;
+	drop(d);
+	n := v.len();
+}
+write_named_target_then_length :: proc(a: Allocator) {
+	x := 1;
+	d := make([dynamic]Pair, a);
+	d.append(Pair{&mut x, 1});
+	x = 2;
+	n := d.len();
+}
+main :: proc() {}

@@ -1,0 +1,154 @@
+// design.md "Global write effects": a copy may run the `hook(copy)` of what it copies, and
+// the hook is handed the source, so what the source holds is in use across its reads, also
+// where last-use transfer makes the copy a move.
+package main;
+counter: int;
+other: int;
+Tagged :: struct { p: ^mut int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		_ = counter;
+		return .ok(Tagged{self.p});
+	}
+}
+Silent :: struct { p: ^mut int }
+impl Silent {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Silent, Allocator_Error) {
+		return .ok(Silent{self.p});
+	}
+}
+Shared :: struct { p: ^int }
+impl Shared {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Shared, Allocator_Error) {
+		_ = counter;
+		return .ok(Shared{self.p});
+	}
+}
+Wrap :: struct { t: Tagged, n: int }
+Two :: struct { a: Tagged, b: Tagged }
+Choice :: union { tagged: Tagged, n: int }
+flip :: proc() -> bool { return true; }
+return_a_copy :: proc(t: ^Tagged) -> Tagged {
+	return t^;
+}
+transferred :: proc(t: Tagged) { u := t; }
+
+declaration_no_later_use :: proc() {
+	t := Tagged{&mut counter};
+	u := t;
+}
+declaration_copy_used :: proc() {
+	t := Tagged{&mut counter};
+	u := t;
+	u.p^ = 1;
+}
+declaration_source_used :: proc() {
+	t := Tagged{&mut counter};
+	u := t;
+	t.p^ = 2;
+}
+assignment :: proc(s: Tagged) {
+	t := Tagged{&mut counter};
+	u := s;
+	u = t;
+	u.p^ = 1;
+}
+field_of_record :: proc() {
+	w := Wrap{Tagged{&mut counter}, 1};
+	t := w.t;
+	t.p^ = 1;
+}
+whole_record :: proc() {
+	w := Wrap{Tagged{&mut counter}, 1};
+	v := w;
+	v.t.p^ = 1;
+}
+through_pointer :: proc() {
+	t := Tagged{&mut counter};
+	p := &t;
+	u := p^;
+	u.p^ = 1;
+}
+element_of_array :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	u := a[0];
+	u.p^ = 1;
+}
+whole_array :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	b := a;
+	b[0].p^ = 1;
+}
+into_a_literal :: proc() {
+	t := Tagged{&mut counter};
+	w := Wrap{t, 1};
+	w.t.p^ = 1;
+}
+returned :: proc() -> Tagged {
+	t := Tagged{&mut counter};
+	u := t;
+	return t;
+}
+in_a_branch :: proc(s: Tagged) {
+	t := Tagged{&mut counter};
+	u := s;
+	if (flip()) { u = t; }
+	u.p^ = 1;
+}
+in_a_loop :: proc() {
+	t := Tagged{&mut counter};
+	for (i := 0; i < 2; i += 1) {
+		u := t;
+		u.p^ = 1;
+	}
+}
+destructure :: proc() {
+	two := Two{Tagged{&mut counter}, Tagged{&mut other}};
+	a, _ := two;
+	a.p^ = 1;
+}
+repeated_element :: proc() {
+	a := [2]Tagged{0..<2 = Tagged{&mut counter}};
+}
+transfer_with_another_borrow_live :: proc() {
+	q := &mut counter;
+	t := Tagged{&mut other};
+	u := t;
+	q^ = 1;
+	u.p^ = 2;
+}
+map_read :: proc(a: Allocator) {
+	m := make(map[int]Tagged, a);
+	m[0] = Tagged{&mut counter};
+	x := m[0];
+	x.p^ = 1;
+}
+map_read_unused :: proc(a: Allocator) {
+	m := make(map[int]Tagged, a);
+	m[0] = Tagged{&mut counter};
+	_ = m[0];
+}
+explicit_clone :: proc(a: Allocator) {
+	t := Tagged{&mut counter};
+	u := t.clone(a);
+}
+unwrap_payload :: proc() {
+	c: Choice = .tagged(Tagged{&mut counter});
+	switch (c) {
+	case .tagged(v):
+		u := v;
+		u.p^ = 1;
+	case .n:
+	}
+}
+through_call_effect :: proc(t: ^Tagged) {
+	q := &mut counter;
+	u := return_a_copy(t);
+	q^ = 1;
+}
+transfer_in_a_callee_counts :: proc(t: Tagged) {
+	q := &mut counter;
+	transferred(t);
+	q^ = 1;
+}
+main :: proc() {}

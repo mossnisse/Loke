@@ -7,31 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A report's later argument can write through a carrier holding borrows
-
-[Built-in procedures](design.md#built-in-procedures) has a report borrow each argument
-until it has printed the last, so a later argument should not change an earlier one.
-Where what a mutable pointer names holds a borrow, this compiles, and prints `n = 2`:
-
-```loke
-package main;
-Node :: struct { value: ^mut int, n: int }
-grow :: proc(p: ^mut Node) -> int { p^.n = 2; return 0; }
-main :: proc() {
-    x := 1;
-    node := Node{&mut x, 1};
-    p := &mut node;
-    assert(false, "stop", p, grow(p));
-}
-```
-
-`fmt.println(p, grow(p))` reports `L0641`, and a pointer to plain data does in a report
-too. `prov_printed_argument` in [src/cfg_provenance.odin](src/cfg_provenance.odin) walks
-such a local without reborrowing it, as a borrow of `p` holds nothing of what it names.
-Reborrowing it there would also reject `assert(false, "stop", p, p)`, which only reads,
-so the fix needs the read told apart from a use that may write. Found on 2026-11-01
-while fixing printing of mutable fields (P3).
-
 ### A distinct mutable slice is read as plain when printed
 
 `prov_type_is_plain_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes
@@ -184,39 +159,6 @@ its element. `in_a_copying_traversal` in
 for `items.copied()`, so a fix must keep that read counted, as a clone inside `next`
 or otherwise. Found while fixing destructuring's copy effects on 2026-11-01 (P3,
 over-rejection).
-
-### A copy's source is not held across its hook's reads
-
-[Global write effects](design.md#global-write-effects) make a mutable borrow still
-live across a call an error, and count every place a value is copied. A borrow the
-copied value itself holds is not seen as live across the hook, unless the source is
-used again:
-
-```loke
-package main;
-counter: int;
-Tagged :: struct { p: ^mut int }
-impl Tagged {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
-        _ = counter;
-        return .ok(Tagged{self.p});
-    }
-}
-main :: proc() {
-    t := Tagged{&mut counter};
-    u := t;
-    u.p^ = 1;
-}
-```
-
-This compiles, though `duplicate` reads `counter` while `t` hands it a pointer that
-`u.p^ = 1` then writes through. Adding `t.p^ = 2;` afterwards reports the expected
-`L0511`. In [src/cfg.odin](src/cfg.odin), `walk_flow_expr` checks `copied_as` as it
-leaves the operand, so the read comes before the binding's definition takes `t`'s
-content, and that definition is not a use, so nothing holds `t` at the read. A repeated array element holds its
-initializer with a `.Live` event after the read (`prov_repeated_element_effects`), and
-the same would newly reject `u := t` with no later use. Found while fixing repeated
-elements' copy effects on 2026-11-01 (P3).
 
 ### A write on every path does not end a received allocator's region
 
@@ -388,29 +330,52 @@ main :: proc() {}
 
 Read `r^.b.to` by name.
 
-### The length of a dynamic array behind a pointer conflicts with a copy out of it
+### Clearing a dynamic array field through a pointer to it uses the pointer's source
 
-A call to `len` reads only the array's header and runs nothing of the program's, as the same
-call on a view shows. On a dynamic array reached through a carrier, walking the receiver reads
-what the array holds, so it conflicts with a read-only copy of a carrier stored there:
+[Weakening and reborrows](design.md#weakening-and-reborrows) has a mutable reborrow suspend
+its source until the reborrow's last use, and a use of the reborrow is no use of the source.
+A pointer to a dynamic array field whose elements hold a mutable carrier conflicts with
+itself when it clears the array, though the same call by name, through a pointer to the whole
+array, or on elements of plain data, is accepted:
 
 ```loke
 package main;
 Pair :: struct { a: ^mut int }
-in_a_view :: proc(s: []mut Pair) {
-    y: ^int = s[0].a;
-    n := s.len();
-    z := y^;
-}
-in_a_dynamic_array :: proc(d: ^mut [dynamic]Pair) {
-    y: ^int = d^[0].a;
-    n := d^.len(); // L0641; should be accepted
-    z := y^;
+Holder :: struct { d: [dynamic]Pair }
+by_name :: proc(h: ^mut Holder) { h^.d.clear(); }
+through_a_field_pointer :: proc(h: ^mut Holder) {
+    y := &mut h^.d;
+    y^.clear(); // L0641; should be accepted
 }
 main :: proc() {}
 ```
 
-Take the length before the copy, or end the use of the copy first.
+Call it by name through `h`. Found on 2026-11-02 while checking a length beside a borrow of
+the field (over-rejection).
+
+### The length of a dynamic array conflicts with a mutable pointer to its element
+
+A call to `len` reads only the array's header, as the same call on a view shows beside a
+pointer to one of its elements. A mutable borrow of an element of a dynamic array reached
+through a carrier reborrows that carrier, so the read of it conflicts:
+
+```loke
+package main;
+Pair :: struct { n: int }
+in_a_view :: proc(s: []mut Pair) {
+    y := &mut s[0];
+    n := s.len();
+    y^.n = n;
+}
+in_a_dynamic_array :: proc(d: ^mut [dynamic]Pair) {
+    y := &mut d^[0];
+    n := d^.len(); // L0641; should be accepted
+    y^.n = n;
+}
+main :: proc() {}
+```
+
+Take the length before the borrow.
 
 ### A read of a carrier a call may have weakened conflicts with the copy
 

@@ -8797,8 +8797,10 @@ It follows implicit calls, procedure values, and `dyn` calls as the write effect
 does. It also takes in each `hook(copy)` a copy in the procedure may run: a copy
 hook may read a global, and how many implicit copies run is unspecified, so every
 place a value is copied counts, including one [last-use
-transfer](#last-use-transfer) may turn into a move. Foreign reads and reads
-through pointers or views stored in globals are excluded, as such writes are.
+transfer](#last-use-transfer) may turn into a move. A copy's hook is handed the
+value it copies, so what that value holds is borrowed across the hook, whether or
+not the value or its copy is used again. Foreign reads and reads through pointers
+or views stored in globals are excluded, as such writes are.
 
 A call counts as a read of every global in its read effect, after its arguments
 have been borrowed. Under [the one rule](#capabilities-and-the-one-rule) only a
@@ -8818,6 +8820,11 @@ bump(&mut counter);             // ERROR: `counter` cannot be read by `bump` her
 shared := &counter;
 n := peek();                    // a read beside a read-only borrow
 fmt.println(shared^ + n);
+
+Tagged :: struct { p: ^mut int }  // with a `hook(copy)` that reads `counter`
+
+t := Tagged{&mut counter};
+u := t;                         // ERROR: `counter` cannot be read by its hook here
 ```
 
 The write effect also warns about likely data races. Passing a named procedure that
@@ -9507,7 +9514,13 @@ form](#string-format-printing), not a capture literal or a compile-time-only
 value, and an untyped constant takes its default type. The report borrows each
 argument where it is, or from a temporary that lives until the report ends, and
 prints it after the message, preceded by a space, as `fmt.eprintln` would.
-Nothing is copied, so a move-only value stays usable when an `assert` holds. The
+Nothing is copied, so a move-only value stays usable when an `assert` holds.
+Until the last argument is printed, each is held as a [read-only
+reborrow](#weakening-and-reborrows) of what it holds, with what a pointer in it
+points to, since that is what [prints](#string-format-printing). So
+`assert(false, "state:", p, grow(p))` is an error where `grow` takes `p` as `^mut`,
+and `assert(false, "state:", p, p)` is not, unless a written `format` is handed a
+mutable carrier, which it may write through. The
 report is written straight to the error stream, so the program need not import
 `core:fmt`. The arguments of an `assert` are evaluated only when its condition
 fails:

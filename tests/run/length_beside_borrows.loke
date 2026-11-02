@@ -1,0 +1,71 @@
+// A call to `len` or `cap` reads a carrier, or an owner's header, and nothing else, so it
+// goes beside a read-only view of the carrier and a copy out of an element.
+package main;
+import "core:fmt";
+Pair :: struct { a: ^mut int, n: int }
+H :: struct { d: [dynamic]Pair }
+Own :: struct { d: [dynamic]Pair, s: []mut Pair }
+make_list :: proc(a: Allocator) -> [dynamic]Pair { return make([dynamic]Pair, a); }
+give :: proc(s: []mut Pair) -> []mut Pair { return s; }
+HH :: struct { d: [dynamic]Pair, other: int, s: []mut Pair }
+Holds_View :: struct { s: []int }
+
+ok_view_copy :: proc(s: []mut Pair) { y: ^int = s[0].a; n := s.len(); z := y^; }
+ok_view_read_only :: proc(s: []mut Pair) { y: []Pair = s; n := s.len(); z := y[0].n; }
+ok_view_mutable_element :: proc(s: []mut Pair) { y := &mut s[0]; n := s.len(); y^.n = 1; }
+ok_dyn_copy :: proc(d: ^mut [dynamic]Pair) { y: ^int = d^[0].a; n := d^.len(); z := y^; }
+ok_dyn_cap :: proc(d: ^mut [dynamic]Pair) { y: ^int = d^[0].a; n := d^.cap(); z := y^; }
+ok_dyn_pointer_view :: proc(d: ^mut [dynamic]Pair) { y: ^Pair = &d^[0]; n := d^.len(); z := y^.n; }
+ok_dyn_field :: proc(h: ^mut H) { y: ^int = h^.d[0].a; n := h^.d.len(); z := y^; }
+ok_local_dyn_copy :: proc(a: Allocator) {
+	d := make([dynamic]Pair, a);
+	y: ^int = d[0].a;
+	n := d.len();
+	z := y^;
+}
+ok_local_dyn_read_only_view :: proc(a: Allocator) {
+	d := make([dynamic]Pair, a);
+	y: []Pair = d;
+	n := d.len();
+	z := y[0].n;
+}
+ok_field_view :: proc(o: ^mut Own) { y: []Pair = o^.s; n := o^.s.len(); z := y[0].n; }
+ok_temporary :: proc(a: Allocator) { n := make_list(a).len(); }
+ok_call_result :: proc(s: []mut Pair) { n := give(s).len(); }
+ok_len_in_a_loop :: proc(s: []mut Pair) {
+	y: []Pair = s;
+	for (i := 0; i < s.len(); i += 1) { z := y[i].n; }
+}
+ok_mutable_afterwards :: proc(s: []mut Pair) {
+	n := s.len();
+	s[0].n = n;
+}
+ok_dyn_mutable_copy :: proc(d: ^mut [dynamic]Pair) { y := d^[0].a; n := d^.len(); y^ = 1; }
+ok_field_read_beside_mutable_copy :: proc(p: ^mut Pair) { y := p^.a; n := p^.n; y^ = 1; }
+ok_sibling_borrowed_mutably :: proc(h: ^mut HH) { y := &mut h^.other; n := h^.d.len(); y^ = 1; }
+ok_other_view_element_dyn_borrowed :: proc(s: []mut [dynamic]Pair) { y := &mut s[0]; n := s[1].len(); y^.clear(); }
+ok_element_field_beside_copy :: proc(d: ^mut [dynamic]Pair) { y := d^[0].a; n := d^[0].n; y^ = 1; }
+ok_view_field_beside_copy :: proc(s: []mut Pair) { y := s[0].a; n := s[0].n; y^ = 1; }
+ok_view_len_beside_copy :: proc(s: []mut Pair) { y := s[0].a; n := s.len(); y^ = 1; }
+ok_dyn_len_beside_copy :: proc(d: ^mut [dynamic]Pair) { y := d^[0].a; n := d^.len(); y^ = 1; }
+ok_pointer_view_len_beside_copy :: proc(q: ^mut []mut Pair) { y := q^[0].a; n := q^.len(); y^ = 1; }
+ok_local_dyn_len_beside_copy :: proc(a: Allocator) {
+	d := make([dynamic]Pair, a);
+	y := d[0].a;
+	n := d.len();
+	y^ = 1;
+}
+ok_length_before_drop :: proc(a: Allocator) {
+	values := [dynamic]int{7};
+	view := []Holds_View{Holds_View{values[:]}};
+	n := view.len();
+	drop(values);
+}
+main :: proc() {
+	a, b := 1, 2;
+	pairs := [2]Pair{Pair{&mut a, 3}, Pair{&mut b, 4}};
+	s := &mut pairs[:];
+	y: []Pair = s;
+	n := s.len();
+	fmt.println(n, y[1].n);
+}

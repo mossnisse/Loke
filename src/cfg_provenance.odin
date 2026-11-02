@@ -179,7 +179,8 @@ Prov_Event :: struct {
 	reads_only:    bool,
 	// `Live`: what the storage a call's arguments lend holds, which stays live for
 	// the call, though it may read one element and is no use of the others
-	// (`with_held_content`, `Slot_Use`).
+	// (`with_held_content`, `Slot_Use`). Without `hands_on`, what a measured receiver
+	// holds, and so what that storage holds in turn.
 	keeps_live:    []int,
 	// `Live`: a call's use of what it borrows, which may read whatever they reach.
 	hands_on:      bool,
@@ -2688,6 +2689,20 @@ prov_plain_slice_local :: proc(graph: ^Flow_Graph, e: Expr) -> (^Expr_Ident, boo
 	return ident, !type_carries_borrow(graph.k.c, underlying_info(graph.k.c, type).element).any
 }
 
+// A place, named or reached through carriers, whose value can be read where it is.
+// A conversion such as `[dynamic]T` to `[]T` borrows an owner instead.
+@(private)
+prov_reads_as_place :: proc(graph: ^Flow_Graph, argument: Expr) -> bool {
+	if expr_base(argument) == nil || prov_repr(graph, argument).view_from != INVALID_TYPE {
+		return false
+	}
+	if _, is_ident := argument.(^Expr_Ident); is_ident {
+		return true
+	}
+	_, _, place := prov_place_of(graph, argument)
+	return place || prov_reads_plainly_through(graph, argument) && len(prov_place_hops(graph, argument)) > 0
+}
+
 // A carrier place passed to a parameter that can write through nothing it
 // receives, as `held.items` passed to a `[]int`, or one read out through a
 // carrier, as `p^` passed to a `^T`: the call only reads it.
@@ -2698,20 +2713,12 @@ prov_argument_only_read :: proc(graph: ^Flow_Graph, argument: Expr, parameter: T
 		return false
 	}
 	repr := prov_repr(graph, argument)
-	// A conversion such as `[dynamic]T` to `[]T` borrows an owner instead.
-	if repr.view_from != INVALID_TYPE || type_carries_borrow(c, parameter).mutable {
+	if type_carries_borrow(c, parameter).mutable {
 		return false
 	}
 	// An erased operand's own type is a `dyn` view.
 	type := repr.erased_from != INVALID_TYPE ? repr.erased_from : repr.type
-	if !type_is_carrier(c, type) {
-		return false
-	}
-	if _, is_ident := argument.(^Expr_Ident); is_ident {
-		return true
-	}
-	_, _, place := prov_place_of(graph, argument)
-	return place || prov_reads_plainly_through(graph, argument) && len(prov_place_hops(graph, argument)) > 0
+	return type_is_carrier(c, type) && prov_reads_as_place(graph, argument)
 }
 
 @(private = "file")
@@ -3792,12 +3799,53 @@ prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Spa
 }
 
 // design.md "Built-in procedures": an argument an `assert` or `panic` report
-// prints keeps its type and is read as a read-only view of it would be, so a
-// slice or pointer to plain data is read rather than lent again.
+// prints keeps its type, and the report borrows it until it has printed the last.
+// What it holds is suspended that long, so a later argument cannot write what it
+// reaches, and printing only reads, so two arguments may name the same place. A
+// written `format` may instead write through a mutable carrier it is handed.
 @(private = "file")
-prov_printed_argument :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
-	held, _ := prov_read_only_view(graph, e, prov_type(graph, e), expr_span(e))
-	return held
+prov_printed_argument :: proc(graph: ^Flow_Graph, e: Expr) -> (held: []int, printed: []int) {
+	type := prov_type(graph, e)
+	span := expr_span(e)
+	writes := prov_print_may_write(graph.k.c, type)
+	if content, kept, through := prov_view_parts_through_carrier(graph, e, span, !writes); through {
+		return prov_join(graph, content, kept), content
+	}
+	loans := prov_reborrow_traversal(graph, prov_read_carrier(graph, e, !writes), span, false)
+	held, _ = prov_lend_read_only(graph, e, loans, span)
+	return held, loans
+}
+
+// Whether printing a `type` hands a written `format` a mutable carrier. A pointer or
+// slice prints what it views, and the slot gets that by a read-only `self: ^`, so the
+// mutable carrier that matters is one held in what is viewed. A distinct one may have
+// a `format` that takes it by value.
+@(private = "file")
+prov_print_may_write :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if !type_prints_through_method(c, type) {
+		return false
+	}
+	viewed := type
+	for {
+		kind := underlying_kind(c, viewed)
+		if type_underlying(c, viewed) != viewed || (kind != .Pointer && kind != .Slice) {
+			break
+		}
+		viewed = underlying_info(c, viewed).element
+	}
+	return type_carries_borrow(c, viewed).mutable
+}
+
+// design.md "String format printing": printing reads what a pointer points to, and
+// so on down, once a report has evaluated its last argument. `printed` is what each
+// argument holds of that, which the read may go through.
+@(private = "file")
+prov_read_printed_reach :: proc(graph: ^Flow_Graph, printed: []int, span: Span) {
+	if len(printed) == 0 {
+		return
+	}
+	graph.has_content_load = true
+	prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = printed, load = .Deep, span = span, reads_only = true})
 }
 
 // A read-only view of a field, element, or pointee reached through a pointer or
@@ -3806,11 +3854,19 @@ prov_printed_argument :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 // is suspended for as long.
 @(private = "file")
 prov_view_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span) -> (held: []int, through: bool) {
+	content, kept, reached := prov_view_parts_through_carrier(graph, e, span)
+	return prov_join(graph, content, kept), reached
+}
+
+// `prov_view_through_carrier` by parts: what the place holds, and the snapshot of the
+// carriers it is reached through.
+@(private = "file")
+prov_view_parts_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span, reads_only := false) -> (content: []int, kept: []int, through: bool) {
 	if !prov_reads_plainly_through(graph, e) {
-		return nil, false
+		return nil, nil, false
 	}
 	if _, _, named := prov_place_of(graph, e); named {
-		return nil, false
+		return nil, nil, false
 	}
 	// A mutable call result holds its source's mutable loan, but a view of what it
 	// names only needs that kept valid: a read of the source does not touch it.
@@ -3820,25 +3876,24 @@ prov_view_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span) -> (h
 		read_only_hold = prov_expr_is_temporary(carrier) && type_carries_borrow(graph.k.c, prov_type(graph, carrier)).mutable
 	}
 	type := prov_type(graph, e)
-	only := prov_read_is_reads_only(graph.k.c, type) || prov_type_is_plain_view(graph.k.c, type)
+	only := reads_only || prov_read_is_reads_only(graph.k.c, type) || prov_type_is_plain_view(graph.k.c, type)
 	carriers, path, reached := prov_read_through_carrier(graph, e, only)
 	if !reached {
-		return nil, false
+		return nil, nil, false
 	}
-	content := prov_load_content(graph, carriers, path, type, span, only, place = e)
-	kept := prov_snapshot(graph, carriers, span)
+	content = prov_load_content(graph, carriers, path, type, span, only, place = e)
+	kept = prov_snapshot(graph, carriers, span)
 	for slot, index in carriers {
 		if read_only_hold || prov_slot_is_mutable_carrier(graph, slot) {
 			append(&graph.reborrows, Prov_Reborrow{source = slot, derived = kept[index], span = span, mutable = false})
 		}
 	}
-	held = prov_join(graph, content, kept)
 	if read_only_hold {
-		for slot in held {
+		for slot in prov_join(graph, content, kept) {
 			graph.prov_slots[slot].read_only_hold = true
 		}
 	}
-	return held, true
+	return content, kept, true
 }
 
 // design.md "string type conversions", "Dynamic arrays", and "Fixed arrays": a
@@ -6833,7 +6888,7 @@ prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind, r
 		return sources
 	}
 	if content := prov_content_slots(graph, v.symbol); len(content) > 0 {
-		prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = v.span})
+		prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = v.span, reads_only = reads_only})
 		return content
 	}
 	return nil
@@ -8355,18 +8410,21 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 			// until it has printed the last argument, so a later argument cannot
 			// change or destroy an earlier one.
 			printed := sym.builtin == .Assert ? 2 : 1
-			reported: []int
+			reported, reach: []int
 			for argument, index in v.bound {
 				if index < printed {
 					walk_flow_expr(graph, argument)
 				} else {
-					reported = prov_join(graph, reported, prov_printed_argument(graph, argument))
+					held, holds := prov_printed_argument(graph, argument)
+					reported = prov_join(graph, reported, held)
+					reach = prov_join(graph, reach, holds)
 					prov_hold_owner(graph, argument)
 				}
 			}
 			for argument in v.bound[min(printed, len(v.bound)):] {
 				prov_report_effects(graph, prov_type(graph, argument), expr_span(argument))
 			}
+			prov_read_printed_reach(graph, reach, v.span)
 			if len(reported) > 0 {
 				prov_emit(graph, Prov_Event{kind = .Live, sources = reported, span = v.span})
 			}
@@ -8629,6 +8687,25 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 	case .Only_Read_Slice:
 		ident, _ := prov_plain_slice_local(graph, argument)
 		prov_read_ident(graph, ident, .Read, reads_only = true)
+		return actual
+	case .Measured_Receiver:
+		// A carrier holds its length, so that is a read of the carrier. An owner's is
+		// beside what it holds, which it reads nothing of. It is still a call, so what
+		// the receiver holds must last for it.
+		kept: []int
+		if type_is_carrier(c, prov_type(graph, argument)) {
+			kept = prov_read_carrier(graph, argument, true)
+		} else if root, path, named := prov_place_of(graph, argument); named {
+			// What a container stores is the content of a loan of it.
+			prov_walk_subscripts(graph, argument)
+			prov_access(graph, root, path, .Read, expr_span(argument), reads_only = true)
+			prov_emit(graph, Prov_Event{kind = .Live, sources = prov_borrow(graph, root, path, false, expr_span(argument), "borrow"), span = expr_span(argument), hands_on = true})
+			return actual
+		} else if carriers, below, through := prov_read_through_carrier(graph, argument, reads_only = true); through {
+			prov_read_through(graph, carriers, below, expr_span(argument), argument)
+			kept = carriers
+		}
+		prov_emit(graph, Prov_Event{kind = .Live, keeps_live = kept, span = expr_span(argument)})
 		return actual
 	case .Copied_Receiver:
 		actual = walk_flow_expr(graph, argument)

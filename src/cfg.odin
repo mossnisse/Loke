@@ -2346,7 +2346,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 				graph.extended_content[base] = carried
 			}
 			if base.copied_as != INVALID_TYPE {
-				prov_copy_effects(graph, base.copied_as, base.span)
+				prov_copy_of_held_effects(graph, base.copied_as, carried, base.span)
 			}
 		}
 	}
@@ -2373,7 +2373,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	case ^Expr_Move:
 		provider_move_end(graph, v)
 		if prov {
-			return prov_consume(graph, v.value, v.span, v.implicit ? LAST_USE_VERB : "moved")
+			consumed := prov_consume(graph, v.value, v.span, v.implicit ? LAST_USE_VERB : "moved")
+			// design.md "Global write effects": a copy last-use transfer made a move
+			// still counts, as the program cannot tell which it gets.
+			if copied := expr_base(v.value).copied_as; v.implicit && copied != INVALID_TYPE {
+				prov_copy_of_held_effects(graph, copied, consumed, v.span)
+			}
+			return consumed
 		}
 		// `Kill` alone: it already requires the source live.
 		if ident, is_ident := v.value.(^Expr_Ident); is_ident {

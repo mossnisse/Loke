@@ -1,0 +1,122 @@
+// design.md "Global write effects": a `hook(copy)` reading a global goes beside a read-only
+// borrow of it and a mutable borrow of something else, and a place that copies nothing runs
+// no hook.
+package main;
+import "core:fmt";
+counter: int;
+other: int;
+Tagged :: struct { p: ^mut int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		_ = counter;
+		return .ok(Tagged{self.p});
+	}
+}
+Silent :: struct { p: ^mut int }
+impl Silent {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Silent, Allocator_Error) {
+		return .ok(Silent{self.p});
+	}
+}
+Shared :: struct { p: ^int }
+impl Shared {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Shared, Allocator_Error) {
+		_ = counter;
+		return .ok(Shared{self.p});
+	}
+}
+Choice :: union { tagged: Tagged, n: int }
+take :: proc(t: Tagged) {}
+
+ok_argument_is_shared_not_copied :: proc() {
+	t := Tagged{&mut counter};
+	take(t);
+	t.p^ = 1;
+}
+ok_foreach_copies_nothing :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	foreach (u in a) { u.p^ = 1; }
+}
+ok_switch_payload_copies_nothing :: proc() {
+	c: Choice = .tagged(Tagged{&mut counter});
+	switch (c) {
+	case .tagged(v):
+		v.p^ = 1;
+	case .n:
+	}
+}
+ok_parameter_pointing_elsewhere :: proc(p: Tagged) {
+	counter = 0;
+	u := p;
+}
+ok_read_only_borrow :: proc() {
+	t := Shared{&counter};
+	u := t;
+	v := u.p^ + t.p^;
+}
+ok_other_global :: proc() {
+	t := Tagged{&mut other};
+	u := t;
+	u.p^ = 1;
+}
+ok_local_target :: proc() {
+	x := 1;
+	t := Tagged{&mut x};
+	u := t;
+	u.p^ = 1;
+}
+ok_hook_reads_nothing :: proc() {
+	t := Silent{&mut counter};
+	u := t;
+	u.p^ = 1;
+}
+ok_borrow_ended_before_copy :: proc(s: Tagged) {
+	t := Tagged{&mut counter};
+	t.p^ = 1;
+	u := s;
+	u.p^ = 2;
+}
+ok_moved_not_copied :: proc() {
+	t := Tagged{&mut counter};
+	u := move(t);
+	u.p^ = 1;
+}
+ok_parameter :: proc(p: Tagged) {
+	u := p;
+	u.p^ = 1;
+}
+ok_foreach_over_view :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	foreach (u in a[:]) { u.p^ = 1; }
+}
+ok_foreach_over_view_unused :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	foreach (u in a[:]) { }
+}
+ok_foreach_over_array :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	foreach (u in a) { u.p^ = 1; }
+}
+ok_foreach_over_array_unused :: proc() {
+	a := [1]Tagged{Tagged{&mut counter}};
+	foreach (u in a) { }
+}
+ok_foreach_with_another_borrow_live :: proc() {
+	q := &mut counter;
+	a := [1]Tagged{Tagged{&mut other}};
+	foreach (u in a) { }
+	q^ = 1;
+}
+ok_foreach_view_with_another_borrow_live :: proc() {
+	q := &mut counter;
+	a := [1]Tagged{Tagged{&mut other}};
+	foreach (u in a[:]) { }
+	q^ = 1;
+}
+main :: proc() {
+	x := 1;
+	t := Tagged{&mut x};
+	u := t;
+	u.p^ = 2;
+	fmt.println(x);
+}

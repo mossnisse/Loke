@@ -10,6 +10,19 @@ checklist.
 
 ### Breaking changes
 
+- An `assert` or `panic` report now holds what each argument prints until it has printed
+  the last ([Built-in procedures](design.md#built-in-procedures)), so a later argument
+  cannot write it. `assert(false, "m", p, grow(p))` with `p: ^mut Node` compiled when `Node`
+  held a borrow, and printed the changed value, and so did the same with a slice of such
+  records and with `bump(p^.value)` or `bump(&mut x)` writing what `p` reaches. Each is now
+  `L0641` or `L0511`. Upgrade by evaluating the argument into a local first.
+- A copy now holds what its source holds across the reads of its `hook(copy)`, and a copy
+  last-use transfer makes a move counts as the
+  [global effects](design.md#global-write-effects) say.
+  `t := Tagged{&mut counter}; u := t;` compiled though the hook read `counter` while handed
+  a mutable pointer to it, and a `u := t;` that was `t`'s last use added no read to the
+  procedure's effect. Each is now `L0511`. Upgrade by ending the use of the borrow before
+  the copy, or with `move(t)`, which runs no hook.
 - A call given a read-only carrier now uses the mutable carriers stored behind it, as a
   callee may write through them
   ([Weakening and reborrows](design.md#weakening-and-reborrows)).
@@ -1200,6 +1213,15 @@ checklist.
 
 ### Fixed
 
+- A report's arguments may name one place whatever it holds, as printing only reads
+  ([Built-in procedures](design.md#built-in-procedures)): `assert(false, "m", p^, p^)`,
+  `assert(false, "m", s[0], s[1])`, and `assert(false, "m", h.p, h.p)` were `L0641` where
+  the value held a mutable carrier.
+- A call to `len` or `cap` only reads, as
+  [Weakening and reborrows](design.md#weakening-and-reborrows) says. `y: []Pair = s;
+  n := s.len(); z := y[0].n;` was `L0641` where `Pair` held a borrow, and so was the length
+  of a dynamic array beside a copy out of it, read-only or mutable, or a read-only view of
+  it. What the receiver holds must still last for the call.
 - A pointer into one element of a view parameter leaves the others free, as naming that
   element does ([Places and overlap](design.md#places-and-overlap)). `p := &mut s[0];
   x := p^.to; y := s[1].to; x^ = 1; y^ = 2;` was `L0641`, and so was the same stored through

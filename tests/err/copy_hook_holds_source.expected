@@ -1,0 +1,72 @@
+L0511
+@38:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@42:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@47:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@52:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@53:6
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@58:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@63:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@69:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@74:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@79:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@84:12
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@89:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@94:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@95:20
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@101:8
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@107:10
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@111:25
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@116:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@123:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@129:6
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@133:7
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@139:8
+`counter` cannot be read by `duplicate` here: a mutable pointer of it is still in use
+L0511
+@146:7
+`counter` cannot be read by `return_a_copy` here: a mutable pointer of it is still in use
+L0511
+@151:2
+`counter` cannot be read by `transferred` here: a mutable pointer of it is still in use

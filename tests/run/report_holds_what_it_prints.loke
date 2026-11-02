@@ -1,0 +1,127 @@
+// design.md "Built-in procedures", "String format printing": printing only reads, so
+// arguments of a report may name one place, unless a written `format` is handed a
+// mutable carrier.
+package main;
+import "core:fmt";
+Node :: struct { value: ^mut int, n: int }
+Plain :: struct { n: int }
+Holder :: struct { p: ^mut Node }
+grow :: proc(p: ^mut Node) -> int { p^.n = 2; return 0; }
+bump :: proc(p: ^mut int) -> int { p^ = 2; return 0; }
+read_node :: proc(p: ^Node) -> int { return p^.n; }
+read_int :: proc(p: ^int) -> int { return p^; }
+read_plain :: proc(p: ^Plain) -> int { return p^.n; }
+same :: proc(p: ^mut Node) -> ^mut Node { return p; }
+Noisy :: struct { value: ^mut int, n: int }
+impl Noisy {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { self.value^ = 2; }
+}
+Quiet :: struct { n: int }
+impl Quiet {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+Printed_Plain :: struct { value: ^mut int }
+Distinct_Pointer :: distinct ^mut int;
+impl Distinct_Pointer {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { self^ = 2; }
+}
+Read_Only_Holder :: struct { r: ^int }
+impl Read_Only_Holder {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+
+ok_twice :: proc(p: ^mut Node) { assert(false, "m", p, p); }
+ok_twice_panic :: proc(p: ^mut Node) { panic("m", p, p); }
+ok_thrice_plain :: proc(p: ^mut int) { assert(false, "m", p, p, p); }
+ok_read_then_pointee :: proc(p: ^mut Node) { assert(false, "m", p, p^); }
+ok_read_then_field :: proc(p: ^mut Node) { assert(false, "m", p, p^.n); }
+ok_read_then_reached :: proc(p: ^mut Node) { assert(false, "m", p, p^.value^); }
+ok_read_then_reached_carrier :: proc(p: ^mut Node) { assert(false, "m", p, p^.value); }
+ok_field_twice :: proc(p: ^mut Node) { assert(false, "m", p^.n, p^.n); }
+ok_pointee_twice :: proc(p: ^mut Node) { assert(false, "m", p^, p^); }
+ok_local_record_twice :: proc(v: ^mut int) {
+	node := Node{v, 1};
+	assert(false, "m", node, node);
+}
+ok_local_record_field :: proc(v: ^mut int) {
+	node := Node{v, 1};
+	assert(false, "m", node, node.n, node.value);
+}
+ok_view_twice :: proc(s: []mut Node) { assert(false, "m", s, s); }
+ok_view_elements :: proc(s: []mut Node) { assert(false, "m", s[0], s[1], s[0]); }
+ok_view_len :: proc(s: []mut Node) { assert(false, "m", s, s.len()); }
+ok_holder_twice :: proc(h: Holder) { assert(false, "m", h.p, h.p); }
+ok_holder_through_twice :: proc(h: ^mut Holder) { assert(false, "m", h^.p, h^.p); }
+ok_pointer_to_pointer_twice :: proc(pp: ^mut ^mut Node) { assert(false, "m", pp, pp^, pp); }
+ok_plain_read_signature :: proc(p: ^mut int) { assert(false, "m", p, read_int(p)); }
+ok_plain_record_read_signature :: proc(p: ^mut Plain) { assert(false, "m", p, read_plain(p)); }
+ok_other_pointer :: proc(p: ^mut Node, q: ^mut Node) { assert(false, "m", p, grow(q)); }
+ok_other_field :: proc(p: ^mut Node) { assert(false, "m", p^.n, p^.value^); }
+ok_write_first :: proc(p: ^mut Node) { assert(false, "m", grow(p), p); }
+ok_writes_only :: proc(p: ^mut Node) { assert(false, "m", grow(p), grow(p)); }
+ok_one_result :: proc(p: ^mut Node) { assert(false, "m", same(p)); }
+ok_used_after :: proc(p: ^mut Node) {
+	assert(p^.n == 0, "m", p);
+	p^.n = 1;
+	x := grow(p);
+	assert(p^.n == 1, "m", p, p);
+	p^.value^ = 2;
+}
+ok_in_a_loop :: proc(p: ^mut Node) {
+	for (i := 0; i < 2; i += 1) {
+		assert(p^.n == 0, "m", p, p);
+		x := grow(p);
+	}
+}
+ok_stays_mutable :: proc(p: ^mut Node) {
+	q := p;
+	assert(q^.n == 0, "m", q, q);
+	q^.n = 1;
+	p^.n = 2;
+}
+ok_copy_of_pointer_used_first :: proc(p: ^mut Node) {
+	q := p;
+	x := grow(q);
+	assert(false, "m", p, p);
+}
+ok_in_the_original_place_twice :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	assert(false, "stop", p, p);
+}
+ok_write_in_the_condition :: proc(p: ^mut Node) { assert(grow(p) == 0, "m", p); }
+ok_field_beside_a_write_of_what_a_sibling_names :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	assert(false, "m", p^.n, bump(&mut x));
+}
+ok_read_only_signature_as_by_hand :: proc(p: ^mut Node) { assert(false, "m", p, read_node(p)); }
+ok_beside_a_read_only_copy_of_what_it_reaches :: proc(p: ^mut Node) {
+	y: ^int = p^.value;
+	assert(false, "m", p);
+	z := y^;
+}
+ok_record_beside_a_read_only_copy_of_what_it_holds :: proc(v: ^mut int) {
+	node := Node{v, 1};
+	y: ^int = node.value;
+	assert(false, "m", node);
+	z := y^;
+}
+ok_once_with_a_method :: proc(x: Noisy) { assert(false, "m", x); }
+ok_quiet_twice :: proc(x: Quiet) { assert(false, "m", x, x); }
+ok_quiet_pointer_twice :: proc(x: ^mut Quiet) { assert(false, "m", x, x); }
+ok_plain_twice :: proc(x: Printed_Plain) { assert(false, "m", x, x); }
+ok_read_only_holder_pointer_twice :: proc(x: ^mut Read_Only_Holder) { assert(false, "m", x, x); }
+ok_quiet_view_twice :: proc(x: []mut Quiet) { assert(false, "m", x, x); }
+ok_plain_pointer_twice :: proc(x: ^mut Printed_Plain) { assert(false, "m", x, x); }
+main :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	assert(p^.n == 1, "unexpected", p, p, p^.value);
+	p^.n = 2;
+	assert(p^.n == 2, "unexpected", p^, p^.n);
+	fmt.println(p^.n, p^.value^);
+}

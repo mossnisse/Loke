@@ -101,8 +101,11 @@ Prov_Receiver_Contract :: enum u8 {
 	// design.md "Borrowing iteration": its result is lent by the view the receiver
 	// holds, not by the receiver.
 	Lends_Held,
-	// It measures or hashes, which only reads, and its plain result keeps nothing.
+	// It hashes, which only reads, and its plain result keeps nothing.
 	Only_Reads,
+	// It reads a length or capacity, which is all it reads of the receiver, and its
+	// plain result keeps nothing.
+	Measures,
 	// Its result holds what the receiver holds, never a loan of the receiver.
 	Copies,
 }
@@ -118,8 +121,10 @@ prov_receiver_contract :: proc(c: ^Compiler, callee: ^Symbol) -> Prov_Receiver_C
 	case .Indexed_Next:
 		// `indexed()` lends only while it wraps a lending source.
 		return .Lends_Held if indexed_next_lends(c, callee) else .Unwritten
-	case .Standard_Len, .Standard_Cap, .Standard_Hash:
+	case .Standard_Hash:
 		return .Only_Reads
+	case .Standard_Len, .Standard_Cap:
+		return .Measures
 	case .Adapter_Iter, .Iterator_Copy:
 		return .Copies
 	case .Adapter_View:
@@ -154,6 +159,8 @@ Prov_Argument_Kind :: enum u8 {
 	Lookup_Receiver,
 	// A slice local of plain data given to what only reads its receiver.
 	Only_Read_Slice,
+	// A place given to what reads only its length or capacity.
+	Measured_Receiver,
 	// A value borrowed from the caller by what only copies it (`Copies`).
 	Copied_Receiver,
 	// A value borrowed from the caller.
@@ -207,6 +214,10 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		case .Only_Reads:
 			if _, plain := prov_plain_slice_local(graph, argument); plain {
 				return .Only_Read_Slice
+			}
+		case .Measures:
+			if prov_reads_as_place(graph, argument) {
+				return .Measured_Receiver
 			}
 		case .Copies:
 			return .Copied_Receiver

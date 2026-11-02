@@ -1,0 +1,84 @@
+L0641
+@11:83
+`d` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@12:73
+`d` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@13:80
+`d` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@14:78
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@18:7
+this read of `d` is not compatible with the mutable pointer of it that is still in use
+L0641
+@21:66
+`s` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@22:74
+`q` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@25:17
+`x` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@28:67
+`h` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@28:79
+`h` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:80
+`h` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:92
+`h` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@30:82
+`s` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@31:95
+`s` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@32:84
+`pp` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@33:81
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@34:84
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@35:95
+`q` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@36:67
+`q` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@37:61
+`h` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@42:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@50:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@56:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@63:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@69:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@75:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@81:2
+`d` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@88:2
+`x` cannot be assigned here: a mutable pointer of it is still in use

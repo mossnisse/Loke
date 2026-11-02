@@ -1,0 +1,118 @@
+// design.md "Built-in procedures", "String format printing": a report borrows each
+// argument until it has printed the last, and printing reads what a pointer points to, so
+// a later argument may not write what an earlier one reaches.
+package main;
+import "core:fmt";
+Node :: struct { value: ^mut int, n: int }
+Plain :: struct { n: int }
+Holder :: struct { p: ^mut Node }
+grow :: proc(p: ^mut Node) -> int { p^.n = 2; return 0; }
+bump :: proc(p: ^mut int) -> int { p^ = 2; return 0; }
+read_node :: proc(p: ^Node) -> int { return p^.n; }
+grow_plain :: proc(p: ^mut Plain) -> int { p^.n = 2; return 0; }
+grow_view :: proc(s: []mut Node) -> int { s[0].n = 2; return 0; }
+same :: proc(p: ^mut Node) -> ^mut Node { return p; }
+set_pointer :: proc(pp: ^mut ^mut Node, q: ^mut Node) -> int { return 0; }
+hand_back :: proc(p: ^mut int) -> ^mut int { return p; }
+Noisy :: struct { value: ^mut int, n: int }
+impl Noisy {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { self.value^ = 2; }
+}
+Quiet :: struct { n: int }
+impl Quiet {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+Distinct_Pointer :: distinct ^mut int;
+impl Distinct_Pointer {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { self^ = 2; }
+}
+Read_Only_Holder :: struct { r: ^int }
+impl Read_Only_Holder {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+
+pointer_to_carrier :: proc(p: ^mut Node) { assert(false, "m", p, grow(p)); }
+pointer_to_carrier_panic :: proc(p: ^mut Node) { panic("m", p, grow(p)); }
+pointer_to_carrier_method :: proc(p: ^mut Node) { assert(false, "m", p, p^.value^); p^.n = 1; x := read_node(p); assert(false, "m", p, grow(p)); }
+pointer_to_plain :: proc(p: ^mut int) { assert(false, "m", p, bump(p)); }
+pointer_to_plain_record :: proc(p: ^mut Plain) { assert(false, "m", p, grow_plain(p)); }
+field_holding_pointer :: proc(h: Holder) { assert(false, "m", h.p, grow(h.p)); }
+field_through_pointer :: proc(h: ^mut Holder) { assert(false, "m", h^.p, grow(h^.p)); }
+pointee :: proc(p: ^mut Node) { assert(false, "m", p^, grow(p)); }
+field_of_pointee :: proc(p: ^mut Node) { assert(false, "m", p^.n, grow(p)); }
+carrier_of_pointee :: proc(p: ^mut Node) { assert(false, "m", p^.value, grow(p)); }
+local_record :: proc(v: ^mut int) {
+	node := Node{v, 1};
+	assert(false, "m", node, grow(&mut node));
+}
+local_record_writes_reach :: proc(v: ^mut int) {
+	node := Node{v, 1};
+	assert(false, "m", node, bump(node.value));
+}
+pointer_writes_reach :: proc(p: ^mut Node) { assert(false, "m", p, bump(p^.value)); }
+view_of_carriers :: proc(s: []mut Node) { assert(false, "m", s, grow(&mut s[0])); }
+view_given_on :: proc(s: []mut Node) { assert(false, "m", s, grow_view(s)); }
+element :: proc(s: []mut Node) { assert(false, "m", s[0], grow(&mut s[0])); }
+pointer_to_pointer :: proc(pp: ^mut ^mut Node) { assert(false, "m", pp, grow(pp^)); }
+copy_of_pointer :: proc(p: ^mut Node) {
+	q := p;
+	assert(false, "m", p, grow(q));
+}
+in_the_original_place :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	assert(false, "stop", p, grow(p));
+}
+local_writes_named_target :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	assert(false, "stop", p, bump(&mut x));
+}
+two_results :: proc(p: ^mut Node) { assert(false, "m", same(p), same(p)); }
+result_then_write :: proc(p: ^mut Node) { assert(false, "m", same(p), grow(p)); }
+replaced :: proc(p: ^mut Node, q: ^mut Node) {
+	r := p;
+	assert(false, "m", r, set_pointer(&mut r, q));
+}
+read_only_view_of_a_carrier_holds :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p: ^Node = &node;
+	assert(false, "m", p, bump(&mut x));
+}
+pointee_holds_named_target :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	assert(false, "m", p^, bump(&mut x));
+}
+chain_holds_named_target :: proc() {
+	x := 1;
+	node := Node{&mut x, 1};
+	p := &mut node;
+	pp := &mut p;
+	assert(false, "m", pp, bump(&mut x));
+}
+view_holds_named_target :: proc() {
+	x := 1;
+	a := [1]Node{Node{&mut x, 1}};
+	s := &mut a[:];
+	assert(false, "m", s, bump(&mut x));
+}
+beside_a_mutable_copy_of_what_it_reaches :: proc(p: ^mut Node) {
+	y := p^.value;
+	assert(false, "m", p);
+	y^ = 1;
+}
+writes_reported_once :: proc(p: ^mut Node) { assert(false, "m", p^, bump(p^.value)); }
+pointer_writes_reported_once :: proc(p: ^mut Node) { assert(false, "m", p, bump(p^.value), p); }
+result_of_reach_reported_once :: proc(p: ^mut Node) { assert(false, "m", p, hand_back(p^.value)); }
+twice_with_a_method_holding_a_mutable_carrier :: proc(x: Noisy) { assert(false, "m", x, x); }
+pointer_twice_with_a_method_holding_a_mutable_carrier :: proc(x: ^mut Noisy) { assert(false, "m", x, x); }
+method_write_later :: proc(x: Noisy) { assert(false, "m", x, bump(x.value)); }
+distinct_pointer_twice :: proc(x: Distinct_Pointer) { assert(false, "m", x, x); }
+noisy_view_twice :: proc(x: []mut Noisy) { assert(false, "m", x, x); }
+noisy_chain_twice :: proc(x: ^mut ^mut Noisy) { assert(false, "m", x, x); }
+main :: proc() {}

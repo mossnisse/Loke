@@ -3361,7 +3361,23 @@ slots it names, so only a call, which may read anything it reaches, needs the
 extension. It does reject `drop(values); view.len()`, since a call's signature does
 not say it reads nothing, and `holders.len()` was already rejected that way. Telling
 a built-in that reads no element from other calls could relax both; nothing here
-depends on either.
+depends on either. A length only keeps what the receiver holds, as a value it holds on
+to rather than one it uses, so it goes beside a read-only reborrow of the receiver and a
+copy out of an element, which a use would conflict with.
+
+A report holds what it prints as a read-only reborrow does, and that is all it promises.
+`assert(false, "m", p, read(p))`, where `read` takes `^Node` and writes through the
+`^mut int` stored there, compiles and prints the changed `int`, as
+`y: ^Node = p; n := read(p); z := y^.value^;` does: neither holds a copy of the stored
+carrier, so nothing is live across the write, and what the report reads afterwards is
+valid. A rule that a later argument changes nothing an earlier one reaches would need
+every call with a read-only signature to count as a write of everything behind it.
+
+A copy's hook is handed the source as a call's argument is, so `u := t` with `t` holding
+`&mut counter` conflicts with a hook reading `counter` though neither is used again, as
+`bump(&mut counter)` does with a body reading it. Holding the source only where a later
+use would already hold it would let the hook read a global through a name while it has
+a mutable pointer to the same one.
 
 A reordering assignment is also not a copy, recognized by the values naming the
 targets' own places; [a reordering written with a

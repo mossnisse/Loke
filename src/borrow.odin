@@ -4250,6 +4250,10 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				}
 				if event.kind == .Live && event.hands_on {
 					event.keeps_live = with_held_content(state, event.sources, content_loans[:])
+				} else if event.kind == .Live && len(event.keeps_live) > 0 {
+					if held := with_held_content(state, event.keeps_live, content_loans[:]); held != nil {
+						event.keeps_live = held
+					}
 				}
 				run_prov_event(state, event, state.reach, state.ended)
 			}
