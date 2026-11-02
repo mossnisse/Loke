@@ -45,3 +45,11 @@ L0503
 L0363
 @29:7
 `Held` has no field or member `clone`
+
+L0488
+@35:20
+`hook(drop)` is a record lifecycle role; `Drop_Hooked` is not a record type
+
+L0488
+@37:20
+`hook(copy)` is a record lifecycle role; `Copy_Hooked` is not a record type

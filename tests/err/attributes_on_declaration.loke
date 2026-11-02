@@ -29,3 +29,9 @@ main :: proc() {
 	d := c.clone();
 	_ = d;
 }
+
+// A lifecycle hook is a struct's, and `@(move_only)` does not make a union one.
+@(move_only) Drop_Hooked :: union { none, id: int }
+impl Drop_Hooked { release :: hook(drop) proc(self: inout Drop_Hooked) {} }
+@(move_only) Copy_Hooked :: union { none, id: int }
+impl Copy_Hooked { duplicate :: hook(copy) proc(self: ^Copy_Hooked) -> Copy_Hooked { return .none; } }
