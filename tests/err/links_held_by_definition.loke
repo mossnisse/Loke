@@ -1,0 +1,166 @@
+// design.md "Weakening and reborrows": what was taken from a carrier is suspended by what
+// holds it on any path that reaches a use, around a swap or a redefinition, so a copy live
+// on one path of a join, or kept round a loop, still conflicts.
+package main;
+flip :: proc() -> bool { return true; }
+Link :: struct { to: ^mut int }
+
+held_on_the_path_without_the_swap :: proc(links: ^mut [2]Link) {
+	held := links^[0];
+	if (flip()) {
+		links^[0] = links^[1];
+		links^[1] = held;
+	}
+	first := links^[0].to;
+	first^ = 1;
+	held.to^ = 2;
+}
+swap_in_one_branch_copy_in_the_other :: proc(links: ^mut [2]Link) {
+	held := links^[1];
+	if (flip()) {
+		saved := links^[0];
+		links^[0] = links^[1];
+		links^[1] = saved;
+	} else {
+		links^[0] = links^[1];
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+	held.to^ = 3;
+}
+copy_in_one_branch_only :: proc(links: ^mut [2]Link) {
+	if (flip()) {
+		links^[0] = links^[1];
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+half_a_swap_in_a_branch :: proc(links: ^mut [2]Link) {
+	if (flip()) {
+		held := links^[0];
+		links^[0] = links^[1];
+		held.to^ = 1;
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+loop_leaves_a_copy_behind :: proc(links: ^mut [2]Link) {
+	for (i := 0; i < 2; i += 1) {
+		first := links^[0].to;
+		second := links^[1].to;
+		first^ = 1;
+		second^ = 2;
+		links^[0] = links^[1];
+	}
+}
+loop_keeps_a_copy_across_iterations :: proc(links: ^mut [2]Link) {
+	kept := links^[0];
+	for (i := 0; i < 2; i += 1) {
+		first := links^[0].to;
+		first^ = 1;
+		kept.to^ = 2;
+		kept = links^[1];
+	}
+}
+swap_at_an_unknown_index :: proc(links: []mut Link, k: int) {
+	held := links[k];
+	links[k] = links[0];
+	links[0] = held;
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+redefined_from_what_it_came_from :: proc(x: ^mut int) {
+	r := x;
+	y := r;
+	r = y;
+	r^ = 1;
+	y^ = 2;
+}
+redefined_with_the_same_source :: proc(x: ^mut int) {
+	r := x;
+	y := r;
+	r = x;
+	r^ = 1;
+	y^ = 2;
+}
+derived_chain_survives_a_middle_redefined :: proc(x: ^mut int, other: ^mut int) {
+	m := x;
+	y := m;
+	m = other;
+	x^ = 1;
+	y^ = 2;
+}
+source_used_after_a_copy_of_a_copy :: proc(x: ^mut int) {
+	a := x;
+	b := a;
+	c := b;
+	a = c;
+	x^ = 1;
+	c^ = 2;
+}
+store_back_into_the_same_field :: proc(l: ^mut Link) {
+	x := l^.to;
+	l^.to = x;
+	y := l^.to;
+	y^ = 1;
+	x^ = 2;
+}
+store_back_in_a_loop :: proc(l: ^mut Link) {
+	x := l^.to;
+	for (i := 0; i < 2; i += 1) {
+		l^.to = x;
+		y := l^.to;
+		y^ = 1;
+		x^ = 2;
+	}
+}
+one_field_twice_by_hand :: proc(links: ^mut [2]Link) {
+	held := links^[1];
+	links^[0] = held;
+	links^[1] = held;
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+cursor_copy_kept :: proc(l: ^mut Link, o: ^mut Link) {
+	cur := l;
+	held := cur^.to;
+	cur = o;
+	y := l^.to;
+	y^ = 1;
+	held^ = 2;
+}
+redefined_copy_in_a_branch_keeps_the_first :: proc(s: []mut Link) {
+	a := s[0].to;
+	b := s[1].to;
+	y := a;
+	if (flip()) { y = b; }
+	a^ = 1;
+	y^ = 2;
+}
+kept_through_a_pointer_when_not_replaced :: proc(s: []mut Link) {
+	d := s[0].to;
+	p := &mut d;
+	if (flip()) { p^ = s[1].to; }
+	s[0].to^ = 1;
+	d^ = 2;
+}
+// A store at an unknown index may not replace the element, so the copy stays what was taken.
+joined_store_keeps_the_copy :: proc(k: int, @(escape=stored) o: ^mut int, a: ^mut int, b: ^mut int) {
+	links := [2]Link{Link{a}, Link{b}};
+	x := links[0].to;
+	links[k].to = o;
+	w := links[0].to;
+	x^ = 1;
+	w^ = 2;
+}
+main :: proc() {}

@@ -96,10 +96,6 @@ Access_Kind :: enum u8 {
 Prov_Load_Kind :: enum u8 {
 	// The carriers stored at `path`.
 	Place,
-	// A carrier loaded on the way to a place through it (`prov_reach_hop`), which
-	// only the access to that place uses, so its reborrow of what it was loaded
-	// out of suspends nothing.
-	Walked,
 	// Also reads through what was read, at any depth.
 	Deep,
 	// A deep load of all a call's arguments reach: a live reborrow of what it reads
@@ -2058,11 +2054,9 @@ prov_value_content :: proc(graph: ^Flow_Graph, sources: []int, type: Type_Id, sp
 	return prov_project_content(graph, sources, INVALID_TYPE, nil, type, span)
 }
 
-// A `walked` load is of a carrier on the way to a place (`Prov_Load_Kind.Walked`).
 @(private)
 prov_load_content :: proc(
-	graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, type: Type_Id, span: Span, reads_only := false,
-	walked := false, place: Expr = nil,
+	graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, type: Type_Id, span: Span, reads_only := false, place: Expr = nil,
 ) -> []int {
 	if len(carriers) == 0 {
 		return nil
@@ -2091,7 +2085,6 @@ prov_load_content :: proc(
 			path            = prov_concat_path(graph, path, graph.prov_slots[slot].path),
 			span            = span,
 			reads_only      = reads_only,
-			load            = .Walked if walked else .Place,
 			load_element    = load_element,
 			element         = element,
 			through_element = through_element,
@@ -2302,7 +2295,7 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 // standard-library.md "Chunks of a mutable slice": a chunk is a reborrow of the view that
 // does not suspend the view, so the view advances while earlier chunks are
 // held, and through it the chunk keeps the sliced carrier suspended. Each step
-// binds a value disjoint from the last, so redefining the binding severs the
+// binds a value disjoint from the last, so redefining the binding ends the
 // reborrows taken from the chunk before. False when the binding is not a
 // carrier slot.
 @(private)
@@ -2314,7 +2307,6 @@ prov_bind_chunk :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 	for source in sources {
 		append(&graph.reborrows, Prov_Reborrow{source = source, derived = slot, span = span, mutable = true, passes_on = true})
 	}
-	graph.fresh_slots[slot] = true
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
 	return true
 }
@@ -2941,7 +2933,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 		for source in event.sources {
 			append(&graph.reborrows, Prov_Reborrow {
 				source = source, derived = event.slot, span = event.span, passes_on = true, via = event.into,
-				walked = event.load == .Walked, pending = true,
+				pending = true,
 			})
 		}
 		return
@@ -2961,7 +2953,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 		if prov_slot_is_mutable_carrier(graph, source) || graph.prov_slots[source].caller_mutable {
 			append(&graph.reborrows, Prov_Reborrow {
 				source = source, derived = event.slot, span = event.span, mutable = mutable, passes_on = passes_on, via = event.into,
-				walked = event.load == .Walked, moved = graph.prov_slots[event.slot].moved_out,
+				moved = graph.prov_slots[event.slot].moved_out,
 			})
 		}
 	}
@@ -6599,7 +6591,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 		outer := prov_reach_hop(graph, place, hops, at + 1, loads, false, walk)
 		from := prov_next_event(graph)
 		slots = prov_load_content(
-			graph, outer, hops[at + 1].path, prov_type(graph, carrier), expr_span(carrier), reads_only = loads, walked = true,
+			graph, outer, hops[at + 1].path, prov_type(graph, carrier), expr_span(carrier), reads_only = loads,
 			place = carrier,
 		)
 		prov_note_walk_reads(graph, walk, from)

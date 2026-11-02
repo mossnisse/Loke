@@ -3467,7 +3467,7 @@ The solve now links each carrier to the slots the store lands in, once reach has
 settled (`link_landed_stores`), a record's carriers to the slots of their paths, and a
 link holds from its store on (`Prov_Reborrow.from_store`). A store to one place also
 ends what was taken from what it replaced, unless it stores what it read from there.
-Severing is its own pass, as it now depends on every link (`solve_severing`).
+Severing became its own pass then, as it came to depend on every link.
 A temporary is never the first step of a conflict through such a link: only its own
 expression reads it, so a later use is of a new value, and the chain from what it was
 copied from still finds the copy.
@@ -3536,6 +3536,52 @@ and a walk reaches it only through a chain from a mutable carrier, and removing 
 links changed nothing. It is not so for the rest. With every link active, 24 inputs of the corpus
 differ, as `foreach (element in split_elements(rest))` in `core:path` conflicts with its own
 temporary, which is read-only and has no `passes_on`. So `pending` stays, as the filter.
+
+### What a slot holds of its links
+
+A link says what is a copy of what, and not when. A walk over the links could not tell which
+definition of a slot had reached a use, so a list of rules stood in for that. Redefining a
+fresh slot or a temporary severed what was taken from it, and so did a stored temporary, a load
+defined its slot afresh, and a store ended what was taken from a place it replaced unless it
+stored what it read there. Severing had to hold on every path, so at the join after a swap with
+a temporary, and round a loop, the swap's links stayed live, and valid programs were rejected.
+
+Now each slot holds a row with a bit per link, solved forward once the links have settled
+(`solve_links_held`). A copy takes what its source held and the link it was copied by, and a new
+value in a slot ends what was taken from the old unless it came from there (`end_links_of_value`).
+A use conflicts with a live slot holding one of its reborrows. That one rule replaced the walk,
+the severing pass, and the exceptions above. `via`, `passes_on`, and `moved` stay, as they say
+what a link means, not when it holds, and `prov_slots_overlap` still filters, as a row
+says a value came through a link and a loan says whether it can still name the same storage.
+
+Checking for a value that came from the old one is by slot, not by bit. Clearing only the bits the
+new value lacks loses `a[0], a[1] = a[1], a[1];`, where `a[1]` keeps its old value and `a[0]` a copy
+of it, by a link the new `a[1]` does not hold.
+
+A first version kept a dense table per block, and 3,000 copies each after a branch took 31 s and
+12.5 GB against the walk's 2.2 s and 2.4 GB, though no real body's table was over 2.3 KB. Keeping
+each distinct row once, with a handle per slot, took that to 1.6 s and 2.1 GB, less than the walk
+as the severing pass is gone too. A use then spent its time on slots that were not live, which
+checking those first removed, as 1,000 loads through one view had gone from 0.5 s to 3.5 s. On
+bodies built to stress it the walk does far worse: 300 swaps in branches took 67 s and 3 GB, against
+0.5 s and 153 MB, and 1,000 redefinitions took 52 s against 3.4 s. On
+`examples/corpus_runner.loke` and `bench/workspace` it adds 2% and 1% to the front end.
+
+It is not smaller, adding about 25 lines more than it removes.
+It was taken for the rule: which definition reaches is now in one place rather than in the
+exceptions of each. Its verdicts, diagnostics, and IR were the walk's on 1,413 inputs, and its
+verdicts on 6,930 generated programs, so nothing here depends on the comparison alone: it accepts
+29 matrix cases and programs judged by hand that the walk wrongly rejected, and those are the
+only changes in verdict found.
+
+Removing each guard in turn, against those tables, the matrices, the fixtures, and the generated
+programs, showed which were left over from the walk. `walked` changed no verdict, and neither did
+a store sparing its own links, a copy of a replaced slot's old row, or the conditions on a slot
+holding its own link, the last three of which no input reached, so all are gone. `via` was checked
+in two places, either of which was enough, so only the strip on storing back stays. Removing that
+too rejects only `cur^.next = cur^.next^.next; cur = cur^.next;`, which is valid, though it closes most
+of [A cursor stepped through itself](known-gaps.md#a-cursor-stepped-through-itself-holds-nothing-of-the-field-it-came-from),
+a hole the walk had as well. A guard that no fixture told apart then got one that does.
 
 ### A task holds what it is lent until the join
 

@@ -498,8 +498,11 @@ Keep these contracts:
   place loan bits they may hold there, as a definition may come over a loop's back
   edge after the walk met the store (`publish_place_settled`). A store to one place ends what
   was taken from what it replaced, unless it stores what it read there
-  (`run_severing_event`, `stores_what_slot_held`), and severing is solved last for
-  that reason (`solve_severing`). A store through a `foreach` loop's `&mut` binding
+  (`end_links_of_value`). Which reborrows each slot's value may have come through is
+  solved last, as it depends on every link (`solve_links_held`): a slot holds a row with
+  a bit per reborrow, which a copy passes on, and each distinct row is kept once, so a
+  block holds only a handle per slot. A use of a carrier conflicts with a live slot
+  holding one of its reborrows (`live_reborrow_of`). A store through a `foreach` loop's `&mut` binding
   also lands in the element it names, whichever that is, joined into what each
   holds (`Prov_Traversal`, `prov_publish_traversal`): by path into a source that
   is a named place, otherwise as a `Publish` through what the traversal holds,
@@ -518,7 +521,7 @@ Keep these contracts:
   argument's carriers hold (`rearrange_carriers`). For a copy the solve also links
   the carriers it reached as reborrows of each other through a hub, which
   hold from that `Rearrange` on (`Prov_Reborrow.from_store`), so an earlier use
-  conflicts with nothing, and only a store replacing one severs them. A copy of a
+  conflicts with nothing, and only a store replacing one ends them. A copy of a
   read-only carrier that may come to hold a reborrow is linked as pending, and the
   solve keeps those whose source does once every link is made
   (`prov_settle_pending_reborrows`), as the walk cannot see all of them.
@@ -545,10 +548,7 @@ Keep these contracts:
   (`Proj_Step.shifts`, `prov_region_path`).
 - **A store that may leave a value keeps it live.** A `Def` joining its slot's own
   value, as a store at a path naming many places does, neither ends that slot's
-  liveness nor severs reborrows of it (`run_live_event`, `run_severing_event`). A
-  temporary stored into lasting storage is severed when evaluated again, as what an
-  earlier evaluation left there is no reborrow of its new value
-  (`prov_slot_is_stored_temporary`).
+  liveness nor what was taken from it (`run_live_event`, `run_links_held_event`).
 - **A slice literal's hidden array is lasting storage.** Its content slots have no
   symbol, but count as a local's wherever a stored carrier is told from a temporary
   (`prov_slot_is_stored`, `Prov_Slot.kind`).

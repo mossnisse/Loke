@@ -1,0 +1,171 @@
+// design.md "Weakening and reborrows": a store to one place ends what was taken from what it
+// replaced, on the paths where it does, so a swap with a temporary leaves each carrier in
+// one place in a branch, a loop, or through a view, and what is done with goes on no longer.
+package main;
+import "core:fmt";
+flip :: proc() -> bool { return true; }
+Link :: struct { to: ^mut int }
+Two :: struct { a: ^mut int, b: ^mut int }
+
+ok_copy_of_what_a_swap_left_done_before_the_temporary :: proc(links: ^mut [2]Link) {
+	held := links^[0];
+	links^[0] = links^[1];
+	links^[1] = held;
+	second := links^[1].to;
+	second^ = 1;
+	held.to^ = 2;
+}
+ok_replaced_through_another_pointer :: proc(links: ^mut [2]Link) {
+	p := links;
+	held := p^[0];
+	links^[0] = links^[1];
+	first := links^[1].to;
+	first^ = 1;
+	held.to^ = 2;
+}
+ok_swap_in_a_branch :: proc(links: ^mut [2]Link) {
+	if (flip()) {
+		held := links^[0];
+		links^[0] = links^[1];
+		links^[1] = held;
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+ok_swap_in_each_branch :: proc(links: ^mut [2]Link) {
+	if (flip()) {
+		held := links^[0];
+		links^[0] = links^[1];
+		links^[1] = held;
+	} else {
+		other := links^[1];
+		links^[1] = links^[0];
+		links^[0] = other;
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+ok_swap_in_a_loop :: proc(links: ^mut [2]Link) {
+	for (i := 0; i < 2; i += 1) {
+		held := links^[0];
+		links^[0] = links^[1];
+		links^[1] = held;
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+ok_swap_through_a_view :: proc(links: []mut Link) {
+	held := links[0];
+	links[0] = links[1];
+	links[1] = held;
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+ok_copy_replaced_on_the_only_path :: proc(links: ^mut [2]Link, @(escape=stored) fresh: Link) {
+	if (flip()) {
+		links^[0] = links^[1];
+		links^[1] = fresh;
+	} else {
+		links^[1] = fresh;
+	}
+	first := links^[0].to;
+	second := links^[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+ok_kept_across_iterations_when_done :: proc(links: ^mut [2]Link) {
+	kept := links^[0];
+	for (i := 0; i < 2; i += 1) {
+		kept.to^ = 2;
+		first := links^[0].to;
+		first^ = 1;
+		kept = links^[0];
+	}
+}
+ok_redefined_from_elsewhere :: proc(x: ^mut int, other: ^mut int) {
+	r := x;
+	y := r;
+	r = other;
+	r^ = 1;
+	y^ = 2;
+}
+ok_redefined_from_elsewhere_sharing_a_loan :: proc(t: ^mut Two) {
+	r := t^.a;
+	y := r;
+	r = t^.b;
+	r^ = 1;
+	y^ = 2;
+}
+ok_cursor_stepped :: proc(a: ^mut Link, b: ^mut Link) {
+	cur := a;
+	first := cur^.to;
+	first^ = 1;
+	cur = b;
+	second := cur^.to;
+	second^ = 2;
+	first = cur^.to;
+	first^ = 3;
+}
+// All of a view's slots share one loan, so here only what each slot holds can tell these apart.
+ok_redefined_copy_leaves_the_first :: proc(s: []mut Link) {
+	a := s[0].to;
+	b := s[1].to;
+	y := a;
+	y = b;
+	a^ = 1;
+	y^ = 2;
+}
+ok_replaced_through_a_pointer_by_a_sibling :: proc(s: []mut Link) {
+	d := s[0].to;
+	p := &mut d;
+	p^ = s[1].to;
+	s[0].to^ = 1;
+	d^ = 2;
+}
+ok_redefined_after_a_store :: proc(s: []mut Link) {
+	other := s[1].to;
+	third := s[2].to;
+	d := s[0].to;
+	p := &mut d;
+	p^ = other;
+	d = third;
+	other^ = 1;
+	d^ = 2;
+}
+keep_in :: proc(l: ^mut ^mut int, @(escape=stored) o: ^mut int) { l^ = o; }
+ok_redefined_after_a_call_stored :: proc(s: []mut Link) {
+	other := s[1].to;
+	third := s[2].to;
+	d := s[0].to;
+	keep_in(&mut d, other);
+	d = third;
+	other^ = 1;
+	d^ = 2;
+}
+Node :: struct { value: int, next: ^mut Node }
+// One slot stands for every node's `next`, so a cursor holding what it stepped to would
+// conflict with reading further down the list.
+ok_unlink_through_a_cursor :: proc(head: ^mut Node) {
+	cur := head;
+	for (i := 0; i < 3; i += 1) {
+		cur^.next = cur^.next^.next;
+		cur = cur^.next;
+	}
+}
+main :: proc() {
+	a, b := 1, 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	ok_swap_in_a_branch(&mut links);
+	c, d := 3, 4;
+	others := [2]Link{Link{&mut c}, Link{&mut d}};
+	ok_swap_through_a_view(&mut others[:]);
+	fmt.println(a, b, c, d);
+}

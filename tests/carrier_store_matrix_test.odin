@@ -105,18 +105,6 @@ STORE_CASES := [?]Store_Case {
 	{"branch_swap_temp", "if (flip()) { h := $A; $A = $B; $B = h; } x := $a; y := $b; x^ = 1; y^ = 2;", false},
 }
 
-// Where the compiler rejects what the rules accept: known-gaps.md "A swap with a
-// temporary is rejected in a branch or a loop", and "Copies out of elements swapped
-// with a temporary through a view parameter are rejected". Listed so that closing
-// either shows up here.
-@(private = "file")
-store_case_over_rejected :: proc(place: Store_Place, entry: Store_Case) -> bool {
-	if entry.name == "loop_swap_temp" || entry.name == "branch_swap_temp" {
-		return true
-	}
-	return place.name == "view_parameter" && entry.name == "swap_temp_copies_of_each"
-}
-
 // One procedure for each of `STORE_CASES` at `place`.
 @(private = "file")
 store_place_source :: proc(place: Store_Place) -> string {
@@ -154,7 +142,7 @@ carrier_store_matrix :: proc(t: ^testing.T) {
 	for place, index in STORE_PLACES {
 		for entry, at in STORE_CASES {
 			first := first_line + 4 * at
-			expected := entry.rejected || store_case_over_rejected(place, entry)
+			expected := entry.rejected
 			store_matrix_expect(t, place.name, entry.name, first, errors[index], expected)
 		}
 	}

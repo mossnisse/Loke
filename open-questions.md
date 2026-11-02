@@ -21,27 +21,6 @@ and estimates have been poor: the
 [borrow matrix](tests/borrow_matrix_test.odin), whose model is written apart from
 the compiler, is the oracle for any of them.
 
-- **Mutable exclusivity is kept by hand-built links (P2).** The solver knows
-  which loans a slot may hold; whether two slots holding one mutable loan may
-  both be used is decided by the reborrow graph. A store through carriers, a
-  `stored` argument, and a call that copies now
-  [link where they land](comments.md#a-stores-links-come-from-where-it-lands). What
-  remains is a link at a time for a copy: `prov_reborrow` for a copy into a slot, during
-  the walk, and `prov_reborrow_loaded` for one read through a pointer, with `pending` for
-  whatever only the solve can tell is a reborrow, settled once every link is made. The
-  walk's reads of those links, in `prov_slot_is_reborrow` and `prov_spawn_reborrows`, are
-  why it still builds them, though none now depends on what the walk has met. Two genuine
-  rules remain underneath: a carrier stored back through what it was loaded from replaces
-  that carrier (`via`), and a read-only reborrow is not suspended by its copies
-  (`passes_on`). The may-sets a permuting `Rearrange` leaves mean the solver cannot by
-  itself tell a copy from a move, so `Carrier_Move.copied` stays. [Loans cannot replace
-  the links](comments.md#loans-cannot-replace-the-links), which say what is a copy of what.
-  What could replace the walk over them, and the severing rules beside it, is the
-  **Value identity** item under [Compositional loan
-  construction](#compositional-loan-construction): one bit per link in each slot, which a
-  copy passes on and a redefinition of the link's source clears. It may close the swap with
-  a temporary in a branch or a loop. Its cost is a row of links for each slot, so measure
-  it beside the walk before deciding.
 - **Place loans beside root loans (P3).** A borrow of a named place is a loan
   of its root and path; one through carriers is a `Prov_Place_Loan`, a
   snapshot slot with a bit of its own, because which storage the carriers name
@@ -197,12 +176,6 @@ against a model written apart from the compiler. Still open:
   effects](design.md#global-write-effects) already can. Decide it together
   with [written public borrow
   contracts](#public-borrow-contracts-should-stand-on-their-own).
-- **Value identity.** Several rules say which definition a reborrow belongs to:
-  a load defines its slot afresh, a reborrow records the carriers its load went
-  through (`Prov_Reborrow.via`), reloading a temporary severs what was reborrowed
-  from its previous value, and `prov_slot_is_stored_temporary` extends that
-  severing to a stored temporary. Explicit reaching definitions would state them
-  as one rule; see [Provenance architecture](#provenance-architecture).
 - **Caller storage contents.** A store through a parameter's loan lands in the
   caller slots for the storage it names (`publish_into_caller`), and a later
   load reads them. The remaining imprecision: caller slots of different loans

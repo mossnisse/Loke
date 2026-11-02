@@ -184,73 +184,6 @@ another is treated the same way, for the same reason. Resetting `allowed` itself
 the same thing. Telling them apart takes region facts by program point. Found while
 fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### A swap with a temporary is rejected in a branch or a loop
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier leave its
-place, and a swap ends with each carrier in one place. Written with a temporary in a
-branch or a loop, it is `L0641`, in a branch at the reads after it, though the same
-swap in straight-line code and one written in a statement are accepted:
-
-```loke
-package main;
-Link :: struct { to: ^mut int }
-flip :: proc() -> bool { return true; }
-in_a_branch :: proc(links: ^mut [2]Link) {
-    if (flip()) {
-        held := links^[0];
-        links^[0] = links^[1];
-        links^[1] = held;
-    }
-    first := links^[0].to; // L0641; should be accepted
-    second := links^[1].to; // L0641; should be accepted
-    first^ = 1;
-    second^ = 2;
-}
-in_a_loop :: proc(links: ^mut [2]Link) {
-    for (i := 0; i < 2; i += 1) {
-        held := links^[0]; // L0641; should be accepted
-        links^[0] = links^[1]; // L0641; should be accepted
-        links^[1] = held; // L0641; should be accepted
-    }
-}
-main :: proc() {}
-```
-
-What a store links holds from that store on, and a reborrow is severed only where it
-is severed on every path (`solve_severing`), so at the join, or round the loop, the
-links of the swap are live where the reads before them are made. Telling them apart
-needs them keyed by which definition reaches, as
-[Compositional loan construction](open-questions.md#compositional-loan-construction)
-says of value identity. Found on 2026-11-01 while deriving a store's links in the
-solve; `carrier_store_matrix` lists these cases (P3, over-rejection).
-
-### Copies out of elements swapped with a temporary through a view parameter are rejected
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) says each carrier is in
-one place after a swap. Through a view parameter, a copy out of each is `L0641` after
-a swap with a temporary, though the same copies compile after a swap in a statement,
-and through any other place form:
-
-```loke
-package main;
-Link :: struct { to: ^mut int }
-copies_of_each :: proc(links: []mut Link) {
-    held := links[0];
-    links[0] = links[1];
-    links[1] = held;
-    first := links[0].to;
-    second := links[1].to; // L0641; should be accepted
-    first^ = 1;
-    second^ = 2;
-}
-main :: proc() {}
-```
-
-All of a view parameter's slots hold one loan, so `prov_slots_overlap` cannot tell what
-`first` holds from what `held` left in `links[1]`, and the chain through `held` still
-reaches `first`. Found on 2026-11-01 while deriving a store's links in the solve (P3,
-over-rejection).
-
 ### A call that swaps with a temporary counts as copying
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering is not
@@ -398,6 +331,40 @@ main :: proc() {}
 ```
 
 Read through the mutable carrier before making the copy.
+
+### A cursor stepped through itself holds nothing of the field it came from
+
+A carrier copied out of storage reborrows the carrier stored there
+([Weakening and reborrows](design.md#weakening-and-reborrows)), so two live copies of
+`head^.next` are `L0641`. Once one is stored back into the carrier it was loaded through, it no
+longer counts, by name or through a pointer to that carrier, and the two copies are accepted:
+
+```loke
+package main;
+Node :: struct { value: int, next: ^mut Node }
+stepped :: proc(head: ^mut Node) {
+    cur := head;
+    cur = cur^.next;
+    other := head^.next;
+    other^.value = 1; // accepted; should be L0641
+    cur^.value = 2;
+}
+through_a_pointer :: proc(head: ^mut Node) {
+    cur := head;
+    p := &mut cur;
+    p^ = p^^.next;
+    other := head^.next;
+    other^.value = 1; // accepted; should be L0641
+    cur^.value = 2;
+}
+main :: proc() {}
+```
+
+One slot stands for the `next` of every node below the first, so keeping these copies as they are
+would reject `cur^.next = cur^.next^.next; cur = cur^.next;` in a loop, which is valid. Fixing it
+needs a read through the cursor's own value told from a read of what it was copied from.
+
+Finish with one copy before making the other.
 
 ### A reordering of fields through a traversal binding is rejected
 

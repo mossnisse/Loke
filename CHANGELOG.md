@@ -1228,6 +1228,14 @@ checklist.
 
 ### Fixed
 
+- A swap with a temporary now leaves each carrier in one place in a branch, in a loop, and through
+  a view parameter, as [Weakening and reborrows](design.md#weakening-and-reborrows) says.
+  `if (flip()) { held := links^[0]; links^[0] = links^[1]; links^[1] = held; }` was `L0641` at
+  each read after it, and a copy out of a place the swap filled conflicted with the temporary
+  even when done before the temporary's next use. A carrier redefined or replaced after a copy
+  also ends what was taken from its old value when both came out of one view. Checking is far
+  faster on bodies with many such stores: 300 swaps in branches took over a minute and now take
+  under a second.
 - A report's arguments may name one place whatever it holds, as printing only reads
   ([Built-in procedures](design.md#built-in-procedures)): `assert(false, "m", p^, p^)`,
   `assert(false, "m", s[0], s[1])`, and `assert(false, "m", h.p, h.p)` were `L0641` where

@@ -101,10 +101,9 @@ Flow_Block :: struct {
 	precision_exit:  []Precision_Loss,
 	ended_entry:     []bool,
 	ended_exit:      []bool,
-	// Per reborrow: severed on every path to here, by a redefinition of its
-	// fresh source (`Flow_Graph.fresh_slots`).
-	severed_entry:   []bool,
-	severed_exit:    []bool,
+	// Per slot, a handle of what it holds of the reborrows (`solve_links_held`).
+	links_entry:     []u32,
+	links_exit:      []u32,
 	live_entry:      []Slot_Use,
 	live_exit:       []Slot_Use,
 	use_entry:       []Span,
@@ -327,11 +326,6 @@ Prov_State :: struct {
 	task_index:       int,
 	materialized:     ^Flow_Graph,
 	task_sites:       [dynamic]Task_Site,
-	// Slots each of whose definitions holds a value disjoint from the one
-	// before: a `chunks_mut` loop's binding. Redefining one severs the
-	// reborrows taken from its previous value (standard-library.md "Chunks of a mutable
-	// slice").
-	fresh_slots:    map[int]bool,
 	// Per named slot, what each of its definitions may point at, so a borrow
 	// through it takes the places of those reaching it (`prov_reaching_offsets`).
 	offset_reach:   Prov_Reach,
@@ -479,7 +473,6 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.view_elements = make(map[Prov_View_Element][]int, allocator)
 		graph.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, allocator)
-		graph.fresh_slots = make(map[int]bool, allocator)
 		graph.offset_reach = Prov_Reach {
 			places  = make(map[int][dynamic]Prov_Offset, allocator),
 			defined = make(map[Prov_Reach_Key]u128, allocator),

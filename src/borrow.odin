@@ -479,9 +479,6 @@ Prov_Reborrow :: struct {
 	// back into one of them, as `cur = cur^.next` does, replaces that
 	// carrier's value rather than holding a second path to `source`.
 	via: []int,
-	// Loaded on the way to a place through `source` (`Prov_Load_Kind.Walked`): the
-	// access to that place stands for the use, so it suspends nothing.
-	walked: bool,
 	// Taken from a read-only carrier that may come to hold a reborrow of a mutable one,
 	// which extends it only if that carrier does, which is settled once every link is
 	// made (`prov_settle_pending_reborrows`). Until then the solve does not see it.
@@ -1560,19 +1557,32 @@ Prov_State :: struct {
 	// A loan ended on every path to here. Checks skip only these, so an
 	// invalidation that reaches its own loop head still meets the loan it ends.
 	ended:   []bool,
-	// Per reborrow, severed on every path to here (`Flow_Block.severed_entry`).
-	// Sized before `resolve_content_reads` adds reborrows of loaded carriers,
-	// which are never severed.
-	severed: []bool,
 	// The slots the last `Rearrange` reached.
 	rearranged: [dynamic]int,
+	// Per slot, which links its value may have come through, as a handle of
+	// `link_rows` (`solve_links_held`).
+	links_held: []u32,
+	// Each distinct row, with one bit per reborrow, kept once however many slots and
+	// blocks hold it. Handle 0 holds no link.
+	link_rows:      [dynamic][]u8,
+	link_row_ids:   map[string]u32,
+	link_row_bytes: int,
+	// Scratch: a value being defined, and a row being changed.
+	link_row_value: []u8,
+	link_row_edit:  []u8,
+	// The reborrows into each slot, those through each carrier they were loaded
+	// through (`Prov_Reborrow.via`), and those each `store_id` makes.
+	links_into:     [][dynamic]int,
+	links_via:      [][dynamic]int,
+	links_of_store: [][dynamic]int,
+	// Whether a definition of a reborrow's derived slot names its source. One that none
+	// does, as a capture's copy of what its source derives from, is made by each of them.
+	link_is_named:  []bool,
 	// The reborrows of each source slot, by index in `graph.reborrows` and in
 	// its order (`reborrows_of`), as of `reborrows_indexed` of them.
 	reborrow_starts:    []int,
 	reborrow_indices:   []int,
 	reborrows_indexed:  int,
-	// The reborrows a redefinition may sever, from a fresh or loaded source.
-	severable: []int,
 	// Scratch: the loans one event ends, and their indices.
 	released: []bool,
 	released_indices: [dynamic]int,
@@ -3360,11 +3370,11 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		return
 	}
 	solve_reaching(&state)
-	// Links depend on reach, and severing on links.
+	// Links depend on reach, and what each slot holds of them on the links.
 	link_landed_stores(&state)
 	resolve_content_reads(&state)
 	prov_settle_pending_reborrows(graph)
-	solve_severing(&state)
+	solve_links_held(&state)
 	solve_loan_liveness(&state)
 	report_provenance(&state)
 }
@@ -3522,33 +3532,53 @@ solve_reaching :: proc(state: ^Prov_State) {
 	}
 }
 
-// Forward, once reach and every reborrow have settled: which reborrows were severed
-// on every path to each block (`run_severing_event`).
+// design.md "Weakening and reborrows": forward, once every reborrow has settled, which of
+// them each slot's value may have come through. A copy takes what its source held and the
+// link it was copied by, and a new value in a slot ends what was taken from the old, so
+// which definition reaches is in the row: a reborrow of a value no slot holds any more
+// suspends nothing, on the paths where that is so.
 @(private = "file")
-solve_severing :: proc(state: ^Prov_State) {
+solve_links_held :: proc(state: ^Prov_State) {
 	graph := state.graph
-	severable := make([dynamic]int, 0, 4, graph.alloc)
-	replaced := make(map[int]bool, graph.alloc)
-	for block in graph.blocks {
-		for event in block.prov {
-			if event.kind == .Publish {
-				for slot in event.replaces { replaced[slot] = true }
-			}
-		}
-	}
-	for reborrow, index in graph.reborrows {
-		if reborrow.from_store > 0 || replaced[reborrow.source] || reborrow_source_is_fresh(graph, reborrow) {
-			append(&severable, index)
-		}
-	}
-	state.severable = severable[:]
-	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
-	if len(severable) == 0 {
+	links := len(graph.reborrows)
+	if links == 0 {
 		return
 	}
+	state.link_row_bytes = (links + 7) / 8
+	state.links_held = make([]u32, state.slots, graph.alloc)
+	state.link_row_value = make([]u8, state.link_row_bytes, graph.alloc)
+	state.link_row_edit = make([]u8, state.link_row_bytes, graph.alloc)
+	state.link_rows = make([dynamic][]u8, 0, 16, graph.alloc)
+	state.link_row_ids = make(map[string]u32, graph.alloc)
+	intern_link_row(state, state.link_row_value)
+	state.links_into = make([][dynamic]int, state.slots, graph.alloc)
+	state.links_via = make([][dynamic]int, state.slots, graph.alloc)
+	state.link_is_named = make([]bool, links, graph.alloc)
+	stores := 0
+	for link, index in graph.reborrows {
+		append_link(&state.links_into[link.derived], index, graph.alloc)
+		for carrier in link.via {
+			append_link(&state.links_via[carrier], index, graph.alloc)
+		}
+		stores = max(stores, link.from_store)
+	}
+	state.links_of_store = make([][dynamic]int, stores + 1, graph.alloc)
+	for link, index in graph.reborrows {
+		if link.from_store > 0 {
+			append_link(&state.links_of_store[link.from_store], index, graph.alloc)
+		}
+	}
 	for block in graph.blocks {
-		block.severed_entry = make([]bool, len(graph.reborrows), graph.alloc)
-		block.severed_exit = make([]bool, len(graph.reborrows), graph.alloc)
+		for event in block.prov {
+			if event.kind != .Def && event.kind != .Load {
+				continue
+			}
+			for index in state.links_into[event.slot] {
+				if slice.contains(event.sources, graph.reborrows[index].source) {
+					state.link_is_named[index] = true
+				}
+			}
+		}
 	}
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	queued := make([]bool, len(graph.blocks), graph.alloc)
@@ -3559,42 +3589,25 @@ solve_severing :: proc(state: ^Prov_State) {
 		id := int(queue[head])
 		block := graph.blocks[id]
 		queued[id] = false
-		mem.zero_slice(state.severed)
-		if id != 0 {
-			seen := false
-			for predecessor in block.preds {
-				if !visited[int(predecessor)] {
-					continue
-				}
-				source := graph.blocks[predecessor]
-				// A predecessor not visited yet stays out of the meet.
-				if seen {
-					for value, index in source.severed_exit {
-						state.severed[index] &&= value
-					}
-				} else {
-					copy(state.severed, source.severed_exit)
-				}
-				seen = true
-			}
-			if !seen {
-				continue
-			}
-		} else {
-			// Nothing has been stored or copied yet.
-			for index in state.severable {
-				state.severed[index] = graph.reborrows[index].from_store > 0
+		mem.zero_slice(state.links_held)
+		for predecessor in block.preds {
+			if visited[int(predecessor)] {
+				join_links_held(state, graph.blocks[predecessor].links_exit)
 			}
 		}
-		copy(block.severed_entry, state.severed)
+		if block.links_entry == nil {
+			block.links_entry = make([]u32, state.slots, graph.alloc)
+			block.links_exit = make([]u32, state.slots, graph.alloc)
+		}
+		copy(block.links_entry, state.links_held)
 		for event in block.prov {
-			run_severing_event(state, event)
+			run_links_held_event(state, event, state.links_held)
 		}
-		if visited[id] && slice.equal(block.severed_exit, state.severed) {
+		if visited[id] && slice.equal(block.links_exit, state.links_held) {
 			continue
 		}
-		copy(block.severed_exit, state.severed)
 		visited[id] = true
+		copy(block.links_exit, state.links_held)
 		for successor in block.succs {
 			if !queued[int(successor)] {
 				append(&queue, successor)
@@ -3604,45 +3617,128 @@ solve_severing :: proc(state: ^Prov_State) {
 	}
 }
 
-// standard-library.md "Chunks of a mutable slice": redefining a fresh slot severs the
-// reborrows of its previous value, and redefining a reborrow's derived slot
-// takes it afresh. A temporary loaded through a carrier is fresh too: only its
-// own expression reads it, so loading it again, as a loop's `cur^.next` does,
-// leaves nothing to use its last value.
 @(private = "file")
-run_severing_event :: proc(state: ^Prov_State, event: Prov_Event) {
-	graph := state.graph
-	if event.kind == .Publish || event.kind == .Rearrange {
-		// A store or a call starts what it links, and a store ends what was taken from a
-		// slot it replaces, which holds another carrier now (design.md "Weakening and
-		// reborrows").
-		for index in state.severable {
-			reborrow := graph.reborrows[index]
-			if reborrow.from_store > 0 && reborrow.from_store == event.store_id {
-				state.severed[index] = false
-			} else if slice.contains(event.replaces, reborrow.source) && !stores_what_slot_held(state, event, reborrow.source) {
-				state.severed[index] = true
-			}
-		}
-		return
+append_link :: proc(links: ^[dynamic]int, index: int, allocator: mem.Allocator) {
+	if links^ == nil {
+		links^ = make([dynamic]int, 0, 2, allocator)
 	}
-	if event.kind != .Def && event.kind != .Load {
-		return
+	append(links, index)
+}
+
+@(private = "file")
+intern_link_row :: proc(state: ^Prov_State, row: []u8) -> u32 {
+	if id, found := state.link_row_ids[string(row)]; found {
+		return id
 	}
-	for index in state.severable {
-		reborrow := graph.reborrows[index]
-		if reborrow.from_store > 0 {
-			// Only its store starts it, and once started it stays: a chain through it
-			// goes on naming the carrier wherever that went.
+	kept := slice.clone(row, state.graph.alloc)
+	id := u32(len(state.link_rows))
+	append(&state.link_rows, kept)
+	state.link_row_ids[string(kept)] = id
+	return id
+}
+
+@(private = "file")
+join_links_held :: proc(state: ^Prov_State, from: []u32) {
+	for row, slot in from {
+		held := state.links_held[slot]
+		if row == held || row == 0 {
 			continue
 		}
-		if reborrow.source == event.slot {
-			// A definition joining the slot's own value does not end it.
-			if event.kind != .Def || !slice.contains(event.sources, event.slot) {
-				state.severed[index] = true
+		if held == 0 {
+			state.links_held[slot] = row
+			continue
+		}
+		copy(state.link_row_edit, state.link_rows[held])
+		bytes_or(state.link_row_edit, state.link_rows[row])
+		state.links_held[slot] = intern_link_row(state, state.link_row_edit)
+	}
+}
+
+// A new value in `slot` ends what was taken from its old one, unless it came from there,
+// as then the old value goes on being held, as `cur = copy_of_cur` does.
+@(private = "file")
+end_links_of_value :: proc(state: ^Prov_State, held: []u32, slot: int, value: []u8) {
+	links := reborrows_of(state, slot)
+	for index in links {
+		if bit_get(value, index) {
+			return
+		}
+	}
+	for index in links {
+		for row, other in held {
+			if row != 0 && bit_get(state.link_rows[row], index) {
+				copy(state.link_row_edit, state.link_rows[row])
+				bit_clear(state.link_row_edit, index)
+				held[other] = intern_link_row(state, state.link_row_edit)
 			}
-		} else if reborrow.derived == event.slot {
-			state.severed[index] = false
+		}
+	}
+}
+
+@(private = "file")
+run_links_held_event :: proc(state: ^Prov_State, event: Prov_Event, held: []u32) {
+	graph := state.graph
+	if state.link_row_bytes == 0 {
+		return
+	}
+	#partial switch event.kind {
+	case .Def, .Load:
+		slot := event.slot
+		value := state.link_row_value
+		mem.zero_slice(value)
+		// A definition joining the slot's own value does not end it.
+		joins := event.kind == .Def && slice.contains(event.sources, slot)
+		if joins {
+			bytes_or(value, state.link_rows[held[slot]])
+		}
+		for index in state.links_into[slot] {
+			link := graph.reborrows[index]
+			if link.from_store > 0 || state.link_is_named[index] && !slice.contains(event.sources, link.source) {
+				continue
+			}
+			bytes_or(value, state.link_rows[held[link.source]])
+			bit_mark(value, index)
+		}
+		// What was loaded through this carrier and is stored back, as `cur = cur^.next`,
+		// is the carrier's own value, not a competing use of what it was loaded out of.
+		for index in state.links_via[slot] {
+			bit_clear(value, index)
+		}
+		if !joins {
+			end_links_of_value(state, held, slot, value)
+		}
+		held[slot] = intern_link_row(state, value)
+	case .Publish, .Rearrange:
+		// A store or a call starts what it links, and a store ends what was taken from a
+		// slot it replaces, which holds another carrier now.
+		stored := state.link_row_value
+		mem.zero_slice(stored)
+		for source in event.sources {
+			bytes_or(stored, state.link_rows[held[source]])
+		}
+		replaces := event.kind == .Publish ? event.replaces : nil
+		for slot in replaces {
+			held[slot] = 0
+		}
+		if event.store_id > 0 && event.store_id < len(state.links_of_store) {
+			// A call's links run both ways through a hub, so this goes until they settle.
+			for changed := true; changed; {
+				changed = false
+				for index in state.links_of_store[event.store_id] {
+					link := graph.reborrows[index]
+					copy(state.link_row_edit, state.link_rows[held[link.derived]])
+					bit_mark(state.link_row_edit, index)
+					bytes_or(state.link_row_edit, state.link_rows[held[link.source]])
+					row := intern_link_row(state, state.link_row_edit)
+					if row != held[link.derived] {
+						held[link.derived] = row
+						changed = true
+					}
+				}
+			}
+		}
+		for slot in replaces {
+			end_links_of_value(state, held, slot, stored)
 		}
 	}
 }
@@ -5146,7 +5242,7 @@ report_provenance :: proc(state: ^Prov_State) {
 		copy(state.reach, block.reach_entry)
 		copy(state.precision, block.precision_entry)
 		copy(state.ended, block.ended_entry)
-		copy(state.severed, block.severed_entry)
+		copy(state.links_held, block.links_entry)
 		for event, index in block.prov {
 			// A temporary's end has no span of its own and is never merged.
 			at := [2]u32{event.span.file, event.span.lo}
@@ -5164,7 +5260,7 @@ report_provenance :: proc(state: ^Prov_State) {
 			check_shared_event(state, event, window, &shared)
 			window = window_step(graph, window, event)
 			run_prov_event(state, event, state.reach, state.ended)
-			run_severing_event(state, event)
+			run_links_held_event(state, event, state.links_held)
 		}
 	}
 }
@@ -6317,20 +6413,30 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use
 	}
 }
 
-// The first reborrow of `source` that a live slot still depends on, directly or
-// through reborrows of the reborrow, and that live slot.
+// design.md "Weakening and reborrows": the first reborrow of `source` that a live slot still
+// holds a value derived through (`solve_links_held`), and that live slot.
 @(private = "file")
 live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use: Prov_Event) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
-	visited := make(map[int]bool, context.temp_allocator)
-	pending := make([dynamic]int, 0, 8, context.temp_allocator)
-	for index in reborrows_of(state, source) {
+	links := reborrows_of(state, source)
+	if state.link_row_bytes == 0 || len(links) == 0 {
+		return {}, -1, false
+	}
+	at_once := use.load == .At_Once
+	candidates := make([dynamic]int, 0, 8, context.temp_allocator)
+	for row, slot in state.links_held {
+		if row == 0 {
+			continue
+		}
+		if at_once ? slice.contains(use.sources, slot) : slot != source && live[slot] == .Used {
+			append(&candidates, slot)
+		}
+	}
+	for index in links {
 		reborrow := graph.reborrows[index]
 		// Only a mutable reborrow excludes a read; what is derived from a
-		// read-only one is read-only too. A severed one was taken from an
-		// earlier value of a fresh source.
-		if reborrow.source != source || reborrow.passes_on || reborrow.walked || reborrow.moved || (use.reads_only && !reborrow.mutable) ||
-		   (index < len(state.severed) && state.severed[index]) {
+		// read-only one is read-only too.
+		if reborrow.passes_on || reborrow.moved || (use.reads_only && !reborrow.mutable) {
 			continue
 		}
 		// Only its own expression reads a temporary, so a later use of one is of a new
@@ -6338,49 +6444,28 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 		if reborrow.from_store > 0 && graph.prov_slots[source].kind == .Temporary {
 			continue
 		}
-		clear(&pending)
-		clear(&visited)
-		// What was derived from `source` and stored back into it, or into the
-		// carrier it was loaded through, as `cur = cur^.next`, is that one's
-		// current value, not a competing use; nor is a carrier the use itself
-		// goes through, as a slice argument holding a reborrow of the elements
-		// a call reads through it.
-		visited[source] = true
-		for carrier in reborrow.via {
-			visited[carrier] = true
-		}
-		if use.kind == .Load && use.load != .At_Once {
-			for carrier in use.into {
-				visited[carrier] = true
-			}
-		}
-		append(&pending, reborrow.derived)
-		for len(pending) > 0 {
-			slot := pop(&pending)
-			if visited[slot] {
+		for slot in candidates {
+			if !bit_get(state.link_rows[state.links_held[slot]], index) {
 				continue
 			}
-			visited[slot] = true
-			// An overwritten intermediate no longer overlaps `source`, but something
-			// derived from its previous value still can. A load defines its slot
-			// afresh, as a loop's `list^.head` loads its temporary again, so that
-			// slot's later uses are of the new value, not the one reborrowed here.
-			fresh := use.kind == .Load && slot == use.slot
-			in_use := slice.contains(use.sources, slot) && at_once_reaches(state, use, source) if use.load == .At_Once else live[slot] == .Used
-			if in_use && !fresh && !(use.reads_only && graph.prov_slots[slot].read_only_hold) && prov_slots_overlap(state, source, slot) {
-				return reborrow, slot, true
+			// A slot standing for many places holds the copy too, whichever it is.
+			if slot == source {
+				return reborrow, source, true
 			}
-			for next in reborrows_of(state, slot) {
-				// A copy the call or store that may make it has not reached yet.
-				if graph.reborrows[next].from_store > 0 && next < len(state.severed) && state.severed[next] {
-					continue
-				}
-				// A slot standing for many places holds the copy too, whichever it is.
-				if use.load == .At_Once && graph.reborrows[next].from_store > 0 && graph.reborrows[next].derived == source &&
-				   slot_stands_for_many(graph.prov_slots[source]) && prov_slots_overlap(state, source, source) && at_once_reaches(state, use, source) {
-					return reborrow, source, true
-				}
-				append(&pending, graph.reborrows[next].derived)
+			// What was stored back into the carrier it was loaded through is that one's
+			// current value, not a competing use; nor is a carrier the use itself goes
+			// through, as a slice argument holding a reborrow of the elements a call
+			// reads through it.
+			if use.kind == .Load && !at_once && slice.contains(use.into, slot) {
+				continue
+			}
+			// A load defines its slot afresh, as a loop's `list^.head` loads its temporary
+			// again, so that slot's later uses are of the new value.
+			if use.kind == .Load && slot == use.slot || use.reads_only && graph.prov_slots[slot].read_only_hold || !prov_slots_overlap(state, source, slot) {
+				continue
+			}
+			if !at_once || at_once_reaches(state, use, source) {
+				return reborrow, slot, true
 			}
 		}
 	}
@@ -6394,17 +6479,20 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 // of a view borrows the view (design.md "Weakening and reborrows").
 @(private = "file")
 at_once_reaches :: proc(state: ^Prov_State, use: Prov_Event, source: int) -> bool {
-	graph := state.graph
 	if slice.contains(use.into, source) {
 		return true
 	}
 	derived := make([dynamic]int, 0, 8, context.temp_allocator)
 	append(&derived, source)
-	for at := 0; at < len(derived); at += 1 {
-		for next in reborrows_of(state, derived[at]) {
-			if !(graph.reborrows[next].from_store > 0 && next < len(state.severed) && state.severed[next]) &&
-			   !slice.contains(derived[:], graph.reborrows[next].derived) {
-				append(&derived, graph.reborrows[next].derived)
+	links := reborrows_of(state, source)
+	for held, slot in state.links_held {
+		if slot == source || held == 0 {
+			continue
+		}
+		for index in links {
+			if bit_get(state.link_rows[held], index) {
+				append(&derived, slot)
+				break
 			}
 		}
 	}
@@ -6420,16 +6508,6 @@ at_once_reaches :: proc(state: ^Prov_State, use: Prov_Event, source: int) -> boo
 		copy(reach_row(state, state.reach, slot), saved[at * state.row_bytes:][:state.row_bytes])
 	}
 	return slice.contains(reads[:], source)
-}
-
-// Whether a slot stands for more than one place, as for every element of a view
-// parameter or of a dynamic array.
-@(private = "file")
-slot_stands_for_many :: proc(entry: Prov_Slot) -> bool {
-	if entry.kind == .Caller {
-		return !entry.caller_one && !entry.caller_element
-	}
-	return !path_is_exact(entry.path)
 }
 
 // The indices of the reborrows of `slot`, in `graph.reborrows` order, once
@@ -6542,43 +6620,6 @@ place_loans_overlap :: proc(a, b: Prov_Place_Loan) -> bool {
 		}
 	}
 	return false
-}
-
-// Whether a store into `slot` stores what was read out of it, as a copy of its old
-// value, so what else was taken from that value still names the same carrier.
-@(private = "file")
-stores_what_slot_held :: proc(state: ^Prov_State, event: Prov_Event, slot: int) -> bool {
-	graph := state.graph
-	derived := make([dynamic]int, 0, 8, context.temp_allocator)
-	append(&derived, slot)
-	for at := 0; at < len(derived); at += 1 {
-		if at > 0 && slice.contains(event.sources, derived[at]) {
-			return true
-		}
-		for next in reborrows_of(state, derived[at]) {
-			// A link a later store makes is no part of what this one read.
-			if !(graph.reborrows[next].from_store > 0 && next < len(state.severed) && state.severed[next]) &&
-			   !slice.contains(derived[:], graph.reborrows[next].derived) {
-				append(&derived, graph.reborrows[next].derived)
-			}
-		}
-	}
-	return false
-}
-
-// Whether redefining a reborrow's source ends what the reborrow took from it.
-@(private = "file")
-reborrow_source_is_fresh :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) -> bool {
-	return graph.fresh_slots[reborrow.source] || graph.prov_slots[reborrow.source].kind == .Temporary ||
-	       prov_slot_is_stored_temporary(graph, reborrow)
-}
-
-// A temporary stored into a named slot. Only its own expression reads it, before
-// the store, and what an earlier evaluation left there, which a store that joins
-// keeps, is no reborrow of its new value: a loop's `held.append(rows)`.
-@(private = "file")
-prov_slot_is_stored_temporary :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) -> bool {
-	return !prov_slot_is_stored(graph.prov_slots[reborrow.source]) && prov_slot_is_stored(graph.prov_slots[reborrow.derived])
 }
 
 // Whether a slot holds a carrier stored in lasting storage, a local's or a slice
