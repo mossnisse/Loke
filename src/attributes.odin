@@ -228,8 +228,8 @@ validate_attribute_list :: proc(
 	}
 }
 
-// The whole-package pass. Record literals and parameters nested anywhere are
-// also validated where they resolve (`resolve_type_syntax`, the signatures).
+// The whole-package pass. Record fields and parameters nested anywhere are also
+// validated where they resolve (`resolve_type_syntax`, the signatures).
 validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
@@ -357,12 +357,9 @@ validate_param_attributes :: proc(k: ^Checker, params: []Parameter) {
 	}
 }
 
-// The attributes of a declared record are its declaration's, so only its fields
-// have a list of their own here.
+// A record's attributes are its declaration's, so only its fields have a list of
+// their own here.
 validate_record_attributes :: proc(k: ^Checker, record: ^Type_Record) {
-	if !record.declared {
-		validate_attribute_list(k, record.attributes, record_attr_position(record))
-	}
 	for field in record.fields {
 		validate_attribute_list(k, field.attributes, .Struct_Field)
 	}

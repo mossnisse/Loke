@@ -49,12 +49,13 @@ Parser :: struct {
 	// Some statement is a `parallel` block.
 	parallels:      [dynamic]u32, // each `parallel` keyword's offset
 	earlier_spellings: [dynamic]Earlier_Spelling,
+	accept_earlier_spellings: bool, // `-migrate`, which rewrites them
 	allocator:      mem.Allocator,
 }
 
 // With an explicit allocator, syntax borrows its lifetime and File.arena stays
 // empty. The default owns a per-file arena, as before.
-parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.Allocator{}) -> File {
+parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.Allocator{}, accept_earlier_spellings := false) -> File {
 	result := File {
 		file = file,
 	}
@@ -73,6 +74,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 		file      = file,
 		tokens    = tokens,
 		allocator = allocator,
+		accept_earlier_spellings = accept_earlier_spellings,
 	}
 	tag_written_move_only(&p)
 	parse_package_clause(&p, &result)
@@ -198,6 +200,11 @@ text_of :: proc(p: ^Parser, t: Token) -> string {
 	return p.c.sources[p.file].text[t.lo:t.hi]
 }
 
+@(private = "file")
+source_text_of :: proc(p: ^Parser, span: Span) -> string {
+	return p.c.sources[p.file].text[span.lo:span.hi]
+}
+
 // Contextual keywords arrive as identifiers.
 @(private = "file")
 is_contextual :: proc(p: ^Parser, word: string) -> bool {
@@ -253,8 +260,9 @@ take_as :: proc(p: ^Parser, kind: Token_Kind) -> Token {
 	return advance(p)
 }
 
-// `move_only` is a name, and only before `struct` the earlier spelling of
-// `@(move_only)`; no name can be followed by `struct`.
+// `move_only` is a name. Directly before `struct`, which no name can be, it is
+// the earlier spelling of `@(move_only)`, named so that it can be rejected well
+// and rewritten by `-migrate`.
 @(private = "file")
 tag_written_move_only :: proc(p: ^Parser) {
 	for index := 0; index + 1 < len(p.tokens); index += 1 {
@@ -1180,8 +1188,8 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 }
 
 // design.md "Attributes": a record's attributes are its declaration's. Those
-// written inside the type, the earlier spelling, join the list after the
-// declaration's own, so both spellings parse to one tree.
+// of an earlier spelling, which only `-migrate` gets past `L0750`, join the list
+// after the declaration's own, so the rewrite can be proved by comparing trees.
 @(private = "file")
 adopt_record_attributes :: proc(p: ^Parser, d: ^Decl, record: ^Type_Record) {
 	if len(record.attributes) > 0 {
@@ -1191,13 +1199,26 @@ adopt_record_attributes :: proc(p: ^Parser, d: ^Decl, record: ^Type_Record) {
 		d.attributes = merged
 	}
 	record.attributes = d.attributes
-	record.declared = true
 	record.move_only = has_attribute(d.attributes, "move_only")
 	for &spelling in p.earlier_spellings {
 		if spelling.record == record {
 			spelling.declaration = d
 		}
 	}
+}
+
+// design.md "Attributes": `attributes` as the declaration would write them.
+@(private = "file")
+reject_earlier_spelling :: proc(p: ^Parser, span: Span, attributes, keyword: string) {
+	if p.accept_earlier_spellings || p.suppress {
+		return
+	}
+	parse_error(
+		p, span, "L0750", "write this on the declaration",
+		"a record's attributes are written on its declaration: `%s Name :: %s {{ ... }}`",
+		attributes, keyword,
+	)
+	add_notef(p.c, no_span(), "`lokec -migrate` rewrites this")
 }
 
 // The entry for `record`, added at its first earlier spelling.
@@ -2977,6 +2998,7 @@ parse_type :: proc(p: ^Parser) -> Expr {
 			value.move_only = true
 			value.span.lo = keyword.lo
 			earlier_spelling_of(p, value).keyword = span_of(p, keyword)
+			reject_earlier_spelling(p, span_of(p, keyword), "@(move_only)", "struct")
 		}
 		return record
 
@@ -3831,6 +3853,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	e.has_error = !opened || !closed || !generics_ok || !members_ok
 	if len(attributes) > 0 {
 		earlier_spelling_of(p, e).groups = groups
+		reject_earlier_spelling(p, groups, source_text_of(p, groups), keyword.kind == .Union ? "union" : "struct")
 	}
 	return e
 }

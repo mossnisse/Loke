@@ -5,7 +5,8 @@
 // `Name :: move_only struct @(packed) { }` becomes
 // `@(move_only, packed) Name :: struct { }`. Both spellings parse to one tree, so
 // a rewrite is checked rather than assumed: the result has none left, and its
-// `-dump-ast` text is the input's (comments.md "Formatting").
+// `-dump-ast` text is the input's (comments.md "Formatting"). This is what parses
+// them at all, past `L0750`; the check of a result is the ordinary parse.
 package lokec
 
 import "core:fmt"
@@ -52,7 +53,7 @@ migrate_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 	errors := c.error_count
 	tokens := lex(c, file)
 	defer delete(tokens)
-	ast := parse(c, file, tokens)
+	ast := parse(c, file, tokens, accept_earlier_spellings = true)
 	defer destroy_ast(&ast)
 	if c.error_count > errors {
 		return "", false

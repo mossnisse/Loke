@@ -1,0 +1,16 @@
+// design.md "Attributes": a record's attributes are written on its declaration,
+// and `-migrate` rewrites what an earlier release accepted.
+package main;
+
+Packed :: struct @(packed) { a: u8 }
+Token :: move_only struct { id: int }
+Both :: move_only struct @(thread_affine) { id: int }
+Maybe :: union @(zero=none) { none, some: int }
+Generic :: struct($N: int) @(align=N) { a: u8 }
+Holder :: struct { field: union @(zero=none) { none, some: int } }
+
+// A name, not a keyword.
+move_only := 3;
+Named :: struct { move_only: int }
+
+sentinel :: proc() { }

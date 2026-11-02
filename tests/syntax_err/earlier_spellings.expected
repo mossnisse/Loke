@@ -1,0 +1,21 @@
+L0750
+@5:18
+a record's attributes are written on its declaration: `@(packed) Name :: struct
+L0750
+@6:10
+a record's attributes are written on its declaration: `@(move_only) Name :: struct
+L0750
+@7:9
+a record's attributes are written on its declaration: `@(move_only) Name :: struct
+L0750
+@7:26
+a record's attributes are written on its declaration: `@(thread_affine) Name :: struct
+L0750
+@8:16
+a record's attributes are written on its declaration: `@(zero=none) Name :: union
+L0750
+@9:28
+a record's attributes are written on its declaration: `@(align=N) Name :: struct
+L0750
+@10:33
+a record's attributes are written on its declaration: `@(zero=none) Name :: union

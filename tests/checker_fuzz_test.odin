@@ -236,7 +236,7 @@ Fuzz_Edit :: struct {
 KEYWORDS :: [?]string {
 	"break", "case", "continue", "default", "defer", "distinct", "dyn", "dynamic", "else", "enum",
 	"for", "foreach", "foreign", "hook", "if", "impl", "import", "in", "inout",
-	"interface", "map", "move", "move_only", "mut", "operator", "or_else", "or_return",
+	"interface", "map", "move", "mut", "operator", "or_else", "or_return",
 	"package", "proc", "return", "struct", "switch", "type", "union", "via", "when", "where",
 }
 

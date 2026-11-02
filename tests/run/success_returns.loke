@@ -63,7 +63,7 @@ lookup :: proc(m: map[string]int, key: string_view) -> Result(int, Parse_Error) 
 	return value + 1;
 }
 
-Connection :: move_only struct { id: int }
+@(move_only) Connection :: struct { id: int }
 
 open :: proc(id: int) -> Result(Connection, Parse_Error) {
 	c := Connection{id = id};
@@ -87,26 +87,6 @@ work :: proc(fail: bool) -> Result(int, Parse_Error) {
 	errdefer steps += 100;
 	if (fail) { return .err(.Empty); }
 	return 42;
-}
-
-// A concrete result keeps the shorthand in a generic body, an inline
-// definition in it included, as in an ordinary one.
-concrete_generic :: proc(ignored: $T) -> Result([size_of(enum { A, B })]u8, int) {
-	return {};
-}
-
-concrete :: proc() -> Result([size_of(enum { A, B })]u8, int) {
-	return {};
-}
-
-// `@(zero=N)` and `@(failure=N)` name the inline union's variant `N`, not the
-// unrelated generic argument, so these results are concrete too.
-zero_named :: proc($N: int) -> Result([size_of(union @(zero=N) { N, some: u8 })]u8, int) {
-	return {};
-}
-
-failure_named :: proc($N: int) -> Result([size_of(union @(failure=N) { ok: u8, N: u8 })]u8, int) {
-	return {};
 }
 
 double :: proc(n: int) -> Option(int) {
@@ -135,7 +115,5 @@ main :: proc() -> Status(Parse_Error) {
 	_ = work(true);
 	fmt.println(steps);
 	fmt.println(DOUBLED);
-	fmt.println(concrete_generic(1) == concrete());
-	fmt.println(zero_named(8), failure_named(8));
 	return;
 }

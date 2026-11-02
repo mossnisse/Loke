@@ -12,7 +12,7 @@ unknown attribute `@(bogus_else)`
 
 L0606
 unknown attribute `@(bogus_nested)`
-@16:13
+@16:4
 
 L0606
 unknown attribute `@(bogus_param_type)`

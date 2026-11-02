@@ -1,0 +1,33 @@
+// design.md "Unions", "Enumerations", "Distinct types": a `union` or `enum` is the
+// value of a constant declaration, so each has a name, and `distinct` does not
+// give it one. A union written in place is an anonymous union.
+package main;
+
+Declared :: union { a: int, none }
+Parenthesized :: (union { a: int, none });
+Kind :: enum { A, B }
+Parenthesized_Kind :: (enum { A, B });
+
+Holder :: struct {
+	field_union: union { a: int, none },
+	field_enum: enum { A, B },
+}
+
+parameter_union :: proc(u: union { a: int, none }) {}
+parameter_enum :: proc(e: enum { A, B }) {}
+result_enum :: proc() -> enum { A, B } { return .A; }
+
+Sized :: [size_of(enum { A, B })]u8;
+Sized_Union :: [size_of(union { a: int, none })]u8;
+
+Distinct_Enum :: distinct enum { A };
+Distinct_Union :: distinct union { a: int, none };
+
+main :: proc() {
+	local: union { a: int, none } = .none;
+	_ = local;
+	held: Option(enum { A, B }) = .none;
+	_ = held;
+	declared: Declared = .none;
+	_ = declared;
+}

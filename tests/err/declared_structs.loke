@@ -16,7 +16,7 @@ Meters :: distinct f64;
 
 main :: proc() {
 	local: struct { a: int } = {};
-	held: Option(move_only struct { b: int }) = .none;
+	held: Option(struct { b: int }) = .none;
 	inline: distinct (x: int, y: int) = {};
 	w: Window = {};
 	b: Box(int) = {1};
@@ -25,7 +25,7 @@ main :: proc() {
 }
 
 // A variable initialised with a definition declares no type, at package or
-// local scope; the enum and distinct forms are types stored in a variable.
+// local scope; the distinct form is a type stored in a variable.
 Var_Struct := (struct { x: int });
 Var_Enum := (enum { a, b });
 Var_Distinct := (distinct int);

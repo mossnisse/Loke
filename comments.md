@@ -1579,6 +1579,31 @@ use, needs only the `format` behavior every printable type has. See the
 [adopted proposals](design-review-2026-10-31.md#adopted-proposals) of the
 design review.
 
+### A record's attributes are on its declaration
+
+An attribute used to sit in one of two places, `@(public) Name :: struct @(packed)
+{ }`, on the theory that the second position described the type and the first its
+name. The theory did not hold: `@(require_results)` describes the type and was
+written on the declaration, so one type's attributes could be split across both.
+And it bought nothing, since a `struct` is only ever a constant's value and an
+inline nominal `union` or `enum` has no use a declared one lacks: every type
+attribute was already on a declaration, one token to the right. The merged list does
+mix what is about the name (`public`) with what is about the layout (`packed`), and
+needs the one rule that a type attribute on an alias is an error.
+
+`move_only` went with it. It was a keyword for a property of the same kind as
+`thread_affine`, which made a reserved word and a grammar production out of what an
+attribute says, and it could not reach a union, which `@(move_only)` does. The name
+stays because "move-only" is the term the specification and the diagnostics use.
+
+The value of `@(align=N)` now sits left of the `$N` that binds it. That reads
+backwards, but it is the one such case, and a value on the far side of the name is
+what any declaration attribute already is. Earlier spellings are rejected with
+`L0750` rather than deprecated with a warning: a language with two spellings for a
+release is the problem this removes, and [`-migrate`](compiler-guide.md#common-options)
+makes the change mechanical, apart from an inline `union` or `enum`, which needs a
+name only its author can give.
+
 ### Nominal conformance declarations
 
 Structural interfaces need no `implements` registry. A declaration with no

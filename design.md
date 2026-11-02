@@ -1670,8 +1670,8 @@ static_assert(Buf(16) == ([16]u8));
   constant, with that parameter's type, which the arguments before it may decide;
   elsewhere it is a `type` parameter. A
   name bound both ways, or written where no argument can bind it, such as inside
-  an inline `struct`, an array-length expression, or a call that computes a type,
-  at any depth, is an error.
+  an array-length expression or a call that computes a type, at any depth, is an
+  error.
 - **No identity.** An application is the type its body denotes, not a new one:
   `Io_Result(int)` is `Result(int, Io_Error)` wherever either is written, in
   type identity, conversions, overloads, `typeid`, and printing. A type's name,
@@ -1732,7 +1732,8 @@ static_assert(Marker != Other);
 
 `distinct` over an [anonymous record](#anonymous-records), written in place or
 through an alias, is rejected: a nominal record is declared with `struct`, which
-also gives it what a nominal record owns.
+also gives it what a nominal record owns. So is `distinct` over a `struct`,
+`union`, or `enum` written in place, which is already nominal once declared.
 
 #### Delegating operators
 
@@ -2033,6 +2034,9 @@ such as `consume(value.position)`.
 
 A union is a discriminated union, also known as a tagged union or sum type.
 Every variant is **named**, and a variant may carry a payload or carry nothing.
+A `union` type is written only as the value of a constant declaration, so every
+union has a name and is a new **nominal** type; a union described in place is an
+[anonymous union](#anonymous-unions), whose identity is structural.
 
 ```loke
 Value :: union {
@@ -2537,8 +2541,10 @@ equal payload types apart with distinct labels,
 ### Enumerations
 
 An enumeration is a closed sum type whose variants carry no payload. `enum`
-offers compact syntax and control over its integer representation. Every value
-names exactly one declared variant. Variants have declaration order:
+offers compact syntax and control over its integer representation. An `enum` type
+is written only as the value of a constant declaration, so every enumeration has a
+name and is a new **nominal** type. Every value names exactly one declared variant.
+Variants have declaration order:
 
 ```loke
 Direction :: enum { North, East, South, West }
@@ -8838,14 +8844,11 @@ instantiations, as in `Result(int, int)`. A payloadless failure has no such
 ambiguity, so `return item;` still builds `.some(item)` for generic `Option(T)`.
 
 A result names a generic argument if its syntax references one anywhere,
-including `$T`, an array length such as `[N + 1]int`, or a type, value, or
-`@(align=N)` inside an inline definition. A constant or alias declared in the
-generic body counts as what it is written as, so `Outcome :: Result(T, E)` and
-`Twice :: N * 2` name `T` and `N`; a type that declaration defines, such as
-`Local :: struct { x: T }`, does not, since it is one type in each instance.
-Variant names in `@(zero=name)` and `@(failure=name)` do not count. An inline
-definition with no generic reference, such as `[size_of(enum { A, B })]u8`,
-leaves the result concrete and permits the shorthand even in a generic body.
+including `$T` or an array length such as `[N + 1]int`. A constant or alias
+declared in the generic body counts as what it is written as, so `Outcome ::
+Result(T, E)` and `Twice :: N * 2` name `T` and `N`; a type that declaration
+defines, such as `Local :: struct { x: T }`, does not, since it is one type in each
+instance.
 
 #### Operator ownership
 
@@ -10410,8 +10413,8 @@ main :: proc() {
 
 ## Attributes
 
-An attribute specifies a property of a declaration, parameter, statement, block,
-or type literal. Use `@(name)` for an attribute without a value. Use
+An attribute specifies a property of a declaration, parameter, field, statement,
+or block. Use `@(name)` for an attribute without a value. Use
 `@(name=value, ...)` for attributes with values. The grammar also admits
 attributes on statements and blocks, but this specification defines none for
 those positions.
@@ -10423,10 +10426,6 @@ An attribute that describes a struct or union, such as `@(packed)` or
 `@(packed) Alias :: Header;`. The value of [`@(align=N)`](#alignn) may name a
 generic parameter of the definition it describes, though that parameter is
 written to its right.
-
-Two earlier spellings are still accepted, and mean the same as the attribute on
-the declaration: an attribute list after a `struct` or `union` and its generic
-parameters, and `move_only` directly before `struct`.
 
 ### Attribute categories
 
@@ -10741,7 +10740,7 @@ name. It takes no value. See [Test procedures](#test-procedures).
 
 #### `@(zero=<variant>)` and `@(failure=<variant>)`
 
-Written after `union`, before its body. `@(zero=name)` gives the union a zero
+Written on a union's declaration. `@(zero=name)` gives the union a zero
 value, and must name its first variant, whose payload is all-zero; see [Zero
 values and `@(zero=)`](#zero-values-and-zero). `@(failure=name)` marks one
 variant of a two-variant union as its failure, which is what
@@ -10832,8 +10831,7 @@ for all of its instances.
 
 #### `@(thread_affine)`
 
-Written after `struct` or `union`, before its body, as [`@(packed)`](#packed)
-is. A value of the type must stay on the thread that created it, as a handle to
+Written on a struct's or union's declaration. A value of the type must stay on the thread that created it, as a handle to
 a window or another foreign resource tied to its thread must, or a value whose
 `hook(drop)` must run there. It takes no value. The property propagates
 structurally: a record, union, array, or container holding one, and a pointer,
@@ -10850,8 +10848,7 @@ thread that took it.
 
 #### `@(wakes_on_drop)`
 
-Written after `struct` or `union`, before its body, as
-[`@(thread_affine)`](#thread_affine) is. Dropping a value of the type may wake
+Written on a struct's or union's declaration. Dropping a value of the type may wake
 threads waiting on the storage the value borrows, as releasing a lock or the
 last endpoint on a side of a channel does. It takes no value. A value that is,
 holds, or reaches one is checked at a `parallel` block's join (see [Releasing
@@ -10860,8 +10857,7 @@ annotation.
 
 #### `@(fieldwise_copy)`
 
-Written after `struct`, before its body, and after a generic record's
-parameters. A record with a `hook(drop)` keeps its generated field-wise copy, as
+Written on a struct's declaration. A record with a `hook(drop)` keeps its generated field-wise copy, as
 one of the decisions under [Lifecycle hooks and resource
 types](#lifecycle-hooks-and-resource-types) requires. It takes no value.
 

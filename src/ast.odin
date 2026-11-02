@@ -649,15 +649,14 @@ Variant :: struct {
 	type: Expr, // nil for a payloadless variant
 }
 
-// `fields` for a struct, `variants` for a union. The value of a constant
-// declaration is `declared`, and `attributes` is then that declaration's list,
-// which a walk of the declaration has already seen. A generic instance clones
-// the record alone, so an `@(align=N)` has to be reachable from it.
+// `fields` for a struct, `variants` for a union. `attributes` is the list of the
+// declaration whose value it is, which a walk of the declaration has already
+// seen. A generic instance clones the record alone, so an `@(align=N)` has to be
+// reachable from it.
 Type_Record :: struct {
 	using base:     Expr_Base,
 	kind:           Record_Kind,
 	move_only:      bool,
-	declared:       bool,
 	generic_params: []Generic_Param,
 	attributes:     []Attribute,
 	where_clauses:  []Expr,

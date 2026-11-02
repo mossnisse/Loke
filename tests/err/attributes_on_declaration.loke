@@ -14,10 +14,9 @@ Header :: struct { a: u8 }
 @(zero=a) Bad_Struct :: struct { a: int }
 @(move_only=true) Valued :: struct { a: int }
 
-// Written twice, even across the earlier spelling.
+// Written twice, in one group or two.
 @(move_only, move_only) Twice :: struct { a: int }
-@(move_only) Both :: move_only struct { a: int }
-@(packed) Packed_Twice :: struct @(packed) { a: int }
+@(packed) @(packed) Packed_Twice :: struct { a: int }
 
 // A union is move-only like a struct.
 @(move_only) Held :: union { none, id: int }

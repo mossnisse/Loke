@@ -82,7 +82,6 @@ Contextual keywords, reserved only in the positions given:
 | `self` | the first parameter name of a procedure declared in an `impl` block, or of an interface `slot` |
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
-| `move_only` | directly before `struct`, the earlier spelling of [`@(move_only)`](design.md#move_only) |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
 | `capture` | directly after a procedure signature, followed by `(` |
 | `convert`, `copy`, `drop` | as the role inside `hook(...)` |
@@ -170,8 +169,7 @@ Attribute_Value= Expression
 
 The qualified form is an [extension attribute](design.md#extension-attributes),
 for example `@(tool.name)`. Attributes attach to declarations, package
-clauses, statements, blocks, parameters, record type literals, and foreign
-blocks; which attribute is valid where is semantic, not grammatical.
+clauses, statements, blocks, parameters, record fields, and foreign blocks; which attribute is valid where is semantic, not grammatical.
 
 # Source files
 
@@ -316,7 +314,7 @@ Type_Name      = Identifier ("." Member_Name)*           // qualified or associa
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
 Generic_Argument = Type | Expression                     // type or compile-time value
 
-Type_Definition = Struct_Type | Move_Only_Struct_Type | Enum_Type | Union_Type
+Type_Definition = Struct_Type | Enum_Type | Union_Type
 
 Proc_Type = "proc" Calling_Convention? Signature
 Calling_Convention = String_Literal                      // "c" or "stdcall"
@@ -351,8 +349,7 @@ rejected.
 ## Records
 
 ```
-Struct_Type = "struct" Generic_Parameters? Attributes? Where_Clause? "{" Field_List? "}"
-Move_Only_Struct_Type = "move_only" Struct_Type
+Struct_Type = "struct" Generic_Parameters? Where_Clause? "{" Field_List? "}"
 Field_List  = Field ("," Field)* ","?
 Field       = Attributes? "using"? Member_Name_List ":" Type
 
@@ -365,7 +362,7 @@ Enum_Field  = Member_Name ("=" Expression)?
 Member_Name_List = Member_Name ("," Member_Name)*
 Member_Name = Identifier | Keyword
 
-Union_Type  = "union" Generic_Parameters? Attributes? Where_Clause? "{" Union_Variants? "}"
+Union_Type  = "union" Generic_Parameters? Where_Clause? "{" Union_Variants? "}"
 Union_Variants = Union_Variant ("," Union_Variant)* ","?
 // A variant with no payload is a bare name; `name:` still means the same.
 Union_Variant  = Member_Name (":" Type?)?
@@ -381,11 +378,10 @@ A `Where_Clause` expression is a compile-time boolean (see
 [design.md](design.md#where-clauses)) and may not have a `Composite_Literal` at
 its top level (see [Resolved ambiguities](#resolved-ambiguities)).
 
-A field named `_` is an unnamed padding field. `Struct_Type` and
-`Move_Only_Struct_Type` parse wherever a `Type` does, but
-[design.md](design.md#structs) accepts one only as the value of a
-`Constant_Decl`, parentheses included; a nested record is written as a
-`Record_Type`.
+A field named `_` is an unnamed padding field. A `Type_Definition` parses
+wherever a `Type` does, but [design.md](design.md#structs) accepts one only as
+the value of a `Constant_Decl`, parentheses included; a nested record is written
+as a `Record_Type`. Its attributes are the declaration's.
 
 ## Interfaces
 
@@ -738,8 +734,8 @@ A composite literal's type name takes at most one selector, so `a.b.c{}` is
 never a literal.
 
 A `Type` that begins with a token no other expression begins with (`^`, `[`,
-`map`, `distinct`, `dyn`, `type`, `$`, `proc`, `struct`, `enum`, `union`,
-`interface`, or `move_only`) is a primary expression only as a call or generic
+`map`, `distinct`, `dyn`, `type`, `$`, `proc`, `struct`, `enum`, `union`, or
+`interface`) is a primary expression only as a call or generic
 argument, as the value of a constant declaration, inside parentheses, or as the
 prefix of its own composite or procedure literal. Anywhere else it is an error,
 so a comparison is written `T == (^int)`. The type grammar would otherwise read

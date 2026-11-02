@@ -456,10 +456,6 @@ api_decl :: proc(
 	}
 	item.private = !decl_is_public(c, b.file, d, block)
 	for attribute in d.attributes {
-		// One written in the type is in the type's text already.
-		if attribute.span.lo > d.names[0].span.lo {
-			continue
-		}
 		spelled := text[attribute.span.lo:attribute.span.hi]
 		if spelled != "public" && spelled != "private" {
 			append(&item.attributes, spelled)
@@ -693,9 +689,6 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 	case ^Type_Record:
 		mark := len(w.bound)
 		bind_generic_params(&w.bound, v.generic_params)
-		if !v.declared {
-			attribute_refs(w, v.attributes)
-		}
 		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)
@@ -1102,10 +1095,7 @@ write_doc_lines :: proc(b: ^strings.Builder, doc: string, indent := "") {
 written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
 	start := lo
 	for attribute in attributes {
-		// One written in the type starts after the name.
-		if attribute.span.lo < lo {
-			start = min(start, u32(strings.last_index_byte(text[:attribute.span.lo], '@')))
-		}
+		start = min(start, u32(strings.last_index_byte(text[:attribute.span.lo], '@')))
 	}
 	return start
 }

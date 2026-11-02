@@ -542,6 +542,12 @@ from source; stage 2 and stage 3 match under the reproducibility contract; both
 implementations pass the required compatibility suites during migration; and
 the installed release works without the Odin implementation present.
 
+## Retiring the earlier spellings
+
+`lokec -migrate` and the parser's recognition of a record's in-type attributes and
+`move_only struct` exist so that code written for 0.9 can be rewritten. Delete them,
+with `L0750`, `L0751`, and `L0752` left unused, after a later minor release.
+
 ## Open language questions
 
 [open-questions.md](open-questions.md) remains the canonical backlog for possible
