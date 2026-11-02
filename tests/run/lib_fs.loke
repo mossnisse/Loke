@@ -351,7 +351,7 @@ main :: proc() {
 	fmt.println(fs.exists(directory) or_else true);
 }
 
-// The documented shape for a fallible source (design.md "Streaming a fallible
+// The documented shape for a fallible source (standard-library.md "Streaming a fallible
 // source"): one `or_return` for the failure, one switch for the end. The reader
 // is move-only and closes its search handle in `drop`, so the scope ending is
 // the close.

@@ -552,7 +552,7 @@ Builtin_Kind :: enum {
 	// design.md "`type` and `typeid`": a `typeid` is an ordinary scalar and can be
 	// forged, so the lookup is checked rather than an unchecked index.
 	Type_Info_Of,
-	// design.md "String format printing": the compiler-owned half of `core:fmt`.
+	// standard-library.md "Printed forms": the compiler-owned half of `core:fmt`.
 	Fmt_Stdout_Writer,
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
@@ -626,7 +626,7 @@ Synth_Kind :: enum {
 	Text_Iter,
 	Text_Next,
 	Rune_Offsets_Next,
-	// design.md "Chunks of a mutable slice".
+	// standard-library.md "Chunks of a mutable slice".
 	Chunks_Next,
 	Try_Clone,
 	Clone,
@@ -823,7 +823,7 @@ Build_Config_Enum :: enum u8 {
 	Log_Level,
 }
 
-// design.md "Compiled log level". The member names are `core:log`'s own, and
+// standard-library.md "Compiled log level". The member names are `core:log`'s own, and
 // `Off` is last so `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled
 // out entirely.
 Log_Level :: enum u8 {

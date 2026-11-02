@@ -402,7 +402,7 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 }
 
 // design.md "Calling a value", "Iteration protocol", "Reverse iteration",
-// "String format printing", "Maps", and "Indexing and slicing": member names
+// "Maps", "Indexing and slicing", and standard-library.md "Printed forms": member names
 // the compiler looks up itself, where no use spells them.
 @(private = "file")
 IMPLICIT_MEMBER_NAMES := [?]string{"call", "iter", "iter_mut", "iter_reverse", "iter_mut_reverse", "next", "format", "hash", "len"}

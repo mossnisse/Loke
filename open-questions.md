@@ -94,7 +94,7 @@ would settle both together.
 
 Such a type gets the generated default for the `Formattable` slot and prints by
 it in every package, its own included
-([String format printing](design.md#string-format-printing),
+([Printed forms](standard-library.md#printed-forms),
 [Interface bodies](design.md#interface-bodies)). The specification leaves open:
 
 - **Ordinary lookup of the hidden default.** Lookup of `format` on such a type
@@ -123,7 +123,7 @@ design questions stay open until a caller or a measurement settles them:
   token recognition and grammar transitions over contiguous input, with
   `next -> Result(Option(Event), Parse_Error)` and a `skip_value` that
   validates what it skips, consumed through a
-  [fallible-source loop](design.md#streaming-a-fallible-source). Borrowed
+  [fallible-source loop](standard-library.md#streaming-a-fallible-source). Borrowed
   decoded text would last until the next step, and a successful decode would
   require consuming the end or calling a `finish` that validates the rest: a
   valid prefix alone is not a validated document.
@@ -392,7 +392,7 @@ two bodies.
 And the policy-following half is load-bearing rather than convenient. Copy
 assignment of a copyable type is *defined* as `try_clone` plus the [allocation
 failure policy](design.md#allocation-failure), and
-[`Cloneable`](design.md#standard-interface-catalogue) names the fallible slot,
+[`Cloneable`](standard-library.md#standard-interface-catalogue) names the fallible slot,
 so both halves already have language-level jobs. Deleting `clone` would not
 remove the policy call, only move it to every call site that copies. A container
 `try_op` carries no equivalent obligation, which is what leaves the container
@@ -433,7 +433,7 @@ outweighs the smaller API.
 
 A record with a `call` method is the callable convention: `x(args)` calls it
 ([Calling a value](design.md#calling-a-value)),
-[`interfaces.Callable`](design.md#standard-interface-catalogue) lets one generic
+[`interfaces.Callable`](standard-library.md#standard-interface-catalogue) lets one generic
 signature accept a procedure or such a record, and a
 [capture literal](design.md#capture-literals) declares the record from a
 clause, and a [`dyn proc` view](design.md#borrowed-callable-views) erases
@@ -730,7 +730,7 @@ which direction, is open.
 
 [`core:math/dense`](standard-library.md#coremathdense) gives
 two disjoint mutable blocks of a matrix by splitting its `[]mut T`, as
-[`split_at_mut`](design.md#splitting-a-mutable-slice) does. That works only
+[`split_at_mut`](standard-library.md#splitting-a-mutable-slice) does. That works only
 when one block's elements all precede the other's: the left and right columns
 of a column-major matrix. The top and bottom rows of the same matrix
 interleave in memory, so no split of the slice separates them, and two

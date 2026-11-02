@@ -1,6 +1,6 @@
 /* The byte sink behind `core:fmt`, and the scalar spellings.
  *
- * design.md "String format printing": printing is a library protocol. The
+ * standard-library.md "Printed forms": printing is a library protocol. The
  * protocol, the writer, the options, and the `print` family are Loke source in
  * `core:fmt`; what lives here is what every formatter ends at — turning one
  * scalar into bytes, and handing bytes to a stream.
@@ -200,7 +200,7 @@ static void spell_up(char *sci) {
 
 /* `%g`'s layout for a `%.*e` spelling, with the trailing zeros dropped: fixed
  * notation from 1e-4 to below 1e17, and an exponent outside that. A float never
- * reads as an integer (design.md "String format printing"): fixed notation keeps
+ * reads as an integer (standard-library.md "Printed forms"): fixed notation keeps
  * one fractional digit, `1.0`, and an exponent is written bare, `1e21`, `1e-7`. */
 static int spell_general(char *out, const char *sci) {
 	char digits[24];
@@ -373,7 +373,7 @@ void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value) {
 }
 
 /* `bytes` as a literal would spell them, between `quote`s: a string or rune
- * nested in an aggregate (design.md "String format printing"). Only the
+ * nested in an aggregate (standard-library.md "Printed forms"). Only the
  * backslash, the quote, and control bytes are escaped; any other byte, including
  * the rest of UTF-8, is written as it is. */
 static void fmt_quoted(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count, uint8_t quote) {

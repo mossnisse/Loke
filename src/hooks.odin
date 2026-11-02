@@ -552,7 +552,7 @@ transfer_facts_walk :: proc(
 	}
 }
 
-// design.md "String format printing": a printed argument is viewed where it is
+// standard-library.md "Printed forms": a printed argument is viewed where it is
 // written, but a nested field or a generic instance reaches its formatter in a
 // pass after the effects, so these witnesses are not all known while checked.
 @(private = "file")

@@ -478,7 +478,7 @@ uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed);
 
 /* ------------------------------------------------------------ formatting -- */
 
-/* design.md "String format printing": "Formatting is a library protocol." The
+/* standard-library.md "Printed forms": "Formatting is a library protocol." The
  * library half lives in `core:fmt`; what the runtime owns is the byte sink every
  * formatter writes through, and the scalar spellings that would otherwise be
  * hundreds of lines of generated LLVM apiece.

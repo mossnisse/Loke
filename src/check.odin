@@ -315,7 +315,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 
 	// Every symbol has its kind and its constant its type.
 	check_private_names(k, package_id)
-	// design.md "String format printing": packages that print are checked after
+	// standard-library.md "Printed forms": packages that print are checked after
 	// `core:fmt`, and their effects and thread transfers ask about the view
 	// printing dispatches through.
 	if pkg.key == STD_FMT {

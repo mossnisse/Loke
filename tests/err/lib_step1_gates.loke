@@ -8,7 +8,7 @@ import "core:container";
 Not_Ordered :: struct { value: int }
 
 main :: proc() {
-	// design.md "Sorting slices": the library procedures accept `[]mut T`, and
+	// standard-library.md "Sorting slices": the library procedures accept `[]mut T`, and
 	// passing a read-only `[]T` is a compile-time error.
 	readable := []int{1, 6, 3};
 	slice.sort(readable);

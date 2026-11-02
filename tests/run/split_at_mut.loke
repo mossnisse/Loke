@@ -2,7 +2,7 @@ package main;
 
 import "core:fmt";
 
-// design.md "Splitting a mutable slice": `split_at_mut` hands back two mutable
+// standard-library.md "Splitting a mutable slice": `split_at_mut` hands back two mutable
 // halves of one `[]mut T`, both usable at once, at run time and during
 // compilation alike.
 

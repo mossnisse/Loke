@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "String format printing": `format` is the erased protocol's name, so
+// standard-library.md "Printed forms": `format` is the erased protocol's name, so
 // a member spelling it in the type's own package has to be able to serve it. The
 // thunk hands over the caller's own storage and expects nothing back.
 

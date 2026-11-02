@@ -7,7 +7,7 @@
 	the built-in `Hashable` types, `len` and indexing for the built-in sequences,
 	and the iteration members for ranges, text, arrays, slices, and maps.
 */
-// design.md "Standard interface catalogue".
+// standard-library.md "Standard interface catalogue".
 @(public)
 package interfaces;
 
@@ -61,7 +61,7 @@ Cloneable :: interface($T: type) {
 	`dyn proc(...)` is its borrowed view.
 */
 // The compiler decides `Self.Result`, since a signature's parameters are no
-// requirement this body could spell (design.md "Standard interface catalogue").
+// requirement this body could spell (standard-library.md "Standard interface catalogue").
 // The view is design.md "Borrowed callable views".
 Callable :: interface($Self: type, $Signature: type) {}
 

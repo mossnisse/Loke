@@ -1,4 +1,4 @@
-// design.md "String format printing": generated format members and the ordinary
+// standard-library.md "Printed forms": generated format members and the ordinary
 // Formattable witnesses that erased arguments recover through their typeid.
 package lokec
 

@@ -1,7 +1,7 @@
 package main;
 import "core:fmt";
 
-// design.md "Standard interface catalogue": a fixed array of hashable elements
+// standard-library.md "Standard interface catalogue": a fixed array of hashable elements
 // is `Hashable` at any size. One over 4096 bytes is an address in the backend,
 // so its elements are hashed in place, nested large arrays included.
 main :: proc() {

@@ -22,7 +22,12 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Store integers in a fixed byte order | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
-| Use numeric functions and types | [`core:math`](#coremath) |
+| Use numeric functions and types | [`core:math`](#coremath), [`core:simd`](#coresimd) |
+| Sort, search, or divide slices | [`core:slice`](#coreslice) |
+| Hold a few elements without allocating, or sets of enum values and indices | [`core:container`](#corecontainer) |
+| Use arenas and other allocators | [`core:mem`](#coremem) |
+| Use atomics, once-only initialization, or lazy values | [`core:sync`](#coresync) |
+| Constrain generic code | [Standard interface catalogue](#standard-interface-catalogue) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
 | Read clocks, work with dates and the local time zone, or print and parse ISO 8601 times | [`core:time`](#coretime) |
 
@@ -72,6 +77,45 @@ do not use a `try_` prefix.
 
 Programmer errors may panic. Missing files, denied access, invalid input data,
 end of input, and a disconnected terminal are ordinary returned errors.
+
+A `try_` operation reports the failure that its ordinary form would panic on, and
+leaves the value unchanged on failure. It returns a
+[`Result`](design.md#typed-fallibility), never a bare `bool`:
+
+- An operation that can fail only by allocating uses `Allocator_Error`.
+- A never-allocating container such as
+  [`Small_Array(T, N)`](#fixed-capacity-arrays) uses a library-declared error
+  such as `Capacity_Error`.
+- A success with nothing to return uses `Status(E)`.
+
+### Streaming a fallible source
+
+A fallible source returns `Result(Option(T), E)` at each step, distinguishing a
+value, end of input, and failure. It is not an [iterable](design.md#iteration-protocol):
+`foreach` has no error channel. Use an ordinary loop, `or_return`, and `switch`:
+
+```loke
+count_entries :: proc(directory: string_view) -> Result(int, io.Error) {
+	reader := fs.read_directory(directory) or_return;
+	total := 0;
+	for (;;) {
+		entry := reader.next() or_return;
+		switch (entry) {
+		case .some(found):
+			total += 1;        // finish with `found` before the next step
+		case .none:
+			return .ok(total);
+		}
+	}
+}
+```
+
+Each step propagates its own failure, so the loop belongs in a procedure whose
+result is a compatible fallible union; a caller that continues afterwards calls
+a helper like this one. A yielded value that borrows the source (an entry naming
+the reader's own buffer) is valid only until the next step, and the switch arm
+is where it is used. A move-only payload is consumed by the switch, written
+`switch (move(entry))`.
 
 ### Ownership is visible
 
@@ -123,14 +167,14 @@ This is a package index, not a dependency order. Imports must not form cycles.
 Each package name corresponds to its source directory (`core:fs` is `core/fs/`).
 
 ```text
-base:runtime          compiler/runtime ABI types
-base:meta             compile-time descriptors
+base:runtime          compiler/runtime ABI types              *
+base:meta             compile-time descriptors                *
 base:interfaces       structural interface catalogue
 
-core:mem              allocators and regions                  *
+core:mem              allocators and regions
 core:unsafe           explicit trust boundary                 *
-core:sync             atomics, fences, once, lazy values      *
-core:simd             cross-lane SIMD operations              *
+core:sync             atomics, fences, once, lazy values
+core:simd             cross-lane SIMD operations
 core:thread           threads, mutexes, monitors, channels, rings, and pools
 core:fmt              value formatting and process diagnostics
 core:strconv          scalar parsing
@@ -146,8 +190,8 @@ core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenval
 core:math/geometry    shapes, rays, frustums, polygons, overlap tests, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
-core:slice            slice algorithms and sorting            *
-core:container        Small_Array, Bit_Set, Enum_Array        *
+core:slice            slice algorithms and sorting
+core:container        Small_Array, Bit_Set, Enum_Array
                       index sets
 core:log              logging over the selected provider
 core:io               byte stream protocols and the I/O error
@@ -159,9 +203,7 @@ core:process          child processes and their pipes
 ```
 
 A package marked `*` is specified by `design.md`, in the section its source
-header comment cites; this document covers the unmarked packages, and
-`core:container`'s index sets, which `design.md` does not use
-([`core:container` index sets](#corecontainer-index-sets)).
+header comment cites; this document covers the unmarked packages.
 
 Planned additions are in [Standard-library maturity](future-plans.md#standard-library-maturity).
 
@@ -363,6 +405,280 @@ The allocator is a required leading parameter because the variadic consumes
 the remaining arguments. For another sink, format in memory and call
 `io.write_string`. To append formatted text to a builder, use
 `builder.append(fmt.to_string(allocator, ...))`.
+
+## Standard interface catalogue
+
+`base:interfaces` exports the standard catalogue. Outside that package, use its
+qualifier, as in `interfaces.Sequence(S)`. Built-in and user-defined types use
+the same structural checks.
+
+```loke
+Equatable :: interface($T: type) {
+	(a, b: T) a == b -> bool;
+}
+
+Ordered :: interface($T: type) {
+	Equatable(T);
+	(a, b: T) a < b -> bool;
+}
+
+Hashable :: interface($T: type) {
+	Equatable(T);
+	(value: T, seed: uint) value.hash(seed) -> uint;
+}
+
+Numeric :: interface($T: type) {
+	T(0) -> T;
+	T(1) -> T;
+	(a, b: T) a + b -> T;
+	(a, b: T) a - b -> T;
+	(a, b: T) a * b -> T;
+	(a, b: T) a / b -> T;
+}
+
+Integral :: interface($T: type) {
+	Numeric(T);
+	(a, b: T) a % b -> T;
+	(a, b: T) a | b -> T;
+	(a, b: T) a ~ b -> T;
+	(a, b: T) a & b -> T;
+	(a, b: T) a &~ b -> T;
+	(a: T, shift: uint) a << shift -> T;
+	(a: T, shift: uint) a >> shift -> T;
+}
+
+Cloneable :: interface($T: type) {
+	slot try_clone: proc(self: ^, allocator: Allocator) -> Result(T, Allocator_Error);
+}
+
+// Satisfied by a built-in rule; it writes no requirement.
+Callable :: interface($Self: type, $Signature: type) {}
+
+Iterator :: interface($Self, $Item: type) {
+	slot next: proc(self: inout Self) -> Option(Item);
+}
+
+Iterable :: interface($Self: type) {
+	Self.Element -> type;
+	Self.Iterator -> type;
+	slot iter: proc(self: ^) -> Self.Iterator;
+	Iterator(Self.Iterator, Self.Iterator.Item);
+}
+
+Reverse_Iterable :: interface($Self: type) {
+	Iterable(Self);
+	slot iter_reverse: proc(self: ^) -> Self.Iterator;
+}
+
+Mutable_Iterable :: interface($Self: type) {
+	Self.Element -> type;
+	Self.Mut_Iterator -> type;
+	(value: inout Self) value.iter_mut() -> Self.Mut_Iterator;
+	Iterator(Self.Mut_Iterator, Self.Mut_Iterator.Item);
+}
+
+Sequence :: interface($Self: type) {
+	Iterable(Self);
+	(value: Self) value.len() -> int;
+	(value: Self, index: int) value[index] -> Self.Element;
+}
+
+Mutable_Sequence :: interface($Self: type) {
+	Sequence(Self);
+	(value: inout Self, index: int) value[index] -> inout Self.Element;
+}
+
+Growable_Sequence :: interface($Self: type) {
+	Mutable_Sequence(Self);
+	(value: inout Self, element: Self.Element) value.append(element) -> _;
+}
+```
+
+- `Ordered` means the `<` operation is available; it does not promise a
+  mathematical total order, so floating-point types satisfy it with IEEE-754
+  comparisons. An algorithm needing a total or strict-weak order states that
+  precondition or takes a comparator. `Numeric` does not compose `Ordered` and
+  requires no ordering.
+- `Cloneable` names the fallible public `try_clone` operation, not the
+  policy-following `clone`. Every copyable type satisfies it, including plain
+  values such as `int`, pointers, and slices, each of which is its own clone. A
+  `move_only struct`, or a type that holds one in a field, does not.
+- `Callable(C, Signature)` holds by a built-in rule; [Calling a
+  value](design.md#calling-a-value) defines it, and `C.Result`.
+- `Iterable` describes reading traversal, whose elements a built-in container
+  lends rather than copies.
+- `Mutable_Iterable` describes mutable traversal, met by a container's
+  `iter_mut(self: inout)` and a mutable view's `iter_mut(self)` alike. Generic
+  indexed mutation uses `Mutable_Sequence`.
+- An owned iterator has `Item = Element`, so
+  `Iterator(Self.Iterator, Self.Iterator.Item)` also accepts it.
+
+Formatting has its own `Formattable` interface in `core:fmt`, described under
+[String format printing](#printed-forms). Two capabilities have no
+catalogue interface. UTF-8 text is its concrete `string`/`string_view` type.
+Maps are constrained by their concrete `map[K]V` shape: a map's `Element` is its
+`(key: K, value: V)` entry, so a map satisfies `Iterable` but not `Sequence`,
+whose `value[index] -> Element` requirement an unordered keyed container cannot
+meet.
+
+Built-in satisfaction follows the operations the language already defines:
+
+- `bool`, integers, floats, runes, `string`, `string_view`, pointers including
+  `rawptr` and C pointers, enums, `typeid`, and recursively comparable fixed
+  arrays satisfy `Equatable`; records and unions do so when their generated or
+  inherent equality is available;
+- integers, floats, runes, `string`, `string_view`, pointers on targets that
+  support pointer ordering, enums, and anonymous records whose fields are all
+  [ordered](design.md#comparison-operators) satisfy `Ordered`;
+- `bool`, integers, runes, `string`, `string_view`, pointers, enums, `typeid`,
+  fixed arrays of hashable elements, and records and unions with a [generated
+  `hash`](design.md#maps) satisfy `Hashable`. Floats do not: a NaN is unequal to itself,
+  so no hash is coherent with float `==`, and a float key could be inserted
+  repeatedly and never found. A map keyed by a float value keys by an integer
+  image of it instead, such as its bits through
+  [`unsafe.transmute`](design.md#unsafetransmute) or a scaled, rounded integer. Other
+  user records and unions require the inherent coherent equality/hash pair
+  specified under [Maps](design.md#maps);
+- built-in integer, floating-point, and rune types satisfy `Numeric`; integer
+  and rune types satisfy `Integral`;
+- every copyable type satisfies `Cloneable`. A plain value (`bool`, integers,
+  floats, runes, enums, pointers, slices, views, `typeid`, and procedures) is
+  its own clone; owning built-ins such as `string`, dynamic arrays, maps, and
+  `Shared(T)`, and aggregates containing them, clone ownership-recursively.
+
+The built-in iterables satisfy the iteration and sequence interfaces as follows.
+Every one satisfies `Iterable`:
+
+| Type | `Element` | Elements are | `Reverse_Iterable` | `Mutable_Iterable` | Sequence interfaces |
+| --- | --- | --- | --- | --- | --- |
+| runtime range | the endpoint type | owned | yes | no | none |
+| `string`, `string_view` | `rune` | owned | no | no | none |
+| fixed array | the stored element | lent | yes | yes | `Sequence`, `Mutable_Sequence` |
+| `[]T` | the stored element | lent | yes | no | `Sequence` |
+| `[]mut T` | the stored element | lent | yes | yes | `Sequence`, `Mutable_Sequence` |
+| dynamic array | the stored element | lent | yes | yes | `Sequence`, `Mutable_Sequence`, `Growable_Sequence` |
+| map | `(key: K, value: V)` | lent as `(key: ^K, value: ^V)` | no | yes | none |
+| `reversed()` view | the source's | as the source's | yes | over a `[]mut T` | none |
+| `indexed()` view | `(value, index)` | as the source's, index owned | no | over a `[]mut T` | none |
+| text and map [views](design.md#iteration-adapters) | as each names | as each names | no | no | none |
+
+`Mutable_Iterable` and `Mutable_Sequence` hold where the value is supplied as a
+mutable place. The sequence interfaces also require a copyable element:
+`value[index] -> Element` would copy a
+[move-only](design.md#lifecycle-hooks-and-resource-types) element out of its place, and
+every sequence interface composes `Sequence`, so a move-only element leaves a
+container with none of them. It remains `Iterable`, and `foreach` borrows each
+element. The standard `Small_Array(T, N)` supplies the same members as a dynamic
+array and follows the same rule, since its copying members are
+[excluded](design.md#where-clauses) for a move-only element.
+
+## `core:mem`
+
+The [allocator model](design.md#allocators) is part of the language; this package
+adds its regions and low-level operations.
+
+`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows
+the supplied storage; provider-backed construction takes a parent allocator and
+defaults it to the program provider. Ordinary construction applies the parent's
+failure policy if the owner cannot be created, while the `try_` procedures
+return a `Result` containing either the owner or an error, never a partial
+owner. Every constructor takes a final `policy: mem.Failure_Policy`, `.Panic`
+unless written, which the new region's own allocation failures follow; see
+[Allocation failure](design.md#allocation-failure). A provider-backed child must be
+dropped before its parent region is reset or ended. The zero `Arena` or
+`Scratch`, which a `static` provider holds until it is assigned, owns an empty
+region: allocating a byte or more from it fails, and resetting or dropping it
+does nothing.
+
+```loke
+fixed := mem.Arena.from_buffer(&mut buffer[:]);
+arena := mem.Arena.init(parent_allocator);
+scratch := mem.Scratch.init();
+outcome := mem.try_scratch(parent_allocator); // Result; handle before using the owner
+embedded := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+```
+
+`mem.Failure_Policy` is `enum { Panic, Trap }`, and `init`, `from_buffer`,
+`try_arena`, and `try_scratch` each take it.
+
+Additional declarations are in the package's `api.loki`.
+
+## `core:sync`
+
+`core:sync` provides `Atomic(T)` for booleans, integers, enums with
+a supported integer backing type, pointers, and an `Option(^T)`, which is one
+address (see [Representation](design.md#representation)) and starts as `.none`.
+
+- Operations accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or
+  `.Sequentially_Consistent` where meaningful. `core:sync.fence(order)` accepts
+  every ordering except `.Relaxed`. Invalid type, operation, or ordering
+  combinations are compile-time errors.
+- Every operation, including writes, takes a read-only `self: ^` receiver.
+  Atomic operations do not conflict with each other, so an `Atomic(T)` can be
+  updated through a `^T`, including inside a `Shared(T)` payload.
+- The plain `value` field is [`@(synchronized)`](design.md#synchronized). Outside
+  `core:sync`, reading, writing, or borrowing it requires exclusive access
+  through an owner, `^mut`, `[]mut`, or `inout`. Read-only borrows cannot access
+  it. Even an owner's read of `value` conflicts with a live read-only loan of
+  the atomic: another thread may write through that loan. `thread.Mutex(T)` and
+  `thread.Monitor(T)` apply the same rule to their `value` fields.
+- `Atomic(T)` is move-only, because copying one is a non-atomic read that yields
+  a second, unrelated atomic. `Once` holds an `Atomic` and is move-only by the
+  same structural rule.
+
+### Atomic operations and Once
+
+`core:sync` exposes the ordering type as `sync.Memory_Order`, an
+`enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_Consistent }`
+declared by `base:runtime`. Every ordering argument must be a compile-time
+constant and defaults to `.Sequentially_Consistent`.
+
+| Operation | Result |
+| --- | --- |
+| `a.load(order)` | the value; `order` is `.Relaxed`, `.Acquire`, or `.Sequentially_Consistent` |
+| `a.store(value, order)` | nothing; `order` is `.Relaxed`, `.Release`, or `.Sequentially_Consistent` |
+| `a.exchange(value, order)` | the previous value |
+| `a.compare_exchange(expected, desired, success, failure)` | `(observed: T, swapped: bool)`: `swapped` says whether `desired` was written, and `observed` is the value found, which equals `expected` exactly when it swapped. `failure` permits what a load permits |
+| `a.add`, `a.sub`, `a.bit_and`, `a.bit_or`, `a.bit_xor` `(value, order)` | the previous value. Integers only; `add` and `sub` wrap |
+| `sync.fence(order)` | nothing; every ordering but `.Relaxed` |
+| `once.do(action: proc())` | runs `action` exactly once across every thread that reaches `once`. A call that finds the action running waits for it, so a return means the action has completed and its writes are visible. An action that reaches its own `Once` never returns. If `action` panics, the `Once` is poisoned: every later call, and every call waiting on it, panics |
+| `once.is_done()` | whether the action has completed; `false` may be stale when it is read |
+| `lazy.get(init)` | a `^T` to the value of a `Lazy(T)`, made by calling `init`, a callable answering `T`, if no thread has yet. It runs as `once.do` runs an action: a call that finds `init` running waits, `init` must not reach its own `Lazy`, and a panic in `init` poisons it. The result borrows `lazy`. Every thread may reach the value as long as the process runs, so `init` is `@(escape=static)` and the value it makes is checked as an argument of a [`@(cross_thread)`](design.md#cross_thread) `move` parameter, as a channel's item is |
+| `lazy.is_done()` | whether the value has been made; `false` may be stale when it is read |
+
+`Once`, `Lazy(T)` for any `T`, and `Atomic(T)` for a `T` with a zero value, have
+usable zero values, so each may live in `static` storage with no initializer. A
+`Lazy(T)` holds a `Once`, so it is move-only, and its value is
+`@(synchronized)`: `core:sync` writes it once, before `get` publishes it, and
+only reads it after. An atomic pointer that starts empty is an
+`Atomic(Option(^T))`.
+
+## `core:simd`
+
+`core:simd` supplies what the operators cannot spell. A lane index is constant,
+so none of these can be written as a loop in ordinary Loke:
+
+- `from_array(array) -> Simd(T, N)` and `to_array(v) -> [N]T`, the two
+  conversions between a vector and an array of the same element and length. They
+  are how vector data reaches ordinary code and how ordinary code reaches a
+  vector;
+- `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors,
+  which is what a lane mask is for;
+- `any(mask) -> bool` and `all(mask) -> bool`, which turn a lane mask back into
+  control flow;
+- `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each folding a
+  vector to one scalar. A floating-point sum and product are ordered, left to
+  right, so their results do not depend on the target's vector width; an integer
+  sum and product fold left to right too, through the checked scalar operator,
+  so they panic where that loop over the lanes would; a minimum and a maximum
+  need no such rule, because they do not depend on order. A floating-point sum
+  starts from `-0.0` and a product from `1.0`, so a vector of nothing but `-0.0`
+  sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN lanes and return a
+  number whenever any lane holds one; a vector of nothing but NaN reduces to
+  NaN. Where two lanes compare equal, including `-0.0` against `+0.0`, either
+  may be the answer.
+
+The splat needs no procedure: a scalar in a vector position already is one.
 
 ## `core:thread`
 
@@ -1093,9 +1409,8 @@ value reads as 10; it and `uppercase` reach integers and whatever a type's
 as the same value at its own width. Floats always print with a `.` point,
 whatever numeric locale foreign code has set for the C library; if the C
 library cannot create its "C" numeric locale for this, printing a float panics.
-design.md "String format printing" gives
-every generated form, including floats and the quoting of strings inside
-aggregates.
+[Printed forms](#printed-forms) gives every generated form, including floats and
+the quoting of strings inside aggregates.
 
 `try_spell_f64` writes the bytes printing would write for an `f64`, `nan`,
 `inf`, and `-inf` included, to the start of a caller's fixed buffer and
@@ -1123,6 +1438,77 @@ measure it. Each wrapper holds its value as a returned `value` parameter does
 (design.md "Parameter semantics and ABI lowering"), so pad a view of a
 container rather than the container. They nest, as in
 `pad_left(fixed(x, 1), 8)`, and the call's `Options` reach the wrapped value.
+
+### Printed forms
+
+A type defines how it is printed by declaring a `format` method in the same
+package as the type:
+
+```loke
+Suit :: enum { Clubs, Diamonds, Hearts, Spades }
+Card :: struct { rank: int, suit: Suit }
+
+impl Card {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.rank, "of", self.suit);
+	}
+}
+
+fmt.println(Card{7, .Hearts}); // 7 of Hearts
+```
+
+Each concrete type has one printed form throughout the program. Declaring more
+than one eligible inherent `format` method for a type is an error; the compiler
+provides a default `format` method for other printable runtime types, including
+scalars and aggregates. These methods satisfy `fmt.Formattable(T)` and support
+ordinary `dyn fmt.Formattable` views. An extension in another package may
+declare and call its own `format` method, but `print` does not use it.
+
+A generated method prints:
+
+| Type | Printed form |
+| --- | --- |
+| `bool` | `true` or `false` |
+| integer | its digits in `Options.base`, decimal by default |
+| float | the shortest decimal that reads back as the same value, never spelled as an integer: fixed notation with at least one fractional digit from `1e-4` to below `1e17`, as `1.0`, `0.1`, and `-0.0`, and a bare exponent outside it, as `1e21` and `2.5e-5`; `nan`, `inf`, or `-inf` |
+| `string`, `string_view`, `cstring_view`, `rune` | its text |
+| `^T`, `^mut T` | the value it points to, as for `Box(T)` |
+| `rawptr`, `[^]T`, procedure | `0x` and the address in hexadecimal, or `<nil>` |
+| `typeid` | the type's name |
+| enum | the member's name, or the number of a value no member names |
+| array, slice, dynamic array, `Simd` | `[1, 2, 3]` |
+| map | `[key = value, ...]` in [iteration order](design.md#maps) |
+| struct | `Name{x = 1, y = 2}`, with the public fields in declaration order |
+| anonymous record | `(x = 1, y = 2)`, or `(1, 2)` when unlabeled |
+| union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses unless it is `Unit` |
+| `Box(T)` | its payload |
+| `dyn fmt.Formattable` | the value it views |
+| any other `dyn` view | its type's name |
+
+A struct prints its public fields only, as reflection from another package sees
+it, because one printed form serves every package. A `package main`'s fields are
+[public by default](design.md#exported-names), so a program's own `Point{1, 2}` prints
+`Point{x = 1, y = 2}`; one with a `@(private)` field leaves it out. A `distinct`
+type prints as the type it wraps, under its own name where that form has one.
+
+A checked pointer is never null and always names a value, so it prints that
+value, as every other checked view prints what it views: a map entry lent as
+`(key: ^K, value: ^V)` prints its key and value. A program that wants the
+address converts to `rawptr`. Printing follows a chain of pointers, as it
+follows a chain of boxes; a cycle, which only [unchecked
+code](design.md#the-unsafe-package) can build, does not terminate.
+
+A field, element, map key, or union payload whose type is a string type, `rune`,
+or a box or pointer to one prints quoted, escaping the backslash, the quote,
+`\n`, `\r`, `\t`, and other control characters as a literal would:
+`["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it
+is its text. A type with its own `format` prints by it in both places.
+
+For ordinary member lookup, a visible local extension named `format` takes
+precedence over the generated default. Interface slot selection remains
+independent of the caller's extensions. An inherent `format` must match the
+slot, including the writer and options parameter modes; a generic method does
+not supply this concrete slot.
 
 ## `core:strings`
 
@@ -1629,6 +2015,175 @@ save_generation :: proc(path: string_view, generation: u64, allocator: Allocator
 }
 ```
 
+## `core:slice`
+
+`core:slice` has the slice algorithms. A `[]mut T` also has members the compiler
+contributes, which need no import, for what no procedure could return, or what
+reads better as a member. [Slices](design.md#slices) themselves are part of the
+language.
+
+### Swapping elements
+
+`values.swap(left, right)` makes two elements of a `[]mut T` trade contents, and
+`slice.swap(values, left, right)` is the free spelling of the same operation. A
+dynamic array has the same member, as it has `sort`. Each index is
+bounds-checked like any other, so an out-of-range one panics, and two equal
+indices leave the element as it is.
+
+```loke
+names := [dynamic]string{"Ada", "Bo", "Cy"};
+names.swap(0, 2);   // [Cy, Bo, Ada]
+```
+
+No copy or drop hook runs on either element, so a swap works for an element type
+with neither a copy nor a zero value, unlike [`exchange`](design.md#exchange).
+`slice.reverse` is built on it and reaches the same element types.
+
+A read-only `[]T` has no `swap`, exactly as it has no `sort`.
+
+### Splitting a mutable slice
+
+`xs.split_at_mut(mid)` divides a `[]mut T` into the two mutable slices
+`xs[:mid]` and `xs[mid:]`, returned as the [anonymous
+record](design.md#anonymous-records) `(left: []mut T, right: []mut T)`. `mid` is checked
+like a slice bound: it may equal `xs.len()`, leaving `right` empty, and a
+negative or larger one panics.
+
+```loke
+left, right := xs.split_at_mut(xs.len() / 2);
+left[0] = right[0];    // both halves are usable at once
+```
+
+The halves are one mutable [reborrow](design.md#weakening-and-reborrows) of `xs`, taken
+after `mid` is evaluated, so `mid` may read `xs`. While either half is in use,
+`xs` is suspended as it is for any reborrow, and neither half outlives what `xs`
+views. The halves never overlap, so writing through one never conflicts with the
+other.
+
+No other spelling gives two mutable views of one sequence: `&mut xs[:mid]` and
+`&mut xs[mid:]` are two reborrows of `xs`, which cannot be live at once, and a
+procedure cannot return them together either. That is why this is a contributed
+member rather than a `core:slice` procedure. A read-only `[]T` needs no such
+member, since two read-only reslices may be live together.
+
+### Chunks of a mutable slice
+
+`xs.chunks_mut(n)` on a `[]mut T` is a view that yields `xs` in consecutive
+mutable chunks of `n` elements, the last one shorter when `n` does not divide
+`xs.len()`. A chunk length below one panics. The view is its own iterator,
+`Chunks_Mut([]mut T)`, whose `Element` is `[]mut T`.
+
+```loke
+foreach (rows in pixels.chunks_mut(4096)) {
+	shade(rows, scene);
+}
+```
+
+Taking the view is one mutable [reborrow](design.md#weakening-and-reborrows) of `xs`, as
+[`split_at_mut`](#splitting-a-mutable-slice) is, and the chunks share it: while
+the view or any chunk is in use, `xs` is suspended. Unlike an element of a
+[by-reference traversal](design.md#by-reference-iteration), a chunk is an owned `[]mut T`
+and stays usable after the loop advances and after it ends, since no two chunks
+overlap. A copy of a chunk is an ordinary reborrow of it, so a chunk binding is
+suspended by its copies for the rest of its step, and the next step binds a new
+chunk. A chunk taken by calling `next` directly is a reborrow of the view, so it
+ends before the view advances. A `chunks_mut` view has no compile-time meaning
+yet.
+
+### Sorting slices
+
+`slice.sort` sorts ascending and `slice.reverse_sort` descending according to
+the element type's `Ordered` implementation. `slice.sort_by` instead takes a
+comparator:
+
+```loke
+sort_by :: proc(values: []mut $T, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool)
+```
+
+The comparator may be a plain `proc(left, right: T) -> bool`, or a record
+containing configuration or checked borrows whose [`call`
+method](design.md#calling-a-value) compares. It is borrowed for the call, retained
+nowhere, and sorting allocates nothing. It must define a strict weak ordering.
+The sort is not stable, so elements for which neither direction is before the
+other may appear in either order. A comparator that is not a strict weak
+ordering leaves the elements in an unspecified order rather than reaching past
+them: the sort is still a permutation of the slice, and still terminates.
+
+All three procedures accept `[]mut T`; passing a read-only `[]T` is a
+compile-time error, because a read-only slice has no mutable storage to sort.
+
+See [Calling a value](design.md#calling-a-value) and [Capture
+literals](design.md#capture-literals) for callable comparators.
+
+### Slice queries and copies
+
+`core:slice` also has these procedures. Only `fill` writes, and it takes
+`[]mut T`; the rest read a `[]T`. The ordering queries require
+`interfaces.Ordered(T)` and the searches `interfaces.Equatable(T)`.
+
+| Procedure | Result |
+| --- | --- |
+| `is_sorted(values)`, `is_reverse_sorted(values)` | whether no adjacent pair is out of order under `<` |
+| `binary_search(values, wanted) -> (index: int, found: bool)` | the leftmost index at which `wanted` could be inserted keeping the slice ascending, and whether the element there `==` `wanted` |
+| `index_of(values, wanted)`, `last_index_of(values, wanted)` | `Option(int)`: the first or last index whose element `==` `wanted` |
+| `contains(values, wanted)` | whether `index_of` finds `wanted` |
+| `equal(left, right)` | whether the lengths match and every pair of elements is `==` |
+| `min(values)`, `max(values)` | `Option(T)`: `.none` for an empty slice |
+| `fill(values, value)` | assigns a copy of `value` to every element |
+| `try_clone(values, allocator)` | `Result([dynamic]T, Allocator_Error)`: `clone` that returns an allocation failure rather than panicking |
+
+`binary_search` requires an ascending slice; an unsorted one yields an
+unspecified index, not a panic. `min` and `max` scan left to right and replace
+their candidate only with an element strictly before or after it under `<`, so
+equal elements keep the earliest, and a NaN is the answer only when it is first.
+`clone` and `try_clone` take `allocator := mem.default_allocator()`.
+
+## `core:container`
+
+`Small_Array`, `Bit_Set`, and `Enum_Array`, with the index sets below. The exact
+declarations are in the package's `api.loki`.
+
+### Fixed-capacity arrays
+
+`Small_Array(T, N)` is a library container with inline capacity `N`. It supports
+indexing, slicing, iteration, and the usual container methods without
+allocating. Operations that exceed `N` panic; their `try_` forms leave the value
+unchanged and return `Status(Capacity_Error)`. Element copying follows the
+ordinary copy rules.
+
+Its inline storage is [capacity](design.md#uninitialized-capacity) rather than `N`
+values, so `T` needs no zero value: an empty `Small_Array(T, N)` imposes exactly
+what an empty `[dynamic]T` does. A copy clones the live elements only, and so
+does a drop.
+
+An invalid insertion index panics in both ordinary and `try_` forms. `pop()`
+returns and removes the last element, or returns `.none` for an empty array.
+`x[a:b]` is a read-only `[]T` over the live prefix, with either endpoint
+omittable as for [user slicing](design.md#indexing-and-slicing); `slice()` is the whole
+prefix as `[]mut T`, and a writable subrange is `slice()[a:b]`.
+
+A [move-only](design.md#lifecycle-hooks-and-resource-types) element type is held too:
+
+- The members that copy an element (`get`, the copying members of `append` and
+  `insert`, and their `try_` forms) are bound on
+  [`is_copyable(T)`](design.md#built-in-procedures), so they are
+  [excluded](design.md#where-clauses) from such an instance.
+- `append`, `insert`, `try_append`, and `try_insert` are [procedure
+  groups](design.md#explicit-procedure-overloading) whose other member consumes, so
+  `values.append(move(token))` or a temporary reaches it, as on a dynamic array.
+  A consuming `try_` form that fails leaves the array unchanged and drops the
+  element it took, as [container insertion](design.md#container-insertion) describes; a
+  caller who must keep the element checks `space()` or `is_full()` first.
+- `get_mut`, `view`, `slice`, `iter_mut`, `pop`, `remove`, `clear`, and
+  [`foreach`](design.md#borrowing-iteration) copy nothing and are unaffected.
+
+```loke
+x: Small_Array(int, 8) = {};
+x.append(1, 2, 3);
+fmt.println(x.len(), x.cap()); // 3 8
+```
+
 ## `core:container` index sets
 
 A set of the indices `0 ..< cap`, one bit each, for the sets an engine keeps
@@ -1812,8 +2367,8 @@ formatting system.
 
 ## `core:log`
 
-design.md "Build-selected providers" says how a program selects its logger, and
-"Compiled log level" what `-log-level` removes. This is the package's surface.
+design.md "Build-selected providers" says how a program selects its logger. This
+is the package's surface.
 
 ```loke
 Level :: enum { Debug, Info, Warning, Error, Off }   // contributed by the compiler
@@ -1851,6 +2406,25 @@ standard one when none is selected or before it is published.
 A provider's factory returns `(log.Logger)(&mut sink)` over a `static` record
 with a `write` method, which is the process-lifetime storage design.md
 "Provider initialization" asks for.
+
+### Compiled log level
+
+`-log-level=<level>` predeclares the constant `LOKE_LOG_LEVEL`, whose type is
+`core:log`'s level enumeration and whose default is the lowest level. The
+`core:log` procedures guard their own bodies with it, so a call below the
+compiled level never reaches the provider.
+
+Discarding a callee's body does not discard the caller's expressions. An
+unguarded call below the level still checks and evaluates its arguments;
+removing those too takes a caller-side [`when`](design.md#when-statement), which is the
+ordinary rule that a discarded branch is neither checked nor emitted:
+
+```loke
+log.debug("state", expensive());                       // argument still evaluated
+when (LOKE_LOG_LEVEL <= .Debug) {
+	log.debug("state", expensive());                   // neither checked nor emitted
+}
+```
 
 ## `core:fs`
 
@@ -2410,6 +2984,22 @@ preserving the native error number. In Windows process and
 filesystem calls, path errors 123, 161, 206, and 267 all have that code.
 Starting another process is [`core:process`](#coreprocess).
 
+### `os.Args`
+
+`os.args` is a constant of type `os.Args`, a stateless, read-only view of the
+process-lifetime argument vector. Its zero value denotes the whole vector.
+
+| Operation | Result |
+| --- | --- |
+| `os.args.len()` | the argument count, including the executable path at index 0 |
+| `os.args[i]` | an owning UTF-8 `string`, copied; an index out of range panics |
+| `foreach (a in os.args)` | a borrowed `string_view` per argument |
+| `os.view_at(i)` | the same borrow by index; an index out of range panics |
+
+Indexing copies an owning string; iteration borrows runtime-owned bytes valid
+for the process lifetime. For immediate termination without cleanup, see
+[`os.exit`](design.md#program-entry-and-exit).
+
 ## `core:process`
 
 A child process is started from a `Command` and owned by the `Child` it returns:
@@ -2528,14 +3118,63 @@ validate UTF-8 before treating them as text.
 
 ## `core:math`
 
-`design.md` "Library numeric types" makes `Complex(T)` and `Quaternion(T)`
-ordinary records. `design.md` "Type conversion" specifies `math.wrap(T, value)`,
-which keeps an integer's low bits, and `math.to(T, value)`, which returns
-`Option(T)`; `design.md` "Integer overflow" specifies `wrapping_add`,
-`wrapping_sub`, and `wrapping_mul`, the procedure forms of `+%`, `-%`, and
-`*%`, and `checked_add`, `checked_sub`, and `checked_mul`; `design.md`
-"Integer operators" specifies `floor_div` and `floor_mod`, the floored
-counterparts of `/` and `%`.
+`Complex(T)` and `Quaternion(T)` are standard-library abstractions, not
+base-language types. They are ordinary records with methods, [operator
+declarations](design.md#operator-declarations), a [conversion
+hook](design.md#conversion-hooks), interfaces, and a `format` method: nothing the
+language reserves for itself. A scalar reaches one through the explicit conversion
+`Complex(f64)(x)`, since there are no [user-defined implicit
+conversions](design.md#implicit-type-conversions). Generic and third-party numeric
+types use the same construction, conversion, and operator rules.
+
+Beside what the [integer operators](design.md#integer-operators) do, integers have
+these named policies:
+
+- `math.wrap(T, value)` keeps the low bits of the two's-complement
+  representation, like the [wrapping operators](design.md#integer-overflow). It
+  accepts an integer, rune, or enum value and an integer or rune destination. For
+  vectors of the same lane count it converts each lane. Constant inputs are
+  folded.
+- `math.to(T, value)` returns `Option(T)`: the value if `T` represents it
+  exactly, or `.none`. It is the integer counterpart of
+  [`Enum.from_int`](design.md#integer-conversion).
+
+The floored forms of `/` and `%` are procedures for every integer type:
+`math.floor_div(x, y)` rounds the quotient toward negative infinity, and
+`math.floor_mod(x, y)` is the remainder that goes with it, so
+`x == floor_div(x, y)*y + floor_mod(x, y)` and a non-zero `floor_mod` has the
+divisor's sign. They panic where `/` and `%` do: on a zero divisor, and
+`floor_div(MIN, -1)` overflows while `floor_mod(MIN, -1)` is `0`. For an
+unsigned type they equal `/` and `%`.
+
+For a divisor that is a power of two, `2^n`, a shift and a mask are already the
+floored quotient and remainder, because `>>` on a signed value is arithmetic:
+
+```loke
+CHUNK_BITS :: 4;                               // chunks 16 wide
+x: i32 = -1;
+chunk := x >> CHUNK_BITS;                      // -1, as math.floor_div(x, 16)
+local := x & ((1 << CHUNK_BITS) - 1);          // 15, as math.floor_mod(x, 16)
+```
+
+The policies of the [integer overflow](design.md#integer-overflow) operators are
+procedures too, for generic code and procedure values:
+
+| Operations | Policy |
+| --- | --- |
+| `math.wrapping_add`, `wrapping_sub`, `wrapping_mul` | Keep the result's low bits, as `+%`, `-%`, and `*%` do. |
+| `math.checked_add`, `checked_sub`, `checked_mul` | Return `Option(T)`: `.some(result)` when the mathematical result fits `T`, otherwise `.none`. |
+
+Each accepts two operands of one signed or unsigned integer type; an unfixed
+second operand takes the first's type:
+
+```loke
+value: u8 = 255;
+fmt.println(value +% 1, math.checked_add(value, 1)); // 0 .none
+```
+
+The wrapping forms also accept two vectors of one integer-lane `Simd` type and
+wrap each lane.
 
 For any `interfaces.Numeric(T)`, `Complex(T)` has the fields `real` and
 `imaginary`, and `Quaternion(T)` has `real`, `i`, `j`, and `k`. Both have

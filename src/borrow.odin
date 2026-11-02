@@ -3604,7 +3604,7 @@ solve_severing :: proc(state: ^Prov_State) {
 	}
 }
 
-// design.md "Chunks of a mutable slice": redefining a fresh slot severs the
+// standard-library.md "Chunks of a mutable slice": redefining a fresh slot severs the
 // reborrows of its previous value, and redefining a reborrow's derived slot
 // takes it afresh. A temporary loaded through a carrier is fresh too: only its
 // own expression reads it, so loading it again, as a loop's `cur^.next` does,

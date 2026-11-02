@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:log";
 
-// `-log-level=off` (design.md "Compiled log level"): every record procedure,
+// `-log-level=off` (standard-library.md "Compiled log level"): every record procedure,
 // `at` included, has no body, so the error stream stays empty, and nothing is
 // enabled. `Off` sorts after `Error`, which is what makes the guard below false.
 

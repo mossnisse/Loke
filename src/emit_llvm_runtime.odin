@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 
-// design.md "String format printing": each `typeid`'s name, so a `typeid`
+// standard-library.md "Printed forms": each `typeid`'s name, so a `typeid`
 // prints without a `base:runtime` import.
 TYPE_NAMES :: "@.loke.type_names"
 TYPE_NAME_COUNT :: "@.loke.type_names.count"
@@ -757,7 +757,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		}
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f32(ptr %%w, float %s)", widened)
 
-	// design.md "String format printing": a checked pointer always names a
+	// standard-library.md "Printed forms": a checked pointer always names a
 	// value, so it prints that value, as a box does; an unchecked address prints
 	// as one.
 	case .Pointer:
@@ -811,8 +811,8 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 }
 
 // `.name` or `.name(payload)` for the active variant, chained like enums. A
-// `Unit` payload prints as `.name`, as a payloadless variant does (design.md
-// "String format printing").
+// `Unit` payload prints as `.name`, as a payloadless variant does (standard-library.md
+// "Printed forms").
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)

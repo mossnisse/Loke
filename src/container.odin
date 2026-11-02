@@ -130,13 +130,13 @@ Container_Op :: enum {
 	// extension visible only there.
 	Sort,
 	Reverse_Sort,
-	// design.md "Swapping elements": one operation, since two `inout` borrows of
+	// standard-library.md "Swapping elements": one operation, since two `inout` borrows of
 	// the same sequence could not be proven distinct.
 	Swap,
-	// design.md "Splitting a mutable slice": two halves that are one reborrow
+	// standard-library.md "Splitting a mutable slice": two halves that are one reborrow
 	// of the receiver, which no library procedure could prove disjoint.
 	Split_At_Mut,
-	// design.md "Chunks of a mutable slice": a view whose chunks borrow the
+	// standard-library.md "Chunks of a mutable slice": a view whose chunks borrow the
 	// receiver, not the view.
 	Chunks_Mut,
 	Map_Find,
@@ -260,7 +260,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	add_members(k.c, type, members[:])
 }
 
-// design.md "Sorting slices": only `[]mut T` has these members. The receiver is a
+// standard-library.md "Sorting slices": only `[]mut T` has these members. The receiver is a
 // value, since the slice header is a borrow of the caller's elements.
 @(private = "file")
 ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
@@ -306,7 +306,7 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 CHUNKS_REST :: 0
 CHUNKS_SIZE :: 1
 
-// design.md "Chunks of a mutable slice": what `chunks_mut` returns, which is its
+// standard-library.md "Chunks of a mutable slice": what `chunks_mut` returns, which is its
 // own iterator. It holds the part of the slice not yet handed out and the chunk
 // length.
 @(private = "file")

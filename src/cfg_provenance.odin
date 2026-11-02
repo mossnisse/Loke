@@ -2299,7 +2299,7 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 	}
 }
 
-// design.md "Chunks of a mutable slice": a chunk is a reborrow of the view that
+// standard-library.md "Chunks of a mutable slice": a chunk is a reborrow of the view that
 // does not suspend the view, so the view advances while earlier chunks are
 // held, and through it the chunk keeps the sliced carrier suspended. Each step
 // binds a value disjoint from the last, so redefining the binding severs the
@@ -3811,7 +3811,7 @@ prov_print_may_write :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return type_carries_borrow(c, viewed).mutable
 }
 
-// design.md "String format printing": printing reads what a pointer points to, and
+// standard-library.md "Printed forms": printing reads what a pointer points to, and
 // so on down, once a report has evaluated its last argument. `printed` is what each
 // argument holds of that, which the read may go through.
 @(private = "file")
@@ -8960,7 +8960,7 @@ prov_snapshot :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
 	return out
 }
 
-// design.md "Splitting a mutable slice": the receiver is read before `mid` and
+// standard-library.md "Splitting a mutable slice": the receiver is read before `mid` and
 // lent after it, so `xs.split_at_mut(xs.len() / 2)` may still read `xs`. The
 // value read is what is lent, so the halves stay tied to it even if `mid`
 // reassigns `xs`; the reborrow suspends `xs` only while `xs` still views the

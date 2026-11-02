@@ -1,4 +1,4 @@
-// design.md "Atomic operations and Once": a `sync.Lazy(T)` makes its value on
+// standard-library.md "Atomic operations and Once": a `sync.Lazy(T)` makes its value on
 // the first `get` and every later `get` shares it. design.md "Globals while
 // tasks run": the value is synchronized storage, so tasks may make it on first
 // use. The value may have no zero value, and a `Lazy` behind a `Shared(T)`

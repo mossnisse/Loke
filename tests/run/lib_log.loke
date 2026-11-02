@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:log";
 
-// `core:log` and the compiled level (design.md "Compiled log level"). Built with
+// `core:log` and the compiled level (standard-library.md "Compiled log level"). Built with
 // `-log-level=warning`, so `debug` and `info` have no body
 // and `warning` and `error` do.
 

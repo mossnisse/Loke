@@ -10,7 +10,7 @@
 	an explicit `(dyn Formattable)(&value)` uses; importing an extension cannot
 	change a type's printed representation.
 */
-// design.md "String format printing". Both layouts are shared with the seed
+// standard-library.md "Printed forms". Both layouts are shared with the seed
 // runtime, which is where a formatter's bytes finally go.
 @(public)
 package fmt;

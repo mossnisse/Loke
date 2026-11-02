@@ -321,7 +321,7 @@ checklist.
   `format_to`, `concat_to`, `format_to_with`, `to_string`), `core:log`'s
   `debug`, `info`, `warning`, `error`, and `at`, and `io.write_formatted` and
   `write_formatted_line` take `..dyn fmt.Formattable` rather than
-  `..any_view` ([String format printing](design.md#string-format-printing)).
+  `..any_view` ([Printed forms](standard-library.md#printed-forms)).
   A call that lists its arguments is unchanged and prints the same. Upgrade a
   procedure that spreads its own `..any_view` arguments into them by declaring
   that parameter `..dyn fmt.Formattable`.
@@ -341,7 +341,7 @@ checklist.
 - A union variant whose payload is `Unit` now prints as `.name`, as a
   payloadless one does, so a successful `Result(Unit, E)` prints `.ok` rather
   than `.ok(Unit{})` and `Option(Unit)` prints `.some`
-  ([String format printing](design.md#string-format-printing)). A two-variant
+  ([Printed forms](standard-library.md#printed-forms)). A two-variant
   union of a `Unit` variant and a non-null reference, such as
   `Result(Unit, ^T)`, now stores no tag, as `Status(^T)` already did, so it is
   one address and a nullable C pointer at a foreign boundary
@@ -363,7 +363,7 @@ checklist.
 - For the same reason, a public type's private `format` no longer decides how
   it prints: the type prints by the generated default in every package, its
   own included, as an explicit `dyn fmt.Formattable` view does
-  ([String format printing](design.md#string-format-printing)). Code in its
+  ([Printed forms](standard-library.md#printed-forms)). Code in its
   package can still call the method directly. Upgrade by marking `format`
   `@(public)` to keep the custom form. Private types and every type in a
   `package main` are unchanged.
@@ -1012,6 +1012,14 @@ checklist.
 
 ### Changed
 
+- [design.md](design.md) is shorter and no longer specifies the library, with no
+  change to what a program means.
+  [standard-library.md](standard-library.md) now specifies printing, `core:slice`,
+  `core:container`, `core:simd`, `core:sync`, `core:mem`'s regions, and the
+  interface catalogue. Provenance tracking rules moved to the
+  [Analysis guarantees](design.md#analysis-guarantees) appendix, and
+  [Inferred effects](design.md#inferred-effects) states once how the effects are
+  computed. The `Type_Kind` listing no longer names the deleted `Any_View`.
 - A procedure returning a fallible union whose success carries `Unit`, such
   as `Result(Unit, E)` or `Option(Unit)`, may now reach the end of its body or
   use `return;` to succeed, as one returning `Status(E)` may, when the result
@@ -1043,7 +1051,7 @@ checklist.
 - A thread that finds a `sync.Once` action, or a `sync.Lazy(T)`'s `init`,
   still running now blocks after a short spin instead of spinning until it
   finishes, so slow setup no longer costs every waiting thread a processor
-  ([Atomic operations and Once](design.md#atomic-operations-and-once)). With
+  ([Atomic operations and Once](standard-library.md#atomic-operations-and-once)). With
   24 threads on 6 processors waiting on 6 ms setups, CPU time fell from about
   1.3 s to 0.17 s, about what the setups themselves take. It needs no new
   link library.
@@ -2113,7 +2121,7 @@ checklist.
   what `init` writes is still checked, and the value is checked as a channel
   item is: process-lifetime borrows, no `thread_local` borrow, nothing
   `@(thread_affine)`. See
-  [Atomic operations and Once](design.md#atomic-operations-and-once).
+  [Atomic operations and Once](standard-library.md#atomic-operations-and-once).
 - [Structured concurrency](design.md#structured-concurrency): a
   `parallel { ... }` block runs each `spawn`ed call on a thread of its own and
   waits for all of them on every way out of the block, a panic included. A
@@ -2202,11 +2210,11 @@ checklist.
 - `xs.split_at_mut(mid)` on a `[]mut T` returns two mutable halves,
   `(left: []mut T, right: []mut T)`, usable at once and checked as one
   reborrow of `xs`, so `left, right := xs.split_at_mut(xs.len() / 2);`
-  works ([Splitting a mutable slice](design.md#splitting-a-mutable-slice)).
+  works ([Splitting a mutable slice](standard-library.md#splitting-a-mutable-slice)).
   It also runs at compile time.
 - `xs.chunks_mut(n)` on a `[]mut T` yields consecutive mutable chunks of `n`
   elements, which stay usable after the loop advances and after it ends while
-  `xs` stays suspended ([Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice)).
+  `xs` stays suspended ([Chunks of a mutable slice](standard-library.md#chunks-of-a-mutable-slice)).
   A length below one panics.
 
 - `lokec <dir> -api` writes each package's interface file, `api.loki`, in its
@@ -2494,7 +2502,7 @@ checklist.
 
 - `xs.split_at_mut(mid)` and `xs.chunks_mut(n)` reborrow `xs` as it was
   evaluated before the argument
-  ([Splitting a mutable slice](design.md#splitting-a-mutable-slice)). An
+  ([Splitting a mutable slice](standard-library.md#splitting-a-mutable-slice)). An
   argument that rebinds `xs`, as `replace(inout xs, other)` may, made the
   compiled program split the new slice instead; compile-time evaluation was
   already right.
@@ -2768,7 +2776,7 @@ checklist.
 - `term.begin_raw` saves the console mode after claiming raw mode rather than
   before, so a scope closing concurrently cannot leave the console raw after
   both scopes close.
-- design.md "Fixed-capacity arrays" describes `Small_Array`'s consuming
+- standard-library.md "Fixed-capacity arrays" describes `Small_Array`'s consuming
   `try_append` and `try_insert`, which drop the element on a capacity
   failure, instead of saying there are none.
 - The operators a `delegate` generates are found from other packages, as
@@ -2785,7 +2793,7 @@ checklist.
   slice was accepted. `slice.reverse` and `random.shuffle` now run in a constant
   initializer too.
 - A compile-time `sort` or `reverse_sort` uses an element's own `<`
-  (design.md "Sorting slices"), as the runtime call does, rather than being
+  (standard-library.md "Sorting slices"), as the runtime call does, rather than being
   rejected with L0341.
 - A compound assignment through `operator([]=)` reads an index naming a
   scalar variable before its right operand, and a multiple assignment before
@@ -2916,7 +2924,7 @@ checklist.
   Diagnostics already printed `Shared(T)` and `Weak(T)`, and now print
   `Box(T)` too.
 - Printing a `^T` or `^mut T` prints the value it points to, as a `box(T)`
-  already did, instead of its address (design.md "String format printing"), so
+  already did, instead of its address (standard-library.md "Printed forms"), so
   `foreach (entry in m) { fmt.println(entry.key); }` prints the key. Convert to
   `rawptr` to print an address; `rawptr`, `[^]T`, and procedures still print
   addresses.
@@ -2982,7 +2990,7 @@ checklist.
 - `type_info_of` is total: the zero `typeid` and an unknown id answer the
   entry whose kind is `Invalid` instead of `nil`. Test `info.kind ==
   .Invalid` where code tested `info == nil`.
-- Generated printed forms changed, and design.md "String format printing"
+- Generated printed forms changed, and standard-library.md "Printed forms"
   now specifies them. A float always shows a fraction or an exponent:
   `fmt.println(1.0)` prints `1.0`, not `1`, and exponents are bare, `1e21`
   and `1e-7` rather than `1e+21` and `1e-07`. A string or rune inside an
@@ -3288,7 +3296,7 @@ checklist.
   `wrapping_sub`, or `wrapping_mul` where a kernel means to wrap; they take
   vectors and compile to the plain instruction.
 - `slice.Comparator` and the `sort_by_comparator`/`sort_by_procedure` members
-  of `slice.sort_by` are removed (design.md "Sorting slices"). `sort_by` is one
+  of `slice.sort_by` are removed (standard-library.md "Sorting slices"). `sort_by` is one
   generic procedure taking any `interfaces.Callable(C, proc(left, right: T) ->
   bool)`: a plain procedure, or a record whose `call` method compares, as
   before. Calls are unchanged. Upgrade a `where slice.Comparator(C, T)` bound
@@ -3485,7 +3493,7 @@ checklist.
 - `interfaces.Callable(C, Signature)` holds for a procedure that converts to
   the procedure type `Signature`, and for a type whose `call` method takes a
   plain `self` and otherwise matches it, calling convention and reset effects
-  included (design.md "Standard interface catalogue"). `C.Result` names what
+  included (standard-library.md "Standard interface catalogue"). `C.Result` names what
   the call returns, and is `L0408` when a `call` returns nothing or two
   disagree. A bound, bare or composed by another interface, lets the body
   write `c(args)`, reaching a `call` method its package could not otherwise
@@ -3656,7 +3664,7 @@ checklist.
   and `size_of(Box(int))` reported `L0389`, saying the name was not declared,
   and left the branch's declarations unresolved.
 - A type's own `<` or `==` declared as a procedure group counts as its own
-  (design.md "Comparison operators", "Sorting slices"). A sort orders by a
+  (design.md "Comparison operators", standard-library.md "Sorting slices"). A sort orders by a
   grouped `<`, and a grouped `==` compares the type wherever it is nested and
   as a map key; both used to fall back to the built-in operators. Another
   package may compare a part by its `==` when the group is `@(public)`, as for

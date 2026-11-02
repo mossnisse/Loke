@@ -329,7 +329,7 @@ Prov_State :: struct {
 	task_sites:       [dynamic]Task_Site,
 	// Slots each of whose definitions holds a value disjoint from the one
 	// before: a `chunks_mut` loop's binding. Redefining one severs the
-	// reborrows taken from its previous value (design.md "Chunks of a mutable
+	// reborrows taken from its previous value (standard-library.md "Chunks of a mutable
 	// slice").
 	fresh_slots:    map[int]bool,
 	// Per named slot, what each of its definitions may point at, so a borrow
@@ -2063,7 +2063,7 @@ walk_foreach_binding_provenance :: proc(
 		if s.kind != .Protocol && len(elements) > 0 {
 			loans = elements
 		}
-		// design.md "Chunks of a mutable slice": a chunk takes the view's loans
+		// standard-library.md "Chunks of a mutable slice": a chunk takes the view's loans
 		// without reborrowing the view, so the view advances while earlier
 		// chunks are held. The chunks are disjoint by construction.
 		if foreach_yields_chunks(graph.k.c, s) && prov_bind_chunk(graph, binding.symbol, loans, expr_span(s.iterable)) {

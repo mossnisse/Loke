@@ -1044,7 +1044,7 @@ eval_simd_lane :: proc(value: Eval_Value, index: int) -> Eval_Value {
 	return value.elements[index]
 }
 
-// design.md "`core:simd`": a fold from lane 0, left to right, as the emitted
+// standard-library.md "`core:simd`": a fold from lane 0, left to right, as the emitted
 // ordered reduction does. A float sum or product needs no `-0.0` or `1.0` seed
 // here, because the seed combined with lane 0 is lane 0. `reduce_min` and
 // `reduce_max` skip NaN lanes, so only an all-NaN vector answers NaN.
@@ -1391,7 +1391,7 @@ map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Ev
 	return &m.elements[len(m.elements) - 1], true
 }
 
-// The element's ordering: its own `<` when it has one (design.md "Sorting
+// The element's ordering: its own `<` when it has one (standard-library.md "Sorting
 // slices"), otherwise the built-in comparison.
 @(private = "file")
 eval_less :: proc(ev: ^Evaluator, span: Span, less: Symbol_Id, a, b: Eval_Value) -> (bool, bool) {
@@ -1539,7 +1539,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	case .Sort, .Reverse_Sort:
 		// A dynamic array is sorted as its place. A slice's receiver is a copy of
 		// its header, but the header's elements are the viewed storage itself
-		// (`eval_slice`), so sorting them sorts what the slice views (design.md
+		// (`eval_slice`), so sorting them sorts what the slice views (standard-library.md
 		// "Sorting slices").
 		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
 			eval_fail(ev, v.span, "L0341", "this value cannot be sorted at compile time")
@@ -1555,7 +1555,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return none, true
 
 	case .Swap:
-		// As for `sort`: a slice swaps the elements it views (design.md
+		// As for `sort`: a slice swaps the elements it views (standard-library.md
 		// "Swapping elements").
 		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
 			eval_fail(ev, v.span, "L0341", "this value cannot be rearranged at compile time")
@@ -1582,7 +1582,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return nil, false
 
 	case .Split_At_Mut:
-		// Both halves view the receiver's elements (design.md "Splitting a
+		// Both halves view the receiver's elements (standard-library.md "Splitting a
 		// mutable slice").
 		mid, mid_ok := count_argument(ev, v, 1)
 		if !mid_ok {
@@ -3040,7 +3040,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		return Eval_Value{}, false
 
-	// design.md "`core:simd`": a vector and its array have the same lanes in the
+	// standard-library.md "`core:simd`": a vector and its array have the same lanes in the
 	// same order, so the conversion only retypes them.
 	case .Simd_Cast:
 		operand, ok := eval_expr(ev, v.bound[0])

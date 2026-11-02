@@ -1,4 +1,4 @@
-// design.md "Atomic operations and Once": a `Once` and a `Lazy` whose setup
+// standard-library.md "Atomic operations and Once": a `Once` and a `Lazy` whose setup
 // takes measurable time, reached at once by more threads than the machine has
 // processors. Each round has a fresh gate, so every round is one winner doing
 // the work and every other thread waiting for it.

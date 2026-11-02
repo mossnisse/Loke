@@ -262,7 +262,7 @@ main :: proc() {}`) { return }
 	testing.expect(t, handle && owner, "an allocator handle contaminated the independent owner's region")
 }
 
-// design.md "Splitting a mutable slice", "Weakening and reborrows".
+// standard-library.md "Splitting a mutable slice", "Weakening and reborrows".
 @(test)
 normalization_delayed_receiver_contract :: proc(t: ^testing.T) {
 	p: Checked
@@ -525,7 +525,7 @@ main :: proc() {}`) { return }
 	testing.expect_value(t, count, 1)
 }
 
-// design.md "Splitting a mutable slice": captures describe evaluated values;
+// standard-library.md "Splitting a mutable slice": captures describe evaluated values;
 // their source places identify bindings without turning captures into reloads.
 @(test)
 normalization_captured_reassignment_contract :: proc(t: ^testing.T) {
@@ -857,8 +857,8 @@ main :: proc() {}`) { return }
 	testing.expect(t, shared_paths, "the copy within `pair` was not carried")
 }
 
-// design.md "Evaluation order", "Splitting a mutable slice", "Procedure
-// type": checked call descriptions retain source ordering, an independent
+// design.md "Evaluation order", "Procedure type", standard-library.md
+// "Splitting a mutable slice": checked call descriptions retain source ordering, an independent
 // receiver capture, and the procedure value a call through one evaluates.
 @(test)
 normalization_call_input_contract :: proc(t: ^testing.T) {

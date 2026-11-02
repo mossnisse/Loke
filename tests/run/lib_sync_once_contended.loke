@@ -1,4 +1,4 @@
-// design.md "Atomic operations and Once": a call that finds the action running
+// standard-library.md "Atomic operations and Once": a call that finds the action running
 // waits for it, so a return means the action has completed. Here the action
 // holds every other thread waiting long enough that each has stopped spinning
 // and blocked, and each must still return only after the action finished:

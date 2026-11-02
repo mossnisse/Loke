@@ -60,7 +60,7 @@ impl Args {
 	// design.md "string type conversions": the conversion validates UTF-8 and
 	// copies into owned storage. The runtime's bytes are already valid, so the
 	// `.none` case is unreachable. An out-of-range index panics, as every index
-	// does (design.md "`os.Args`").
+	// does (standard-library.md "`os.Args`").
 	at :: operator([]) proc(self, index: int) -> string {
 		if (index < 0 || index >= rt_args_count()) {
 			panic("index out of range");

@@ -14,7 +14,7 @@ unordered :: proc() {
 	xs.reverse_sort();
 }
 
-// design.md "Sorting slices": a read-only slice is not sortable, so it has no
+// standard-library.md "Sorting slices": a read-only slice is not sortable, so it has no
 // `sort` to call. `swap` rearranges it too, and is gated the same way.
 read_only :: proc() {
 	readable := []int{3, 1, 2};

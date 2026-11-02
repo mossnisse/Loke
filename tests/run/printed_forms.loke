@@ -1,5 +1,5 @@
 package main;
-// design.md "String format printing": the generated printed forms.
+// standard-library.md "Printed forms": the generated printed forms.
 import "core:fmt";
 
 Point :: struct { @(public) x: f64, @(public) label: string }

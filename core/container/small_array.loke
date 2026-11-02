@@ -16,7 +16,7 @@
 	array, and everything that reaches an element without copying it is
 	unchanged.
 */
-// design.md "Fixed-capacity arrays". The copying members are bound on
+// standard-library.md "Fixed-capacity arrays". The copying members are bound on
 // `is_copyable(T)` (design.md "where clauses"), and the insertions are
 // procedure groups whose other member consumes.
 @(public)
@@ -26,7 +26,7 @@ import "core:fmt";
 import "core:unsafe";
 
 /// What a `try_` operation reports when the array is full.
-// design.md writes `try_append` as `Status(Capacity_Error)`, so this is
+// standard-library.md writes `try_append` as `Status(Capacity_Error)`, so this is
 // the payload inside that result union, not a second fallible shape. Nothing
 // about it is compiler-known: it is an ordinary record with ordinary queries.
 Capacity_Error :: struct {

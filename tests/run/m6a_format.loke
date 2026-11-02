@@ -1,6 +1,6 @@
 package main;
 
-// design.md "String format printing": formatting uses fmt.Formattable.
+// standard-library.md "Printed forms": formatting uses fmt.Formattable.
 // Its `value.format(writer, options)` slot selects that method,
 // and runtime formatting is coherent per concrete `typeid`. The compiler
 // supplies a formatter for every printable built-in; a package may write one

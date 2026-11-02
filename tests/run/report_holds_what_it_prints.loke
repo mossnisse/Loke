@@ -1,4 +1,4 @@
-// design.md "Built-in procedures", "String format printing": printing only reads, so
+// design.md "Built-in procedures", standard-library.md "Printed forms": printing only reads, so
 // arguments of a report may name one place, unless a written `format` is handed a
 // mutable carrier.
 package main;

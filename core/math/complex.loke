@@ -7,7 +7,7 @@
 	A scalar converts through `hook(convert)`, written out: `Complex(f64)(x)`.
 	That is the ordinary conversion rule, not a numeric special case.
 */
-// design.md "Library numeric types". Deliberately not primitive: they get no
+// standard-library.md "core:math". Deliberately not primitive: they get no
 // special relationship with the compiler. `tests/run/lib_numeric.loke` writes
 // the `T = f64` case out by hand to show a user could.
 @(public)
@@ -194,7 +194,7 @@ join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: stri
 
 // ------------------------------------------------ the floating instances --
 //
-// design.md "Library numeric types". The generic blocks above are
+// standard-library.md "core:math". The generic blocks above are
 // constrained by `interfaces.Numeric(T)`, which admits integers and implies no
 // ordering, so nothing in them can call an `f32`/`f64` `hypot`. Narrowing the
 // types would break existing source, so the new operations live in exact

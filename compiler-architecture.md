@@ -824,6 +824,33 @@ stores every local's address through its slot's name, then
 prologue names only the slots that remain. A procedure that registers nothing
 keeps no frame, live flags, or env at all.
 
+### Intrinsic declarations
+
+What a declaration states is checked against what it describes (`L0736`). Its
+visibility must be the supplied name's, since it is what `-doc` shows. A
+procedure's calling convention, parameter types, modes, and result must be the
+compiler's, each written parameter name must be the compiler's name for that
+parameter, since a named argument binds by it, and a parameter has a default
+exactly when the compiler's does. A default's value is the compiler's, so it is
+written for readers. An enum's members must be the compiler's, in order, and a
+struct's fields its public fields, in order, with their types, each public and
+none `using`; the struct has no generic parameters or `where` clause. An
+operation the compiler types itself, such as `raw_data` with its five operand
+forms, has a signature written for readers and checked only for its name; its
+section of this specification defines its typing.
+
+The attribute is valid only at file scope or in such an `impl` block, outside
+`when`, in a package the compiler supplies names to (`L0734`). Besides
+`@(public)` and `@(private)`, on the declaration or a struct field, it takes no
+other attribute there or on a parameter or the struct (`L0734`), since the
+compiler supplies whatever one would say. It must name one of those names, or a
+member the compiler supplies to one of those types, describe it as the kind of
+declaration it is, and describe it once (`L0735`). Every public name the
+compiler supplies to the package, and every member it supplies to `mem.Arena`
+and `mem.Scratch`, has an intrinsic declaration (`L0737`), so none is missing
+from the package's documentation. A constant written `Name :: ---;` without the
+attribute is a syntax error (`L0262`).
+
 ## Source-code map
 
 Files directly in `src/` form the `lokec` package; `src/subprocess/` is a

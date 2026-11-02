@@ -89,7 +89,7 @@ sort ends each half's reborrow before the next, and its merge reads both
 halves through read-only views. Handing each half to its own task does need
 both.
 
-[Splitting a mutable slice](design.md#splitting-a-mutable-slice) is built into
+[Splitting a mutable slice](standard-library.md#splitting-a-mutable-slice) is built into
 the compiler, as `swap` is, because a library cannot write it. Written with
 `unsafe.raw_data`, its halves carry no provenance, so appending to the owner or
 writing through `xs` while they are live is accepted: a use after reallocation
@@ -99,7 +99,7 @@ check, two slice headers, and a result whose two fields are one mutable
 reborrow of `xs`, so no disjointness relation needs tracking: that reborrow
 keeps `xs` suspended until both halves are finished, and writes through the
 halves do not conflict, since suspension constrains uses of the source and not
-of its reborrows. [Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice)
+of its reborrows. [Chunks of a mutable slice](standard-library.md#chunks-of-a-mutable-slice)
 extends this to the data-parallel case.
 
 ### One temporary-lifetime rule
@@ -1586,6 +1586,25 @@ semantic force would only repeat `static_assert(Interface(Type))` while implying
 nominal membership. Giving it force would require a different design for
 coherence, generic conformance, and witness construction.
 
+### Choosing between `where` constraints and specialization
+
+Two mechanisms determine whether a generic declaration is applicable:
+
+- **[`where` clauses](design.md#where-clauses)** filter an otherwise matched declaration
+  with compile-time Boolean expressions. `N > 2` and `Additive(T)` are the same
+  kind of bound. An interface declaration does not add a third constraint
+  mechanism; it defines a named, reusable Boolean predicate whose failure can
+  identify an individual structural requirement.
+- **[Specialization](design.md#specialization)** matches and destructures structural
+  shape in a parameter type, as in `values: []$E` or
+  `table: ^Table($Key, $Value)`. Because it binds parts and participates in
+  overload specificity, it is not merely another predicate.
+
+Use an interface when a capability is reused, when constrained code needs its
+members or slots, when a value relation is part of that reusable capability, or
+when a per-requirement diagnostic is valuable. Use a direct `where` expression
+for a relation local to one declaration, such as `N > 2`.
+
 ### A `()` unit type
 
 `Unit :: struct {}` already represents the empty result payload in
@@ -1723,7 +1742,7 @@ Generated formatting distinguishes values that would otherwise look identical:
 
 Struct formatting includes only public fields because one generated form serves
 all packages. A type wanting a different representation declares `format`.
-See [String format printing](design.md#string-format-printing).
+See [Printed forms](standard-library.md#printed-forms).
 
 ### Explicit overload groups
 

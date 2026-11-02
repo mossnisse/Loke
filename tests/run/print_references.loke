@@ -1,4 +1,4 @@
-// design.md "String format printing": a checked pointer prints the value it
+// standard-library.md "Printed forms": a checked pointer prints the value it
 // names, as a box does; an unchecked address still prints as an address.
 package main;
 import "core:fmt";

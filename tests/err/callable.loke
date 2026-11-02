@@ -10,7 +10,7 @@ field_only :: proc() -> int {
 	return holder(1);
 }
 
-// design.md "Standard interface catalogue": `call` methods that disagree on
+// standard-library.md "Standard interface catalogue": `call` methods that disagree on
 // their result leave no `Result` to name.
 Mixed :: struct { }
 

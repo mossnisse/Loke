@@ -580,7 +580,7 @@ remove_directory :: proc(path: string_view) -> Status(io.Error) {
 */
 // This is not a preference. A `[dynamic]Directory_Entry` whose entries own
 // their name would retain and release that name at every step, and a walk that
-// only reads each name should not pay for a copy of it. The loop is design.md
+// only reads each name should not pay for a copy of it. The loop is standard-library.md
 // "Streaming a fallible source".
 read_directory :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(),

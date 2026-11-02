@@ -101,7 +101,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// (design.md "`unsafe.transmute`"):
 		contribute_builtin(c, pkg, "transmute", .Unsafe_Transmute)
 	case STD_FMT:
-		// design.md "String format printing": the library owns Formattable,
+		// standard-library.md "Printed forms": the library owns Formattable,
 		// writer, options, and `print` family. The compiler owns the process sinks.
 		// Package-private, because `core:fmt` names them unqualified and nothing
 		// outside it should write to a sink directly.
@@ -188,7 +188,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "next_power_of_two", .Math_Next_Power_Of_Two)
 		contribute_builtin(c, pkg, "checked_next_power_of_two", .Math_Checked_Next_Power_Of_Two)
 	case STD_LOG:
-		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
+		// standard-library.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated
 		// lazily, exactly as the other `LOKE_*` enums are.
 		contribute_type(c, pkg, "Level", build_config_enum_type(c, .Log_Level))

@@ -1,4 +1,4 @@
-// design.md "Atomic operations and Once": a call waiting on an action that
+// standard-library.md "Atomic operations and Once": a call waiting on an action that
 // panics panics too. The waiter has blocked by the time the action panics, so
 // only the poisoning's wake can release it; without one this hangs. `main`'s
 // unwind joins the waiter, so the waiter's panic is what ends the program,

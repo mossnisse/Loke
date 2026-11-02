@@ -4,7 +4,7 @@ import "core:fmt";
 
 // design.md "Weakening and reborrows": printing only reads a mutable carrier, so a
 // later read of it is allowed, wherever the carrier is held. A pointer prints what it
-// views (design.md "String format printing"), so it is read as a slice is. It is free
+// views (standard-library.md "Printed forms"), so it is read as a slice is. It is free
 // again once printing ends.
 
 Holder :: struct { items: []mut int, p: ^mut int, count: int }

@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:container";
 
-// A move-only element in the library containers (design.md "Fixed-capacity
+// A move-only element in the library containers (standard-library.md "Fixed-capacity
 // arrays" and "where clauses"). The methods that copy an element are bound on
 // `is_copyable(T)`, so they are not members of these instances at all; what is
 // left is the half that reaches an element without copying it.

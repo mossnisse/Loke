@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Chunks of a mutable slice": the chunks are one mutable reborrow
+// standard-library.md "Chunks of a mutable slice": the chunks are one mutable reborrow
 // of the receiver, so the receiver is suspended while any chunk is live, in
 // the loop and after it. A chunk binding is a mutable carrier of its own, so a
 // copy of it suspends it for the rest of its step.

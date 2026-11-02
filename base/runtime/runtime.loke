@@ -158,7 +158,7 @@ Status :: Result(Unit, $E);
 // any other. `f` owns the error it is handed, so it moves a managed or
 // move-only error into the new variant rather than cloning it. `f` is any
 // callable taking the error, and `C.Result`, what it returns, is the new error
-// type (design.md "Standard interface catalogue").
+// type (standard-library.md "Standard interface catalogue").
 impl Result($T, $E) {
 	map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
 		where interfaces.Callable(C, proc(error: move E) -> C.Result) {

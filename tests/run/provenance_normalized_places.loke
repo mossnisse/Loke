@@ -1,7 +1,7 @@
 package main;
 import "core:fmt";
 
-// design.md "Splitting a mutable slice", "Temporaries and procedure boundaries".
+// standard-library.md "Splitting a mutable slice", "Temporaries and procedure boundaries".
 deferred :: proc(early: bool) {
     defer {
         view: []int = make([dynamic]int, 2);

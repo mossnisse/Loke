@@ -2,7 +2,7 @@ package main;
 
 import "core:fmt";
 
-// design.md "Chunks of a mutable slice": a chunk length below one panics,
+// standard-library.md "Chunks of a mutable slice": a chunk length below one panics,
 // since no chunk could make progress.
 main :: proc() {
 	values := [3]int{1, 2, 3};

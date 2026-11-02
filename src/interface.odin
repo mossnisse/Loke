@@ -796,7 +796,7 @@ callable_interface :: proc(k: ^Checker) -> ^Interface_Info {
 	return nil
 }
 
-// design.md "Standard interface catalogue": `Callable(Self, Signature)` holds
+// standard-library.md "Standard interface catalogue": `Callable(Self, Signature)` holds
 // for a procedure that converts to `Signature`, and for a type with a `call`
 // method meeting the slot `call: proc(self, <Signature's parameters>) -> <its
 // result>`. A field named `call` is not a method, so it never qualifies.
@@ -860,7 +860,7 @@ callable_call_method :: proc(k: ^Checker, info: ^Interface_Info, subject, signat
 	return INVALID_SYMBOL
 }
 
-// design.md "Standard interface catalogue": a `call` method meets a signature
+// standard-library.md "Standard interface catalogue": a `call` method meets a signature
 // when it takes a plain `self`, then the signature's parameter types and modes,
 // returns its result, retains no argument further than it allows, and matches
 // the rest of its procedure type identity.
@@ -884,7 +884,7 @@ call_method_matches :: proc(c: ^Compiler, sym: ^Symbol, subject, signature: Type
 	return call_escapes_weaken_to(c, sym.proc_type, signature) && call_effects_match(c, sym.proc_type, signature)
 }
 
-// design.md "Standard interface catalogue": `C.Result` is what a callable
+// standard-library.md "Standard interface catalogue": `C.Result` is what a callable
 // returns, a procedure type's result or its one `call` method's, so a generic
 // signature can name it. A type declaring its own `Result` keeps it, and one
 // whose `call` methods disagree, or return nothing, gets none.

@@ -9,8 +9,8 @@
 	The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
 	compile-time error rather than a silent no-op.
 */
-// design.md "Slices", design.md "Sorting slices", and design.md "Slice queries
-// and copies".
+// design.md "Slices", standard-library.md "Sorting slices", and
+// standard-library.md "Slice queries and copies".
 //
 // The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private
 // sorting bridge reaches the runtime's raw relocation machinery.
@@ -28,7 +28,7 @@ import "core:mem";
 	borrows. It is borrowed for the call and retained nowhere, and sorting
 	allocates nothing. The sort is not stable.
 */
-// design.md "Sorting slices".
+// standard-library.md "Sorting slices".
 //
 // The package-private intrinsic owns only the bridge to the shared
 // byte-relocating runtime introsort: it receives an ordering record's address
@@ -57,7 +57,7 @@ impl Ordering($T, $C) {
 	NaN sorts to an unspecified permutation rather than trapping. The same as
 	`values.sort()`. The sort is not stable.
 */
-// This is design.md's free spelling of the contributed `values.sort()` member,
+// This is standard-library.md's free spelling of the contributed `values.sort()` member,
 // and it forwards to it: one introsort in the runtime, reached by both, so the
 // two spellings cannot drift apart.
 sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
@@ -120,7 +120,7 @@ binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 // filled. `exchange` needs a replacement, and the zero is the only one
 // available without a copy, which an element type may not have at all.
 //
-// This is design.md's free spelling of the contributed `values.swap()` member,
+// This is standard-library.md's free spelling of the contributed `values.swap()` member,
 // and it forwards to it exactly as `sort` does: one implementation, reached by
 // both spellings.
 swap :: proc(values: []mut $T, left: int, right: int) {

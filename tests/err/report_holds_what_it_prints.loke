@@ -1,4 +1,4 @@
-// design.md "Built-in procedures", "String format printing": a report borrows each
+// design.md "Built-in procedures", standard-library.md "Printed forms": a report borrows each
 // argument until it has printed the last, and printing reads what a pointer points to, so
 // a later argument may not write what an earlier one reaches.
 package main;

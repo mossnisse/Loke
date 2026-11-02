@@ -3,7 +3,7 @@ package lib;
 import "core:fmt";
 
 // design.md "Interface bodies": a public type's private `format` meets no slot,
-// here included, so design.md "String format printing" uses the generated
+// here included, so standard-library.md "Printed forms" uses the generated
 // default for it in every package. A private type's own `format` still serves.
 
 @(public)

@@ -1,7 +1,7 @@
 // design.md "One result": a success that carries `Unit` as the result is
 // written, as `Result(Unit, E)`'s does, may reach the end of its body or use
 // `return;`, as a payloadless one does, including when only the failure is
-// generic. A `Unit` payload prints as `.name` ("String format printing"), and
+// generic. A `Unit` payload prints as `.name` (standard-library.md "Printed forms"), and
 // next to a non-null reference it leaves the null word as its tag
 // ("Representation").
 package main;

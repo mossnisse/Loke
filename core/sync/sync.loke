@@ -7,7 +7,7 @@
 	Data races are not checked: a race is undefined behaviour, and there are no
 	implicit `Send`/`Sync` interfaces.
 */
-// design.md "Concurrency and the memory model", design.md "Atomic operations
+// design.md "Concurrency and the memory model", standard-library.md "Atomic operations
 // and Once".
 //
 // The compiler owns the operations whose ordering is part of the instruction,
@@ -341,7 +341,7 @@ wake_waiters :: proc() {}
 	storage with no initializer. Like `Once`, it works behind the `^T` a
 	`Shared(T)` hands out, and it is move-only.
 */
-// design.md "Atomic operations and Once". The value is synchronized: this
+// standard-library.md "Atomic operations and Once". The value is synchronized: this
 // package writes it once, before publishing it, and only reads it after, so a
 // task that calls `get` on a global `Lazy` writes no global
 // (design.md "Globals while tasks run").

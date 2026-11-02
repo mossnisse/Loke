@@ -166,7 +166,7 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// design.md "Swapping elements": two elements change place, so no copy or drop
+// standard-library.md "Swapping elements": two elements change place, so no copy or drop
 // hook runs. Both loads precede either store, so equal indices are a no-op.
 @(private = "file")
 emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
@@ -206,7 +206,7 @@ emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// design.md "Splitting a mutable slice": one bounds check and two headers over
+// standard-library.md "Splitting a mutable slice": one bounds check and two headers over
 // the receiver's elements.
 @(private = "file")
 emit_synth_split :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
@@ -243,7 +243,7 @@ emit_synth_split :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// design.md "Chunks of a mutable slice": the view over the receiver, after the
+// standard-library.md "Chunks of a mutable slice": the view over the receiver, after the
 // chunk length is checked.
 @(private = "file")
 emit_synth_chunks :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {

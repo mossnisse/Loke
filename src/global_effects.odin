@@ -1652,7 +1652,7 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, program: ^Effect_Program
 				}
 			}
 		}
-		// design.md "String format printing": the witnesses nested and generic
+		// standard-library.md "Printed forms": the witnesses nested and generic
 		// printing reach are built after this pass, so the slot may reach any
 		// `format` method it can meet, which a public type's private one is not.
 		if view, found := c.runtime_types["Format_View"]; found && call.dyn_interface == underlying_info(c, view).dyn_interface {

@@ -1,4 +1,4 @@
-// design.md "Comparison operators", "Sorting slices": a type's own `<` or `==`
+// design.md "Comparison operators", standard-library.md "Sorting slices": a type's own `<` or `==`
 // declared as a procedure group is its own all the same. A sort orders by the
 // grouped `<`; a part, a map key, and a constant compare by the grouped `==`,
 // as a constant compares by any own `==` of a scalar part.

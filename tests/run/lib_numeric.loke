@@ -3,8 +3,7 @@ package main;
 import "core:fmt";
 import "core:math";
 
-// `Complex(T)` and `Quaternion(T)` (design.md "Library numeric
-// types").
+// `Complex(T)` and `Quaternion(T)` (standard-library.md "core:math").
 //
 // The first block is a hand-written `Complex_F64`, proving that the library
 // type needs no facility a user could not write; the rest is the generic version
@@ -78,7 +77,7 @@ main :: proc() {
 	fmt.println(Q.from_components(1, 2, 3, 4).norm_squared());
 	fmt.println(i + Q(1.0));
 
-	// ---- the floating specializations (design.md "Library numeric types") ----
+	// ---- the floating specializations (standard-library.md "core:math") ----
 	//
 	// `abs`, `inverse`, and a `divide` that does not form `c*c + d*d` exist only
 	// for `Complex(f32)`/`Complex(f64)` and the two `Quaternion` instances; every

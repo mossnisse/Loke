@@ -2,7 +2,7 @@ package main;
 
 import "core:fmt";
 
-// design.md "Splitting a mutable slice": the two halves are one mutable
+// standard-library.md "Splitting a mutable slice": the two halves are one mutable
 // reborrow of the receiver, so the receiver is suspended while either is live,
 // and the halves are bounded by what the receiver views.
 

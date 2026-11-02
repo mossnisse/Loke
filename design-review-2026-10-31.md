@@ -51,6 +51,13 @@ overflows the stack on a long chain ([Probes](#probes)). The copy decision for
 drop hooks, argued on that ground and split from the attribute move, which is
 syntax alone, then landed and is under [Adopted proposals](#adopted-proposals).
 
+On 2026-11-02 the editorial proposals were applied to design.md: the conformance
+appendix, effects and initialization stated once, procedures as callables, and the
+explanation of `inout` beside `^mut T`. Library material left design.md for
+standard-library.md at the same time. They are under
+[Adopted proposals](#adopted-proposals), and their sections below say so. Line
+counts in this review are those of the versions it examined.
+
 ## Contents
 
 - [Summary](#summary)
@@ -82,13 +89,11 @@ that matters, and `inout` and `^mut T` may ([2.5](#25-one-capability-axis)).
 The remaining recommendations with the best ratio of concepts removed to
 expressiveness lost, in rough priority order:
 
-1. **Effects stated once**, as one algebra that the four inferred effects
-   read ([2.3](#23-effects-as-one-algebra)).
-2. **Attributes in one position**, with `move_only` as one of them
+1. **Attributes in one position**, with `move_only` as one of them
    ([3.1](#31-attributes-in-one-position)).
-3. **Delete** `using` and, if wanted, the splat of a typed scalar into a
+2. **Delete** `using` and, if wanted, the splat of a typed scalar into a
    `Simd` ([5](#5-deletion-candidates)).
-4. **Generated-code performance.** Prove common index arithmetic
+3. **Generated-code performance.** Prove common index arithmetic
    overflow-free and indexed views' bounds stable; emit the container fast
    paths in the module, since linking the runtime as bitcode did not inline
    them; and emit `noalias` under `-panic=abort` once its soundness
@@ -149,7 +154,7 @@ allocator does not ([Withdrawn proposals](#withdrawn-proposals)).
 budgets, the normalized-input discussion, and several paragraphs under
 [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
 describe how a conforming analysis must behave in terms only an implementer
-reads. They belong in a normative conformance appendix
+reads. Those that track provenance now sit in a normative appendix
 ([7](#7-the-specification-itself)).
 
 ## 2. Type theory as a simplifying lens
@@ -187,10 +192,11 @@ general fix is variadic generics, which this review does not recommend. The
 smaller observation is that the catalogue already treats a procedure value as a
 record with a `call` method and no fields (`dyn proc(...)` is
 `dyn Callable(...)`, and a procedure "occupies the view's data word"). Saying
-so once in design.md, as the definition of procedure values, would let
+so once in design.md, as the definition of procedure values, lets
 [Calling a value](design.md#calling-a-value), `Callable`, and
 [Borrowed callable views](design.md#borrowed-callable-views) share one
-paragraph of rules instead of restating them.
+statement of the rules. This is adopted: [Calling a value](design.md#calling-a-value)
+holds it.
 
 ### 2.3 Effects as one algebra
 
@@ -200,7 +206,8 @@ write-back are each defined with their own resolution rule for callbacks,
 procedure values, `dyn` views, and unions, and the specification says "with
 callbacks and unions resolved as under Global write effects" three times.
 
-**Proposal.** Define *effects* once: a procedure's effect is a set of facts
+**Proposal (adopted as [Inferred effects](design.md#inferred-effects)).** Define
+*effects* once: a procedure's effect is a set of facts
 (writes global `g`, reaches through global carrier `g`, operates on region `r`,
 writes `thread_local` `t`); a call takes the union of its callee's effects; a
 call through a value takes the union over every procedure the value may hold,
@@ -323,7 +330,7 @@ above understate:
   tests, and the examples changes, and what it buys is a row of one table, a
   column of another, and the receiver sentence.
 
-**A cheaper fix for the asymmetry.** If both stay, explain them where the
+**A cheaper fix for the asymmetry (adopted).** If both stay, explain them where the
 reader meets the difference. [Capabilities and the one
 rule](design.md#capabilities-and-the-one-rule) can say that a parameter spells
 the mutable capability `inout` because the body works on the caller's variable
@@ -762,6 +769,12 @@ reduction, a separately named operation says so, for example
 
 ## 7. The specification itself
 
+Both proposals below are adopted: [Analysis
+guarantees](design.md#analysis-guarantees) is the appendix, and it holds the
+provenance precision and tracking rules. The programmer-facing text did not reach
+half its length, since the rules on reborrows, escape levels, and retention that
+carry examples stayed with the chapter they explain.
+
 - **Separate the normative core from analysis guarantees.** Chapter 8 and the
   appendix mix the rules a programmer needs (the one rule, places, reborrows,
   escape levels) with what an implementation must prove (minimum provenance
@@ -811,7 +824,7 @@ steps that have landed are under [Adopted proposals](#adopted-proposals).
    last: it is the largest surface change, and it needs the formatter able to
    rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
-   can be written now either way.
+   is written.
 
 ## Adopted proposals
 
@@ -819,6 +832,16 @@ These were proposed by this review and have landed; the specification and
 CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md.
 
+- **The specification is stated once, and without the library** (2026-11-02). An
+  editorial change, with no change to what a program means.
+  [Inferred effects](design.md#inferred-effects) defines how effects are computed,
+  one sentence defines taking a value [as an initialization
+  does](design.md#value-semantics-and-the-ownership-rule),
+  [Calling a value](design.md#calling-a-value) holds the `Callable` rule, and
+  [Analysis guarantees](design.md#analysis-guarantees) holds what an analysis must
+  prove. [standard-library.md](standard-library.md) now specifies printing,
+  `core:slice`, `core:container`, `core:simd`, `core:sync`, `core:mem`'s regions, the
+  interface catalogue, and the compiled log level.
 - **A record with a drop hook says how it is copied**
   ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types),
   [`@(fieldwise_copy)`](design.md#fieldwise_copy), rationale under

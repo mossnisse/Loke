@@ -135,7 +135,7 @@ fill :: proc(source: inout $G, destination: []mut u8) where Source(G) {
 	that trades places with it. Fewer than two elements take no draw. The swap
 	runs no copy or drop hook, so any element type can be shuffled.
 */
-// design.md "Swapping elements".
+// standard-library.md "Swapping elements".
 shuffle :: proc(source: inout $G, values: []mut $T) where Source(G) {
 	for (i := values.len() - 1; i > 0; i -= 1) {
 		values.swap(i, in_range(inout source, 0 ..= i));

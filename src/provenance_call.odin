@@ -55,7 +55,7 @@ Container_Op_Effect :: enum {
 	Removes_Element,
 	// design.md "Iteration adapters": a map view read-borrows the map.
 	Returns_View,
-	// design.md "Splitting a mutable slice", "Chunks of a mutable slice": the
+	// standard-library.md "Splitting a mutable slice", "Chunks of a mutable slice": the
 	// result views what the receiver views, so the receiver is lent as a mutable
 	// carrier argument is.
 	Lends_Receiver,
@@ -231,7 +231,7 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 }
 
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
-// "Splitting a mutable slice".
+// standard-library.md "Splitting a mutable slice".
 // Keyed by the call node alone, as its capture is (`prov_input_capture`).
 prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input {
 	key := Prov_Input_Key{node = &call.base, expansion = graph.expansion}
