@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A read-only copy of a carrier that comes to hold a reborrow of a mutable one later in a loop
+  is now a reborrow of it too ([Weakening and
+  reborrows](design.md#weakening-and-reborrows)). This compiled, and read `x` through `y` while
+  it wrote `x` on the second time round, and is now `L0641`, as are the same with a field, a
+  record, a view, a literal, a call's result, a spawned argument, or a load through a pointer:
+  `r: ^int = other; for (i := 0; i < 2; i += 1) { y := r; x^ = 1; z := y^; r = x; }`.
+  Upgrade by ending the use of the copy before the write.
 - An `assert` or `panic` report now holds what each argument prints until it has printed
   the last ([Built-in procedures](design.md#built-in-procedures)), so a later argument
   cannot write it. `assert(false, "m", p, grow(p))` with `p: ^mut Node` compiled when `Node`

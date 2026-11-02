@@ -482,11 +482,9 @@ Prov_Reborrow :: struct {
 	// Loaded on the way to a place through `source` (`Prov_Load_Kind.Walked`): the
 	// access to that place stands for the use, so it suspends nothing.
 	walked: bool,
-	// Taken from a read-only carrier loaded out through a pointer, or in a place a
-	// store or a call may land in, or from a copy of one, which extends a reborrow only
-	// once the solve finds that carrier holds one of a mutable carrier
-	// (`prov_reborrow_loaded`, `prov_activate_landed_copies`); until then the solve does
-	// not see it.
+	// Taken from a read-only carrier that may come to hold a reborrow of a mutable one,
+	// which extends it only if that carrier does, which is settled once every link is
+	// made (`prov_settle_pending_reborrows`). Until then the solve does not see it.
 	pending: bool,
 	// Links a carrier to where a store through carriers landed it, or carriers a call
 	// may have copied to each other, in both directions (`prov_link_copied_carriers`):
@@ -3365,9 +3363,7 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	// Links depend on reach, and severing on links.
 	link_landed_stores(&state)
 	resolve_content_reads(&state)
-	if graph.has_linked_store {
-		prov_activate_landed_copies(graph)
-	}
+	prov_settle_pending_reborrows(graph)
 	solve_severing(&state)
 	solve_loan_liveness(&state)
 	report_provenance(&state)
@@ -4259,8 +4255,6 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 			}
 		}
 	}
-	// Activating pending reborrows changes no count, so the index is rebuilt.
-	state.reborrow_starts = nil
 }
 
 // design.md "Values that contain borrows": what the storage a use's sources lend
@@ -6438,9 +6432,10 @@ slot_stands_for_many :: proc(entry: Prov_Slot) -> bool {
 	return !path_is_exact(entry.path)
 }
 
-// The indices of the reborrows of `slot`, in `graph.reborrows` order. The
-// index is rebuilt once materialization has added reborrows since, so a
-// search through a long chain of reborrows reads only each slot's own.
+// The indices of the reborrows of `slot`, in `graph.reborrows` order, once
+// they have settled (`prov_settle_pending_reborrows`). The index is rebuilt once
+// materialization has added reborrows since, so a search through a long chain of
+// reborrows reads only each slot's own.
 @(private = "file")
 reborrows_of :: proc(state: ^Prov_State, slot: int) -> []int {
 	graph := state.graph
@@ -6448,9 +6443,7 @@ reborrows_of :: proc(state: ^Prov_State, slot: int) -> []int {
 		slots := len(graph.prov_slots)
 		starts := make([]int, slots + 1, graph.alloc)
 		for reborrow in graph.reborrows {
-			if !reborrow.pending {
-				starts[reborrow.source + 1] += 1
-			}
+			starts[reborrow.source + 1] += 1
 		}
 		for index in 0 ..< slots {
 			starts[index + 1] += starts[index]
@@ -6458,10 +6451,8 @@ reborrows_of :: proc(state: ^Prov_State, slot: int) -> []int {
 		indices := make([]int, len(graph.reborrows), graph.alloc)
 		filled := make([]int, slots, context.temp_allocator)
 		for reborrow, index in graph.reborrows {
-			if !reborrow.pending {
-				indices[starts[reborrow.source] + filled[reborrow.source]] = index
-				filled[reborrow.source] += 1
-			}
+			indices[starts[reborrow.source] + filled[reborrow.source]] = index
+			filled[reborrow.source] += 1
 		}
 		state.reborrow_starts, state.reborrow_indices, state.reborrows_indexed = starts, indices, len(graph.reborrows)
 	}

@@ -1,0 +1,132 @@
+L0641
+@20:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@29:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@39:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@48:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@57:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@67:4
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@77:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@87:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@96:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@107:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@116:3
+`x` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@124:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@130:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@139:3
+`l` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@148:3
+`l` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@155:18
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@161:19
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@169:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@176:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@183:19
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@188:20
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@195:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@202:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@211:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@219:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@228:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@236:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@247:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@258:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@266:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@273:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@281:2
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@288:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@296:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@303:4
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@313:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@323:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@333:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@341:4
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@349:19
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@362:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@373:3
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@385:23
+`x` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@397:3
+`x` cannot be used here: a read-only reborrow of it is still in use

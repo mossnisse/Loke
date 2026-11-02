@@ -3480,7 +3480,7 @@ already see one into it, and it could no longer. No fixture, comparison, or tabl
 that, as the tables read such a copy through a pointer, where it is loaded and pending
 already, and it took a table of call copies, written for the next step, to show it. So a
 copy of such a slot is now pending as a loaded one is, and the solve activates it from
-the links it finds (`prov_activate_landed_copies`). When moving links, check who reads
+the links it finds (`prov_settle_pending_reborrows`). When moving links, check who reads
 them during the walk, as well as what the solve does with them.
 
 The links of a call that copies moved next, and changed no verdict and no diagnostic.
@@ -3488,6 +3488,35 @@ They had been built by type during the walk and switched on by the slots a `Rear
 reached, which needed severing to replay reach. Linking those slots once reach has
 settled does the same with no replay, no flag of their own, and no second copy of each
 link for an element slot made later, as a landing includes those.
+
+### Loans cannot replace the links
+
+[Provenance architecture](open-questions.md#provenance-architecture) proposed one rule for
+exclusivity: a `Def` whose sources hold a mutable loan another live slot holds, outside the
+chain the new slot derives from, is the conflict. It does not work, for two reasons. Most uses
+are no `Def`: in `y := x; x^ = 1; y^ = 2;`, `x` is in `y`'s chain and the write defines nothing,
+and finding the conflict there takes the graph the rule was to replace. And applying it at every
+use rejects valid programs, as a shared loan is not a shared carrier: all of a view parameter's
+slots hold one loan, so `first := links[0].to; second := links[1].to;` would conflict. A link says
+what is a copy of what, and the overlap check in `live_reborrow_of` only filters the links. Loans
+could say so only if each carrier had its own, which is the redesign of caller slots.
+
+Looking at this found a real hole instead. `prov_reborrow` decided whether to link a read-only
+copy from the links the walk had met, so one a later definition reaches round a loop was left
+pending, and only a load or a store's link ever activated it. Of 58 programs judged by hand,
+11 of them straight-line forms to show each conflicts at all, 18 were wrongly accepted:
+`y := r; x^ = 1; z := y^; r = x;` in a loop reads `x` through `y` across the write. The same
+order dependence was in a literal's capture, a spawn's hold, what a call retains, and a read-only
+load, which asked in event order whether its source reborrowed a mutable carrier. So every
+candidate is now made pending, and one pass settles them once every link exists
+(`prov_settle_pending_reborrows`). `prov_slot_reborrows_mutable` and `prov_activate_copies` went
+with that, and over the corpus and the 6,930 generated programs only one note changed.
+
+The next step looked like removing `pending` altogether, since a read-only link has `passes_on`
+and a walk reaches it only through a chain from a mutable carrier, and removing it from a load's
+links changed nothing. It is not so for the rest. With every link active, 24 inputs of the corpus
+differ, as `foreach (element in split_elements(rest))` in `core:path` conflicts with its own
+temporary, which is read-only and has no `passes_on`. So `pending` stays, as the filter.
 
 ### A task holds what it is lent until the join
 

@@ -1,0 +1,149 @@
+// design.md "Weakening and reborrows": a read-only copy of a carrier holds what that
+// carrier held then, so one a definition after it reaches round a loop is free where it
+// is not used, or where what would conflict was replaced first.
+package main;
+import "core:fmt";
+Holder :: struct { p: ^int }
+Link :: struct { to: ^mut int }
+H2 :: struct { a: ^int, n: int }
+id :: proc(p: ^int) -> ^int { return p; }
+two :: proc(p: ^int, n: int) -> int { return p^ + n; }
+read_it :: proc(p: ^int) { n := p^; }
+
+ok_copy_done_before_the_write :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		z := y^;
+		x^ = 1;
+		r = x;
+	}
+}
+ok_replaced_before_the_back_edge :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		z := y^;
+		r = x;
+		r = other;
+	}
+}
+ok_no_loop :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	y := r;
+	x^ = 1;
+	z := y^;
+	r = x;
+}
+ok_reads_only :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		n := x^;
+		z := y^ + n;
+		r = x;
+	}
+}
+ok_never_stored_mutable :: proc(x: ^mut int, other: ^int, third: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		z := y^;
+		r = third;
+	}
+}
+ok_loop_exits_after_the_store :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		z := y^;
+		r = x;
+		break;
+	}
+}
+ok_later_weakening_of_a_load_done :: proc(l: ^mut Link, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		z := y^;
+		l^.to^ = 1;
+		r = l^.to;
+	}
+}
+ok_loop_literal_done :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		h := H2{r, 0};
+		z := h.a^;
+		x^ = 1;
+		r = x;
+	}
+}
+ok_loop_result_done :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := id(r);
+		z := y^;
+		x^ = 1;
+		r = x;
+	}
+}
+ok_loop_argument_read :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		n := two(r, x^);
+		r = x;
+	}
+}
+ok_loop_store_through_done :: proc(@(escape=stored) x: ^mut int, @(escape=stored) other: ^int, pr: ^mut ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		pr^ = r;
+		q := pr^;
+		z := q^;
+		x^ = 1;
+		pr^ = other;
+		r = x;
+	}
+}
+ok_loop_spawn_joined :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		parallel {
+			spawn read_it(r);
+		}
+		x^ = 1;
+		r = x;
+	}
+}
+ok_loop_literal_read :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		h := H2{r, x^};
+		z := h.a^;
+		r = x;
+	}
+}
+ok_load_replaced_in_the_same_iteration :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	h := Holder{other};
+	ph := &mut h;
+	for (i := 0; i < 3; i += 1) {
+		y := r;
+		ph^.p = y;
+		ph^.p = other;
+		q := ph^.p;
+		x^ = 1;
+		z := q^;
+		r = x;
+	}
+}
+main :: proc() {
+	value, other := 5, 2;
+	ok_copy_done_before_the_write(&mut value, &other);
+	ok_replaced_before_the_back_edge(&mut value, &other);
+	fmt.println(value, other);
+}

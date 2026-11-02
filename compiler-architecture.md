@@ -519,8 +519,9 @@ Keep these contracts:
   the carriers it reached as reborrows of each other through a hub, which
   hold from that `Rearrange` on (`Prov_Reborrow.from_store`), so an earlier use
   conflicts with nothing, and only a store replacing one severs them. A copy of a
-  read-only carrier in lasting storage stays pending until the solve finds such
-  a link into it (`prov_activate_landed_copies`), as the walk cannot see one.
+  read-only carrier that may come to hold a reborrow is linked as pending, and the
+  solve keeps those whose source does once every link is made
+  (`prov_settle_pending_reborrows`), as the walk cannot see all of them.
 - **A reordering moves carriers.** Each value of an assignment that only reorders
   its targets (`prov_assign_permutes`) still reborrows what it read, and the place it
   lands in reborrows that, so what a carrier was copied from goes on to where it went.

@@ -1166,6 +1166,9 @@ write_view :: proc(s: []Held_Pair) { s[0].a^ = 1; }
 write_slice_pair :: proc(p: ^Slice_Held) { p^.s[0] = 1; }
 read_int :: proc(p: ^int) -> int { return p^; }
 read_view :: proc(s: []int) -> int { return s[0]; }
+bump_int :: proc(x: ^mut int) -> int { x^ = 1; return 1; }
+read_task :: proc(p: ^int) { n := p^; }
+keep_ro_held :: proc(dst: ^mut Ro_Held, @(escape=stored) p: ^int) { dst^.a = p; }
 `
 
 @(private = "file")
@@ -1178,6 +1181,28 @@ STORE_LANDING_CASES := [?]Stored_Reach_Case {
 	{"unknown_store_read_back_other_constant", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
 	{"unknown_store_read_back_same_index", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[i].to; other^ = 1; y^ = 2;", true},
 	{"unknown_store_read_back_done", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; y := s[1].to; y^ = 2; other^ = 1;", false},
+	// A read-only copy of a carrier a definition after it reaches round a loop
+	// (`prov_settle_pending_reborrows`).
+	{"later_copy", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := r; x^ = 1; z := y^; r = x; }", true},
+	{"later_copy_done", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := r; z := y^; x^ = 1; r = x; }", false},
+	{"later_copy_replaced", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := r; x^ = 1; z := y^; r = x; r = other; }", false},
+	{"later_copy_of_copy", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := r; w := y; x^ = 1; z := w^; r = x; }", true},
+	{"later_copy_read_beside", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := r; n := x^; z := y^ + n; r = x; }", false},
+	{"later_copy_chain", "x: ^mut int, other: ^int", "s: ^int = other; r: ^int = other; for (i := 0; i < 3; i += 1) { y := s; x^ = 1; z := y^; s = r; r = x; }", true},
+	{"later_field", "x: ^mut int, other: ^int", "h := Ro_Held{other, 0}; for (i := 0; i < 3; i += 1) { y := h.a; x^ = 1; z := y^; h.a = x; }", true},
+	{"later_record", "x: ^mut int, other: ^int", "h := Ro_Held{other, 0}; for (i := 0; i < 3; i += 1) { g := h; x^ = 1; z := g.a^; h.a = x; }", true},
+	{"later_result", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := read_int(r); x^ = y; z := r; r = x; }", true},
+	{"later_literal", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { h := Ro_Held{r, bump_int(x)}; z := h.a^; r = x; }", true},
+	{"later_literal_read", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { h := Ro_Held{r, x^}; z := h.a^; r = x; }", false},
+	{"later_literal_of_a_load", "x: ^mut int, other: ^int", "r: ^int = other; h := Ro_Held{other, 0}; ph := &mut h; for (i := 0; i < 3; i += 1) { v := Ro_Held{ph^.a, bump_int(x)}; z := v.a^; ph^.a = r; r = x; }", true},
+	{"later_loaded", "x: ^mut int, other: ^int", "r: ^int = other; h := Ro_Held{other, 0}; ph := &mut h; for (i := 0; i < 3; i += 1) { q := ph^.a; x^ = 1; z := q^; y := r; ph^.a = y; r = x; }", true},
+	{"later_loaded_replaced", "x: ^mut int, other: ^int", "r: ^int = other; h := Ro_Held{other, 0}; ph := &mut h; for (i := 0; i < 3; i += 1) { y := r; ph^.a = y; ph^.a = other; q := ph^.a; x^ = 1; z := q^; r = x; }", false},
+	{"later_kept_copy", "@(escape=stored) x: ^mut int, @(escape=stored) other: ^int, dst: ^mut Ro_Held", "r: ^int = other; for (i := 0; i < 3; i += 1) { y := r; keep_ro_held(dst, y); q := dst^.a; x^ = 1; z := q^; r = x; }", true},
+	{"later_spawned", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { parallel { spawn read_task(r); x^ = 1; } r = x; }", true},
+	{"later_of_a_load", "l: ^mut Link, other: ^int", "r: ^int = other; for (i := 0; i < 2; i += 1) { y := r; l^.to^ = 1; z := y^; r = l^.to; }", true},
+	{"later_of_a_load_done", "l: ^mut Link, other: ^int", "r: ^int = other; for (i := 0; i < 2; i += 1) { y := r; z := y^; l^.to^ = 1; r = l^.to; }", false},
+	{"later_of_what_a_pointer_holds", "l: ^mut ^mut Link, other: ^int", "r: ^int = other; for (i := 0; i < 2; i += 1) { y := r; l^^.to^ = 1; z := y^; r = l^^.to; }", true},
+	{"later_spawned_joined", "x: ^mut int, other: ^int", "r: ^int = other; for (i := 0; i < 3; i += 1) { parallel { spawn read_task(r); } x^ = 1; r = x; }", false},
 	{"unknown_store_source_then_read", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; other^ = 1; y := s[0].to; y^ = 2;", true},
 	{"unknown_store_source_not_read", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[i].to = other; other^ = 1;", false},
 	{"unknown_store_does_not_end_constant", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "s[0].to = other; s[i].to = s[1].to; y := s[0].to; other^ = 1; y^ = 2;", true},

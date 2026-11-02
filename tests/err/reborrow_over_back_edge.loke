@@ -1,0 +1,405 @@
+// design.md "Weakening and reborrows": a read-only copy of a carrier that comes to hold a
+// reborrow of a mutable one, by a definition after the copy that reaches it round a loop,
+// is a reborrow of that too. `straight_` cases show each form conflicts without the loop.
+package main;
+flip :: proc() -> bool { return true; }
+Holder :: struct { p: ^int }
+Link :: struct { to: ^mut int }
+H2 :: struct { a: ^int, n: int }
+Pair :: struct { a: int, b: int }
+bump :: proc(x: ^mut int) -> int { x^ = 1; return 1; }
+id :: proc(p: ^int) -> ^int { return p; }
+two :: proc(p: ^int, n: int) -> int { return p^ + n; }
+keep_ro :: proc(dst: ^mut Holder, @(escape=stored) p: ^int) { dst^.p = p; }
+read_it :: proc(p: ^int) { n := p^; }
+
+later_weakening :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		z := y^;
+		r = x;
+	}
+}
+later_weakening_in_a_branch :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		z := y^;
+		if (flip()) { r = x; }
+	}
+}
+later_weakening_copy_of_copy :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		w := y;
+		x^ = 1;
+		z := w^;
+		r = x;
+	}
+}
+later_weakening_field :: proc(x: ^mut int, other: ^int) {
+	h := Holder{other};
+	for (i := 0; i < 2; i += 1) {
+		y := h.p;
+		x^ = 1;
+		z := y^;
+		h.p = x;
+	}
+}
+later_weakening_record_copy :: proc(x: ^mut int, other: ^int) {
+	h := Holder{other};
+	for (i := 0; i < 2; i += 1) {
+		g := h;
+		x^ = 1;
+		z := g.p^;
+		h.p = x;
+	}
+}
+later_weakening_nested_loop :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		for (j := 0; j < 2; j += 1) {
+			y := r;
+			x^ = 1;
+			z := y^;
+		}
+		r = x;
+	}
+}
+later_weakening_foreach :: proc(x: ^mut int, other: ^int, items: []int) {
+	r: ^int = other;
+	foreach (item in items) {
+		y := r;
+		x^ = 1;
+		z := y^ + item;
+		r = x;
+	}
+}
+later_weakening_kept_across_iterations :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	y: ^int = other;
+	for (i := 0; i < 3; i += 1) {
+		z := y^;
+		x^ = 1;
+		y = r;
+		r = x;
+	}
+}
+later_weakening_slice :: proc(x: []mut int, other: []int) {
+	r: []int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x[0] = 1;
+		z := y[0];
+		r = x;
+	}
+}
+later_weakening_borrowed_local :: proc(other: ^int) {
+	v := 1;
+	x := &mut v;
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		z := y^;
+		r = x;
+	}
+}
+mutable_later :: proc(x: ^mut int, other: ^mut int) {
+	r: ^mut int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		x^ = 1;
+		y^ = 2;
+		r = x;
+	}
+}
+straight_line :: proc(x: ^mut int) {
+	r: ^int = x;
+	y := r;
+	x^ = 1;
+	z := y^;
+}
+through_a_pointer :: proc(@(escape=stored) x: ^mut int, pr: ^mut ^int) {
+	for (i := 0; i < 2; i += 1) {
+		y := pr^;
+		x^ = 1;
+		z := y^;
+		pr^ = x;
+	}
+}
+later_weakening_of_a_load :: proc(l: ^mut Link, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		l^.to^ = 1;
+		z := y^;
+		r = l^.to;
+	}
+}
+later_weakening_of_a_callers_carrier :: proc(l: ^mut ^mut Link, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		l^^.to^ = 1;
+		z := y^;
+		r = l^^.to;
+	}
+}
+straight_literal :: proc(x: ^mut int) {
+	r: ^int = x;
+	h := H2{r, bump(x)};
+	z := h.a^;
+}
+loop_literal :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		h := H2{r, bump(x)};
+		z := h.a^;
+		r = x;
+	}
+}
+straight_literal_after :: proc(x: ^mut int) {
+	r: ^int = x;
+	h := H2{r, 0};
+	x^ = 1;
+	z := h.a^;
+}
+loop_literal_after :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		h := H2{r, 0};
+		x^ = 1;
+		z := h.a^;
+		r = x;
+	}
+}
+straight_argument :: proc(x: ^mut int) {
+	r: ^int = x;
+	n := two(r, bump(x));
+}
+loop_argument :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		n := two(r, bump(x));
+		r = x;
+	}
+}
+straight_result :: proc(x: ^mut int) {
+	r: ^int = x;
+	y := id(r);
+	x^ = 1;
+	z := y^;
+}
+loop_result :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := id(r);
+		x^ = 1;
+		z := y^;
+		r = x;
+	}
+}
+straight_store_through :: proc(@(escape=stored) x: ^mut int, pr: ^mut ^int) {
+	r: ^int = x;
+	pr^ = r;
+	q := pr^;
+	x^ = 1;
+	z := q^;
+}
+loop_store_through :: proc(@(escape=stored) x: ^mut int, @(escape=stored) other: ^int, pr: ^mut ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		pr^ = r;
+		q := pr^;
+		x^ = 1;
+		z := q^;
+		r = x;
+	}
+}
+straight_kept :: proc(@(escape=stored) x: ^mut int, dst: ^mut Holder) {
+	r: ^int = x;
+	keep_ro(dst, r);
+	q := dst^.p;
+	x^ = 1;
+	z := q^;
+}
+loop_kept :: proc(@(escape=stored) x: ^mut int, @(escape=stored) other: ^int, dst: ^mut Holder) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		keep_ro(dst, r);
+		q := dst^.p;
+		x^ = 1;
+		z := q^;
+		r = x;
+	}
+}
+loop_kept_copy :: proc(@(escape=stored) x: ^mut int, @(escape=stored) other: ^int, dst: ^mut Holder) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		keep_ro(dst, y);
+		q := dst^.p;
+		x^ = 1;
+		z := q^;
+		r = x;
+	}
+}
+loop_kept_in_local :: proc(@(escape=stored) x: ^mut int, @(escape=stored) other: ^int) {
+	r: ^int = other;
+	h := Holder{other};
+	for (i := 0; i < 2; i += 1) {
+		keep_ro(&mut h, r);
+		q := h.p;
+		x^ = 1;
+		z := q^;
+		r = x;
+	}
+}
+straight_reslice :: proc(x: []mut int) {
+	r: []int = x;
+	y := r[0:1];
+	x[0] = 1;
+	z := y[0];
+}
+loop_reslice :: proc(x: []mut int, other: []int) {
+	r: []int = other;
+	for (i := 0; i < 2; i += 1) {
+		y := r[0:1];
+		x[0] = 1;
+		z := y[0];
+		r = x;
+	}
+}
+straight_field_borrow :: proc(x: ^mut Pair) {
+	r: ^Pair = x;
+	y := &r^.a;
+	x^.a = 1;
+	z := y^;
+}
+loop_field_borrow :: proc(x: ^mut Pair, other: ^Pair) {
+	r: ^Pair = other;
+	for (i := 0; i < 2; i += 1) {
+		y := &r^.a;
+		x^.a = 1;
+		z := y^;
+		r = x;
+	}
+}
+straight_foreach_over :: proc(x: []mut int) {
+	r: []int = x;
+	foreach (e in r) {
+		x[0] = e;
+	}
+}
+loop_foreach_over :: proc(x: []mut int, other: []int) {
+	r: []int = other;
+	for (i := 0; i < 2; i += 1) {
+		foreach (e in r) {
+			x[0] = e;
+		}
+		r = x;
+	}
+}
+loop_copy_in_a_branch :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	y: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		if (flip()) { y = r; }
+		x^ = 1;
+		z := y^;
+		r = x;
+	}
+}
+loop_through_two_read_only :: proc(x: ^mut int, other: ^int) {
+	s: ^int = other;
+	r: ^int = other;
+	for (i := 0; i < 3; i += 1) {
+		y := s;
+		x^ = 1;
+		z := y^;
+		s = r;
+		r = x;
+	}
+}
+straight_spawn :: proc(x: ^mut int) {
+	r: ^int = x;
+	parallel {
+		spawn read_it(r);
+		x^ = 1;
+	}
+}
+loop_spawn :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	for (i := 0; i < 2; i += 1) {
+		parallel {
+			spawn read_it(r);
+			x^ = 1;
+		}
+		r = x;
+	}
+}
+loop_literal_with_an_earlier_reborrow :: proc(x: ^mut int, w: ^mut int) {
+	r: ^int = w;
+	for (i := 0; i < 2; i += 1) {
+		h := H2{r, bump(x)};
+		z := h.a^;
+		r = x;
+	}
+}
+loop_loaded_copy :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	h := Holder{other};
+	ph := &mut h;
+	for (i := 0; i < 2; i += 1) {
+		y := r;
+		ph^.p = y;
+		q := ph^.p;
+		x^ = 1;
+		z := q^;
+		r = x;
+	}
+}
+loop_load_before_the_store :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	h := Holder{other};
+	ph := &mut h;
+	for (i := 0; i < 3; i += 1) {
+		q := ph^.p;
+		x^ = 1;
+		z := q^;
+		y := r;
+		ph^.p = y;
+		r = x;
+	}
+}
+loop_literal_of_a_load :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	h := Holder{other};
+	ph := &mut h;
+	for (i := 0; i < 2; i += 1) {
+		v := H2{ph^.p, bump(x)};
+		z := v.a^;
+		ph^.p = r;
+		r = x;
+	}
+}
+copy_after_the_write_of_what_it_came_to_hold :: proc(x: ^mut int, other: ^int) {
+	r: ^int = other;
+	h := Holder{other};
+	ph := &mut h;
+	for (i := 0; i < 3; i += 1) {
+		q := ph^.p;
+		x^ = 1;
+		z := q^;
+		y := r;
+		ph^.p = y;
+		ph^.p = other;
+		r = x;
+	}
+}
+main :: proc() {}
