@@ -689,9 +689,8 @@ resolve_overload :: proc(
 	description: string,
 	members: []Symbol_Id,
 	args: []Arg_Info,
-	report := true,
 ) -> (Candidate, bool) {
-	return choose_candidate(k, span, description, members, form_candidates(k, members, args), args, report)
+	return choose_candidate(k, span, description, members, form_candidates(k, members, args), args)
 }
 
 // Each member built against `args`, in order, for `choose_candidate` and
@@ -712,12 +711,9 @@ choose_candidate :: proc(
 	members: []Symbol_Id,
 	all: []Candidate,
 	args: []Arg_Info,
-	report := true,
 ) -> (Candidate, bool) {
 	if len(members) == 0 {
-		if report {
-			errorf(k.c, span, "L0392", "%s has no overloads", description)
-		}
+		errorf(k.c, span, "L0392", "%s has no overloads", description)
 		return Candidate{}, false
 	}
 	viable := make([dynamic]int, 0, len(members), context.temp_allocator)
@@ -727,9 +723,7 @@ choose_candidate :: proc(
 		}
 	}
 	if len(viable) == 0 {
-		if report {
-			report_no_match(k, span, description, all[:], args, members)
-		}
+		report_no_match(k, span, description, all[:], args, members)
 		return Candidate{}, false
 	}
 
@@ -751,9 +745,7 @@ choose_candidate :: proc(
 		promote_generic_instance(k, chosen.instance, span)
 		return chosen, true
 	}
-	if report {
-		report_ambiguity(k, span, description, all[:], maximal[:])
-	}
+	report_ambiguity(k, span, description, all[:], maximal[:])
 	return Candidate{}, false
 }
 

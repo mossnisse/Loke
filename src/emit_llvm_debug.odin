@@ -344,7 +344,7 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 	name := llvm_escape(type_name(c, type))
 	size := type_size(c, type) * 8
 	if info == nil {
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
+		debug_composite(d, id, name, size, "")
 		return id
 	}
 	// CodeView clamps wide enumerators; expose their exact stored bits.
@@ -352,7 +352,7 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 		members := strings.builder_make()
 		debug_member(d, &members, "low", TYPE_U64, 0)
 		debug_member(d, &members, "high", TYPE_U64, 8)
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+		debug_composite(d, id, name, size, strings.to_string(members))
 		return id
 	}
 	#partial switch info.kind {
@@ -416,7 +416,7 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 			}
 			debug_member(d, &members, member_name, member.type, type_field_offset(c, type, index))
 		}
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+		debug_composite(d, id, name, size, strings.to_string(members))
 	case .String, .String_View, .Slice, .Dynamic_Array:
 		// design.md "string type" and "Slices": data first, then its length; a
 		// dynamic array's header adds its capacity.
@@ -431,22 +431,22 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 		if type == TYPE_STRING {
 			name = "string$"
 		}
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+		debug_composite(d, id, name, size, strings.to_string(members))
 	case .Union:
 		debug_union(d, id, type, name)
 	case .Map:
 		debug_map(d, id, type)
 	case:
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
+		debug_composite(d, id, name, size, "")
 	}
 	return id
 }
 
 @(private = "file")
-debug_composite :: proc(d: ^Debug_Info, id: int, tag, name: string, size: u64, members: string) {
+debug_composite :: proc(d: ^Debug_Info, id: int, name: string, size: u64, members: string) {
 	debug_node_at(
-		d, id, `distinct !DICompositeType(tag: %s, name: "%s", size: %d, elements: !{{%s})`,
-		tag, name, size, members,
+		d, id, `distinct !DICompositeType(tag: DW_TAG_structure_type, name: "%s", size: %d, elements: !{{%s})`,
+		name, size, members,
 	)
 }
 
@@ -488,7 +488,7 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 		payload, shape.payload_size * 8)
 	// A niche union's null payload is its other variant; it has no tag member.
 	if shape.niche {
-		debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, fmt.aprintf("!%d", payload_member))
+		debug_composite(d, id, name, shape.size * 8, fmt.aprintf("!%d", payload_member))
 		return
 	}
 	tag := debug_node(d, `!DIBasicType(name: "tag", size: %d, encoding: DW_ATE_unsigned)`, shape.tag_bytes * 8)
@@ -498,7 +498,7 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 		debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !%d, size: %d, offset: %d)`,
 			tag, shape.tag_bytes * 8, shape.tag_offset * 8),
 	)
-	debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, members)
+	debug_composite(d, id, name, shape.size * 8, members)
 }
 
 // Natvis reads `{expr}` in display text and parses C++ type names in casts,
@@ -557,7 +557,7 @@ debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 		for field, index in ([]string{"seed", "controls_offset", "keys_offset", "values_offset", "block_size", "block_align"}) {
 			debug_member(d, &header, field, TYPE_U64, u64(index + 3) * 8)
 		}
-		debug_composite(d, d.map_table, "DW_TAG_structure_type", "loke_rt_map_table_v1", 9 * 64, strings.to_string(header))
+		debug_composite(d, d.map_table, "loke_rt_map_table_v1", 9 * 64, strings.to_string(header))
 	}
 	name := fmt.aprintf("map$%d", u32(type))
 	members := strings.builder_make()
@@ -565,7 +565,7 @@ debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 	debug_member(d, &members, "len", TYPE_INT, 8)
 	debug_member(d, &members, "cap", TYPE_INT, 16)
 	debug_member(d, &members, "allocator", TYPE_ALLOCATOR, 24)
-	debug_composite(d, id, "DW_TAG_structure_type", name, type_size(c, type) * 8, strings.to_string(members))
+	debug_composite(d, id, name, type_size(c, type) * 8, strings.to_string(members))
 
 	debug_natvis_type(d, fmt.aprintf("%s$key", name), info.key)
 	debug_natvis_type(d, fmt.aprintf("%s$value", name), info.element)

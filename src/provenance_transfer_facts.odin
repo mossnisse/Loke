@@ -91,7 +91,7 @@ prov_value_region :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Step, q
 @(private = "file")
 prov_component_region :: proc(graph: ^Flow_Graph, component: Prov_Component, path: []Proj_Step, query: Region_Query) -> Region_Set {
 	source_path := prov_concat_path(graph, component.from, path)
-	if component.mode != .Clone && component.mode != .Copy { return prov_value_region(graph, component.source, source_path, query) }
+	if component.mode != .Clone { return prov_value_region(graph, component.source, source_path, query) }
 	allocator := Region_Set{default = true}
 	if component.allocator != 0 { allocator = prov_value_region(graph, component.allocator, nil, .All) }
 	return prov_copy_component_region(graph, component, path, query, allocator)

@@ -11,7 +11,7 @@ import "core:strings"
 // design.md "Zero values": a union constant is the payload's little-endian byte
 // image, split across the integer head and byte-array tail, plus the tag.
 @(private = "file")
-union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Type_Info) -> string {
+union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
 	if value.kind != .Aggregate || value.aggregate == nil {
 		return "zeroinitializer" // the designated zero variant, which is all-zero
@@ -138,7 +138,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		// Nil is success, and success is zero.
 		return value.kind == .Nil ? "0" : bi_text(e.c, value.integer)
 	case .Union:
-		return union_constant(e, value, under, info)
+		return union_constant(e, value, under)
 	case .Array, .Simd:
 		// A vector constant is `<...>`; a `Simd(bool, N)` lane is `i8` in memory.
 		vector := info.kind == .Simd
@@ -1351,7 +1351,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 		return
 	}
 	if info.kind == .Map {
-		emit_map_literal_into(e, v, address, info.key, info.element, as_type)
+		emit_map_literal_into(e, v, address, info.element, as_type)
 		return
 	}
 	// design.md "What the unwind runs, and what it does not": a part is the
@@ -2347,9 +2347,6 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> [
 @(private)
 emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	switch v.operation.(Call_Text_Conversion).op {
-	case .None:
-		break
-
 	case .String_From_Bytes:
 		data, length := emit_byte_slice_parts(e, v.bound[0])
 		return emit_text_optional_ok(

@@ -1475,13 +1475,6 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	}
 	none: []Eval_Value
 
-	results :: proc(ev: ^Evaluator, values: ..Eval_Value) -> []Eval_Value {
-		out, err := make([]Eval_Value, len(values), ev.alloc)
-		if err != nil { return nil }
-		copy(out, values)
-		return out
-	}
-
 	argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (Eval_Value, bool) {
 		if index >= len(v.bound) || v.bound[index] == nil {
 			return Eval_Value{}, false
@@ -1648,7 +1641,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			append(&kept, ..self.elements[at + 1:])
 		}
 		self.elements = kept[:]
-		return results(ev, taken), true
+		return eval_one(ev, taken)
 
 	case .Clear, .Map_Clear:
 		self.elements = nil

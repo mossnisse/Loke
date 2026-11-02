@@ -196,7 +196,7 @@ check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	}
 	// Nominal, like the receivers: a `distinct` byte slice needs a written conversion.
 	info := type_of(k.c, source)
-	op := Text_Conversion.None
+	op: Text_Conversion
 	switch {
 	case info.kind == .Slice && info.element == TYPE_U8:
 		op = from_bytes

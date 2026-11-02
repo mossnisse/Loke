@@ -2142,7 +2142,7 @@ prov_reads_plainly_through :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
 prov_read_carrier :: proc(graph: ^Flow_Graph, operand: Expr, reads_only: bool) -> []int {
 	if reads_only {
 		if ident, is_ident := operand.(^Expr_Ident); is_ident {
-			return prov_read_ident(graph, ident, .Read, reads_only = true)
+			return prov_read_ident(graph, ident, reads_only = true)
 		}
 		if root, path, ok := prov_place_of(graph, operand); ok {
 			prov_walk_subscripts(graph, operand)
@@ -2412,14 +2412,12 @@ prov_define_one_content :: proc(
 
 // Where a store through a `foreach (&mut x in source)` binding lands: the
 // element it names, in a named place at `path` of `root`, or else in what the
-// slots `into` name, along `path` when `known` says it is one place. `view` is
-// the view the traversal goes over, if it is named.
+// slots `into` name, along `path` when `known` says it is one place.
 Prov_Traversal :: struct {
 	root:  Root_Id,
 	path:  []Proj_Step,
 	into:  []int,
 	known: bool,
-	view:  Symbol_Id,
 	// A user's iterator lends it: `root` and `path` are the source, and `into`
 	// the storage it may reach through carriers.
 	lent:  bool,
@@ -2441,13 +2439,10 @@ prov_note_traversal :: proc(
 	}
 	protocol := s.kind == .Protocol
 	carrier := type_is_carrier(graph.k.c, prov_type(graph, s.iterable))
-	traversal := Prov_Traversal{root = NO_ROOT, view = INVALID_SYMBOL, lent = protocol}
+	traversal := Prov_Traversal{root = NO_ROOT, lent = protocol}
 	if carrier && !protocol && len(elements) > 0 {
 		// What a view lends is below its loans, at no step of its own.
 		traversal.into, traversal.path, traversal.known = elements, below, true
-		if ident, named := s.iterable.(^Expr_Ident); named {
-			traversal.view = ident.symbol
-		}
 	} else if len(through) > 0 {
 		traversal.into = through
 		entry := graph.prov_slots[through[0]]
@@ -3726,7 +3721,7 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 @(private = "file")
 prov_read_only_view :: proc(graph: ^Flow_Graph, e: Expr, type: Type_Id, span: Span, erasing := false) -> (held: []int, lent: bool) {
 	if ident, plain := prov_plain_view_local(graph, e); plain {
-		return prov_lend_read_only(graph, e, prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false), span)
+		return prov_lend_read_only(graph, e, prov_reborrow_traversal(graph, prov_read_ident(graph, ident, reads_only = true), span, false), span)
 	}
 	loans: []int
 	plain_place := prov_plain_view_place(graph, e, type)
@@ -3935,7 +3930,7 @@ prov_read_only_conversion :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> ([]int, 
 	e := v.bound[0]
 	span := expr_span(e)
 	if ident, plain := prov_plain_view_local(graph, e); plain {
-		return prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false), true
+		return prov_reborrow_traversal(graph, prov_read_ident(graph, ident, reads_only = true), span, false), true
 	}
 	if prov_plain_view_place(graph, e, prov_type(graph, e)) {
 		return prov_reborrow_traversal(graph, prov_read_carrier(graph, e, true), span, false), true
@@ -4107,13 +4102,13 @@ region_weight :: proc(set: Region_Set) -> int {
 // Every region dependency of a symbol, including its field facts. A carrier's
 // own entry is what it views, which only a read through it reaches.
 @(private)
-prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false, owners := false) -> Region_Set {
+prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false) -> Region_Set {
 	out := prov_empty_region(graph)
 	sym := symbol_of(graph.k.c, id)
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		for alias in aliases {
-			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, owners ? .Owners : .All))
-			if !owners && sym != nil {
+			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, .All))
+			if sym != nil {
 				prov_add_received_allocator(graph, &out, alias.root, sym.type)
 			}
 		}
@@ -4124,15 +4119,11 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 		region_merge(&out, direct)
 	}
 	for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
-		// `owners` asks only what backs an owner stored there.
-		if !owners || !content.handle {
-			region_merge(&out, content.region)
-		}
+		region_merge(&out, content.region)
 	}
 	if viewed {
 		for alias in prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = id}), nil) {
-			region_merge(&out, prov_region_content_at(graph, prov_root_for_storage(graph, alias.target), alias.at,
-			                                        owners ? .Owners : .All))
+			region_merge(&out, prov_region_content_at(graph, prov_root_for_storage(graph, alias.target), alias.at, .All))
 		}
 	}
 	return out
@@ -5141,8 +5132,8 @@ prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type
 }
 
 @(private = "file")
-prov_allocation_region :: proc(graph: ^Flow_Graph, bound: []Value_Id, allocator_index := 1) -> Region_Set {
-	if len(bound) > allocator_index && bound[allocator_index] != 0 { return prov_region_of(graph, bound[allocator_index]) }
+prov_allocation_region :: proc(graph: ^Flow_Graph, bound: []Value_Id) -> Region_Set {
+	if len(bound) > 1 && bound[1] != 0 { return prov_region_of(graph, bound[1]) }
 	out := prov_empty_region(graph)
 	out.default = true
 	return out
@@ -6206,7 +6197,7 @@ prov_forget_argument_aliases :: proc(
 	if id == 0 { return }
 	c := graph.k.c
 	if !inout && !carrier_is_mutable(c, parameter) && !prov_type_reaches_mutable(c, parameter) { return }
-	if inout { prov_forget_place_aliases(graph, id, true, seen); return }
+	if inout { prov_forget_place_aliases(graph, id, seen); return }
 	_ = prov_value_transfer(graph, id)
 	aliases := prov_value_aliases(graph, id)
 	for carrier in carrier_shape(c, parameter) {
@@ -6225,9 +6216,9 @@ Written_Alias_Visit :: struct {
 }
 
 @(private = "file")
-prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Value_Id, writable: bool, seen: ^[dynamic]Written_Alias_Visit) {
+prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Value_Id, seen: ^[dynamic]Written_Alias_Visit) {
 	if root, path, ok := prov_value_place_of(graph, place); ok {
-		prov_forget_storage_aliases(graph, prov_storage_for_root(graph, root), path, writable, seen)
+		prov_forget_storage_aliases(graph, prov_storage_for_root(graph, root), path, true, seen)
 		return
 	}
 	if prov_place_carrier(graph, place) == 0 {
@@ -6238,7 +6229,7 @@ prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Value_Id, writable:
 	}
 	below := prov_path_below_carrier(graph, place)
 	for alias in prov_written_targets(graph, place, as_place = true) {
-		prov_forget_storage_aliases(graph, alias.target, prov_concat_path(graph, alias.at, below), writable, seen)
+		prov_forget_storage_aliases(graph, alias.target, prov_concat_path(graph, alias.at, below), true, seen)
 	}
 }
 
@@ -6843,9 +6834,9 @@ prov_range_step :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> Proj_Step {
 // ------------------------------------------------------- statement hooks --
 
 @(private)
-prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind, reads_only := false) -> []int {
+prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, reads_only := false) -> []int {
 	if root := prov_root_for_symbol(graph, v.symbol); root != NO_ROOT {
-		prov_access(graph, root, nil, kind, v.span, reads_only = reads_only)
+		prov_access(graph, root, nil, .Read, v.span, reads_only = reads_only)
 	}
 	if slot, is_carrier := prov_slot_for_symbol(graph, v.symbol); is_carrier {
 		sources := prov_one(graph, slot)
@@ -6998,7 +6989,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	}
 	source: []int
 	if ident, plain := prov_plain_slice_local(graph, v.operand); plain && !mutable {
-		source = prov_read_ident(graph, ident, .Read, reads_only = true) // a read-only view only reads
+		source = prov_read_ident(graph, ident, reads_only = true) // a read-only view only reads
 	} else {
 		source = walk_flow_expr(graph, v.operand)
 	}
@@ -8657,7 +8648,7 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		}
 	case .Only_Read_Slice:
 		ident, _ := prov_plain_slice_local(graph, argument)
-		prov_read_ident(graph, ident, .Read, reads_only = true)
+		prov_read_ident(graph, ident, reads_only = true)
 		return actual
 	case .Measured_Receiver:
 		// A carrier holds its length, so that is a read of the carrier. An owner's is

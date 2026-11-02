@@ -254,7 +254,7 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 			if !file.parallel_bound && selects_parallel(file) {
 				file.parallel_bound = true
 				changed = true
-				bind_parallel_edge(c, id, file)
+				bind_parallel_edge(c, id)
 			}
 			for item in file.active_items {
 				imported, is_import := item.(^Item_Import)
@@ -343,8 +343,8 @@ selects_parallel :: proc(file: ^File) -> bool {
 // that needs it says so (`check_parallel`), and a block in a branch no check
 // reaches needs nothing.
 @(private = "file")
-bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File) {
-	dir, why := resolve_import_path(c, file, STD_THREAD)
+bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id) {
+	dir, why := resolve_import_path(c, nil, STD_THREAD)
 	if why != .Ok || !os.is_dir(dir) {
 		return
 	}

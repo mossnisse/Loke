@@ -132,7 +132,7 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 
 	info := type_of(c, under)
 	if info != nil {
-		collect_hooks(c, under, info, entry)
+		collect_hooks(c, info, entry)
 		entry.container = info.kind == .Dynamic_Array || info.kind == .Map
 		entry.provider = info.provider
 		entry.boxed = info.kind == .Box
@@ -144,7 +144,7 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 			entry.custom_drop != INVALID_SYMBOL ||
 			entry.custom_try_clone != INVALID_SYMBOL ||
 			entry.clone_disabled ||
-			has_managed_part(c, under, info)
+			has_managed_part(c, info)
 	}
 	if open {
 		delete_key(&c.lifecycles, under)
@@ -184,7 +184,7 @@ lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Ty
 
 // Inherent, hand-written members only: extensions never contribute a hook.
 @(private = "file")
-collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lifecycle) {
+collect_hooks :: proc(c: ^Compiler, info: ^Type_Info, entry: ^Lifecycle) {
 	for member in info.members {
 		sym := symbol_of(c, member)
 		if sym == nil || sym.synth != .None {
@@ -212,7 +212,7 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 }
 
 @(private = "file")
-has_managed_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
+has_managed_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 	#partial switch info.kind {
 	case .Array:
 		return type_is_managed(c, info.element)
@@ -867,7 +867,7 @@ resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
 	}
 }
 
-// The conversion a generic template declares, so `hook_candidates` finds it and
+// The conversion a generic template declares, so `conversion_hooks` finds it and
 // overload resolution instantiates it, as for a generic method. A generic
 // lifecycle hook is left to `validate_semantic_hook`, which rejects it: its
 // signature is fixed by its subject.
@@ -891,7 +891,7 @@ mark_template_hook :: proc(k: ^Checker, d: ^Decl) {
 }
 
 // The fixed hook signatures, checked where each inherent declaration is written.
-validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Symbol, symbol_id: Symbol_Id) {
+validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, sym: ^Symbol, symbol_id: Symbol_Id) {
 	name := identifier_text(k.c, sym.name)
 	if sym.hook == .None {
 		if name == "clone" || name == "try_clone" {
@@ -1093,7 +1093,7 @@ validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
 			// procedure, with no role; a non-generic block records it when declared.
 			sym.hook = role
 			errors := k.c.error_count
-			validate_semantic_hook(k, item, d, sym, symbol_id)
+			validate_semantic_hook(k, item, sym, symbol_id)
 			if k.c.error_count != errors {
 				k.c.reported_generic_hooks[generic_hook_key(d)] = true
 			}

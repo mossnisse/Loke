@@ -100,12 +100,12 @@ option_type :: proc(k: ^Checker, payload: Type_Id, span := Span{}) -> Type_Id {
 }
 
 // `Result(T, E)`.
-result_type :: proc(k: ^Checker, payload, error: Type_Id, span := Span{}) -> Type_Id {
+result_type :: proc(k: ^Checker, payload, error: Type_Id) -> Type_Id {
 	if k.c.result_symbol == INVALID_SYMBOL || payload == INVALID_TYPE || error == INVALID_TYPE {
 		return INVALID_TYPE
 	}
 	args := [2]Type_Id{payload, error}
-	return instantiate_record_types(k, k.c.result_symbol, args[:], span)
+	return instantiate_record_types(k, k.c.result_symbol, args[:], Span{})
 }
 
 // Is this an instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership"

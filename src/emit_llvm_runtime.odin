@@ -35,8 +35,6 @@ RT_ALLOCATOR_RECORD :: "{ i32, i32, ptr, ptr, ptr, i32, i32 }"
 emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, "%s = external global %s", RT_DEFAULT_ALLOCATOR, RT_ALLOCATOR_RECORD)
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_alloc(ptr, i64, i64)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_alloc_zeroed(ptr, i64, i64)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_resize(ptr, ptr, i64, i64, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_free(ptr, ptr, i64, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_reset(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_alloc_failed(ptr) " + FAILURE_ATTRIBUTES)
@@ -407,7 +405,7 @@ llvm_escape :: proc(text: string) -> string {
 
 // The constant message a `panic`/`assert` was written with.
 @(private)
-panic_message_text :: proc(e: ^Emitter, v: ^Expr_Call, index: int, fallback: string) -> string {
+panic_message_text :: proc(v: ^Expr_Call, index: int, fallback: string) -> string {
 	if index < len(v.bound) && v.bound[index] != nil {
 		if base := expr_base(v.bound[index]); base != nil && base.is_const && base.const_value.kind == .String {
 			return base.const_value.text
@@ -430,7 +428,7 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 // are evaluated before the report starts, so one that panics is its own panic.
 @(private)
 emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fallback: string) {
-	message := panic_message_text(e, v, message_index, fallback)
+	message := panic_message_text(v, message_index, fallback)
 	if len(v.bound) <= message_index + 1 {
 		emit_panic(e, message)
 		return
@@ -845,7 +843,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 // A `typeid` prints its type's name, or its number when it has none.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
-	safe, _ := typeid_index(e, id, TYPE_NAME_COUNT)
+	safe := typeid_index(e, id, TYPE_NAME_COUNT)
 	view := gep_at(e, STRING_VIEW_TYPE, TYPE_NAMES, safe)
 	data := load(e, "ptr", view)
 	stride := gep_field(e, STRING_VIEW_TYPE, view, STRING_LEN)
@@ -1354,22 +1352,22 @@ named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]st
 // gives the `Invalid` entry, which is entry 0.
 @(private)
 emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	safe, _ := typeid_index(e, emit_expr(e, v.bound[0]), TYPE_INFO_COUNT)
+	safe := typeid_index(e, emit_expr(e, v.bound[0]), TYPE_INFO_COUNT)
 	return gep_at(e, struct_name(e, e.c.runtime_types["Type_Info"]), TYPE_INFO_TABLE, safe)
 }
 
 // `id` clamped into a table of `count` entries: a nil or out-of-range id maps to
-// the empty entry 0, and `bad` says so.
+// the empty entry 0.
 @(private = "file")
-typeid_index :: proc(e: ^Emitter, id, count: string) -> (safe, bad: string) {
+typeid_index :: proc(e: ^Emitter, id, count: string) -> string {
 	limit := load(e, "i64", count)
 	zero, past := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
-	bad, safe = temp(e), temp(e)
+	bad, safe := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
-	return
+	return safe
 }
 
 // ------------------------------------------- compiler-contributed procedures --
@@ -1403,7 +1401,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_range_next(e, symbol, name)
 		case .Array_Next:
 			emit_synth_indexed_next(e, symbol, name, slice = false)
-		case .Slice_Next, .Slice_Mut_Next, .Slice_Ref_Next:
+		case .Slice_Mut_Next, .Slice_Ref_Next:
 			emit_synth_indexed_next(e, symbol, name, slice = true)
 		case .Map_Next, .Map_Keys_Next, .Map_Values_Next:
 			emit_synth_map_next(e, symbol, name)

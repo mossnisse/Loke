@@ -129,19 +129,16 @@ dyn_type :: proc(
 	args: []Generic_Arg,
 	span: Span,
 	mutable: bool,
-	report: bool,
 ) -> Type_Id {
 	if !dyn_compatible(k, info) {
-		if report {
-			errorf(
-				k.c,
-				span,
-				"L0463",
-				"`%s` is not dyn-compatible: %s",
-				identifier_text(k.c, symbol_of(k.c, info.symbol).name),
-				info.dyn_reason,
-			)
-		}
+		errorf(
+			k.c,
+			span,
+			"L0463",
+			"`%s` is not dyn-compatible: %s",
+			identifier_text(k.c, symbol_of(k.c, info.symbol).name),
+			info.dyn_reason,
+		)
 		return INVALID_TYPE
 	}
 	key := dyn_key(k.c, info.symbol, args, mutable)
@@ -149,21 +146,19 @@ dyn_type :: proc(
 		return existing
 	}
 	if failure, holds := interface_predicates_check(k, info, interface_application(k.c, info, TYPE_RAWPTR, args)); !holds {
-		if report {
-			errorf(
-				k.c,
-				span,
-				"L0463",
-				"`%s` does not satisfy its interface `where` clause",
-				dyn_display_name(k.c, info, args, mutable),
-			)
-			add_notef(k.c, failure.span, "this predicate does not hold: %s", failure.reason)
-		}
+		errorf(
+			k.c,
+			span,
+			"L0463",
+			"`%s` does not satisfy its interface `where` clause",
+			dyn_display_name(k.c, info, args, mutable),
+		)
+		add_notef(k.c, failure.span, "this predicate does not hold: %s", failure.reason)
 		return INVALID_TYPE
 	}
 	// The read-only variant is the ABI type both capabilities share.
 	if mutable {
-		dyn_type(k, info, args, span, false, report)
+		dyn_type(k, info, args, span, false)
 	}
 	name := intern_identifier(k.c, dyn_display_name(k.c, info, args, mutable))
 	type := new_type(k.c, Type_Info {
@@ -443,7 +438,7 @@ dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Ar
 			if index > 0 {
 				strings.write_string(&b, ", ")
 			}
-			strings.write_string(&b, interface_argument_text(c, arg))
+			strings.write_string(&b, generic_argument_text(c, arg))
 		}
 		strings.write_string(&b, ")")
 	}
@@ -713,9 +708,6 @@ Witness :: struct {
 Witness_Slot :: struct {
 	name:   Identifier_Id,
 	target: Symbol_Id,
-	mode:   Param_Mode,
-	params: []Type_Id,
-	result: Type_Id,
 }
 
 // The flattened slots of an interface application, composition included.
@@ -807,9 +799,6 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 		slots[index] = Witness_Slot {
 			name   = entry.name,
 			target = target,
-			mode   = len(modes) > 0 ? modes[0] : Param_Mode.Value,
-			params = params,
-			result = result_type,
 		}
 	}
 	restore_checker_location(k, saved)
@@ -827,17 +816,9 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 @(private = "file")
 callable_witness_slots :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, args: []Generic_Arg) -> []Witness_Slot {
 	slots := make([]Witness_Slot, 1, k.c.semantic_allocator)
-	signature := args[0].type
-	wanted := underlying_info(k.c, signature)
-	params := make([]Type_Id, len(wanted.parameters) + 1, k.c.semantic_allocator)
-	params[0] = concrete
-	copy(params[1:], wanted.parameters)
 	slots[0] = Witness_Slot {
 		name   = intern_identifier(k.c, "call"),
-		target = callable_call_method(k, info, concrete, signature),
-		mode   = .Value,
-		params = params,
-		result = wanted.result,
+		target = callable_call_method(k, info, concrete, args[0].type),
 	}
 	return slots
 }
@@ -944,7 +925,7 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 		return INVALID_TYPE
 	}
 	if !dyn_compatible(k, info) {
-		return dyn_type(k, info, nil, v.span, v.mutable, report = true)
+		return dyn_type(k, info, nil, v.span, v.mutable)
 	}
 	if len(args) != len(info.params) - 1 {
 		errorf(
@@ -971,7 +952,7 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 	if interface_is_callable(k.c, info) {
 		return callable_dyn_type(k, info, bound[0].type, v)
 	}
-	return dyn_type(k, info, bound, v.span, v.mutable, report = true)
+	return dyn_type(k, info, bound, v.span, v.mutable)
 }
 
 // design.md "Borrowed callable views": the view of one signature, which a
@@ -993,7 +974,7 @@ callable_dyn_type :: proc(k: ^Checker, info: ^Interface_Info, signature: Type_Id
 	}
 	args := make([]Generic_Arg, 1, k.c.semantic_allocator)
 	args[0] = Generic_Arg{is_type = true, type = signature}
-	return dyn_type(k, info, args, v.span, false, report = true)
+	return dyn_type(k, info, args, v.span, false)
 }
 
 // design.md: `(dyn I)(&concrete)` checks `I(Concrete, args...)` and requests

@@ -1168,9 +1168,9 @@ llvm_name_byte :: proc(ch: u8) -> bool {
 // Escapes every byte LLVM would need quoted, `$` included, as `$XX`: injective
 // and still readable. `dots = false` also escapes `.`, for a part that a `.`
 // joins to others.
-llvm_safe :: proc(name: string, dots := true, allocator := context.allocator) -> string {
+llvm_safe :: proc(name: string, dots := true) -> string {
 	hex := "0123456789abcdef"
-	out := make([dynamic]u8, 0, len(name) + 8, allocator)
+	out := make([dynamic]u8, 0, len(name) + 8)
 	for i in 0 ..< len(name) {
 		ch := name[i]
 		if llvm_name_byte(ch) && (dots || ch != '.') {

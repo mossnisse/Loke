@@ -507,7 +507,7 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	#partial switch sym.synth {
 	case .Clone, .Try_Clone, .Iterator_Copy:
 		prov_copy_effects(graph, subject, v.span)
-	case .Indexed_Next, .Copied_Next, .Array_Next, .Slice_Next:
+	case .Indexed_Next, .Copied_Next, .Array_Next:
 		// What an iterator's `next` hands back by value, it clones out.
 		prov_copy_effects(graph, sym.result, v.span)
 	case .Standard_Hash:
@@ -868,7 +868,7 @@ call_parts :: proc(c: ^Compiler, body: Symbol_Id, call: Effect_Call, open: bool)
 			value_parts(c, &out, value, any, whole, open)
 		}
 	case:
-		for reached in effect_targets(c, call, program) {
+		for reached in effect_targets(c, call) {
 			part := whole
 			part.body = reached
 			append(&out, part)
@@ -896,7 +896,7 @@ value_parts :: proc(c: ^Compiler, out: ^[dynamic]Call_Part, value: Effect_Arg, a
 			return
 		}
 	}
-	for reached in effect_targets(c, any, program) {
+	for reached in effect_targets(c, any) {
 		member := part
 		member.body = reached
 		append(out, member)
@@ -1402,7 +1402,7 @@ effect_call_globals :: proc(
 			return globals
 		}
 		globals := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-		for reached in effect_targets(c, target, &c.effect_program) {
+		for reached in effect_targets(c, target) {
 			for global in whole[c.effect_program.bodies[reached].symbol] {
 				add_global_symbol(&globals, global)
 			}
@@ -1605,8 +1605,8 @@ reject_copy_hook_writes :: proc(c: ^Compiler) {
 
 // The bodies one call may run.
 @(private = "file")
-effect_targets :: proc(c: ^Compiler, call: Effect_Call, program: ^Effect_Program, seen: ^map[string]bool = nil) -> []int {
-	bodies, index_of, used_as_value := program.bodies, program.index_of, program.used_as_value
+effect_targets :: proc(c: ^Compiler, call: Effect_Call, seen: ^map[string]bool = nil) -> []int {
+	bodies, index_of, used_as_value := c.effect_program.bodies, c.effect_program.index_of, c.effect_program.used_as_value
 	out := make([dynamic]int, 0, 4, context.temp_allocator)
 	visited := seen
 	if visited == nil {
@@ -1640,7 +1640,7 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, program: ^Effect_Program
 			// A view of a view runs what the inner view may run.
 			if sym := symbol_of(c, target); sym != nil {
 				if inner, is_forward := forwarding_effect(c, sym); is_forward {
-					append(&out, ..effect_targets(c, inner, program, visited))
+					append(&out, ..effect_targets(c, inner, visited))
 				}
 			}
 		}
@@ -1850,7 +1850,7 @@ callable_type_targets :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
 
 @(private = "file")
 effect_target_symbols :: proc(c: ^Compiler, call: Effect_Call) -> []Symbol_Id {
-	reached := effect_targets(c, call, &c.effect_program)
+	reached := effect_targets(c, call)
 	out := make([]Symbol_Id, len(reached), context.temp_allocator)
 	for index, position in reached {
 		out[position] = c.effect_program.bodies[index].symbol

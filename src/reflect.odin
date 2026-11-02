@@ -821,7 +821,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	if k.c.meta_field_type == INVALID_TYPE || base.type != k.c.meta_field_type {
 		return false
 	}
-	op := Reflect_Op.None
+	op: Reflect_Op
 	switch sel.name.text {
 	case "get":
 		op = .Field_Get

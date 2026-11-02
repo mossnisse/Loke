@@ -119,7 +119,6 @@ Instance :: struct {
 	// probe's check is rolled back, so committing the body checks them again.
 	bounds_committed: bool,
 	// Record instances only: the generic `impl` blocks installed on it.
-	impls:        [dynamic]^Generic_Impl,
 	// Record instances only: the members of those blocks no other block is more
 	// specialized than, by name and table. The table holds the one survivor,
 	// or a group of crossed ones a call finds ambiguous (design.md "Generic
@@ -2824,7 +2823,6 @@ instantiate_record_body :: proc(
 	}
 	instance.symbol = symbol_id
 	instance.type = type
-	instance.impls = make([dynamic]^Generic_Impl, 0, 0, k.c.semantic_allocator)
 	instance.impl_candidates = make(map[Impl_Member_Key][dynamic]Impl_Candidate, k.c.semantic_allocator)
 	saved := enter_instance(k, template, instance.scope)
 	defer restore_checker_location(k, saved)
@@ -3286,7 +3284,7 @@ where_bound_text :: proc(c: ^Compiler, clause: Expr) -> string {
 
 // `impl Table($K, $V)` or `impl Table(string, int)`, kept until an instance
 // exists to install it on.
-register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id, args: []Argument) -> bool {
+register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id, args: []Argument) {
 	blocks, found := &k.c.generic_impls[template]
 	if !found {
 		k.c.generic_impls[template] = make([dynamic]^Generic_Impl, 0, 2, k.c.semantic_allocator)
@@ -3294,7 +3292,7 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 	}
 	for existing in blocks {
 		if existing.item == item {
-			return true // an earlier discovery round already registered it
+			return // an earlier discovery round already registered it
 		}
 	}
 	// Inherent in the template's own package, an extension elsewhere.
@@ -3324,7 +3322,6 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 			install_one_generic_impl(k, instance, block)
 		}
 	}
-	return true
 }
 
 // A generic `impl` subject with the wrong argument count, or a written argument
@@ -3595,7 +3592,6 @@ declare_generic_impl_block :: proc(k: ^Checker, instance: ^Instance, block: ^Gen
 	clone.declared = true
 	k.impl_type = instance.type
 	conflicts := declare_instance_impl_members(k, clone, instance, block)
-	append(&instance.impls, block)
 	return Impl_Install{block = block, clone = clone, scope = scope, conflicts = conflicts}, true
 }
 

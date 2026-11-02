@@ -26,9 +26,6 @@ emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_reserve(ptr, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_clone(ptr, ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_drop(ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_add(i64, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_bytes(i64, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_container_fault(ptr) " + FAILURE_ATTRIBUTES)
 	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_hash_bytes(ptr, i64, i64)")
 	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_map_scan(ptr, ptr, i64, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_bind(ptr)")
@@ -622,7 +619,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 // `map[K]V{ key = value, ... }` over an already zeroed header. Each entry is
 // inserted as soon as it is evaluated, under a temporary unwind action.
 @(private)
-emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, key, element: Type_Id, as_type: Type_Id) {
+emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, element: Type_Id, as_type: Type_Id) {
 	if len(v.elements) == 0 {
 		return
 	}

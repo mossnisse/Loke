@@ -1038,7 +1038,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 // Conversion hooks are inherent to the target, so imports cannot change `T(value)`.
 @(private = "file")
 check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, args: []Arg_Info, attempted: Type_Id) {
-	usable := hook_candidates(k, target, .Convert)
+	usable := conversion_hooks(k, target)
 	if len(usable) == 0 {
 		errorf(k.c, expr_span(v.args[0].value), "L0373", "`%s` cannot be converted to `%s`", type_name(k.c, attempted), type_name(k.c, target))
 		note_mutable_slicing(k, v.args[0].value, attempted, type_underlying(k.c, target))

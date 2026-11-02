@@ -160,7 +160,6 @@ Argument :: struct {
 
 // The compiler-defined operations of a `meta.Field` descriptor.
 Reflect_Op :: enum {
-	None,
 	Field_Get,
 	Field_Pointer,
 }
@@ -181,7 +180,6 @@ Text_Op :: enum {
 
 // The named text constructors, which validate and return Option(T).
 Text_Conversion :: enum {
-	None,
 	String_From_Bytes,  // `string.from_utf8(bytes)` — validate and copy
 	View_From_Bytes,    // `string_view.from_utf8(bytes)` — validate and borrow
 	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy

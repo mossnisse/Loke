@@ -43,7 +43,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"Allocator_Error", TYPE_ALLOCATOR_ERROR},
 	}
 	for entry in types {
-		define_universe(c, universe, entry.name, Symbol{kind = .Type, type = entry.id})
+		define_universe(c, entry.name, Symbol{kind = .Type, type = entry.id})
 		// The first name wins in diagnostics, so `u8` beats `byte`.
 		if info := type_of(c, entry.id); info != nil && info.name == INVALID_IDENTIFIER {
 			info.name = intern_identifier(c, entry.name)
@@ -52,19 +52,19 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 
 	// design.md "Predeclared names": literals are `reserved`, so no declaration
 	// can change what `true` means.
-	define_universe(c, universe, "true", Symbol {
+	define_universe(c, "true", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
 		const_value = bool_const(true),
 		reserved    = true,
 	})
-	define_universe(c, universe, "false", Symbol {
+	define_universe(c, "false", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
 		const_value = bool_const(false),
 		reserved    = true,
 	})
-	define_universe(c, universe, "nil", Symbol {
+	define_universe(c, "nil", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_NIL,
 		const_value = nil_const(),
@@ -101,7 +101,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"exchange", .Exchange},
 	}
 	for entry in builtins {
-		define_universe(c, universe, entry.name, Symbol {
+		define_universe(c, entry.name, Symbol {
 			kind      = .Builtin,
 			builtin   = entry.kind,
 			type      = TYPE_VOID,
@@ -120,13 +120,13 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		proc_type = no_args,
 	})
 
-	predeclare_build_config(c, universe)
+	predeclare_build_config(c)
 	return universe
 }
 
-define_universe :: proc(c: ^Compiler, scope: ^Scope, name: string, template: Symbol) {
+define_universe :: proc(c: ^Compiler, name: string, template: Symbol) {
 	symbol := template
 	symbol.name = intern_identifier(c, name)
 	symbol.span = no_span()
-	scope.names[symbol.name] = new_symbol(c, symbol)
+	c.universe.names[symbol.name] = new_symbol(c, symbol)
 }

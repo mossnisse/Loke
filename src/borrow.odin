@@ -145,7 +145,6 @@ Prov_Root :: struct {
 Proj_Kind :: enum u8 {
 	Field,
 	Range, // half-open constant element range; an index `i` is [i, i+1)
-	Deref,
 	Wild,  // anything not statically distinct; overlaps every sibling
 }
 
@@ -211,8 +210,6 @@ steps_overlap :: proc(a, b: Proj_Step) -> bool {
 		return a.lo == b.lo
 	case .Range:
 		return a.lo < b.hi && b.lo < a.hi
-	case .Deref:
-		return true
 	case .Wild:
 		return true
 	}
@@ -635,7 +632,7 @@ escape_level_name :: proc(level: Escape_Level) -> string {
 
 // The written `@(escape=<level>)`, a bare identifier. `valid` is false for any
 // other value, which the caller reports.
-attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (level: Escape_Level, written: bool, valid: bool) {
+attribute_escape_level :: proc(attributes: []Attribute) -> (level: Escape_Level, written: bool, valid: bool) {
 	for attribute in attributes {
 		if len(attribute.path) != 1 || attribute.path[0].text != "escape" {
 			continue

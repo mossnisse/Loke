@@ -111,20 +111,20 @@ build_config_enum_type :: proc(c: ^Compiler, which: Build_Config_Enum) -> Type_I
 
 // Windows x64 is the only target, so architecture, OS, endianness, and vendor
 // are fixed at their first member.
-predeclare_build_config :: proc(c: ^Compiler, universe: ^Scope) {
-	define_universe(c, universe, "LOKE_ARCH", enum_const(c, .Arch, 0))
-	define_universe(c, universe, "LOKE_OS", enum_const(c, .Os, 0))
-	define_universe(c, universe, "LOKE_ENDIAN", enum_const(c, .Endian, 0))
-	define_universe(c, universe, "LOKE_BUILD_MODE", enum_const(c, .Build_Mode, int(c.build_mode)))
-	define_universe(c, universe, "LOKE_OPTIMIZATION_MODE", enum_const(c, .Optimization_Mode, int(c.opt_mode)))
-	define_universe(c, universe, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
-	define_universe(c, universe, "LOKE_VENDOR", enum_const(c, .Vendor, 0))
-	define_universe(c, universe, "LOKE_DEBUG", Symbol {
+predeclare_build_config :: proc(c: ^Compiler) {
+	define_universe(c, "LOKE_ARCH", enum_const(c, .Arch, 0))
+	define_universe(c, "LOKE_OS", enum_const(c, .Os, 0))
+	define_universe(c, "LOKE_ENDIAN", enum_const(c, .Endian, 0))
+	define_universe(c, "LOKE_BUILD_MODE", enum_const(c, .Build_Mode, int(c.build_mode)))
+	define_universe(c, "LOKE_OPTIMIZATION_MODE", enum_const(c, .Optimization_Mode, int(c.opt_mode)))
+	define_universe(c, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
+	define_universe(c, "LOKE_VENDOR", enum_const(c, .Vendor, 0))
+	define_universe(c, "LOKE_DEBUG", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
 		const_value = bool_const(c.debug),
 	})
-	define_universe(c, universe, "LOKE_VERSION", Symbol {
+	define_universe(c, "LOKE_VERSION", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_STRING,
 		const_value = Const_Value{kind = .String, text = LOKE_VERSION_STRING},

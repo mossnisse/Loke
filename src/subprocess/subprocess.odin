@@ -33,14 +33,11 @@ Startup_Info_Ex :: struct {
 	attributes: rawptr,
 }
 
-// `run` waits for as long as the child takes.
-NO_DEADLINE :: time.Duration(0)
-
 // `os.process_exec`, but idle while the child runs. The core one polls its pipes
 // in a loop with no pause, so a waiting process held a whole core, and parallel
 // builds and test corpora starved the very children they were waiting for.
 //
-// With a `deadline`, a child that has not closed its output and exited by then
+// With a nonzero `deadline`, a child that has not closed its output and exited by then
 // is ended with every process it started, and `err` is `.Timeout`; `stdout` and
 // `stderr` keep what it wrote. The tree is ended, not just the child: a
 // grandchild holding an inherited pipe would otherwise keep the reads from
@@ -50,7 +47,7 @@ NO_DEADLINE :: time.Duration(0)
 run :: proc(
 	desc: os.Process_Desc,
 	allocator: runtime.Allocator,
-	deadline := NO_DEADLINE,
+	deadline: time.Duration = 0,
 ) -> (
 	state: os.Process_State,
 	stdout, stderr: []byte,

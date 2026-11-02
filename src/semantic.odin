@@ -611,7 +611,6 @@ Synth_Kind :: enum {
 	Array_Iter,
 	Array_Iter_Reverse,
 	Array_Next,
-	Slice_Next,
 	Slice_Mut_Next,
 	Slice_Ref_Next,
 	// Builds a slice's `{ data, index }`, so `next` is the slice one.
@@ -1666,11 +1665,6 @@ pointer_to :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 		Type_Key{kind = .Pointer, element = element, mutable = mutable},
 		Type_Info{kind = .Pointer, element = element, mutable = mutable, bits = c.target.pointer_bits},
 	)
-}
-
-pointer_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := underlying_info(c, id)
-	return info != nil && info.kind == .Pointer && info.mutable
 }
 
 // The one backend type a struct-shaped carrier's two capabilities share.

@@ -1105,7 +1105,6 @@ report_events :: proc(
 			// Every cleanup point of one local votes: any disagreement between
 			// them, or a conditional state at one of them, makes the drop
 			// conditional and gives the slot a runtime flag.
-			local.seen_cleanup = true
 			switch state[event.slot] {
 			case .Live:
 				local.live_exit = true
@@ -1187,7 +1186,7 @@ assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 			continue
 		}
 		// Reaching a cleanup point live is what gives a local an implicit drop.
-		sym.drop_at_exit = local.seen_cleanup && local.live_exit
+		sym.drop_at_exit = local.live_exit
 		// A hidden flag exists only where a lowering has to tell the runtime paths
 		// apart: cleanup points that disagree, or an assignment whose destination
 		// is live on one path and dead on another (design.md "Managed values and

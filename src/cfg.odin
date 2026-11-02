@@ -150,7 +150,6 @@ Tracked_Local :: struct {
 	ever_written:  bool,
 	// Filled while reporting: which states reach a cleanup, and whether an
 	// assignment sees it live on one path and dead on another.
-	seen_cleanup:       bool,
 	live_exit:          bool,
 	dead_exit:          bool,
 	conditional_assign: bool,
@@ -1897,7 +1896,7 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	if graph.mode == .Lifecycle {
 		append(&graph.held, ..walk_flow_reads(graph, iterable))
 	} else if ident, plain := prov_plain_slice_local(graph, iterable); plain && !place_loop {
-		iterated = prov_read_ident(graph, ident, .Read, reads_only = true) // traversed by value
+		iterated = prov_read_ident(graph, ident, reads_only = true) // traversed by value
 	} else {
 		iterated = walk_flow_expr(graph, iterable)
 	}
@@ -2361,7 +2360,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			}
 			return nil
 		}
-		return prov_read_ident(graph, v, .Read)
+		return prov_read_ident(graph, v)
 
 	case ^Expr_Move:
 		provider_move_end(graph, v)
@@ -2568,7 +2567,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			// carrier (design.md "Weakening and reborrows").
 			if ident, plain := prov_plain_slice_local(graph, v.operand); plain && len(v.bound) == 0 &&
 			   !prov_indices_may_write(v.indices) {
-				carriers := prov_read_ident(graph, ident, .Read, reads_only = true)
+				carriers := prov_read_ident(graph, ident, reads_only = true)
 				for index in v.indices {
 					walk_flow_expr(graph, index)
 				}

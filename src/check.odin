@@ -676,7 +676,7 @@ check_escape_attribute :: proc(
 	generic_instance := false,
 	borrowing := false,
 ) -> Escape_Level {
-	level, written, ok := attribute_escape_level(k.c, attributes)
+	level, written, ok := attribute_escape_level(attributes)
 	if !written {
 		return .Result
 	}

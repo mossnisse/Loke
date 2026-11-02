@@ -3675,7 +3675,7 @@ report_invalid_utf8 :: proc(k: ^Checker, span: Span, target: Type_Id) {
 // design.md "Type conversion": an integer constant converts only to a type that
 // holds it, where a runtime one would panic. False when `value` is not an
 // integer bound for an integer type, which is some other conversion's failure.
-report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Value, target: Type_Id, allocator: mem.Allocator = {}) -> bool {
+report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Value, target: Type_Id) -> bool {
 	if (value.kind != .Integer && value.kind != .Rune) ||
 	   !(type_is_integer(c, target) || type_is_rune(c, target)) || type_is_untyped(c, target) {
 		return false
@@ -3683,7 +3683,7 @@ report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Valu
 	errorf(
 		c, span, "L0712",
 		"the value %s does not fit `%s`; `math.wrap(%s, value)` keeps its low bits, and `math.to` tests whether it fits",
-		bi_text(value_allocator(c, allocator), value.integer), type_name(c, target), type_name(c, target),
+		bi_text(value_allocator(c, {}), value.integer), type_name(c, target), type_name(c, target),
 	)
 	return true
 }

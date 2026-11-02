@@ -29,7 +29,6 @@ Interface_Info :: struct {
 	file:      u32,
 	file_node: ^File,
 	params:    []Generic_Param_Decl,
-	type:      Type_Id,
 	checked:   bool,
 	// Computed once per declaration, with the rule that disqualified it.
 	dyn_computed: bool,
@@ -60,7 +59,6 @@ interface_info_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Interface_Info
 	info.node = node
 	info.pkg = sym.pkg
 	info.file, info.file_node = sym.def_file, sym.def_file_node
-	info.type = sym.type
 	info.scope = sym.def_scope
 	if info.scope == nil {
 		if pkg := package_of(k.c, sym.pkg); pkg != nil {
@@ -391,7 +389,6 @@ bound_arguments :: proc(k: ^Checker, call: ^Expr_Call, info: ^Interface_Info) ->
 Requirement_Failure :: struct {
 	span:    Span,
 	reason:  string,
-	subject: Type_Id,
 }
 
 // Does `info` hold for these arguments? Only a `where` bound or a `dyn`
@@ -417,7 +414,7 @@ report_interface_failure :: proc(
 	span: Span,
 	failure: Requirement_Failure,
 ) {
-	subject := len(args) > 0 && args[0].is_type ? args[0].type : failure.subject
+	subject := len(args) > 0 && args[0].is_type ? args[0].type : INVALID_TYPE
 	errorf(
 		k.c,
 		span,
@@ -445,7 +442,7 @@ report_failed_interface_bound :: proc(k: ^Checker, clause: Expr, span: Span) -> 
 failed_bound_text :: proc(k: ^Checker, clause: Expr) -> string {
 	if info, args, ok := bound_interface_application(k, clause); ok {
 		if failure, held := interface_check(k, info, args, expr_span(clause)); !held {
-			subject := len(args) > 0 && args[0].is_type ? args[0].type : failure.subject
+			subject := len(args) > 0 && args[0].is_type ? args[0].type : INVALID_TYPE
 			text := fmt.aprintf(
 				"`%s` does not satisfy `%s`",
 				type_name(k.c, subject), interface_application_text(k.c, info, args),
@@ -481,13 +478,9 @@ interface_application_text :: proc(c: ^Compiler, info: ^Interface_Info, args: []
 		if index > 0 {
 			text = concat(c, text, ", ")
 		}
-		text = concat(c, text, interface_argument_text(c, arg))
+		text = concat(c, text, generic_argument_text(c, arg))
 	}
 	return concat(c, text, ")")
-}
-
-interface_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
-	return generic_argument_text(c, arg)
 }
 
 // Stops an interface whose composition names itself.

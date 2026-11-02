@@ -5,7 +5,7 @@ package lokec
 import "core:mem"
 import "core:slice"
 
-Prov_Transfer_Mode :: enum { Read, Copy, Clone, Move }
+Prov_Transfer_Mode :: enum { Read, Clone, Move }
 
 Prov_Copy_Operation :: struct {
 	type: Type_Id,
@@ -57,7 +57,7 @@ prov_component :: proc(graph: ^Flow_Graph, source: Value_Id, from: []Proj_Step =
 	                           mode = mode, type = type == INVALID_TYPE ? prov_type_at(graph.k.c, prov_value(graph, source).type, from) : type,
 	                           uncertain_copy = uncertain_copy}
 	component.copy_from = component.from
-	if mode == .Clone || mode == .Copy { component.copy = prov_input_copy_operation(graph, component.type) }
+	if mode == .Clone { component.copy = prov_input_copy_operation(graph, component.type) }
 	if allocator != nil { component.allocator = prov_input_value(graph, allocator) }
 	// Normalize children now. In particular a hidden array's owner is distinct
 	// from its slice value.

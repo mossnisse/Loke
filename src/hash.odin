@@ -95,7 +95,7 @@ record_hashes_structurally :: proc(c: ^Compiler, id, under: Type_Id, info: ^Type
 	if info.packed || type_is_capture_record(c, under) {
 		return false
 	}
-	if type_own_equality(c, id) != INVALID_SYMBOL || inherent_member_named(c, under, "hash") != INVALID_SYMBOL {
+	if type_own_equality(c, id) != INVALID_SYMBOL || inherent_hash_member(c, under) != INVALID_SYMBOL {
 		return false
 	}
 	return true
@@ -119,11 +119,11 @@ part_hash_member :: proc(c: ^Compiler, part: Type_Id) -> (Symbol_Id, Type_Id) {
 	if type_own_equality(c, part) == INVALID_SYMBOL {
 		return INVALID_SYMBOL, INVALID_TYPE
 	}
-	if found := inherent_member_named(c, part, "hash"); found != INVALID_SYMBOL {
+	if found := inherent_hash_member(c, part); found != INVALID_SYMBOL {
 		return found, part
 	}
 	under := type_underlying(c, part)
-	return inherent_member_named(c, under, "hash"), under
+	return inherent_hash_member(c, under), under
 }
 
 // A float, or a fixed array of them, as `type_is_hashable` excludes.
@@ -193,8 +193,8 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 	if key == INVALID_TYPE {
 		return Key_Policy{}, "is not a type"
 	}
-	hash := inherent_member_named(c, key, "hash")
-	equal, _ := inherent_operator_named(c, key, "==")
+	hash := inherent_hash_member(c, key)
+	equal, _ := inherent_equality(c, key)
 	// Declaring either half opts out of the catalogue, so a `distinct` scalar
 	// never pairs its own `==` with its underlying type's hash.
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
@@ -234,14 +234,14 @@ key_hash_signature_ok :: proc(sym: ^Symbol, key: Type_Id) -> bool {
 		len(sym.params) == 2 && sym.params[0] == key && sym.params[1] == TYPE_UINT
 }
 
-// The key type's own non-synthesized member; a `distinct` type inherits none.
+// The key type's own non-synthesized `hash`; a `distinct` type inherits none.
 @(private = "file")
-inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
+inherent_hash_member :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 	info := type_of(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
-	wanted := intern_identifier(c, name)
+	wanted := intern_identifier(c, "hash")
 	for member in info.members {
 		sym := symbol_of(c, member)
 		if sym != nil && sym.name == wanted && sym.kind == .Proc && sym.operator == "" &&
@@ -269,14 +269,14 @@ type_own_equality_declared :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 
 @(private = "file")
 own_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol_Id) {
-	if callable, declared = inherent_operator_named(c, type, "=="); callable != INVALID_SYMBOL {
+	if callable, declared = inherent_equality(c, type); callable != INVALID_SYMBOL {
 		return
 	}
 	under := type_underlying(c, type)
 	if under == type {
 		return INVALID_SYMBOL, INVALID_SYMBOL
 	}
-	return inherent_operator_named(c, under, "==")
+	return inherent_equality(c, under)
 }
 
 // Every type within `type`, itself included, that compares by its own `==`;
@@ -330,8 +330,8 @@ own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id,
 // A delegated `==` keeps the underlying type's policy, so it is not one of the
 // type's own.
 @(private = "file")
-inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> (callable, declared: Symbol_Id) {
-	callable, declared = inherent_self_operator(c, type, symbol_text)
+inherent_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol_Id) {
+	callable, declared = inherent_self_operator(c, type, "==")
 	if sym := symbol_of(c, callable); sym == nil || sym.delegated {
 		return INVALID_SYMBOL, INVALID_SYMBOL
 	}

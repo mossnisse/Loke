@@ -133,8 +133,8 @@ defer_foreign_signature :: proc(k: ^Checker, sig: Foreign_Signature) {
 }
 
 // Arrays may cross as record fields; reason identifies the unsafe member.
-foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string) {
-	ok, reason, _ = abi_safety(c, type, top_level)
+foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id) -> (ok: bool, reason: string) {
+	ok, reason, _ = abi_safety(c, type)
 	return
 }
 
@@ -147,12 +147,12 @@ Abi_Walk :: struct {
 
 // Incomplete answers must be checked again after fields resolve.
 @(private = "file")
-abi_safety :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string, incomplete: bool) {
+abi_safety :: proc(c: ^Compiler, type: Type_Id) -> (ok: bool, reason: string, incomplete: bool) {
 	walk := Abi_Walk{
 		visiting = make([]bool, len(c.types), context.temp_allocator),
 		safe = make([]bool, len(c.types), context.temp_allocator),
 	}
-	safe, noun, path := abi_walk(c, type, top_level, &walk)
+	safe, noun, path := abi_walk(c, type, true, &walk)
 	if safe {
 		return true, "", walk.incomplete
 	}

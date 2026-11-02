@@ -392,7 +392,7 @@ check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
 		if sym == nil {
 			continue
 		}
-		validate_semantic_hook(k, item, d, sym, symbol_id)
+		validate_semantic_hook(k, item, sym, symbol_id)
 	}
 }
 
@@ -600,14 +600,10 @@ visible_member_named :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 	return member
 }
 
-has_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> bool {
-	return find_member(k, type, name) != INVALID_SYMBOL
-}
-
 // ------------------------------------------------------ semantic hooks --
 
-// Every inherent hook of one role, matched by role rather than name.
-hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symbol_Id {
+// Every inherent conversion hook, matched by role rather than name.
+conversion_hooks :: proc(k: ^Checker, target: Type_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	info := type_of(k.c, target)
 	if info == nil {
@@ -619,7 +615,7 @@ hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symb
 			resolve_symbol_signature_in_place(k, member, target)
 			sym = symbol_of(k.c, member)
 		}
-		if sym != nil && sym.hook == role {
+		if sym != nil && sym.hook == .Convert {
 			append(&out, member)
 		}
 	}
