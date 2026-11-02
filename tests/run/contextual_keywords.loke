@@ -17,7 +17,7 @@ where :: proc($T: type) -> int where size_of(T) == 8 {
 
 Vec :: struct { x: int }
 
-Box_It :: move_only struct { id: int }
+@(move_only) Box_It :: struct { id: int }
 
 impl Vec {
 	add :: operator(+) proc(a: Vec, b: Vec) -> Vec { return Vec{x = a.x + b.x}; }

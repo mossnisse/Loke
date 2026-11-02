@@ -3,18 +3,18 @@
 // for, and the drop hook's shape needs no instance at all.
 package main;
 
-Wrong :: move_only struct($T: type) { value: T }
+@(move_only) Wrong :: struct($T: type) { value: T }
 impl Wrong($T) {
 	close :: hook(drop) proc(self) {}
 }
 
-Unused :: move_only struct($T: type) { value: T }
+@(move_only) Unused :: struct($T: type) { value: T }
 impl Unused($T) {
 	close :: hook(drop) proc(self: inout, extra: int) {}
 }
 
 // One report for two instances.
-Twice :: move_only struct($T: type) { value: T }
+@(move_only) Twice :: struct($T: type) { value: T }
 impl Twice($T) {
 	close :: hook(drop) proc(self: inout) {}
 	shut :: hook(drop) proc(self: inout) {}
@@ -39,7 +39,7 @@ impl Own_Generic($T) {
 	}
 }
 
-Declared :: move_only struct($T: type) { value: T }
+@(move_only) Declared :: struct($T: type) { value: T }
 impl Declared($T) {
 	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Declared(T), Allocator_Error) {
 		return .ok(Declared(T){self.value});
@@ -63,7 +63,7 @@ impl Converted($T) {
 
 // A record's copy is move-only for this one argument, and the hook has no bound
 // that says so: reported for that instance alone, once.
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 Cell :: struct($T: type) { size: int }
 impl Cell($T) {
 	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Cell(T), Allocator_Error) {
@@ -86,7 +86,7 @@ impl Bounded($T) {
 	}
 }
 // A specialized block replaces the general hook of the same name.
-Special :: move_only struct($T: type) { value: T }
+@(move_only) Special :: struct($T: type) { value: T }
 impl Special($T) {
 	close :: hook(drop) proc(self: inout) {}
 }
@@ -102,7 +102,7 @@ impl Vector($T) {
 }
 
 // Two hooks only one instance sees, under different names.
-Both :: move_only struct($T: type) { value: T }
+@(move_only) Both :: struct($T: type) { value: T }
 impl Both($T) {
 	close :: hook(drop) proc(self: inout) {}
 }

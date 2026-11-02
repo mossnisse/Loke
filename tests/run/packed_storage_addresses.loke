@@ -6,7 +6,7 @@ import "core:fmt";
 // read and written in place, unaligned. A pointer field's target is separate,
 // aligned storage, so its fields have ordinary addresses.
 Cell :: struct { value: int }
-Packed :: struct @(packed) { tag: u8, data: [2]int, pointer: ^Cell }
+@(packed) Packed :: struct { tag: u8, data: [2]int, pointer: ^Cell }
 
 main :: proc() {
 	cell := Cell{42};

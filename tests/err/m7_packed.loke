@@ -4,9 +4,9 @@ package main;
 // `@(packed)` applies to a struct rather than a union. The whole packed value's
 // address stays valid.
 
-Packed :: struct @(packed) { x: u8, y: i32 }
+@(packed) Packed :: struct { x: u8, y: i32 }
 Outer :: struct { inner: Packed }
-Bad_Union :: union @(packed) { n: i32, f: bool } // L0607: packed is struct-only
+@(packed) Bad_Union :: union { n: i32, f: bool } // L0607: packed is struct-only
 
 main :: proc() {
 	p := Packed{ x = 1, y = 2 };

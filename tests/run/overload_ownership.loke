@@ -30,7 +30,7 @@ only_string :: proc(x: string_view) -> int { return 3; }
 only        :: proc{only_int, only_string};
 
 // A move-only temporary reaches `shared_from_move`, not the cloning member.
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 make_res :: proc(id: int) -> Res { return Res{id}; }
 
 // One source line dispatches alike for a copyable and a move-only element.

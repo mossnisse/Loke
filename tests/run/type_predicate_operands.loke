@@ -7,7 +7,7 @@ import "base:meta";
 // nothing and the local still drops. design.md "Built-in procedures":
 // `is_union` asks only a type's kind, so a reflection descriptor is no union.
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 impl Token {
 	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }
 }

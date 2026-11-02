@@ -36,7 +36,8 @@ import "core:mem";
 	which is what makes a document cheap to reuse. A failed reparse leaves it
 	empty, with that capacity and no input. Drop the document to release it.
 */
-Document :: move_only struct {
+@(move_only)
+Document :: struct {
 	// and fields private to the package
 }
 

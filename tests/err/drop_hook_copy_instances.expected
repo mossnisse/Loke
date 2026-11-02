@@ -3,9 +3,9 @@ L0747
 `Later` declares `hook(drop)`, so it must say how it is copied
 @15:4
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 @135:2
 while instantiating `hook_later(int)`
 
@@ -14,38 +14,38 @@ L0747
 `Earlier` declares `hook(drop)`, so it must say how it is copied
 @23:4
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 @136:2
 while instantiating `hook_earlier(int)`
 
 L0748
-@30:20
-`@(fieldwise_copy)` keeps a generated copy, but `Later` holds a move-only field and has none; write `move_only`
+@30:4
+`@(fieldwise_copy)` keeps a generated copy, but `Later` holds a move-only field and has none; write `@(move_only)`
 @140:2
 while instantiating `field_later(Token)`
 
 L0748
-@36:22
-`@(fieldwise_copy)` keeps a generated copy, but `Earlier` holds a move-only field and has none; write `move_only`
+@36:4
+`@(fieldwise_copy)` keeps a generated copy, but `Earlier` holds a move-only field and has none; write `@(move_only)`
 @141:2
 while instantiating `field_earlier(Token)`
 
 L0749
-@44:20
+@44:4
 `@(fieldwise_copy)` is for a record with `hook(drop)`; `Later` declares none, so it already copies field by field
 @145:2
 while instantiating `unhooked_later(bool)`
 
 L0749
-@52:22
+@52:4
 `@(fieldwise_copy)` is for a record with `hook(drop)`; `Earlier` declares none, so it already copies field by field
 @146:2
 while instantiating `unhooked_earlier(bool)`
 
 L0748
-@62:20
+@62:4
 `@(fieldwise_copy)` keeps the generated copy, but `Later` declares `hook(copy)`
 @68:4
 `hook(copy)` is declared here
@@ -57,16 +57,16 @@ L0747
 `Undecided` declares `hook(drop)`, so it must say how it is copied
 @79:3
 `hook(drop)` is declared here
-`Undecided` is already move-only through a field; write `move_only` before `struct` to say so
+`Undecided` is already move-only through a field; write `@(move_only)` on its declaration to say so
 
 L0748
-@81:21
-`@(fieldwise_copy)` keeps a generated copy, but `Holder` holds a move-only field and has none; write `move_only`
+@81:4
+`@(fieldwise_copy)` keeps a generated copy, but `Holder` holds a move-only field and has none; write `@(move_only)`
 @152:2
 while instantiating `repeated(Token)`
 
 L0748
-@89:19
+@89:4
 `@(fieldwise_copy)` keeps the generated copy, but `Both` declares `hook(copy)`
 @95:4
 `hook(copy)` is declared here
@@ -74,8 +74,8 @@ L0748
 while instantiating `different(int)`
 
 L0748
-@89:19
-`@(fieldwise_copy)` keeps a generated copy, but `Both` holds a move-only field and has none; write `move_only`
+@89:4
+`@(fieldwise_copy)` keeps a generated copy, but `Both` holds a move-only field and has none; write `@(move_only)`
 @157:2
 while instantiating `different(Token)`
 
@@ -84,8 +84,8 @@ L0747
 `Element` declares `hook(drop)`, so it must say how it is copied
 @108:5
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 @104:2
 in static expansion 1, for `1`

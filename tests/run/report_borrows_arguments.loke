@@ -11,7 +11,7 @@ import "core:fmt";
 Point :: struct { x, y: int }
 Held :: struct { items, other: []int }
 Lent :: struct { items: []mut int }
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 data: [dynamic]int = {};
 

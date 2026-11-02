@@ -27,7 +27,7 @@ import "core:strings";
 // open-questions.md "Self-referential storage": the document stores offsets
 // into its source and its decoded text, never views of its own storage, so an
 // accessor computes each view from wherever the document now is.
-Document :: move_only struct {
+@(move_only) Document :: struct {
 	@(private) nodes:   [dynamic]Node,
 	@(private) decoded: strings.String_Builder,
 	@(private) source:  Source,
@@ -425,8 +425,8 @@ TRUE_FLAG :: 0x100;
 DECODED_FLAG :: 0x200;
 
 // Where the document's text lives; nothing until a parse succeeds.
-@(private)
-Source :: union @(zero=borrowed) {
+@(private, zero=borrowed)
+Source :: union {
 	borrowed: string_view,
 	owned:    string,
 }

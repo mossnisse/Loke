@@ -10,6 +10,31 @@ checklist.
 
 ### Breaking changes
 
+- A struct's or union's attributes are now written on its declaration, and `move_only` is
+  the attribute `@(move_only)`, no longer a reserved word
+  ([Attributes](design.md#attributes)). Attributes in the type, and `move_only struct`, are
+  now `L0750`. Upgrade by running `lokec <file or directory> -migrate`:
+
+  ```
+  Header :: struct @(packed) { ... }             // before
+  @(packed) Header :: struct { ... }             // after
+
+  @(public) Window :: move_only struct @(thread_affine) { ... }
+  @(public, move_only, thread_affine) Window :: struct { ... }
+
+  Generic :: struct($N: int) @(align=N) { ... }
+  @(align=N) Generic :: struct($N: int) { ... }
+  ```
+
+- A `union` or `enum` is now written only as the value of a constant declaration, as a
+  `struct` already was ([Unions](design.md#unions),
+  [Enumerations](design.md#enumerations)). `f :: proc(k: enum { A, B })`, `field: union { a:
+  int, none }`, `[size_of(enum { A, B })]u8`, and `distinct enum { A }` are now `L0717`.
+  `-migrate` cannot rewrite these, since each needs a name. Upgrade by declaring the type,
+  or with an [anonymous union](design.md#anonymous-unions) `(a: int | none:)` for a union
+  whose identity need not be nominal. A generic argument no longer reaches the
+  [success shorthand](design.md#success-returns) through an inline definition, because
+  there is none.
 - A read-only copy of a carrier that comes to hold a reborrow of a mutable one later in a loop
   is now a reborrow of it too ([Weakening and
   reborrows](design.md#weakening-and-reborrows)). This compiled, and read `x` through `y` while
@@ -730,6 +755,12 @@ checklist.
 
 ### Added
 
+- `@(move_only)` applies to a union too, which could be move-only only through a move-only
+  payload before ([`@(move_only)`](design.md#move_only)).
+- `lokec -migrate` rewrites what an earlier release accepted into what this one does, in a
+  file or a directory's `.loke` files, and leaves everything else as written;
+  `-migrate-check` lists the files it would change
+  ([Common options](compiler-guide.md#common-options)).
 - [`@(fieldwise_copy)`](design.md#fieldwise_copy) keeps the generated field-wise
   copy of a record with a `hook(drop)`, for a hook that adds a step each value
   needs once.

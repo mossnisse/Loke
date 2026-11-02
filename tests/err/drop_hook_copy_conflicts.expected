@@ -1,29 +1,29 @@
 L0748
-@6:28
-`@(fieldwise_copy)` keeps a generated copy, but a `move_only` record has none
+@6:14
+`@(fieldwise_copy)` keeps a generated copy, but a `@(move_only)` record has none
 
 L0748
-@11:20
+@11:3
 `@(fieldwise_copy)` keeps the generated copy, but `Hooked` declares `hook(copy)`
 @14:2
 `hook(copy)` is declared here
 
 L0748
-@19:30
+@19:3
 `@(fieldwise_copy)` keeps the generated copy, but `Copier` declares `hook(copy)`
 @22:2
 `hook(copy)` is declared here
 
 L0748
-@28:20
-`@(fieldwise_copy)` keeps a generated copy, but `Holder` holds a move-only field and has none; write `move_only`
+@28:3
+`@(fieldwise_copy)` keeps a generated copy, but `Holder` holds a move-only field and has none; write `@(move_only)`
 
 L0749
-@34:19
+@34:3
 `@(fieldwise_copy)` is for a record with `hook(drop)`; `Plain` declares none, so it already copies field by field
 
 L0749
-@35:32
+@35:3
 `@(fieldwise_copy)` is for a record with `hook(drop)`; `Template` declares none, so it already copies field by field
 
 L0488
@@ -31,17 +31,17 @@ L0488
 `drop` has a fixed signature for `Broken`: `proc(self: inout T)`
 
 L0607
-@44:19
-`@(fieldwise_copy)` cannot appear on a union type
+@44:3
+`@(fieldwise_copy)` cannot appear on a union declaration
 
 L0607
 @45:3
-`@(fieldwise_copy)` cannot appear on a type declaration
+`@(fieldwise_copy)` cannot appear on a constant declaration
 
 L0608
-@48:20
+@48:3
 `@(fieldwise_copy)` takes no value
 
 L0749
-@54:20
+@54:4
 `@(fieldwise_copy)` is for a record with `hook(drop)`; `Local` declares none, so it already copies field by field

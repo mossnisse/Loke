@@ -182,7 +182,7 @@ other_pool :: proc() {
 	fmt.println("another pool's task ran inside the join", child);
 }
 
-Marker :: move_only struct { used: bool }
+@(move_only) Marker :: struct { used: bool }
 
 impl Marker {
 	release :: hook(drop) proc(self: inout) {

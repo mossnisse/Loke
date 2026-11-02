@@ -11,14 +11,14 @@ import "core:unsafe";
 // behind the count is never cloned and never released, and one in front of it
 // is cloned and released exactly once.
 
-Tracked :: struct @(fieldwise_copy) { id: int }
+@(fieldwise_copy) Tracked :: struct { id: int }
 impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
 }
 
 // No zero value and no copy: the element kind a `[N]T` field could not hold at
 // all, because the record would need a zero for it.
-Held :: move_only struct { id: int }
+@(move_only) Held :: struct { id: int }
 Sealed :: union { first: Held, second: Held }
 
 Buffer :: struct($T: type, $N: int) {

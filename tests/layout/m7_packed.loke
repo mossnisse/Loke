@@ -4,9 +4,9 @@ package main; import "core:fmt";
 //: a packed struct, an over-aligned struct, their combination,
 // each nested in another struct and used as a fixed-array element.
 
-Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
-Over :: struct @(align=16) { b: bool, n: i32 }
-Both :: struct @(packed, align=8) { x: u8, y: i32 }
+@(packed) Packed :: struct { x: u8, y: i32, z: u16, w: u8 }
+@(align=16) Over :: struct { b: bool, n: i32 }
+@(packed, align=8) Both :: struct { x: u8, y: i32 }
 
 Hold_Packed :: struct { flag: bool, value: Packed }
 Hold_Over :: struct { flag: bool, value: Over }

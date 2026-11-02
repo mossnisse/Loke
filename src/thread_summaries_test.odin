@@ -194,7 +194,7 @@ reach_includes_hooks_and_cleanup :: proc(t: ^testing.T) {
 	defer destroy_checked(&p)
 	if !summarized(t, &p, `
 shared: []mut int;
-Guard :: move_only struct { id: int }
+@(move_only) Guard :: struct { id: int }
 impl Guard { release :: hook(drop) proc(self: inout Guard) { shared[0] = self.id; } }
 scoped :: proc() { g := Guard{1}; }
 deferred :: proc() { defer shared[0] = 2; }
@@ -271,7 +271,7 @@ allocator_use_includes_hooks_and_cleanup :: proc(t: ^testing.T) {
 	defer destroy_checked(&p)
 	if !summarized(t, &p, `
 chosen: Allocator;
-Guard :: move_only struct { id: int }
+@(move_only) Guard :: struct { id: int }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) { log := make([dynamic]int, 0, 4, chosen); }
 }
@@ -301,7 +301,7 @@ thread_exit_drops_cover_every_thread_local_owner :: proc(t: ^testing.T) {
 	if !summarized(t, &p, `
 total: int;
 shared: []mut int;
-Tracked :: move_only struct { id: int }
+@(move_only) Tracked :: struct { id: int }
 impl Tracked { release :: hook(drop) proc(self: inout Tracked) { total += self.id; shared[0] = self.id; } }
 resource: thread_local Tracked;
 names: thread_local [dynamic]int;
@@ -361,14 +361,14 @@ count :: proc(s: string_view) -> int { return s.rune_count(); }
 	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "count")), "counting runes allocates nothing")
 }
 
-// A `move_only` record of plain fields is managed for its lifecycle but frees
+// A `@(move_only)` record of plain fields is managed for its lifecycle but frees
 // no allocator storage.
 @(test)
 plain_move_only_drops_use_no_allocator :: proc(t: ^testing.T) {
 	p: Checked
 	defer destroy_checked(&p)
 	if !summarized(t, &p, `
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 token: thread_local Token;
 hold :: proc() { held := Token{1}; }
 `) {

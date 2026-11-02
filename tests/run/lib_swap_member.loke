@@ -13,7 +13,7 @@ import "core:slice";
 // The element is move-only *and* has no zero value, so nothing built on
 // `exchange` could rearrange it: there is neither a copy to make nor a zero to
 // install. A swap installs nothing, which is why it reaches this element.
-Held :: move_only struct { id: int }
+@(move_only) Held :: struct { id: int }
 Sealed :: union { held: Held, spare: Held }
 
 id_of :: proc(value: Sealed) -> int {

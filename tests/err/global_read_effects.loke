@@ -92,7 +92,7 @@ through_a_receiver :: proc() { bag.refill(); }
 
 // Hooks run implicitly: a drop at scope exit, by `drop`, and a conversion.
 hooked: int;
-Guard :: move_only struct { active: bool }
+@(move_only) Guard :: struct { active: bool }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) {
 		if (self.active) { fmt.println(hooked); }

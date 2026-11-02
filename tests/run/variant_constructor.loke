@@ -16,7 +16,7 @@ impl Detail {
 	release :: hook(drop) proc(self: inout Detail) { fmt.println("drop detail", self.id); }
 }
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 impl Token {
 	release :: hook(drop) proc(self: inout Token) { fmt.println("drop token", self.id); }

@@ -5,7 +5,7 @@ package main; import "core:fmt";
 // later argument that panics still destroys the owners built before it, in
 // reverse registration order.
 
-Box :: move_only struct { tag: int, items: [dynamic]int }
+@(move_only) Box :: struct { tag: int, items: [dynamic]int }
 
 impl Box {
 	release :: hook(drop) proc(self: inout Box) { fmt.println("drop", self.tag); }

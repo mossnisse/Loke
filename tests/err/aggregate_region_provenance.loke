@@ -82,7 +82,7 @@ nested_string :: proc() {
 	fmt.println(kept.values.len());
 }
 
-Handle :: move_only struct { allocator: Allocator }
+@(move_only) Handle :: struct { allocator: Allocator }
 
 result_error :: proc() {
 	arena := mem.Arena.init();

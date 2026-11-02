@@ -3,10 +3,10 @@
 // aligned copy, which reads the same values.
 package main;
 import "core:fmt";
-H :: struct @(packed) { pad: u8, arr: [2]i32 }
-P :: struct @(packed) { pad: u8, n: i32 }
+@(packed) H :: struct { pad: u8, arr: [2]i32 }
+@(packed) P :: struct { pad: u8, n: i32 }
 Inner :: struct { a: i32, b: i64 }
-Q :: struct @(packed) { pad: u8, inner: Inner }
+@(packed) Q :: struct { pad: u8, inner: Inner }
 main :: proc() {
 	h := H{1, {70000, 3}};
 	foreach (x in h.arr) { fmt.println(x); }

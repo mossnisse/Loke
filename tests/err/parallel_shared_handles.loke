@@ -10,7 +10,7 @@ import "core:mem";
 
 global_arena: mem.Arena;
 
-Item :: move_only struct { n: int }
+@(move_only) Item :: struct { n: int }
 
 impl Item {
 	release :: hook(drop) proc(self: inout) { _ = fill(global_arena.allocator()); }

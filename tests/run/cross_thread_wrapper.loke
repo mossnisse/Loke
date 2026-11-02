@@ -17,7 +17,7 @@ Job :: struct { name: string, rounds: int, values: [dynamic]int }
 hits: sync.Atomic(int);
 
 // A handle that must stay on the thread that opened it.
-Handle :: struct @(thread_affine) { id: int }
+@(thread_affine) Handle :: struct { id: int }
 
 work :: proc(job: move Job) {
 	opened := Handle{id = job.rounds};

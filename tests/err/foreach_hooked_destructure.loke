@@ -6,7 +6,7 @@ import "core:fmt";
 // custom copy or drop hook forbids, at any depth of the pattern. A lent record
 // is only projected, and a copying traversal clones each field from storage.
 
-Guarded :: move_only struct { first: int, second: int }
+@(move_only) Guarded :: struct { first: int, second: int }
 impl Guarded {
     release :: hook(drop) proc(self: inout Guarded) { fmt.println("drop", self.first); }
 }

@@ -6,7 +6,7 @@ import "core:fmt";
 
 drops: int = 0;
 
-Tracked :: move_only struct { items: [1]int }
+@(move_only) Tracked :: struct { items: [1]int }
 impl Tracked {
 	done :: hook(drop) proc(self: inout Tracked) { drops += 1; }
 	read :: proc(self: ^) -> int { return self.items[0]; }

@@ -765,8 +765,8 @@ find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, boo
 	return {}, false
 }
 
-// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4)
-// {...}`. Only a power of two the target supports is accepted; a written
+// design.md "@(align=N)": `@(align=4) Name :: union {...}`, or `struct {...}`.
+// Only a power of two the target supports is accepted; a written
 // alignment under the natural one raises rather than lowers.
 record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
 	attribute, written := find_attribute(value.attributes, "align")
@@ -2017,16 +2017,22 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Type_Record:
 		if value.denoted_type == INVALID_TYPE {
-			// design.md "Structs": a `struct` is a declaration's value, so every
-			// nominal record has a name; a record described in place is the
-			// structural `(name: Type, ...)`. The type is still made, once, so
-			// nothing that uses it reports again.
+			// design.md "Structs", "Unions": each is a declaration's value, so every
+			// nominal one has a name; one described in place is the structural
+			// `(name: Type, ...)` or `(a: A | b: B)`. The type is still made, once,
+			// so nothing that uses it reports again.
 			if value.kind == .Struct {
 				errorf(
 					k.c, value.span, "L0717",
 					"a `struct` type is declared, `Name :: struct {{ ... }}`, not written in place",
 				)
 				add_notef(k.c, value.span, "a record written in place is an anonymous record, `(x: int, y: int)`")
+			} else {
+				errorf(
+					k.c, value.span, "L0717",
+					"a `union` type is declared, `Name :: union {{ ... }}`, not written in place",
+				)
+				add_notef(k.c, value.span, "a union written in place is an anonymous union, `(a: int | b: bool)`")
 			}
 			validate_record_attributes(k, value)
 			if value.kind == .Struct {
@@ -2056,6 +2062,11 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Type_Enum:
 		if value.denoted_type == INVALID_TYPE {
+			// design.md "Enumerations": every one has a name.
+			errorf(
+				k.c, value.span, "L0717",
+				"an `enum` type is declared, `Name :: enum {{ ... }}`, not written in place",
+			)
 			value.denoted_type = new_type(k.c, Type_Info{kind = .Enum})
 			resolve_enum_members(k, value.denoted_type, value)
 		}
@@ -3009,10 +3020,8 @@ Generic_Lookup :: struct {
 	followed: [dynamic]Symbol_Id,
 }
 
-// A `$` name is a generic argument. An inline definition depends on one only
-// through the types and values written inside it, such as `struct { x: T }` in
-// `size_of`, so those are walked rather than assumed, and a local alias, named or
-// selected from a type, through what it names (design.md "Success returns").
+// A `$` name is a generic argument, and a local alias, named or selected from a
+// type, depends on one through what it names (design.md "Success returns").
 @(private = "file")
 names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	lookup := (^Generic_Lookup)(data)
@@ -3034,43 +3043,6 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 		return alias_names_generic(lookup, v.resolution.symbol)
 	case ^Type_Poly:
 		return true
-	case ^Type_Record:
-		// `@(align=N)` changes the layout as a field type does. It is the one
-		// expression-valued record attribute: `zero` and `failure` name a
-		// variant, and a field's attributes name a sibling field or nothing, so
-		// none of those is looked up in scope.
-		if align, written := find_attribute(v.attributes, "align"); written && any_of(align.value, data) {
-			return true
-		}
-		for parameter in v.generic_params {
-			if any_of(parameter.type, data) {
-				return true
-			}
-		}
-		for clause in v.where_clauses {
-			if any_of(clause, data) {
-				return true
-			}
-		}
-		for field in v.fields {
-			if any_of(field.type, data) {
-				return true
-			}
-		}
-		for variant in v.variants {
-			if any_of(variant.type, data) {
-				return true
-			}
-		}
-	case ^Type_Enum:
-		if any_of(v.backing, data) {
-			return true
-		}
-		for field in v.fields {
-			if any_of(field.value, data) {
-				return true
-			}
-		}
 	case ^Expr_Proc:
 		return any_of(v.signature, data)
 	}

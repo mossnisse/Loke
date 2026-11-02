@@ -67,7 +67,8 @@ Metadata :: struct {
 	particular instance was opened with. Using an unsupported direction returns
 	`Unsupported` at run time.
 */
-File :: move_only struct {
+@(move_only)
+File :: struct {
 	// and fields private to the package
 }
 
@@ -302,7 +303,8 @@ Directory_Entry :: struct {
 when (LOKE_OS == .Windows) {
 
 // The open enumeration `read_directory` returns.
-Directory_Reader :: move_only struct {
+@(move_only)
+Directory_Reader :: struct {
 	// and fields private to the package
 }
 

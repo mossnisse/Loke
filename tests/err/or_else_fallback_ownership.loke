@@ -1,11 +1,11 @@
 package main;
 
-Handle :: move_only struct { id: int }
+@(move_only) Handle :: struct { id: int }
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) {}
 }
 
-Outcome :: union @(failure=err) { ok: Handle, err: int }
+@(failure=err) Outcome :: union { ok: Handle, err: int }
 failed :: proc() -> Outcome { return .err(1); }
 
 main :: proc() {

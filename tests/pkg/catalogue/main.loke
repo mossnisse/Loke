@@ -49,7 +49,7 @@ impl Counted {
 	}
 }
 
-Move_Only :: move_only struct { handle: int }
+@(move_only) Move_Only :: struct { handle: int }
 
 Holds_Move_Only :: struct { inner: Move_Only }
 

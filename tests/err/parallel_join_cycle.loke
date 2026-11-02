@@ -19,7 +19,7 @@ check :: proc(send: ^thread.Sender(int), value: ^Cycle) {
 
 P :: distinct ^P;
 Q :: distinct ^Q;
-Ticket :: struct @(wakes_on_drop) { held: P }
+@(wakes_on_drop) Ticket :: struct { held: P }
 
 borrow_pointer :: proc(value: Q) {}
 

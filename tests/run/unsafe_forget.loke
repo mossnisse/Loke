@@ -7,7 +7,7 @@ package main; import "core:fmt"; import "core:unsafe";
 // hook here prints, so a suppressed cleanup is observable as a line that is not
 // in the expected output.
 
-Res :: struct @(fieldwise_copy) { id: int }
+@(fieldwise_copy) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) {

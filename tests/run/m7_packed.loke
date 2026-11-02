@@ -7,17 +7,17 @@ import "core:unsafe";
 // runtime type info all agree. A nested access through a packed value stays
 // correct, and the value round-trips through a by-value call and a fixed array.
 
-Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
-Over :: struct @(align=16) { b: bool, n: i32 }
-Both :: struct @(packed, align=8) { x: u8, y: i32 }
+@(packed) Packed :: struct { x: u8, y: i32, z: u16, w: u8 }
+@(align=16) Over :: struct { b: bool, n: i32 }
+@(packed, align=8) Both :: struct { x: u8, y: i32 }
 Outer :: struct { head: u8, inner: Packed }
 Const_Inner :: struct { x: i64, y: i64 }
-Const_Outer :: struct @(packed, align=16) { tag: u8, inner: Const_Inner }
+@(packed, align=16) Const_Outer :: struct { tag: u8, inner: Const_Inner }
 
 // Equality on a combined record compares only an `@(initialized)` array's live
 // prefix, and keeps a large field an address.
-Buf :: struct @(packed, align=8) { count: int, @(initialized=count) items: [4]int }
-Big :: struct @(packed, align=8) { tag: u8, data: [1024]int }
+@(packed, align=8) Buf :: struct { count: int, @(initialized=count) items: [4]int }
+@(packed, align=8) Big :: struct { tag: u8, data: [1024]int }
 
 saved: Const_Outer = { tag = 9, inner = { x = 41, y = 42 } };
 

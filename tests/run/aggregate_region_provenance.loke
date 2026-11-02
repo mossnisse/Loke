@@ -5,7 +5,7 @@ package main;
 import "core:mem";
 import "core:fmt";
 
-Handle :: move_only struct { allocator: Allocator }
+@(move_only) Handle :: struct { allocator: Allocator }
 held: Handle;
 shared_handle: Option(Shared(Handle));
 

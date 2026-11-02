@@ -120,7 +120,8 @@ when (LOKE_OS == .Windows) {
 	that calls `os.exit` while raw leaves the user's terminal raw. Ctrl+C,
 	Ctrl+Break, and closing the window restore the mode whatever the strategy.
 */
-Raw_Mode :: move_only struct {
+@(move_only)
+Raw_Mode :: struct {
 	// and fields private to the package
 }
 

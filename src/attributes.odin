@@ -15,8 +15,8 @@ Attr_Pos :: enum {
 	Type_Decl,
 	Struct_Field,
 	Parameter,
-	Struct_Literal,
-	Union_Literal,
+	Struct_Decl,
+	Union_Decl,
 	Foreign_Block,
 	Static_Assert,
 	Delegate,
@@ -49,14 +49,14 @@ Attr_Spec :: struct {
 attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	switch name {
 	case "public":
-		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
+		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
 	case "private":
-		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
+		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
 	case "default_allocator", "default_logger":
 		// Also read before import discovery by `collect_source_provider_defaults`.
 		return {{.Package_Clause}, .Value_Required, false}, true
 	case "require_results":
-		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None, false}, true
+		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, false}, true
 	case "deprecated":
 		return {{.Proc_Decl}, .Value_Required, false}, true
 	case "cold":
@@ -80,9 +80,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		// A bare level identifier, checked by `check_escape_attribute`.
 		return {{.Parameter}, .Deferred, false}, true
 	case "packed":
-		return {{.Struct_Literal}, .None, false}, true
+		return {{.Struct_Decl}, .None, false}, true
 	case "align":
-		return {{.Struct_Literal, .Union_Literal}, .Deferred, false}, true
+		return {{.Struct_Decl, .Union_Decl}, .Deferred, false}, true
 	case "initialized":
 		// A sibling field name, checked by `resolve_uninitialized_fields`.
 		return {{.Struct_Field}, .Deferred, false}, true
@@ -91,21 +91,21 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "synchronized":
 		// Which variables may carry it is `validate_decl_attributes`'.
 		return {{.Struct_Field, .Var_Decl}, .None, false}, true
-	case "thread_affine", "wakes_on_drop":
-		return {{.Struct_Literal, .Union_Literal}, .None, false}, true
+	case "move_only", "thread_affine", "wakes_on_drop":
+		return {{.Struct_Decl, .Union_Decl}, .None, false}, true
 	case "fieldwise_copy":
 		// What the record must be is `check_copy_decision`'.
-		return {{.Struct_Literal}, .None, false}, true
+		return {{.Struct_Decl}, .None, false}, true
 	case "cross_thread":
 		// What the parameter must be is `check_cross_thread_attribute`'.
 		return {{.Parameter}, .None, false}, true
 	case "intrinsic":
 		// Bound by `src/intrinsic.odin`, which validates the declaration's other
 		// attributes; one reaching the ordinary pass is misplaced.
-		return {{.Proc_Decl, .Type_Decl, .Const_Decl}, .None, true}, true
+		return {{.Proc_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Const_Decl}, .None, true}, true
 	case "zero", "failure":
 		// A variant name, checked in `src/union.odin`.
-		return {{.Union_Literal}, .Deferred, false}, true
+		return {{.Union_Decl}, .Deferred, false}, true
 	}
 	return {}, false
 }
@@ -121,8 +121,8 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	case .Type_Decl:      return "a type declaration"
 	case .Struct_Field:   return "a struct field"
 	case .Parameter:      return "a parameter"
-	case .Struct_Literal: return "a struct type"
-	case .Union_Literal:  return "a union type"
+	case .Struct_Decl:    return "a struct declaration"
+	case .Union_Decl:     return "a union declaration"
 	case .Foreign_Block:  return "a foreign block"
 	case .Static_Assert:  return "a `static_assert`"
 	case .Delegate:       return "a `delegate`"
@@ -228,8 +228,8 @@ validate_attribute_list :: proc(
 	}
 }
 
-// The whole-package pass. Record literals and parameters nested anywhere are
-// also validated where they resolve (`resolve_type_syntax`, the signatures).
+// The whole-package pass. Record fields and parameters nested anywhere are also
+// validated where they resolve (`resolve_type_syntax`, the signatures).
 validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
@@ -357,8 +357,9 @@ validate_param_attributes :: proc(k: ^Checker, params: []Parameter) {
 	}
 }
 
+// A record's attributes are its declaration's, so only its fields have a list of
+// their own here.
 validate_record_attributes :: proc(k: ^Checker, record: ^Type_Record) {
-	validate_attribute_list(k, record.attributes, record.kind == .Struct ? .Struct_Literal : .Union_Literal)
 	for field in record.fields {
 		validate_attribute_list(k, field.attributes, .Struct_Field)
 	}
@@ -413,8 +414,17 @@ dispatch_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
 	return .X86_64, false
 }
 
+record_attr_position :: proc(record: ^Type_Record) -> Attr_Pos {
+	return record.kind == .Struct ? .Struct_Decl : .Union_Decl
+}
+
 @(private = "file")
 decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
+	if len(d.values) == 1 {
+		if record, is_record := d.values[0].(^Type_Record); is_record {
+			return record_attr_position(record)
+		}
+	}
 	if sym := symbol_of(k.c, d.symbols[0]); sym != nil {
 		#partial switch sym.kind {
 		case .Proc:       return .Proc_Decl

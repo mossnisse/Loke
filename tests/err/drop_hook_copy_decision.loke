@@ -30,7 +30,7 @@ impl Unused($T) {
 
 // A move-only field does not count as the decision, and only `move_only` is
 // offered, since the other two fixes cannot apply.
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 Holder :: struct { token: Token }
 impl Holder {
 	close :: hook(drop) proc(self: inout Holder) {}
@@ -55,7 +55,7 @@ impl Twice {
 }
 
 // A decision, in each of its forms: none of these report.
-Decided :: move_only struct { fd: int }
+@(move_only) Decided :: struct { fd: int }
 impl Decided {
 	close :: hook(drop) proc(self: inout Decided) {}
 }
@@ -66,15 +66,15 @@ impl Copied {
 		return .ok(Copied{self.fd});
 	}
 }
-Fields :: struct @(fieldwise_copy) { fd: int }
+@(fieldwise_copy) Fields :: struct { fd: int }
 impl Fields {
 	close :: hook(drop) proc(self: inout Fields) {}
 }
-Cell :: struct($T: type) @(fieldwise_copy) { value: T }
+@(fieldwise_copy) Cell :: struct($T: type) { value: T }
 impl Cell($T) {
 	close :: hook(drop) proc(self: inout) {}
 }
-Moved :: move_only struct($T: type) { value: T }
+@(move_only) Moved :: struct($T: type) { value: T }
 impl Moved($T) {
 	close :: hook(drop) proc(self: inout) {}
 }
@@ -110,7 +110,7 @@ main :: proc() {
 		}
 	}
 
-	Fine :: move_only struct { fd: int }
+	@(move_only) Fine :: struct { fd: int }
 	impl Fine {
 		close :: hook(drop) proc(self: inout Fine) {}
 	}

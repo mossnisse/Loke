@@ -33,7 +33,7 @@ fallback :: proc(value: Option(int)) -> Result(Unit, Disk) {
 	fmt.println("got", n);
 }
 
-Saved :: union @(failure=lost) { kept: Unit, lost: int }
+@(failure=lost) Saved :: union { kept: Unit, lost: int }
 
 save :: proc(fail: bool) -> Saved {
 	if (fail) { return .lost(4); }

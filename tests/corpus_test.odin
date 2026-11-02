@@ -806,6 +806,8 @@ UNPINNED :: []string {
 	// — every arm that used to reach it was given an honest diagnostic in M7.
 	"L0405",
 	"L0350",
+	// `-migrate` reporting its own rewrite wrong, which no input should reach.
+	"L0751",
 	// `core:fmt` without its own `Writer`/`Options`.
 	"L0601",
 	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
@@ -1366,6 +1368,77 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 			"`%s` is not formatted, or its second formatting changed it:\n%s%s",
 			job.command[1], string(job.stdout), string(job.stderr),
 		)
+	}
+}
+
+// `-migrate` moves a record's attributes to its declaration and changes nothing
+// else, and each result already has the form a second run leaves alone.
+@(test)
+migrating_moves_a_records_attributes_to_its_declaration :: proc(t: ^testing.T) {
+	Case :: struct { before, after: string }
+	cases := []Case {
+		{"S :: struct @(packed) { a: u8 }", "@(packed) S :: struct { a: u8 }"},
+		{"@(public) S :: struct @(packed, align=8) { a: u8 }", "@(public, packed, align=8) S :: struct { a: u8 }"},
+		{"@(public,) S :: struct @(packed,) { a: u8 }", "@(public, packed) S :: struct { a: u8 }"},
+		{"S :: move_only struct { a: u8 }", "@(move_only) S :: struct { a: u8 }"},
+		{"S :: move_only struct @(thread_affine) @(wakes_on_drop) { a: u8 }", "@(move_only, thread_affine, wakes_on_drop) S :: struct { a: u8 }"},
+		{"@(public) @(require_results) S :: move_only struct @(thread_affine) { a: u8 }", "@(public) @(require_results, move_only, thread_affine) S :: struct { a: u8 }"},
+		{"S :: struct($N: int) @(align=N) { a: u8 }", "@(align=N) S :: struct($N: int) { a: u8 }"},
+		{"U :: union($T: type) @(zero=none) where size_of(T) > 0 { none, some: T }", "@(zero=none) U :: union($T: type) where size_of(T) > 0 { none, some: T }"},
+		{"S :: (move_only struct @(packed) { a: u8 });", "@(move_only, packed) S :: (struct { a: u8 });"},
+		{"S :: struct\n\t@(packed)\n{\n\ta: u8,\n}", "@(packed) S :: struct\n{\n\ta: u8,\n}"},
+		{"S :: struct @(packed)\n{\n\ta: u8,\n}", "@(packed) S :: struct\n{\n\ta: u8,\n}"},
+		{"S :: struct @(packed)\r\n{\r\n\ta: u8,\r\n}", "@(packed) S :: struct\r\n{\r\n\ta: u8,\r\n}"},
+		{"S :: struct @(align=/* why */ 8) { a: u8 }", "@(align=/* why */ 8) S :: struct { a: u8 }"},
+		{"S :: struct /* kept */ @(packed) { a: u8 }", "@(packed) S :: struct /* kept */ { a: u8 }"},
+		{"S  ::  struct  @(packed)  { a: u8 }", "@(packed) S  ::  struct  { a: u8 }"},
+		{"S : type : struct @(packed) { a: u8 }", "@(packed) S : type : struct { a: u8 }"},
+		{"impl T { S :: struct @(packed) { a: u8 } }", "impl T { @(packed) S :: struct { a: u8 } }"},
+		{"f :: proc() { S :: move_only struct { a: u8 } }", "f :: proc() { @(move_only) S :: struct { a: u8 } }"},
+		{"f :: proc() { g(proc() { S :: struct @(packed) { a: u8 } }); }", "f :: proc() { g(proc() { @(packed) S :: struct { a: u8 } }); }"},
+		// Written well already, or nothing of the kind.
+		{"@(packed) S :: struct { a: u8 }", "@(packed) S :: struct { a: u8 }"},
+		{"move_only := 3;\nS  ::  struct { move_only: int }", "move_only := 3;\nS  ::  struct { move_only: int }"},
+	}
+	dir := fmt.tprintf("%s/migrate", TMP)
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	path := fmt.tprintf("%s/case.loke", dir)
+	for test_case in cases {
+		_ = os.write_entire_file(path, transmute([]u8)fmt.tprintf("package main;\n%s\n", test_case.before))
+		changes := test_case.before != test_case.after
+		checked, stdout, _, check_err := exec(os.Process_Desc{command = []string{compiler_path(), path, "-migrate-check"}}, context.allocator)
+		testing.expectf(t, check_err == nil && checked.exit_code == (changes ? 1 : 0), "-migrate-check on `%s` exited %d", test_case.before, checked.exit_code)
+		testing.expectf(t, strings.contains(string(stdout), "case.loke") == changes, "-migrate-check on `%s` listed: %s", test_case.before, string(stdout))
+		for _ in 0 ..< 2 {
+			state, _, stderr, err := exec(os.Process_Desc{command = []string{compiler_path(), path, "-migrate"}}, context.allocator)
+			testing.expectf(t, err == nil && state.exit_code == 0, "-migrate failed on `%s`:\n%s", test_case.before, string(stderr))
+			text, _ := os.read_entire_file(path, context.temp_allocator)
+			testing.expectf(t, string(text) == fmt.tprintf("package main;\n%s\n", test_case.after), "`%s` became:\n%s", test_case.before, string(text))
+		}
+	}
+}
+
+// What `-migrate` cannot move, it names, and the file is left as it was.
+@(test)
+migrating_refuses_what_it_cannot_move :: proc(t: ^testing.T) {
+	cases := []string {
+		"x: Option(move_only struct { a: int }) = .none;",
+		"f :: proc(y: union @(zero=a) { a, b: int }) {}",
+		"S :: struct @(packed) /* between */ @(align=8) { a: u8 }",
+		"S :: struct @(packed // why\n) { a: u8 }",
+	}
+	dir := fmt.tprintf("%s/migrate_refused", TMP)
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	path := fmt.tprintf("%s/case.loke", dir)
+	for source in cases {
+		written := fmt.tprintf("package main;\n%s\n", source)
+		_ = os.write_entire_file(path, transmute([]u8)written)
+		state, _, stderr, err := exec(os.Process_Desc{command = []string{compiler_path(), path, "-migrate"}}, context.allocator)
+		testing.expectf(t, err == nil && state.exit_code == 1 && strings.contains(string(stderr), "L0752"), "`%s` was not refused:\n%s", source, string(stderr))
+		text, _ := os.read_entire_file(path, context.temp_allocator)
+		testing.expectf(t, string(text) == written, "the refused `%s` became:\n%s", source, string(text))
 	}
 }
 

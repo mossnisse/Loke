@@ -4,7 +4,7 @@ import "core:fmt";
 
 // design.md "@(packed)": viewing a packed `string` or `[dynamic]T` field reads
 // its header with `align 1`, since the field may start at any byte.
-Packed :: struct @(packed) { tag: u8, text: string, data: [dynamic]int }
+@(packed) Packed :: struct { tag: u8, text: string, data: [dynamic]int }
 
 main :: proc() {
 	p := Packed{1, "hello", {3, 4}};

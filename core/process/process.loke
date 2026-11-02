@@ -42,7 +42,7 @@ Command :: struct {
 	for it. Dropping a `Child` closes its pipes and its handle to the process,
 	and the child runs on, detached.
 */
-Child :: move_only struct {
+@(move_only) Child :: struct {
 	stdin:  Pipe,
 	stdout: Pipe,
 	stderr: Pipe,
@@ -85,7 +85,7 @@ impl Child {
 	One end of a pipe to a child: written for its `stdin`, read for the others.
 	The zero value is closed, and `drop` closes a live one.
 */
-Pipe :: move_only struct {
+@(move_only) Pipe :: struct {
 	@(private) handle: Handle,
 	@(private) writes: bool,
 }

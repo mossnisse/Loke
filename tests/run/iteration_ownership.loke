@@ -14,7 +14,7 @@ impl Tracked {
 }
 
 // design.md "Borrowing iteration": a move-only element is read like any other.
-Locked :: move_only struct { id: int, }
+@(move_only) Locked :: struct { id: int, }
 impl Locked {
 	release :: hook(drop) proc(self: inout Locked) { self.id = 0; }
 }
@@ -46,7 +46,7 @@ impl Lender_Iterator {
 
 drops: int;
 Sequence :: struct { count: int, }
-Cursor :: move_only struct { at: int, count: int, active: bool, }
+@(move_only) Cursor :: struct { at: int, count: int, active: bool, }
 impl Sequence {
 	Element :: int;
 	Iterator :: Cursor;

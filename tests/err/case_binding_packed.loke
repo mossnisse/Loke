@@ -2,9 +2,9 @@
 // borrowing it is rejected as `&value.field` is, and it cannot be `&mut`.
 package main;
 
-Pk :: struct @(packed) { tag: u8, n: i32 }
+@(packed) Pk :: struct { tag: u8, n: i32 }
 Value :: union { pk: Pk, num: i32, none }
-Holder :: struct @(packed) { pad: u8, v: Value }
+@(packed) Holder :: struct { pad: u8, v: Value }
 
 read :: proc(x: ^i32) -> i32 { return x^; }
 bump :: proc(x: inout i32) { x += 1; }

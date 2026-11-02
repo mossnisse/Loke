@@ -136,7 +136,7 @@ closed_but_kept :: proc() {
 }
 
 // A type of the program's own, marked as the library's are.
-Ticket :: struct @(wakes_on_drop) { gate: ^thread.Monitor(int) }
+@(wakes_on_drop) Ticket :: struct { gate: ^thread.Monitor(int) }
 
 wait_on :: proc(gate: ^thread.Monitor(int)) {}
 

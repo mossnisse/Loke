@@ -4,7 +4,7 @@ package main;
 // `Enum_Array` value is mutated as `key, &value`.
 import "core:container";
 import "core:fmt";
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 Color :: enum { Red, Green }
 main :: proc() {
 	xs: container.Small_Array(Token, 4) = {};

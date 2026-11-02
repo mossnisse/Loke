@@ -146,7 +146,7 @@
         { "name": "storage.type.loke", "match": "(?<=\\[)dynamic(?=\\])" },
         { "name": "storage.type.loke", "match": "(?<!\\.)\\boperator\\b(?=\\s*\\(\\s*[^\\w\\s(])" },
         { "name": "storage.type.loke", "match": "(?<!\\.)\\bhook\\b(?=\\s*\\(\\s*\\w+\\s*\\)\\s*proc\\b)" },
-        { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:mut|inout|move|move_only)\\b" },
+        { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:mut|inout|move)\\b" },
         { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:via|where)\\b(?=\\s+[\\w&(!])" },
         { "name": "storage.modifier.loke", "match": "(?<=:)\\s*\\b(?:static|thread_local)\\b" },
         { "name": "storage.modifier.loke", "match": "\\busing\\b(?=\\s+[A-Za-z_])" },

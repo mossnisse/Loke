@@ -4,7 +4,7 @@
 package main;
 import "core:fmt";
 
-Part :: move_only struct { tag: int }
+@(move_only) Part :: struct { tag: int }
 impl Part {
 	done :: hook(drop) proc(self: inout Part) {
 		fmt.println("drop", self.tag);

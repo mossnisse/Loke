@@ -936,7 +936,7 @@ be labeled or all unlabeled. See [Anonymous records](design.md#anonymous-records
 ### Structs declare, parentheses describe
 
 A struct is nominal and belongs to a package. That ownership supports private
-fields, hooks, `move_only`, and changes to field order without changing outside
+fields, hooks, `@(move_only)`, and changes to field order without changing outside
 callers. An anonymous record describes a structural value without those rights.
 
 Combining the two would either weaken encapsulation or make every returned pair
@@ -1578,6 +1578,31 @@ type switch over an open set can never be exhaustive. Printing, the remaining
 use, needs only the `format` behavior every printable type has. See the
 [adopted proposals](design-review-2026-10-31.md#adopted-proposals) of the
 design review.
+
+### A record's attributes are on its declaration
+
+An attribute used to sit in one of two places, `@(public) Name :: struct @(packed)
+{ }`, on the theory that the second position described the type and the first its
+name. The theory did not hold: `@(require_results)` describes the type and was
+written on the declaration, so one type's attributes could be split across both.
+And it bought nothing, since a `struct` is only ever a constant's value and an
+inline nominal `union` or `enum` has no use a declared one lacks: every type
+attribute was already on a declaration, one token to the right. The merged list does
+mix what is about the name (`public`) with what is about the layout (`packed`), and
+needs the one rule that a type attribute on an alias is an error.
+
+`move_only` went with it. It was a keyword for a property of the same kind as
+`thread_affine`, which made a reserved word and a grammar production out of what an
+attribute says, and it could not reach a union, which `@(move_only)` does. The name
+stays because "move-only" is the term the specification and the diagnostics use.
+
+The value of `@(align=N)` now sits left of the `$N` that binds it. That reads
+backwards, but it is the one such case, and a value on the far side of the name is
+what any declaration attribute already is. Earlier spellings are rejected with
+`L0750` rather than deprecated with a warning: a language with two spellings for a
+release is the problem this removes, and [`-migrate`](compiler-guide.md#common-options)
+makes the change mechanical, apart from an inline `union` or `enum`, which needs a
+name only its author can give.
 
 ### Nominal conformance declarations
 
@@ -2404,6 +2429,16 @@ of writing. [tests/corpus_test.odin](tests/corpus_test.odin) keeps `core/` and
 `base/` formatted and formats every program corpus to a layout that formats to
 itself.
 
+`-migrate` ([src/migrate.odin](src/migrate.odin)) is the one tool that changes
+tokens, and a separate flag for that reason: a formatter that only moves whitespace
+is safe to run on save, which an editor does through the same code. It rewrites
+what an earlier release accepted and leaves every other byte alone, so it does not
+lay a file out; a file that was formatted stays formatted. It has no such token
+check to lean on, so it compares trees instead: a spelling it moves parses to the
+same tree in both places, the result must hold nothing left to rewrite, and its
+`-dump-ast` text must equal the input's, or it reports an internal error instead of
+writing.
+
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
 
 ## Standard-library API choices
@@ -3015,7 +3050,7 @@ boundaries and API shapes follow a few common choices:
   The one rule, not a run-time check, keeps `multiply_into(out, a, b)` from
   writing what it reads. Strides are not negative; a reversed view waits for
   a caller.
-- **A dense matrix copies, and has no operators.** `move_only` would stop an
+- **A dense matrix copies, and has no operators.** `@(move_only)` would stop an
   accidental copy, but a matrix is a value in every numerical language, an
   algorithm sometimes wants the copy, and the copy-cost diagnostic already
   names it. `*` and `+` allocating from the default allocator, as NumPy and

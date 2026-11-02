@@ -12,7 +12,7 @@ L0607
 a variable declaration
 L0607
 @22:3
-a type declaration
+a struct declaration
 L0607
 @26:4
 a foreign declaration has none

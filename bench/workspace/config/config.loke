@@ -18,7 +18,7 @@ Error :: enum { Empty_Line, Missing_Separator, Bad_Number }
 // A resource whose release is observable. Nothing here is reference-counted or
 // deferred to a collector: the drop runs at the closing brace, in reverse
 // declaration order, after any `defer` in the same scope.
-Reader :: move_only struct { name: string, line: int }
+@(move_only) Reader :: struct { name: string, line: int }
 
 impl Reader {
 	init :: proc(name: string) -> Reader {

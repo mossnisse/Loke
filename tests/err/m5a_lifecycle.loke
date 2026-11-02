@@ -25,7 +25,7 @@ impl T {
 	}
 }
 
-Move_Only :: move_only struct { z: int }
+@(move_only) Move_Only :: struct { z: int }
 
 impl Move_Only {
 	copy_anyway :: hook(copy) proc(self, allocator: Allocator) -> Result(Move_Only, Allocator_Error) {
@@ -33,7 +33,7 @@ impl Move_Only {
 	}
 }
 
-Resource :: move_only struct { live: bool }
+@(move_only) Resource :: struct { live: bool }
 
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { self.live = false; }

@@ -17,7 +17,7 @@ import "core:unsafe";
 	Dropping an endpoint closes its side. Dropping the ring drops the items
 	still queued. It is move-only and has no zero value.
 */
-Ring :: move_only struct($T: type) {
+@(move_only) Ring :: struct($T: type) {
 	// `size` slots, one more than the capacity: the spare slot tells a full
 	// ring from an empty one. Only queued slots hold an item.
 	@(private, required) slots: [dynamic]Ring_Slot(T),
@@ -55,7 +55,7 @@ Ring_Slot :: struct($T: type) {
 }
 
 /// Sends into the ring it borrows. Move-only, and the only sender.
-Ring_Sender :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only, wakes_on_drop) Ring_Sender :: struct($T: type) {
 	@(private) ring: ^Ring(T),
 	// This side's index, and the receiver's as last read.
 	@(private) tail: uint,
@@ -63,7 +63,7 @@ Ring_Sender :: move_only struct($T: type) @(wakes_on_drop) {
 }
 
 /// Receives from the ring it borrows. Move-only, and the only receiver.
-Ring_Receiver :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only, wakes_on_drop) Ring_Receiver :: struct($T: type) {
 	@(private) ring: ^Ring(T),
 	// This side's index, and the sender's as last read.
 	@(private) head: uint,

@@ -3,43 +3,43 @@ L0747
 `Handle` declares `hook(drop)`, so it must say how it is copied
 @8:2
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0747
 @12:1
 `Split` declares `hook(drop)`, so it must say how it is copied
 @17:2
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0747
 @22:1
 `Chain` declares `hook(drop)`, so it must say how it is copied
 @24:2
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0747
 @26:1
 `Unused` declares `hook(drop)`, so it must say how it is copied
 @28:2
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0747
 @34:1
 `Holder` declares `hook(drop)`, so it must say how it is copied
 @36:2
 `hook(drop)` is declared here
-`Holder` is already move-only through a field; write `move_only` before `struct` to say so
+`Holder` is already move-only through a field; write `@(move_only)` on its declaration to say so
 
 L0488
 @42:2
@@ -54,9 +54,9 @@ L0747
 `Twice` declares `hook(drop)`, so it must say how it is copied
 @53:2
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0488
 @54:2
@@ -67,9 +67,9 @@ L0747
 `Inner` declares `hook(drop)`, so it must say how it is copied
 @89:3
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 @97:2
 while instantiating `twice(int)`
 
@@ -78,15 +78,15 @@ L0747
 `Local` declares `hook(drop)`, so it must say how it is copied
 @102:3
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0747
 @106:2
 `Later` declares `hook(drop)`, so it must say how it is copied
 @109:4
 `hook(drop)` is declared here
-if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
-if copying each field is right, write `@(fieldwise_copy)` after `struct`
+if copying each field is right, write `@(fieldwise_copy)` on its declaration

@@ -6,7 +6,7 @@ import "core:fmt";
 // if `or_return` were `^`, which emitted a nil check on the carrier itself and
 // IR that LLVM rejected.
 
-Tracked :: move_only struct { n: int }
+@(move_only) Tracked :: struct { n: int }
 
 impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.n); }

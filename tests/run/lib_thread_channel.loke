@@ -32,7 +32,7 @@ watch :: proc(seconds: move int) {
 }
 
 // Counts its drops, and those on a thread other than `main`'s.
-Item :: move_only struct { id: int }
+@(move_only) Item :: struct { id: int }
 
 impl Item {
 	release :: hook(drop) proc(self: inout) {

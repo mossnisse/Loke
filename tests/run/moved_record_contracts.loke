@@ -7,7 +7,7 @@ package main;
 import "core:mem";
 import "core:fmt";
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 held: Token;
 
 identity :: proc(value: move Token) -> Token { return move(value); }
@@ -21,7 +21,7 @@ keep :: proc(@(escape=static) value: move Token) {
 	held = move(local);
 }
 
-Handle :: move_only struct { allocator: Allocator }
+@(move_only) Handle :: struct { allocator: Allocator }
 handle: Handle;
 
 fresh_handle :: proc(@(escape=static) allocator: Allocator) -> Handle {

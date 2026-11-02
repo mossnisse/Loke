@@ -33,7 +33,7 @@ alias-attribute step on 2026-11-01 linked hand-edited IR at `-O2` and found
 that `noalias` is unsound under the default `unwind` strategy, that a callee
 may read a global it holds `^mut` to, and that LLVM already infers the capture
 attributes; [6.1](#61-alias-attributes-from-facts-the-checker-already-proves)
-and step 4 of the [Suggested order](#8-suggested-order) are narrowed
+and step 3 of the [Suggested order](#8-suggested-order) are narrowed
 accordingly.
 
 On 2026-11-01 the review was revised to the language as it then stood. The
@@ -50,6 +50,10 @@ own example of a field-wise copy, a `Box` chain with an iterative drop hook,
 overflows the stack on a long chain ([Probes](#probes)). The copy decision for
 drop hooks, argued on that ground and split from the attribute move, which is
 syntax alone, then landed and is under [Adopted proposals](#adopted-proposals).
+
+On 2026-11-02 attributes moved to the declaration and `move_only` became one
+of them; that proposal is removed from the text and listed under
+[Adopted proposals](#adopted-proposals), with the sections after it renumbered.
 
 On 2026-11-02 the editorial proposals were applied to design.md: the conformance
 appendix, effects and initialization stated once, procedures as callables, and the
@@ -78,7 +82,7 @@ counts in this review are those of the versions it examined.
 Loke's individual decisions are well argued, and comments.md records the
 argument for nearly every one. The problem is the sum. The specification is
 about 12,000 lines; it has three spellings of a sum type, two reflection tiers,
-two mutable-borrow modes, four inferred effect systems, 27 attributes, and a
+two mutable-borrow modes, four inferred effect systems, 28 attributes, and a
 list of nineteen implicit conversions. Each was added for a reason. The two
 clearest pairs that expressed one idea twice, `Status` beside
 `Result(Unit, E)` and `any_view` beside `dyn`, are gone
@@ -89,11 +93,9 @@ that matters, and `inout` and `^mut T` may ([2.5](#25-one-capability-axis)).
 The remaining recommendations with the best ratio of concepts removed to
 expressiveness lost, in rough priority order:
 
-1. **Attributes in one position**, with `move_only` as one of them
-   ([3.1](#31-attributes-in-one-position)).
-2. **Delete** `using` and, if wanted, the splat of a typed scalar into a
+1. **Delete** `using` and, if wanted, the splat of a typed scalar into a
    `Simd` ([5](#5-deletion-candidates)).
-3. **Generated-code performance.** Prove common index arithmetic
+2. **Generated-code performance.** Prove common index arithmetic
    overflow-free and indexed views' bounds stable; emit the container fast
    paths in the module, since linking the runtime as bitcode did not inline
    them; and emit `noalias` under `-panic=abort` once its soundness
@@ -110,9 +112,9 @@ is:
 
 | Area | Count | Where it is |
 | --- | --- | --- |
-| Reserved words | 36 | [Keywords](grammar.md#keywords) |
+| Reserved words | 35 | [Keywords](grammar.md#keywords) |
 | Contextual keywords, each with a disambiguation rule | 17 | [Keywords](grammar.md#keywords) |
-| Attributes | 27 | [Attribute categories](design.md#attribute-categories) |
+| Attributes | 28 | [Attribute categories](design.md#attribute-categories) |
 | Implicit conversions | 19 | [Implicit type conversions](design.md#implicit-type-conversions) |
 | Spellings of a sum type | 3 | `enum`, `union`, `(a: A \| b: B)`; `Option` and `Result` are library unions, and `Status` is a [parametric alias](design.md#parametric-aliases) of `Result(Unit, E)` |
 | Spellings of a product type | 3 | `struct`, `(a: A, b: B)`, `(A, B)` |
@@ -181,8 +183,7 @@ unlabeled record is a structural record whose positions are its names. This is
 the standard distinction, and comments.md
 ["Structs declare, parentheses describe"](comments.md#structs-declare-parentheses-describe)
 gives the right reason to keep it: nominality is what pays for privacy, hooks,
-and field reordering. No change proposed, beyond the attribute position in
-[3.1](#31-attributes-in-one-position).
+and field reordering. No change proposed.
 
 ### 2.2 Procedures are callable records
 
@@ -357,47 +358,7 @@ Three things the lens suggests and this review does **not** recommend:
 
 ## 3. Orthogonality
 
-### 3.1 Attributes in one position
-
-Attributes appear before a declaration (`@(public) Name :: ...`) and inside a
-type (`Name :: struct @(packed) { ... }`,
-`Maybe :: union @(zero=none) { ... }`). The second position exists for
-attributes that describe the type. But a `struct` "is written only as the value
-of a constant declaration", and a nominal `union` or `enum` has no meaningful
-inline use either (the inline structural forms are the parenthesized record
-and union). So every type attribute is already on a declaration, one token to
-the right of where the others are. Nor do the two positions separate the
-name from the type cleanly today: `@(require_results)` describes the type and
-is written on the declaration, so
-`@(require_results) Reply :: union @(zero=none) { ... }` already splits one
-type's attributes across both.
-
-**Proposal.** Nominal `struct`, `union`, and `enum` definitions are written
-only as a constant's value, and their attributes go on the declaration:
-`@(public, packed) Header :: struct { ... }` and
-`@(zero=none, failure=none) Option :: union($T: type) { none, some: T }`.
-grammar.md loses `Attributes?` from `Struct_Type` and `Union_Type`, the
-inline `[size_of(enum { A, B })]u8` corner under
-[Success returns](design.md#success-returns) goes with it, and `move_only`
-becomes `@(move_only)` in the same place, beside `@(thread_affine)` and
-`@(wakes_on_drop)`, and grammar.md loses `Move_Only_Struct_Type`. Like those
-two, `@(move_only)` applies to struct and union types; a union is move-only
-today only through a move-only payload. The name stays: "move-only" is the
-term the specification, its glossary, and the diagnostics use.
-
-**What is lost.** The inline nominal `enum` and `union`. The merged list also
-mixes attributes about the name (`public`, `deprecated`) with attributes about
-the layout (`packed`, `align`), and it needs one new rule: a type attribute on
-a declaration whose value is not a `struct`, `union`, or `enum` definition,
-such as `@(packed) Alias :: Header;`, is an error.
-
-**Cost.** The gain is two grammar productions and a reserved word; the cost
-is that every use of `packed`, `align`, `zero`, `failure`, `thread_affine`,
-`fieldwise_copy`, `wakes_on_drop`, and `move_only` moves. Do it only when
-`lokec -fmt` can rewrite the old forms mechanically; it is token-preserving today
-and has no rewrite mode. The migration then gets its own upgrade note.
-
-### 3.2 Runtime reflection
+### 3.1 Runtime reflection
 
 `runtime.Type_Info` carries a `members` table whose `Member_Kind` covers
 fields, enum values, union variants, and, for a procedure type, its
@@ -423,7 +384,7 @@ needs runtime member tables can build them from `fields_of` in a static
 `foreach`, which is the direction the language already prefers. This review
 records it as a judgment call rather than a deletion.
 
-### 3.3 `using`
+### 3.2 `using`
 
 [Promoted struct fields](design.md#promoted-struct-fields) is Odin's `using`
 narrowed to field lookup. It adds a contextual keyword, an ambiguity rule, and
@@ -433,7 +394,7 @@ bindings, for the saving of one selector (`entity.x` for
 composition it serves is written as plainly with the field named.
 Recommended for deletion, low urgency.
 
-### 3.4 `@(initialized=count)` and uninitialized storage
+### 3.3 `@(initialized=count)` and uninitialized storage
 
 [Uninitialized capacity](design.md#uninitialized-capacity) couples a fixed
 array field to a sibling `int` by attribute so that the generated copy, drop,
@@ -465,8 +426,6 @@ parenthesis of `for ((key in counts))` and the parentheses of
 | Today | Problem | Proposal |
 | --- | --- | --- |
 | `(&mut a[:]).indexed()` | `&mut` applied to a slice suffix is a special grammatical case, and a member of the result needs parentheses | A postfix spelling of mutable slicing, `a.slice_mut()` or `a[mut lo:hi]`, which chains like every other postfix and removes the `&mut`-before-slice rule from grammar.md |
-| `Name :: struct @(packed) { }` | Attributes in a second position | [3.1](#31-attributes-in-one-position) |
-| `move_only struct @(thread_affine) { }` | A keyword and an attribute for two properties of the same kind | [3.1](#31-attributes-in-one-position) |
 | `(dyn Drawable)(&circle)` | Conversion of a composite type is C-cast-like | Keep. `T(v)` with a parenthesized composite type is one rule for every conversion, and the alternative (`as`) is a keyword |
 
 ### 4.2 Verbosity hotspots
@@ -507,7 +466,7 @@ appearance. Keep them.
 
 The seventeen contextual keywords are a different matter. Each has a
 disambiguation rule in [Resolved ambiguities](grammar.md#resolved-ambiguities)
-that every tool must follow. [3.3](#33-using) removes `using`. `static` and
+that every tool must follow. [3.2](#32-using) removes `using`. `static` and
 `thread_local`, whose rule has four cases, would be simpler as reserved words:
 no program needs a type named `static`, and a keyword may still name a field
 or member ([Predeclared names](design.md#predeclared-names)).
@@ -532,15 +491,13 @@ thing. Each row names the replacement and what is lost.
 
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
-| Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
-| `move_only` keyword | `@(move_only)`, also on unions ([3.1](#31-attributes-in-one-position)) | A reserved word | Medium |
 | Splat of a typed scalar into a `Simd` | `simd.splat(x)`; constant splats stay ([2.4](#24-coercions)) | `v * scale` for a scalar variable `scale` | Low |
 | Distinct-procedure-type conversions | Alias, or explicit conversion ([2.4](#24-coercions)) | The conversion at each site passing a procedure | Low |
-| `using` | Named selection ([3.3](#33-using)) | One selector per access | Low |
+| `using` | Named selection ([3.2](#32-using)) | One selector per access | Low |
 | `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.5](#25-one-capability-axis)) | The marker at every call that mutates; carets on scalar and whole-value writes | Judgment call; leaning against |
 | Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Four characters per return | Judgment call |
 | `Option.ok_or` | `or_return .Variant` and a `switch` | An eager form for stored absences | Judgment call; the open question keeps it |
-| `Type_Info.members`, `Member_Info`, `Member_Kind` | `fields_of` and `variants_of` at compile time ([3.2](#32-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types | Judgment call |
+| `Type_Info.members`, `Member_Info`, `Member_Kind` | `fields_of` and `variants_of` at compile time ([3.1](#31-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types | Judgment call |
 
 Not recommended for deletion, though a simplification pass might ask:
 per-variant switch cases and union argument expansion (both are defined as
@@ -801,27 +758,24 @@ Each step is independent of the others unless noted, and each is a spec,
 compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
 
-1. Attributes in one position and `@(move_only)`
-   ([3.1](#31-attributes-in-one-position)), once `lokec -fmt` can rewrite the
-   old forms. A syntax migration with its own upgrade note.
-2. Range facts and loop versioning for checked arithmetic
+1. Range facts and loop versioning for checked arithmetic
    ([6.3](#63-checked-arithmetic-and-bounds-in-loops)), with bounds proofs that
    account for reassigned slices, aliases, and calls. Then measure the dense
    kernels again.
-3. Container fast paths in IR, emitted only when optimizing
+2. Container fast paths in IR, emitted only when optimizing
    ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)).
    Measure `bench/collections.loke` with `perf.ps1` before and after.
-4. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
+3. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
    in this order. First the prerequisites, which are correctness work in their
    own right: close the borrow-checker gaps 6.1 lists, add a read component to
    the global effects, and state the aliasing rule for unchecked code in
-   design.md. Then, after step 2, measure by adding `noalias` by hand to the
+   design.md. Then, after step 1, measure by adding `noalias` by hand to the
    `bench/` kernels' IR. Only if that pays, emit `noalias` (and
    `noalias readonly` for `^T`) under `-panic=abort`, starting with `^mut T`,
    `inout`, and `self: ^mut` parameters. No capture attributes: LLVM infers
    them for internal procedures.
-5. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
-   last: it is the largest surface change, and it needs the formatter able to
+4. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
+   last: it is the largest surface change, and it needs `lokec -migrate` able to
    rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
    is written.
@@ -832,6 +786,15 @@ These were proposed by this review and have landed; the specification and
 CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md.
 
+- **A record's attributes are on its declaration, and `move_only` is one of them**
+  (2026-11-02; [Attributes](design.md#attributes), [`@(move_only)`](design.md#move_only),
+  rationale under ["A record's attributes are on its
+  declaration"](comments.md#a-records-attributes-are-on-its-declaration)). A nominal
+  `union` or `enum` is now only a constant's value, as a `struct` was, and `@(move_only)`
+  reaches a union. The rewrite the proposal required is
+  [`lokec -migrate`](compiler-guide.md#common-options), a flag of its own rather than
+  part of `-fmt`, which keeps its promise to move only whitespace. The IR of every program
+  in `examples` and `bench` was byte-identical before and after the corpus moved.
 - **The specification is stated once, and without the library** (2026-11-02). An
   editorial change, with no change to what a program means.
   [Inferred effects](design.md#inferred-effects) defines how effects are computed,

@@ -81,7 +81,7 @@ INPUTS :: [5]Input{
 
 // The generator is move-only, so a world is too; `Snapshot` is its copyable
 // record.
-World :: move_only struct {
+@(move_only) World :: struct {
 	tick:   u64,
 	bodies: [BODIES]Body,
 	rng:    random.Pcg64,

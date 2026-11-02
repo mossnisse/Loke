@@ -9,7 +9,7 @@ package main; import "core:fmt"; import "core:container";
 
 Choice :: union { a: i32, b: bool }
 
-Tracked :: struct @(fieldwise_copy) { id: int }
+@(fieldwise_copy) Tracked :: struct { id: int }
 impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
 }

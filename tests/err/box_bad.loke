@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-Ticket :: move_only struct { id: int }
+@(move_only) Ticket :: struct { id: int }
 
 take :: proc(b: Box(int)) { b^ = 3; }
 

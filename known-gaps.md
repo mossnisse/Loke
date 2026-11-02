@@ -50,7 +50,7 @@ valid:
 package main;
 import "core:fmt";
 main :: proc() {
-    H :: move_only struct { fd: int }
+    @(move_only) H :: struct { fd: int }
     a := H{1};
     N :: 1;
     when (N == 1) {

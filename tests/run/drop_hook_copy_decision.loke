@@ -5,19 +5,19 @@ package main;
 import "core:fmt";
 
 // Wipes its key, and every field owns its data, so a field-wise copy is right.
-Key :: struct @(fieldwise_copy) { id: int, bytes: [dynamic]u8 }
+@(fieldwise_copy) Key :: struct { id: int, bytes: [dynamic]u8 }
 impl Key {
 	wipe :: hook(drop) proc(self: inout Key) {
 		fmt.println("wipe", self.id, self.bytes.len());
 	}
 }
 
-Cell :: struct($T: type) @(fieldwise_copy) { value: T }
+@(fieldwise_copy) Cell :: struct($T: type) { value: T }
 impl Cell($T) {
 	release :: hook(drop) proc(self: inout) { fmt.println("release", self.value); }
 }
 
-Handle :: move_only struct { fd: int }
+@(move_only) Handle :: struct { fd: int }
 impl Handle {
 	close :: hook(drop) proc(self: inout Handle) { fmt.println("close", self.fd); }
 }
@@ -37,7 +37,7 @@ main :: proc() {
 
 	consume(Handle{3});
 
-	Local :: struct @(fieldwise_copy) { id: int }
+	@(fieldwise_copy) Local :: struct { id: int }
 	impl Local {
 		release :: hook(drop) proc(self: inout Local) { fmt.println("local", self.id); }
 	}

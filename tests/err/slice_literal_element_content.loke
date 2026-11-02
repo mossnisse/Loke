@@ -8,7 +8,7 @@ import "core:fmt";
 // it. An element replaced where the store cannot name it, or on one path only, may
 // still hold what it held.
 
-Read :: move_only struct { data: []int }
+@(move_only) Read :: struct { data: []int }
 impl Read {
 	retire :: hook(drop) proc(self: inout Read) {
 		if (self.data.len() > 0) { fmt.println(self.data[0]); }

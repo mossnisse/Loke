@@ -6,7 +6,7 @@ package main;
 
 Parse_Error :: enum { Bad_Digit, Empty }
 Color :: enum { Red, Green }
-Connection :: move_only struct { id: int }
+@(move_only) Connection :: struct { id: int }
 
 selector :: proc() -> Result(int, Parse_Error) {
 	return .Bad_Digit;
@@ -58,20 +58,6 @@ generic_dollar :: proc(value: $T, error: $E) -> Result($T, $E) {
 	return error;
 }
 
-// An inline definition depends on `T` through what is written inside it.
-generic_inline :: proc(value: $T, error: [2]int) -> Result([size_of(union { a: T, b: u8 })]u8, [2]int) {
-	return error;
-}
-
-// So does a binding only in an inline definition's attribute. The instances
-// below make both payloads `[16]u8`.
-generic_attribute :: proc($N: int, error: [16]u8) -> Result([size_of(union @(align=N) { a: u8, b: u8 })]u8, [16]u8) {
-	return error;
-}
-
-generic_attribute_type :: proc(value: $T, error: [16]u8) -> Result([size_of(union @(align=align_of(T)) { a: u8, b: u8 })]u8, [16]u8) {
-	return error;
-}
 
 borrowed :: proc(c: Connection) -> Option(Connection) {
 	return c;
@@ -87,9 +73,6 @@ main :: proc() {
 	_ = generic_value(1, "x");
 	_ = generic_length(1, [2]int{});
 	_ = generic_dollar(1, 2);
-	_ = generic_inline(1, [2]int{});
-	_ = generic_attribute(8, [16]u8{});
-	_ = generic_attribute_type(1, [16]u8{});
 	_ = unit(Unit{}, Parse_Error.Empty);
 	_ = unit_end(Unit{}, Parse_Error.Empty);
 }

@@ -17,13 +17,13 @@ Scene :: struct { cells: []mut int }
 
 measure :: proc(scene: ^Scene) -> int { return scene.cells.len(); }
 
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 
 open :: proc() -> Window { return Window{1}; }
 
 show :: proc(window: Window) {}
 
-Failure :: union @(thread_affine) { none, window: Window }
+@(thread_affine) Failure :: union { none, window: Window }
 
 try_open :: proc() -> Result(int, Failure) { return .ok(1); }
 

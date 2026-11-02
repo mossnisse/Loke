@@ -124,10 +124,13 @@ Source_Code_Location :: struct {
 // The empty type: what `or_return` yields for a success that carries nothing.
 Unit :: struct {}
 
-Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
+@(zero=none)
+@(failure=none)
+Option :: union($T: type) { none, some: T }
 
 @(require_results)
-Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+@(failure=err)
+Result :: union($T, $E: type) { ok: T, err: E }
 
 /*
 	A fallible operation that produces nothing on success: `Result(Unit, E)`

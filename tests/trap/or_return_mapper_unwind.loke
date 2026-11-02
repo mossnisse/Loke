@@ -3,7 +3,7 @@
 package main;
 import "core:fmt";
 
-Tracked :: move_only struct { name: string }
+@(move_only) Tracked :: struct { name: string }
 impl Tracked {
 	done :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.name); }
 }

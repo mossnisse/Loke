@@ -8,7 +8,7 @@ import "base:interfaces";
 // inspecting move-only or expensive elements requires neither a clone nor
 // mutable access to their storage, and a pointer taken with `&` outlives both
 // the step and the traversal.
-Entry :: move_only struct { id: int }
+@(move_only) Entry :: struct { id: int }
 impl Entry {
 	release :: hook(drop) proc(self: inout Entry) { self.id = 0; }
 }

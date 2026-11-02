@@ -48,12 +48,14 @@ Parser :: struct {
 	probed:         Probed_Literal,
 	// Some statement is a `parallel` block.
 	parallels:      [dynamic]u32, // each `parallel` keyword's offset
+	earlier_spellings: [dynamic]Earlier_Spelling,
+	accept_earlier_spellings: bool, // `-migrate`, which rewrites them
 	allocator:      mem.Allocator,
 }
 
 // With an explicit allocator, syntax borrows its lifetime and File.arena stays
 // empty. The default owns a per-file arena, as before.
-parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.Allocator{}) -> File {
+parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.Allocator{}, accept_earlier_spellings := false) -> File {
 	result := File {
 		file = file,
 	}
@@ -72,10 +74,13 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 		file      = file,
 		tokens    = tokens,
 		allocator = allocator,
+		accept_earlier_spellings = accept_earlier_spellings,
 	}
+	tag_written_move_only(&p)
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
 	result.parallels = p.parallels[:]
+	result.earlier_spellings = p.earlier_spellings[:]
 	return result
 }
 
@@ -195,6 +200,11 @@ text_of :: proc(p: ^Parser, t: Token) -> string {
 	return p.c.sources[p.file].text[t.lo:t.hi]
 }
 
+@(private = "file")
+source_text_of :: proc(p: ^Parser, span: Span) -> string {
+	return p.c.sources[p.file].text[span.lo:span.hi]
+}
+
 // Contextual keywords arrive as identifiers.
 @(private = "file")
 is_contextual :: proc(p: ^Parser, word: string) -> bool {
@@ -248,6 +258,18 @@ take_as :: proc(p: ^Parser, kind: Token_Kind) -> Token {
 		p.tokens[p.index].kind = kind
 	}
 	return advance(p)
+}
+
+// `move_only` is a name. Directly before `struct`, which no name can be, it is
+// the earlier spelling of `@(move_only)`, named so that it can be rejected well
+// and rewritten by `-migrate`.
+@(private = "file")
+tag_written_move_only :: proc(p: ^Parser) {
+	for index := 0; index + 1 < len(p.tokens); index += 1 {
+		if p.tokens[index].kind == .Ident && p.tokens[index + 1].kind == .Struct && text_of(p, p.tokens[index]) == "move_only" {
+			p.tokens[index].kind = .Move_Only
+		}
+	}
 }
 
 // A contextual keyword is lexed as `Ident`; a probe the parser rolled back may
@@ -1094,6 +1116,9 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	}
 
 	value := parse_constant_value(p)
+	if record, is_record := value.(^Type_Record); is_record {
+		adopt_record_attributes(p, d, record)
+	}
 	values := make([]Expr, 1, p.allocator)
 	values[0] = value
 	d.values = values
@@ -1160,6 +1185,55 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	d.span = span_to_here(p, start)
 	d.has_error = !terminated
 	return d, true
+}
+
+// design.md "Attributes": a record's attributes are its declaration's. Those
+// of an earlier spelling, which only `-migrate` gets past `L0750`, join the list
+// after the declaration's own, so the rewrite can be proved by comparing trees.
+@(private = "file")
+adopt_record_attributes :: proc(p: ^Parser, d: ^Decl, record: ^Type_Record) {
+	if len(record.attributes) > 0 {
+		merged := make([]Attribute, len(d.attributes) + len(record.attributes), p.allocator)
+		copy(merged, d.attributes)
+		copy(merged[len(d.attributes):], record.attributes)
+		d.attributes = merged
+	}
+	record.attributes = d.attributes
+	record.move_only = has_attribute(d.attributes, "move_only")
+	for &spelling in p.earlier_spellings {
+		if spelling.record == record {
+			spelling.declaration = d
+		}
+	}
+}
+
+// design.md "Attributes": `attributes` as the declaration would write them.
+@(private = "file")
+reject_earlier_spelling :: proc(p: ^Parser, span: Span, attributes, keyword: string) {
+	if p.accept_earlier_spellings || p.suppress {
+		return
+	}
+	parse_error(
+		p, span, "L0750", "write this on the declaration",
+		"a record's attributes are written on its declaration: `%s Name :: %s {{ ... }}`",
+		attributes, keyword,
+	)
+	add_notef(p.c, no_span(), "`lokec -migrate` rewrites this")
+}
+
+// The entry for `record`, added at its first earlier spelling.
+@(private = "file")
+earlier_spelling_of :: proc(p: ^Parser, record: ^Type_Record) -> ^Earlier_Spelling {
+	if p.earlier_spellings == nil {
+		p.earlier_spellings = make([dynamic]Earlier_Spelling, 0, 2, p.allocator)
+	}
+	for &spelling in p.earlier_spellings {
+		if spelling.record == record {
+			return &spelling
+		}
+	}
+	append(&p.earlier_spellings, Earlier_Spelling{record = record})
+	return &p.earlier_spellings[len(p.earlier_spellings) - 1]
 }
 
 @(private = "file")
@@ -2912,14 +2986,19 @@ parse_type :: proc(p: ^Parser) -> Expr {
 
 	case .Move_Only:
 		keyword := advance(p)
-		if !at(p, .Struct) {
-			parse_error(p, span_of(p, current(p)), "L0210", fmt_found(p, current(p)), "`move_only` must be followed by `struct`")
-			return error_expr(p, span_of(p, keyword))
-		}
 		record := parse_record(p)
 		if value, ok := record.(^Type_Record); ok {
+			// The earlier spelling of `@(move_only)`, in the list as that would be.
+			path := make([]Name, 1, p.allocator)
+			path[0] = name_of(p, keyword)
+			attributes := make([]Attribute, len(value.attributes) + 1, p.allocator)
+			attributes[0] = Attribute{path = path, span = span_of(p, keyword)}
+			copy(attributes[1:], value.attributes)
+			value.attributes = attributes
 			value.move_only = true
 			value.span.lo = keyword.lo
+			earlier_spelling_of(p, value).keyword = span_of(p, keyword)
+			reject_earlier_spelling(p, span_of(p, keyword), "@(move_only)", "struct")
 		}
 		return record
 
@@ -3715,7 +3794,11 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	lo := keyword.lo
 
 	generics, generics_ok := parse_generic_params(p)
+	groups := Span{file = p.file, lo = current(p).lo, hi = current(p).lo}
 	attributes := parse_attributes(p)
+	if len(attributes) > 0 {
+		groups.hi = p.last.hi
+	}
 	where_clauses := parse_where_clause(p)
 
 	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the body")
@@ -3763,10 +3846,15 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	e.kind = keyword.kind == .Union ? .Union : .Struct
 	e.generic_params = generics
 	e.attributes = attributes
+	e.move_only = has_attribute(attributes, "move_only")
 	e.where_clauses = where_clauses
 	e.fields = fields
 	e.variants = variants
 	e.has_error = !opened || !closed || !generics_ok || !members_ok
+	if len(attributes) > 0 {
+		earlier_spelling_of(p, e).groups = groups
+		reject_earlier_spelling(p, groups, source_text_of(p, groups), keyword.kind == .Union ? "union" : "struct")
+	}
 	return e
 }
 

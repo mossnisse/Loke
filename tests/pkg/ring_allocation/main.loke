@@ -18,7 +18,7 @@ import "core:unsafe";
 drops: sync.Atomic(int);
 
 // Counts its drops.
-Item :: move_only struct { id: int }
+@(move_only) Item :: struct { id: int }
 
 impl Item {
 	release :: hook(drop) proc(self: inout) {

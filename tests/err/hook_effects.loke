@@ -8,13 +8,13 @@ package main; import "core:fmt";
 
 cache: [dynamic]int;
 
-Guard :: move_only struct { active: bool }
+@(move_only) Guard :: struct { active: bool }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) {
 		if (self.active) { cache.clear(); cache.shrink(); }
 	}
 }
-Holder :: move_only struct { guard: Guard }
+@(move_only) Holder :: struct { guard: Guard }
 
 Noisy :: struct { n: int }
 impl Noisy {

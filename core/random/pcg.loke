@@ -21,7 +21,7 @@ import "core:math";
 	system. A seeded increment is always odd, so a zero increment can only mean
 	that.
 */
-Pcg64 :: move_only struct {
+@(move_only) Pcg64 :: struct {
 	@(private) lcg: u128,
 	@(private) increment: u128,
 }

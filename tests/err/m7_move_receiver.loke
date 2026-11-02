@@ -6,7 +6,7 @@ package main; import "core:fmt";
 // call. A consuming receiver leaves the source dead, so it is written
 // `move(value).method()` like every other transfer.
 
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 
 impl Res {
 	init :: proc(id: int) -> Res { return Res{id}; }

@@ -53,7 +53,7 @@ need.
 
 A file cannot be copied like an array: two owners of one native handle would
 both try to close it. `fs.File` is therefore move-only. A wrapper containing it
-is also move-only; spelling `move_only` makes that intent explicit.
+is also move-only; spelling `@(move_only)` makes that intent explicit.
 
 Save this input as `tracked_input.txt`:
 
@@ -68,7 +68,7 @@ import "core:fmt";
 import "core:fs";
 import "core:io";
 
-Tracked_File :: move_only struct {
+@(move_only) Tracked_File :: struct {
 	name: string,
 	file: fs.File,
 }
@@ -152,7 +152,7 @@ future cleanup to the destination instead of running it immediately.
 The default panic strategy also runs local cleanup; an aborting panic does
 not. The [Errors lesson](05-errors.md#panics) explains the distinction.
 
-A record with a drop hook must say how it is copied: `move_only`, as here, a
+A record with a drop hook must say how it is copied: `@(move_only)`, as here, a
 `hook(copy)`, or `@(fieldwise_copy)` when copying each field is right.
 Custom copy hooks are only needed for resources that have a meaningful,
 independent clone. [design.md "Lifecycle hooks and resource types"](../design.md#lifecycle-hooks-and-resource-types)

@@ -5,7 +5,7 @@ package main;
 
 import "core:fmt";
 
-Guard :: move_only struct { p: ^[dynamic]int }
+@(move_only) Guard :: struct { p: ^[dynamic]int }
 
 impl Guard {
 	done :: hook(drop) proc(self: inout) {

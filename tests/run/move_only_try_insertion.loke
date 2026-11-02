@@ -8,7 +8,7 @@ import "core:unsafe";
 // design.md "Container insertion": a `try_` form takes a move-only element from
 // a temporary or `move(...)`, as `append` does, and drops it when it fails.
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 impl Token {
 	release :: hook(drop) proc(self: inout Token) {

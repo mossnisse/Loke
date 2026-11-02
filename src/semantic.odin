@@ -164,14 +164,14 @@ Type_Info :: struct {
 	// design.md "@(require_results)": a bare call statement is rejected when any
 	// result type requires handling.
 	requires_results: bool,
-	// A validated `union @(align=N)` or `struct @(align=N)`, or 0. Kept apart from
+	// A validated `@(align=N)` on a union or struct, or 0. Kept apart from
 	// `align`, which the layout pass overwrites with the computed result —
 	// `union_layout` is asked again by the emitter after that, and both must agree.
 	written_align: u64,
 	// design.md "@(packed)": no inter-field padding, natural alignment 1 (an
 	// `@(align=N)` may still raise it).
 	packed:        bool,
-	// `move_only struct` suppresses the generated ownership-copy operations.
+	// `@(move_only)` suppresses the generated ownership-copy operations.
 	// This bit records an explicit leaf declaration; containing records inherit
 	// it through lifecycle classification.
 	move_only:     bool,

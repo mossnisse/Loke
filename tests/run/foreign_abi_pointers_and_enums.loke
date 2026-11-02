@@ -11,13 +11,11 @@ Implicit :: enum { A }
 
 echo :: proc "c" (value: Code) -> Code { return value; }
 echo_alias :: proc "stdcall" (value: Alias_Code) -> Alias_Code { return value; }
-echo_anonymous :: proc "c" (value: enum i32 { Good = 37 }) -> i32 { return i32(value); }
 borrow :: proc "c" (a: ^Empty, b: inout Empty, c: ^Wide, d: ^Implicit) {}
 
 main :: proc() {
 	fmt.println(i32(echo(.Good)));
 	fmt.println(i32(echo_alias(.Good)));
-	fmt.println(echo_anonymous(.Good));
 	a, b: Empty = {}, {};
 	c := Wide.A;
 	d := Implicit.A;

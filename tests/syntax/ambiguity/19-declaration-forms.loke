@@ -22,7 +22,7 @@ add :: proc(a: int, $T: type, values: ..T, b: int = 1) -> (ok: bool, count: int)
 extern_call :: proc "c" (a: ^u8) ---;
 group :: proc { add, sub }
 element_set :: operator([]=) proc(a: int) ---;
-Move_Only :: move_only struct { id: int }
+@(move_only) Move_Only :: struct { id: int }
 
 counter: static int = 0;
 inferred: thread_local = 1;

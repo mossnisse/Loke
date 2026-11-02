@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // design.md "Compile-time reflection": a descriptor describes only the type it
 // was reflected from, and `field.get` names that field as a read-only place.
 
-Handle :: move_only struct { id: int }
+@(move_only) Handle :: struct { id: int }
 Holder :: struct { handle: Handle, count: int }
 Twin :: struct { handle: Handle, count: int }
 

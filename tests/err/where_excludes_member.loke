@@ -6,7 +6,7 @@ import "core:container";
 // (design.md "where clauses"). Each is a member the instantiation does not
 // have, not a body that failed to check.
 
-Token :: move_only struct { @(public) id: int }
+@(move_only) Token :: struct { @(public) id: int }
 
 Slot :: enum{Only};
 

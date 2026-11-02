@@ -463,7 +463,15 @@ api_decl :: proc(
 	}
 	w := Ref_Walk{b = b, subject = owner}
 	append(&w.bound, ..bound)
+	// `@(align=N)` may name a generic parameter of the record it describes.
+	mark := len(w.bound)
+	if len(d.values) == 1 {
+		if record, is_record := d.values[0].(^Type_Record); is_record {
+			bind_generic_params(&w.bound, record.generic_params)
+		}
+	}
 	attribute_refs(&w, d.attributes)
+	resize(&w.bound, mark)
 	api_refs(&w, d.declared_type)
 	lo, hi := d.names[0].span.lo, d.span.hi
 	if literal := decl_proc_literal(d); literal != nil {
@@ -493,7 +501,6 @@ api_decl :: proc(
 		if record := decl_struct(d); record != nil {
 			item.text = public_struct(b, record, lo)
 			bind_generic_params(&w.bound, record.generic_params)
-			attribute_refs(&w, record.attributes)
 			for parameter in record.generic_params {
 				api_refs(&w, parameter.type)
 			}
@@ -682,7 +689,6 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 	case ^Type_Record:
 		mark := len(w.bound)
 		bind_generic_params(&w.bound, v.generic_params)
-		attribute_refs(w, v.attributes)
 		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)

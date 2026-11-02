@@ -18,7 +18,7 @@ import "core:unsafe";
 	to the next. Dropping the pool lets its workers finish and joins them.
 	It is move-only and has no zero value.
 */
-Pool :: move_only struct {
+@(move_only) Pool :: struct {
 	// The `Pool_State` its workers share, on the heap, so the pool can move
 	// while they run.
 	@(private, required) state: rawptr,

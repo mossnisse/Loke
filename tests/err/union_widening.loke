@@ -13,7 +13,7 @@ Missing :: (io: Io_Error | net: int);
 Retyped :: (io: int | parse: Parse_Error | net: int);
 Named :: union { io: Io_Error, parse: Parse_Error }
 
-Connection :: move_only struct { id: int }
+@(move_only) Connection :: struct { id: int }
 Owned :: (conn: Connection | none:);
 Wider :: (conn: Connection | none: | other: int);
 

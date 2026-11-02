@@ -57,7 +57,7 @@ stored_mutable :: proc() {
 
 // What a view converted at the spawn views.
 
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 
 Handle :: interface($Self: type) {
 	slot id: proc(self) -> int;
@@ -251,7 +251,7 @@ main :: proc() {
 
 // The witnesses that keep the erased views above rejected, each converted
 // where no task runs.
-Dial :: struct @(thread_affine) { side: int }
+@(thread_affine) Dial :: struct { side: int }
 
 impl Dial {
 	area :: proc(self, scale: int) -> int { return self.side * scale; }

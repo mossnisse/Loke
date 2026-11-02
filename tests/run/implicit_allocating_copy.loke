@@ -21,7 +21,7 @@ Box :: struct { values: [dynamic]int }
 Held :: union { some: [dynamic]int, none: }
 Numbers :: distinct [dynamic]int;
 Pair :: struct { name: string, values: [dynamic]int }
-Outcome :: union @(failure=failed) { done: [dynamic]int, failed: }
+@(failure=failed) Outcome :: union { done: [dynamic]int, failed: }
 
 pack :: proc(items: ..[dynamic]int) -> int { return items.len(); }
 missing :: proc() -> Outcome { return .failed; }

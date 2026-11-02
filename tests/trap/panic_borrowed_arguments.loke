@@ -5,9 +5,9 @@ package main;
 // packed field is printed from an aligned copy, and a managed temporary lives
 // until the report ends. The program does not import `core:fmt`.
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 Point :: struct { x: int, y: int }
-Packed :: struct @(packed) { tag: u8, p: Point }
+@(packed) Packed :: struct { tag: u8, p: Point }
 make_text :: proc() -> string { return "made"; }
 
 main :: proc() {

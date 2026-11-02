@@ -42,7 +42,7 @@ impl Muddle_Iterator {
 
 // Lending a record field by field takes it apart, which a type with a custom
 // hook does not allow — the restriction a consuming destructure carries.
-Guarded :: move_only struct { key: int, value: int }
+@(move_only) Guarded :: struct { key: int, value: int }
 
 impl Guarded {
 	release :: hook(drop) proc(self: inout Guarded) { self.key = 0; }

@@ -112,7 +112,7 @@ lifted_label :: proc() -> int {
 LIFTED :: lifted_label();
 
 // A move-only payload transfers from an owned local, a `move`, or a temporary.
-Connection :: move_only struct { id: int }
+@(move_only) Connection :: struct { id: int }
 Owned :: (conn: Connection | none:);
 Wider :: (none: | other: int | conn: Connection);
 

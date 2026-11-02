@@ -649,7 +649,10 @@ Variant :: struct {
 	type: Expr, // nil for a payloadless variant
 }
 
-// `fields` for a struct, `variants` for a union.
+// `fields` for a struct, `variants` for a union. `attributes` is the list of the
+// declaration whose value it is, which a walk of the declaration has already
+// seen. A generic instance clones the record alone, so an `@(align=N)` has to be
+// reachable from it.
 Type_Record :: struct {
 	using base:     Expr_Base,
 	kind:           Record_Kind,
@@ -1354,6 +1357,18 @@ File :: struct {
 	// added it.
 	parallels:      []u32,
 	parallel_bound: bool,
+	// What `-migrate` rewrites. Nothing else reads it.
+	earlier_spellings: []Earlier_Spelling,
+}
+
+// A record written the way an earlier release required: its `move_only` keyword
+// and its in-type attribute groups, each span empty when absent. `declaration` is
+// the constant whose value it is, if any.
+Earlier_Spelling :: struct {
+	record:      ^Type_Record,
+	declaration: ^Decl,
+	keyword:     Span,
+	groups:      Span,
 }
 
 destroy_ast :: proc(f: ^File) {

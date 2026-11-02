@@ -12,7 +12,7 @@ L0489
 a lifecycle hook takes no written default; the compiler supplies `mem.default_allocator()`
 L0488
 @31:2
-a `move_only` type cannot also declare `hook(copy)`
+a move-only type cannot also declare `hook(copy)`
 L0488
 @40:2
 duplicate `hook(drop)` for `Resource`

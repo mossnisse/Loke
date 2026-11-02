@@ -2,25 +2,25 @@ L0422
 @4:36
 `n` is already a variant of this union
 L0423
-@5:22
+@5:3
 `@(align=3)` must be a power of two between 1 and 16
 L0422
 @6:33
 this union variant payload is not a type
 L0423
-@10:22
+@10:3
 `@(zero=second)` must name the first variant, so the zero value stays all-zero
 L0423
-@11:25
+@11:3
 `@(zero=missing)` names no variant of this union
 L0423
-@15:28
+@15:3
 `@(zero=first)` needs an all-zero payload, and `Value` has no zero value
 L0423
-@18:22
+@18:3
 `@(failure=...)` needs a union of exactly two variants, found 3
 L0423
-@19:28
+@19:3
 `@(failure=missing)` names no variant of this union
 L0429
 @29:17

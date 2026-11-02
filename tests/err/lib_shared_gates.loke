@@ -49,7 +49,7 @@ main :: proc() {
 
 // "`shared(value)` clones a borrowed value": a move-only one has no clone, so
 // the call names the member that would take it by `move`.
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 shares_a_borrowed_token :: proc() {
 	token := Token{5};

@@ -2,10 +2,10 @@
 // borrowed, as `&value.field` cannot, and cannot be written `&mut`.
 package main;
 
-H :: struct @(packed) { pad: u8, arr: [2]i32 }
-P :: struct @(packed) { pad: u8, n: i32 }
+@(packed) H :: struct { pad: u8, arr: [2]i32 }
+@(packed) P :: struct { pad: u8, n: i32 }
 Inner :: struct { a: i32, b: i64 }
-Q :: struct @(packed) { pad: u8, inner: Inner }
+@(packed) Q :: struct { pad: u8, inner: Inner }
 
 read :: proc(x: ^i32) -> i32 { return x^; }
 read64 :: proc(x: ^i64) -> i64 { return x^; }

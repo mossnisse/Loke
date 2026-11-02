@@ -6,7 +6,7 @@ package main;
 
 import "core:thread";
 
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 
 affine :: proc(windows: ^thread.Sender(Window)) {
 	_ = windows.send(Window{1});

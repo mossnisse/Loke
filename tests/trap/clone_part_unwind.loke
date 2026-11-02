@@ -15,7 +15,7 @@ impl Tracked {
         if (self.id != 0) { fmt.println("drop", self.id); }
     }
 }
-Holder :: struct @(fieldwise_copy) { first: Tracked, items: [3]Tracked, last: Tracked }
+@(fieldwise_copy) Holder :: struct { first: Tracked, items: [3]Tracked, last: Tracked }
 impl Holder {
     release :: hook(drop) proc(self: inout Holder) { fmt.println("drop holder"); }
 }

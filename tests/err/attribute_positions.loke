@@ -13,7 +13,7 @@ package main;
 }
 
 Nested :: struct {
-	a: union @(bogus_nested) { x: int },
+	@(bogus_nested) a: int,
 }
 
 Callback :: proc(@(bogus_param_type) x: int);
@@ -30,7 +30,7 @@ main :: proc() {
 	f := proc(@(bogus_lambda_param) y: int) {};
 	@(require_results) inner_proc :: proc() -> int { return 3; }
 	_ = local; _ = hidden; _ = f; _ = inner_proc;
-	n: Nested = {a = .x(1)};
+	n: Nested = {a = 1};
 	_ = n;
 	_ = helper();
 	fmt.println("unreachable");

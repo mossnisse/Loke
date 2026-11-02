@@ -40,6 +40,6 @@ read :: proc(value: int = Boxed.DEFAULT) -> int { return value; }
 @(private) ALIGNMENT :: 16;
 
 /// Laid out at a private alignment.
-Aligned :: struct @(align=ALIGNMENT) {
+@(align=ALIGNMENT) Aligned :: struct {
 	value: u8,
 }

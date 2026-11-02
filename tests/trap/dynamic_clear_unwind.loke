@@ -5,7 +5,7 @@ import "core:fmt";
 // design.md "Uninitialized capacity": a container shortens before it drops
 // what it took, so when one element's drop hook panics, the unwind drops each
 // element still in the array exactly once and then runs the outer cleanup.
-Tracked :: move_only struct { id: int }
+@(move_only) Tracked :: struct { id: int }
 impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) {
 		fmt.println("drop", self.id);

@@ -85,7 +85,7 @@ Metadata :: struct {
 	particular instance was opened with. Using an unsupported direction returns
 	`Unsupported` at run time.
 */
-File :: move_only struct {
+@(move_only) File :: struct {
 	@(private) handle: Handle,
 	@(private) access: Access,
 	@(private) append: bool,
@@ -1208,7 +1208,7 @@ remove_directory_native :: proc(path: string_view) -> Status(io.Error) {
 // The search handle plus the record Windows fills. `pending` is the entry
 // `FindFirstFileW` already produced: the first `next` consumes it rather than
 // advancing, which is what makes the first entry visible at all.
-Directory_Reader :: move_only struct {
+@(move_only) Directory_Reader :: struct {
 	@(private) handle:    Handle,
 	@(private) pending:   bool,
 	@(private) data:      Find_Data,

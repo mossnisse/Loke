@@ -10,7 +10,7 @@ Show :: interface($Self: type) {
 Point :: struct { x: int, y: int }
 impl Point { show :: proc(self) -> int { return self.x + self.y; } }
 
-Packed :: struct @(packed) { tag: u8, p: Point }
+@(packed) Packed :: struct { tag: u8, p: Point }
 
 total :: proc(args: ..dyn Show) -> int {
 	sum := 0;

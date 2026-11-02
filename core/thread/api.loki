@@ -40,7 +40,9 @@ Unsent :: union($T: type) { closed: T, full: T }
 Received :: union($T: type) { item: T, empty, closed }
 
 // Sends into the channel it borrows. Move-only; `fork` makes another.
-Sender :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only)
+@(wakes_on_drop)
+Sender :: struct($T: type) {
 	// and fields private to the package
 }
 
@@ -48,7 +50,9 @@ Sender :: move_only struct($T: type) @(wakes_on_drop) {
 	Receives from the channel it borrows. Move-only; `fork` makes another.
 	`foreach (item in receiver)` receives until the stream ends.
 */
-Receiver :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only)
+@(wakes_on_drop)
+Receiver :: struct($T: type) {
 	// and fields private to the package
 }
 
@@ -147,7 +151,8 @@ impl Receiver_Iterator($T) {
 	to the next. Dropping the pool lets its workers finish and joins them.
 	It is move-only and has no zero value.
 */
-Pool :: move_only struct {
+@(move_only)
+Pool :: struct {
 	// and fields private to the package
 }
 
@@ -169,17 +174,22 @@ impl Pool {
 	Dropping an endpoint closes its side. Dropping the ring drops the items
 	still queued. It is move-only and has no zero value.
 */
-Ring :: move_only struct($T: type) {
+@(move_only)
+Ring :: struct($T: type) {
 	// and fields private to the package
 }
 
 // Sends into the ring it borrows. Move-only, and the only sender.
-Ring_Sender :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only)
+@(wakes_on_drop)
+Ring_Sender :: struct($T: type) {
 	// and fields private to the package
 }
 
 // Receives from the ring it borrows. Move-only, and the only receiver.
-Ring_Receiver :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only)
+@(wakes_on_drop)
+Ring_Receiver :: struct($T: type) {
 	// and fields private to the package
 }
 
@@ -221,7 +231,8 @@ processor_count :: proc() -> int ---;
 	A running thread. Dropping one joins it, so a thread never outlives the owner
 	of its handle; `join` says so at the point it happens.
 */
-Thread :: move_only struct {
+@(move_only)
+Thread :: struct {
 	// and fields private to the package
 }
 
@@ -271,7 +282,10 @@ impl Mutex($T) {
 	The pointer borrows the mutex, so it cannot move or end while locked. A
 	guard stays on the thread that locked, which is the one that must unlock.
 */
-Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
+@(move_only)
+@(thread_affine)
+@(wakes_on_drop)
+Guard :: struct($T: type) {
 	// and fields private to the package
 }
 
@@ -343,7 +357,10 @@ impl Monitor($T) {
 	The pointer borrows the monitor, so it cannot move or end while locked. A
 	guard stays on the thread that locked, which is the one that must unlock.
 */
-Monitor_Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
+@(move_only)
+@(thread_affine)
+@(wakes_on_drop)
+Monitor_Guard :: struct($T: type) {
 	// and fields private to the package
 }
 
