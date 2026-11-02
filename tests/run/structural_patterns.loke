@@ -38,7 +38,7 @@ describe_any :: proc(value: $T) -> string_view { return "any"; }
 describe_shape :: proc(found: (some: $T | none:)) -> string_view { return "shape"; }
 describe_int :: proc(found: (some: int | none:)) -> string_view { return "int"; }
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 take :: proc(held: (some: $T | none:)) -> int {
 	switch (held) {
 	case .some(token): return token.id;

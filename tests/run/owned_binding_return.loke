@@ -6,7 +6,7 @@ import "core:fmt";
 // owned local, so returning it transfers the payload rather than copying a
 // borrowed value, and it is dropped once, by its new owner.
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 impl Token {
 	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }

@@ -4,7 +4,7 @@ import "core:fmt";
 // combined packed/aligned record may hold a view of literal storage.
 Label :: union { text: string_view, number: int }
 Owned :: union { name: string, raw: cstring_view, list: []int }
-Packed :: struct @(packed, align=8) { tag: u8, text: string_view }
+@(packed, align=8) Packed :: struct { tag: u8, text: string_view }
 Outer :: struct { id: int, label: Label }
 
 label: Label = .text("hi");

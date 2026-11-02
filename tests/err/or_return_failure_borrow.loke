@@ -1,7 +1,7 @@
 package main;
 
-Inner :: union @(failure=err) { ok: int, err: string }
-Outer :: union @(failure=err) { ok: int, err: string_view }
+@(failure=err) Inner :: union { ok: int, err: string }
+@(failure=err) Outer :: union { ok: int, err: string_view }
 
 inner :: proc() -> Inner { return .err("temporary"); }
 outer :: proc() -> Outer {

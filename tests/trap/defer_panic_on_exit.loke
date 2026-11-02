@@ -6,7 +6,7 @@ import "core:fmt";
 // at that frame, so it must run only the actions not yet run: `drop 2` and the
 // panicking defer happen once, and the earlier defer and owners still unwind.
 
-Noisy :: move_only struct { id: int };
+@(move_only) Noisy :: struct { id: int };
 
 impl Noisy {
 	release :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }

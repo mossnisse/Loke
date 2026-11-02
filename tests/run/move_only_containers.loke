@@ -7,7 +7,7 @@ import "core:fmt";
 // including one an insertion did not need.
 drops := 0;
 
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) {

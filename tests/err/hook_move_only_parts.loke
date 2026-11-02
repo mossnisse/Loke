@@ -2,7 +2,7 @@ package main;
 
 // A container of move-only elements has no copy, and a record holding a
 // move-only field cannot opt back in with `hook(copy)`.
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 Box :: struct { r: Res }
 impl Box {
 	copy_box :: hook(copy) proc(self, allocator: Allocator) -> Result(Box, Allocator_Error) {

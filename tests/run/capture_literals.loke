@@ -19,7 +19,7 @@ impl Sorter {
 }
 
 // The drops print, so a lost or doubled drop shows.
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 impl Token {
 	release :: hook(drop) proc(self: inout Token) { fmt.println("drop token", self.id); }

@@ -21,7 +21,7 @@ impl Res {
 Holder :: struct { values: [dynamic]int, res: Res }
 
 // A packed field is read in place with no address taken.
-Packed :: struct @(packed) { tag: u8, value: int }
+@(packed) Packed :: struct { tag: u8, value: int }
 
 // A field read through a pointer is borrowed, so returning it is a clone.
 first :: proc(h: ^Holder) -> [dynamic]int {

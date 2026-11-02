@@ -5,14 +5,14 @@ package main;
 import "core:fmt";
 import "base:interfaces";
 
-Noisy :: move_only struct { n: int }
+@(move_only) Noisy :: struct { n: int }
 impl Noisy {
 	bye :: hook(drop) proc(self: inout) {
 		if (self.n != 0) { fmt.println("drop", self.n); }
 	}
 }
 
-Copyable :: struct @(fieldwise_copy) { n: int }
+@(fieldwise_copy) Copyable :: struct { n: int }
 impl Copyable {
 	bye :: hook(drop) proc(self: inout) {
 		if (self.n != 0) { fmt.println("copyable drop", self.n); }

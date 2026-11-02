@@ -25,7 +25,7 @@ impl Res {
 		if (self.id != 0) { fmt.println("drop", self.id); }
 	}
 }
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 Small :: (res: Res | none:);
 Wide :: (none: | res: Res | token: Token);
 

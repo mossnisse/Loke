@@ -26,7 +26,7 @@ store :: proc(fail: bool) -> Status(App_Error) {
 	fmt.println("stored", n);
 }
 
-Tri :: union @(failure=broken) { fine, broken: int }
+@(failure=broken) Tri :: union { fine, broken: int }
 
 user :: proc(fail: bool) -> Tri {
 	if (fail) { return .broken(7); }

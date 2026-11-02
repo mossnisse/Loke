@@ -936,7 +936,7 @@ be labeled or all unlabeled. See [Anonymous records](design.md#anonymous-records
 ### Structs declare, parentheses describe
 
 A struct is nominal and belongs to a package. That ownership supports private
-fields, hooks, `move_only`, and changes to field order without changing outside
+fields, hooks, `@(move_only)`, and changes to field order without changing outside
 callers. An anonymous record describes a structural value without those rights.
 
 Combining the two would either weaken encapsulation or make every returned pair
@@ -3025,7 +3025,7 @@ boundaries and API shapes follow a few common choices:
   The one rule, not a run-time check, keeps `multiply_into(out, a, b)` from
   writing what it reads. Strides are not negative; a reversed view waits for
   a caller.
-- **A dense matrix copies, and has no operators.** `move_only` would stop an
+- **A dense matrix copies, and has no operators.** `@(move_only)` would stop an
   accidental copy, but a matrix is a value in every numerical language, an
   algorithm sometimes wants the copy, and the copy-cost diagnostic already
   names it. `*` and `+` allocating from the default allocator, as NumPy and

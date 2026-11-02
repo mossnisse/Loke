@@ -3,11 +3,11 @@ package main; import "core:fmt";
 // design.md "Record layout attributes": the byte-exact LLVM
 // bodies and the `align 1` that a packed field's load and store carry.
 
-Packed :: struct @(packed) { x: u8, y: i32 }
-Over :: struct @(align=16) { b: bool, n: i32 }
-Both :: struct @(packed, align=8) { x: u8, y: i32 }
-Empty_Over :: struct @(align=8) { }
-Empty_Both :: struct @(packed, align=8) { }
+@(packed) Packed :: struct { x: u8, y: i32 }
+@(align=16) Over :: struct { b: bool, n: i32 }
+@(packed, align=8) Both :: struct { x: u8, y: i32 }
+@(align=8) Empty_Over :: struct { }
+@(packed, align=8) Empty_Both :: struct { }
 
 main :: proc() {
 	p := Packed{ x = 1, y = 2 };

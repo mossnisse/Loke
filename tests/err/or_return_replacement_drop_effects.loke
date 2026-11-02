@@ -5,7 +5,7 @@
 package main;
 
 cache: [dynamic]int;
-Guard :: move_only struct { active: bool }
+@(move_only) Guard :: struct { active: bool }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) {
 		if (self.active) { cache.clear(); cache.shrink(); }

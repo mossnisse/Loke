@@ -17,7 +17,7 @@ port :: proc(settings: map[string]int) -> Result(int, Config_Error) {
 	return .ok(value);
 }
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 impl Token {
 	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }

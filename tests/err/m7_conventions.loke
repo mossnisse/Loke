@@ -19,7 +19,7 @@ main :: proc() { }
 // A record reached again through a procedure pointer is a legal cycle, not an
 // infinite-size one: it must not switch off the record's own lifecycle check,
 // nor let the pointer's signature be answered before the record has fields.
-Ctx :: move_only struct { cb: proc "c" (c: Ctx), n: i32 }
+@(move_only) Ctx :: struct { cb: proc "c" (c: Ctx), n: i32 }
 impl Ctx {
 	release :: hook(drop) proc(self: inout Ctx) { self.n = 0; }
 }

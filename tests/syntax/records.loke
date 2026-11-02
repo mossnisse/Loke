@@ -32,7 +32,7 @@ Constrained_Struct :: struct($T: type) where Additive(T), Sized(T) {
 	value: T,
 }
 
-Attributed_Struct :: struct @(packed) { x: int }
+@(packed) Attributed_Struct :: struct { x: int }
 
 Empty_Enum :: enum { }
 Bare_Enum :: enum { Red, Green, Blue }
@@ -42,7 +42,7 @@ Empty_Union :: union { }
 Value_Union :: union { count: int, label: string, node: ^Point }
 Payloadless_Union :: union { absent:, present: int }
 Bare_Union :: union { absent, present: int, gone }
-Generic_Union :: union($T: type) @(zero=empty) where Sized(T) { empty:, held: T, failed: Error, }
+@(zero=empty) Generic_Union :: union($T: type) where Sized(T) { empty:, held: T, failed: Error, }
 
 Sequence :: interface($Self: type) {
 	// An expression requirement, with and without a binding list and a result.

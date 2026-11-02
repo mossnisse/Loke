@@ -9,7 +9,7 @@ import "core:fmt";
 // ---------------------------------------------------- a body-local record --
 
 asked_first :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	fmt.println(is_copyable(H));
 	impl H {
 		close :: hook(drop) proc(self: inout H) { fmt.println("asked close", self.fd); }
@@ -19,7 +19,7 @@ asked_first :: proc() {
 }
 
 value_first :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{2};
 	impl H {
 		close :: hook(drop) proc(self: inout H) { fmt.println("value close", self.fd); }
@@ -45,7 +45,7 @@ copied_first :: proc() {
 
 // A record holding it, or a container of it, made before the block.
 held_first :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	O :: struct { h: H }
 	fmt.println(is_copyable(O));
 	o := O{H{5}};
@@ -60,7 +60,7 @@ held_first :: proc() {
 // A hook's signature and body may name what is declared after the record, so
 // they wait for the block's own statement.
 later_name :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{7};
 	K :: struct { n: int }
 	impl H {
@@ -72,7 +72,7 @@ later_name :: proc() {
 // Any block the record's own scope holds: nested, through an alias, in the
 // selected branch of a `when`, or after a `return`.
 nested :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{8};
 	if (a.fd == 0) {
 		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("nested close", self.fd); } }
@@ -81,7 +81,7 @@ nested :: proc() {
 }
 
 aliased :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{9};
 	A :: H;
 	impl A { close :: hook(drop) proc(self: inout H) { fmt.println("aliased close", self.fd); } }
@@ -89,7 +89,7 @@ aliased :: proc() {
 }
 
 selected :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{10};
 	when (is_copyable(H)) {
 		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("wrong close", self.fd); } }
@@ -101,7 +101,7 @@ selected :: proc() {
 
 declared_in_when :: proc() {
 	when (true) {
-		H :: move_only struct { fd: int }
+		@(move_only) H :: struct { fd: int }
 	}
 	a := H{11};
 	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("when close", self.fd); } }
@@ -109,7 +109,7 @@ declared_in_when :: proc() {
 }
 
 after_return :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{12};
 	fmt.println(a.fd);
 	return;
@@ -119,13 +119,13 @@ after_return :: proc() {
 // Sibling scopes may reuse a name: each block is its own record's.
 siblings :: proc() {
 	{
-		H :: move_only struct { fd: int }
+		@(move_only) H :: struct { fd: int }
 		a := H{13};
 		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("first close", self.fd); } }
 		fmt.println(a.fd);
 	}
 	{
-		H :: move_only struct { fd: int }
+		@(move_only) H :: struct { fd: int }
 		a := H{14};
 		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("second close", self.fd); } }
 		fmt.println(a.fd);
@@ -134,7 +134,7 @@ siblings :: proc() {
 
 // Each instance of a generic procedure declares its own record and hook.
 in_generic :: proc($T: type, value: T) {
-	H :: move_only struct { value: T }
+	@(move_only) H :: struct { value: T }
 	a := H{value};
 	fmt.println(is_copyable(H), a.value);
 	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("generic close", self.value); } }
@@ -143,7 +143,7 @@ in_generic :: proc($T: type, value: T) {
 // -------------------------------------------------------- a generic record --
 
 // A member's bound asks before a later hook is resolved.
-Later_Drop :: move_only struct($T: type) { value: T }
+@(move_only) Later_Drop :: struct($T: type) { value: T }
 impl Later_Drop($T) {
 	helper :: proc(self) where !is_copyable(Later_Drop(T)) { fmt.println("helper"); }
 	release :: hook(drop) proc(self: inout) { fmt.println("later drop", self.value); }
@@ -167,7 +167,7 @@ impl Holds_Later($T) {
 }
 
 // A hook whose own bound asks is left out without leaving a name behind.
-Own_Bound :: move_only struct($T: type) { value: T }
+@(move_only) Own_Bound :: struct($T: type) { value: T }
 impl Own_Bound($T) {
 	release :: hook(drop) proc(self: inout) where is_copyable(Own_Bound(T)) { fmt.println("wrong drop", self.value); }
 }
@@ -182,7 +182,7 @@ impl Own_Copy($T) {
 }
 
 // One block asks, and another declares the hook.
-Two_Blocks :: move_only struct($T: type) { value: T }
+@(move_only) Two_Blocks :: struct($T: type) { value: T }
 impl Two_Blocks($T) {
 	helper :: proc(self) where !is_copyable(Two_Blocks(T)) { fmt.println("two helper"); }
 }
@@ -220,13 +220,13 @@ generics :: proc() {
 // ------------------------------------------- a file-scope `when` that asks --
 
 // Asked while file-scope blocks are still being selected and declared.
-Asked_By_When :: move_only struct($T: type) { value: T }
+@(move_only) Asked_By_When :: struct($T: type) { value: T }
 when (!is_copyable(Asked_By_When(int))) { WHEN_GENERIC :: 15; } else { WHEN_GENERIC :: 0; }
 impl Asked_By_When($T) {
 	release :: hook(drop) proc(self: inout) { fmt.println("when generic drop", self.value); }
 }
 
-Plain_By_When :: move_only struct { fd: int }
+@(move_only) Plain_By_When :: struct { fd: int }
 when (!is_copyable(Plain_By_When)) { WHEN_PLAIN :: 16; } else { WHEN_PLAIN :: 0; }
 impl Plain_By_When {
 	close :: hook(drop) proc(self: inout) { fmt.println("when plain close", self.fd); }

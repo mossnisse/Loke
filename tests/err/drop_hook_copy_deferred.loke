@@ -40,10 +40,10 @@ deferred_impl :: proc() {
 
 // The attribute's own errors.
 no_hook :: proc() {
-	defer Bare :: struct @(fieldwise_copy) { fd: int }
+	defer @(fieldwise_copy) Bare :: struct { fd: int }
 }
 moved :: proc() {
-	defer Moved :: move_only struct @(fieldwise_copy) { fd: int }
+	defer @(move_only, fieldwise_copy) Moved :: struct { fd: int }
 	impl Moved {
 		close :: hook(drop) proc(self: inout Moved) {}
 	}
@@ -51,11 +51,11 @@ moved :: proc() {
 
 // A decision, in each of its forms: none of these report.
 decided :: proc() {
-	defer Sole :: move_only struct { fd: int }
+	defer @(move_only) Sole :: struct { fd: int }
 	impl Sole {
 		close :: hook(drop) proc(self: inout Sole) {}
 	}
-	defer Fields :: struct @(fieldwise_copy) { fd: int }
+	defer @(fieldwise_copy) Fields :: struct { fd: int }
 	impl Fields {
 		close :: hook(drop) proc(self: inout Fields) {}
 	}

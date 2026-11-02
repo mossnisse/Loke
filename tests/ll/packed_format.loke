@@ -6,7 +6,7 @@ import "core:fmt"; import "core:unsafe";
 // its value at the type's alignment, so the record formatter hands a packed
 // field's formatter an aligned copy, and reads a live-prefix count with
 // `align 1`.
-Packed :: struct @(packed) {
+@(packed) Packed :: struct {
 	@(public) tag: u8,
 	@(public) value: u64,
 	@(public) count: int,

@@ -765,8 +765,8 @@ find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, boo
 	return {}, false
 }
 
-// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4)
-// {...}`. Only a power of two the target supports is accepted; a written
+// design.md "@(align=N)": `@(align=4) Name :: union {...}`, or `struct {...}`.
+// Only a power of two the target supports is accepted; a written
 // alignment under the natural one raises rather than lowers.
 record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
 	attribute, written := find_attribute(value.attributes, "align")

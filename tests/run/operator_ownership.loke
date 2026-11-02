@@ -18,17 +18,17 @@ impl Owned {
 	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
 }
 
-Boxed :: union @(failure=failed) { held: Owned, failed: Owned }
+@(failure=failed) Boxed :: union { held: Owned, failed: Owned }
 
 held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
 failed :: proc(id: int) -> Boxed { return .failed(Owned{id}); }
 
 // A move-only payload has no copy, so only a temporary or a `move` reaches it.
-Handle :: move_only struct { id: int }
+@(move_only) Handle :: struct { id: int }
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) { drops += 1; }
 }
-Sealed :: union @(failure=gone) { open: Handle, gone: }
+@(failure=gone) Sealed :: union { open: Handle, gone: }
 opened :: proc(id: int) -> Sealed { return .open(Handle{id}); }
 
 reset :: proc() { copies.store(0); drops = 0; }

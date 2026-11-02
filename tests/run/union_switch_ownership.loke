@@ -20,12 +20,12 @@ impl Owned {
 	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
 }
 
-Handle :: move_only struct { id: int }
+@(move_only) Handle :: struct { id: int }
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) { drops += 1; }
 }
 
-Boxed  :: union @(zero=empty) { empty:, held: Owned, spare: Owned }
+@(zero=empty) Boxed  :: union { empty:, held: Owned, spare: Owned }
 Sealed :: union { open: Handle, shut: }
 
 held :: proc(id: int) -> Boxed { return .held(Owned{id}); }

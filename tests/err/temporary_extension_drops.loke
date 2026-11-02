@@ -7,7 +7,7 @@ import "core:fmt";
 // What the hook reads stays borrowed until then ("Capabilities and the one
 // rule"), and what it writes counts there ("Global write effects").
 
-Read :: move_only struct { data: []int, n: int }
+@(move_only) Read :: struct { data: []int, n: int }
 
 impl Read {
 	retire :: hook(drop) proc(self: inout Read) { fmt.println(self.data[0]); }
@@ -42,7 +42,7 @@ unhooked :: proc() {
 
 shared_values: [dynamic]int = {};
 
-Clear :: move_only struct { id: int }
+@(move_only) Clear :: struct { id: int }
 
 impl Clear {
 	retire :: hook(drop) proc(self: inout Clear) { shared_values = {}; }

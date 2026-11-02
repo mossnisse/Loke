@@ -2,7 +2,7 @@ package main;
 
 // design.md "Foreign-ABI-safe types": zero-sized records have no Win64 C layout.
 Empty :: struct {}
-Aligned :: struct @(align=8) {}
+@(align=8) Aligned :: struct {}
 Zero_Array :: struct { items: [0]i32 }
 Carrier :: struct { empty: Empty, marker: i32 }
 Nested :: struct { carriers: [2]Carrier }

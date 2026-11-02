@@ -17,15 +17,15 @@ impl Owned {
 	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
 }
 
-Boxed :: union @(zero=empty) { empty:, held: Owned }
+@(zero=empty) Boxed :: union { empty:, held: Owned }
 
 // Two variants of one payload type. `Result(int, int)` is the same shape, and
 // is the reason variant identity is the declaration index rather than the
 // payload: nothing about `int` distinguishes these two arms.
-Pair :: union @(zero=left) { left: int, right: int }
+@(zero=left) Pair :: union { left: int, right: int }
 
 // A managed payload beside a managed one, so the tag decides which hook runs.
-Text :: union @(zero=none) { none:, one: string, two: string }
+@(zero=none) Text :: union { none:, one: string, two: string }
 
 reset :: proc() { copies.store(0); drops = 0; }
 

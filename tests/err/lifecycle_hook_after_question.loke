@@ -38,13 +38,13 @@ generic_uses :: proc() {
 
 // A body-local record's hooks count before their block's statement.
 local_uses :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{1};
 	a.close();
 	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }
 	fmt.println(a.fd);
 
-	P :: struct @(fieldwise_copy) { x, y: int }
+	@(fieldwise_copy) P :: struct { x, y: int }
 	x, y := P{1, 2};
 	impl P { close :: hook(drop) proc(self: inout P) { fmt.println("close", self.x); } }
 	fmt.println(x, y);
@@ -52,7 +52,7 @@ local_uses :: proc() {
 
 // A method stays out of sight until its block, though a hook beside it does not.
 local_method :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{1};
 	a.method();
 	impl H {
@@ -64,7 +64,7 @@ local_method :: proc() {
 // known-gaps.md "A hook in a `when` on a later constant comes too late for a record
 // already used": what could not be selected where the record is declared.
 too_late :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	a := H{1};
 	N :: 1;
 	when (N == 1) {
@@ -75,7 +75,7 @@ too_late :: proc() {
 
 // No value yet, so the same block is in time.
 in_time :: proc() {
-	H :: move_only struct { fd: int }
+	@(move_only) H :: struct { fd: int }
 	N :: 1;
 	when (N == 1) {
 		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }

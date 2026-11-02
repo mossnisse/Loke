@@ -171,7 +171,7 @@ Type_Info :: struct {
 	// design.md "@(packed)": no inter-field padding, natural alignment 1 (an
 	// `@(align=N)` may still raise it).
 	packed:        bool,
-	// `move_only struct` suppresses the generated ownership-copy operations.
+	// `@(move_only)` suppresses the generated ownership-copy operations.
 	// This bit records an explicit leaf declaration; containing records inherit
 	// it through lifecycle classification.
 	move_only:     bool,

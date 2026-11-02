@@ -2,7 +2,7 @@ package main;
 
 // design.md "@(packed)": `inout` passes the place's address, so a field reached
 // through a packed struct cannot be one, on any call path.
-Packed :: struct @(packed) { tag: u8, value: int, items: [2]int }
+@(packed) Packed :: struct { tag: u8, value: int, items: [2]int }
 set :: proc(value: inout int) { value = 42; }
 Setter :: interface($Self: type) {
 	slot put: proc(self, value: inout int);

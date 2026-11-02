@@ -44,9 +44,9 @@ if a copy must do more than copy each field, declare `hook(copy)`
 if copying each field is right, write `@(fieldwise_copy)` on its declaration
 
 L0749
-@43:25
+@43:10
 `@(fieldwise_copy)` is for a record with `hook(drop)`; `Bare` declares none, so it already copies field by field
 
 L0748
-@46:36
+@46:21
 `@(fieldwise_copy)` keeps a generated copy, but a `@(move_only)` record has none

@@ -7,7 +7,7 @@ package main; import "core:fmt"; import "core:mem";
 // same way.
 
 Holder :: struct { view: []int }
-Boxed :: union @(failure=empty) { held: Holder, empty: }
+@(failure=empty) Boxed :: union { held: Holder, empty: }
 
 // The bare form: a slice of a local cannot outlive the local.
 bare :: proc() -> []int {

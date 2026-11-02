@@ -5,7 +5,7 @@ package main;
 import "core:fmt";
 
 Pair :: struct { a: int, b: int }
-Hooked :: move_only struct { a: int, b: int }
+@(move_only) Hooked :: struct { a: int, b: int }
 impl Hooked {
 	release :: hook(drop) proc(self: inout Hooked) { }
 }

@@ -11,14 +11,14 @@ Error_Code :: enum { Something_Bad, Something_Worse }
 Pair_Of_Ints :: union { left: int, right: int }
 
 // A payloadless variant, and a designated zero so the union has one.
-Maybe_Int :: union @(zero=absent) { absent:, present: int }
+@(zero=absent) Maybe_Int :: union { absent:, present: int }
 
 // A user's own failure protocol: `or_else`/`or_return` recognise the shape, not
 // the name `Result`.
-Parsed :: union @(failure=bad) { good: int, bad: Error_Code }
+@(failure=bad) Parsed :: union { good: int, bad: Error_Code }
 
-Inner_Failure :: union @(failure=err) { ok: int, err: string }
-Outer_Failure :: union @(failure=err) { ok: int, err: string_view }
+@(failure=err) Inner_Failure :: union { ok: int, err: string }
+@(failure=err) Outer_Failure :: union { ok: int, err: string_view }
 outer_failure :: proc(source: inout Inner_Failure) -> Outer_Failure {
 	n := source or_return;
 	return .ok(n);
@@ -26,7 +26,7 @@ outer_failure :: proc(source: inout Inner_Failure) -> Outer_Failure {
 
 // The natural layout, and the same variants under a written alignment.
 Narrow :: union { flag: bool, small: i16 }
-Wide_Aligned :: union @(align=8) { flag: bool, small: i16 }
+@(align=8) Wide_Aligned :: union { flag: bool, small: i16 }
 Holder :: struct { flag: bool, value: Wide_Aligned }
 Pair_Value :: union { numbers: [2]i16, flag: bool }
 

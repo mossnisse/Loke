@@ -1,6 +1,6 @@
 L0607
 `@(packed)` cannot appear on a union declaration
-@9:22
+@9:3
 
 L0614
 cannot take the address of `y`

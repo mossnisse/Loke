@@ -6,31 +6,31 @@ import "core:fmt";
 // part of that instance, and that holds for a drop hook. The instance has no cleanup
 // of its own, and whatever its parts own still drops.
 
-Inner :: move_only struct { id: int }
+@(move_only) Inner :: struct { id: int }
 impl Inner {
 	close :: hook(drop) proc(self: inout Inner) { fmt.println("inner", self.id); }
 }
 
-Only_Int :: move_only struct($T: type) { value: T }
+@(move_only) Only_Int :: struct($T: type) { value: T }
 impl Only_Int($T) {
 	release :: hook(drop) proc(self: inout) where T == int { fmt.println("int", self.value); }
 }
 
 // One hook per instance, each excluding the other, and an instance with neither.
-Either :: move_only struct($T: type) { value: T }
+@(move_only) Either :: struct($T: type) { value: T }
 impl Either($T) {
 	on_int :: hook(drop) proc(self: inout) where T == int { fmt.println("either int", self.value); }
 	on_text :: hook(drop) proc(self: inout) where T == string { fmt.println("either text", self.value); }
 }
 
 // A bound holding only where the instance has a copy, which the attribute keeps.
-Kept :: struct($T: type) @(fieldwise_copy) { value: T }
+@(fieldwise_copy) Kept :: struct($T: type) { value: T }
 impl Kept($T) {
 	release :: hook(drop) proc(self: inout) where T == int { fmt.println("kept", self.value); }
 }
 
 // A specialized block's hook replaces one whose bound fails for it.
-Special :: move_only struct($T: type) { value: T }
+@(move_only) Special :: struct($T: type) { value: T }
 impl Special($T) {
 	release :: hook(drop) proc(self: inout) where T == string { fmt.println("general", self.value); }
 }
@@ -38,7 +38,7 @@ impl Special(int) {
 	release :: hook(drop) proc(self: inout) { fmt.println("special", self.value); }
 }
 
-Holder :: move_only struct { excluded: Only_Int(string), included: Only_Int(int) }
+@(move_only) Holder :: struct { excluded: Only_Int(string), included: Only_Int(int) }
 
 consume :: proc(value: move Only_Int(string)) { fmt.println("consume", value.value); }
 

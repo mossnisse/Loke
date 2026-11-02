@@ -4,7 +4,7 @@ package main; import "core:mem"; import "core:fmt";
 // explicitly fallible primitives always return their error and never invoke a
 // failure policy.
 
-Handle :: move_only struct {
+@(move_only) Handle :: struct {
 	id:    int,
 	valid: bool,
 }
@@ -55,7 +55,7 @@ direct :: proc() -> Result(int, Allocator_Error) {
 
 // The same propagation into a user's own two-variant failure union, which
 // `or_return` recognises structurally rather than by name.
-Boxed :: union @(failure=broke) { held: int, broke: Allocator_Error }
+@(failure=broke) Boxed :: union { held: int, broke: Allocator_Error }
 
 wrapped :: proc() -> Boxed {
 	p := try_box(0) or_return;

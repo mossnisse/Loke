@@ -7,7 +7,7 @@ package main; import "core:fmt"; import "core:unsafe";
 // provenance-free. Forgetting is not a lifetime extension: a borrow of the
 // operand ends there, exactly as it would at a `drop`.
 
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

@@ -7,7 +7,7 @@ package main; import "core:fmt"; import "core:os";
 // `tests/run/m6a_normal_tls` shows the same declarations being cleaned up on a
 // normal return, which is what makes this output's silence meaningful.
 
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

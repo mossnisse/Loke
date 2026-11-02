@@ -10,7 +10,7 @@ import "core:fmt";
 import "core:mem";
 import "core:sync";
 
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 
 counter: int;
 values: [2]int;

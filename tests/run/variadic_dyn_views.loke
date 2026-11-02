@@ -16,19 +16,19 @@ impl int {
 	show :: proc(self) -> int { return self; }
 }
 
-Guard :: move_only struct { id: int }
+@(move_only) Guard :: struct { id: int }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) { fmt.println("drop", self.id); }
 	show :: proc(self) -> int { return self.id; }
 }
 make_guard :: proc(id: int) -> Guard { return Guard{id}; }
 
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 impl Token {
 	show :: proc(self) -> int { return self.id; }
 }
 
-Packed :: struct @(packed) { tag: u8, p: Point }
+@(packed) Packed :: struct { tag: u8, p: Point }
 
 total :: proc(args: ..dyn Show) -> int {
 	sum := 0;

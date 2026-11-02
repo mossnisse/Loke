@@ -27,11 +27,12 @@ Memory_Order :: enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_
 
 	The zero value is `T`'s zero, and nothing has to run before it is usable.
 
-	`move_only`, because a copy of an atomic is a *non-atomic* read of it that
+	`@(move_only)`, because a copy of an atomic is a *non-atomic* read of it that
 	hands back a second, unrelated atomic. A record holding one is move-only
 	too.
 */
-Atomic :: move_only struct($T: type) {
+@(move_only)
+Atomic :: struct($T: type) {
 	/*
 		Public, because a caller that has exclusive access — during
 		construction, or after joining every other thread — reads and writes it

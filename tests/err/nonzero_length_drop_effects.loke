@@ -7,11 +7,11 @@ import "core:fmt";
 
 values: [dynamic]int = {};
 
-Clear :: move_only struct { id: int }
+@(move_only) Clear :: struct { id: int }
 impl Clear {
 	retire :: hook(drop) proc(self: inout Clear) { values = {}; }
 }
-Holds :: move_only struct { none: [0]Clear, one: [1]Clear }
+@(move_only) Holds :: struct { none: [0]Clear, one: [1]Clear }
 
 slice_literal :: proc() {
 	borrowed := values[:];

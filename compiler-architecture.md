@@ -639,7 +639,7 @@ file whose selected items hold a `parallel` keyword (`File.parallels`), and a
 block reports `L0329` where no collection provides it.
 
 ```text
-Task_Scope :: move_only struct          // private to core:thread
+@(move_only) Task_Scope :: struct          // private to core:thread
 Task_Scope.pooled(pool: ^Pool) -> Task_Scope
                                         // the scope of `parallel (pool)`, borrowing it
 Task_Scope.start(self: inout, run: proc(frame: rawptr), frame: rawptr)

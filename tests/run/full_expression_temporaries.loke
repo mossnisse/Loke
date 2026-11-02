@@ -10,7 +10,7 @@ package main; import "core:fmt";
 // where the temporary is the argument itself, was always cleaned up — the gap
 // was the borrow, not the temporary.
 
-Box :: move_only struct { tag: int, items: [dynamic]int }
+@(move_only) Box :: struct { tag: int, items: [dynamic]int }
 
 impl Box {
 	release :: hook(drop) proc(self: inout Box) { fmt.println("drop", self.tag); }
@@ -118,7 +118,7 @@ main :: proc() {
 
 // A managed element is what makes the hidden array's ownership observable: an
 // unmanaged one is filled and abandoned with nothing to notice.
-Held :: move_only struct { tag: int }
+@(move_only) Held :: struct { tag: int }
 
 impl Held {
 	release :: hook(drop) proc(self: inout Held) { fmt.println("drop held", self.tag); }

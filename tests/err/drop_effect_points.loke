@@ -6,7 +6,7 @@ package main; import "core:fmt"; import "core:unsafe";
 
 cache: [dynamic]int;
 
-Guard :: move_only struct { active: bool }
+@(move_only) Guard :: struct { active: bool }
 
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) {

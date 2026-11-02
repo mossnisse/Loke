@@ -4,8 +4,8 @@
 // first, and instances that fail alike report it once.
 package main;
 
-Token :: move_only struct { id: int }
-Other :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
+@(move_only) Other :: struct { id: int }
 
 // An instance adds the hook, after and before one that has none.
 hook_later :: proc($T: type) {
@@ -27,13 +27,13 @@ hook_earlier :: proc($T: type) {
 
 // An instance acquires a move-only field, after and before one that copies.
 field_later :: proc($T: type) {
-	Later :: struct @(fieldwise_copy) { value: T }
+	@(fieldwise_copy) Later :: struct { value: T }
 	impl Later {
 		close :: hook(drop) proc(self: inout Later) {}
 	}
 }
 field_earlier :: proc($T: type) {
-	Earlier :: struct @(fieldwise_copy) { value: T }
+	@(fieldwise_copy) Earlier :: struct { value: T }
 	impl Earlier {
 		close :: hook(drop) proc(self: inout Earlier) {}
 	}
@@ -41,7 +41,7 @@ field_earlier :: proc($T: type) {
 
 // An instance has no hook for the attribute to keep a copy beside.
 unhooked_later :: proc($T: type) {
-	Later :: struct @(fieldwise_copy) { fd: int }
+	@(fieldwise_copy) Later :: struct { fd: int }
 	when (T == int) {
 		impl Later {
 			close :: hook(drop) proc(self: inout Later) {}
@@ -49,7 +49,7 @@ unhooked_later :: proc($T: type) {
 	}
 }
 unhooked_earlier :: proc($T: type) {
-	Earlier :: struct @(fieldwise_copy) { fd: int }
+	@(fieldwise_copy) Earlier :: struct { fd: int }
 	when (T == int) {
 		impl Earlier {
 			close :: hook(drop) proc(self: inout Earlier) {}
@@ -59,7 +59,7 @@ unhooked_earlier :: proc($T: type) {
 
 // An instance declares the copy the attribute would keep.
 copied_later :: proc($T: type) {
-	Later :: struct @(fieldwise_copy) { fd: int }
+	@(fieldwise_copy) Later :: struct { fd: int }
 	impl Later {
 		close :: hook(drop) proc(self: inout Later) {}
 	}
@@ -78,7 +78,7 @@ repeated :: proc($T: type) {
 	impl Undecided {
 		close :: hook(drop) proc(self: inout Undecided) {}
 	}
-	Holder :: struct @(fieldwise_copy) { value: T }
+	@(fieldwise_copy) Holder :: struct { value: T }
 	impl Holder {
 		close :: hook(drop) proc(self: inout Holder) {}
 	}
@@ -86,7 +86,7 @@ repeated :: proc($T: type) {
 
 // Two instances can fail differently, and each failure is reported.
 different :: proc($T: type) {
-	Both :: struct @(fieldwise_copy) { value: T }
+	@(fieldwise_copy) Both :: struct { value: T }
 	impl Both {
 		close :: hook(drop) proc(self: inout Both) {}
 	}
@@ -113,16 +113,16 @@ each :: proc() {
 
 // Every instance decides or has nothing to decide: none of these report.
 decided :: proc($T: type) {
-	Fields :: struct @(fieldwise_copy) { value: int }
+	@(fieldwise_copy) Fields :: struct { value: int }
 	impl Fields {
 		close :: hook(drop) proc(self: inout Fields) {}
 	}
-	Sole :: move_only struct { value: T }
+	@(move_only) Sole :: struct { value: T }
 	impl Sole {
 		close :: hook(drop) proc(self: inout Sole) {}
 	}
 	Bare :: struct { value: T }
-	Conditional :: move_only struct { fd: int }
+	@(move_only) Conditional :: struct { fd: int }
 	when (T == int) {
 		impl Conditional {
 			close :: hook(drop) proc(self: inout Conditional) {}

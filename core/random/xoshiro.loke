@@ -23,7 +23,7 @@ import "core:math";
 	system. xoshiro's state is never all zero once seeded, so a zero state can
 	only mean that.
 */
-Xoshiro256 :: move_only struct {
+@(move_only) Xoshiro256 :: struct {
 	@(private) words: [4]u64,
 }
 

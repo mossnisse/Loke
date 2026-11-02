@@ -1,7 +1,7 @@
 package main;
 import "core:fmt";
 
-Resource :: move_only struct { id: int }
+@(move_only) Resource :: struct { id: int }
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { fmt.println("drop", self.id); }
 }

@@ -56,9 +56,9 @@ main :: proc() {
 	packed_reads();
 }
 
-Pk :: struct @(packed) { tag: u8, n: i32 }
+@(packed) Pk :: struct { tag: u8, n: i32 }
 Packed :: union { pk: Pk, num: i32, none }
-Holder :: struct @(packed) { pad: u8, v: Packed }
+@(packed) Holder :: struct { pad: u8, v: Packed }
 
 show :: proc(h: ^Holder) {
 	switch (h.v) {

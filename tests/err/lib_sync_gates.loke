@@ -11,9 +11,9 @@ Point :: struct { x: int, y: int }
 
 Colour :: enum { Red, Green };
 
-Packed :: struct @(packed) { flag: u8, count: i32 }
+@(packed) Packed :: struct { flag: u8, count: i32 }
 
-Packed_Atomic :: struct @(packed) { flag: u8, count: sync.Atomic(i64) }
+@(packed) Packed_Atomic :: struct { flag: u8, count: sync.Atomic(i64) }
 
 // A relaxed fence orders nothing, so it is a mistake rather than a no-op.
 relaxed_fence :: proc() {

@@ -19,4 +19,4 @@ main :: proc() {
 	_, _, _, _ = a, b, c, d;
 }
 
-Misplaced :: struct @(required) { id: u64 }
+@(required) Misplaced :: struct { id: u64 }

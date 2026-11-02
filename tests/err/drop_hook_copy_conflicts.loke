@@ -3,12 +3,12 @@
 // own, and means nothing on a record with no hook.
 package main;
 
-Both :: move_only struct @(fieldwise_copy) { fd: int }
+@(move_only, fieldwise_copy) Both :: struct { fd: int }
 impl Both {
 	close :: hook(drop) proc(self: inout Both) {}
 }
 
-Hooked :: struct @(fieldwise_copy) { fd: int }
+@(fieldwise_copy) Hooked :: struct { fd: int }
 impl Hooked {
 	close :: hook(drop) proc(self: inout Hooked) {}
 	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Hooked, Allocator_Error) {
@@ -16,7 +16,7 @@ impl Hooked {
 	}
 }
 
-Copier :: struct($T: type) @(fieldwise_copy) { value: T }
+@(fieldwise_copy) Copier :: struct($T: type) { value: T }
 impl Copier($T) {
 	close :: hook(drop) proc(self: inout) {}
 	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Copier(T), Allocator_Error) {
@@ -24,32 +24,32 @@ impl Copier($T) {
 	}
 }
 
-Token :: move_only struct { id: int }
-Holder :: struct @(fieldwise_copy) { token: Token }
+@(move_only) Token :: struct { id: int }
+@(fieldwise_copy) Holder :: struct { token: Token }
 impl Holder {
 	close :: hook(drop) proc(self: inout Holder) {}
 }
 
 // No hook to keep a copy beside, and a hook added later must still ask.
-Plain :: struct @(fieldwise_copy) { fd: int }
-Template :: struct($T: type) @(fieldwise_copy) { value: T }
+@(fieldwise_copy) Plain :: struct { fd: int }
+@(fieldwise_copy) Template :: struct($T: type) { value: T }
 
 // A hook another diagnostic rejects still counts as written.
-Broken :: struct @(fieldwise_copy) { fd: int }
+@(fieldwise_copy) Broken :: struct { fd: int }
 impl Broken {
 	close :: hook(drop) proc(self) {}
 }
 
 // Structs alone.
-Either :: union @(fieldwise_copy) { a: int, b: bool }
+@(fieldwise_copy) Either :: union { a: int, b: bool }
 @(fieldwise_copy) Declared :: int;
 
 // It takes no value.
-Valued :: struct @(fieldwise_copy=true) { fd: int }
+@(fieldwise_copy=true) Valued :: struct { fd: int }
 impl Valued {
 	close :: hook(drop) proc(self: inout Valued) {}
 }
 
 main :: proc() {
-	Local :: struct @(fieldwise_copy) { fd: int }
+	@(fieldwise_copy) Local :: struct { fd: int }
 }

@@ -3,7 +3,7 @@ package main;
 // design.md "Zero values and @(zero=)": a union has no nil state, whether or
 // not it designates a zero variant.
 Choice :: union { value: int }
-Maybe :: union @(zero=none) { none:, some: int }
+@(zero=none) Maybe :: union { none:, some: int }
 
 main :: proc() {
 	choice: Choice = nil;

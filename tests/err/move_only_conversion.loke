@@ -2,7 +2,7 @@ package main; import "core:fmt";
 
 // Converting to or from a distinct type copies a place like any other value
 // use, so a move-only operand must be moved.
-Handle :: move_only struct { id: int }
+@(move_only) Handle :: struct { id: int }
 Owned :: distinct Handle;
 
 main :: proc() {

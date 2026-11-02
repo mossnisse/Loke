@@ -30,7 +30,7 @@ impl Res {
 	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 }
 
-Only :: move_only struct { id: int }
+@(move_only) Only :: struct { id: int }
 
 impl Only {
 	release :: hook(drop) proc(self: inout Only) { self.id = 0; }

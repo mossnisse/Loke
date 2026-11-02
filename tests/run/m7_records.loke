@@ -47,7 +47,7 @@ SUM :: const_sum();
 // A record whose own hooks own its lifecycle can still be destructured out of a
 // place: that projects fields and does not call the copy hook, so the source
 // keeps its hook and drops exactly once.
-Handle :: move_only struct { valid: bool, id: int }
+@(move_only) Handle :: struct { valid: bool, id: int }
 released: int;
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) {

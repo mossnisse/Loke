@@ -22,7 +22,7 @@ mixed_left :: proc(left: int) -> int { return left; }
 mixed_right :: proc(right: int) -> string_view { return "right"; }
 mixed_stop :: proc(stop: Unit) -> int { return 0; }
 
-Owned :: move_only struct { id: int }
+@(move_only) Owned :: struct { id: int }
 Held :: (owned: Owned | none:);
 take :: proc { take_owned, take_none }
 take_owned :: proc(owned: move Owned) {}

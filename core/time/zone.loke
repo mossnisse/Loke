@@ -29,8 +29,8 @@ Zone :: struct {
 	@(private) kind: Zone_Kind,
 }
 
-@(private)
-Zone_Kind :: union @(zero=fixed) { fixed: Offset, system }
+@(private, zero=fixed)
+Zone_Kind :: union { fixed: Offset, system }
 
 /// The zone the system's clock shows, read again on each use.
 local_zone :: proc() -> Zone {

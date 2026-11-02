@@ -147,7 +147,8 @@ binomial :: proc(source: inout $G, trials: u64, probability: f64) -> u64 where S
 	system. A seeded increment is always odd, so a zero increment can only mean
 	that.
 */
-Pcg64 :: move_only struct {
+@(move_only)
+Pcg64 :: struct {
 	// and fields private to the package
 }
 
@@ -354,7 +355,8 @@ secure_u64 :: proc() -> u64 ---;
 	system. xoshiro's state is never all zero once seeded, so a zero state can
 	only mean that.
 */
-Xoshiro256 :: move_only struct {
+@(move_only)
+Xoshiro256 :: struct {
 	// and fields private to the package
 }
 

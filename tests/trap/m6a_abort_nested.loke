@@ -8,7 +8,7 @@ package main; import "core:fmt";
 // "runs no cleanup and terminates the program immediately at the point of the
 // fault", so the `.expected` file beside it is empty.
 
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

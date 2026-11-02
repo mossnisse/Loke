@@ -134,12 +134,12 @@ Source_Code_Location :: struct {
 @(public)
 Unit :: struct {}
 
-@(public)
-Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
+@(public, zero=none, failure=none)
+Option :: union($T: type) { none, some: T }
 
 @(public)
-@(require_results)
-Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+@(require_results, failure=err)
+Result :: union($T, $E: type) { ok: T, err: E }
 
 /**
 	A fallible operation that produces nothing on success: `Result(Unit, E)`

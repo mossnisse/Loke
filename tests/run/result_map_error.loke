@@ -38,7 +38,7 @@ from_place :: proc() -> Result(int, App_Error) {
 
 // A move-only success payload is relocated, never cloned, so mapping the error
 // side leaves it untouched. The drop prints, so a lost or doubled one shows.
-Handle :: move_only struct { id: int }
+@(move_only) Handle :: struct { id: int }
 
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) { fmt.println(self.id); }
@@ -84,7 +84,7 @@ detailed :: proc() -> Result(int, Detail_Error) {
 
 // A move-only error maps too, which a mapper that only borrowed it could not do:
 // the token the error holds reaches the caller instead of being dropped.
-Token :: move_only struct { id: int }
+@(move_only) Token :: struct { id: int }
 
 impl Token {
 	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }

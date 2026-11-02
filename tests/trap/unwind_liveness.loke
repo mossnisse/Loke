@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // A panic replays a local's drop only while it holds a value: never before its
 // first assignment, and again after an assignment revives a dropped one.
 
-Res :: move_only struct { id: int }
+@(move_only) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

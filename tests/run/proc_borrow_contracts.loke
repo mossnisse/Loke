@@ -50,7 +50,7 @@ recursive_reader :: proc(input: []int) -> []int {
 }
 
 dropped: int;
-Owned :: move_only struct { value: int }
+@(move_only) Owned :: struct { value: int }
 impl Owned {
 	release :: hook(drop) proc(self: inout Owned) { dropped += 1; }
 	read :: proc(self) -> int { return self.value; }

@@ -6,7 +6,7 @@ package main;
 import "core:mem";
 import "core:fmt";
 
-Handle :: move_only struct { allocator: Allocator }
+@(move_only) Handle :: struct { allocator: Allocator }
 held: Handle;
 
 optional :: proc(@(escape=static) allocator: Allocator) -> Option(Handle) {
@@ -17,7 +17,7 @@ fallible :: proc(@(escape=static) allocator: Allocator) -> Result(Handle, Alloca
 	return .ok(Handle{allocator});
 }
 
-Copy_Handle :: struct @(fieldwise_copy) { allocator: Allocator }
+@(fieldwise_copy) Copy_Handle :: struct { allocator: Allocator }
 impl Copy_Handle { release :: hook(drop) proc(self: inout Copy_Handle) {} }
 Wrap :: struct { value: Copy_Handle }
 copied: Copy_Handle;

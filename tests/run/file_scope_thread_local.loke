@@ -5,7 +5,7 @@ import "core:thread";
 // thread. design.md "Values that outlive every scope": each thread's managed
 // ones drop at its return, file-scope and local together, in reverse source
 // order.
-Tracked :: move_only struct { id: int }
+@(move_only) Tracked :: struct { id: int }
 impl Tracked {
     release :: hook(drop) proc(self: inout Tracked) {
         if (self.id != 0) { fmt.println("drop", self.id); }

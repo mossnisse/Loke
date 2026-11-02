@@ -49,8 +49,8 @@ finished: static sync.Atomic(int) = {};
 // Shared ownership under contention: every thread clones and
 // drops the same handle thousands of times, and the payload must be dropped
 // exactly once — after the last strong handle, and never before.
-@(private)
-Payload :: move_only struct {
+@(private, move_only)
+Payload :: struct {
 	id: int,
 }
 

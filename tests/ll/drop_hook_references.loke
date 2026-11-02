@@ -3,7 +3,7 @@
 // null test, and its `self` is `nonnull`.
 package main;
 
-Guard :: move_only struct {
+@(move_only) Guard :: struct {
 	target: ^mut int,
 	count:  ^int,
 	step:   proc(n: int) -> int,

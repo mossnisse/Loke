@@ -1,6 +1,6 @@
 package main;
 
-Only :: move_only struct { id: int }
+@(move_only) Only :: struct { id: int }
 
 Move_First :: struct {
 	only: Only,

@@ -15,7 +15,7 @@ Node :: struct {
 
 // A payload with a drop hook, so "drops the payload one time" is observable
 // rather than asserted.
-Tracked :: move_only struct {
+@(move_only) Tracked :: struct {
 	id: int,
 }
 

@@ -26,7 +26,7 @@ cloning :: proc(path: string_view) -> Result(int, Error_Code) {
 }
 
 // A move-only field cannot be cloned out of a place at all.
-Only :: move_only struct { id: int }
+@(move_only) Only :: struct { id: int }
 Holder :: struct { token: Only, count: int }
 held :: proc(h: Holder) -> int {
 	token, count := h;

@@ -2,23 +2,23 @@ package main; import "core:fmt";
 
 Value :: union { flag: bool, number: i32 }
 Duplicate_Names :: union { n: i32, n: bool }
-Bad_Align :: union @(align=3) { n: i32 }
+@(align=3) Bad_Align :: union { n: i32 }
 Bad_Payload :: union { nothing: void }
 
 // `@(zero=)` may only name the first variant, because the zero value has to
 // stay all-zero.
-Late_Zero :: union @(zero=second) { first: i32, second: }
-No_Such_Zero :: union @(zero=missing) { first: }
+@(zero=second) Late_Zero :: union { first: i32, second: }
+@(zero=missing) No_Such_Zero :: union { first: }
 
 // Tag 0 alone is not the all-zero representation: the payload beside it has to
 // be all-zero too, and a union with no zero of its own is not.
-No_Zero_Payload :: union @(zero=first) { first: Value, second: }
+@(zero=first) No_Zero_Payload :: union { first: Value, second: }
 
 // `@(failure=)` designates one of exactly two variants.
-Three_Way :: union @(failure=c) { a: i32, b: bool, c: }
-No_Such_Failure :: union @(failure=missing) { a: i32, b: }
+@(failure=c) Three_Way :: union { a: i32, b: bool, c: }
+@(failure=missing) No_Such_Failure :: union { a: i32, b: }
 
-Outcome :: union @(failure=bad) { good: i32, bad: }
+@(failure=bad) Outcome :: union { good: i32, bad: }
 
 not_fallible :: proc() -> bool { return true; }
 outcome :: proc() -> Outcome { return .good(1); }

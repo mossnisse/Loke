@@ -8,8 +8,8 @@ package main;
 import "core:fmt";
 
 Node :: struct($T: type) { value: T, next: Option(Box(Node(T))) }
-List :: move_only struct($T: type) { head: Option(Box(Node(T))), count: int }
-Ticket :: move_only struct { id: int }
+@(move_only) List :: struct($T: type) { head: Option(Box(Node(T))), count: int }
+@(move_only) Ticket :: struct { id: int }
 
 impl List($T) {
 	push_front :: proc(self: inout, @(escape=stored) value: move T) {

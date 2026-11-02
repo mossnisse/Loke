@@ -337,7 +337,7 @@ read_console_line :: proc(
 // Because a wedged terminal outlives the process that wedged it, `begin_raw`
 // also registers a console control handler, so those restore the mode without
 // depending on Loke cleanup running at all.
-Raw_Mode :: move_only struct {
+@(move_only) Raw_Mode :: struct {
 	@(private) handle:   int,
 	@(private) previous: u32,
 	@(private) live:     bool,

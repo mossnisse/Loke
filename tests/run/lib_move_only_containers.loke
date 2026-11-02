@@ -8,13 +8,13 @@ import "core:container";
 // `is_copyable(T)`, so they are not members of these instances at all; what is
 // left is the half that reaches an element without copying it.
 
-Token :: move_only struct { @(public) id: int }
+@(move_only) Token :: struct { @(public) id: int }
 
 Plain :: struct { id: int }
 
 // Says when it is dropped, so a failed consuming insertion shows it took the
 // element (design.md "Container insertion").
-Counted :: move_only struct { id: int }
+@(move_only) Counted :: struct { id: int }
 
 impl Counted {
 	release :: hook(drop) proc(self: inout Counted) { fmt.println("drop", self.id); }

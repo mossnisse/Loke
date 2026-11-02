@@ -905,7 +905,7 @@ Dropping, copying, and printing a box reach its payload, and through it any box
 the payload holds, so a long chain of boxes such as a linked list nests that
 deeply. A type that builds a long chain declares a drop hook that unlinks it
 iteratively, moving each node's successor out before the node is dropped. The
-hook does nothing for a copy, so such a type is also `move_only`, or copies
+hook does nothing for a copy, so such a type is also `@(move_only)`, or copies
 iteratively in its own `hook(copy)`.
 
 A box is neither comparable nor hashable, and it is not
@@ -1238,7 +1238,7 @@ does](#value-semantics-and-the-ownership-rule), so a move-only element requires 
 temporary or `move`:
 
 ```loke
-Connection :: move_only struct { id: int }
+@(move_only) Connection :: struct { id: int }
 
 connections: [dynamic]Connection = {};
 connections.append(connect("a.example"));   // a temporary moves in
@@ -1783,7 +1783,7 @@ type, owned by the package that declares it. A record described in place, such
 as a field's type or a procedure's result, is an [anonymous
 record](#anonymous-records), whose identity is **structural**. A struct carries
 what needs an owner: private fields, [lifecycle
-hooks](#lifecycle-hooks-and-resource-types), `move_only`, field and [layout
+hooks](#lifecycle-hooks-and-resource-types), `@(move_only)`, field and [layout
 attributes](#struct-layout-attributes), and the [field order](#destructuring)
 its package alone may rely on. Literals, selection, destructuring, equality,
 layout, formatting, and reflection follow one set of record rules for both
@@ -2390,7 +2390,7 @@ variant, and that variant's payload must itself be all-zero, so the union's zero
 stays the all-zero representation every other zero is.
 
 ```loke
-Maybe :: union @(zero=none) { none, some: int }
+@(zero=none) Maybe :: union { none, some: int }
 m: Maybe;              // accepted: the zero is `.none`
 
 Choice :: union { a: i32, b: bool }
@@ -3817,7 +3817,7 @@ Traversing a place borrows it, and that is the default: no adapter, marker, or
 view is needed to read a collection without copying it.
 
 ```loke
-Ticket :: move_only struct { id: int }
+@(move_only) Ticket :: struct { id: int }
 
 sum :: proc(items: []Ticket) -> int {
 	total := 0;
@@ -3999,7 +3999,7 @@ with `hook(copy)` or `hook(drop)`, whose signatures are fixed:
 
 ```loke
 // A resource whose zero handle is valid carries a separate validity flag.
-File :: move_only struct {
+@(move_only) File :: struct {
 	handle: int,
 	valid:  bool,
 }
@@ -4014,7 +4014,7 @@ impl File {
 }
 ```
 
-`move_only struct` removes both generated copy operations; a record containing a
+`@(move_only)` removes both generated copy operations; a record containing a
 move-only field is also move-only. `move` and `drop` leave lexical sources inert
 and dead; static-duration storage requires [`exchange`](#exchange) instead. See
 [Owners and `drop`](#owners-and-drop) for operand restrictions. Fields are
@@ -4031,12 +4031,12 @@ fields only name would release it twice, and a hook that does work the generated
 operations do not, such as unlinking a long chain, leaves the copy without it. It
 is an error at the declaration unless the record does one of these:
 
-- writes `move_only`, so that it has no copy;
+- writes `@(move_only)`, so that it has no copy;
 - declares a `hook(copy)`;
 - asks for the generated copy with [`@(fieldwise_copy)`](#fieldwise_copy).
 
 The decision is read from the declaration and its own `impl` blocks. A record
-that a move-only field already makes move-only still writes `move_only`, and a
+that a move-only field already makes move-only still writes `@(move_only)`, and a
 generic record decides once, for all of its instances. A record declared in a
 generic procedure's body is a declaration of each instance of the procedure, with
 that instance's fields and `impl` blocks, so each answers for itself. A hook that
@@ -4044,7 +4044,7 @@ is itself rejected asks for no decision, and a `hook(copy)` counts as the decisi
 even when it is rejected or is written only for some of a generic record's
 instances.
 
-A `hook(copy)` on a record with no copy to customize is an error: a `move_only`
+A `hook(copy)` on a record with no copy to customize is an error: a `@(move_only)`
 one, or one a move-only field makes move-only. On a generic record that depends
 on the arguments, so a bound on the hook, such as `where is_copyable(T)`, leaves it
 out of the instances it cannot serve. Each of these rules, and the fixed signatures
@@ -4076,7 +4076,7 @@ effect](#global-write-effects) is empty, and the compiler rejects one that is
 not. A count kept by copies is an
 [`Atomic(T)`](standard-library.md#coresync), whose updates are not writes.
 A duplicate that must differ from its source, such as one with a fresh identity,
-is a named method on a `move_only` type. An explicit `clone` or `try_clone`
+is a named method on a `@(move_only)` type. An explicit `clone` or `try_clone`
 always runs the hook.
 
 Default copying recursively calls `try_clone` for owning fields. A custom copy
@@ -6923,7 +6923,7 @@ A union declares them the same way:
 
 ```loke
 Parse_Error :: enum { Empty, Too_Long, Bad_Digit }
-Parsed :: union($T: type) @(failure=failed) { value: T, failed: Parse_Error }
+@(failure=failed) Parsed :: union($T: type) { value: T, failed: Parse_Error }
 r: Parsed(int) = .value(123);
 r = .failed(Parse_Error.Empty);
 ```
@@ -7611,7 +7611,7 @@ dropping a container runs no hook of its own, so a `[dynamic][]int` constrains
 its roots only until its last use.
 
 ```loke
-Guard :: move_only struct { p: ^[dynamic]int }
+@(move_only) Guard :: struct { p: ^[dynamic]int }
 impl Guard { done :: hook(drop) proc(self: inout) { fmt.println(self.p^.len()); } }
 
 xs := [dynamic]int{1, 2, 3};
@@ -8735,10 +8735,10 @@ have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`, or
 ```loke
 Unit :: struct {}
 
-Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
+@(zero=none, failure=none) Option :: union($T: type) { none, some: T }
 
 @(require_results)
-Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+@(failure=err) Result :: union($T, $E: type) { ok: T, err: E }
 
 Status :: Result(Unit, $E);
 ```
@@ -8771,7 +8771,7 @@ with `@(failure=name)` written on it. That is the only thing
 for, so a user-declared union is a first-class participant:
 
 ```loke
-Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
+@(failure=bad) Parsed :: union { value: int, bad: Parse_Error }
 ```
 
 There is no truthiness rule and no nil status: `nil` is not a failure, a
@@ -9518,7 +9518,7 @@ A value that crosses to another thread through a
   passed.
 
 ```loke
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 show :: proc(window: move Window) {}
 
 background := thread.spawn(show, Window{});   // ERROR: `Window` is `@(thread_affine)`
@@ -10749,7 +10749,7 @@ variant of a two-variant union as its failure, which is what
 recognize; see [The failure protocol](#the-failure-protocol-and-failure).
 
 ```loke
-Maybe :: union @(zero=none, failure=none) { none, some: int }
+@(zero=none, failure=none) Maybe :: union { none, some: int }
 ```
 
 #### `@(required)`
@@ -10868,7 +10868,7 @@ types](#lifecycle-hooks-and-resource-types) requires. It takes no value.
 ```loke
 // Wipes its key before the buffer is freed. Each copy owns its own buffer and
 // wipes it once.
-Key :: struct @(fieldwise_copy) { id: int, bytes: [dynamic]u8 }
+@(fieldwise_copy) Key :: struct { id: int, bytes: [dynamic]u8 }
 
 impl Key {
 	wipe :: hook(drop) proc(self: inout Key) {
@@ -10879,7 +10879,7 @@ impl Key {
 
 It is right when every field owns its data and the hook adds a step each value
 needs once. It is an error on a record that has no generated copy to keep: a
-`move_only` one, one with a `hook(copy)`, or a non-generic one with a move-only
+`@(move_only)` one, one with a `hook(copy)`, or a non-generic one with a move-only
 field. It is also an error on a record with no `hook(drop)`, so that adding a hook
 later still asks for a decision.
 
@@ -10955,7 +10955,7 @@ it cannot be borrowed or marked `&mut`. This applies at any nesting depth to:
   fields of packed elements.
 
 ```loke
-Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
+@(packed) Packed :: struct { x: u8, y: i32, z: u16, w: u8 }
 ```
 
 ##### `@(align=N)`
@@ -10964,10 +10964,10 @@ This attribute can be applied to a struct or union. It specifies that the value
 is aligned to `N` bytes. Fields remain in source order.
 
 ```loke
-Aligned_Flag :: struct @(align=4) {
+@(align=4) Aligned_Flag :: struct {
 	set: bool,
 }
-Aligned_Value :: union @(align=4) {
+@(align=4) Aligned_Value :: union {
 	number: i32,
 	byte_value: u8,
 }
@@ -11191,7 +11191,7 @@ collects those requirements for conformance checking; omitting one is a defect.
 | When | The diagnostic names |
 | --- | --- |
 | A no-zero type is asked for a zero | the operation, and the two ways out: `@(zero=first_variant)`, or explicit construction ([§](#types-with-no-zero-value)) |
-| A record declares `hook(drop)` without saying how it is copied | the hook, and the decisions in this order: `move_only`, `hook(copy)`, `@(fieldwise_copy)`; only `move_only` when a field already makes it move-only ([§](#lifecycle-hooks-and-resource-types)) |
+| A record declares `hook(drop)` without saying how it is copied | the hook, and the decisions in this order: `@(move_only)`, `hook(copy)`, `@(fieldwise_copy)`; only `move_only` when a field already makes it move-only ([§](#lifecycle-hooks-and-resource-types)) |
 | A variant or enum switch is not exhaustive | the variants it did not cover ([§](#inspecting-a-union)) |
 | An overloaded call stays ambiguous | every maximal candidate with its signature, and why selection failed, in the programmer's terms rather than as a rank vector or a tie-breaker number ([§](#operator-lookup-and-overload-resolution)) |
 | An overloaded call's result does not fit its destination | the member the arguments selected ([§](#operator-lookup-and-overload-resolution)) |
@@ -11242,7 +11242,7 @@ each.
 | **managed value** | An owning value whose resources are released automatically when it leaves scope. See [Managed values and storage](#managed-values-and-storage). |
 | **materialize** | To give a constant or temporary read-only storage because a use needs an address, such as `&` or a non-constant index. See [Materialization](#materialization). |
 | **mode** (iteration) | Which of borrowed or mutable traversal a `foreach` header selects. See [Traversal modes](#traversal-modes). |
-| **move-only** | A type with no copy operations: a `move_only struct`, or a record with a move-only field. Its values transfer with `move` or as temporaries and are never copied. See [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types). |
+| **move-only** | A type with no copy operations: one marked `@(move_only)`, or a record or union with a move-only part. Its values transfer with `move` or as temporaries and are never copied. See [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types). |
 | **one rule** | A checked borrow may be used only while its root is live, and every access to the root while the borrow is live must be compatible with the borrow's capability. See [Capabilities and the one rule](#capabilities-and-the-one-rule). |
 | **place** | A storage root plus a normalized projection path through fields, indices, ranges, and dereferences. Borrow compatibility is decided for places, not names. See [Places and overlap](#places-and-overlap). |
 | **place position** | A position that names a location rather than a value: an assignment target, the operand of `&`, or an `inout` argument. It selects which indexing operation runs. See [Indexing and slicing](#indexing-and-slicing). |

@@ -11,10 +11,10 @@ import "core:mem";
 
 buffer: thread_local [4]int;
 
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 Windows :: struct { open: [dynamic]Window }
 Via_Pointer :: struct { window: ^Window }
-Choice :: union @(thread_affine) { none, some: int }
+@(thread_affine) Choice :: union { none, some: int }
 
 Sized :: interface($Self: type) {
 	slot size: proc(self) -> int;
@@ -27,7 +27,7 @@ Erased :: struct { view: dyn Sized }
 
 counter: Counter = {};
 screen: Window = {};
-Window_Counter :: struct @(thread_affine) { value: int }
+@(thread_affine) Window_Counter :: struct { value: int }
 impl Window_Counter {
 	size :: proc(self) -> int { return self.value; }
 }

@@ -27,7 +27,7 @@ measure :: proc(shape: dyn Shape) -> int {
 
 // A drop hook and a `format` method count as the calls they are, so only the
 // globals they write conflict, and a moved-out local's scope exit runs no hook.
-Guard :: move_only struct { active: bool }
+@(move_only) Guard :: struct { active: bool }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) { if (self.active) { cache.clear(); } }
 }

@@ -6,7 +6,7 @@ package main; import "core:fmt"; import "core:slice";
 // the frame being unwound, and the cleanup thunk is a separate function, so the
 // replay must not reach for it there.
 
-Res :: struct @(fieldwise_copy) { id: int }
+@(fieldwise_copy) Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

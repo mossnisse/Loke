@@ -4,11 +4,11 @@
 // what it does not").
 package main;
 import "core:fmt";
-Tracked :: move_only struct { id: int }
+@(move_only) Tracked :: struct { id: int }
 impl Tracked {
     release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
 }
-Holder :: move_only struct { first: Tracked, second: Tracked }
+@(move_only) Holder :: struct { first: Tracked, second: Tracked }
 impl Holder {
     release :: hook(drop) proc(self: inout Holder) {
         fmt.println("drop holder");

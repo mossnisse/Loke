@@ -24,7 +24,7 @@ sum :: proc(reader: inout Reader) -> Result(int, Read_Error) {
 	return .ok(total);
 }
 
-Ticket :: move_only struct { id: int }
+@(move_only) Ticket :: struct { id: int }
 
 impl Ticket {
 	release :: hook(drop) proc(self: inout Ticket) { fmt.println("drop", self.id); }

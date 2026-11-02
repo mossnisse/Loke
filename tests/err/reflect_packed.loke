@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // design.md "@(packed)": a packed field may be misaligned, so reflection hands
 // out no address of one. Reading it with `field.get` is fine.
 
-Packed :: struct @(packed) { tag: u8, value: int }
+@(packed) Packed :: struct { tag: u8, value: int }
 
 main :: proc() {
 	p: Packed = {1, 2};

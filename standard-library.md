@@ -502,7 +502,7 @@ Growable_Sequence :: interface($Self: type) {
 - `Cloneable` names the fallible public `try_clone` operation, not the
   policy-following `clone`. Every copyable type satisfies it, including plain
   values such as `int`, pointers, and slices, each of which is its own clone. A
-  `move_only struct`, or a type that holds one in a field, does not.
+  `@(move_only)` type, or a type that holds one in a field, does not.
 - `Callable(C, Signature)` holds by a built-in rule; [Calling a
   value](design.md#calling-a-value) defines it, and `C.Result`.
 - `Iterable` describes reading traversal, whose elements a built-in container
@@ -1048,7 +1048,7 @@ tradeoff. The orderings are those of
 which adopts C++20's.
 
 ```text
-Ring(T) :: move_only struct               // no zero value; cannot move while split
+@(move_only) Ring(T) :: struct               // no zero value; cannot move while split
     slots:         [dynamic]Ring_Slot(T)  // `size` slots; only queued ones hold an item
     size:          uint                   // requested capacity + 1; immutable after init
     pad_metadata:  [CACHE_LINE_BYTES]u8
@@ -1062,9 +1062,9 @@ Ring(T) :: move_only struct               // no zero value; cannot move while sp
     pad_flags:     [CACHE_LINE_BYTES]u8
 
 @(wakes_on_drop)
-Ring_Sender(T)   :: move_only struct { ring: ^Ring(T), tail: uint, head_seen: uint }
+@(move_only) Ring_Sender(T)   :: struct { ring: ^Ring(T), tail: uint, head_seen: uint }
 @(wakes_on_drop)
-Ring_Receiver(T) :: move_only struct { ring: ^Ring(T), head: uint, tail_seen: uint }
+@(move_only) Ring_Receiver(T) :: struct { ring: ^Ring(T), head: uint, tail_seen: uint }
 ```
 
 A `Ring_Slot(T)` is one item of [uninitialized capacity](design.md#uninitialized-capacity)
@@ -1774,7 +1774,7 @@ parse_text(input: string_view, allocator := mem.default_allocator(),
 parse_owned(input: move string, allocator := mem.default_allocator(),
 	options: Parse_Options = {}) -> Result(Document, Parse_Error)
 
-Document :: move_only struct { /* private */ }
+@(move_only) Document :: struct { /* private */ }
 Document.init(allocator := mem.default_allocator()) -> Document
 Document.root(self: ^) -> Option(Value)
 Document.reparse(self: inout, input: []u8, options: Parse_Options = {}) -> Status(Parse_Error)
@@ -2469,7 +2469,7 @@ Open_Options :: struct {
 
 Seek_Origin :: enum {Start, Current, End}
 
-File :: move_only struct { /* private handle and access */ }
+@(move_only) File :: struct { /* private handle and access */ }
 
 open(path: string_view, options: Open_Options) -> Result(File, io.Error)
 open_read(path: string_view) -> Result(File, io.Error)
@@ -2876,7 +2876,7 @@ fallible stream output uses `term.stdout()` with `io.write_all` or
 
 ```loke
 Raw_Options :: struct { interrupt_as_key: bool }
-Raw_Mode :: move_only struct { /* private state */ }
+@(move_only) Raw_Mode :: struct { /* private state */ }
 
 begin_raw(input: Input = stdin(), options: Raw_Options = {})
 	-> Result(Raw_Mode, io.Error)
@@ -3022,14 +3022,14 @@ Command :: struct {
 	stderr:      Stdio,
 }
 
-Child :: move_only struct {
+@(move_only) Child :: struct {
 	stdin:  Pipe,
 	stdout: Pipe,
 	stderr: Pipe,
 	// and the process, private to the package
 }
 
-Pipe :: move_only struct { /* private */ }
+@(move_only) Pipe :: struct { /* private */ }
 
 Output :: struct {
 	status: i32,
@@ -4015,7 +4015,7 @@ Source :: interface($Self: type) {
 
 SEQUENCE_VERSION :: u32(1)
 
-Xoshiro256 :: move_only struct { /* private state */ }
+@(move_only) Xoshiro256 :: struct { /* private state */ }
 
 impl Xoshiro256 {
 	from_seed    :: proc(seed: u64) -> Xoshiro256;
@@ -4028,7 +4028,7 @@ impl Xoshiro256 {
 	split        :: proc(self: inout) -> Xoshiro256;
 }
 
-Pcg64 :: move_only struct { /* private state */ }
+@(move_only) Pcg64 :: struct { /* private state */ }
 
 impl Pcg64 {
 	from_seed    :: proc(seed: u64) -> Pcg64;

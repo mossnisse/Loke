@@ -16,7 +16,7 @@ Lifecycle :: struct {
 	// The contributed public copy entry points.
 	clone:            Symbol_Id,
 	try_clone:        Symbol_Id,
-	// `move_only`, a provider, holding a move-only part, or an instance whose
+	// `@(move_only)`, a provider, holding a move-only part, or an instance whose
 	// `hook(copy)` its `where` clause excluded: no copy exists.
 	clone_disabled:   bool,
 	copy_excluded:    bool,
@@ -432,7 +432,7 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // design.md "@(thread_affine)": what a value would take to another thread
 // that may not go. `affine` is a thread-affine type it holds or reaches, and
 // `erased` a `dyn` it reaches, behind which affinity cannot be
-// seen. Like `move_only`, affinity propagates structurally, but transfer also
+// seen. Like `@(move_only)`, affinity propagates structurally, but transfer also
 // follows pointees, owned and shared payloads, container elements, and a
 // generic record's type arguments. An unchecked address, a `rawptr` or a C
 // pointer, is not followed: design.md "Concurrency and the memory model" lets
@@ -759,7 +759,7 @@ clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // Whether a `type` holds allocator storage its drop releases: a `string`, a
 // container, a provider, a box, a `Shared(T)` handle, or a record or union
-// holding one. A `move_only` or hooked record of plain parts is managed for
+// holding one. A `@(move_only)` or hooked record of plain parts is managed for
 // its lifecycle but frees nothing itself; what its hook does is the hook's.
 type_owns_allocation :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE || !type_is_managed(c, type) {

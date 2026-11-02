@@ -76,7 +76,7 @@ Unsent :: union($T: type) { closed: T, full: T }
 Received :: union($T: type) { item: T, empty, closed }
 
 /// Sends into the channel it borrows. Move-only; `fork` makes another.
-Sender :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only, wakes_on_drop) Sender :: struct($T: type) {
 	@(private) channel: ^Channel(T),
 }
 
@@ -84,7 +84,7 @@ Sender :: move_only struct($T: type) @(wakes_on_drop) {
 	Receives from the channel it borrows. Move-only; `fork` makes another.
 	`foreach (item in receiver)` receives until the stream ends.
 */
-Receiver :: move_only struct($T: type) @(wakes_on_drop) {
+@(move_only, wakes_on_drop) Receiver :: struct($T: type) {
 	@(private) channel: ^Channel(T),
 }
 

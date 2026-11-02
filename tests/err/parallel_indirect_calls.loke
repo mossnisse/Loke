@@ -162,7 +162,7 @@ already_erased :: proc(f: dyn proc(n: i64)) {
 
 // Thread affinity.
 
-Window :: struct @(thread_affine) { handle: int }
+@(thread_affine) Window :: struct { handle: int }
 
 call_f32 :: proc(f: dyn proc(x: f32)) { f(1); }
 call_moved :: proc(f: move $C) where interfaces.Callable(C, proc()) { f(); }

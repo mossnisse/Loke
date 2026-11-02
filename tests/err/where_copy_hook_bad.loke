@@ -8,7 +8,7 @@ impl Holder($T) {
 	}
 }
 
-Ticket :: move_only struct { id: int }
+@(move_only) Ticket :: struct { id: int }
 
 main :: proc() {
 	held := Holder(Ticket){Ticket{1}};

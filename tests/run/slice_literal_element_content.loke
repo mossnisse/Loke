@@ -7,7 +7,7 @@ import "core:fmt";
 // what it held, so its old borrow ends there, whether the slice is still in use or
 // not. The order of the lines is the order of the hooks.
 
-Read :: move_only struct { data: []int }
+@(move_only) Read :: struct { data: []int }
 impl Read {
 	retire :: hook(drop) proc(self: inout Read) {
 		if (self.data.len() > 0) { fmt.println("retire", self.data[0]); }

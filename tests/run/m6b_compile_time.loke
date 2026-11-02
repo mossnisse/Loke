@@ -144,7 +144,7 @@ copied :: proc() -> int {
 	return xs.len() * 10 + ys.len();
 }
 
-Eval_Failure :: union @(failure=err) { ok: int, err: int }
+@(failure=err) Eval_Failure :: union { ok: int, err: int }
 eval_source :: proc(fail: bool) -> Eval_Failure {
 	if (fail) { return .err(7); }
 	return .ok(4);
