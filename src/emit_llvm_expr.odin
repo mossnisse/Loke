@@ -1180,12 +1180,29 @@ emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
 	return value
 }
 
+// Addressable storage for `expr` at `as_type`. A non-addressable value gets a
+// slot, and an owned temporary is dropped when its full expression ends.
+@(private)
+spill_viewed_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
+	base := expr_base(expr)
+	if base.addressable {
+		return emit_lent_address(e, expr, as_type)
+	}
+	value := emit_expr_at(e, expr, as_type)
+	slot := alloca(e, llvm_type(e, as_type))
+	store(e, as_type, value, slot)
+	if !base.is_const {
+		hold_addressed_temporary(e, expr, as_type, slot)
+	}
+	return slot
+}
+
 // The address an erased view of `expr` holds: the place itself, or a temporary
 // holding the value. A view reads its target at the type's alignment, which a
 // packed place may not have (design.md "@(packed)"), so it views an aligned copy.
 @(private)
 emit_viewed_address :: proc(e: ^Emitter, expr: Expr, from: Type_Id) -> string {
-	address := spill_iterable_at(e, expr, from)
+	address := spill_viewed_at(e, expr, from)
 	if align, known := e.place_align[address]; known && align < type_align(e.c, from) {
 		aligned := temporary_slot(e, from)
 		copy_bytes(e, aligned, address, type_size(e.c, from))

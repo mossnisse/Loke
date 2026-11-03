@@ -610,10 +610,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_iter(e, symbol, name)
 		case .Range_Next:
 			emit_synth_range_next(e, symbol, name)
-		case .Array_Next:
-			emit_synth_indexed_next(e, symbol, name, slice = false)
 		case .Slice_Mut_Next, .Slice_Ref_Next:
-			emit_synth_indexed_next(e, symbol, name, slice = true)
+			emit_synth_slice_next(e, symbol, name)
 		case .Map_Next, .Map_Keys_Next, .Map_Values_Next:
 			emit_synth_map_next(e, symbol, name)
 		case .Text_Next, .Rune_Offsets_Next:
@@ -638,7 +636,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_provider_op(e, symbol, name)
 		case .Variant_Construct:
 			emit_synth_variant_construct(e, symbol, name)
-		case .None:
+		case .None, .Array_Next:
+			// `.Array_Next`'s iterator is compile-time-only, so it was skipped above.
 		}
 		fmt.sbprintln(&e.b, "")
 	}

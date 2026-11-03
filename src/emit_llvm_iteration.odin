@@ -5,13 +5,6 @@ package lokec
 
 import "core:fmt"
 
-// ============================================================== iteration ==
-
-@(private)
-emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> string {
-	return emit_union_value(e, option_type, union_index_of(e.c, option_type, "some"), payload)
-}
-
 // A stored `a ..< b` or `a ..= b`: the endpoints plus the closed flag.
 @(private)
 emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range, as_type: Type_Id) -> string {
@@ -25,8 +18,7 @@ emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range, as_type: Type_Id) -> strin
 	return insert(e, storage, step2, "i1", closed, RANGE_CLOSED)
 }
 
-// design.md "Ranges": `x in r` evaluates `x`, then `r`, once each, and holds
-// when `r.low <= x` and `x` is below `r.high`, or equal to it when closed.
+// design.md "Ranges": evaluates x, then r, once each.
 @(private)
 emit_range_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	range := expr_base(v.rhs).type
@@ -68,15 +60,19 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	}
 	push_scope(e, nil)
 
-	#partial switch s.kind {
+	switch s.kind {
 	case .Protocol:
 		emit_protocol_foreach(e, s)
 	case .Text:
 		emit_text_foreach(e, s)
 	case .Map:
 		emit_map_foreach(e, s)
-	case:
-		emit_indexed_foreach(e, s)
+	case .Range, .Stored_Range:
+		emit_range_foreach(e, s)
+	case .Array, .Slice, .Dynamic:
+		emit_sequence_foreach(e, s)
+	case .Unresolved, .Static:
+		backend_fail(e, "an unresolved `foreach` reached emission")
 	}
 	debug_mark_end(e, s.span)
 	pop_scope(e)
@@ -85,14 +81,25 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 @(private = "file")
 Loop_Labels :: struct {
 	head, body, post, done: string,
+	// `indexed()`'s ordinal, or a sequence's cursor; `close_loop` steps it.
+	counter: string,
 }
 
-// The labels every loop shape uses, with `break` and `continue` aimed at them.
 @(private = "file")
-open_loop :: proc(e: ^Emitter) -> Loop_Labels {
+new_counter :: proc(e: ^Emitter) -> string {
+	slot := alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", slot)
+	return slot
+}
+
+@(private = "file")
+open_loop :: proc(e: ^Emitter, counted: bool) -> Loop_Labels {
 	loop := Loop_Labels{
-		new_label(e, "foreach.head"), new_label(e, "foreach.body"),
-		new_label(e, "foreach.post"), new_label(e, "foreach.done"),
+		head = new_label(e, "foreach.head"), body = new_label(e, "foreach.body"),
+		post = new_label(e, "foreach.post"), done = new_label(e, "foreach.done"),
+	}
+	if counted {
+		loop.counter = new_counter(e)
 	}
 	e.break_label, e.continue_label = loop.done, loop.post
 	// `break` lands in the loop scope, whose exit disposes of the iterator once.
@@ -109,7 +116,6 @@ begin_step :: proc(e: ^Emitter, loop: Loop_Labels) {
 	push_scope(e, nil)
 }
 
-// Runs the body, closes the step, and opens the `post` block.
 @(private = "file")
 finish_step :: proc(e: ^Emitter, s: ^Stmt_Foreach, loop: Loop_Labels) {
 	emit_scoped_block(e, s.body)
@@ -122,6 +128,9 @@ finish_step :: proc(e: ^Emitter, s: ^Stmt_Foreach, loop: Loop_Labels) {
 
 @(private = "file")
 close_loop :: proc(e: ^Emitter, loop: Loop_Labels) {
+	if loop.counter != "" {
+		step_counter(e, loop.counter, "i64")
+	}
 	branch(e, loop.head)
 	place_label(e, loop.done)
 }
@@ -150,12 +159,15 @@ owned_field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 }
 
 // One binding names the whole `Element`; N bindings name its fields. A
-// destructuring loop never builds the record it takes apart.
+// destructuring loop never builds the record it takes apart. `indexed()` pairs
+// `element` with the counter.
 @(private = "file")
-bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field) {
-	source := Foreach_Field{type = s.element_type, children = fields}
-	if len(fields) == 1 && fields[0].type == s.element_type {
-		source = fields[0]
+bind_foreach_element :: proc(e: ^Emitter, s: ^Stmt_Foreach, loop: Loop_Labels, element: Foreach_Field) {
+	source := element
+	pair: [2]Foreach_Field
+	if s.indexed {
+		pair = {element, {type = TYPE_INT, value = load(e, "i64", loop.counter)}}
+		source = Foreach_Field{type = s.element_type, children = pair[:]}
 	}
 	bind_foreach_pattern(e, s.bindings, s.element_type, s.item_type, source)
 }
@@ -164,11 +176,11 @@ bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Fie
 bind_foreach_pattern :: proc(
 	e: ^Emitter, bindings: []Foreach_Binding, logical, item: Type_Id, source: Foreach_Field,
 ) {
-	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		bind_foreach_pattern(e, bindings[0].group, logical, item, source)
-		return
-	}
-	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+	if len(bindings) == 1 {
+		if len(bindings[0].group) > 0 {
+			bind_foreach_pattern(e, bindings[0].group, logical, item, source)
+			return
+		}
 		bound := logical
 		projected := foreach_projected_record(e.c, logical, item)
 		if projected || len(source.children) > 0 {
@@ -181,40 +193,20 @@ bind_foreach_pattern :: proc(
 		return
 	}
 	parts := foreach_field_children(e, logical, source)
-	logical_info := type_of(e.c, type_underlying(e.c, logical))
-	item_info := type_of(e.c, type_underlying(e.c, item))
-	for binding, position in bindings {
+	logical_info := underlying_info(e.c, logical)
+	for position in 0 ..< len(bindings) {
 		// A padding field fills no binding, so each binding takes its field's slot.
 		index := named_field_slot(e.c, logical_info, position)
 		field := symbol_of(e.c, logical_info.fields[index])
-		projected := INVALID_TYPE
-		if item_info != nil && item_info.kind == .Struct && index < len(item_info.fields) {
-			if projected_field := symbol_of(e.c, item_info.fields[index]); projected_field != nil {
-				projected = projected_field.type
-			}
-		}
-		if len(binding.group) > 0 {
-			bind_foreach_pattern(e, binding.group, field.type, projected, parts[index])
-		} else if foreach_projected_record(e.c, field.type, projected) {
-			slot := materialize_foreach_record(e, field.type, projected, parts[index])
-			own_foreach_slot(e, binding.symbol, projected, slot)
-		} else {
-			bind_foreach_field(e, binding.symbol, parts[index])
-		}
+		projected := foreach_projected_field(e.c, item, index)
+		bind_foreach_pattern(e, bindings[position:position + 1], field.type, projected, parts[index])
 	}
-}
-
-@(private = "file")
-foreach_projected_record :: proc(c: ^Compiler, logical, item: Type_Id) -> bool {
-	if logical == INVALID_TYPE || item == INVALID_TYPE || logical == item { return false }
-	a, b := underlying_info(c, logical), underlying_info(c, item)
-	return a != nil && b != nil && a.kind == .Struct && b.kind == .Struct
 }
 
 @(private = "file")
 foreach_field_children :: proc(e: ^Emitter, logical: Type_Id, source: Foreach_Field) -> []Foreach_Field {
 	if len(source.children) > 0 { return source.children }
-	info := type_of(e.c, type_underlying(e.c, logical))
+	info := underlying_info(e.c, logical)
 	fields := make([]Foreach_Field, len(info.fields), context.temp_allocator)
 	address := source.address
 	if address == "" {
@@ -237,8 +229,8 @@ foreach_field_children :: proc(e: ^Emitter, logical: Type_Id, source: Foreach_Fi
 materialize_foreach_record :: proc(
 	e: ^Emitter, logical, item: Type_Id, source: Foreach_Field,
 ) -> string {
-	logical_info := type_of(e.c, type_underlying(e.c, logical))
-	item_info := type_of(e.c, type_underlying(e.c, item))
+	logical_info := underlying_info(e.c, logical)
+	item_info := underlying_info(e.c, item)
 	parts := foreach_field_children(e, logical, source)
 	llvm := llvm_type(e, item)
 	slot := alloca(e, llvm)
@@ -302,30 +294,13 @@ bind_foreach_place :: proc(e: ^Emitter, symbol: Symbol_Id, address: string) {
 	bind_local(e, symbol, address)
 }
 
-// `indexed()` pairs the wrapped element (one field again, even if the
-// traversal produced several) with the counter.
-@(private = "file")
-with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, counter: string) -> []Foreach_Field {
-	if !s.indexed {
-		return fields
-	}
-	inner := fields[0]
-	if len(fields) > 1 {
-		inner = Foreach_Field{type = foreach_yielded_type(e, s), children = fields}
-	}
-	out := make([dynamic]Foreach_Field, 0, 2, context.temp_allocator)
-	append(&out, inner)
-	append(&out, Foreach_Field{type = TYPE_INT, value = counter})
-	return out[:]
-}
-
 // What the loop yields before `indexed()` numbers it.
 @(private = "file")
 foreach_yielded_type :: proc(e: ^Emitter, s: ^Stmt_Foreach) -> Type_Id {
 	if !s.indexed {
 		return s.element_type
 	}
-	return symbol_of(e.c, type_of(e.c, type_underlying(e.c, s.element_type)).fields[ELEMENT_FIRST]).type
+	return symbol_of(e.c, underlying_info(e.c, s.element_type).fields[ELEMENT_FIRST]).type
 }
 
 @(private = "file")
@@ -351,8 +326,7 @@ emit_decode_rune :: proc(e: ^Emitter, data, length, offset, decoded: string) -> 
 	return used
 }
 
-// Whether a range cursor is still in range: `<`/`<=` forward, `>`/`>=` in
-// reverse, chosen by the run-time `closed` flag.
+// Whether the cursor is live, by the run-time closed flag.
 @(private = "file")
 emit_range_live :: proc(e: ^Emitter, signed, reverse: bool, type, current, limit, closed: string) -> string {
 	open_op, closed_op := signed ? "slt" : "ult", signed ? "sle" : "ule"
@@ -366,27 +340,18 @@ emit_range_live :: proc(e: ^Emitter, signed, reverse: bool, type, current, limit
 	return live
 }
 
-// Decoded code points; `rune_offsets()` adds the byte offset and `indexed()`
-// the rune ordinal (design.md "String iteration").
+// Decoded code points; indexed() adds the ordinal (design.md "String iteration").
 @(private = "file")
 emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	type := type_underlying(e.c, expr_base(s.iterable).type)
 	storage := llvm_type(e, type)
-	value := load(e, storage, spill_foreach_iterable(e, s.iterable))
+	value := load_place(e, type, spill_foreach_iterable(e, s.iterable))
 	data := extract(e, storage, value, STRING_DATA)
 	length := extract(e, storage, value, STRING_LEN)
-	offset := alloca(e, "i64")
-	decoded := temp(e)
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", offset)
-	alloca_named(e, decoded, "i32")
+	offset := new_counter(e)
+	decoded := alloca(e, "i32")
 
-	ordinal := ""
-	if s.indexed {
-		ordinal = alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", ordinal)
-	}
-
-	loop := open_loop(e)
+	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
 	current := load(e, "i64", offset)
 	at_end := temp(e)
@@ -395,17 +360,12 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	begin_step(e, loop)
 	used := emit_decode_rune(e, data, length, current, decoded)
-	fields := []Foreach_Field{{type = TYPE_RUNE, address = decoded}}
-	counter := ordinal == "" ? "" : load(e, "i64", ordinal)
-	bind_foreach_fields(e, s, with_index(e, s, fields, counter))
+	bind_foreach_element(e, s, loop, Foreach_Field{type = TYPE_RUNE, address = decoded})
 	finish_step(e, s, loop)
 
 	advanced := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, current, used)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, offset)
-	if ordinal != "" {
-		step_counter(e, ordinal, "i64")
-	}
 	close_loop(e, loop)
 }
 
@@ -415,19 +375,13 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	container := expr_base(s.iterable).type
 	ops := container_ops_global(e, container)
-	header := spill_foreach_iterable(e, s.iterable)
-	table := load(e, "ptr", header)
-	cursor := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	header := load_place(e, container, spill_foreach_iterable(e, s.iterable))
+	table := extract(e, llvm_type(e, container), header, CONTAINER_STORAGE)
+	cursor := new_counter(e)
 	key_out := alloca(e, "ptr")
 	value_out := alloca(e, "ptr")
-	counter := ""
-	if s.indexed {
-		counter = alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
-	}
 
-	loop := open_loop(e)
+	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
 	current := load(e, "i64", cursor)
 	next := temp(e)
@@ -444,116 +398,69 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	// The halves bind where the table stores them; `key, &value` makes the value
 	// a place, and the key stays read-only. One name gets a built entry.
 	place := s.borrows || foreach_is_place_loop(s)
-	fields := []Foreach_Field{
+	halves := []Foreach_Field{
 		{type = container_key(e.c, container), address = load(e, "ptr", key_out),
 		 place = place, stored = true},
 		{type = container_element(e.c, container), address = load(e, "ptr", value_out),
 		 place = place, stored = true},
 	}
-	numbered := counter == "" ? "" : load(e, "i64", counter)
-	bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
+	bind_foreach_element(e, s, loop, Foreach_Field{type = foreach_yielded_type(e, s), children = halves})
 	finish_step(e, s, loop)
-	if counter != "" {
-		step_counter(e, counter, "i64")
-	}
 	close_loop(e, loop)
 }
 
-// A range or a sequence: an index loop, with no iterator object at all.
+// A range: the cursor is its value, so `indexed()` needs a counter of its own.
 @(private = "file")
-emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
+emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	yielded := foreach_yielded_type(e, s)
 	element := llvm_type(e, yielded)
-	cursor := temp(e)
-	limit, closed, array_slot, floor := "", "", "", ""
-	counter_type := element
-	is_range := s.kind == .Range || s.kind == .Stored_Range
-
-	switch s.kind {
-	case .Range:
+	low, high, closed: string
+	if s.kind == .Range {
 		written := s.iterable.(^Expr_Range)
-		floor = emit_expr(e, written.lo)
-		limit = emit_expr(e, written.hi)
+		low = emit_expr(e, written.lo)
+		high = emit_expr(e, written.hi)
 		closed = written.op == .Range_Incl ? "true" : "false"
-
-	case .Stored_Range:
+	} else {
 		range_type := llvm_type(e, expr_base(s.iterable).type)
 		value := emit_expr(e, s.iterable)
-		floor = extract(e, range_type, value, RANGE_LOW)
-		limit = extract(e, range_type, value, RANGE_HIGH)
+		low = extract(e, range_type, value, RANGE_LOW)
+		high = extract(e, range_type, value, RANGE_HIGH)
 		closed = extract(e, range_type, value, RANGE_CLOSED)
-
-	case .Array:
-		// A place, so `&value` names the element itself rather than a copy.
-		array_slot = spill_foreach_iterable(e, s.iterable)
-		limit = fmt.aprintf("%d", s.count)
-
-	case .Slice:
-		// Evaluated once; the loop walks the root through the data word.
-		slice_type := llvm_type(e, expr_base(s.iterable).type)
-		value := emit_expr(e, s.iterable)
-		array_slot = extract(e, slice_type, value, SLICE_DATA)
-		limit = extract(e, slice_type, value, SLICE_LEN)
-
-	case .Dynamic:
-		// The current allocation up to `len`, kept current by the loop's loan.
-		header := spill_foreach_iterable(e, s.iterable)
-		array_slot = load(e, "ptr", header)
-		limit = load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
-
-	case .Unresolved, .Static, .Protocol, .Text, .Map:
-		backend_fail(e, "an unresolved `foreach` reached emission")
-		return
 	}
-	if is_range {
-		alloca_named(e, cursor, element)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, floor, cursor)
-	} else {
-		counter_type = "i64"
-		alloca_named(e, cursor, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-	}
+	cursor := alloca(e, element)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
 
-	loop := open_loop(e)
-
-	// A range's cursor is its value, so `indexed()` needs a counter of its own.
-	counter := ""
-	if s.indexed && is_range {
-		counter = alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
-	}
-
+	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
-	current := load(e, counter_type, cursor)
-	test := ""
-	if is_range {
-		signed := type_signed(e.c, yielded) || type_is_rune(e.c, yielded)
-		test = emit_range_live(e, signed, false, counter_type, current, limit, closed)
-	} else {
-		test = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
-	}
-	branch_if(e, test, loop.body, loop.done)
+	current := load(e, element, cursor)
+	signed := type_signed(e.c, yielded) || type_is_rune(e.c, yielded)
+	live := emit_range_live(e, signed, false, element, current, high, closed)
+	branch_if(e, live, loop.body, loop.done)
 
 	begin_step(e, loop)
-	numbered := counter == "" ? current : load(e, "i64", counter)
-	bind_indexed_value(e, s, current, array_slot, element, limit, floor, closed, numbered)
+	at := current
+	if s.adapter == .Reversed {
+		// The cursor still counts up; the value is mirrored as
+		// `low + last - current`, where `last` is the final forward value.
+		open_high, last, sum, mirrored := temp(e), temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", open_high, element, high)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", last, closed, element, high, element, open_high)
+		fmt.sbprintfln(&e.b, "  %s = add %s %s, %s", sum, element, low, last)
+		fmt.sbprintfln(&e.b, "  %s = sub %s %s, %s", mirrored, element, sum, current)
+		at = mirrored
+	}
+	bind_foreach_element(e, s, loop, Foreach_Field{type = yielded, value = at})
 	finish_step(e, s, loop)
 
-	if is_range {
-		// A closed range ending at the type's maximum cannot represent high+1, so
-		// it finishes right after yielding high.
-		at_high, finished := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", at_high, counter_type, current, limit)
-		fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", finished, closed, at_high)
-		step := new_label(e, "foreach.step")
-		branch_if(e, finished, loop.done, step)
-		place_label(e, step)
-	}
-	step_counter(e, cursor, counter_type)
-	if counter != "" {
-		step_counter(e, counter, "i64")
-	}
+	// A closed range ending at the type's maximum cannot represent high+1, so
+	// it finishes right after yielding high.
+	at_high, finished := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", at_high, element, current, high)
+	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", finished, closed, at_high)
+	step := new_label(e, "foreach.step")
+	branch_if(e, finished, loop.done, step)
+	place_label(e, step)
+	step_counter(e, cursor, element)
 	close_loop(e, loop)
 }
 
@@ -565,89 +472,82 @@ step_counter :: proc(e: ^Emitter, slot, type: string) {
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", type, next, slot)
 }
 
+// A fixed array, a slice or a dynamic array: an index loop, with no iterator
+// object at all, whose cursor doubles as the `indexed()` counter.
 @(private = "file")
-bind_indexed_value :: proc(
-	e: ^Emitter,
-	s: ^Stmt_Foreach,
-	current, array_slot, element: string,
-	limit, floor, closed: string,
-	numbered: string,
-) {
+emit_sequence_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	yielded := foreach_yielded_type(e, s)
-	field: Foreach_Field
-	if s.kind == .Range || s.kind == .Stored_Range {
-		at := current
-		if s.adapter == .Reversed {
-			// The cursor still counts up; the value is mirrored as
-			// `low + last - current`, where `last` is the final forward value.
-			last, mirrored := temp(e), temp(e)
-			open_high := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", open_high, element, limit)
-			fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", last, closed, element, limit, element, open_high)
-			sum := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = add %s %s, %s", sum, element, floor, last)
-			fmt.sbprintfln(&e.b, "  %s = sub %s %s, %s", mirrored, element, sum, current)
-			at = mirrored
-		}
-		field = Foreach_Field{type = yielded, value = at}
-	} else {
-		// `reversed()` flips only the element reached, so `indexed()` still counts
-		// from zero (design.md "Reverse iteration").
-		at := current
-		if s.adapter == .Reversed {
-			last, flipped := temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", last, limit)
-			fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", flipped, last, current)
-			at = flipped
-		}
-		address := temp(e)
-		if s.kind == .Slice || s.kind == .Dynamic {
-			fmt.sbprintfln(
-				&e.b,
-				"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-				address, element, array_slot, at,
-			)
-		} else {
-			fmt.sbprintfln(
-				&e.b,
-				"  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %s",
-				address, s.count, element, array_slot, at,
-			)
-		}
-		// `&value` and a lending traversal bind the element's address; only a
-		// copying loop owns a clone for the step (design.md "Borrowing iteration").
-		field = Foreach_Field{
-			type = yielded, address = address, place = foreach_is_place_loop(s) || s.borrows, stored = true,
-		}
+	source := expr_base(s.iterable).type
+	base, limit: string
+	#partial switch s.kind {
+	case .Array:
+		// A place, so `&value` names the element itself rather than a copy.
+		base = spill_foreach_iterable(e, s.iterable)
+		limit = fmt.aprintf("%d", s.count)
+
+	case .Slice:
+		// Evaluated once; the loop walks the root through the data word.
+		value := emit_expr(e, s.iterable)
+		base = extract(e, llvm_type(e, source), value, SLICE_DATA)
+		limit = extract(e, llvm_type(e, source), value, SLICE_LEN)
+
+	case .Dynamic:
+		// The current allocation up to `len`, kept current by the loop's loan.
+		header := load_place(e, source, spill_foreach_iterable(e, s.iterable))
+		base = extract(e, llvm_type(e, source), header, CONTAINER_STORAGE)
+		limit = extract(e, llvm_type(e, source), header, CONTAINER_LEN)
 	}
-	bind_foreach_fields(e, s, with_index(e, s, []Foreach_Field{field}, numbered))
+
+	loop := open_loop(e, true)
+	place_label(e, loop.head)
+	current := load(e, "i64", loop.counter)
+	test := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
+	branch_if(e, test, loop.body, loop.done)
+
+	begin_step(e, loop)
+	// `reversed()` flips only the element reached, so `indexed()` still counts
+	// from zero (design.md "Reverse iteration").
+	at := current
+	if s.adapter == .Reversed {
+		last, flipped := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", last, limit)
+		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", flipped, last, current)
+		at = flipped
+	}
+	// `&value` and a lending traversal bind the element's address; only a
+	// copying loop owns a clone for the step (design.md "Borrowing iteration").
+	bind_foreach_element(e, s, loop, Foreach_Field{
+		type = yielded, address = gep_at(e, llvm_type(e, yielded), base, at),
+		place = foreach_is_place_loop(s) || s.borrows, stored = true,
+	})
+	finish_step(e, s, loop)
+	close_loop(e, loop)
 }
 
 // A user iterable: `it := x.iter()`, then `next(&it)` per step.
 @(private = "file")
 emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	iter_sym := symbol_of(e.c, s.iter_symbol)
-	// An immutable `iter` receiver takes the source's address; a temporary
-	// source moves into the loop scope for the statement's duration.
+	subject_type := iter_sym.params[0]
 	subject_mode := symbol_param_mode(e.c, iter_sym, 0)
-	subject_by_ptr := param_mode_is_pointer(subject_mode)
-	subject := subject_by_ptr ? spill_foreach_iterable_at(e, s.iterable, iter_sym.params[0]) : emit_expr(e, s.iterable)
-	subject_type := param_llvm(e, iter_sym.params[0], subject_mode)
+	// However `iter` takes it, a temporary source moves into the loop scope for
+	// the statement's duration.
+	subject := spill_foreach_iterable_at(e, s.iterable, subject_type)
+	if !param_mode_is_pointer(subject_mode) {
+		subject = load_place(e, subject_type, subject)
+	}
 	iterator_type := llvm_type(e, s.iterator_type)
 	iterator := alloca(e, iterator_type)
-	made := emit_call_result(e, s.iterator_type, callee_name(e, s.iter_symbol), fmt.aprintf("%s %s", subject_type, subject))
+	made := emit_call_result(
+		e, s.iterator_type, callee_name(e, s.iter_symbol),
+		fmt.aprintf("%s %s", param_llvm(e, subject_type, subject_mode), subject),
+	)
 	store(e, s.iterator_type, made, iterator)
 	register_scope_place(e, s.iterator_type, iterator)
 
-	counter := ""
-	if s.indexed || (foreach_is_place_loop(s) && len(s.bindings) == 2) {
-		counter = alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
-	}
-
-	loop := open_loop(e)
+	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
-	yielded := foreach_yielded_type(e, s)
 	option := symbol_of(e.c, s.next_symbol).result
 	produced := emit_call_result(e, option, callee_name(e, s.next_symbol), fmt.aprintf("ptr %s", iterator))
 	ok := emit_union_tag_is(e, option, produced, union_index_of(e.c, option, "some"))
@@ -655,53 +555,33 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	branch_if(e, ok, loop.body, loop.done)
 
 	begin_step(e, loop)
-	numbered := counter == "" ? "" : load(e, "i64", counter)
 	payload := option_payload(e.c, option)
-	// `next` hands over an owned `Element`, so the step takes it without a copy.
-	if foreach_is_place_loop(s) && !type_is_pointer(e.c, payload) {
-		// A record `Yield` with a mutable part: each lent part is a place.
-		bind_foreach_fields(e, s, with_index(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload), numbered))
-	} else if foreach_is_place_loop(s) {
-		logical := s.indexed ? foreach_yielded_type(e, s) : s.element_type
-		address := emit_union_payload(e, option, payload, slot)
-		fields := []Foreach_Field{{type = logical, address = address, place = true, stored = true}}
-		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
-	} else if s.borrows && !type_is_pointer(e.c, payload) {
-		// A record `Yield` is a record of pointers, one per lent part.
-		bind_foreach_fields(e, s, with_index(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload), numbered))
-	} else if s.borrows {
-		// The payload points into the source, and the loop owns nothing. It is
-		// `stored` because one name over an `indexed()` pair copies it into a record.
-		address := emit_union_payload(e, option, payload, slot)
-		fields := []Foreach_Field{{type = yielded, address = address, place = true, stored = true}}
-		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
-	} else {
-		value := emit_union_payload(e, option, yielded, slot)
-		fields := []Foreach_Field{{type = yielded, value = value}}
-		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
-	}
+	element := lent_yield_field(e, foreach_yielded_type(e, s), payload, emit_union_payload(e, option, payload, slot))
+	bind_foreach_element(e, s, loop, element)
 	finish_step(e, s, loop)
-	if counter != "" {
-		step_counter(e, counter, "i64")
-	}
 	close_loop(e, loop)
 }
 
-// Addressable storage for `expr` at `as_type`. A non-addressable value gets a
-// slot, and an owned temporary is dropped when its full expression ends.
-@(private)
-spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
-	base := expr_base(expr)
-	if base.addressable {
-		return emit_lent_address(e, expr, as_type)
+// What `next` hands over: an owned `Element` or part is the value, which the step
+// takes without a copy; a lent one is the place its pointer names, and `stored`
+// because one name over a record copies it in; a record `Yield` has one per part.
+@(private = "file")
+lent_yield_field :: proc(e: ^Emitter, logical, payload: Type_Id, value: string) -> Foreach_Field {
+	if logical == payload {
+		return Foreach_Field{type = logical, value = value}
 	}
-	value := emit_expr_at(e, expr, as_type)
-	slot := alloca(e, llvm_type(e, as_type))
-	store(e, as_type, value, slot)
-	if !base.is_const {
-		hold_addressed_temporary(e, expr, as_type, slot)
+	if type_is_pointer(e.c, payload) {
+		return Foreach_Field{type = logical, address = value, place = true, stored = true}
 	}
-	return slot
+	logical_info := underlying_info(e.c, logical)
+	payload_info := underlying_info(e.c, payload)
+	children := make([]Foreach_Field, len(logical_info.fields), context.temp_allocator)
+	for logical_field_id, index in logical_info.fields {
+		logical_field := symbol_of(e.c, logical_field_id)
+		payload_field := symbol_of(e.c, payload_info.fields[index])
+		children[index] = lent_yield_field(e, logical_field.type, payload_field.type, record_part(e, payload, value, index))
+	}
+	return Foreach_Field{type = logical, children = children}
 }
 
 @(private = "file")
@@ -755,15 +635,9 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			view = emit_ptr_len(e, view_type, extract(e, source, self, CONTAINER_STORAGE), length)
 			index = length
 		case source_info.kind == .Array:
-			count := fmt.aprintf("%d", source_info.count)
-			if !type_is_compile_time_only(e.c, source_info.element) {
-				view = emit_ptr_len(e, view_type, "%arg0", count)
-			} else {
-				view_type = source
-			}
-			index = count
+			index = fmt.aprintf("%d", source_info.count)
+			view = emit_ptr_len(e, view_type, "%arg0", index)
 		case:
-			view_type = source
 			index = extract(e, source, self, SLICE_LEN)
 		}
 		first := insert(e, iterator, "undef", view_type, view, ITER_ARRAY_DATA)
@@ -805,6 +679,15 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
+// The end of a synthesized `next`: exhaustion is `.none`, `Option`'s all-zero
+// designated zero.
+@(private)
+close_synth_next :: proc(e: ^Emitter, option: Type_Id, stop_label: string) {
+	place_label(e, stop_label)
+	emit_ret(e, option, "zeroinitializer")
+	fmt.sbprintln(&e.b, "}")
+}
+
 @(private)
 emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -826,15 +709,15 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	reversed := load(e, "i1", reversed_ptr)
 	forward_label, reverse_label := new_label(e, "next.forward"), new_label(e, "next.reverse")
 	stop_label := new_label(e, "next.stop")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", reversed, reverse_label, forward_label)
+	branch_if(e, reversed, reverse_label, forward_label)
 
-	fmt.sbprintfln(&e.b, "%s:", forward_label)
+	place_label(e, forward_label)
 	live := emit_range_live(e, signed, false, element, current, high, closed)
 	yield_label := new_label(e, "next.forward.yield")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
+	branch_if(e, live, yield_label, stop_label)
 
 	// Yielding a closed range's high clears `closed` instead of stepping past it.
-	fmt.sbprintfln(&e.b, "%s:", yield_label)
+	place_label(e, yield_label)
 	stepped, at_high, last := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add %s %s, 1", stepped, element, current)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", at_high, element, current, high)
@@ -846,12 +729,12 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", next_closed, closed_ptr)
 	emit_ret(e, option, emit_option_some(e, option, current))
 
-	fmt.sbprintfln(&e.b, "%s:", reverse_label)
+	place_label(e, reverse_label)
 	reverse_live := emit_range_live(e, signed, true, element, current, high, closed)
 	reverse_yield := new_label(e, "next.reverse.yield")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", reverse_live, reverse_yield, stop_label)
+	branch_if(e, reverse_live, reverse_yield, stop_label)
 
-	fmt.sbprintfln(&e.b, "%s:", reverse_yield)
+	place_label(e, reverse_yield)
 	previous, yielded := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", previous, element, current)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", yielded, closed, element, current, element, previous)
@@ -859,79 +742,46 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", closed_ptr)
 	emit_ret(e, option, emit_option_some(e, option, yielded))
 
-	// Exhaustion is `.none`, `Option`'s all-zero designated zero.
-	fmt.sbprintfln(&e.b, "%s:", stop_label)
-	emit_ret(e, option, "zeroinitializer")
-	fmt.sbprintln(&e.b, "}")
+	close_synth_next(e, option, stop_label)
 }
 
-// `next` for an array or a slice over one `{ data, index, reversed }` cursor;
-// only the bound and the element address differ.
+// `next` for a slice, or an array viewed as one, over a `{ data, index, reversed }`
+// cursor: the element's address.
 @(private)
-emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slice: bool) {
+emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	option := symbol.result
-	by_ref := symbol.synth == .Slice_Mut_Next || symbol.synth == .Slice_Ref_Next
-	payload := option_payload(e.c, option)
-	element := llvm_type(e, by_ref ? type_of(e.c, payload).element : payload)
+	element := llvm_type(e, type_of(e.c, option_payload(e.c, option)).element)
 	iterator := llvm_type(e, symbol.params[0])
-	iterator_info := type_of(e.c, symbol.params[0])
-	stored := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
-	stored_llvm := llvm_type(e, stored)
+	stored := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.params[0]).fields[ITER_ARRAY_DATA]).type)
 
 	open_synth_receiver(e, name, option)
 	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
 	index := load(e, "i64", index_ptr)
-	reversed_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED)
-	reversed := load(e, "i1", reversed_ptr)
-	// A slice's bound is its length; a fixed array's is a constant.
-	slice_value: string
-	bound: string
-	if slice {
-		slice_value = load(e, stored_llvm, gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA))
-		bound = extract(e, stored_llvm, slice_value, SLICE_LEN)
-	} else {
-		bound = fmt.tprintf("%d", type_of(e.c, stored).count)
-	}
+	reversed := load(e, "i1", gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED))
+	slice := load(e, stored, gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA))
+	bound := extract(e, stored, slice, SLICE_LEN)
 	forward_live, reverse_live, live := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", forward_live, index, bound)
 	fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", reverse_live, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, reversed, reverse_live, forward_live)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
+	branch_if(e, live, yield_label, stop_label)
 
-	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	base: string
-	if slice {
-		base = extract(e, stored_llvm, slice_value, SLICE_DATA)
-	} else {
-		base = gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA)
-	}
+	place_label(e, yield_label)
+	base := extract(e, stored, slice, SLICE_DATA)
 	previous, at := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", previous, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", at, reversed, previous, index)
-	slot: string
-	if slice {
-		slot = gep_at(e, element, base, at)
-	} else {
-		slot = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s", slot, stored_llvm, base, at)
-	}
-	// What `next` hands back is owned, so a managed element is cloned out.
-	value := by_ref ? slot : load_place(e, payload, slot)
-	if !by_ref && emit_lifecycle(e, payload).managed {
-		value = emit_clone_value(e, payload, value)
-	}
+	slot := gep_at(e, element, base, at)
 	stepped, next_index := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", next_index, reversed, previous, stepped)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_ptr)
-	emit_ret(e, option, emit_option_some(e, option, value))
+	emit_ret(e, option, emit_option_some(e, option, slot))
 
-	fmt.sbprintfln(&e.b, "%s:", stop_label)
-	emit_ret(e, option, "zeroinitializer")
-	fmt.sbprintln(&e.b, "}")
+	close_synth_next(e, option, stop_label)
 }
 
 // `next` for a map's entries, `keys()` and `values()`, in the same slot order a
@@ -963,9 +813,9 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	finished := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", finished, stop_label, yield_label)
+	branch_if(e, finished, stop_label, yield_label)
 
-	fmt.sbprintfln(&e.b, "%s:", yield_label)
+	place_label(e, yield_label)
 	out := ""
 	#partial switch symbol.synth {
 	case .Map_Keys_Next:
@@ -979,36 +829,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 	emit_ret(e, option, emit_option_some(e, option, out))
 
-	fmt.sbprintfln(&e.b, "%s:", stop_label)
-	emit_ret(e, option, "zeroinitializer")
-	fmt.sbprintln(&e.b, "}")
-}
-
-// One field per part of a record `Yield`: a lent part is the place its pointer
-// names, an owned one the value itself.
-@(private = "file")
-lent_record_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, record: string, payload: Type_Id) -> []Foreach_Field {
-	root := lent_yield_field(e, foreach_yielded_type(e, s), payload, record)
-	return root.children
-}
-
-@(private = "file")
-lent_yield_field :: proc(e: ^Emitter, logical, payload: Type_Id, value: string) -> Foreach_Field {
-	if logical == payload {
-		return Foreach_Field{type = logical, value = value}
-	}
-	if type_is_pointer(e.c, payload) {
-		return Foreach_Field{type = logical, address = value, place = true, stored = true}
-	}
-	logical_info := type_of(e.c, type_underlying(e.c, logical))
-	payload_info := type_of(e.c, type_underlying(e.c, payload))
-	children := make([]Foreach_Field, len(logical_info.fields), context.temp_allocator)
-	for logical_field_id, index in logical_info.fields {
-		logical_field := symbol_of(e.c, logical_field_id)
-		payload_field := symbol_of(e.c, payload_info.fields[index])
-		children[index] = lent_yield_field(e, logical_field.type, payload_field.type, record_part(e, payload, value, index))
-	}
-	return Foreach_Field{type = logical, children = children}
+	close_synth_next(e, option, stop_label)
 }
 
 // One decoded code point per step; `rune_offsets()` also yields its byte offset.
@@ -1029,9 +850,9 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	at_end := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp sge i64 %s, %s", at_end, offset, length)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", at_end, stop_label, yield_label)
+	branch_if(e, at_end, stop_label, yield_label)
 
-	fmt.sbprintfln(&e.b, "%s:", yield_label)
+	place_label(e, yield_label)
 	decoded := alloca(e, "i32")
 	used := emit_decode_rune(e, data, length, offset, decoded)
 	advanced := temp(e)
@@ -1045,7 +866,5 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 	emit_ret(e, option, emit_option_some(e, option, value))
 
-	fmt.sbprintfln(&e.b, "%s:", stop_label)
-	emit_ret(e, option, "zeroinitializer")
-	fmt.sbprintln(&e.b, "}")
+	close_synth_next(e, option, stop_label)
 }

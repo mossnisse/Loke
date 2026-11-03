@@ -1245,7 +1245,7 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 			payload = emit_clone_value(e, payload_type, payload)
 		}
 	}
-	store(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "some"), payload), slot)
+	store(e, as_type, emit_option_some(e, as_type, payload), slot)
 	branch(e, done_label)
 	place_label(e, done_label)
 	return load_place(e, as_type, slot)

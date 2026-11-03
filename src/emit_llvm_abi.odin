@@ -415,6 +415,11 @@ emit_union_value :: proc(e: ^Emitter, union_type: Type_Id, index: int, value: st
 	return load_temporary(e, union_type, slot)
 }
 
+@(private)
+emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> string {
+	return emit_union_value(e, option_type, union_index_of(e.c, option_type, "some"), payload)
+}
+
 // design.md "Widening by label": each alternative keeps its payload under the
 // wider union's tag for its label. The layouts differ, so the payload is moved
 // into the wider storage, one arm per alternative.

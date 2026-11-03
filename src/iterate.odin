@@ -862,17 +862,10 @@ check_foreach_pattern :: proc(
 	   reject_hooked_destructure(k, logical, bindings[0].name.span) {
 		return false
 	}
-	item_info := underlying_info(k.c, item)
 	for &binding, index in bindings {
 		field := symbol_of(k.c, fields[index])
 		if field == nil { return false }
-		projected := INVALID_TYPE
-		slot := int(field.index)
-		if item_info != nil && item_info.kind == .Struct && slot < len(item_info.fields) {
-			if projected_field := symbol_of(k.c, item_info.fields[slot]); projected_field != nil {
-				projected = projected_field.type
-			}
-		}
+		projected := foreach_projected_field(k.c, item, int(field.index))
 		// A record descriptor names each part; any other applies to all of them.
 		part := desc
 		if desc.kind == .Record && index < len(desc.fields) {
@@ -932,6 +925,21 @@ place_loop_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
 	return s.indexed ? indexed_yield(k.c, element) : element
 }
 
+// Whether a leaf binds the projected `item`: two different record types.
+foreach_projected_record :: proc(c: ^Compiler, logical, item: Type_Id) -> bool {
+	if logical == INVALID_TYPE || item == INVALID_TYPE || logical == item { return false }
+	a, b := underlying_info(c, logical), underlying_info(c, item)
+	return a != nil && b != nil && a.kind == .Struct && b.kind == .Struct
+}
+
+// The type field `slot` projects to, when `item` is a record.
+foreach_projected_field :: proc(c: ^Compiler, item: Type_Id, slot: int) -> Type_Id {
+	info := underlying_info(c, item)
+	if info == nil || info.kind != .Struct || slot >= len(info.fields) { return INVALID_TYPE }
+	field := symbol_of(c, info.fields[slot])
+	return field != nil ? field.type : INVALID_TYPE
+}
+
 // A leaf binds its logical type, or the projected record of pointers when both
 // are records. A place loop's leaves, like a lending loop's, name storage the
 // source still owns, except a part `next` hands over owned (design.md "Element
@@ -941,14 +949,7 @@ bind_pattern_leaf :: proc(
 	k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Binding, logical, item: Type_Id, part: Yield_Desc,
 	packed := "",
 ) -> bool {
-	bound := logical
-	if item != INVALID_TYPE && item != logical {
-		item_info := underlying_info(k.c, item)
-		logical_info := underlying_info(k.c, logical)
-		if item_info != nil && logical_info != nil && item_info.kind == .Struct && logical_info.kind == .Struct {
-			bound = item
-		}
-	}
+	bound := foreach_projected_record(k.c, logical, item) ? item : logical
 	if !gate_type(k, bound, expr_span(s.iterable)) { return false }
 	owned := !foreach_is_place_loop(s) && (!s.borrows || part.kind == .Owned)
 	// design.md "@(packed)": a writable leaf needs the address of a field

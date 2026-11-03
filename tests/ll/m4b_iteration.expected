@@ -6,4 +6,4 @@ br i1 %t*, label %foreach.done.*, label %foreach.step.*
 foreach.head.
 foreach.post.
 foreach.done.
-getelementptr inbounds [3 x i64], ptr
+getelementptr inbounds i64, ptr

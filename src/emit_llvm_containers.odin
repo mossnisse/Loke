@@ -296,9 +296,7 @@ emit_synth_chunks_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	store(e, slice, emit_ptr_len(e, header, gep_at(e, element, data, taken), left), rest_ptr)
 	emit_ret(e, option, emit_option_some(e, option, chunk))
 
-	place_label(e, stop_label)
-	emit_ret(e, option, "zeroinitializer")
-	fmt.sbprintln(&e.b, "}")
+	close_synth_next(e, option, stop_label)
 }
 
 // `core:slice.sort_by`: the checked comparator and its concrete `call` method

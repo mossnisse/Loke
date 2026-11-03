@@ -1,0 +1,95 @@
+// design.md "Temporaries and procedure boundaries": a temporary in a `foreach`
+// iterable lives until the statement ends, then drops, whichever receiver form
+// `iter` takes; a method taking a plain `self` meets the protocol too
+// (design.md "Iteration protocol").
+package main;
+import "core:fmt";
+
+It :: struct { left: int, }
+impl It {
+	next :: proc(self: inout It) -> Option(int) {
+		if (self.left <= 0) { return .none; }
+		self.left -= 1;
+		return .some(self.left);
+	}
+}
+
+@(fieldwise_copy) By_Value :: struct { id: int, }
+impl By_Value {
+	Element :: int;
+	Iterator :: It;
+	iter :: proc(self) -> It { return {self.id}; }
+	iter_reverse :: proc(self) -> It { return {self.id + 1}; }
+	free_it :: hook(drop) proc(self: inout By_Value) { fmt.println("drop value", self.id); }
+}
+
+@(fieldwise_copy) By_Pointer :: struct { id: int, }
+impl By_Pointer {
+	Element :: int;
+	Iterator :: It;
+	iter :: proc(self: ^) -> It { return {self.id}; }
+	free_it :: hook(drop) proc(self: inout By_Pointer) { fmt.println("drop pointer", self.id); }
+}
+
+// Large enough to cross calls by address.
+@(fieldwise_copy) Large :: struct { id: int, pad: [1024]int, }
+impl Large {
+	Element :: int;
+	Iterator :: It;
+	iter :: proc(self) -> It { return {self.id}; }
+	free_it :: hook(drop) proc(self: inout Large) { fmt.println("drop large", self.id); }
+}
+
+@(packed) Holder :: struct { tag: u8, source: By_Value, }
+
+Constant :: By_Value{1};
+
+make_value :: proc(id: int) -> By_Value { return By_Value{id}; }
+make_pointer :: proc(id: int) -> By_Pointer { return By_Pointer{id}; }
+make_large :: proc(id: int) -> Large { return Large{id = id}; }
+
+// A return leaves through the loop scope, which drops the source once.
+first_of :: proc(id: int) -> int {
+	foreach (v in make_value(id)) { return v; }
+	return -1;
+}
+
+main :: proc() {
+	foreach (v in make_value(2)) { fmt.println(v); }
+	fmt.println("after temporary");
+
+	foreach (v in make_pointer(2)) { fmt.println(v); }
+	fmt.println("after pointer receiver");
+
+	foreach (v in make_large(1)) { fmt.println(v); }
+	fmt.println("after large");
+
+	foreach (v in make_value(3)) {
+		if (v == 1) { break; }
+		fmt.println(v);
+	}
+	fmt.println("after break");
+
+	foreach (v, i in make_value(2).indexed()) { fmt.println(v, i); }
+	fmt.println("after indexed");
+
+	foreach (v in make_value(1).reversed()) { fmt.println(v); }
+	fmt.println("after reversed");
+
+	fmt.println(first_of(4));
+	fmt.println("after return");
+
+	moved := make_value(1);
+	foreach (v in move(moved)) { fmt.println(v); }
+	fmt.println("after move");
+
+	// A place keeps its owner, so the loop drops nothing.
+	local := make_value(1);
+	foreach (v in local) { fmt.println(v); }
+	fmt.println("after place");
+	holder := Holder{1, make_value(1)};
+	foreach (v in holder.source) { fmt.println(v); }
+	fmt.println("after packed field");
+	foreach (v in Constant) { fmt.println(v); }
+	fmt.println("after constant");
+}

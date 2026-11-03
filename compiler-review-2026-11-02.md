@@ -1026,51 +1026,12 @@ What remains is the allocation-failure branch it shares with the other emitter f
 
 ### src/emit_llvm_iteration.odin
 
-Comments are mostly tight and the range arithmetic checks out, but protocol-loop binding has four branches that differ by accident, and one of them miscompiles. Two synthesized paths the dispatcher can never reach remain, and the `next` bodies repeat their framing.
-
-**Bugs**
-
-- `BUG-emit_llvm_iteration-2` **medium** [emit_llvm_iteration.odin:631](src/emit_llvm_iteration.odin#L631) `emit_protocol_foreach`: a value-mode `iter` receiver takes `emit_expr` and nothing registers the temporary, so an owned source is never dropped. Scenario: with `iter :: proc(self) -> It`, `foreach (v in make_source(7))` never runs `drop 7`, while `make_source(6).iter()` does. Fix: spill through `spill_foreach_iterable_at` and pass `load_place` of the slot. *Confirmed: Probe: with iter :: proc(self) -> It, foreach (v in make_source(7)) never prints drop 7, while make_source(6).iter() prints drop 6. design.md "Temporaries and procedure boundaries" says it lives to statement end, then drops; not in known-gaps. Medium fits.*
-- `BUG-emit_llvm_iteration-4` **low** [emit_llvm_iteration.odin:373](src/emit_llvm_iteration.odin#L373) `emit_text_foreach`, also [417](src/emit_llvm_iteration.odin#L417) and [499](src/emit_llvm_iteration.odin#L499)-[500](src/emit_llvm_iteration.odin#L500): plain `load` ignores `e.place_align`, so a header in a packed field gets natural alignment, which is LLVM UB. Scenario: `@(packed) P :: struct { tag: u8, name: string }`, `foreach (c in p.name)` emits `load %loke.string, ptr %t458` at offset 1 with no `align 1`. Fix: use `load_place` or `align_suffix`. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_iteration.odin:664](src/emit_llvm_iteration.odin#L664) `emit_protocol_foreach`: `lent_yield_field` already covers all four branches (owned, pointer, record), so lines 662-685 become `field := lent_yield_field(e, yielded, payload, emit_union_payload(e, option, payload, slot))` plus one bind call. (about 18 lines)
-- [emit_llvm_iteration.odin:153](src/emit_llvm_iteration.odin#L153) `bind_foreach_fields`, [with_index](src/emit_llvm_iteration.odin#L306), [lent_record_fields](src/emit_llvm_iteration.odin#L993): let each traversal pass one root field (a map's is `{entry, children}`); one `bind_foreach_element` adds the counter pair when `s.indexed`. This also removes `with_index`'s mistyped one-field record case. (about 25 lines)
-- [emit_llvm_iteration.odin:194](src/emit_llvm_iteration.odin#L194) `bind_foreach_pattern`: the group/projected/leaf chain repeats the single-binding cases at the top, so call `bind_foreach_pattern(e, bindings[position:position+1], field.type, projected, parts[index])`. Line 169's second condition is also always true. (about 8 lines)
-- [emit_llvm_iteration.odin:602](src/emit_llvm_iteration.odin#L602) `bind_indexed_value`: both GEP spellings compute the same address, so `address := gep_at(e, element, array_slot, at)` serves all three kinds and carries `place_align`. (about 11 lines)
-- [emit_llvm_iteration.odin:377](src/emit_llvm_iteration.odin#L377) `emit_text_foreach` and [465](src/emit_llvm_iteration.odin#L465)/[507](src/emit_llvm_iteration.odin#L507) `emit_indexed_foreach`: `temp` then `alloca_named` has no use for the early name; write `decoded := alloca(e, "i32")` and `cursor := alloca(e, counter_type)`. (about 4 lines)
-- [emit_llvm_iteration.odin:423](src/emit_llvm_iteration.odin#L423) and the sites at 382, 519, 640: the optional counter repeats alloca, zero store, load and step. A `new_counter` helper plus a `counter` field on `Loop_Labels`, stepped by `close_loop`, removes them. (about 15 lines)
-- [emit_llvm_iteration.odin:182](src/emit_llvm_iteration.odin#L182), also 183, 215, 238, 239, 326, 1006, 1007: `type_of(e.c, type_underlying(e.c, x))` is `underlying_info(e.c, x)`. (no lines, shorter expressions)
-
-**Dead code**
-
-- (branch) [emit_llvm_iteration.odin:640](src/emit_llvm_iteration.odin#L640): `|| (foreach_is_place_loop(s) && len(s.bindings) == 2)` makes a counter only `with_index` could read, and that returns early unless `s.indexed`; test `s.indexed` alone.
-- (branch) [emit_llvm_iteration.odin:874](src/emit_llvm_iteration.odin#L874) `emit_synth_indexed_next`, `slice = false`: `.Array_Next` exists only for compile-time-only elements, whose iterator is a descriptor, and [emit_llvm_runtime.odin:1387](src/emit_llvm_runtime.odin#L1387) skips those. Without it `slice` and `by_ref` are always true, and the array paths and clone (lines 924-928) go; about 25 lines.
-- (branch) [emit_llvm_iteration.odin:764](src/emit_llvm_iteration.odin#L764) `emit_synth_iter`: the same skip makes the compile-time-only array `else` unreachable, and line 769's `view_type = source` restates the field's LLVM type, so `view_type` need never change. (about 5 lines)
+What remains is two near copies that belong to the cross-file groups.
 
 **Near copies**
 
 - [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [961](src/emit_llvm_iteration.odin#L961) and [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945): the `loke_rt_v1_map_scan` call plus cursor store are identical; share `emit_map_scan(e, table, ops, cursor, cursor_slot, key_out, value_out) -> string`. (about 8 lines)
-- [emit_llvm_iteration.odin:821](src/emit_llvm_iteration.odin#L821), [886](src/emit_llvm_iteration.odin#L886), [953](src/emit_llvm_iteration.odin#L953), [1028](src/emit_llvm_iteration.odin#L1028) and [emit_llvm_containers.odin:283](src/emit_llvm_containers.odin#L283): the same stop block (lines 866-868, 935-937, 985-987, 1054-1056); share `close_synth_next(e, option, stop_label)`, and use `branch_if` for the raw `br i1`. (about 10 lines)
 - [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61) and [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679): the same six-line save and restore of four loop targets; group them as one `Loop_Targets` field on `Emitter`, then `outer := e.loop; defer e.loop = outer`. (about 8 lines)
-- [emit_llvm_iteration.odin:206](src/emit_llvm_iteration.odin#L206) and [iterate.odin:982](src/iterate.odin#L982); [emit_llvm_iteration.odin:188](src/emit_llvm_iteration.odin#L188) and [iterate.odin:899](src/iterate.odin#L899): the projected-record test and projected-field lookup are written twice. Both take only `^Compiler`, so they belong in `iterate.odin`, shared. (about 10 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm_iteration.odin:696](src/emit_llvm_iteration.odin#L696) `spill_iterable_at`: its only callers are [emit_viewed_address](src/emit_llvm_expr.odin#L1133) and [emit_dyn_proc_value](src/emit_llvm_runtime.odin#L1553), neither of which iterates. Move it to `emit_llvm_expr.odin` under a name such as `spill_viewed_at`.
-- [emit_llvm_iteration.odin:462](src/emit_llvm_iteration.odin#L462) `emit_indexed_foreach`, [bind_indexed_value](src/emit_llvm_iteration.odin#L567): `is_range` is tested repeatedly to weave two loops together, which forces seven string parameters. Split them into `emit_range_foreach` and `emit_sequence_foreach`, each binding inline.
-- [emit_llvm_iteration.odin:993](src/emit_llvm_iteration.odin#L993) `lent_record_fields`, `lent_yield_field`: these serve only `emit_protocol_foreach` but sit among the synthesized `next` bodies; move them beside it, keeping lowering (51-730) and synthesized bodies (732 on) apart.
-- [emit_llvm_iteration.odin:11](src/emit_llvm_iteration.odin#L11) `emit_option_some`: used across the backend and unrelated to iteration, and [emit_llvm_calls.odin:1824](src/emit_llvm_calls.odin#L1824) spells it out by hand. Move it beside `emit_union_value` and use it there.
-
-**Comments**
-
-- [emit_llvm_iteration.odin:8](src/emit_llvm_iteration.odin#L8): delete; the banner repeats the file header, and no other section has one.
-- [emit_llvm_iteration.odin:28](src/emit_llvm_iteration.odin#L28): shorten to `// design.md "Ranges": evaluates x, then r, once each.`; the rest restates the spec and the code below.
-- [emit_llvm_iteration.odin:90](src/emit_llvm_iteration.odin#L90): delete; the body says it.
-- [emit_llvm_iteration.odin:110](src/emit_llvm_iteration.odin#L110): delete; it narrates the four lines below.
-- [emit_llvm_iteration.odin:352](src/emit_llvm_iteration.odin#L352): shorten to `// Whether the cursor is live, by the run-time closed flag.`
-- [emit_llvm_iteration.odin:367](src/emit_llvm_iteration.odin#L367): wrong as well as long, since `rune_offsets()` is a view that takes the protocol path. Use `// Decoded code points; indexed() adds the ordinal (design.md "String iteration").`
 
 ### src/emit_llvm_runtime.odin
 

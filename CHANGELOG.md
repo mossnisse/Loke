@@ -1392,6 +1392,12 @@ checklist.
 
 ### Fixed
 
+- `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
+  statement ends, as `make_source().iter()` already did; it was never dropped
+  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+- `foreach` over a string, map, dynamic array or fixed array in a packed struct now reads it
+  with `align 1`; it claimed natural alignment, which is undefined behavior in the generated code
+  ([`@(packed)`](design.md#packed)).
 - A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
   by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
 - `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`

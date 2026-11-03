@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// design.md "@(packed)": a string, map or dynamic array in a packed struct has
+// an under-aligned header, so a `foreach` reads it with `align 1`, as it does an
+// array element stored there.
+@(packed) Text :: struct { tag: u8, name: string }
+@(packed) Table :: struct { tag: u8, entries: map[int]int }
+@(packed) Items :: struct { tag: u8, items: [dynamic]int }
+@(packed) Fixed :: struct { tag: u8, values: [2]int }
+
+main :: proc() {
+	text := Text{1, "ab"};
+	foreach (c in text.name) { fmt.println(c); }
+	table := Table{tag = 1};
+	foreach (k, v in table.entries) { fmt.println(k, v); }
+	items := Items{tag = 1};
+	foreach (x in items.items) { fmt.println(x); }
+	fixed := Fixed{1, {2, 3}};
+	foreach (x in fixed.values) { fmt.println(x); }
+}

@@ -50,7 +50,7 @@ emit_dyn_proc_value :: proc(e: ^Emitter, expr: Expr, from, as_type: Type_Id) -> 
 		data = emit_expr_at(e, expr, from)
 		code = symbol_name(e, e.c.dyn_proc_adapters[carrier_abi_type(e.c, as_type)])
 	} else {
-		data = spill_iterable_at(e, expr, from)
+		data = spill_viewed_at(e, expr, from)
 		dyn := underlying_info(e.c, as_type)
 		witness := lookup_witness(e.c, dyn.dyn_interface, from, dyn.dyn_args)
 		if witness == nil {
