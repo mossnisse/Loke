@@ -1214,204 +1214,6 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 	}
 }
 
-// design.md "Inspecting a union": a case binds, never the header. `switch (name
-// in subject)` with an unresolved name arrives as a membership test.
-@(private = "file")
-report_header_binding :: proc(k: ^Checker, s: ^Stmt_Switch) -> bool {
-	test, is_binary := s.subject.(^Expr_Binary)
-	if !is_binary || test.op != .In {
-		return false
-	}
-	name, is_ident := test.lhs.(^Expr_Ident)
-	if !is_ident || lookup_symbol(k.scope, identifier_of(k.c, name)) != INVALID_SYMBOL {
-		return false
-	}
-	errorf(
-		k.c, expr_span(s.subject), "L0426",
-		"a switch binds in its cases: write `switch (subject)` with `case .variant(%s):`",
-		name.name,
-	)
-	return true
-}
-
-@(private = "file")
-check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
-	if s.kind != .Value {
-		return check_type_switch(k, s)
-	}
-	enter_statement_header(k, s.init)
-	if report_header_binding(k, s) {
-		return Flow_Info{}
-	}
-	subject := check_single_expr(k, s.subject)
-	if subject == INVALID_TYPE {
-		// Not falling through, so no missing return is blamed on it.
-		return Flow_Info{}
-	}
-	// design.md "Inspecting a union": the subject's type decides.
-	// A `dyn` subject arrives too, so it is told why it has no such switch.
-	if type_is_union(k.c, subject) || type_is_dyn(k.c, subject) {
-		adopt_branch_patterns(k, s)
-		return check_variant_cases(k, s, subject)
-	}
-	if type_is_untyped(k.c, subject) {
-		materialize(k, s.subject, default_type(k.c, subject))
-		subject = expr_base(s.subject).type
-	}
-	if !type_is_comparable(k.c, subject) {
-		errorf(k.c, expr_span(s.subject), "L0355", "`%s` is not comparable", type_name(k.c, subject))
-		return Flow_Info{}
-	}
-	owned := make([dynamic]Type_Id, context.temp_allocator)
-	own_equalities_within(k.c, subject, &owned)
-	if !own_equalities_visible(k, owned[:], subject, expr_span(s.subject)) {
-		return Flow_Info{}
-	}
-
-	// design.md "Per-variant switch cases": reported for any other subject.
-	if !expand_variant_cases(k, s, subject) {
-		return Flow_Info{}
-	}
-	cases := Case_Values {
-		integers = new_integer_set(0, context.temp_allocator),
-		others   = make([dynamic]Const_Value, 0, 8, context.temp_allocator),
-		covered  = make(map[Symbol_Id]bool, 0, context.temp_allocator),
-	}
-	if type_is_enum(k.c, subject) {
-		cases.members = enum_members_by_value(k.c, subject)
-	}
-	has_default := false
-	flow := Flow_Info{}
-	for &entry in s.cases {
-		if len(entry.values) == 0 {
-			if has_default {
-				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
-			}
-			has_default = true
-		}
-		for value in entry.values {
-			check_case_value(k, value, subject, &cases)
-		}
-		case_scope := k.scope
-		k.scope = new_scope(k.c, case_scope, .Local)
-		case_flow := check_stmts(k, entry.stmts)
-		k.scope = case_scope
-		flow.returns ||= case_flow.returns
-		flow.breaks ||= case_flow.breaks
-		flow.continues ||= case_flow.continues
-		flow.can_fall_through ||= case_flow.can_fall_through
-	}
-
-	s.exhaustive = has_default || check_exhaustive(k, s, subject, cases.covered)
-	flow.can_fall_through ||= !s.exhaustive
-	return flow
-}
-
-// What a value switch's cases have named. A generated switch can have thousands,
-// so an integer's repeat, and the enum member it covers, are looked up.
-@(private = "file")
-Case_Values :: struct {
-	integers: Integer_Set,
-	others:   [dynamic]Const_Value,
-	covered:  map[Symbol_Id]bool,
-	members:  map[i64]Symbol_Id,
-}
-
-@(private = "file")
-check_case_value :: proc(k: ^Checker, value: Expr, subject: Type_Id, cases: ^Case_Values) {
-	if range, is_range := value.(^Expr_Range); is_range {
-		check_value_expr(k, range.lo, subject, "compare")
-		check_value_expr(k, range.hi, subject, "compare")
-		range.type = subject
-		if !type_is_ordered(k.c, subject) {
-			errorf(k.c, range.op_span, "L0355", "`%s` is not ordered, so a range case is not meaningful", type_name(k.c, subject))
-		}
-		return
-	}
-	// design.md "switch statement": a case names values, never types, so a
-	// type is reported rather than compared.
-	if _, is_call := value.(^Expr_Call); !is_call {
-		if named := resolve_type_syntax(k, value); named != INVALID_TYPE {
-			errorf(
-				k.c, expr_span(value), "L0426",
-				"`%s` is a type, and a switch matches values of its subject `%s`, not types; hold the alternatives in a union to match them",
-				type_name(k.c, named), type_name(k.c, subject),
-			)
-			return
-		}
-	}
-	if !check_value_expr(k, value, subject, "compare") {
-		return
-	}
-	base := expr_base(value)
-	if !base.is_const {
-		return // an ordered dynamic case, compared in source order
-	}
-	if case_value_repeats(k.c, cases, base.const_value) {
-		errorf(k.c, expr_span(value), "L0367", "this value is already covered by an earlier case")
-		return
-	}
-	if cases.members != nil && base.const_value.kind == .Integer {
-		member := INVALID_SYMBOL
-		if small, fits := bi_to_i64(k.c, base.const_value.integer); fits {
-			member = cases.members[small]
-		} else {
-			member = enum_member_by_value(k.c, subject, base.const_value)
-		}
-		if member != INVALID_SYMBOL {
-			cases.covered[member] = true
-		}
-	}
-}
-
-@(private = "file")
-case_value_repeats :: proc(c: ^Compiler, cases: ^Case_Values, value: Const_Value) -> bool {
-	if value.kind == .Integer || value.kind == .Rune {
-		return !integer_set_add(c, &cases.integers, value.integer)
-	}
-	for previous in cases.others {
-		if equal, ok := fold_comparison(c, .Eq_Eq, previous, value); ok && equal {
-			return true
-		}
-	}
-	append(&cases.others, value)
-	return false
-}
-
-// design.md "Exhaustive switch": a switch over an enum with no default must
-// name every member.
-@(private = "file")
-check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: map[Symbol_Id]bool) -> (complete: bool) {
-	if !type_is_enum(k.c, subject) {
-		errorf(k.c, s.span, "L0366", "a switch over `%s` needs a default case", type_name(k.c, subject))
-		return false
-	}
-	info := underlying_info(k.c, subject)
-	missing := ""
-	count := 0
-	for member in info.fields {
-		if covered[member] {
-			continue
-		}
-		count += 1
-		symbol := symbol_of(k.c, member)
-		if count <= 3 {
-			if missing != "" {
-				missing = concat(k.c, missing, ", ")
-			}
-			missing = concat(k.c, missing, identifier_text(k.c, symbol.name))
-		}
-	}
-	if count == 0 {
-		return true
-	}
-	if count > 3 {
-		missing = concat(k.c, missing, ", ...")
-	}
-	errorf(k.c, s.span, "L0366", "this switch over `%s` does not cover %s", type_name(k.c, subject), missing)
-	return false
-}
-
 // design.md "defer statement": deferred code runs on the way out of its own
 // scope, so it may not itself leave that scope.
 @(private = "file")
@@ -1426,7 +1228,7 @@ check_defer :: proc(k: ^Checker, s: ^Stmt_Defer) -> Flow_Info {
 	written := k.proc_literal.signature.result
 	unresolved := k.result_type == INVALID_TYPE && written != nil && !written.diverges
 	if s.on_failure && !unresolved {
-		if _, fallible := fallible_of(k, k.result_type); !fallible || k.result_inout {
+		if _, fallible := fallible_of(k.c, k.result_type); !fallible || k.result_inout {
 			if k.result_type == INVALID_TYPE {
 				errorf(k.c, s.span, "L0720", "`errdefer` needs a result with a failure variant; this procedure returns nothing")
 			} else {
@@ -1480,9 +1282,9 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 				"this procedure returns `%s`, so `return` needs a value; a result is anonymous and has no local to fill",
 				type_name(k.c, k.result_type),
 			)
-			if shape, fallible := fallible_of(k, k.result_type); fallible && !k.result_inout {
+			if shape, fallible := fallible_of(k.c, k.result_type); fallible && !k.result_inout {
 				name := union_variant_name(k.c, k.result_type, shape.success)
-				if shape.info.variants[shape.success] == k.c.unit_type {
+				if shape.success_type == k.c.unit_type {
 					add_notef(
 						k.c, s.span, "`.%s` carries `Unit` here only through a generic argument, so `return;` cannot build it; write `return .%s;`",
 						name, name,

@@ -37,3 +37,17 @@ bad_mapper :: proc() -> Result(int, App_Error) {
 }
 
 main :: proc() {}
+
+// A failure that carries nothing takes only a replacement, so the operand is
+// checked as one: an undefined name reports itself, and a mapper does not fit.
+undefined_replacement :: proc() -> Result(int, Parse_Error) {
+	v := find() or_return undefined_name;
+	return .ok(v);
+}
+
+to_parse_error :: proc(error: int) -> Parse_Error { return .Bad; }
+
+mapper_of_nothing :: proc() -> Result(int, Parse_Error) {
+	v := find() or_return to_parse_error;
+	return .ok(v);
+}

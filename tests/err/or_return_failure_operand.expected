@@ -13,3 +13,9 @@ to reach the success payload, write `(text() or_return).len()`
 L0352
 @35:25
 42 is not representable by `App_Error`
+L0315
+@44:24
+unknown name `undefined_name`
+L0310
+@51:24
+`Option(int).none` carries no error to map

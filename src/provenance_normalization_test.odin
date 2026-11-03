@@ -96,7 +96,7 @@ main :: proc() {}`) { return }
 	if testing.expect(t, len(bindings) == 1, "the borrowed payload must have one known destination") {
 		testing.expect(t, bindings[0].root == root, "the payload binding created a second owner")
 		path := bindings[0].path
-		shape, _ := fallible_of(&k, underlying_info(&p.c, prov_storage(graph, storage).type).element)
+		shape, _ := fallible_of(&p.c, underlying_info(&p.c, prov_storage(graph, storage).type).element)
 		testing.expectf(t, len(path) == 2 && (path[0].kind == .Wild || (path[0].kind == .Range && path[0].lo == 0)) &&
 		                   path[1].kind == .Field && path[1].lo == i64(shape.success),
 		                "the payload lost its array-element and variant projections: %v", path)
@@ -352,12 +352,12 @@ main :: proc() {}`) { return }
 		call, is_call := choice.value.(^Expr_Call)
 		if testing.expect(t, is_call) {
 			extraction, checked := call.operation.(Call_Union_As)
-			shape, ok := fallible_of(&k, expr_base(call.bound[0]).type)
+			shape, ok := fallible_of(&p.c, expr_base(call.bound[0]).type)
 			testing.expect(t, checked && ok && extraction.index == shape.success, "the selected variant must remain checked metadata")
 			transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, call)).(Prov_Transfer_Forward)
 			if testing.expect(t, transfers) {
 				part := transfer.component
-				result, _ := fallible_of(&k, call.type)
+				result, _ := fallible_of(&p.c, call.type)
 				testing.expect(t, part.mode == .Clone && part.copy.type == union_variant_payload(&p.c, expr_base(call.bound[0]).type, extraction.index),
 				               "checked extraction must select the payload's copy operation")
 				testing.expect(t, len(part.from) == 1 && part.from[0] == proj_field(extraction.index) &&

@@ -95,8 +95,8 @@ check_expr :: proc(
 	case ^Expr_Propagated_Error:
 		// The operand's failure payload, a temporary either way: a place's is a
 		// copy (design.md "Operator ownership").
-		if shape, ok := fallible_of(k, expr_base(v.owner.operand).type); ok {
-			v.type = shape.info.variants[shape.failure]
+		if shape, ok := fallible_of(k.c, expr_base(v.owner.operand).type); ok {
+			v.type = shape.failure_type
 		}
 
 	case ^Expr_Binary:

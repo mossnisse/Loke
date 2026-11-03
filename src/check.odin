@@ -458,17 +458,11 @@ entry_result_is_fallible :: proc(c: ^Compiler, result: Type_Id) -> bool {
 // What the startup code prints for a failing `main`: the failure's payload,
 // or the whole union when the failure carries none.
 entry_failure_type :: proc(c: ^Compiler, result: Type_Id) -> (Type_Id, bool) {
-	under := type_underlying(c, result)
-	info := type_of(c, under)
-	if info == nil || info.kind != .Union || !info.failure_designated || len(info.variants) != 2 {
+	shape, fallible := fallible_of(c, result)
+	if !fallible || (shape.success_type != TYPE_VOID && shape.success_type != c.unit_type) {
 		return INVALID_TYPE, false
 	}
-	success := info.variants[1 - info.failure_variant]
-	if success != TYPE_VOID && success != c.unit_type {
-		return INVALID_TYPE, false
-	}
-	failure := info.variants[info.failure_variant]
-	return failure == TYPE_VOID ? result : failure, true
+	return shape.failure_type == TYPE_VOID ? result : shape.failure_type, true
 }
 
 // Creates the symbols for one declaration, rejecting a shadowed local. Also

@@ -1,0 +1,30 @@
+// design.md "The failure operand": a value assignable to `F` replaces, and that
+// includes a procedure literal when `F` is a procedure type. Any other literal
+// is a mapper called with the error.
+package main;
+import "core:fmt";
+
+Answer :: proc() -> int;
+
+fail :: proc() -> Result(int, string) { return .err("failed"); }
+
+replaced :: proc() -> Result(int, Answer) {
+	value := fail() or_return proc() -> int { return 41; };
+	return .ok(value);
+}
+
+mapped :: proc() -> Result(int, int) {
+	value := fail() or_return proc(error: string) -> int { return error.len(); };
+	return .ok(value);
+}
+
+main :: proc() {
+	switch (replaced()) {
+	case .ok(value): fmt.println("ok", value);
+	case .err(answer): fmt.println("replaced", answer());
+	}
+	switch (mapped()) {
+	case .ok(value): fmt.println("ok", value);
+	case .err(length): fmt.println("mapped", length);
+	}
+}

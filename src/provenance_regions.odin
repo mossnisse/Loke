@@ -139,9 +139,9 @@ prov_result_region_fields :: proc(
 // propagating a temporary transfers it. Both preserve the selected payload.
 @(private)
 prov_error_region_at :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, path: []Proj_Step, query: Region_Query, target := INVALID_TYPE) -> Region_Set {
-	shape, ok := fallible_of(graph.k, prov_value(graph, error.operand).type)
+	shape, ok := fallible_of(graph.k.c, prov_value(graph, error.operand).type)
 	if !ok { return Region_Set{} }
-	from := shape.info.variants[shape.failure]
+	from := shape.failure_type
 	path := path
 	if union_widens_to(graph.k.c, from, target) {
 		mapped, possible := prov_widened_region_path(graph, from, target, path)
@@ -161,12 +161,12 @@ prov_error_region_at :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, path: [
 // through `Expr_Propagated_Error`.
 @(private)
 prov_error_region_fields :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, result_type: Type_Id) -> []Prov_Region_Content {
-	target, ok := fallible_of(graph.k, result_type)
+	target, ok := fallible_of(graph.k.c, result_type)
 	if !ok { return nil }
 	out := region_field_shape(graph.k.c, result_type, graph.alloc)
 	for &content in out {
 		if len(content.path) == 0 || content.path[0].kind != .Field || int(content.path[0].lo) != target.failure { continue }
-		content.region = prov_error_region_at(graph, error, content.path[1:], content.own ? .Own : .All, target.info.variants[target.failure])
+		content.region = prov_error_region_at(graph, error, content.path[1:], content.own ? .Own : .All, target.failure_type)
 	}
 	return out
 }
@@ -1209,7 +1209,7 @@ prov_constructed_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Pro
 	shared_copy := prov_call_keeps_shared_handle(graph, v, value.type)
 	if payload == nil && !shared_copy { return out, false }
 	path := path
-	if shape, ok := fallible_of(graph.k, value.type); ok && (fallible || shared_copy) {
+	if shape, ok := fallible_of(graph.k.c, value.type); ok && (fallible || shared_copy) {
 		if len(path) == 0 || path[0].kind != .Field || path[0].lo != i64(shape.success) { return out, true }
 		path = path[1:]
 	}
@@ -1411,7 +1411,7 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, oper
 	set := summary.region
 	if len(path) > 0 || query != .All {
 		projected_path := path
-		if shape, ok := fallible_of(graph.k, summary.content_type); ok {
+		if shape, ok := fallible_of(graph.k.c, summary.content_type); ok {
 			projected_path = prov_concat_path(graph, {proj_field(shape.success)}, path)
 		}
 		projected: Region_Set

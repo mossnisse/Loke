@@ -120,7 +120,7 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 
 #### Failure writes that the default in `check_expr` makes unnecessary
 
-`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [text.odin](src/text.odin) 18, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
+`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [text.odin](src/text.odin) 18, [reflect.odin](src/reflect.odin) 14. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
 Shared form: assign only on success. Saves about 100 lines.
 
@@ -153,10 +153,10 @@ Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false
 `Expr_Ident`: [capture.odin:102](src/capture.odin#L102), [capture.odin:137](src/capture.odin#L137), [check.odin:3889](src/check.odin#L3889), [check_calls.odin:329](src/check_calls.odin#L329), [expand.odin:636](src/expand.odin#L636), [hooks.odin:823](src/hooks.odin#L823), [parallel.odin:652](src/parallel.odin#L652).
 One-name `Decl`: [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140), [check.odin:3898](src/check.odin#L3898), [parallel.odin:182](src/parallel.odin#L182), [parallel.odin:724](src/parallel.odin#L724), [parallel.odin:736](src/parallel.odin#L736).
 Dereference: [check.odin:3857](src/check.odin#L3857), [parallel.odin:669](src/parallel.odin#L669), and with the place fields set, [check_expr.odin:1119](src/check_expr.odin#L1119) and `dereference_argument` in `check_calls.odin`.
-Selector: [check.odin:2878](src/check.odin#L2878), [check_calls.odin:204](src/check_calls.odin#L204), [expand.odin:627](src/expand.odin#L627), [optional.odin:269](src/optional.odin#L269), [parallel.odin:660](src/parallel.odin#L660).
+Selector: [check.odin:2878](src/check.odin#L2878), [check_calls.odin:204](src/check_calls.odin#L204), [expand.odin:627](src/expand.odin#L627), [parallel.odin:660](src/parallel.odin#L660).
 One-argument call: [check.odin:4796](src/check.odin#L4796), [expand.odin:640](src/expand.odin#L640), [hooks.odin:832](src/hooks.odin#L832), [optional.odin:259](src/optional.odin#L259), [optional.odin:272](src/optional.odin#L272), [parallel.odin:678](src/parallel.odin#L678).
 
-They differ only in whether the identifier id is passed or interned and in the `Decl` kind. [parallel.odin:651](src/parallel.odin#L651) already has the complete set, with `synth_ident`, `synth_selector` and `synth_deref` package-visible and the rest file-private. Shared form: move `synth_*` to `ast_clone.odin` or a new `synth.odin`, with `synth_decl(c, kind, name, value, declared_type = nil)`, and build `success_selector` and the failure selector on it. [parallel.odin:700](src/parallel.odin#L700) `synth_record` can also serve the record at [capture.odin:95](src/capture.odin#L95). Saves about 80 lines.
+They differ only in whether the identifier id is passed or interned and in the `Decl` kind. [parallel.odin:651](src/parallel.odin#L651) already has the complete set, with `synth_ident`, `synth_selector` and `synth_deref` package-visible and the rest file-private. Shared form: move `synth_*` to `ast_clone.odin` or a new `synth.odin`, with `synth_decl(c, kind, name, value, declared_type = nil)`, and build `variant_selector` on it. [parallel.odin:700](src/parallel.odin#L700) `synth_record` can also serve the record at [capture.odin:95](src/capture.odin#L95). Saves about 80 lines.
 
 #### Impl member declaration
 
@@ -192,7 +192,7 @@ Shared form: `new_iterator_type(c, name, label, element, key, fields)`. Saves ab
 
 #### Switch checking
 
-The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L4390) at [optional.odin:574](src/optional.odin#L574). [check.odin:4464](src/check.odin#L4464) `check_exhaustive` and [optional.odin:713](src/optional.odin#L713) `report_uncovered_variants` build the same first-three list. `check_type_switch` is reached only by a switch already marked `.Pattern`, written at [optional.odin:377](src/optional.odin#L377) and [expand.odin:620](src/expand.odin#L620). Its subject is a union there, so `check_switch`'s own path serves it and the reviewer's route of deleting it and the dispatch at [check.odin:4324](src/check.odin#L4324) looks right, though a clone's subject should be tested first. With a `missing_list` builder and a `Case_Flow` accumulator this saves about 45 lines.
+The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L4390) at [optional.odin:574](src/optional.odin#L574). [check.odin:4464](src/check.odin#L4464) `check_exhaustive` and [optional.odin:713](src/optional.odin#L713) `report_uncovered_variants` build the same first-three list. With a `missing_list` builder and a `Case_Flow` accumulator this saves about 45 lines.
 
 #### Constant values
 
@@ -689,14 +689,10 @@ What remains here waits on a helper shared across files.
 
 What remains here waits on helpers shared across files.
 
-**Simplification**
-
-- [check.odin:4323](src/check.odin#L4323) `check_switch`: open the scope and check `init` before testing `s.kind`, so `check_type_switch` ([optional.odin:448](src/optional.odin#L448)) reduces to the subject check and `check_variant_cases`, or inlines. (about 14 lines)
-
 **Near copies**
 
 - [check.odin:3888](src/check.odin#L3888) and [parallel.odin:652](src/parallel.odin#L652): `lowered_name`, `lowered_deref` and `lowered_temporary` match `synth_ident`, `synth_deref` and `synth_var`, with `synth_const` and `hidden_declaration` as further `Decl` copies. Use the package-visible `synth_ident` and `synth_deref`, and promote the rest. (about 25 lines)
-- [check.odin:2876](src/check.odin#L2876) and [optional.odin:269](src/optional.odin#L269): `success_selector` and the `or_return` failure selector are the same builder for a variant index; the one-argument call at 4796 repeats [optional.odin:272](src/optional.odin#L272). Share `variant_selector` and `synth_call`. (about 10 lines)
+- [check.odin:4796](src/check.odin#L4796): the one-argument call repeats [optional.odin:272](src/optional.odin#L272). Share `synth_call`. (about 5 lines)
 - [check.odin:4376](src/check.odin#L4376) and [optional.odin:574](src/optional.odin#L574): the same per-case flow merge and result; `flow_either(&flow, case_flow)` also serves `check_if` (4243). [check.odin:3138](src/check.odin#L3138) and [expand.odin:36](src/expand.odin#L36) share the sequential merge as `flow_then`. (about 15 lines)
 
 **Structure and boundaries**
@@ -1430,54 +1426,14 @@ What is left restates the group "Operator binding and the built-in operator tabl
 
 ### src/optional.odin
 
-Sound logic and mostly good comments, but it holds two unrelated subsystems, an exact copy in the `or_return` checks, and a redundant second entry to the union switch. The bugs below were reproduced with the `lokec.exe` in the repository root, built just after this commit.
-
-**Bugs**
-
-- `BUG-optional-1` **medium** [optional.odin:184](src/optional.odin#L184) `check_or_return`: the copy report names the whole union even for a replacement, which design.md "Operator ownership" says leaves the error alone. Scenario: `r: Result(int, map[string]int)`, `x := r or_return .Bad;` warns by default L0507 "this `or_return` clones `r`, which may allocate", though only an `int` is copied. Fix: report the success payload when `v.failure != nil && !v.failure_maps`. *Confirmed: Reproduced: `r or_return .Bad` warns L0507 "clones `r`, which may allocate", yet f's IR has no map_clone (the mapper form does) and or_else stays silent. Only a false warning with no codegen effect, so low severity rather than medium.*
-- `BUG-optional-2` **low** [optional.odin:248](src/optional.odin#L248) `check_or_return_failure`: a replacement that fails the probe is taken for a mapper, and a failure with no error then hides the real diagnostic. Scenario: `opt() or_return undefined_name;` reports "`Option(int).none` carries no error to map", never the undefined name. Fix: with `from == TYPE_VOID`, check the operand as a replacement and make this text a note. *Not verified.*
-- `BUG-optional-3` **low** [optional.odin:319](src/optional.odin#L319) `or_return_replaces`: a proc literal is always a mapper, against design.md "The failure operand": "A value assignable to `F` replaces". Scenario: with `F :: proc() -> int`, `res() or_return proc() -> int { return 1; };` is rejected L0322 "takes 0 arguments, found 1". Fix: drop the `^Expr_Proc` case so the probe decides. *Not verified.*
-- `BUG-optional-4` **low** [optional.odin:501](src/optional.odin#L501) `check_variant_cases`: a rejected single-binding case binds its name at the union type, so its body reports again. Scenario: a duplicate `case .a(y): return y + 1;` or `case .nope(z): return z + 1;` adds L0352 "1 is not representable by `U`". Fix: bind `INVALID_TYPE` when `entry.values` is non-empty and no index survived, as unresolved fields already are (line 541). *Not verified.*
-
-**Simplification**
-
-- [optional.odin:448](src/optional.odin#L448) `check_type_switch`: delete it and the `s.kind != .Value` dispatch at [check.odin:4324](src/check.odin#L4324). `check_switch` repeats its head and `adopt_branch_patterns` is a no-op on selector cases, so a recloned `.Pattern` switch takes the ordinary path. (about 22 lines)
-- [optional.odin:9](src/optional.odin#L9) `Fallible`: `info` is only ever read as `shape.info.variants[shape.success or failure]`, at 25 sites across the checker, CFG and evaluator. Store `success_type` and `failure_type` instead of `info`, which also removes the local aliases at lines 75 and 187.
-- [optional.odin:54](src/optional.odin#L54) `check_or_else`, [optional.odin:125](src/optional.odin#L125) `check_or_return`: set `v.type = INVALID_TYPE` once on entry and assign the real type only on the success path, replacing 13 repeats on the early returns. (about 12 lines)
-- [optional.odin:93](src/optional.odin#L93) `check_or_else`: make the exit and the fallback the two arms of an `if`/`else`, followed by one `if v.borrows { record_copy }` and `v.type = payload`, in place of the copy at lines 98-102. (about 4 lines)
-- [optional.odin:225](src/optional.odin#L225) `check_or_return_failure`: let `or_return_constructs` return `(payload, ok)`, dropping line 230's lookup, and replace the `switch` with `maps := constructs || !or_return_replaces(k, v.failure, into)`. (about 7 lines)
-- [optional.odin:580](src/optional.odin#L580) `check_variant_cases`: `s.exhaustive = has_default || variant_count(...) == len(seen_variants)` with one `if !s.exhaustive` report; drop `any_case_falls` by accumulating into `flow`, and return `flow`. (about 10 lines)
-- [optional.odin:652](src/optional.odin#L652) `field_name_at`: one caller, whose `slot` was read from this same record by `resolve_case_fields`, so its bounds and nil checks cannot fire. Inline it as `identifier_text(k.c, symbol_of(k.c, underlying_info(k.c, binding_type).fields[field.slot]).name)`. (about 7 lines)
-- [optional.odin:45](src/optional.odin#L45) `note_optional_replacement`: a `#partial switch` with one case; write `if index, is_index := e.(^Expr_Index); is_index && ...`. (about 2 lines)
-
-**Dead code**
-
-- (branch) [optional.odin:715](src/optional.odin#L715): `info == nil` cannot hold, because `variant_count` then returns 0, which equals the empty `seen_variants`, so the only caller never reports.
-- (branch) [optional.odin:732](src/optional.odin#L732): `count == 0` cannot hold, because the caller ran only when `seen_variants`, whose valid indices are distinct, is shorter than the variant count.
-- (branch) [optional.odin:601](src/optional.odin#L601): the `case_scope` parameter never varies; it is always `k.scope.parent` (line 546). Drop it and look up in `k.scope.parent`, as [iterate.odin:1071](src/iterate.odin#L1071) does.
+What remains here waits on helpers shared across files.
 
 **Near copies**
 
-- [optional.odin:197](src/optional.odin#L197) and [optional.odin:338](src/optional.odin#L338): identical 15 lines rejecting a procedure result that is absent or not fallible. Share `or_return_target(k, v) -> (Fallible, bool)`. (about 14 lines)
 - [optional.odin:713](src/optional.odin#L713) and [check.odin:4464](src/check.odin#L4464): the same "first three, then `, ...`" list and "does not cover" message, differing in the name source and the code. Each collects names into a temp slice and calls one `report_uncovered(k, s, subject, code, names)`. (about 12 lines)
 - [optional.odin:603](src/optional.odin#L603), [iterate.odin:1062](src/iterate.odin#L1062) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share `check_local_name(k, name, id, span) -> bool`; they differ in `check.odin`'s synthesized-name exemption and in whether a reserved name still binds. (about 14 lines)
 - [optional.odin:574](src/optional.odin#L574), [check.odin:4390](src/check.odin#L4390) and [expand.odin:36](src/expand.odin#L36): the same `||=` merge of `Flow_Info` fields. Share `merge_flow(&flow, other)` beside `Flow_Info`. (about 6 lines)
 - [optional.odin:259](src/optional.odin#L259), [optional.odin:272](src/optional.odin#L272), [check.odin:4796](src/check.odin#L4796) and [expand.odin:640](src/expand.odin#L640): a synthesized one-argument `Expr_Call`, five lines each. Share `new_call(c, span, callee, argument)`. (about 10 lines)
-- [optional.odin:20](src/optional.odin#L20), [check.odin:442](src/check.odin#L442) and [emit_llvm_calls.odin:777](src/emit_llvm_calls.odin#L777): `fallible_of` reads only `k.c`, yet taking `^Checker` keeps the emitter and `entry_failure_type` hand-rolling the shape. Take `^Compiler`; [union.odin:253](src/union.odin#L253) already guarantees the two variants `check.odin` retests.
-- [optional.odin:75](src/optional.odin#L75), [optional.odin:188](src/optional.odin#L188), [optional.odin:529](src/optional.odin#L529), [reflect.odin:294](src/reflect.odin#L294) and [emit_llvm_runtime.odin:1267](src/emit_llvm_runtime.odin#L1267): a payloadless variant reads as `Unit`. Share `payload_value_type(c, payload)`. (about 3 lines)
-
-**Structure and boundaries**
-
-- [optional.odin:372](src/optional.odin#L372): the second half is union switching and shares nothing with the failure protocol, and the name `optional.odin` covers neither. Move it, with `check_switch`, `check_case_value` and `check_exhaustive` from `check.odin`, to a switch file, and update the source map.
-- [optional.odin:35](src/optional.odin#L35): `note_anonymous_union_is_data` is used only in this file, so the source map's rule makes it `@(private = "file")`.
-- [optional.odin:468](src/optional.odin#L468) `check_variant_cases` is 127 lines: lift lines 509-525 to `case_variants` and lines 526-565 to `bind_case`. [optional.odin:196](src/optional.odin#L196) `check_or_return_failure` is 100 lines: lift lines 268-282 to `failure_return`.
-
-**Comments**
-
-- [optional.odin:7](src/optional.odin#L7), [optional.odin:372](src/optional.odin#L372): stale banners: nothing here is "optional-ok" and no switch matches types. Use `failure operators` and `union switches`.
-- [optional.odin:191](src/optional.odin#L191): shorten to `// design.md "The failure operand": builds `v.failure_exit`, the `return` a failure takes.`; the prose repeats the spec, and that heading is the exact one. (about 2 lines)
-- [optional.odin:73](src/optional.odin#L73): shorten to `// design.md "or_else expression": a payloadless success yields `Unit`.` (1 line)
-- [optional.odin:403](src/optional.odin#L403): delete; the next line says it.
 
 ### src/parallel.odin
 

@@ -288,6 +288,11 @@ union_variant_payload :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> 
 	return info.variants[index]
 }
 
+// The type a variant's payload reads as: a payloadless variant reads as `Unit`.
+payload_value_type :: proc(c: ^Compiler, payload: Type_Id) -> Type_Id {
+	return payload == TYPE_VOID ? c.unit_type : payload
+}
+
 // design.md "Iteration protocol": `next` yields `Option(Element)`.
 option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
 	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))

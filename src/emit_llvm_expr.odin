@@ -2182,8 +2182,8 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 @(private)
 emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	info := type_of(e.c, type_underlying(e.c, union_type))
-	return emit_union_tag_is(e, union_type, value, info.failure_variant)
+	shape, _ := fallible_of(e.c, union_type)
+	return emit_union_tag_is(e, union_type, value, shape.failure)
 }
 
 @(private = "file")
@@ -2222,14 +2222,10 @@ emit_conditional_exit :: proc(e: ^Emitter, exit: Stmt) {
 @(private = "file")
 emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
 	operand_type := type_underlying(e.c, expr_base(v.value).type)
-	info := type_of(e.c, operand_type)
-	success := 1 - info.failure_variant
-	payload_type := info.variants[success]
+	shape, _ := fallible_of(e.c, operand_type)
 	// A success that carries nothing yields `Unit`.
-	unit := payload_type == TYPE_VOID
-	if unit {
-		payload_type = e.c.unit_type
-	}
+	unit := shape.success_type == TYPE_VOID
+	payload_type := payload_value_type(e.c, shape.success_type)
 
 	value := emit_expr(e, v.value)
 	slot := emit_union_spill(e, operand_type, value)
@@ -2255,9 +2251,8 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
 	// design.md: `or_else` never copies the error, so a managed failure payload of
 	// a *temporary* is dropped here, before the fallback runs, since the operand's
 	// value is discarded on this path. A place still owns its own.
-	if failure_type := info.variants[info.failure_variant];
-	   !v.borrows && emit_lifecycle(e, failure_type).managed {
-		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+	if !v.borrows && emit_lifecycle(e, shape.failure_type).managed {
+		emit_drop_place(e, shape.failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
 	// design.md "or_else expression": an exit leaves here, and only the success
 	// arm reaches the rest of the expression.
@@ -2279,8 +2274,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
 @(private = "file")
 emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 	operand_type := type_underlying(e.c, expr_base(v.operand).type)
-	info := type_of(e.c, operand_type)
-	success := 1 - info.failure_variant
+	shape, _ := fallible_of(e.c, operand_type)
 	operand_address := ""
 	value := ""
 	if v.borrows {
@@ -2303,7 +2297,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 		// mapper takes the error, copied out of a place; a replacement leaves a
 		// place's error where it is and drops a temporary's first, as `or_else`
 		// does.
-		failure_type := info.variants[info.failure_variant]
+		failure_type := shape.failure_type
 		if v.failure_maps {
 			error := emit_union_payload(e, operand_type, failure_type, slot)
 			if v.borrows && emit_lifecycle(e, failure_type).managed {
@@ -2317,30 +2311,29 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 		}
 		emit_conditional_exit(e, v.failure_exit)
 	} else {
-		target := type_underlying(e.c, e.result_type)
-		target_info := type_of(e.c, target)
+		target, _ := fallible_of(e.c, e.result_type)
 		error := ""
-		if failure_type := info.variants[info.failure_variant]; failure_type != TYPE_VOID {
+		if failure_type := shape.failure_type; failure_type != TYPE_VOID {
 			error = emit_union_payload(e, operand_type, failure_type, slot)
-			failure_into := target_info.variants[target_info.failure_variant]
+			failure_into := target.failure_type
 			if v.borrows && emit_lifecycle(e, failure_type).managed &&
 			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
 				error = emit_clone_value(e, failure_type, error)
 			}
 			error = emit_failure_conversion(e, error, failure_type, failure_into)
 		}
-		wrapped := emit_union_value(e, e.result_type, target_info.failure_variant, error)
+		wrapped := emit_union_value(e, e.result_type, target.failure, error)
 		store(e, e.result_type, wrapped, e.result_slot)
 		emit_epilogue(e)
 	}
 
 	place_label(e, ok_label)
-	if info.variants[success] == TYPE_VOID {
+	if shape.success_type == TYPE_VOID {
 		return "zeroinitializer"
 	}
-	out := emit_union_payload(e, operand_type, info.variants[success], slot)
-	if v.borrows && emit_lifecycle(e, info.variants[success]).managed {
-		out = emit_clone_value(e, info.variants[success], out)
+	out := emit_union_payload(e, operand_type, shape.success_type, slot)
+	if v.borrows && emit_lifecycle(e, shape.success_type).managed {
+		out = emit_clone_value(e, shape.success_type, out)
 	}
 	return out
 }

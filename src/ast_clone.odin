@@ -528,7 +528,6 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 
 	case ^Stmt_Switch:
 		n := new_node_clone(c, v)
-		n.kind = v.kind
 		n.init = clone_stmt(c, v.init)
 		n.subject = clone_expr(c, v.subject)
 		written := v.written != nil ? v.written : v.cases

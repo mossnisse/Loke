@@ -284,7 +284,7 @@ variant_descriptor :: proc(c: ^Compiler, subject: Type_Id, index: int) -> Const_
 	payload := union_variant_payload(c, subject, index)
 	values := make([]Const_Value, 4, c.semantic_allocator)
 	values[META_VARIANT_NAME] = string_view_const(union_variant_name(c, subject, index))
-	values[META_VARIANT_TYPE] = type_const(payload == TYPE_VOID ? c.unit_type : payload)
+	values[META_VARIANT_TYPE] = type_const(payload_value_type(c, payload))
 	values[META_VARIANT_INDEX] = int_const(c, i64(index))
 	values[META_VARIANT_OWNER] = type_const(subject)
 	return aggregate_const(c, meta_variant_type(c), values)

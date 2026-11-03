@@ -598,7 +598,7 @@ returned_variant :: proc(graph: ^Flow_Graph, s: ^Stmt_Return) -> (returning, fai
 	if !is_selector || selector.variant_union == INVALID_TYPE || selector.variant_union != sym.result {
 		return true, false
 	}
-	shape, fallible := fallible_of(graph.k, sym.result)
+	shape, fallible := fallible_of(graph.k.c, sym.result)
 	switch {
 	case !fallible:
 		return true, false
@@ -1748,14 +1748,14 @@ walk_flow_or_return :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, operand_loans:
 	prov := graph.mode != .Lifecycle
 	resume := fork_flow_branch(graph)
 	if v.failure_exit != nil {
-		shape, _ := fallible_of(graph.k, prov_type(graph, v.operand))
+		shape, _ := fallible_of(graph.k.c, prov_type(graph, v.operand))
 		if prov && v.failure_maps {
 			graph.propagated_errors[v] = prov_payload_content(
-				graph, operand_loans, prov_type(graph, v.operand), shape.info.variants[shape.failure], v.span,
+				graph, operand_loans, prov_type(graph, v.operand), shape.failure_type, v.span,
 			)
 		} else if prov && !v.borrows {
 			// A replacement drops a temporary's error before it runs.
-			prov_drop_effects(graph, shape.info.variants[shape.failure], v.op_span, "the replaced error", unnamed = true)
+			prov_drop_effects(graph, shape.failure_type, v.op_span, "the replaced error", unnamed = true)
 		}
 		walk_flow_stmt(graph, v.failure_exit)
 	} else if prov {

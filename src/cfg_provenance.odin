@@ -2788,13 +2788,13 @@ prov_or_return_escape :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, operand_loan
 	if proc_symbol == nil || proc_symbol.result == INVALID_TYPE {
 		return nil
 	}
-	shape, operand_fallible := fallible_of(graph.k, prov_type(graph, v.operand))
-	target, target_fallible := fallible_of(graph.k, proc_symbol.result)
+	shape, operand_fallible := fallible_of(graph.k.c, prov_type(graph, v.operand))
+	target, target_fallible := fallible_of(graph.k.c, proc_symbol.result)
 	if !operand_fallible || !target_fallible {
 		return nil
 	}
-	from := shape.info.variants[shape.failure]
-	into := target.info.variants[target.failure]
+	from := shape.failure_type
+	into := target.failure_type
 	escaping := prov_payload_content(graph, operand_loans, prov_type(graph, v.operand), from, v.span)
 	if failure_assignment_borrows(graph.k.c, from, into) {
 		if root, path, is_place := prov_place_of(graph, v.operand); is_place {

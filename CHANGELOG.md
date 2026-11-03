@@ -2394,6 +2394,17 @@ checklist.
   temporary or a wrong type was told to write it too.
 - A failed overload's reasons are now worded only when they are reported. A call through a group of
   128 members checks in about half the time.
+- `r or_return .Bad` on a place no longer warns that it clones `r` when only the success is copied:
+  an `or_return` replacement leaves the error where it is
+  ([Operator ownership](design.md#operator-ownership)). `L0507` now names the success's cost.
+- `find() or_return undefined_name` on a failure that carries nothing now reports the unknown name.
+  The operand is checked as the replacement it must be, and "carries no error to map" is a note on
+  a value that does not fit ([The failure operand](design.md#the-failure-operand)).
+- A procedure literal assignable to the failure payload type is an `or_return` replacement, as any
+  other such value is: with `F :: proc() -> int`, `res() or_return proc() -> int { return 1; }` was
+  `L0322` ([The failure operand](design.md#the-failure-operand)).
+- A `case` of a union `switch` that repeats a variant or names none no longer reports its body again:
+  `case .nope(z): return z + 1;` added `L0352` for `z`, bound at the union type.
 
 ## [0.9.0] - 2026-10-27
 

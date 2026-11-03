@@ -1860,7 +1860,7 @@ eval_named_union :: proc(ev: ^Evaluator, type: Type_Id, name: string, payload: E
 @(private = "file")
 eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (out: Eval_Value, success: bool) {
 	value := eval_expr(ev, v.value) or_return
-	shape, fallible := fallible_of(ev.k, expr_base(v.value).type)
+	shape, fallible := fallible_of(ev.k.c, expr_base(v.value).type)
 	if !fallible {
 		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
 		return Eval_Value{}, false
@@ -1891,7 +1891,7 @@ eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (out: Eval_Value, succ
 @(private = "file")
 eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (out: Eval_Value, success: bool) {
 	value := eval_expr(ev, v.operand) or_return
-	shape, fallible := fallible_of(ev.k, expr_base(v.operand).type)
+	shape, fallible := fallible_of(ev.k.c, expr_base(v.operand).type)
 	frame := current_frame(ev)
 	if !fallible || frame == nil || frame.result_type == INVALID_TYPE {
 		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
@@ -1916,16 +1916,16 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (out: Eval_Value, su
 		return Eval_Value{}, false
 	}
 
-	target, target_ok := fallible_of(ev.k, frame.result_type)
+	target, target_ok := fallible_of(ev.k.c, frame.result_type)
 	if !target_ok {
 		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
 		return Eval_Value{}, false
 	}
 	payload := eval_union_payload(value)
-	into := target.info.variants[target.failure]
+	into := target.failure_type
 	if into != TYPE_VOID {
 		payload = copy_value(ev, payload) or_return
-		if from := shape.info.variants[shape.failure]; union_widens_to(ev.k.c, from, into) {
+		if from := shape.failure_type; union_widens_to(ev.k.c, from, into) {
 			payload = widen_eval_value(ev.k.c, payload, from, into)
 		}
 		payload.type = into
@@ -1941,7 +1941,7 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (out: Eval_Value, su
 // otherwise the payload.
 @(private = "file")
 eval_success_payload :: proc(ev: ^Evaluator, value: Eval_Value, shape: Fallible) -> (Eval_Value, bool) {
-	if shape.info.variants[shape.success] == TYPE_VOID {
+	if shape.success_type == TYPE_VOID {
 		return zero_value(ev, ev.k.c.unit_type)
 	}
 	return eval_union_payload(value), true
@@ -2726,7 +2726,7 @@ run_defers :: proc(ev: ^Evaluator, frame: ^Eval_Frame, mark: int, flow: Eval_Flo
 	result := flow
 	failing := false
 	if flow == .Return && frame.result_type != INVALID_TYPE {
-		if shape, fallible := fallible_of(ev.k, frame.result_type); fallible {
+		if shape, fallible := fallible_of(ev.k.c, frame.result_type); fallible {
 			failing = frame.result.variant == shape.failure
 		}
 	}

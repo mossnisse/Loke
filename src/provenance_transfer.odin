@@ -123,7 +123,7 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 		}, graph.alloc)}
 	case ^Expr_Or_Else:
 		parts := make([dynamic]Prov_Component, graph.alloc)
-		if shape, ok := fallible_of(graph.k, expr_base(v.value).type); ok {
+		if shape, ok := fallible_of(graph.k.c, expr_base(v.value).type); ok {
 			append(&parts, prov_component(graph, prov_input_value(graph, v.value), {proj_field(shape.success)}))
 		}
 		if v.fallback != nil { append(&parts, prov_component(graph, prov_input_value(graph, v.fallback))) }
@@ -131,7 +131,7 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 	case ^Expr_Postfix:
 		if v.op == .Or_Return {
 			path: []Proj_Step
-			if shape, ok := fallible_of(graph.k, expr_base(v.operand).type); ok { path = prov_extend(graph, nil, proj_field(shape.success)) }
+			if shape, ok := fallible_of(graph.k.c, expr_base(v.operand).type); ok { path = prov_extend(graph, nil, proj_field(shape.success)) }
 			return Prov_Transfer_Forward{prov_component(graph, prov_input_value(graph, v.operand), path)}
 		}
 	case ^Expr_Unary:
@@ -185,7 +185,7 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 		case Call_Box_Unbox:
 			return Prov_Transfer_Forward{prov_component(graph, prov_input_value(graph, v.bound[0]), {proj_wild()}, mode = .Move, type = value.type)}
 		case Call_Union_As:
-			shape, _ := fallible_of(graph.k, value.type)
+			shape, _ := fallible_of(graph.k.c, value.type)
 			payload := union_variant_payload(c, expr_base(v.bound[0]).type, operation.index)
 			return Prov_Transfer_Forward{prov_component(graph, prov_input_value(graph, v.bound[0]), {proj_field(operation.index)}, {proj_field(shape.success)},
 			                            mode = .Clone, type = payload, allocator = allocator, uncertain_copy = true)}
@@ -198,7 +198,7 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 		case Call_Allocation:
 			prefix: []Proj_Step
 			if operation.fallible {
-				shape, _ := fallible_of(graph.k, value.type)
+				shape, _ := fallible_of(graph.k.c, value.type)
 				prefix = prov_extend(graph, nil, proj_field(shape.success))
 			}
 			backing := Prov_Backing{path = prefix}
@@ -231,7 +231,7 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 		if sym := symbol_of(c, call_contract_declaration(c, v)); sym != nil && (sym.synth == .Clone || sym.synth == .Try_Clone) {
 			prefix: []Proj_Step
 			if sym.synth == .Try_Clone {
-				shape, _ := fallible_of(graph.k, value.type)
+				shape, _ := fallible_of(graph.k.c, value.type)
 				prefix = prov_extend(graph, nil, proj_field(shape.success))
 			}
 			return Prov_Transfer_Forward{prov_component(graph, prov_input_value(graph, v.bound[0]), nil, prefix, mode = .Clone, type = sym.owner_type,

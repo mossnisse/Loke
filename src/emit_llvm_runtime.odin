@@ -519,7 +519,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 	case .Union:
 		for variant, index in shape.variants {
 			// A payloadless variant reports `Unit`.
-			payload := variant == TYPE_VOID ? e.c.unit_type : variant
+			payload := payload_value_type(e.c, variant)
 			name := identifier_text(e.c, shape.variant_names[index])
 			append(&entries, member_constant(e, member, .Union_Variant, name, payload, fmt.aprintf("%d", index)))
 		}
