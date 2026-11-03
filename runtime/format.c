@@ -250,16 +250,33 @@ static int spell_general(char *out, const char *sci) {
 	return used;
 }
 
-static int reads_back(const char *sci, double value, int single, _locale_t locale) {
+/* `x` rounded to `f16`, ties to even, as arithmetic on the scaled value: the
+ * Win64 C ABI has no `f16` (design.md "Foreign-ABI-safe types"). Past `f16`'s
+ * range it gives a value no `f16` equals, which is all `reads_back` asks. */
+static double nearest_f16(double x) {
+	int exponent;
+	frexp(x, &exponent);
+	int unit = exponent - 11 < -24 ? -24 : exponent - 11;
+	return ldexp(nearbyint(ldexp(x, -unit)), unit);
+}
+
+static int reads_back(const char *sci, double value, int bits, _locale_t locale) {
 	double back = _strtod_l(sci, 0, locale);
-	return single ? (float)back == (float)value : back == value;
+	switch (bits) {
+	case 16:
+		return nearest_f16(back) == value;
+	case 32:
+		return (float)back == (float)value;
+	default:
+		return back == value;
+	}
 }
 
 /* The shortest spelling that reads back as the same value. `%.17g` alone always
  * round-trips a double but spells 0.1 as 0.10000000000000001, so the precisions
- * are tried in order and the first that survives `strtod` is kept. `single`
- * compares at `float` precision, where 9 digits always suffice: a widened `f32`
- * would otherwise print its binary noise, 0.10000000149011612.
+ * are tried in order and the first that survives `strtod` is kept. `bits`
+ * compares at that width, where 5 digits suffice for `f16` and 9 for `f32`: a
+ * widened `f32` would otherwise print its binary noise, 0.10000000149011612.
  *
  * At each precision the spelling one up is tried after the nearest one. At a
  * power of two the gap below the value is half the gap above it, so the nearest
@@ -271,7 +288,7 @@ static int reads_back(const char *sci, double value, int single, _locale_t local
  *
  * ponytail: up to 17 `snprintf`/`strtod` pairs per value rather than Ryu or
  * Grisu. Formatting is not a hot path; swap in one of those if it becomes one. */
-static int64_t spell_float(uint8_t *out, double value, int single, _locale_t locale) {
+static int64_t spell_float(uint8_t *out, double value, int bits, _locale_t locale) {
 	if (isnan(value)) {
 		memcpy(out, "nan", 3);
 		return 3;
@@ -287,25 +304,25 @@ static int64_t spell_float(uint8_t *out, double value, int single, _locale_t loc
 	/* The longest spelling, `-2.2250738585072014e-308`, is 24 bytes; the
 	 * longest fixed one, `-0.00012345678901234567`, is 23. */
 	char sci[32];
-	int widest = single ? 9 : 17;
+	int widest = bits == 16 ? 5 : bits == 32 ? 9 : 17;
 	for (int precision = 1;; precision++) {
 		_snprintf_s_l(sci, sizeof(sci), _TRUNCATE, "%.*e", locale, precision - 1, value);
-		if (precision == widest || reads_back(sci, value, single, locale)) {
+		if (precision == widest || reads_back(sci, value, bits, locale)) {
 			break;
 		}
 		spell_up(sci);
-		if (reads_back(sci, value, single, locale)) {
+		if (reads_back(sci, value, bits, locale)) {
 			break;
 		}
 	}
 	return spell_general((char *)out, sci);
 }
 
-static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
+static void fmt_float(const loke_rt_writer_v1 *w, double value, int bits) {
 	/* NaN and the infinities need no locale, so printing them cannot panic. */
 	_locale_t locale = isnan(value) || isinf(value) ? 0 : c_numeric();
 	uint8_t out[LOKE_RT_FLOAT_SPELLING_MAX];
-	int64_t used = spell_float(out, value, single, locale);
+	int64_t used = spell_float(out, value, bits, locale);
 	loke_rt_v1_fmt_bytes(w, out, used);
 }
 
@@ -321,15 +338,19 @@ int64_t loke_rt_v1_try_spell_f64(uint8_t *out, double value) {
 			return -(int64_t)failure;
 		}
 	}
-	return spell_float(out, value, 0, locale);
+	return spell_float(out, value, 64, locale);
 }
 
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value) {
-	fmt_float(w, value, 0);
+	fmt_float(w, value, 64);
 }
 
 void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value) {
-	fmt_float(w, value, 1);
+	fmt_float(w, value, 32);
+}
+
+void loke_rt_v1_fmt_f16(const loke_rt_writer_v1 *w, float value) {
+	fmt_float(w, value, 16);
 }
 
 /* `fmt.fixed`: `value` with exactly `digits` fractional digits, rounded as the
@@ -338,7 +359,7 @@ void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value) {
  * double, the point, and 40 digits. NaN and the infinities print as any float. */
 void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digits) {
 	if (isnan(value) || isinf(value)) {
-		fmt_float(w, value, 0);
+		fmt_float(w, value, 64);
 		return;
 	}
 	digits = digits < 0 ? 0 : digits > 40 ? 40 : digits;

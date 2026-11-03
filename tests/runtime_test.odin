@@ -19,9 +19,6 @@ RUNTIME_RECORDS :: [][2]string {
 	{"%loke.container_ops", "loke_rt_container_ops_v1"},
 }
 
-@(private = "file")
-DEFAULT_ALLOCATOR :: "@loke_rt_v1_default_allocator"
-
 // runtime/loke_rt.h declares each `loke_rt_v1_` function and record; the
 // emitter writes its own `declare` (or, for a function the runtime calls back,
 // `define`) of each, and names the records by their LLVM types. Linking checks
@@ -94,8 +91,6 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 			triple = strings.trim(body, "\"")
 		case strings.has_prefix(name, "%loke.") && strings.has_prefix(body, "type "):
 			compiler_types[name] = body[len("type "):]
-		case name == DEFAULT_ALLOCATOR:
-			_, _, compiler_types[name] = strings.partition(body, " global ")
 		}
 	}
 
@@ -121,7 +116,6 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 	for name in unheaded {
 		delete_key(&compiler_signatures, name)
 	}
-	fmt.sbprintfln(&unit, "\t(void *)&%s,", DEFAULT_ALLOCATOR[1:])
 	strings.write_string(&unit, "};\n")
 	for record, index in RUNTIME_RECORDS {
 		fmt.sbprintfln(&unit, "%s loke_abi_record_%d;", record[1], index)
@@ -143,7 +137,6 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 
 	header_signatures := make(map[string]string, context.temp_allocator)
 	structs := make(map[string]string, context.temp_allocator)
-	allocator_type := ""
 	for line in strings.split_lines(string(lowered), context.temp_allocator) {
 		if function, signature, ok := runtime_signature(line, "declare "); ok {
 			header_signatures[function] = signature
@@ -153,9 +146,6 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 		switch {
 		case strings.has_prefix(name, "%struct.") && strings.has_prefix(body, "type "):
 			structs[name] = body[len("type "):]
-		case name == DEFAULT_ALLOCATOR:
-			_, _, global := strings.partition(body, " global ")
-			allocator_type, _, _ = strings.partition(global, ",")
 		}
 	}
 
@@ -168,12 +158,6 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 			)
 		}
 	}
-	allocator_record := flatten_struct(structs, allocator_type)
-	testing.expectf(
-		t, compiler_types[DEFAULT_ALLOCATOR] == allocator_record,
-		"`%s`: the compiler says `%s`, the header lowers to `%s`",
-		DEFAULT_ALLOCATOR, compiler_types[DEFAULT_ALLOCATOR], allocator_record,
-	)
 	for record in RUNTIME_RECORDS {
 		c_type := flatten_struct(structs, fmt.tprintf("%%struct.%s", record[1]))
 		testing.expectf(

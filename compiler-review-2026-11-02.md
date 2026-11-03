@@ -314,7 +314,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
 - Transfer wording and type reach: [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belongs beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
-- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Formatting in [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541) onward. Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
+- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 - Seams in the largest file: `cfg_provenance.odin` still splits at the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)).
 
 ### Looked at and left alone
@@ -1274,72 +1274,11 @@ Comments are mostly tight and the range arithmetic checks out, but protocol-loop
 
 ### src/emit_llvm_runtime.odin
 
-Correct on the paths exercised, with two low-severity printing divergences. It holds five subsystems in one file, and its main costs are repeated IR-building shapes, a map-per-record metadata builder the checker has made unnecessary, and defensive branches the emission contract already rules out.
-
-**Bugs**
-
-- `BUG-emit_llvm_runtime-1` **low** [emit_llvm_runtime.odin:893](src/emit_llvm_runtime.odin#L893) `emit_format_enum`: an unnamed value always goes through `widen_to_i64` and `fmt_i64`, ignoring signedness and 128-bit backing, unlike the `.Int` case at line 718. *Not verified.*
-  Scenario: an unsafe-built `enum u64` value `0xFFFFFFFFFFFFFFFF` prints `-1`, and an `enum i128` value prints its low word (`trunc i128` seen in `-emit-ll`), against standard-library.md "Printed forms"; such a value is already an invalid representation.
-  Fix: extract lines 715-732 as `emit_format_integer(e, under, value)` and call it from both.
-- `BUG-emit_llvm_runtime-2` **low** [emit_llvm_runtime.odin:751](src/emit_llvm_runtime.odin#L751) `emit_format_body`: `f16` prints through `fmt_f32`, a divergence recorded only in a `ponytail:` source comment, not in `known-gaps.md`. *Not verified.*
-  Scenario: `fmt.println(f16(0.1))` prints `0.099975586`, where standard-library.md "Printed forms" requires the shortest decimal that reads back, `0.1`.
-  Fix: add a runtime `fmt_f16` entry, or record the gap with this reproduction and cut the comment.
-
-**Simplification**
-
-- [emit_llvm_runtime.odin:179](src/emit_llvm_runtime.odin#L179) `slice_constant` (also lines 452, 492, 576, 588): these concatenate because of `{`, yet line 79 already escapes it. Use `fmt.aprintf("{{ ptr %s, i64 %d }}", name, count)` and `sbprintfln` with `{{`, and delete the comments at 179 and 451. (about 8 lines)
-- [emit_llvm_runtime.odin:1364](src/emit_llvm_runtime.odin#L1364) `typeid_index`: the `zero` test is redundant because `select` already maps 0 to 0. Typeids are frozen before emission (`validate_emission_dependencies`), so take `len(e.c.typeid_order)` as an immediate and drop `TYPE_NAME_COUNT`, `TYPE_INFO_COUNT` and their globals (575, 1157). (about 12 lines)
-- [emit_llvm_runtime.odin:584](src/emit_llvm_runtime.odin#L584) `emit_format_thunks`: the name-table entry repeats `text_constant`, including the zero case for an empty name; call `text_constant(e, Const_Value{kind = .String, text = name}, false)`. (about 7 lines)
-- [emit_llvm_runtime.odin:558](src/emit_llvm_runtime.odin#L558) `emit_format_thunks`: merge the `typeid_order` loops at 558 and 567 into one that sets `names[id]` and emits the thunk when printable. (about 5 lines)
-- [emit_llvm_runtime.odin:1134](src/emit_llvm_runtime.odin#L1134) `emit_type_info_tables`: drop the `entries[0]` assignment and the fill loop at 1142; write `entry == "" ? "zeroinitializer" : entry` in the print loop at 1154. (about 5 lines)
-- [emit_llvm_runtime.odin:1067](src/emit_llvm_runtime.odin#L1067) `emit_fmt_builtin`: the call site passes only the three handled kinds ([emit_llvm_calls.odin:164](src/emit_llvm_calls.odin#L164)), so the trailing `return "0"` can go; move `writer_type` into its case and use `insert` as `emit_dyn_value` does. (about 5 lines)
-- [emit_llvm_runtime.odin:850](src/emit_llvm_runtime.odin#L850) `emit_format_type_name`: `data, length := load_pair(e, STRING_VIEW_TYPE, view, VIEW_DATA, VIEW_LEN)` replaces three lines and the misnamed `stride`. (about 3 lines)
-- [emit_llvm_runtime.odin:443](src/emit_llvm_runtime.odin#L443) `emit_formatted_panic`: `types` parallels `addresses` and is `expr_base(arg).type` of the same `v.bound[message_index + 1:]`; keep one array and read the other from `v.bound`. (about 3 lines)
-- [emit_llvm_runtime.odin:412](src/emit_llvm_runtime.odin#L412) `panic_message_text`: `check_message_arg` already rejects a non-constant message ([check_builtin.odin:1299](src/check_builtin.odin#L1299)), so return `expr_base(v.bound[index]).const_value.text` once the argument is present. (about 2 lines)
-- [emit_llvm_runtime.odin:728](src/emit_llvm_runtime.odin#L728) `emit_format_body`: use a `signed ? ... : ...` callee as line 723 does instead of two `sbprintfln` branches. (about 3 lines)
-
-**Dead code**
-
-- `RT_DEFAULT_ALLOCATOR` ([emit_llvm_runtime.odin:23](src/emit_llvm_runtime.odin#L23)): no emitted IR references this global; `-emit-ll` shows only its declaration from line 36. It exists only for the ABI check at [runtime_test.odin:97](tests/runtime_test.odin#L97), so removal must move that record check.
-- `RT_ALLOCATOR_RECORD` ([emit_llvm_runtime.odin:32](src/emit_llvm_runtime.odin#L32)): used only by that declaration, and the record shape appears nowhere else in `src/`; the same test-only status.
-- (branch) [emit_llvm_runtime.odin:1092](src/emit_llvm_runtime.odin#L1092): `emit_format_witness_call`'s `data`, `writer` and `options` are always `%data`, `%w` and `%o` from its one caller at line 606; fold it into `emit_one_format_thunk`.
-- (branch) [emit_llvm_runtime.odin:560](src/emit_llvm_runtime.odin#L560): `id != 0 && int(id) <= count`, here and at 569 and 1137, holds for every `typeid_order` entry by `validate_typeids`.
-- (branch) [emit_llvm_runtime.odin:1178](src/emit_llvm_runtime.odin#L1178): the five `shape == nil ?` tests at 1178-1182 and the check at 1227 cannot fire, since the contract requires `type_of` to be non-nil for each requested type.
-- (branch) [emit_llvm_runtime.odin:1626](src/emit_llvm_runtime.odin#L1626): `target == nil` in `emit_witness_thunk` is excluded by `validate_witnesses` in `emission_contract.odin`; were it reachable, line 1611 would name a thunk never defined.
-- (branch) [emit_llvm_runtime.odin:1320](src/emit_llvm_runtime.odin#L1320): both words are masked to 64 bits just above, as its own comment admits, so `bi_to_u64` cannot report failure.
-- (branch) [emit_llvm_runtime.odin:1503](src/emit_llvm_runtime.odin#L1503): the default case is unreachable; `emit_synth_procs` dispatches only the three handled kinds at line 1393.
-- (branch) [emit_llvm_runtime.odin:1464](src/emit_llvm_runtime.odin#L1464): `e.terminated = false` here and at 1631 repeats `begin_function_emission`'s `e.fn = {}`, since `terminated` lives in `Function_State` ([emit_llvm.odin:176](src/emit_llvm.odin#L176)).
-
-**Data structures and algorithms**
-
-- [emit_llvm_runtime.odin:1163](src/emit_llvm_runtime.odin#L1163) `type_info_entry`, `type_info_members`, `named_field_constant`: each record builds a `map[string]string` by field name "so the layout stays authoritative", but `runtime_layout_matches` ([check_builtin.odin:1562](src/check_builtin.odin#L1562)) already pins names, order and types. Pass a positional `[]string` with `""` as zero, and each `make`/`defer delete`/assign block in lines 1238-1289 becomes one call. (about 30 lines)
+What remains is the cursor loop shared with three other files; `emit_format_sequence` is now in `emit_llvm_format.odin`.
 
 **Near copies**
 
-- [emit_llvm_runtime.odin:124](src/emit_llvm_runtime.odin#L124) and [emit_llvm_runtime.odin:381](src/emit_llvm_runtime.odin#L381): `text_literal_global` and `message_global` emit the same global, differing only in map and name prefix. Use the former everywhere and delete `e.messages` ([emit_llvm.odin:56](src/emit_llvm.odin#L56)); no test names `@.msg.`. (about 12 lines)
-- [emit_llvm_runtime.odin:450](src/emit_llvm_runtime.odin#L450) and [emit_llvm_runtime.odin:491](src/emit_llvm_runtime.odin#L491): the same stderr writer `alloca` and `store`; share `emit_stderr_writer(e) -> string`. (about 5 lines)
-- [emit_llvm_runtime.odin:458](src/emit_llvm_runtime.odin#L458) and [emit_llvm_runtime.odin:618](src/emit_llvm_runtime.odin#L618), also lines 496, 508 and 632: `fmt_bytes` of a literal, three with a hand-counted length (1, 7, 1); give `emit_format_literal` a `writer` parameter. (about 6 lines)
-- [emit_llvm_runtime.odin:651](src/emit_llvm_runtime.odin#L651) and [emit_llvm_runtime.odin:771](src/emit_llvm_runtime.odin#L771): the string and `cstring_view` arms differ only in `fmt_quoted` against `fmt_bytes`; share `emit_format_text(e, under, address, callee)`. (about 7 lines)
-- [emit_llvm_runtime.odin:911](src/emit_llvm_runtime.odin#L911) and [emit_llvm_runtime.odin:955](src/emit_llvm_runtime.odin#L955): the same "first element, else `, `" blocks; share `emit_format_separator(e, index)`. (about 7 lines)
 - [emit_llvm_runtime.odin:902](src/emit_llvm_runtime.odin#L902), [emit_llvm_calls.odin:477](src/emit_llvm_calls.odin#L477), [emit_llvm_expr.odin:1886](src/emit_llvm_expr.odin#L1886) and [emit_llvm_cleanup.odin:1532](src/emit_llvm_cleanup.odin#L1532): the same cursor loop (zero, head, compare, body, add, store, branch); `open_counted_loop`/`close_counted_loop` would serve all four, with the label prefix as a parameter. (about 10 lines per site)
-- [emit_llvm_runtime.odin:239](src/emit_llvm_runtime.odin#L239) and [emit_llvm_runtime.odin:353](src/emit_llvm_runtime.odin#L353): `emit_static_locals` and `emit_global` both pick an initial value and print the same definition; share `emit_var_global(e, name, sym, decl, position)` and find the position with `slice.linear_search`. (about 8 lines)
-- [emit_llvm_runtime.odin:1149](src/emit_llvm_runtime.odin#L1149), [emit_llvm_runtime.odin:1297](src/emit_llvm_runtime.odin#L1297), [emit_llvm_runtime.odin:579](src/emit_llvm_runtime.odin#L579) and [emit_llvm.odin:855](src/emit_llvm.odin#L855): a private constant array written element by element to `e.globals`; share `append_constant_array(e, name, element, entries)`. (about 15 lines)
-- [emit_llvm_runtime.odin:1634](src/emit_llvm_runtime.odin#L1634), [emit_llvm_runtime.odin:1662](src/emit_llvm_runtime.odin#L1662) and [emit_llvm_runtime.odin:1686](src/emit_llvm_runtime.odin#L1686): the same forwarding header, differing in linkage and receiver type; share `open_forwarding_function(e, linkage, name, symbol, signature, receiver_type)`. (about 10 lines)
-- [emit_llvm_runtime.odin:1523](src/emit_llvm_runtime.odin#L1523) and [emit_llvm_runtime.odin:1538](src/emit_llvm_runtime.odin#L1538), also lines 1562 and 1072: the two `insert`s that build a view; share `dyn_view_value(e, storage, data, second)`. (about 5 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541): formatting (541-1111, plus `emit_formatted_panic`, `emit_entry_failure_report` and `emit_synth_format`) is a third of the file with few entry points; it belongs in its own `emit_llvm_format.odin`.
-- [emit_llvm_runtime.odin:1510](src/emit_llvm_runtime.odin#L1510): the source-code map gives "erased dispatch" to `emit_llvm_calls.odin` and witnesses to this file, yet `emit_dyn_slot_call` and the views live here. Lines 1510-1737, minus `emit_materialized_constants`, form a natural `emit_llvm_erased.odin`.
-- [emit_llvm_runtime.odin:1585](src/emit_llvm_runtime.odin#L1585): `emit_materialized_constants` sits among erased views; it belongs with the globals section at line 235.
-- [emit_llvm_runtime.odin:139](src/emit_llvm_runtime.odin#L139): `slice_literal_constant`, `slice_literal_storage` and `text_constant` are called from `emit_llvm_expr.odin` (lines 136, 177, 369), and the source-code map gives constants to that file; they belong there, with `text_constant` still visible to the metadata code.
-
-**Comments**
-
-- [emit_llvm_runtime.odin:1064](src/emit_llvm_runtime.odin#L1064): wrong; there are three kinds ([semantic.odin:556](src/semantic.odin#L556)). Use "The compiler-owned `core:fmt` entry points."
-- [emit_llvm_runtime.odin:1652](src/emit_llvm_runtime.odin#L1652): "trap on a nil witness" describes no code here, and a `dyn` has no nil value (design.md "Comparison operators"). Use "`dyn I` satisfies `I` through slots that take the view and call its thunk with the data pointer."
-- [emit_llvm_runtime.odin:237](src/emit_llvm_runtime.odin#L237): misleading; `c.static_locals` is in checking order ([lifecycle.odin:720](src/lifecycle.odin#L720)), and teardown order is sorted at line 341. Delete "in design.md's teardown order".
-- [emit_llvm_runtime.odin:1566](src/emit_llvm_runtime.odin#L1566): narrates the body; delete. The same goes for lines 1583, 1459, 530 and 442. (about 7 lines across the file)
 
 ### src/emit_llvm_simd.odin
 

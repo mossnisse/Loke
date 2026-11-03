@@ -1403,6 +1403,12 @@ checklist.
   on a local and as `&mut p^.items` does; it was a false `L0641`
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). A conflict on such a slice is
   also reported once, naming the carrier.
+- An `f16` prints its own shortest spelling, as `f32` and `f64` do: `f16(0.1)` prints `0.1`
+  rather than `0.099975586` ([Printed forms](standard-library.md#printed-forms)).
+- An enum value no member names, reached through `unsafe.transmute`, prints as its number at the
+  enum's own width and signedness: an `enum u64` holding all ones prints `18446744073709551615`
+  rather than `-1`, and an `enum i128` no longer prints only its low word
+  ([Printed forms](standard-library.md#printed-forms)).
 - A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
   site's window never closed, so a write after its join was a false `L0731`
   ([Globals while tasks run](design.md#globals-while-tasks-run)).

@@ -526,6 +526,76 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 	return transmute(u64)f64(transmute(f32)pattern)
 }
 
+// The global backing array of a file-scope slice literal. Never shared: a
+// write through one `[]mut T` literal must not show up in another.
+@(private)
+slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
+	count := len(value.aggregate.elements)
+	if count == 0 {
+		return "zeroinitializer"
+	}
+	return slice_constant(slice_literal_storage(e, value, info), count)
+}
+
+// The global backing array of a slice literal with at least one element.
+@(private)
+slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
+	count := len(value.aggregate.elements)
+	imaged := false
+	for slot in value.aggregate.elements {
+		imaged ||= const_needs_image(e, slot, info.element)
+	}
+	contents, align := "", ""
+	if imaged {
+		image_type, image := const_image(e, value.aggregate.elements, info.element)
+		contents = fmt.aprintf("%s %s", image_type, image)
+		align = fmt.aprintf(", align %d", type_align(e.c, info.element))
+	} else {
+		element := llvm_type(e, info.element)
+		b := strings.builder_make()
+		fmt.sbprintf(&b, "[%d x %s] [", count, element)
+		for slot, index in value.aggregate.elements {
+			fmt.sbprintf(&b, "%s %s %s", index > 0 ? "," : "", element, llvm_const(e, slot, info.element))
+		}
+		strings.write_string(&b, " ]")
+		contents = strings.to_string(b)
+	}
+	name := fmt.aprintf("@.slice.%d", len(e.globals))
+	append(&e.globals, fmt.aprintf(
+		"%s = private %s %s%s\n",
+		name, info.mutable ? "global" : "unnamed_addr constant", contents, align,
+	))
+	return name
+}
+
+@(private)
+slice_constant :: proc(name: string, count: int) -> string {
+	return fmt.aprintf("{{ ptr %s, i64 %d }}", name, count)
+}
+
+// A literal `string` or `string_view`: static owner flags, no allocation.
+@(private)
+text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
+	if value.kind != .String || value.text == "" {
+		return "zeroinitializer"
+	}
+	b := strings.builder_make()
+	strings.write_string(&b, "{ ptr ")
+	strings.write_string(&b, text_literal_global(e, value.text))
+	fmt.sbprintf(&b, ", i64 %d", len(value.text))
+	if owning {
+		fmt.sbprintf(&b, ", i64 %d", STRING_STATIC)
+	}
+	strings.write_string(&b, " }")
+	return strings.to_string(b)
+}
+
+// `text` as a literal `string_view`.
+@(private)
+text_view_constant :: proc(e: ^Emitter, text: string) -> string {
+	return text_constant(e, Const_Value{kind = .String, text = text}, false)
+}
+
 // ------------------------------------------------------------------ places --
 
 // A load from a written place, which may be under-aligned through a packed

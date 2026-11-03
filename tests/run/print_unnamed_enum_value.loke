@@ -1,0 +1,29 @@
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+// standard-library.md "Printed forms": a value no member names prints as its
+// number, at the enum's own width and signedness.
+
+Wide :: enum u64 { Named = 1 }
+Huge :: enum i128 { Named = 1 }
+Vast :: enum u128 { Named = 1 }
+Small :: enum i8 { Named = 1 }
+Tiny :: enum u8 { Named = 1 }
+
+main :: proc() {
+	wide := u64(0xFFFFFFFFFFFFFFFF);
+	high := i128(1) << 100;
+	low := -high;
+	vast := ~u128(0);
+	small := i8(-3);
+	tiny := u8(200);
+	fmt.println(unsafe.transmute(Wide, wide));
+	fmt.println(unsafe.transmute(Huge, high));
+	fmt.println(unsafe.transmute(Huge, low));
+	fmt.println(unsafe.transmute(Vast, vast));
+	fmt.println(unsafe.transmute(Small, small));
+	fmt.println(unsafe.transmute(Tiny, tiny));
+	fmt.println(Wide.Named, Huge.Named, Vast.Named, Small.Named, Tiny.Named);
+}

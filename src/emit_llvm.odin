@@ -53,7 +53,6 @@ Emitter :: struct {
 	// consuming body besides the cloning one.
 	consuming_ops: map[Symbol_Id]bool,
 	container_thunks: map[string]bool,
-	messages: map[string]string,
 	literals: map[string]string,
 	// The LLVM intrinsics a call has declared, by name.
 	simd_intrinsics: map[string]bool,
@@ -85,7 +84,6 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		container_move_ops = make(map[Type_Id]string),
 		consuming_ops = make(map[Symbol_Id]bool),
 		container_thunks = make(map[string]bool),
-		messages     = make(map[string]string),
 		literals     = make(map[string]string),
 		simd_intrinsics = make(map[string]bool),
 		globals      = make([dynamic]string),
@@ -883,15 +881,12 @@ emit_test_entry :: proc(e: ^Emitter) {
 	}
 	names := "null"
 	if len(e.c.tests) > 0 {
-		b := strings.builder_make()
-		fmt.sbprintf(&b, "@loke.tests = private unnamed_addr constant [%d x ptr] [", len(e.c.tests))
+		entries := make([]string, len(e.c.tests))
 		for test, index in e.c.tests {
-			text := identifier_text(e.c, symbol_of(e.c, test).name)
-			fmt.sbprintf(&b, "%sptr %s", index == 0 ? "" : ", ", text_literal_global(e, text))
+			entries[index] = text_literal_global(e, identifier_text(e.c, symbol_of(e.c, test).name))
 		}
-		strings.write_string(&b, "]\n")
-		append(&e.globals, strings.to_string(b))
 		names = "@loke.tests"
+		append_constant_array(e, names, "ptr", entries)
 	}
 
 	function := begin_function_emission(e)

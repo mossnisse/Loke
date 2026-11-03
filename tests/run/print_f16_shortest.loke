@@ -1,0 +1,26 @@
+package main;
+
+import "core:fmt";
+
+// standard-library.md "Printed forms": a float prints the shortest decimal that
+// reads back as the same value at its own width.
+
+Holder :: struct { @(public) x: f16 }
+
+// The spellings below that look wrong read back as the value written beside them.
+static_assert(f16(65500.0) == f16(65504.0));
+static_assert(f16(32770.0) == f16(32768.0));
+static_assert(f16(6.104e-5) == f16(0.00006103515625));
+static_assert(f16(6e-8) == f16(0.000000059604644775390625));
+
+main :: proc() {
+	fmt.println(f16(0.1), f16(0.2), f16(-0.1), f16(1.5), f16(3.14));
+	// The largest finite value, and a power of two.
+	fmt.println(f16(65504.0), f16(32768.0));
+	// The least normal and the least subnormal.
+	fmt.println(f16(0.00006103515625), f16(0.000000059604644775390625));
+	zero, one: f16 = 0.0, 1.0;
+	fmt.println(zero, -zero, one / zero, -one / zero, zero / zero);
+	fmt.println([]f16{0.1, 0.2}, Holder{0.3});
+	fmt.println(f32(0.1), f64(0.1));
+}

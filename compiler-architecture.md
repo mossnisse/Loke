@@ -938,7 +938,8 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's floating-point guard and `-debug`'s check after a foreign call. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
 | `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |
-| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
+| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, and allocation built-ins. |
+| `emit_llvm_erased.odin` | Erased views: `dyn` values and slot calls, witness tables and their thunks, and the forwarding bodies of `dyn I` and `dyn proc`. |
 | `emit_llvm_math.odin` | The `core:math` bit and floating-point instruction built-ins. |
 | `emit_llvm_cleanup.odin` | Cleanup registration: scopes, full-expression frames, and held values. |
 | `emit_llvm_unwind.odin` | Panic replay: a procedure's registration state and its generated thunk. |
@@ -947,7 +948,8 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |
-| `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
+| `emit_llvm_runtime.odin` | Runtime declarations, static-storage globals, runtime failures, reflection metadata, and the dispatch of compiler-contributed procedures. |
+| `emit_llvm_format.odin` | Printing: format thunks and bodies, the `core:fmt` sink and entry points, and the reports of formatted panics and failed entries. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
 | `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
