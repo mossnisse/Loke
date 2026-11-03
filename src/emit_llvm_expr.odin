@@ -806,6 +806,15 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	}
 	#partial switch v in expr {
 	case ^Expr_Ident:
+		// A default argument selecting from a parameter to its left.
+		if bound, ok := e.param_values[v.symbol]; ok {
+			if bound.by_address {
+				return bound.operand
+			}
+			slot := temporary_slot(e, as_type)
+			store(e, as_type, bound.operand, slot)
+			return slot
+		}
 		if name, ok := e.names[v.symbol]; ok {
 			return name
 		}
@@ -1264,8 +1273,9 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return const_operand(e, v.const_value, as_type)
 
 	case ^Expr_Ident:
-		if name, ok := e.param_values[v.symbol]; ok {
-			return name // a default argument reading a parameter to its left
+		// A default argument reading a parameter to its left.
+		if bound, ok := e.param_values[v.symbol]; ok {
+			return bound.by_address ? load_place(e, as_type, bound.operand) : bound.operand
 		}
 		symbol := symbol_of(e.c, v.symbol)
 		if symbol != nil && symbol.kind == .Proc {
@@ -1286,8 +1296,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 
 	case ^Expr_Postfix:
 		if v.op == .Or_Return {
-			results := emit_producer_value(e, expr, as_type)
-			return len(results) == 0 ? "0" : results[0]
+			return emit_or_return(e, v)
 		}
 		return load_place(e, as_type, emit_address_at(e, expr, as_type))
 
@@ -1338,7 +1347,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return load_place(e, as_type, result)
 
 	case ^Expr_Or_Else:
-		return emit_producer_value(e, expr, as_type)[0]
+		return emit_or_else(e, v)
 
 	case ^Expr_Composite:
 		if v.backing != INVALID_TYPE {
@@ -2206,6 +2215,171 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 }
 
 @(private)
+emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
+	info := type_of(e.c, type_underlying(e.c, union_type))
+	return emit_union_tag_is(e, union_type, value, info.failure_variant)
+}
+
+@(private = "file")
+emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id) -> string {
+	if from == into {
+		return value
+	}
+	if underlying_kind(e.c, from) == .String && underlying_kind(e.c, into) == .String_View {
+		data := extract(e, STRING_TYPE, value, STRING_DATA)
+		length := extract(e, STRING_TYPE, value, STRING_LEN)
+		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+	}
+	// design.md "Widening by label": a smaller error set propagates into a
+	// larger one.
+	if union_widens_to(e.c, from, into) {
+		return emit_union_widen(e, value, from, into)
+	}
+	// Carrier weakening, procedure escape weakening, checked/C-pointer
+	// interchange, and pointer-to-rawptr all share one backend representation.
+	return value
+}
+
+// A failure path's exit statement, whose temporaries are made only on this path.
+@(private = "file")
+emit_conditional_exit :: proc(e: ^Emitter, exit: Stmt) {
+	begin_conditional(e)
+	emit_stmt(e, exit)
+	end_conditional(e)
+	if !e.terminated {
+		fmt.sbprintln(&e.b, "  unreachable")
+		e.terminated = true
+	}
+}
+
+// The fallback is evaluated only for the failure variant.
+@(private = "file")
+emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
+	operand_type := type_underlying(e.c, expr_base(v.value).type)
+	info := type_of(e.c, operand_type)
+	success := 1 - info.failure_variant
+	payload_type := info.variants[success]
+	// A success that carries nothing yields `Unit`.
+	unit := payload_type == TYPE_VOID
+	if unit {
+		payload_type = e.c.unit_type
+	}
+
+	value := emit_expr(e, v.value)
+	slot := emit_union_spill(e, operand_type, value)
+	failed := emit_union_failed(e, operand_type, value)
+	joined := temporary_slot(e, payload_type)
+	success_label := new_label(e, "orelse.success")
+	fallback_label := new_label(e, "orelse.fallback")
+	done := new_label(e, "orelse.done")
+	branch_if(e, failed, fallback_label, success_label)
+
+	place_label(e, success_label)
+	taken := "zeroinitializer"
+	if !unit {
+		taken = emit_union_payload(e, operand_type, payload_type, slot)
+	}
+	if v.borrows && emit_lifecycle(e, payload_type).managed {
+		taken = emit_clone_value(e, payload_type, taken)
+	}
+	store(e, payload_type, taken, joined)
+	branch(e, done)
+
+	place_label(e, fallback_label)
+	// design.md: `or_else` never copies the error, so a managed failure payload of
+	// a *temporary* is dropped here, before the fallback runs, since the operand's
+	// value is discarded on this path. A place still owns its own.
+	if failure_type := info.variants[info.failure_variant];
+	   !v.borrows && emit_lifecycle(e, failure_type).managed {
+		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+	}
+	// design.md "or_else expression": an exit leaves here, and only the success
+	// arm reaches the rest of the expression.
+	if v.exit != nil {
+		emit_conditional_exit(e, v.exit)
+	} else {
+		begin_conditional(e)
+		fallback := emit_copied_expr(e, v.fallback, payload_type, v.fallback_clone)
+		end_conditional(e)
+		store(e, payload_type, fallback, joined)
+		branch(e, done)
+	}
+
+	place_label(e, done)
+	return load_temporary(e, payload_type, joined)
+}
+
+// Rewraps a failure and exits through the ordinary epilogue.
+@(private = "file")
+emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
+	operand_type := type_underlying(e.c, expr_base(v.operand).type)
+	info := type_of(e.c, operand_type)
+	success := 1 - info.failure_variant
+	operand_address := ""
+	value := ""
+	if v.borrows {
+		// A place is evaluated once and retained as an address.
+		operand_address = emit_address(e, v.operand)
+		value = load_place(e, operand_type, operand_address)
+	} else {
+		value = emit_expr(e, v.operand)
+	}
+	slot := emit_union_spill(e, operand_type, value)
+	failed := emit_union_failed(e, operand_type, value)
+
+	fail_label := new_label(e, "orreturn.fail")
+	ok_label := new_label(e, "orreturn.ok")
+	branch_if(e, failed, fail_label, ok_label)
+
+	place_label(e, fail_label)
+	if v.failure_exit != nil {
+		// design.md "or_return operator": the failure operand runs only here. A
+		// mapper takes the error, copied out of a place; a replacement leaves a
+		// place's error where it is and drops a temporary's first, as `or_else`
+		// does.
+		failure_type := info.variants[info.failure_variant]
+		if v.failure_maps {
+			error := emit_union_payload(e, operand_type, failure_type, slot)
+			if v.borrows && emit_lifecycle(e, failure_type).managed {
+				error = emit_clone_value(e, failure_type, error)
+			}
+			// Held until the mapper takes it, so an exit or a panic while the
+			// mapper is selected still drops it.
+			e.propagated_errors[v] = {error, hold_temporary_value(e, failure_type, error)}
+		} else if !v.borrows && failure_type != TYPE_VOID && emit_lifecycle(e, failure_type).managed {
+			emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+		}
+		emit_conditional_exit(e, v.failure_exit)
+	} else {
+		target := type_underlying(e.c, e.result_type)
+		target_info := type_of(e.c, target)
+		error := ""
+		if failure_type := info.variants[info.failure_variant]; failure_type != TYPE_VOID {
+			error = emit_union_payload(e, operand_type, failure_type, slot)
+			failure_into := target_info.variants[target_info.failure_variant]
+			if v.borrows && emit_lifecycle(e, failure_type).managed &&
+			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
+				error = emit_clone_value(e, failure_type, error)
+			}
+			error = emit_failure_conversion(e, error, failure_type, failure_into)
+		}
+		wrapped := emit_union_value(e, e.result_type, target_info.failure_variant, error)
+		store(e, e.result_type, wrapped, e.result_slot)
+		emit_epilogue(e)
+	}
+
+	place_label(e, ok_label)
+	if info.variants[success] == TYPE_VOID {
+		return "zeroinitializer"
+	}
+	out := emit_union_payload(e, operand_type, info.variants[success], slot)
+	if v.borrows && emit_lifecycle(e, info.variants[success]).managed {
+		out = emit_clone_value(e, info.variants[success], out)
+	}
+	return out
+}
+
+@(private)
 emit_ptr_len :: proc(e: ^Emitter, storage, data, length: string) -> string {
 	first := insert(e, storage, "undef", "ptr", data, SLICE_DATA)
 	out := insert(e, storage, first, "i64", length, SLICE_LEN)
@@ -2238,42 +2412,41 @@ emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: st
 }
 
 @(private)
-emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
-	out := make([]string, 1)
-	out[0] = "0"
+emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	out := "0"
 	switch v.operation.(Call_Text).op {
 	case .None:
 		backend_fail(e, "a text call has no operation")
 
 	case .Byte_Len:
 		_, length := emit_text_parts(e, v.bound[0])
-		out[0] = length
+		out = length
 
 	case .Rune_Count:
 		data, length := emit_text_parts(e, v.bound[0])
-		out[0] = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_rune_count(ptr %s, i64 %s)", out[0], data, length)
+		out = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_rune_count(ptr %s, i64 %s)", out, data, length)
 
 	case .Bytes:
 		// A read-only `[]u8` over the same storage.
 		data, length := emit_text_parts(e, v.bound[0])
-		out[0] = emit_slice_value(e, as_type, data, length)
+		out = emit_slice_value(e, as_type, data, length)
 
 	case .Runes:
 		// The same borrow as `bytes()`, viewed as text (design.md "String iteration").
 		data, length := emit_text_parts(e, v.bound[0])
-		out[0] = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+		out = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 
 	case .Rune_Offsets:
 		// The view holds the bytes; the cursor belongs to its iterator.
 		data, length := emit_text_parts(e, v.bound[0])
 		view := emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
-		out[0] = insert(e, llvm_type(e, as_type), "undef", STRING_VIEW_TYPE, view, VIEW_SOURCE)
+		out = insert(e, llvm_type(e, as_type), "undef", STRING_VIEW_TYPE, view, VIEW_SOURCE)
 
 	case .Copy:
 		data, length := emit_text_parts(e, v.bound[0])
 		provider := emit_default_allocator(e)
-		out[0] = emit_text_allocating_call(
+		out = emit_text_allocating_call(
 			e, "loke_rt_v1_string_clone",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, provider),
 			provider,
@@ -2286,8 +2459,8 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		data, _ := emit_text_parts(e, v.bound[0])
 		missing := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, data)
-		out[0] = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", out[0], missing, text_literal_global(e, ""), data)
+		out = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", out, missing, text_literal_global(e, ""), data)
 
 	case .To_Runes:
 		// The helper releases its partial buffer before the policy applies.
@@ -2301,7 +2474,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 			ok, slot, ops, data, length, provider,
 		)
 		emit_alloc_check(e, ok, provider)
-		out[0] = load(e, CONTAINER_TYPE, slot)
+		out = load(e, CONTAINER_TYPE, slot)
 
 	case .From_Runes:
 		data, count := emit_byte_slice_parts(e, v.bound[0])
@@ -2349,20 +2522,18 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments, provider: stri
 
 // On failure the runtime has already published the zero value into the slot.
 @(private = "file")
-emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: string) -> []string {
+emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: string) -> string {
 	slot, ok := emit_text_call_slot(e, callee, arguments)
 	value, valid := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, STRING_TYPE, slot)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", valid, ok)
-	out := make([]string, 1)
-	out[0] = emit_option_value(e, option, valid, value)
-	return out
+	return emit_option_value(e, option, valid, value)
 }
 
 // `Option(string_view)` over bytes that are borrowed, not copied: `.some` only
 // when they are valid UTF-8.
 @(private = "file")
-emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) -> []string {
+emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) -> string {
 	valid, ok := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
@@ -2370,16 +2541,14 @@ emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) ->
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
 	view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
-	out := make([]string, 1)
-	out[0] = emit_option_value(e, option, ok, view)
-	return out
+	return emit_option_value(e, option, ok, view)
 }
 
 // `strings.allocate_string(text, allocator)`: `.copy()` into the caller's
 // allocator, reporting failure instead of applying its policy. The header
 // records the allocator, so release returns the block to it.
 @(private)
-emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
+emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	data, length := emit_text_parts(e, v.bound[0])
 	allocator := emit_expr(e, v.bound[1])
 	slot, ok := emit_text_call_slot(
@@ -2388,14 +2557,12 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> [
 	copied := load(e, STRING_TYPE, slot)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
-	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, as_type, failed, copied)
-	return out
+	return emit_alloc_result(e, as_type, failed, copied)
 }
 
 // design.md "string type conversions": each validates and returns `Option(T)`.
 @(private)
-emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
+emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	switch v.operation.(Call_Text_Conversion).op {
 	case .String_From_Bytes:
 		data, length := emit_byte_slice_parts(e, v.bound[0])
@@ -2429,9 +2596,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []
 		place_label(e, done)
 		ok, kept := load(e, "i1", terminated), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept, ok, data)
-		out := make([]string, 1)
-		out[0] = emit_option_value(e, as_type, ok, kept)
-		return out
+		return emit_option_value(e, as_type, ok, kept)
 
 	case .String_From_C_View:
 		pointer := emit_expr(e, v.bound[0])
@@ -2443,9 +2608,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []
 		)
 	}
 	backend_fail(e, "an unclassified text conversion reached emission")
-	out := make([]string, 1)
-	out[0] = "zeroinitializer"
-	return out
+	return "zeroinitializer"
 }
 
 // The data pointer and length of a slice value.
@@ -2539,30 +2702,29 @@ bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // `unsafe.raw_data`, `unsafe.cstring_view` and `unsafe.string_view`; the last
 // still validates, since `string_view` promises UTF-8.
 @(private)
-emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
-	out := make([]string, 1)
-	out[0] = "null"
+emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
+	out := "null"
 	operand_kind := underlying_kind(e.c, expr_base(v.bound[0]).type)
 	#partial switch kind {
 	case .Unsafe_Raw_Data:
 		#partial switch operand_kind {
 		case .Slice:
 			data, _ := emit_byte_slice_parts(e, v.bound[0])
-			out[0] = data
+			out = data
 		case .String, .String_View:
 			data, _ := emit_text_parts(e, v.bound[0])
-			out[0] = data
+			out = data
 		case .Dynamic_Array:
 			// The current allocation's first element; nothing keeps it current.
-			out[0] = extract(e, CONTAINER_TYPE, emit_expr(e, v.bound[0]), CONTAINER_STORAGE)
+			out = extract(e, CONTAINER_TYPE, emit_expr(e, v.bound[0]), CONTAINER_STORAGE)
 		case:
 			// A pointer to a fixed array, or a `cstring_view`, is already the address.
-			out[0] = emit_expr(e, v.bound[0])
+			out = emit_expr(e, v.bound[0])
 		}
 
 	case .Unsafe_C_String_View:
-		out[0] = emit_expr(e, v.bound[0])
-		guard_null_reference(e, out[0], expr_base(v.bound[0]).type, TYPE_CSTRING_VIEW)
+		out = emit_expr(e, v.bound[0])
+		guard_null_reference(e, out, expr_base(v.bound[0]).type, TYPE_CSTRING_VIEW)
 
 	case .Unsafe_String_View:
 		// design.md "string type conversions": a negative length is a bounds

@@ -575,6 +575,14 @@ declaration. A `stack` modifier would then exist only to undo that policy.
 Programs needing a large heap allocation can use an owning value. Oversized
 stack frames can still overflow.
 
+A variadic pack mixing a spread with other operands stays on the stack for the
+same reason. Its length is a runtime value, though, so no frame size warns of it,
+and one large slice would overflow where nothing in the source suggests a large
+frame, losing buffered output with the fault. It panics past a fixed limit instead
+([Variadic parameters](design.md#variadic-parameters)). The limit is well inside
+the one-megabyte stack Windows gives a thread by default, and a lone spread, which
+passes its own slice, has none.
+
 ### A drop hook states its copy
 
 Every record receives a generated field-wise copy, which is right until a drop

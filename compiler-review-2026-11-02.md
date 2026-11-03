@@ -79,7 +79,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 ## The changes most worth making
 
-4. **Five small independent fixes.** Spill test on `@global` operands, [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516) (BUG-emit_llvm_calls-1). `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
+4. **Five small independent fixes.** `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
 
 6. **Valid unfixed arithmetic reaches clang, and `nil` operands crash.** `y: u8 = (1 if c() else 2) + 1` hits the "should not arise" arm at [check_expr.odin:3586](src/check_expr.odin#L3586); recurse as the conditional arm does. Route the nil cases ([box.odin:147](src/box.odin#L147), [check_builtin.odin:954](src/check_builtin.odin#L954) and five siblings) through one reporting helper. BUG-check_expr.part2-1, BUG-box-1, BUG-check_builtin-1. About 40 lines.
 
@@ -1156,7 +1156,6 @@ Comments here are mostly the right kind and no top-level name is dead, but sever
 **Bugs**
 
 - `BUG-check.part1-1` **medium** [check.odin:1643](src/check.odin#L1643) `check_param_defaults`: a split group's default cannot see its own receiver, since symbols install after the group's default (line 1670 likewise). Scenario: `impl T { m :: proc(self, x: int = self.n) -> int {...} }` gives L0315 unknown `self`, against grammar.md "a default may refer only to the receiver and the parameters to its left". Fix: install a split `self` first. *Confirmed: Reproduced: proc(self, x: int = self.n) and proc(self, x := self.n) give L0315 unknown `self`, against design.md "Default values". Separately, proc(self: T, x: int = self.n) passes the checker but clang rejects its IR (undefined %p0), so that form fails too.*
-- `BUG-check.part1-2` **medium** [emit_llvm_calls.odin:1391](src/emit_llvm_calls.odin#L1391) call lowering: a default that selects a field of an earlier by-value parameter misses `param_values`, so the caller names the callee's alloca. Scenario: `m :: proc(a: T, x: int = a.n)`, `m(t)` fails in clang with L0403, "use of undefined value '%p0.52'"; `x: T = a` and `self: ^T` work. Fix: the place path must read `e.param_values`. *Confirmed: m(t) with x: int = a.n fails: L0403 undefined %p0.456; caller first gives L0405. Controls x: T = a and self: ^T print 7. Severity is higher: a recursive m(T{n=99}, depth=1) silently reads the caller's a, printing 7, not 99. emit_address_at ignores param_values.*
 - `BUG-check.part1-3` **medium** [check.odin:860](src/check.odin#L860) `check_symbol_decl_in_place`: an on-demand check clears only grants, so the requester's `k.body` leaks into a global's initializer. Scenario: `LOC :: source_location();` prints `LOC.procedure` as `main` when declared after `main`, empty when before. Fix: `k.body = {}` for a top-level declaration, as [eval.odin:178](src/eval.odin#L178) does. *Confirmed: Reproduced: LOC :: source_location() prints procedure 'main' when declared after main, empty when before. check_symbol_decl_in_place keeps k.proc_literal; eval.odin:178 clears k.body. Not in the gap docs. Severity is closer to low: only this metadata field was shown wrong.*
 - `BUG-check.part1-4` **medium** [check.odin:270](src/check.odin#L270) `check_declaration_size` runs only for package items and generic instances, never for a local type (the local path is line 3329). Scenario: `main :: proc() { S :: struct { s: S } }` reports L0405 "internal backend contract violation" rather than L0364. Fix: call it after `resolve_declaration_signature` at line 3329. *Confirmed: Reproduced: body-local `S :: struct { s: S }` gives spanless L0405 from hooks.odin:62; the file-scope form gives L0364. Not recorded in known-gaps. The program is still rejected, so only the diagnostic is wrong: closer to low than medium.*
 - `BUG-check.part1-5` **medium** [check.odin:1113](src/check.odin#L1113) `resolve_anon_record`: `report_unresolved_type` has no `error_count` guard, unlike every sibling. Scenario: `x: (a: [-1]int, b: int);` gives L0384 plus L0350 "this is a compiler defect"; `(a: int, b: (c: Nope, d: int))` gives L0306 plus L0350; `(a: Box(int, int), b: int)` adds "unknown type `Box`". Fix: guard, or the helper under Near copies. *Confirmed: Reproduced: x: (a: [-1]int, b: int); gives L0384 plus L0350, the nested Nope gives L0306 plus L0350, Box(int, int) adds L0306 on Box; a bare [-1]int gives only L0384. Not recorded. Severity is low: invalid programs are rejected anyway, only the diagnostics are wrong.*
@@ -1826,7 +1825,6 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 - [emit_llvm_abi.odin:947](src/emit_llvm_abi.odin#L947) `emit_foreign_return`: `.Bool_I1` is `.Direct` with the same result, since `llvm_type(bool)` is `i1`; merge the cases, as line 1177 already does. (3 lines)
 - [emit_llvm_abi.odin:814](src/emit_llvm_abi.odin#L814) `emit_entry_guard`: the void-or-value call and return are written twice. A nested proc taking the result name holds both. (about 5 lines)
 - [emit_llvm_abi.odin:1142](src/emit_llvm_abi.odin#L1142) `emit_foreign_call`: `strings.join(args[:], ", ")` and one print replace the comma loop; `result_type` (line 1068), `fixed` and `c_vararg` (lines 1090-1091) only alias `callee_type` fields. (about 12 lines)
-- [emit_llvm_abi.odin:1065](src/emit_llvm_abi.odin#L1065) `emit_foreign_call`: returns `[]string` of zero or one element because the call family does (`emit_direct_call`, `emit_or_else` and about 12 others), though a procedure returns at most one value. Returning a `string` with "" for none would remove the `single` allocation and the `out[0]` writes across the family.
 
 **Dead code**
 
@@ -1843,13 +1841,11 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 - [emit_llvm_abi.odin:991](src/emit_llvm_abi.odin#L991) and [line 1121](src/emit_llvm_abi.odin#L1121): the same spill and reload through `iN`; lines 998, 1112 and 1128 are the same spill to a pointer. A `foreign_value_operand(e, type, operand)` serves the promotion's aggregate case and the fixed-argument switch. (about 12 lines)
 - [emit_llvm_abi.odin:441](src/emit_llvm_abi.odin#L441), [line 467](src/emit_llvm_abi.odin#L467) and [line 505](src/emit_llvm_abi.odin#L505): write the payload at member 0, then the tag. Hoist the nested `arm` to file scope and use it in all three. (about 6 lines)
 - [emit_llvm_abi.odin:208](src/emit_llvm_abi.odin#L208) and [emit_llvm_expr.odin:180](src/emit_llvm_expr.odin#L180): the type's and the constant's spelling of a record each derive packed, over-aligned and byte-member form; [emit_llvm_expr.odin:2014](src/emit_llvm_expr.odin#L2014) derives the last again. With the flag above, both read the same two facts.
-- [emit_llvm_abi.odin:681](src/emit_llvm_abi.odin#L681) and [emit_llvm_calls.odin:1281](src/emit_llvm_calls.odin#L1281): `result_inout_of` is `proc_result_is_inout(type_of(e.c, t))`. Keep one.
 
 **Structure and boundaries**
 
 - [emit_llvm_abi.odin:433](src/emit_llvm_abi.odin#L433): union construction, widening, tag and payload reads (to line 606), plus `emit_option_value`, `emit_alloc_result` and `emit_restore_refusal` (lines 1183-1217), are not ABI and not in the source-code map's entry. Move them to an `emit_llvm_union.odin`.
 - [emit_llvm_abi.odin:608](src/emit_llvm_abi.odin#L608): the Loke convention (`sret_param`, `emit_ret`, `emit_call_result`, `param_llvm`, the `synth_*` helpers, to line 726) sits between union code and the foreign signature. It belongs with `emit_llvm_calls.odin`, or the map entry should name it.
-- [emit_llvm_calls.odin:1276](src/emit_llvm_calls.odin#L1276): `param_is_by_ptr` and `proc_result_is_inout` are used only in this file. Move them here, without the stranded "Materializes the Windows x64 call-side ABI" comment above them.
 - [emit_llvm_abi.odin:1062](src/emit_llvm_abi.odin#L1062) `emit_foreign_call`: 120 lines with seams at result classification, argument lowering, the call, and result recovery; the near-copy fixes leave it about half that.
 
 **Comments**
@@ -1864,74 +1860,12 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 
 ### src/emit_llvm_calls.odin
 
-The lowering logic is careful, but one common call shape fails to compile and an unbounded stack allocation crashes valid programs. Much of the bulk is removable: a single-value `[]string` chain with a mostly dead dispatcher, repeated intrinsic declarations, and a variadic fill loop written twice.
-
-**Bugs**
-
-- `BUG-emit_llvm_calls-1` **high** [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516) `emit_bound_call`: the large-argument spill tests only `operand[0] != '%'`, so a pointer-mode operand that is a global's address `@name` is spilled as if it were a constant. *Confirmed: Reproduced: 8 KB file-scope h with h.peek() (self: ^) and set(inout big) both give L0403, clang 'global variable reference must have pointer type'; local or 64-byte global compile and run. Valid program rejected, not miscompiled, so high is arguable.*
-  Scenario, reproduced: `h: Holder` over 4096 bytes, `h.peek()` with `self: ^` (or `set(inout big)`) gives L0403, clang "global variable reference must have pointer type". Fix: skip the spill when `param_mode_is_pointer(mode)`.
-- `BUG-emit_llvm_calls-2` **medium** [emit_llvm_calls.odin:1118](src/emit_llvm_calls.odin#L1118) `emit_variadic_pack`: a pack with a spread is an `alloca` of the runtime total; the only limit (line 1113) is `max(i64)/size`. *Confirmed: Reproduced: sum(1, ..big[:]) over 4M ints exits C00000FD with earlier stdout lost; sum(..big[:]) works. comments.md's 'oversized stack frames can overflow' covers lexical locals, not runtime-sized packs. Severity nearer low: a fail-stop crash.*
-  Scenario, reproduced: `sum(1, ..big[:])` with 4,000,000 elements exits with C00000FD and no panic, losing buffered stdout, while `sum(..big[:])` works. Fix: heap storage above a threshold, or the existing `variadic.size` panic.
-
-**Simplification**
-
-- [emit_llvm_calls.odin:659](src/emit_llvm_calls.odin#L659) `emit_make_container`, `emit_or_else`, `emit_or_return`: all return a one-element `[]string`, as do `emit_text_operation`, `emit_text_conversion`, `emit_strings_allocate`, `emit_unsafe_builtin` in `emit_llvm_expr.odin`.
-  With the dispatcher gone (see Dead code), return `string` and drop every `make([]string, 1)` and `[0]`. (about 35 lines)
-- [emit_llvm_calls.odin:1353](src/emit_llvm_calls.odin#L1353) `emit_bound_call`: returns zero or one result in a slice, since a procedure returns at most one value. Return `string`, with "0" for none, and remove `len(results) == 0 ? "0" : results[0]` at lines 53, 68, 565. (about 10 lines)
-- [emit_llvm_calls.odin:788](src/emit_llvm_calls.odin#L788) `emit_or_else`: always join through `temporary_slot`, as both arms already do for large values, and `load_temporary` at `done`. That removes the entry block, both exit labels and both phis; the `v.exit` phi has a single incoming edge anyway. (about 20 lines)
-- [emit_llvm_calls.odin:1143](src/emit_llvm_calls.odin#L1143) `emit_variadic_pack`: use `cursor_slot` for unmanaged packs too, so a lent managed spread (1145-1161) and an unmanaged spread (1213-1228) become one `is_spread && (lend || !managed)` memcpy arm, and only the single-element store differs. (about 25 lines)
-- [emit_llvm_calls.odin:1063](src/emit_llvm_calls.odin#L1063) `emit_variadic_pack`: `spreads` and `lent` (line 1058) are read only in the iteration that writes them; make each a local. (about 4 lines)
-- [emit_llvm_calls.odin:74](src/emit_llvm_calls.odin#L74) `emit_call`: switch on `kind := call_builtin_kind(e, v)` and let `.None` take the backend failure; the `symbol` guard, its nesting and lines 189-190 go. (about 5 lines)
-- [emit_llvm_calls.odin:1318](src/emit_llvm_calls.odin#L1318) `consumed_element_slot`: both `e.consuming_ops[symbol_id] = true` writes coincide with `consuming_body = true`, so set it once at the caller's `if consuming_body` (line 1376). The query then has no side effect and needs no `symbol_id`. (about 3 lines)
-- [emit_llvm_calls.odin:1651](src/emit_llvm_calls.odin#L1651) `emit_value_conversion`: `TYPE_RUNE` is declared `bits = 32, signed = true` (semantic.odin:1047), so `|| type_is_rune` at 1651, 1652, 1694, 1695, 1759 is redundant at emission; use `type_signed` alone. (5 lines shorter)
-- [emit_llvm_calls.odin:531](src/emit_llvm_calls.odin#L531) `emit_hash_bits`: for the same reason the `width = 32` override and `|| info.kind == .Rune` (line 539) do nothing. (about 3 lines)
-- [emit_llvm_calls.odin:1696](src/emit_llvm_calls.odin#L1696) `guard_integer_conversion`: `test_high` is just `to_bits - to_signed < from_bits - from_signed`. Compare ints, drop `from_max`, and build `to_max`/`to_min` after the early return, so the common widening case makes no big ints. (about 2 lines)
-- [emit_llvm_calls.odin:663](src/emit_llvm_calls.odin#L663) `emit_make_container`: `!is_map` already implies `len(values) > 1` at line 678. [emit_llvm_calls.odin:1613](src/emit_llvm_calls.odin#L1613) `emit_conversion`: `source_expr` and `target` only rename. (about 3 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_calls.odin:592](src/emit_llvm_calls.odin#L592): `emit_producer_value`'s `^Expr_Call` arm and fallthrough (592-615, 623-625) are unreachable; its only callers, emit_llvm_expr.odin:1231 and 1283, pass an `or_return` and an `^Expr_Or_Else`. Call `emit_or_return` and `emit_or_else` directly and delete the procedure. (39 lines)
-- (branch) [emit_llvm_calls.odin:1461](src/emit_llvm_calls.odin#L1461): a bare identifier cannot reach a move receiver: check_calls.odin:403 and lifecycle.odin:307 reject a place with L0501, and `move(x)` is an `^Expr_Move` that `emit_move` kills itself. (6 lines)
-- (branch) [emit_llvm_calls.odin:933](src/emit_llvm_calls.odin#L933): the no-result `else`, and with it the `e.result_slot != ""` test at 917, cannot run: `check_or_return_target` and `check_or_return_failure` (optional.odin:339, 198) reject a procedure without a fallible result, and `result_slot` is empty only then.
-- (branch) [emit_llvm_calls.odin:1792](src/emit_llvm_calls.odin#L1792): `emit_union_operation` is called only from the `case Call_Union_Construct:` arm at line 62, so `!construction` is false; pass `operation` as a parameter.
-- (branch) [emit_llvm_calls.odin:754](src/emit_llvm_calls.odin#L754): `value == ""` never holds; the only caller, line 928, passes a payload loaded for a non-void failure.
-- (branch) [emit_llvm_calls.odin:712](src/emit_llvm_calls.odin#L712): `e.terminated = false` directly after `place_label`, which already clears it; the same at lines 1268 and 1552.
-- (branch) [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516): `index < len(callee_type.parameters)` always holds past the foreign return at line 1484, as line 1536's unguarded index already assumes.
-
-**Data structures and algorithms**
-
-- [emit_llvm_calls.odin:1361](src/emit_llvm_calls.odin#L1361) `emit_bound_call`: every call site builds and frees a `map` holding each parameter's operand, read only by default-argument expressions. Cost grows with call sites and parameters; fill it only when the callee has a default.
-- [emit_llvm_calls.odin:1041](src/emit_llvm_calls.odin#L1041) `emit_variadic_pack`: a managed static-only pack is written to `staging`, then copied element by element to an identically shaped `buffer` with a second flag array. With no spreads, staging can be the pack, which removes a GEP, load, store and flag update per element.
-- [emit_llvm_calls.odin:1453](src/emit_llvm_calls.odin#L1453) `emit_bound_call`: when the result borrows, every non-place value argument gets an `alloca` and `store`, even an `int`, and `register_temporary_place` then ignores it as unmanaged. Test `emit_lifecycle(...).managed` first, as `hold_temporary_value` does.
+Only near copies shared with other emitter files remain.
 
 **Near copies**
 
 - [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) and [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113): the four-line "declare once" block appears at 201, 227, 254, 324, 348, 358, 376 and simd:274. Share `declare_intrinsic(e, key, text)`, and rename `simd_intrinsics`, which now holds every intrinsic. (about 20 lines)
-- [emit_llvm_calls.odin:251](src/emit_llvm_calls.odin#L251) and [emit_llvm_calls.odin:373](src/emit_llvm_calls.odin#L373): `emit_reverse_bits` and `emit_float_instruction` differ only in the key's suffix. Share `emit_unary_intrinsic(e, v, key)`, which also serves the `ctpop` arm of `emit_bit_count`. (about 10 lines)
-- [emit_llvm_calls.odin:197](src/emit_llvm_calls.odin#L197) and [emit_llvm_calls.odin:226](src/emit_llvm_calls.odin#L226): `emit_bit_count`'s `ctlz` path re-spells `emit_ctlz`; `emit_ctlz` with a `name` parameter covers `cttz` as well. (about 5 lines)
 - [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Also emit_llvm_containers.odin:798, emit_llvm_expr.odin:2273, emit_llvm_stmt.odin:174. Share `emit_alloc_policy_if(e, failed, allocator)`. (about 15 lines)
-- [emit_llvm_calls.odin:438](src/emit_llvm_calls.odin#L438) and [emit_llvm_calls.odin:512](src/emit_llvm_calls.odin#L512): the same xor-then-multiply hash step; share `emit_hash_mix(e, seed, bits)`. (about 4 lines)
-- [emit_llvm_calls.odin:826](src/emit_llvm_calls.odin#L826) and [emit_llvm_calls.odin:910](src/emit_llvm_calls.odin#L910): a conditional `emit_stmt` followed by `unreachable` if still open; share `emit_conditional_exit(e, stmt)`. (about 6 lines)
-- [emit_llvm_calls.odin:1643](src/emit_llvm_calls.odin#L1643) and [emit_llvm_calls.odin:1680](src/emit_llvm_calls.odin#L1680): the same split of SIMD operands into lane types; share `conversion_lanes(c, from, to)`. (about 4 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm_calls.odin:397](src/emit_llvm_calls.odin#L397): `emit_hash_value` and `emit_hash_bits` (150 lines) are not call lowering; their callers are the synthesized key bodies (emit_llvm_containers.odin:491, emit_llvm_runtime.odin:1500). Move them to `emit_llvm_containers.odin`.
-- [emit_llvm_calls.odin:193](src/emit_llvm_calls.odin#L193): the bit and float builtins (lines 193-384) fit neither the file header nor the source-code map entry, and form a clean new file such as `emit_llvm_math.odin`.
-- [emit_llvm_calls.odin:774](src/emit_llvm_calls.odin#L774): `emit_or_else`, `emit_or_return` and `emit_failure_conversion` lower expressions rather than calls. Moved with `emit_union_failed`, the postfix case in `emit_llvm_expr.odin` could reach them directly.
-- [emit_llvm_calls.odin:1276](src/emit_llvm_calls.odin#L1276): `param_is_by_ptr` and `proc_result_is_inout` are used only by `emit_llvm_abi.odin`; move them there.
-- [emit_llvm_calls.odin:17](src/emit_llvm_calls.odin#L17): the 30-line `Call_Enum_From_Int` body sits inside the `emit_call` dispatcher; extract `emit_enum_from_int`.
-- [emit_llvm_calls.odin:1344](src/emit_llvm_calls.odin#L1344) `emit_bound_call` (235 lines): natural seams are operand binding (1386-1470), the refusal join (1490-1510), the instruction (1515-1545), and post-call cleanup (1555-1578).
-- [emit_llvm_calls.odin:1024](src/emit_llvm_calls.odin#L1024) `emit_variadic_pack` (220 lines): seams are evaluating operands into staging (1038-1107), allocating the final pack (1109-1133), and filling it (1135-1234).
-
-**Comments**
-
-- [emit_llvm_calls.odin:1274](src/emit_llvm_calls.odin#L1274): delete; "Materializes the Windows x64 call-side ABI" sits on a by-pointer predicate and describes nothing here.
-- [emit_llvm_calls.odin:342](src/emit_llvm_calls.odin#L342): wrong, since `check_fma_builtin` does not test the target. Say: "`core:math` calls this only behind `fma_is_instruction()`; on a target without FMA the call is unreachable, so it traps."
-- [emit_llvm_calls.odin:156](src/emit_llvm_calls.odin#L156): shorten to "Skips the drop an owned temporary would get; `emit_move` still kills a `move(place)` source."
-- [emit_llvm_calls.odin:1461](src/emit_llvm_calls.odin#L1461): contradicts design.md "Receiver forms", where a consuming receiver's place is written `move(value).method()`; delete with the branch.
-- [emit_llvm_calls.odin:737](src/emit_llvm_calls.odin#L737): delete, as the name says it; likewise lines 978 and 1336. Delete line 1403, which repeats the header at 1021.
-- [emit_llvm_calls.odin:1789](src/emit_llvm_calls.odin#L1789): shorten to "`U.name(payload)`." Line 588 goes with its procedure, and line 751 says nothing the failure conversions' own comments don't. (about 15 lines across the file)
 
 ### src/emit_llvm_cleanup.odin
 
@@ -2094,7 +2028,6 @@ Careful code with mostly useful why-comments, but constants of a large type brea
 - [emit_llvm_expr.odin:171](src/emit_llvm_expr.odin#L171) `llvm_const`: `.Dyn`, `.Dynamic_Array`, `.Map` and a non-literal `.Slice` have no fields, so they always reach `zeroinitializer` through the record builder. Give them their own arm, and the `info.kind == .Struct &&` guards at lines 179-180 go. (about 6 lines)
 - [emit_llvm_expr.odin:2184](src/emit_llvm_expr.odin#L2184) `emit_text_parts`, and `emit_byte_slice_parts` at line 2409: hand-written `extractvalue` pairs; `return extract(e, storage, value, STRING_DATA), extract(e, storage, value, STRING_LEN)`. (about 6 lines)
 - [emit_llvm_expr.odin:1322](src/emit_llvm_expr.odin#L1322) `emit_slice_literal`: `element_address(e, backing, root, index)` replaces the hand-written GEP. Likewise `gep_at` at line 1001, `alloca` at line 2286 and `load` at line 2305. (about 8 lines)
-- [emit_llvm_expr.odin:2192](src/emit_llvm_expr.odin#L2192) `emit_text_operation`, `emit_text_conversion`, `emit_unsafe_builtin`, `emit_strings_allocate`: always one result, yet each builds a one-element `[]string` that `emit_call` indexes with `[0]`. Return `string`; the arms at emit_llvm_calls.odin:602-612 then fall into its final `emit_expr_at`. (about 20 lines)
 - [emit_llvm_expr.odin:2390](src/emit_llvm_expr.odin#L2390) `emit_text_conversion`: `.String_From_C_View` can start from `emit_text_parts`, which already measures a C string view, and share the `.String_From_Bytes` arm's call. (about 3 lines)
 - [emit_llvm_expr.odin:1165](src/emit_llvm_expr.odin#L1165) `emit_expr_at`: four arms repeat `if from := base.view_from; from != INVALID_TYPE`; test it once and switch on `underlying_kind(as_type)` inside. (about 3 lines)
 - [emit_llvm_expr.odin:835](src/emit_llvm_expr.odin#L835) `emit_address_at`: `record_field_align(e, base_type, base_address, out, info.element)` computes the same alignment. (about 2 lines)

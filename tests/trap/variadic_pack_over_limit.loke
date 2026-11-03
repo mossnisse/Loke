@@ -1,0 +1,23 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Variadic parameters": a pack sized at run time has a limit, and
+// passing it panics rather than overflowing the stack. A lone spread passes its
+// own slice, and a pack up to the limit is built as ever.
+sum :: proc(nums: ..int) -> int {
+	total := 0;
+	foreach (n in nums) {
+		total += n;
+	}
+	return total;
+}
+
+main :: proc() {
+	big := make([dynamic]int, 4000000);
+	big[0] = 2;
+	fmt.println(sum(..big[:]));
+	fmt.println(sum(1, ..big[0:32767]));
+	fmt.println(sum(1, ..big[:]));
+	fmt.println("not reached");
+}

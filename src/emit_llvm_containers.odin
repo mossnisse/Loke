@@ -1429,3 +1429,147 @@ emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> (string, s
 	was_inserted := load(e, "i32", inserted)
 	return place, was_inserted
 }
+
+emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
+	// design.md "Maps": a part with its own `==` hashes by its own `hash`, which
+	// is the coherent partner of the `==` structural equality calls for it.
+	if own := part_own_hash(e.c, type); own != INVALID_SYMBOL {
+		address := value
+		if !is_large_value(e, type) {
+			address = alloca(e, llvm_type(e, type))
+			store(e, type, value, address)
+		}
+		out := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i64 %s(%s, i64 %s)",
+			out, callee_name(e, own), hook_argument(e, own, 0, type, address), seed,
+		)
+		return out
+	}
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	// A record mixes its fields in declaration order, as an array mixes its
+	// elements; a large one is an address, read in place.
+	if info != nil && info.kind == .Struct {
+		current := seed
+		for field, index in info.fields {
+			symbol := symbol_of(e.c, field)
+			current = emit_hash_value(e, symbol.type, record_part(e, under, value, index), current)
+		}
+		return current
+	}
+	// A union mixes its tag, then the active payload, so two variants with one
+	// payload type hash apart.
+	if info != nil && info.kind == .Union {
+		shape := union_layout(e.c, under)
+		tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+		tag := emit_union_tag(e, under, value)
+		widened := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, tag_llvm, tag)
+		tagged := emit_hash_mix(e, seed, widened)
+		slot := emit_union_spill(e, under, value)
+		state := alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", tagged, state)
+		done := new_label(e, "unionhash.done")
+		for variant, index in info.variants {
+			if variant == TYPE_VOID {
+				continue
+			}
+			active := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, tag, index)
+			hit, next := new_label(e, "unionhash.hit"), new_label(e, "unionhash.next")
+			branch_if(e, active, hit, next)
+			place_label(e, hit)
+			payload := emit_union_payload(e, under, variant, slot)
+			payload_hash := emit_hash_value(e, variant, payload, tagged)
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", payload_hash, state)
+			branch(e, done)
+			place_label(e, next)
+		}
+		place_label(e, done)
+		return load(e, "i64", state)
+	}
+	if info != nil && info.kind == .Array && is_large_value(e, under) {
+		// A large array is an address, so its elements are hashed in place, in a
+		// loop rather than unrolled.
+		element_llvm := llvm_type(e, info.element)
+		state, cursor := alloca(e, "i64"), alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+		head := new_label(e, "hash.large.head")
+		body, done := new_label(e, "hash.large.body"), new_label(e, "hash.large.done")
+		branch(e, head)
+		place_label(e, head)
+		at := load(e, "i64", cursor)
+		more := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %d", more, at, info.count)
+		branch_if(e, more, body, done)
+		place_label(e, body)
+		element := load_temporary(e, info.element, gep_at(e, element_llvm, value, at))
+		next := emit_hash_value(e, info.element, element, load(e, "i64", state))
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
+		step := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", step, at)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", step, cursor)
+		branch(e, head)
+		place_label(e, done)
+		return load(e, "i64", state)
+	}
+	if info != nil && info.kind == .Array {
+		current := seed
+		for index in 0 ..< int(info.count) {
+			element := extract(e, llvm_type(e, under), value, index)
+			current = emit_hash_value(e, info.element, element, current)
+		}
+		return current
+	}
+	// design.md: `string` and `string_view` hash byte-wise, which is the coherent
+	// partner of the byte-wise `==` they already have.
+	if type_is_utf8_text(e.c, under) {
+		storage := llvm_type(e, under)
+		data := extract(e, storage, value, STRING_DATA)
+		length := extract(e, storage, value, STRING_LEN)
+		out := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)",
+			out, data, length, seed,
+		)
+		return out
+	}
+	return emit_hash_mix(e, seed, emit_hash_bits(e, under, value))
+}
+
+// One hash step: `bits` folded into `seed`.
+@(private = "file")
+emit_hash_mix :: proc(e: ^Emitter, seed, bits: string) -> string {
+	mixed, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = xor i64 %s, %s", mixed, seed, bits)
+	fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", out, mixed, HASH_MULTIPLIER)
+	return out
+}
+
+// One scalar's 64-bit integer image.
+@(private = "file")
+emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
+	info := type_of(e.c, under)
+	out := temp(e)
+	#partial switch info.kind {
+	case .Bool:
+		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out, value)
+	case .Raw_Pointer, .Pointer, .C_Pointer:
+		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to i64", out, value)
+	case:
+		width := type_bits(e.c, under)
+		switch {
+		case width == 64:
+			return value
+		case width > 64:
+			fmt.sbprintfln(&e.b, "  %s = trunc i%d %s to i64", out, width, value)
+		case type_signed(e.c, under):
+			fmt.sbprintfln(&e.b, "  %s = sext i%d %s to i64", out, width, value)
+		case:
+			fmt.sbprintfln(&e.b, "  %s = zext i%d %s to i64", out, width, value)
+		}
+	}
+	return out
+}

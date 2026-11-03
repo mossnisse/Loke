@@ -78,7 +78,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		propagated_errors = make(map[^Expr_Postfix]Mapper_Error),
 		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
-		param_values = make(map[Symbol_Id]string),
+		param_values = make(map[Symbol_Id]Bound_Parameter),
 		pending      = make([dynamic]string),
 		pending_thunks = make([dynamic]string),
 		container_ops = make(map[Type_Id]string),
@@ -212,7 +212,7 @@ Function_State :: struct {
 	loop_frames: int,
 	loop_held:   int,
 	// Arguments already bound at the current call, for default expressions.
-	param_values: map[Symbol_Id]string,
+	param_values: map[Symbol_Id]Bound_Parameter,
 	unwind: Unwind_State,
 	// Fixed-size allocas, spliced into the entry block so a loop can't grow the stack.
 	prologue: [dynamic]string,

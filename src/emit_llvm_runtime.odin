@@ -1565,7 +1565,7 @@ emit_dyn_proc_value :: proc(e: ^Emitter, expr: Expr, from, as_type: Type_Id) -> 
 // A slot call: load the thunk from the witness table and call it with the
 // view's data pointer as the receiver.
 @(private)
-emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	view := emit_expr(e, v.bound[0])
 	storage := llvm_type(e, expr_base(v.bound[0]).type)
 	data := extract(e, storage, view, DYN_DATA)

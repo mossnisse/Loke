@@ -1303,6 +1303,15 @@ checklist.
 
 ### Fixed
 
+- A global larger than 4096 bytes passed by pointer, as `g.peek()` with `self: ^` or `set(inout g)`,
+  compiles. It used to fail in clang with `L0403`.
+- A variadic pack with a spread among other operands, as `sum(1, ..big[:])`, panics with
+  "variadic argument pack is too large" past 256 KiB
+  ([Variadic parameters](design.md#variadic-parameters)). It used to overflow the stack and lose
+  buffered output.
+- A default argument can select from a parameter to its left, as `x: int = a.n`, whichever way that
+  parameter passes. It used to fail in clang with `L0403`, or read the enclosing call's `a` in a
+  recursive procedure.
 - A distinct type over a union stores its variants as the union does. Its tag used to overwrite the
   payload, so `D.a(9)` read back as `.a(0)` and a reference payload was corrupted. `==` on such a
   type now compiles rather than failing in clang, and a constant comparison tells two variants with

@@ -849,7 +849,7 @@ foreign_result_llvm :: proc(e: ^Emitter, result: Type_Id, info: ^Type_Info) -> (
 	if result == INVALID_TYPE {
 		return "void", false
 	}
-	if proc_result_is_inout(info) {
+	if info != nil && info.result_inout {
 		return "ptr", false
 	}
 	switch abi_pass(e.c, result) {
@@ -1036,11 +1036,16 @@ foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) 
 	return strings.to_string(b)
 }
 
+@(private = "file")
+param_is_by_ptr :: proc(info: ^Type_Info, index: int) -> bool {
+	return index < len(info.param_by_ptr) && info.param_by_ptr[index]
+}
+
 @(private)
 emit_foreign_call :: proc(
 	e: ^Emitter, callee: string, callee_type: ^Type_Info, operands: []string,
 	symbol: ^Symbol, bound: []Expr,
-) -> []string {
+) -> string {
 	result_type := callee_type.result
 	ret, indirect := foreign_result_llvm(e, result_type, callee_type)
 	sret := ""
@@ -1120,28 +1125,24 @@ emit_foreign_call :: proc(
 	emit_foreign_environment_check(e, symbol)
 
 	if callee_type.result == INVALID_TYPE {
-		return nil
+		return "0"
 	}
-	single := make([]string, 1)
-	if proc_result_is_inout(callee_type) {
-		single[0] = call
-		return single
+	if callee_type.result_inout {
+		return call
 	}
 	switch abi_pass(e.c, result_type) {
 	case .Indirect:
-		v := load_place(e, result_type, sret)
-		single[0] = v
+		return load_place(e, result_type, sret)
 	case .Reg_Int:
 		slot, v := temp(e), temp(e)
 		align := type_align(e.c, result_type)
 		alloca_named(e, slot, llvm_type(e, result_type))
 		fmt.sbprintfln(&e.b, "  store i%d %s, ptr %s, align %d", abi_reg_bits(e.c, result_type), call, slot, align)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", v, llvm_type(e, result_type), slot, align)
-		single[0] = v
+		return v
 	case .Bool_I1, .Direct:
-		single[0] = call
 	}
-	return single
+	return call
 }
 
 // `Option(T)` from a runtime presence flag. The payload is written only on the

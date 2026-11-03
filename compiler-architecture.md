@@ -931,10 +931,11 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm.odin` | Module orchestration, emitter state, symbol names, procedures, globals, and instruction plumbing. |
 | `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's floating-point guard and `-debug`'s check after a foreign call. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
-| `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, and text operations. |
+| `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |
 | `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
+| `emit_llvm_math.odin` | The `core:math` bit and floating-point instruction built-ins. |
 | `emit_llvm_cleanup.odin` | Lifecycle clone/drop, cleanup registration, and panic replay. |
-| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, and typed-comparator sort adapters. |
+| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, and typed-comparator sort adapters. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |

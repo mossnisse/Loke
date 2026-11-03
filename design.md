@@ -6601,6 +6601,11 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 The pack is a temporary of the complete call expression, as is anything an
 argument creates for it, so neither outlives that expression.
 
+A pack lives on the stack. A lone spread passes its own slice and copies nothing,
+so `sum(..odds)` has no limit. A spread among other operands is copied into a pack
+sized when the call runs, and one whose elements would take more than 256 KiB
+panics instead of being built.
+
 A `..dyn I` parameter, whose element is a read-only
 [`dyn` view](#borrowed-dynamic-interface-values) other than a `dyn proc`, also
 takes values whose types satisfy `I`. Each such argument converts

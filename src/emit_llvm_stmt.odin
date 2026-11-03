@@ -208,15 +208,13 @@ emit_spawn_arguments :: proc(
 ) -> (owned: [dynamic]Deferred) {
 	// A procedure value has no declaration: its call supplies every argument.
 	callee := task.through_value ? nil : symbol_of(e.c, call.resolution.symbol)
-	// A default reads the parameters bound to its left, as at a call.
-	outer_params := e.param_values
-	defer e.param_values = outer_params
-	own_params := make(map[Symbol_Id]string)
+	scope := begin_default_scope(e, callee)
+	defer end_default_scope(e, &scope)
 	for step in 0 ..< len(call.bound) {
 		index := call_slot_at(call, step)
 		argument := call.bound[index]
 		type := callee_type.parameters[index]
-		e.param_values = argument_is_default(callee, index, argument) ? own_params : outer_params
+		enter_default_scope(e, &scope, index, argument)
 		field := spawn_field_address(e, task.frame, frame, spawn_argument_field(index))
 		if call_packs(call, index) {
 			pack := symbol_of(e.c, type_of(e.c, task.frame).fields[spawn_argument_field(index)]).type
@@ -238,9 +236,7 @@ emit_spawn_arguments :: proc(
 			append(&owned, hold_temporary_value(e, type, bound))
 			store(e, type, bound, field)
 		}
-		if callee != nil && index < len(callee.param_symbols) && callee.param_symbols[index] != INVALID_SYMBOL {
-			own_params[callee.param_symbols[index]] = bound
-		}
+		bind_default_scope(e, &scope, index, bound)
 	}
 	return
 }
