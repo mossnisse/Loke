@@ -1503,6 +1503,13 @@ neither `==` nor `hash`, keeps its generated
 [structural equality](#comparison-operators), and every field or variant payload
 is hashable. A component with custom equality must also supply its own `hash`.
 
+A [distinct type](#distinct-types) that declares neither `==` nor `hash` keys a
+map as its underlying type does: by that type's `==` and `hash` when it declares
+them, and otherwise by the generated or built-in pair. It has that `hash` as a
+member. A distinct type that declares either half must declare the other, as a
+key and as a component, since its underlying type's half would not be coherent
+with it.
+
 Generated hashing combines fields in declaration order, or a union's variant
 followed by its payload, just as a fixed array combines its elements. It calls
 each component's hash and is coherent with generated equality. Packed structs,
@@ -1709,6 +1716,9 @@ conversion hooks, interfaces, and formatting. Compared with its underlying type:
   exactly when its underlying type is, and its values compare as the underlying
   values do. A comparison overload declared for the distinct type takes
   precedence, as for any user type.
+- **Hashing** follows equality: a distinct type that declares neither `==` nor
+  `hash` has its underlying type's `hash`, so it [keys a map](#maps) as that type
+  does.
 - **Other operations** are not inherited: `Meters :: distinct f64` supports no
   arithmetic until it is given some. Bring them over one at a time with an
   ordinary forwarding declaration that unwraps to the underlying type, or in

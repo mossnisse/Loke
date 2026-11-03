@@ -2063,6 +2063,14 @@ generated member is inherent, and a structural hash is coherent with structural
 equality by construction. A part with its own `==` must bring its own `hash`,
 which the generated one calls, so the pair stays coherent at every depth.
 
+A `distinct` type that declares neither half keeps its underlying type's pair,
+whether written or generated. A distinct value already compares by that `==`, so
+the same `hash` is coherent with it by construction, and rejecting only the
+written pair would stop a wrapped type keying a map exactly when its type had
+chosen a policy. Declaring one half breaks the pairing, so it requires the other at every depth;
+the alternative, taking the missing half from the underlying type, is how a coarser
+`==` came to sit beside a `hash` that told equal values apart.
+
 ### `in` is a comparison, not an additive operator
 
 `in` produces a Boolean, so it shares comparison precedence. Giving it additive

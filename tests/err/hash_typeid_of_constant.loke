@@ -1,0 +1,12 @@
+// design.md "`type` and `typeid`": a `typeid_of(T)` has no number at compile time,
+// so its `hash` has no compile-time value, alone or as a part. Each used to fold to
+// the nil `typeid`'s hash, which no run of the program computes.
+package main;
+
+Tagged :: struct { id: typeid, n: int }
+
+A :: typeid_of(int).hash(uint(7));
+B :: [2]typeid{typeid_of(int), typeid_of(string)}.hash(uint(7));
+C :: Tagged{typeid_of(int), 1}.hash(uint(7));
+
+main :: proc() {}

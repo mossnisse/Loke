@@ -15,6 +15,14 @@ checklist.
   predeclared `string` and took one branch, while another `when` declared `string`, now reads that
   declaration and may take the other. One whose own branch declares the name is now `L0389`, where it
   compiled and read the predeclared name. Upgrade by renaming the declaration in the branch.
+- A `distinct` type that declares one half of `==` and `hash` is now `L0586` as a part of a map key,
+  as it already was as the key itself ([Maps](design.md#maps)). With `D :: distinct S` declaring a
+  coarser `==`, `map[Holder]int` over `struct { d: D }` paired it with `S.hash`, and two keys that
+  compared equal could both be stored; a lone `hash` on `D` was silently ignored. Upgrade by declaring
+  both on `D`, or neither.
+- `typeid_of(T).hash(seed)`, alone or within a record or array, is now `L0341` in compile-time
+  evaluation ([`type` and `typeid`](design.md#type-and-typeid)). It folded to the nil `typeid`'s hash,
+  which no run of the program computes. Upgrade by hashing at run time.
 - A move-only field or element of a temporary, as a `spawn` argument or receiver, is now `L0728`
   ([Spawn statements](design.md#spawn-statements)). It compiled, and the task read storage the
   parent had already dropped. Upgrade by binding the temporary to a local declared before the
@@ -1449,6 +1457,10 @@ checklist.
 
 ### Fixed
 
+- A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
+  map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
+  ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a
+  record holding a `D` keyed a map by that pair.
 - `L0740` reads more of what a public declaration writes
   ([Private names in public declarations](design.md#private-names-in-public-declarations)). It now
   warns about a private name that a block's `$` name had hidden from every later declaration; a

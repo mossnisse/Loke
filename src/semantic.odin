@@ -1168,33 +1168,33 @@ intern_proc_type :: proc(
 	init_semantic_stores(c)
 	hash := HASH_OFFSET_BASIS
 	for parameter in parameters {
-		hash = (hash ~ u64(parameter)) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(parameter))
 	}
 	for mode in param_modes {
-		hash = (hash ~ u64(mode)) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(mode))
 	}
-	hash = (hash ~ u64(result)) * HASH_MULTIPLIER
+	hash = hash_mix(hash, u64(result))
 	// Every field the comparison below reads contributes, normalized the same
 	// way: same-shape procedures with distinct contracts would otherwise share
 	// one bucket and make each insertion scan and copy all of them.
-	hash = (hash ~ u64(proc_contract)) * HASH_MULTIPLIER
-	hash = (hash ~ u64(result_inout) ~ u64(c_vararg) << 1) * HASH_MULTIPLIER
+	hash = hash_mix(hash, u64(proc_contract))
+	hash = hash_mix(hash, u64(result_inout) ~ u64(c_vararg) << 1)
 	for index in 0 ..< len(convention) {
-		hash = (hash ~ u64(convention[index])) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(convention[index]))
 	}
 	for value, index in param_resets {
-		if value { hash = (hash ~ u64(index + 1)) * HASH_MULTIPLIER }
+		if value { hash = hash_mix(hash, u64(index + 1)) }
 	}
 	for value, index in param_by_ptr {
-		if value { hash = (hash ~ u64(index + 1) << 16) * HASH_MULTIPLIER }
+		if value { hash = hash_mix(hash, u64(index + 1) << 16) }
 	}
 	for level, index in param_escapes {
 		if level != .Result {
-			hash = (hash ~ u64(index + 1) << 32 ~ u64(level)) * HASH_MULTIPLIER
+			hash = hash_mix(hash, u64(index + 1) << 32 ~ u64(level))
 		}
 	}
 	for value, index in param_cross_thread {
-		if value { hash = (hash ~ u64(index + 1) << 48) * HASH_MULTIPLIER }
+		if value { hash = hash_mix(hash, u64(index + 1) << 48) }
 	}
 	bucket := c.proc_types[hash]
 	for candidate in bucket {
@@ -1401,8 +1401,8 @@ Anon_Member :: struct {
 anon_hash :: proc(members: []Anon_Member) -> u64 {
 	hash := HASH_OFFSET_BASIS
 	for member in members {
-		hash = (hash ~ u64(member.name)) * HASH_MULTIPLIER
-		hash = (hash ~ u64(member.type)) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(member.name))
+		hash = hash_mix(hash, u64(member.type))
 	}
 	return hash
 }

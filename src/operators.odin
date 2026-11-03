@@ -922,6 +922,79 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 	return false
 }
 
+// design.md "Comparison operators": the `==` a type declares for itself, or a
+// distinct type's underlying type does. A value of the type compares by it
+// wherever it is nested, as a map key does.
+type_own_equality :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	callable, _ := own_equality(c, type)
+	return callable
+}
+
+// `declared` is the declaration the procedure belongs to, the group when it is in
+// one: what `@(public)` is written on, so what visibility asks.
+own_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol_Id) {
+	if callable, declared = inherent_equality(c, type); callable != INVALID_SYMBOL {
+		return
+	}
+	return inherent_equality(c, type_underlying(c, type))
+}
+
+// Every type within `type`, itself included, that compares by its own `==`;
+// structural comparison does not look inside one.
+own_equalities_within :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id) {
+	seen: Type_Walk
+	defer delete(seen)
+	own_equalities_walk(c, type, out, &seen, false)
+}
+
+// Those a comparison or hash of a value of `type` calls: a zero-length array has
+// no element (design.md "Global write effects"), though comparing one still
+// requires of its element what `own_equalities_within` says.
+own_equalities_called :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id) {
+	seen: Type_Walk
+	defer delete(seen)
+	own_equalities_walk(c, type, out, &seen, true)
+}
+
+@(private = "file")
+own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, seen: ^Type_Walk, called: bool) {
+	if type_own_equality(c, type) != INVALID_SYMBOL {
+		append(out, type)
+		return
+	}
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil || !type_walk_enter(seen, under, info) {
+		return
+	}
+	#partial switch info.kind {
+	case .Array:
+		if !called || info.count > 0 {
+			own_equalities_walk(c, info.element, out, seen, called)
+		}
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				own_equalities_walk(c, sym.type, out, seen, called)
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			own_equalities_walk(c, variant, out, seen, called)
+		}
+	}
+}
+
+// A delegated `==` keeps the underlying type's policy, so it is not one of the
+// type's own.
+inherent_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol_Id) {
+	callable, declared = inherent_self_operator(c, type, "==")
+	if sym := symbol_of(c, callable); sym == nil || sym.delegated {
+		return INVALID_SYMBOL, INVALID_SYMBOL
+	}
+	return
+}
+
 type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch underlying_kind(c, id) {
 	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,

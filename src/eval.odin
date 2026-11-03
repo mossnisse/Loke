@@ -2160,7 +2160,7 @@ eval_hash :: proc(ev: ^Evaluator, value: Eval_Value, type: Type_Id, seed: u64, s
 			}
 			return current, true
 		case .Union:
-			tagged := (seed ~ u64(value.variant)) * HASH_MULTIPLIER
+			tagged := hash_mix(seed, u64(value.variant))
 			if value.variant < 0 || value.variant >= len(info.variants) {
 				return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
 			}
@@ -2172,6 +2172,12 @@ eval_hash :: proc(ev: ^Evaluator, value: Eval_Value, type: Type_Id, seed: u64, s
 		}
 	}
 	frozen := freeze(ev, value, ev.alloc) or_return
+	// design.md "`type` and `typeid`": a `typeid_of(T)` has no number yet.
+	if underlying_kind(c, type) == .Typeid {
+		if _, known := typeid_const_number(c, frozen); !known {
+			return 0, eval_fail(ev, span, "L0341", "`typeid_of` has no number at compile time, so it cannot be hashed there")
+		}
+	}
 	return hash_const(c, frozen, type, seed, ev.alloc), true
 }
 

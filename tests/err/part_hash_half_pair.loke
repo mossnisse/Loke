@@ -1,0 +1,78 @@
+// design.md "Maps": a part is held to what a key is. A `distinct` type declaring
+// either half of the `==` and `hash` pair must declare the other, since the wrapped
+// type's half would not be coherent with it.
+package main;
+import "base:interfaces";
+
+Pair :: struct { v: int }
+impl Pair {
+	same :: operator(==) proc(a, b: Pair) -> bool { return a.v == b.v; }
+	hash :: proc(self, seed: uint) -> uint { return seed ~ uint(self.v); }
+}
+
+// Its coarser `==` would hash equal values apart by `Pair.hash`.
+Coarse :: distinct Pair;
+impl Coarse {
+	coarse :: operator(==) proc(a, b: Coarse) -> bool { return a.v / 10 == b.v / 10; }
+}
+In_Coarse :: struct { d: Coarse }
+
+// Its `hash` would never be called: `==` is `Pair`'s.
+Own_Hash :: distinct Pair;
+impl Own_Hash {
+	hash :: proc(self, seed: uint) -> uint { return 1; }
+}
+In_Own_Hash :: struct { d: Own_Hash }
+
+// And here it would be ignored for the structural hash.
+Plain :: struct { v: int }
+Plain_Hash :: distinct Plain;
+impl Plain_Hash {
+	hash :: proc(self, seed: uint) -> uint { return 1; }
+}
+In_Plain_Hash :: struct { d: Plain_Hash }
+
+Folded :: distinct u64;
+impl Folded {
+	hash :: proc(self, seed: uint) -> uint { return 1; }
+}
+In_Folded :: union { folded: Folded, empty }
+
+// The wrapped type has only half a pair to give.
+Half :: struct { v: int }
+impl Half {
+	same :: operator(==) proc(a, b: Half) -> bool { return a.v == b.v; }
+}
+Wrapped_Half :: distinct Half;
+In_Half :: struct { d: Wrapped_Half }
+
+// The wrapped type's `hash` is held to the protocol's shape too.
+Odd :: struct { v: int }
+impl Odd {
+	same :: operator(==) proc(a, b: Odd) -> bool { return a.v == b.v; }
+	hash :: proc(self) -> string { return "x"; }
+}
+Wrapped_Odd :: distinct Odd;
+In_Odd :: struct { d: Wrapped_Odd }
+
+static_assert(!interfaces.Hashable(Coarse));
+static_assert(!interfaces.Hashable(Wrapped_Half));
+static_assert(!interfaces.Hashable(In_Plain_Hash));
+
+main :: proc() {
+	a: map[Coarse]int = {};
+	b: map[In_Coarse]int = {};
+	c: map[[2]Coarse]int = {};
+	d: map[Own_Hash]int = {};
+	e: map[In_Own_Hash]int = {};
+	f: map[In_Plain_Hash]int = {};
+	g: map[In_Folded]int = {};
+	h: map[[2]Folded]int = {};
+	i: map[(x: Folded)]int = {};
+	j: map[Wrapped_Half]int = {};
+	k: map[In_Half]int = {};
+	l: map[Wrapped_Odd]int = {};
+	m: map[In_Odd]int = {};
+	_ = Coarse{1}.hash(0);
+	_ = Wrapped_Half{1}.hash(0);
+}

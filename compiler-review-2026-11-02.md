@@ -281,7 +281,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 
@@ -293,7 +292,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - `synchronized_field_walk` ([materialize.odin:119](src/materialize.odin#L119)) and `type_requires_results_walk` ([zero.odin:98](src/zero.odin#L98)): inline-only walks with no closures to share them; a visitor would be longer.
 - `type_is_comparable_walk` ([semantic.odin:1976](src/semantic.odin#L1976)), `record_order_blocker_walk` ([semantic.odin:2074](src/semantic.odin#L2074)) and `type_is_hashable_walk` ([hash.odin:30](src/hash.odin#L30)): each kind has its own rule, so `type_parts` would remove little.
 - Region-content find-or-grow ([cfg_provenance.odin:4394](src/cfg_provenance.odin#L4394), [cfg_provenance.odin:5835](src/cfg_provenance.odin#L5835), [borrow.odin:2974](src/borrow.odin#L2974)): differing equality tests, path truncation and allocators leave a shared form no simpler.
-- `fmt.aprintf(..., allocator = c.semantic_allocator)` at 57 sites and the FNV step at about 20: a wrapper shortens the lines without removing any, and the checker's local failure blocks are better served by per-file helpers such as `requirement_failuref`.
+- `fmt.aprintf(..., allocator = c.semantic_allocator)` at 57 sites: a wrapper shortens the lines without removing any, and the checker's local failure blocks are better served by per-file helpers such as `requirement_failuref`.
 
 ## Findings per file
 
@@ -1192,48 +1191,6 @@ The solvers are sound in how they iterate and deterministic, and the comments ar
 **Near copies**
 
 - [global_effects.odin:144](src/global_effects.odin#L144), L275, L359, L713 and [borrow.odin:2578](src/borrow.odin#L2578): the same `Ident`/`Selector`/`Proc` switch; share `expr_named_symbol(e) -> Symbol_Id`. L713 omits `Expr_Proc` since the race warning covers named procedures only, so keep that check at its caller. The tail of `effect_value` at L369-374 and borrow.odin:2587-2591 also match.
-
-### src/hash.odin
-
-Small and readable, but it holds four jobs, and its distinct-type handling and compile-time mix have real errors, all reproduced with scratch programs on the current `lokec.exe`. Most of the shortening is in the hashability walk and the compile-time leaf.
-
-**Bugs**
-
-- `BUG-hash-1` **medium** [hash.odin:122](src/hash.odin#L122) `part_hash_member`: looks for `hash` on the part, then its underlying type, without regard to where `==` came from, so a part can pair one type's `==` with another's `hash`. Scenario: `S` declares `==` and `hash`, `D :: distinct S` declares only a coarser `==`, and `map[struct { d: D }]int` is accepted using `S.hash`; two keys that compare equal hash apart and the map holds both (`len` 2, `x == y` true). Fix: read `hash` from the type that supplied `==`, so this `D` has no `hash` and is rejected. *Confirmed: Reproduced: map[struct-with-D]int prints len 2, x == y true, hashes differ, using S.hash beside D's own coarser ==. map[D]int gets L0586, and design.md "Maps" requires a component with custom equality to supply its own hash; unrecorded in the gap documents.*
-- `BUG-hash-3` **medium** [hash.odin:353](src/hash.odin#L353) `hash_scalar_bits`: a `typeid_of(T)` constant has no number yet (design.md "`type` and `typeid`") and `value.integer` is zero, so it hashes like the nil `typeid`. Scenario: `typeid_of(int).hash(uint(7)) == typeid_of(string).hash(uint(7))` folds true, and neither matches the runtime hash, against the file's "must agree exactly". Fix: `eval_hash` fails with L0341 for a `.Type` value naming a type, as bit-casting one does. *Confirmed: Probe: H :: typeid_of(int).hash(uint(7)) and the string form both give 7696581397477, the nil id's runtime hash, while runtime gives other values for each. design.md says such a number has no compile-time meaning; no gap recorded.*
-- `BUG-hash-4` **low** [hash.odin:98](src/hash.odin#L98) `record_hashes_structurally`: checks for a `hash` on `under` only, and `part_is_hashable` never checks a scalar part, so a nested `distinct` declaring only `hash` is accepted and its `hash` ignored. Scenario: with `Ds :: distinct S` declaring `hash`, `map[Ds]int` is rejected as half a pair but `map[struct { d: Ds }]int` compiles and hashes `d` structurally. Fix: in `part_is_hashable`, a part with no own `==` and an inherent `hash` is not hashable. *Not verified.*
-- `BUG-hash-5` **low** [hash.odin:98](src/hash.odin#L98) `record_hashes_structurally`: `type_own_equality(c, id)` also sees the underlying type's `==`, so a `distinct` declaring neither half is rejected as a key, against the comment at [customization.odin:55](src/customization.odin#L55). Scenario: `D :: distinct S` with `S` holding the pair gives L0586 for `map[D]int`, while `map[struct { d: D }]int` compiles using `S.hash`. Fix: settle which design.md "Maps" means; then key `D` by `S`'s pair or correct that comment. *Not verified.*
-
-**Simplification**
-
-- [hash.odin:52](src/hash.odin#L52) `type_is_hashable_walk`: the temporary `parts` array exists only to be looped over; check each field or variant in place with `part_is_hashable`. Inline `record_hashes_structurally` (one caller) as one condition too. (about 12 lines)
-- [hash.odin:276](src/hash.odin#L276) `own_equality`: the `under == type` guard only saves rescanning a member list that just failed; `return inherent_equality(c, type_underlying(c, type))` covers it. (about 3 lines)
-- [hash.odin:344](src/hash.odin#L344) `hash_scalar_bits`: its one caller is `hash_const` and only `eval_hash` calls that, always with `ev.alloc`; inline it, use `underlying_kind`, make `allocator` required, and drop `value_allocator`. (about 8 lines)
-- [hash.odin:265](src/hash.odin#L265) `type_own_equality_declared`: one caller, [check_expr.odin:2519](src/check_expr.odin#L2519); make `own_equality` file-visible and write `_, declared := own_equality(...)` there. (about 5 lines)
-- [hash.odin:148](src/hash.odin#L148) `first_unhashable_part`: the `bool` result always equals `part_type != INVALID_TYPE`, and `type_underlying` is computed twice; drop the one and name the other. (about 3 lines)
-
-**Dead code**
-
-- (branch) [hash.odin:371](src/hash.odin#L371): `hash_const`'s array branch; `eval_hash` handles every `.Aggregate` array first, so `value.aggregate` is never set here, and `zero_value` and `value_from_const` gave no non-aggregate array on any path read. Remove it. (about 11 lines)
-- (branch) [hash.odin:40](src/hash.odin#L40): the `.Untyped_*` arms here and at lines 137, 347 and 362; `map[K]` cannot name an untyped type, parts are typed, [customization.odin:44](src/customization.odin#L44) excludes untyped, and literal receivers arrive converted.
-
-**Near copies**
-
-- [hash.odin:154](src/hash.odin#L154) and [hash.odin:83](src/hash.odin#L83): the nested `unhashable` is `part_is_hashable` negated plus a void check. Move the void check into `part_is_hashable`, which also removes the filter at line 65, and call that with one shared `seen`. (about 8 lines)
-- [hash.odin:382](src/hash.odin#L382), [eval.odin:4153](src/eval.odin#L4153) and [semantic.odin:1214](src/semantic.odin#L1214) (about 18 sites there): the same `(h ~ v) * HASH_MULTIPLIER`; a `hash_mix(h, v)` beside the constant gives the step one name.
-
-**Structure and boundaries**
-
-- [hash.odin:255](src/hash.odin#L255): lines 255-339 are equality, not hashing, and most callers are comparison code such as `type_is_comparable` and [check_expr.odin:2494](src/check_expr.odin#L2494). They belong beside `type_is_comparable` in `operators.odin`.
-- [hash.odin:200](src/hash.odin#L200) `resolve_map_key_policy`: selecting a policy and wording a rejection are mixed; the seam is lines 204-219, an `unhashable_key_reason(c, key) -> string`, which also gives the sentence repeated at lines 215 and 219 one home.
-
-**Comments**
-
-- [hash.odin:16](src/hash.odin#L16): the catalogue is in standard-library.md, also misattributed on line 1. Shorten to: `standard-library.md "Standard interface catalogue" lists the hashable scalars; a record or union keeping its generated == hashes structurally (design.md "Maps").` The NaN rationale is there and in the message at line 205. (about 2 lines)
-- [hash.odin:48](src/hash.odin#L48): delete; `Type_Walk`'s comment at [semantic.odin:2185](src/semantic.odin#L2185) says this.
-- [hash.odin:149](src/hash.odin#L149): the array remark does not match the filter below it, which rejects arrays; delete it or write `An array has no named part.`
-- [hash.odin:90](src/hash.odin#L90): the list narrates the conditions below it; keep only `Packed fields are read in place.` (about 2 lines)
-- [hash.odin:129](src/hash.odin#L129): delete; the name says it.
 
 ### src/hooks.odin
 

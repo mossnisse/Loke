@@ -35,14 +35,15 @@ fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Sy
 }
 
 // design.md "Maps": a type that keeps its generated `==` and declares no `hash`
-// has that `hash` as a member. As with a generated `format`, it appears only
-// when `hash` is looked up and the name is free.
+// has that `hash` as a member, as a `distinct` type that declares neither half has
+// its underlying type's. As with a generated `format`, it appears only when `hash`
+// is looked up and the name is free.
 ensure_hash_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	if identifier_text(k.c, name) != "hash" || type_is_untyped(k.c, type) {
 		return
 	}
 	info := type_of(k.c, type)
-	if info == nil || member_named(k.c, info.members, name) != INVALID_SYMBOL || type_own_equality(k.c, type) != INVALID_SYMBOL {
+	if info == nil || member_named(k.c, info.members, name) != INVALID_SYMBOL {
 		return
 	}
 	settle_part_hashes(k, type)
