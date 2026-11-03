@@ -85,30 +85,12 @@ emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol) {
 		fmt.sbprintfln(&e.b, "%s = external global %s", name, llvm_type(e, sym.type))
 		return
 	}
-	ret := "void"
-	sret_prefix := ""
 	proc_info := type_of(e.c, sym.proc_type)
-	if sym.result != INVALID_TYPE {
-		result := sym.result
-		if proc_result_is_inout(proc_info) {
-			ret = "ptr"
-		} else {
-			switch abi_pass(e.c, result) {
-			case .Indirect:
-				sret_prefix = fmt.aprintf("ptr sret(%s) align %d", llvm_type(e, result), type_align(e.c, result))
-			case .Reg_Int:
-				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
-			case .Bool_I1:
-				ret = "zeroext i1"
-			case .Direct:
-				ret = llvm_type(e, result)
-			}
-		}
-	}
+	ret, indirect := foreign_result_llvm(e, sym.result, proc_info)
 	fmt.sbprintf(&e.b, "declare %s %s(", ret, name)
 	need_comma := false
-	if sret_prefix != "" {
-		fmt.sbprint(&e.b, sret_prefix)
+	if indirect {
+		fmt.sbprintf(&e.b, "ptr sret(%s) align %d", llvm_type(e, sym.result), type_align(e.c, sym.result))
 		need_comma = true
 	}
 	for parameter, index in sym.params {
@@ -750,28 +732,14 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 // a `define` writes them and a call that forwards them writes them again.
 @(private = "file")
 foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol) -> (ret: string, params: []string) {
-	ret = "void"
 	out := make([dynamic]string, 0, len(symbol.params) + 1)
-	proc_info := type_of(e.c, symbol.proc_type)
-	if symbol.result != INVALID_TYPE {
-		result := symbol.result
-		if proc_result_is_inout(proc_info) {
-			ret = "ptr"
-		} else {
-			switch abi_pass(e.c, result) {
-			case .Indirect:
-				e.abi_sret = "%arg.sret"
-				append(&out, fmt.aprintf(
-					"ptr sret(%s) align %d %s", llvm_type(e, result), type_align(e.c, result), e.abi_sret,
-				))
-			case .Reg_Int:
-				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
-			case .Bool_I1:
-				ret = "zeroext i1"
-			case .Direct:
-				ret = llvm_type(e, result)
-			}
-		}
+	indirect: bool
+	ret, indirect = foreign_result_llvm(e, symbol.result, type_of(e.c, symbol.proc_type))
+	if indirect {
+		e.abi_sret = "%arg.sret"
+		append(&out, fmt.aprintf(
+			"ptr sret(%s) align %d %s", llvm_type(e, symbol.result), type_align(e.c, symbol.result), e.abi_sret,
+		))
 	}
 	for parameter, index in symbol.params {
 		append(&out, fmt.aprintf("%s %%arg%d", foreign_param_type(e, symbol, parameter, index), index))
@@ -880,12 +848,35 @@ emit_foreign_environment_check :: proc(e: ^Emitter, symbol: ^Symbol) {
 	place_label(e, after)
 }
 
+// A foreign procedure's LLVM return type, or `void` and `indirect` for a result
+// through an `sret` pointer the signature adds.
+@(private = "file")
+foreign_result_llvm :: proc(e: ^Emitter, result: Type_Id, info: ^Type_Info) -> (ret: string, indirect: bool) {
+	if result == INVALID_TYPE {
+		return "void", false
+	}
+	if proc_result_is_inout(info) {
+		return "ptr", false
+	}
+	switch abi_pass(e.c, result) {
+	case .Indirect:
+		return "void", true
+	case .Reg_Int:
+		return fmt.aprintf("i%d", abi_reg_bits(e.c, result)), false
+	case .Bool_I1:
+		return "zeroext i1", false
+	case .Direct:
+		return llvm_type(e, result), false
+	}
+	unreachable()
+}
+
 // The LLVM type (with any ABI attribute) one foreign parameter occupies.
 @(private = "file")
 foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, index: int) -> string {
 	// design.md: a `self: ^` receiver, `inout T`, and `@(by_ptr) T` cross as a pointer.
 	proc_info := type_of(e.c, symbol.proc_type)
-	if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) || param_is_by_ptr(proc_info, index) {
+	if foreign_param_is_pointer(proc_info.param_modes, proc_info.param_by_ptr, index) {
 		return "ptr"
 	}
 	switch abi_pass(e.c, parameter) {
@@ -1016,22 +1007,7 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 // matching the `declare`'s parameter types without their call-site attributes.
 @(private = "file")
 foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) -> string {
-	ret := "void"
-	if callee_type.result != INVALID_TYPE {
-		result := callee_type.result
-		if proc_result_is_inout(callee_type) {
-			ret = "ptr"
-		} else {
-			#partial switch abi_pass(e.c, result) {
-			case .Reg_Int:
-				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
-			case .Bool_I1:
-				ret = "zeroext i1"
-			case .Direct:
-				ret = llvm_type(e, result)
-			}
-		}
-	}
+	ret, _ := foreign_result_llvm(e, callee_type.result, callee_type)
 	b := strings.builder_make()
 	fmt.sbprintf(&b, "%s (", ret)
 	need_comma := false
@@ -1044,8 +1020,7 @@ foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) 
 			fmt.sbprint(&b, ", ")
 		}
 		need_comma = true
-		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		if param_mode_is_pointer(mode) || param_is_by_ptr(callee_type, index) {
+		if foreign_param_is_pointer(callee_type.param_modes, callee_type.param_by_ptr, index) {
 			fmt.sbprint(&b, "ptr")
 			continue
 		}
@@ -1072,26 +1047,12 @@ emit_foreign_call :: proc(
 	e: ^Emitter, callee: string, callee_type: ^Type_Info, operands: []string,
 	symbol: ^Symbol, bound: []Expr,
 ) -> []string {
-	ret := "void"
+	result_type := callee_type.result
+	ret, indirect := foreign_result_llvm(e, result_type, callee_type)
 	sret := ""
-	result_type := INVALID_TYPE
-	if callee_type.result != INVALID_TYPE {
-		result_type = callee_type.result
-		if proc_result_is_inout(callee_type) {
-			ret = "ptr"
-		} else {
-			switch abi_pass(e.c, result_type) {
-			case .Indirect:
-				sret = temp(e)
-				alloca_named(e, sret, llvm_type(e, result_type))
-			case .Reg_Int:
-				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result_type))
-			case .Bool_I1:
-				ret = "zeroext i1"
-			case .Direct:
-				ret = llvm_type(e, result_type)
-			}
-		}
+	if indirect {
+		sret = temp(e)
+		alloca_named(e, sret, llvm_type(e, result_type))
 	}
 
 	// design.md "`@(c_vararg)`": arguments past the fixed parameters are concrete

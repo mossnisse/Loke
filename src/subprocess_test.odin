@@ -129,7 +129,7 @@ sees_its_end :: proc(pipe: ^os.File, limit: time.Duration) -> bool {
 @(test)
 subprocess_run_reports_a_failed_wait :: proc(t: ^testing.T) {
 	sync.mutex_guard(&launching)
-	subprocess.wait_override = proc(process: os.Process) -> (os.Process_State, os.Error) {
+	subprocess.wait_override = proc(process: os.Process, _: time.Duration) -> (os.Process_State, os.Error) {
 		_, _ = os.process_wait(process)
 		return {}, os.General_Error.Invalid_Command
 	}
@@ -137,4 +137,38 @@ subprocess_run_reports_a_failed_wait :: proc(t: ^testing.T) {
 	child := os.Process_Desc{command = {"cmd.exe", "/c", "exit 3"}}
 	_, _, _, err := subprocess.run(child, context.temp_allocator)
 	testing.expectf(t, err == os.General_Error.Invalid_Command, "a failed wait was reported as %v", err)
+}
+
+// The deadline holds for a child that keeps writing, whose pipes may never be
+// found empty.
+@(test)
+subprocess_run_keeps_its_deadline_while_the_child_writes :: proc(t: ^testing.T) {
+	sync.mutex_guard(&launching)
+	child := os.Process_Desc{command = {"cmd.exe", "/c", "for /l %i in (0,0,1) do @echo output"}}
+	started := time.tick_now()
+	state, stdout, _, err := subprocess.run(child, context.temp_allocator, 500 * time.Millisecond)
+	testing.expectf(t, err == os.General_Error.Timeout, "a writing child was reported as %v (exit %d)", err, state.exit_code)
+	testing.expect(t, strings.has_prefix(string(stdout), "output"), "the output before the deadline was lost")
+	testing.expectf(t, time.tick_since(started) < 30 * time.Second, "the deadline was enforced only after %v", time.tick_since(started))
+}
+
+// A nil environment or directory means the parent's, so one that cannot convert
+// fails rather than letting the child run with the parent's.
+@(test)
+subprocess_run_rejects_text_it_cannot_convert :: proc(t: ^testing.T) {
+	sync.mutex_guard(&launching)
+	_, _, _, env_err := subprocess.run(os.Process_Desc{command = {"cmd.exe", "/c", "exit 0"}, env = {"LOKE_BAD=\xff"}}, context.temp_allocator)
+	testing.expectf(t, env_err != nil, "an environment entry with an invalid byte was reported as %v", env_err)
+	_, _, _, dir_err := subprocess.run(os.Process_Desc{command = {"cmd.exe", "/c", "exit 0"}, working_dir = "\xff"}, context.temp_allocator)
+	testing.expectf(t, dir_err != nil, "a working directory with an invalid byte was reported as %v", dir_err)
+}
+
+// Windows reads environment keys without regard to case.
+@(test)
+subprocess_run_replaces_an_entry_of_another_case :: proc(t: ^testing.T) {
+	sync.mutex_guard(&launching)
+	child := os.Process_Desc{command = {"cmd.exe", "/c", "echo %LOKE_CASE%"}, env = {"LOKE_case=first", "LOKE_CASE=second"}}
+	_, stdout, _, err := subprocess.run(child, context.temp_allocator)
+	testing.expectf(t, err == nil, "cannot run the child: %v", err)
+	testing.expectf(t, strings.trim_space(string(stdout)) == "second", "the child saw %q", string(stdout))
 }

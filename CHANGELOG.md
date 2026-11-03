@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- `f16` at a foreign boundary, directly or as a record's field, is now `L0619`: the Win64 C ABI
+  does not classify it ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)). Upgrade by
+  passing an `f32`, or by passing a `^f16`.
 - A struct's or union's attributes are now written on its declaration, and `move_only` is
   the attribute `@(move_only)`, no longer a reserved word
   ([Attributes](design.md#attributes)). Attributes in the type, and `move_only struct`, are
@@ -1285,6 +1288,14 @@ checklist.
 
 ### Fixed
 
+- Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
+  a wrong pointer to it, and same-named types, from two packages or two procedures, each show their
+  own layout. A later such type is named `Name$<n>` in the debugger.
+- An unresolved type in a foreign signature no longer adds an `L0619` about `<invalid>`, or about a
+  zero-sized record, to its `L0306`.
+- Checking a record that holds a foreign procedure type taking that record no longer nearly doubles in
+  time with each level of records it shares: 24 levels took 7.5 seconds, and now take under a tenth of one.
+- The compiler no longer waits a timer tick of about 15 ms on each child it launches.
 - An owner built from a provider inside a `Shared` payload is now checked: one built from
   `held.get().allocator()` that outlives `held` is now `L0537`, and returning it is `L0592`. Both
   compiled and read a dead region ([Shared ownership](design.md#shared-ownership)). The same goes for

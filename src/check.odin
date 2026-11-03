@@ -9,9 +9,9 @@ import "core:strings"
 
 Checker :: struct {
 	c:     ^Compiler,
-	// Foreign signatures that named a record still resolving its fields
-	// (`check_deferred_foreign_signatures`).
-	deferred_foreign_signatures: [dynamic]Foreign_Signature,
+	// Parts of foreign signatures that named a record still resolving its fields
+	// (`check_deferred_foreign_parts`).
+	deferred_foreign_parts: [dynamic]Foreign_Part,
 	file:  u32,
 	// The file being checked. Its package-clause attributes decide the default
 	// visibility of the declarations in it.
@@ -263,7 +263,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	check_intrinsic_declarations(k, pkg)
 
 	// Every record has its fields now.
-	check_deferred_foreign_signatures(k)
+	check_deferred_foreign_parts(k)
 
 	// Phase 2c: reject a type that contains itself by value, a layout past the
 	// maximum, and a union's designated zero with no zero value: each needs every
@@ -316,7 +316,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		}
 	}
 	// And any a body's own procedure type deferred.
-	check_deferred_foreign_signatures(k)
+	check_deferred_foreign_parts(k)
 
 	// Every symbol has its kind and its constant its type.
 	check_private_names(k, package_id)
@@ -1581,12 +1581,9 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		result_inout = result.is_inout
 	}
 
-	if validate_convention(k, literal.signature.convention, literal.span) &&
-	   convention_is_foreign(literal.signature.convention) {
-		check_foreign_signature(
-			k, params[:], modes[:], by_ptr_list[:], result_type, result_inout, literal.span,
-		)
-	}
+	check_signature_convention(
+		k, literal.signature.convention, params[:], modes[:], by_ptr_list[:], result_type, result_inout, literal.span,
+	)
 	proc_type := intern_proc_type(
 		k.c, params[:], modes[:], result_type, result_inout,
 		literal.signature.convention, resets_list[:],
@@ -2153,10 +2150,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			}
 			result_inout = result.is_inout
 		}
-		if validate_convention(k, value.convention, value.span) &&
-		   convention_is_foreign(value.convention) {
-			check_foreign_signature(k, params[:], modes[:], nil, result_type, result_inout, value.span)
-		}
+		check_signature_convention(k, value.convention, params[:], modes[:], nil, result_type, result_inout, value.span)
 		value.denoted_type = intern_proc_type(
 			k.c, params[:], modes[:], result_type, result_inout, value.convention, resets[:],
 			param_escapes = escapes[:],

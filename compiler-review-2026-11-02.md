@@ -28,14 +28,14 @@ section are revised when a fix changes them.
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
-| High and medium severity bugs | 162 (36 high, 126 medium) | An independent attempt to refute each one |
-| Low severity bugs | 163 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 612 | Only the reviewer |
-| Dead code | 347 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
-| Data structures and algorithms | 121 | Only the reviewer |
-| Near copies | 399 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 258 | Only the reviewer |
-| Comments | 469 | Only the reviewer |
+| High and medium severity bugs | 160 (36 high, 124 medium) | An independent attempt to refute each one |
+| Low severity bugs | 155 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 597 | Only the reviewer |
+| Dead code | 336 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| Data structures and algorithms | 119 | Only the reviewer |
+| Near copies | 388 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 249 | Only the reviewer |
+| Comments | 457 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 325 overstates the number of separate
+  merges the ones found so far, so 315 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 399 suggests: the
+Near copies are real but smaller than the raw count of 388 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -294,9 +294,9 @@ The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L34
 
 #### Foreign result and parameter spelling
 
-The `abi_pass` switch for a result is at [emit_llvm_abi.odin:94](src/emit_llvm_abi.odin#L94), [emit_llvm_abi.odin:752](src/emit_llvm_abi.odin#L752), [emit_llvm_abi.odin:1016](src/emit_llvm_abi.odin#L1016) and [emit_llvm_abi.odin:1074](src/emit_llvm_abi.odin#L1074). The arms differ only in what `.Indirect` does: a declaration prefix, a named parameter, nothing, or a slot. The parameter switch is at [emit_llvm_abi.odin:882](src/emit_llvm_abi.odin#L882) and [emit_llvm_abi.odin:1043](src/emit_llvm_abi.odin#L1043), which differ in the `zeroext` attribute. [abi.odin:48](src/abi.odin#L48) `foreign_param_is_pointer` is rewritten by hand at [emit_llvm_abi.odin:879](src/emit_llvm_abi.odin#L879) and [emit_llvm_abi.odin:1039](src/emit_llvm_abi.odin#L1039).
+The parameter switch is at [emit_llvm_abi.odin:882](src/emit_llvm_abi.odin#L882) and [emit_llvm_abi.odin:1043](src/emit_llvm_abi.odin#L1043), which differ in the `zeroext` attribute.
 
-Shared form: `foreign_result(e, type, inout) -> (ret: string, indirect: bool)`, with each caller handling `indirect`, and one `foreign_param_llvm(e, info, parameter, index, attributes: bool)`. Saves about 55 lines.
+Shared form: one `foreign_param_llvm(e, info, parameter, index, attributes: bool)`. Saves about 15 lines.
 
 #### Allocation failure branch
 
@@ -333,21 +333,18 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - `symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))` at 12 sites becomes `ident_symbol(k, ident)`.
 - `is_package_selector(k, sel)` replaces [box.odin:206](src/box.odin#L206), [erased.odin:1080](src/erased.odin#L1080), [check.odin:1907](src/check.odin#L1907), [check_expr.odin:695](src/check_expr.odin#L695), [check_expr.odin:755](src/check_expr.odin#L755). About 15 lines.
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68) differ in one string; [box.odin:34](src/box.odin#L34) and [select.odin:293](src/select.odin#L293) in one enum. `predeclared_callee(k, callee, name)` and `callee_is_builtin` save about 25 lines.
-- A parameter's mode with the bounds test is written at 24 sites, for example [check_calls.odin:668](src/check_calls.odin#L668) and [emit_llvm_calls.odin:1423](src/emit_llvm_calls.odin#L1423), beside [semantic.odin:1339](src/semantic.odin#L1339) `proc_parameter_mode` and its near copy [abi.odin:17](src/abi.odin#L17). A `param_mode_at(info, index)` saves no lines but shortens every site.
+- A parameter's mode with the bounds test is written at 24 sites, for example [check_calls.odin:668](src/check_calls.odin#L668) and [emit_llvm_calls.odin:1423](src/emit_llvm_calls.odin#L1423), beside [semantic.odin:1339](src/semantic.odin#L1339) `proc_parameter_mode`. A `param_mode_at(info, index)` saves no lines but shortens every site.
 - `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `bind_one(k, v, e)`. About 30 lines.
 - Copy cost then copy classification: `classify_copy_cost` at [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721) follows the same arguments' `classify_copy`. One wrapper, about 8 lines.
 - Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), [container.odin:723](src/container.odin#L723), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
 - Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373), [attributes.odin:473](src/attributes.odin#L473) and [borrow.odin:639](src/borrow.odin#L639) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
-- `record_resolving` ([check.odin:1832](src/check.odin#L1832)) is spelled out at [abi.odin:280](src/abi.odin#L280) and [layout.odin:84](src/layout.odin#L84).
 - Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93), with [doc.odin:1374](src/doc.odin#L1374) file-private. Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
-- The fuzz harness's pipe, poll and kill loop ([checker_fuzz_test.odin:108](tests/checker_fuzz_test.odin#L108)) is what [subprocess.odin:82](src/subprocess/subprocess.odin#L82) `exec` does, about 25 lines.
 
 #### Code in the wrong file
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- [abi.odin:27](src/abi.odin#L27) `param_borrows_caller_storage` has one caller, `prov_argument_kind` in `provenance_call.odin`. Inline it there.
 - Constant reinterpretation ([check_builtin.odin:1096](src/check_builtin.odin#L1096) to `const_from_storage`, also called from [eval.odin:3019](src/eval.odin#L3019)) belongs in `const_ops.odin`; runtime type binding ([check_builtin.odin:1489](src/check_builtin.odin#L1489), [check_builtin.odin:1562](src/check_builtin.odin#L1562)) in `bootstrap.odin`, with [atomics.odin:49](src/atomics.odin#L49) `runtime_enum_matches`, whose other callers are [check_builtin.odin:1588](src/check_builtin.odin#L1588) and [check_builtin.odin:1592](src/check_builtin.odin#L1592).
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `semantic.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
@@ -376,7 +373,6 @@ Counts per file, then the findings themselves in the same order.
 
 | File | Lines | Bugs | Simplify | Dead | Data | Copies | Structure | Comments |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [abi.odin](src/abi.odin) | 342 | 3 | 4 | 1 | 1 | 4 | 2 | 1 |
 | [ast.odin](src/ast.odin) | 1488 | 1 | 5 | 2 | 1 | 1 | 1 | 6 |
 | [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 2 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
@@ -394,11 +390,10 @@ Counts per file, then the findings themselves in the same order.
 | [container.odin](src/container.odin) | 831 | 2 | 12 | 6 | 2 | 7 | 5 | 9 |
 | [doc.odin](src/doc.odin) | 1375 | 7 | 9 | 4 | 1 | 6 | 5 | 5 |
 | [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
-| [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 13 | 3 | 2 | 6 | 4 | 7 |
+| [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 13 | 3 | 2 | 5 | 4 | 7 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
 | [emit_llvm_containers.odin](src/emit_llvm_containers.odin) | 1436 | 2 | 15 | 3 | 3 | 8 | 4 | 7 |
-| [emit_llvm_debug.odin](src/emit_llvm_debug.odin) | 638 | 2 | 4 | 4 | 0 | 2 | 3 | 3 |
 | [emit_llvm_expr.odin](src/emit_llvm_expr.odin) | 2549 | 4 | 13 | 8 | 3 | 11 | 4 | 6 |
 | [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) | 1057 | 3 | 7 | 3 | 0 | 4 | 4 | 6 |
 | [emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) | 1737 | 2 | 10 | 9 | 1 | 10 | 4 | 4 |
@@ -408,9 +403,8 @@ Counts per file, then the findings themselves in the same order.
 | [enums.odin](src/enums.odin) | 105 | 0 | 0 | 0 | 0 | 2 | 1 | 0 |
 | [erased.odin](src/erased.odin) | 1216 | 5 | 9 | 4 | 4 | 8 | 5 | 6 |
 | [eval.odin](src/eval.odin) | 4169 | 9 | 22 | 10 | 5 | 13 | 8 | 14 |
-| [eval_memory.odin](src/eval_memory.odin) | 249 | 0 | 5 | 4 | 0 | 3 | 2 | 4 |
 | [expand.odin](src/expand.odin) | 694 | 5 | 12 | 3 | 1 | 4 | 4 | 6 |
-| [foreign.odin](src/foreign.odin) | 174 | 9 | 2 | 4 | 0 | 2 | 1 | 6 |
+| [foreign.odin](src/foreign.odin) | 174 | 8 | 2 | 4 | 0 | 2 | 1 | 6 |
 | [format.odin](src/format.odin) | 298 | 4 | 7 | 2 | 1 | 3 | 2 | 5 |
 | [formatter.odin](src/formatter.odin) | 516 | 6 | 10 | 4 | 0 | 2 | 1 | 4 |
 | [generic.odin](src/generic.odin) | 3992 | 8 | 15 | 7 | 5 | 12 | 7 | 9 |
@@ -444,51 +438,9 @@ Counts per file, then the findings themselves in the same order.
 | [simd.odin](src/simd.odin) | 596 | 7 | 5 | 9 | 0 | 5 | 2 | 8 |
 | [slice.odin](src/slice.odin) | 91 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
 | [source.odin](src/source.odin) | 911 | 2 | 5 | 0 | 1 | 3 | 2 | 7 |
-| [subprocess.odin](src/subprocess/subprocess.odin) | 350 | 4 | 2 | 2 | 1 | 1 | 2 | 4 |
 | [text.odin](src/text.odin) | 350 | 6 | 4 | 0 | 1 | 3 | 2 | 4 |
 | [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 2 | 2 | 7 |
 | [universe.odin](src/universe.odin) | 132 | 0 | 0 | 0 | 0 | 2 | 0 | 1 |
-
-### src/abi.odin
-
-The classification rules are right and match the spec table, and its comments are already terse. The cost is in the walk's bookkeeping and the deferred signature machinery, most of which exists to re-check procedure signatures that are already checked where they are written.
-
-**Bugs**
-
-- `BUG-abi-1` **low** [abi.odin:202](src/abi.odin#L202) `abi_walk`: an unresolved type gets a follow-on L0619 that leaks `<invalid>`, printed ahead of the real error. Scenario: `f :: proc "c" (a: Missing) {}` reports "`<invalid>` is not a resolved type", then L0306; a field `a: Missing` does the same. Fix: return safe here, as line 112 already skips an invalid result. *Not verified.*
-- `BUG-abi-2` **low** [abi.odin:230](src/abi.odin#L230) `abi_walk`: answers are never cached once a cycle was seen, so checking is exponential. Scenario: a valid chain `A1 :: struct { cb: proc "c" (a: A1), l: A2, r: A2 }` and so on took 0.59 s at depth 20 and 2.0 s at depth 22, doubling per level. Fix: the first two Simplification items. *Not verified.*
-- `BUG-abi-3` **low** [abi.odin:253](src/abi.odin#L253) `abi_walk`: `.Float` is accepted at any width, so `proc "c" (a: f16)` compiles. design.md "Foreign-ABI-safe types" makes `f16` safe only where the target ABI defines its classification, and the Win64 ABI defines none. Fix: reject `bits == 16`, or have the spec state the Win64 class. *Not verified.*
-
-**Simplification**
-
-- [abi.odin:259](src/abi.odin#L259) `abi_walk`: drop the signature walk in `.Proc`, leaving only the convention test. Every foreign procedure type is checked where written ([check.odin:1586](src/check.odin#L1586), [check.odin:2137](src/check.odin#L2137)), generic instances too. This removes `cycles` and `outer_cycle`, plus the duplicate "member `cb` of `S` is a managed `string`". (about 20 lines)
-- [abi.odin:226](src/abi.odin#L226) `abi_walk`: with the above, cache every safe answer: `defer { walk.visiting[index] = false; walk.safe[index] = safe }`. Any unsafe member aborts the whole walk and the arrays last one walk, while cycles and incomplete records already skip checks in ways the program or a re-walk settles. (about 6 lines)
-- [abi.odin:93](src/abi.odin#L93) `check_foreign_signature_types`: defer one `{type, what, span}` rather than a whole signature. One helper then does `abi_safety`, then re-queue or report; the `Unsafe` list, the doubled blocks at 103 and 113, and the separate mode loop at line 63 all go. Diagnostics of a deferred signature may reorder. (about 30 lines)
-- [abi.odin:32](src/abi.odin#L32) `validate_convention`: an unknown convention already fails `convention_is_foreign`, so the bool return only feeds the `&&` at both callers. Fold both into `check_signature_convention`: return on `""`, report if not foreign, else check the signature. (about 8 lines)
-
-**Dead code**
-
-- (branch) [abi.odin:215](src/abi.odin#L215): the range test and `marked` cannot fail, since `type_of` at line 206 has bounds-checked `under` against `c.types` and the walk creates no types (`hooks.odin` and `layout.odin` intern none). Index unconditionally and drop `marked`.
-
-**Data structures and algorithms**
-
-- [abi.odin:152](src/abi.odin#L152) `abi_safety`: allocates two `len(c.types)` arrays for every by-value foreign parameter, even an `i32`, in a temp allocator nothing resets, so cost is parameters times types. 8000 records and 8000 three-`i32` foreign procs peaked at 292 MB against 69 MB without parameters (0.40 s against 0.25 s). Use `map[Type_Id]` as in [hooks.odin:258](src/hooks.odin#L258).
-
-**Near copies**
-
-- [abi.odin:280](src/abi.odin#L280) and [check.odin:1832](src/check.odin#L1832): line 280 spells out `record_resolving`, as does [layout.odin:84](src/layout.odin#L84). Call the helper from both.
-- [abi.odin:17](src/abi.odin#L17) and [semantic.odin:1339](src/semantic.odin#L1339): `symbol_param_mode` repeats `proc_parameter_mode`. Its body can be `return proc_parameter_mode(c, symbol.proc_type, index)`.
-- [abi.odin:48](src/abi.odin#L48) and [emit_llvm_abi.odin:879](src/emit_llvm_abi.odin#L879): the mode-or-`by_ptr` pointer test is rewritten there and at [emit_llvm_abi.odin:1039](src/emit_llvm_abi.odin#L1039). Both can call `foreign_param_is_pointer(info.param_modes, info.param_by_ptr, index)`.
-- [abi.odin:172](src/abi.odin#L172) and [emit_llvm_abi.odin:94](src/emit_llvm_abi.odin#L94): the `abi_pass` switch spelling a result is repeated at lines 752, 1016 and 1074 of that file. One `foreign_result_llvm(e, result, info) -> (ret: string, indirect: bool)` beside them serves all four.
-
-**Structure and boundaries**
-
-- [abi.odin:165](src/abi.odin#L165): `Abi_Pass`, `abi_pass` and `abi_reg_bits`, which the emitter uses, sit between `abi_safety` and its `abi_walk`. Move them after the walk so the two halves of the file read separately.
-- [abi.odin:17](src/abi.odin#L17): `symbol_param_mode` and `param_borrows_caller_storage` (line 27) are about Loke parameters, not the foreign ABI this file owns. Move the first beside `proc_parameter_mode`; the second has one caller, [cfg_provenance.odin:7933](src/cfg_provenance.odin#L7933), and belongs there.
-
-**Comments**
-
-- [abi.odin:135](src/abi.odin#L135): the first clause misleads, because this procedure rejects a top-level array and the rule is in `abi_walk`. Shorten to `// reason names the unsafe member.`
 
 ### src/ast.odin
 
@@ -2040,8 +1992,7 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 
 **Near copies**
 
-- [emit_llvm_abi.odin:89](src/emit_llvm_abi.odin#L89), [line 747](src/emit_llvm_abi.odin#L747), [line 1011](src/emit_llvm_abi.odin#L1011) and [line 1069](src/emit_llvm_abi.odin#L1069): the same "inout, else `abi_pass`" result switch. One `foreign_result(e, info) -> (ret: string, sret: bool)` serves all four. (about 40 lines)
-- [emit_llvm_abi.odin:1036](src/emit_llvm_abi.odin#L1036) and [line 876](src/emit_llvm_abi.odin#L876): `foreign_call_type` re-classifies parameters as `foreign_param_type` does, differing only in dropping `zeroext`. Take `^Type_Info` in `foreign_param_type` and trim the attribute. The `mode` lookups at lines 1038 and 1105 also repeat `foreign_param_is_pointer` ([abi.odin:48](src/abi.odin#L48)). (about 15 lines)
+- [emit_llvm_abi.odin:1036](src/emit_llvm_abi.odin#L1036) and [line 876](src/emit_llvm_abi.odin#L876): `foreign_call_type` re-classifies parameters as `foreign_param_type` does, differing only in dropping `zeroext`. Take `^Type_Info` in `foreign_param_type` and trim the attribute. The `mode` lookup at line 1105 also repeats `foreign_param_is_pointer`. (about 15 lines)
 - [emit_llvm_abi.odin:991](src/emit_llvm_abi.odin#L991) and [line 1121](src/emit_llvm_abi.odin#L1121): the same spill and reload through `iN`; lines 998, 1112 and 1128 are the same spill to a pointer. A `foreign_value_operand(e, type, operand)` serves the promotion's aggregate case and the fixed-argument switch. (about 12 lines)
 - [emit_llvm_abi.odin:441](src/emit_llvm_abi.odin#L441), [line 467](src/emit_llvm_abi.odin#L467) and [line 505](src/emit_llvm_abi.odin#L505): write the payload at member 0, then the tag. Hoist the nested `arm` to file scope and use it in all three. (about 6 lines)
 - [emit_llvm_abi.odin:208](src/emit_llvm_abi.odin#L208) and [emit_llvm_expr.odin:180](src/emit_llvm_expr.odin#L180): the type's and the constant's spelling of a record each derive packed, over-aligned and byte-member form; [emit_llvm_expr.odin:2014](src/emit_llvm_expr.odin#L2014) derives the last again. With the flag above, both read the same two facts.
@@ -2279,46 +2230,6 @@ Most of the removable bulk is hand-written IR that existing helpers already cove
 - [emit_llvm_containers.odin:341](src/emit_llvm_containers.odin#L341): repeats line 416 word for word; keep one, in the shared `begin_thunk`.
 - [emit_llvm_containers.odin:998](src/emit_llvm_containers.odin#L998): delete; design.md "Map container operations" and the call say it.
 - [emit_llvm_containers.odin:864](src/emit_llvm_containers.odin#L864): delete; `value_storage` shows the spill.
-
-### src/emit_llvm_debug.odin
-
-The marker-then-rewrite design is compact and its comments mostly explain why, but two checks with cdb show values a debugger gets wrong. The shortening available is mainly a few near copies and some guards that cannot fire.
-
-**Bugs**
-
-- `BUG-emit_llvm_debug-1` **medium** [emit_llvm_debug.odin:260](src/emit_llvm_debug.odin#L260) `debug_declare`: `arg:` marks a by-value aggregate over 8 bytes as a parameter, and cdb then reads its slot as a pointer to it (x64 by-reference), though Loke's slot holds the value. Scenario: `take(pt: Pt)` with `Pt{x = 4, y = 5}`: `dv /t` prints `Pt * pt = 0x4` and `dx pt` cannot read memory; `string_view`, `[]int` and `dyn` parameters break alike, while scalars, an 8-byte struct and `[3]int` are right. Fix: omit `arg:` for these (doing so in the IR fixed all four in cdb) and pin a parameter in `a_debugger_shows_values`. *Confirmed: Reproduced with lokec -g and cdbX64: dv /t shows `Pt * pt = 0x4`, `Tri * tri = 0x7`, and string_view and []int params also as pointers, and dx cannot read them; Small, [3]int and int display right. No gap or decision is recorded. Debug display only, no wrong code.*
-- `BUG-emit_llvm_debug-2` **medium** [emit_llvm_debug.odin:344](src/emit_llvm_debug.odin#L344) `debug_type`: a type's CodeView name is the unqualified `type_name`, and cdb resolves a by-name reference to one definition, so same-named types show each other's layout. Scenario: `a.Thing{alpha, beta}` and `b.Thing{gamma, delta, epsilon}`, or a local `Local` in two procedures: `*h.pa` and a by-value field `h.va` show `gamma`, `delta`, `epsilon` with wrong values. Fix: make the name unique, such as by package and a suffix for a local type; renaming in the IR fixed it, adding `identifier:` did not. *Confirmed: Reproduced with cdb on a -g build: `dx *h.pa` and `dx h.va` of a.Thing showed b.Thing's gamma/delta/epsilon with garbage, and a by-value field of one body-local Local showed the other's fields. Direct locals were right; neither gap doc records it.*
-
-**Simplification**
-
-- [emit_llvm_debug.odin:171](src/emit_llvm_debug.odin#L171) `attach_debug_info`: `emit_witnesses` ([emit_llvm_runtime.odin:1605](src/emit_llvm_runtime.odin#L1605)) writes the tables in `witness_order`, so the n-th `@loke.w.` line is witness n. A counter replaces the `witnesses` map, its fill loop, the `" = "` slice and the `found` test. (about 6 lines)
-- [emit_llvm_debug.odin:249](src/emit_llvm_debug.odin#L249) `debug_declare`: `line_col` and `debug_file` each run twice for the same symbol; compute `file`, `line`, `column` once after the guard. (about 3 lines)
-- [emit_llvm_debug.odin:606](src/emit_llvm_debug.odin#L606) `debug_dyn_natvis`: drop `name`, `condition` and `strings.concatenate` for `fmt.sbprintfln` with `witness$%d` and `{{`, and write lines 612 to 616 as one `fmt.sbprintf` taking `shown` and `expanded`. (about 5 lines)
-- [emit_llvm_debug.odin:111](src/emit_llvm_debug.odin#L111) `attach_debug_info`: the `make(map...)` and `strings.builder_make()` initializers are unneeded, since a zero map and builder allocate on first write; `Debug_Info{c = c, count = SUBROUTINE_TYPE + 1}` is enough. (about 5 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_debug.odin:132](src/emit_llvm_debug.odin#L132): `symbol == nil` cannot hold, as the only caller `emit_proc_definition` has already dereferenced that symbol. The same test at [line 245](src/emit_llvm_debug.odin#L245) is covered by the `INVALID_SYMBOL` guard at line 56.
-- (branch) [emit_llvm_debug.odin:175](src/emit_llvm_debug.odin#L175): the `else` cannot run: only `name_witnesses` ([emit_llvm.odin:442](src/emit_llvm.odin#L442)) spells `@loke.w.`, every such name is in the map, and a thunk's line starts with `define`.
-- (branch) [emit_llvm_debug.odin:346](src/emit_llvm_debug.odin#L346): `info == nil` needs an id outside `c.types`; `INVALID_TYPE` is index 0, a real `.Invalid` entry that the `case:` at line 439 already handles. Delete these four lines.
-- (branch) [emit_llvm_debug.odin:624](src/emit_llvm_debug.odin#L624): the quote trimming is unreachable, because only exported names are quoted here and line 311 sends those to `link_name`. A marked non-exported procedure's name comes from `llvm_proc_name`.
-
-**Near copies**
-
-- [emit_llvm_debug.odin:189](src/emit_llvm_debug.odin#L189) and [emit_llvm_debug.odin:197](src/emit_llvm_debug.odin#L197): identical but for field and list. Shared form: `debug_list_field(d, "retainedTypes", d.retained[:])` returning `", field: !N"` or `""`. (about 7 lines)
-- [emit_llvm_debug.odin:454](src/emit_llvm_debug.odin#L454), [emit_llvm_debug.odin:463](src/emit_llvm_debug.odin#L463) and [emit_llvm_debug.odin:487](src/emit_llvm_debug.odin#L487): the same member node three times. One `debug_member_node(d, members, name, base, size, offset)` that also appends the `!N` serves all, and `debug_union` loses its `aprintf`s and early return with `if !shape.niche`. (about 10 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm_debug.odin:107](src/emit_llvm_debug.odin#L107) `attach_debug_info`: 115 lines doing two jobs, with a clean seam at line 186: the line rewrite above it and the module trailer below it (natvis close, unit, flags), which could be `debug_module_trailer(d, &out)`.
-- [emit_llvm_debug.odin:335](src/emit_llvm_debug.odin#L335) `debug_type`: `.Union` and `.Map` have their own procedures while `.Enum`, `.Struct` and the string and slice headers sit inline in a 110-line switch; extracting those three leaves a plain dispatch.
-- [emit_llvm_debug.odin:621](src/emit_llvm_debug.odin#L621) `debug_proc_name`: used only in this file, so `@(private = "file")`; it undoes `llvm_safe` ([emit_llvm.odin:1171](src/emit_llvm.odin#L1171)) with nothing saying so, and its comment should name it.
-
-**Comments**
-
-- [emit_llvm_debug.odin:89](src/emit_llvm_debug.odin#L89): delete; the struct's name, its use as `current`, and the fields say this.
-- [emit_llvm_debug.odin:224](src/emit_llvm_debug.odin#L224): delete; the six-line loop below reads the same.
-- [emit_llvm_debug.odin:421](src/emit_llvm_debug.odin#L421): shorten to `// design.md "string type" and "Slices".`; the member calls below state the rest. (the file's other comments earn their place)
 
 ### src/emit_llvm_expr.odin
 
@@ -2789,7 +2700,7 @@ The semantics are careful and the comments mostly explain why, but the code is l
 - [eval.odin:1485](src/eval.odin#L1485) `argument`: promote "evaluate, then copy" to a file-level `eval_copied(ev, e)` and use it at 1264-1272, 1274-1281, 1525-1532 and 2270-2277. (about 15 lines)
 - [eval.odin:1250](src/eval.odin#L1250) `eval_container_literal`: `written` always ends equal to `count`, so `elements[:written]` is `elements`. Index by entry and use `eval_copied`; the procedure halves. (about 20 lines)
 - [eval.odin:1304](src/eval.odin#L1304) `map_deduplicate`: the inner loop is `map_find` over a value holding `kept[:]`. (about 10 lines)
-- [eval.odin:261](src/eval.odin#L261) `eval_elements`: the memory message is written out at 194, 247 and 265, and `eval_fail` already swaps it in when `memory_error` is set. Here set `ev.memory_error = .Out_Of_Memory` and `return nil, eval_memory_ok(ev)`. (about 6 lines)
+- [eval.odin:261](src/eval.odin#L261) `eval_elements`: the memory message is written out at 194, 247 and 265, and `eval_fail` already swaps it in when `storage.exhausted` is set. Here set `ev.storage.exhausted = true` and `return nil, eval_memory_ok(ev)`. (about 6 lines)
 - [eval.odin:1536](src/eval.odin#L1536) `eval_container_op`: `if !fallible {...}; return eval_one(ev, eval_alloc_ok(...))` repeats at 1617, 1679 and 1688; a nested `finished()` covers them. (about 4 lines)
 - [eval.odin:591](src/eval.odin#L591) `eval_expr`: this hot path computes `expr_base(e)` three times (591, 599, 615); compute it once. Also 892: `const_of(result).boolean` is `result.boolean`; 400-401: `return zero_const(...)`; 1669: check hooks once before the loop, not per element. (about 5 lines)
 
@@ -2902,48 +2813,6 @@ Readable and tightly commented, with three valid programs rejected at compile ti
 - [eval.odin:3720](src/eval.odin#L3720): narrates; delete "One step: bind the element, run the body." and keep the `continue` clause.
 - [eval.odin:3971](src/eval.odin#L3971): says "switch subject" though `eval_foreach` calls it too; write "Whether `subject` is a place rooted in this frame's storage, which a binding then names rather than copies."
 
-### src/eval_memory.odin
-
-A small, correct allocator: size-class arithmetic, alignment, charging, and zeroing all held up when traced, and its intrusive free lists and linked heap blocks suit the job. What remains is a redundant shape struct, a few repeated paths, and guards the Odin runtime already makes unreachable.
-
-**Simplification**
-
-- [eval_memory.odin:100](src/eval_memory.odin#L100) `Eval_Shape`: repeats `Eval_Block`'s fields. Have `eval_shape` return an `Eval_Block` with `state = EVAL_BLOCK_LIVE`; the write at line 173 becomes `eval_header(payload)^ = shape`
-  and the test at line 232 becomes `shape == header^`. Removes the struct, its comment, the six-line literal, and the casts in the comparison. (about 12 lines)
-- [eval_memory.odin:147](src/eval_memory.odin#L147) `eval_block_alloc`: the arena and heap arms differ only in allocator and link-in. `shape.pad` is a valid alignment for both, so pop the free list if possible, otherwise make one `mem.alloc_bytes_non_zeroed(cost, shape.pad, allocator)` call,
-  set `payload = raw_data(block[shape.pad:])`, and link only when `class < 0`. One error path and no `[^]u8` casts. (about 6 lines)
-- [eval_memory.odin:55](src/eval_memory.odin#L55) `eval_storage_init`: a zero `virtual.Arena` is already a growing arena that makes its first block on first use (`arena_alloc_unguarded`). Delete this and the check at [eval.odin:235](src/eval.odin#L235);
-  a failed reservation then reports through `memory_error` like every later arena failure, losing only the separate "cannot reserve" wording. (about 6 lines)
-- [eval_memory.odin:124](src/eval_memory.odin#L124) `eval_shape`: `pad = 16 << uint(shift)` equals `align` on this path, since `align` is 16, 32, or 64. Write `pad = align`.
-- [eval_memory.odin:228](src/eval_memory.odin#L228) `eval_block_resize`: `kept := min(old_size, size)` is enough, since a block's `old_size` never exceeds its capacity. At line 230 only `size >= 0` matters, because a size over the limit rounds to a capacity no live block has. (about 1 line)
-
-**Dead code**
-
-- (branch) [eval_memory.odin:88](src/eval_memory.odin#L88): `.Query_Features` is only asked by `mem.query_features` and the tracking and trace allocators, and nothing in `src/` calls or wraps `ev.alloc` with those. Without it the mode falls to `.Mode_Not_Implemented` at line 94. (5 lines)
-- (branch) [eval_memory.odin:219](src/eval_memory.odin#L219): lines 188, 219, and 222 and `max(..., 1)` at line 114 cannot fire, because `mem_free*`, `mem_alloc*`, and `_mem_resize` filter nil pointers and zero sizes first, and `src/` and `core:math/big` never call the procedure directly.
-  Removing them gives up the general allocator contract for 10 lines; the only other direct caller is `#soa`, which `src/` does not use.
-- (branch) [eval_memory.odin:135](src/eval_memory.odin#L135): the runtime's `mem_alloc*` assert a power-of-two alignment before calling, so `!mem.is_power_of_two(...)` cannot be true on any path that reaches here.
-- `EVAL_BLOCK_FREE` ([eval_memory.odin:29](src/eval_memory.odin#L29)): written at line 193 and never compared; both asserts test only `EVAL_BLOCK_LIVE`, so `header.state = 0` does the same job unless the value is wanted for reading in a debugger.
-
-**Near copies**
-
-- [eval_memory.odin:136](src/eval_memory.odin#L136), [:142](src/eval_memory.odin#L142), [:154](src/eval_memory.odin#L154), and [:162](src/eval_memory.odin#L162): each sets `ev.memory_error` and returns the error. [eval.odin:193](src/eval.odin#L193) and [:246](src/eval.odin#L246) only test it against nil, and both failures mean out of memory,
-  so make it a `bool` and use one `eval_out_of_memory(ev)` return helper. With the alloc merge above there are three sites. (about 4 lines)
-- [eval_memory.odin:233](src/eval_memory.odin#L233) and [:244](src/eval_memory.odin#L244): the same zero-fill in the in-place and moved arms. Choose `result` in each arm, then end with one `if zeroed { mem.zero_slice(result[kept:]) }` and `return result, nil`. (about 3 lines)
-- [eval_memory.odin:72](src/eval_memory.odin#L72) and [bigint.odin:50](src/bigint.odin#L50): both compare an allocator's procedure with `eval_allocator_proc`. `bi_release` can call `is_eval_storage(value.digit.allocator)`, keeping that identity test in this file.
-
-**Structure and boundaries**
-
-- [eval_memory.odin:79](src/eval_memory.odin#L79): the allocator needs `Evaluator` only for `bytes`, `memory_error`, and `storage`. Move the first two ([eval.odin:70](src/eval.odin#L70)) into `Eval_Storage` and pass `^Eval_Storage` as the allocator data; the file then never names the interpreter, and eval.odin reads the limit state through one field.
-- [eval_memory.odin:21](src/eval_memory.odin#L21): `EVAL_SMALL_LIMIT`, `EVAL_BLOCK_LIVE`, `EVAL_BLOCK_FREE`, and `Eval_Block` are used only in this file but are package-visible, while the helpers beside them are `@(private = "file")`. Mark them private too, so the header layout cannot be reached from the other `src/` files.
-
-**Comments**
-
-- [eval_memory.odin:6](src/eval_memory.odin#L6): lines 6-10 repeat [compiler-architecture.md](compiler-architecture.md#compile-time-execution-and-generics) and comments.md. Shorten to: "Only the compiler's own code releases. A value the program drops stays charged; see comments.md "The evaluator's memory limit counts what it holds"." (about 3 lines)
-- [eval_memory.odin:18](src/eval_memory.odin#L18): keep only the reason: "A larger payload comes from the system heap, so its storage never waits on a request of the same size." (about 1 line)
-- [eval_memory.odin:97](src/eval_memory.odin#L97): repeats the `class` comment at line 37 and goes away with `Eval_Shape`; if the struct stays, use "Where a request is served, in `Eval_Block`'s terms." (about 1 line)
-- [eval_memory.odin:213](src/eval_memory.odin#L213): the second half narrates the code below. Shorten to: "Growth within a class stays in place and costs nothing." (about 1 line)
-
 ### src/expand.odin
 
 Readable and well commented, but the static `foreach` half re-implements binding rules the runtime `foreach` gets from helpers, and has drifted from them (BUG-expand-2 and BUG-expand-3). Each bug's scenario was run on the repository's `lokec.exe`; the proposed fixes are untested.
@@ -3028,10 +2897,9 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 - `BUG-foreign-3` **low** [foreign.odin:135](src/foreign.odin#L135) `resolve_foreign_global`: `d.values[0] != nil` lets `---` through, which parses to a nil value, against grammar.md's "a variable with no initializer". Scenario: `foreign lib { a, b: i32 = ---, 1; }` compiles and the `1` is dropped. Fix: `if len(d.values) > 0`. *Not verified.*
 - `BUG-foreign-4` **low** [foreign.odin:171](src/foreign.odin#L171) `check_c_vararg_param`: checks the parameter's position but not its name count, and the caller skips the L0574 path. Scenario: `f :: proc(@(c_vararg) a, b: ..) ---;` compiles, while `a, b: ..int` is L0574. Fix: also reject `len(parameter.names) != 1`. *Not verified.*
 - `BUG-foreign-5` **low** [foreign.odin:110](src/foreign.odin#L110) `check_foreign_links`: an empty link name skips the agreement check, and nothing rejects `@(link_name="")`. Scenario: two members with `@(link_name="")` and different signatures compile and emit one `declare void @""()`. Fix: reject the empty name in attribute validation. *Not verified.*
-- `BUG-foreign-6` **low** [foreign.odin:6](src/foreign.odin#L6) `foreign_default_convention`: the block's value is only validated through each member's `validate_convention`. Scenario: `@(default_calling_convention="bogus") foreign lib { x: i32; }` compiles; with three procedures it reports L0618 three times, at the members. Fix: validate once here at the attribute and fall back to `"c"`. *Not verified.*
+- `BUG-foreign-6` **low** [foreign.odin:6](src/foreign.odin#L6) `foreign_default_convention`: the block's value is only validated through each member's `check_signature_convention`. Scenario: `@(default_calling_convention="bogus") foreign lib { x: i32; }` compiles; with three procedures it reports L0618 three times, at the members. Fix: validate once here at the attribute and fall back to `"c"`. *Not verified.*
 - `BUG-foreign-7` **low** [foreign.odin:136](src/foreign.odin#L136) `resolve_foreign_global`: every non-procedure member with a value is treated as a global. Scenario: `foreign lib { X :: 1; }` or a member struct reports "a foreign global is declared without an initializer", which names neither the construct nor the rule. Fix: for `d.kind != .Var`, say a foreign block declares only `---` procedures and `x: T;` variables. *Not verified.*
 - `BUG-foreign-8` **low** [foreign.odin:76](src/foreign.odin#L76) `check_foreign_block`: `@(export)` on a member passes validation and `check_exports` never visits it, so it silently does nothing. Scenario: `foreign lib { @(export) f :: proc() ---; }` compiles and emits only a `declare`, though design.md "`@(export)`" says it emits a symbol. Fix: L0607 under the `.Foreign` scope in `validate_decl_attributes`. *Not verified.*
-- `BUG-foreign-9` **low** [abi.odin:103](src/abi.odin#L103) `check_foreign_signature_types`: an unresolved parameter is walked as a type, while the result is guarded by `sig.result != INVALID_TYPE`. Scenario: `foreign lib { f :: proc(x: Nope) ---; }` reports a spurious L0619 "`<invalid>` is not a resolved type" ahead of the real L0306. Fix: skip `INVALID_TYPE` parameters. *Not verified.*
 
 **Simplification**
 
@@ -4003,7 +3871,7 @@ The checks read well and match the spec, but `spawn_field_kind` lends the task s
 - [parallel.odin:700](src/parallel.odin#L700) and [capture.odin:95](src/capture.odin#L95): a local struct whose field types are aliases only its scope binds. They differ in field names and spans; `synth_record` taking `[]Name`, with each field's span from its `Name`, serves both, moving capture fields from `entry.span` to `entry.name.span`. (about 15 lines)
 - [parallel.odin:469](src/parallel.odin#L469) and [parallel.odin:579](src/parallel.odin#L579): `local := aprintf(...)`, take into a new local, then name or `move` it. Extract `spawn_take_local(k, stmts, name, field, span) -> Expr`, with a `synth_move` that [capture.odin:51](src/capture.odin#L51) and [lifecycle.odin:368](src/lifecycle.odin#L368) can also use. (about 8 lines)
 - [parallel.odin:206](src/parallel.odin#L206), [parallel.odin:635](src/parallel.odin#L635) and [format.odin:281](src/format.odin#L281), [bootstrap.odin:58](src/bootstrap.odin#L58), [atomics.odin:28](src/atomics.odin#L28): `pkg.scope.names[intern_identifier(c, name)]`. Add `package_member(c, pkg, name)`.
-- [parallel.odin:398](src/parallel.odin#L398), [parallel.odin:448](src/parallel.odin#L448): `index < len(info.param_modes) ? info.param_modes[index] : .Value`, 20 lines across `src/`. Add `param_mode_at(info, index)` next to [abi.odin:17](src/abi.odin#L17) `symbol_param_mode`.
+- [parallel.odin:398](src/parallel.odin#L398), [parallel.odin:448](src/parallel.odin#L448): `index < len(info.param_modes) ? info.param_modes[index] : .Value`, 20 lines across `src/`. Add `param_mode_at(info, index)` next to `proc_parameter_mode` in `semantic.odin`.
 
 **Structure and boundaries**
 
@@ -4859,47 +4727,6 @@ Small, sound procedures for loading and diagnostics, sharing a file with the 380
 - [source.odin:72](src/source.odin#L72): delete the `Context` naming note, and at [source.odin:425](src/source.odin#L425) drop "Parser ASTs remain per-file arenas.", which lines 75-77 say. Also delete line 632, which adds nothing to line 631. (4 lines)
 - [source.odin:674](src/source.odin#L674): keep the citation plus "`end_probe` fails if a probe grew the emission registries without a `begin_commit`"; the rest repeats compiler-architecture.md. Likewise cut [source.odin:733](src/source.odin#L733) to two lines. (about 6 lines)
 - [source.odin:483](src/source.odin#L483), line 488 and [source.odin:420](src/source.odin#L420) cite a spec without a heading: use `grammar.md "Source encoding"` and `design.md "Allocators"`; line 488 then repeats line 483 and can go. (1 line)
-
-### src/subprocess/subprocess.odin
-
-Careful, well-reasoned Windows process code with correct handle ownership and quoting; there is no dead procedure. The one finding of real weight is the idle poll, whose 1 ms sleep really lasts about 15 ms and costs every launch time and every large output throughput; the bugs are all low severity.
-
-**Bugs**
-
-- `BUG-subprocess-1` **low** [subprocess.odin:91](src/subprocess/subprocess.odin#L91) `run`: the deadline is consulted only on an iteration where both pipes were empty, so `.Timeout` is not guaranteed. Scenario: a child writing nonstop that the reader never finds drained runs past its deadline while `out` grows without bound. Fix: test `remaining` every iteration and sleep only when idle. *Not verified.*
-- `BUG-subprocess-2` **low** [subprocess.odin:206](src/subprocess/subprocess.odin#L206) `start`: `make([]byte, ...)` asks for alignment 1, but the attribute list is an opaque struct holding pointers. Scenario: after the `u16` command line the arena returned an address 4 mod 8 in a scratch check; only x64's tolerance makes it work. Fix: `make_aligned` with `align_of(rawptr)`. *Not verified.*
-- `BUG-subprocess-3` **low** [subprocess.odin:170](src/subprocess/subprocess.odin#L170) `start`: `utf8_to_utf16` and `utf8_to_wstring` (line 174) return nil on invalid UTF-8, and nil means "inherit". Scenario: an `env` entry or `working_dir` with an invalid byte runs the child with the parent's environment or directory, with no error. Fix: return an error when the conversion gives nil for a non-empty input. *Not verified.*
-- `BUG-subprocess-4` **low** [subprocess.odin:321](src/subprocess/subprocess.odin#L321) `environment_block_of`: keys compare case-sensitively, though Windows treats them case-insensitively. Scenario: `{"Path=a", "PATH=b"}` keeps both, against the comment's "a later entry replaces an earlier one"; today's callers only add `LOKE_*`, so this is latent. Fix: `strings.equal_fold`. *Not verified.*
-
-**Simplification**
-
-- [subprocess.odin:109](src/subprocess/subprocess.odin#L109) `run`: `remaining` already returns `TIMEOUT_INFINITE` when there is no deadline, so the `deadline > 0` test is redundant. Use `limit := os.TIMEOUT_INFINITE if err != nil else remaining(started, deadline)`. (about 3 lines)
-- [subprocess.odin:64](src/subprocess/subprocess.odin#L64) and [subprocess.odin:67](src/subprocess/subprocess.odin#L67) `run`: `os.close(nil)` is a no-op in `core:os`, so `defer os.close(stdout_w)` needs no `if` guard; the same goes for `stderr_w`. (no lines, two conditions)
-
-**Dead code**
-
-- `wait_override` ([subprocess.odin:130](src/subprocess/subprocess.odin#L130)): not dead, but exists only for `subprocess_run_reports_a_failed_wait` in [subprocess_test.odin:132](src/subprocess_test.odin#L132). It puts a test branch in `run` and bypasses the limit logic that the real path uses.
-- (branch) [subprocess.odin:178](src/subprocess/subprocess.odin#L178): the `DuplicateHandle` path runs only for the witness in [subprocess_test.odin:70](src/subprocess_test.odin#L70); no compiler or harness launch sets `stdin`. Give it a real caller (see the `run_greeting` comment at [corpus_test.odin:2885](tests/corpus_test.odin#L2885)), or the test needs another witness and this goes.
-
-**Data structures and algorithms**
-
-- [subprocess.odin:95](src/subprocess/subprocess.odin#L95) `run`: `time.sleep(time.Millisecond)` is `Sleep(1)`, measured at 15.4 ms here, so EOF is seen late and a 4 KB pipe drains only per wakeup. A scratch run: `cmd /c exit 0` 32 ms vs 13 ms unwrapped; 8 MB in 512-byte writes 6.3 s vs 0.1 s for `os.process_exec`. `win.timeBeginPeriod(1)` with `defer timeEndPeriod` around the loop gave 15 ms and 0.28 s, about 16 ms per launch across clang, NASM and every harness child.
-
-**Near copies**
-
-- [subprocess.odin:82](src/subprocess/subprocess.odin#L82) and [checker_fuzz_test.odin:108](tests/checker_fuzz_test.odin#L108): `fuzz_compile` hand-writes the pipe, poll, deadline and kill loop for stderr. `exec(desc, context.temp_allocator, FUZZ_TIMEOUT)` with `.Timeout` mapped to `.Hang` replaces it. (about 25 lines there)
-
-**Structure and boundaries**
-
-- [subprocess.odin:177](src/subprocess/subprocess.odin#L177): `start` is about 100 lines, and getting the child's stdin (lines 177-196) is a self-contained job with its own error paths. Extract `inheritable_stdin(desc.stdin) -> (win.HANDLE, os.Error)`, leaving the attribute list and launch as one flow.
-- [subprocess.odin:13](src/subprocess/subprocess.odin#L13): the foreign block exports `CreateJobObjectW` and five others to importers, though nothing outside this file calls them and the neighbouring constant and struct are file-private. Add `private = "file"` to its attribute.
-
-**Comments**
-
-- [subprocess.odin:45](src/subprocess/subprocess.odin#L45): the reason given is wrong, since `run` stops reading at the timeout whether or not a grandchild holds a pipe. Replace lines 45-47 with: "The tree is ended, not just the child, so nothing a stalled launch started outlives its deadline."
-- [subprocess.odin:39](src/subprocess/subprocess.odin#L39): reads as history. Shorten lines 39-41 to: "`os.process_exec`, but idle while the child runs: the core one spins on its pipes, starving the children a parallel build waits for."
-- [subprocess.odin:155](src/subprocess/subprocess.odin#L155): delete ", and those three are all the child inherits"; the comment at line 199 says it with the reason.
-- [subprocess.odin:242](src/subprocess/subprocess.odin#L242): delete. Closing an unneeded thread handle needs no remark, and what `os.process_start` does is not needed here; the leak history is already in `subprocess_test.odin`.
 
 ### src/text.odin
 

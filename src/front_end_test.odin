@@ -547,21 +547,24 @@ foreign_abi_shared_records_finish_within_budget :: proc(t: ^testing.T) {
 		"27 shared types should not expand into millions of checks: %v", elapsed)
 }
 
+// Each level holds the next twice and a foreign procedure type taking itself. The
+// walk once followed that signature, which stopped it remembering any answer.
 @(test)
-foreign_abi_cached_array_field_cannot_be_a_parameter :: proc(t: ^testing.T) {
-	c: Compiler
-	defer destroy_compilation(&c)
-	init_semantic_stores(&c)
-	element := new_type(&c, Type_Info{kind = .Int, bits = 32, signed = true})
-	array := array_of(&c, element, 2)
-	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[0] = new_symbol(&c, Symbol{kind = .Var, type = array})
-	holder := new_type(&c, Type_Info{kind = .Struct, fields = fields})
-	params := make([]Type_Id, 2, c.semantic_allocator)
-	params[0], params[1] = holder, array
-	callback := new_type(&c, Type_Info{kind = .Proc, convention = "c", parameters = params, result = INVALID_TYPE})
-	safe, reason := foreign_abi_safe(&c, callback)
-	testing.expect(t, !safe && strings.contains(reason, "fixed array"), reason)
+foreign_abi_cyclic_signatures_finish_within_budget :: proc(t: ^testing.T) {
+	LEVELS :: 28
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, "package main;\n")
+	for level in 0 ..< LEVELS {
+		fmt.sbprintf(&source, "A%d :: struct {{ cb: proc \"c\" (a: A%d), l: A%d, r: A%d }}\n", level, level, level + 1, level + 1)
+	}
+	fmt.sbprintf(&source, "A%d :: struct {{ x: i32 }}\nmain :: proc() {{}}\n", LEVELS)
+	started := time.now()
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, strings.to_string(source))
+	elapsed := time.since(started)
+	testing.expect(t, p.c.error_count == 0, "a valid chain of records was rejected")
+	testing.expectf(t, elapsed < 5 * time.Second, "%d shared levels should not double per level: %v", LEVELS, elapsed)
 }
 
 @(test)

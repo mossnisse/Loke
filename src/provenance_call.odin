@@ -143,8 +143,10 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		return .Lookup_Receiver
 	}
 	// A receiver answers with its declared mode: a provider handle takes a managed
-	// receiver by value.
-	if index == 0 && input.has_receiver ? input.receiver == .Borrow : param_borrows_caller_storage(c, part.mode, part.type) {
+	// receiver by value. design.md "Parameter semantics and ABI lowering": managed
+	// value parameters borrow caller allocations for the call, independently of
+	// machine classification.
+	if index == 0 && input.has_receiver ? input.receiver == .Borrow : param_mode_is_pointer(part.mode) || (part.mode == .Value && type_is_managed(c, part.type)) {
 		#partial switch prov_receiver_contract(c, symbol_of(c, v.resolution.chosen_overload)) {
 		case .Only_Reads:
 			if _, plain := prov_plain_slice_local(graph, argument); plain {

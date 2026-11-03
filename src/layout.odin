@@ -77,8 +77,8 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 	}
 	// Fields are incomplete while their declaration signature is resolving.
 	if info.kind == .Struct || info.kind == .Union {
-		if sym := symbol_of(c, info.symbol); sym != nil && sym.decl != nil && sym.decl.sig_state == .Checking {
-			errorf(c, sym.span, "L0364", "the layout of `%s` is written in terms of its own layout", type_name(c, type))
+		if record_resolving(c, info) {
+			errorf(c, symbol_of(c, info.symbol).span, "L0364", "the layout of `%s` is written in terms of its own layout", type_name(c, type))
 			info.layout_state = .Finite
 			return
 		}

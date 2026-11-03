@@ -1,0 +1,9 @@
+// design.md "Foreign-ABI-safe types": a fixed array is permitted as a record field
+// and not as a parameter, even after one such field has been checked.
+package main;
+
+Holder :: struct { pair: [2]i32 }
+
+Callback :: proc "c" (holder: Holder, pair: [2]i32);
+
+main :: proc() {}

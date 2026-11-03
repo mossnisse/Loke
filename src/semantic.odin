@@ -1345,6 +1345,10 @@ proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Par
 	return info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 }
 
+symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mode {
+	return proc_parameter_mode(c, symbol.proc_type, index)
+}
+
 // design.md `@(escape=<level>)`: a callee may promise more than the type its
 // value is stored in asks, never less. Levels are part of procedure type
 // identity, but assigning a stricter type to a weaker one is safe — every

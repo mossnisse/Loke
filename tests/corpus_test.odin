@@ -805,7 +805,7 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "the -g build failed:\n%s", string(stderr)) {
 		return
 	}
-	commands := "ld debugger_values; bp debugger_values!stop; g; .frame 1; dv /t; dx ages; dx ids; dx shape; q"
+	commands := "ld debugger_values; bp debugger_values!stop; g; .frame 1; dv /t; dx ages; dx ids; dx shape; g; .frame 1; dx point; dx label; g; g; .frame 1; dx held.inner; q"
 	run, stdout, stderr2, err2 := exec(
 		os.Process_Desc{command = []string{cdb, "-lines", "-y", dir, "-c", commands, exe}},
 		context.allocator,
@@ -822,6 +822,9 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 		`int64 count = 0n2`,
 		`string$ text = "seven"`,
 		`width            : 3`,
+		`height           : 4`,
+		`label            : "loke"`,
+		`alpha            : 11`,
 	}) {
 		testing.expectf(t, strings.contains(string(stdout), shown), "cdb does not show `%s`:\n%s", shown, string(stdout))
 	}
@@ -2940,10 +2943,6 @@ example_greeting_appends_to_its_file :: proc(t: ^testing.T) {
 	)
 }
 
-// The redirect goes through the shell rather than `Process_Desc.stdin`: core:os
-// hands a supplied handle straight to `CreateProcessW`, and a handle from
-// `os.open` is not marked inheritable, so the child receives an invalid one and
-// the example reports `Not_A_Terminal` instead of reading a name.
 @(private)
 run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	if !testing.expect(
@@ -2953,11 +2952,15 @@ run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	) {
 		return false
 	}
+	stdin, stdin_err := os.open(fmt.tprintf("%s/stdin.txt", dir))
+	if !testing.expectf(t, stdin_err == nil, "cannot open the greeting input file: %v", stdin_err) {
+		return false
+	}
+	defer os.close(stdin)
+	// A child's path is not read against its working directory.
+	exe, _ := filepath.abs(fmt.tprintf("%s/greeting.exe", dir), context.temp_allocator)
 	state, _, stderr, err := exec(
-		os.Process_Desc{
-			command     = []string{"cmd", "/c", ".\\greeting.exe < stdin.txt"},
-			working_dir = dir,
-		},
+		os.Process_Desc{command = []string{exe}, working_dir = dir, stdin = stdin},
 		context.allocator,
 	)
 	if !testing.expect(t, err == nil, "cannot run the greeting example") {

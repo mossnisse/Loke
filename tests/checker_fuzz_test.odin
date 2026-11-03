@@ -102,47 +102,15 @@ fuzz_compile :: proc(source: string, flags: []string) -> (failure: Fuzz_Failure,
 	append(&command, compiler_path(), input, "-emit-ll", "-o", FUZZ_DIR + "/mutant.exe")
 	append(&command, ..flags)
 
-	// A pipe rather than a file: Windows hands the child only inheritable
-	// handles, and `os.pipe` is the one that makes them. It is drained while
-	// the compiler runs, so a long report cannot fill it and stall the child.
-	errors_r, errors_w, pipe_err := os.pipe()
-	if pipe_err != nil {
-		return .Crash, "cannot create a pipe", false, -1
+	state, _, stderr, err := exec(os.Process_Desc{command = command[:]}, context.temp_allocator, FUZZ_TIMEOUT)
+	if err == os.General_Error.Timeout {
+		return .Hang, fmt.tprintf("no exit within %v", FUZZ_TIMEOUT), false, -1
 	}
-	defer _ = os.close(errors_r)
-	process, start_err := os.process_start({command = command[:], stderr = errors_w})
-	_ = os.close(errors_w)
-	if start_err != nil {
-		return .Crash, "cannot start lokec", false, -1
+	if err != nil {
+		return .Crash, fmt.tprintf("cannot run lokec: %v", err), false, -1
 	}
-
-	stderr := make([dynamic]byte, context.temp_allocator)
-	buf: [4096]byte
-	started := time.tick_now()
-	for {
-		exited_state, wait_err := os.process_wait(process, 0)
-		for {
-			has_data, _ := os.pipe_has_data(errors_r)
-			if !has_data { break }
-			n, read_err := os.read(errors_r, buf[:])
-			append(&stderr, ..buf[:n])
-			if read_err != nil { break }
-		}
-		if wait_err == nil {
-			failure, detail, checked = judge(string(stderr[:]), exited_state.exit_code, source)
-			return failure, detail, checked, exited_state.exit_code
-		}
-		// Any failure but a timeout has already released the process.
-		if wait_err != os.General_Error.Timeout {
-			return .Crash, fmt.tprintf("cannot wait for lokec: %v", wait_err), false, -1
-		}
-		if time.tick_since(started) > FUZZ_TIMEOUT {
-			_ = os.process_kill(process)
-			_, _ = os.process_wait(process)
-			return .Hang, fmt.tprintf("no exit within %v", FUZZ_TIMEOUT), false, -1
-		}
-		time.sleep(time.Millisecond)
-	}
+	failure, detail, checked = judge(string(stderr), state.exit_code, source)
+	return failure, detail, checked, state.exit_code
 }
 
 @(private = "file")

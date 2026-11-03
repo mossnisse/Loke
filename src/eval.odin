@@ -67,8 +67,6 @@ Evaluator :: struct {
 	alloc:  mem.Allocator,
 	frames: [dynamic]^Eval_Frame,
 	steps:  int,
-	bytes:  int,
-	memory_error: mem.Allocator_Error,
 	failed: bool,
 	// The context that required this evaluation, where the diagnostic points.
 	origin: Span,
@@ -126,9 +124,7 @@ evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0
 // nothing else reported.
 @(private = "file")
 eval_root :: proc(ev: ^Evaluator, e: Expr, code, format: string) -> (Eval_Value, bool) {
-	if !init_evaluator(ev) {
-		return Eval_Value{}, false
-	}
+	init_evaluator(ev)
 	value, ok := eval_expr(ev, e)
 	if !eval_memory_ok(ev) || !ok {
 		if !ev.failed {
@@ -190,7 +186,7 @@ eval_fail :: proc(ev: ^Evaluator, span: Span, code: string, format: string, args
 	}
 	ev.failed = true
 	c := ev.k.c
-	if ev.memory_error != nil {
+	if ev.storage.exhausted {
 		errorf(c, ev.origin, "L0342", "compile-time evaluation exceeded %d bytes of scratch memory", EVAL_MAX_MEMORY)
 	} else {
 		errorf(c, ev.origin, code, format, ..args)
@@ -231,19 +227,15 @@ eval_step :: proc(ev: ^Evaluator, span: Span) -> bool {
 }
 
 @(private = "file")
-init_evaluator :: proc(ev: ^Evaluator) -> bool {
-	if err := eval_storage_init(&ev.storage); err != nil {
-		return eval_fail(ev, ev.origin, "L0342", "cannot reserve compile-time scratch memory")
-	}
-	ev.alloc = mem.Allocator{eval_allocator_proc, ev}
+init_evaluator :: proc(ev: ^Evaluator) {
+	ev.alloc = mem.Allocator{eval_allocator_proc, &ev.storage}
 	ev.frames = make([dynamic]^Eval_Frame, 0, 8, ev.alloc)
-	return true
 }
 
 // Reported outside the allocator, since reporting allocates too.
 @(private = "file")
 eval_memory_ok :: proc(ev: ^Evaluator) -> bool {
-	if ev.memory_error == nil { return true }
+	if !ev.storage.exhausted { return true }
 	return eval_fail(ev, ev.origin, "L0342", "compile-time evaluation exceeded %d bytes of scratch memory", EVAL_MAX_MEMORY)
 }
 
@@ -257,7 +249,7 @@ eval_slot :: proc(ev: ^Evaluator, value: Eval_Value) -> (^Eval_Value, bool) {
 
 @(private = "file")
 eval_elements :: proc(ev: ^Evaluator, count: int) -> ([]Eval_Value, bool) {
-	if count < 0 || count > (EVAL_MAX_MEMORY - ev.bytes) / size_of(Eval_Value) {
+	if count < 0 || count > (EVAL_MAX_MEMORY - ev.storage.bytes) / size_of(Eval_Value) {
 		eval_fail(
 			ev,
 			ev.origin,

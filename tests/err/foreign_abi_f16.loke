@@ -1,0 +1,11 @@
+// design.md "Foreign-ABI-safe types": `f16` is safe only where the target ABI
+// classifies it, and the Win64 C ABI does not.
+package main;
+
+Half :: struct { value: f16 }
+
+parameter :: proc "c" (value: f16) {}
+result :: proc "c" () -> Half { return {}; }
+Callback :: proc "c" (value: f16);
+
+main :: proc() {}

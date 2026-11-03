@@ -47,7 +47,7 @@ bi_release :: proc(c: Value_Storage, values: ..Big_Int) {
 	}
 	for value in values {
 		value := value
-		if value.digit.allocator.procedure == eval_allocator_proc {
+		if is_eval_storage(value.digit.allocator) {
 			context.allocator = value.digit.allocator
 			big.internal_int_destroy(&value)
 		}

@@ -10,7 +10,7 @@ import "core:time"
 
 foreign import kernel32 "system:Kernel32.lib"
 
-@(default_calling_convention = "system")
+@(default_calling_convention = "system", private = "file")
 foreign kernel32 {
 	CreateJobObjectW :: proc(attributes: ^win.SECURITY_ATTRIBUTES, name: win.LPCWSTR) -> win.HANDLE ---
 	AssignProcessToJobObject :: proc(job: win.HANDLE, process: win.HANDLE) -> win.BOOL ---
@@ -33,16 +33,14 @@ Startup_Info_Ex :: struct {
 	attributes: rawptr,
 }
 
-// `os.process_exec`, but idle while the child runs. The core one polls its pipes
-// in a loop with no pause, so a waiting process held a whole core, and parallel
-// builds and test corpora starved the very children they were waiting for.
+// `os.process_exec`, but idle while the child runs: the core one spins on its
+// pipes, starving the children a parallel build waits for.
 //
 // With a nonzero `deadline`, a child that has not closed its output and exited by then
 // is ended with every process it started, and `err` is `.Timeout`; `stdout` and
-// `stderr` keep what it wrote. The tree is ended, not just the child: a
-// grandchild holding an inherited pipe would otherwise keep the reads from
-// ever seeing EOF. Descendants still running when the child finishes in time
-// are left alone, since some tools, like the MSVC linker's PDB server, are
+// `stderr` keep what it wrote. The tree is ended, not just the child, so nothing a
+// stalled launch started outlives its deadline. Descendants still running when the
+// child finishes in time are left alone, since some tools, like the MSVC linker's PDB server, are
 // meant to outlive the process that started them.
 run :: proc(
 	desc: os.Process_Desc,
@@ -58,10 +56,10 @@ run :: proc(
 	// second pipe still closes the first.
 	stdout_r, stdout_w := os.pipe() or_return
 	defer os.close(stdout_r)
-	defer if stdout_w != nil { os.close(stdout_w) }
+	defer os.close(stdout_w)
 	stderr_r, stderr_w := os.pipe() or_return
 	defer os.close(stderr_r)
-	defer if stderr_w != nil { os.close(stderr_w) }
+	defer os.close(stderr_w)
 	process: os.Process
 	job: win.HANDLE
 	{
@@ -79,18 +77,23 @@ run :: proc(
 	out := make([dynamic]byte, allocator)
 	errs := make([dynamic]byte, allocator)
 	out_done, errs_done: bool
+	// A 1 ms sleep otherwise lasts a timer tick, about 15 ms, which every launch
+	// would wait out and every 4 KB of output would drain by.
+	win.timeBeginPeriod(1)
+	defer win.timeEndPeriod(1)
 	for err == nil && !(out_done && errs_done) {
 		got_out, got_errs: bool
 		got_out, err = drain(stdout_r, &out, &out_done)
 		if err == nil {
 			got_errs, err = drain(stderr_r, &errs, &errs_done)
 		}
-		if err == nil && !got_out && !got_errs {
-			if remaining(started, deadline) == 0 {
-				err = os.General_Error.Timeout
-			} else {
-				time.sleep(time.Millisecond)
-			}
+		if err != nil {
+			break
+		}
+		if remaining(started, deadline) == 0 {
+			err = os.General_Error.Timeout
+		} else if !got_out && !got_errs {
+			time.sleep(time.Millisecond)
 		}
 	}
 	stdout, stderr = out[:], errs[:]
@@ -99,19 +102,15 @@ run :: proc(
 	}
 	// `os.process_wait` releases the process handle, whether or not it succeeds,
 	// except when it times out.
-	wait_err: os.Error
+	wait: Wait_Proc = os.process_wait
 	if wait_override != nil {
-		state, wait_err = wait_override(process)
-	} else {
-		limit := os.TIMEOUT_INFINITE
-		if err == nil && deadline > 0 {
-			limit = remaining(started, deadline)
-		}
-		state, wait_err = os.process_wait(process, limit)
-		if wait_err == os.General_Error.Timeout {
-			end(process, job)
-			state, _ = os.process_wait(process)
-		}
+		wait = wait_override
+	}
+	wait_err: os.Error
+	state, wait_err = wait(process, os.TIMEOUT_INFINITE if err != nil else remaining(started, deadline))
+	if wait_err == os.General_Error.Timeout {
+		end(process, job)
+		state, _ = os.process_wait(process)
 	}
 	// A failed wait leaves `state` zero, which reads as a clean exit, so it
 	// reaches the caller; a read error before it is the first cause and wins.
@@ -124,7 +123,9 @@ run :: proc(
 // Replaces `os.process_wait` for `run` on this thread, so a test can make the
 // wait fail; nil means the real one.
 @(thread_local)
-wait_override: proc(process: os.Process) -> (os.Process_State, os.Error)
+wait_override: Wait_Proc
+
+Wait_Proc :: proc(process: os.Process, limit: time.Duration) -> (os.Process_State, os.Error)
 
 // What is left of `deadline` since `started`: 0 once it has passed, and
 // `os.TIMEOUT_INFINITE` when there is none.
@@ -149,8 +150,7 @@ end :: proc(process: os.Process, job: win.HANDLE) {
 // before it runs, or a grandchild started at once could escape. A job that
 // cannot be made or joined, as where a parent job forbids it, leaves `job` nil
 // and the child alone to end. Only the stdio of `desc` that `run` uses is
-// read, its `stdin` and the `stdout` and `stderr` it passes, and those three
-// are all the child inherits.
+// read, its `stdin` and the `stdout` and `stderr` it passes.
 @(private = "file")
 start :: proc(
 	desc: os.Process_Desc,
@@ -162,35 +162,23 @@ start :: proc(
 ) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	command_line := win.utf8_to_wstring(command_line_of(desc.command), context.temp_allocator)
+	// A nil environment or directory means the parent's, so a failed conversion
+	// must not reach the launch.
 	environment: rawptr
 	if desc.env != nil {
 		environment = raw_data(win.utf8_to_utf16(environment_block_of(desc.env), context.temp_allocator))
+		if environment == nil {
+			return {}, nil, os.General_Error.Invalid_Command
+		}
 	}
 	working_dir: win.wstring
 	if desc.working_dir != "" {
 		working_dir = win.utf8_to_wstring(desc.working_dir, context.temp_allocator)
-	}
-	// An inheritable handle of our own, closed once the child has its copy.
-	stdin_handle: win.HANDLE
-	if desc.stdin != nil {
-		this := win.GetCurrentProcess()
-		if !win.DuplicateHandle(this, win.HANDLE(os.fd(desc.stdin)), this, &stdin_handle, 0, true, win.DUPLICATE_SAME_ACCESS) {
-			return {}, nil, os.Platform_Error(win.GetLastError())
-		}
-	} else {
-		stdin_handle = win.CreateFileW(
-			win.L("NUL"),
-			win.GENERIC_READ,
-			win.FILE_SHARE_READ | win.FILE_SHARE_WRITE,
-			&win.SECURITY_ATTRIBUTES{nLength = size_of(win.SECURITY_ATTRIBUTES), bInheritHandle = true},
-			win.OPEN_EXISTING,
-			win.FILE_ATTRIBUTE_NORMAL,
-			nil,
-		)
-		if stdin_handle == win.INVALID_HANDLE_VALUE {
-			return {}, nil, os.Platform_Error(win.GetLastError())
+		if working_dir == nil {
+			return {}, nil, os.General_Error.Invalid_Dir
 		}
 	}
+	stdin_handle := inheritable_stdin(desc.stdin) or_return
 	defer win.CloseHandle(stdin_handle)
 
 	// The child inherits its stdio and nothing else. Every inheritable handle
@@ -200,7 +188,8 @@ start :: proc(
 	inherited := [3]win.HANDLE{stdin_handle, win.HANDLE(os.fd(stdout)), win.HANDLE(os.fd(stderr))}
 	list_size: win.SIZE_T
 	InitializeProcThreadAttributeList(nil, 1, 0, &list_size)
-	list := make([]byte, list_size, context.temp_allocator)
+	// An opaque structure holding pointers.
+	list, _ := runtime.make_aligned([]byte, int(list_size), align_of(rawptr), context.temp_allocator)
 	if !InitializeProcThreadAttributeList(raw_data(list), 1, 0, &list_size) {
 		return {}, nil, os.Platform_Error(win.GetLastError())
 	}
@@ -236,8 +225,6 @@ start :: proc(
 	) {
 		return {}, nil, os.Platform_Error(win.GetLastError())
 	}
-	// Closed here, which `os.process_start` never does: a launch keeps no
-	// handle but the process's.
 	defer win.CloseHandle(info.hThread)
 	process = {pid = int(info.dwProcessId), handle = uintptr(info.hProcess)}
 	job = CreateJobObjectW(nil, nil)
@@ -255,6 +242,32 @@ start :: proc(
 		return {}, nil, err
 	}
 	return
+}
+
+// An inheritable handle for the child's stdin, of our own to close once the child
+// has its copy: `stdin`, or `NUL`.
+@(private = "file")
+inheritable_stdin :: proc(stdin: ^os.File) -> (handle: win.HANDLE, err: os.Error) {
+	if stdin != nil {
+		this := win.GetCurrentProcess()
+		if !win.DuplicateHandle(this, win.HANDLE(os.fd(stdin)), this, &handle, 0, true, win.DUPLICATE_SAME_ACCESS) {
+			return nil, os.Platform_Error(win.GetLastError())
+		}
+		return handle, nil
+	}
+	handle = win.CreateFileW(
+		win.L("NUL"),
+		win.GENERIC_READ,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE,
+		&win.SECURITY_ATTRIBUTES{nLength = size_of(win.SECURITY_ATTRIBUTES), bInheritHandle = true},
+		win.OPEN_EXISTING,
+		win.FILE_ATTRIBUTE_NORMAL,
+		nil,
+	)
+	if handle == win.INVALID_HANDLE_VALUE {
+		return nil, os.Platform_Error(win.GetLastError())
+	}
+	return handle, nil
 }
 
 // The command line `CommandLineToArgvW` and the C runtime split back into
@@ -300,8 +313,8 @@ command_line_of :: proc(command: []string) -> string {
 
 // `KEY=VALUE` entries as an environment block, each ended by a NUL and the
 // whole by another, in the temporary allocator. A later entry for a key
-// replaces an earlier one, as `os.process_start` treats them. A key may begin
-// with `=`, as the per-drive directories Windows keeps do.
+// replaces an earlier one, as `os.process_start` treats them, and keys differ
+// only by more than case, as Windows reads them. A key may begin with `=`, as the per-drive directories Windows keeps do.
 @(private = "file")
 environment_block_of :: proc(environment: []string) -> string {
 	key_of :: proc(entry: string) -> string {
@@ -315,7 +328,7 @@ environment_block_of :: proc(environment: []string) -> string {
 	entries: for entry, index in environment {
 		key := key_of(entry)
 		for later in environment[index + 1:] {
-			if key_of(later) == key {
+			if strings.equal_fold(key_of(later), key) {
 				continue entries
 			}
 		}
