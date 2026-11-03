@@ -883,7 +883,7 @@ be file-private. Paths below are relative to `src/`.
 | Files | Responsibility |
 | --- | --- |
 | `check.odin`, `check_expr.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expression dispatch/materialization/folding, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
-| `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, zero-value rules and constants, and required-result classification. |
+| `bigint.odin`, `const_ops.odin`, `const_float.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, exact float operations and encodings, zero-value rules and constants, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |

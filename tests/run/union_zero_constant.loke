@@ -1,0 +1,97 @@
+// design.md "Zero values and `@(zero=)`": a union's zero value is its designated
+// first variant, with a zero payload, like any other value of that variant:
+// folded, evaluated at compile time, and at run time.
+package main;
+
+import "core:fmt";
+
+@(zero=none) Maybe :: union { none, some: int }
+Holder :: struct { m: Maybe, n: int }
+@(zero=a) Pair :: union { a: int, b: int }
+Point :: struct { x: int, y: int }
+@(zero=p) Shape :: union { p: Point, empty }
+@(zero=a) Cells :: union { a: [2]int, n: int }
+Same :: distinct Pair;
+
+@(zero=s) With_Text :: union { s: string, n: int }
+@(zero=d) With_List :: union { d: [dynamic]int, n: int }
+@(zero=m) With_Map :: union { m: map[string]int, n: int }
+@(zero=v) With_View :: union { v: []int, n: int }
+@(zero=i) With_Union :: union { i: Pair, n: int }
+@(zero=t) With_Typeid :: union { t: typeid, n: int }
+@(zero=f) With_Half :: union { f: f16, n: int }
+Record :: struct { t: string, d: [dynamic]int, f: f64, o: Option(^int) }
+@(zero=r) With_Record :: union { r: Record, n: int }
+
+// Folded.
+HOLDER_EQUAL :: Holder{} == Holder{m = .none};
+HOLDER_DIFFERS :: Holder{} != Holder{m = .some(0)};
+PAIR_EQUAL :: Pair{} == Pair.a(0);
+PAIR_DIFFERS :: Pair{} == Pair.b(0);
+DISTINCT_EQUAL :: Same{} == Same(Pair{});
+SHAPES :: [4]Shape{};
+TEXT :: With_Text{};
+
+// Evaluated: the payload is there to read.
+read_pair :: proc(u: Pair) -> int {
+	switch (u) {
+	case .a(p): return p + 1;
+	case .b(q): return q;
+	}
+}
+zero_payload :: proc() -> int { u := Pair{}; return read_pair(u); }
+Wrapped :: struct { u: Pair, n: int }
+field_payload :: proc(n: int) -> int { h := Wrapped{n = n}; return read_pair(h.u) + h.n; }
+cells_payload :: proc() -> int {
+	u := Cells{};
+	switch (u) {
+	case .a(p): return p[0] + p[1] + 3;
+	case .n(q): return q;
+	}
+}
+option_equal :: proc() -> bool { x := Option(int){}; y: Option(int) = .none; return x == y; }
+field_equal :: proc(n: int) -> bool { x := Holder{n = n}; return x == Holder{m = .none, n = n}; }
+
+ZERO_PAYLOAD :: zero_payload();
+FIELD_PAYLOAD :: field_payload(3);
+CELLS_PAYLOAD :: cells_payload();
+OPTION_EQUAL :: option_equal();
+FIELD_EQUAL :: field_equal(3);
+
+// Hashed as at run time: the tag and then the payload.
+SHAPE_HASH :: Shape{}.hash(uint(7));
+
+main :: proc() {
+	fmt.println(HOLDER_EQUAL, HOLDER_DIFFERS, PAIR_EQUAL, PAIR_DIFFERS, DISTINCT_EQUAL);
+	fmt.println(ZERO_PAYLOAD, FIELD_PAYLOAD, CELLS_PAYLOAD, OPTION_EQUAL, FIELD_EQUAL);
+
+	a := Holder{};
+	b := Holder{m = .none};
+	fmt.println(a == b);
+
+	shape := Shape{};
+	fmt.println(SHAPE_HASH == shape.hash(uint(7)));
+
+	shapes := SHAPES;
+	fmt.println(shapes[3] == Shape{});
+
+	// Every payload's zero is all-zero, whatever its constant looks like.
+	text := With_Text{};
+	switch (text) { case .s(s): fmt.println("text", s.len()); case .n(n): fmt.println(n); }
+	named := TEXT;
+	switch (named) { case .s(s): fmt.println("named text", s.len()); case .n(n): fmt.println(n); }
+	list := With_List{};
+	switch (list) { case .d(d): fmt.println("list", d.len()); case .n(n): fmt.println(n); }
+	dictionary := With_Map{};
+	switch (dictionary) { case .m(m): fmt.println("map", m.len()); case .n(n): fmt.println(n); }
+	view := With_View{};
+	switch (view) { case .v(v): fmt.println("view", v.len()); case .n(n): fmt.println(n); }
+	nested := With_Union{};
+	switch (nested) { case .i(i): fmt.println("union", i == Pair{}); case .n(n): fmt.println(n); }
+	id := With_Typeid{};
+	switch (id) { case .t(t): fmt.println("typeid", t == typeid{}); case .n(n): fmt.println(n); }
+	half := With_Half{};
+	switch (half) { case .f(f): fmt.println("half", f); case .n(n): fmt.println(n); }
+	record := With_Record{};
+	switch (record) { case .r(r): fmt.println("record", r.t.len(), r.d.len(), r.f); case .n(n): fmt.println(n); }
+}

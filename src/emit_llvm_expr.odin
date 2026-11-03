@@ -5,6 +5,7 @@
 package lokec
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 // -------------------------------------------------------------- constants --
@@ -15,7 +16,7 @@ import "core:strings"
 union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
 	if value.kind != .Aggregate || value.aggregate == nil {
-		return "zeroinitializer" // the designated zero variant, which is all-zero
+		return "zeroinitializer" // a union with no zero: inert bits, no value
 	}
 	index := value.aggregate.variant
 	payload_type := union_variant_payload(e.c, type, index)
@@ -33,6 +34,9 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 			bits = bi_add(e.c, bits, part)
 		}
 		head = bi_text(e.c, bits)
+	}
+	if index == 0 && slice.all_of(payload_bytes, 0) {
+		return "zeroinitializer"
 	}
 
 	b := strings.builder_make()
@@ -326,24 +330,29 @@ write_const_bytes :: proc(
 	case .Typeid:
 		write_u64_bytes(out, emitted_typeid(e, value))
 		return true
+	case .Dynamic_Array, .Map, .Dyn:
+		// A constant of these is only the empty one, which is all-zero.
+		return true
 	case .String, .String_View, .CString_View, .Slice:
-		// Literal text and a slice literal's backing array are module storage, so
-		// an image holds a relocation to them.
-		if relocations == nil {
-			return false
-		}
 		target, count, flags := "", 0, 0
 		switch {
 		case info.kind == .Slice:
 			if value.aggregate == nil || len(value.aggregate.elements) == 0 {
 				return true
 			}
-			target, count = slice_literal_storage(e, value, info), len(value.aggregate.elements)
 		case value.kind != .String:
 			return false
 		case value.text == "" && info.kind != .CString_View:
 			return true
-		case:
+		}
+		// Literal text and a slice literal's backing array are module storage, so
+		// an image holds a relocation to them.
+		if relocations == nil {
+			return false
+		}
+		if info.kind == .Slice {
+			target, count = slice_literal_storage(e, value, info), len(value.aggregate.elements)
+		} else {
 			target, count = text_literal_global(e, value.text), len(value.text)
 			flags = info.kind == .String ? STRING_STATIC : 0
 		}
@@ -1428,7 +1437,7 @@ emit_unary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, operand: strin
 		if type_is_float(e.c, type) {
 			fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
 		} else {
-			return emit_checked_integer(e, .Minus, integer_computes_signed(e.c, type), llvm, "0", operand)
+			return emit_checked_integer(e, .Minus, type_signed(e.c, type), llvm, "0", operand)
 		}
 	case .Tilde:
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, -1", out, llvm, operand)
@@ -1527,7 +1536,7 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 		return out
 	}
 
-	signed := integer_computes_signed(e.c, type)
+	signed := type_signed(e.c, type)
 	#partial switch op {
 	case .Plus, .Minus, .Star:
 		return emit_checked_integer(e, op, signed, llvm, lhs, rhs)
@@ -1715,7 +1724,7 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 		return out
 	}
 	predicate := compare_predicate(op)
-	name := integer_computes_signed(e.c, type) ? predicate.signed : predicate.unsigned
+	name := type_signed(e.c, type) ? predicate.signed : predicate.unsigned
 	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", out, name, llvm, lhs, rhs)
 	return out
 }

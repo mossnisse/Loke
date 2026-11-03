@@ -221,7 +221,7 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		// A mask, not a `bool`: not an `if` condition until `simd.any` reduces it.
 		v.type = simd_of(k.c, TYPE_BOOL, info.count)
-		fold_simd_comparison(k, v)
+		fold_simd_binary(k, v)
 	case .Shl, .Shr:
 		if reject_negative_count_lanes(k, v.rhs, int(info.count)) {
 			return
@@ -229,17 +229,7 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 		fallthrough
 	case:
 		v.type = vector
-		left, right := expr_base(v.lhs), expr_base(v.rhs)
-		if !left.is_const || !right.is_const {
-			return
-		}
-		folded, ok := fold_arithmetic(k.c, v.op, v.op_span, left.const_value, right.const_value, vector)
-		if !ok {
-			v.type = INVALID_TYPE
-			return
-		}
-		v.is_const = true
-		v.const_value = folded
+		fold_simd_binary(k, v)
 	}
 }
 
@@ -264,23 +254,33 @@ reject_negative_count_lanes :: proc(k: ^Checker, count: Expr, lanes: int) -> boo
 	return false
 }
 
-// A constant comparison folds to a constant mask, one lane at a time.
+// Constant operands fold one lane at a time at the element type, a comparison to
+// a constant mask.
 @(private = "file")
-fold_simd_comparison :: proc(k: ^Checker, v: ^Expr_Binary) {
+fold_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary) {
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
 	if !left.is_const || !right.is_const || v.type == INVALID_TYPE {
 		return
 	}
-	info := type_of(k.c, v.type)
+	info := underlying_info(k.c, v.type)
 	elements := make([]Const_Value, info.count, k.c.semantic_allocator)
 	for index in 0 ..< int(info.count) {
-		result, ok := fold_comparison(
-			k.c, v.op, simd_lane_const(left.const_value, index), simd_lane_const(right.const_value, index),
-		)
-		if !ok {
-			return
+		a, b := simd_lane_const(left.const_value, index), simd_lane_const(right.const_value, index)
+		#partial switch v.op {
+		case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+			result, ok := fold_comparison(k.c, v.op, a, b)
+			if !ok {
+				return
+			}
+			elements[index] = bool_const(result)
+		case:
+			folded, ok := fold_arithmetic(k.c, v.op, v.op_span, a, b, info.element)
+			if !ok {
+				v.type = INVALID_TYPE
+				return
+			}
+			elements[index] = folded
 		}
-		elements[index] = bool_const(result)
 	}
 	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
 	aggregate.type = v.type

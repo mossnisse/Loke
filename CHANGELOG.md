@@ -21,6 +21,10 @@ checklist.
   ([Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)). Only the first
   argument used to be checked, and a procedure value that may be either of two only as the
   first. Upgrade by not returning that borrow across the task.
+- An unfixed integer too large for a float no longer meets an unfixed float
+  ([Number literals](design.md#number-literals)): `(1 << 2000) + 1.5` is now `L0352`. It compiled,
+  reading the integer as `0`. A comparison, as in `(1 << 2000) > 1.5`, still orders the exact values.
+  Upgrade by writing a value a float can hold.
 - A distinct type converts only as written in more places
   ([Distinct types](design.md#distinct-types)): `r: rawptr = P(&n)` with `P :: distinct ^int` is now
   `L0310`, and `S("a") + view` and `S("a") == T("b")` with distinct strings are `L0354`. `a && b` on
@@ -1367,6 +1371,15 @@ checklist.
   other staged elements to the unwind. They used to leak.
 - The generated copy of a fixed array of owning elements is one loop. It emitted each element's code
   separately, so copying a `[20000]Value` of owning fields wrote a `.ll` of about 60 MB.
+- A union's zero value is its designated variant with a zero payload at compile time too
+  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). `R{} == R{m = .none}` folded to
+  `false`, `Option(int){} == .none` failed with `L0341` in compile-time code, `case .a(p)` on a zero
+  `U` bound a `p` with no value, a compile-time `.hash` of one differed from the run-time hash, and a
+  zero union whose payload has a `hook(drop)` or `hook(copy)` escaped the `L0341` every other such
+  value gets.
+- A constant `==` or `!=` on records with an `@(initialized)` count outside `0 ..= N` is `L0343`, as
+  [Uninitialized capacity](design.md#uninitialized-capacity) has equality panic, whichever operand
+  holds that count. It folded to unequal, and an evaluated comparison looked only at the smaller count.
 - A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
   used to fail with internal `L0405`, "a map key operation was not resolved during checking".
 - `pointer[0:length]` on a C pointer panics for a negative `length`, as

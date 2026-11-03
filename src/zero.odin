@@ -129,6 +129,12 @@ const_element_count :: proc(c: ^Compiler, type: Type_Id) -> u64 {
 			return max(u64)
 		}
 		return max(info.count * element, 1)
+	case .Union:
+		if !info.zero_designated || info.size_state == .Cyclic {
+			return 1
+		}
+		element := const_element_count(c, info.variants[0])
+		return element == max(u64) ? element : element + 1
 	case .Struct:
 		if info.size_state == .Cyclic {
 			return 1
@@ -173,9 +179,30 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		return type_const(INVALID_TYPE), true
 	// A slice constant's elements are the viewed ones, so the empty view is the
 	// all-zero `.Nil` rather than an aggregate of its two fields.
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error,
 	     .CString_View, .Slice:
 		return nil_const(), true
+	case .Union:
+		// With no designated zero, all-zero bits are no value of the type, as for a
+		// reference.
+		if !info.zero_designated {
+			return nil_const(), true
+		}
+		if info.size_state == .Cyclic {
+			return Const_Value{}, false
+		}
+		payload := Const_Value{}
+		if info.variants[0] != TYPE_VOID {
+			ok: bool
+			payload, ok = zero_const(c, info.variants[0], build)
+			if !ok {
+				return Const_Value{}, false
+			}
+		}
+		if !build {
+			return Const_Value{kind = .Aggregate}, true
+		}
+		return union_const(c, type, 0, payload), true
 	case .String, .String_View:
 		return Const_Value{kind = .String}, true
 	case .Array, .Simd:

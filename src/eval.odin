@@ -29,17 +29,11 @@ Eval_Flow :: enum {
 // A value being computed. Aggregates keep mutable elements; a pointer is
 // `target` and a procedure value `proc_value`.
 Eval_Value :: struct {
-	kind:       Const_Kind,
+	// Its `aggregate` stays nil: `elements` are the parts.
+	using constant: Const_Value,
 	type:       Type_Id,
 	// A union's variant; `elements[0]` is its payload, `Invalid` when none.
 	variant:    int,
-	integer:    Big_Int,
-	float:      f64,
-	float_bits: u16,
-	float_raw:  u64,
-	boolean:    bool,
-	text:       string,
-	type_value: Type_Id,
 	elements:   []Eval_Value,
 	target:     ^Eval_Value,
 	proc_value: Symbol_Id,
@@ -435,31 +429,14 @@ eval_release_tables :: proc(ev: ^Evaluator, value: Const_Value) {
 
 @(private = "file")
 const_of :: proc(v: Eval_Value) -> Const_Value {
-	return Const_Value {
-		kind       = v.kind,
-		integer    = v.integer,
-		float      = v.float,
-		float_bits = v.float_bits,
-		float_raw  = v.float_raw,
-		boolean    = v.boolean,
-		text       = v.text,
-		type_value = v.type_value,
-	}
+	return v.constant
 }
 
 @(private = "file")
 scalar :: proc(cv: Const_Value, type: Type_Id) -> Eval_Value {
-	return Eval_Value {
-		kind       = cv.kind,
-		type       = type,
-		integer    = cv.integer,
-		float      = cv.float,
-		float_bits = cv.float_bits,
-		float_raw  = cv.float_raw,
-		boolean    = cv.boolean,
-		text       = cv.text,
-		type_value = cv.type_value,
-	}
+	value := Eval_Value{constant = cv, type = type}
+	value.aggregate = nil
+	return value
 }
 
 @(private = "file")
@@ -524,10 +501,10 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 
 // design.md "Compile-time procedure evaluation": an evaluated path makes no
 // value whose drop or copy runs a hand-written hook, so such a record is
-// rejected where it is made. Only a record declares a hook, and only a record
-// or a fixed array holds one by value in a zero; a container, union, or box
-// starts out holding none, and gets one only from a value made, and checked,
-// on its own.
+// rejected where it is made. Only a record declares a hook, and only a record,
+// a fixed array, or a union's zero variant holds one by value in a zero; a
+// container or box starts out holding none, and gets one only from a value made,
+// and checked, on its own.
 @(private = "file")
 eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool {
 	info := underlying_info(ev.k.c, type)
@@ -537,6 +514,8 @@ eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool 
 	#partial switch info.kind {
 	case .Array:
 		return eval_hooks_supported(ev, info.element, site)
+	case .Union:
+		return !info.zero_designated || eval_hooks_supported(ev, info.variants[0], site)
 	case .Struct:
 		if !eval_record_hooks_supported(ev, type, site) {
 			return false
@@ -945,10 +924,6 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 		eval_fold_failed(ev)
 		return Eval_Value{}, false
 	}
-	// A lane-wise fold answers with an aggregate.
-	if folded.kind == .Aggregate {
-		return value_from_const(ev, folded, v.type)
-	}
 	return scalar(folded, v.type), true
 }
 
@@ -1174,15 +1149,15 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 				equal = ok && same
 				continue
 			}
-			left_count, left_ok := bi_to_i64(ev.alloc, a.elements[counter.index].integer)
-			right_count, right_ok := bi_to_i64(ev.alloc, b.elements[counter.index].integer)
-			count := min(left_count, right_count)
-			if !left_ok || !right_ok || count < 0 || count > i64(len(element.elements)) ||
-			   count > i64(len(b.elements[index].elements)) {
+			count, in_range := common_live_count(
+				ev.alloc, a.elements[counter.index].integer, b.elements[counter.index].integer,
+				len(element.elements), len(b.elements[index].elements),
+			)
+			if !in_range {
 				eval_fail(ev, ev.origin, "L0343", "an initialized prefix count is out of range")
 				return false, false
 			}
-			for at in 0 ..< int(count) {
+			for at in 0 ..< count {
 				same, ok := eval_compare(ev, .Eq_Eq, element.elements[at], b.elements[index].elements[at])
 				if !ok || !same {
 					equal = false
@@ -2966,7 +2941,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		if !by_ok {
 			return Eval_Value{}, false
 		}
-		rotated := rotate_const(ev.k.c, ev.alloc, const_of(operand).integer, const_of(by).integer, v.type, symbol.builtin)
+		rotated := rotate_const(ev.k.c, operand.integer, by.integer, v.type, symbol.builtin, ev.alloc)
 		return scalar(integer_const(rotated), v.type), true
 
 	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
@@ -2975,7 +2950,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		source := expr_base(v.bound[0]).type
-		count := bit_count(const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
+		count := bit_count(operand.integer, type_bits(ev.k.c, source), symbol.builtin)
 		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
 
 	// design.md "Integer overflow": a `next_power_of_two` that would panic at
@@ -2988,10 +2963,10 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		source := expr_base(v.bound[0]).type
 		if symbol.builtin == .Math_Checked_Next_Power_Of_Two {
-			power, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, .Math_Next_Power_Of_Two)
+			power, fits := bit_value_const(ev.k.c, operand.integer, source, .Math_Next_Power_Of_Two, ev.alloc)
 			return eval_option(ev, v.type, scalar(power, source), fits)
 		}
-		result, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, symbol.builtin)
+		result, fits := bit_value_const(ev.k.c, operand.integer, source, symbol.builtin, ev.alloc)
 		if !fits {
 			report_integer_overflow(ev.k.c, v.span, result.integer, source, ev.alloc)
 			eval_fold_failed(ev)

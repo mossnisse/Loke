@@ -1958,11 +1958,6 @@ type_is_rune :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
-// Runes compute as the signed `i32` they are stored in.
-integer_computes_signed :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_signed(c, type) || type_is_rune(c, type)
-}
-
 type_is_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch underlying_kind(c, id) {
 	case .Float, .Untyped_Float:

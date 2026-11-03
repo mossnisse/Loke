@@ -1,0 +1,16 @@
+// design.md "Number literals": an unfixed integer meeting an unfixed float converts
+// to a float, and a conversion that would overflow to infinity is rejected.
+package main;
+
+SUM :: (1 << 2000) + 1.5;
+PRODUCT :: 2.0 * (1 << 2000);
+
+choose :: proc(c: bool) { _ = (1 << 2000) if c else 1.5; }
+
+// Below the largest finite value, the conversion rounds and is fine.
+FITS :: (1 << 1000) + 1.5;
+// A comparison produces no float, so it orders the exact values.
+ORDER :: (1 << 2000) > 1.5;
+EQUAL :: 1.5 == (1 << 2000);
+
+main :: proc() { _ = FITS; _ = ORDER || EQUAL; }

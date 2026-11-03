@@ -1,0 +1,20 @@
+// design.md "Uninitialized capacity": equality panics on a count outside `0 ..= N`,
+// so a constant comparison reports it, whichever operand holds that count.
+package main;
+import "core:unsafe";
+
+Buf :: struct { @(initialized = count) items: [2]int, count: int }
+
+GOOD :: Buf{count = 1};
+BAD :: Buf{count = 9};
+NEGATIVE :: Buf{count = -1};
+
+BOTH :: BAD == BAD;
+LEFT :: BAD == GOOD;
+RIGHT :: GOOD != BAD;
+BELOW :: GOOD == NEGATIVE;
+
+// In range, unequal counts are just unequal.
+FINE :: GOOD == Buf{count = 2};
+
+main :: proc() { _ = BOTH || LEFT || RIGHT || BELOW || FINE; }

@@ -93,7 +93,7 @@ to work in if split, though that shortens nothing.
 
 12. **Re-checked expressions emit duplicate functions.** Hoisting at [check_expr.odin:2776](src/check_expr.odin#L2776) and the `erased_from` guard at [check_expr.odin:3536](src/check_expr.odin#L3536) break when [text.odin:43](src/text.odin#L43), [box.odin:211](src/box.odin#L211), [check.odin:2195](src/check.odin#L2195) or [check.odin:3640](src/check.odin#L3640) checks a receiver twice. A `hoisted` flag plus one receiver-checked flag also removes the doubling per call-chain link. BUG-check.part2-1, BUG-box-3, BUG-text-2, BUG-erased-2. About 30 lines.
 
-13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). A zero union is `.Nil` ([check_expr.odin:3417](src/check_expr.odin#L3417)). BUG-eval.part1-1, -2, BUG-const_ops-2, BUG-hash-2. About 35 lines.
+13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). BUG-eval.part1-1. About 35 lines.
 
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
@@ -113,7 +113,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
 
-- BUG-eval.part1-2, BUG-const_ops-2 and BUG-hash-2: `zero_const` answers `.Nil` for a union ([check_expr.odin:3417](src/check_expr.odin#L3417)), where every other union constant is an `.Aggregate` with a variant. Fixing the constant's form, rather than the three readers, is the smaller change.
 
 #### Receivers checked twice, because `check_expr` is not idempotent
 
@@ -223,7 +222,7 @@ Shared form: `new_iterator_type(c, name, label, element, key, fields)`. Saves ab
 #### Constant values
 
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
-- [reflect.odin:317](src/reflect.odin#L317) `typeid_const` is [const_ops.odin:73](src/const_ops.odin#L73) `type_const`. [const_ops.odin:868](src/const_ops.odin#L868) `lane` is [simd.odin:300](src/simd.odin#L300) `simd_lane_const`. [check.odin:4514](src/check.odin#L4514) `const_equal` is `fold_comparison(.Eq_Eq)` ([const_ops.odin:693](src/const_ops.odin#L693)) behind a kind check, and lacks aggregates. Saves about 25.
+- [reflect.odin:317](src/reflect.odin#L317) `typeid_const` is [const_ops.odin:73](src/const_ops.odin#L73) `type_const`. [check.odin:4514](src/check.odin#L4514) `const_equal` is `fold_comparison(.Eq_Eq)` ([const_ops.odin:693](src/const_ops.odin#L693)) behind a kind check, and lacks aggregates. Saves about 25.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 - A big integer is rounded to a float at [bigint.odin:354](src/bigint.odin#L354), [bigint.odin:463](src/bigint.odin#L463) and [const_ops.odin:391](src/const_ops.odin#L391). `dyadic_to_float` is exact and general; the other two can call it once it releases its temporaries, which CTFE's charged allocator needs. Saves about 30.
 
@@ -550,7 +549,7 @@ No bugs found: the rounding, shift, wrap and range logic held up against `core:m
 
 - [bigint.odin:384](src/bigint.odin#L384) `decimal_to_float`: 95 lines doing two jobs. Split at line 430 into scanning the spelling into digits and exponent, then rounding.
 - [bigint.odin:351](src/bigint.odin#L351): `bi_to_float` and `decimal_to_float` are float rounding in the integer file, calling `round_float` back in `const_ops.odin`.
-  Move both to `const_ops.odin`, next to `dyadic_to_float`, and make `bi_release` package-visible. `decimal_to_float` has one caller, [check_expr.odin:3793](src/check_expr.odin#L3793).
+  Move both to `const_float.odin`, next to `dyadic_to_float`, and make `bi_release` package-visible. `decimal_to_float` has one caller, [check_expr.odin:3793](src/check_expr.odin#L3793).
 
 **Comments**
 
@@ -1137,57 +1136,14 @@ What remains here belongs to the groups under "Findings that span files".
 
 ### src/const_ops.odin
 
-The arithmetic is careful and the exact float algorithms hold up on reading, but folded aggregate equality and mixed-kind float folding give wrong answers. The larger cost is around the file: the unary fold, aggregate comparison, and bigint-to-float rounding each exist more than once. All three bugs were reproduced with the built `lokec.exe`.
-
-**Bugs**
-
-- `BUG-const_ops-1` **medium** [const_ops.odin:560](src/const_ops.odin#L560) `fold_arithmetic`: the float arm reads `.float` of an `Integer` operand, which is 0, because `unify_operands` ([check_expr.odin:2556](src/check_expr.odin#L2556)) ignores a failed `materialize`. Scenario: `B :: (1 << 2000) + 1.5;` prints `1.5` and `(1 << 2000) * 2.0` prints `0.0`, where design.md "Number literals" rejects a conversion overflowing to infinity. Fix: fail in `unify_operands` with a diagnostic, and have this arm require two `Float` operands. *Confirmed: Reproduced: `(1 << 2000) + 1.5` compiles and prints 1.5, `* 2.0` prints 0.0, while `x: f64 = 1 << 2000` gives L0352. materialize's untyped branch returns true when convert_const fails (check_expr.odin:3579), leaving .Integer. Not in known-gaps.*
-- `BUG-const_ops-2` **medium** [const_ops.odin:829](src/const_ops.odin#L829) `part_equal`: a zero union is `.Nil` (`zero_const`, [check_expr.odin:3416](src/check_expr.odin#L3416)), and `.Nil` against the same variant's `.Aggregate` "counts as a difference". Scenario: with `@(zero=none) Maybe`, `R{} == R{m = .none}` folds to `false` while the same comparison at run time prints `true`. Fix: build the zero union as an aggregate of variant 0, or at least set `deferred` for that pair so it is decided at run time. *Confirmed: Reproduced: for R{m: Maybe, n: int}, the constant and inline R{} == R{m = .none} print false and static_assert(R{} != R{m = .none}) passes, while the same comparison on variables prints true. Not recorded in the gap documents.*
-- `BUG-const_ops-3` **low** [const_ops.odin:800](src/const_ops.odin#L800) `aggregate_equal`: an `@(initialized)` count outside `0 ..= N` answers a known `false`, though design.md "Uninitialized capacity" has equality panic and `eval_compare` reports L0343. Scenario: with `P` and `Q` both `Buf{count = 9}` over a `[2]int`, `C :: P == Q;` is `false`, while the same comparison at run time panics. Only `a`'s count is tested. Fix: return `false, false` when either count is out of range, leaving the comparison to run time. *Not verified.*
-
-**Simplification**
-
-- [const_ops.odin:548](src/const_ops.odin#L548) `fold_arithmetic`: the same L0355 `errorf` and failing `return` appear at 548, 573, 582, 595, and 648. A file-private `operator_not_applicable(c, op, op_span, type) -> (Const_Value, bool)` makes each one a single `return`. (about 5 lines)
-- [const_ops.odin:329](src/const_ops.odin#L329) `sqrt_rounded`: lines 329-339 redo `remainder_operand` with a bit-at-a-time loop. Use `m, e := remainder_operand(transmute(u64)x)`, renaming it for its wider use, since `x` is positive here. (about 9 lines)
-- [const_ops.odin:556](src/const_ops.odin#L556) `fold_arithmetic`: `bits := type_is_untyped(c, type) ? 64 : u16(type_bits(c, type))`. (3 lines)
-- [semantic.odin:1919](src/semantic.odin#L1919) `integer_computes_signed`: `TYPE_RUNE` already has `signed = true` ([semantic.odin:1047](src/semantic.odin#L1047)) and `integer_fits` returns on untyped first, so this equals `type_signed`, which `wrap_to_type` at [const_ops.odin:690](src/const_ops.odin#L690) already uses. Replace it at its uses here and in `emit_llvm_expr.odin` and delete it. (about 5 lines)
-- [const_ops.odin:212](src/const_ops.odin#L212) `bit_value_const` and [const_ops.odin:236](src/const_ops.odin#L236) `rotate_const`: these take `c` and a separate `storage`, so the checker writes `(k.c, k.c, ...)`. Use the file's other convention, a trailing `allocator: mem.Allocator = {}` with `value_allocator`. (2 call sites shorter)
-
-**Dead code**
-
-- (branch) [const_ops.odin:777](src/const_ops.odin#L777): the `allocator` default `= {}` of `aggregate_equal` is never taken; its one caller, line 751, passes `storage`. `aggregate_order` and `part_equal` have no such default.
-- (branch) [const_ops.odin:709](src/const_ops.odin#L709): the integer-against-float arm is reached only when `unify_operands` drops a failed `materialize`, as in `(1 << 2000) > 1.5`. Fixing BUG-const_ops-1 makes it dead, and leaves `bi_cmp_float` used only by `bigint_test.odin`.
-- (branch) [eval.odin:942](src/eval.odin#L942): `folded.kind == .Aggregate` cannot hold, because line 924 already diverts every vector type and `fold_arithmetic` makes an aggregate only for a vector `type`.
-
-**Data structures and algorithms**
-
-- [const_ops.odin:658](src/const_ops.odin#L658) `fold_arithmetic`: a typed `+ - * /` runs `integer_fits`, then `bi_wrap` (`bi_pow2`, a mask, `bi_and`, and more) on a value just shown to fit, once per operation in an evaluator loop. Return `result` from the checked arm, and wrap only for `+% -% *%` and `<<`, since the remaining operators stay in range for in-range operands.
+The exact float algorithms hold up on reading. What remains is around the file: the unary fold, bigint-to-float rounding, and constant equality each exist more than once.
 
 **Near copies**
 
 - [const_ops.odin:664](src/const_ops.odin#L664), [check_expr.odin:2059](src/check_expr.odin#L2059), [eval.odin:854](src/eval.odin#L854), and [eval.odin:966](src/eval.odin#L966): the unary `+ - ~ !` fold with its overflow check and wrap is written three times, despite this file's promise that both sides "fold identically". Add `fold_unary(c, op, span, value, type, allocator) -> (Const_Value, bool)` here, including the checker's literal-text sign handling. (about 40 lines)
 - [const_ops.odin:391](src/const_ops.odin#L391) and [bigint.odin:354](src/bigint.odin#L354): `dyadic_to_float` and `bi_to_float` both round a big integer to a float, one exactly, one via a sticky bit. `bi_to_float` becomes `dyadic_to_float(c, v, 0, bits)` plus its `is_inf` test; move the helper to `bigint.odin`, where `bi_release` is visible. (about 20 lines)
-- [const_ops.odin:835](src/const_ops.odin#L835) and [eval.odin:1131](src/eval.odin#L1131): `aggregate_order` and `eval_compare`'s ordering loop are the same 15 lines over different element types. A polymorphic loop taking the element compare would serve both. The equality walks ([const_ops.odin:777](src/const_ops.odin#L777), [eval.odin:1151](src/eval.odin#L1151)) have drifted, as BUG-const_ops-3 shows, so share at least the count validation.
-- [const_ops.odin:868](src/const_ops.odin#L868) and [simd.odin:300](src/simd.odin#L300): the nested `lane` is identical to `simd_lane_const`. Keep one, per the move under Structure. (6 lines)
 - [check.odin:4514](src/check.odin#L4514) and [const_ops.odin:693](src/const_ops.odin#L693): `const_equal` is `fold_comparison(.Eq_Eq)` behind a kind check. Make it those two statements; aggregates then get a known answer instead of unknown, so check its three callers. (about 15 lines)
 - [const_ops.odin:884](src/const_ops.odin#L884) and [reflect.odin:307](src/reflect.odin#L307): 15 sites across `src/` hand-build a `Const_Aggregate`, and `reflect.odin` already has a file-private `aggregate_const`. Promote it to the constructors at line 53, with an allocator parameter. (about 3 lines per site)
-- [const_ops.odin:140](src/const_ops.odin#L140), [165](src/const_ops.odin#L165), and [256](src/const_ops.odin#L256) spell the quiet bit, and [146](src/const_ops.odin#L146) and [264](src/const_ops.odin#L264) the default NaN. File-private `quieted(x)` and `default_nan(bits)` name them once. (about 3 lines)
-- [const_ops.odin:35](src/const_ops.odin#L35) and [eval.odin:31](src/eval.odin#L31): `Eval_Value` repeats `Const_Value`'s scalar fields, so `const_of` and `scalar` copy nine fields by hand. Embedding a `using` `Const_Value` in `Eval_Value`, with `aggregate` left nil, removes most of both. (about 20 lines)
-
-**Structure and boundaries**
-
-- [const_ops.odin:859](src/const_ops.odin#L859) `fold_simd_lanes` and its arm at 542: only `simd.odin:242` reaches them, since every other caller diverts vectors first or passes a scalar type, and `delegate` refuses vectors (L0420). Move it beside `fold_simd_comparison`, calling `fold_arithmetic` per lane. That drops its `allocator` and an `underlying_info` lookup from every fold.
-- [const_ops.odin:532](src/const_ops.odin#L532) `fold_arithmetic`: 128 lines with a seam at each operand kind. Split out `fold_float`, `fold_bool`, and `fold_shift` (lines 625-646), leaving a short dispatcher that can emit L0355 once.
-- [const_ops.odin:108](src/const_ops.odin#L108): lines 108-422 are exact float algorithms, a different job from the value type above and the folding below, and `exact_fma`, `exact_sqrt`, `exact_integral`, and `exact_mod` have only `eval.odin` and tests as callers. Move the float procedures to a `const_float.odin`, listed in the "Source-code map".
-
-**Comments**
-
-- [const_ops.odin:155](src/const_ops.odin#L155): shorten to "`x` rounded to an integral value as `builtin` does: the compile-time `core:math.floor`, `ceil`, `trunc`, `round`. Exact, and an `f32`'s integral value is an `f32`, so the `f64` procedures serve both. A NaN gives the operand quieted; nothing promises it." (3 lines fewer)
-- [const_ops.odin:205](src/const_ops.odin#L205): drop "built in `storage`" and "The reversal reads the pattern and gives `type`'s value of the reversed one."; keep what `is_power_of_two` and `next_power_of_two` read and the `fits` contract. (2 lines fewer)
-- [const_ops.odin:235](src/const_ops.odin#L235): delete "The result is built in `storage`.", which restates the parameter.
-- [const_ops.odin:248](src/const_ops.odin#L248): shorten to "`x mod y` with `x`'s sign: the compile-time `core:math.mod`. C's `fmod` is exact too, so they differ only in which NaN, which nothing promises. An `f32` remainder is exact as an `f64`, so the `f64` one serves both." (2 lines fewer)
-- [const_ops.odin:546](src/const_ops.odin#L546): delete; the next line says it.
-- [const_ops.odin:740](src/const_ops.odin#L740): delete; it sits before the `case` and says less than `type_consts_equal`'s own comment at [reflect.odin:347](src/reflect.odin#L347).
 
 ### src/container.odin
 
@@ -1627,7 +1583,7 @@ Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=n
 - [emit_llvm_simd.odin:146](src/emit_llvm_simd.odin#L146) and [emit_llvm_expr.odin:1583](src/emit_llvm_expr.odin#L1583): `emit_simd_divrem` and `emit_divrem` differ only in constant spelling, `i1` versus `<N x i1>`, and reducing before `panic_if`. Make `emit_divrem` lane-generic with one constant helper and one any-lane helper, the shape at `emit_llvm_calls.odin:1707` and `:1729`. (about 30 lines)
 - [emit_llvm_simd.odin:182](src/emit_llvm_simd.odin#L182) and [emit_llvm_expr.odin:1622](src/emit_llvm_expr.odin#L1622): the same shift sequence; the scalar adds only count-width conversion, which a vector skips because its count has the lane width. The same helpers merge them, taking `bits` from the lane. (about 20 lines)
 - [emit_llvm_simd.odin:108](src/emit_llvm_simd.odin#L108) and [emit_llvm_expr.odin:1553](src/emit_llvm_expr.odin#L1553), with [emit_llvm_simd.odin:217](src/emit_llvm_simd.odin#L217) and [emit_llvm_expr.odin:1421](src/emit_llvm_expr.odin#L1421): checked call and unary operators, differing in declaration, mask type, and any-lane reduction. Once merged, `emit_simd_binary_values` is little more than splatting, compares, and `emit_binary_op`. (about 15 lines)
-- [emit_llvm_simd.odin:129](src/emit_llvm_simd.odin#L129) and [emit_llvm_expr.odin:1712](src/emit_llvm_expr.odin#L1712): both choose `fcmp`/`icmp` and the predicate from a lane type. A helper returning the text such as `"icmp slt"`, using `integer_computes_signed`, serves both. (about 6 lines)
+- [emit_llvm_simd.odin:129](src/emit_llvm_simd.odin#L129) and [emit_llvm_expr.odin:1712](src/emit_llvm_expr.odin#L1712): both choose `fcmp`/`icmp` and the predicate from a lane type. A helper returning the text such as `"icmp slt"`, using `type_signed`, serves both. (about 6 lines)
 - [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113), [emit_llvm_simd.odin:274](src/emit_llvm_simd.odin#L274) and [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) (also `:228`, `:254`, `:324`, `:348`, `:358`, `:376`): the same declare-once block, nine times. Add `declare_intrinsic(e, key, declaration)` and rename `simd_intrinsics` (`emit_llvm.odin:59`), which also holds `llvm.ctpop` and `llvm.trap`. (about 18 lines)
 - [emit_llvm_simd.odin:36](src/emit_llvm_simd.odin#L36), [emit_llvm_abi.odin:1223](src/emit_llvm_abi.odin#L1223) and [emit_llvm_expr.odin:146](src/emit_llvm_expr.odin#L146): the mask test written out three times. Keep one unprivate `simd_is_mask` with body `type_is_boolean(e.c, info.element)` and call it from the other two.
 - [emit_llvm_simd.odin:260](src/emit_llvm_simd.odin#L260) and [emit_llvm_calls.odin:357](src/emit_llvm_calls.odin#L357) (also `:375`): both mangle a float spelling for an overloaded intrinsic. Rename `simd_mangled_lane` to a general name, make it package-visible, and use it at all three sites.
@@ -1795,8 +1751,7 @@ The semantics are careful and the comments mostly explain why, but the code is l
 **Bugs**
 
 - `BUG-eval.part1-1` **high** [eval.odin:1516](src/eval.odin#L1516) `eval_container_op`: `.Append` ignores `v.variadic_forwards`, where the checker binds a lone spread to `v.bound[v.variadic_slot]` and leaves both pack lists empty. Scenario: `a := [dynamic]int{}; a.append(..[]int{1,2}); return a.len();` folds to 0 and `static_assert(X == 0)` passes; at run time it is 2. Fix: append copies of the forwarded slice's elements; `a.append(9, ..b)` (L0341 at 1517) can use `variadic_order`. *Confirmed: Reproduced: X :: f() with a.append(..[]int{1,2}) passes static_assert(X == 0) and prints 0 vs runtime 2. A lone spread sets only variadic_forwards (check_calls.odin:1196), so the L0341 guard misses it; a mixed spread gets L0341. Not recorded in the docs.*
-- `BUG-eval.part1-2` **high** [eval.odin:512](src/eval.odin#L512) `zero_value`: a union falls through to `zero_const`, which is `.Nil` with no elements, while `eval_union` always keeps one element. Scenario: `x := Option(int){}; y: Option(int) = .none; x == y` gives L0341; with `@(zero=a) U :: union {a: int, b: int}`, `case .a(p)` on `U{}` binds `p` to the `.Nil` value, so `p + 1 == 1` fails, and a `[2]int` payload gives L0361. Fix: build `eval_union` with the zero variant and a zero payload here and in `value_from_const` (298). *Confirmed: Reproduced with lokec: Option(int){} == .none gives L0341, p + 1 == 1 gives L0341, and a [2]int payload gives L0361, while each runs fine at run time. A `.a(&mut p)` write on U{} also folds silently to 0 versus 5 at run time. No gap is recorded; high fits.*
-- `BUG-eval.part1-3` **low** [eval.odin:1168](src/eval.odin#L1168) `eval_compare`: `equal = ok && same` (and 1181) turns a pair that cannot be compared into "different", while the same pair at top level reports L0341 (929). Scenario: `T :: struct {o: Option(int)}`, `T{} == T{o = .none}` folds to false, so a `static_assert` fails with no hint of why. Fix: return `false, false` when `!ok`. *Not verified.*
+- `BUG-eval.part1-3` **low** [eval.odin:1168](src/eval.odin#L1168) `eval_compare`: `equal = ok && same` (and 1181) turns a pair that cannot be compared into "different", while the same pair at top level reports L0341 (929). Scenario: a part with no compile-time comparison held in a record folds to false, so a `static_assert` fails with no hint of why; `T{} == T{o = .none}` no longer shows it, since a zero union now compares. Fix: return `false, false` when `!ok`. *Not verified.*
 
 **Simplification**
 
@@ -1876,7 +1831,7 @@ Readable and tightly commented, with three valid programs rejected at compile ti
 - [eval.odin:3393](src/eval.odin#L3393) `eval_assign`: the destination and write phases appear twice (3393-3416, 3434-3454). `eval_place` already gives `_` a throwaway slot, so `is_discard` and `slot != nil` are unnecessary and one `eval_write_targets(ev, s.lhs, values)` serves both. (about 20 lines)
 - [eval.odin:3767](src/eval.odin#L3767) `bind_eval_value_pattern`: the value is always a fresh copy, so binding its parts in place is equivalent. Put it in one `eval_slot` and call the place version, which gains a `span` in place of `no_span()` at 3802 and recurses on `bindings[slot:][:1]`. (about 30 lines)
 - [eval.odin:3876](src/eval.odin#L3876) `eval_variant_switch`: the inner search and double break become `if slice.contains(entry.variant_indices, subject.variant) { chosen = index; break }`. (about 5 lines)
-- [eval.odin:2450](src/eval.odin#L2450) `eval_standard_customization`: the seed is a `uint` scalar, so freezing it adds nothing; use `seed.integer`. Likewise `const_of(x).integer` is `x.integer` at 2975, 2984, 2997, and 3000. (about 3 lines)
+- [eval.odin:2450](src/eval.odin#L2450) `eval_standard_customization`: the seed is a `uint` scalar, so freezing it adds nothing; use `seed.integer`. (about 3 lines)
 - [eval.odin:4028](src/eval.odin#L4028) `eval_case_fields`: `payload` and `record` are recomputed per field; compute both once before the loop. (about 2 lines)
 
 **Dead code**
@@ -2300,7 +2255,6 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 **Bugs**
 
 - `BUG-hash-1` **medium** [hash.odin:122](src/hash.odin#L122) `part_hash_member`: looks for `hash` on the part, then its underlying type, without regard to where `==` came from, so a part can pair one type's `==` with another's `hash`. Scenario: `S` declares `==` and `hash`, `D :: distinct S` declares only a coarser `==`, and `map[struct { d: D }]int` is accepted using `S.hash`; two keys that compare equal hash apart and the map holds both (`len` 2, `x == y` true). Fix: read `hash` from the type that supplied `==`, so this `D` has no `hash` and is rejected. *Confirmed: Reproduced: map[struct-with-D]int prints len 2, x == y true, hashes differ, using S.hash beside D's own coarser ==. map[D]int gets L0586, and design.md "Maps" requires a component with custom equality to supply its own hash; unrecorded in the gap documents.*
-- `BUG-hash-2` **medium** [hash.odin:382](src/hash.odin#L382) `hash_const`: a zero union reaches it as a `.Nil` scalar, because [eval.odin:4128](src/eval.odin#L4128) only walks `.Aggregate`, so it mixes 0 once; the runtime mixes tag 0 and then the payload. Scenario: `@(zero=p) U :: union { p: Point, empty }`, where `U{}.hash(uint(7))` as a constant differs from a runtime `u.hash(s)`, also nested in a struct or array. Fix: have `eval_hash` treat a `.Nil` union as variant 0 with a zero payload. *Confirmed: Probe: const U{}.hash(uint(7)) = 7696581397477 (7*FNV prime, one mix); runtime and const U.p({0,0}).hash(7) = 4369156843660375725, though u==e. Nested struct and [2]U differ too; a void first variant agrees. Not recorded in the gap documents.*
 - `BUG-hash-3` **medium** [hash.odin:353](src/hash.odin#L353) `hash_scalar_bits`: a `typeid_of(T)` constant has no number yet (design.md "`type` and `typeid`") and `value.integer` is zero, so it hashes like the nil `typeid`. Scenario: `typeid_of(int).hash(uint(7)) == typeid_of(string).hash(uint(7))` folds true, and neither matches the runtime hash, against the file's "must agree exactly". Fix: `eval_hash` fails with L0341 for a `.Type` value naming a type, as bit-casting one does. *Confirmed: Probe: H :: typeid_of(int).hash(uint(7)) and the string form both give 7696581397477, the nil id's runtime hash, while runtime gives other values for each. design.md says such a number has no compile-time meaning; no gap recorded.*
 - `BUG-hash-4` **low** [hash.odin:98](src/hash.odin#L98) `record_hashes_structurally`: checks for a `hash` on `under` only, and `part_is_hashable` never checks a scalar part, so a nested `distinct` declaring only `hash` is accepted and its `hash` ignored. Scenario: with `Ds :: distinct S` declaring `hash`, `map[Ds]int` is rejected as half a pair but `map[struct { d: Ds }]int` compiles and hashes `d` structurally. Fix: in `part_is_hashable`, a part with no own `==` and an inherent `hash` is not hashable. *Not verified.*
 - `BUG-hash-5` **low** [hash.odin:98](src/hash.odin#L98) `record_hashes_structurally`: `type_own_equality(c, id)` also sees the underlying type's `==`, so a `distinct` declaring neither half is rejected as a key, against the comment at [customization.odin:55](src/customization.odin#L55). Scenario: `D :: distinct S` with `S` holding the pair gives L0586 for `map[D]int`, while `map[struct { d: D }]int` compiles using `S.hash`. Fix: settle which design.md "Maps" means; then key `D` by `S`'s pair or correct that comment. *Not verified.*
@@ -3751,8 +3705,6 @@ Readable and well scoped, with no dead symbols, but `check_simd_binary` skips op
 
 **Near copies**
 
-- [simd.odin:300](src/simd.odin#L300) and [const_ops.odin:868](src/const_ops.odin#L868): `simd_lane_const` and the local `lane` are the same five lines; keep one in `const_ops.odin`.
-- [simd.odin:275](src/simd.odin#L275) and [const_ops.odin:859](src/const_ops.odin#L859): `fold_simd_comparison` and `fold_simd_lanes` have one skeleton (allocate, fold per lane, wrap in an aggregate) and differ in the per-lane call; move the comparison beside its twin and share the aggregate wrap.
 - [simd.odin:76](src/simd.odin#L76) and [check.odin:1965](src/check.odin#L1965): lane count and array length run the same poly lookup, `check_single_expr`, `require_const`, integer test, and `bi_to_i64`; they differ in wording and code. A shared `constant_count(k, written, what, code) -> (u64, bool)` removes about 20 lines here, and `simd_lane_count_permitted` already rejects 0.
 - [simd.odin:15](src/simd.odin#L15), [box.odin:45](src/box.odin#L45) and [iterate.odin:68](src/iterate.odin#L68): `simd_callee`, `box_type_callee` and `range_callee` differ only in the name; use `predeclared_callee(k, callee, "Simd")`.
 - [simd.odin:185](src/simd.odin#L185) and [check_expr.odin:1432](src/check_expr.odin#L1432): the same constant-element fold, except that the array path also sets `v.immutable = .Constant`; a small shared helper keeps the two from drifting further.

@@ -822,7 +822,7 @@ check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 	if !base.is_const || base.const_value.kind != .Integer {
 		return
 	}
-	result, fits := bit_value_const(k.c, k.c, base.const_value.integer, type, kind)
+	result, fits := bit_value_const(k.c, base.const_value.integer, type, kind)
 	if !fits {
 		report_integer_overflow(k.c, v.span, result.integer, type)
 		v.type = INVALID_TYPE
@@ -888,7 +888,7 @@ check_rotate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	base, by := expr_base(value), expr_base(count)
 	if base.is_const && base.const_value.kind == .Integer && by.is_const && by.const_value.kind == .Integer {
 		v.is_const = true
-		v.const_value = integer_const(rotate_const(k.c, k.c, base.const_value.integer, by.const_value.integer, type, kind))
+		v.const_value = integer_const(rotate_const(k.c, base.const_value.integer, by.const_value.integer, type, kind))
 	}
 }
 
