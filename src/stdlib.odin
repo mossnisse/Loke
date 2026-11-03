@@ -52,9 +52,6 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 	switch pkg.key {
 	case STD_RUNTIME:
 		contribute_allocator_surface(c, pkg)
-		// The `LOKE_*` enum types stay unbound here: binding them eagerly would
-		// allocate one per importer and shift type numbering.
-		//
 		// `Shared(T)` allocates its control block, and `base:runtime` is below
 		// `core:mem` in the dependency order, so it cannot import the package that
 		// publishes the default provider. The control block then travels as a
@@ -199,9 +196,8 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "checked_next_power_of_two", .Math_Checked_Next_Power_Of_Two)
 	case STD_LOG:
 		// standard-library.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
-		// `Level` must be one type, or a caller could not compare them. Allocated
-		// lazily, exactly as the other `LOKE_*` enums are.
-		contribute_type(c, pkg, "Level", build_config_enum_type(c, .Log_Level))
+		// `Level` must be one type, or a caller could not compare them.
+		contribute_type(c, pkg, "Level", c.log_level_type)
 	case STD_META:
 		// The compile-time reflection descriptors. They stay compile-time-only
 		// types: naming them does not make them storable.

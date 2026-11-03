@@ -497,6 +497,21 @@ compile_runtime_sources :: proc(command: []string, staging: string) -> (reason: 
 	return ""
 }
 
+// Every `*.c` file in `dir`, sorted so one directory always gives one command.
+// Listed rather than globbed: a `[` in the path would be read as glob syntax.
+@(private = "file")
+runtime_sources :: proc(dir: string) -> (sources: []string, err: os.Error) {
+	entries := os.read_all_directory_by_path(dir, context.temp_allocator) or_return
+	found := make([dynamic]string, 0, len(entries))
+	for entry in entries {
+		if strings.has_suffix(entry.name, ".c") {
+			append(&found, join_path({dir, entry.name}))
+		}
+	}
+	slice.sort(found[:])
+	return found[:], nil
+}
+
 // clang does llc, the runtime's C sources, and the link in one process
 // (decisions A5, A7). Outside a developer prompt it cannot find the MSVC
 // toolset, so its headers and libraries are located here.
@@ -504,19 +519,18 @@ compile_runtime_sources :: proc(command: []string, staging: string) -> (reason: 
 link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emission_Options) -> int {
 	clang := find_clang()
 
-	runtime_dir := resolved_runtime_dir(opts)
-	sources := runtime_sources(runtime_dir)
+	// `-runtime=<dir>` replaces the bundled directory outright.
+	custom_runtime := opts.runtime_dir != ""
+	runtime_dir := custom_runtime ? opts.runtime_dir : install_component("runtime")
+	sources, listing := runtime_sources(runtime_dir)
 	if len(sources) == 0 {
-		errorf(
-			c,
-			no_span(),
-			"L0551",
-			"no seed runtime sources in `%s`: %s",
-			runtime_dir == "" ? "<unknown>" : runtime_dir,
-			is_directory(runtime_dir) \
-				? "the directory holds no `.c` files" \
-				: "the directory does not exist; pass `-runtime=<dir>`",
-		)
+		reason := "the directory holds no `.c` files"
+		if !is_directory(runtime_dir) {
+			reason = "the directory does not exist; pass `-runtime=<dir>`"
+		} else if listing != nil {
+			reason = fmt.tprintf("the directory cannot be listed: %s", os.error_string(listing))
+		}
+		errorf(c, no_span(), "L0551", "no seed runtime sources in `%s`: %s", runtime_dir == "" ? "<unknown>" : runtime_dir, reason)
 		return 2
 	}
 
@@ -546,7 +560,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	// compiled as an unoptimized build's are, `cpu.c` among them.
 	bitcode := links_runtime_bitcode(clang, c.opt_mode)
 	runtime_inputs := sources
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.target, c.opt_mode, opts.runtime_dir != "", bitcode); prebuilt != nil {
+	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.target, c.opt_mode, custom_runtime, bitcode); prebuilt != nil {
 		runtime_inputs = prebuilt
 	} else {
 		bitcode = false

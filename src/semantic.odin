@@ -786,7 +786,6 @@ Symbol :: struct {
 	// global rather than an `alloca`.
 	duration:         Duration,
 	// Which `LOKE_*` enum this predeclared constant belongs to, or `.None`.
-	build_config_enum: Build_Config_Enum,
 	// design.md "`@(deprecated=<string>)`": the warning message printed at each
 	// use of this procedure, or "" if it is not deprecated.
 	deprecated_message: string,
@@ -811,28 +810,6 @@ Symbol :: struct {
 	// design.md "@(export)": emit under `link_name` rather than the mangled
 	// `@loke.p...`, so a C consumer can link to it.
 	exported:           bool,
-}
-
-Build_Config_Enum :: enum u8 {
-	None,
-	Arch,
-	Os,
-	Endian,
-	Build_Mode,
-	Optimization_Mode,
-	Vendor,
-	Log_Level,
-}
-
-// standard-library.md "Compiled log level". The member names are `core:log`'s own, and
-// `Off` is last so `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled
-// out entirely.
-Log_Level :: enum u8 {
-	Debug,
-	Info,
-	Warning,
-	Error,
-	Off,
 }
 
 Scope_Kind :: enum {
@@ -903,24 +880,18 @@ Package :: struct {
 	intrinsics_bound: bool,
 }
 
-// Address space reserved for each arena reset after every body. Pages are
-// committed as they are first used and stay committed across resets, so the
-// next body does not fault them in again.
+// Address space each per-body scratch arena reserves.
 SCRATCH_ARENA_RESERVE :: mem.Gigabyte
 
 // The per-body scratch arenas, empty.
 @(private)
 init_analysis_arenas :: proc(c: ^Compiler) {
-	if err := scratch_arena_init(&c.analysis_arena, SCRATCH_ARENA_RESERVE); err != nil {
-		panic("cannot reserve the compilation's analysis arena")
+	for arena in ([]^Scratch_Arena{&c.analysis_arena, &c.replay_carry_arena, &c.replay_round_arena}) {
+		if err := scratch_arena_init(arena, SCRATCH_ARENA_RESERVE); err != nil {
+			panic("cannot reserve the compilation's analysis arenas")
+		}
 	}
 	c.analysis_allocator = scratch_allocator(&c.analysis_arena)
-	if err := scratch_arena_init(&c.replay_carry_arena, SCRATCH_ARENA_RESERVE); err != nil {
-		panic("cannot reserve the compilation's provenance replay arenas")
-	}
-	if err := scratch_arena_init(&c.replay_round_arena, SCRATCH_ARENA_RESERVE); err != nil {
-		panic("cannot reserve the compilation's provenance replay arenas")
-	}
 }
 
 @(private)

@@ -461,3 +461,23 @@ it", at the `0`, and nothing about `Unknown`. So does `$V: Record(T, 0)`, where 
 instantiation limit is what stops the parameter's type. The site's comment says the
 template reports its own parameter types, and it does not here. Found on 2026-11-01
 while fixing the instantiation limit for a parameter's type.
+
+### A reset past the region limit is reported as certain
+
+[Minimum provenance precision](design.md#minimum-provenance-precision) says a
+diagnostic caused by an analysis budget must describe the dependency as possible, not
+certain. Past `REGION_LOCAL_LIMIT` local regions merge, so a procedure that only declares
+65 arenas is rejected, which the budget permits, but `L0537` says "this reset would end the
+region backing `a0`". It names a declaration as the reset, and only the notes that follow
+say the limit may be the cause. [tests/err/crowded_regions.loke](tests/err/crowded_regions.loke)
+pins the current wording. The reproduction, with the lines between written out:
+
+```loke
+package main;
+import "core:mem";
+main :: proc() {
+    a0 := mem.Arena.init();
+    // a1 through a63 alike
+    a64 := mem.Arena.init();
+}
+```

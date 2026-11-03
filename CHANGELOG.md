@@ -1268,6 +1268,12 @@ checklist.
 
 ### Fixed
 
+- A `-runtime` directory that exists but cannot be listed now says so in `L0551`, rather than
+  calling the directory empty.
+- Editor completion now shows the type of `LOKE_OS` and the other `LOKE_*` enum constants before
+  any code reads them.
+- The note that more than 64 local allocator regions merged now ends, as the other precision
+  notes do, with how to avoid the limit.
 - An enum's own `==` and `<` are now the ones used, as a struct's are ([Operator lookup and
   overload resolution](design.md#operator-lookup-and-overload-resolution)): `x == y` ignored its
   own `==` at the top level while `[2]E` used it. A generated `hash` no longer stands beside an

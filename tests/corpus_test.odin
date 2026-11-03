@@ -501,6 +501,39 @@ seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 	)
 }
 
+// A runtime directory that exists but cannot be listed says so, rather than
+// being reported as empty. Skipped where the access rule cannot be set.
+@(test)
+unlistable_runtime_directory_is_reported :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	cwd := os.get_working_directory(context.temp_allocator) or_else ""
+	denied := join_path({cwd, TMP, "denied-runtime"}, context.temp_allocator)
+	os.make_directory(denied)
+	user := os.get_env("USERNAME", context.temp_allocator)
+	refused, _, _, refused_err := exec(
+		os.Process_Desc{command = []string{"icacls", denied, "/deny", fmt.tprintf("%s:(RD)", user)}},
+		context.allocator,
+	)
+	if refused_err != nil || refused.exit_code != 0 {
+		return
+	}
+	defer exec(os.Process_Desc{command = []string{"icacls", denied, "/remove:d", user}}, context.allocator)
+
+	source := join_path({cwd, "examples", "hello.loke"}, context.temp_allocator)
+	exe := join_path({cwd, TMP, "runtime-denied.exe"}, context.temp_allocator)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), source, "-o", exe, fmt.tprintf("-runtime=%s", denied)}},
+		context.allocator,
+	)
+	testing.expectf(t, err == nil && state.exit_code == 2, "expected the link to refuse a runtime it cannot list:\n%s", string(stderr))
+	testing.expectf(
+		t,
+		strings.contains(string(stderr), "L0551") && strings.contains(string(stderr), "cannot be listed"),
+		"expected L0551 saying the directory cannot be listed, got:\n%s",
+		string(stderr),
+	)
+}
+
 // A seed runtime that exists but does not define everything the module calls
 // is a runtime failure, not a foreign one. `loke_rt.h` makes the ABI version
 // part of every exported name so a stale directory fails to link instead of

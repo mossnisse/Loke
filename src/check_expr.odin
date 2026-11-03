@@ -636,10 +636,6 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = INVALID_TYPE
 
 	case .Const, .Enum_Member:
-		// A `LOKE_*` build-config constant allocates its enum type on first use.
-		if sym.build_config_enum != .None && sym.type == INVALID_TYPE {
-			sym.type = build_config_enum_type(k.c, sym.build_config_enum)
-		}
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.type

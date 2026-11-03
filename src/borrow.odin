@@ -983,6 +983,9 @@ Region_Set :: struct {
 	crowded: bool,   // more local providers than bits: may be any of them
 }
 
+// The width of `Region_Set.locals`.
+REGION_LOCAL_LIMIT :: 64
+
 // Whether the set may name a region created in this procedure.
 region_has_local :: proc(set: Region_Set) -> bool {
 	return set.locals != 0 || set.crowded
@@ -1454,7 +1457,7 @@ load_paths_at :: proc(c: ^Compiler, into: ^Result_Dependencies, index, depth: in
 @(private = "file")
 merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
 	merge_provenance(c, into, from)
-	merge_precision(&into.precision, from.precision)
+	into.precision |= from.precision
 	for depths, index in from.param_loads {
 		if index >= len(into.param_loads) {
 			continue
@@ -6271,10 +6274,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use
 	for source in event.sources { state.diagnostic_precision |= state.precision[source] }
 	defer {
 		if len(state.k.c.diagnostics) > before {
-			add_precision_notes(state.k.c, event.span, state.diagnostic_precision)
-			if event.region.crowded {
-				add_notef(state.k.c, event.span, "provenance precision limit: more than 64 local allocator regions merge region identities")
-			}
+			add_precision_notes(state.k.c, event.span, state.diagnostic_precision, event.region.crowded)
 		}
 	}
 	#partial switch event.kind {

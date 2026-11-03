@@ -43,7 +43,7 @@ emit_atomic_declarations :: proc(e: ^Emitter) {
 emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
 	checked := v.operation.(Call_Atomic)
 	if kind == .Atomic_Fence {
-		fmt.sbprintfln(&e.b, "  fence %s", llvm_ordering(Memory_Order(checked.order)))
+		fmt.sbprintfln(&e.b, "  fence %s", llvm_ordering(checked.order))
 		return "0"
 	}
 
@@ -100,7 +100,7 @@ emit_native_atomic :: proc(
 	case .Pointer, .C_Pointer, .Raw_Pointer:
 		storage = "ptr"
 	}
-	order := llvm_ordering(Memory_Order(checked.order))
+	order := llvm_ordering(checked.order)
 	align := bits / 8
 
 	if kind == .Atomic_Load {
@@ -128,7 +128,7 @@ emit_native_atomic :: proc(
 		fmt.sbprintfln(
 			&e.b, "  %s = cmpxchg ptr %s, %s %s, %s %s %s %s, align %d",
 			pair, address, storage, expected, storage, desired,
-			order, llvm_ordering(Memory_Order(checked.failure_order)), align,
+			order, llvm_ordering(checked.failure_order), align,
 		)
 		pair_type := fmt.aprintf("{{ %s, i1 }}", storage)
 		observed := extract(e, pair_type, pair, 0)
@@ -162,7 +162,7 @@ emit_fallback_atomic :: proc(
 		out := alloca(e, storage)
 		fmt.sbprintfln(
 			&e.b, "  call void @loke_rt_v1_atomic128_load(ptr %s, ptr %s, i32 %d)",
-			address, out, checked.order,
+			address, out, int(checked.order),
 		)
 		return load(e, storage, out)
 	}
@@ -172,7 +172,7 @@ emit_fallback_atomic :: proc(
 		store(e, checked.type, emit_expr(e, v.bound[1]), value)
 		fmt.sbprintfln(
 			&e.b, "  call void @loke_rt_v1_atomic128_store(ptr %s, ptr %s, i32 %d)",
-			address, value, checked.order,
+			address, value, int(checked.order),
 		)
 		return "0"
 	}
@@ -187,7 +187,7 @@ emit_fallback_atomic :: proc(
 		fmt.sbprintfln(
 			&e.b,
 			"  %s = call i32 @loke_rt_v1_atomic128_compare_exchange(ptr %s, ptr %s, ptr %s, i32 %d, i32 %d)",
-			status, address, expected, desired, checked.order, checked.failure_order,
+			status, address, expected, desired, int(checked.order), int(checked.failure_order),
 		)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", swapped, status)
 		observed := load(e, storage, expected)
@@ -199,7 +199,7 @@ emit_fallback_atomic :: proc(
 	store(e, checked.type, emit_expr(e, v.bound[1]), value)
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_atomic128_%s(ptr %s, ptr %s, ptr %s, i32 %d)",
-		helper, address, value, out, checked.order,
+		helper, address, value, out, int(checked.order),
 	)
 	return load(e, storage, out)
 }

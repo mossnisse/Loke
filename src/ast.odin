@@ -223,7 +223,7 @@ Call_Union_Construct :: struct { index: int, clone: bool }
 Call_Union_As :: struct { index: int }
 Call_Text_Conversion :: struct { op: Text_Conversion }
 // Orderings and the element type are settled during checking, not runtime args.
-Call_Atomic :: struct { type: Type_Id, order: int, failure_order: int }
+Call_Atomic :: struct { type: Type_Id, order: Memory_Order, failure_order: Memory_Order }
 Call_Sort_By :: struct { comparator: Symbol_Id }
 Call_Simd_Reduce :: struct { fold: Simd_Fold }
 // The witness the pointed-to type satisfies the interface with.

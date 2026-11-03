@@ -191,11 +191,11 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	}
 
 	order, order_ok := check_atomic_order(k, v.args[operands].value, order_type, kind, false)
-	operation := Call_Atomic{type = element, order = int(order)}
+	operation := Call_Atomic{type = element, order = order}
 	ok = ok && order_ok
 	if kind == .Atomic_Compare_Exchange {
 		failure, failure_ok := check_atomic_order(k, v.args[operands + 1].value, order_type, kind, true)
-		operation.failure_order = int(failure)
+		operation.failure_order = failure
 		ok = ok && failure_ok
 	}
 	if !ok {

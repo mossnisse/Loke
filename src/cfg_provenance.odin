@@ -4416,7 +4416,7 @@ Provider_Path :: struct {
 	bit: u64,
 }
 
-// Every token of one local. Past 64 tokens the set is `crowded`, meaning "may
+// Every token of one local. Past `REGION_LOCAL_LIMIT` the set is `crowded`, meaning "may
 // be any of them".
 @(private)
 prov_provider_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
@@ -4468,7 +4468,7 @@ prov_provider_tokens :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 	if len(positions) == 0 {
 		append(&positions, Provider_Path{})
 	}
-	if len(graph.provider_symbols) + len(positions) > 64 {
+	if len(graph.provider_symbols) + len(positions) > REGION_LOCAL_LIMIT {
 		return false
 	}
 	bits := graph.provider_moved[id]
@@ -4935,7 +4935,7 @@ prov_temp_provider_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_S
 	set := prov_empty_region(graph)
 	bit, found := graph.temp_provider_bits[v]
 	if !found {
-		if len(graph.provider_symbols) >= 64 {
+		if len(graph.provider_symbols) >= REGION_LOCAL_LIMIT {
 			set.unknown = true
 			return set
 		}

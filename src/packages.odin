@@ -106,9 +106,7 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 	init_semantic_stores(k.c)
 	if _, seeded := k.c.collections["base"]; !seeded {
 		// Test binaries need the working-directory fallback.
-		installed := install_component("base")
-		defer delete(installed)
-		root := installed
+		root := install_component("base")
 		if root == "" || !is_directory(strings.concatenate({root, "/runtime"}, context.temp_allocator)) {
 			root = "base"
 		}

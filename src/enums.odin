@@ -1,6 +1,30 @@
 // `Enum.from_int` and `Enum.values`; members are resolved in check.odin.
 package lokec
 
+// An enum the compiler declares, over `int`, numbered in member order.
+synth_enum :: proc(c: ^Compiler, name: string, members: []string) -> Type_Id {
+	type := new_type(c, Type_Info {
+		kind    = .Enum,
+		name    = intern_identifier(c, name),
+		element = TYPE_INT,
+		bits    = u16(type_bits(c, TYPE_INT)),
+		signed  = true,
+	})
+	fields := make([]Symbol_Id, len(members), c.semantic_allocator)
+	for member, index in members {
+		fields[index] = new_symbol(c, Symbol {
+			name        = intern_identifier(c, member),
+			span        = no_span(),
+			kind        = .Enum_Member,
+			type        = type,
+			index       = u32(index),
+			const_value = Const_Value{kind = .Integer, integer = bi_from_i64(c, i64(index))},
+		})
+	}
+	type_of(c, type).fields = fields
+	return type
+}
+
 // The compiler-defined `Enum.from_int` and `Enum.values`, which no `impl` or
 // `extend` member may shadow.
 enum_builtin_member :: proc(name: string) -> bool {

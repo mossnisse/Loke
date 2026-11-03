@@ -201,10 +201,8 @@ destroy_session :: proc(s: ^Compilation_Session) {
 	virtual.arena_destroy(&s.scratch_arena)
 	virtual.arena_destroy(&s.configuration_arena)
 	virtual.arena_destroy(&s.stats_arena)
-	for _, overlay in s.overlays {
-		delete(overlay.key)
-		delete(overlay.path)
-		delete(overlay.text)
+	for key, overlay in s.overlays {
+		delete_overlay(key, overlay)
 	}
 	delete(s.overlays)
 	s^ = {}
@@ -264,10 +262,7 @@ register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	init_semantic_stores(c)
 	for name in ([]string{"base", "core"}) {
 		if bundled := install_component(name); bundled != "" {
-			// Cloned like an explicit entry, so the whole map has one owner and
-			// the heap path `install_component` returns is not left behind.
 			c.collections[name] = strings.clone(bundled, c.semantic_allocator)
-			delete(bundled)
 		}
 	}
 

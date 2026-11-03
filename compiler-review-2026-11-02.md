@@ -29,13 +29,13 @@ section are revised when a fix changes them.
 | Findings | Count | Checked by |
 | --- | ---: | --- |
 | High and medium severity bugs | 182 (43 high, 139 medium) | An independent attempt to refute each one |
-| Low severity bugs | 177 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 701 | Only the reviewer |
+| Low severity bugs | 175 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 694 | Only the reviewer |
 | Dead code | 372 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
-| Data structures and algorithms | 130 | Only the reviewer |
-| Near copies | 455 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 292 | Only the reviewer |
-| Comments | 518 | Only the reviewer |
+| Data structures and algorithms | 128 | Only the reviewer |
+| Near copies | 453 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 286 | Only the reviewer |
+| Comments | 516 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 359 overstates the number of separate
+  merges the ones found so far, so 357 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 455 suggests: the
+Near copies are real but smaller than the raw count of 453 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -273,8 +273,6 @@ The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771)
 
 The same nine settings are fields of `Compilation_Config` ([session.odin:9](src/session.odin#L9)), `Options` ([main.odin:88](src/main.odin#L88)) and `Compiler` ([source.odin:278](src/source.odin#L278)), and are copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and [session.odin:87](src/session.odin#L87). One embedded `Build_Settings` struct saves about 25 lines. [session.odin:90](src/session.odin#L90) also sets `c.target`, which [semantic.odin:937](src/semantic.odin#L937) overwrites from the same `c.cpu`.
 
-CPU level spellings are at [build_config.odin:34](src/build_config.odin#L34), [main.odin:356](src/main.odin#L356) and [attributes.odin:411](src/attributes.odin#L411). A `[Cpu_Level]string` table with `cpu_level_from_name` saves about 10.
-
 #### File rewriting and scratch lexing
 
 [doc.odin:134](src/doc.odin#L134) repeats [formatter.odin:60](src/formatter.odin#L60) `format_text`.
@@ -401,13 +399,12 @@ Counts per file, then the findings themselves in the same order.
 | [abi.odin](src/abi.odin) | 342 | 3 | 4 | 1 | 1 | 4 | 2 | 1 |
 | [ast.odin](src/ast.odin) | 1488 | 1 | 5 | 2 | 1 | 1 | 1 | 6 |
 | [ast_clone.odin](src/ast_clone.odin) | 798 | 1 | 6 | 3 | 0 | 2 | 3 | 1 |
-| [atomics.odin](src/atomics.odin) | 312 | 1 | 6 | 0 | 1 | 0 | 2 | 4 |
+| [atomics.odin](src/atomics.odin) | 312 | 1 | 6 | 0 | 0 | 0 | 2 | 4 |
 | [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 2 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
 | [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
 | [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 16 | 24 |
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
-| [build_config.odin](src/build_config.odin) | 132 | 1 | 3 | 0 | 0 | 0 | 2 | 0 |
 | [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 3 | 4 |
 | [cfg.odin](src/cfg.odin) | 3031 | 8 | 11 | 9 | 2 | 10 | 7 | 7 |
 | [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 53 | 14 | 15 | 34 | 21 | 31 |
@@ -422,7 +419,6 @@ Counts per file, then the findings themselves in the same order.
 | [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
 | [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 2 | 6 | 4 | 7 |
 | [emit_llvm_adapters.odin](src/emit_llvm_adapters.odin) | 121 | 5 | 3 | 1 | 0 | 3 | 0 | 1 |
-| [emit_llvm_atomics.odin](src/emit_llvm_atomics.odin) | 271 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 1 | 0 | 0 | 0 | 2 | 0 | 0 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
@@ -449,7 +445,6 @@ Counts per file, then the findings themselves in the same order.
 | [hooks.odin](src/hooks.odin) | 1260 | 2 | 8 | 5 | 2 | 6 | 4 | 8 |
 | [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 3 | 3 | 5 |
 | [incremental.odin](src/incremental.odin) | 369 | 0 | 6 | 4 | 1 | 2 | 2 | 8 |
-| [install.odin](src/install.odin) | 46 | 1 | 2 | 0 | 0 | 0 | 1 | 0 |
 | [interface.odin](src/interface.odin) | 1484 | 10 | 9 | 5 | 1 | 11 | 3 | 6 |
 | [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 7 | 4 | 0 | 3 | 0 | 2 |
 | [iterate.odin](src/iterate.odin) | 1150 | 9 | 11 | 9 | 0 | 8 | 4 | 6 |
@@ -460,12 +455,10 @@ Counts per file, then the findings themselves in the same order.
 | [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 4 | 2 | 5 | 4 | 9 |
 | [operators.odin](src/operators.odin) | 770 | 12 | 10 | 10 | 2 | 5 | 3 | 8 |
 | [optional.odin](src/optional.odin) | 746 | 4 | 8 | 3 | 0 | 7 | 4 | 4 |
-| [overlays.odin](src/overlays.odin) | 61 | 0 | 1 | 0 | 0 | 0 | 1 | 0 |
 | [overload.odin](src/overload.odin) | 1023 | 6 | 8 | 7 | 1 | 4 | 3 | 8 |
 | [packages.odin](src/packages.odin) | 689 | 1 | 8 | 2 | 0 | 2 | 2 | 2 |
 | [parallel.odin](src/parallel.odin) | 744 | 5 | 8 | 2 | 0 | 7 | 1 | 7 |
 | [parser.odin](src/parser.odin) | 4270 | 17 | 24 | 11 | 0 | 10 | 4 | 15 |
-| [precision.odin](src/precision.odin) | 55 | 0 | 1 | 0 | 0 | 0 | 1 | 0 |
 | [private_names.odin](src/private_names.odin) | 1151 | 9 | 8 | 9 | 2 | 5 | 4 | 9 |
 | [proc_contracts.odin](src/proc_contracts.odin) | 321 | 0 | 4 | 2 | 0 | 4 | 5 | 2 |
 | [provenance_call.odin](src/provenance_call.odin) | 281 | 2 | 6 | 1 | 0 | 1 | 2 | 5 |
@@ -480,14 +473,13 @@ Counts per file, then the findings themselves in the same order.
 | [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 5 | 1 | 2 |
 | [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 2 | 1 | 8 | 3 | 9 |
 | [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 5 |
-| [scratch_arena.odin](src/scratch_arena.odin) | 188 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | [select.odin](src/select.odin) | 504 | 3 | 7 | 3 | 2 | 4 | 0 | 6 |
 | [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 9 | 3 | 5 | 4 | 10 |
-| [session.odin](src/session.odin) | 299 | 1 | 3 | 10 | 0 | 2 | 2 | 7 |
+| [session.odin](src/session.odin) | 299 | 1 | 3 | 10 | 0 | 1 | 2 | 7 |
 | [simd.odin](src/simd.odin) | 596 | 7 | 5 | 9 | 0 | 5 | 2 | 8 |
 | [slice.odin](src/slice.odin) | 91 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| [source.odin](src/source.odin) | 911 | 2 | 5 | 0 | 1 | 3 | 3 | 7 |
-| [stdlib.odin](src/stdlib.odin) | 278 | 0 | 2 | 1 | 0 | 1 | 0 | 14 |
+| [source.odin](src/source.odin) | 911 | 2 | 5 | 0 | 1 | 3 | 2 | 7 |
+| [stdlib.odin](src/stdlib.odin) | 278 | 0 | 2 | 1 | 0 | 1 | 0 | 13 |
 | [subprocess.odin](src/subprocess/subprocess.odin) | 350 | 4 | 2 | 2 | 1 | 1 | 2 | 4 |
 | [text.odin](src/text.odin) | 350 | 6 | 4 | 0 | 1 | 3 | 2 | 4 |
 | [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 2 | 2 | 7 |
@@ -631,10 +623,6 @@ Small and readable, with one over-acceptance in the type gate. Its main excess i
 - [atomics.odin:171](src/atomics.odin#L171) `check_atomic_builtin`: `ok := builtin_arguments_ok(k, v)` ([check_builtin.odin:198](src/check_builtin.odin#L198)) replaces the loop. Only the first bad shape is then reported, which is enough for a path only stdlib authors reach. (about 5 lines)
 - [atomics.odin:278](src/atomics.odin#L278) `check_atomic_order`: `require_const` already reports L0666 "must be a compile-time constant". Dropping the `is_const` pre-check loses only the `$` hint on this stdlib-author path; `tests/pkg_err/stdlib_atomic_order.expected` would change. (about 7 lines)
 - [atomics.odin:86](src/atomics.odin#L86) `atomic_width_bits`, [atomics.odin:120](src/atomics.odin#L120) `atomic_operation_supported`: `underlying_kind` already maps nil to `.Invalid`, so the `info` locals and nil checks go; line 100 is just `type_bits(c, type)`, which takes the underlying type itself. (about 5 lines)
-
-**Data structures and algorithms**
-
-- [atomics.odin:200](src/atomics.odin#L200) `check_atomic_builtin`: `Call_Atomic` ([ast.odin:228](src/ast.odin#L228)) stores `order` and `failure_order` as `int` in the same package as `Memory_Order`, so both ends cast ([emit_llvm_atomics.odin:71](src/emit_llvm_atomics.odin#L71)). Declare the fields as `Memory_Order`; only the runtime call arguments need `int()`.
 
 **Structure and boundaries**
 
@@ -1013,25 +1001,6 @@ Small and readable, with no dead code and no algorithmic concerns. The untyped-p
 - [box.odin:53](src/box.odin#L53): shorten to `// design.md "Owned values", "Shared ownership": reports `box(T)`, `shared(T)`, or `weak(T)` written for the handle type, in type position or with a type argument. `weak` names nothing.` (about 1 line)
 - [box.odin:116](src/box.odin#L116): the first sentence restates the signature, and the second repeats the spec. Replace lines 116-118 with `// design.md "Owned values": the value is taken as an initialization takes it.` (about 2 lines)
 - [box.odin:199](src/box.odin#L199): repeats the design.md paragraph on `unbox`. Replace lines 199-201 with `// design.md "Owned values": `move(b).unbox()`.` (about 2 lines)
-
-### src/build_config.odin
-
-Small and readable, with every symbol in use. The one real cost is the lazy creation of the `LOKE_*` enum types, which spreads a special case into `Symbol` and `check_expr.odin` for a benefit that is close to nothing.
-
-**Bugs**
-
-- `BUG-build_config-2` **low** [build_config.odin:88](src/build_config.odin#L88) `enum_const`: the type stays invalid until a read, and [queries.odin:496](src/queries.odin#L496) copies `symbol.type` as is. Scenario: LSP completion where nothing has read `LOKE_OS` gives it no detail ([editing.odin:153](lsp/editing.odin#L153)), while `LOKE_DEBUG` shows its type. Fix: create the types eagerly (see Simplification). *Not verified.*
-
-**Simplification**
-
-- [build_config.odin:94](src/build_config.odin#L94) `build_config_enum_type`: create the types in `predeclare_build_config`: `enum_const(c, synth_enum(c, "Arch", {...}), 0)`, keeping only a `log_level_type` for [stdlib.odin:194](src/stdlib.odin#L194). `Build_Config`, `Build_Config_Enum`, `Symbol.build_config_enum` and the hook at [check_expr.odin:639](src/check_expr.odin#L639) all go. (about 30 lines)
-- [build_config.odin:95](src/build_config.odin#L95) the same change, its cost: laziness protects only `Type_Id` numbering, which `freeze_typeids` sorts away for typeids ([reflect.odin:417](src/reflect.odin#L417)) and which reaches just IR struct names ([emit_llvm_abi.odin:321](src/emit_llvm_abi.odin#L321)). Eager creation shifts those once, and adds 7 types and 21 member symbols per compile.
-- [build_config.odin:56](src/build_config.odin#L56) `Build_Config`: if laziness stays, this one-field struct can be `build_config_types: [Build_Config_Enum]Type_Id` on `Compiler`, beside `failure_policy_type` ([source.odin:187](src/source.odin#L187)), and the `bc` alias goes. (about 4 lines)
-
-**Structure and boundaries**
-
-- [semantic.odin:815](src/semantic.odin#L815) and [semantic.odin:829](src/semantic.odin#L829): `Build_Config_Enum` and `Log_Level` sit in `semantic.odin`, but they are this file's data, siblings of `Build_Mode` and `Opt_Mode`. Move them here, if `Build_Config_Enum` survives the change above.
-- [build_config.odin:60](src/build_config.odin#L60) `synth_enum`: a general helper, also used for `mem.Failure_Policy` at [region.odin:57](src/region.odin#L57); nothing in it concerns build configuration. It belongs in `enums.odin`.
 
 ### src/capture.odin
 
@@ -2277,14 +2246,6 @@ Small and readable, with sparse useful comments, but every adapter body builds i
 
 - [emit_llvm_adapters.odin:59](src/emit_llvm_adapters.odin#L59): delete with the dead call it describes; indexing never changes ownership here, so the comment misleads. (1 line)
 
-### src/emit_llvm_atomics.odin
-
-The lowering is correct and has clear boundaries: I found no bugs, checking orderings, widths, the `Option` word, and compare-exchange against `atomics.odin` and `runtime/atomic.c`. What remains is typing the orderings of `Call_Atomic`.
-
-**Data structures and algorithms**
-
-- [emit_llvm_atomics.odin:71](src/emit_llvm_atomics.odin#L71) `emit_atomic_builtin`: [`Call_Atomic`](src/ast.odin#L228) stores `order` and `failure_order` as `int` though `Memory_Order` is in the same package. Typing them removes the casts here, at line 177, and at `atomics.odin:200` and `:204`; the C calls keep `int(...)`.
-
 ### src/emit_llvm_box.odin
 
 Small and well organised. The remaining bug is a use-after-free when a boxed place is changed by the allocator argument.
@@ -2931,7 +2892,7 @@ Careful code whose comments mostly explain why, with real failure handling for t
 - [emit_llvm_toolchain.odin:273](src/emit_llvm_toolchain.odin#L273) `replace_ext`: `filepath.ext` already stops at either separator, so the body is `return strings.concatenate({strings.trim_suffix(path, filepath.ext(path)), ext})`, the shape [main.odin:455](src/main.odin#L455) uses. The comment goes too. (about 5 lines)
 - [emit_llvm_toolchain.odin:439](src/emit_llvm_toolchain.odin#L439) and [emit_llvm_toolchain.odin:557](src/emit_llvm_toolchain.odin#L557): the three copy loops become `append(&command, ..sources)`, `..runtime_inputs` and `..foreign_inputs`; line 828 already uses the spread. (about 6 lines)
 - [emit_llvm_toolchain.odin:450](src/emit_llvm_toolchain.odin#L450) `runtime_compile_commands`: drop the `!bitcode` early return. Partition with `bitcode && base != CPU_CHECK_SOURCE ? &optimized : &native`, then append each non-empty group's command; plain builds become the all-native case. (about 4 lines)
-- [emit_llvm_toolchain.odin:301](src/emit_llvm_toolchain.odin#L301) `prebuilt_runtime_objects`: `custom_runtime` has one caller, which knows it as `opts.runtime_dir != ""`. Test that at line 549 and drop the parameter and the guard. (about 3 lines)
+- [emit_llvm_toolchain.odin:301](src/emit_llvm_toolchain.odin#L301) `prebuilt_runtime_objects`: `custom_runtime` has one caller, which holds it as a local. Test that at line 549 and drop the parameter and the guard. (about 3 lines)
 - [emit_llvm_toolchain.odin:802](src/emit_llvm_toolchain.odin#L802) `msvc_include_dirs`: `ucrt` restates `sdk != ""`. Write `if sdk != "" { append(&out, join_path({sdk, "ucrt"})) }` and return `root != "" && sdk != ""`. (about 2 lines)
 - [emit_llvm_toolchain.odin:679](src/emit_llvm_toolchain.odin#L679) `collect_foreign_link_inputs`: compares the message text `NASM` to choose behaviour, and line 701 spells the same flags again. Test `strings.equal_fold(filepath.ext(resolved), ".asm")` here and inline the constant into `assembler_for`. (about 3 lines)
 
@@ -3802,27 +3763,6 @@ About 12 lines can go across the file, mostly text repeating `compiler-architect
 - [incremental.odin:323](src/incremental.odin#L323): `// In loading order (source indices), as a batch reports syntax diagnostics.`
 - [incremental.odin:360](src/incremental.odin#L360): move to the early return at line 126 as `// A rewind keeps its pre-edit boundary: recapturing after reparsing would accumulate obsolete syntax.` The middle sentence narrates lines 315-318.
 
-### src/install.odin
-
-A small, sound file with accurate comments. Its one real issue is scope: only `install_component` is installation logic, and the other two procedures serve a single caller in the toolchain.
-
-**Bugs**
-
-- `BUG-install-1` **low** [install.odin:27](src/install.odin#L27) `runtime_sources`: a listing error is dropped and looks like an empty directory. Scenario: `-runtime=<dir>` where `<dir>` exists but cannot be listed *Not verified.*
-  (ACL denies it): L0551 says "the directory holds no `.c` files", since `link` re-derives the reason with `is_directory`. Fix: return the `os.Error` and have L0551 ([emit_llvm_toolchain.odin:510](src/emit_llvm_toolchain.odin#L510)) report it.
-
-**Simplification**
-
-- [install.odin:12](src/install.odin#L12) `install_component`: allocate the directory and result in `context.temp_allocator` and drop `defer delete(dir)`. Both owning callers clone at once, so `delete(installed)` at
-  [packages.odin:110](src/packages.odin#L110) and the `delete` plus its two-line comment at [session.odin:267](src/session.odin#L267) go too; `link` keeps the string only for its own call. (about 6 lines)
-- [install.odin:41](src/install.odin#L41) `resolved_runtime_dir`: inline at its one caller, [emit_llvm_toolchain.odin:507](src/emit_llvm_toolchain.odin#L507), which tests `opts.runtime_dir != ""` again at line 549 as `custom_runtime`:
-  `custom := opts.runtime_dir != ""` and `runtime_dir := custom ? opts.runtime_dir : install_component("runtime")`. (about 5 lines)
-
-**Structure and boundaries**
-
-- [install.odin:22](src/install.odin#L22): `runtime_sources` has one caller, `link`, and lists any directory including a `-runtime` one, so it is not installation-relative. Move it file-private into `emit_llvm_toolchain.odin` beside
-  `runtime_build_manifest`, which lists the same directory. With `resolved_runtime_dir` inlined, `install.odin` matches its map row, keeps only `install_component`, and stops naming the emitter's `Emission_Options`.
-
 ### src/interface.odin
 
 The satisfaction path is sound for ordinary programs, but the composition walks disagree on scope, grant context and recursion guard; every bug below was reproduced with `lokec.exe` built at this commit. Most of the shortening is in failure construction and three copies of the composed-application loop.
@@ -4355,18 +4295,6 @@ Sound logic and mostly good comments, but it holds two unrelated subsystems, an 
 - [optional.odin:73](src/optional.odin#L73): shorten to `// design.md "or_else expression": a payloadless success yields `Unit`.` (1 line)
 - [optional.odin:403](src/optional.odin#L403): delete; the next line says it.
 
-### src/overlays.odin
-
-A small, correct file with no bugs found: every procedure is used, and copy-before-free and key ownership are handled properly. The main saving is the `key` field of `Source_Overlay`, which only repeats the map key.
-
-**Simplification**
-
-- [overlays.odin:15](src/overlays.odin#L15) `set_session_overlay`, `remove_session_overlay`: drop `Source_Overlay.key` ([source.odin:48](src/source.odin#L48)); the map holds that string. `delete_key` returns the stored key and value, so removal becomes `stored, previous := delete_key(&s.overlays, key); if stored == "" { return false }`. Setting uses `&s.overlays[key]`, and `for key, overlay in` serves lines 57 and [session.odin:204](src/session.odin#L204). (about 6 lines)
-
-**Structure and boundaries**
-
-- [overlays.odin:9](src/overlays.odin#L9): `Source_Overlay` is declared at [source.odin:47](src/source.odin#L47), yet only this file creates and replaces overlays. Move the struct here, next to the procedures that define its ownership.
-
 ### src/overload.odin
 
 Ranking itself is sound and matches the spec's vector and tie-breaker order, but the candidate and context-typing paths have several wrong-selection or wrongly rejected cases (each reproduced with the `lokec.exe` built at this commit). The file also holds a dead layer of defensive guards and about 150 lines of argument binding that belong beside `bind_arguments`.
@@ -4682,18 +4610,6 @@ The expression and type grammar is sound and readable, and its comments are most
 - [parser.odin:3601](src/parser.odin#L3601): wrong, since a "nameless receiver" is not what is kept. Write "A parameter with no name to report against is dropped."
 - [parser.odin:3861](src/parser.odin#L3861): move to the `using` test at 3871, which it explains.
 - [parser.odin:4184](src/parser.odin#L4184): delete; the parser accepts a group here and the checker rejects it with L0488, so it misleads.
-
-### src/precision.odin
-
-Small and well placed, with every procedure and enum member in use. One note outside this file belongs with the others.
-
-**Simplification**
-
-- [borrow.odin:1460](src/borrow.odin#L1460) `merge_result_dependencies`: it discards the result of `merge_precision`, whose only added value is that result; write `into.precision |= from.precision`. (no line change)
-
-**Structure and boundaries**
-
-- [borrow.odin:6279](src/borrow.odin#L6279): the one precision-limit note outside this file, with 64 written as a literal for the width of `Region_Set.locals`, and without the closing advice. Move it here beside the others as a small procedure, or a parameter of `add_precision_notes`, and name the limit with a constant.
 
 ### src/private_names.odin
 
@@ -5252,7 +5168,7 @@ Small and well scoped, with every declaration in use, but it has one real soundn
 **Dead code**
 
 - (branch) [region.odin:194](src/region.odin#L194): `sym.receiver = .Value` assigns the zero value of `Param_Mode` ([ast.odin:498](src/ast.odin#L498)) on a fresh symbol; `mode = .Value` at line 222 likewise.
-- (branch) [region.odin:89](src/region.odin#L89): the nil tests on `type_of` of a type just made, and on `symbol_of` of a symbol just made at lines 166, 191, 217 and 237, cannot fail; `synth_enum` at [build_config.odin:79](src/build_config.odin#L79) writes through unguarded.
+- (branch) [region.odin:89](src/region.odin#L89): the nil tests on `type_of` of a type just made, and on `symbol_of` of a symbol just made at lines 166, 191, 217 and 237, cannot fail; `synth_enum` at [enums.odin:24](src/enums.odin#L24) writes through unguarded.
 
 **Data structures and algorithms**
 
@@ -5270,18 +5186,6 @@ Small and well scoped, with every declaration in use, but it has one real soundn
 - [region.odin:142](src/region.odin#L142): delete this paragraph, which restates the code and the constructors' signatures in `core/mem/api.loki`; if a pointer is wanted, standard-library.md "`core:mem`". Keep lines 146-148, unless the eager form above removes them along with the guard.
 - [region.odin:22](src/region.odin#L22): shorten to "Index of the one field, the control-block pointer."
 - [region.odin:3](src/region.odin#L3) and [stdlib.odin:74](src/stdlib.odin#L74): both state the no-ambient-allocator rule; keep the citation here and cut stdlib's copy to why the types are compiler-owned. (about 8 lines across the file)
-
-### src/scratch_arena.odin
-
-Small, well bounded and correct: chaining, the zero-past-`used` invariant and in-place growth all hold on every path I traced, and a bump allocator with chained ranges is the right structure. What remains is repetition around it in `semantic.odin`.
-
-**Near copies**
-
-- [semantic.odin:913](src/semantic.odin#L913) and [semantic.odin:917](src/semantic.odin#L917), [semantic.odin:920](src/semantic.odin#L920): three init-or-panic blocks over this file's API differing only in the arena. A loop over `[]^Scratch_Arena{...}` with one panic message goes from 9 lines to 5 and keeps line 916's allocator assignment beside it.
-
-**Comments**
-
-- [semantic.odin:905](src/semantic.odin#L905): repeats this file's header on committed pages. Shorten to `// Address space each per-body scratch arena reserves.` (about 2 lines)
 
 ### src/select.odin
 
@@ -5359,7 +5263,7 @@ The stores and interning are sound, and the `Symbol` and `Type_Info` definitions
 - [semantic.odin:1811](src/semantic.odin#L1811) `positional_field_name`: once `intern_identifier` clones on a miss, this is `intern_identifier(c, fmt.tprintf("%d", position))`, and callers such as [iterate.odin:53](src/iterate.odin#L53) can use `tprintf` too. (about 3 lines here)
 - [semantic.odin:1390](src/semantic.odin#L1390) `parameters_weaken_to`: the first `if` is what the length check and loop already answer. At [semantic.odin:1403](src/semantic.odin#L1403), test the target's `Type_Info` rather than making a predicate intern a pointer type with `pointer_to`. (about 3 lines)
 - [semantic.odin:1367](src/semantic.odin#L1367) `proc_escape_weakens_to`: merge the two loops over the same range. The name is also too narrow: it decides receiver forms, cross-thread and contracts too, so `proc_type_weakens_to` fits. (about 2 lines)
-- [semantic.odin:1772](src/semantic.odin#L1772) `type_bits`, and [semantic.odin:1780](src/semantic.odin#L1780) `type_signed`: the `.Enum` recursion is redundant, since [check.odin:1269](src/check.odin#L1269) and [build_config.odin:65](src/build_config.odin#L65) copy both from the backing. (about 2 lines)
+- [semantic.odin:1772](src/semantic.odin#L1772) `type_bits`, and [semantic.odin:1780](src/semantic.odin#L1780) `type_signed`: the `.Enum` recursion is redundant, since [check.odin:1269](src/check.odin#L1269) and [enums.odin:6](src/enums.odin#L6) copy both from the backing. (about 2 lines)
 - [semantic.odin:1148](src/semantic.odin#L1148) `synth_proc`: `intern_proc_type` already copies the parameters, so `params = type_of(c, proc_type).parameters` drops a second allocation. (about 2 lines)
 - [semantic.odin:1464](src/semantic.odin#L1464) `intern_type`, also `lookup_type`, `anon_record_type`, `anon_union_type`: `init_semantic_stores` is redundant, because reading a nil map is safe, `new_type` initializes before any write, and the anon forms take already interned names. (about 4 lines)
 
@@ -5393,7 +5297,7 @@ The stores and interning are sound, and the `Symbol` and `Type_Info` definitions
 
 - [semantic.odin:1753](src/semantic.odin#L1753): lines 1753-2476 are type queries, walks and naming, while the "Source-code map" row gives this file stores and interning. The seam is a `types.odin` from `type_of` through `proc_type_name`.
 - [semantic.odin:1965](src/semantic.odin#L1965): comparability and ordering (1965-2152) belong with `type_own_equality` in [hash.odin:258](src/hash.odin#L258) or the delegates in [operators.odin:689](src/operators.odin#L689), since `operator_is_builtin` walks the chain that code builds.
-- [semantic.odin:287](src/semantic.odin#L287): `Target_Info` and the CPU types (287-348), plus `Build_Config_Enum` and `Log_Level` (815-835), belong in `build_config.odin`, which owns `Cpu_Level` and `synth_enum`. `compiler-architecture.md` line 783 cites this location and would move with them.
+- [semantic.odin:287](src/semantic.odin#L287): `Target_Info` and the CPU types (287-348) belong in `build_config.odin`, which owns `Cpu_Level`. `compiler-architecture.md` line 783 cites this location and would move with them.
 - [semantic.odin:1885](src/semantic.odin#L1885): `underlying_info` and `underlying_kind` sit 100 lines from `type_underlying` (1785), with field helpers between them. Put them together and the field and record helpers (1802-1883) in one group.
 
 **Comments**
@@ -5439,7 +5343,6 @@ A compact, sound orchestrator whose lifecycle ordering holds up. It carries abou
 **Near copies**
 
 - [session.odin:9](src/session.odin#L9), [main.odin:110](src/main.odin#L110) and [source.odin:278](src/source.odin#L278): the same nine settings are declared three times, then copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and session.odin:87-92. One embedded `Compilation_Settings` struct with its default replaces those copies. (about 25 lines)
-- [session.odin:205](src/session.odin#L205) and [overlays.odin:36](src/overlays.odin#L36): both delete an overlay's `key`, `path` and `text`. Add a `delete_overlay` in `overlays.odin`, which owns the struct, and call it from both. (about 2 lines)
 
 **Structure and boundaries**
 
@@ -5562,7 +5465,6 @@ Small, sound procedures for loading and diagnostics, sharing a file with the 380
 **Structure and boundaries**
 
 - [source.odin:78](src/source.odin#L78): `Compiler` is 380 of 911 lines and hides what the file is for. Move it to `compiler.odin`, leaving spans, sources, diagnostics and probes; update the "Source-code map" row. Probes stay put unless the `speculation_depth` guard at test-all.ps1:89, which names this file, moves with them.
-- [source.odin:47](src/source.odin#L47): `Source_Overlay` belongs in `overlays.odin`, which creates and frees it and owns `compiler_overlays`; the code here only reads `.text` from it.
 - [source.odin:840](src/source.odin#L840): `code_end` sits between `same_diagnostic` and `render` though only `render` and a test use it, and `errors_since` (line 759) splits `hold_diagnostics` from its comment. Put `code_end` beside `line_text`, `errors_since` before line 755.
 
 **Comments**
@@ -5597,7 +5499,6 @@ A flat, correct table of what the compiler binds into each bundled package; ever
 - [stdlib.odin:6](src/stdlib.odin#L6): "M5" is a milestone name that appears nowhere else in `src/` or the documents; write "every provenance fact".
 - [stdlib.odin:13](src/stdlib.odin#L13): "in the order the switch below handles them" is false (`STD_MATH` is declared last but handled before `STD_LOG`, and `STD_THREAD` and `STD_INTERFACES` are not handled); delete the clause.
 - [stdlib.odin:23](src/stdlib.odin#L23): stale. `global_effects.odin` never uses this key; spawns are found by `param_cross_thread`. Write "Contributes nothing; `parallel.odin` and `packages.odin` find it by this key."
-- [stdlib.odin:45](src/stdlib.odin#L45): "one per importer" is wrong: `build_config_enum_type` creates all seven once per compilation. Write "The `LOKE_*` enum types stay unbound here: every program loads this package, so binding would create them in every program and shift type numbering."
 - [stdlib.odin:48](src/stdlib.odin#L48): "Both are contributed" predates the five builtins below it. Keep the reason: "`Shared(T)` allocates and releases a `rawptr` control block, and this package is below `core:mem` and `core:unsafe`, so these are contributed privately rather than imported." (about 3 lines)
 - [stdlib.odin:65](src/stdlib.odin#L65): "as each wrapper below does" has no referent in this file (the wrappers are in `base/runtime/shared.loke`); end the sentence at "reports".
 - [stdlib.odin:74](src/stdlib.odin#L74): delete the first sentence, which restates the design rule; keep "Compiler-owned because the region lattice has to recognise them, not merely call them." (about 2 lines)

@@ -44,12 +44,6 @@ Source :: struct {
 	comments:    [dynamic]Span,
 }
 
-Source_Overlay :: struct {
-	key:  string,
-	path: string, // absolute, cleaned path; the map key is case-insensitive
-	text: string,
-}
-
 Severity :: enum {
 	Error,
 	Warning,
@@ -299,9 +293,8 @@ Compiler :: struct {
 	natvis:              string,
 	// `-debug`, the value `LOKE_DEBUG` is predeclared with.
 	debug:               bool,
-	// The build-configuration enum types, synthesized once and shared by the
-	// `LOKE_*` universe constants and their `base:runtime` bindings.
-	build_config:        Build_Config,
+	// The type of `LOKE_LOG_LEVEL`, which `core:log` binds as `Level`.
+	log_level_type:      Type_Id,
 	// design.md "`type` and `typeid`": whether this program asked for runtime
 	// metadata at all. The dense table is emitted only when it did.
 	type_info_requested: bool,

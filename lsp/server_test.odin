@@ -954,6 +954,9 @@ completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
 		add_item := completion_item(reply, "add")
 		detail, _ := member_string(add_item, "detail")
 		testing.expect_value(t, detail, "proc(a, b: int) -> int")
+		// A build constant has its type before any code reads it.
+		build_constant, _ := member_string(completion_item(reply, "LOKE_OS"), "detail")
+		testing.expect_value(t, build_constant, "Os")
 		documentation, _ := member_string(add_item, "documentation")
 		if listed { documentation, _ = member_string(member(add_item, "documentation"), "value") }
 		testing.expect_value(t, documentation, "Adds two numbers.")

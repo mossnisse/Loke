@@ -16,8 +16,8 @@ merge_precision :: proc(into: ^Precision_Loss, from: Precision_Loss) -> bool {
 	return changed
 }
 
-add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
-	if loss == {} {
+add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss, crowded_regions := false) {
+	if loss == {} && !crowded_regions {
 		return
 	}
 	if .Array_Elements in loss {
@@ -44,8 +44,13 @@ add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
 	if .Storages in loss {
 		add_notef(c, span, "provenance precision limit: a pointer that may point into more than one storage is taken to point at each of its places in every one")
 	}
+	if crowded_regions {
+		add_notef(c, span, "provenance precision limit: more than %d local allocator regions merge region identities", REGION_LOCAL_LIMIT)
+	}
 	advice := "pass or return the needed field or element separately to preserve its provenance"
-	if loss == {.Storages} {
+	if loss == {} {
+		advice = "use fewer local allocator regions in the procedure to keep them apart"
+	} else if loss == {.Storages} {
 		advice = "choose the pointer among places of one storage to keep them apart"
 	} else if loss <= {.Places, .Storages} {
 		advice = "choose the pointer among fewer places to keep them apart"
