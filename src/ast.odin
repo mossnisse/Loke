@@ -1240,6 +1240,11 @@ decl_proc_literal :: proc(d: ^Decl) -> ^Expr_Proc {
 	return nil
 }
 
+decl_is_lifecycle_hook :: proc(d: ^Decl) -> bool {
+	role := decl_hook_kind(d)
+	return role == .Drop || role == .Copy
+}
+
 decl_hook_kind :: proc(d: ^Decl) -> Hook_Kind {
 	if d == nil || d.kind != .Const || len(d.values) != 1 {
 		return .None

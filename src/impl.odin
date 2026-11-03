@@ -1,4 +1,4 @@
-// `impl` blocks, methods, associated members, and semantic hooks.
+// `impl` blocks, methods, and associated members.
 //
 // A block in the subject's own package writes inherent members onto the
 // `Type_Info`; one elsewhere writes into its own package's extension table, so
@@ -37,26 +37,21 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 
 	// A quiet attempt that fails is rolled back and retried, so it is a
 	// speculation: it must not claim a report-once cache the retry needs.
-	errors := k.c.error_count
-	probe: Probe
+	subject: Type_Id
 	if quiet {
-		probe = begin_probe(k.c)
-	}
-	subject := resolve_type_syntax(k, item.type)
-	if quiet {
+		probe := begin_probe(k.c)
+		subject = resolve_type_syntax(k, item.type)
 		end_probe(k.c, probe, keep = subject != INVALID_TYPE)
-	}
-	if subject == INVALID_TYPE {
-		if quiet {
+		if subject == INVALID_TYPE {
 			return
 		}
-		item.declared = true
-		if k.c.error_count == errors {
-			errorf(k.c, expr_span(item.type), "L0406", "this `impl` subject does not name a type")
-		}
-		return
+	} else {
+		subject = resolve_impl_subject(k, item)
 	}
 	item.declared = true
+	if subject == INVALID_TYPE {
+		return
+	}
 	item.subject = subject
 
 	// Built-in, foreign, and structural subjects have no owning package, so they
@@ -65,17 +60,31 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	owner := info == nil ? nil : symbol_of(k.c, info.symbol)
 	own_package := owner != nil && owner.pkg == k.pkg
 	item.kind = own_package ? .Impl : .Extend
+	declare_impl_members(k, item)
+}
 
-	members := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
-	existing := impl_member_table(k, item.kind, subject, k.pkg)
-	for member in item.members {
-		d, is_decl := member.(^Decl)
-		if !is_decl {
-			continue // `delegate` and recovery nodes are handled in the body phase
-		}
-		declare_impl_member(k, item, d, existing, &members)
+// `resolve_type_syntax` reports nothing for a subject that names no type at all.
+@(private = "file")
+resolve_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) -> Type_Id {
+	errors := k.c.error_count
+	subject := resolve_type_syntax(k, item.type)
+	if subject == INVALID_TYPE && k.c.error_count == errors {
+		errorf(k.c, expr_span(item.type), "L0406", "this `impl` subject does not name a type")
 	}
-	install_impl_members(k, item.kind, subject, members[:], k.pkg)
+	return subject
+}
+
+// `delegate` and recovery nodes are handled by later phases.
+@(private = "file")
+declare_impl_members :: proc(k: ^Checker, item: ^Item_Impl, hooks_only := false) {
+	members := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
+	existing := impl_member_table(k, item.kind, item.subject, k.pkg)
+	for member in item.members {
+		if d, is_decl := member.(^Decl); is_decl && (!hooks_only || decl_is_lifecycle_hook(d)) {
+			declare_impl_member(k, item, d, existing, &members)
+		}
+	}
+	install_impl_members(k, item.kind, item.subject, members[:], k.pkg)
 }
 
 // A body-local `impl`, which may only give members to a type declared in the same
@@ -90,7 +99,7 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 		)
 		return
 	}
-	subject := resolve_type_syntax(k, item.type)
+	subject := resolve_impl_subject(k, item)
 	if subject == INVALID_TYPE {
 		return
 	}
@@ -134,19 +143,7 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 declare_local_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, subject: Type_Id) {
 	item.subject = subject
 	item.kind = .Impl
-	members := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
-	existing := impl_member_table(k, .Impl, subject, k.pkg)
-	for member in item.members {
-		if d, is_decl := member.(^Decl); is_decl && decl_is_lifecycle_hook(d) {
-			declare_impl_member(k, item, d, existing, &members)
-		}
-	}
-	install_impl_members(k, .Impl, subject, members[:], k.pkg)
-}
-
-decl_is_lifecycle_hook :: proc(d: ^Decl) -> bool {
-	role := decl_hook_kind(d)
-	return role == .Drop || role == .Copy
+	declare_impl_members(k, item, hooks_only = true)
 }
 
 // The one block `declare_local_impl_hooks` cannot reach is in a `when` whose
@@ -168,7 +165,6 @@ reject_unhoisted_local_hook :: proc(k: ^Checker, d: ^Decl, subject: Type_Id) {
 	}
 }
 
-// Whether the subject is a type this very procedure declares.
 @(private = "file")
 type_declared_in_this_body :: proc(k: ^Checker, subject: Type_Id) -> bool {
 	info := type_of(k.c, subject)
@@ -191,9 +187,7 @@ declare_impl_member :: proc(
 		return
 	}
 	d.top_level = true
-	if d.kind != .Const || d.duration != .None || d.via != nil {
-		errorf(k.c, d.span, "L0406", "an `impl` member is a constant, a procedure, or an associated type")
-		d.symbols = make([]Symbol_Id, 0, k.c.semantic_allocator)
+	if !require_impl_member_form(k, d) {
 		return
 	}
 
@@ -204,34 +198,29 @@ declare_impl_member :: proc(
 			continue
 		}
 		name_id := name_identifier(k.c, name)
-		if member_named(k.c, existing, name_id) != INVALID_SYMBOL ||
-		   member_named(k.c, out[:], name_id) != INVALID_SYMBOL {
-			errorf(
-				k.c,
-				name.span,
-				"L0409",
-				"`%s` already has a member `%s`",
-				type_name(k.c, item.subject),
-				name.text,
-			)
-			append(&symbols, INVALID_SYMBOL)
-			continue
-		}
+		previous := symbol_of(k.c, member_named(k.c, existing, name_id))
+		generated := previous != nil && previous.synth != .None
+		clash := ""
+		switch {
+		case generated:
+			clash = "generated member"
+		case previous != nil || member_named(k.c, out[:], name_id) != INVALID_SYMBOL:
+			clash = "member"
 		// `c.v` selects the field, so a member of that name could never be reached.
-		if subject_field_named(k, item.subject, name_id) != INVALID_SYMBOL {
-			errorf(
-				k.c, name.span, "L0409",
-				"`%s` already has a field `%s`", type_name(k.c, item.subject), name.text,
-			)
-			append(&symbols, INVALID_SYMBOL)
-			continue
+		case subject_field_named(k, item.subject, name_id) != INVALID_SYMBOL:
+			clash = "field"
+		case (type_is_enum(k.c, item.subject) && enum_builtin_member(name.text)) ||
+		     (type_is_union(k.c, item.subject) && name.text == "as"):
+			clash = "built-in member"
 		}
-		if (type_is_enum(k.c, item.subject) && enum_builtin_member(name.text)) ||
-		   (type_is_union(k.c, item.subject) && name.text == "as") {
+		if clash != "" {
 			errorf(
 				k.c, name.span, "L0409",
-				"`%s` already has a built-in member `%s`", type_name(k.c, item.subject), name.text,
+				"`%s` already has a %s `%s`", type_name(k.c, item.subject), clash, name.text,
 			)
+			if generated {
+				add_notef(k.c, item.span, "a use ahead of this block generated it, so write the block before that use")
+			}
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
@@ -263,6 +252,16 @@ declare_impl_member :: proc(
 	d.symbols = symbols[:]
 }
 
+// What a block may hold, reported once for a generic block, whose instances skip
+// anything else.
+require_impl_member_form :: proc(k: ^Checker, d: ^Decl) -> bool {
+	if d.kind == .Const && d.duration == .None && d.via == nil {
+		return true
+	}
+	errorf(k.c, d.span, "L0406", "an `impl` member is a constant, a procedure, or an associated type")
+	return false
+}
+
 @(private = "file")
 bind_member_in_package :: proc(k: ^Checker, name: Name, name_id: Identifier_Id, id: Symbol_Id) {
 	if _, taken := k.scope.names[name_id]; taken {
@@ -273,7 +272,7 @@ bind_member_in_package :: proc(k: ^Checker, name: Name, name_id: Identifier_Id, 
 }
 
 // The type's inherent members, or `in_pkg`'s extensions of it. `in_pkg` is the
-// instance's defining package when `src/generic.odin` materialises a block.
+// instance's defining package when `src/generic_impl.odin` materialises a block.
 impl_member_table :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_pkg: Package_Id) -> []Symbol_Id {
 	if kind == .Impl {
 		info := type_of(k.c, subject)
@@ -317,7 +316,6 @@ subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) 
 	return info == nil ? INVALID_SYMBOL : member_named(k.c, info.fields, name)
 }
 
-// Takes the `^Compiler` so `src/generic.odin` can use it from an instance's package.
 member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
 	for member in members {
 		if sym := symbol_of(c, member); sym != nil && sym.name == name {
@@ -461,7 +459,11 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 		#partial switch v in member {
 		case ^Decl:
 			check_decl(k, v)
-			check_associated_member(k, item, v)
+			for symbol_id in v.symbols {
+				if sym := symbol_of(k.c, symbol_id); sym != nil {
+					validate_semantic_hook(k, item, sym, symbol_id)
+				}
+			}
 		case ^Item_Delegate, ^Item_Error:
 			// Resolved with the signatures.
 		case:
@@ -473,17 +475,6 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 	ensure_derived_members(k, item.subject)
 }
 
-@(private = "file")
-check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
-	for symbol_id in d.symbols {
-		sym := symbol_of(k.c, symbol_id)
-		if sym == nil {
-			continue
-		}
-		validate_semantic_hook(k, item, sym, symbol_id)
-	}
-}
-
 // ---------------------------------------------------------------- lookup --
 
 // The package whose extensions are visible: the current one unless a declaration
@@ -493,8 +484,7 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 }
 
 // Members the compiler contributes on demand, as if a hand-written `impl` had
-// declared them. Shared by `member_candidates` and `find_member` so both see the
-// same set.
+// declared them.
 @(private = "file")
 ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	ensure_format_member(k, type, name)
@@ -513,14 +503,9 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	ensure_contributed_members(k, type, name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-	if info := type_of(k.c, type); info != nil {
-		expand_visible_members(k, type, info.members, name, &out)
-	}
-	if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
-		if members, found := pkg.extensions[type]; found {
-			expand_visible_members(k, type, members, name, &out)
-		}
-	}
+	pkg := lookup_package(k)
+	expand_visible_members(k, type, impl_member_table(k, .Impl, type, pkg), name, &out)
+	expand_visible_members(k, type, impl_member_table(k, .Extend, type, pkg), name, &out)
 	if len(out) == 0 {
 		// A `where` bound reaches implementations ordinary visibility hides.
 		if required := required_slot_candidates(k, type, name); len(required) > 0 {
@@ -535,14 +520,13 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 
 // A member a failed `where` bound removed, so "no such member" can say why.
 excluded_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> ^Symbol {
-	info := type_of(k.c, type)
-	if info == nil {
-		return nil
-	}
-	for member in info.members {
-		sym := symbol_of(k.c, member)
-		if sym != nil && sym.name == name && sym.bound_excluded {
-			return sym
+	pkg := lookup_package(k)
+	for table in ([][]Symbol_Id{impl_member_table(k, .Impl, type, pkg), impl_member_table(k, .Extend, type, pkg)}) {
+		for member in table {
+			sym := symbol_of(k.c, member)
+			if sym != nil && sym.name == name && sym.bound_excluded {
+				return sym
+			}
 		}
 	}
 	return nil
@@ -551,48 +535,14 @@ excluded_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> ^Sym
 // The one visibility predicate, asked by every lookup path. The observer is the
 // lookup package, so a generic body instantiated elsewhere sees its definition site.
 member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
-	if sym == nil {
-		return false
-	}
 	// A member whose `where` bound failed is not part of this instantiation.
-	if sym.bound_excluded {
+	if sym == nil || sym.bound_excluded {
 		return false
 	}
-	hidden, extension := standard_format_hidden(k.c, sym, lookup_package(k))
-	if extension != nil {
-		extension.looked_up = true
-	}
-	if hidden {
-		return false
-	}
-	if !capture_field_visible(k, sym) {
+	if standard_format_hidden(k.c, sym, lookup_package(k)) || !capture_field_visible(k, sym) {
 		return false
 	}
 	return sym.pkg == lookup_package(k) || sym.public
-}
-
-// Whether a generated formatting default is out of `observer`'s sight, and the
-// local extension that takes its name if one does. The default is a fallback for
-// ordinary member lookup: a public type's private `format` keeps the name, though
-// the slot uses the default (design.md "Interface bodies"), and a local extension
-// remains callable. Interface slots bypass this and retain the concrete type's
-// coherent printed representation. This writes nothing, so a query may ask it.
-standard_format_hidden :: proc(c: ^Compiler, sym: ^Symbol, observer: Package_Id) -> (hidden: bool, extension: ^Symbol) {
-	if sym.synth != .Standard_Format {
-		return false, nil
-	}
-	if written_format_member(c, sym.owner_type) != nil {
-		return true, nil
-	}
-	pkg := package_of(c, observer)
-	if pkg == nil {
-		return false, nil
-	}
-	local := symbol_of(c, member_named(c, pkg.extensions[sym.owner_type], sym.name))
-	if local == nil || local.bound_excluded || (local.pkg != observer && !local.public) {
-		return false, nil
-	}
-	return true, local
 }
 
 // Every field access path routes through here so they agree with reflection.
@@ -605,7 +555,7 @@ require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: 
 		errorf(
 			k.c, span, code,
 			"`%s` is a capture of `%s`, which only the literal's body reads, so it cannot be %s here",
-			strings.trim_prefix(identifier_text(k.c, sym.name), "capture$"), type_name(k.c, subject), action,
+			strings.trim_prefix(identifier_text(k.c, sym.name), CAPTURE_FIELD_PREFIX), type_name(k.c, subject), action,
 		)
 		return false
 	}
@@ -636,7 +586,9 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 		sym.looked_up = true
 		if sym.kind == .Proc_Group {
 			for nested in sym.members {
-				append(out, nested)
+				if !symbol_of(k.c, nested).bound_excluded {
+					append(out, nested)
+				}
 			}
 			continue
 		}
@@ -647,17 +599,12 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 // One named member, without expanding a group: `Type.member`.
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	ensure_contributed_members(k, type, name)
-	if info := type_of(k.c, type); info != nil {
-		if found := visible_member_named(k, info.members, name); found != INVALID_SYMBOL {
-			return found
-		}
+	pkg := lookup_package(k)
+	if found := visible_member_named(k, impl_member_table(k, .Impl, type, pkg), name); found != INVALID_SYMBOL {
+		return found
 	}
-	if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
-		if members, present := pkg.extensions[type]; present {
-			if found := visible_member_named(k, members, name); found != INVALID_SYMBOL {
-				return found
-			}
-		}
+	if found := visible_member_named(k, impl_member_table(k, .Extend, type, pkg), name); found != INVALID_SYMBOL {
+		return found
 	}
 	// Same `where`-bound fallback as `member_candidates`, so `T.m(x)` finds what
 	// `x.m()` does.
@@ -681,22 +628,4 @@ visible_member_named :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 	}
 	sym.looked_up = true
 	return member
-}
-
-// ------------------------------------------------------ semantic hooks --
-
-// Every inherent conversion hook, matched by role rather than name.
-conversion_hooks :: proc(k: ^Checker, target: Type_Id) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-	info := type_of(k.c, target)
-	if info == nil {
-		return out[:]
-	}
-	for member in info.members {
-		sym := member_with_signature(k, member, target)
-		if sym != nil && sym.hook == .Convert {
-			append(&out, member)
-		}
-	}
-	return out[:]
 }

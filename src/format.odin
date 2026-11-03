@@ -121,6 +121,23 @@ written_format_member :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
 	return nil
 }
 
+// Whether a generated format is hidden from observer: a written or visible local
+// format takes the name (design.md "Interface bodies"); interface slots bypass this.
+standard_format_hidden :: proc(c: ^Compiler, sym: ^Symbol, observer: Package_Id) -> bool {
+	if sym.synth != .Standard_Format {
+		return false
+	}
+	if written_format_member(c, sym.owner_type) != nil {
+		return true
+	}
+	pkg := package_of(c, observer)
+	if pkg == nil {
+		return false
+	}
+	local := symbol_of(c, member_named(c, pkg.extensions[sym.owner_type], sym.name))
+	return local != nil && !local.bound_excluded && (local.pkg == observer || local.public)
+}
+
 // design.md gives the name to the protocol, so a type's `format` that cannot
 // serve it is a mistake, not an unrelated procedure. Reported once per written
 // declaration, not per generic instance.

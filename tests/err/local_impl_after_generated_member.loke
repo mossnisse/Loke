@@ -1,0 +1,22 @@
+// A body-local block cannot take a name an earlier use made the compiler generate:
+// a type has one printed form and one hash. See known-gaps.md "A body-local block
+// cannot take a name an earlier use generated".
+package main;
+
+import "core:fmt";
+
+main :: proc() {
+	R :: struct { x: int }
+	S :: struct { x: int }
+	r := R{1};
+	s := S{1};
+	fmt.println(r);
+	a := s.hash(1);
+	impl R {
+		format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+	}
+	impl S {
+		hash :: proc(self, seed: uint) -> uint { return seed; }
+	}
+	_ = a;
+}

@@ -234,6 +234,34 @@ release a value twice. `reject_unhoisted_local_hook` in
 [src/impl.odin](src/impl.odin) reports it. Found on 2026-11-01 while fixing the lost
 hooks of a body-local record.
 
+### A body-local block cannot take a name an earlier use generated
+
+[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) makes a
+body-local block's members other than its hooks visible from its statement on, and does not
+say what happens when a use before that statement already made the compiler generate a member
+of that name:
+
+```loke
+package main;
+import "core:fmt";
+main :: proc() {
+    R :: struct { x: int }
+    r := R{1};
+    fmt.println(r);
+    impl R {
+        format :: proc(self, writer: fmt.Writer, options: fmt.Options) { fmt.concat_to(writer, "R"); }
+    }
+    fmt.println(r);
+}
+```
+
+This is `L0409`, "already has a generated member `format`", and `hash` is the same;
+moving the block up compiles. It stays an error because letting the written member
+in would not reach what the earlier use settled: `Formattable`'s witness is chosen once
+per type, so the second `println` would print the generated form with a written `format`
+in scope, and a map's entries could be hashed two ways. Making this valid needs a
+decision on which member such a program means. Found on 2026-11-04 in the compiler review.
+
 ### A file-scope `when` cannot call a member declared in a package still selecting
 
 [when statement](design.md#when-statement) lets a condition read what its names

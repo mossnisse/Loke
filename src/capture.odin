@@ -17,6 +17,9 @@ import "core:strings"
 // that method's, which the literal cannot capture without saying so.
 CAPTURE_RECEIVER :: "self$capture"
 
+// What a capture's record field is called, before the captured name.
+CAPTURE_FIELD_PREFIX :: "capture$"
+
 // The record type the literal is a value of, or INVALID_TYPE once reported.
 lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 	capture := v.capture
@@ -72,7 +75,7 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 	fields := make([]Capture_Field, len(capture.entries), k.c.semantic_allocator)
 	placeholders := make([]Symbol_Id, len(capture.entries), k.c.semantic_allocator)
 	for entry, index in capture.entries {
-		text := strings.concatenate({"capture$", entry.name.text}, k.c.semantic_allocator)
+		text := strings.concatenate({CAPTURE_FIELD_PREFIX, entry.name.text}, k.c.semantic_allocator)
 		fields[index] = Capture_Field {
 			mode  = entry.mode,
 			field = Name{text = text, span = entry.name.span, id = intern_identifier(k.c, text)},

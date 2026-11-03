@@ -97,7 +97,8 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 }
 
 // A generic `impl` subject with the wrong argument count, or a written argument
-// that does not resolve, would silently match no instance.
+// that does not resolve, would silently match no instance. A member no instance
+// can declare would be silently dropped from all of them.
 check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 	call, is_call := item.type.(^Expr_Call)
 	if !is_call {
@@ -109,7 +110,15 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 		}
 	}
 	template := generic_template_of_callee(k, call.callee, .Record)
-	if template == nil || !generic_application_fits(k, call.args, expr_span(item.type), template, true) {
+	if template == nil {
+		return
+	}
+	for member in item.members {
+		if d, is_decl := member.(^Decl); is_decl {
+			require_impl_member_form(k, d)
+		}
+	}
+	if !generic_application_fits(k, call.args, expr_span(item.type), template, true) {
 		return
 	}
 	for arg, index in call.args {

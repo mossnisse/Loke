@@ -1,0 +1,19 @@
+// A generic block's member has the form every block's does, whether or not an
+// instance exists.
+package main;
+
+Used :: struct($T: type) { v: T }
+Unused :: struct($T: type) { v: T }
+
+impl Used($T) {
+	x: int = 0;
+}
+
+impl Unused($T) {
+	y: int = 0;
+}
+
+main :: proc() {
+	g := Used(int){7};
+	_ = g;
+}

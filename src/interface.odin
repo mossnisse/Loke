@@ -926,7 +926,9 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 		// A witness member is never a group, so the group's members are candidates.
 		if sym.kind == .Proc_Group {
 			for nested in sym.members {
-				append(out, nested)
+				if !symbol_of(k.c, nested).bound_excluded {
+					append(out, nested)
+				}
 			}
 			continue
 		}

@@ -158,9 +158,9 @@ They differ only in whether the identifier id is passed or interned and in the `
 
 #### Impl member declaration
 
-[impl.odin:209](src/impl.odin#L209) `declare_impl_member` and [generic.odin:3677](src/generic.odin#L3677) `declare_instance_impl_members` repeat the `L0409` clash checks, and [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693) repeat the `Symbol` literal. The generic copy skips a non-constant member silently where [impl.odin:193](src/impl.odin#L193) reports `L0406` (BUG-impl-4), and has its own built-in member check. It also differs on purpose: it admits candidates from other blocks and takes `block.pkg`.
+[impl.odin:209](src/impl.odin#L209) `declare_impl_member` and [generic.odin:3677](src/generic.odin#L3677) `declare_instance_impl_members` repeat the `L0409` clash checks, and [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693) repeat the `Symbol` literal. The generic copy has its own built-in member check. It also differs on purpose: it admits candidates from other blocks and takes `block.pkg`.
 
-Shared form: `member_name_clash(k, subject, name, name_id, existing) -> bool` and `new_member_symbol(k, d, name, name_id, subject, pkg)`. Saves about 30 lines and fixes BUG-impl-4.
+Shared form: `member_name_clash(k, subject, name, name_id, existing) -> bool` and `new_member_symbol(k, d, name, name_id, subject, pkg)`. Saves about 30 lines.
 
 #### Checks on a new local name
 
@@ -616,7 +616,6 @@ The lowering design is sound and its comments mostly explain why, but the record
 **Structure and boundaries**
 
 - [capture.odin:21](src/capture.odin#L21) `lower_capture_literal`: four jobs in 140 lines. Natural seams: the entry values and their types (36-66), the fields and placeholders (75-87), declaring the record (92-134), and declaring `call` (137-153). The procedure then reads as those four calls.
-- [capture.odin:78](src/capture.odin#L78): the `"capture$"` field prefix is spelled here and again in `trim_prefix` at [impl.odin:522](src/impl.odin#L522); make it a constant beside `CAPTURE_RECEIVER`, so the two cannot drift.
 
 **Comments**
 
@@ -1119,49 +1118,11 @@ The classification logic is careful and its comments mostly explain why. What re
 
 ### src/impl.odin
 
-A compact file with mostly useful comments, and member-table scans that stay small enough to leave alone. Its weak points are that the generic copy of member declaration has drifted from it, and that hook and `where`-exclusion lookups skip paths the ordinary lookup covers. Every bug below was reproduced with `lokec.exe` built at this commit.
-
-**Bugs**
-
-- `BUG-impl-1` **medium** [impl.odin:622](src/impl.odin#L622) `conversion_hooks`: ignores `bound_excluded`, unlike `member_is_visible` and every other reader. Scenario: `impl V($T) { from_int :: hook(convert) proc(v: int) -> V(T) where T == int {...} }` with `V(string)(3)` stops with L0405 "internal backend contract violation"; an added unbound `i8` hook makes it L0391 ambiguous, naming the excluded hook. Fix: add `&& !sym.bound_excluded`. *Confirmed: Reproduced: V(string)(3) with a `where T == int` convert hook exits 2 with L0405; adding an unbound i8 hook gives L0391 naming from_int. design.md "where clauses" says lookup cannot find an excluded method; V(int)(3) compiles. No record found; medium is fair.*
-- `BUG-impl-2` **medium** [impl.odin:93](src/impl.odin#L93) `check_local_impl`: returns silently when the subject does not resolve, since `resolve_type_syntax` reports nothing for these. Scenario: `main :: proc() { x := 1; impl x { f :: proc() { undefined_thing(); } } }` and `impl nope { }` both compile and run, while file scope reports L0406. Fix: the `error_count` guard from lines 53-55, in a helper both paths share. *Confirmed: Reproduced: body-local `impl x {f :: proc() {undefined_thing();}}` and `impl nope {}` exit 0 and run, members unchecked; file scope gives L0406. grammar.md requires a subject declared in this body; no gap or decision is recorded.*
-- `BUG-impl-3` **medium** [impl.odin:456](src/impl.odin#L456) `excluded_member`: scans only `info.members`, so a failed bound on a generic extension is not seen. Scenario: `impl Option($T) { f :: proc(self, x: int) -> int where T == int {...}; g :: proc(self, x: string) -> int {...}; h :: proc{f, g}; }` on `Option(string)` is L0395 at [overload.odin:79](src/overload.odin#L79), and an inherent block compiles; `o.f()` also loses its note. Fix: also scan `pkg.extensions[type]` for `lookup_package(k)`. *Confirmed: Reproduced: extension impl Option($T) group on Option(string) gives L0395, and o.f(1) gives L0363 with no note; the same code on an inherent Box($T) compiles and gets the note. design.md "where clauses" requires both; Option(int) compiles. Medium is fair.*
-- `BUG-impl-4` **medium** [impl.odin:193](src/impl.odin#L193) `declare_impl_member`: reports L0406 for a non-constant member, but its generic copy at [generic.odin:3656](src/generic.odin#L3656) skips one silently. Scenario: `impl G($T) { x: int = 0; }` compiles and `x` is dropped; `impl G { x: int = 0; }` is L0406. Fix: report it for the generic block once, in `check_generic_impl_subject` or registration. *Confirmed: Reproduced: impl G($T) { x: int = 0; } builds and runs (rc 0, prints 7) with G(int) instantiated, and g.x then gives L0363; the non-generic impl G gives L0406. generic.odin:3656 skips non-Const silently; no gap is recorded. Accepts-invalid, so low-medium.*
-- `BUG-impl-6` **low** [impl.odin:209](src/impl.odin#L209) `declare_impl_member`: `existing` includes compiler-contributed members, which a body-local `impl` can meet because it declares its other members at its own statement. Scenario: `R :: struct {x: int}; r := R{1}; fmt.println(r); impl R { format :: proc(self, w: ^fmt.Writer, opt: fmt.Options) {...} }` is L0409 "already has a member `format`"; moving the `impl` up compiles. Fix: ignore `sym.synth != .None` in this check. *Not verified.*
-- `BUG-impl-7` **low** [impl.odin:622](src/impl.odin#L622) `conversion_hooks`: tests `sym.hook` on table entries, but crossed generic blocks replace a same-named member with a `.Proc_Group` whose `hook` is `.None`. Scenario: `impl G(int, $U) { conv :: hook(convert) proc(x: int) -> G(int, U) {...} }` and `impl G($T, int) { conv :: hook(convert) proc(x: string) -> G(T, int) {...} }`: `G(int, int)(3)` is L0373; naming the second `c2` compiles and prints 3. Fix: expand groups, as `expand_visible_members` does. *Not verified.*
-
-**Simplification**
-
-- [impl.odin:209](src/impl.odin#L209) `declare_impl_member`: the three L0409 branches differ only in a noun. Pick `clash := "member" | "field" | "built-in member"` in one `switch`, then one `errorf("`%s` already has a %s `%s`")`, `append`, `continue`. (about 15 lines)
-- [impl.odin:205](src/impl.odin#L205) `declare_impl_member`: the four lines are `name_id := name_identifier(k.c, name)` ([check.odin:1727](src/check.odin#L1727)). (about 3 lines)
-- [impl.odin:389](src/impl.odin#L389) `check_associated_member`: a loop around one call with one caller; inline it in the `^Decl` case of `check_impl_block`. (about 8 lines)
-- [impl.odin:433](src/impl.odin#L433) `member_candidates` and [impl.odin:572](src/impl.odin#L572) `find_member`: a missing map key already gives a nil slice, which both scanners handle, so drop the `found`/`present` test, or read both tables through `impl_member_table`. (about 8 lines)
-- [impl.odin:476](src/impl.odin#L476) `member_is_visible`: the `looked_up` write is redundant, because the only callers that can pass a `.Standard_Format` symbol scan `pkg.extensions` next and mark the same extension. Remove it and `standard_format_hidden`'s second result, which ends in `return local != nil && !local.bound_excluded && (local.pkg == observer || local.public)`. (about 10 lines)
-- [impl.odin:468](src/impl.odin#L468) `member_is_visible`: join the early exits into `if sym == nil || sym.bound_excluded` and `if hidden || !capture_field_visible(k, sym)`. (about 6 lines)
-- [impl.odin:616](src/impl.odin#L616) `conversion_hooks`: resolves every member's signature although only hooks can match. `sym.hook` is set at declaration (line 251), so test it first and resolve only matches; `info == nil` can `return nil`. (about 5 lines)
-
-**Dead code**
-
-- (branch) [impl.odin:195](src/impl.odin#L195): assigning an empty `d.symbols` does nothing, since every reader uses `len` or `for` and a repeat declaration is barred by `item.declared`.
+What remains needs a helper shared with `generic.odin`.
 
 **Near copies**
 
 - [impl.odin:209](src/impl.odin#L209) and [generic.odin:3677](src/generic.odin#L3677): duplicate and field checks, plus the `Symbol` literal at [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693), differ only in `pkg` and subject. Share `impl_member_clash(k, subject, name)` and `new_impl_member(k, d, name, subject, pkg)`. (about 25 lines)
-- [impl.odin:68](src/impl.odin#L68) and [impl.odin:136](src/impl.odin#L136): the same make, read table, declare, install sequence, one filtered to lifecycle hooks. Share `declare_impl_members(k, item, hooks_only := false)`. (about 6 lines)
-
-**Structure and boundaries**
-
-- [impl.odin:494](src/impl.odin#L494) `standard_format_hidden`: formatting policy, also called by [queries.odin:334](src/queries.odin#L334); move it to `format.odin` beside `written_format_member`, its first dependency.
-- [impl.odin:607](src/impl.odin#L607) `conversion_hooks` and its banner: `hooks.odin` owns hook roles and validation, and the only caller is in `check_calls.odin`. Move it to either, and drop "semantic hooks" from the header on line 1.
-- [impl.odin:146](src/impl.odin#L146) `decl_is_lifecycle_hook`: a pure syntax query also used by [generic.odin:3524](src/generic.odin#L3524); it belongs beside `decl_hook_kind` at [ast.odin:1209](src/ast.odin#L1209).
-
-**Comments**
-
-- [impl.odin:325](src/impl.odin#L325): delete; it is stale, as `generic.odin` passes `k.c` and the callers without a checker are [intrinsic.odin:151](src/intrinsic.odin#L151) and [parallel.odin:219](src/parallel.odin#L219).
-- [impl.odin:73](src/impl.odin#L73): wrong phase, since delegates resolve in `resolve_impl_signatures`; write `// handled by later phases`.
-- [impl.odin:170](src/impl.odin#L170): delete; it restates `type_declared_in_this_body`.
-- [impl.odin:408](src/impl.odin#L408): delete the sentence naming the two callers, which `grep` answers.
-- [impl.odin:488](src/impl.odin#L488): cut to `Whether a generated format is hidden from observer: a written or visible local format takes the name (design.md "Interface bodies"); interface slots bypass this.` (about 4 lines)
 
 ### src/incremental.odin
 

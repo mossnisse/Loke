@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A body-local `impl` whose subject names no type, such as `impl x` on a variable or `impl nope`,
+  is now `L0406`, as at file scope. It compiled, and its members were never checked. Upgrade by
+  removing the block or naming the type.
+- A member of a generic `impl` that is not a constant, a procedure, or an associated type, such as
+  `impl G($T) { x: int = 0; }`, is now `L0406`, as in any other block. It compiled and the member
+  was dropped. Upgrade by removing the member, or moving the field to the record.
 - A file-scope `when` now waits for a branch that may shadow a predeclared name it reads, directly or
   through a declaration ([when statement](design.md#when-statement)). A condition that read a
   predeclared `string` and took one branch, while another `when` declared `string`, now reads that
@@ -1466,6 +1472,15 @@ checklist.
   between the repeats. Errors at one position now print narrowest first.
 - A diagnostic's caret line counts characters, so a mark after or across non-ASCII text in a string
   or comment stands under what it marks.
+- A member whose `where` bound fails is out of the instantiation on more paths
+  ([where clauses](design.md#where-clauses)). A conversion hook no longer stops the compiler with
+  `L0405` or joins an `L0391` ambiguity; a procedure group on a generic extension can name one where
+  it was `L0395`; `x.f()` on an extension's explains why with the note an inherent block's has; and
+  a method or interface slot supplied by two crossed generic blocks no longer counts it.
+- A conversion hook of a name two crossed generic blocks both supply is found
+  ([Conversion hooks](design.md#conversion-hooks)). `G(int, int)(3)` was `L0373`.
+- A body-local `format` or `hash` after a use that generated one now says so: `L0409` reads "already
+  has a generated member", with a note to write the block before that use.
 - `L0740` reads more of what a public declaration writes
   ([Private names in public declarations](design.md#private-names-in-public-declarations)). It now
   warns about a private name that a block's `$` name had hidden from every later declaration; a

@@ -1112,6 +1112,37 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	return true
 }
 
+// Every inherent conversion hook, matched by role rather than name. Crossed
+// generic blocks' hooks of one name stand in the table as a group.
+@(private = "file")
+conversion_hooks :: proc(k: ^Checker, target: Type_Id) -> []Symbol_Id {
+	info := type_of(k.c, target)
+	if info == nil {
+		return nil
+	}
+	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym != nil && sym.kind == .Proc_Group {
+			for nested in sym.members {
+				append_conversion_hook(k, nested, target, &out)
+			}
+		} else {
+			append_conversion_hook(k, member, target, &out)
+		}
+	}
+	return out[:]
+}
+
+@(private = "file")
+append_conversion_hook :: proc(k: ^Checker, member: Symbol_Id, target: Type_Id, out: ^[dynamic]Symbol_Id) {
+	sym := symbol_of(k.c, member)
+	if sym != nil && sym.hook == .Convert && !sym.bound_excluded {
+		resolve_symbol_signature_in_place(k, member, target)
+		append(out, member)
+	}
+}
+
 // Conversion hooks are inherent to the target, so imports cannot change `T(value)`.
 @(private = "file")
 check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
