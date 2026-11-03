@@ -1,0 +1,11 @@
+// design.md "Integer operators": a constant zero divisor is an error, a rune's too.
+package main;
+
+main :: proc() {
+	r: rune = 97;
+	_ = r % 0;
+	_ = r / 0;
+	r %= 0;
+	r /= 0;
+	_ = r / '\x00';
+}

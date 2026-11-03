@@ -1,0 +1,21 @@
+// design.md "Slices": a read-only place stays read-only however it is reached.
+package main;
+
+Value_Only :: struct { cells: [4]int }
+
+impl Value_Only {
+	at :: operator([]) proc(self: Value_Only, i: int) -> [4]int { return self.cells; }
+}
+
+reads :: proc(m: map[int][4]int) {
+	s := &mut m[1][0:2];
+	_ = s;
+}
+
+main :: proc() {
+	value := Value_Only{};
+	s := &mut value[0][0:2];
+	_ = s;
+	missing := &mut (map[int][4]int{})[1][0:2];
+	_ = missing;
+}

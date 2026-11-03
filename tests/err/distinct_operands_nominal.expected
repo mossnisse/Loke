@@ -1,0 +1,39 @@
+L0354
+@18:8
+mismatched operand types `S` and `string_view`
+
+L0354
+@19:11
+mismatched operand types `string_view` and `S`
+
+L0354
+@20:8
+mismatched operand types `S` and `T`
+
+L0354
+@21:8
+mismatched operand types `S` and `T`
+
+L0310
+@22:19
+cannot initialise `string_view` with `S`
+
+L0310
+@23:9
+cannot initialise `V` with `string_view`
+
+L0310
+@25:14
+cannot initialise `rawptr` with `P`
+
+L0318
+@27:11
+`&&` does not apply to `B` and `B`
+
+L0318
+@28:11
+`||` does not apply to `B` and `untyped bool`
+
+L0310
+@29:9
+cannot initialise `D` with `int`

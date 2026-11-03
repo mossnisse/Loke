@@ -1,0 +1,19 @@
+// design.md "Fixed arrays": a key is a constant integer or rune, each slot is set
+// once, and a `[?]` length is held to what could be built.
+package main;
+
+C :: enum { A, B }
+
+main :: proc() {
+	a := [4]int{1 = 1, 1 = 2};
+	b := [4]int{1..=2 = 1, 2..=3 = 2};
+	c := [4]int{2..=3 = 1, 1..=2 = 2};
+	d := [2]int{5 = 1};
+	e := [2]int{C.B = 1};
+	f := [?]int{C.A = 1};
+	g := [?]int{1 << 40 = 1};
+	h := [2]int{0 ..= 1 << 62 = 1};
+	i := [2]int{1, 2, 3};
+	j := [8]int{0..=3 = 1, 2 = 2, 3 = 3};
+	_ = a; _ = b; _ = c; _ = d; _ = e; _ = f; _ = g; _ = h; _ = i; _ = j;
+}

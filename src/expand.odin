@@ -470,7 +470,8 @@ expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> 
 		}
 		label := new(Expr_Selector, k.c.semantic_allocator)
 		label.span = span
-		label.name = Name{text = union_variant_name(k.c, subject, index), span = span}
+		variant := union_variant_name(k.c, subject, index)
+		label.name = Name{text = variant, span = span, id = intern_identifier(k.c, variant)}
 		values := make([]Expr, 1, k.c.semantic_allocator)
 		values[0] = label
 		body := Block{stmts = written.stmts}
@@ -628,7 +629,7 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 		label := union_variant_name(k.c, subject, index)
 		selector := new(Expr_Selector, k.c.semantic_allocator)
 		selector.span = span
-		selector.name = Name{text = label, span = span}
+		selector.name = Name{text = label, span = span, id = intern_identifier(k.c, label)}
 		entry.span = v.span
 		entry.values = make([]Expr, 1, k.c.semantic_allocator)
 		entry.values[0] = selector

@@ -81,7 +81,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 4. **Five small independent fixes.** `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
 
-6. **Valid unfixed arithmetic reaches clang, and `nil` operands crash.** `y: u8 = (1 if c() else 2) + 1` hits the "should not arise" arm at [check_expr.odin:3586](src/check_expr.odin#L3586); recurse as the conditional arm does. Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-check_expr.part2-1, BUG-box-1. About 40 lines.
+6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
 7. **Holes in `foreach` safety.** The `indexed()` counter and a per-step projected record are marked lent ([iterate.odin:856](src/iterate.odin#L856), [iterate.odin:990](src/iterate.odin#L990)), so `return &e` compiles; public iterator fields let safe code segfault ([iterate.odin:172](src/iterate.odin#L172)). BUG-iterate-1, -3, -2. About 25 lines.
 
@@ -103,7 +103,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1 and BUG-container-2, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
 
-19. **Mechanical removal of failure boilerplate.** Replace the 101 three-line guards in `eval.odin` part 1 with `or_return` ([eval.odin:662](src/eval.odin#L662) onward; about 300 lines), and set `base.type = INVALID_TYPE` once at [check_expr.odin:44](src/check_expr.odin#L44) (about 150 to 200 lines across 297 writes). Low risk; do the first any time and the second after item 12.
+19. **Mechanical removal of failure boilerplate.** Replace the 101 three-line guards in `eval.odin` part 1 with `or_return` ([eval.odin:662](src/eval.odin#L662) onward; about 300 lines), and drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
 
 ## Findings that span files
 
@@ -115,7 +115,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
 
-- BUG-check_expr.part2-6 and BUG-simd-2: [check_expr.odin:3523](src/check_expr.odin#L3523) splats a typed constant without the lane check a runtime scalar gets.
 - BUG-eval.part1-2, BUG-const_ops-2 and BUG-hash-2: `zero_const` answers `.Nil` for a union ([check_expr.odin:3417](src/check_expr.odin#L3417)), where every other union constant is an `.Aggregate` with a variant. Fixing the constant's form, rather than the three readers, is the smaller change.
 
 #### Receivers checked twice, because `check_expr` is not idempotent
@@ -144,11 +143,11 @@ The operand path has the real divergence. `check_defaulted_operand` in `check_bu
 
 Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targets)`, `check_allocator_argument(k, e)`, and `check_defaulted_operand` shared with `box.odin`. Saves about 40 lines and fixes BUG-box-1.
 
-#### Failure writes that a default in `check_expr` would make unnecessary
+#### Failure writes that the default in `check_expr` makes unnecessary
 
-`v.type = INVALID_TYPE` appears 297 times: [check_expr.odin](src/check_expr.odin) 124, [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [lifecycle.odin](src/lifecycle.odin) 22, [text.odin](src/text.odin) 18, [erased.odin](src/erased.odin) 15, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Most precede an early return. Some procedures already write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), so the same rule is applied at three levels.
+`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [lifecycle.odin](src/lifecycle.odin) 22, [text.odin](src/text.odin) 18, [erased.odin](src/erased.odin) 15, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
-Shared form: set `base.type = INVALID_TYPE` and `base.value_category = .Value` beside `base.immutable` at [check_expr.odin:44](src/check_expr.odin#L44), and assign only on success. Saves about 150 to 200 lines. Land it after the receiver fix above, because a re-check would then always reset the type.
+Shared form: assign only on success. Saves about 100 lines.
 
 #### Syntax walkers
 
@@ -202,7 +201,7 @@ Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves ab
 
 [operators.odin:451](src/operators.odin#L451) `bind_operator_operands` with [operators.odin:480](src/operators.odin#L480) `check_operator_modes` is a cut-down copy of [overload.odin:902](src/overload.odin#L902). It has lost `substitute_caller_location` (BUG-operators-8) and the pointer dereference. Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 25 lines.
 
-The table of what a built-in operator accepts is split across [check_expr.odin:2658](src/check_expr.odin#L2658), [check.odin:4197](src/check.odin#L4197), [operators.odin:336](src/operators.odin#L336), [operators.odin:363](src/operators.odin#L363) and the case-by-case restatement at [check_expr.odin:2028](src/check_expr.odin#L2028). Shifts are only in the second and third, SIMD only in the second, which is BUG-operators-2 and BUG-operators-7. Shared form: one `builtin_operator_applies` with shift and SIMD cases, `compound_applies` as that minus concatenation, and `check_unary` asking `builtin_unary_defined`. Saves about 30 lines.
+The table of what a built-in operator accepts is split across [check_expr.odin:2658](src/check_expr.odin#L2658), [check.odin:4197](src/check.odin#L4197), [operators.odin:336](src/operators.odin#L336) and [operators.odin:363](src/operators.odin#L363). Shifts are only in the second and third, SIMD only in the second, which is BUG-operators-2 and BUG-operators-7. Shared form: one `builtin_operator_applies` with shift and SIMD cases and `compound_applies` as that minus concatenation. Saves about 30 lines.
 
 [operators.odin:724](src/operators.odin#L724) `operator_token` is `operator_spelling` ([lexer.odin:745](src/lexer.odin#L745)) reversed: a loop over `operator_table` ([lexer.odin:682](src/lexer.odin#L682)) saves 40 lines.
 
@@ -330,7 +329,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
 - Enum logic: [check.odin:1250](src/check.odin#L1250) and [check.odin:4497](src/check.odin#L4497) belong in `enums.odin`, which the map names as owner.
-- Layering: [check_expr.odin:4158](src/check_expr.odin#L4158) `binding_initial_const` is used only by the emitter ([emit_llvm_runtime.odin:256](src/emit_llvm_runtime.odin#L256), [emit_llvm_runtime.odin:361](src/emit_llvm_runtime.odin#L361)). [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
+- Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
 - Single-caller helper: [borrow.odin:638](src/borrow.odin#L638) in `check.odin` ([check.odin:679](src/check.odin#L679)).
 - Transfer wording and type reach: [borrow.odin:5494](src/borrow.odin#L5494), [borrow.odin:5588](src/borrow.odin#L5588), [borrow.odin:5750](src/borrow.odin#L5750) and [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belong beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Formatting in [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541) onward. Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
@@ -1201,7 +1200,7 @@ Comments here are mostly the right kind and no top-level name is dead, but sever
 - [check.odin:954](src/check.odin#L954) and [check.odin:2007](src/check.odin#L2007): the `Type_Distinct` element is resolved, reported and rejected identically; share a `resolve_distinct_element`. (about 5 lines)
 - [check.odin:383](src/check.odin#L383), [check.odin:1882](src/check.odin#L1882), [check.odin:1895](src/check.odin#L1895), [check.odin:2171](src/check.odin#L2171), [check.odin:2244](src/check.odin#L2244), [check_expr.odin:651](src/check_expr.odin#L651): the triple of `denoted_type`, `resolution` and `value_category = .Type`. Share `mark_denotes_type(base, type, symbol)`. (about 10 lines)
 - [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:481](src/iterate.odin#L481): check a constant on demand, then read the type it names. Share `const_type_value(k, id, subject) -> Type_Id`. (about 8 lines)
-- [check.odin:556](src/check.odin#L556), [check.odin:1705](src/check.odin#L1705), [check.odin:2165](src/check.odin#L2165), [impl.odin:205](src/impl.odin#L205): hand-written `name_identifier`; [check_expr.odin:477](src/check_expr.odin#L477) is `identifier_of`. Line 1535 should pass `name_id` from 1497, not the raw `name.id`. (about 12 lines)
+- [check.odin:556](src/check.odin#L556), [check.odin:1705](src/check.odin#L1705), [check.odin:2165](src/check.odin#L2165), [impl.odin:205](src/impl.odin#L205): hand-written `name_identifier`. Line 1535 should pass `name_id` from 1497, not the raw `name.id`. (about 12 lines)
 
 **Structure and boundaries**
 
@@ -1319,148 +1318,22 @@ The file is readable and its comments mostly say why, and every declaration has 
 
 ### src/check_expr.odin (part 1 of 2)
 
-The logic is sound and the spec citations are good, but the code is long mostly through repetition: `v.type = INVALID_TYPE` before early returns, a place's capability fields written by hand, and two procedures over 150 lines. The five bugs below are narrow, and each was reproduced with the `lokec.exe` built at this commit.
-
-**Bugs**
-
-- `BUG-check_expr.part1-1` **medium** [check_expr.odin:1322](src/check_expr.odin#L1322) `check_index`: the implicit `p^` hop is written for a slice, dynamic array, or map behind a pointer, but not a C pointer. Scenario: `pp := &c; x := pp[1];` with `c: [^]int` passes the checker, then clang fails with L0403 "invalid getelementptr indices"; `pp^[1]` works. Fix: add `.C_Pointer` to that condition. *Confirmed: Reproduced: pp := &c; x := pp[1] with c: [^]int passes the checker, then clang fails with L0403 invalid getelementptr indices; pp^[1] builds and yields 2. The hop at check_expr.odin:1322 omits .C_Pointer. No recorded gap or decision found.*
-- `BUG-check_expr.part1-2` **medium** [check_expr.odin:1799](src/check_expr.odin#L1799) `check_builtin_slice`: an array needs `base.immutable == .None`, but the C-pointer index (line 1347) and the `inout` `operator([])` place (line 1613) keep `.Not_A_Place` from line 44. Scenario: `&mut c[1][0:2]` with `c: [^][4]int`, and `&mut g[0][0:2]` with only an `inout` overload, give L0359 "cannot be sliced mutably". Fix: set `v.immutable = .None` at both places, which also stops line 1031 calling them read-only names; then `writable := base.assignable`. *Confirmed: Reproduced: both forms give L0359 though design.md "Slices" allows a mutable array place. c[1] is assignable, and `p := &mut c[1]; &mut p^[0:2]` compiles and writes; a [dynamic] result passes via assignable. Valid code rejected, with a workaround; medium at most.*
-- `BUG-check_expr.part1-3` **medium** [check_expr.odin:1625](src/check_expr.odin#L1625) `check_slice`: the operand is always checked in value position, though design.md "Slices" says `&mut a[lo:hi]` requires a mutable array place. Scenario: `&mut m[1][0:2]` with `m: map[int][4]int`, and `&mut g[0][0:2]` with value and `inout` overloads, give L0477 "no storage to slice". Fix: use `.Place` when `v.mutable`, keeping a value overload that yields a slice usable. *Confirmed: Reproduced: &mut m[1][0:2] and &mut g[0][0:2] give L0477, inout-only g gives L0359, while &mut m[1] and m[1][3] = 6 compile; no recorded decision. Severity low-medium: valid code rejected, workaround p := &mut m[1]; &mut p^[0:2].*
-- `BUG-check_expr.part1-4` **low** [check_expr.odin:816](src/check_expr.odin#L816) `check_selector`: `has_field` sees only fields the payload declares, so a box's member beats a promoted field but loses to a declared one. Scenario: with `Outer :: struct { using inner: Inner }` and `Inner :: struct { clone: int }`, `box(Outer{...}).clone` gives L0408 "is a method and must be called"; the field declared directly reads fine. Fix: decide with `promoted_field_path`. *Not verified.*
-- `BUG-check_expr.part1-5` **low** [check_expr.odin:920](src/check_expr.odin#L920) `select_call_method`: a box hop returns without trying the pointer hop that `x.call` takes, against design.md "Calling a value". Scenario: `b := box(&t); b.call(1)` compiles but `b(1)` gives L0320 "`Box(^T)` is not callable". Fix: after the box step, continue with its element as the operand of the pointer step. *Not verified.*
-
-**Simplification**
-
-- [check_expr.odin:44](src/check_expr.odin#L44) `check_expr`: lines 1-2109 hold 88 `.type = INVALID_TYPE` writes (129 in the file), most before a return where nothing has set a type. Default `base.type` to `INVALID_TYPE` and `base.value_category` to `.Value` here beside `immutable`. Keep writes after a type is set (714, 1429) and in `check_package_selector`, which check.odin:1908 reaches without `check_expr`. (about 80 lines)
-- [check_expr.odin:2022](src/check_expr.odin#L2022) `check_unary`: the Distinct test and the switch at 2028-2051 restate `builtin_unary_defined` (operators.odin:363). Take `defined := builtin_unary_defined(...)`, try the user overload if `!defined`, handle SIMD, then `if !defined` report `operator_mismatch`. (about 25 lines)
-- [check_expr.odin:841](src/check_expr.odin#L841) `check_selector`: `promoted_field_path` already starts with `struct_field` (line 1081), so call only it. A path of length 1 is a declared field; pass `through_pointer, pointer_mutable` to the final `select_field`, since the loop clears them. `field`, the second struct test, and line 910 go, and the method path is no longer nested. (about 10 lines)
-- [check_expr.odin:920](src/check_expr.odin#L920) `select_call_method`: the box and pointer arms differ only in the wrapper. Test for `.Box` or `.Pointer` once, select on `info.element`, then pick the deref; do this together with bug 5. (about 5 lines)
-- [check_expr.odin:477](src/check_expr.odin#L477) `check_ident`: lines 477-481 are `identifier_of` (check.odin:1731), so write `name_id := identifier_of(k.c, v)`. (about 4 lines)
-- [check_expr.odin:539](src/check_expr.odin#L539) `check_ident`, also lines 586 and 603: the `sym = symbol_of(...)` re-fetches are needless, since `c.symbols` holds stable pointers from `new_clone` (semantic.odin:1096). Lines 1170 and 1184 can share one `sym` for the same reason. (about 4 lines)
-- [check_expr.odin:764](src/check_expr.odin#L764) `check_selector`, with 1288 and 2162: `position == .Place || position == .Insert ? .Place : .Value` is written three times; a one-line `operand_position(position)` names the rule "reaches the place, never inserts". (about 1 line, for clarity)
-
-**Dead code**
-
-- (branch) [check_expr.odin:41](src/check_expr.odin#L41): `base == nil` cannot hold; line 37 returned for a nil `e`, and `expr_base` returns `&v.base` for every variant.
-- (branch) [check_expr.odin:170](src/check_expr.odin#L170): `base != nil` here and at line 180. `type == TYPE_VOID` needs a checked non-nil `e`, and both outside callers (check_calls.odin:1318, overload.odin:138) already dereference `expr_base(arg.value)`.
-- (branch) [check_expr.odin:1085](src/check_expr.odin#L1085): `mark` and the `resize` at 1103-1105 never do anything. When nothing is found, every iteration has already restored `path` at line 1100.
-- (branch) [check_expr.odin:1407](src/check_expr.odin#L1407): `index_base == nil` at 1410 and `index_base != nil` at 1417 are always settled, because `check_integer_index` just succeeded on that non-nil index.
-- (branch) [check_expr.odin:1786](src/check_expr.odin#L1786): `v.value_category = .Value` repeats line 1624, and nothing between changes it.
-- (branch) [check_expr.odin:1870](src/check_expr.odin#L1870): the `candidates` default `= nil` is never used; both callers (1599, 1693) pass it.
-- (branch) [check_expr.odin:1945](src/check_expr.odin#L1945): `base == nil` cannot hold, since `next == nil` returned at line 1942.
-
-**Data structures and algorithms**
-
-- [check_expr.odin:736](src/check_expr.odin#L736) `check_selector` and helpers: `intern_identifier(k.c, v.name.text)` appears at 724, 736, 787, 817, 841, 846, 1161, 1196, and 1257, up to four string-hash lookups per selector, and selectors grow with the program. The parser already interns `Name.id` (parser.odin:217); use `v.name.id` after setting `id` in expand.odin:472 and 629, the two synthesized selectors that omit it.
-- [check_expr.odin:1228](src/check_expr.odin#L1228) `method_candidates`: every method selector allocates two lists from `semantic_allocator` that are never freed, though `select_method` needs only the first entry and `check_method_call` repeats the lookup (check_calls.odin:393). Return early when `all` is empty and have `select_method` take the first match without a list; the cost is small per call but grows with call count.
-- [check_expr.odin:345](src/check_expr.odin#L345) `decode_string_literal`: builds into a growing builder in the arena even with no escape, the common case. Return `body` when it has no backslash, as the raw path does, and otherwise size the builder to `len(body)`.
+What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
 - [check_expr.odin:1112](src/check_expr.odin#L1112) and [overload.odin:1009](src/overload.odin#L1009): `implicit_pointer_deref` and `dereference_argument` build the same node. Make the first package-visible and have the second call it with `info.element, info.mutable`. (about 8 lines)
-- [check_expr.odin:991](src/check_expr.odin#L991) and [simd.odin:177](src/simd.odin#L177): `inherit_capability` is repeated field for field in the SIMD lane code, and lines 1123-1125 are its pointer arm. Make it package-visible and call it from all three.
-- [check_expr.odin:1134](src/check_expr.odin#L1134), [check_expr.odin:1366](src/check_expr.odin#L1366) and [check_expr.odin:1568](src/check_expr.odin#L1568): the box dereference, dynamic-array element, and map place write the same fields from their owner. Rename `box_deref_place` to `owned_element_place` and call it from all three. (about 6 lines)
-- [check_expr.odin:535](src/check_expr.odin#L535), [check_expr.odin:1170](src/check_expr.odin#L1170) and [check_expr.odin:1276](src/check_expr.odin#L1276): the same check-on-demand with an L0324 cycle report. Share `ensure_decl_checked(k, span, symbol, name, subject) -> bool`; the package path's unhandled `.Checking` is unreachable because imports are acyclic. (about 10 lines)
-- [check_expr.odin:742](src/check_expr.odin#L742) and [check_expr.odin:789](src/check_expr.odin#L789): the same annotation of a selected enum member, differing only in the type. Use a `select_enum_member(v, member, type)`. (about 5 lines)
 - [check_expr.odin:693](src/check_expr.odin#L693), [check_expr.odin:753](src/check_expr.odin#L753) and [check.odin:1905](src/check.odin#L1905): the same "operand is an identifier naming a package alias" test. Use a `selector_package_alias(k, v) -> (ident, alias, ok)`. (about 6 lines)
-- [check_expr.odin:890](src/check_expr.odin#L890) and [check_expr.odin:935](src/check_expr.odin#L935): the same receiver default, `operand == TYPE_UNTYPED_STRING ? TYPE_STRING_VIEW : default_type(...)`. Name it `unfixed_receiver_type`, since it is a rule of its own that differs from `default_type`.
-- [check_expr.odin:1609](src/check_expr.odin#L1609), [check_expr.odin:1706](src/check_expr.odin#L1706), [check_expr.odin:2104](src/check_expr.odin#L2104) and [check_expr.odin:2140](src/check_expr.odin#L2140): the same `sym`, `Resolution{kind = .User_Operator, ...}`, and `v.type = sym.result`. An `annotate_user_operator(k, &v.base, chosen)` returning the symbol replaces them. (about 6 lines)
 - [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852): scalar unary folding is the same switch and the same overflow and wrap step, differing in allocator, failure reporting, and the float's decimal text. Move it to `const_ops.odin` as `fold_unary`. (about 20 lines)
-
-**Structure and boundaries**
-
-- [check_expr.odin:686](src/check_expr.odin#L686) `check_selector`: 225 lines doing several selections in turn. The seams are the implicit `.Member` block (710-749), the type subject (771-809), and field-then-method lookup on a value (826-910), leaving this procedure as the dispatch.
-- [check_expr.odin:1286](src/check_expr.odin#L1286) `check_index`: 155 lines. The fixed-array path at 1402-1440, with its materialization and constant folding, is a natural `check_array_index`.
-- [check_expr.odin:337](src/check_expr.odin#L337): literal decoding has nothing to do with checking and is also called by attributes.odin, packages.odin, and providers.odin. It belongs in `lexer.odin`, beside the `escape` that defines the syntax.
-- [check_expr.odin:1134](src/check_expr.odin#L1134): `box_deref_place` and `implicit_box_deref` (line 1143) are used only in this file but lack `@(private = "file")`, which compiler-architecture.md "Source-code map" asks for.
-- [check_expr.odin:1461](src/check_expr.odin#L1461): `check_map_membership` also handles ranges and a user `in`, so `check_in` says what it is.
-- [check_expr.odin:1911](src/check_expr.odin#L1911): `packed_field_reached` sits in the "unary" section but is called from five files. Give it its own section or move it beside the packed layout rules.
-
-**Comments**
-
-- [check_expr.odin:112](src/check_expr.odin#L112): delete `// Already reported.`; the test above says it.
-- [check_expr.odin:335](src/check_expr.odin#L335): shorten to `// The lexer has already validated the spelling.` Line 408 repeats it and goes when the decoders merge.
-- [check_expr.odin:457](src/check_expr.odin#L457): shorten to `// These share one immutability flag, so the construct written is recovered for the diagnostic.`
-- [check_expr.odin:876](src/check_expr.odin#L876): shorten to `// A pointer's own methods come first, then the pointee's.`
-- [check_expr.odin:945](src/check_expr.odin#L945): delete; it restates the signature.
-- [check_expr.odin:1303](src/check_expr.odin#L1303): shorten to `// Nominal (design.md "Distinct types"): a distinct type reaches check_user_index, not the built-in table.`
-- [check_expr.odin:1320](src/check_expr.odin#L1320): shorten to `// A carrier is reached through its header, so the hop is written as p^.` Lines 813 and 1109 already give the "later passes understand it" reason.
-- [check_expr.odin:1753](src/check_expr.odin#L1753): shorten to `// design.md "Slices". False for anything but a built-in carrier.` The rest narrates the body.
-- [check_expr.odin:1864](src/check_expr.odin#L1864): the receiver is not checked here, so say `// The already-checked receiver, then every index, checked here once.` (about 12 lines across the file)
 
 ### src/check_expr.odin (part 2 of 2)
 
-Well commented and mostly sound, but the rules for non-constant unfixed operands, distinct operands and operand joining have real holes; every bug below was reproduced with the `lokec.exe` built from this commit. No declared symbol is dead; the removable code is branches, and the file's size hides two natural extractions.
-
-**Bugs**
-
-- `BUG-check_expr.part2-1` **high** [check_expr.odin:3586](src/check_expr.odin#L3586) `materialize`: the "should not arise" arm is reachable and returns false with no diagnostic. Scenario: `y: u8 = (1 if c() else 2) + 1` (also `z: f64 = ... * 2`, `y: i32 = -(1 if c() else 2)`, or a `u8` argument) reaches clang: `'%t471' defined with type 'i64' but expected 'i8'`. Fix: recurse through non-constant unfixed binary and unary operands, as the conditional arm at line 3563 does. *Confirmed: Reproduced: y: u8 = (1 if c() else 2) + 1 fails L0403, clang '%t471' defined with type 'i64' but expected 'i8'; also f64, f32, unary minus to i32, u8 argument. Not in known-gaps. It is a backend rejection, not a miscompile, so medium fits better than high.*
-- `BUG-check_expr.part2-2` **medium** [check_expr.odin:2281](src/check_expr.odin#L2281) `check_binary`: `+` on non-constant unfixed strings keeps `untyped string`, since `type_is_utf8_text` excludes it. Scenario: `s := ("a" if c() else "b") + "c"` emits `@llvm.uadd.with.overflow.%loke.string` and clang fails. Fix: a non-constant unfixed concatenation materializes its operands and has type `string`. *Confirmed: Reproduced: s := ("a" if c() else "b") + "c" passes the checker, then emits @llvm.uadd.with.overflow.%loke.string and clang fails with L0403; s: string = also fails. design.md allows + on text; not in known-gaps. Medium fits.*
-- `BUG-check_expr.part2-3` **medium** [check_expr.odin:3104](src/check_expr.odin#L3104) `check_array_literal`: `values` has one slot per array element, whatever the literal lists. Scenario: `x := [1 << 33]u8{1}` crashes the compiler: `make` returns empty, then `check_expr.odin(3122:14) Index 0 is out of range 0..<0`. Fix: past `MAX_CONST_ELEMENTS` nothing folds, so skip the table and find duplicates by sorting the `(lo, hi)` slots. *Confirmed: Reproduced: a valid main with x := [1 << 33]u8{1} panics at check_expr.odin(3122:14), index 0 out of range 0..<0; [1 << 31] and an empty [1 << 33]u8{} compile. Not recorded in the docs. Severity is low: only literals of about 8 GiB or more.*
-- `BUG-check_expr.part2-4` **medium** [check_expr.odin:2609](src/check_expr.odin#L2609) `join_operand_types`: design.md "Comparison operators" lets either operand be assignable to the other, but only same-kind pointers and unions join. Scenario: `p == r` with `p: ^int`, `r: rawptr`, and `a == b` with `(x: int, y: int)` and `(int, int)`, give L0354. Fix: try `assignable` in both directions; see Simplification. *Confirmed: Probes give L0354 for ^int == rawptr, [^]int == rawptr and (x: int, y: int) == (int, int), though each side assigns and no gap is recorded. tests/err/unlabelled_records pins the record case (4d41c93b), against the spec, so that half needs a spec decision.*
-- `BUG-check_expr.part2-5` **medium** [check_expr.odin:3937](src/check_expr.odin#L3937) `assignable` (also [2604](src/check_expr.odin#L2604), [3955](src/check_expr.odin#L3955)): `underlying_kind` unwraps `distinct`, so distinct operands convert implicitly. Scenario: with `S :: distinct string`, `S("a") + view` compiles though `S + S` is L0318; `r: rawptr = P(&n)` with `P :: distinct ^int` too. Fix: test `type_kind` of both sides. *Confirmed: Probes compile and run: v: string_view = S, S + view, S + T, S == T, string -> distinct view, r: rawptr = P, while S + S is L0318 and P -> ^int is L0310. design.md "Implicit type conversions" lists only string -> string_view and ^T -> rawptr; no recorded decision.*
-- `BUG-check_expr.part2-6` **medium** [check_expr.odin:3523](src/check_expr.odin#L3523) `materialize`: a typed constant scalar splats by `convert_const` without being the lane type. Scenario: `N : i64 : 3; v: Simd(f32, 4) = N` compiles to `[3.0, ...]`, while a runtime `i64` is L0310 and `x: f32 = N` is L0310. Fix: require `assignable(base.type, element)`, as the runtime arm at line 3513 does. *Confirmed: Probe: N : i64 : 3; v: Simd(f32, 4) = N compiles and lanes hold 3; f64 and i64(3) too. Runtime i64 and x: f32 = N give L0310. design.md allows only a scalar of the lane type; no gap recorded. Accepts-invalid, values correct: low-medium.*
-- `BUG-check_expr.part2-7` **low** [check_expr.odin:2328](src/check_expr.odin#L2328) `check_logical`: `type_is_boolean` looks through `distinct`, against design.md "Distinct types" ("Other operations are not inherited"). Scenario: with `B :: distinct bool`, `a && a` compiles and yields `bool`, while `!a` is L0317. Fix: reject a `.Distinct` operand here, as `check_shift` does at line 2362. *Not verified.*
-- `BUG-check_expr.part2-8` **low** [check_expr.odin:2307](src/check_expr.odin#L2307) `constant_zero_divisor`: a rune divisor constant has kind `.Rune` and is skipped. Scenario: `r: rune = 97; x := r % 0` (or `r / 0`, or `r %= 0`, guarded by `type_is_integer` at [check.odin:4029](src/check.odin#L4029)) compiles and panics at run time; design.md "Integer operators" makes it an error. Fix: accept `.Rune` and drop that guard. *Not verified.*
-- `BUG-check_expr.part2-9` **low** [check_expr.odin:2384](src/check_expr.odin#L2384) `check_shift`: the left operand's expected type is filtered by `type_is_integer`, which excludes runes and admits distinct types. Scenario: `r: rune = 1 << n` is L0310 though `r: rune = 1` is fine, and `d: D = 1 << n` compiles though `D(1) << n` is L0318. Fix: use line 2362's own test on `expected`. *Not verified.*
-- `BUG-check_expr.part2-10` **low** [check_expr.odin:3202](src/check_expr.odin#L3202) `array_key_slots`: the constant-folding budget limits keys even where the literal is built at run time. Scenario: `a: [2000000]u8 = {1500000 = 1}` gives L0361 "index 1500000 is out of range". Fix: apply the limit only to `[?]T`, whose length the key sets; a written length is checked at line 3109. *Not verified.*
-- `BUG-check_expr.part2-11` **low** [check_expr.odin:3193](src/check_expr.odin#L3193) `array_key_slots`: `materialize` leaves a typed constant alone, and only the constant's kind is tested. Scenario: `[2]int{C.B = 1}` with `C` an enum compiles, while `a[C.B]` is L0362. Fix: call `check_integer_index` from line 1445 in `bound`; see Near copies. *Not verified.*
-- `BUG-check_expr.part2-12` **low** [check_expr.odin:3841](src/check_expr.odin#L3841) `convert_const`: an empty container literal is a constant, but containers have no case here. Scenario: `D([dynamic]int{})` with `D :: distinct [dynamic]int`, or `M(map[int]int{})`, gives L0373, against design.md "Distinct types". Fix: send `.Dynamic_Array` and `.Map` to `retype_aggregate`. *Not verified.*
-- `BUG-check_expr.part2-13` **low** [check_expr.odin:2417](src/check_expr.odin#L2417) `validate_shift_count`: a non-constant unfixed count falls through to the error. Scenario: `a << (1 if c() else 2)` gives L0356 "must have an integer type, found `untyped int`", though `x := 1 if c() else 2` is an `int`. Fix: materialize it to its default type first. *Not verified.*
-- `BUG-check_expr.part2-14` **low** [check_expr.odin:2691](src/check_expr.odin#L2691) `check_cond`: `materialize`'s result is ignored, so a failed condition is reported twice. Scenario: `x := 1 if 5 else 2` gives L0352 and L0355 at one span. Fix: only test the type when `materialize` returned true. *Not verified.*
-
-**Simplification**
-
-- [check_expr.odin:2604](src/check_expr.odin#L2604) `join_operand_types`: the text, pointer and union special cases are all `assignable` relations. Replace lines 2601-2624 with `if assignable(lt, rt) { return rt, true }`, the reverse, and the failure; this also fixes the comparison bug above. (about 14 lines)
-- [check_expr.odin:2950](src/check_expr.odin#L2950) `check_struct_literal`: the named and positional arms differ only in how they find the field. Have both yield `symbol` and share the slot bookkeeping and check. A capture's elements are always positional ([capture.odin:56](src/capture.odin#L56)), so the capture test applies to both. (about 12 lines)
-- [check_expr.odin:3700](src/check_expr.odin#L3700) `convert_const`: join the two `info.kind` switches by handling `.Nil` first, with `.Untyped_Nil` in that test, and write `case .Struct, .Array, .Union:` and `case .Typeid, .Type:` instead of repeating bodies. (about 8 lines)
-- [check_expr.odin:2860](src/check_expr.odin#L2860) `check_composite`: rather than clearing the constant after the fact, write `if v.capture == nil { fold_aggregate(...) }` at line 3070 and delete this block. (about 3 lines)
-- [check_expr.odin:3303](src/check_expr.odin#L3303) `fold_aggregate`: both callers pass `len(values)` equal to the count, so use `for value, index in values` and read `element` once before the loop instead of calling `underlying_info` per omitted slot. (about 4 lines)
-- [check_expr.odin:2926](src/check_expr.odin#L2926) `check_slice_literal`: `assignable` and `immutable` already have these values from lines 2843-2844; keep only `v.addressable = false`. (2 lines)
-- [check_expr.odin:2676](src/check_expr.odin#L2676) `builtin_operator_applies`: `.Percent` and the bitwise case have one body; write `case .Percent, .Amp, .Pipe, .Tilde, .Amp_Tilde:`. (2 lines)
-- [check_expr.odin:3643](src/check_expr.odin#L3643) `report_unrepresentable`: end the `.String` case in `fallthrough` to the identical message on line 3650. (1 line)
-- [check_expr.odin:3918](src/check_expr.odin#L3918) `assignable`: `from == element ||` repeats the recursive call's first test. (part of a line)
-
-**Dead code**
-
-- `const_value_of` ([check_expr.odin:4177](src/check_expr.odin#L4177)): both uses follow a passing `is_const_expr`, so its nil arm never runs; `expr_base(x).const_value` replaces it. Only `binding_initial_const` calls it, and grep finds no other use in `src/`, `lsp/` or `tests/`.
-- (branch) [check_expr.odin:2155](src/check_expr.odin#L2155): `check_postfix` sees only `.Caret` and `.Or_Return`; [parser.odin:2470](src/parser.odin#L2470) makes only those, and the synthesized nodes (`synth_deref`, [check.odin:3859](src/check.odin#L3859), [check_expr.odin:1126](src/check_expr.odin#L1126)) are `.Caret`.
-- (branch) [check_expr.odin:2149](src/check_expr.odin#L2149): the default of `position` is never used; the only caller, line 75, passes it.
-- (branch) [check_expr.odin:3395](src/check_expr.odin#L3395): `const_element_count` returns 1 for `.Dyn`, `.Slice`, `.Dynamic_Array` and `.Map`, so those can never pass the budget test. The whole switch can go, as every non-aggregate counts as 1.
-- (branch) [check_expr.odin:3306](src/check_expr.odin#L3306): `index < len(values)` is always true because both callers size `values` to the count; the comment at line 3296 is stale with it.
-- (branch) [check_expr.odin:3984](src/check_expr.odin#L3984): `from != to` is always true, because `assignable` has already returned for equal types.
-- (branch) [check_expr.odin:4029](src/check_expr.odin#L4029): the nil checks cannot fail, because both kinds were just read as `.Pointer`.
-
-**Data structures and algorithms**
-
-- [check_expr.odin:3304](src/check_expr.odin#L3304) `fold_aggregate`: allocates `elements` before learning whether the literal folds, so `[500000]int{f()}` leaves up to 64 MiB in the semantic arena per literal. Scan `values` for a non-constant first, then allocate.
-- [check_expr.odin:2943](src/check_expr.odin#L2943) `check_struct_literal`: `seen` and `values` die with the call but live in the semantic arena, once per literal. `context.temp_allocator` fits, since it is only freed at [main.odin:135](src/main.odin#L135). The cost grows with the fields of each literal, so this is cheap to fix rather than urgent.
+What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
 - [check_expr.odin:3332](src/check_expr.odin#L3332), [3345](src/check_expr.odin#L3345), [3437](src/check_expr.odin#L3437), [3474](src/check_expr.odin#L3474), [3837](src/check_expr.odin#L3837) and [reflect.odin:307](src/reflect.odin#L307): each wraps a type and elements in a `Const_Aggregate`. Move `aggregate_const` to `const_ops.odin` with an allocator argument and use it here, in [check_builtin.odin:1378](src/check_builtin.odin#L1378) and [const_ops.odin:884](src/const_ops.odin#L884); first confirm its `type_value` is harmless. (about 15 lines)
-- [check_expr.odin:2915](src/check_expr.odin#L2915), [2978](src/check_expr.odin#L2978), [3130](src/check_expr.odin#L3130), [3250](src/check_expr.odin#L3250), [3288](src/check_expr.odin#L3288): `check_value_expr` then `classify_composite_element`. A `check_composite_element(k, v, index, type) -> bool` holding both removes about 2 lines per site.
-- [check_expr.odin:2896](src/check_expr.odin#L2896), [3232](src/check_expr.odin#L3232), [3260](src/check_expr.odin#L3260): the empty literal is the zero constant. `zero_const` cannot fail for these headers, so the `if zero, ok` guards leave nothing to handle. Handle `len(v.elements) == 0` once in `check_composite` for `.Dynamic_Array` and `.Map`, with `.Slice` when untyped.
-- [check_expr.odin:3193](src/check_expr.odin#L3193) `bound` and [check_expr.odin:1445](src/check_expr.odin#L1445) `check_integer_index`: both check an index at `TYPE_INT`, and only the second tests its type. Call the second from `bound`.
 - [check_expr.odin:2721](src/check_expr.odin#L2721), [lifecycle.odin:257](src/lifecycle.odin#L257), [lifecycle.odin:589](src/lifecycle.odin#L589), [optional.odin:108](src/optional.odin#L108): `classify_copy_cost` then `classify_copy` with the same arguments. A wrapper returning `classify_copy`'s result removes one line per pair.
-
-**Structure and boundaries**
-
-- [check_expr.odin:3342](src/check_expr.odin#L3342): `capacity_const`, `MAX_CONST_ELEMENTS`, `const_element_count` and `zero_const` are zero-value rules, which the source-code map gives to `zero.odin`; move them there.
-- [check_expr.odin:3691](src/check_expr.odin#L3691): `convert_const` and `retype_aggregate` use no `Checker` and are value-level, which line 4087 says lives in `const_ops.odin`; `convert_const` is also called from `eval.odin`. Move them there.
-- [check_expr.odin:2781](src/check_expr.odin#L2781): composite literals (about 510 lines) are self-contained behind `check_composite` and could be `check_composite.odin`. The type relations from `type_accepts_nil` to `unchecked_pointer_conversion` (lines 3875-4061) are a second seam.
-- [check_expr.odin:4158](src/check_expr.odin#L4158): `binding_initial_const` is called only by the emitter ([emit_llvm_runtime.odin:256](src/emit_llvm_runtime.odin#L256), [361](src/emit_llvm_runtime.odin#L361)) and takes no `Checker`; it belongs there, as a private helper.
-- [check_expr.odin:3044](src/check_expr.odin#L3044) `check_struct_literal`: the omitted-field loop is a separate job; extracting `check_omitted_fields` leaves a shorter procedure once the two element arms are merged.
-
-**Comments**
-
-- [check_expr.odin:3036](src/check_expr.odin#L3036): "as a rejected array literal has none" is false; line 3137 returns with the type intact. Drop the clause, or make the array case match.
-- [check_expr.odin:3296](src/check_expr.odin#L3296): delete "`values` may stop short of an array's length"; it no longer can.
-- [check_expr.odin:3447](src/check_expr.odin#L3447): stale, since a slice takes the `.Nil` arm above. Write "All-zero fields: a nil view, or an empty container."
-- [check_expr.odin:2402](src/check_expr.odin#L2402): repeats the rule at lines 2355-2358 and 2426-2427. Write "Shared by `a << b` and `a <<= b`; the compound form checks its own operand here rather than against the destination's type."
-- [check_expr.odin:3520](src/check_expr.odin#L3520): history in the last sentence. Write "A typed constant scalar, such as `T(0)` in a generic body, folds to the vector; an unfixed one folds below."
-- [check_expr.odin:4087](src/check_expr.odin#L4087): a note attached to no code. Delete it, or move it to the file header.
-- [check_expr.odin:3587](src/check_expr.odin#L3587): "Should not arise" is wrong, per the first bug above; remove it with the fix.
 
 ### src/const_ops.odin
 
@@ -4227,7 +4100,6 @@ Readable and well scoped, with no dead symbols, but `check_simd_binary` skips op
 - `BUG-simd-1` **medium** [simd.odin:199](src/simd.odin#L199) `check_simd_binary`: any operand that is a vector ends here (dispatch at [check_expr.odin:2238](src/check_expr.odin#L2238)), so no user overload is tried; design.md "Operator lookup and overload resolution" says one is found where no built-in exists. *Confirmed: Reproduced: `m * v` and `v + m` give L0686 with matching operator overloads, while `v += m` compiles and runs (prints 3.0). check_binary sends any vector operand to check_simd_binary; design.md says an overload is found where no built-in exists. Nothing recorded.*
   Scenario: with `operator(*) proc(m: Mat, v: Simd(f32, 4))`, `m * v` gives L0686, as does `v + m`, while `v += m` compiles through the same overload; float `v % v` is also closed to overloads.
   Fix: enter only when the built-in is defined for these operands; otherwise call `check_user_binary`, then report L0686.
-- `BUG-simd-2` **medium** [simd.odin:318](src/simd.odin#L318) `simd_splat_operands`: a typed constant skips the lane check that a runtime scalar gets, and [check_expr.odin:3523](src/check_expr.odin#L3523) converts it with `convert_const`; design.md "Construction and conversion" splats only a lane-typed scalar. *Confirmed: Reproduced: f32_vec + i32(1), f32_vec + f64(0.1), i32_vec + i64(5) and a: Simd(f32,4) = i32(1) compile and run, while a runtime i32 is L0686 and x: f32 = i32(1) is L0310. design.md allows only a scalar of the lane type to splat; no gap is recorded.*
   Scenario: `f32_vec + i32(1)`, `f32_vec + f64(0.1)`, `i32_vec + i64(5)` and `a: Simd(f32, 4) = i32(1)` compile, though `x: f32 = i32(1)` is L0310.
   Fix: in `materialize`, require a typed constant to be assignable to the lane type before converting it.
 - `BUG-simd-3` **low** [simd.odin:362](src/simd.odin#L362) `check_simd_unary`: it never folds, so `-C` on a constant vector is not `is_const` and `reject_negative_count_lanes` cannot see it; design.md "Lane-wise operators" makes a constant negative lane an error. *Not verified.*
@@ -4243,7 +4115,6 @@ Readable and well scoped, with no dead symbols, but `check_simd_binary` skips op
 
 **Simplification**
 
-- [simd.odin:177](src/simd.odin#L177) `check_simd_index`: the `through_pointer` block is `inherit_capability` ([check_expr.odin:991](src/check_expr.odin#L991)) with the same assignments; drop its file-private marking and call it. (about 6 lines)
 - [simd.odin:576](src/simd.odin#L576) `simd_written_fold`: lines 576-593 become `enum_member_by_value` ([check.odin:4497](src/check.odin#L4497)) for the name, then `reflect.enum_from_name(Simd_Fold, name)` for the fold. (about 14 lines)
 - [simd.odin:438](src/simd.odin#L438) `check_simd_builtin`: the `[dynamic]Expr` threaded through three procedures only ever holds `args[0]`, or all three for select; build the slice once after the switch and drop the `bound` parameters. (about 6 lines)
 - [simd.odin:324](src/simd.odin#L324) `simd_splat_operands`: materialize a runtime scalar at `vector` as well, so [check_expr.odin:3510](src/check_expr.odin#L3510) records `splat_from`; the separate "left at the element type" convention goes, along with the emitter's `simd_operand` and its type parameters ([emit_llvm_simd.odin:10](src/emit_llvm_simd.odin#L10)). (about 5 lines here, 10 in the emitter)

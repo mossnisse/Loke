@@ -278,6 +278,7 @@ set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool, resu
 		v.value_category = .Place
 		v.addressable = true
 		v.assignable = true
+		v.immutable = .None
 	}
 }
 

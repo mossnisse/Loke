@@ -10,6 +10,20 @@ checklist.
 
 ### Breaking changes
 
+- A distinct type converts only as written in more places
+  ([Distinct types](design.md#distinct-types)): `r: rawptr = P(&n)` with `P :: distinct ^int` is now
+  `L0310`, and `S("a") + view` and `S("a") == T("b")` with distinct strings are `L0354`. `a && b` on
+  a `distinct bool` is `L0318`, as `!a` was `L0317`. `d: D = 1 << n` with `D :: distinct int` is
+  `L0310`, as `D(1) << n` was `L0318`. Upgrade by writing the conversion.
+- Only a scalar of the lane type splats, constant or not
+  ([SIMD vectors](design.md#simd-vectors)): `v: Simd(f32, 4) = N` with `N : i64 : 3`, and
+  `f32_vector + i32(1)`, are now `L0310`. They compiled, converting the constant. Upgrade by writing
+  the lane type, `f32(N)`.
+- An array literal's key must have an integer or rune type, as an index does
+  ([Fixed arrays](design.md#fixed-arrays)): `[2]int{C.B = 1}` with an enum `C` is now `L0362`.
+  Upgrade by writing `int(C.B)`.
+- A constant zero divisor of a rune is `L0319` ([Integer operators](design.md#integer-operators)):
+  `r % 0` and `r /= 0` compiled and panicked at run time.
 - A destructuring assignment to a destination that would view or splat its field, such as
   `v, n = record` with a `string` field and a `string_view` `v`, is now `L0310`
   ([Destructuring](design.md#destructuring)). It compiled, and wrote the field's bytes past the
@@ -1333,6 +1347,31 @@ checklist.
 - A compile-time `unsafe.transmute` counts what it builds against the evaluator's memory limit, and
   builds one integer per scalar rather than several per byte: a compile-time loop over a 4 KB array
   peaks at 26 MB rather than 109 MB.
+- Arithmetic over a runtime choice of constants takes the type its context gives
+  ([Conditional expression](design.md#conditional-expression)):
+  `y: u8 = (1 if c() else 2) + 1`, with `*`, unary `-` and `~`, or at a `u8` argument, reached clang
+  and failed `L0403`. `("a" if c() else "b") + "c"` is a `string`, and comparing such a string works;
+  both failed in clang too. A left shift gives its unfixed operand the type expected, even with a
+  runtime choice, or a rune: `r: rune = 1 << n` was `L0310`. A runtime choice as a shift count is an
+  `int`, where `a << (1 if c() else 2)` was `L0356`.
+- A comparison accepts operands either of which is assignable to the other, as
+  [Comparison operators](design.md#comparison-operators) says: `p == r` with a `^int` and a `rawptr`,
+  and a labelled record against the unlabelled one with its field types, were `L0354`.
+- `pp[i]`, with `pp` a pointer to a C pointer, indexes through the C pointer. It reached clang and
+  failed `L0403` ([C pointers](design.md#c-pointers)).
+- `&mut a[lo:hi]` slices any mutable array place ([Slices](design.md#slices)): an element of a C
+  pointer, a map element, or an `inout` `operator([])` result was `L0359` or `L0477`.
+- A field a box's payload promotes beats the box's own member, as a declared one does:
+  `box(Outer{...}).clone` with a `using` field holding `clone` was `L0408`
+  ([Owned values](design.md#owned-values)). `b(args)` finds `call` through a box and then a pointer,
+  as `b.call(args)` does, where `Box(^T)` was `L0320`
+  ([Calling a value](design.md#calling-a-value)).
+- An array literal is checked by what it lists, not its length
+  ([Fixed arrays](design.md#fixed-arrays)): `x := [1 << 33]u8{1}` crashed the compiler, and
+  `a: [2000000]u8 = {1500000 = 1}` was `L0361`, though only a `[?]T` has its length set by its keys.
+- `D([dynamic]int{})` and `M(map[int]int{})` convert an empty container literal to a distinct type,
+  which was `L0373` ([Distinct types](design.md#distinct-types)).
+- A condition that cannot be `bool`, as in `1 if 5 else 2`, is reported once rather than twice.
 - A distinct type over a union stores its variants as the union does. Its tag used to overwrite the
   payload, so `D.a(9)` read back as `.a(0)` and a reference payload was corrupted. `==` on such a
   type now compiles rather than failing in clang, and a constant comparison tells two variants with

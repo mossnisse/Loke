@@ -1,0 +1,28 @@
+// design.md "Owned values" and "Calling a value": a field reached through a box
+// beats the box's own member whether it is declared or promoted, and `b(args)`
+// finds `call` through a box and then a pointer, as `b.call(args)` does.
+package main;
+
+import "core:fmt";
+
+Inner :: struct { clone: int }
+Outer :: struct { using inner: Inner }
+Direct :: struct { clone: int }
+
+Callable :: struct { n: int }
+
+impl Callable {
+	call :: proc(self, x: int) -> int { return self.n + x; }
+}
+
+main :: proc() {
+	promoted := box(Outer{inner = Inner{clone = 3}});
+	declared := box(Direct{clone = 4});
+	fmt.println(promoted.clone, declared.clone);
+
+	target := Callable{n = 1};
+	through_pointer := box(&target);
+	fmt.println(through_pointer.call(1), through_pointer(1));
+	direct := box(Callable{n = 2});
+	fmt.println(direct.call(1), direct(1));
+}

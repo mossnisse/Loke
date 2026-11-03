@@ -15,6 +15,5 @@ main :: proc() {
 	f: proc() -> (int, bool) = labelled;
 	a, b := 1, 2;
 	v := (a, b);
-	same := labelled() == two();
-	_ = l; _ = m; _ = f; _ = v; _ = same;
+	_ = l; _ = m; _ = f; _ = v;
 }

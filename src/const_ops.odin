@@ -7,6 +7,7 @@ import "base:intrinsics"
 import "core:math"
 import "core:mem"
 import "core:strings"
+import "core:unicode/utf8"
 
 Const_Kind :: enum {
 	Invalid,
@@ -1037,4 +1038,180 @@ const_from_storage :: proc(c: ^Compiler, storage: mem.Allocator, bytes: []u8, wr
 		return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}, .Folded
 	}
 	return {}, .Unfoldable
+}
+
+// Converts a constant to a target type. Only an `explicit` `T(v)` turns a float
+// into an integer, truncating it; an implicit conversion refuses even an
+// integral float.
+convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
+	storage := value_allocator(c, allocator)
+	info := underlying_info(c, target)
+	if info == nil {
+		return value, false
+	}
+	// A typed zero such as an empty slice shares `.Nil` with the written `nil`;
+	// the sites converting an untyped constant refuse `nil` for other types.
+	if value.kind == .Nil {
+		return value, info.kind == .Untyped_Nil || type_accepts_nil(c, target) || zero_is_nil(c, target)
+	}
+	#partial switch info.kind {
+	case .Untyped_Int, .Untyped_Rune:
+		if value.kind == .Integer || value.kind == .Rune {
+			return Const_Value{kind = info.kind == .Untyped_Rune ? .Rune : .Integer, integer = value.integer}, true
+		}
+	case .Untyped_Float:
+		if value.kind == .Float {
+			return value, true
+		}
+		if value.kind == .Integer || (value.kind == .Rune && explicit) {
+			converted, fits := bi_to_float(storage, value.integer, 64)
+			return fits ? float_const(converted, 64) : value, fits
+		}
+	case .Untyped_Bool, .Bool:
+		if value.kind == .Boolean {
+			return value, true
+		}
+	case .Untyped_String, .CString_View:
+		if value.kind == .String {
+			return value, true
+		}
+	// A `string` always holds valid UTF-8 (design.md "string type"). It is checked
+	// after folding, so `"\xc3" + "\xa9"` is the `é` it spells.
+	case .String, .String_View:
+		if value.kind == .String {
+			return value, utf8.valid_string(value.text)
+		}
+	case .Enum:
+		// Retyping a constant must never manufacture a non-variant. Source-type
+		// checks at conversion and generic-binding sites enforce enum identity.
+		return value, value.kind == .Integer && enum_member_by_value(c, target, value) != INVALID_SYMBOL
+	case .Int:
+		bits, signed := type_bits(c, target), type_signed(c, target)
+		#partial switch value.kind {
+		case .Integer, .Rune:
+			if !bi_fits(storage, value.integer, bits, signed) {
+				return value, false
+			}
+			return Const_Value{kind = .Integer, integer = value.integer}, true
+		case .Float:
+			// design.md "Implicit type conversions": a float never becomes an
+			// integer implicitly, even when it is integral.
+			if !explicit {
+				return value, false
+			}
+			// The interval the runtime conversion checks (design.md "Type
+			// conversion"); NaN and infinities fail it.
+			limit := power_of_two(int(bits) - (signed ? 1 : 0))
+			if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
+				return value, false
+			}
+			truncated, _, ok := bi_from_f64_trunc(storage, value.float)
+			if !ok {
+				return value, false
+			}
+			if !bi_fits(storage, truncated, bits, signed) {
+				return value, false
+			}
+			return Const_Value{kind = .Integer, integer = truncated}, true
+		}
+	case .Rune:
+		#partial switch value.kind {
+		case .Integer, .Rune:
+			if !bi_fits(storage, value.integer, 32, true) {
+				return value, false
+			}
+			return Const_Value{kind = .Rune, integer = value.integer}, true
+		}
+	case .Float:
+		#partial switch value.kind {
+		case .Float:
+			// Kept as is, so a signalling NaN is not quieted.
+			if value.float_bits == info.bits {
+				return value, true
+			}
+			// design.md "Number literals": a finite constant may not round to an
+			// infinity. A literal's decimal value is rounded once, not through f64.
+			converted := float_const(value.float, info.bits)
+			if exact, exact_ok := decimal_to_float(storage, value.text, info.bits); exact_ok {
+				converted = float_const(exact, info.bits)
+			}
+			return converted, !math.is_inf(converted.float) || math.is_inf(value.float)
+		case .Integer, .Rune:
+			// design.md "Implicit type conversions": a rune constant never
+			// becomes a float implicitly.
+			if value.kind == .Rune && !explicit {
+				return value, false
+			}
+			converted, fits := bi_to_float(storage, value.integer, info.bits)
+			return fits ? float_const(converted, info.bits) : value, fits
+		}
+	case .Typeid, .Type:
+		// A folded `typeid_of(T)` keeps the type it identifies; the value's own
+		// type, checked before this, is what separates it from a type.
+		if value.kind == .Type {
+			return value, true
+		}
+	case .Simd:
+		// design.md "SIMD vectors": each lane converts as a scalar would, and a
+		// scalar splats into every lane.
+		if value.kind == .Aggregate {
+			if value.aggregate == nil || len(value.aggregate.elements) != int(info.count) {
+				return value, false
+			}
+			if value.aggregate.type == target {
+				return value, true
+			}
+		}
+		elements := make([]Const_Value, info.count, storage)
+		for index in 0 ..< int(info.count) {
+			lane := value
+			if value.kind == .Aggregate {
+				lane = value.aggregate.elements[index]
+			}
+			converted, fits := convert_const(c, lane, info.element, explicit, allocator)
+			if !fits {
+				return value, false
+			}
+			elements[index] = converted
+		}
+		aggregate := new(Const_Aggregate, storage)
+		aggregate.type = target
+		aggregate.elements = elements
+		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
+	case .Struct, .Array, .Union, .Dynamic_Array, .Map:
+		return retype_aggregate(c, value, target, explicit, storage)
+	}
+	return value, false
+}
+
+// A struct, array, union, or empty container constant keeps its representation when it converts
+// to its own type, when a labelled record drops its labels, or, written out,
+// between a distinct type and its underlying one (design.md "Distinct types").
+@(private = "file")
+retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, storage: mem.Allocator) -> (Const_Value, bool) {
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return value, false
+	}
+	source := value.aggregate.type
+	if source == target {
+		return value, true
+	}
+	relabelled := record_drops_labels_to(c, source, target)
+	if union_widens_to(c, source, target) {
+		return widen_const(c, value, source, target, storage), true
+	}
+	if !relabelled && (!explicit || type_underlying(c, source) != type_underlying(c, target)) {
+		return value, false
+	}
+	retyped := new_clone(value.aggregate^, storage)
+	retyped.type = target
+	return Const_Value{kind = .Aggregate, aggregate = retyped}, true
+}
+
+// Is `.Nil` the zero value of `type`? A reference's zero_const is `.Nil` too,
+// but a reference has no zero.
+@(private = "file")
+zero_is_nil :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	zero, ok := zero_const(c, type, false)
+	return ok && zero.kind == .Nil && type_has_zero(c, type)
 }

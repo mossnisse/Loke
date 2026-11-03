@@ -1,0 +1,16 @@
+// design.md "Distinct types": converting keeps the representation, and an empty
+// container literal is a constant, so it converts as one.
+package main;
+
+import "core:fmt";
+
+D :: distinct [dynamic]int;
+M :: distinct map[int]int;
+
+main :: proc() {
+	d := D([dynamic]int{});
+	m := M(map[int]int{});
+	back := ([dynamic]int)(D([dynamic]int{}));
+	back.append(1);
+	fmt.println(([dynamic]int)(move(d)).len(), (map[int]int)(move(m)).len(), back);
+}

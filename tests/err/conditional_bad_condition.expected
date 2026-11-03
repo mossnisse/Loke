@@ -1,0 +1,7 @@
+L0352
+@5:12
+5 is not representable by `bool`
+
+L0355
+@7:12
+a condition must be `bool`, found `int`

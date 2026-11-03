@@ -301,7 +301,9 @@ universe instead of synthesizing duplicate types. These include `Unit`,
 ### Checking and overload resolution
 
 `check.odin` handles declarations, signatures, statements, and type syntax.
-`check_expr.odin` handles contextual typing, conversions, places, and folding;
+`check_expr.odin` handles contextual typing, implicit conversion to a
+destination, places, and folding; `check_composite.odin` handles composite
+literals; `conversions.odin` says which types convert to which;
 `check_calls.odin` handles call forms and argument binding. Expected types guide
 untyped constants, implicit enum members, `nil`, and typeless literals.
 
@@ -870,7 +872,7 @@ be file-private. Paths below are relative to `src/`.
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
 | `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
 | `source.odin` | `Compiler`, sources, spans, and diagnostics; destruction lives in `semantic.odin`. |
-| `lexer.odin` | Tokens and lexical scanning. |
+| `lexer.odin` | Tokens, lexical scanning, and decoding a string or rune literal's spelling. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
 | `migrate.odin` | `-migrate` and `-migrate-check`: rewrites earlier spellings, proving each result parses to the same tree. |
@@ -881,8 +883,8 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `check.odin`, `check_expr.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expression dispatch/conversions/folding, call checking/argument binding, and compiler-owned primitive call contracts. |
-| `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
+| `check.odin`, `check_expr.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expression dispatch/materialization/folding, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
+| `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, zero-value rules and constants, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |

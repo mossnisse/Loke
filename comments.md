@@ -2454,6 +2454,19 @@ writing.
 
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
 
+### An operator over a runtime choice of constants runs at the destination's type
+
+`y: u8 = (1 if c else 2) + 1` could have been given the default type, `int`, and
+been rejected, or computed at `int` and converted. Passing the type down to the
+constants keeps the rule a conditional already follows: a constant has no type
+until context gives it one, so `(1 if c else 2) + 1` should not be less welcome
+than `1 + 1`. The price is that `(1 if c else 3) / 2` in an `f64` is `0.5` or
+`1.5`, where the constant `3 / 2` folds as integers to `1`. That difference is what
+"runs at that type" says: the constant is exact arithmetic finished before any
+type exists, and the runtime one has to happen at some type. An integer-only
+operator at a float destination is an error rather than a silent `int` computation,
+so the two can never disagree in the other direction.
+
 ## Standard-library API choices
 
 Public contracts live in [standard-library.md](standard-library.md). The package

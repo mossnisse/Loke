@@ -1,0 +1,14 @@
+// design.md "Construction and conversion": only a scalar of the lane type splats,
+// constant or not.
+package main;
+
+N : i64 : 3;
+
+main :: proc() {
+	a: Simd(f32, 4) = N;
+	b: Simd(f32, 4) = f64(1);
+	v := Simd(f32, 4){};
+	c := v + i32(1);
+	d := Simd(i32, 4){} + i64(5);
+	_ = a; _ = b; _ = c; _ = d;
+}

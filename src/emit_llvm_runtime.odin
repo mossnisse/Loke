@@ -1721,3 +1721,26 @@ emit_forwarding_call :: proc(
 	emit_forward_ret(e, "call", sret || symbol.result == INVALID_TYPE ? "void" : result_type, callee, joined)
 	fmt.sbprintln(&e.b, "}")
 }
+
+// The constant a static-duration binding starts with: its own initializer, or
+// for `a, b := record` its field of the folded record (design.md
+// "Destructuring").
+@(private = "file")
+binding_initial_const :: proc(c: ^Compiler, d: ^Decl, position: int) -> (Const_Value, bool) {
+	if !d.destructure.active {
+		if position < len(d.values) && d.values[position] != nil && is_const_expr(d.values[position]) {
+			return expr_base(d.values[position]).const_value, true
+		}
+		return {}, false
+	}
+	if len(d.values) != 1 || !is_const_expr(d.values[0]) || position >= len(d.destructure.fields) {
+		return {}, false
+	}
+	record := expr_base(d.values[0]).const_value
+	field := symbol_of(c, d.destructure.fields[position])
+	if record.kind != .Aggregate || record.aggregate == nil || field == nil ||
+	   int(field.index) >= len(record.aggregate.elements) {
+		return {}, false
+	}
+	return record.aggregate.elements[field.index], true
+}

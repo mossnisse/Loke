@@ -3460,6 +3460,10 @@ them before ranking:
    assignable.
 2. Everywhere else the value overload is preferred, even for a mutable receiver.
 
+The operand of [`&mut a[lo:hi]`](#slices) is a place position when an `inout`
+overload exists. With only a value overload it stays a value, which a result
+carrying a `[]mut T` can still slice.
+
 The same rule applies to built-in indexing of maps and dynamic arrays. Place
 position selects *which operation runs*; it never creates a missing element (see
 [Maps](#maps) for the one map form that does). A container wanting a lookup that
@@ -5419,6 +5423,19 @@ BUFFER_SIZE :: 4096 if LOKE_OS == .Windows else 8192; // a constant
 
 When the condition and selected value are constant, the result is constant. Use
 a `when` statement when the unselected branch must not be checked.
+
+When the condition is not constant and both operands are unfixed constants, the
+result is unfixed but not constant. Context gives it a type as it gives one to a
+constant, and each operand converts to that type; with no context it takes its
+default type. An operator applied to such a result is unfixed the same way: its
+operands take the type and the operator runs at that type, which it must apply
+to.
+
+```loke
+y: u8 = (1 if flag else 2) + 1;   // adds two `u8`
+z: f64 = (1 if flag else 3) / 2;  // divides two `f64`
+w: f64 = (1 if flag else 3) % 2;  // ERROR: `%` does not apply to `f64`
+```
 
 The result is a temporary that owns its value, whatever takes it. A place
 operand is copied into it under [the ownership

@@ -174,13 +174,7 @@ check_simd_index :: proc(
 
 	v.type = info.element
 	v.value_category = .Place
-	if through_pointer {
-		v.addressable, v.assignable = true, pointer_mutable
-		v.immutable = pointer_mutable ? .None : .Through_Pointer
-	} else {
-		v.addressable, v.assignable = operand.addressable, operand.assignable
-		v.immutable = operand.immutable
-	}
+	inherit_capability(&v.base, operand, through_pointer, pointer_mutable)
 	// A constant vector's lane is a constant, as `ARRAY[2]` is.
 	if operand.is_const && operand.const_value.kind == .Aggregate {
 		aggregate := operand.const_value.aggregate

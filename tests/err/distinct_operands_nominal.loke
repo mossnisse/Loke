@@ -1,0 +1,31 @@
+// design.md "Distinct types" and "Implicit type conversions": a distinct type
+// converts only as written, and its only inherited operations are comparisons.
+package main;
+
+S :: distinct string;
+T :: distinct string;
+V :: distinct string_view;
+P :: distinct ^int;
+B :: distinct bool;
+D :: distinct int;
+
+count :: proc() -> int { return 2; }
+
+main :: proc() {
+	view: string_view = "a";
+	s := S("a");
+	t := T("b");
+	_ = s + view;
+	_ = view + s;
+	_ = s + t;
+	_ = s == t;
+	v: string_view = s;
+	w: V = view;
+	n := 1;
+	r: rawptr = P(&n);
+	flag := B(true);
+	_ = flag && flag;
+	_ = flag || true;
+	d: D = 1 << count();
+	_ = v; _ = w; _ = r; _ = d;
+}

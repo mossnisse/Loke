@@ -3,6 +3,7 @@
 package lokec
 
 import "core:strings"
+import "core:unicode/utf8"
 
 Token_Kind :: enum {
 	EOF,
@@ -749,4 +750,50 @@ operator :: proc(l: ^Lexer) -> Token {
 	}
 	l.pos += 1
 	return error_token(l, lo, "L0101", "invalid character `%s`", l.src[lo:l.pos])
+}
+
+// The lexer has already validated the spelling.
+decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string, bool) {
+	if len(text) < 2 {
+		return "", false
+	}
+	body := text[1:len(text) - 1]
+	// A raw string has no escapes at all, and most others have none to decode.
+	if raw || strings.index_byte(body, '\\') < 0 {
+		return body, true
+	}
+	out := strings.builder_make(0, len(body), c.semantic_allocator)
+	for i := 0; i < len(body); {
+		if body[i] != '\\' {
+			strings.write_byte(&out, body[i])
+			i += 1
+			continue
+		}
+		value, width, problem := scan_escape(body[i:])
+		if problem != .None {
+			return "", false
+		}
+		// `\xNN` is one byte; every other escape names a code point.
+		if body[i + 1] == 'x' {
+			strings.write_byte(&out, u8(value))
+		} else {
+			strings.write_rune(&out, value)
+		}
+		i += width
+	}
+	return strings.to_string(out), true
+}
+
+// The lexer has already validated the spelling.
+decode_rune_literal :: proc(text: string) -> (value: rune, ok: bool) {
+	if len(text) < 3 || text[0] != '\'' || text[len(text) - 1] != '\'' {
+		return 0, false
+	}
+	body := text[1:len(text) - 1]
+	if body[0] != '\\' {
+		decoded, width := utf8.decode_rune_in_string(body)
+		return decoded, width == len(body)
+	}
+	decoded, width, problem := scan_escape(body)
+	return decoded, problem == .None && width == len(body)
 }

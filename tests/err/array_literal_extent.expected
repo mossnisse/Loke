@@ -1,0 +1,43 @@
+L0376
+@8:21
+element 1 of `[4]int` is set twice
+
+L0376
+@9:25
+element 2 of `[4]int` is set twice
+
+L0376
+@10:25
+element 2 of `[4]int` is set twice
+
+L0361
+@11:14
+index 5 is out of range for `[2]int`
+
+L0362
+@12:14
+an index must be an integer or rune, found `C`
+
+L0362
+@13:14
+an index must be an integer or rune, found `C`
+
+L0361
+@14:14
+index 1099511627776 is out of range
+
+L0361
+@15:14
+index 4611686018427387904 is out of range for `[2]int`
+
+L0376
+@16:20
+`[2]int` holds 2 elements
+
+L0376
+@17:25
+element 2 of `[8]int` is set twice
+
+L0376
+@17:32
+element 3 of `[8]int` is set twice

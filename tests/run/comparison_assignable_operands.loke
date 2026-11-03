@@ -1,0 +1,26 @@
+// design.md "Comparison operators": either operand may be assignable to the other.
+package main;
+
+import "core:fmt";
+
+labelled :: proc() -> (n: int, ok: bool) { return {1, true}; }
+plain :: proc() -> (int, bool) { return {1, true}; }
+
+main :: proc() {
+	n := 1;
+	m := 2;
+	p: ^int = &n;
+	q: ^mut int = &mut m;
+	r: rawptr = p;
+	c := ([^]int)(&n);
+	fmt.println(p == r, r == p, c == r, p != q);
+	fmt.println(labelled() == plain(), plain() == labelled(), labelled() != plain());
+	a: (x: int, y: int) = {1, 2};
+	b: (int, int) = {1, 3};
+	fmt.println(a == b, a < b);
+	text: string_view = "t";
+	owned: string = "t";
+	fmt.println(text == owned, owned + text);
+	chosen := p if m == 2 else r;
+	fmt.println(chosen == r);
+}

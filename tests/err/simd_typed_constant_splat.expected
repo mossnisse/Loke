@@ -1,0 +1,15 @@
+L0310
+@8:20
+cannot splat `f32` with `i64`
+
+L0310
+@9:20
+cannot splat `f32` with `f64`
+
+L0310
+@11:11
+cannot splat `f32` with `i32`
+
+L0310
+@12:24
+cannot splat `i32` with `i64`

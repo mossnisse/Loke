@@ -1,0 +1,13 @@
+// design.md "Integer operators" speaks of integers: a float divides by zero as
+// IEEE-754 says, in the compound form too.
+package main;
+
+import "core:fmt";
+
+main :: proc() {
+	f: f64 = 1;
+	f /= 0;
+	fmt.println(f);
+	g: f64 = 1;
+	fmt.println(g / 0);
+}
