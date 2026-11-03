@@ -76,11 +76,12 @@ Defer_Expansion :: struct {
 	unwinding: bool,
 }
 
-// The owners live and symbols dead at one reset point. Lifecycle registers
-// every point it walks and solves the reachable ones, so the provenance walk
-// tells an unreachable point from one the walks keyed differently, a compiler bug.
+// Whether the key's symbol is dead, and where a region ends, the owners live at
+// one reset point. Lifecycle registers every point it walks and solves the
+// reachable ones, so the provenance walk tells an unreachable point from one the
+// walks keyed differently, a compiler bug.
 Reset_Liveness :: struct {
-	dead:    []Symbol_Id,
+	dead:    bool,
 	owners:  []Symbol_Id,
 	reached: bool,
 }
@@ -153,7 +154,7 @@ Tracked_Local :: struct {
 	live_exit:          bool,
 	dead_exit:          bool,
 	conditional_assign: bool,
-	// Whether a statement that may panic finds it live.
+	// Whether a statement that may panic finds it live, or an unwind leaves it so.
 	live_at_panic:      bool,
 }
 
@@ -184,9 +185,6 @@ Flow_Graph :: struct {
 	// Lifecycle counts temporary providers until their statement boundary;
 	// provenance keeps their region tokens in `temp_providers` instead.
 	temp_provider_count: int,
-	// The borrowed temporaries a statement extends to its block's end
-	// (`mark_extended_temporaries`).
-	extended:       map[^Expr_Base]bool,
 	extended_content: map[^Expr_Base][]int,
 	// The statement a panic's unwind path leaves from, while
 	// `expansion.unwinding` says one is walked; its blocks are marked.
@@ -279,7 +277,6 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.held_owners = make([dynamic]Expr, allocator)
 	graph.panic_free = make(map[^Node_Base]bool, allocator)
-	graph.extended = make(map[^Expr_Base]bool, allocator)
 	graph.extended_content = make(map[^Expr_Base][]int, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, allocator)
 	graph.propagated_errors = make(map[^Expr_Postfix][]int, allocator)
@@ -714,7 +711,7 @@ unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit:
 	}
 	live, found := graph.k.c.cleanup_reset_dead[key]
 	assert(found, "the provenance walk reached an unwind drop the lifecycle walk did not")
-	if !live.reached || slice.contains(live.dead, id) {
+	if !live.reached || live.dead {
 		return
 	}
 	prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name), region = prov_symbol_drop_region(graph, id))
@@ -758,8 +755,8 @@ end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt
 // a deferred statement rerun in one scope and lend nothing.
 @(private = "file")
 walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends := false) {
-	if lends && graph.mode != .Lifecycle {
-		mark_extended_temporaries(graph.k.c, stmt, &graph.extended)
+	if lends && graph.mode == .Lifecycle {
+		mark_extended_temporaries(graph.k.c, stmt)
 	}
 	mark := len(graph.temp_roots)
 	providers := graph.mode == .Lifecycle ? graph.temp_provider_count : len(graph.temp_providers)
@@ -1523,7 +1520,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	// the borrow extending it may name only a field of it.
 	defer if prov {
 		if base := expr_base(e); base != nil {
-			if graph.extended[base] {
+			if base.extended {
 				graph.extended_content[base] = carried
 			}
 			if base.copied_as != INVALID_TYPE {

@@ -1,0 +1,19 @@
+L0501
+@11:27
+`exchange` takes ownership of its replacement and copies nothing, so a place is written `move(...)`, or `.clone()` for a copy
+
+L0501
+@20:27
+`exchange` takes ownership of its replacement and copies nothing, so a place is written `move(...)`, or `.clone()` for a copy
+
+L0501
+@28:32
+`exchange` takes ownership of its replacement and copies nothing, so a place is written `move(...)`, or `.clone()` for a copy
+
+L0501
+@29:33
+`exchange` takes ownership of its replacement and copies nothing, so a place is written `move(...)`, or `.clone()` for a copy
+
+L0501
+@38:27
+`exchange` takes ownership of its replacement and copies nothing, so a place is written `move(...)`, or `.clone()` for a copy

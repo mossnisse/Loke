@@ -917,7 +917,9 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
+| `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, move/drop checking, liveness, and cleanup slots. |
+| `copy_sites.odin` | Which expressions copy or transfer, and the copy-cost warnings. |
+| `extended_temporaries.odin` | Which temporaries a statement extends to its block's end. |
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, places, and the statement hooks. |
 | `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
 | `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |

@@ -32,6 +32,9 @@ Expr_Base :: struct {
 	// A copy site's source: the type a copy of this place clones at, which may
 	// run `hook(copy)`.
 	copied_as:   Type_Id,
+	// A borrowed temporary its statement extends to the block's end, or a node on
+	// the way to it (`mark_extended_temporaries`).
+	extended:    bool,
 	// This node or any child is an error node.
 	has_error:   bool,
 }

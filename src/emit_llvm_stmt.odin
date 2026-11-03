@@ -33,20 +33,14 @@ emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 		// A block statement's full-expression boundary, which also holds an initial
 		// statement's temporaries; a loop update declares its own.
 		push_temporaries(e)
-		emit_stmt(e, stmt, lends = true)
+		emit_stmt(e, stmt)
 		pop_temporaries(e)
 	}
 }
 
-// A statement that `lends` is one of its block's own, so a temporary a local's
-// value borrows is dropped with the block (design.md "Temporaries and procedure
-// boundaries"); a `for` update and a deferred statement lend nothing.
 @(private)
-emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
+emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 	debug_mark_location(e, stmt_span(stmt))
-	if lends {
-		mark_extended_temporaries(e.c, stmt, &e.extended)
-	}
 	switch s in stmt {
 	case ^Stmt_Error:
 
@@ -511,15 +505,15 @@ displace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string
 	if !emit_lifecycle(e, type).managed {
 		return {}
 	}
-	flag := ""
+	symbol := INVALID_SYMBOL
 	if ident, is_ident := target.(^Expr_Ident); is_ident {
-		flag = drop_flag_of(e, ident.symbol)
+		symbol = ident.symbol
 	}
 	out := Displaced{type = type}
 	state := index < len(s.destination_live) ? s.destination_live[index] : Liveness.Live
 	if state != .Dead {
-		if state != .Live && flag != "" {
-			out.live = load(e, "i1", flag)
+		if state != .Live && drop_flag_of(e, symbol) != "" {
+			out.live = load(e, "i1", unwind_flag_address(e, symbol))
 		}
 		out.aside = alloca(e, llvm_type(e, type))
 		copy_bytes(e, out.aside, address, type_size(e.c, type))
@@ -590,7 +584,7 @@ inserting_map_index :: proc(target: Expr) -> ^Expr_Index {
 push_init_scope :: proc(e: ^Emitter, init: Stmt) {
 	push_scope(e, nil)
 	if init != nil {
-		emit_stmt(e, init, lends = true)
+		emit_stmt(e, init)
 	}
 }
 
@@ -955,7 +949,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 			// of it transfers nothing, and a borrowed binding names storage its
 			// subject still owns (design.md "Switch ownership").
 			if !value.clone_on_return && emit_lifecycle(e, e.result_type).managed {
-				if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
+				if ident, is_ident := value.expr.(^Expr_Ident); is_ident && expression_is_borrowed_place(ident) {
 					if sym := symbol_of(e.c, ident.symbol); sym != nil && sym.borrowed_binding == .None &&
 					   emit_lifecycle(e, sym.type).managed {
 						kill_place(e, ident.symbol)

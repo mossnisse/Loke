@@ -577,7 +577,7 @@ report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 			continue
 		}
 		if expression_is_borrowed_place(argument) {
-			report_copy_cost(k, .Argument, expr_span(argument), argument, type)
+			record_copy(k, .Argument, expr_span(argument), argument, type)
 		}
 	}
 }
@@ -884,7 +884,7 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0410", "a conversion to `%s` takes exactly one plain value argument", type_name(k.c, target))
 		v.type = INVALID_TYPE
 		return
@@ -971,7 +971,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		// both it and the result would own one allocation.
 		clones = classify_copy(k, operand, source, .Conversion)
 		if clones {
-			report_copy_cost(k, .Conversion, expr_span(operand), operand, source)
+			record_copy(k, .Conversion, expr_span(operand), operand, source)
 		}
 	}
 	v.operation = Call_Conversion{clones = clones}

@@ -137,6 +137,11 @@ builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	return true
 }
 
+// One value, written by position with no marker.
+has_one_plain_argument :: proc(v: ^Expr_Call) -> bool {
+	return len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value
+}
+
 // Whether the call passes exactly `wanted` positional values, reporting the
 // first thing wrong. The call stays invalid until the caller sets its result type.
 builtin_arity_ok :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, code: string, wanted: int) -> bool {

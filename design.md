@@ -5790,8 +5790,9 @@ once, then the replacement is evaluated completely. If that fails or panics, the
 destination remains unchanged. Otherwise the old value is returned and the
 replacement is installed without an observable dead state.
 
-An owning variable used as `replacement` must use `move(source)` to transfer
-ownership. The result follows ordinary ownership rules, including temporary
+A managed place used as `replacement` is rejected, since nothing is cloned: an
+owning variable must use `move(source)` to transfer ownership, and any other
+place spells its copy, `place.clone()`. The result follows ordinary ownership rules, including temporary
 cleanup if ignored.
 
 To make two elements of a mutable slice trade places, use

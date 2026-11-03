@@ -1,0 +1,58 @@
+// design.md "Exchange": the replacement is stored as it is, so an owning place
+// spells how it gives up a value. Storing one unmoved left two owners of it.
+package main; import "core:fmt";
+
+@(move_only) Res :: struct { id: int }
+Holder :: struct { items: [dynamic]int, name: string }
+
+variables :: proc() {
+	a: [dynamic]int = {};
+	b: [dynamic]int = {};
+	old := exchange(inout a, b);
+	moved := exchange(inout a, move(b));
+	made := exchange(inout a, {});
+	fmt.println(old.len(), moved.len(), made.len());
+}
+
+move_only_variable :: proc() {
+	a := Res{1};
+	b := Res{2};
+	old := exchange(inout a, b);
+	moved := exchange(inout a, move(b));
+	fmt.println(old.id, moved.id);
+}
+
+// `move` takes only a variable, so a part of one is cloned, or moved out first.
+parts :: proc(h: Holder, p: ^Holder) {
+	kept: [dynamic]int = {};
+	first := exchange(inout kept, h.items);
+	second := exchange(inout kept, p^.items);
+	third := exchange(inout kept, h.items.clone());
+	fmt.println(first.len(), second.len(), third.len());
+}
+
+// A `string` owns too, though its copy only retains.
+text :: proc() {
+	a: string = "a";
+	b: string = "b";
+	old := exchange(inout a, b);
+	fmt.println(old);
+}
+
+// Nothing here owns, and a borrowing view is not an owner.
+unmanaged :: proc(values: []int) {
+	a := 1;
+	b := 2;
+	old := exchange(inout a, b);
+	view: []int = {};
+	before := exchange(inout view, values);
+	fmt.println(old, before.len());
+}
+
+main :: proc() {
+	variables();
+	move_only_variable();
+	parts(Holder{}, &Holder{});
+	text();
+	unmanaged({});
+}

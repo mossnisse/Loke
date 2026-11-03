@@ -18,7 +18,8 @@ consuming :: proc(path: string_view) -> Result(int, Error_Code) {
 	return .ok(name.len() + bytes);
 }
 
-// Cloning: `doc` stays live, so `name` is a copy of its string.
+// Cloning: `doc` stays live, so `name` is a copy of its string, which retains and
+// is not costly.
 cloning :: proc(path: string_view) -> Result(int, Error_Code) {
 	doc := read_document(path) or_return;
 	name, bytes := doc;
@@ -40,8 +41,15 @@ discarded_move_only :: proc(h: Holder) -> int {
 	return count;
 }
 
+// A container's copy may allocate, so this clone is one a warning names.
+Tagged :: struct { tags: [dynamic]int, count: int }
+cloning_tags :: proc(t: Tagged) -> int {
+	tags, count := t;
+	return tags.len() + count;
+}
+
 main :: proc() {
-	fmt.println(consuming("abc"), cloning("abc"));
+	fmt.println(consuming("abc"), cloning("abc"), cloning_tags(Tagged{}));
 	fmt.println(held(Holder{token = Only{1}, count = 2}));
 	fmt.println(discarded_move_only(Holder{token = Only{3}, count = 4}));
 }

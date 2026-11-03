@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A managed place as the replacement of `exchange` is now `L0501`
+  ([Exchange](design.md#exchange)). `exchange(inout a, b)` on a `[dynamic]int` stored `b`'s bits
+  unmoved, so both owned one allocation and the program corrupted its heap. Upgrade by writing
+  `move(b)`, or `b.clone()` to keep it, as a part such as `h.items` must.
 - A `slot` whose written `self` type is not the interface's subject is `L0442`
   ([Interface bodies](design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
   `interface($T: type)` compiled and was never met. Upgrade by writing the subject, or no type.
@@ -1409,6 +1413,13 @@ checklist.
   it as a `string_view` and failed in clang with `L0403`.
 - A map literal keeps one set of slots for all its entries, so a 300-entry `map[int]L` with a 5 KB `L`,
   or a 30000-entry `map[string]string`, no longer overflows the stack at `-opt=none`.
+- A deferred assignment on a panic's unwind now drops the value it replaces where that value is
+  live, reads whether it is, and leaves the new value to be dropped
+  ([Assignment statements](design.md#assignment-statements)). The old value could leak, a hook
+  could run on a value already dropped, and the replacement could leak.
+- `-copy-cost` no longer warns of a copy of a move-only type, beside the error that it cannot be
+  copied, or by size of a `string` or `Shared(T)`, whose copy only retains
+  ([Copy-cost diagnostics](design.md#copy-cost-diagnostics)).
 - A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
   by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
 - `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`

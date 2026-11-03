@@ -5,7 +5,6 @@
 package lokec
 
 import "core:fmt"
-import "core:slice"
 
 // A local holding a provider ends its region when it is cleaned up, dropped,
 // moved anywhere but a new local or a result, or assigned over; every owner the
@@ -26,7 +25,7 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	live, found := graph.k.c.cleanup_reset_dead[key]
 	assert(found, "the provenance walk reached a provider end the lifecycle walk did not")
 	// An unreachable exit ends nothing, and a consumed value has no region left.
-	if !live.reached || slice.contains(live.dead, id) {
+	if !live.reached || live.dead {
 		return
 	}
 	prov_provider_use(graph, id, span)

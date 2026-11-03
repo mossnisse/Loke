@@ -510,7 +510,7 @@ main :: proc() {}`) { return }
 	for entry, index in graph.input.storages {
 		if entry.key.temporary == nil || underlying_kind(&p.c, entry.type) != .Dynamic_Array { continue }
 		if entry.key.expansion.deferred == nil { continue }
-		testing.expect(t, graph.extended[entry.key.temporary], "an extended deferred owner needs scope cleanup")
+		testing.expect(t, entry.key.temporary.extended, "an extended deferred owner needs scope cleanup")
 		if entry.key.expansion.exit == nil { normal = Storage_Id(index) } else { abrupt = Storage_Id(index) }
 	}
 	testing.expect(t, normal != 0 && abrupt != 0 && normal != abrupt, "evaluations in different defer expansions need separate storage")

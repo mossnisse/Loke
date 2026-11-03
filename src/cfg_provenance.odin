@@ -4936,7 +4936,7 @@ prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
 @(private)
 prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr, content: []int) -> Root_Id {
 	span := expr_span(e)
-	extends := graph.extended[expr_base(e)]
+	extends := expr_base(e).extended
 	storage := prov_storage_id(graph, Written_Storage{temporary = expr_base(e), type = prov_type(graph, e)})
 	root := prov_root_for_storage(graph, storage)
 	if extends {

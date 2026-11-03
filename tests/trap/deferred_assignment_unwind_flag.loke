@@ -1,0 +1,29 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Assignment statements": a deferred assignment reached on a panic's
+// unwind with its destination live on only some paths reads the runtime flag, so
+// the value `drop` already ended is not dropped again.
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		fmt.println("drop", self.id);
+	}
+}
+
+may_panic :: proc(fail: bool) {
+	if (fail) { panic("failed"); }
+}
+
+check :: proc(early: bool) {
+	value := Tracked{1};
+	defer value = Tracked{2};
+	if (early) { drop(value); }
+	may_panic(true);
+	fmt.println("unreached");
+}
+
+main :: proc() {
+	check(true);
+}

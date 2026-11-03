@@ -1,0 +1,40 @@
+// design.md "Copy-cost diagnostics": a copy that retains storage, of a `string` or
+// a `Shared(T)`, is not costly, however low the threshold. A move-only type has no
+// copy to cost, so the error that it cannot be copied is the whole report, even
+// where it holds a container.
+package main; import "core:fmt";
+
+@(move_only) Holding :: struct { data: [dynamic]int }
+Carrier :: struct { held: Holding }
+Pair :: struct { held: Holding, count: int }
+
+retained :: proc() {
+	s := shared(1);
+	t := s;
+	a: string = "hello";
+	b := a;
+	fmt.println(s.get()^, t.get()^, a, b);
+}
+
+move_only_literal :: proc() -> Carrier {
+	a := Holding{};
+	return Carrier{held = a};
+}
+
+move_only_destructure :: proc() -> int {
+	whole := Pair{};
+	held, count := whole;
+	return held.data.len() + count;
+}
+
+move_only_binding :: proc() {
+	a := Holding{};
+	b := a;
+	fmt.println(a.data.len(), b.data.len());
+}
+
+main :: proc() {
+	retained();
+	fmt.println(move_only_literal().held.data.len(), move_only_destructure());
+	move_only_binding();
+}

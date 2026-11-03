@@ -96,7 +96,7 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 			return
 		}
 		if v.borrows {
-			report_copy_cost(k, .Or_Else, expr_span(v.value), v.value, payload)
+			record_copy(k, .Or_Else, expr_span(v.value), v.value, payload)
 		}
 		v.type = payload
 		return
@@ -114,7 +114,7 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 	// design.md "Operator ownership": a place operand's success payload is
 	// copied out, and only that copy is reported.
 	if v.borrows {
-		report_copy_cost(k, .Or_Else, expr_span(v.value), v.value, payload)
+		record_copy(k, .Or_Else, expr_span(v.value), v.value, payload)
 	}
 	v.type = payload
 }
@@ -181,7 +181,7 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		}
 		// Either payload may be copied out of a place, so the report names the
 		// whole fallible union.
-		report_copy_cost(k, .Or_Return, expr_span(v.operand), v.operand, base.type)
+		record_copy(k, .Or_Return, expr_span(v.operand), v.operand, base.type)
 	}
 
 	success := shape.info.variants[shape.success]

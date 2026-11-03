@@ -83,8 +83,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 7. **Holes in `foreach` safety.** The `indexed()` counter and a per-step projected record are marked lent ([iterate.odin:856](src/iterate.odin#L856), [iterate.odin:990](src/iterate.odin#L990)), so `return &e` compiles; public iterator fields let safe code segfault ([iterate.odin:172](src/iterate.odin#L172)). BUG-iterate-1, -3, -2. About 25 lines.
 
-8. **Safe code the checker accepts and then corrupts.** `exchange` of an unmoved owned place ([lifecycle.odin:194](src/lifecycle.odin#L194)). BUG-lifecycle-1. About 20 lines.
-
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
 11. **Wrong inferred effects.** Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-global_effects-1, -2, -3. Merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
@@ -127,7 +125,7 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 
 #### Failure writes that the default in `check_expr` makes unnecessary
 
-`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [lifecycle.odin](src/lifecycle.odin) 22, [text.odin](src/text.odin) 18, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
+`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [text.odin](src/text.odin) 18, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
 Shared form: assign only on success. Saves about 100 lines.
 
@@ -593,7 +591,6 @@ Small and readable, with no dead code and no algorithmic concerns. The untyped-p
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68): `box_type_callee`, `simd_callee` and `range_callee` differ only in the name. Shared form: `predeclared_type_callee(k, callee, "Box")`. (about 12 lines)
 - [box.odin:164](src/box.odin#L164) and [check_builtin.odin:586](src/check_builtin.odin#L586): the same optional allocator check with the same L0490 text. Shared form: `check_allocator_argument(k, e) -> bool`. (about 8 lines)
 - [box.odin:226](src/box.odin#L226): the three-line one-element `v.bound` also appears at lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bound_exprs(k, e)`, from `check_builtin.odin`. (about 12 lines)
-- [box.odin:97](src/box.odin#L97) and [check_calls.odin:561](src/check_calls.odin#L561): the "one positional value" test is repeated at check_calls.odin:947, enums.odin:32 and lifecycle.odin:25, 47. Shared form: `has_one_plain_argument(v)`.
 
 **Structure and boundaries**
 
@@ -1721,64 +1718,10 @@ The value-loop path is sound for elements but mishandles parts a traversal owns:
 
 The dataflow core is sound and the file is readable, but `exchange` lets an owned place through unmoved (a heap-corrupting double free) and unwind paths do not vote on deferred assignments. Much of the rest is repeated error plumbing, and the file holds four loosely related jobs.
 
-**Bugs**
-
-- `BUG-lifecycle-1` **high** [lifecycle.odin:194](src/lifecycle.odin#L194) `check_exchange_builtin`: a place replacement is neither rejected nor classified, and `emit_exchange` stores its bits, against design.md "Exchange" ("must use `move(source)`"). Scenario: `a, b: [dynamic]int; b.append(1); old := exchange(inout a, b);` compiles and dies with STATUS_HEAP_CORRUPTION; a move-only `b` drops twice. Fix: after line 194, report L0501 for a managed place replacement. *Confirmed: Reproduced: exchange(inout a, b) on [dynamic]int compiles, then exits 0xC0000374; a move-only Res prints drop 2 twice, while a = b gives L0503. No classify_copy on the replacement and no known-gaps entry; high is fair.*
-- `BUG-lifecycle-2` **medium** [lifecycle.odin:1043](src/lifecycle.odin#L1043) `report_events`: an unwind block skips the `.Assign` case, so a deferred assignment's `destination_live` omits unwind expansions, though line 1074 says it joins every expansion. Scenario: `x := Res{1}; defer x = Res{3}; may_panic(true); drop(x);` overwrites `Res{1}` on the unwind and its hook never runs (run: only `drop 3`). Fix: record the destination vote before the unwind `continue`. *Confirmed: Reproduced: the scenario prints only `drop 3` on panic, and Res{1}'s hook never runs; without drop(x) it prints drop 1, drop 3. Report_events skips .Assign in unwind blocks. Not in known-gaps or open-questions. Leak is panic-path only, so medium is at most fair.*
-- `BUG-lifecycle-3` **low** [lifecycle.odin:805](src/lifecycle.odin#L805) `report_copy_cost`: `clone_may_allocate` ignores `@(move_only)`, and `classify_copy_cost` and `classify_destructure` (line 685) report before L0503. Scenario: `Box2{o = a}` with a move-only `a` holding a `[dynamic]int` warns "write `a.clone()`" beside the error saying it cannot be copied. Fix: return from `report_copy_cost` for a `type_clone_disabled` type, after setting `copied_as`. *Not verified.*
-- `BUG-lifecycle-4` **low** [lifecycle.odin:818](src/lifecycle.odin#L818) `report_copy_cost`: the byte check also measures `string` and `Shared(T)`, which design.md "Copy-cost diagnostics" and the comment at line 793 say are not costly. Scenario: under `-copy-cost=8`, `t := s` with `s: Shared(int)` warns "copies 8 bytes" and advises a `Shared(T)`; `b := a` on a string warns 24 bytes. Fix: return for those two types before line 818. *Not verified.*
-
-**Simplification**
-
-- [lifecycle.odin:22](src/lifecycle.odin#L22) `check_drop_builtin`, `check_forget_builtin`, `check_exchange_builtin`, `check_capacity_builtin`, `check_move`: set `v.type = INVALID_TYPE` first and assign the real type only on the success path; nothing reads `v.type` midway, so every failure block drops that line. (about 25 lines)
-- [lifecycle.odin:1151](src/lifecycle.odin#L1151) `report_not_live`: pick the reason with one ternary and make one `errorf` with "`%s` cannot be %s here: %s"; the two-message `.Spawn_Result` report at line 1063 shrinks the same way. (about 14 lines)
-- [lifecycle.odin:116](src/lifecycle.odin#L116) `require_lexical_owner`: the two L0690 reports differ only in the format string; use one `errorf` with a ternary. (about 7 lines)
-- [lifecycle.odin:329](src/lifecycle.odin#L329) `classify_return_value`: replace lines 329-339 with `!expression_is_borrowed_place(value.expr)` plus one ident test. The only non-place with a root symbol is a constant, which behaves as a literal does. Line 357 can use `copied`. (about 6 lines)
-- [lifecycle.odin:1011](src/lifecycle.odin#L1011) `states_equal`: delete it and use `slice.equal`, as `settle_last_uses` does at cfg.odin:2915. (about 9 lines)
-- [lifecycle.odin:758](src/lifecycle.odin#L758) `copy_site_text`: a `[Copy_Site]string` table replaces the switch and the unreachable `return "copy"`, and the compiler still checks that every member is present. (about 4 lines)
-- [lifecycle.odin:850](src/lifecycle.odin#L850) `report_allocating_copy`: three branches each issue a warning, a loop note and a hint. Compute the object text and hint, then emit one `warnf` and the notes once. (about 6 lines)
-- [lifecycle.odin:913](src/lifecycle.odin#L913) `analyze_ownership`: the two `defer`s guard a single early return; `if graph != nil { ... }` followed by flush and `free_all` reads in order. (about 2 lines)
-- [lifecycle.odin:1143](src/lifecycle.odin#L1143) `record_reset_liveness`: choose the map once, `table := event.call != nil ? &k.c.reset_dead : &k.c.cleanup_reset_dead`, and insert once. (about 3 lines)
-- [lifecycle.odin:1181](src/lifecycle.odin#L1181) `assign_cleanup_slots`: merge the two `continue` guards and turn the last into `if sym.drop_conditional { ... }`. (about 4 lines)
-
-**Dead code**
-
-- (branch) [lifecycle.odin:951](src/lifecycle.odin#L951): both `mem.zero_slice(state)` calls (also line 997) are overwritten before any read, since every slot is assigned or `copy` follows. They are the only `mem.` uses, so `import "core:mem"` goes too.
-- (branch) [lifecycle.odin:970](src/lifecycle.odin#L970): `if first { continue }` is unreachable. Only block 0 and successors of a visited block enter the queue, and `link` keeps `preds` and `succs` symmetric, so a dequeued block always has a visited predecessor.
-- (branch) [lifecycle.odin:1131](src/lifecycle.odin#L1131): `event.reset.body == nil` cannot hold. All five `.Reset_Point` emit sites key on `graph.literal`, and `new_flow_graph` returns nil for a nil literal.
-- (branch) [lifecycle.odin:581](src/lifecycle.odin#L581): `base == nil` follows `expression_is_borrowed_place`, which already implies non-nil; likewise `value == nil` at lines 548 and 575 and `value != nil` at line 613, since `expr_base(nil)` returns nil.
-
-**Data structures and algorithms**
-
-- [lifecycle.odin:1134](src/lifecycle.odin#L1134) `record_reset_liveness`: every point stores `dead` and `owners` lists over all tracked locals in the semantic arena. Unwind drops emit one per hooked local per panicking statement, so a body with a `defer` grows as statements x hooked x tracked, and cfg.odin:1100 only asks whether one symbol is dead; a single bool fits there. Not measured.
-- [lifecycle.odin:400](src/lifecycle.odin#L400) `mark_extended_temporaries`: cfg.odin:1399 and emit_llvm_stmt.odin:49 each re-derive the same fact from settled AST into their own `map[^Expr_Base]bool`. Marking once in the lifecycle walk and storing a bool on `Expr_Base` removes both maps and both lookups by pointer.
-
 **Near copies**
 
-- [lifecycle.odin:1023](src/lifecycle.odin#L1023) and [lifecycle.odin:1044](src/lifecycle.odin#L1044): identical event-to-state switches, and `report_events` repeats the same writes case by case. Extract `apply_event(state, event)`, run the diagnostics only when `!block.unwind`, and apply once at the bottom of the loop. (about 14 lines)
-- [lifecycle.odin:593](src/lifecycle.odin#L593), [lifecycle.odin:619](src/lifecycle.odin#L619), [lifecycle.odin:662](src/lifecycle.odin#L662) and [lifecycle.odin:695](src/lifecycle.odin#L695): the same lazy `clones` allocation and set. A `mark_clone(k, &clones, count, index)` helper replaces each. (about 8 lines)
 - [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721): `classify_copy_cost` then `classify_copy` with the same arguments. A `classify_costed_copy` returning the bool serves these; box and insertion differ and keep the two calls.
-- [lifecycle.odin:25](src/lifecycle.odin#L25), [lifecycle.odin:47](src/lifecycle.odin#L47), [box.odin:97](src/box.odin#L97), [check_calls.odin:561](src/check_calls.odin#L561), [check_calls.odin:947](src/check_calls.odin#L947) and [enums.odin:32](src/enums.odin#L32): the same one-positional-value test. A `has_one_plain_argument(v)` predicate shortens each.
 - [lifecycle.odin:38](src/lifecycle.odin#L38), [lifecycle.odin:81](src/lifecycle.odin#L81), [lifecycle.odin:199](src/lifecycle.odin#L199), [check_builtin.odin:748](src/check_builtin.odin#L748) and [box.odin:226](src/box.odin#L226): `make` a `[]Expr` then assign each slot. A variadic `bind_arguments(k, v, ..values)` makes each one line.
-
-**Structure and boundaries**
-
-- [lifecycle.odin:799](src/lifecycle.odin#L799) `report_copy_cost`: a proc named as a diagnostic writes `copied_as`, which provenance reads (cfg.odin:2341), and `classify_destructure` must undo it at line 703. Split out the warning half, have the destructure call only that, and delete lines 701-703.
-- [lifecycle.odin:393](src/lifecycle.odin#L393): extended temporaries read neither liveness nor `Checker`, and their callers are cfg.odin and emit_llvm_stmt.odin. The section belongs with temporaries handling, not with lifecycle checking, and compiler-architecture.md "Source-code map" does not list it here.
-- [lifecycle.odin:709](src/lifecycle.odin#L709) `record_static_local`: not ownership. It has one caller at check.odin:2447 and only appends to `static_locals`; move it there and drop its one-proc section.
-- [lifecycle.odin:524](src/lifecycle.odin#L524): copy sites and the copy-cost report (lines 524-704 and 725-890) share only the held reports with the liveness solver (from line 892). If the file is split, this is the seam: a copy-site file and a solver file.
-
-**Comments**
-
-- [lifecycle.odin:727](src/lifecycle.odin#L727): the nine lines repeat the spec and list 4 of 15 sites. Use `// A point that duplicates a value instead of moving or borrowing it (design.md "Copy-cost diagnostics").` (about 8 lines)
-- [lifecycle.odin:743](src/lifecycle.odin#L743): shorten to `// Inside a larger expression, where a copy is easy to miss.` (about 2 lines)
-- [lifecycle.odin:939](src/lifecycle.odin#L939): delete; lines 924-926 already explain the worklist and the rest is history. (about 2 lines)
-- [lifecycle.odin:1122](src/lifecycle.odin#L1122): keep why only `.Dead` unblocks a reset and why the arena is the compilation's; drop the restatement of the design text, the citation kept. (about 3 lines)
-- [lifecycle.odin:551](src/lifecycle.odin#L551): `copied_type` already explains the widening at line 532; keep `// design.md "Widening by label"`. (about 1 line)
-- [lifecycle.odin:375](src/lifecycle.odin#L375): inaccurate as well as long, since a `p^` place also yields INVALID_SYMBOL. Use `// The variable a place is rooted in; INVALID_SYMBOL for a temporary or through a dereference.` (about 1 line)
-- [lifecycle.odin:467](src/lifecycle.odin#L467): shorten to `// The erased operand of an explicit dyn proc conversion, through identity conversions.` (about 2 lines)
-- [lifecycle.odin:840](src/lifecycle.odin#L840): shorten to `// Never advise inout: it grants mutation and changes which aliases are legal (design.md).` (about 1 line)
-- [lifecycle.odin:587](src/lifecycle.odin#L587): delete; lines 101, 115 and 137 likewise narrate the check or message that follows. (about 4 lines)
 
 ### src/operators.odin
 
@@ -1871,7 +1814,7 @@ Sound logic and mostly good comments, but it holds two unrelated subsystems, an 
 - [optional.odin:448](src/optional.odin#L448) `check_type_switch`: delete it and the `s.kind != .Value` dispatch at [check.odin:4324](src/check.odin#L4324). `check_switch` repeats its head and `adopt_branch_patterns` is a no-op on selector cases, so a recloned `.Pattern` switch takes the ordinary path. (about 22 lines)
 - [optional.odin:9](src/optional.odin#L9) `Fallible`: `info` is only ever read as `shape.info.variants[shape.success or failure]`, at 25 sites across the checker, CFG and evaluator. Store `success_type` and `failure_type` instead of `info`, which also removes the local aliases at lines 75 and 187.
 - [optional.odin:54](src/optional.odin#L54) `check_or_else`, [optional.odin:125](src/optional.odin#L125) `check_or_return`: set `v.type = INVALID_TYPE` once on entry and assign the real type only on the success path, replacing 13 repeats on the early returns. (about 12 lines)
-- [optional.odin:93](src/optional.odin#L93) `check_or_else`: make the exit and the fallback the two arms of an `if`/`else`, followed by one `if v.borrows { report_copy_cost }` and `v.type = payload`, in place of the copy at lines 98-102. (about 4 lines)
+- [optional.odin:93](src/optional.odin#L93) `check_or_else`: make the exit and the fallback the two arms of an `if`/`else`, followed by one `if v.borrows { record_copy }` and `v.type = payload`, in place of the copy at lines 98-102. (about 4 lines)
 - [optional.odin:225](src/optional.odin#L225) `check_or_return_failure`: let `or_return_constructs` return `(payload, ok)`, dropping line 230's lookup, and replace the `switch` with `maps := constructs || !or_return_replaces(k, v.failure, into)`. (about 7 lines)
 - [optional.odin:580](src/optional.odin#L580) `check_variant_cases`: `s.exhaustive = has_default || variant_count(...) == len(seen_variants)` with one `if !s.exhaustive` report; drop `any_case_falls` by accumulating into `flow`, and return `flow`. (about 10 lines)
 - [optional.odin:652](src/optional.odin#L652) `field_name_at`: one caller, whose `slot` was read from this same record by `resolve_case_fields`, so its bounds and nil checks cannot fire. Inline it as `identifier_text(k.c, symbol_of(k.c, underlying_info(k.c, binding_type).fields[field.slot]).name)`. (about 7 lines)

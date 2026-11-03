@@ -488,7 +488,7 @@ revive_place :: proc(e: ^Emitter, target: Expr) {
 	if flag := drop_flag_of(e, ident.symbol); flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 	}
-	unwind_register(e, Deferred{slot = e.unwind.slot_by_symbol[ident.symbol]})
+	unwind_revive(e, ident.symbol)
 }
 
 // The hidden `i1` of a conditionally live local, or "" when its state is

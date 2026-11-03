@@ -60,6 +60,7 @@ check_expr :: proc(
 	base.immutable = .Not_A_Place
 	// It reset the type; a conversion recorded by an earlier check reads that.
 	base.erased_from = INVALID_TYPE
+	base.extended = false
 
 	switch v in e {
 	case ^Expr_Error:

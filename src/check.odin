@@ -2065,6 +2065,24 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// Static-duration locals use constant initialization and module storage.
+@(private = "file")
+record_static_local :: proc(k: ^Checker, d: ^Decl) {
+	for symbol_id, index in d.symbols {
+		sym := symbol_of(k.c, symbol_id)
+		if sym == nil || sym.kind != .Var {
+			continue
+		}
+		// Compile-time evaluation of the initializer already said why it failed.
+		if index < len(d.values) && d.values[index] != nil && !is_const_expr(d.values[index]) {
+			continue
+		}
+		if committing(k.c) {
+			append(&k.c.static_locals, symbol_id)
+		}
+	}
+}
+
 @(private = "file")
 check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	// design.md "Parametric aliases": one is declared at package scope, where

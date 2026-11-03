@@ -81,7 +81,7 @@ report_handle_type_spelling :: proc(k: ^Checker, call: ^Expr_Call, type_position
 // Whether a one-argument application names a type; the probe is silent.
 @(private = "file")
 callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+	if !has_one_plain_argument(v) {
 		return false
 	}
 	return resolve_type_syntax(k, v.args[0].value) != INVALID_TYPE
@@ -103,7 +103,7 @@ resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {
 		return v.denoted_type
 	}
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0713", "`Box` takes one element type, as in `Box(Node)`")
 		return INVALID_TYPE
 	}

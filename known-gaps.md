@@ -7,6 +7,22 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A local in a deferred block leaks when only a panic reaches the block
+
+[Scope-exit cleanup](design.md#what-the-unwind-runs-and-what-it-does-not) runs for every initialized
+managed owner, but a local declared in a deferred block registers its drop only if the block also
+has a normal exit. With none, `y` is never dropped, and this prints `5` without `drop 5`:
+
+```loke
+package main; import "core:fmt";
+@(move_only) Tracked :: struct { id: int }
+impl Tracked { release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); } }
+main :: proc() {
+	defer { y := Tracked{5}; fmt.println(y.id); }
+	panic("failed");
+}
+```
+
 ### An export can still spell a generated name the compiler fixes
 
 [`@(export)`](design.md#export) reserves only the `loke_rt_` prefix, and the names the naming pass

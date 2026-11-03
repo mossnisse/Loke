@@ -789,7 +789,7 @@ projects_managed_literal :: proc(e: ^Emitter, expr: Expr) -> bool {
 // own instead.
 @(private = "file")
 temporary_slot_for :: proc(e: ^Emitter, expr: Expr, type: Type_Id) -> string {
-	if e.extended[expr_base(expr)] {
+	if expr_base(expr).extended {
 		return alloca(e, llvm_type(e, type))
 	}
 	return temporary_slot(e, type)
@@ -928,7 +928,7 @@ hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: 
 	}
 	// A local's value may extend it to the end of the block (design.md
 	// "Temporaries and procedure boundaries").
-	if e.extended[expr_base(expr)] {
+	if expr_base(expr).extended {
 		register_scope_place(e, type, place)
 		return
 	}

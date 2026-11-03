@@ -171,7 +171,7 @@ check_enum_builtin :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> b
 // never a representation-only type conversion.
 @(private = "file")
 check_enum_from_int :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id) {
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0410", "`%s.from_int` takes exactly one plain integer argument", type_name(k.c, subject))
 		return
 	}

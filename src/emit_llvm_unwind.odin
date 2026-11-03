@@ -185,6 +185,29 @@ unwind_register :: proc(e: ^Emitter, entry: Deferred) {
 	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, entry.slot - 1))
 }
 
+// A local holds a value again, so its implicit drop is registered once more. A
+// replayed deferred assignment does this too: what it names was registered before
+// it, so that drop's turn in the thunk is still to come.
+@(private)
+unwind_revive :: proc(e: ^Emitter, symbol: Symbol_Id) {
+	slot := e.unwind.slot_by_symbol[symbol]
+	if !e.unwind.replaying {
+		unwind_register(e, Deferred{slot = slot})
+	} else if slot != 0 {
+		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, slot - 1))
+	}
+}
+
+// The `i1` saying whether a flagged local holds a value. The thunk's flags are
+// stand-ins seeded `true`, so replayed code asks a body local's registration.
+@(private)
+unwind_flag_address :: proc(e: ^Emitter, symbol: Symbol_Id) -> string {
+	if slot := e.unwind.slot_by_symbol[symbol]; e.unwind.replaying && slot != 0 {
+		return unwind_live_address(e, slot - 1)
+	}
+	return drop_flag_of(e, symbol)
+}
+
 // Clears a registration before the action's own code runs, so a panic raised
 // by a cleanup cannot ask for it again. It also runs inside the thunk, where
 // `e.unwind.live` names the thunk's own view of the array, so a replayed
