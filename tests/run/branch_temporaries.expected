@@ -1,0 +1,20 @@
+then
+after
+else if 1
+drop 1
+after
+--
+drop 2
+one
+one
+drop 2
+default
+drop 3
+two
+--
+5
+drop 4
+6
+drop 5
+6
+drop 6

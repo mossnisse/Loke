@@ -1,0 +1,99 @@
+// design.md "Temporaries and procedure boundaries": a temporary of an initial
+// statement or an iterable lives until that statement ends, so a `break` or
+// `continue` drops only what it leaves inside the loop, and a loop's own
+// initial declaration drops once however the loop ends.
+package main;
+
+import "core:fmt";
+
+@(move_only) Res :: struct { id: int, items: [dynamic]int }
+
+impl Res {
+	done :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+
+mk :: proc(id: int) -> Res { return {id, [dynamic]int{1}}; }
+take :: proc(items: []int) -> int { return items.len(); }
+use :: proc(res: Res, n: int) -> int { return res.id + n; }
+maybe :: proc(present: bool) -> Option(int) {
+	if (present) { return .some(1); }
+	return .none;
+}
+
+// A loop inside an `if` leaves the `if`'s temporary alone.
+inner_loop_in_if :: proc() {
+	if (n := take(mk(1).items[:]); n > 0) {
+		for (;;) { break; }
+		foreach (_ in 0 ..< 3) { break; }
+		fmt.println("use", n);
+	}
+}
+
+// A loop's own initial statement is not left by `continue`.
+continue_keeps_init :: proc() {
+	i := 0;
+	for (n := take(mk(2).items[:]); i < 2; i += 1) {
+		if (n > 0) { continue; }
+	}
+	fmt.println("after loop");
+}
+
+// An `if` inside the loop is left, once on each path.
+if_inside_loop :: proc() {
+	for (j := 0; j < 3; j += 1) {
+		if (n := take(mk(3).items[:]); n > 0) {
+			if (j == 1) { break; }
+			continue;
+		}
+	}
+}
+
+// The local a loop's initial statement declares.
+break_drops_init_once :: proc() {
+	for (r := mk(4); r.id > 0; ) { break; }
+	fmt.println("after loop");
+}
+
+// A switch subject inside the loop is left by `break`.
+switch_subject_in_loop :: proc() {
+	for (;;) {
+		switch (mk(5).id) {
+		case 5: break;
+		case:
+		}
+	}
+}
+
+// A call's earlier argument is held when its later one leaves the loop.
+exit_from_argument :: proc() {
+	for (i := 0; i < 2; i += 1) {
+		fmt.println(use(mk(6), maybe(i == 0) or_else break));
+	}
+	fmt.println("after loop");
+}
+
+// A deferred loop, run by an exit from an argument, does not repeat what that
+// exit is already dropping.
+deferred_loop :: proc() -> Option(int) {
+	defer {
+		for (;;) { break; }
+		fmt.println("deferred");
+	}
+	return .some(use(mk(9), maybe(false) or_return));
+}
+
+main :: proc() {
+	inner_loop_in_if();
+	fmt.println("--");
+	continue_keeps_init();
+	fmt.println("--");
+	if_inside_loop();
+	fmt.println("--");
+	break_drops_init_once();
+	fmt.println("--");
+	switch_subject_in_loop();
+	fmt.println("--");
+	exit_from_argument();
+	fmt.println("--");
+	deferred_loop();
+}

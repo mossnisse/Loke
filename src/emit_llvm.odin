@@ -207,6 +207,10 @@ Function_State :: struct {
 	continue_label: string,
 	break_depth:    int,
 	continue_depth: int,
+	// The temporary frames and held values open when the loop began: a `break` or
+	// `continue` owes only those made since.
+	loop_frames: int,
+	loop_held:   int,
 	// Arguments already bound at the current call, for default expressions.
 	param_values: map[Symbol_Id]string,
 	unwind: Unwind_State,
@@ -215,6 +219,8 @@ Function_State :: struct {
 	// Large temporaries, shared by the full expressions that need one: taken ones
 	// in order, a mark per open full expression, and the free ones.
 	large_taken: [dynamic]Large_Slot,
+	// One zeroed global per large type that has a zero constant (`large_zero`).
+	large_zeros: map[Type_Id]string,
 	large_marks: [dynamic]int,
 	large_free:  [dynamic]Large_Slot,
 	// Per open full expression, the slot holding the stack pointer saved before
@@ -746,7 +752,7 @@ emit_proc_definition :: proc(
 
 	emit_scoped_block(e, literal.body)
 	if !e.terminated {
-		emit_return_values(e, nil)
+		emit_epilogue(e)
 	}
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")

@@ -1,0 +1,70 @@
+// Values above the size the backend keeps first-class are addresses, including a
+// constant one and a part of an iterator's record.
+package main;
+
+import "core:fmt";
+
+Big :: struct { a: int, pad: [5000]u8 }
+Labelled :: struct { label: (none: bool | text: string), pad: [5000]u8 }
+Wide :: (small: int | big: Big);
+
+K :: Big{a = 3};
+ZERO :: Big{};
+TEXT :: Labelled{label = .text("hi")};
+WIDE : Wide : .big(K);
+
+equality :: proc() {
+	x := Big{a = 3};
+	fmt.println(x == K, x == Big{}, x != ZERO, Big{} == ZERO, K == K);
+}
+
+copies :: proc() {
+	a := K;
+	b := ZERO;
+	c := TEXT;
+	fmt.println(a.a, b.a, a.pad[4999], b.pad[4999]);
+	switch (c.label) {
+	case .none(_): fmt.println("none");
+	case .text(t): fmt.println(t);
+	}
+}
+
+union_constant :: proc() {
+	switch (WIDE) {
+	case .small(v): fmt.println(v);
+	case .big(v): fmt.println(v.a);
+	}
+}
+
+Pair :: struct { key: int, big: Big }
+Source :: struct { keys: []int }
+Source_Iterator :: struct { keys: []int, at: int }
+
+impl Source {
+	Element :: Pair;
+	Iterator :: Source_Iterator;
+	iter :: proc(self) -> Source_Iterator { return {self.keys, 0}; }
+}
+
+impl Source_Iterator {
+	next :: proc(self: inout Source_Iterator) -> Option((key: ^int, big: Big)) {
+		if (self.at >= self.keys.len()) { return .none; }
+		item := &self.keys[self.at];
+		self.at += 1;
+		return .some({item, Big{a = self.at}});
+	}
+}
+
+lent_parts :: proc() {
+	keys := [dynamic]int{7, 8};
+	foreach (key, big in Source{keys[:]}) {
+		fmt.println(key, big.a);
+	}
+}
+
+main :: proc() {
+	equality();
+	copies();
+	union_constant();
+	lent_parts();
+}

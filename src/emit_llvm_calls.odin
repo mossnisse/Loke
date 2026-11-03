@@ -5,6 +5,17 @@ import "core:fmt"
 
 // ------------------------------------------------------------------- calls --
 
+// design.md "Exchange": the replacement is fully evaluated before the
+// destination is touched, and the old value is handed back, not dropped.
+@(private = "file")
+emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	address := emit_address(e, v.bound[0])
+	replacement := emit_expr(e, v.bound[1])
+	previous := load_place(e, as_type, address)
+	store(e, as_type, replacement, address)
+	return previous
+}
+
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if v.dispatch != nil {
@@ -724,6 +735,13 @@ emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	emit_rt_free(e, allocator, pointer, type_size(e.c, info.element), type_align(e.c, info.element))
 }
 
+// Whether `argument`, in parameter `index`, is the callee's own default rather
+// than something the call wrote.
+@(private)
+argument_is_default :: proc(symbol: ^Symbol, index: int, argument: Expr) -> bool {
+	return symbol != nil && argument != nil && index < len(symbol.param_defaults) && argument == symbol.param_defaults[index]
+}
+
 // Whether this union value holds its designated failure variant.
 @(private)
 emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
@@ -1369,9 +1387,7 @@ emit_bound_call :: proc(
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
-		is_default := symbol != nil && argument != nil && index < len(symbol.param_defaults) &&
-			argument == symbol.param_defaults[index]
-		e.param_values = is_default ? own_params : outer_params
+		e.param_values = argument_is_default(symbol, index, argument) ? own_params : outer_params
 		if index == 0 && receiver != "" {
 			operands[0] = receiver
 			if symbol != nil && len(symbol.param_symbols) > 0 && symbol.param_symbols[0] != INVALID_SYMBOL {

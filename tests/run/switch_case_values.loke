@@ -1,0 +1,81 @@
+// design.md "switch statement": a case's values are tested left to right, stopping
+// at the first match, at run time and at compile time. A produced subject lives
+// until the statement ends, and a produced case value until its test ends.
+package main;
+
+import "core:fmt";
+
+@(move_only) T :: struct { id: int, items: [dynamic]int }
+
+impl T {
+	done :: hook(drop) proc(self: inout T) { fmt.println("drop", self.id); }
+	eq :: operator(==) proc(a, b: T) -> bool { return a.id == b.id; }
+}
+
+mkt :: proc(id: int) -> T { return {id, [dynamic]int{}}; }
+text :: proc() -> string { return "a" + "bc"; }
+f :: proc(x: int) -> int { fmt.println("f", x); return x; }
+pass :: proc(t: move T) -> int { return t.id; }
+
+short_circuit :: proc() {
+	s := 3;
+	switch (s) {
+	case f(1), f(3), f(4): fmt.println("hit");
+	case f(5): fmt.println("miss");
+	case:
+	}
+	// The second value would divide by zero.
+	switch (s) {
+	case 3, 10 / (s - 3): fmt.println("first");
+	case:
+	}
+}
+
+constant :: proc() -> int {
+	s := 3;
+	switch (s) {
+	case 3, 10 / (s - 3): return 1;
+	case: return 0;
+	}
+}
+CONSTANT :: constant();
+
+// A value may not run, so what it moves stays live on the path past it.
+conditional_move :: proc(s: int) {
+	y := mkt(10 + s);
+	switch (s) {
+	case 3, pass(move(y)):
+		fmt.println("matched");
+	case:
+		fmt.println("default");
+	}
+	fmt.println("after");
+}
+
+produced_values :: proc() {
+	switch (mkt(1)) {
+	case mkt(2): fmt.println("two");
+	case mkt(1), mkt(9): fmt.println("one");
+	case mkt(3): fmt.println("three");
+	case:
+	}
+	fmt.println("--");
+	switch (text()) {
+	case "abc": fmt.println("text");
+	case:
+	}
+	switch (text()) {
+	case text(): fmt.println("text");
+	case:
+	}
+}
+
+main :: proc() {
+	short_circuit();
+	fmt.println(CONSTANT);
+	fmt.println("--");
+	conditional_move(3);
+	conditional_move(4);
+	fmt.println("--");
+	produced_values();
+}

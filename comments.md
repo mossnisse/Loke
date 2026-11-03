@@ -638,6 +638,11 @@ meaning. A duplicate that intentionally differs belongs in a named operation,
 not a copy hook. Analysis order and generated moves are documented under
 [Ownership, lifecycle, and provenance](compiler-architecture.md#ownership-lifecycle-and-provenance).
 
+A destructuring assignment admits a union widening but no view of a field, since
+it clones or transfers each field: a consumed record's `string` would have no
+owner left for a `string_view` destination to borrow. Writing the field by name
+keeps the borrow on a place the rules can see.
+
 ### Panics run lexical cleanup
 
 Managed resources need a defined answer when execution fails. Under `unwind`,

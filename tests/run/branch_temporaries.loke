@@ -1,0 +1,65 @@
+// design.md "Temporaries and procedure boundaries": a temporary is dropped only on
+// the paths that made it, whichever branch of a statement that was.
+package main;
+
+import "core:fmt";
+
+@(move_only) Res :: struct { id: int, items: [dynamic]int }
+
+impl Res {
+	done :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+	on_a :: proc(self: ^Res, a: int) -> int { return self.id + a; }
+	on_b :: proc(self: ^Res, b: bool) -> int { return self.id; }
+	on :: proc{on_a, on_b};
+}
+
+Outer :: struct { inner: Res }
+Arg :: (a: int | b: bool);
+
+mk :: proc(id: int) -> Res { return {id, [dynamic]int{1}}; }
+mk_outer :: proc(id: int) -> Outer { return {mk(id)}; }
+take :: proc(items: []int) -> int { return items.len(); }
+
+// An `else if` initial statement's temporary is that branch's.
+else_if_init :: proc(a: int) {
+	if (a > 0) {
+		fmt.println("then");
+	} else if (n := take(mk(1).items[:]); n > 0) {
+		fmt.println("else if", n);
+	}
+	fmt.println("after");
+}
+
+// A case value's temporary ends with its test, if the test ran.
+case_values :: proc() {
+	foreach (x in 1 ..= 2) {
+		switch (x) {
+		case 5: fmt.println("five");
+		case take(mk(2).items[:]): fmt.println("one");
+		case: fmt.println("default");
+		}
+		switch (x) {
+		case 1: fmt.println("one");
+		case take(mk(3).items[:]) + 1: fmt.println("two");
+		case: fmt.println("default");
+		}
+	}
+}
+
+// An expansion arm's temporary is that arm's, and lasts the full expression.
+expansion_arms :: proc() {
+	u: Arg = .a(1);
+	fmt.println(mk(4).on(..u));
+	fmt.println(mk_outer(5).inner.on(..u));
+	u = .b(true);
+	fmt.println(mk(6).on(..u));
+}
+
+main :: proc() {
+	else_if_init(1);
+	else_if_init(0);
+	fmt.println("--");
+	case_values();
+	fmt.println("--");
+	expansion_arms();
+}

@@ -1926,6 +1926,12 @@ Ownership follows the operand's category, exactly as every other binding does:
 field drops exactly once, in reverse declaration order, after every retained
 binding is published.
 
+A destination of `=` takes the whole field, so it needs a type the field converts
+to without viewing or repeating it: [widening a union](#widening-by-label)
+applies, but `name_view, n = record` with a `string` field is an error, as is
+any view of a field or a scalar field splatting into a vector. Assign such a
+field by name.
+
 Retained fields are prepared in declaration order before any binding is
 published, and assignment follows the ordinary prepare-then-write rule. If
 cloning fails, it cleans partial field temporaries and leaves the source
@@ -5982,17 +5988,19 @@ case .Linux, .Darwin:
 Only the selected case runs, so no `break` is needed at the end of a case. Case
 values need not be integers or constants.
 
-Switch cases are evaluated from top to bottom, stopping when a case succeeds.
-For example:
+Switch cases are evaluated from top to bottom, stopping when a case succeeds,
+and a case's values from left to right, stopping at the first that matches. For
+example:
 
 ```loke
 switch (i) {
 case 0:
-case limit():
+case limit(), other():
 }
 ```
 
-`limit()` is not called if `i == 0`.
+`limit()` is not called if `i == 0`, and `other()` is not called if `i == 0` or
+`i == limit()`.
 
 The header is an initialization statement and a subject, and binds nothing:
 `switch (x in set)` switches on the boolean membership test. A switch over a

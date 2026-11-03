@@ -60,13 +60,13 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	outer_break, outer_continue := e.break_label, e.continue_label
 	outer_break_depth, outer_continue_depth := e.break_depth, e.continue_depth
+	outer_frames, outer_held := e.loop_frames, e.loop_held
 	defer {
 		e.break_label, e.continue_label = outer_break, outer_continue
 		e.break_depth, e.continue_depth = outer_break_depth, outer_continue_depth
+		e.loop_frames, e.loop_held = outer_frames, outer_held
 	}
 	push_scope(e, nil)
-	// `break` lands in the loop scope, whose exit disposes of the iterator once.
-	e.break_depth = len(e.cleanups)
 
 	#partial switch s.kind {
 	case .Protocol:
@@ -95,7 +95,9 @@ open_loop :: proc(e: ^Emitter) -> Loop_Labels {
 		new_label(e, "foreach.post"), new_label(e, "foreach.done"),
 	}
 	e.break_label, e.continue_label = loop.done, loop.post
-	e.continue_depth = len(e.cleanups)
+	// `break` lands in the loop scope, whose exit disposes of the iterator once.
+	e.break_depth, e.continue_depth = len(e.cleanups), len(e.cleanups)
+	e.loop_frames, e.loop_held = len(e.temporaries), len(e.held)
 	return loop
 }
 
@@ -1001,13 +1003,10 @@ lent_yield_field :: proc(e: ^Emitter, logical, payload: Type_Id, value: string) 
 	logical_info := type_of(e.c, type_underlying(e.c, logical))
 	payload_info := type_of(e.c, type_underlying(e.c, payload))
 	children := make([]Foreach_Field, len(logical_info.fields), context.temp_allocator)
-	llvm := llvm_type(e, payload)
 	for logical_field_id, index in logical_info.fields {
 		logical_field := symbol_of(e.c, logical_field_id)
 		payload_field := symbol_of(e.c, payload_info.fields[index])
-		children[index] = lent_yield_field(
-			e, logical_field.type, payload_field.type, extract(e, llvm, value, index),
-		)
+		children[index] = lent_yield_field(e, logical_field.type, payload_field.type, record_part(e, payload, value, index))
 	}
 	return Foreach_Field{type = logical, children = children}
 }

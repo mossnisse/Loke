@@ -1,0 +1,64 @@
+// design.md "Destructuring": a field assigned by destructuring is cloned or
+// transferred at its own type, and a narrower union then widens to its
+// destination's, at run time and at compile time.
+package main;
+
+import "core:fmt";
+
+Small :: (a: int | b: bool | c: string);
+Wide :: (x: f64 | a: int | y: f64 | b: bool | c: string);
+Pair :: (n: int, small: Small);
+
+make_pair :: proc(small: Small) -> Pair { return {3, small}; }
+
+show :: proc(value: Wide) {
+	switch (value) {
+	case .x(v): fmt.println("x", v);
+	case .a(v): fmt.println("a", v);
+	case .y(v): fmt.println("y", v);
+	case .b(v): fmt.println("b", v);
+	case .c(v): fmt.println("c", v);
+	}
+}
+
+// A managed payload from a place is cloned before it widens.
+from_place :: proc() {
+	pair := make_pair(.c("place"));
+	n: int;
+	wide: Wide = .x(0.5);
+	n, wide = pair;
+	show(wide);
+	switch (pair.small) { case .a(v): fmt.println(v); case .b(v): fmt.println(v); case .c(v): fmt.println(v); }
+	fmt.println(n);
+}
+
+// A map element is a destination like any other.
+into_map :: proc() {
+	m := map[string]Wide{};
+	n: int;
+	n, m["key"] = make_pair(.b(false));
+	show(m["key"]);
+}
+
+constant :: proc() -> int {
+	n: int;
+	wide: Wide = .x(0.5);
+	n, wide = make_pair(.a(4));
+	switch (wide) {
+	case .a(v): return n + v;
+	case: return 0;
+	}
+}
+CONSTANT :: constant();
+
+main :: proc() {
+	n: int;
+	wide: Wide = .x(0.5);
+	n, wide = make_pair(.b(true));
+	show(wide);
+	n, wide = make_pair(.c("moved"));
+	show(wide);
+	from_place();
+	into_map();
+	fmt.println(CONSTANT);
+}

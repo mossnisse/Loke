@@ -3389,6 +3389,11 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 				return .Fail
 			}
 			destinations[index] = destination
+			// design.md "Destructuring": a narrower union widens to its destination's.
+			from, to := symbol_of(ev.k.c, s.destructure.fields[index]).type, expr_base(target).type
+			if union_widens_to(ev.k.c, from, to) {
+				values[index] = widen_eval_value(ev.k.c, values[index], from, to)
+			}
 		}
 		for destination, index in destinations {
 			slot, slot_ok := destination_slot(ev, destination)

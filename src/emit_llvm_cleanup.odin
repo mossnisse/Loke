@@ -699,7 +699,7 @@ pop_temporaries :: proc(e: ^Emitter) {
 		return
 	}
 	if !e.terminated {
-		drain_temporaries(e, len(e.temporaries) - 1)
+		drain_temporaries(e, len(e.temporaries) - 1, len(e.held))
 	}
 	entries := e.temporaries[len(e.temporaries) - 1]
 	delete(entries)
@@ -745,23 +745,21 @@ save_stack_for_expression :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", kept, slot^)
 }
 
-// Drops the frames above `down_to`, innermost first, without closing them: an
+// Drops the frames from `frame` up, innermost first, without closing them: an
 // exit that branches away owes their drops, while the fall-through path pops.
 @(private)
-drain_temporaries :: proc(e: ^Emitter, down_to: int) {
-	// An exit from inside an operation also owes what it holds; its other
-	// paths still drop those values themselves, so the list survives. Both
-	// kinds are dropped newest first, across the two lists (design.md
-	// "Evaluation order").
+drain_temporaries :: proc(e: ^Emitter, frame, first_held: int) {
+	// An exit from inside an operation also owes what it holds from `first_held`
+	// up; its other paths still drop those values themselves, so the list
+	// survives. Both kinds are dropped newest first, across the two lists
+	// (design.md "Evaluation order").
 	owed := make([dynamic]Deferred)
 	defer delete(owed)
 	held := make([]Deferred, len(e.held))
 	defer delete(held)
 	copy(held, e.held[:])
-	if down_to == 0 {
-		append(&owed, ..held)
-	}
-	for depth in down_to ..< len(e.temporaries) {
+	append(&owed, ..held[first_held:])
+	for depth in frame ..< len(e.temporaries) {
 		append(&owed, ..e.temporaries[depth][:])
 	}
 	slice.stable_sort_by(owed[:], proc(a, b: Deferred) -> bool { return a.order > b.order })
@@ -963,13 +961,17 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) 
 	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
 }
 
-// A whole-local assignment makes the place hold a value again, so its implicit
-// drop is registered for panic replay once more.
+// A whole-local assignment makes the place hold a value again, so a flagged
+// local is marked live and its implicit drop registered for panic replay once
+// more.
 @(private)
 revive_place :: proc(e: ^Emitter, target: Expr) {
 	ident, is_ident := target.(^Expr_Ident)
 	if !is_ident {
 		return
+	}
+	if flag := drop_flag_of(e, ident.symbol); flag != "" {
+		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 	}
 	if slot, registered := e.unwind.slot_by_symbol[ident.symbol]; registered {
 		unwind_register(e, Deferred{slot = slot})

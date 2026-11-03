@@ -2216,8 +2216,8 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 		bodies[index] = new_flow_block(graph)
 	}
 	if s.kind == .Value {
-		// design.md: value cases are tested in order, each testing all its
-		// values, and the default runs only once every test has failed.
+		// design.md "switch statement": values are tested in order, stopping at the
+		// first match, and the default runs only once every test has failed.
 		fallback := s.exhaustive ? NO_BLOCK : merge
 		for c, index in s.cases {
 			if len(c.values) == 0 {
@@ -2226,11 +2226,11 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 			}
 			for value in c.values {
 				walk_flow_expr(graph, value)
+				link(graph, graph.current, bodies[index])
+				next := new_flow_block(graph)
+				link(graph, graph.current, next)
+				graph.current = next
 			}
-			link(graph, graph.current, bodies[index])
-			next := new_flow_block(graph)
-			link(graph, graph.current, next)
-			graph.current = next
 		}
 		link(graph, graph.current, fallback)
 	} else {

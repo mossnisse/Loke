@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A destructuring assignment to a destination that would view or splat its field, such as
+  `v, n = record` with a `string` field and a `string_view` `v`, is now `L0310`
+  ([Destructuring](design.md#destructuring)). It compiled, and wrote the field's bytes past the
+  destination. Upgrade by assigning that field by name.
 - `f16` at a foreign boundary, directly or as a record's field, is now `L0619`: the Win64 C ABI
   does not classify it ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)). Upgrade by
   passing an `f32`, or by passing a `^f16`.
@@ -1311,6 +1315,19 @@ checklist.
 - A `@(c_vararg)` procedure in a procedure group now takes its variadic arguments, where a call
   through the group said the procedure took too many
   ([`@(c_vararg)`](design.md#c_vararg)).
+- A `switch` case stops testing its values at the first match, as the compile-time evaluator did
+  ([switch statement](design.md#switch-statement)): `case f(1), f(2):` no longer calls `f(2)` when
+  `f(1)` matched.
+- `break` and `continue` no longer drop a temporary or a loop's initial declaration twice.
+- `return inout x` no longer zeroes the place it hands back.
+- A destructuring assignment widens a field to a wider union destination, instead of storing it with
+  the wrong tag.
+- A temporary in an `else if` initial statement, a `switch` case value or a union argument expansion
+  arm is no longer dropped on the paths that did not make it.
+- A `switch` drops a subject or case value it produced, such as a call's result.
+- Values above 4096 bytes: destructuring one, `errdefer` over a `Result` holding one, comparing or
+  switching on a constant one, a large constant holding a pointer, and an iterator record holding
+  one no longer segfault or fail in clang (`L0403`).
 - Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
   a wrong pointer to it, and same-named types, from two packages or two procedures, each show their
   own layout. A later such type is named `Name$<n>` in the debugger.

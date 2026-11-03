@@ -3590,7 +3590,15 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 					if field == nil {
 						return
 					}
-					check_assign_target(k, target, field.type)
+					type := check_assign_target(k, target, field.type)
+					if type != INVALID_TYPE && destructure_cannot_convert(k.c, field.type, type) {
+						errorf(
+							k.c, expr_span(target), "L0310",
+							"a destructured field of type `%s` cannot be assigned to `%s`",
+							type_name(k.c, field.type), type_name(k.c, type),
+						)
+						add_notef(k.c, expr_span(target), "assign the field by name to view or splat it")
+					}
 				}
 			}
 			return
@@ -4119,6 +4127,16 @@ check_user_compound :: proc(
 	s.lhs[0], s.rhs[0] = bound[0], bound[1]
 	s.operator, s.operator_direct = chosen, false
 	return true
+}
+
+// design.md "Destructuring": a destination takes a whole field, cloned or
+// transferred, so it cannot be a view of that field or a splat of it.
+@(private = "file")
+destructure_cannot_convert :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	if from == to {
+		return false
+	}
+	return type_views_as(c, from, to) || dyn_proc_signature(c, to) != INVALID_TYPE || (type_is_simd(c, to) && !type_is_simd(c, from))
 }
 
 // The destination half of an assignment. A `_` on the left is a discard, which

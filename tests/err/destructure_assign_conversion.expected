@@ -1,0 +1,9 @@
+L0310
+@17:2
+a destructured field of type `string` cannot be assigned to `string_view`
+L0310
+@18:11
+a destructured field of type `[dynamic]int` cannot be assigned to `[]int`
+L0310
+@19:16
+a destructured field of type `f32` cannot be assigned to `Simd(f32, 4)`

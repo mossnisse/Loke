@@ -79,14 +79,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 ## The changes most worth making
 
-1. **`-> inout` returns zero the place they hand back.** [emit_llvm_stmt.odin:996](src/emit_llvm_stmt.odin#L996): `return inout x` runs the transfer-out `kill_place`. Add `!e.result_inout` to the condition. BUG-emit_llvm_stmt-3. 1 line.
-
-2. **`break` and `continue` double-drop.** [emit_llvm_stmt.odin:687](src/emit_llvm_stmt.odin#L687) takes `break_depth` before `push_scope`, so `for (r := mk(3); ; ) { break; }` drops `r` twice; [emit_llvm_stmt.odin:102](src/emit_llvm_stmt.odin#L102) drains every temporary frame rather than those opened inside the loop. BUG-emit_llvm_stmt-2, -1. About 10 lines.
-
-
 4. **Five small independent fixes.** Spill test on `@global` operands, [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516) (BUG-emit_llvm_calls-1). `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
-
-5. **Temporaries dropped on paths that never made them.** [emit_llvm_stmt.odin:669](src/emit_llvm_stmt.odin#L669) (`else if` init), [emit_llvm_stmt.odin:757](src/emit_llvm_stmt.odin#L757) (case values) and [emit_llvm_stmt.odin:875](src/emit_llvm_stmt.odin#L875) (expansion arms) register in an enclosing frame unflagged, dropping garbage. Give each its own frame or conditional. BUG-emit_llvm_stmt-5, -6, -7. About 20 lines.
 
 6. **Valid unfixed arithmetic reaches clang, and `nil` operands crash.** `y: u8 = (1 if c() else 2) + 1` hits the "should not arise" arm at [check_expr.odin:3586](src/check_expr.odin#L3586); recurse as the conditional arm does. Route the nil cases ([box.odin:147](src/box.odin#L147), [check_builtin.odin:954](src/check_builtin.odin#L954) and five siblings) through one reporting helper. BUG-check_expr.part2-1, BUG-box-1, BUG-check_builtin-1. About 40 lines.
 
@@ -103,8 +96,6 @@ seams and would be easier to work in if split, though that shortens nothing.
 12. **Re-checked expressions emit duplicate functions.** Hoisting at [check_expr.odin:2776](src/check_expr.odin#L2776) and the `erased_from` guard at [check_expr.odin:3536](src/check_expr.odin#L3536) break when [text.odin:43](src/text.odin#L43), [box.odin:211](src/box.odin#L211), [check.odin:2195](src/check.odin#L2195) or [check.odin:3640](src/check.odin#L3640) checks a receiver twice. A `hoisted` flag plus one receiver-checked flag also removes the doubling per call-chain link. BUG-check.part2-1, BUG-box-3, BUG-text-2, BUG-erased-2. About 30 lines.
 
 13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). A zero union is `.Nil` ([check_expr.odin:3417](src/check_expr.odin#L3417)). BUG-eval.part1-1, -2, BUG-const_ops-2, BUG-hash-2. About 35 lines.
-
-14. **Values over 4096 bytes fail to compile or segfault.** `extract`, `insert` and constants treat an address as a value at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198), [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532), [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361). Use `record_part` and `build_record` and run each path at 5000 bytes. BUG-emit_llvm_expr-1, -2, BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10, -11. About 30 lines.
 
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
@@ -136,12 +127,6 @@ These ids describe one defect each and need one fix. Each is also confirmed by a
 The copies differ in how they guard against a package alias: [box.odin:206](src/box.odin#L206) and [erased.odin:1080](src/erased.odin#L1080) test the alias, while [text.odin:36](src/text.odin#L36) reads the symbol's type and thereby causes BUG-text-1.
 
 Shared form: a `receiver_checked` flag on `Expr_Selector`, set by a single `check_receiver(k, sel)` and honored by `check_selector`; a `hoisted` flag on `Expr_Proc`; `erased_from` cleared when a re-check starts. Saves about 20 lines and fixes BUG-check.part2-1, BUG-box-3, BUG-text-1, BUG-text-2 and BUG-erased-2, along with the doubling per chain link measured in text.md (32.7 s at depth 22).
-
-#### Values over 4096 bytes are addresses, and most part readers assume they are not
-
-`is_large_value` ([emit_llvm_expr.odin:598](src/emit_llvm_expr.odin#L598)) makes a large value an address. `record_part` and `build_record` in `emit_llvm_expr.odin` read and build a record in either form, and a local `part_value` ([emit_llvm_expr.odin:1856](src/emit_llvm_expr.odin#L1856)) reads a part. The sites that still use `extract`, `insert` or a raw `load` on a possibly large value are [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361) and [emit_llvm_stmt.odin:1025](src/emit_llvm_stmt.odin#L1025). Constants break the same rule at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198) and [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532).
-
-Shared form: call those at the remaining sites, and make `const_operand` return a global's name for a large type. Net lines stay about even. Fixes BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10 and -11, BUG-emit_llvm_expr-1 and -2.
 
 #### Container operations classified in several tables
 
@@ -317,7 +302,7 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 #### Small repeated IR shapes
 
 - `loke_rt_v1_map_scan` and cursor store: [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [emit_llvm_iteration.odin:961](src/emit_llvm_iteration.odin#L961), [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945). `emit_map_scan`, about 10.
-- Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8; BUG-emit_llvm_stmt-2 is an ordering slip beside the first.
+- Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8.
 - Frame finish: [emit_llvm.odin:727](src/emit_llvm.odin#L727) and [emit_llvm_cleanup.odin:406](src/emit_llvm_cleanup.odin#L406) are the same sequence, except that one writes `e.pending` straight out. About 8.
 - Union storage head: [emit_llvm_abi.odin:410](src/emit_llvm_abi.odin#L410) and [emit_llvm_expr.odin:42](src/emit_llvm_expr.odin#L42) spell the same `i%d`, so the BUG-emit_llvm_abi-1 fix must change both. Share the head spelling.
 - Slice from data and length: [emit_llvm_containers.odin:236](src/emit_llvm_containers.odin#L236) open-codes [emit_llvm_expr.odin:2159](src/emit_llvm_expr.odin#L2159) `emit_ptr_len` twice.
@@ -1999,7 +1984,6 @@ The lowering logic is careful, but one common call shape fails to compile and an
 - [emit_llvm_calls.odin:438](src/emit_llvm_calls.odin#L438) and [emit_llvm_calls.odin:512](src/emit_llvm_calls.odin#L512): the same xor-then-multiply hash step; share `emit_hash_mix(e, seed, bits)`. (about 4 lines)
 - [emit_llvm_calls.odin:826](src/emit_llvm_calls.odin#L826) and [emit_llvm_calls.odin:910](src/emit_llvm_calls.odin#L910): a conditional `emit_stmt` followed by `unreachable` if still open; share `emit_conditional_exit(e, stmt)`. (about 6 lines)
 - [emit_llvm_calls.odin:1643](src/emit_llvm_calls.odin#L1643) and [emit_llvm_calls.odin:1680](src/emit_llvm_calls.odin#L1680): the same split of SIMD operands into lane types; share `conversion_lanes(c, from, to)`. (about 4 lines)
-- [emit_llvm_calls.odin:1360](src/emit_llvm_calls.odin#L1360) and [emit_llvm_stmt.odin:187](src/emit_llvm_stmt.odin#L187): the same `outer_params`/`own_params` save, swap and `is_default` test for calls and `spawn`. A small default-scope helper covers both. (about 6 lines)
 
 **Structure and boundaries**
 
@@ -2170,8 +2154,6 @@ Careful code with mostly useful why-comments, but constants of a large type brea
 
 **Bugs**
 
-- `BUG-emit_llvm_expr-1` **high** [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198) `emit_expr_at`: a large constant comes back as constant text, but consumers of a large value expect an address; only `store` copes. Scenario: `x == Big{}` (5008-byte struct) emits `ptr zeroinitializer` and segfaults; `x == K` and `switch (K)` on a large union fail in clang (L0403). Fix: for a large type, `const_operand` returns a private global's name, as `store` does at line 652. *Confirmed: Reproduced: `x == Big{}` and `x == K` on a 5008-byte struct emit `getelementptr ..., ptr zeroinitializer` and segfault; `switch (K)` and `x == K` on a large union fail in clang with L0403. Two locals compare fine; not recorded in the docs.*
-- `BUG-emit_llvm_expr-2` **medium** [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532) `const_operand`: an image is always loaded as a first-class value, so a large one is a register value that `store` then passes to memcpy as a pointer. Scenario: `B :: Big{label = .text("hi")}` with a 5000-byte field and `x := B;` fails in clang: `%t457 defined with type %struct.Big but expected ptr`. Fix: return `name` unloaded when `is_large_value`. *Confirmed: Reproduced: a 5000-byte struct const with a string union payload fails with L0403, clang: '%t457 defined with type %struct.Big but expected ptr'. A 50-byte pad or a non-pointer payload builds and runs. Not recorded in the docs; medium fits, as it fails at build rather than miscompiling.*
 - `BUG-emit_llvm_expr-3` **medium** [emit_llvm_expr.odin:1039](src/emit_llvm_expr.odin#L1039) `emit_c_pointer_slice`: only `low u> high` is tested, so a negative `high` with `low` 0 passes; design.md "string type conversions" says a negative length panics, as `pointer[0:length]` does. Scenario: `n := -1; s := a[0:n];` gives `s.len() == -1`, and `s[1000]` passes its bounds check and segfaults. Fix: also panic on `icmp slt i64 high, 0`. *Confirmed: Probe: `n := -1; a[0:n]` prints len -1 with no panic; `s[1000000000]` then segfaults. `unsafe.string_view(a, -1)` and `a[2:1]` do panic, and design.md says `pointer[0:length]` panics too. Not in the gap docs. Needs core:unsafe, so medium is at most.*
 - `BUG-emit_llvm_expr-4` **low** [emit_llvm_expr.odin:2510](src/emit_llvm_expr.odin#L2510) `emit_unsafe_builtin`: the `[dynamic]` arm reads an owned temporary with `emit_expr`, so nothing drops it; the string arm at line 2506 and `emit_builtin_slice` at line 979 borrow. Scenario: `p := unsafe.raw_data(build());` emits no drop in `main`, leaking the array. Fix: use `emit_borrowed_operand`. *Not verified.*
 
@@ -2245,7 +2227,6 @@ Comments are mostly tight and the range arithmetic checks out, but protocol-loop
 **Bugs**
 
 - `BUG-emit_llvm_iteration-2` **medium** [emit_llvm_iteration.odin:631](src/emit_llvm_iteration.odin#L631) `emit_protocol_foreach`: a value-mode `iter` receiver takes `emit_expr` and nothing registers the temporary, so an owned source is never dropped. Scenario: with `iter :: proc(self) -> It`, `foreach (v in make_source(7))` never runs `drop 7`, while `make_source(6).iter()` does. Fix: spill through `spill_foreach_iterable_at` and pass `load_place` of the slot. *Confirmed: Probe: with iter :: proc(self) -> It, foreach (v in make_source(7)) never prints drop 7, while make_source(6).iter() prints drop 6. design.md "Temporaries and procedure boundaries" says it lives to statement end, then drops; not in known-gaps. Medium fits.*
-- `BUG-emit_llvm_iteration-3` **medium** [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014) `lent_yield_field`: uses `extract` on a payload that is an address once above `LARGE_VALUE_BYTES`. Scenario: `next` returns `Option((key: ^int, big: Big))` with `Big` holding `[1000]int`; `foreach (k, b in src)` fails in clang with L0403 (`%t541` defined with type `ptr`). Fix: for a large payload, read each part with `element_address` and `load_place`. *Confirmed: Probe with next -> Option((key: ^int, big: Big)) and [1000]int fails in clang with L0403: extractvalue on %t553, an alloca ptr; the [100]int version compiles and runs. No gap or decision is recorded. Medium fits: a valid program is rejected, not miscompiled.*
 - `BUG-emit_llvm_iteration-4` **low** [emit_llvm_iteration.odin:373](src/emit_llvm_iteration.odin#L373) `emit_text_foreach`, also [417](src/emit_llvm_iteration.odin#L417) and [499](src/emit_llvm_iteration.odin#L499)-[500](src/emit_llvm_iteration.odin#L500): plain `load` ignores `e.place_align`, so a header in a packed field gets natural alignment, which is LLVM UB. Scenario: `@(packed) P :: struct { tag: u8, name: string }`, `foreach (c in p.name)` emits `load %loke.string, ptr %t458` at offset 1 with no `align 1`. Fix: use `load_place` or `align_suffix`. *Not verified.*
 
 **Simplification**
@@ -2397,88 +2378,12 @@ Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=n
 
 ### src/emit_llvm_stmt.odin
 
-Readable and well commented, but statement lowering has several ownership bugs, all reproduced with the built `lokec.exe`: double drops on `break` and `continue`, drops of temporaries never made, and clang failures on large values. Plain and destructuring assignment are also near copies.
-
-**Bugs**
-
-- `BUG-emit_llvm_stmt-1` **high** [emit_llvm_stmt.odin:102](src/emit_llvm_stmt.odin#L102) `emit_stmt`: `break`/`continue` drain every temporary frame, including frames whose statement the branch stays inside, and those drain again when popped. *Confirmed: Reproduced with probes/BUG-emit_llvm_stmt-1/p4.loke: the `if` init temporary prints `drop 2` before `use` and again after; a `for` init with `continue` drops once per iteration plus once at the end. Hook drops repeat (p2 panics); not recorded in the docs. High is fair.*
-  Scenario: `if (n := take(mk(1).items[:]); n > 0) { for (;;) { break; } use(); }` prints `drop 1` before `use` and again after; `for (n := take(mk(2).items[:]); ...) { continue; }` likewise.
-  Fix: record `len(e.temporaries)` at loop entry and drain only from there.
-- `BUG-emit_llvm_stmt-2` **high** [emit_llvm_stmt.odin:687](src/emit_llvm_stmt.odin#L687) `emit_for`: `break_depth` is taken before the loop scope is pushed, so `break` runs the init local's cleanup and `pop_scope` at `for.done` runs it again. *Confirmed: Reproduced with lokec: `for (r := mk(3); r.id > 0; ) { break; }` prints `drop 3` twice; leaving via the condition drops once. break_depth is taken before push_scope, so break and pop_scope at for.done both run it. Not recorded; high is fair.*
-  Scenario: `for (r := mk(3); r.id > 0; ) { break; }` prints `drop 3` twice.
-  Fix: set it after `push_scope`, as `emit_foreach` does, so it equals `continue_depth`.
-- `BUG-emit_llvm_stmt-3` **high** [emit_llvm_stmt.odin:996](src/emit_llvm_stmt.odin#L996) `emit_return_values`: the transfer-out `kill_place` also runs for an `inout` result, zeroing the place handed back. *Confirmed: Reproduced: `pass(inout r).id` and `r.id` print 0 after 1, a returned global is zeroed too, and a `[dynamic]` field's elements are lost (len 2 to 0). `-> inout` of a bare managed ident hits kill_place; high severity fits, and no gap or decision records it.*
-  Scenario: `pass :: proc(x: inout Res) -> inout Res { return inout x; }` with `r := mk(1)`: `pass(inout r).id` and `r.id` print 0; a global returned this way is zeroed too.
-  Fix: add `!e.result_inout` to the condition.
-- `BUG-emit_llvm_stmt-4` **high** [emit_llvm_stmt.odin:447](src/emit_llvm_stmt.odin#L447) `emit_destructure_assign`: the checker admits any field assignable to the target (check.odin:4132), but this stores at the field's type with no conversion. *Confirmed: Reproduced: `y, z = mk()` widening `.b(true)` prints `a 1` (plain `z: Wide = s` prints `b true`), and `v, y = r` with a string field into string_view clobbers a neighbouring local (1234605616436508552 prints 1). Not recorded; high is fair.*
-  Scenario: `v: string_view; y: int; z: (x: f64 | a: int | c: f64 | b: bool); v, y, z = mkr();` with `small = .b(true)` prints `a 1`, and `store %loke.string` overruns `v`'s 16-byte slot.
-  Fix: convert to the target's type, or have the checker require the same type.
-- `BUG-emit_llvm_stmt-5` **high** [emit_llvm_stmt.odin:669](src/emit_llvm_stmt.odin#L669) `emit_if`: an `else if` initial statement's temporaries go in the enclosing statement's frame with no conditional flag, so they drop on paths that skipped them. *Confirmed: Reproduced: with the then branch taken, `else if (n := mk(2).v; n > 0)` prints `drop 2167036633120`; the `.items[:]` form exits 3 with the allocator ABI error. Braced `else { if ... }` is clean: emit_if pushes no frame for s.otherwise. Severity high is fair.*
-  Scenario: `if (a > 0) {} else if (n := take(mk(2).items[:]); n > 0) {}` with `a = 1` prints `drop 113`, then exits 3 with `allocator record does not match this runtime's ABI`.
-  Fix: push a frame around `s.otherwise`.
-- `BUG-emit_llvm_stmt-6` **medium** [emit_llvm_stmt.odin:757](src/emit_llvm_stmt.odin#L757) `emit_switch`: a case value's temporaries land in the statement's frame unflagged, though later tests run conditionally. *Confirmed: Reproduced: with x=1, `case take(mk(2).items[:])` never ran mk, yet the program printed `drop 777006` (stale stack data; probes/b.loke). emit_switch brackets case tests with no begin_conditional, so the temporary's frame drop is unflagged.*
-  Scenario: `switch (x) { case 1: ...; case take(mk(2).items[:]): ...; case: ... }` with `x = 1` prints `drop <garbage>`.
-  Fix: give each test its own frame popped before `branch_if`, as `emit_if` does for its condition.
-- `BUG-emit_llvm_stmt-7` **medium** [emit_llvm_stmt.odin:875](src/emit_llvm_stmt.odin#L875) `emit_type_switch`: an expansion arm's temporaries are registered unflagged in the enclosing frame, so the arm not taken drops storage it never wrote. *Confirmed: Reproduced: with `on_a/on_b(self: ^Res, ...)`, `mk(5).on(..u)` prints `drop 140` then `drop 5`; `mk_outer(6).inner.on(..u)` likewise. emit_type_switch has no begin_conditional or frame around arms. Severity fair: a real drop hook acts on garbage.*
-  Scenario: `mk(5).on(..u)` over a two-variant union prints `drop <garbage>` and then `drop 5`.
-  Fix: bracket the arm with `begin_conditional`/`end_conditional`.
-- `BUG-emit_llvm_stmt-8` **medium** [emit_llvm_stmt.odin:756](src/emit_llvm_stmt.odin#L756) `emit_switch`: every value of a case is evaluated and ORed, while design.md "switch statement" stops when a case succeeds and `eval.odin:3850` returns at the first match. *Confirmed: Probe: `case f(1), f(3), f(4)` with s=3 calls f(4); `case 3, 10/(s-3)` gives 1 at compile time but panics at run time, as eval_switch stops at first match. design.md is explicit only per case; cfg.odin's contrary comment has no spec text behind it.*
-  Scenario: `case f(1), f(3), f(4):` with subject 3 also calls `f(4)`.
-  Fix: test each value in turn and branch to the body on a match.
-- `BUG-emit_llvm_stmt-9` **medium** [emit_llvm_stmt.odin:742](src/emit_llvm_stmt.odin#L742) `emit_switch`: a produced managed subject and managed case values ([:976](src/emit_llvm_stmt.odin#L976)) are never registered for drop, against design.md "Temporaries and procedure boundaries". *Confirmed: Probe: switch (mkt(1)) { case mkt(1): } printed no drop, while if (mkt(5) == mkt(5)) dropped both. IR for a call-made string subject has no string_release; the if form has one. Spec says the temporary ends with the statement; no gap recorded. Medium is fair.*
-  Scenario: `switch (mkt(1)) { case mkt(1): ... }` with a `hook(drop)` type runs no drop at all, and a `string` subject from a call is not dropped either.
-  Fix: spill and call `register_temporary_place` unless the expression is a borrowed place.
-- `BUG-emit_llvm_stmt-10` **medium** [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361) `emit_destructure_fields`: a record above `LARGE_VALUE_BYTES` is an address, but this uses `extractvalue` on it. *Confirmed: Reproduced: `a, pad, b := mkbig()` with a [5000]u8 field fails L0403 (clang: %t54 defined with type ptr, expected %struct.Big); the same probe with [8]u8 compiles and runs. Not recorded in known-gaps. Medium fits: valid program rejected, not miscompiled.*
-  Scenario: `a, pad, b := mkbig()` with a `[5000]u8` field fails with L0403, clang reporting `%t508` defined with type `ptr`.
-  Fix: for a large record read through `gep_field` and `load_place`.
-- `BUG-emit_llvm_stmt-11` **medium** [emit_llvm_stmt.odin:1025](src/emit_llvm_stmt.odin#L1025) `returned_failure`: `load` yields a first-class value where `emit_union_failed` expects a large union's address. *Confirmed: Reproduced: Result(Big, Err) with [5000]u8 and errdefer fails L0403, clang: '%t473' defined with union type but expected 'ptr'. The same probe with [50]u8 builds and runs. Not recorded in known-gaps.md or open-questions.md; medium fits.*
-  Scenario: `f :: proc(n: int) -> Result(Big, Err) { errdefer ...; ... }` with `Big` holding `[5000]u8` fails with L0403, clang reporting a union where `ptr` was expected.
-  Fix: use `load_temporary(e, union_type, e.result_slot)`.
-
-**Simplification**
-
-- [emit_llvm_stmt.odin:649](src/emit_llvm_stmt.odin#L649) `emit_if`, `emit_for` (:688), `emit_switch` (:736), `emit_type_switch` (:818): the same four lines open the scope and emit the initial statement. Use one `push_init_scope(e, s.init)`. (about 9 lines)
-- [emit_llvm_stmt.odin:189](src/emit_llvm_stmt.odin#L189) `emit_spawn`, `emit_switch` (:745), `emit_type_switch` (:839): `delete` frees nothing, since `emit_llvm_module` runs on the emission arena (emit_llvm.odin:103) and sibling slices are never freed. Line :226 also repeats the restore in the `defer`. Keep one restore. (about 6 lines)
-- [emit_llvm_stmt.odin:177](src/emit_llvm_stmt.odin#L177) `emit_spawn`: `e.terminated = false` at :179 is a no-op after `place_label`, and because `terminated` is never set, `place_label` emits a stray `br` after `unreachable` (seen in the IR). Set it to true before `place_label` and delete :179. (about 1 line)
-- [emit_llvm_stmt.odin:887](src/emit_llvm_stmt.odin#L887) `emit_type_switch`: the large-value test is `load_temporary`. Write `if joined == "" { return "" }` then `return load_temporary(e, result, joined)`. (about 1 line)
-- [emit_llvm_stmt.odin:1033](src/emit_llvm_stmt.odin#L1033) `emit_epilogue`: three `e.terminated = true` become one `defer e.terminated = true` at the top. (about 3 lines)
-- [emit_llvm_stmt.odin:363](src/emit_llvm_stmt.odin#L363) `emit_destructure_fields`: the clone test appears twice (:370). Compute `clones := retained && index < len(plan.clones) && plan.clones[index]` once. (about 1 line)
-- [emit_llvm_stmt.odin:31](src/emit_llvm_stmt.odin#L31) `emit_statements`: the two lines are `place_label(e, new_label(e, "unreachable"))`, which adds no `br` after a terminator and gives the same label form. (about 1 line)
-
-**Dead code**
-
-- `operator_consumes_left` ([emit_llvm_stmt.odin:631](src/emit_llvm_stmt.odin#L631)): its only caller is :608 and it is never true. A `move` parameter needs a written `move(...)` (overload.odin:497), and `move(v) += 2` is L0359; `v += V{2}` with `a: move V` is L0392 for managed and unmanaged `V`. Delete it and the `if` at :608.
-- (branch) [emit_llvm_stmt.odin:984](src/emit_llvm_stmt.odin#L984): `s != nil` exists for the one `emit_return_values(e, nil)` at emit_llvm.odin:721, which can call `emit_epilogue(e)` directly.
-- (branch) [emit_llvm_stmt.odin:498](src/emit_llvm_stmt.odin#L498): `index < len(s.lhs)` follows a use of `s.lhs[index]` at :496, and the `index < len(values)` tests at :517, :521 and :522 cannot fail, since check.odin:3587 rejects differing lengths.
-- (branch) [emit_llvm_stmt.odin:357](src/emit_llvm_stmt.odin#L357): `field == nil` (also :401, :443) cannot hold, because `plan.fields` comes from the record's own fields.
-- (branch) [emit_llvm_stmt.odin:366](src/emit_llvm_stmt.odin#L366): the length tests on `destinations` and `plan.retained` (:362, :385, :422, :432) cannot fail, since all are built with `len(fields)` (check.odin:2553, :3571). `addresses[index] == ""` at :439 is also unreachable for a retained target.
-- (branch) [emit_llvm_stmt.odin:88](src/emit_llvm_stmt.odin#L88): `s.slot` always indexes `defer_flags` (check.odin:4561 and :2837 share the counter) and a body always has a scope. If this ever failed it would silently lose a `defer`, so remove it.
+What remains is two near copies that belong to the cross-file groups.
 
 **Near copies**
 
-- [emit_llvm_stmt.odin:419](src/emit_llvm_stmt.odin#L419) and [emit_llvm_stmt.odin:503](src/emit_llvm_stmt.odin#L503): identical address-preparation loops, since `retained[i] == !is_discard(target)` (check.odin:3573). The write loops at :431 and :515 match too, apart from the type stored. Share `emit_destinations` and a per-target write. (about 20 lines)
-- [emit_llvm_stmt.odin:446](src/emit_llvm_stmt.odin#L446), [emit_llvm_stmt.odin:527](src/emit_llvm_stmt.odin#L527) and [emit_llvm_stmt.odin:609](src/emit_llvm_stmt.odin#L609): displace, store, revive, finish guard, drop displaced. Merge into `emit_replacing_store(e, s, index, type, value, address, guard)`, which also ends `displace_place` setting the flag while callers revive. (about 8 lines)
 - [emit_llvm_stmt.odin:173](src/emit_llvm_stmt.odin#L173), [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800) and [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Shared form: `emit_alloc_failed_if(e, failed, allocator)`, shaped like `panic_if`. (about 5 lines per site)
 - [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679) and [emit_llvm_iteration.odin:62](src/emit_llvm_iteration.odin#L62): the same save and restore of four loop fields. Group them in a `Loop_Targets` on `Emitter` (`outer := e.loop; defer e.loop = outer`), which is also where the frame depth from BUG-1 belongs. (about 8 lines)
-- [emit_llvm_stmt.odin:898](src/emit_llvm_stmt.odin#L898) and [emit_llvm_stmt.odin:956](src/emit_llvm_stmt.odin#L956): name `%bind.N`, alloca, `bind_local`. One helper returning the slot. (about 3 lines)
-- [emit_llvm_stmt.odin:162](src/emit_llvm_stmt.odin#L162) and [emit_llvm_stmt.odin:265](src/emit_llvm_stmt.odin#L265): the same field GEP. Hoist the nested `field_address` to file scope and use it in `emit_spawn_pack`.
-- [emit_llvm_stmt.odin:199](src/emit_llvm_stmt.odin#L199) and [emit_llvm_calls.odin:1389](src/emit_llvm_calls.odin#L1389): the "this argument is the callee's default" test. One predicate over symbol, index and argument.
-
-**Structure and boundaries**
-
-- [emit_llvm_stmt.odin:321](src/emit_llvm_stmt.odin#L321): `emit_exchange` and `emit_move` (:331) lower expressions, and their only callers are emit_llvm_calls.odin:98 and emit_llvm_expr.odin:1299. Move each beside its caller, file-private.
-- [emit_llvm_stmt.odin:144](src/emit_llvm_stmt.odin#L144) `emit_spawn`: about 105 lines doing three jobs. The seams are frame allocation (:165-180) and the argument loop (:187-226), which can become `emit_spawn_arguments` returning `owned`.
-- [emit_llvm_stmt.odin:18](src/emit_llvm_stmt.odin#L18): `emit_block_statements` has no caller outside this file, so make it `@(private = "file")`, as compiler-architecture.md "Source-code map" asks. So can `emit_return_values` once emit_llvm.odin:721 calls `emit_epilogue`.
-
-**Comments**
-
-- [emit_llvm_stmt.odin:34](src/emit_llvm_stmt.odin#L34): wrong, since initial statements declare no frame. Write: `A block statement's full-expression boundary, which also holds an initial statement's temporaries; a loop update declares its own.`
-- [emit_llvm_stmt.odin:101](src/emit_llvm_stmt.odin#L101) and [emit_llvm_stmt.odin:686](src/emit_llvm_stmt.odin#L686): these describe BUG-1 and BUG-2 as intended; reword with the fixes.
-- [emit_llvm_stmt.odin:283](src/emit_llvm_stmt.odin#L283): delete; :290 says the same.
-- [emit_llvm_stmt.odin:329](src/emit_llvm_stmt.odin#L329): delete; it restates the three lines below.
-- [emit_llvm_stmt.odin:516](src/emit_llvm_stmt.odin#L516): delete; the comment at :637 already says it.
-- [emit_llvm_stmt.odin:592](src/emit_llvm_stmt.odin#L592): delete, and at :615 write `design.md "Evaluation order": the destination is read after the right operand.`, since that citation names no heading.
-- [emit_llvm_stmt.odin:604](src/emit_llvm_stmt.odin#L604): delete; it narrates the next lines.
 
 ### src/emit_llvm_toolchain.odin
 

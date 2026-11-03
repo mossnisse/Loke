@@ -517,16 +517,36 @@ global_initializer :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> (s
 	return llvm_type(e, type), llvm_const(e, value, type), ""
 }
 
-// A constant operand in a body; an image is loaded from a private global.
+// A constant operand in a body; an image is loaded from a private global. A large
+// value is an address, so a large constant is the global's.
 @(private = "file")
 const_operand :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
-	if !const_needs_image(e, value, type) {
-		return llvm_const(e, value, type)
-	}
+	large := is_large_value(e, type)
 	image_type, image, align := global_initializer(e, value, type)
+	if large && image == "zeroinitializer" {
+		return large_zero(e, type)
+	}
+	if !large && !const_needs_image(e, value, type) {
+		return image
+	}
 	name := fmt.aprintf("@.image.%d", len(e.globals))
 	append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s%s\n", name, image_type, image, align))
-	return load(e, llvm_type(e, type), name)
+	return large ? name : load(e, llvm_type(e, type), name)
+}
+
+// The address of a large zero, which takes no space in the file. `store` writes
+// the zero itself rather than copying this, so most of these are never read.
+LARGE_ZERO_PREFIX :: "@.zero."
+
+@(private = "file")
+large_zero :: proc(e: ^Emitter, type: Type_Id) -> string {
+	if name, known := e.large_zeros[type]; known {
+		return name
+	}
+	name := fmt.aprintf("%s%d", LARGE_ZERO_PREFIX, len(e.globals))
+	append(&e.globals, fmt.aprintf("%s = private unnamed_addr global %s zeroinitializer\n", name, llvm_type(e, type)))
+	e.large_zeros[type] = name
+	return name
 }
 
 // Every float constant is spelled as its bit pattern, since LLVM's decimal
@@ -672,12 +692,12 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	// A large constant is written with memset or copied from a module constant.
 	if is_large_value(e, type) {
 		size := type_size(e.c, type)
-		if value == "zeroinitializer" {
+		if value == "zeroinitializer" || strings.has_prefix(value, LARGE_ZERO_PREFIX) {
 			fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)", address, size)
 			return
 		}
 		from := value
-		if value[0] != '%' {
+		if value[0] != '%' && value[0] != '@' {
 			from = fmt.aprintf("@.aggregate.%d", len(e.globals))
 			append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s\n", from, llvm_type(e, type), value))
 		}
@@ -1152,6 +1172,15 @@ emit_copied_expr :: proc(
 		value = emit_clone_value(e, from, value, provider)
 	}
 	return from == type ? value : emit_union_widen(e, value, from, type)
+}
+
+@(private = "file")
+emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
+	value := emit_expr(e, v.value)
+	if ident, is_ident := v.value.(^Expr_Ident); is_ident {
+		kill_place(e, ident.symbol)
+	}
+	return value
 }
 
 // The address an erased view of `expr` holds: the place itself, or a temporary
