@@ -1566,7 +1566,7 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 - [emit_llvm_abi.odin:1036](src/emit_llvm_abi.odin#L1036) and [line 876](src/emit_llvm_abi.odin#L876): `foreign_call_type` re-classifies parameters as `foreign_param_type` does, differing only in dropping `zeroext`. Take `^Type_Info` in `foreign_param_type` and trim the attribute. The `mode` lookup at line 1105 also repeats `foreign_param_is_pointer`. (about 15 lines)
 - [emit_llvm_abi.odin:991](src/emit_llvm_abi.odin#L991) and [line 1121](src/emit_llvm_abi.odin#L1121): the same spill and reload through `iN`; lines 998, 1112 and 1128 are the same spill to a pointer. A `foreign_value_operand(e, type, operand)` serves the promotion's aggregate case and the fixed-argument switch. (about 12 lines)
 - [emit_llvm_abi.odin:441](src/emit_llvm_abi.odin#L441), [line 467](src/emit_llvm_abi.odin#L467) and [line 505](src/emit_llvm_abi.odin#L505): write the payload at member 0, then the tag. Hoist the nested `arm` to file scope and use it in all three. (about 6 lines)
-- [emit_llvm_abi.odin:208](src/emit_llvm_abi.odin#L208) and [emit_llvm_expr.odin:180](src/emit_llvm_expr.odin#L180): the type's and the constant's spelling of a record each derive packed, over-aligned and byte-member form; [emit_llvm_expr.odin:2014](src/emit_llvm_expr.odin#L2014) derives the last again. With the flag above, both read the same two facts.
+- [emit_llvm_abi.odin:208](src/emit_llvm_abi.odin#L208) and [emit_llvm_expr.odin:180](src/emit_llvm_expr.odin#L180): the type's and the constant's spelling of a record each derive packed, over-aligned and byte-member form. With the flag above, both read the same two facts.
 
 **Structure and boundaries**
 
@@ -1739,74 +1739,11 @@ Most of the removable bulk is hand-written IR that existing helpers already cove
 
 ### src/emit_llvm_expr.odin
 
-Careful code with mostly useful why-comments, but constants of a large type break the "a large value is an address" rule, and a C-pointer slice misses its negative-length panic. The main savings are in near copies among the constant and equality walkers, plus a text-slice validation that costs O(n) where O(1) would do. The bugs below were reproduced with the built `lokec.exe`.
-
-**Bugs**
-
-- `BUG-emit_llvm_expr-3` **medium** [emit_llvm_expr.odin:1039](src/emit_llvm_expr.odin#L1039) `emit_c_pointer_slice`: only `low u> high` is tested, so a negative `high` with `low` 0 passes; design.md "string type conversions" says a negative length panics, as `pointer[0:length]` does. Scenario: `n := -1; s := a[0:n];` gives `s.len() == -1`, and `s[1000]` passes its bounds check and segfaults. Fix: also panic on `icmp slt i64 high, 0`. *Confirmed: Probe: `n := -1; a[0:n]` prints len -1 with no panic; `s[1000000000]` then segfaults. `unsafe.string_view(a, -1)` and `a[2:1]` do panic, and design.md says `pointer[0:length]` panics too. Not in the gap docs. Needs core:unsafe, so medium is at most.*
-- `BUG-emit_llvm_expr-4` **low** [emit_llvm_expr.odin:2510](src/emit_llvm_expr.odin#L2510) `emit_unsafe_builtin`: the `[dynamic]` arm reads an owned temporary with `emit_expr`, so nothing drops it; the string arm at line 2506 and `emit_builtin_slice` at line 979 borrow. Scenario: `p := unsafe.raw_data(build());` emits no drop in `main`, leaking the array. Fix: use `emit_borrowed_operand`. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_expr.odin:537](src/emit_llvm_expr.odin#L537) `llvm_float`: `hex_pattern` is a hand-written printf on a path that is not hot; use `fmt.aprintf("0xH%04X", u16(pattern))` and `fmt.aprintf("0x%016X", pattern)`, and delete `hex_pattern`. (about 10 lines)
-- [emit_llvm_expr.odin:562](src/emit_llvm_expr.odin#L562) `f32_pattern_as_f64`: only NaN needs bit surgery, since `f32` to `f64` is exact for every other value. Keep the `0xff` case (infinity is the same either way) and use the hardware conversion for the rest. (about 5 lines)
-- [emit_llvm_expr.odin:1855](src/emit_llvm_expr.odin#L1855) `emit_large_equal`: local `part_value` is `load_temporary` (line 629), as is the last line of `record_part`; call it instead. (about 5 lines)
-- [emit_llvm_expr.odin:171](src/emit_llvm_expr.odin#L171) `llvm_const`: `.Dyn`, `.Dynamic_Array`, `.Map` and a non-literal `.Slice` have no fields, so they always reach `zeroinitializer` through the record builder. Give them their own arm, and the `info.kind == .Struct &&` guards at lines 179-180 go. (about 6 lines)
-- [emit_llvm_expr.odin:2184](src/emit_llvm_expr.odin#L2184) `emit_text_parts`, and `emit_byte_slice_parts` at line 2409: hand-written `extractvalue` pairs; `return extract(e, storage, value, STRING_DATA), extract(e, storage, value, STRING_LEN)`. (about 6 lines)
-- [emit_llvm_expr.odin:1322](src/emit_llvm_expr.odin#L1322) `emit_slice_literal`: `element_address(e, backing, root, index)` replaces the hand-written GEP. Likewise `gep_at` at line 1001, `alloca` at line 2286 and `load` at line 2305. (about 8 lines)
-- [emit_llvm_expr.odin:2390](src/emit_llvm_expr.odin#L2390) `emit_text_conversion`: `.String_From_C_View` can start from `emit_text_parts`, which already measures a C string view, and share the `.String_From_Bytes` arm's call. (about 3 lines)
-- [emit_llvm_expr.odin:1165](src/emit_llvm_expr.odin#L1165) `emit_expr_at`: four arms repeat `if from := base.view_from; from != INVALID_TYPE`; test it once and switch on `underlying_kind(as_type)` inside. (about 3 lines)
-- [emit_llvm_expr.odin:835](src/emit_llvm_expr.odin#L835) `emit_address_at`: `record_field_align(e, base_type, base_address, out, info.element)` computes the same alignment. (about 2 lines)
-- [emit_llvm_expr.odin:2018](src/emit_llvm_expr.odin#L2018) `record_uses_byte_members`: `struct_body` reads `info.align` after `type_size` without refetching, so `current` is needless. Lines 179-181 and 416 can share this predicate once it accepts an empty record. (about 3 lines)
-- [emit_llvm_expr.odin:1801](src/emit_llvm_expr.odin#L1801) `emit_equal`: `llvm_type(e, under)` is spelled at lines 1801, 1802, 1814, 1815 and 1818; hoist one `llvm` above the switch. (about 3 lines)
-- [emit_llvm_expr.odin:1717](src/emit_llvm_expr.odin#L1717) `emit_compare`: `type_signed(...) || type_is_rune(...)` is `integer_computes_signed`, which `emit_binary_op` already uses. (about 2 lines)
-
-**Dead code**
-
-- `type_is_erased_view` ([emit_llvm_expr.odin:1956](src/emit_llvm_expr.odin#L1956)): only caller is line 1701, and it can answer true only for the unreachable types in the next bullet; delete it.
-- (branch) [emit_llvm_expr.odin:1781](src/emit_llvm_expr.odin#L1781): the `.Dyn` and `.Slice` arms of `emit_equal`. The checker rejects `== nil` (L0310), `d == g`, `Option([]int)`, a `switch` subject (L0355), map keys and sort, as design.md "Comparison operators" says; line 1787's ternary is also constant. (about 17 lines)
-- (branch) [emit_llvm_expr.odin:124](src/emit_llvm_expr.odin#L124): `bits, signed = 32, true` for a rune; `type_of` already holds exactly that (semantic.odin:1047), and `default_type` at line 97 removed the untyped rune.
-- (branch) [emit_llvm_expr.odin:2451](src/emit_llvm_expr.odin#L2451): `source_ptr && target_ptr` in `reinterpret_bits`; all three pointer-shaped kinds spell `ptr` (emit_llvm_abi.odin:365), so `from == to` at line 2444 has already returned.
-- (branch) [emit_llvm_expr.odin:387](src/emit_llvm_expr.odin#L387): this `write_const_bytes` arm returns false, as the fall-through at line 391 does; its comment goes too.
-- (branch) [emit_llvm_expr.odin:278](src/emit_llvm_expr.odin#L278): the float width test; the only float types are 16, 32 and 64 bits (semantic.odin:1044-1046).
-- (branch) [emit_llvm_expr.odin:1507](src/emit_llvm_expr.odin#L1507): the integer column for `.Plus`, `.Minus` and `.Star` (and `""` for `.Slash`) in `arith_mnemonic`; `emit_binary_op` returns for those at lines 1532-1535 before reading it.
-- (branch) [emit_llvm_expr.odin:1248](src/emit_llvm_expr.odin#L1248): `index.operand != nil`; `emit_address_at` line 794 uses the same operand unguarded, so the guard protects nothing.
-
-**Data structures and algorithms**
-
-- [emit_llvm_expr.odin:1017](src/emit_llvm_expr.odin#L1017) `emit_text_subrange`: every text slice re-validates the whole range in the runtime, which is O(range length), so `rest = rest[n:]` in a tokenizer is quadratic in the text. The operand is already valid UTF-8 (design.md "String views"), so testing the lead byte at `high` as line 1010 does at `low` is O(1).
-- [emit_llvm_expr.odin:1800](src/emit_llvm_expr.odin#L1800) `emit_equal`: arrays up to `LARGE_VALUE_BYTES` are unrolled, about four instructions per element; `[4096]u8 == [4096]u8` produced a 16396-line procedure. Spill and use the loop from `emit_large_equal` above a small element count. The ponytail note at line 1762 already expects this.
-- [emit_llvm_expr.odin:150](src/emit_llvm_expr.odin#L150) `llvm_const`: with `value.aggregate == nil` the loop still formats every element of an N-element array and then discards the text for `zeroinitializer`, so the cost grows with the array size. Return early when there are no elements; the struct arm at line 185 can do the same.
+What remains is the allocation-failure branch it shares with the other emitter files.
 
 **Near copies**
 
-- [emit_llvm_expr.odin:404](src/emit_llvm_expr.odin#L404) `const_needs_image` and [emit_llvm_expr.odin:435](src/emit_llvm_expr.odin#L435) `const_has_pointer`: same walk with identical union, struct and array recursion. One proc with `in_image := false`, set true on entering a union payload or byte-member record, and pointer leaves answering only when set. (about 25 lines)
-- [emit_llvm_expr.odin:1812](src/emit_llvm_expr.odin#L1812), [emit_llvm_expr.odin:1860](src/emit_llvm_expr.odin#L1860) and [emit_llvm_expr.odin:2043](src/emit_llvm_expr.odin#L2043): one field loop with its `initialized_by` branch, differing only in how a part is read. One loop taking a reader (extract, address, byte member), which `emit_record_order`'s `field_value` at line 1735 can also use. (about 25 lines)
-- [emit_llvm_expr.odin:1877](src/emit_llvm_expr.odin#L1877) and [emit_llvm_expr.odin:1926](src/emit_llvm_expr.odin#L1926): the same cursor-and-accumulator comparison loop; only the bound differs, a constant or an operand. Share `emit_elements_equal(e, element, left, right, count: string)`, using `combine_and` as the first does. (about 20 lines)
-- [emit_llvm_expr.odin:1050](src/emit_llvm_expr.odin#L1050) `emit_bounds_check` and [emit_llvm_expr.odin:899](src/emit_llvm_expr.odin#L899) `emit_index_below`: same check, the first with its own wide-index handling. Evaluate the fixed-array index with `emit_index_below(e, v, fmt.tprintf("%d", info.count))` and delete `emit_bounds_check`. (about 14 lines)
-- [emit_llvm_expr.odin:154](src/emit_llvm_expr.odin#L154), [190](src/emit_llvm_expr.odin#L190), [293](src/emit_llvm_expr.odin#L293) and [313](src/emit_llvm_expr.odin#L313): the same missing-element-is-zero fetch; share `const_element(value, index) -> Const_Value`. (about 12 lines)
-- [emit_llvm_expr.odin:282](src/emit_llvm_expr.odin#L282), [340](src/emit_llvm_expr.odin#L340) and [353](src/emit_llvm_expr.odin#L353): little-endian byte loops that `write_u64_bytes` at line 395 already is. (about 7 lines)
-- [emit_llvm_expr.odin:111](src/emit_llvm_expr.odin#L111) and [emit_llvm_expr.odin:345](src/emit_llvm_expr.odin#L345): the same typeid lookup with the same failure message; share `const_typeid_number(e, value) -> u64`. (about 5 lines)
-- [emit_llvm_expr.odin:697](src/emit_llvm_expr.odin#L697), [801](src/emit_llvm_expr.odin#L801), [856](src/emit_llvm_expr.odin#L856) and [890](src/emit_llvm_expr.odin#L890): slot, store, `hold_addressed_temporary`. Share `hold_in_temporary(e, expr, type, value) -> string`. (about 6 lines)
-- [emit_llvm_expr.odin:2121](src/emit_llvm_expr.odin#L2121) and [emit_llvm_expr.odin:2133](src/emit_llvm_expr.odin#L2133): the two arms of `emit_cond` differ only in label, operand and clone flag; share `emit_cond_arm(...) -> (value, exit: string)`. (about 8 lines)
-- [emit_llvm_expr.odin:760](src/emit_llvm_expr.odin#L760) and [emit_llvm_expr.odin:781](src/emit_llvm_expr.odin#L781): the same symbol-storage lookup and failure; share `symbol_place(e, symbol) -> string`. (about 5 lines)
 - [emit_llvm_expr.odin:2272](src/emit_llvm_expr.odin#L2272) and [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), plus [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176), [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073): the same branch to `alloc_failed`. Share `emit_alloc_failed_if(e, failed, provider, label)`. (about 25 lines overall)
-
-**Structure and boundaries**
-
-- [emit_llvm_expr.odin:1](src/emit_llvm_expr.odin#L1): 2549 lines with three clean seams: constants (lines 9-574), comparison and equality (lines 1663-2072) and text (lines 2158-2413). Text has no section banner; `emit_transmute` and `emit_unsafe_builtin` sit under it though they are neither, and `emit_const_len_receiver` at line 2536 and `emit_byte_slice_parts` at line 2406 are far from their users.
-- [emit_llvm_expr.odin:752](src/emit_llvm_expr.odin#L752) `emit_address_at`: `e.lending` (emit_llvm.odin:199) is a parameter passed through emitter state. This file alone uses it, and it is consumed on entry; a `lending := false` parameter on `emit_address` and `emit_address_at` removes the field and the writes at lines 695, 710, 912 and 939.
-- [emit_llvm_expr.odin:1147](src/emit_llvm_expr.odin#L1147) `emit_expr_at`: 165 lines, of which lines 1147-1195 are one job, implicit conversions of the node. Extract `emit_implicit_conversion(e, expr, base, as_type) -> (string, bool)`, leaving the constant path and the node switch.
-- [emit_llvm_expr.odin:741](src/emit_llvm_expr.odin#L741) `temporary_slot_for`: used only in this file but marked `@(private)`; the source-code map asks for `@(private = "file")`.
-
-**Comments**
-
-- [emit_llvm_expr.odin:907](src/emit_llvm_expr.odin#L907): drop the milestone name "M5b", which no document defines: "`xs[i]`: an address in the current allocation, valid only as long as it is."
-- [emit_llvm_expr.odin:1095](src/emit_llvm_expr.odin#L1095): inaccurate for large values; "An operand: a literal, a `%name`, or a large value's address."
-- [emit_llvm_expr.odin:1497](src/emit_llvm_expr.odin#L1497): the first sentence restates the proc; keep only the second, adjusted for the dead column above.
-- [emit_llvm_expr.odin:2404](src/emit_llvm_expr.odin#L2404): delete, and rename `emit_byte_slice_parts` to `emit_slice_parts`, since it reads a slice of any element type (line 924).
-- [emit_llvm_expr.odin:2171](src/emit_llvm_expr.odin#L2171): keep "The data pointer and byte length of a text operand."
-- [emit_llvm_expr.odin:23](src/emit_llvm_expr.odin#L23), [1566](src/emit_llvm_expr.odin#L1566) and [2165](src/emit_llvm_expr.odin#L2165): delete; each restates the next line or the signature.
 
 ### src/emit_llvm_iteration.odin
 

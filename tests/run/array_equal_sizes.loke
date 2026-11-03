@@ -1,0 +1,78 @@
+// design.md "Comparison operators": arrays compare element by element, whether
+// the comparison is unrolled, a loop over spilled values, or a loop in place.
+package main;
+
+import "core:fmt";
+
+// Every element of the two arrays but one is equal, and that one is the last.
+last_differs :: proc($N: int) -> bool {
+	a: [N]u8 = {};
+	b: [N]u8 = {};
+	same := a == b;
+	b[N - 1] = 1;
+	return same && a != b && !(a == b);
+}
+
+First_Field :: struct { key, ignored: int }
+
+impl First_Field {
+	equal :: operator(==) proc(a, b: First_Field) -> bool { return a.key == b.key; }
+}
+
+Holder :: struct {
+	tag:   u8,
+	items: [20]i32,
+}
+
+Choice :: union { none, many: [20]i16 }
+
+main :: proc() {
+	fmt.println(last_differs(1), last_differs(8), last_differs(9), last_differs(64), last_differs(65));
+	fmt.println(last_differs(4096), last_differs(4097), last_differs(70000));
+
+	// Nested arrays, unrolled inside a loop.
+	grid_a: [9][9]u8 = {};
+	grid_b: [9][9]u8 = {};
+	fmt.println(grid_a == grid_b);
+	grid_b[8][8] = 1;
+	fmt.println(grid_a == grid_b);
+
+	// Elements larger than a large value stay addresses.
+	big_a: [3][5000]u8 = {};
+	big_b: [3][5000]u8 = {};
+	fmt.println(big_a == big_b);
+	big_b[2][4999] = 1;
+	fmt.println(big_a == big_b);
+
+	// An element with its own `==`, and managed text.
+	own_a: [12]First_Field = {};
+	own_b: [12]First_Field = {};
+	own_b[11].ignored = 7;
+	fmt.println(own_a == own_b);
+	own_b[11].key = 7;
+	fmt.println(own_a == own_b);
+	text_a: [10]string = {};
+	text_b: [10]string = {};
+	text_a[9] = "same";
+	text_b[9] = "same";
+	fmt.println(text_a == text_b);
+	text_b[9] = "other";
+	fmt.println(text_a == text_b);
+
+	// A NaN differs from itself in every shape.
+	floats_a: [16]f64 = {};
+	zero := 0.0;
+	fmt.println(floats_a == floats_a);
+	floats_a[15] = zero / zero;
+	fmt.println(floats_a == floats_a);
+
+	// An array inside a record and a union.
+	one, other := Holder{}, Holder{};
+	fmt.println(one == other);
+	other.items[19] = 1;
+	fmt.println(one == other);
+	first, second: Choice = .many([20]i16{}), .many([20]i16{});
+	fmt.println(first == second);
+	second = .many([20]i16{19 = 1});
+	fmt.println(first == second);
+}

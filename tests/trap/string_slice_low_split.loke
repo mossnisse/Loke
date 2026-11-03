@@ -1,0 +1,10 @@
+package main; import "core:fmt";
+
+// design.md "String views": a low bound inside a sequence panics.
+main :: proc() {
+	text: string = "aé";
+	low := 1;
+	fmt.println(text[low:].len());
+	low = 2;
+	fmt.println(text[low:].len());
+}

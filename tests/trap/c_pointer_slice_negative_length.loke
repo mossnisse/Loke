@@ -1,0 +1,14 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// design.md "string type conversions": a negative length panics in
+// `pointer[0:length]`, where a low bound of 0 is not above the high bound in the
+// unsigned comparison that orders them. A slice that went through would pass
+// every later bounds check.
+
+main :: proc() {
+	store := [4]int{1, 2, 3, 4};
+	pointer := ([^]int)(&mut store);
+	fmt.println(pointer[1:3].len());
+	length := -1;
+	fmt.println(pointer[0:length].len());
+}

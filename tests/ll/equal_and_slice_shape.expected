@@ -1,0 +1,4 @@
+equal.head
+not extractvalue [4096 x i8]
+slice.lead
+not call i32 @loke_rt_v1_utf8_valid

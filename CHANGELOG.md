@@ -1113,6 +1113,11 @@ checklist.
 
 ### Changed
 
+- Slicing a `string` or a `string_view` tests only the bytes at its bounds, in constant time, rather
+  than validating the whole range, since the text is already valid UTF-8. `rest = rest[1:]` over
+  256 KB took 145 s and now takes under 0.2 s. A bound inside a sequence still panics.
+- Comparing a fixed array of more than 8 elements or 64 bytes generates a loop rather than a few
+  instructions per element, so `[4096]u8 == [4096]u8` is about 40 lines of IR, down from about 16,400.
 - [design.md](design.md) is shorter and no longer specifies the library, with no
   change to what a program means.
   [standard-library.md](standard-library.md) now specifies printing, `core:slice`,
@@ -1331,6 +1336,11 @@ checklist.
 
 - A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
   used to fail with internal `L0405`, "a map key operation was not resolved during checking".
+- `pointer[0:length]` on a C pointer panics for a negative `length`, as
+  [string type conversions](design.md#string-type-conversions) says. The slice used to come out with
+  that length, so its later bounds checks passed and an index read out of bounds.
+- `unsafe.raw_data` of a temporary `[dynamic]T` drops the array when the full expression ends, as the
+  same call on a `string` does, rather than leaking it and never running its elements' `hook(drop)`.
 - A global larger than 4096 bytes passed by pointer, as `g.peek()` with `self: ^` or `set(inout g)`,
   compiles. It used to fail in clang with `L0403`.
 - A variadic pack with a spread among other operands, as `sum(1, ..big[:])`, panics with

@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Comparison operators": a fixed array that is not small compares in a
+// loop rather than in instructions per element. design.md "String views": slicing
+// valid text tests the bytes at its bounds and does not validate the range.
+
+same :: proc(a, b: ^[4096]u8) -> bool { return a^ == b^; }
+
+rest :: proc(text: string_view, from: int) -> string_view { return text[from:]; }
+
+main :: proc() {
+	a: [4096]u8 = {};
+	if (same(&a, &a) && rest("a", 0).len() == 1) {
+		a[0] = 1;
+	}
+}
