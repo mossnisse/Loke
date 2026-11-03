@@ -1,0 +1,6 @@
+// A type declared in a body is measured as a package's is.
+package main;
+
+main :: proc() {
+	S :: struct { s: S }
+}

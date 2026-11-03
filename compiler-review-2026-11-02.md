@@ -91,7 +91,6 @@ to work in if split, though that shortens nothing.
 
 11. **Wrong inferred effects.** Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-global_effects-1, -2, -3. Merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
 
-12. **Re-checked expressions emit duplicate functions.** Hoisting at [check_expr.odin:2776](src/check_expr.odin#L2776) and the `erased_from` guard at [check_expr.odin:3536](src/check_expr.odin#L3536) break when [text.odin:43](src/text.odin#L43), [box.odin:211](src/box.odin#L211), [check.odin:2195](src/check.odin#L2195) or [check.odin:3640](src/check.odin#L3640) checks a receiver twice. A `hoisted` flag plus one receiver-checked flag also removes the doubling per call-chain link. BUG-check.part2-1, BUG-box-3, BUG-text-2, BUG-erased-2. About 30 lines.
 
 13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). BUG-eval.part1-1. About 35 lines.
 
@@ -113,14 +112,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
 
-
-#### Receivers checked twice, because `check_expr` is not idempotent
-
-[text.odin:43](src/text.odin#L43), [box.odin:211](src/box.odin#L211) and [erased.odin:1086](src/erased.odin#L1086) all run from one chain at [check_calls.odin:96](src/check_calls.odin#L96); [check.odin:2195](src/check.odin#L2195) has the same habit, and so do [check.odin:3640](src/check.odin#L3640), [check.odin:3676](src/check.odin#L3676) and [check.odin:3763](src/check.odin#L3763) for setters. Each checks an operand to decide something, returns false, and leaves the caller to check it again. The second check breaks two things that are not idempotent: the hoist at [check_expr.odin:2776](src/check_expr.odin#L2776) and the `erased_from` guard at [check_expr.odin:3536](src/check_expr.odin#L3536).
-
-The copies differ in how they guard against a package alias: [box.odin:206](src/box.odin#L206) and [erased.odin:1080](src/erased.odin#L1080) test the alias, while [text.odin:36](src/text.odin#L36) reads the symbol's type and thereby causes BUG-text-1.
-
-Shared form: a `receiver_checked` flag on `Expr_Selector`, set by a single `check_receiver(k, sel)` and honored by `check_selector`; a `hoisted` flag on `Expr_Proc`; `erased_from` cleared when a re-check starts. Saves about 20 lines and fixes BUG-check.part2-1, BUG-box-3, BUG-text-1, BUG-text-2 and BUG-erased-2, along with the doubling per chain link measured in text.md (32.7 s at depth 22).
 
 #### Container operations classified in several tables
 
@@ -217,12 +208,12 @@ Shared form: `new_iterator_type(c, name, label, element, key, fields)`. Saves ab
 
 #### Switch checking
 
-[check.odin:4327](src/check.odin#L4327) and [optional.odin:448](src/optional.odin#L448) open a switch identically, and the union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L4390) at [optional.odin:574](src/optional.odin#L574). [check.odin:4464](src/check.odin#L4464) `check_exhaustive` and [optional.odin:713](src/optional.odin#L713) `report_uncovered_variants` build the same first-three list. `check_type_switch` is reached only by a switch already marked `.Pattern`, written at [optional.odin:377](src/optional.odin#L377) and [expand.odin:620](src/expand.odin#L620). Its subject is a union there, so `check_switch`'s own path serves it and the reviewer's route of deleting it and the dispatch at [check.odin:4324](src/check.odin#L4324) looks right, though a clone's subject should be tested first. With a `missing_list` builder and a `Case_Flow` accumulator this saves about 45 lines.
+The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L4390) at [optional.odin:574](src/optional.odin#L574). [check.odin:4464](src/check.odin#L4464) `check_exhaustive` and [optional.odin:713](src/optional.odin#L713) `report_uncovered_variants` build the same first-three list. `check_type_switch` is reached only by a switch already marked `.Pattern`, written at [optional.odin:377](src/optional.odin#L377) and [expand.odin:620](src/expand.odin#L620). Its subject is a union there, so `check_switch`'s own path serves it and the reviewer's route of deleting it and the dispatch at [check.odin:4324](src/check.odin#L4324) looks right, though a clone's subject should be tested first. With a `missing_list` builder and a `Case_Flow` accumulator this saves about 45 lines.
 
 #### Constant values
 
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
-- [reflect.odin:317](src/reflect.odin#L317) `typeid_const` is [const_ops.odin:73](src/const_ops.odin#L73) `type_const`. [check.odin:4514](src/check.odin#L4514) `const_equal` is `fold_comparison(.Eq_Eq)` ([const_ops.odin:693](src/const_ops.odin#L693)) behind a kind check, and lacks aggregates. Saves about 25.
+- [reflect.odin:317](src/reflect.odin#L317) `typeid_const` is [const_ops.odin:73](src/const_ops.odin#L73) `type_const`. Saves about 25.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 - A big integer is rounded to a float at [bigint.odin:354](src/bigint.odin#L354), [bigint.odin:463](src/bigint.odin#L463) and [const_ops.odin:391](src/const_ops.odin#L391). `dyadic_to_float` is exact and general; the other two can call it once it releases its temporaries, which CTFE's charged allocator needs. Saves about 30.
 
@@ -303,9 +294,8 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 #### One-line helpers that exist, or should
 
 - `type_of(c, type_underlying(c, x))` at 33 sites is [semantic.odin:1885](src/semantic.odin#L1885) `underlying_info`.
-- Hand-written [check.odin:1727](src/check.odin#L1727) `name_identifier`: [check.odin:557](src/check.odin#L557), [check.odin:1706](src/check.odin#L1706), [check.odin:2166](src/check.odin#L2166), [impl.odin:206](src/impl.odin#L206), [expand.odin:178](src/expand.odin#L178), [overload.odin:72](src/overload.odin#L72). About 18 lines.
 - `symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))` at 12 sites becomes `ident_symbol(k, ident)`.
-- `is_package_selector(k, sel)` replaces [box.odin:206](src/box.odin#L206), [erased.odin:1080](src/erased.odin#L1080), [check.odin:1907](src/check.odin#L1907), [check_expr.odin:695](src/check_expr.odin#L695), [check_expr.odin:755](src/check_expr.odin#L755). About 15 lines.
+- `is_package_selector(k, sel)` replaces `check_receiver`'s test in `check_calls.odin`, [check.odin:1907](src/check.odin#L1907), [check_expr.odin:695](src/check_expr.odin#L695), [check_expr.odin:755](src/check_expr.odin#L755). About 15 lines.
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68) differ in one string; [box.odin:34](src/box.odin#L34) and [select.odin:293](src/select.odin#L293) in one enum. `predeclared_callee(k, callee, name)` and `callee_is_builtin` save about 25 lines.
 - A parameter's mode with the bounds test is written at 24 sites, for example [check_calls.odin:668](src/check_calls.odin#L668) and [emit_llvm_calls.odin:1423](src/emit_llvm_calls.odin#L1423), beside [semantic.odin:1339](src/semantic.odin#L1339) `proc_parameter_mode`. A `param_mode_at(info, index)` saves no lines but shortens every site.
 - `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
@@ -322,7 +312,6 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `semantic.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
-- Enum logic: [check.odin:1250](src/check.odin#L1250) and [check.odin:4497](src/check.odin#L4497) belong in `enums.odin`, which the map names as owner.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
 - Transfer wording and type reach: [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belongs beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Formatting in [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541) onward. Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
@@ -450,7 +439,7 @@ Mostly plain node definitions, in good shape: a scan of every struct field found
 
 - [ast.odin:382](src/ast.odin#L382): wrong field. `type` is the checker's base field; say "when `type_expr` is nil".
 - [ast.odin:257](src/ast.odin#L257): "or -1" is stale. The only writers store a real slot ([check_calls.odin:1201](src/check_calls.odin#L1201), [check_calls.odin:1268](src/check_calls.odin#L1268)) and the default is 0. Say "`variadic_slot`, when `is_variadic`, is the packed parameter."
-- [ast.odin:2](src/ast.odin#L2): "decision A1" points nowhere; the only A1 in `comments.md` is about compile-time element budgets. Cite `compiler-architecture.md "One annotated AST"`, here and in `ast_clone.odin:1` and `check.odin:3`.
+- [ast.odin:2](src/ast.odin#L2): "decision A1" points nowhere; the only A1 in `comments.md` is about compile-time element budgets. Cite `compiler-architecture.md "One annotated AST"`, here and in `ast_clone.odin:1`.
 - [ast.odin:69](src/ast.odin#L69): cut to "Named types are `Expr_Ident` / `Expr_Selector`; a generic application is an `Expr_Call`." The header already gives the reason.
 - [ast.odin:652](src/ast.odin#L652): "`fields` for a struct, `variants` for a union. A generic instance clones the record alone, so `attributes` repeats the declaration's list to keep `@(align=N)` reachable."
 - [ast.odin:495](src/ast.odin#L495): "`Borrow` is a `self: ^` receiver or a synthesized read-only one, passed by address. It is last because a mode number reaches the type identity key (`typeid_sort_key_walk`)."
@@ -485,7 +474,6 @@ A compact, table-driven validator in good shape overall; the table matches `desi
 
 - [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91): all three check for a string literal and decode it. Share one `attribute_string_text(c, attribute) -> (string, bool)` that replaces `source_provider_target` and serves lines 396 and 464. (about 8 lines)
 - [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106) and [hooks.odin:1138](src/hooks.odin#L1138): the same `u64(file) << 32 | u64(lo)` key. Make `generic_hook_key` a shared `span_key(span)`. (about 2 lines)
-- [attributes.odin:188](src/attributes.odin#L188) and [check.odin:3391](src/check.odin#L3391): the same long L0734 message. Share a one-line `report_misplaced_intrinsic(k, span)` so the wording cannot drift.
 
 **Structure and boundaries**
 
@@ -601,7 +589,6 @@ Small and readable, with no dead code and no algorithmic concerns. The untyped-p
 
 - `BUG-box-1` **high** [box.odin:148](src/box.odin#L148) `check_box_builtin`: `default_type` of untyped `nil` is `INVALID_TYPE`, and this returns with no diagnostic. Scenario: `box(nil);`, `try_box(nil)`, `unsafe.new(nil)` or `b: Box(^int) = box(nil)` panics at emit_llvm_box.odin:15, exit 132. Fix: report as check_builtin.odin:258 does for `nil`, or materialize to the expected payload. *Confirmed: Reproduced: box(nil), try_box(nil), unsafe.new(nil) and b: Box(^int) = box(nil) each panic at emit_llvm_box.odin:15, exit 132, while x := nil gives L0310. Not recorded in the docs. An internal crash with no output, on unusual code: medium rather than high.*
 - `BUG-box-2` **medium** [box.odin:146](src/box.odin#L146) `check_box_builtin`: an untyped payload always takes its default type, ignoring `payload_expected`, though an initialization would use it. Scenario: `b: Box(u8) = box(1)`, `Box(f32) = box(1.5)` and `Box(string_view) = box("abc")` get L0310. Fix: materialize to `payload_expected` when set, as enums.odin:41 does. *Confirmed: Reproduced L0310 on b: Box(u8) = box(1), while box({1, 2}) and box(.a) take the payload type; no spec text or decision covers it. Severity is low: a clean error, box(u8(1)) works, and shared(1) and id(1) reject alike; "as an initialization does" defines only ownership.*
-- `BUG-box-3` **medium** [box.odin:211](src/box.odin#L211) `check_box_unbox`: a non-box operand is checked here and again as the callee, which hoists a procedure literal twice. Scenario: `(proc() -> S {...})().unbox()` or `f(proc() -> int {...}).unbox()`, with an `unbox` method on `S`, fails in clang with "invalid redefinition of function" (L0403). Fix: make `check_proc_literal` idempotent. *Confirmed: Reproduced: (lit)().unbox() on non-box S emits 2 lambda defines and fails L0403; .other() emits 1 and compiles. But f(lit).other() also fails (2 defines; .unbox() 3), so that form has a separate double check. Narrow trigger: low-medium.*
 - `BUG-box-4` **low** [box.odin:138](src/box.odin#L138) `check_box_builtin`: only `box` passes an expected payload type, though design.md "Owned values" says `try_box` takes the same arguments. Scenario: `r: Result(Box(N), Allocator_Error) = try_box({1, 2})` gets L0376 where `box({1, 2})` compiles. Fix: read the box from the success variant through `fallible_of`. *Not verified.*
 - `BUG-box-5` **low** [box.odin:153](src/box.odin#L153) `check_box_builtin`: diagnostics name a box when the call is `unsafe.new`. Scenario: `unsafe.new(int)` says "a box holds a runtime value", and `unsafe.new(m)` with a move-only `m` says "this box cannot copy it" (the `.Box` site, line 156). Fix: word line 153 with `ident.name` and add a `Copy_Site` for it. *Not verified.*
 
@@ -615,7 +602,6 @@ Small and readable, with no dead code and no algorithmic concerns. The untyped-p
 **Near copies**
 
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68): `box_type_callee`, `simd_callee` and `range_callee` differ only in the name. Shared form: `predeclared_type_callee(k, callee, "Box")`. (about 12 lines)
-- [box.odin:206](src/box.odin#L206) and [erased.odin:1080](src/erased.odin#L1080): the same five-line "operand is a package alias" guard, before the same `check_single_expr(k, sel.operand)`. Shared form: `selector_on_package(k, sel)`.
 - [box.odin:164](src/box.odin#L164) and [check_builtin.odin:586](src/check_builtin.odin#L586): the same optional allocator check with the same L0490 text. Shared form: `check_allocator_argument(k, e) -> bool`. (about 8 lines)
 - [box.odin:226](src/box.odin#L226): the three-line one-element `v.bound` also appears at erased.odin:1014, lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bound_exprs(k, e)`, from `check_builtin.odin`. (about 12 lines)
 - [box.odin:97](src/box.odin#L97) and [check_calls.odin:561](src/check_calls.odin#L561): the "one positional value" test is repeated at check_calls.odin:947, enums.odin:32 and lifecycle.odin:25, 47. Shared form: `has_one_plain_argument(v)`.
@@ -839,11 +825,11 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 - [cfg_provenance.odin:7273](src/cfg_provenance.odin#L7273) `prov_declare_region`: `source` is built from `projected` at 7274, 7325 and 7345; hoist it to the top, then `prov_result_region_at(graph, value, source)` also covers the branch at 7273. (about 7 lines)
 - [cfg_provenance.odin:7299](src/cfg_provenance.odin#L7299) `prov_declare_region`: `type_is_carrier` is already true of `TYPE_ALLOCATOR` (borrow.odin:529), so the test is just `type_is_carrier`; the same makes the `!= TYPE_ALLOCATOR` at 7522 redundant. (about 1 line)
 - [cfg_provenance.odin:7308](src/cfg_provenance.odin#L7308) `prov_declare_region`: `prov_type_has_region` already answers true for managed types, so `managed` goes and the test is `!prov_type_has_region`; likewise 7520-7521 reduce to `prov_type_has_region(c, target_type)`. (about 3 lines)
-- [cfg_provenance.odin:6111](src/cfg_provenance.odin#L6111) `prov_note_written_alias`: `type_carries_borrow(...).any` is already true of a carrier (borrow.odin:748), so `type_is_carrier ||` is redundant here, at 6123 and at 6136. Also at 10181 and check.odin:692.
+- [cfg_provenance.odin:6111](src/cfg_provenance.odin#L6111) `prov_note_written_alias`: `type_carries_borrow(...).any` is already true of a carrier (borrow.odin:748), so `type_is_carrier ||` is redundant here, at 6123 and at 6136. Also at 10181.
 - [cfg_provenance.odin:6071](src/cfg_provenance.odin#L6071) `prov_written_aliases_of`: the `len(aliases) > 0` guard only wraps a `for` that handles empty. (about 2 lines)
 - [cfg_provenance.odin:6778](src/cfg_provenance.odin#L6778) `prov_map_entry_step`: `.Integer` and `.Rune` differ by one letter; one case with the prefix picked by `kind` does both. (about 5 lines)
 - [cfg_provenance.odin:6720](src/cfg_provenance.odin#L6720) `prov_walk_subscripts`: compute `is_map := len(v.bound) == 0 && underlying_kind(...) == .Map` once for 6720 and 6723; the `info == nil` test at 6728 cannot fire once the kind is `.Map`. (about 4 lines)
-- [cfg_provenance.odin:7717](src/cfg_provenance.odin#L7717) `prov_names_same_place`: `const_equal` runs even when only one side is constant. Use `if x.is_const != y.is_const { return false }`, then compare both. (about 1 line)
+- [cfg_provenance.odin:7717](src/cfg_provenance.odin#L7717) `prov_names_same_place`: the comparison runs even when only one side is constant. Use `if x.is_const != y.is_const { return false }`, then compare both. (about 1 line)
 - [cfg_provenance.odin:5981](src/cfg_provenance.odin#L5981) `prov_written_storage_type`: a one-call wrapper for `prov_storage(graph, storage).type`; `prov_address_of` (6876) is the same for `prov_borrow_place` from cfg.odin:2424. Inline both. (about 8 lines)
 
 **Dead code**
@@ -948,155 +934,29 @@ The logic holds up and every declaration here has a caller in `src/`, with none 
 
 ### src/check.odin (part 1 of 2)
 
-Comments here are mostly the right kind and no top-level name is dead, but several programs reach the "compiler defect" or backend errors, and the type-syntax and signature code repeats itself. Three procedures, `resolve_type_syntax`, `resolve_proc_signature` and `check_decl_inner`, have natural seams. Every bug below was reproduced with the `lokec.exe` built from this commit.
-
-**Bugs**
-
-- `BUG-check.part1-1` **medium** [check.odin:1643](src/check.odin#L1643) `check_param_defaults`: a split group's default cannot see its own receiver, since symbols install after the group's default (line 1670 likewise). Scenario: `impl T { m :: proc(self, x: int = self.n) -> int {...} }` gives L0315 unknown `self`, against grammar.md "a default may refer only to the receiver and the parameters to its left". Fix: install a split `self` first. *Confirmed: Reproduced: proc(self, x: int = self.n) and proc(self, x := self.n) give L0315 unknown `self`, against design.md "Default values". Separately, proc(self: T, x: int = self.n) passes the checker but clang rejects its IR (undefined %p0), so that form fails too.*
-- `BUG-check.part1-3` **medium** [check.odin:860](src/check.odin#L860) `check_symbol_decl_in_place`: an on-demand check clears only grants, so the requester's `k.body` leaks into a global's initializer. Scenario: `LOC :: source_location();` prints `LOC.procedure` as `main` when declared after `main`, empty when before. Fix: `k.body = {}` for a top-level declaration, as [eval.odin:178](src/eval.odin#L178) does. *Confirmed: Reproduced: LOC :: source_location() prints procedure 'main' when declared after main, empty when before. check_symbol_decl_in_place keeps k.proc_literal; eval.odin:178 clears k.body. Not in the gap docs. Severity is closer to low: only this metadata field was shown wrong.*
-- `BUG-check.part1-4` **medium** [check.odin:270](src/check.odin#L270) `check_declaration_size` runs only for package items and generic instances, never for a local type (the local path is line 3329). Scenario: `main :: proc() { S :: struct { s: S } }` reports L0405 "internal backend contract violation" rather than L0364. Fix: call it after `resolve_declaration_signature` at line 3329. *Confirmed: Reproduced: body-local `S :: struct { s: S }` gives spanless L0405 from hooks.odin:62; the file-scope form gives L0364. Not recorded in known-gaps. The program is still rejected, so only the diagnostic is wrong: closer to low than medium.*
-- `BUG-check.part1-5` **medium** [check.odin:1113](src/check.odin#L1113) `resolve_anon_record`: `report_unresolved_type` has no `error_count` guard, unlike every sibling. Scenario: `x: (a: [-1]int, b: int);` gives L0384 plus L0350 "this is a compiler defect"; `(a: int, b: (c: Nope, d: int))` gives L0306 plus L0350; `(a: Box(int, int), b: int)` adds "unknown type `Box`". Fix: guard, or the helper under Near copies. *Confirmed: Reproduced: x: (a: [-1]int, b: int); gives L0384 plus L0350, the nested Nope gives L0306 plus L0350, Box(int, int) adds L0306 on Box; a bare [-1]int gives only L0384. Not recorded. Severity is low: invalid programs are rejected anyway, only the diagnostics are wrong.*
-- `BUG-check.part1-6` **medium** [check.odin:2401](src/check.odin#L2401) `report_unresolved_type`: `[?]T` and an unbound `[$N]T` return silently from lines 1959 and 1968, and nothing here names them, so they fall through to L0350. Scenario: `x: [?]int;`, `p: ^[?]int`, `h: proc(x: [$N]int);` each report a compiler defect (grammar.md: `[?]T` is valid only on a composite literal). Fix: a `Type_Array` case; `$N` takes L0437. *Confirmed: Reproduced: x: [?]int;, p: ^[?]int, a [?]int parameter and h: proc(x: [$N]int); all report L0350 'compiler defect'; no gap is recorded. Severity is closer to low: the invalid code is still rejected, only the diagnostic is wrong.*
-- `BUG-check.part1-7` **medium** [check.odin:2378](src/check.odin#L2378) `report_unresolved_type`: a call whose head is not an identifier leaves the block unreported and reaches L0350. Scenario: `import "core:fmt"; x: fmt.Nope(int);` and `x: a.b.c(int);` report a compiler defect. Fix: report L0306 with the callee's source text when the head is a selector. *Confirmed: Reproduced: `x: fmt.Nope(int);` and `x: a.b.c(int);` each report only L0350 'compiler defect', also in locals, parameters and fields; check.odin:2378 handles only an identifier head. No record in known-gaps. Wrong diagnostic only, so low-medium.*
-- `BUG-check.part1-8` **medium** [check.odin:2118](src/check.odin#L2118) `resolve_type_syntax`: a `Type_Proc` parameter never gets the exemption line 690 gives generic signatures. Scenario: `Foo :: struct($T: type) { cb: proc(@(escape=none) x: T) }` works as `Foo(string_view)`, while `Foo(int)` reports L0648 at the template. Fix: pass `generic_instance = k.generic_depth > 0`. *Confirmed: Reproduced: Foo(int) and impl Foo($T) callback `proc(@(escape=none) x: T)` give L0648 for int, string_view passes; `@(escape=none) x: T` on the method passes. Unrecorded. Severity low: a rejection only, and design.md never states the exemption.*
-- `BUG-check.part1-9` **medium** [check.odin:469](src/check.odin#L469) `check_exports`: a generic `impl` member has no symbols, so its `@(export)` is dropped silently, and `reject_uninstantiated_generic` never sees it. Scenario: `impl G($T) { @(export) f :: proc "c" () {} }` compiles; `.ll` has `define internal @loke.p.G.int.f`. design.md "@(export)": generics cannot be exported. Fix: report L0438 for such a block. *Confirmed: Reproduced: impl G($T) { @(export) f :: proc "c" () {} } compiles with no L0438 and emits define internal @loke.p.G.int.f, against design.md @(export). A non-generic impl member's export is dropped the same way, so the defect is wider than generics.*
-- `BUG-check.part1-10` **low** [check.odin:784](src/check.odin#L784) `record_written_alignment`: `!evaluated` shares the second report, though `require_const` has already reported. Scenario: `n := 3; @(align=n) X :: struct {...}` gives L0341 and L0423 for one mistake. Fix: return on `!evaluated`, as line 1978 does. *Not verified.*
-- `BUG-check.part1-11` **low** [check.odin:2330](src/check.odin#L2330) `report_unresolved_type`: compares the spelling `Simd` where line 2334 uses the scope-aware `box_type_callee`. Scenario: `Simd :: 3; x: Simd;` reports L0681 "needs its element type and lane count". Fix: `simd_callee(k, ident)`. *Not verified.*
-- `BUG-check.part1-12` **low** [check.odin:2570](src/check.odin#L2570) `check_decl_inner`: an initializer that failed to check has no type, so it is not destructurable and also gets the arity error. Scenario: `a, b := bad_name;` gives L0315 and L0308 "2 names but 1 initialiser". Fix: skip L0308 when `errors_since` the check at line 2535. *Not verified.*
-- `BUG-check.part1-13` **low** [check.odin:1491](src/check.odin#L1491) `resolve_proc_signature`: line 1484 excludes `$` parameters from inference, so they land on a message that does not fit. Scenario: `f :: proc($n := 5)` reports L0408 "a parameter needs a type or a default" although it has one. Fix: say that a `$` parameter writes `$Name: Type` (grammar.md "Types"). *Not verified.*
-
-**Simplification**
-
-- [check.odin:808](src/check.odin#L808) `Checker_Location`: make it an embedded `using location:` block of `Checker` holding those eight fields, so `saved := k.location; defer k.location = saved` replaces both copies and the "belongs here" rule enforces itself. Delete lines 819-831. (about 20 lines)
-- [check.odin:1920](src/check.odin#L1920) `resolve_type_syntax`: `value.denoted_type = X; value.resolution.kind = .Type; return value.denoted_type` appears 15 times. A helper `denote(&value.base, X) -> Type_Id` makes each one line and the four element-type cases three lines each. (about 20 lines)
-- [check.odin:2024](src/check.odin#L2024) `resolve_type_syntax`: two `if value.kind == .Struct` branches differ in one word and in a `move_only`. Take the keyword into `%s`, and use one `new_type` with `kind` and `move_only`, with one `resolve_*` branch. (about 10 lines)
-- [check.odin:2323](src/check.odin#L2323) `report_unresolved_type`: three chained `syntax.(X)` tests and a component lookup whose forms are disjoint fit one `#partial switch`, with `unresolved_component` as its default. Lines 2368-2373 merge with `||`. (about 8 lines)
-- [check.odin:2473](src/check.odin#L2473) `check_decl_inner`: `len(d.symbols) == 1` plus `symbol_of` is done three times (2460, 2473, 2489). Read `only` once; the `Proc_Group` return can join the `Type` one before the loop, which does nothing useful for a group. (about 6 lines)
-- [check.odin:1691](src/check.odin#L1691) `identifier_list_contains`: delete it and use `slice.contains`, already imported and used this way at [union.odin:18](src/union.odin#L18). (about 8 lines)
-- [check.odin:1855](src/check.odin#L1855) `concat`: make it variadic over `strings.concatenate`. About 20 call sites in 7 files flatten `concat(k.c, a, concat(k.c, b, c))` and stop allocating intermediates in the permanent arena; `size_cycle_path` then shrinks too. (about 10 lines)
-- [check.odin:266](src/check.odin#L266) `check_package_bodies`: phases at 266 and 294, plus 150 in `prepare_package`, differ only in the called procedure. A file-private `for_each_package_decl(k, pkg, visit)` makes each one line. Lines 284-285 merge into one empty case. (about 16 lines)
-- [check.odin:715](src/check.odin#L715) `check_cross_thread_attribute`: drop `report`. The print-time dedupe ([source.odin:811](src/source.odin#L811)) already collapses the repeat, which `check_escape_attribute` and `allocator_reset_ok` rely on in the same loop. (about 4 lines)
-- [check.odin:377](src/check.odin#L377) `create_nominal_type_shell`: set `move_only` in the `^Type_Record` case of the switch above rather than re-asserting the variant. (about 3 lines)
-- [check.odin:895](src/check.odin#L895) `resolve_declaration_signature`: `generic_template_for` is called at 895 and again at 905; hold it in one local. (about 2 lines)
-- [check.odin:1301](src/check.odin#L1301) `resolve_enum_members`: the name loop is `member_named` ([impl.odin:326](src/impl.odin#L326)). The `bi_fits` at 1308 only matters for an implicit value, since line 1284 checked a written one. (about 5 lines)
-
-**Dead code**
-
-- (branch) [check.odin:503](src/check.odin#L503) `check_export_decl`: `sym.is_foreign` is set only for foreign-block members ([foreign.odin:40](src/foreign.odin#L40)), and `check_exports` sends those to `check_foreign_links`, never here.
-- (branch) [check.odin:1865](src/check.odin#L1865) `resolve_type_syntax`: the `syntax == nil` guard and the `^Expr_Error` case both end in the tail `return INVALID_TYPE`; a `#partial switch` on a nil union runs no case. Delete both.
-
-**Data structures and algorithms**
-
-- [check.odin:171](src/check.odin#L171) `prepare_package`: every discovery round walks the import closure for every `impl`, allocating a `len(c.packages)` slice each time ([select.odin:121](src/select.odin#L121)), before `declare_impl_block` looks at `item.declared`. Cost grows as impls times closure times rounds. Test `!impl.declared` first, and memoize per subject package within a round.
-- [check.odin:1311](src/check.odin#L1311) `resolve_enum_members`: two scans of all earlier members per member, the second comparing bigints, so n² `bi_cmp` per enum; generated C-binding enums reach thousands of members. Use a local map keyed on the `i64` value (`bi_to_i64`, falling back to the scan), or sort once after the loop.
-- [check.odin:2280](src/check.odin#L2280) `gate_type`: `type_is_supported` builds a heap `Type_Walk` map and walks the whole reachable type graph ([semantic.odin:2255](src/semantic.odin#L2255)) for every declaration, so cost grows as declarations times graph size. A finished type's answer never changes; cache it on `Type_Info` as `size_state` does.
-- [check.odin:2078](src/check.odin#L2078) `resolve_type_syntax`: unlike `Type_Dyn` and `Type_Array`, `Type_Proc` does not cache `denoted_type`, so each visit re-runs validation and leaves five arrays in the semantic arena, which `intern_proc_type` copies anyway. Cache it and use `temp_allocator`; likewise lines 1445-1449, keeping `params`.
+What remains here waits on a helper shared across files.
 
 **Near copies**
 
-- [check.odin:954](src/check.odin#L954), [check.odin:994](src/check.odin#L994), [check.odin:1253](src/check.odin#L1253), [check.odin:1479](src/check.odin#L1479), [check.odin:1578](src/check.odin#L1578), [check.odin:2007](src/check.odin#L2007), [check.odin:2130](src/check.odin#L2130), [generic.odin:1077](src/generic.odin#L1077): "resolve, then report if it failed silently". `resolve_type_name` (line 2304) is already this; generalize it to `resolve_type_reporting(k, syntax)`, nil-safe. (about 25 lines)
-- [check.odin:1572](src/check.odin#L1572) and [check.odin:2126](src/check.odin#L2126): a signature's result, and the convention check at 1586 and 2137, are the same apart from `diverges` and `by_ptr`. Share `resolve_signature_result`. The `borrowing = mode == ...` argument at 1521 and 2118 becomes a `mode` parameter, as the cross-thread check takes. (about 12 lines)
-- [check.odin:954](src/check.odin#L954) and [check.odin:2007](src/check.odin#L2007): the `Type_Distinct` element is resolved, reported and rejected identically; share a `resolve_distinct_element`. (about 5 lines)
-- [check.odin:383](src/check.odin#L383), [check.odin:1882](src/check.odin#L1882), [check.odin:1895](src/check.odin#L1895), [check.odin:2171](src/check.odin#L2171), [check.odin:2244](src/check.odin#L2244), [check_expr.odin:651](src/check_expr.odin#L651): the triple of `denoted_type`, `resolution` and `value_category = .Type`. Share `mark_denotes_type(base, type, symbol)`. (about 10 lines)
 - [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:481](src/iterate.odin#L481): check a constant on demand, then read the type it names. Share `const_type_value(k, id, subject) -> Type_Id`. (about 8 lines)
-- [check.odin:556](src/check.odin#L556), [check.odin:1705](src/check.odin#L1705), [check.odin:2165](src/check.odin#L2165), [impl.odin:205](src/impl.odin#L205): hand-written `name_identifier`. Line 1535 should pass `name_id` from 1497, not the raw `name.id`. (about 12 lines)
-
-**Structure and boundaries**
-
-- [check.odin:1864](src/check.odin#L1864) `resolve_type_syntax` is 350 lines of one switch. The seams are `resolve_proc_type` (2076-2147), `resolve_array_type` (1951-1992) and the rejected in-place record (2018-2047).
-- [check.odin:1430](src/check.odin#L1430) `resolve_proc_signature` is 190 lines around eight parallel arrays. The seam is the per-name body (1495-1568), as an `append_signature_parameter` over a small builder struct that owns those arrays.
-- [check.odin:2452](src/check.odin#L2452) `check_decl_inner` is about 200 lines. The seams are destructuring (2533-2567) and `---` (2589-2612), each a procedure, leaving the per-value loop readable.
-- [check.odin:1250](src/check.odin#L1250) `resolve_enum_members` belongs in `enums.odin`, as `resolve_union_variants` lives in `union.odin`; the source map gives enums to that file.
-- [check.odin:605](src/check.odin#L605), [check.odin:671](src/check.odin#L671), [check.odin:754](src/check.odin#L754), [check.odin:771](src/check.odin#L771): visibility rules, `check_escape_attribute`, `check_cross_thread_attribute`, `has_attribute`, `find_attribute` and `record_written_alignment` belong in `attributes.odin`, which owns attribute validation.
-- [check.odin:455](src/check.odin#L455) `check_exports` and `check_export_decl` belong in `foreign.odin` beside `link_name_of`, `check_foreign_links` and `foreign_links_agree`, all of which they call.
-
-**Comments**
-
-- [check.odin:612](src/check.odin#L612): the claim "so it is asked once per declaration" is false: [intrinsic.odin:175](src/intrinsic.odin#L175) and [private_names.odin:855](src/private_names.odin#L855) ask again. Delete the sentence; the dedupe makes the repeat harmless.
-- [check.odin:605](src/check.odin#L605): nine lines restate two spec sections. Keep "design.md "Exported names", "`@(public)`": L0338 unless L0332 already rejected it; a public default leaves a variable package-private silently."
-- [check.odin:292](src/check.odin#L292): "Phase 3c" comes before "Phase 3b" and line 2005 cites a "phase 2a" no comment defines. Drop the numbers, keep the reasons, and say "got its shell in `prepare_package`" at 2005.
-- [check.odin:896](src/check.odin#L896): six lines on the three `mark_template_*` calls shrink to "Found by method syntax, operator, or hook role before any instance exists."
-- [check.odin:1412](src/check.odin#L1412), [check.odin:1248](src/check.odin#L1248) (second sentence), [check.odin:2445](src/check.odin#L2445): delete; they restate the error message or the next lines.
-- [check.odin:2266](src/check.odin#L2266): keep the citation and drop the rest, which repeats the error text below it. Likewise [check.odin:2020](src/check.odin#L2020) reduces to the citation and "The type is still made, once, so its uses report nothing more." (about 35 lines across the part)
 
 ### src/check.odin (part 2 of 2)
 
-Declaration, procedure and statement checking is sound and its comments are mostly about why, but the `operator([]=)` paths carry most of the bugs: receivers are checked more than once and in the wrong position. No declaration here is unused; the savings are in merged copies, `check_compound_assign`, and code that belongs with other owners. All bug scenarios were reproduced with `lokec.exe` built from this commit.
-
-**Bugs**
-
-- `BUG-check.part2-1` **high** [check.odin:3640](src/check.odin#L3640) `check_place_setter`: the receiver is really checked here and again by `check_assign_target`, and `check_proc_literal` hoists on each check. Scenario: `h[one(proc() -> int { return 1; })][0] = 5;` fails in clang, `invalid redefinition of function 'loke.p.lambda.1'`; same at 3676 and 3763. Fix: decide under `begin_probe`, commit one check. *Confirmed: Reproduced: `h[one(proc() -> int {...})][0] = 5;`, the `+=` form and the parallel form all fail with L0403, clang: invalid redefinition of 'loke.p.lambda.N'; one level, `h[one(...)] = 5`, builds. Not recorded. Loud failure, rare input: medium rather than high.*
-- `BUG-check.part2-2` **medium** [check.odin:3640](src/check.odin#L3640) `check_place_setter`: the receiver is checked in value position, though design.md "Indexing and slicing" makes it a place. Scenario: `m["a"][1] = 5;`, and `o[0][1] = 5;` with an `inout` `operator([])`, give L0359 while `m["a"][1] += 5;` works. Fix: pass `position = .Place`. *Confirmed: Reproduced: m["a"][1] = 5 and o[0][1] = 5 give L0359, while += on both runs and prints 5; inout m["a"] and m["a"].cells[2] = 7 also compile. Spec makes an inout operand a place; no gap is recorded. m["a"].set(1, 5) fails the same way. Medium fits.*
-- `BUG-check.part2-3` **medium** [check.odin:3932](src/check.odin#L3932) `uses_place_setter`: it ignores design.md "Operator lookup and overload resolution", "Built-in operations cannot be shadowed". Scenario: `impl [3]int { set :: operator([]=) ... }` makes `a[0] = 1;` call the extension, and `a` stays zero. Fix: return false when built-in indexing applies to the receiver. *Confirmed: Probe: with impl [3]int { set :: operator([]=) }, a[0] = 1 printed "setter called" and a[0] stayed 0; [dynamic]int, += and parallel assignment did too. An extension operator([]) is ignored on reads, so reads and writes disagree. No gap recorded.*
-- `BUG-check.part2-4` **medium** [check.odin:3689](src/check.odin#L3689) `lower_compound_setter`: a name on the right is not bound, so it is read after `operator([])` runs, against design.md "Evaluation order". Scenario: with a getter that sets global `n = 100`, `b[0] += n;` on `b.v == 10`, `n == 1` gives 110, not 11. Fix: also bind when `names_scalar_variable`, as `bind_index_place` does. *Confirmed: Probe prints 110 for b[0] += n but 11 for b[0] += n + 0: lowered_pure leaves a bare name unbound, so it is read after the getter, against design.md "Evaluation order". Not recorded in the docs. Severity is low-medium: only a getter that writes that variable shows it.*
-- `BUG-check.part2-5` **medium** [check.odin:3821](src/check.odin#L3821) `lowered_constant`: it misses selected constants and constant calls, so they get a default-typed temporary. Scenario: `small[0], x = math.PI, 2;` on an `f32` setter gives L0392, as do `Small.N` and `size_of(int)` on `i8`; the plain array form compiles. Fix: clone-check and ask `is_const_expr`, as `lower_compound_setter` does. *Confirmed: Reproduced: small[0], x = math.PI, 2 and Small.N give L0392; single and array forms compile, nothing recorded. The size_of part is false: it is int, and arrays reject it too (L0310). Low-medium: valid code rejected, never miscompiled.*
-- `BUG-check.part2-6` **low** [check.odin:3581](src/check.odin#L3581) `check_assign`: destructuring reaches `check_assign_target` directly, never the setter path. Scenario: `g[0], y = mk();` on a setter-only `Grid` gives L0362 `cannot be indexed`, while `g[0], y = 1, 2;` compiles. Fix: bind the fields to temporaries, then assign through the parallel setter lowering. *Not verified.*
-- `BUG-check.part2-7` **low** [check.odin:3149](src/check.odin#L3149) `report_unread_required_results`: unlike `report_local_copy_decisions` (3104) it does not look through `Stmt_Defer`. Scenario: `defer r := must();` with `@(require_results) must` compiles with no L0698, while `r := must();` is rejected. Fix: unwrap `defer` the same way. *Not verified.*
+What remains here waits on helpers shared across files.
 
 **Simplification**
 
-- [check.odin:4009](src/check.odin#L4009) `check_compound_assign`: replace 4009-4020 and 4032-4041 with `if !compound_applies(...) { if !check_user_compound(...) { L0318 }; return }` before the value check. A mismatched right side then reports L0318 rather than L0310, so expected files need review. (about 20 lines)
-- [check.odin:4898](src/check.odin#L4898) `check_branch`: one `keyword := s.kind == .Break ? "break" : "continue"`, one depth check, then `return s.kind == .Break ? Flow_Info{breaks = true} : Flow_Info{continues = true}`. (about 8 lines)
-- [check.odin:4884](src/check.odin#L4884) `check_or_else_exit`: delete the `loop_depth == 0` test. `check_branch`, run at 4890, reports the same code and text at the same span, and `errors` turns that into `false`. (4 lines)
-- [check.odin:3265](src/check.odin#L3265) `hoist_hooks_in_stmt`: the `if x != nil { hoist_hooks_in_stmts(..., x.stmts) }` shape appears five times; a nil-tolerant `hoist_hooks_in_block(k, subject, names, b: ^Block)` makes each one line. (about 10 lines)
 - [check.odin:4323](src/check.odin#L4323) `check_switch`: open the scope and check `init` before testing `s.kind`, so `check_type_switch` ([optional.odin:448](src/optional.odin#L448)) reduces to the subject check and `check_variant_cases`, or inlines. (about 14 lines)
-- [check.odin:4375](src/check.odin#L4375) `check_switch`: `any_case_falls` can be `flow.can_fall_through`, ending in `flow.can_fall_through ||= !s.exhaustive; return flow`. In `check_if` (4234) the no-else return is `then_flow.can_fall_through = true; return then_flow`. (about 10 lines)
-- [check.odin:2460](src/check.odin#L2460) `check_decl_inner`: three `len(d.symbols) == 1` lookups of one symbol; take `sole` once and return for `.Proc_Group` with the `.Type` branch at 2474, before the duration loop. Join the `declared != INVALID_TYPE` tests at 2499 and 2503. (about 8 lines)
-- [check.odin:2725](src/check.odin#L2725) `check_proc`: `if (!symbol.signature_error && compile_time_only_procedure(k.c, symbol)) || runtime_signature_ok(k, symbol, literal.span) { check_proc_body(k, literal) }`. (4 lines)
-- [check.odin:4589](src/check.odin#L4589) `check_return`: `bare_success` already implies fallible and not `inout`, so the guard is `if s.value == nil && k.body.bare_success` with `shape, _ := fallible_of(...)` inside. (2 lines)
-- [check.odin:3387](src/check.odin#L3387) `check_stmt`: `decl_is_intrinsic` is `has_attribute(..., "intrinsic")`, so use `if attribute, found := find_attribute(s.attributes, "intrinsic"); found` alone. (3 lines)
-- [check.odin:3028](src/check.odin#L3028) `names_generic_binding`: the nested `any_of` has one caller; call `type_syntax_any_name(v.signature, data, names_generic_binding)` at 3047. (3 lines)
-- [check.odin:3644](src/check.odin#L3644) `check_place_setter`: move `operands` below the early return and have `uses_place_setter` return the setters (nil for none), so 3649 need not look them up again. (about 3 lines)
-- [check.odin:4745](src/check.odin#L4745) `check_returned_value`: `call_diverges` is asked twice; set the type and return `materialize_value_expr` inside one `if`, leaving the `.Either` test separate. (about 1 line)
-- [check.odin:3726](src/check.odin#L3726) `bind_index_place`: this hand-writes `lowered_position_name`; call it with the prefix plus `"index"`. (3 lines)
-
-**Dead code**
-
-- (branch) [check.odin:4022](src/check.odin#L4022): `!type_is_simd(k.c, type)` is always true, since the SIMD path has returned at 4005 or 4019. The comment at 4021 describes that unreachable case too.
-- (branch) [check.odin:4009](src/check.odin#L4009): `!operand_is_builtin` adds nothing; it is false only for a named struct or union, distinct, interface, dyn or invalid type, and `compound_applies` is false for all of them.
-- (branch) [check.odin:4546](src/check.odin#L4546): `k.proc_literal != nil` here and at 4585 and 4626 is always true; statements are checked only in bodies, and the expression exits guard it at 4868 and [optional.odin:126](src/optional.odin#L126).
-- (branch) [check.odin:2702](src/check.odin#L2702): `d.symbols[0] != INVALID_SYMBOL` repeats the nil check below it, because `symbol_of` returns nil for symbol 0.
-- (branch) [check.odin:3349](src/check.odin#L3349): `clamp(mark, 0, len(k.c.diagnostics))` can be `mark`; anything rolled back during `check_stmt` was added after the mark.
-
-**Data structures and algorithms**
-
-- [check.odin:3932](src/check.odin#L3932) `uses_place_setter`: each indexed store, on built-in arrays too, makes at least one `operator_candidates_for_receiver` call, which scans every enclosing local scope's names and the package's operator set and allocates from the arena never freed during checking. Cost grows as stores times locals; the built-in guard of bug 3 removes it for most stores.
-- [check.odin:4446](src/check.odin#L4446) `check_case_value`: `seen` is a linear list, and `enum_member_by_value` is linear per case, so a switch over N cases costs O(N²) comparisons. It only matters for generated switches of thousands of cases; an enum's duplicate test could read `covered`, and `covered` could key on `Symbol_Id` instead of `u32`.
 
 **Near copies**
 
-- [check.odin:4514](src/check.odin#L4514) and [const_ops.odin:693](src/const_ops.odin#L693): `const_equal` repeats `fold_comparison` for `.Eq_Eq` but lacks aggregates, so `case X: case Y:` with equal struct constants gets no L0367. Delegate to `fold_comparison`, which also compares across numeric kinds; callers compare one type. (about 18 lines)
 - [check.odin:3888](src/check.odin#L3888) and [parallel.odin:652](src/parallel.odin#L652): `lowered_name`, `lowered_deref` and `lowered_temporary` match `synth_ident`, `synth_deref` and `synth_var`, with `synth_const` and `hidden_declaration` as further `Decl` copies. Use the package-visible `synth_ident` and `synth_deref`, and promote the rest. (about 25 lines)
 - [check.odin:2876](src/check.odin#L2876) and [optional.odin:269](src/optional.odin#L269): `success_selector` and the `or_return` failure selector are the same builder for a variant index; the one-argument call at 4796 repeats [optional.odin:272](src/optional.odin#L272). Share `variant_selector` and `synth_call`. (about 10 lines)
-- [check.odin:2860](src/check.odin#L2860) and [check.odin:4595](src/check.odin#L4595): both build the `Return_Value` of a bare success at an empty span; `bare_success_value(k, at)` serves both. (about 4 lines)
-- [check.odin:4218](src/check.odin#L4218), [check.odin:4266](src/check.odin#L4266), [check.odin:4327](src/check.odin#L4327) and [optional.odin:449](src/optional.odin#L449): scope, deferred `report_unread_required_results` with its comment, and `init` check. An `@(deferred_in_out)` `enter_statement_header(k, init)` holds all of it. (about 15 lines)
 - [check.odin:4376](src/check.odin#L4376) and [optional.odin:574](src/optional.odin#L574): the same per-case flow merge and result; `flow_either(&flow, case_flow)` also serves `check_if` (4243). [check.odin:3138](src/check.odin#L3138) and [expand.odin:36](src/expand.odin#L36) share the sequential merge as `flow_then`. (about 15 lines)
-- [check.odin:2533](src/check.odin#L2533) and [check.odin:3565](src/check.odin#L3565): check the value, test it, call `destructure_fields`, fill `retained`, call `plan_destructure`. A helper taking the count, code, action and a ready `retained` covers both; `retained` is the real difference. (about 6 lines)
-- [check.odin:3703](src/check.odin#L3703) and [check.odin:3810](src/check.odin#L3810): the same five lines build the block, set `s.lowered` and check it; extract `check_lowered_block(k, s, stmts)`. (about 8 lines)
-- [check.odin:2921](src/check.odin#L2921) and [check.odin:2934](src/check.odin#L2934): the same scope swap and recursion through a local alias; a nested helper taking the symbol serves both. (about 5 lines)
 
 **Structure and boundaries**
 
-- [check.odin:3075](src/check.odin#L3075): statements run 1840 lines to the end of the file, and setter lowering (3634-3963) is a self-contained 330 of them. The header says "declarations, statements, signatures, and type syntax"; a `check_stmt.odin` split at this banner gives the file a real boundary.
-- [check.odin:2846](src/check.odin#L2846): bare-success analysis (2846-3065) and success returns (4679-4857) are one feature, split by the rest of the file, and use `fallible_of` from `optional.odin`, which owns the failure protocol. Move them there.
-- [check.odin:3219](src/check.odin#L3219): `hoist_local_lifecycle_hooks` and its walkers exist to call `declare_local_impl_hooks`; they belong in `impl.odin` beside it.
-- [check.odin:4497](src/check.odin#L4497): `enum_member_by_value` has callers in six files and belongs in `enums.odin`; `const_equal` (4514) belongs in `const_ops.odin`; `check_or_else_exit` (4861), called only from [optional.odin:94](src/optional.odin#L94), belongs in `optional.odin`.
 - [check.odin:3349](src/check.odin#L3349): `check_partial_statement` filters `diagnostics` and clamps `last_noted_diagnostic` directly, as `prov_drop_event_diagnostics` does. Give `source.odin`, which owns `truncate_diagnostics`, a drop-by-predicate helper for both.
-- [check.odin:2452](src/check.odin#L2452): `check_decl_inner` runs 215 lines; the seams are `a, b := record` (2532-2567) and the per-value body (2586-2664). The second can take `value`, `symbol_id` and `declared`.
-- [check.odin:4718](src/check.odin#L4718): `check_returned_value` runs 88 lines; split out the `nil` diagnostics (4752-4772) and building `.ok(value)` (4794-4803).
-
-**Comments**
-
-- [check.odin:3049](src/check.odin#L3049): misleading, since this `return false` covers every other node (`Type_Record`, `Type_Enum`, `Type_Distinct`, `Type_Interface`), not only interfaces. Say: "A declaration defines its own type; its contents name no argument here."
-- [check.odin:4301](src/check.odin#L4301): records history ("is gone"). Say: "design.md "Inspecting a union": a case binds, never the header. `switch (name in subject)` with an unresolved name arrives as a membership test."
-- [check.odin:4495](src/check.odin#L4495): names one of six callers; say: "The member whose value is `value`, or none: a value the type never admits."
-- [check.odin:4715](src/check.odin#L4715): "so every later phase sees the construction it handles today" records history; end the sentence at "the `.ok(value)` it stands for".
-- [check.odin:3505](src/check.odin#L3505): inaccurate, since the code accepts `or_return` over any operand (`x or_return;` compiles), not "over one" call. Say: "A call or an `or_return`; anything else computes a value and drops it."
-- [check.odin:2670](src/check.odin#L2670): delete "Shared by a single binding and a destructuring declaration."; `grep` answers it.
-- [check.odin:2735](src/check.odin#L2735): cut to "Checks before the signature is resolved, for a declaration and a literal."; the literal's rules are stated again at 2751 and 2759.
-- [check.odin:2788](src/check.odin#L2788): cut to "Whether the signature can be a runtime procedure value."
-- [check.odin:4400](src/check.odin#L4400): delete; `check_exhaustive`'s comment and the assignment below say it.
-- [check.odin:4222](src/check.odin#L4222): the same two-line comment recurs at 4270 and 4331 and in `optional.odin`; keep one once the header helper exists. (about 15 lines across the file)
 
 ### src/check_builtin.odin
 
@@ -1142,7 +1002,6 @@ The exact float algorithms hold up on reading. What remains is around the file: 
 
 - [const_ops.odin:664](src/const_ops.odin#L664), [check_expr.odin:2059](src/check_expr.odin#L2059), [eval.odin:854](src/eval.odin#L854), and [eval.odin:966](src/eval.odin#L966): the unary `+ - ~ !` fold with its overflow check and wrap is written three times, despite this file's promise that both sides "fold identically". Add `fold_unary(c, op, span, value, type, allocator) -> (Const_Value, bool)` here, including the checker's literal-text sign handling. (about 40 lines)
 - [const_ops.odin:391](src/const_ops.odin#L391) and [bigint.odin:354](src/bigint.odin#L354): `dyadic_to_float` and `bi_to_float` both round a big integer to a float, one exactly, one via a sticky bit. `bi_to_float` becomes `dyadic_to_float(c, v, 0, bits)` plus its `is_inf` test; move the helper to `bigint.odin`, where `bi_release` is visible. (about 20 lines)
-- [check.odin:4514](src/check.odin#L4514) and [const_ops.odin:693](src/const_ops.odin#L693): `const_equal` is `fold_comparison(.Eq_Eq)` behind a kind check. Make it those two statements; aggregates then get a known answer instead of unknown, so check its three callers. (about 15 lines)
 - [const_ops.odin:884](src/const_ops.odin#L884) and [reflect.odin:307](src/reflect.odin#L307): 15 sites across `src/` hand-build a `Const_Aggregate`, and `reflect.odin` already has a file-private `aggregate_const`. Promote it to the constructors at line 53, with an allocator parameter. (about 3 lines per site)
 
 ### src/container.odin
@@ -1686,7 +1545,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 **Bugs**
 
 - `BUG-erased-1` **high** [erased.odin:671](src/erased.odin#L671) `dyn_slot_is_compatible`: `!split &&` skips the group type of `proc(self, other: Self)`, though line 651 says that type belongs to `other`. Scenario (run): `slot same: proc(self, other: Self) -> bool` with `v.same(v)` compiles and `other.r` prints garbage (917046360800) instead of L0463. Fix: test `parameter.type` whenever `position > 0 || split`. *Confirmed: Reproduced: `slot show: proc(self, other: Self) -> int` compiles and `v.show(v)` prints garbage (783195044624), while `proc(self: Self, other: Self)` reports L0463. design.md "Dyn compatibility" forbids this; no gap is recorded. High severity fits: silent memory misread.*
-- `BUG-erased-2` **high** [erased.odin:372](src/erased.odin#L372) `request_dyn_proc_view`: the conversion is not idempotent: a re-check resets the argument's type and the `erased_from == INVALID_TYPE` guard at [check_expr.odin:3536](src/check_expr.odin#L3536) skips it. Scenario (run): `mk(g).foo()` with `mk :: proc(f: dyn proc() -> int) -> S` fails in clang (L0403), since [check.odin:2195](src/check.odin#L2195) checks the receiver before `check_selector` does; [erased.odin:1086](src/erased.odin#L1086) re-checks too for `.as`. Fix: drop the pre-checks, or clear `erased_from` on a re-check. *Confirmed: Reproduced: `mk(g).foo()` and `mk(g).as(.a)` fail with L0403 (clang: `@loke.p.g` passed as the dyn struct); `mk(g).v` and `s := mk(g); s.foo()` run and print 7. Valid program rejected, not a miscompile. Not in known-gaps.md or open-questions.md.*
 - `BUG-erased-3` **medium** [erased.odin:235](src/erased.odin#L235) `install_dyn_forwarding_slots`: `modes[0]` is unguarded (line 208 guards it) and `dyn_slot_is_compatible` accepts a slot with no parameters. Scenario (run): `slot nothing: proc() -> int;` plus `v: dyn I;` panics "Index 0 is out of range" before the queued L0442 prints. Fix: reject an empty parameter list in `dyn_slot_is_compatible`. *Confirmed: Reproduced: `slot nothing: proc() -> int;` plus `v: dyn I;` panics at erased.odin(235:27), Index 0 out of range; without the dyn local L0442 prints. Invalid input only, so the harm is a lost diagnostic: low-to-medium. Not recorded in the gap docs.*
 - `BUG-erased-4` **medium** [erased.odin:662](src/erased.odin#L662) `dyn_slot_is_compatible`: the receiver check asks only whether the type mentions the subject, but design.md "Dyn compatibility" allows only `self`, `self: ^`, or `self: inout Self`. Scenario (run): `slot b: proc(self: ^^Self) -> int` with a parameter `v: dyn J` fails in clang (L0403) instead of L0463. Fix: match the receiver syntax against those forms. *Confirmed: Reproduced: slot proc(self: ^^Self) (also []Self, Option(Self)) with v: dyn J gives L0403 clang IR errors; self: int gives L0463. Unrecorded; design.md allows only three receivers. Severity low: invalid code is still rejected, and a ^^T method fails L0444.*
 - `BUG-erased-5` **low** [erased.odin:511](src/erased.odin#L511) `dyn_compatible`: the in-progress mark leaves `dyn_reason` empty. Scenario (run): `A` composes `B` composes `A` reports "the composed interface `A` is not dyn-compatible: " with nothing after the colon. Fix: set `info.dyn_reason = "it composes itself"` with the mark. *Not verified.*
@@ -1725,7 +1583,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 - [erased.odin:475](src/erased.odin#L475) `dyn_same_application` and [erased.odin:492](src/erased.odin#L492) `view_witness_types`: same argument-list comparison. Shared form: `generic_args_equal(c, a, b: []Generic_Arg)`.
 - [erased.odin:415](src/erased.odin#L415) and [generic.odin:1536](src/generic.odin#L1536): same type-or-length-prefixed-constant key text. Shared form: `write_generic_arg_key(c, b, arg)`.
 - [erased.odin:47](src/erased.odin#L47) and [erased.odin:57](src/erased.odin#L57): `variadic_view_satisfied` and `dyn_view_witness` open identically, differing only in `report`. One helper taking `report` serves both.
-- [erased.odin:1080](src/erased.odin#L1080) and [box.odin:206](src/box.odin#L206): same "operand names a package alias" test (also [check_expr.odin:753](src/check_expr.odin#L753)). Shared form: `operand_is_package_alias(k, operand)`.
 
 **Structure and boundaries**
 
@@ -1972,7 +1829,6 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 - (branch) [foreign.odin:29](src/foreign.odin#L29): `literal.signature != nil` is always true: [parser.odin:3440](src/parser.odin#L3440) always sets it and [check.odin:1459](src/check.odin#L1459) reads it unguarded. Merge lines 29 and 30 into one `if`.
 - (branch) [foreign.odin:139](src/foreign.odin#L139): `d.declared_type == nil` is reachable only from `x := ---;`, which the parser already rejects as L0235, so L0625 here is a cascade. With `len(d.values) > 0` at line 135 the branch can never run; no expected file pins this message.
 - (branch) [foreign.odin:110](src/foreign.odin#L110): `sym.link_name == ""` cannot hold for a normal member, since `check_foreign_block` sets a name on every symbol at line 87. It only serves the `@(link_name="")` bug above and goes away with that fix.
-- (branch) [check.odin:503](src/check.odin#L503): `sym.is_foreign` in `check_export_decl` never holds: it is set only at [foreign.odin:40](src/foreign.odin#L40) on block members, and `check_exports` passes only top-level and `impl` declarations. The comment there describes a case that does not occur.
 
 **Near copies**
 
@@ -1981,7 +1837,6 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 
 **Structure and boundaries**
 
-- [foreign.odin:102](src/foreign.odin#L102): the link-name rules are split. `check_foreign_links` and `foreign_links_agree` live here, while their only driver `check_exports` and `check_export_decl` ([check.odin:455](src/check.odin#L455), about 85 lines) sit in the oversized check.odin, and L0600 is reported from both. Move those two here so this file owns link names.
 
 **Comments**
 
@@ -2492,7 +2347,7 @@ The satisfaction path is sound for ordinary programs, but the composition walks 
 **Near copies**
 
 - [interface.odin:1352](src/interface.odin#L1352), [interface.odin:1392](src/interface.odin#L1392) and [erased.odin:747](src/erased.odin#L747): the same steps from requirement to `composed`, clone and `bound_arguments`. Share `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)`.
-- [interface.odin:583](src/interface.odin#L583), [interface.odin:1326](src/interface.odin#L1326), [interface.odin:1388](src/interface.odin#L1388) and [erased.odin:725](src/erased.odin#L725): identical entry into an interface's scope, package and file. Share `enter_interface(k, info, args)` after `save_checker_location`.
+- [interface.odin:583](src/interface.odin#L583), [interface.odin:1326](src/interface.odin#L1326), [interface.odin:1388](src/interface.odin#L1388) and [erased.odin:725](src/erased.odin#L725): identical entry into an interface's scope, package and file. Share `enter_interface(k, info, args)` after saving `k.location`.
 - [interface.odin:312](src/interface.odin#L312), [interface.odin:347](src/interface.odin#L347) and [generic.odin:3070](src/generic.odin#L3070): the enum, `convert_const` and `nil_converts` test. Find the value and its type once, then call a shared `convert_generic_value`; `report_unrepresentable_argument` goes.
 - [interface.odin:594](src/interface.odin#L594) and [interface.odin:677](src/interface.odin#L677): check, capture the first message, truncate. Share `captured_reason(k, mark, fallback)` using `errors_since`. Also [interface.odin:610](src/interface.odin#L610) and [interface.odin:704](src/interface.odin#L704): the same "evaluates to false" failure.
 - [interface.odin:903](src/interface.odin#L903) and [interface.odin:929](src/interface.odin#L929): the same walk over `call` methods. One `callable_method_results(k, type) -> (result, conflicting)` serves both `ensure_callable_result_member` and the note.
@@ -2552,7 +2407,7 @@ Well-commented and cleanly owned; its linear scans run over a per-package, compi
 
 - [intrinsic.odin:535](src/intrinsic.odin#L535) and [intrinsic.odin:549](src/intrinsic.odin#L549): `member_list` and `field_list` differ only in appending `: type`. Keep `public` as `[]Symbol_Id` and write one `symbol_list(c, symbols, typed: bool)` using `fmt.sbprintf`. (about 12 lines)
 - [intrinsic.odin:182](src/intrinsic.odin#L182) and [intrinsic.odin:279](src/intrinsic.odin#L279): the duplicate check and `described` scan `pkg.intrinsics` for the same symbol. One `description_of(pkg, symbol_id) -> ^Intrinsic_Decl`, nil when absent, serves both. (about 3 lines)
-- [intrinsic.odin:347](src/intrinsic.odin#L347), [intrinsic.odin:351](src/intrinsic.odin#L351), and [check.odin:3391](src/check.odin#L3391) with [attributes.odin:188](src/attributes.odin#L188): two L0734 messages, each spelled out twice. Give each one a constant here; `check.odin:3388` can also drop its `found` test, which `decl_is_intrinsic` already answered.
+- [intrinsic.odin:347](src/intrinsic.odin#L347) and [intrinsic.odin:351](src/intrinsic.odin#L351): one L0734 message, spelled out twice. Give it a constant here.
 
 **Comments**
 
@@ -2811,7 +2666,6 @@ Sound logic and mostly good comments, but it holds two unrelated subsystems, an 
 **Structure and boundaries**
 
 - [optional.odin:372](src/optional.odin#L372): the second half is union switching and shares nothing with the failure protocol, and the name `optional.odin` covers neither. Move it, with `check_switch`, `check_case_value` and `check_exhaustive` from `check.odin`, to a switch file, and update the source map.
-- [check.odin:4861](src/check.odin#L4861): `check_or_else_exit` has one caller, [optional.odin:94](src/optional.odin#L94), and belongs here beside `check_or_else`, file-private.
 - [optional.odin:35](src/optional.odin#L35): `note_anonymous_union_is_data` is used only in this file, so the source map's rule makes it `@(private = "file")`.
 - [optional.odin:468](src/optional.odin#L468) `check_variant_cases` is 127 lines: lift lines 509-525 to `case_variants` and lines 526-565 to `bind_case`. [optional.odin:196](src/optional.odin#L196) `check_or_return_failure` is 100 lines: lift lines 268-282 to `failure_return`.
 
@@ -3782,10 +3636,8 @@ Short and readable, with why-comments that mostly earn their place. The main iss
 
 **Bugs**
 
-- `BUG-text-1` **medium** [text.odin:39](src/text.odin#L39) `check_text_operation`: the name shortcut reads `sym.type` before a forward file-scope variable is resolved, so a valid call falls to the member path. *Confirmed: Reproduced: s.byte_len() gives L0363 while s.len() prints 3 5. The constant is not needed: any proc declared before `s := "hello"` fails, and moving s first compiles. Not in known-gaps.md. Medium fits: a valid program is rejected.*
   Scenario: `N :: f(false); f :: proc(use: bool) -> int { if (use) { return s.byte_len(); } return 3; } s := "hello";` gives L0363 "`string` has no field or member `byte_len`"; `s.len()` compiles.
   Fix: do not take the shortcut for a variable whose type is still `INVALID_TYPE`.
-- `BUG-text-2` **medium** [text.odin:43](src/text.odin#L43) `check_text_operation`: a non-text receiver is checked here and again by the caller, and each check of a proc literal appends to `hoisted_procs` ([check_expr.odin:2776](src/check_expr.odin#L2776)). *Confirmed: Reproduced: .copy() emits lambda.2 three times, .other() lambda.1 twice, clang L0403; .f once. Untraced path: associated_group -> resolve_type_syntax -> check_expr (check.odin:2195), so text.odin:43 is one of several causes. Not in the gap docs; loud failure, medium fits.*
   Scenario: `make_s(proc() -> int { y := 4; return y; }).copy()` on a struct method fails in clang: "invalid redefinition of function 'loke.p.lambda.2'". `.other()` also fails (`lambda.1`), so another path, not traced, re-checks too; plain `make_s(lit)` works.
   Fix: hoist each literal once, and stop re-checking (see Data structures).
 - `BUG-text-3` **low** [text.odin:150](src/text.odin#L150) `check_from_runes`: checks only the argument count, not its name or mode, unlike `check_from_utf8` at line 187. *Not verified.*
@@ -3810,8 +3662,6 @@ Short and readable, with why-comments that mostly earn their place. The main iss
 
 **Data structures and algorithms**
 
-- [text.odin:43](src/text.odin#L43) `check_text_operation`: a non-text receiver with an op-named method is checked here and again at [check_calls.odin:118](src/check_calls.odin#L118), so cost doubles per chain link. Measured for a struct method `copy`: depth 16 0.7s, 20 8.3s, 22 32.7s; `.other()` at depth 22 takes 0.1s.
-  Real chains are short, but the same re-check causes BUG-text-2. A "receiver checked" flag on `Expr_Selector`, read by `check_selector`, would fix both and drop the lines 34-42 shortcut behind BUG-text-1.
 
 **Near copies**
 

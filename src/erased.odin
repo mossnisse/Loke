@@ -699,8 +699,8 @@ Witness_Slot :: struct {
 
 // The flattened slots of an interface application, composition included.
 interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, out: ^[dynamic]Interface_Slot) {
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
@@ -773,7 +773,7 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 		return witness
 	}
 	slots := make([]Witness_Slot, len(flattened), k.c.semantic_allocator)
-	saved := save_checker_location(k)
+	saved := k.location
 	for entry, index in flattened {
 		owner := interface_info_for(k, entry.owner)
 		// The slot's declaring package decides which extensions may supply it.
@@ -788,7 +788,7 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 			target = target,
 		}
 	}
-	restore_checker_location(k, saved)
+	k.location = saved
 	witness.slots = slots
 	if committing(k.c) {
 		k.c.witnesses[key] = witness
@@ -1044,14 +1044,7 @@ check_as_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	if sel.name.text != "as" {
 		return false
 	}
-	// A package selector names a declaration, not a value receiver.
-	if ident, ok := sel.operand.(^Expr_Ident); ok {
-		if sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident))); sym != nil &&
-		   sym.kind == .Package_Alias {
-			return false
-		}
-	}
-	subject := check_single_expr(k, sel.operand)
+	subject := check_receiver(k, sel)
 	if type_is_union(k.c, subject) {
 		check_union_as(k, v, sel, subject)
 		return true

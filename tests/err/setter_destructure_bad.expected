@@ -1,0 +1,15 @@
+L0360
+@23:12
+`Three` has 3 fields, so it fills 3 bindings, not 2
+
+L0310
+@24:8
+a destructured field of type `string` cannot be assigned to `string_view`
+
+L0360
+@25:2
+2 destinations but 1 value
+
+L0315
+@26:10
+unknown name `bad_name`

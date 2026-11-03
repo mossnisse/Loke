@@ -546,3 +546,32 @@ bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exa
 	}
 	return magnitude, exact, true
 }
+
+// A set of integers for code that can see thousands. Only the few past `i64` are
+// compared one by one.
+Integer_Set :: struct {
+	small: map[i64]bool,
+	large: [dynamic]Big_Int,
+}
+
+new_integer_set :: proc(capacity: int, allocator: mem.Allocator) -> Integer_Set {
+	return Integer_Set{small = make(map[i64]bool, capacity, allocator), large = make([dynamic]Big_Int, allocator)}
+}
+
+// Whether `value` is new to the set, adding it if so.
+integer_set_add :: proc(c: Value_Storage, set: ^Integer_Set, value: Big_Int) -> bool {
+	if small, fits := bi_to_i64(c, value); fits {
+		if small in set.small {
+			return false
+		}
+		set.small[small] = true
+		return true
+	}
+	for other in set.large {
+		if bi_cmp(c, other, value) == 0 {
+			return false
+		}
+	}
+	append(&set.large, value)
+	return true
+}

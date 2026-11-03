@@ -1,0 +1,29 @@
+// design.md "Destructuring": the rules are the same with a setter among the
+// destinations.
+package main;
+
+Grid :: struct { value: int }
+
+impl Grid {
+	set :: operator([]=) proc(self: inout Grid, i: int, value: int) { self.value = value; }
+	get :: operator([]) proc(self: Grid, i: int) -> int { return self.value; }
+}
+
+Three :: struct { a: int, b: int, c: int }
+
+Text :: struct { a: int, b: string }
+
+three :: proc() -> Three { return Three{1, 2, 3}; }
+text :: proc() -> Text { return Text{1, "x"}; }
+
+main :: proc() {
+	g := Grid{};
+	y := 0;
+	v: string_view = "";
+	g[0], y = three();
+	g[0], v = text();
+	g[0], y = 5;
+	g[0] += bad_name;
+	_ = y;
+	_ = v;
+}

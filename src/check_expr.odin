@@ -58,6 +58,8 @@ check_expr :: proc(
 	base.type = INVALID_TYPE
 	base.value_category = .Value
 	base.immutable = .Not_A_Place
+	// It reset the type; a conversion recorded by an earlier check reads that.
+	base.erased_from = INVALID_TYPE
 
 	switch v in e {
 	case ^Expr_Error:
@@ -466,9 +468,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 	switch sym.kind {
 	case .Type:
 		resolve_symbol_signature_in_place(k, symbol_id)
-		v.resolution = Resolution{kind = .Type, symbol = symbol_id}
-		v.denoted_type = sym.type
-		v.value_category = .Type
+		mark_denotes_type(v, sym.type, symbol_id)
 		v.type = TYPE_TYPE
 		v.is_const = true
 		v.const_value = type_const(sym.type)
@@ -520,9 +520,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.immutable = .Constant
 		// design.md "Type alias": a constant whose value is a type denotes it.
 		if const_names_type(k.c, sym.const_value, sym.type) {
-			v.resolution = Resolution{kind = .Type, symbol = symbol_id}
-			v.denoted_type = sym.const_value.type_value
-			v.value_category = .Type
+			mark_denotes_type(v, sym.const_value.type_value, symbol_id)
 		}
 
 	case .Var, .Parameter:
@@ -589,7 +587,9 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 	// The operand is not in callee position, whatever this selector is. It is
 	// a place when this is: `m[key].x = v` reaches the index as a place, but
 	// never inserts (design.md "Maps").
-	operand := check_single_expr(k, v.operand, position = operand_position(position))
+	// `check_receiver` may already have, for the call whose callee this is.
+	operand := v.receiver_checked ? expr_base(v.operand).type : check_single_expr(k, v.operand, position = operand_position(position))
+	v.receiver_checked = false
 	if operand == INVALID_TYPE {
 		return
 	}
@@ -1246,6 +1246,25 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 	check_array_index(k, v, info, base_type, operand_base, through_pointer, pointer_mutable)
 }
 
+// Whether `check_index` answers `operand[...]` itself. Built-in indexing takes
+// one index and cannot be shadowed; a distinct type is nominal, so it never does.
+index_is_builtin :: proc(c: ^Compiler, operand: Type_Id, indices: int) -> bool {
+	info := type_of(c, operand)
+	if info != nil && (info.kind == .Box || info.kind == .Pointer) {
+		info = type_of(c, info.element)
+	}
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .String, .String_View:
+		return true
+	case .C_Pointer, .Slice, .Dynamic_Array, .Map, .Simd, .Array:
+		return indices == 1
+	}
+	return false
+}
+
 // `a[i]` for a fixed array.
 @(private = "file")
 check_array_index :: proc(
@@ -1680,7 +1699,6 @@ select_by_place :: proc(k: ^Checker, all: []Symbol_Id, place: bool) -> []Symbol_
 }
 
 // The already-checked receiver, then every index, checked here once.
-@(private = "file")
 index_arguments :: proc(
 	k: ^Checker,
 	receiver: Expr,
@@ -2538,6 +2556,11 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 // an enclosing procedure's frame.
 @(private = "file")
 check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
+	// The program has it, with its body checked, whatever checks it again.
+	if v.hoisted {
+		v.type = symbol_of(k.c, v.symbol).proc_type
+		return
+	}
 	if !proc_shape_ok(k, v, is_value = true) {
 		return
 	}
@@ -2569,6 +2592,7 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	// Not while speculatively checking an interface requirement.
 	if pkg := package_of(k.c, k.pkg); pkg != nil && committing(k.c) {
 		append(&pkg.hoisted_procs, v)
+		v.hoisted = true
 	}
 	check_proc_body(k, v)
 }

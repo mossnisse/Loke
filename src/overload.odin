@@ -68,10 +68,7 @@ candidate_ranks :: proc(cand: ^Candidate) -> []int {
 resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Proc_Group) {
 	members := make([dynamic]Symbol_Id, 0, len(value.names), k.c.semantic_allocator)
 	for name in value.names {
-		id := name.id
-		if id == INVALID_IDENTIFIER {
-			id = intern_identifier(k.c, name.text)
-		}
+		id := name_identifier(k.c, name)
 		member := INVALID_SYMBOL
 		owner := symbol_of(k.c, group_id)
 		if owner != nil && owner.owner_type != INVALID_TYPE {

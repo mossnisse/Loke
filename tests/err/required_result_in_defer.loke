@@ -1,0 +1,9 @@
+// design.md "@(require_results)": what a `defer` wraps directly stays visible to
+// its sequence, so a required result it binds and never reads is reported.
+package main;
+
+@(require_results) must :: proc() -> int { return 1; }
+
+main :: proc() {
+	defer r := must();
+}

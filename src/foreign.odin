@@ -2,6 +2,8 @@
 // blocks. Members are ordinary package symbols marked foreign.
 package lokec
 
+import "core:strings"
+
 foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> string {
 	if value, ok := attribute_string_value(k.c, block.attributes, "default_calling_convention"); ok {
 		return value
@@ -170,5 +172,97 @@ check_c_vararg_param :: proc(k: ^Checker, is_foreign: bool, literal: ^Expr_Proc,
 	}
 	if position != len(literal.signature.params) - 1 {
 		errorf(k.c, parameter.span, "L0627", "`@(c_vararg)` must mark the final parameter")
+	}
+}
+
+// design.md "@(export)": a whole-program pass, so clashing external symbols are
+// reported with locations rather than failing at link time.
+check_exports :: proc(c: ^Compiler) {
+	claimed := make(map[string]Symbol_Id, 16, context.temp_allocator)
+	linked := make(map[string]Symbol_Id, 16, context.temp_allocator)
+	for id in package_order(c) {
+		pkg := package_of(c, id)
+		if pkg == nil {
+			continue
+		}
+		for file in pkg.files {
+			for item in file.active_items {
+				#partial switch v in item {
+				case ^Decl:
+					check_export_decl(c, v, &claimed)
+				case ^Item_Impl:
+					for member in v.members {
+						if d, ok := member.(^Decl); ok {
+							check_export_decl(c, d, &claimed)
+						}
+					}
+				case ^Item_Foreign_Block:
+					check_foreign_links(c, v, &linked)
+				}
+			}
+		}
+	}
+	// A foreign binding of an exported name links to that definition.
+	for name, bound_id in linked {
+		defined_id, seen := claimed[name]
+		if !seen {
+			continue
+		}
+		bound := symbol_of(c, bound_id)
+		defined := symbol_of(c, defined_id)
+		if !foreign_links_agree(bound, defined) {
+			errorf(c, bound.span, "L0600", "the foreign symbol `%s` is exported with a different type", name)
+			add_notef(c, defined.span, "`%s` is exported here", name)
+		}
+	}
+}
+
+@(private = "file")
+check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Symbol_Id) {
+	if !has_attribute(d.attributes, "export") {
+		return
+	}
+	// A member of a generic `impl` has symbols only in its instances.
+	if len(d.symbols) == 0 {
+		errorf(c, d.span, "L0438", "a member of a generic `impl` has no ABI until it is instantiated, so it cannot be `@(export)`")
+		return
+	}
+	for sid in d.symbols {
+		sym := symbol_of(c, sid)
+		if sym == nil {
+			continue
+		}
+		name := link_name_of(c, d, sym)
+		if strings.has_prefix(name, "loke_rt_") {
+			errorf(c, sym.span, "L0635", "an exported symbol cannot use the reserved `loke_rt_` runtime prefix: `%s`", name)
+			continue
+		}
+		// Already L0438.
+		if sym.generic {
+			continue
+		}
+		#partial switch sym.kind {
+		case .Proc:
+			info := type_of(c, sym.proc_type)
+			if info == nil || !convention_is_foreign(info.convention) {
+				errorf(c, sym.span, "L0629", "an exported procedure must use a foreign calling convention: `proc \"c\" (...)`")
+				continue
+			}
+		case .Var:
+			if ok, reason := foreign_abi_safe(c, sym.type); !ok {
+				errorf(c, sym.span, "L0619", "an exported global is not ABI-safe: %s", reason)
+				continue
+			}
+		case:
+			continue // export on anything else is a misplaced-attribute error already
+		}
+		if first, seen := claimed[name]; seen {
+			errorf(c, sym.span, "L0634", "two declarations export the symbol `%s`", name)
+			add_notef(c, symbol_of(c, first).span, "`%s` is also exported here", name)
+			continue
+		}
+		claimed[name] = sid
+		sym.exported = true
+		sym.link_name = name
 	}
 }

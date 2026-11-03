@@ -174,8 +174,8 @@ add_slot_owners :: proc(
 		}
 		return
 	}
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, owner, nil), owner.pkg, owner.pkg
 	composed := composed_interface_of(k, requirement)
 	if composed == nil || visited[composed.symbol] {
@@ -514,10 +514,10 @@ interface_check :: proc(
 	defer end_probe(k.c, probe, keep = true)
 	scope := interface_scope(k, info, args)
 
-	saved := save_checker_location(k)
+	saved := k.location
 	k.interface_depth += 1
 	defer {
-		restore_checker_location(k, saved)
+		k.location = saved
 		k.interface_depth -= 1
 	}
 	// design.md "Interface bodies": each requirement reaches the associated
@@ -570,7 +570,7 @@ interface_predicates_check :: proc(
 		return Requirement_Failure{span = info.node.span, reason = "this interface predicate is recursive"}, false
 	}
 
-	saved := save_checker_location(k)
+	saved := k.location
 	probe := begin_probe(k.c)
 	k.interface_depth += 1
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
@@ -579,7 +579,7 @@ interface_predicates_check :: proc(
 		k.file, k.file_node = info.file, info.file_node
 	}
 	defer {
-		restore_checker_location(k, saved)
+		k.location = saved
 		k.interface_depth -= 1
 		end_probe(k.c, probe, keep = true)
 	}
@@ -1303,8 +1303,8 @@ application_constant :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic
 	if len(args) != len(info.params) || interface_is_callable(k.c, info) || !interface_names_constant(k, info, name) {
 		return INVALID_SYMBOL
 	}
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
@@ -1365,8 +1365,8 @@ composed_callable :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Ar
 	if depth >= MAX_INTERFACE_DEPTH {
 		return nil
 	}
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node

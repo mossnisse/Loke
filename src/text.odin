@@ -31,16 +31,7 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	if op == .None && name != "from_utf8" && name != "from_runes" && name != "from_bytes" {
 		return false
 	}
-	// A receiver that is a name already knows its type, so an ordinary method
-	// call's receiver is not checked here and then again as a method.
-	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
-		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-		if sym != nil && sym.kind != .Type && sym.const_value.kind != .Type &&
-		   !type_is_text(k.c, sym.type) && sym.type != TYPE_UNTYPED_STRING {
-			return false
-		}
-	}
-	operand := check_single_expr(k, sel.operand)
+	operand := check_receiver(k, sel)
 	if operand == INVALID_TYPE {
 		return false
 	}

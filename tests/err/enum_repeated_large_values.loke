@@ -1,0 +1,6 @@
+// design.md "Enumerations": a repeated representation is found past `i64` too.
+package main;
+
+E :: enum u64 { A = 18446744073709551615, B = 1, C = 18446744073709551615, D = 0, F = 0 }
+
+main :: proc() {}

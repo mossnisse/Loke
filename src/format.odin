@@ -158,7 +158,7 @@ discover_formatters :: proc(c: ^Compiler) {
 	}
 	pkg := standard_package(c, STD_FMT)
 	if pkg == nil { return }
-	k := Checker{c = c, pkg = pkg.id, lookup_pkg = pkg.id, scope = pkg.scope}
+	k := Checker{c = c, location = {pkg = pkg.id, lookup_pkg = pkg.id, scope = pkg.scope}}
 	view, exists := package_type_named(&k, pkg, "Format_View")
 	if !exists { return }
 	c.runtime_types["Format_View"] = view

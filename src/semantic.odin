@@ -227,6 +227,9 @@ Type_Info :: struct {
 	// Set once the finite-size check has visited this nominal type, so a cycle
 	// is reported at one place instead of once per reference.
 	size_state: Size_State,
+	// `type_is_supported` said yes, of a type whose records were all finished, so
+	// the answer cannot change.
+	known_supported: bool,
 	// A monomorphized instance: the template it came from and the arguments that
 	// produced it. Structural specialization matches against these.
 	instance_of:   Symbol_Id,
@@ -2274,18 +2277,42 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 }
 
 type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	seen: Type_Walk
-	defer delete(seen)
-	return type_is_supported_walk(c, id, &seen)
+	walk := Support_Walk{finished = true}
+	defer delete(walk.seen)
+	if !type_is_supported_walk(c, id, &walk) {
+		return false
+	}
+	if walk.finished {
+		for reached in walk.seen {
+			type_of(c, reached).known_supported = true
+		}
+	}
+	return true
+}
+
+// Whether no record `id` reaches is still waiting for its fields, so a question
+// about what it holds has its final answer.
+type_records_finished :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	walk := Support_Walk{finished = true}
+	defer delete(walk.seen)
+	type_is_supported_walk(c, id, &walk)
+	return walk.finished
 }
 
 @(private = "file")
-type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
+Support_Walk :: struct {
+	seen:     Type_Walk,
+	// No record reached is still waiting for its fields.
+	finished: bool,
+}
+
+@(private = "file")
+type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, walk: ^Support_Walk) -> bool {
 	info := type_of(c, id)
 	if info == nil {
 		return false
 	}
-	if !type_walk_enter(seen, id, info) {
+	if info.known_supported || !type_walk_enter(&walk.seen, id, info) {
 		return true
 	}
 	if info.descriptor {
@@ -2309,49 +2336,59 @@ type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> b
 		// `src/borrow.odin` rather than restricted here.
 		return true
 	case .Slice:
-		return type_is_supported_walk(c, info.element, seen)
+		return type_is_supported_walk(c, info.element, walk)
 	case .C_Pointer:
 		// design.md "C pointers": a documented trust boundary, not an unsupported
 		// type — no length, no capability, and no lifetime check after conversion.
-		return type_is_supported_walk(c, info.element, seen)
+		return type_is_supported_walk(c, info.element, walk)
 	case .Interface:
 		return false
 	case .Dynamic_Array, .Box:
-		return type_is_supported_walk(c, info.element, seen)
+		return type_is_supported_walk(c, info.element, walk)
 	case .Map:
-		return type_is_supported_walk(c, info.key, seen) &&
-		       type_is_supported_walk(c, info.element, seen)
+		return type_is_supported_walk(c, info.key, walk) &&
+		       type_is_supported_walk(c, info.element, walk)
 	case .Union:
+		walk.finished &&= record_finished(c, info)
 		for variant in info.variants {
-			if !type_is_supported_walk(c, variant, seen) {
+			if !type_is_supported_walk(c, variant, walk) {
 				return false
 			}
 		}
 		return true
 	case .Pointer, .Array, .Simd, .Distinct:
-		return type_is_supported_walk(c, info.element, seen)
+		return type_is_supported_walk(c, info.element, walk)
 	case .Enum:
 		return true
 	case .Struct:
+		walk.finished &&= record_finished(c, info)
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol == nil || !type_is_supported_walk(c, symbol.type, seen) {
+			if symbol == nil || !type_is_supported_walk(c, symbol.type, walk) {
 				return false
 			}
 		}
 		return true
 	case .Proc:
 		for parameter in info.parameters {
-			if !type_is_supported_walk(c, parameter, seen) {
+			if !type_is_supported_walk(c, parameter, walk) {
 				return false
 			}
 		}
-		if info.result != INVALID_TYPE && !type_is_supported_walk(c, info.result, seen) {
+		if info.result != INVALID_TYPE && !type_is_supported_walk(c, info.result, walk) {
 			return false
 		}
 		return true
 	}
 	return false
+}
+
+// Whether a record's declaration has given it its fields. A compiler-made or
+// structural one has them from the start.
+@(private = "file")
+record_finished :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	sym := symbol_of(c, info.symbol)
+	return sym == nil || sym.decl == nil || sym.decl.sig_state == .Checked
 }
 
 // Indexed by `Type_Id`, so a new predeclared type is added here beside its

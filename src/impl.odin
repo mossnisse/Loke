@@ -5,6 +5,7 @@
 // an unused import cannot change what an expression means.
 package lokec
 
+import "core:slice"
 import "core:strings"
 
 // ------------------------------------------------------------- declaration --
@@ -202,10 +203,7 @@ declare_impl_member :: proc(
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
-		name_id := name.id
-		if name_id == INVALID_IDENTIFIER {
-			name_id = intern_identifier(k.c, name.text)
-		}
+		name_id := name_identifier(k.c, name)
 		if member_named(k.c, existing, name_id) != INVALID_SYMBOL ||
 		   member_named(k.c, out[:], name_id) != INVALID_SYMBOL {
 			errorf(
@@ -330,6 +328,96 @@ member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) ->
 		}
 	}
 	return INVALID_SYMBOL
+}
+
+// A body-local record's hooks, from the `impl` statements after it in its scope
+// (`declare_local_impl_hooks`). A local name is never shadowed in its body, so the
+// names it goes by say which blocks are its own.
+hoist_local_lifecycle_hooks :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || k.body.following == nil {
+		return
+	}
+	record, is_record := d.values[0].(^Type_Record)
+	sym := symbol_of(k.c, d.symbols[0])
+	if !is_record || record.kind != .Struct || sym == nil || sym.kind != .Type {
+		return
+	}
+	subject := sym.type
+	names := make([dynamic]string, 0, 2, context.temp_allocator)
+	append(&names, d.names[0].text)
+	for following := k.body.following; following != nil; following = following.outer {
+		hoist_hooks_in_stmts(k, subject, &names, following.stmts)
+	}
+	// A `when` condition asked on the way may have read the record before a hook.
+	delete_key(&k.c.lifecycles, type_underlying(k.c, subject))
+}
+
+@(private = "file")
+hoist_hooks_in_stmts :: proc(k: ^Checker, subject: Type_Id, names: ^[dynamic]string, stmts: []Stmt) {
+	for stmt in stmts {
+		hoist_hooks_in_stmt(k, subject, names, stmt)
+	}
+}
+
+@(private = "file")
+hoist_hooks_in_block :: proc(k: ^Checker, subject: Type_Id, names: ^[dynamic]string, block: ^Block) {
+	if block != nil {
+		hoist_hooks_in_stmts(k, subject, names, block.stmts)
+	}
+}
+
+@(private = "file")
+hoist_hooks_in_stmt :: proc(k: ^Checker, subject: Type_Id, names: ^[dynamic]string, stmt: Stmt) {
+	names_subject :: proc(names: []string, e: Expr) -> bool {
+		ident, is_ident := e.(^Expr_Ident)
+		return is_ident && slice.contains(names, ident.name)
+	}
+	#partial switch s in stmt {
+	case ^Item_Impl:
+		if names_subject(names[:], s.type) {
+			declare_local_impl_hooks(k, s, subject)
+		}
+	case ^Decl:
+		// `Alias :: Record;` names the same record.
+		if s.kind == .Const && len(s.names) == 1 && len(s.values) == 1 && names_subject(names[:], s.values[0]) {
+			append(names, s.names[0].text)
+		}
+	case ^Block:
+		hoist_hooks_in_stmts(k, subject, names, s.stmts)
+	case ^Stmt_If:
+		hoist_hooks_in_block(k, subject, names, s.then)
+		hoist_hooks_in_stmt(k, subject, names, s.otherwise)
+	case ^Stmt_For:
+		hoist_hooks_in_block(k, subject, names, s.body)
+	case ^Stmt_Foreach:
+		// A static expansion checks copies of its body, each a block of its own.
+		if !any_static_binding(s.bindings) {
+			hoist_hooks_in_block(k, subject, names, s.body)
+		}
+	case ^Stmt_Switch:
+		for case_clause in s.cases {
+			hoist_hooks_in_stmts(k, subject, names, case_clause.stmts)
+		}
+	case ^Stmt_Defer:
+		hoist_hooks_in_stmt(k, subject, names, s.stmt)
+	case ^Stmt_Parallel:
+		hoist_hooks_in_block(k, subject, names, s.body)
+	case ^Stmt_When:
+		// A condition naming a constant declared later cannot be answered yet.
+		if first_unresolved_name(k, s.cond) != "" {
+			return
+		}
+		probe := begin_probe(k.c)
+		value, answered := check_when_condition(k, s.cond)
+		end_probe(k.c, probe)
+		switch {
+		case !answered:
+		case value:
+			hoist_hooks_in_block(k, subject, names, s.then)
+		case:
+			hoist_hooks_in_stmt(k, subject, names, s.otherwise)
+		}
+	}
 }
 
 // ---------------------------------------------------------- later phases --

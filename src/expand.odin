@@ -174,10 +174,7 @@ bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, t
 	if binding.name.text == "_" || binding.name.text == "" {
 		return
 	}
-	id := binding.name.id
-	if id == INVALID_IDENTIFIER {
-		id = intern_identifier(k.c, binding.name.text)
-	}
+	id := name_identifier(k.c, binding.name)
 	k.scope.names[id] = new_symbol(k.c, Symbol {
 		name        = id,
 		span        = binding.name.span,

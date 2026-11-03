@@ -8358,7 +8358,7 @@ prov_names_same_place :: proc(c: ^Compiler, a, b: Expr) -> bool {
 		return false
 	}
 	if x.is_const || y.is_const {
-		equal, comparable := const_equal(c, x.const_value, y.const_value)
+		equal, comparable := fold_comparison(c, .Eq_Eq, x.const_value, y.const_value)
 		return x.is_const && y.is_const && comparable && equal
 	}
 	if conversion_source(x) != INVALID_TYPE || conversion_source(y) != INVALID_TYPE {

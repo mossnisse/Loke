@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- An extension `operator([]=)` no longer takes a store that built-in indexing answers
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
+  with `impl [3]int { set :: operator([]=) ... }`, `a[0] = 1` now writes the element, as a read
+  already ignored an extension `operator([])`. Upgrade by calling the procedure by name.
+- `@(export)` on a member of a generic `impl` block is now `L0438`
+  ([`@(export)`](design.md#export)). It compiled and exported nothing. Upgrade by removing it, or by
+  exporting an ordinary procedure that calls the member.
 - A map's `iter_mut` is now a mutable borrow of the map, as a dynamic array's is
   ([By-reference iteration](design.md#by-reference-iteration)), so reading the map while an
   entry is still in use, or taking a second iterator, is now `L0511`. It compiled, though the
@@ -1349,6 +1356,38 @@ checklist.
 
 ### Fixed
 
+- A store's receiver is a place, so `m["a"][1] = 5` and `o[0][1] = 5` with an `inout` `operator([])`
+  compile when the element has an `operator([]=)`, as their `+=` forms did
+  ([Indexing and slicing](design.md#indexing-and-slicing)).
+- A receiver is checked once per check of its call. A procedure literal or a `dyn proc` argument in
+  a receiver no longer fails in clang, in `h[f(proc() -> int {...})][0] = 5` and its `+=` and multiple
+  assignment forms, and in `f(proc() -> int {...}).unbox()`, `.copy()` and `mk(g).foo()`. A chain of
+  calls to methods named like a text operation no longer doubles its checking time per link.
+- `s.byte_len()` finds a file-scope `s` declared after the procedure that calls it, as `s.len()` did.
+- A default sees a `self` written in its own group: `proc(self, x: int = self.n)` and
+  `proc(self, x := self.n)` ([Default values](design.md#default-values)).
+- `b[0] += n` through `operator([]=)` reads a scalar variable `n` before `operator([])` runs
+  ([Evaluation order](design.md#evaluation-order)).
+- A constant keeps its destination's type in a multiple assignment with a setter however it is
+  spelled, so `small[0], x = math.PI, 2` and `Small.N` compile. A setter's value and indices take
+  their parameter's type as context, so `paint[0] = .Blue` compiles.
+- `g[0], y = record` works when `g` has only an `operator([]=)`
+  ([Destructuring](design.md#destructuring)).
+- A file-scope `source_location()` reports no procedure, whichever body reaches it first.
+- `@(escape=...)` on a procedure type's parameter in a generic record is exempt in a binding with no
+  borrow, as it is on a method's: `Foo(int)` for `cb: proc(@(escape=none) x: T)` no longer reports
+  `L0648`.
+- `defer r := must();` reports a required result it never reads (`L0698`).
+- A repeated constant `case` of a struct type is `L0367`.
+- These report what is wrong rather than `L0350` "compiler defect" or a backend error: a type
+  containing itself declared in a body (`L0364`), `[?]T` outside a composite literal (`L0384`), an
+  unbound `[$N]T` (`L0437`), and `x: fmt.Nope(int)` (`L0306`). A failed component of an anonymous
+  record reports once.
+- One mistake reports once: `@(align=n)` with a variable `n` is `L0341` alone, and `a, b := bad_name`
+  is `L0315` alone. A compound assignment whose operator does not apply is `L0318` whatever the right
+  side is, where a mismatched one was `L0310`.
+- A declared `Simd`, unsuitable as a type, is `L0306` rather than a request for the predeclared
+  constructor's arguments, and `$n := 5` says that a `$` parameter writes its type.
 - A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
   site's window never closed, so a write after its join was a false `L0731`
   ([Globals while tasks run](design.md#globals-while-tasks-run)).

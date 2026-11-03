@@ -1,0 +1,8 @@
+// A value that is not constant is reported once.
+package main;
+
+n := 3;
+
+@(align=n) X :: struct { a: int }
+
+main :: proc() {}

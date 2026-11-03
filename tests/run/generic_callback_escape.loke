@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// A procedure type in a generic record is one binding of a type written for many,
+// so `@(escape=...)` on a parameter that holds no borrow in this binding is exempt,
+// as it is on a method's own parameter.
+
+Foo :: struct($T: type) { callback: proc(@(escape=none) x: T) -> int }
+
+impl Foo($T) {
+	run :: proc(self: Foo(T), x: T, other: proc(@(escape=none) y: T) -> int) -> int {
+		return self.callback(x) + other(x);
+	}
+}
+
+twice :: proc(x: int) -> int { return x * 2; }
+
+main :: proc() {
+	f := Foo(int){callback = twice};
+	fmt.println(f.run(4, twice));
+}

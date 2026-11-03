@@ -212,12 +212,7 @@ check_box_unbox :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool
 	if sel.name.text != "unbox" {
 		return false
 	}
-	if ident, ok := sel.operand.(^Expr_Ident); ok {
-		if sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident))); sym != nil && sym.kind == .Package_Alias {
-			return false
-		}
-	}
-	subject := check_single_expr(k, sel.operand)
+	subject := check_receiver(k, sel)
 	if !type_is_box(k.c, subject) {
 		return false
 	}

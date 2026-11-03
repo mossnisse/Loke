@@ -1981,7 +1981,7 @@ report_unread_required :: proc(graph: ^Flow_Graph) {
 		if reads_get(reads, event.slot) || graph.lent[event.slot] {
 			continue
 		}
-		what := write.source != "" ? concat(graph.k.c, "the result of `", concat(graph.k.c, write.source, "`")) : "the result of this call"
+		what := write.source != "" ? concat(graph.k.c, "the result of `", write.source, "`") : "the result of this call"
 		errorf(
 			graph.k.c, event.span, "L0698",
 			"%s stored in `%s` is never read before it is overwritten or goes out of scope: inspect it, or discard it with `_ = ...`",

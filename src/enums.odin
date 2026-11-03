@@ -1,5 +1,115 @@
-// `Enum.from_int` and `Enum.values`; members are resolved in check.odin.
+// Enum members, `Enum.from_int`, and `Enum.values`.
 package lokec
+
+// design.md "Enumerations": an enum's members are named constants that need not be
+// contiguous.
+resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
+	backing := TYPE_INT
+	if resolved := resolve_type_reporting(k, value.backing); resolved != INVALID_TYPE {
+		if type_is_integer(k.c, resolved) {
+			backing = resolved
+		} else {
+			errorf(k.c, expr_span(value.backing), "L0380", "an enum's backing type must be an integer type")
+		}
+	}
+	info := type_of(k.c, type)
+	if info != nil {
+		info.element = backing
+		info.bits = u16(type_bits(k.c, backing))
+		info.signed = type_signed(k.c, backing)
+		info.enum_backing_explicit = value.backing != nil
+	}
+
+	members := make([dynamic]Symbol_Id, 0, len(value.fields), k.c.semantic_allocator)
+	seen := new_integer_set(len(value.fields), context.temp_allocator)
+	next := bi_from_i64(k.c, 0)
+	for &field in value.fields {
+		discriminant := next
+		if field.value != nil {
+			if written, ok := enum_member_value(k, field.value, backing); ok {
+				discriminant = written
+			}
+		} else if !bi_fits(k.c, discriminant, type_bits(k.c, backing), type_signed(k.c, backing)) {
+			errorf(k.c, field.name.span, "L0352", "enum member representation does not fit `%s`", type_name(k.c, backing))
+		}
+		if field.name.text != "" && field.name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, field.name)) != INVALID_SYMBOL {
+			errorf(k.c, field.name.span, "L0304", "`%s` is already a member of this enum", field.name.text)
+		}
+		if !integer_set_add(k.c, &seen, discriminant) {
+			errorf(k.c, field.name.span, "L0380", "enum variants must have distinct integer representations")
+		}
+		field.symbol = new_binding_symbol(k, field.name, .Enum_Member)
+		if symbol := symbol_of(k.c, field.symbol); symbol != nil {
+			symbol.type = type
+			symbol.index = u32(len(members))
+			symbol.const_value = Const_Value{kind = .Integer, integer = discriminant}
+		}
+		if field.symbol != INVALID_SYMBOL {
+			append(&members, field.symbol)
+		}
+		next = bi_add(k.c, discriminant, bi_from_i64(k.c, 1))
+	}
+	if info != nil {
+		info.fields = members[:]
+	}
+}
+
+// A member's written value, reported when it is not one the backing type holds.
+@(private = "file")
+enum_member_value :: proc(k: ^Checker, value: Expr, backing: Type_Id) -> (Big_Int, bool) {
+	if check_single_expr(k, value, backing) == INVALID_TYPE {
+		return {}, false
+	}
+	folded, evaluated := require_const(k, value, "an enum member's value", "L0380")
+	if !evaluated {
+		return {}, false
+	}
+	if folded.kind != .Integer && folded.kind != .Rune {
+		errorf(k.c, expr_span(value), "L0380", "an enum member's value must be a constant integer")
+		return {}, false
+	}
+	if !bi_fits(k.c, folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
+		errorf(
+			k.c, expr_span(value), "L0352", "%s is not representable by `%s`",
+			bi_text(k.c, folded.integer), type_name(k.c, backing),
+		)
+		return {}, false
+	}
+	return folded.integer, true
+}
+
+// An enum's members by value, for those that fit `i64`.
+enum_members_by_value :: proc(c: ^Compiler, type: Type_Id) -> map[i64]Symbol_Id {
+	info := underlying_info(c, type)
+	members := make(map[i64]Symbol_Id, len(info.fields), context.temp_allocator)
+	for member in info.fields {
+		symbol := symbol_of(c, member)
+		if symbol != nil && symbol.const_value.kind == .Integer {
+			if value, fits := bi_to_i64(c, symbol.const_value.integer); fits {
+				members[value] = member
+			}
+		}
+	}
+	return members
+}
+
+// The member whose value is `value`, or none: a value the type never admits.
+enum_member_by_value :: proc(c: ^Compiler, type: Type_Id, value: Const_Value) -> Symbol_Id {
+	info := underlying_info(c, type)
+	if info == nil || value.kind != .Integer {
+		return INVALID_SYMBOL
+	}
+	for member in info.fields {
+		symbol := symbol_of(c, member)
+		if symbol == nil || symbol.const_value.kind != .Integer {
+			continue
+		}
+		if bi_cmp(c, symbol.const_value.integer, value.integer) == 0 {
+			return member
+		}
+	}
+	return INVALID_SYMBOL
+}
 
 // An enum the compiler declares, over `int`, numbered in member order.
 synth_enum :: proc(c: ^Compiler, name: string, members: []string) -> Type_Id {
@@ -37,7 +147,7 @@ check_enum_builtin :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> b
 	if !enum_builtin_member(sel.name.text) {
 		return false
 	}
-	subject := resolve_type_syntax(k, sel.operand)
+	subject := receiver_denoted_type(k, sel)
 	if subject == INVALID_TYPE || !type_is_enum(k.c, subject) {
 		return false
 	}

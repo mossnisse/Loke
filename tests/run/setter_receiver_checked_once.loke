@@ -1,0 +1,39 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Indexing and slicing": a store's receiver is a place, reached through
+// an `inout` overload or a map entry. Deciding whether the store takes a setter
+// does not check it a second time, which would emit a procedure literal twice.
+
+Grid :: struct { cells: [4]int }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, i: int) -> int { return self.cells[i]; }
+	set :: operator([]=) proc(self: inout Grid, i: int, value: int) { self.cells[i] = value; }
+}
+
+Holder :: struct { grids: [2]Grid }
+
+impl Holder {
+	at :: operator([]) proc(self: inout Holder, i: int) -> inout Grid { return inout self.grids[i]; }
+}
+
+one :: proc(f: proc() -> int) -> int { return f(); }
+
+main :: proc() {
+	h: Holder = {};
+	h[one(proc() -> int { return 1; })][0] = 5;
+	h[one(proc() -> int { return 1; })][0] += 5;
+	y := 0;
+	h[one(proc() -> int { return 1; })][1], y = 7, 8;
+	fmt.println(h.grids[1].cells[0], h.grids[1].cells[1], y);
+
+	h[0][1] = 6;
+	fmt.println(h.grids[0].cells[1]);
+
+	m: map[string]Grid = {};
+	m["a"] = Grid{};
+	m["a"][1] = 5;
+	fmt.println(m["a"][1]);
+}

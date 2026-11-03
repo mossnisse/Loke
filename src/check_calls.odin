@@ -32,7 +32,14 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	defer report_argument_copies(k, v)
 	v.value_category = .Value
 
+	selector, _ := v.callee.(^Expr_Selector)
+	if selector != nil {
+		selector.receiver_checked = false
+	}
 	if check_compile_time_callee(k, v, expected) {
+		if selector != nil {
+			selector.receiver_checked = false
+		}
 		return
 	}
 
@@ -77,6 +84,34 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 	check_procedure_call(k, v, callee_base, info)
+}
+
+// The receiver of `v.callee`, for a form that must see its type to know whether
+// it applies: checked once per check of the call, whichever form asks, and the
+// selector then takes this answer if none does. INVALID_TYPE for a package alias,
+// which is no receiver, and for what failed to check.
+check_receiver :: proc(k: ^Checker, sel: ^Expr_Selector) -> Type_Id {
+	if sel.receiver_checked {
+		return expr_base(sel.operand).type
+	}
+	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
+		if sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident))); sym != nil && sym.kind == .Package_Alias {
+			return INVALID_TYPE
+		}
+	}
+	type := check_single_expr(k, sel.operand)
+	sel.receiver_checked = true
+	return type
+}
+
+// What a selector's operand names, if a type. A generic procedure's call must be
+// checked to say, which makes it the receiver's one check.
+receiver_denoted_type :: proc(k: ^Checker, sel: ^Expr_Selector) -> Type_Id {
+	if call, is_call := sel.operand.(^Expr_Call); is_call && generic_template_of_callee(k, call.callee, .Procedure) != nil {
+		check_receiver(k, sel)
+		return call.value_category == .Type ? call.denoted_type : INVALID_TYPE
+	}
+	return resolve_type_syntax(k, sel.operand)
 }
 
 // The forms whose callee is not a value: built-ins, groups and generic
@@ -350,7 +385,7 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	if !is_selector || sel.operand == nil {
 		return INVALID_SYMBOL
 	}
-	subject := resolve_type_syntax(k, sel.operand)
+	subject := receiver_denoted_type(k, sel)
 	if subject == INVALID_TYPE {
 		return INVALID_SYMBOL
 	}
@@ -401,7 +436,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	args[0].is_receiver = true
 	copy(args[1:], written)
 
-	description := concat(k.c, "method `", concat(k.c, sel.name.text, "`"))
+	description := concat(k.c, "method `", sel.name.text, "`")
 	cand, resolved := resolve_overload(k, v.span, description, candidates, args)
 	if !resolved {
 		v.type = INVALID_TYPE
@@ -451,7 +486,7 @@ reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -
 check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	sym := symbol_of(k.c, group)
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
-	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
+	description := concat(k.c, "`", identifier_text(k.c, sym.name), "`")
 	args, args_ok := collect_call_arguments(k, v.args, members, live_group = group)
 	if !args_ok {
 		v.type = INVALID_TYPE
@@ -901,7 +936,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		return false
 	}
 	if typed && unchecked_pointer_conversion(k.c, source, target) &&
-	   !require_unsafe_import(k, v.span, concat(k.c, "converting to `", concat(k.c, type_name(k.c, target), "`"))) {
+	   !require_unsafe_import(k, v.span, concat(k.c, "converting to `", type_name(k.c, target), "`")) {
 		v.type = INVALID_TYPE
 		return true
 	}
@@ -967,7 +1002,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) 
 		v.type = INVALID_TYPE
 		return
 	}
-	description := concat(k.c, "conversion to `", concat(k.c, type_name(k.c, target), "`"))
+	description := concat(k.c, "conversion to `", type_name(k.c, target), "`")
 	args := []Arg_Info{arg_from_expr(v.args[0].value)}
 	cand, resolved := resolve_overload(k, v.span, description, usable, args)
 	if !resolved {

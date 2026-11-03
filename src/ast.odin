@@ -115,6 +115,9 @@ Expr_Selector :: struct {
 	// design.md "@(synchronized)": a synchronized field reached from outside its
 	// declaring package, which the borrow analysis counts as exclusive access.
 	synchronized:  bool,
+	// `check_receiver` has checked `operand` for the call being checked, and
+	// `check_selector` takes that answer rather than checking it again.
+	receiver_checked: bool,
 }
 
 // `x[a]`, and the user-defined comma form `x[a, b]`.
@@ -544,6 +547,9 @@ Expr_Proc :: struct {
 	where_clauses: []Expr,
 	body:          ^Block,
 	bodiless:      bool,
+	// Enrolled for emission, its body checked for the program: a literal is not
+	// checked twice, and a second copy of it would be a redefinition.
+	hoisted:       bool,
 	// The procedure this literal becomes.
 	symbol:        Symbol_Id,
 	// Cleanup slots this body needs, allocated in the entry block.

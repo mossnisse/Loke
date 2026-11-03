@@ -1074,13 +1074,7 @@ generic_parameter_kind :: proc(k: ^Checker, applied: Applied_Parameters, at: int
 	saved := k.scope
 	k.scope = applied.scope
 	defer k.scope = saved
-	errors := k.c.error_count
-	syntax := clone_expr(k.c, parameter.type_syntax)
-	kind = resolve_type_syntax(k, syntax)
-	if kind == INVALID_TYPE && k.c.error_count == errors {
-		report_unresolved_type(k, syntax)
-	}
-	return kind, false
+	return resolve_type_reporting(k, clone_expr(k.c, parameter.type_syntax)), false
 }
 
 // design.md "Parametric aliases": the type of an alias's constant parameter that
@@ -1091,7 +1085,7 @@ alias_dependent_type :: proc(
 	k: ^Checker, template: ^Generic_Template, parameter: Generic_Param_Decl, scope: ^Scope, report: bool,
 ) -> Type_Id {
 	saved := enter_instance(k, template, scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 	// A copy, since the arguments resolve for this application and not the next.
 	call := clone_expr(k.c, parameter.dependent_on).(^Expr_Call)
 	applied := applied_parameters(k, call.callee)
@@ -1424,7 +1418,7 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 	if type == INVALID_TYPE && report && k.c.error_count == before {
 		report_unresolved_type(k, body)
 	}
-	restore_checker_location(k, saved)
+	k.location = saved
 	if type == INVALID_TYPE {
 		return INVALID_TYPE
 	}
@@ -2055,7 +2049,7 @@ generic_parameter_context_type :: proc(k: ^Checker, template: ^Generic_Template,
 		return INVALID_TYPE
 	}
 	saved := enter_instance(k, template, new_instance_scope(k, template))
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 	return resolve_type_syntax(k, clone_expr(k.c, written))
 }
 
@@ -2197,7 +2191,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	result.scope = scope
 
 	saved := enter_instance(k, template, scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 
 	// Checked on the written call, before `$` arguments leave the signature.
 	named := false
@@ -2677,7 +2671,7 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 	}
 	name := generic_instance_name(k.c, template.symbol, instance.bindings)
 	saved := enter_instance(k, template, instance.scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
 	defer pop(&k.c.instantiation_stack)
@@ -2766,12 +2760,12 @@ note_instantiation_stack :: proc(k: ^Checker, from := -1) {
 }
 
 // Positions the checker at an instance's definition: its scope, package, and
-// file. Restored with `restore_checker_location`.
+// file. Restored by assigning `k.location`.
 @(private = "file")
 enter_generic_location :: proc(
 	k: ^Checker, scope: ^Scope, pkg, lookup_pkg: Package_Id, impl_type: Type_Id, file: u32, file_node: ^File,
 ) -> Checker_Location {
-	saved := save_checker_location(k)
+	saved := k.location
 	k.scope = scope
 	k.pkg, k.lookup_pkg = pkg, lookup_pkg
 	k.impl_type = impl_type
@@ -2828,7 +2822,7 @@ instantiate_record_body :: proc(
 	instance.type = type
 	instance.impl_candidates = make(map[Impl_Member_Key][dynamic]Impl_Candidate, k.c.semantic_allocator)
 	saved := enter_instance(k, template, instance.scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 
 	// Bounds first: `where N > 0` is what makes `[N]int` well formed.
 	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
@@ -3121,7 +3115,7 @@ instantiate_procedure_signature :: proc(
 	literal.symbol = symbol_id
 
 	saved := enter_instance(k, template, instance.scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 
 	before := k.c.error_count
 	clone.sig_state = .Checked
@@ -3159,7 +3153,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	}
 
 	saved := enter_instance(k, template, instance.scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 
 	// Diagnosed against the selecting call; a probe-created instance has none.
 	append(&k.c.instantiation_stack, Instantiation_Frame {
@@ -3263,7 +3257,7 @@ check_where_clauses :: proc(
 // Read in the instance's scope, as the bound was, and leaves no diagnostic.
 failed_bound_reason :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance) -> string {
 	saved := enter_instance(k, template, instance.scope)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 	probe := begin_probe(k.c)
 	text := failed_bound_text(k, instance.failed_bound)
 	end_probe(k.c, probe)
@@ -3489,7 +3483,7 @@ install_generic_impl_blocks :: proc(k: ^Checker, instance: ^Instance, blocks: []
 			}
 		}
 		append(&k.c.pending_impl_instances, Pending_Impl{item = install.clone, scope = install.scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = install.conflicts})
-		restore_checker_location(k, saved)
+		k.location = saved
 	}
 }
 
@@ -3515,7 +3509,7 @@ enter_impl_install :: proc(k: ^Checker, instance: ^Instance, install: Impl_Insta
 @(private = "file")
 resolve_instance_impl_members :: proc(k: ^Checker, instance: ^Instance, install: Impl_Install, hooks: bool) {
 	saved := enter_impl_install(k, instance, install)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 	for member in install.clone.members {
 		d, is_decl := member.(^Decl)
 		if !is_decl || decl_is_proc_group(d) {
@@ -3537,7 +3531,7 @@ declare_generic_impl_block :: proc(k: ^Checker, instance: ^Instance, block: ^Gen
 	scope := new_scope(k.c, block.scope, .Local)
 	scope.instance = instance
 	saved := enter_generic_location(k, scope, block.pkg, block.pkg, INVALID_TYPE, block.file, block.file_node)
-	defer restore_checker_location(k, saved)
+	defer k.location = saved
 
 	// A written argument that differs from the bound one skips this instance;
 	// `check_generic_impl_subject` reports one that could never match, so each
@@ -3973,7 +3967,7 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 			}
 		}
 
-		restore_checker_location(k, saved)
+		k.location = saved
 	}
 	check_deferred_escape_parts(k)
 
@@ -3984,7 +3978,7 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 		read := k.c.pending_private_reads[index]
 		saved := enter_generic_location(k, read.scope, read.pkg, read.lookup_pkg, read.impl_type, read.file, read.file_node)
 		check_generic_private_names(k, read)
-		restore_checker_location(k, saved)
+		k.location = saved
 	}
 	clear(&k.c.pending_private_reads)
 	// What those reads selected may have instantiated a block.

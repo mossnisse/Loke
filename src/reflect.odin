@@ -821,7 +821,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	if named == nil || named.kind != .Const || !type_is_descriptor(k.c, named.type) {
 		return false
 	}
-	check_single_expr(k, sel.operand)
+	check_receiver(k, sel)
 	base := expr_base(sel.operand)
 	if base == nil || !base.is_const || base.const_value.kind != .Aggregate {
 		return false

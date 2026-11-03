@@ -446,18 +446,7 @@ switch_binds_place :: proc(s: ^Stmt_Switch) -> bool {
 }
 
 check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
-	outer := k.scope
-	k.scope = new_scope(k.c, outer, .Local)
-	defer k.scope = outer
-
-	// design.md "@(require_results)": a header binding's scope ends with the
-	// statement.
-	defer if s.init != nil {
-		report_unread_required_results(k, []Stmt{s.init})
-	}
-	if s.init != nil {
-		check_stmt(k, s.init)
-	}
+	enter_statement_header(k, s.init)
 	subject := check_single_expr(k, s.subject)
 	if subject == INVALID_TYPE {
 		return Flow_Info{}
@@ -726,7 +715,7 @@ report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id
 			if missing != "" {
 				missing = concat(k.c, missing, ", ")
 			}
-			missing = concat(k.c, missing, concat(k.c, ".", union_variant_name(k.c, subject, index)))
+			missing = concat(k.c, missing, ".", union_variant_name(k.c, subject, index))
 		}
 	}
 	if count == 0 {
@@ -743,4 +732,459 @@ report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id
 		type_name(k.c, subject),
 		missing,
 	)
+}
+
+// -------------------------------------------------------- success returns --
+
+// design.md "One result": a body whose result is a fallible union whose
+// success carries nothing or `Unit`, such as `Status(E)` or `Result(Unit, E)`,
+// may reach its end, which returns that success. The `return` is appended, so
+// every later phase sees the statement it means. Its span is empty, at the
+// closing brace, so no query finds it.
+implicit_success :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol) -> bool {
+	if literal.body == nil || !k.body.bare_success {
+		return false
+	}
+	end := literal.body.span
+	end.lo = max(end.hi, 1) - 1
+	end.hi = end.lo
+	exit := new(Stmt_Return, k.c.semantic_allocator)
+	exit.span = end
+	exit.value = bare_success_value(k, symbol.result, end)
+	stmts := make([]Stmt, len(literal.body.stmts) + 1, k.c.semantic_allocator)
+	copy(stmts, literal.body.stmts)
+	stmts[len(stmts) - 1] = exit
+	literal.body.stmts = stmts
+	check_stmt(k, exit)
+	return true
+}
+
+// The returned value that a body's bare success stands for, at an empty span.
+bare_success_value :: proc(k: ^Checker, result: Type_Id, at: Span) -> ^Return_Value {
+	shape, _ := fallible_of(k, result)
+	value := new(Return_Value, k.c.semantic_allocator)
+	value.span = at
+	value.expr = success_selector(k, result, shape.success, at)
+	return value
+}
+
+// The unchecked `.name` of `result`'s variant `index`, as a compiler-written
+// statement spells it. An empty `at` keeps it out of every query.
+@(private = "file")
+success_selector :: proc(k: ^Checker, result: Type_Id, index: int, at: Span) -> ^Expr_Selector {
+	name := union_variant_name(k.c, result, index)
+	selector := new(Expr_Selector, k.c.semantic_allocator)
+	selector.span = at
+	selector.name = Name{text = name, span = at, id = intern_identifier(k.c, name)}
+	return selector
+}
+
+// design.md "One result": whether a body may return its success by reaching
+// its end or with `return;`. A payloadless success always may. A `Unit` one
+// may when the result as written makes it `Unit`, so that a body generic over
+// `Result(T, E)` means the same in an instance where `T` is `Unit` as in any
+// other.
+success_needs_no_value :: proc(k: ^Checker, scope: ^Scope, literal: ^Expr_Proc, symbol: ^Symbol) -> bool {
+	if symbol.result_inout {
+		return false
+	}
+	shape, fallible := fallible_of(k, symbol.result)
+	if !fallible {
+		return false
+	}
+	payload := shape.info.variants[shape.success]
+	if payload == TYPE_VOID {
+		return true
+	}
+	if payload != k.c.unit_type {
+		return false
+	}
+	result := literal.signature.result
+	return result == nil || !success_names_generic(k, scope, result.type, shape.success)
+}
+
+// Whether the success payload of a written fallible result depends on a
+// generic argument bound in `scope`. `Result(Unit, E)` does not, though `E` is
+// one; `Result(T, E)` and a bare `R` do.
+@(private = "file")
+success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success: int) -> bool {
+	if !type_syntax_names_generic(k, scope, syntax) {
+		return false
+	}
+	read_alias :: proc(k: ^Checker, id: Symbol_Id, success: int) -> (depends, is_alias: bool) {
+		target, target_scope := local_alias_target(k, id)
+		if target == nil {
+			return false, false
+		}
+		saved := k.scope
+		k.scope = target_scope
+		defer k.scope = saved
+		return success_names_generic(k, target_scope, target, success), true
+	}
+	#partial switch v in syntax {
+	case ^Expr_Ident:
+		// An alias means what it names, so `Outcome :: Result(Unit, E)` leaves the
+		// success as `Unit` as written, and `Outcome :: Result(T, E)` does not.
+		if depends, is_alias := read_alias(k, lookup_symbol(scope, identifier_of(k.c, v)), success); is_alias {
+			return depends
+		}
+	case ^Expr_Selector:
+		// `Local.Outcome` reads the same way. `T.Outcome` and `Box(T).Outcome` do
+		// not, since which member they select depends on the argument.
+		if type_syntax_names_generic(k, scope, v.operand) {
+			return true
+		}
+		if depends, is_alias := read_alias(k, v.resolution.symbol, success); is_alias {
+			return depends
+		}
+	case ^Expr_Call:
+		template := generic_template_of_callee(k, v.callee, .Record)
+		if template == nil {
+			template = generic_template_of_callee(k, v.callee, .Alias)
+		}
+		if template == nil || len(v.args) != len(template.params) {
+			return true
+		}
+		depends := success_parameters(k, template, success)
+		for arg, i in v.args {
+			if depends[i] && type_syntax_names_generic(k, scope, arg.value) {
+				return true
+			}
+		}
+		return false
+	case ^Type_Record:
+		if success < len(v.variants) {
+			payload := v.variants[success].type
+			return payload != nil && type_syntax_names_generic(k, scope, payload)
+		}
+	}
+	return true
+}
+
+// Whether type syntax names a generic argument bound in `scope`, as
+// `Result(T, Error)`, `Result($T, Error)`, or `[N + 1]int` does in an instance
+// generic over `T` or `N`. Outside an instance nothing is bound, so nothing is
+// walked.
+type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
+	if !scope_in_instance(scope) {
+		return false
+	}
+	lookup := Generic_Lookup{k = k, scope = scope, from = scope, followed = make([dynamic]Symbol_Id, context.temp_allocator)}
+	return type_syntax_any_name(e, &lookup, names_generic_binding)
+}
+
+@(private = "file")
+scope_in_instance :: proc(scope: ^Scope) -> bool {
+	for enclosing := scope; enclosing != nil; enclosing = enclosing.parent {
+		if enclosing.instance != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// What a constant declared in a generic body stands for wherever it is named,
+// and the scope that reads it: `Result(T, E)` for `Outcome :: Result(T, E)`, or
+// `N * 2` for `Twice :: N * 2`. A package-scope constant cannot name a binding,
+// and a declaration that defines something, such as `Local :: struct { x: T }`,
+// is one type in each instance rather than a spelling of its arguments.
+@(private = "file")
+local_alias_target :: proc(k: ^Checker, id: Symbol_Id) -> (target: Expr, scope: ^Scope) {
+	symbol := symbol_of(k.c, id)
+	if symbol == nil || symbol.generic || symbol.decl == nil || symbol.decl.kind != .Const || !scope_in_instance(symbol.def_scope) {
+		return nil, nil
+	}
+	// grammar.md "Declarations": a constant binds one name, and an incomplete
+	// declaration may have no initializer.
+	if len(symbol.decl.symbols) != 1 || symbol.decl.symbols[0] != id || len(symbol.decl.values) == 0 {
+		return nil, nil
+	}
+	#partial switch _ in symbol.decl.values[0] {
+	case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator:
+		return nil, nil
+	}
+	return symbol.decl.values[0], symbol.def_scope
+}
+
+@(private = "file")
+Generic_Lookup :: struct {
+	k:        ^Checker,
+	scope:    ^Scope,
+	// Where the syntax is written. A selected member can name a binding this
+	// scope does not bind: `B.Outcome` for `B :: Box(Unit)` reads `Box`'s own `$U`,
+	// which is not a generic argument here.
+	from:     ^Scope,
+	// The aliases already read, since each answers once and a cyclic one, which
+	// its declaration reports, must not be read forever.
+	followed: [dynamic]Symbol_Id,
+}
+
+// A `$` name is a generic argument, and a local alias, named or selected from a
+// type, depends on one through what it names (design.md "Success returns").
+@(private = "file")
+names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
+	lookup := (^Generic_Lookup)(data)
+	#partial switch v in node {
+	case ^Expr_Ident:
+		id := lookup_symbol(lookup.scope, identifier_of(lookup.k.c, v))
+		symbol := symbol_of(lookup.k.c, id)
+		if symbol == nil {
+			return false
+		}
+		if symbol.generic_binding {
+			return lookup_symbol(lookup.from, symbol.name) == id
+		}
+		return alias_names_generic(lookup, id)
+	case ^Expr_Selector:
+		return alias_names_generic(lookup, v.resolution.symbol)
+	case ^Type_Poly:
+		return true
+	case ^Expr_Proc:
+		return type_syntax_any_name(v.signature, data, names_generic_binding)
+	}
+	// A declaration defines its own type; its contents name no argument here.
+	return false
+}
+
+// Whether the local alias `id`, if it is one, names a generic argument.
+@(private = "file")
+alias_names_generic :: proc(lookup: ^Generic_Lookup, id: Symbol_Id) -> bool {
+	target, target_scope := local_alias_target(lookup.k, id)
+	if target == nil || slice.contains(lookup.followed[:], id) {
+		return false
+	}
+	append(&lookup.followed, id)
+	saved := lookup.scope
+	lookup.scope = target_scope
+	defer lookup.scope = saved
+	return type_syntax_any_name(target, lookup, names_generic_binding)
+}
+
+// What a returned expression's form says it builds (design.md "Success
+// returns"), decided before it has a type.
+@(private = "file")
+Return_Target :: enum u8 {
+	// A variant construction or implicit selector: the whole result.
+	Result,
+	// A composite literal or an unfixed constant, from which no union is built.
+	Payload,
+	// An expression with a type of its own: the result when it is assignable.
+	Either,
+}
+
+@(private = "file")
+return_target :: proc(e: Expr) -> Return_Target {
+	#partial switch v in e {
+	case ^Expr_Selector:
+		if v.operand == nil {
+			return .Result
+		}
+	case ^Expr_Call:
+		if is_implicit_selector(v.callee) {
+			return .Result
+		}
+	case ^Expr_Cond:
+		if return_target(v.then) == .Result || return_target(v.otherwise) == .Result {
+			return .Result
+		}
+	case ^Expr_Composite, ^Expr_Literal:
+		return .Payload
+	}
+	return .Either
+}
+
+// Checks a returned value against the result. In a procedure whose result is
+// a fallible union with a success payload, a value that is not the whole
+// result is checked against the payload, and the statement becomes the
+// `.ok(value)` it stands for (design.md "Success returns").
+check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
+	result := k.result_type
+	e := value.expr
+	target := return_target(e)
+	shape, fallible := fallible_of(k, result)
+	payload := fallible ? shape.info.variants[shape.success] : TYPE_VOID
+	failure := fallible ? shape.info.variants[shape.failure] : TYPE_VOID
+	// In a generic body the two payloads may be one type in some instance, so a
+	// value meant as the error would become the success there.
+	wraps := payload != TYPE_VOID && !(k.result_generic && failure != TYPE_VOID)
+	if !wraps || target == .Result {
+		errors := k.c.error_count
+		if check_value_expr(k, e, result, "return") {
+			return true
+		}
+		if fallible && k.c.error_count > errors {
+			note_success_return(k, e, shape, target, wraps)
+		}
+		return false
+	}
+
+	type := check_single_expr(k, e, payload)
+	if type == INVALID_TYPE {
+		return false
+	}
+	untyped := type_is_untyped(k.c, type)
+	// A call that never returns stands in for any value, the result included.
+	if call_diverges(k.c, e) {
+		expr_base(e).type = result
+		return materialize_value_expr(k, e, result, "return")
+	}
+	if target == .Either && !untyped && assignable(k.c, type, result) {
+		return materialize_value_expr(k, e, result, "return")
+	}
+	success := union_variant_name(k.c, result, shape.success)
+	if type == TYPE_UNTYPED_NIL {
+		report_returned_nil(k, e, shape)
+		return false
+	}
+	if !untyped && !assignable(k.c, type, payload) {
+		errorf(
+			k.c, expr_span(e), "L0310",
+			"cannot return `%s` from a procedure that returns `%s`: it is neither the result nor its `.%s` payload `%s`",
+			type_name(k.c, type), type_name(k.c, result), success, type_name(k.c, payload),
+		)
+		note_success_return(k, e, shape, target, wraps)
+		return false
+	}
+	if !materialize_value_expr(k, e, payload, "return") {
+		return false
+	}
+	e = transfer_returned_local(k, e)
+	if base := expr_base(e); base.value_category == .Place && type_clone_disabled(k.c, payload) {
+		errorf(
+			k.c, expr_span(e), "L0502",
+			"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
+			type_name(k.c, payload),
+		)
+		return false
+	}
+	value.expr = wrap_returned_success(k, e, shape)
+	return true
+}
+
+// design.md "Success returns": `nil` is never an implicit success, so `return
+// nil;` cannot be read as absence and silently be `.some(nil)`. Only an unchecked
+// address takes `nil`, so only there is the success a fix to suggest.
+@(private = "file")
+report_returned_nil :: proc(k: ^Checker, e: Expr, shape: Fallible) {
+	result := k.result_type
+	payload := shape.info.variants[shape.success]
+	success := union_variant_name(k.c, result, shape.success)
+	failed := union_variant_name(k.c, result, shape.failure)
+	if type_accepts_nil(k.c, payload) {
+		errorf(
+			k.c, expr_span(e), "L0310",
+			"`nil` does not build `.%s` implicitly: write `.%s(nil)` for a success, or `.%s` for the failure",
+			success, success, failed,
+		)
+	} else {
+		errorf(
+			k.c, expr_span(e), "L0310",
+			"`nil` is not a value of `%s`, the `.%s` payload: write `.%s` for the failure",
+			type_name(k.c, payload), success, failed,
+		)
+	}
+}
+
+// The checked `.ok(e)` a returned payload stands for.
+@(private = "file")
+wrap_returned_success :: proc(k: ^Checker, e: Expr, shape: Fallible) -> Expr {
+	result := k.result_type
+	at := expr_span(e)
+	at.hi = at.lo
+	call := new(Expr_Call, k.c.semantic_allocator)
+	call.span = at
+	callee := success_selector(k, result, shape.success, at)
+	call.callee = callee
+	call.args = make([]Argument, 1, k.c.semantic_allocator)
+	call.args[0] = Argument{span = expr_span(e), value = e}
+	check_union_variant_selector(k, callee, result, callee = true)
+	finish_union_construct(k, call, result, shape.success, e)
+	return call
+}
+
+// After a returned value fit nothing: name the variant that would take it.
+@(private = "file")
+note_success_return :: proc(k: ^Checker, e: Expr, shape: Fallible, target: Return_Target, wraps: bool) {
+	result := k.result_type
+	success := union_variant_name(k.c, result, shape.success)
+	failure := union_variant_name(k.c, result, shape.failure)
+	payload := shape.info.variants[shape.success]
+	failure_payload := shape.info.variants[shape.failure]
+	if selector, is_selector := e.(^Expr_Selector); is_selector && selector.operand == nil {
+		// `return .Bad_Digit;` names a member of a payload, not a variant.
+		id := intern_identifier(k.c, selector.name.text)
+		switch {
+		case type_has_member(k.c, failure_payload, id):
+			add_notef(k.c, selector.span, "`.%s` belongs to the `.%s` payload: write `.%s(.%s)`", selector.name.text, failure, failure, selector.name.text)
+		case type_has_member(k.c, payload, id):
+			add_notef(k.c, selector.span, "`.%s` belongs to the `.%s` payload: write `.%s(.%s)`", selector.name.text, success, success, selector.name.text)
+		}
+		return
+	}
+	if target == .Result {
+		return
+	}
+	type := expr_base(e).type
+	switch {
+	case type == INVALID_TYPE:
+	case !wraps && payload != TYPE_VOID:
+		add_notef(
+			k.c, expr_span(e), "this result names a generic argument, so a returned value is never wrapped: write `.%s(value)` or `.%s(value)`",
+			success, failure,
+		)
+	case failure_payload != TYPE_VOID && assignable(k.c, type, failure_payload):
+		if payload == TYPE_VOID {
+			add_notef(k.c, expr_span(e), "`.%s` carries nothing here; write `.%s(value)` to fail", success, failure)
+		} else {
+			add_notef(k.c, expr_span(e), "a returned value builds only `.%s`; write `.%s(value)` to fail", success, failure)
+		}
+	}
+}
+
+// Whether `type` is an enum with member `name` or a union with variant `name`.
+@(private = "file")
+type_has_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> bool {
+	if type == TYPE_VOID || type == INVALID_TYPE {
+		return false
+	}
+	underlying := type_underlying(c, type)
+	if type_is_enum(c, underlying) {
+		return enum_member(c, underlying, name) != INVALID_SYMBOL
+	}
+	return union_variant_index(c, type, name) >= 0
+}
+
+// ------------------------------------------------------- or_else exits --
+
+// design.md "or_else expression": `break`, `continue`, and `return value` in the
+// fallback position are the statements, run where the failure is found.
+@(private = "file")
+check_or_else_exit :: proc(k: ^Checker, v: ^Expr_Or_Else) -> bool {
+	exit_span := stmt_span(v.exit)
+	_, is_return := v.exit.(^Stmt_Return)
+	keyword := "return"
+	if branch, is_branch := v.exit.(^Stmt_Branch); is_branch {
+		keyword = branch.kind == .Break ? "break" : "continue"
+	}
+	if k.proc_literal == nil {
+		errorf(k.c, exit_span, "L0718", "`or_else %s` is only valid inside a procedure", keyword)
+		return false
+	}
+	if k.in_defer && (is_return || k.loop_depth <= k.defer_loop_depth) {
+		errorf(k.c, exit_span, "L0369", "a deferred statement cannot leave the construct it is registered in")
+		return false
+	}
+	if !is_return && k.loop_header {
+		errorf(
+			k.c, exit_span, "L0718",
+			"`or_else %s` cannot appear in a loop's header; test the value in the body", keyword,
+		)
+		return false
+	}
+	errors := k.c.error_count
+	flow := check_stmt(k, v.exit)
+	if flow.breaks {
+		k.loop_broken = true
+	}
+	return k.c.error_count == errors
 }

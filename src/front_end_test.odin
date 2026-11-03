@@ -453,7 +453,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 	check_one_package(&p.c, p.pkg)
 	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
 	scope := package_of(&p.c, p.pkg).scope
-	k = Checker{c = &p.c, pkg = p.pkg, lookup_pkg = p.pkg, scope = scope, file_node = &p.f}
+	k = Checker{c = &p.c, location = {pkg = p.pkg, lookup_pkg = p.pkg, scope = scope, file_node = &p.f}}
 	record := symbol_of(&p.c, scope.names[intern_identifier(&p.c, "Record")]).type
 	table := scope.names[intern_identifier(&p.c, "TABLE")]
 	args := []Generic_Arg{{is_type = true, type = record}}

@@ -1,0 +1,8 @@
+// grammar.md "Types": a `$` parameter writes its type, even with a default.
+package main;
+
+f :: proc($n := 5) {}
+
+main :: proc() {
+	f();
+}

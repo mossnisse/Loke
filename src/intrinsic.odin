@@ -40,8 +40,8 @@ impl_is_intrinsic :: proc(v: ^Item_Impl) -> bool {
 // declaration finds what it describes and a missing one is reported once.
 bind_intrinsic_declarations :: proc(k: ^Checker, pkg: ^Package) {
 	pkg.intrinsics = make([dynamic]Intrinsic_Decl, 0, len(pkg.contributions), k.c.semantic_allocator)
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
@@ -317,8 +317,8 @@ report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 // Once signatures resolve: what each declaration states is checked against
 // what it describes, and one inside a selected `when` branch is reported.
 check_intrinsic_declarations :: proc(k: ^Checker, pkg: ^Package) {
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 	for entry in pkg.intrinsics {
 		k.file, k.file_node = entry.file.file, entry.file

@@ -7,6 +7,32 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A switch of thousands of `return` cases is slow, then crashes the compiler
+
+Neither is a checker cost: a `switch` over an enum, with each `case .Mi: return i;`, takes 1 s at
+1000 cases and 130 s at 3000, and at 6000 ends in `solve_reaching` in
+[src/borrow.odin](src/borrow.odin) with `Index 0 is out of range 0..<0`, an empty block list. The
+language sets no such limit, and a C binding's generated switch can reach it. The cause of the empty
+list is not established; a failed allocation is the first thing to rule out. Found on 2026-11-03 (P2).
+
+### Comparing `source_location()`'s `procedure` constant to `""` is false
+
+[`source_location`](design.md#source_location-or-source_locationentity) gives a file-scope
+location an empty `procedure`, but a direct comparison of that constant field disagrees with a
+copy of it. This prints `false 0 true`:
+
+```loke
+package main;
+import "core:fmt";
+HERE :: source_location();
+main :: proc() {
+    v := HERE.procedure;
+    fmt.println(HERE.procedure == "", HERE.procedure.len(), v == "");
+}
+```
+
+A `string_view` field of an ordinary constant record compares correctly. Found on 2026-11-03 (P3).
+
 ### A distinct mutable slice is read as plain when printed
 
 `prov_type_is_plain_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes

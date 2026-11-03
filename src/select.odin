@@ -151,8 +151,8 @@ activate_when_items :: proc(k: ^Checker, pkg: ^Package) -> bool {
 	}
 	k.c.impls_declaring += 1
 	defer k.c.impls_declaring -= 1
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 
 	progressed := false
@@ -197,8 +197,8 @@ report_stalled_whens :: proc(k: ^Checker, pkg: ^Package) {
 	if pkg == nil || pkg.scope == nil {
 		return
 	}
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 
 	for file in pkg.files {
@@ -373,10 +373,10 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 				target := package_of(k.c, symbol.pkg)
 				name := intern_identifier(k.c, v.name.text)
 				if target == nil || target.scope == nil {
-					return concat(k.c, ident.name, concat(k.c, ".", v.name.text))
+					return concat(k.c, ident.name, ".", v.name.text)
 				}
 				if _, found := target.scope.names[name]; !found {
-					return concat(k.c, ident.name, concat(k.c, ".", v.name.text))
+					return concat(k.c, ident.name, ".", v.name.text)
 				}
 				return ""
 			}

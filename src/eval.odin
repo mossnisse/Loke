@@ -158,8 +158,8 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 		return false // the caller reports the dependency path
 	}
 
-	outer_location := save_checker_location(k)
-	defer restore_checker_location(k, outer_location)
+	outer_location := k.location
+	defer k.location = outer_location
 	// A member of an instantiated generic block is checked inside it, where its
 	// `where` clause has the block's parameters in scope.
 	if !enter_pending_impl_member(k, d) {
