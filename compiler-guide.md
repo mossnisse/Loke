@@ -352,8 +352,8 @@ A run takes at most one of these, or of `-fmt`, `-migrate`, `-api`, and their
 | `-dump-ast` | Print that file's syntax tree, then stop at the same stage. |
 | `-dump-tokens` | Print that file's tokens, one `lo hi Kind` line each with the byte span, then stop after lexing. |
 | `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
-| `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, the `-g` natvis rules, and any object NASM assembled for a `.asm` foreign import. Normally they are removed after the Clang step. |
-| `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
+| `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, the `-g` natvis rules, `-check-layout`'s probe, and any object NASM assembled for a `.asm` foreign import. Normally they are removed after the Clang step. |
+| `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. The probe is a temporary beside the `-o` path, named `<name>.layout.exe`, and the output itself is left alone. Requires the native toolchain. |
 | `-print-toolchain` | Print the Clang, MSVC toolset, and `-isystem`/`-L` flags a link would use on this machine, whether an optimized build links the runtime as bitcode (`lto=yes`), and whether a link could run at all (`ready=yes`), then stop. Takes no input. |
 
 The parsing modes take a **file**, not a package directory:

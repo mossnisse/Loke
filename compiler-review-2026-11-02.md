@@ -77,8 +77,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 ## The changes most worth making
 
-4. **Five small independent fixes.** Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). 1 to 2 lines each.
-
 6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
@@ -943,60 +941,6 @@ What remains is two near copies that belong to the cross-file groups.
 
 - [emit_llvm_stmt.odin:173](src/emit_llvm_stmt.odin#L173), [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800) and [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Shared form: `emit_alloc_failed_if(e, failed, allocator)`, shaped like `panic_if`. (about 5 lines per site)
 - [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679) and [emit_llvm_iteration.odin:62](src/emit_llvm_iteration.odin#L62): the same save and restore of four loop fields. Group them in a `Loop_Targets` on `Emitter` (`outer := e.loop; defer e.loop = outer`), which is also where the frame depth from BUG-1 belongs. (about 8 lines)
-
-### src/emit_llvm_toolchain.odin
-
-Careful code whose comments mostly explain why, with real failure handling for the cache and the linker. The main problems are `-check-layout` deleting the program's real output, a 2-second wait for every loser of a cache-install race, and a section order that hides the flow.
-
-**Bugs**
-
-- `BUG-emit_llvm_toolchain-1` **medium** [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) `check_layout_agreement`: the probe links to `opts.output`, the path of the real build, then removes it at line 213. Scenario: `lokec hello.loke`, then `lokec hello.loke -check-layout`: `hello.exe` is overwritten and deleted. Fix: link the probe to `replace_ext(opts.output, ".layout.exe")`. *Confirmed: Reproduced: `lokec hello.loke -check-layout` deleted the built hello.exe (and failed L0405 on the bare path); `-o ./a.exe` exits 0 and also deletes a.exe; -keep-temps leaves it overwritten (md5 differs). Not recorded. Output is rebuildable, so low-medium.*
-- `BUG-emit_llvm_toolchain-2` **low** [emit_llvm_toolchain.odin:217](src/emit_llvm_toolchain.odin#L217) `check_layout_agreement`: runs `opts.output` as given, and `CreateProcessW` with a bare name searches the compiler's directory before the working directory. Scenario: `foo.exe` beside `lokec.exe`; `lokec foo.loke -check-layout` from elsewhere runs that one and reports L0405. Fix: `filepath.abs`, as [test_runner.odin:16](src/test_runner.odin#L16) does. *Not verified.*
-- `BUG-emit_llvm_toolchain-3` **low** [emit_llvm_toolchain.odin:350](src/emit_llvm_toolchain.odin#L350) `rename_directory`: renaming onto an existing directory also gives `Permission_Denied` (confirmed with `os.rename`), so a loser of the race at line 334 retries for 2 s. Scenario: 8 parallel links after a runtime edit: 7 wait 2 s for nothing; a damaged set costs that on every link. Fix: stop retrying once `to` exists. *Not verified.*
-- `BUG-emit_llvm_toolchain-4` **low** [emit_llvm_toolchain.odin:393](src/emit_llvm_toolchain.odin#L393) `runtime_build_manifest`: "everything that decides the objects" omits two inputs: the discarded stamp is zero for a bare `clang`, and INCLUDE's value is unrecorded (lines 790-792). Scenario: upgrade a PATH clang, or switch VS developer prompts: the old set is reused. Fix: record INCLUDE and the resolved clang's stamp or `--version`. *Not verified.*
-- `BUG-emit_llvm_toolchain-5` **low** [emit_llvm_toolchain.odin:543](src/emit_llvm_toolchain.odin#L543) `link`: `-Wl,` splits its argument at commas, so a natvis path with a comma reaches the linker in pieces. Scenario: `lokec x.loke -g -o "a,b.exe"` fails at the link with L0403. Fix: `append(&command, "-Xlinker", fmt.aprintf("/NATVIS:%s", natvis_path))`. *Not verified.*
-- `BUG-emit_llvm_toolchain-6` **low** [emit_llvm_toolchain.odin:655](src/emit_llvm_toolchain.odin#L655) `collect_foreign_link_inputs`: the `.lib` trim is case-sensitive, though the file treats paths as case-insensitive elsewhere. Scenario: `foreign import k "system:kernel32.LIB"` gives `-lkernel32.LIB`, which clang turns into `kernel32.LIB.lib` (checked with `clang -###`), so the link fails. Fix: compare the suffix with `strings.equal_fold`. *Not verified.*
-- `BUG-emit_llvm_toolchain-7` **low** [emit_llvm_toolchain.odin:39](src/emit_llvm_toolchain.odin#L39) `emit_package`: natvis is written before the `-emit-ll` return at line 52, and its removal is registered after it. Scenario: `lokec x.loke -g -emit-ll` prints only `wrote x.ll` and leaves `x.natvis`, against compiler-guide.md's `-emit-ll` and `-keep-temps` rows. Fix: write it after that return. *Not verified.*
-- `BUG-emit_llvm_toolchain-8` **low** [emit_llvm_toolchain.odin:265](src/emit_llvm_toolchain.odin#L265) `layout_probeable`: the allowlist omits `String`, `String_View`, `CString_View`, `C_Pointer`, `Typeid`, `Simd` and `Dyn`, which `llvm_type` lowers, though line 140 says "every type". Scenario: a wrong `size_of(Simd(f32, 3))` with no field after it passes. Fix: add them, or say why they are skipped. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_toolchain.odin:273](src/emit_llvm_toolchain.odin#L273) `replace_ext`: `filepath.ext` already stops at either separator, so the body is `return strings.concatenate({strings.trim_suffix(path, filepath.ext(path)), ext})`, the shape [main.odin:455](src/main.odin#L455) uses. The comment goes too. (about 5 lines)
-- [emit_llvm_toolchain.odin:439](src/emit_llvm_toolchain.odin#L439) and [emit_llvm_toolchain.odin:557](src/emit_llvm_toolchain.odin#L557): the three copy loops become `append(&command, ..sources)`, `..runtime_inputs` and `..foreign_inputs`; line 828 already uses the spread. (about 6 lines)
-- [emit_llvm_toolchain.odin:450](src/emit_llvm_toolchain.odin#L450) `runtime_compile_commands`: drop the `!bitcode` early return. Partition with `bitcode && base != CPU_CHECK_SOURCE ? &optimized : &native`, then append each non-empty group's command; plain builds become the all-native case. (about 4 lines)
-- [emit_llvm_toolchain.odin:301](src/emit_llvm_toolchain.odin#L301) `prebuilt_runtime_objects`: `custom_runtime` has one caller, which holds it as a local. Test that at line 549 and drop the parameter and the guard. (about 3 lines)
-- [emit_llvm_toolchain.odin:802](src/emit_llvm_toolchain.odin#L802) `msvc_include_dirs`: `ucrt` restates `sdk != ""`. Write `if sdk != "" { append(&out, join_path({sdk, "ucrt"})) }` and return `root != "" && sdk != ""`. (about 2 lines)
-- [emit_llvm_toolchain.odin:679](src/emit_llvm_toolchain.odin#L679) `collect_foreign_link_inputs`: compares the message text `NASM` to choose behaviour, and line 701 spells the same flags again. Test `strings.equal_fold(filepath.ext(resolved), ".asm")` here and inline the constant into `assembler_for`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_toolchain.odin:619](src/emit_llvm_toolchain.odin#L619): `package_order` yields only ids in `1 ..< len(c.packages)` and dereferences `package_of` unchecked itself, so this `nil` test cannot fire. The same dead test is at [check.odin:460](src/check.odin#L460).
-- (branch) [emit_llvm_toolchain.odin:504](src/emit_llvm_toolchain.odin#L504): `link`'s `exe_path` is `opts.output` at both call sites (lines 67 and 209), beside `opts` itself. Drop it, unless the fix for bug 1 above makes the probe's path differ.
-
-**Data structures and algorithms**
-
-- [emit_llvm_toolchain.odin:607](src/emit_llvm_toolchain.odin#L607) `append_c_includes`: outside a developer prompt an LTO link runs `newest_containing` 7 times (4 toolset, 3 SDK, two globs each), cache hit or not. The count is constant and small beside clang, so do this only for clarity: discover once in `link` and pass `includes` down.
-
-**Near copies**
-
-- [emit_llvm_toolchain.odin:739](src/emit_llvm_toolchain.odin#L739) and [emit_llvm_toolchain.odin:110](src/emit_llvm_toolchain.odin#L110), [emit_llvm_toolchain.odin:607](src/emit_llvm_toolchain.odin#L607), [emit_llvm_toolchain.odin:568](src/emit_llvm_toolchain.odin#L568): `print_toolchain` respells the flags a link passes, the drift line 102 guards against. Shared form: split `-march`/`-ffp-contract` from the `-O` flag, build one `[dynamic]string`, print each as `flag=`. (about 6 lines)
-- [emit_llvm_toolchain.odin:34](src/emit_llvm_toolchain.odin#L34), [emit_llvm_toolchain.odin:47](src/emit_llvm_toolchain.odin#L47) and [emit_llvm_toolchain.odin:202](src/emit_llvm_toolchain.odin#L202): the same write-or-L0401 block with only the path and text differing. Shared form: `write_artifact(c, path, text) -> bool`. (about 4 lines net)
-
-**Structure and boundaries**
-
-- [emit_llvm_toolchain.odin:130](src/emit_llvm_toolchain.odin#L130): the only banner, "layout agreement", appears to cover everything after it, and `link` sits far below its caller `emit_package`. Seams: `check_layout_agreement` and `layout_probeable` to an `emit_llvm_layout_probe.odin`; lines 282-498 to a runtime-cache file; banners for artifacts, foreign inputs and discovery.
-- [emit_llvm_toolchain.odin:282](src/emit_llvm_toolchain.odin#L282): the runtime-object cache is about a quarter of the file, yet this file's row in compiler-architecture.md "Source-code map" does not mention it. Add it there, or give the cache its own row with the split above.
-- [emit_llvm_toolchain.odin:273](src/emit_llvm_toolchain.odin#L273) `replace_ext`: a general path helper between the layout probe and the cache; it belongs with `path_dir` and `join_path` in `paths.odin`.
-- [emit_llvm_toolchain.odin:545](src/emit_llvm_toolchain.odin#L545) `link`: 98 lines doing input collection, cache choice, command assembly and failure classification. Natural seam: `runtime_link_inputs(...) -> (inputs: []string, bitcode: bool)` for lines 545-553, which also isolates the fallback rule.
-- [emit_llvm_toolchain.odin:360](src/emit_llvm_toolchain.odin#L360), [emit_llvm_toolchain.odin:364](src/emit_llvm_toolchain.odin#L364), [emit_llvm_toolchain.odin:18](src/emit_llvm_toolchain.odin#L18) and [emit_llvm_toolchain.odin:468](src/emit_llvm_toolchain.odin#L468): `RUNTIME_MANIFEST`, `RUNTIME_CACHE_FAILURE`, `CLANG_MISSING` and `CPU_CHECK_SOURCE` are named nowhere else in the repository; mark them `@(private = "file")`.
-
-**Comments**
-
-- [emit_llvm_toolchain.odin:501](src/emit_llvm_toolchain.odin#L501): delete "(decisions A5, A7)". comments.md's A5 is about speculative checks and no A7 is recorded, so the reference misleads.
-- [emit_llvm_toolchain.odin:282](src/emit_llvm_toolchain.odin#L282): compiler-architecture.md "Runtime and library boundary" says most of this. Shorten to: "Cached objects; see that section. A set's directory is named by its manifest's hash and never modified, so concurrent links can share it. nil: the link compiles the sources." Keep the `ponytail`. (about 4 lines)
-- [emit_llvm_toolchain.odin:376](src/emit_llvm_toolchain.odin#L376): the same section lists the key. Keep only the why: "Contents are hashed because an edit can keep both size and modification time; a reinstall changes clang's modification time." (about 2 lines)
-- [emit_llvm_toolchain.odin:721](src/emit_llvm_toolchain.odin#L721): compiler-guide.md's `-print-toolchain` row covers the output. Shorten to: "One `flag=` line per word, in command order. The test harness reads this instead of repeating the discovery." (about 3 lines)
-- [emit_llvm_toolchain.odin:736](src/emit_llvm_toolchain.odin#L736), [emit_llvm_toolchain.odin:412](src/emit_llvm_toolchain.odin#L412), [emit_llvm_toolchain.odin:603](src/emit_llvm_toolchain.odin#L603) and [emit_llvm_toolchain.odin:613](src/emit_llvm_toolchain.odin#L613): delete; each restates the name or the code below it. (4 lines)
 
 ### src/enums.odin
 

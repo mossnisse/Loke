@@ -748,6 +748,40 @@ a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 	)
 }
 
+// `-Wl,` would split the natvis path at a comma and the linker would get pieces.
+@(test)
+a_comma_in_the_output_reaches_the_linker_whole :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/comma,name.exe", TMP)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-g", "-o", out}},
+		context.allocator,
+	)
+	testing.expectf(t, err == nil && state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr))
+}
+
+// `-emit-ll` writes the module and nothing the link it skips would read.
+@(test)
+emit_ll_writes_no_natvis :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/emit-only.exe", TMP)
+	rules := fmt.tprintf("%s/emit-only.natvis", TMP)
+	os.remove(rules)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/ll/debug_info.loke", "-g", "-emit-ll", "-o", out}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "-g -emit-ll failed:\n%s", string(stderr)) {
+		return
+	}
+	testing.expectf(t, os.is_file(fmt.tprintf("%s/emit-only.ll", TMP)), "-emit-ll left no module beside %s", out)
+	testing.expectf(t, !os.exists(rules), "-g -emit-ll left %s", rules)
+}
+
 // `-g` writes natvis rules for a map's entries and a `dyn` view's value, and
 // the linker stores them in the PDB, where Visual Studio and WinDbg find them.
 // No debugger runs here, so this pins the rules and their delivery only.
@@ -1327,6 +1361,63 @@ layout_agrees_with_llvm :: proc(t: ^testing.T) {
 			string(stderr),
 		)
 	}
+}
+
+// The probe is not the program: `-o` keeps what it held, and with a bare name,
+// which `CreateProcess` would not look for in the working directory, the probe
+// still runs. `-g` leaves no PDB behind for it.
+@(test)
+the_layout_probe_leaves_the_output_alone :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	dir := fmt.tprintf("%s/layout-output", TMP)
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	out := fmt.tprintf("%s/program.exe", dir)
+	if !testing.expect(t, os.write_entire_file(out, transmute([]byte)string("the real output")) == nil, "cannot write the output") {
+		return
+	}
+	state, _, stderr, err := exec(
+		os.Process_Desc {
+			command     = []string{compiler_path(), launch_path("tests/layout/types.loke"), "-o", "program.exe", "-g", "-check-layout"},
+			working_dir = dir,
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "-check-layout failed:\n%s", string(stderr)) {
+		return
+	}
+	kept, read_err := os.read_entire_file(out, context.temp_allocator)
+	testing.expectf(t, read_err == nil && string(kept) == "the real output", "-check-layout changed %s", out)
+	entries, _ := os.read_all_directory_by_path(dir, context.temp_allocator)
+	testing.expectf(t, len(entries) == 1, "-check-layout left %d files in %s", len(entries), dir)
+}
+
+// Every value kind the checker lays out reaches LLVM, the ones that are not
+// declared records as well.
+@(test)
+the_layout_probe_covers_carrier_kinds :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/layout-carriers.exe", TMP)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/layout/text_and_handles.loke", "-o", exe, "-check-layout", "-keep-temps"}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "-check-layout failed:\n%s", string(stderr)) {
+		return
+	}
+	probe, read_err := os.read_entire_file(fmt.tprintf("%s/layout-carriers.layout.ll", TMP), context.temp_allocator)
+	if !testing.expect(t, read_err == nil, "-keep-temps left no probe module") {
+		return
+	}
+	testing.expectf(t, strings.contains(string(probe), "getelementptr (<4 x float>, ptr null, i64 1)"), "no probe asks for a vector's size:\n%s", string(probe))
+	testing.expectf(t, strings.contains(string(probe), "getelementptr (%loke.string, ptr null, i64 1)"), "no probe asks for a string's size:\n%s", string(probe))
 }
 
 // Multi-file and import behaviour cannot be expressed by the one-file corpora:

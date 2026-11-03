@@ -798,8 +798,9 @@ adds, both through explicit `"target-features"` lists.
 
 `prebuilt_runtime_objects` caches C objects under
 `runtime/prebuilt/<cpu>-<mode>-<hash>/`. The key covers the clang path, flags
-(including the CPU level's `-march`), MSVC/SDK include roots, clang
-modification time, and runtime source/header names and contents. Installed sets are immutable for concurrent links; changed inputs
+(including the CPU level's `-march`), MSVC/SDK include roots, the value of
+`INCLUDE`, the modification time of the clang the command runs, found on `PATH`
+for a bare name, and runtime source/header names and contents. Installed sets are immutable for concurrent links; changed inputs
 create a new set. On cache build/install failure, the link compiles sources
 directly and records the reason in `runtime/prebuilt/last-failure.txt`.
 
@@ -966,7 +967,9 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_format.odin` | Printing: format thunks and bodies, the `core:fmt` sink and entry points, and the reports of formatted panics and failed entries. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
 | `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
-| `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
+| `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, and foreign inputs. |
+| `emit_llvm_runtime_cache.odin` | The prebuilt runtime objects, and whether a link takes them or the sources. |
+| `emit_llvm_layout_probe.odin` | `-check-layout`: the module that asks LLVM for the checker's layout facts. |
 | `subprocess/subprocess.odin` | Child-process execution without busy-waiting; also used by the test harness. |
 
 `emit_llvm_module` consumes checked state and returns text without filesystem or
@@ -1208,7 +1211,8 @@ remain manual checks with `examples/keys.loke`.
 
 `src/session.odin` owns one `Compiler`, copied configuration and overlays,
 session arenas, and optional package checkpoints. CLI presentation stays in
-`main.odin`; filesystem/toolchain policy stays in `emit_llvm_toolchain.odin`.
+`main.odin`; filesystem/toolchain policy stays in `emit_llvm_toolchain.odin` and
+`emit_llvm_runtime_cache.odin`.
 
 | Operation | Contract |
 | --- | --- |

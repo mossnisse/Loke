@@ -1,0 +1,16 @@
+package main; import "core:fmt";
+
+// design.md "Foreign system": Windows library names ignore case, so a `.LIB`
+// suffix is dropped like `.lib`, and the name is not looked up as
+// `KERNEL32.LIB.lib`.
+
+foreign import kernel32 "system:KERNEL32.LIB";
+
+foreign kernel32 {
+	@(link_name="GetCurrentProcessId")
+	current_process_id :: proc "stdcall" () -> u32 ---;
+}
+
+main :: proc() {
+	fmt.println(current_process_id() != 0);
+}

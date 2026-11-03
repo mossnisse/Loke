@@ -182,11 +182,7 @@ check_exports :: proc(c: ^Compiler, defines_entry: bool) {
 	claimed := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	linked := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	for id in package_order(c) {
-		pkg := package_of(c, id)
-		if pkg == nil {
-			continue
-		}
-		for file in pkg.files {
+		for file in package_of(c, id).files {
 			for item in file.active_items {
 				#partial switch v in item {
 				case ^Decl:

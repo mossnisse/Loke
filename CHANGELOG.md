@@ -1435,6 +1435,18 @@ checklist.
 
 ### Fixed
 
+- `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
+  `<name>.layout.exe`. A bare output name, which every build without `-o` has, no longer fails it
+  with `L0405`, and `-g` no longer writes a PDB for the probe.
+- `-check-layout` also compares `string`, `string_view`, `cstring_view`, `[^]T`, `typeid`, `Simd` and
+  `dyn` values with LLVM's layout, as it says it does for every type.
+- `lokec x.loke -g -emit-ll` no longer leaves `x.natvis` behind, and `-g` links an output whose path
+  holds a comma, which failed with `L0403`.
+- `foreign import k "system:kernel32.LIB"` links `kernel32`: the `.lib` and `.a` suffixes are
+  recognized in any case, and `-lkernel32.LIB` failed the link.
+- The cached runtime objects now follow the value of `INCLUDE` and the upgrade of a clang found on
+  `PATH`, either of which reused the old objects. A link that loses the race to install a set no
+  longer waits two seconds, and neither does one that finds a damaged set in place.
 - A map's `clear`, and a sequence's `clear` and `resize`, no longer count as using an unknown
   allocator region for a `hook(drop)` of what they discard. Two tasks each clearing a map of their
   own were `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).

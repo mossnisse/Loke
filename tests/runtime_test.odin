@@ -176,7 +176,7 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 // keeps these builds away from the objects the corpus links against.
 @(test)
 runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
-	clang, _, found := host_toolchain()
+	clang, flags, found := host_toolchain()
 	if !found {
 		skipped_capability(t, "no usable clang, so no runtime object is ever built")
 		return
@@ -194,15 +194,19 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	}
 
 	inherited, _ := os.environ(context.temp_allocator)
-	with_clang :: proc(inherited: []string, clang: string) -> []string {
+	with_env :: proc(inherited: []string, name, value: string) -> []string {
+		prefix := fmt.tprintf("%s=", name)
 		out := make([dynamic]string, context.temp_allocator)
 		for entry in inherited {
-			if !strings.has_prefix(strings.to_upper(entry, context.temp_allocator), "LOKE_CLANG=") {
+			if !strings.has_prefix(strings.to_upper(entry, context.temp_allocator), prefix) {
 				append(&out, entry)
 			}
 		}
-		append(&out, fmt.tprintf("LOKE_CLANG=%s", clang))
+		append(&out, fmt.tprintf("%s%s", prefix, value))
 		return out[:]
+	}
+	with_clang :: proc(inherited: []string, clang: string) -> []string {
+		return with_env(inherited, "LOKE_CLANG", clang)
 	}
 	respelled, _ := strings.replace_all(clang, "\\", "/", context.temp_allocator)
 	if respelled == clang {
@@ -309,6 +313,40 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	printed := strings.trim_space(string(stdout))
 	testing.expectf(t, run_err == nil && printed == "nope", "an edit that kept the size and time linked the old runtime: printed `%s`; %s", printed, cache_state(root))
 	testing.expectf(t, len(sets(root)) == 3, "the edited runtime did not get a set of its own; %s", cache_state(root))
+
+	// INCLUDE decides which headers clang reads, and is in no command.
+	includes := os.get_env("INCLUDE", context.temp_allocator)
+	if includes == "" {
+		discovered := make([dynamic]string, context.temp_allocator)
+		for flag, index in flags {
+			if index > 0 && flags[index - 1] == "-isystem" {
+				append(&discovered, flag)
+			}
+		}
+		includes = strings.join(discovered[:], ";", context.temp_allocator)
+	}
+	with_include := with_env(with_env(inherited, "LOKE_CLANG", clang), "INCLUDE", includes)
+	link_all(t, compiler, root, with_include, 1)
+	testing.expectf(t, len(sets(root)) == 4, "the first INCLUDE did not get a set of its own; %s", cache_state(root))
+	with_include = with_env(with_include, "INCLUDE", fmt.tprintf("%s;%s", includes, root))
+	link_all(t, compiler, root, with_include, 1)
+	testing.expectf(t, len(sets(root)) == 5, "a second INCLUDE reused the first's set; %s", cache_state(root))
+
+	// A clang found on PATH has no path to stamp as written, but an upgrade
+	// still has to change the set.
+	on_path := with_env(with_env(inherited, "LOKE_CLANG", "clang"), "PATH", fmt.tprintf("%s;%s", filepath.dir(clang), os.get_env("PATH", context.temp_allocator)))
+	link_all(t, compiler, root, on_path, 1)
+	if !testing.expectf(t, len(sets(root)) == 6, "a clang on PATH did not get a set of its own; %s", cache_state(root)) {
+		return
+	}
+	stamped := false
+	for set in sets(root) {
+		manifest, _ := os.read_entire_file(fmt.tprintf("%s/build-inputs.txt", set.fullpath), context.temp_allocator)
+		if strings.has_prefix(string(manifest), "clang\n") {
+			stamped = !strings.contains(string(manifest), "clang modified 0\n")
+		}
+	}
+	testing.expectf(t, stamped, "a clang on PATH was recorded without its modification time; %s", cache_state(root))
 }
 
 // A `declare`/`define` of a runtime function that starts a string literal or

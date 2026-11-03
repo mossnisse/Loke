@@ -35,6 +35,24 @@ path_dir :: proc(path: string, allocator := context.allocator) -> string {
 	return filepath.clean(filepath.dir(path), allocator) or_else "."
 }
 
+replace_ext :: proc(path: string, ext: string) -> string {
+	return strings.concatenate({strings.trim_suffix(path, filepath.ext(path)), ext})
+}
+
+// The first file PATH holds for a command name, with or without `.exe`, or "".
+find_on_path :: proc(name: string, allocator := context.allocator) -> string {
+	search := os.get_env("PATH", context.temp_allocator)
+	for dir in strings.split_iterator(&search, ";") {
+		for candidate in ([]string{name, strings.concatenate({name, ".exe"}, context.temp_allocator)}) {
+			path := join_path({dir, candidate}, context.temp_allocator)
+			if os.is_file(path) {
+				return strings.clone(path, allocator)
+			}
+		}
+	}
+	return ""
+}
+
 // Produces a temporary absolute, cleaned, `/`-separated path.
 canonical_dir :: proc(path: string) -> string {
 	absolute, abs_err := filepath.abs(path, context.temp_allocator)
