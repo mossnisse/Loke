@@ -696,7 +696,7 @@ emit_cleanups :: proc(
 @(private = "file")
 unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit: rawptr) {
 	sym := symbol_of(graph.k.c, id)
-	if sym == nil || sym.kind != .Var || len(type_drop_hooks(graph.k.c, sym.type)) == 0 {
+	if sym == nil || sym.kind != .Var || !type_drop_runs_hook(graph.k.c, sym.type) {
 		return
 	}
 	// A view such as a `&` loop element owns nothing, so an unwind drops nothing.

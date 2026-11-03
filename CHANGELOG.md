@@ -2281,6 +2281,17 @@ checklist.
   no parameter of a generic procedure takes now says `no parameter named` or `is given twice` rather
   than a count of arguments.
 
+- A `distinct` type may declare `hook(convert)` from a source its underlying type also converts
+  from: `R` and `D :: distinct R`, each with one from `bool`, was a false `L0488`
+  ([Conversion hooks](design.md#conversion-hooks)). Two hooks from one source on `distinct int` are
+  now `L0488` where they are written, instead of `L0391` at the first use.
+- A `distinct` fixed array has `clone` as well as `try_clone`
+  ([Distinct types](design.md#distinct-types)): `a.clone()` was `L0363`.
+- Copying a `[0]T` no longer counts `T`'s `hook(copy)`, so what that hook reads no longer gives a
+  false `L0511` ([Global write effects](design.md#global-write-effects)).
+- Asking whether a deeply nested record is copyable, and copying one, no longer takes time
+  exponential in its nesting.
+
 ## [0.9.0] - 2026-10-27
 
 ### Breaking changes

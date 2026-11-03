@@ -5,7 +5,6 @@ package lokec
 import "core:strings"
 import "core:testing"
 
-@(private = "file")
 named_type :: proc(t: ^testing.T, p: ^Checked, name: string) -> Type_Id {
 	for item in p.f.items {
 		d, ok := item.(^Decl)

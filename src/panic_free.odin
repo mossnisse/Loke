@@ -212,5 +212,5 @@ drop_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 		return false
 	}
 	ident, is_ident := call.args[0].value.(^Expr_Ident)
-	return is_ident && len(type_drop_hooks(c, ident.type)) == 0
+	return is_ident && !type_drop_runs_hook(c, ident.type)
 }

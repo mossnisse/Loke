@@ -1,0 +1,22 @@
+// design.md "Distinct types": a copyable distinct type has its own generated
+// `try_clone` and `clone`, typed in the distinct name, over an array as over
+// anything else.
+package main;
+
+import "core:fmt";
+
+Plain :: distinct [2]int;
+Texts :: distinct [2]string;
+
+main :: proc() {
+    a: Plain = Plain([2]int{1, 2});
+    b: Plain = a.clone();
+    fmt.println(([2]int)(b)[0], ([2]int)(b)[1]);
+    c: Plain = a.try_clone() or_else Plain([2]int{0, 0});
+    fmt.println(([2]int)(c)[1]);
+
+    s: Texts = Texts([2]string{"x", "y"});
+    t: Texts = s.clone();
+    u := ([2]string)(move(t));
+    fmt.println(u[0], u[1]);
+}

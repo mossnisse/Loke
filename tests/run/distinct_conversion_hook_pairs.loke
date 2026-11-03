@@ -1,0 +1,22 @@
+// design.md "Conversion hooks": each source/target pair has at most one hook. A
+// `distinct` name is its own target, so it may convert from what its underlying
+// type converts from.
+package main;
+
+import "core:fmt";
+
+R :: struct { n: int }
+D :: distinct R;
+
+impl R {
+    from_bool :: hook(convert) proc(v: bool) -> R { return R{1}; }
+}
+
+impl D {
+    from_bool :: hook(convert) proc(v: bool) -> D { return D(R{2}); }
+}
+
+main :: proc() {
+    fmt.println(R(true).n);
+    fmt.println(R(D(true)).n);
+}

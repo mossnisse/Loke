@@ -741,7 +741,7 @@ The checks run on the `Prov_Diagnose` graph:
   same replay (`check_join_retention`). The values the parent keeps are the
   slots of a symbol live after the join and every borrowed parameter's slots;
   a slot counts when its carrier path reaches an `@(wakes_on_drop)` type
-  (`path_waker`, from the `waker` of `transfer_facts` in `hooks.odin`), so a
+  (`path_waker`, from the `waker` of `transfer_facts` in `transfer_facts.odin`), so a
   wrapper's other fields do not count. Its loans are compared with the
   block's `task_slots` and `task_holds` by root (`loans_may_share_storage`,
   `roots_may_share_storage`); a raw pointer or erased view reaches anything.
@@ -917,9 +917,10 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, move/drop checking, liveness, and cleanup slots. |
+| `hooks.odin`, `hook_validation.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks and the checks of their declarations, move/drop checking, liveness, and cleanup slots. |
 | `copy_sites.odin` | Which expressions copy or transfer, and the copy-cost warnings. |
 | `extended_temporaries.odin` | Which temporaries a statement extends to its block's end. |
+| `transfer_facts.odin` | What a value takes to another thread, and what its storage holds or points to. |
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, places, and the statement hooks. |
 | `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
 | `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |

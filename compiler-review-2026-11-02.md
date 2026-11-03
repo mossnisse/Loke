@@ -90,7 +90,7 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
-18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
+18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1. Removes about 250 lines; no behavior change beyond those.
 
 19. **Mechanical removal of failure boilerplate.** Drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
 
@@ -148,7 +148,6 @@ Owned parts are walked at [hooks.odin:166](src/hooks.odin#L166), [hooks.odin:277
 
 - `Shared(T)`: only [borrow.odin:758](src/borrow.odin#L758) and `provider_reach_walk` in `region.odin` follow the payload.
 - Void variants and empty arrays: skipped by the drop walk only.
-- The recursion guard: a path-based one in [hooks.odin:413](src/hooks.odin#L413) makes that walk exponential (58 s measured), a visited map elsewhere.
 
 All parts are walked at [semantic.odin:2204](src/semantic.odin#L2204), [semantic.odin:2262](src/semantic.odin#L2262) and [reflect.odin:149](src/reflect.odin#L149), with `Type_Walk` in all three.
 
@@ -302,7 +301,6 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`.
-- Transfer wording and type reach: the reports moved beside `transfer_facts` in `hooks.odin` belong with them in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 
 ### Looked at and left alone
@@ -1437,65 +1435,12 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 
 ### src/hooks.odin
 
-The classification logic is careful and its comments mostly explain why, but the file repeats one kind dispatch in four walkers and generates the copy pair in three places. It also holds transfer facts and declaration validation, which are separate jobs. Two wrongly rejected programs and one exponential walk were reproduced with the `lokec.exe` built at this commit.
-
-**Bugs**
-
-- `BUG-hooks-1` **medium** [hooks.odin:944](src/hooks.odin#L944) `validate_semantic_hook`: duplicate detection reads `underlying_info`, but a `distinct` subject's conversions live on its own info, as `conversion_hooks` reads them. *Confirmed: Reproduced: R and D :: distinct R, each with hook(convert) from bool, give false L0488 on D, though design.md "Conversion hooks" limits per source/target pair. Two bool hooks on distinct int pass with no use, L0391 only at D(true); struct gets L0488. Not recorded.*
-  Scenario: `R` and `D :: distinct R` each with `hook(convert) proc(v: bool)` gives a false `L0488` on `D`, and two same-source hooks on `D :: distinct int` go unreported until a use gives `L0391`. Fix: use `type_of(k.c, subject)`; lifecycle roles only reach here on a plain struct.
-- `BUG-hooks-2` **low** [hooks.odin:610](src/hooks.odin#L610) `contribute_distinct_copy_members`: a `distinct` array gets `try_clone` but no `clone`, against design.md "Distinct types". Commit 0ce949cc removed this exclusion from the underlying path only. *Not verified.*
-  Scenario: `A :: distinct [2]int; a.clone()` is `L0363`, while `[2]int` has `clone`. Fix: drop the condition.
-
-**Simplification**
-
-- [hooks.odin:22](src/hooks.odin#L22) `Lifecycle.copy_excluded`: read only at line 140, and it always equals `has_excluded_copy_hook(c, info)`. Drop the field and the branch at line 204, and share `provider || move_only || has_excluded_copy_hook` between lines 140 and 409. (about 8 lines)
-- [hooks.odin:668](src/hooks.odin#L668) `contribute_underlying_lifecycle_members`: both branches start with `if !entry.clone_disabled && !created { add pair }` and `enroll_lifecycle_members`. Hoist those above the switch, leaving only the choice of parts in the branches. (about 6 lines)
-- [hooks.odin:800](src/hooks.odin#L800) `generated_hook`: `name` and `fallible` always follow `kind`, since the only calls pair `"try_clone", .Try_Clone, true` and `"clone", .Clone, false`. Derive both from `kind`. (about 2 lines, plus shorter calls)
-- [hooks.odin:491](src/hooks.odin#L491) `transfer_facts_walk`: the early exit needs all four or five facts found at once, which is rare, and `visited` already bounds the walk. Keep `type == INVALID_TYPE || visited[visit]`. (about 3 lines)
-- [hooks.odin:82](src/hooks.odin#L82) `lifecycle_parts`: fetches the info twice and asks for the kind a third way. Take `underlying_info` once, return on nil or `.Cyclic`, then switch on `.Array`, `.Struct`, `.Union`. (about 5 lines)
-- [hooks.odin:953](src/hooks.odin#L953) `validate_semantic_hook`: `conflict := sym.hook != .Convert || (len(sym.params) == 1 && len(other.params) == 1 && sym.params[0] == other.params[0])`. (about 3 lines)
-- [hooks.odin:1048](src/hooks.odin#L1048) `check_generic_impl_hooks`: `validate_instance_hooks` returns early for `.Extend`, so only the drop-shape case needs `reported_generic_hooks`. Two plain `if`s replace the switch, its two `continue` cases and the shared line 1065. (about 5 lines)
-- [hooks.odin:246](src/hooks.odin#L246) `type_drop_runs_hook`: [cfg.odin:940](src/cfg.odin#L940) and [cfg.odin:1085](src/cfg.odin#L1085) spell it `len(type_drop_hooks(...)) == 0`. Use the helper there.
-
-**Dead code**
-
-- `type_clone_is_fallible` ([hooks.odin:783](src/hooks.odin#L783)): its only caller is the assertion at [emit_llvm_test.odin:604](src/emit_llvm_test.odin#L604), which compares `finalize_type_lifecycle`'s rule with a second copy of that rule. It exists only for that test.
-- (branch) [hooks.odin:520](src/hooks.odin#L520): `info.kind == .Dyn` is always true inside `case .Dyn`.
-- (branch) [hooks.odin:745](src/hooks.odin#L745): `type == INVALID_TYPE ||` here and at line 765 is already covered by `!type_is_managed`, which answers false for it at line 237.
-- (branch) [hooks.odin:847](src/hooks.odin#L847): the only caller, in [check.odin](src/check.odin#L949), has already returned on `len(d.symbols) != 1 || d.symbols[0] == INVALID_SYMBOL`.
-- (branch) [hooks.odin:1035](src/hooks.odin#L1035): the caller got `template` with `.Record` kind, and `declaration_generic_kind` gives that only for a single `Type_Record` value, so both guards cannot fire.
-
-**Data structures and algorithms**
-
-- [hooks.odin:413](src/hooks.odin#L413) `type_clone_disabled_walk`: `defer delete_key` makes the guard path-based, so a type reached by two routes is rewalked, exponentially in nesting. The query is reachability and caches nothing, so a plain visited set is exact. Measured with `Tn :: struct { a, b: Tn-1 }`: `is_copyable(T26)` took 58 s top-down, 0.18 s bottom-up.
-- [hooks.odin:744](src/hooks.odin#L744) `clone_may_allocate`: recurses over `lifecycle_parts` with no visited set or cache, so a managed record with no allocating part costs one visit per field path, at each copy site. Compiling the same nesting with `string` leaves and copies took 2.3 s at depth 14 and 41 s at 18, not isolated from other walkers. Pass a visited set.
+The classification logic is careful and its comments mostly explain why. What remains is two near copies shared with other files.
 
 **Near copies**
 
-- [hooks.odin:264](src/hooks.odin#L264) and [hooks.odin:316](src/hooks.odin#L316): `drop_hooks_walk` and `copy_hooks_walk` differ in the field read, the stop after a copy hook, and the zero-length check. Merge them into one walker taking the `Hook_Kind`, which also ends the difference known-gaps.md records for `[0]T`.
 - [hooks.odin:166](src/hooks.odin#L166), [hooks.odin:277](src/hooks.odin#L277), [hooks.odin:330](src/hooks.odin#L330), [hooks.odin:370](src/hooks.odin#L370) and [region.odin:136](src/region.odin#L136): the same element, key, field and non-void variant dispatch. A helper `owned_parts(c, info) -> []Type_Id` reduces each walker to one loop. (about 35 lines here)
-- [hooks.odin:608](src/hooks.odin#L608), [hooks.odin:687](src/hooks.odin#L687) and [hooks.odin:704](src/hooks.odin#L704): three ways to generate and add the `try_clone`/`clone` pair. With BUG-hooks-2 fixed they are identical; rename `contribute_intrinsic_copy_members` and use it at all three. (about 8 lines)
-- [hooks.odin:68](src/hooks.odin#L68), [hooks.odin:749](src/hooks.odin#L749) and [hooks.odin:788](src/hooks.odin#L788): `custom_try_clone != INVALID_SYMBOL || container || boxed` three times, and `clone_may_allocate` nearly repeats `type_clone_is_fallible`. Name the predicate, and drop the second recursion with its test-only caller.
 - [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138) and [attributes.odin:150](src/attributes.odin#L150): the same `file << 32 | lo` position key. Line 1138 should call `generic_hook_key`; a `span_key(span)` beside `Span` would serve all three.
-- [hooks.odin:928](src/hooks.odin#L928) and [hooks.odin:1052](src/hooks.odin#L1052): the same `L0486` message, written twice and differing only in how the type is named. Share `report_extension_hook(k, span, type_text, role)`.
-
-**Structure and boundaries**
-
-- [hooks.odin:430](src/hooks.odin#L430): transfer facts (lines 430-567) concern what crosses threads, not lifecycles, and their readers are `borrow.odin` and `cfg_provenance.odin`. Move them to their own file. The header at line 1 does not mention them.
-- [hooks.odin:843](src/hooks.odin#L843): declaration validation (lines 843-1260, a third of the file) touches classification only through `type_clone_disabled` and `default_allocator_arg`, both already public. It is a natural separate file, `hook_validation.odin`.
-- [hooks.odin:1152](src/hooks.odin#L1152) `check_copy_decision`: 108 lines doing two jobs. Seams: gathering written hooks (lines 1174-1223, returning a small struct, with one reader for templates and one for declared records), and `@(fieldwise_copy)` misuse (lines 1225-1246).
-- [hooks.odin:894](src/hooks.odin#L894) `validate_semantic_hook`: 104 lines with three stages. Seams: whether a hook may be declared on this subject (lines 902-941), the duplicate check (lines 942-970), and the role's shape (lines 971-996).
-
-**Comments**
-
-- [hooks.odin:1](src/hooks.odin#L1): the signatures repeat lines 1004 and 1007 and the default sentence repeats line 1021. Shorten to the first sentence with its citation. (about 6 lines)
-- [hooks.odin:432](src/hooks.odin#L432): the 20-line block describes each field in prose. Move each sentence, with its citation, onto the field in `Transfer_Facts`, and drop the restated names. (about 6 lines)
-- [hooks.odin:594](src/hooks.odin#L594): `design.md "Distinct types": a copyable `distinct` name has its own pair, typed in the name; the lifecycle entry stays the underlying type's.` (about 2 lines)
-- [hooks.odin:710](src/hooks.odin#L710): repeats line 79. Shorten to `Emission indexes these; `lifecycle_parts` keeps one array element.` (about 1 line)
-- [hooks.odin:769](src/hooks.odin#L769): delete; line 25 already says it.
-- [hooks.odin:781](src/hooks.odin#L781): omits the box the code tests, and narrates the loop. Delete, or keep only `A generated clone fails when some part's can.`
-- [hooks.odin:845](src/hooks.odin#L845): delete; it restates the name and the first lines of the body.
-- [hooks.odin:893](src/hooks.odin#L893): covers only part of the procedure, which also checks the subject and duplicates. `Checked where each inherent declaration is written.`
 
 ### src/impl.odin
 

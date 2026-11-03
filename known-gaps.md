@@ -208,34 +208,6 @@ no answer during selection. The block cannot be declared first, as a `when` may 
 what it needs, so a fix has to say which questions a condition may ask. Found on
 2026-11-01 while fixing the lost hooks of a body-local record.
 
-### Copying a zero-length array counts its element's copy hook
-
-[Global write effects](design.md#global-write-effects) count the hooks a copy may run.
-A `[0]T` has no element, but its copy still counts `T`'s `hook(copy)`:
-
-```loke
-package main;
-values: [dynamic]int = {};
-Tagged :: struct { n: int }
-impl Tagged {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
-        _ = values;
-        return .ok(Tagged{1});
-    }
-}
-main :: proc() {
-    p := &mut values;
-    a: [0]Tagged = {};
-    b := a;
-    p.append(1);
-}
-```
-
-This reports `L0511` at `a`, though the generated `[0]Tagged` `try_clone` calls no
-element clone. `copy_hooks_walk` in [src/hooks.odin](src/hooks.odin) descends into an
-array's element whatever its length, as `drop_hooks_walk` beside it does not. Found
-while fixing the same for equality and hashing on 2026-11-01 (P3, over-rejection).
-
 ### An owned `next` counts a copy of its element that no step makes
 
 [Global write effects](design.md#global-write-effects) count the copies that may

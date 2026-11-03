@@ -601,9 +601,13 @@ main :: proc() {
 		type := Type_Id(index)
 		operations, resolved := resolved_lifecycle_operations(c, type)
 		testing.expect(t, resolved && operations.managed == type_is_managed(c, type) &&
-		               operations.clone_fallible == type_clone_is_fallible(c, type) &&
 		               operations.clone_disabled == type_clone_disabled(c, type),
 		               "the snapshot changed lifecycle semantics")
+	}
+	// A generated clone fails when some part's can, and a `[0]T` has no part.
+	for expected in ([]struct { name: string, fallible: bool }{{"Resource", true}, {"Nested", true}, {"Empty", false}, {"Shape", true}}) {
+		operations, _ := resolved_lifecycle_operations(c, named_type(t, &p, expected.name))
+		testing.expectf(t, operations.clone_fallible == expected.fallible, "%s: clone_fallible is %v", expected.name, operations.clone_fallible)
 	}
 	finalize_semantics(c)
 	before, emitted := emit_llvm_module(c)

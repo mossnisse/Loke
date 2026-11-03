@@ -1,0 +1,13 @@
+// design.md "Conversion hooks": a second hook for one source and a `distinct`
+// target is reported where it is written, with no use of the conversion.
+package main;
+
+D :: distinct int;
+
+impl D {
+    first :: hook(convert) proc(v: bool) -> D { return D(1); }
+    second :: hook(convert) proc(v: bool) -> D { return D(2); }
+    other_source :: hook(convert) proc(v: string) -> D { return D(3); }
+}
+
+main :: proc() {}
