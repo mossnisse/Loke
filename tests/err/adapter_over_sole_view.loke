@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Iteration adapters": a mutable view that cannot be copied gets a
+// read-only stored adapter, so its capability is not reached through a borrow.
+
+Cursor :: struct { cells: []mut int, at: int }
+
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; }
+}
+
+@(move_only)
+Sole :: struct { values: []mut int }
+
+impl Sole {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {self.values, 0}; }
+	iter_mut :: proc(self) -> Cursor { return {self.values, 0}; }
+}
+
+main :: proc() {
+	storage := [2]int{1, 2};
+	source := Sole{&mut storage[:]};
+	view := source.indexed();
+	foreach (&mut v, i in view) { v += i; }
+}

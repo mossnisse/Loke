@@ -321,13 +321,11 @@ chunks_mut_type :: proc(k: ^Checker, slice: Type_Id) -> Type_Id {
 	info.fields = fields
 	info.backend_label = fmt.aprintf("Chunks_Mut.%d", slice, allocator = c.semantic_allocator)
 	info.contributed += {.Iteration}
-	next := synth_receiver_proc(c, "next", .Chunks_Next, type, []Type_Id{type}, []Param_Mode{.Inout}, option_type(k, slice))
-	set_synth_result_summary(c, next, 0)
 	add_members(c, type, []Symbol_Id{
 		new_associated_type(c, "Element", slice, type),
 		new_associated_type(c, "Iterator", type, type),
-		adapter_proc(k, "iter", .Iterator_Copy, type, .Borrow, type),
-		next,
+		synth_self_member(k.c, "iter", .Iterator_Copy, type, .Borrow, type),
+		synth_self_member(k.c, "next", .Chunks_Next, type, .Inout, option_type(k, slice)),
 	})
 	return type
 }

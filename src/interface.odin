@@ -1035,7 +1035,6 @@ check_slot_requirement :: proc(
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	ensure_format_member(k, subject, name)
 	ensure_iteration_members(k, subject)
-	ensure_item_member(k, subject)
 	ensure_lifecycle_members(k, subject, name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	// design.md "Distinct types": a `distinct` name's own members, never its

@@ -207,7 +207,7 @@ Compiler :: struct {
 	// three of them.
 	view_types:         map[View_Key]Type_Id,
 	adapter_members:    map[Adapter_Key]Symbol_Id,
-	item_states:        map[Item_Key]Item_State,
+	derived_members:    map[Derived_Key]struct{},
 	// design.md "Capture literals": the records capture literals lower to,
 	// each with its `call`'s literal, the one body that reads its fields.
 	capture_records:    map[Type_Id]^Expr_Proc,

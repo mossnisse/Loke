@@ -373,9 +373,9 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	members := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	append(&members, new_associated_type(k.c, "Element", element, under))
 	append(&members, new_associated_type(k.c, "Iterator", iterator, under))
-	append(&members, iter_member(k.c, "iter", iter_kind, under, iterator))
+	append(&members, synth_self_member(k.c, "iter", iter_kind, under, .Borrow, iterator))
 	if reverse_kind != .None {
-		append(&members, iter_member(k.c, "iter_reverse", reverse_kind, under, iterator))
+		append(&members, synth_self_member(k.c, "iter_reverse", reverse_kind, under, .Borrow, iterator))
 	}
 	add_members(k.c, under, members[:])
 
@@ -391,8 +391,8 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// A map lends a record of two pointers, since the table never holds a record.
 	item := lends ? pointer_to(k.c, element, false) : element
 	if next_kind == .Map_Next {
-		lent := []Yield_Desc{{kind = .Borrowed}, {kind = .Borrowed}}
-		item = yield_item_type(k, element, Yield_Desc{kind = .Record, fields = lent}, no_span())
+		lent := yield_pair(k.c, Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed})
+		item = yield_item_type(k, element, lent, no_span())
 		if item == INVALID_TYPE { return }
 	}
 	next := synth_receiver_proc(
@@ -400,16 +400,6 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, item),
 	)
 	add_members(k.c, iterator, []Symbol_Id{next})
-}
-
-// `source.iter()` or `iter_reverse()`: a borrowing receiver whose result borrows
-// from it. A synthesised member has no body for provenance to walk, so that
-// dependency is written here.
-@(private = "file")
-iter_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner, iterator: Type_Id) -> Symbol_Id {
-	id := synth_receiver_proc(c, name, kind, owner, []Type_Id{owner}, []Param_Mode{.Borrow}, iterator)
-	set_synth_result_summary(c, id, 0)
-	return id
 }
 
 iteration_proc_matches :: proc(
@@ -606,16 +596,9 @@ foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
 foreach_record_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
 	base := Yield_Desc{kind = .Borrowed}
 	if s.kind == .Map {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed}
-		base = Yield_Desc{kind = .Record, fields = fields}
+		base = yield_pair(k.c, Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed})
 	}
-	if s.indexed {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = base, Yield_Desc{kind = .Owned}
-		return Yield_Desc{kind = .Record, fields = fields}
-	}
-	return base
+	return s.indexed ? indexed_yield(k.c, base) : base
 }
 
 // design.md "Element bindings": whether the traversal builds a record of lent
@@ -766,7 +749,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	}
 	// `next`'s `Item` says how the element is handed over.
 	yield := iterator_yield(k, iterator, element)
-	item := yield_item_type(k, element, yield, expr_span(s.iterable))
+	item := iterator_item_type(k, iterator, element, yield, expr_span(s.iterable))
 	if item == INVALID_TYPE {
 		return FLOWS
 	}
@@ -791,12 +774,9 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	effective_element := element
 	effective_item := item
 	if s.indexed {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = yield, Yield_Desc{kind = .Owned}
-		effective_yield = Yield_Desc{kind = .Record, fields = fields}
+		effective_yield = indexed_yield(k.c, yield)
 		effective_element = indexed_element_type(k.c, element)
-		effective_item = yield_item_type(k, effective_element, effective_yield, expr_span(s.iterable))
-		if effective_item == INVALID_TYPE { return FLOWS }
+		effective_item = indexed_element_type(k.c, item)
 	}
 	if !yield_is_owned(effective_yield) {
 		s.borrows = true
@@ -949,16 +929,9 @@ report_immutable_ref_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: Foreac
 place_loop_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
 	element := Yield_Desc{kind = .Mutable}
 	if s.kind == .Map {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = Yield_Desc{kind = .Borrowed}, element
-		element = Yield_Desc{kind = .Record, fields = fields}
+		element = yield_pair(k.c, Yield_Desc{kind = .Borrowed}, element)
 	}
-	if !s.indexed {
-		return element
-	}
-	fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-	fields[0], fields[1] = element, Yield_Desc{kind = .Owned}
-	return Yield_Desc{kind = .Record, fields = fields}
+	return s.indexed ? indexed_yield(k.c, element) : element
 }
 
 // A leaf binds its logical type, or the projected record of pointers when both

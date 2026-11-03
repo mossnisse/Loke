@@ -26,6 +26,12 @@ checklist.
   @(align=N) Generic :: struct($N: int) { ... }
   ```
 
+- A declared `Iterator` or `Mut_Iterator` that disagrees with `iter` or `iter_mut`, or a declared
+  `Item` that disagrees with `next`, is now `L0694` whether or not anything looks it up, and in
+  whatever order the members are declared ([Iteration protocol](design.md#iteration-protocol)).
+  Upgrade by correcting the declaration or removing it.
+- A generic procedure ending with `---` is now `L0630`, as a plain one is. It compiled while uncalled.
+  Upgrade by giving it a body or removing it.
 - `box(d, pick(&mut d))`, whose allocator operand writes the managed place being boxed, is now
   `L0511`, as the same two operands of a call are ([Evaluation order](design.md#evaluation-order)).
   It compiled, and cloned freed memory. Upgrade by evaluating the allocator first.
@@ -1273,6 +1279,18 @@ checklist.
 
 ### Fixed
 
+- An adapter stored over a mutable view that owns something now holds a clone of it, and one over a
+  mutable view that cannot be copied borrows it read-only. The source and the view each dropped the
+  same value, which freed it twice ([Iteration adapters](design.md#iteration-adapters)).
+- A static `foreach` over `copied()` now yields the elements. It yielded zeros.
+- `foreach (p, i in source.indexed())` over a `next` lending a record now binds the counter. It read
+  the record's parts as the pair's, and then garbage.
+- A `next` may lend through a named record, as [Yield modes](design.md#yield-modes) allows. It was `L0456`.
+- `Iterator`, `Mut_Iterator`, and `Item` now derive in whatever order a type's members are declared,
+  and on a `distinct` name from its own members. A member that is not a receiver of the protocol's
+  shape no longer derives one, and `Item :: 5` on a type with no `next` is no longer `L0694`.
+- `x := move y;` now reports `L0228`. It crashed the compiler.
+- A call of a generic procedure ending with `---` is now `L0630` rather than an internal `L0405`.
 - `indexed()`, `copied()`, and `reversed()` over a value, iterator, or element larger than 4096
   bytes now compile, and so does `foreach` over one taken by value. Each failed with `L0403`.
 - A `-runtime` directory that exists but cannot be listed now says so in `L0551`, rather than

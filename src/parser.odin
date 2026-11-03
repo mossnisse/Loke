@@ -2805,14 +2805,14 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 	case .Move:
 		advance(p)
 		_, opened := expect(p, .Lparen, "L0228", "`(` after `move`")
-		value: Expr
-		if opened {
-			value = parse_expr(p)
-			expect(p, .Rparen, "L0228", "`)` to close `move`")
+		if !opened {
+			return error_expr(p, span_of(p, t))
 		}
+		value := parse_expr(p)
+		expect(p, .Rparen, "L0228", "`)` to close `move`")
 		e := new_expr(p, Expr_Move, t.lo)
 		e.value = value
-		e.has_error = !opened || expr_has_error(value)
+		e.has_error = expr_has_error(value)
 		return e
 
 	case .Lbrace:

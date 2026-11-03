@@ -67,6 +67,11 @@ spawn_callee_field :: proc(task: ^Spawn_Task) -> int {
 	return len(task.kinds) + (task.result != INVALID_SYMBOL ? 2 : 1)
 }
 
+// compiler-architecture.md "Lowering parallel blocks".
+spawn_frame_field_count :: proc(task: ^Spawn_Task) -> int {
+	return spawn_callee_field(task) + (task.through_value ? 1 : 0)
+}
+
 // How diagnostics name what a spawn starts: the procedure or method, the
 // procedure value or `dyn` call as written, or a literal called in place by
 // its signature.
@@ -405,7 +410,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 	if task.through_value {
 		field_types[spawn_callee_field(task)] = proc_type
 	}
-	fields := field_types[:spawn_callee_field(task) + (task.through_value ? 1 : 0)]
+	fields := field_types[:spawn_frame_field_count(task)]
 
 	field_names := make([]string, len(fields), c.semantic_allocator)
 	for &name, index in field_names {

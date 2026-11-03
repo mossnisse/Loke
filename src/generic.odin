@@ -247,6 +247,9 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 		)
 	}
 	literal := decl_proc_literal(d)
+	if literal != nil && literal.bodiless && !symbol_of(k.c, d.symbols[0]).is_foreign {
+		proc_shape_ok(k, literal, is_value = false)
+	}
 	rejected := false
 	if literal != nil && literal.signature != nil {
 		check_independent_poly_defaults(k, literal.signature.params)

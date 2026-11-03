@@ -946,7 +946,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.view_types = make(map[View_Key]Type_Id, c.semantic_allocator)
 	c.adapter_members = make(map[Adapter_Key]Symbol_Id, c.semantic_allocator)
-	c.item_states = make(map[Item_Key]Item_State, c.semantic_allocator)
+	c.derived_members = make(map[Derived_Key]struct{}, c.semantic_allocator)
 	c.capture_records = make(map[Type_Id]^Expr_Proc, c.semantic_allocator)
 	c.capture_placeholders = make(map[Symbol_Id]Capture_Placeholder, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
@@ -1149,6 +1149,18 @@ synth_receiver_proc :: proc(
 	id := synth_proc(c, name, kind, owner, params, modes, result, enroll)
 	sym := symbol_of(c, id)
 	sym.has_receiver, sym.receiver = true, modes[0]
+	return id
+}
+
+// A member taking only its receiver, whose result depends on that receiver: an
+// `iter` or `next`, say, with the member it wraps as its `target`.
+synth_self_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner: Type_Id, mode: Param_Mode, result: Type_Id, target := INVALID_SYMBOL) -> Symbol_Id {
+	id := synth_receiver_proc(c, name, kind, owner, []Type_Id{owner}, []Param_Mode{mode}, result)
+	sym := symbol_of(c, id)
+	sym.iteration_target = target
+	// `synth_proc` enrolled the adapter before it had a target.
+	if sym.synth_enrolled { enroll_synth(c, target) }
+	set_synth_result_summary(c, id, 0)
 	return id
 }
 

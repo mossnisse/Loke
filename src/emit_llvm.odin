@@ -305,7 +305,7 @@ backend_fail :: proc(e: ^Emitter, message: string) {
 		return
 	}
 	e.failed = true
-	errorf(e.c, no_span(), "L0405", "internal backend contract violation: %s", message)
+	emission_contract_error(e.c, message)
 }
 
 // Every symbol is named before any body, so an unnamed one is a contract break,

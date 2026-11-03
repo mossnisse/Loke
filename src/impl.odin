@@ -383,6 +383,9 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 			unsupported_construct(k, item_span(member))
 		}
 	}
+	// A declared associated type answers to the signatures whether or not a
+	// lookup ever reaches it.
+	ensure_derived_members(k, item.subject)
 }
 
 @(private = "file")
@@ -414,8 +417,7 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 	ensure_hash_member(k, type, name)
 	ensure_iteration_members(k, type)
 	ensure_mutable_iteration_members(k, type)
-	ensure_item_member(k, type)
-	ensure_iterator_members(k, type, name)
+	ensure_derived_members(k, type)
 	ensure_callable_result_member(k, type, name)
 	ensure_lifecycle_members(k, type, name)
 	ensure_container_members(k, type)

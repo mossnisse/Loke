@@ -1,0 +1,19 @@
+package main;
+
+// Only a foreign declaration ends with `---`, generic or not, and whether or not
+// anything calls it.
+called :: proc(x: $T) -> int ---;
+uncalled :: proc(x: $T) -> int ---;
+
+Holder :: struct { n: int }
+
+impl Holder {
+	method :: proc(self, x: $T) -> int ---;
+}
+
+main :: proc() {
+	n := called(1);
+	m := Holder{1}.method(2);
+	_ = n;
+	_ = m;
+}

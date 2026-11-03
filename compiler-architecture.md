@@ -893,7 +893,7 @@ be file-private. Paths below are relative to `src/`.
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, and ownership/borrow modes of yielded bindings. |
+| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, ownership/borrow modes of yielded bindings, and the associated types that follow from protocol signatures. |
 
 ### Generics, compile-time features, and bootstrap
 

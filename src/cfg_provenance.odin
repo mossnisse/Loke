@@ -6132,7 +6132,6 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Val
 	if recorded { prov_effect_begin(graph, Prov_Effect_Targets{local, prov_effect_value(graph, value), prov_effect_path(graph, prefix)}) }
 	defer prov_effect_end(graph, recorded)
 	if value == 0 { return }
-	_ = prov_value_transfer(graph, value)
 	for alias in prov_value_aliases(graph, value) {
 		prov_add_written_alias(graph, local, Written_Alias{target = alias.target, at = alias.at,
 		                       path = prov_concat_path(graph, prefix, alias.path)})
@@ -6215,7 +6214,6 @@ prov_forget_argument_aliases :: proc(
 	c := graph.k.c
 	if !inout && !carrier_is_mutable(c, parameter) && !prov_type_reaches_mutable(c, parameter) { return }
 	if inout { prov_forget_place_aliases(graph, id, seen); return }
-	_ = prov_value_transfer(graph, id)
 	aliases := prov_value_aliases(graph, id)
 	for carrier in carrier_shape(c, parameter) {
 		for alias in aliases {

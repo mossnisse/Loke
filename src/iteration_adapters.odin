@@ -18,9 +18,10 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 		if sym == nil || sym.synth != .Adapter_View || len(call.bound) != 1 { break }
 		// design.md "Iteration protocol": `&mut` asks the adapter's value, never its
 		// root, so only a mutable view is peeled for a by-reference loop. Text and
-		// ranges still peel, to be refused for producing values.
+		// ranges still peel, to be refused for producing values, and a mutable view
+		// too valuable to copy, which the adapter only borrows, walks in its place.
 		if foreach_is_place_loop(s) && iteration_member(k, call.type, "iter_mut") == INVALID_SYMBOL &&
-		   !adapter_source_produces_values(k.c, call.bound[0]) {
+		   !adapter_source_produces_values(k.c, call.bound[0]) && !is_mutable_view(k, expr_base(call.bound[0]).type) {
 			break
 		}
 		kind := type_of(k.c, call.type).adapter_kind
@@ -43,24 +44,17 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 
 @(private = "file")
 adapter_source_produces_values :: proc(c: ^Compiler, source: Expr) -> bool {
-	if _, written := source.(^Expr_Range); written { return true }
 	info := underlying_info(c, expr_base(source).type)
 	return info != nil && (info.is_range || info.kind == .String || info.kind == .String_View)
 }
 
 // Whether indexed() preserves a pointer lent by its source.
 indexed_next_lends :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
-	if callee.synth != .Indexed_Next || len(callee.params) == 0 {
-		return false
-	}
 	handed := underlying_info(c, option_payload(c, callee.result))
 	element := underlying_info(c, type_of(c, type_underlying(c, callee.params[0])).element)
-	if handed == nil || element == nil || len(handed.fields) == 0 || len(element.fields) == 0 {
-		return false
-	}
 	lent, held := symbol_of(c, handed.fields[ELEMENT_FIRST]), symbol_of(c, element.fields[ELEMENT_FIRST])
 	// A mutable part is lent by the iterator, and ends before it advances.
-	return lent != nil && held != nil && lent.type != held.type && !type_carries_borrow(c, lent.type).mutable
+	return lent.type != held.type && !type_carries_borrow(c, lent.type).mutable
 }
 
 iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_Id) -> Symbol_Id {
@@ -78,121 +72,105 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	iter := iteration_member(k, source, "iter")
 	if !iteration_proc_matches(k, symbol_of(k.c, iter), source, .Borrow, iterator) ||
 	   element == INVALID_TYPE || iterator == INVALID_TYPE { return INVALID_SYMBOL }
-	next := iteration_member(k, iterator, "next")
-	source_yield := iterator_yield(k, iterator, element)
-	item := yield_item_type(k, element, source_yield, no_span(), report = false)
-	if item == INVALID_TYPE ||
-	   !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
+	next, source_yield, item, usable := adapter_source_next(k, iterator, element, .Owned)
+	if !usable || (kind == .Copied && !yield_borrowed_parts_copyable(k.c, element, source_yield)) {
 		return INVALID_SYMBOL
 	}
-	// indexed() preserves the source yield and owns only its counter.
-	lends := kind == .Indexed && !yield_is_owned(source_yield)
-	if kind == .Copied && !yield_borrowed_parts_copyable(k.c, element, source_yield) {
-		return INVALID_SYMBOL
-	}
+	reverse := iteration_member(k, source, "iter_reverse")
+	reversible := iteration_proc_matches(k, symbol_of(k.c, reverse), source, .Borrow, iterator)
+	if kind == .Reversed && !reversible { return INVALID_SYMBOL }
 	forward, backward := iter, INVALID_SYMBOL
 	if kind == .Reversed {
-		forward = iteration_member(k, source, "iter_reverse")
-		if !iteration_proc_matches(k, symbol_of(k.c, forward), source, .Borrow, iterator) {
-			return INVALID_SYMBOL
-		}
-		backward = iter
-	} else if kind == .Copied {
-		reverse := iteration_member(k, source, "iter_reverse")
-		if iteration_proc_matches(k, symbol_of(k.c, reverse), source, .Borrow, iterator) {
-			backward = reverse
-		}
+		forward, backward = reverse, iter
+	} else if kind == .Copied && reversible {
+		backward = reverse
 	}
 	c := k.c
 	label := kind == .Indexed ? "Indexed" : kind == .Copied ? "Copied" : "Reversed"
+	// Nested views own their small source descriptor, and so does a mutable
+	// view, whose capability is in the value rather than in a place. Holding
+	// one copies it, so one that cannot be copied stays borrowed.
+	source_info := underlying_info(c, source)
+	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice ||
+	            source_info.kind == .String_View || (is_mutable_view(k, source) && !type_clone_disabled(c, source))
+	fields := make([]Symbol_Id, 1, c.semantic_allocator)
+	fields[0] = new_field(c, "source", by_value ? source : TYPE_RAWPTR, 0, public = false)
 	view := new_type(c, Type_Info{
 		kind = .Struct, name = intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, source), allocator = c.semantic_allocator)),
 		key = source, element = element, is_view = true, adapter_kind = kind,
+		fields = fields, adapter_by_value = by_value, descriptor = type_is_compile_time_only(c, source),
+		contributed = {.Iteration},
+		backend_label = fmt.aprintf("%s.%d.%d", label, source, key.pkg, allocator = c.semantic_allocator),
 	})
-	// Nested views own their small source descriptor, and so does a mutable
-	// view, whose capability is in the value rather than in a place.
-	source_info := underlying_info(c, source)
-	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice ||
-	            source_info.kind == .String_View || is_mutable_view(k, source)
-	held := by_value ? source : TYPE_RAWPTR
-	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[0] = new_field(c, "source", held, 0, public = false)
-	view_info := type_of(c, view)
-	view_info.fields = fields
-	view_info.adapter_by_value = by_value
-	view_info.descriptor = type_is_compile_time_only(c, source)
-	view_info.contributed += {.Iteration}
-	view_info.backend_label = fmt.aprintf("%s.%d.%d", label, source, key.pkg, allocator = c.semantic_allocator)
 	result_iterator := iterator
 	if kind == .Indexed {
-		element = indexed_element_type(c, element)
-		result_iterator = new_type(c, Type_Info{
-			kind = .Struct, name = intern_identifier(c, fmt.aprintf("Indexed_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
-			key = iterator, element = element, adapter_kind = .Indexed,
-		})
-		iterator_fields := make([]Symbol_Id, 2, c.semantic_allocator)
-		iterator_fields[0] = new_field(c, "iterator", iterator, 0, public = false)
-		iterator_fields[1] = new_field(c, "index", TYPE_INT, 1, public = false)
-		result_info := type_of(c, result_iterator)
-		result_info.fields = iterator_fields
-		result_info.descriptor = type_is_compile_time_only(c, source)
-		result_info.backend_label = fmt.aprintf("Indexed_Iterator.%d", view, allocator = c.semantic_allocator)
-		result_info.contributed += {.Iteration}
-		yielded := element
-		indexed_yield := Yield_Desc{}
-		if lends {
-			lent := []Yield_Desc{source_yield, {kind = .Owned}}
-			indexed_yield = Yield_Desc{kind = .Record, fields = lent}
-			yielded = yield_item_type(
-				k, element, indexed_yield, no_span(), report = false,
-			)
-			if yielded == INVALID_TYPE {
-				return INVALID_SYMBOL
-			}
-		}
-		next_member := adapter_proc(k, "next", .Indexed_Next, result_iterator, .Inout, option_type(k, yielded), next)
-		copy_member := adapter_proc(k, "iter", .Iterator_Copy, result_iterator, .Borrow, result_iterator)
-		members := make([dynamic]Symbol_Id, 0, 5, context.temp_allocator)
-		append(&members, new_associated_type(c, "Element", element, result_iterator))
-		append(&members, new_associated_type(c, "Iterator", result_iterator, result_iterator))
-		append(&members, next_member, copy_member)
-		add_members(c, result_iterator, members[:])
-		if type_is_managed(c, result_iterator) { contribute_lifecycle_members(k, result_iterator) }
-	} else if kind == .Copied {
-		result_iterator = new_type(c, Type_Info{
-			kind = .Struct, name = intern_identifier(c, fmt.aprintf("Copied_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
-			key = iterator, element = element, adapter_kind = .Copied,
-		})
-		copied_fields := make([]Symbol_Id, 1, c.semantic_allocator)
-		copied_fields[0] = new_field(c, "iterator", iterator, 0, public = false)
-		result_info := type_of(c, result_iterator)
-		result_info.fields = copied_fields
-		result_info.descriptor = type_is_compile_time_only(c, source)
-		result_info.backend_label = fmt.aprintf("Copied_Iterator.%d", view, allocator = c.semantic_allocator)
-		result_info.contributed += {.Iteration}
-		next_member := adapter_proc(k, "next", .Copied_Next, result_iterator, .Inout, option_type(k, element), next)
-		copy_member := adapter_proc(k, "iter", .Iterator_Copy, result_iterator, .Borrow, result_iterator)
-		add_members(c, result_iterator, []Symbol_Id{
-			new_associated_type(c, "Element", element, result_iterator),
-			new_associated_type(c, "Iterator", result_iterator, result_iterator),
-			next_member, copy_member,
-		})
-		if type_is_managed(c, result_iterator) { contribute_lifecycle_members(k, result_iterator) }
+		element, item = indexed_element_type(c, element), indexed_element_type(c, item)
 	}
-	iter_member := adapter_proc(k, "iter", .Adapter_Iter, view, .Borrow, result_iterator, forward)
+	if kind != .Reversed {
+		result_iterator = new_wrapping_iterator(k, kind, source, iterator, element, item, next, view)
+	}
+	iter_member := synth_self_member(k.c, "iter", .Adapter_Iter, view, .Borrow, result_iterator, forward)
 	add_members(c, view, []Symbol_Id{
 		new_associated_type(c, "Element", element, view),
 		new_associated_type(c, "Iterator", result_iterator, view), iter_member,
 	})
 	if backward != INVALID_SYMBOL {
-		add_members(c, view, []Symbol_Id{adapter_proc(k, "iter_reverse", .Adapter_Iter, view, .Borrow, result_iterator, backward)})
+		add_members(c, view, []Symbol_Id{synth_self_member(k.c, "iter_reverse", .Adapter_Iter, view, .Borrow, result_iterator, backward)})
 	}
 	if by_value && kind != .Copied {
 		add_mutable_adapter_members(k, view, source, kind)
 	}
-	member := adapter_proc(k, identifier_text(c, name), .Adapter_View, source, .Borrow, view)
+	// The view keeps its own copy of a source that owns something.
+	if by_value && type_is_managed(c, source) { contribute_lifecycle_members(k, source) }
+	member := synth_self_member(k.c, identifier_text(c, name), .Adapter_View, source, .Borrow, view)
 	c.adapter_members[key] = member
 	return member
+}
+
+// The iterator's `next`, how it yields against `element`, and what it hands back,
+// when it is a `next` the protocol can call.
+@(private = "file")
+adapter_source_next :: proc(k: ^Checker, iterator, element: Type_Id, fallback: Yield_Kind) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
+	next = iteration_member(k, iterator, "next")
+	yield = iterator_yield(k, iterator, element, fallback)
+	item = iterator_item_type(k, iterator, element, yield, no_span(), report = false)
+	ok = item != INVALID_TYPE && iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item))
+	return
+}
+
+// The iterator `indexed()` or `copied()` wraps around its source's, named for the
+// view it serves. `indexed()` adds the counter.
+@(private = "file")
+new_adapter_iterator :: proc(k: ^Checker, backend_label: string, kind: Adapter_Kind, source, iterator, element, view: Type_Id) -> Type_Id {
+	c := k.c
+	fields := make([]Symbol_Id, kind == .Indexed ? 2 : 1, c.semantic_allocator)
+	fields[0] = new_field(c, "iterator", iterator, 0, public = false)
+	if kind == .Indexed { fields[1] = new_field(c, "index", TYPE_INT, 1, public = false) }
+	return new_type(c, Type_Info{
+		kind = .Struct,
+		name = intern_identifier(c, fmt.aprintf("%s_Iterator(%s)", kind == .Indexed ? "Indexed" : "Copied", type_name(c, iterator), allocator = c.semantic_allocator)),
+		key = iterator, element = element, adapter_kind = kind, fields = fields,
+		descriptor = type_is_compile_time_only(c, source), contributed = {.Iteration},
+		backend_label = fmt.aprintf("%s.%d", backend_label, view, allocator = c.semantic_allocator),
+	})
+}
+
+// The self-iterable iterator of a read-only `indexed()` or `copied()`. A `copied()`
+// hands back its `Element`, and an `indexed()` what `item` says.
+@(private = "file")
+new_wrapping_iterator :: proc(k: ^Checker, kind: Adapter_Kind, source, iterator, element, item: Type_Id, next: Symbol_Id, view: Type_Id) -> Type_Id {
+	c := k.c
+	indexed := kind == .Indexed
+	wrapper := new_adapter_iterator(k, indexed ? "Indexed_Iterator" : "Copied_Iterator", kind, source, iterator, element, view)
+	yielded := indexed ? item : element
+	add_members(c, wrapper, []Symbol_Id{
+		new_associated_type(c, "Element", element, wrapper),
+		new_associated_type(c, "Iterator", wrapper, wrapper),
+		synth_self_member(k.c, "next", indexed ? .Indexed_Next : .Copied_Next, wrapper, .Inout, option_type(k, yielded), next),
+		synth_self_member(k.c, "iter", .Iterator_Copy, wrapper, .Borrow, wrapper),
+	})
+	if type_is_managed(c, wrapper) { contribute_lifecycle_members(k, wrapper) }
+	return wrapper
 }
 
 // A type whose `iter_mut` takes no `inout` receiver: any value of it walks
@@ -204,88 +182,35 @@ is_mutable_view :: proc(k: ^Checker, type: Type_Id) -> bool {
 	return found && receiver != .Inout
 }
 
-// design.md "Iteration adapters": over a mutable view the adapter is a mutable
-// view too, holding its source by value and walking it through the source's own
-// `iter_mut`. Over a container it stays a read view.
+// design.md "Iteration adapters": over a mutable view, an adapter walks its
+// source through the source's own `iter_mut`.
 @(private = "file")
 add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Adapter_Kind) {
+	if !is_mutable_view(k, source) { return }
 	c := k.c
 	element := associated_type_of(k, source, "Element")
 	iterator := associated_type_of(k, source, "Mut_Iterator")
 	iter := iteration_member(k, source, "iter_mut")
-	receiver, found := mutable_iteration_receiver(k, iter, source, iterator)
-	if element == INVALID_TYPE || iterator == INVALID_TYPE || !found || receiver == .Inout {
-		return
-	}
-	yield := iterator_yield(k, iterator, element, .Mutable)
-	item := yield_item_type(k, element, yield, no_span(), report = false)
-	next := iteration_member(k, iterator, "next")
-	if item == INVALID_TYPE || !iteration_proc_matches(k, symbol_of(c, next), iterator, .Inout, option_type(k, item)) {
-		return
-	}
+	next, _, item, usable := adapter_source_next(k, iterator, element, .Mutable)
+	if !usable { return }
 	if kind == .Reversed {
 		reverse := iteration_member(k, source, "iter_mut_reverse")
 		if _, reversible := mutable_iteration_receiver(k, reverse, source, iterator); !reversible { return }
 		add_members(c, view, []Symbol_Id{
 			new_associated_type(c, "Mut_Iterator", iterator, view),
-			adapter_proc(k, "iter_mut", .Adapter_Iter, view, .Borrow, iterator, reverse),
-			adapter_proc(k, "iter_mut_reverse", .Adapter_Iter, view, .Borrow, iterator, iter),
+			synth_self_member(k.c, "iter_mut", .Adapter_Iter, view, .Borrow, iterator, reverse),
+			synth_self_member(k.c, "iter_mut_reverse", .Adapter_Iter, view, .Borrow, iterator, iter),
 		})
 		type_of(c, view).mutable = true
 		return
 	}
-	// `indexed()` lends the source's parts as the source does and owns its counter.
-	indexed := indexed_element_type(c, element)
-	parts := make([]Yield_Desc, 2, c.semantic_allocator)
-	parts[0], parts[1] = yield, Yield_Desc{kind = .Owned}
-	numbered := Yield_Desc{kind = .Record, fields = parts}
-	yielded := yield_item_type(k, indexed, numbered, no_span(), report = false)
-	if yielded == INVALID_TYPE { return }
-	walker := new_type(c, Type_Info{
-		kind = .Struct, name = intern_identifier(c, fmt.aprintf("Indexed_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
-		key = iterator, element = indexed, adapter_kind = .Indexed,
-	})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[0] = new_field(c, "iterator", iterator, 0, public = false)
-	fields[1] = new_field(c, "index", TYPE_INT, 1, public = false)
-	walker_info := type_of(c, walker)
-	walker_info.fields = fields
-	walker_info.backend_label = fmt.aprintf("Indexed_Mut_Iterator.%d", view, allocator = c.semantic_allocator)
-	walker_info.contributed += {.Iteration}
+	walker := new_adapter_iterator(k, "Indexed_Mut_Iterator", .Indexed, source, iterator, indexed_element_type(c, element), view)
 	add_members(c, walker, []Symbol_Id{
-		adapter_proc(k, "next", .Indexed_Next, walker, .Inout, option_type(k, yielded), next),
+		synth_self_member(k.c, "next", .Indexed_Next, walker, .Inout, option_type(k, indexed_element_type(c, item)), next),
 	})
 	add_members(c, view, []Symbol_Id{
 		new_associated_type(c, "Mut_Iterator", walker, view),
-		adapter_proc(k, "iter_mut", .Adapter_Iter, view, .Borrow, walker, iter),
+		synth_self_member(k.c, "iter_mut", .Adapter_Iter, view, .Borrow, walker, iter),
 	})
 	type_of(c, view).mutable = true
-}
-
-// copied() clones lent leaves and passes owned leaves through.
-yield_borrowed_parts_copyable :: proc(c: ^Compiler, element: Type_Id, desc: Yield_Desc) -> bool {
-	switch desc.kind {
-	case .Owned:
-		return true
-	case .Borrowed, .Mutable:
-		return !type_clone_disabled(c, element)
-	case .Record:
-	}
-	info := underlying_info(c, element)
-	if info == nil || info.kind != .Struct || len(info.fields) != len(desc.fields) { return false }
-	for field_id, index in info.fields {
-		field := symbol_of(c, field_id)
-		if field == nil || !yield_borrowed_parts_copyable(c, field.type, desc.fields[index]) { return false }
-	}
-	return true
-}
-
-adapter_proc :: proc(k: ^Checker, name: string, kind: Synth_Kind, owner: Type_Id, mode: Param_Mode, result: Type_Id, target := INVALID_SYMBOL) -> Symbol_Id {
-	id := synth_proc(k.c, name, kind, owner, []Type_Id{owner}, []Param_Mode{mode}, result)
-	sym := symbol_of(k.c, id)
-	sym.has_receiver, sym.receiver, sym.iteration_target = true, mode, target
-	// `synth_proc` enrolled the adapter before it had a target.
-	if sym.synth_enrolled { enroll_synth(k.c, target) }
-	set_synth_result_summary(k.c, id, 0)
-	return id
 }

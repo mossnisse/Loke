@@ -287,10 +287,10 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 			element_type := associated_type_of(k, type, "Element")
 			out := make([]Const_Value, len(elements), k.c.semantic_allocator)
 			for element, index in elements {
-				if kind == .Reversed {
-					out[len(elements) - 1 - index] = element
-				} else {
-					out[index] = indexed_pair(k.c, element_type, element, index)
+				#partial switch kind {
+				case .Reversed: out[len(elements) - 1 - index] = element
+				case .Copied:   out[index] = element
+				case:           out[index] = indexed_pair(k.c, element_type, element, index)
 				}
 			}
 			return out, element_type, true

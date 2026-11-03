@@ -14,8 +14,6 @@ prov_input_read :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Read_Input {
 	case Prov_Form_Selector: input.fallback = form.operand
 	case Prov_Form_Index: input.fallback = form.operand
 	case Prov_Form_Postfix: input.fallback = form.operand
-	case Prov_Form_Unary:
-		if form.op == .Amp { input.fallback = form.operand }
 	}
 	return input
 }

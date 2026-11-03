@@ -13,6 +13,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		held := "%arg0"
 		if type_of(e.c, symbol.result).adapter_by_value {
 			held = load_place(e, source, "%arg0")
+			if emit_lifecycle(e, source).managed { held = emit_clone_value(e, source, held) }
 		}
 		emit_ret(e, symbol.result, build_record(e, symbol.result, held))
 	case .Adapter_Iter:

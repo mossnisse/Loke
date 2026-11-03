@@ -25,13 +25,11 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 		iterator_info := type_of(c, iterator)
 		iterator_info.fields = fields
 		iterator_info.backend_label = fmt.aprintf("Mutable_Map_Iterator.%d", subject, allocator = c.semantic_allocator)
-		parts := make([]Yield_Desc, 2, c.semantic_allocator)
-		parts[0], parts[1] = Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Mutable}
-		lent := Yield_Desc{kind = .Record, fields = parts}
+		lent := yield_pair(c, Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Mutable})
 		item := yield_item_type(k, entry, lent, no_span(), report = false)
-		next := adapter_proc(k, "next", .Map_Next, iterator, .Inout, option_type(k, item))
+		next := synth_self_member(k.c, "next", .Map_Next, iterator, .Inout, option_type(k, item))
 		add_members(c, iterator, []Symbol_Id{next})
-		iter := adapter_proc(k, "iter_mut", .Map_Iter, subject, .Inout, iterator)
+		iter := synth_self_member(k.c, "iter_mut", .Map_Iter, subject, .Inout, iterator)
 		add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter})
 		return
 	}
@@ -49,14 +47,14 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 	fields[2] = new_field(c, "reversed", TYPE_BOOL, 2, public = false)
 	type_of(c, iterator).fields = fields
 	type_of(c, iterator).backend_label = fmt.aprintf("Mutable_Iterator.%d", subject, allocator = c.semantic_allocator)
-	next := adapter_proc(k, "next", .Slice_Mut_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))
+	next := synth_self_member(k.c, "next", .Slice_Mut_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))
 	add_members(c, iterator, []Symbol_Id{next})
 	// A `[]mut T` is a mutable view: any value of it walks mutably, so its
 	// receiver is a value. A container needs its own mutable place.
 	receiver := info.kind == .Slice ? Param_Mode.Value : Param_Mode.Inout
-	iter := adapter_proc(k, "iter_mut", constructor, subject, receiver, iterator)
+	iter := synth_self_member(k.c, "iter_mut", constructor, subject, receiver, iterator)
 	reverse_kind := info.kind == .Dynamic_Array ? Synth_Kind.Dynamic_Iter_Reverse : Synth_Kind.Array_Iter_Reverse
-	reverse := adapter_proc(k, "iter_mut_reverse", reverse_kind, subject, receiver, iterator)
+	reverse := synth_self_member(k.c, "iter_mut_reverse", reverse_kind, subject, receiver, iterator)
 	add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter, reverse})
 }
 
@@ -86,7 +84,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		iter = reverse
 	}
 	yield := iterator_yield(k, iterator, element, .Mutable)
-	item := yield_item_type(k, element, yield, expr_span(s.iterable))
+	item := iterator_item_type(k, iterator, element, yield, expr_span(s.iterable))
 	if item == INVALID_TYPE { return FLOWS }
 	next := iteration_member(k, iterator, "next")
 	if !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
@@ -95,17 +93,15 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		return FLOWS
 	}
 	if !gate_type(k, element, s.span) { return FLOWS }
-	logical, handed := element, yield
+	logical, handed, projected := element, yield, item
 	if s.indexed {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = yield, Yield_Desc{kind = .Owned}
-		handed = Yield_Desc{kind = .Record, fields = fields}
+		handed = indexed_yield(k.c, yield)
 		logical = indexed_element_type(k.c, element)
+		projected = indexed_element_type(k.c, item)
 	}
 	// A record of lent parts binds through its projection, as a lending loop's does.
 	if yield.kind == .Record {
-		s.item_type = yield_item_type(k, logical, handed, expr_span(s.iterable))
-		if s.item_type == INVALID_TYPE { return FLOWS }
+		s.item_type = projected
 	}
 	s.kind, s.element_type, s.iterator_type = .Protocol, logical, iterator
 	s.iter_symbol, s.next_symbol = iter, next
@@ -133,10 +129,8 @@ mutable_iteration_receiver :: proc(k: ^Checker, member: Symbol_Id, subject, iter
 report_not_mutably_iterable :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) {
 	info := underlying_info(k.c, subject)
 	if info != nil && info.adapter_kind == .Reversed {
-		source := info.key
-		iterator := associated_type_of(k, source, "Mut_Iterator")
-		if receiver, found := mutable_iteration_receiver(k, iteration_member(k, source, "iter_mut"), source, iterator); found && receiver != .Inout {
-			errorf(k.c, expr_span(s.iterable), "L0460", "`%s` cannot be reversed mutably: it needs `iter_mut_reverse`", type_name(k.c, source))
+		if is_mutable_view(k, info.key) {
+			errorf(k.c, expr_span(s.iterable), "L0460", "`%s` cannot be reversed mutably: it needs `iter_mut_reverse`", type_name(k.c, info.key))
 			return
 		}
 	}

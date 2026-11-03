@@ -507,6 +507,9 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	#partial switch sym.synth {
 	case .Clone, .Try_Clone, .Iterator_Copy:
 		prov_copy_effects(graph, subject, v.span)
+	case .Adapter_View:
+		// A view holding its source by value keeps a copy of it.
+		if type_of(c, sym.result).adapter_by_value { prov_copy_effects(graph, subject, v.span) }
 	case .Indexed_Next, .Copied_Next, .Array_Next:
 		// What an iterator's `next` hands back by value, it clones out.
 		prov_copy_effects(graph, sym.result, v.span)

@@ -462,6 +462,33 @@ instantiation limit is what stops the parameter's type. The site's comment says 
 template reports its own parameter types, and it does not here. Found on 2026-11-01
 while fixing the instantiation limit for a parameter's type.
 
+### An adapter's clone of its source draws no copy warning
+
+An adapter stored over a mutable view that owns something clones it
+([Iteration adapters](design.md#iteration-adapters)), which may allocate, but `L0507` does
+not report it as it reports other implicit clones. The adapter call is checked before
+`foreach` knows whether it will peel the adapter and make no clone, so warning there would
+also report a loop that copies nothing. This compiles with no warning:
+
+```loke
+package main;
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+Owning :: struct { owned: [dynamic]int }
+impl Owning {
+    Element :: int;
+    Iterator :: Cursor;
+    Mut_Iterator :: Cursor;
+    iter :: proc(self) -> Cursor { return {0}; }
+    iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+main :: proc() {
+    source := Owning{};
+    view := source.indexed();
+    _ = view;
+}
+```
+
 ### A reset past the region limit is reported as certain
 
 [Minimum provenance precision](design.md#minimum-provenance-precision) says a

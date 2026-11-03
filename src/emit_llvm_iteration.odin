@@ -666,7 +666,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else if s.borrows && !type_is_pointer(e.c, payload) {
 		// A record `Yield` is a record of pointers, one per lent part.
-		bind_foreach_fields(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload))
+		bind_foreach_fields(e, s, with_index(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload), numbered))
 	} else if s.borrows {
 		// The payload points into the source, and the loop owns nothing. It is
 		// `stored` because one name over an `indexed()` pair copies it into a record.
