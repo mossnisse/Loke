@@ -705,19 +705,10 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 **Simplification**
 
-- [cfg_provenance.odin:4901](src/cfg_provenance.odin#L4901) `prov_handle_region`: three exits build the same unknown set. Use `if is_ident { region_of lookup } else if receiver.temporary { ... } else if local place { ... }` and one unknown fallthrough. (about 5 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:5069](src/cfg_provenance.odin#L5069) `prov_call_region`: every effective branch of the argument loop tests `!direct`. Wrap the loop and the `unknown` fallback in one `if !direct`, compute `info` there, and merge the allocator and `.Move` branches, which do the same thing. (about 6 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4172](src/cfg_provenance.odin#L4172) `prov_written_parameter_content`: the deep copy is needless, since `add` with `written = true` only edits by-value fields and the one caller ([borrow.odin:2946](src/borrow.odin#L2946)) only reads. Pass `content` directly; the `if len(aliases) > 0` around the loop at [:4158](src/cfg_provenance.odin#L4158) is needless too. (about 5 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4395](src/cfg_provenance.odin#L4395) `prov_define_region_content`: `len(...) == len(...) && path_has_exact_prefix` is `prov_same_path`; the store at [:4397](src/cfg_provenance.odin#L4397) rewrites an unchanged slice; and [:4401](src/cfg_provenance.odin#L4401) is `slice.clone`. (about 3 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:5283](src/cfg_provenance.odin#L5283) `prov_call_region_content`: `make` plus `copy` is `slice.clone(content.path, graph.alloc)`, inline in the literal. (about 3 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4768](src/cfg_provenance.odin#L4768) `prov_storage_region`: the allocator test only bypasses the carrier test. Use `if id != 0 && <view carrier, see Near copies> { return prov_viewed_region(graph, id) }; return prov_region_of(graph, id)`. (about 3 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4737](src/cfg_provenance.odin#L4737) `prov_region_of`: the `Default_Allocator` case is redundant, because both remaining paths reach the same test at [:5050](src/cfg_provenance.odin#L5050) (`call_results` is only filled by `prov_call_region`). (about 5 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:5483](src/cfg_provenance.odin#L5483) `prov_reset_temporary`: the two "join all, or the reset-relevant fields" branches can be one local proc taking `type` and `fields`, with `prov_storage(graph, temporary.storage)` read once. (about 4 lines) *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616): the literal depth 8 here and at [:4647](src/cfg_provenance.odin#L4647), [:5207](src/cfg_provenance.odin#L5207) and [borrow.odin:1222](src/borrow.odin#L1222) is one limit on one shape walk; name it beside `CARRIER_DEPTH`.
 
 **Dead code**
 
-- (branch) [cfg_provenance.odin:5129](src/cfg_provenance.odin#L5129): the `query` default on `prov_copied_region_at` is unused, since all three callers pass it. *Left open: not reached in this pass; the code still has it.*
 
 **Data structures and algorithms**
 
@@ -727,14 +718,6 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 **Near copies**
 
-- [cfg_provenance.odin:5182](src/cfg_provenance.odin#L5182) and [cfg_provenance.odin:1412](src/cfg_provenance.odin#L1412): the same "own query, own depth, overlap, matched" loop over `region_content`. Share `prov_merge_matching_content(out: ^Region_Set, contents, path, query) -> bool`; `out` stays the caller's because the hook's set has the callee's parameter count. (about 8 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:3996](src/cfg_provenance.odin#L3996) and [:4113](src/cfg_provenance.odin#L4113), [:4158](src/cfg_provenance.odin#L4158), [:4192](src/cfg_provenance.odin#L4192), [:4384](src/cfg_provenance.odin#L4384): each spells the rule that a final `NO_ROOT` alias means targets are not all known. A `prov_aliases_settle(aliases) -> bool` (non-empty, last root known) states `Prov_Region_Alias`'s rule once. (about 5 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4122](src/cfg_provenance.odin#L4122) and [cfg_provenance.odin:4166](src/cfg_provenance.odin#L4166): an identical three-part "view carrier" test, also inside [:3042](src/cfg_provenance.odin#L3042) and split at [:4768](src/cfg_provenance.odin#L4768). Add `prov_type_is_view_carrier(c, type)`. (about 4 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:3248](src/cfg_provenance.odin#L3248) and [cfg_provenance.odin:1453](src/cfg_provenance.odin#L1453): the test for a parameter that gets a region of its own appears twice, and the second depends on matching the first. Share one predicate. (about 2 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4046](src/cfg_provenance.odin#L4046) and [:4034](src/cfg_provenance.odin#L4034), [:4173](src/cfg_provenance.odin#L4173), [:4204](src/cfg_provenance.odin#L4204), [:4414](src/cfg_provenance.odin#L4414): "empty set, then merge" is a clone. Add `region_clone(set, params, allocator)` beside `region_merge`; the BUG-1 fix uses it too. (about 6 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4687](src/cfg_provenance.odin#L4687) and [:4738](src/cfg_provenance.odin#L4738), [:4752](src/cfg_provenance.odin#L4752), [:4913](src/cfg_provenance.odin#L4913), [:4920](src/cfg_provenance.odin#L4920), [:5146](src/cfg_provenance.odin#L5146): the empty-set-then-flag triple. `prov_default_region` and `prov_unknown_region` make each one line. (about 8 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:3232](src/cfg_provenance.odin#L3232) and [:4291](src/cfg_provenance.odin#L4291), [:5327](src/cfg_provenance.odin#L5327), [:6397](src/cfg_provenance.odin#L6397), [:10142](src/cfg_provenance.odin#L10142): hand-counted walks of `signature.params`. A flat `graph.param_symbols: []Symbol_Id` built with the graph replaces `param_count`, `prov_parameter_symbol` and the search in `prov_self_reads_begin`. (about 15 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4977](src/cfg_provenance.odin#L4977) and [cfg_provenance.odin:5040](src/cfg_provenance.odin#L5040): the same "strong copy, weak handle, or upgrade" test. Share `prov_call_keeps_shared_handle(graph, v, type)`. (about 2 lines) *Left open: not reached in this pass; the code still has it.*
 
 **Structure and boundaries**
 
@@ -744,7 +727,6 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 **Comments**
 
-- [cfg_provenance.odin:5119](src/cfg_provenance.odin#L5119): 9 lines listing cases the body shows. Shorten to "The regions at `path` of a copy of `source` as `type`: new storage in the copy's allocator, logical copies keep the source's." Also delete the last two sentences at [:5111](src/cfg_provenance.odin#L5111). (about 9 lines) *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:3619](src/cfg_provenance.odin#L3619): delete sentences that only name callers or restate the name, at [:4959](src/cfg_provenance.odin#L4959), [:2905](src/cfg_provenance.odin#L2905), [:2912](src/cfg_provenance.odin#L2912) and [:3023](src/cfg_provenance.odin#L3023), which restate the name; keep the backticked type where it helps. (about 7 lines) *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:4141](src/cfg_provenance.odin#L4141): 7 lines; keep "kept apart by field; the argument's prior value and the body's own regions say nothing new", and drop the rest, which the body and `Prov_Region_Content.from` say. (about 4 lines) *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:2921](src/cfg_provenance.odin#L2921): 9 lines, mostly the two branches read aloud, and similar paragraphs at [:2725](src/cfg_provenance.odin#L2725), [:3506](src/cfg_provenance.odin#L3506) and [:3597](src/cfg_provenance.odin#L3597). Cut each to the rule and the citation. (about 60 lines across this part) *Left open: not reached in this pass; the code still has it.*
@@ -766,7 +748,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 
 - [cfg_provenance.odin:5918](src/cfg_provenance.odin#L5918) and [cfg_provenance.odin:6251](src/cfg_provenance.odin#L6251): the same bound-the-path, scan `seen`, append visit. A `prov_first_alias_visit(seen, target, path, writable) -> (bounded, ok)` replaces both, beside `Written_Alias_Visit`. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
-- [cfg_provenance.odin:5835](src/cfg_provenance.odin#L5835), [cfg_provenance.odin:4394](src/cfg_provenance.odin#L4394) and [borrow.odin:2974](src/borrow.odin#L2974): find an equal content entry, else grow a fresh slice with a cloned entry. `prov_define_region_content` still compares by hand and could use `prov_same_region_content` and `prov_clone_region_content`. *Left open: not reached in this pass; the code still has it.*
 
 **Structure and boundaries**
 
@@ -795,8 +776,6 @@ The logic holds up and every declaration here has a caller in `src/`, with none 
 
 - [cfg_provenance.odin:9322](src/cfg_provenance.odin#L9322) `prov_type_reaches_destination`, `prov_type_reaches_mutable`: a fresh map and type walk per query, and queries run per call and parameter ([provenance_call.odin:264](src/provenance_call.odin#L264), [borrow.odin:2889](src/borrow.odin#L2889)), so they grow with the program. Memoize per type as `type_carries_borrow` does; check with `perf.ps1`. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:9553](src/cfg_provenance.odin#L9553) `prov_link_retained`: scans all of `graph.reborrows` per temporary source, per retained store, so it is quadratic in one body's size and only large bodies with many `stored` calls feel it. [cfg_provenance.odin:8318](src/cfg_provenance.odin#L8318) has the same scan; the solver's `reborrows_of` index would fit, were it reachable from `graph`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9124](src/cfg_provenance.odin#L9124) `WRITTEN_BACK_BORROW`: a diagnostic word doubles as a flag, compared by string at [borrow.odin:6222](src/borrow.odin#L6222) for each loan. A `written_back` bool on the loan says it directly. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:8257](src/cfg_provenance.odin#L8257) `prov_enter_parallel`: `holds` and `tasks` are never appended to after this procedure, so `task_holds` and `pool_tasks` ([cfg.odin:298](src/cfg.odin#L298), [cfg.odin:301](src/cfg.odin#L301)) can store slices. *Left open: not reached in this pass; the code still has it.*
 
 **Near copies**
 

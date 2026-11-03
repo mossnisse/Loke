@@ -285,6 +285,13 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	graph.propagated_errors = make(map[^Expr_Postfix][]int, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new_prov_state(allocator, normalized_input != nil ? normalized_input : new_prov_input(allocator))
+		if literal.signature != nil {
+			params := make([dynamic]Symbol_Id, 0, len(literal.signature.params), allocator)
+			for parameter in literal.signature.params {
+				append(&params, ..parameter.symbols)
+			}
+			graph.param_symbols = params[:]
+		}
 	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)

@@ -1932,7 +1932,7 @@ compute_thread_summaries :: proc(k: ^Checker) {
 		own := &facts[index]
 		handle := runtime_handle_operation(c, body.literal.symbol)
 		if graph.allocator_use.param_sources != nil {
-			resize_allocator_use(&own.use, graph.param_count)
+			resize_allocator_use(&own.use, len(graph.param_symbols))
 			merge_allocator_use_from(&own.use, graph.allocator_use)
 		}
 		if handle && own.use.regions.unknown {

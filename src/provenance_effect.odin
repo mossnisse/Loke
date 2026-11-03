@@ -45,7 +45,6 @@ Prov_Effect_Site :: struct {
 // construction graph owns these maps. Each fact graph takes its own copy, since
 // a query there may still number a temporary provider the walk never named.
 Prov_Topology :: struct {
-	param_count: int,
 	roots: []Prov_Root,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	root_by_storage: map[Storage_Id]Root_Id,
@@ -171,7 +170,6 @@ prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_G
 	program.input = graph.input
 	program.input.frozen = true
 	program.topology = Prov_Topology {
-		param_count        = graph.param_count,
 		roots              = graph.roots[:],
 		root_by_symbol     = graph.root_by_symbol,
 		root_by_storage    = graph.root_by_storage,
@@ -192,7 +190,6 @@ prov_fact_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mode, progr
 	graph := new_flow_graph(k, literal, allocator, mode, normalized_input = program.input)
 	graph.replaying_facts = true
 	topology := &program.topology
-	graph.param_count = topology.param_count
 	append(&graph.roots, ..topology.roots)
 	for key, value in topology.root_by_symbol { graph.root_by_symbol[key] = value }
 	for key, value in topology.root_by_storage { graph.root_by_storage[key] = value }

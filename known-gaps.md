@@ -22,6 +22,38 @@ main :: proc() { _ = f(); }
 
 Found on 2026-11-03 (P3).
 
+### A store through one field of a record parameter blames the sibling field's target at the call
+
+[Minimum provenance precision](design.md#minimum-provenance-precision) keeps a record's carrier
+leaves apart, and one body does: the same store written in the caller, through `pair.second^` or a
+local `s := pair.second`, lands only in `b`, so this program is accepted. Across a call it is
+rejected with L0537 naming `a`, because `prov_written_aliases_of` in
+[src/provenance_aliases.odin](src/provenance_aliases.odin) answers a parameter's written target
+without the path of the carrier reached, and the summary row's paths are then applied below every
+target of the argument:
+
+```loke
+package main;
+import "core:mem";
+Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
+store_second :: proc(pair: Pair, allocator: mem.Allocator) {
+    pair.second^ = make([dynamic]int, 1, allocator);
+}
+caller :: proc(@(allocator_reset) allocator: mem.Allocator) {
+    buffer := [64]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 0, kept.allocator());
+    b := make([dynamic]int, 0, kept.allocator());
+    store_second(Pair{&mut a, &mut b}, allocator);
+    drop(b);
+    free_all(allocator);
+    _ = a[0];
+}
+main :: proc() {}
+```
+
+Found on 2026-11-03 (P3): the rejection errs on the safe side.
+
 ### A switch of thousands of `return` cases is slow, then crashes the compiler
 
 Neither is a checker cost: a `switch` over an enum, with each `case .Mi: return i;`, takes 1 s at

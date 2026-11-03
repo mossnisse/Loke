@@ -304,6 +304,10 @@ Prov_Loan :: struct {
 	// A `pointee_loans` entry: the position in `carrier_pointee_shape` of the
 	// path its first load goes along, plus one; zero for every other loan.
 	pointee: int,
+	// A `thread_local` borrow a spawned call leaves in an argument, which the
+	// spawn reports from the summary. One left by any other call crosses no
+	// further than a borrow taken directly.
+	written_back: bool,
 }
 
 // What a later event wants of a slot's value. A `Kept` value is only held on to by

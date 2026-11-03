@@ -65,10 +65,10 @@ Prov_State :: struct {
 	// (`prov_enter_parallel`); `spawning` is the call whose lending is
 	// collected into `spawn_held`.
 	task_slots:     map[Symbol_Id]int,
-	task_holds:     map[Symbol_Id][dynamic]int,
+	task_holds:     map[Symbol_Id][]int,
 	// design.md "Parallel blocks": a pooled block's tasks, by its hidden scope,
 	// which its join may run on the joining thread.
-	pool_tasks:     map[Symbol_Id][dynamic]Pool_Task,
+	pool_tasks:     map[Symbol_Id][]Pool_Task,
 	// Each spawn site's slot in `task_holds`.
 	spawn_holds:    map[^Stmt_Spawn]int,
 	spawning:       ^Expr_Call,
@@ -136,7 +136,8 @@ Prov_State :: struct {
 	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
 	// Set while a store into a writable parameter reads its regions.
 	self_reads:      ^Prov_Self_Reads,
-	param_count:     int,
+	// The body's parameters, in the positions a `Region_Set` numbers.
+	param_symbols:   []Symbol_Id,
 	// One bit per local `mem.Arena`/`mem.Scratch`.
 	provider_bits:    map[Symbol_Id]u64,
 	provider_symbols: [dynamic]Symbol_Id,
@@ -1173,18 +1174,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		if region, known := prov_constructed_region_at(graph, id, path, query); known { return region }
 		if result, found := graph.call_results[form.call]; found && len(result.region_content) > 0 {
 			out := Region_Set{}
-			matched := false
-			for content in result.region_content {
-				if query == .Own && (!content.own || !prov_same_path(content.path, path)) {
-					continue
-				}
-				if content.own && len(content.path) < len(path) { continue }
-				if paths_overlap(content.path, path) {
-					matched = true
-					region_merge(&out, content.region)
-				}
-			}
-			if matched { return out }
+			if prov_merge_matching_content(&out, result.region_content, path, query) { return out }
 		}
 	case Prov_Form_Selector:
 		if form.field && form.operand != 0 &&
@@ -1214,12 +1204,9 @@ prov_add_received_allocator :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: 
 	if root == NO_ROOT || !prov_root_is_parameter(graph, root) || type_underlying(c, type) != TYPE_ALLOCATOR {
 		return
 	}
-	received := symbol_of(c, graph.roots[int(root)].symbol).type
-	if type_underlying(c, received) == TYPE_ALLOCATOR || type_is_managed(c, received) ||
-	   type_is_carrier(c, received) && !type_is_region_provider(c, received) {
-		return
+	if !prov_type_keeps_argument_region(c, symbol_of(c, graph.roots[int(root)].symbol).type) {
+		set.unknown = true
 	}
-	set.unknown = true
 }
 
 // Whether `root` is one of this body's parameters, whose contents the caller
@@ -1923,7 +1910,7 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 	if held, joins := graph.task_slots[id]; joins {
 		sources := prov_one(graph, held)
 		if holds, reborrowed := graph.task_holds[id]; reborrowed {
-			sources = prov_join(graph, sources, holds[:])
+			sources = prov_join(graph, sources, holds)
 		}
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = span})
 		bit := prov_window_bit(graph, id)
@@ -1931,7 +1918,7 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 			// Before the join closes the window, which decides where they apply.
 			events := &graph.blocks[graph.current].prov
 			first := len(events)
-			prov_pool_join_effects(graph, tasks[:], span)
+			prov_pool_join_effects(graph, tasks, span)
 			for &event in events[first:] {
 				event.joins = bit + 1
 			}
@@ -2700,8 +2687,21 @@ prov_slot_is_loaded_read_only :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 
 @(private = "file")
 prov_type_is_read_only_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type != INVALID_TYPE && type_is_carrier(c, type) && !type_is_region_provider(c, type) &&
-		type_underlying(c, type) != TYPE_ALLOCATOR && !carrier_is_mutable(c, type)
+	return prov_type_is_view_carrier(c, type) && !carrier_is_mutable(c, type)
+}
+
+// A carrier that views storage, as a provider or an allocator handle does not.
+@(private = "file")
+prov_type_is_view_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type_is_carrier(c, type) && !type_is_region_provider(c, type) && type_underlying(c, type) != TYPE_ALLOCATOR
+}
+
+// design.md "Allocator regions and region provenance": an owner moved in, a copy
+// of one passed in, and what a carrier passed in views keep the argument's
+// region, which the caller substitutes; so does an allocator handle.
+@(private = "file")
+prov_type_keeps_argument_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type_underlying(c, type) == TYPE_ALLOCATOR || type_is_managed(c, type) || prov_type_is_view_carrier(c, type)
 }
 
 @(private = "file")
@@ -3208,25 +3208,15 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 	if literal.signature == nil {
 		return
 	}
-	position := 0
-	for parameter in literal.signature.params {
-		position += len(parameter.symbols)
-	}
-	graph.param_count = position
-	position = 0
+	index := 0
 	for parameter in literal.signature.params {
 		for id in parameter.symbols {
-			index := position
-			position += 1
+			defer index += 1
 			sym := symbol_of(graph.k.c, id)
 			if sym == nil {
 				continue
 			}
-			// design.md "Allocator regions and region provenance": an owner moved in,
-			// a copy of one passed in, and what a carrier passed in views keep the
-			// argument's region, which the caller substitutes.
-			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR || type_is_managed(graph.k.c, sym.type) ||
-			   type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) {
+			if prov_type_keeps_argument_region(graph.k.c, sym.type) {
 				set: Region_Set
 				region_add_param(&set, index)
 				graph.region_of[id] = set
@@ -3910,7 +3900,7 @@ prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set)
 		for alias in aliases {
 			prov_define_region_content(graph, alias.root, alias.path, set, handle = !type_is_managed(graph.k.c, sym.type))
 		}
-		if aliases[len(aliases) - 1].root != NO_ROOT { return }
+		if prov_aliases_settle(aliases) { return }
 	}
 	existing, found := graph.region_of[id]
 	if !found {
@@ -3943,8 +3933,7 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 	for id, content in seed.region_content {
 		copied := make([]Prov_Region_Content, len(content), graph.alloc)
 		for entry, index in content {
-			copied[index] = prov_clone_region_content(entry, Region_Set{}, graph.alloc)
-			region_merge(&copied[index].region, entry.region)
+			copied[index] = prov_clone_region_content(entry, entry.region, graph.alloc)
 		}
 		graph.region_content[id] = copied
 	}
@@ -4020,9 +4009,9 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 				prov_add_received_allocator(graph, &out, alias.root, sym.type)
 			}
 		}
-		if aliases[len(aliases) - 1].root != NO_ROOT { return out }
+		if prov_aliases_settle(aliases) { return out }
 	}
-	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
+	carrier := sym != nil && prov_type_is_view_carrier(graph.k.c, sym.type)
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
 		region_merge(&out, direct)
 	}
@@ -4054,24 +4043,19 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 		if content.from != nil || !region_is_empty(content.region) { append(out, content) }
 	}
 	whole, owned := Region_Set{}, Region_Set{}
-	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
-		for alias in aliases {
-			region_merge(&whole, prov_region_content_at(graph, alias.root, alias.path, .All))
-			region_merge(&owned, prov_region_content_at(graph, alias.root, alias.path, .Owners))
-		}
+	for alias in graph.region_aliases[id] {
+		region_merge(&whole, prov_region_content_at(graph, alias.root, alias.path, .All))
+		region_merge(&owned, prov_region_content_at(graph, alias.root, alias.path, .Owners))
 	}
-	if len(graph.region_aliases[id]) == 0 || graph.region_aliases[id][len(graph.region_aliases[id]) - 1].root == NO_ROOT {
+	if !prov_aliases_settle(graph.region_aliases[id]) {
 		sym := symbol_of(graph.k.c, id)
-		carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
+		carrier := sym != nil && prov_type_is_view_carrier(graph.k.c, sym.type)
 		if direct, found := graph.region_of[id]; found && !carrier {
 			region_merge(&whole, direct)
 			region_merge(&owned, direct)
 		}
 		for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
-			copied := content
-			copied.region = Region_Set{}
-			region_merge(&copied.region, content.region)
-			add(&out, index, copied, written = true)
+			add(&out, index, content, written = true)
 		}
 	}
 	add(&out, index, Prov_Region_Content{region = owned})
@@ -4092,7 +4076,7 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		for alias in aliases {
 			region_merge(&out, prov_region_content_at(graph, alias.root, prov_concat_path(graph, alias.path, path), query))
 		}
-		if aliases[len(aliases) - 1].root != NO_ROOT { return out }
+		if prov_aliases_settle(aliases) { return out }
 	}
 	reads := graph.self_reads
 	if reads != nil && reads.symbol != id { reads = nil }
@@ -4100,8 +4084,7 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		region_merge(&out, direct)
 	} else if found {
 		// The parameter's own region here is what the argument held at `path`.
-		rest := Region_Set{}
-		region_merge(&rest, direct)
+		rest := direct
 		region_remove_param(&rest, reads.index)
 		region_merge(&out, rest)
 		append(&reads.sources, Prov_Region_Source{slice.clone(path, graph.alloc), query})
@@ -4181,22 +4164,15 @@ prov_define_value_regions :: proc(
 // other root.
 @(private = "file")
 prov_self_reads_begin :: proc(graph: ^Flow_Graph, root: Root_Id) -> ^Prov_Self_Reads {
-	if root == NO_ROOT || graph.self_reads != nil || graph.literal.signature == nil { return nil }
+	if root == NO_ROOT || graph.self_reads != nil { return nil }
 	// A pointer parameter's storage is the pointee's, which is not a `.Param` root.
 	id := graph.roots[int(root)].symbol
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil || sym.kind != .Parameter || !param_writes_caller(graph.k.c, sym) { return nil }
-	index := 0
-	for parameter in graph.literal.signature.params {
-		for symbol in parameter.symbols {
-			if symbol == id {
-				graph.self_reads = new_clone(Prov_Self_Reads{symbol = id, index = index, sources = make([dynamic]Prov_Region_Source, graph.alloc)}, graph.alloc)
-				return graph.self_reads
-			}
-			index += 1
-		}
-	}
-	return nil
+	index, is_own := slice.linear_search(graph.param_symbols, id)
+	if !is_own { return nil }
+	graph.self_reads = new_clone(Prov_Self_Reads{symbol = id, index = index, sources = make([dynamic]Prov_Region_Source, graph.alloc)}, graph.alloc)
+	return graph.self_reads
 }
 
 @(private = "file")
@@ -4243,6 +4219,13 @@ Prov_Region_Alias :: struct {
 	path: []Proj_Step,
 }
 
+// Whether `aliases` name every place the binding's facts live, with no local
+// snapshot needed beside them.
+@(private = "file")
+prov_aliases_settle :: proc(aliases: []Prov_Region_Alias) -> bool {
+	return len(aliases) > 0 && aliases[len(aliases) - 1].root != NO_ROOT
+}
+
 // Region facts are flow-insensitive, so one at an element of a dynamic array
 // would stay at that index whatever later moved the element: it stands for any.
 @(private)
@@ -4284,25 +4267,23 @@ prov_define_region_content :: proc(
 		for alias in aliases {
 			prov_define_region_content(graph, alias.root, prov_concat_path(graph, alias.path, path), region, handle, own)
 		}
-		if aliases[len(aliases) - 1].root != NO_ROOT { return }
+		if prov_aliases_settle(aliases) { return }
 	}
 	// A handle's entry stays apart from an owner's at the same path, so what
 	// backs an owner is still told from it (design.md "Allocator regions and
 	// region provenance").
+	added := Prov_Region_Content{path = path, region = region, handle = handle, own = own}
 	content := graph.region_content[storage]
 	for &entry in content {
-		if entry.from == nil && entry.handle == handle && entry.own == own && len(entry.path) == len(path) && path_has_exact_prefix(entry.path, path) {
+		if prov_same_region_content(entry, added) {
 			region_merge(&entry.region, region)
-			graph.region_content[storage] = content
 			return
 		}
 	}
-	stored_path := make([]Proj_Step, len(path), graph.alloc)
-	copy(stored_path, path)
-	grown := make([dynamic]Prov_Region_Content, len(content), len(content) + 1, graph.alloc)
-	copy(grown[:], content)
-	append(&grown, Prov_Region_Content{path = stored_path, region = region, handle = handle, own = own})
-	graph.region_content[storage] = grown[:]
+	grown := make([]Prov_Region_Content, len(content) + 1, graph.alloc)
+	copy(grown, content)
+	grown[len(content)] = prov_clone_region_content(added, region, graph.alloc)
+	graph.region_content[storage] = grown
 }
 
 // Records a stored value's regions at a path: `owned`, the part backing an
@@ -4310,8 +4291,7 @@ prov_define_region_content :: proc(
 @(private = "file")
 prov_define_stored_content :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, region, owned: Region_Set, own := false) {
 	prov_define_region_content(graph, root, path, owned, own = own)
-	handles := Region_Set{}
-	region_merge(&handles, owned)
+	handles := owned
 	if region_merge(&handles, region) {
 		prov_define_region_content(graph, root, path, region, handle = true, own = own)
 	}
@@ -4583,9 +4563,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	}
 	// design.md "Allocators": the zero `Allocator` is the default provider.
 	if base := expr_base(e); base.is_const && base.const_value.kind == .Nil && type_underlying(c, value.type) == TYPE_ALLOCATOR {
-		set := Region_Set{}
-		set.default = true
-		return set
+		return Region_Set{default = true}
 	}
 	if transfer := prov_value_transfer(graph, id); transfer != nil {
 		return prov_transfer_region(graph, transfer, nil, .All)
@@ -4633,11 +4611,6 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		}
 	case Prov_Form_Call:
 		v := form.call
-		if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
-			set := Region_Set{}
-			set.default = true
-			return set
-		}
 		// `arena.allocator()` names the provider's own region.
 		if set, ok := prov_handle_region(graph, v, prov_receiver_value(form.arguments)); ok {
 			return set
@@ -4647,12 +4620,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		}
 		return prov_call_region(graph, id, value.type)
 	}
-	if prov_carries_allocator(c, value.type) {
-		set := Region_Set{}
-		set.unknown = true
-		return set
-	}
-	return Region_Set{}
+	return Region_Set{unknown = prov_carries_allocator(c, value.type)}
 }
 
 // design.md "Allocator regions and region provenance": a copy of a managed
@@ -4662,12 +4630,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 // them from each value it is given, and a carrier parameter from its argument.
 @(private)
 prov_storage_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
-	c := graph.k.c
-	type := prov_value(graph, id).type
-	if id != 0 && type_underlying(c, type) == TYPE_ALLOCATOR {
-		return prov_region_of(graph, id)
-	}
-	if id != 0 && type_is_carrier(c, type) && !type_is_region_provider(c, type) {
+	if id != 0 && prov_type_is_view_carrier(graph.k.c, prov_value(graph, id).type) {
 		return prov_viewed_region(graph, id)
 	}
 	return prov_region_of(graph, id)
@@ -4799,14 +4762,12 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id
 	}
 	id := receiver
 	receiver := prov_value(graph, id)
-	ident, is_ident := receiver.form.(Prov_Form_Symbol)
-	if !is_ident && receiver.temporary {
-		return prov_temp_provider_region(graph, v), true
-	}
-	if is_ident {
+	if ident, is_ident := receiver.form.(Prov_Form_Symbol); is_ident {
 		if set, found := graph.region_of[ident.symbol]; found {
 			return set, true
 		}
+	} else if receiver.temporary {
+		return prov_temp_provider_region(graph, v), true
 	} else if root, path, ok := prov_root_place(graph, receiver.place); ok {
 		// A provider inside a local record or container: the token of its position.
 		if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
@@ -4816,9 +4777,7 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id
 	if set, known := prov_provider_through_carrier(graph, id); known {
 		return set, true
 	}
-	set := Region_Set{}
-	set.unknown = true
-	return set, true
+	return Region_Set{unknown = true}, true
 }
 
 // A provider reached through a carrier, when that names local ones: what a local
@@ -4904,8 +4863,7 @@ prov_constructed_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Pro
 	form := value.form.(Prov_Form_Call)
 	v, bound := form.call, prov_bound_values(form)
 	payload, fallible := shared_constructor_payload(c, v)
-	shared_copy := prov_receiver_is_shared_handle(graph, v) && len(bound) > 0 &&
-	               prov_type_or_wrapped(c, value.type, type_is_shared_handle)
+	shared_copy := prov_call_keeps_shared_handle(graph, v, value.type)
 	if payload == nil && !shared_copy { return out, false }
 	path := path
 	if shape, ok := fallible_of(graph.k, value.type); ok && (fallible || shared_copy) {
@@ -4938,6 +4896,13 @@ prov_type_shares_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
+// Whether a call on a shared handle gives back a handle to its control block: a
+// strong copy, a weak handle, or a successful upgrade.
+@(private = "file")
+prov_call_keeps_shared_handle :: proc(graph: ^Flow_Graph, v: ^Expr_Call, type: Type_Id) -> bool {
+	return prov_receiver_is_shared_handle(graph, v) && len(v.bound) > 0 && prov_type_or_wrapped(graph.k.c, type, type_is_shared_handle)
+}
+
 // The region of a call result: a direct summary substituted by position, or
 // conservative input dependencies when no body is available.
 @(private)
@@ -4967,19 +4932,16 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	}
 	// Strong copies, weak handles, and successful upgrades keep the same
 	// control block and therefore its region.
-	if prov_receiver_is_shared_handle(graph, v) && len(bound) > 0 &&
-	   prov_type_or_wrapped(c, result_type, type_is_shared_handle) {
+	if prov_call_keeps_shared_handle(graph, v, result_type) {
 		return prov_storage_region(graph, bound[0])
 	}
 	// design.md "string type conversions": these copy into the default allocator.
 	if operation, conversion := v.operation.(Call_Text_Conversion); conversion &&
 	   (operation.op == .String_From_Bytes || operation.op == .String_From_C_View) {
-		out.default = true
-		return out
+		return Region_Set{default = true}
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
-		out.default = true
-		return out
+		return Region_Set{default = true}
 	}
 	// Also here, because a stored call result is consulted before `prov_region_of`.
 	if set, ok := prov_handle_region(graph, v, prov_receiver_value(form.arguments)); ok {
@@ -4995,30 +4957,28 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	if summary, found := result_summary(c, callee); found {
 		region_merge(&out, prov_substitute_region(graph, bound, summary.region))
 	}
+	if direct {
+		return out
+	}
 	info := underlying_info(c, call_proc_type(c, v))
 	for argument, index in bound {
 		if argument == 0 {
 			continue
 		}
-		if type_underlying(c, prov_value(graph, argument).type) == TYPE_ALLOCATOR && !direct {
+		moved := info != nil && index < len(info.param_modes) && info.param_modes[index] == .Move
+		if moved || type_underlying(c, prov_value(graph, argument).type) == TYPE_ALLOCATOR {
 			// design.md "Allocator regions and region provenance": without a body
 			// to follow, an owner built with an allocator argument takes its
 			// region. A direct call's summary already names the allocators its
 			// result is built with, so one the body never uses backs nothing.
 			region_merge(&out, prov_region_of(graph, argument))
-			continue
-		}
-		if !direct && info != nil && index < len(info.param_modes) && info.param_modes[index] == .Move {
-			region_merge(&out, prov_region_of(graph, argument))
-		} else if !direct && prov_type_shares_region(c, result_type) {
+		} else if prov_type_shares_region(c, result_type) {
 			// A procedure value has no result summary. Logical copies may retain
 			// borrowed inputs, even when a destination allocator is also supplied.
 			region_merge(&out, prov_storage_region(graph, argument))
 		}
 	}
-	if !direct && region_is_empty(out) {
-		out.unknown = true
-	}
+	out.unknown ||= region_is_empty(out)
 	return out
 }
 
@@ -5038,25 +4998,16 @@ prov_copy_source_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy,
 }
 
 // An explicit clone's regions: `bound[0]` copied into the allocator its other
-// operands name. Copied declarations and assignments, implicit variant
-// copies, and copied error payloads use the same rule through
-// `prov_copied_region_at`.
+// operands name.
 @(private = "file")
 prov_clone_region_at :: proc(graph: ^Flow_Graph, bound: []Value_Id, type: Type_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
 	return prov_copied_region_at(graph, Prov_Region_Copy{value = bound[0], allocator = prov_allocation_region(graph, bound)}, type, path, query)
 }
 
-// The regions at `path` of a copy of `source` as `type`. Newly allocated
-// storage is in the copy's allocator, while logical copies keep the source's
-// regions, read at the projected source prefix. Destructuring starts at the
-// field type (`Destructure.clones`); only the source query prepends the
-// containing record's path. A widened destination path is remapped to the
-// source type before the query. Custom copy hooks, including hooks nested in
-// generated copies, substitute their result summaries. Shared and weak
-// handles keep the control block's allocator apart from the payload's
-// regions through copies, downgrades, and upgrades.
+// The regions at `path` of a copy of `source` as `type`: new storage in the
+// copy's allocator, logical copies keep the source's.
 @(private)
-prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type: Type_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
+prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type: Type_Id, path: []Proj_Step, query: Region_Query) -> Region_Set {
 	type := type
 	for step, index in path {
 		if type_is_shared_handle(graph.k.c, type) {
@@ -5073,9 +5024,7 @@ prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type
 @(private = "file")
 prov_allocation_region :: proc(graph: ^Flow_Graph, bound: []Value_Id) -> Region_Set {
 	if len(bound) > 1 && bound[1] != 0 { return prov_region_of(graph, bound[1]) }
-	out := Region_Set{}
-	out.default = true
-	return out
+	return Region_Set{default = true}
 }
 
 @(private = "file")
@@ -5088,6 +5037,21 @@ prov_source_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		return prov_storage_region(graph, id)
 	}
 	return prov_result_region_at(graph, id, path, query, as_type)
+}
+
+// Merges into `out` what `contents` hold at `path`, each entry's own query and
+// depth applied; false when none is there.
+@(private = "file")
+prov_merge_matching_content :: proc(out: ^Region_Set, contents: []Prov_Region_Content, path: []Proj_Step, query: Region_Query) -> (matched: bool) {
+	for content in contents {
+		if query == .Own && (!content.own || !prov_same_path(content.path, path)) { continue }
+		if content.own && len(content.path) < len(path) { continue }
+		if paths_overlap(content.path, path) {
+			matched = true
+			region_merge(out, content.region)
+		}
+	}
+	return
 }
 
 @(private = "file")
@@ -5108,16 +5072,7 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, oper
 			projected_path = prov_concat_path(graph, {proj_field(shape.success)}, path)
 		}
 		projected: Region_Set
-		matched := false
-		for content in summary.region_content {
-			if query == .Own && (!content.own || !prov_same_path(content.path, projected_path)) { continue }
-			if content.own && len(content.path) < len(projected_path) { continue }
-			if paths_overlap(content.path, projected_path) {
-				matched = true
-				region_merge(&projected, content.region)
-			}
-		}
-		if matched { set = projected }
+		if prov_merge_matching_content(&projected, summary.region_content, projected_path, query) { set = projected }
 	}
 	if region_has_param(set, 0) { region_merge(&out, prov_copy_source_region_at(graph, source, prefix)) }
 	if region_has_param(set, 1) { region_merge(&out, source.allocator) }
@@ -5208,10 +5163,8 @@ prov_call_region_content :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Prov_Reg
 	}
 	out := make([]Prov_Region_Content, len(summary.region_content), graph.alloc)
 	for content, index in summary.region_content {
-		path := make([]Proj_Step, len(content.path), graph.alloc)
-		copy(path, content.path)
 		out[index] = Prov_Region_Content {
-			path = path,
+			path = slice.clone(content.path, graph.alloc),
 			region = prov_substitute_region(graph, prov_bound_values(form), content.region),
 			handle = content.handle,
 			own = content.own,
@@ -5245,20 +5198,7 @@ prov_reset_promise :: proc(graph: ^Flow_Graph, set: Region_Set) -> (covered: boo
 
 @(private = "file")
 prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
-	literal := graph.literal
-	if literal == nil || literal.signature == nil {
-		return nil
-	}
-	position := 0
-	for parameter in literal.signature.params {
-		for id in parameter.symbols {
-			if position == index {
-				return symbol_of(graph.k.c, id)
-			}
-			position += 1
-		}
-	}
-	return nil
+	return index < len(graph.param_symbols) ? symbol_of(graph.k.c, graph.param_symbols[index]) : nil
 }
 
 // A reset may end every allocation in its region (design.md "@(allocator_reset)"): checked for its
@@ -5410,24 +5350,23 @@ prov_returning_region :: proc(graph: ^Flow_Graph, returning: Prov_Returning) -> 
 prov_reset_temporary :: proc(graph: ^Flow_Graph, root: Root_Id, event: ^Prov_Event) -> bool {
 	temporary := graph.roots[int(root)]
 	region := Region_Set{}
+	// All of it for a provider's end, or the part a reset ends.
+	join :: proc(graph: ^Flow_Graph, region: ^Region_Set, type: Type_Id, fields: []Prov_Region_Content, all: bool) {
+		if !all {
+			region_merge(region, prov_reset_fields_region(graph, type, fields))
+			return
+		}
+		for field in fields { region_merge(region, field.region) }
+	}
 	if temporary.owner != nil {
 		fields := prov_result_region_fields(graph, prov_input_value(graph, temporary.owner), temporary.dropped)
-		if event.provider_end {
-			for field in fields { region_merge(&region, field.region) }
-		} else {
-			region = prov_reset_fields_region(graph, temporary.dropped, fields)
-		}
+		join(graph, &region, temporary.dropped, fields, event.provider_end)
 	}
 	// Later writes into a temporary's backing storage are live until its
 	// actual cleanup, just as its initial owners are (design.md
 	// "Allocator regions and region provenance").
-	if prov_storage(graph, temporary.storage).key.temporary != nil && type_is_managed(graph.k.c, prov_storage(graph, temporary.storage).type) {
-		fields := graph.region_content[temporary.storage]
-		if event.provider_end {
-			for field in fields { region_merge(&region, field.region) }
-		} else {
-			region_merge(&region, prov_reset_fields_region(graph, prov_storage(graph, temporary.storage).type, fields))
-		}
+	if storage := prov_storage(graph, temporary.storage); storage.key.temporary != nil && type_is_managed(graph.k.c, storage.type) {
+		join(graph, &region, storage.type, graph.region_content[temporary.storage], event.provider_end)
 	}
 	if region_is_empty(region) || !regions_may_overlap(region, event.region) { return false }
 	event.verb, event.owner_span = temporary.name, temporary.span
@@ -6043,23 +5982,15 @@ prov_owner_name :: proc(graph: ^Flow_Graph, value: Expr) -> string {
 // and the set without its `move` parameters, which are not received regions.
 @(private = "file")
 prov_moved_parameter :: proc(graph: ^Flow_Graph, set: Region_Set, level: Escape_Level) -> (name: string, rest: Region_Set) {
-	rest = Region_Set{}
-	region_merge(&rest, set)
-	if graph.literal.signature == nil {
-		return
-	}
-	index := 0
-	for parameter in graph.literal.signature.params {
-		for id in parameter.symbols {
-			defer index += 1
-			sym := symbol_of(graph.k.c, id)
-			if sym == nil || sym.mode != .Move || !region_has_param(set, index) {
-				continue
-			}
-			region_remove_param(&rest, index)
-			if name == "" && sym.escape < level {
-				name = identifier_text(graph.k.c, sym.name)
-			}
+	rest = set
+	for id, index in graph.param_symbols {
+		sym := symbol_of(graph.k.c, id)
+		if sym == nil || sym.mode != .Move || !region_has_param(set, index) {
+			continue
+		}
+		region_remove_param(&rest, index)
+		if name == "" && sym.escape < level {
+			name = identifier_text(graph.k.c, sym.name)
 		}
 	}
 	return
@@ -6989,8 +6920,7 @@ prov_declare_region :: proc(
 	}
 	// An owner copied from a place may be cloned.
 	if initializer != nil && clone_may_allocate(graph.k.c, sym.type) && expression_is_borrowed_place(initializer) {
-		cloned := Region_Set{}
-		region_merge(&cloned, prov_destination_allocator(graph, id))
+		cloned := prov_destination_allocator(graph, id)
 		region_merge(&cloned, initializer_region)
 		prov_note_allocator_use(graph, cloned, sym.span, owned = true)
 	}
@@ -7870,7 +7800,7 @@ prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
 	prov_window_bit(graph, s.scope)
 	if graph.task_slots == nil {
 		graph.task_slots = make(map[Symbol_Id]int, graph.alloc)
-		graph.task_holds = make(map[Symbol_Id][dynamic]int, graph.alloc)
+		graph.task_holds = make(map[Symbol_Id][]int, graph.alloc)
 		graph.spawn_holds = make(map[^Stmt_Spawn]int, graph.alloc)
 	}
 	graph.task_slots[s.scope] = prov_temp_slot(graph)
@@ -7887,12 +7817,12 @@ prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
 			append(&tasks, Pool_Task{runs = spawn_runs(graph, spawn), name = spawn_callee_name(graph.k.c, spawn.call.(^Expr_Call))})
 		}
 	}
-	graph.task_holds[s.scope] = holds
+	graph.task_holds[s.scope] = holds[:]
 	if tasks != nil {
 		if graph.pool_tasks == nil {
-			graph.pool_tasks = make(map[Symbol_Id][dynamic]Pool_Task, graph.alloc)
+			graph.pool_tasks = make(map[Symbol_Id][]Pool_Task, graph.alloc)
 		}
-		graph.pool_tasks[s.scope] = tasks
+		graph.pool_tasks[s.scope] = tasks[:]
 	}
 }
 
@@ -8746,11 +8676,6 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 	}
 }
 
-// What a `thread_local` borrow a spawned call leaves in an argument is called.
-// The spawn reports it from the summary, so the crossing check passes over it;
-// one left by any other call crosses no further than a borrow taken directly.
-WRITTEN_BACK_BORROW :: "written-back borrow"
-
 // design.md "Borrows crossing between tasks": what the task's call may write
 // into an argument stays behind after the worker's thread ends, wherever the
 // argument came from, a local or the parent's own caller.
@@ -8804,7 +8729,7 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	lefts := call_thread_local_left(c, v, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	prov_note_summary_dependencies(graph, consulted[:])
-	what := v == graph.spawning ? WRITTEN_BACK_BORROW : "borrow"
+	spawned := v == graph.spawning
 	for left in lefts {
 		if left.at >= len(actuals) || (v.bound[left.at] == nil && !call_packs(v, left.at)) {
 			continue
@@ -8815,7 +8740,10 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 			prov_retain_into_argument(graph, v, left.at, actuals[left.at], sources)
 		}
 		if left.global != INVALID_SYMBOL {
-			sources := prov_borrow(graph, prov_root_for_symbol(graph, left.global), nil, false, v.span, what)
+			first := len(graph.loans)
+			sources := prov_borrow(graph, prov_root_for_symbol(graph, left.global), nil, false, v.span, spawned ? "written-back borrow" : "borrow")
+			// The spawn reports it from the summary, so the crossing check passes over it.
+			for &loan in graph.loans[first:] { loan.written_back = spawned }
 			prov_retain_into_argument(graph, v, left.at, actuals[left.at], sources)
 		}
 	}
@@ -9737,16 +9665,12 @@ prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
 	if graph.literal.signature == nil {
 		return region_is_parameter_backed(set)
 	}
-	index := 0
-	for parameter in graph.literal.signature.params {
-		for id in parameter.symbols {
-			defer index += 1
-			if !region_has_param(set, index) {
-				continue
-			}
-			if sym := symbol_of(graph.k.c, id); sym == nil || !sym.cross_thread || sym.mode != .Move {
-				return true
-			}
+	for id, index in graph.param_symbols {
+		if !region_has_param(set, index) {
+			continue
+		}
+		if sym := symbol_of(graph.k.c, id); sym == nil || !sym.cross_thread || sym.mode != .Move {
+			return true
 		}
 	}
 	return false
@@ -10135,7 +10059,7 @@ prov_note_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span,
 	}
 	output := prov_output(graph)
 	if output.allocator_use.param_sources == nil {
-		output.allocator_use = new_allocator_use(output.param_count, output.alloc)
+		output.allocator_use = new_allocator_use(len(output.param_symbols), output.alloc)
 	}
 	merge_allocator_use(&output.allocator_use, visible, Effect_Source{span = span})
 }
@@ -10176,8 +10100,7 @@ prov_note_window_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span
 // parent share that parent's state.
 @(private)
 prov_region_closure :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
-	out := Region_Set{}
-	region_merge(&out, set)
+	out := set
 	pending, seen := set.locals, u64(0)
 	for pending & ~seen != 0 {
 		position := bits.count_trailing_zeros(pending & ~seen)
@@ -10200,8 +10123,7 @@ prov_region_closure :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
 // provider's, whose parent is not tracked, for an unknown region.
 @(private)
 prov_caller_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
-	out := Region_Set{}
-	region_merge(&out, set)
+	out := set
 	out.unknown ||= set.crowded
 	pending, seen := set.locals, u64(0)
 	for pending & ~seen != 0 {

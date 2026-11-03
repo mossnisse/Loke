@@ -242,7 +242,7 @@ check_join_retention :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot
 		append(&held, slot)
 	}
 	if holds, found := graph.task_holds[scope]; found {
-		append(&held, ..holds[:])
+		append(&held, ..holds)
 	}
 	if len(held) == 0 {
 		return
@@ -777,7 +777,7 @@ check_crossing :: proc(state: ^Prov_Solve, event: Prov_Event) {
 	for _, index in next_live_loan(&it) {
 		loan := graph.loans[index]
 		root := graph.roots[int(loan.root)]
-		if root.kind != .Thread_Local || loan.what == WRITTEN_BACK_BORROW {
+		if root.kind != .Thread_Local || loan.written_back {
 			continue
 		}
 		// design.md "Minimum provenance precision": with the dependency merged,
