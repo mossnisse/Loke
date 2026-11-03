@@ -536,7 +536,7 @@ decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute =
 	}
 	if len(d.symbols) > 0 {
 		symbol := symbol_of(c, d.symbols[0])
-		return symbol != nil && symbol.public && !symbol.is_test
+		return symbol != nil && symbol.public && !symbol_is_test(symbol)
 	}
 	if d.kind == .Var || has_attribute(d.attributes, "test") || has_attribute(d.attributes, "private") {
 		return false

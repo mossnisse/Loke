@@ -29,6 +29,16 @@ STD_META :: "base:meta"
 STD_INTERFACES :: "base:interfaces"
 STD_MATH :: "core:math"
 
+// A bundled package already in the build, by its key, or nil.
+standard_package :: proc(c: ^Compiler, key: string) -> ^Package {
+	for &pkg in c.packages {
+		if pkg.key == key {
+			return &pkg
+		}
+	}
+	return nil
+}
+
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
 // contributed name is reported as the ordinary redeclaration it is.

@@ -1546,7 +1546,7 @@ emit_dyn_proc_value :: proc(e: ^Emitter, expr: Expr, from, as_type: Type_Id) -> 
 	data, code: string
 	if underlying_kind(e.c, from) == .Proc {
 		data = emit_expr_at(e, expr, from)
-		code = symbol_name(e, e.c.dyn_proc_adapters[dyn_abi_type(e.c, as_type)])
+		code = symbol_name(e, e.c.dyn_proc_adapters[carrier_abi_type(e.c, as_type)])
 	} else {
 		data = spill_iterable_at(e, expr, from)
 		dyn := underlying_info(e.c, as_type)

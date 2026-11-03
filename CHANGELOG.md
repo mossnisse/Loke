@@ -26,6 +26,11 @@ checklist.
   @(align=N) Generic :: struct($N: int) { ... }
   ```
 
+- `string` -> `string_view` no longer applies to a distinct type on either side, as the
+  [conversion list](design.md#implicit-type-conversions) says and as `distinct [3]int` -> `[]int`
+  already did not. `s: string_view = Name("abc")` with `Name :: distinct string` is now `L0310`.
+  Upgrade by writing the conversion: `string_view(string(name))`.
+
 - A `union` or `enum` is now written only as the value of a constant declaration, as a
   `struct` already was ([Unions](design.md#unions),
   [Enumerations](design.md#enumerations)). `f :: proc(k: enum { A, B })`, `field: union { a:
@@ -1259,6 +1264,17 @@ checklist.
 
 ### Fixed
 
+- A `@(test)` may use a local type or capture literal with a file-scope generic, a formatter or
+  a `dyn` view, and an ordinary build of the package, or of an importer of it, still compiles. It
+  failed with `L0405`. An ordinary build also leaves out those instances and their `static` and
+  `thread_local` locals ([Test procedures](design.md#test-procedures)).
+- `-migrate` refuses a record written inside another's attributes with `L0752` instead of crashing,
+  and no longer joins neighbouring words, as in `union@(zero=a) where`, when it takes attributes out.
+  An attribute list's trailing comma stays, and a comment between two attributes is refused.
+- Selecting a logging provider without `core:log` reports `L0660` at the selection, once, without a
+  second `L0659`.
+- `-dump-ast` labels a `for` statement's post statement `(post ...)`, so `for (f();;)` and
+  `for (;;f())` no longer print alike.
 - An untyped constant whose address is taken gets storage for each type it is used at, as
   [Materialization](design.md#materialization) says. With `X :: 300`, the same `double` global
   served every use, so a method on a `distinct int` read its bits as an integer. `&X` is now a `^T`

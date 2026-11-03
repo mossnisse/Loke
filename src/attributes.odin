@@ -317,6 +317,12 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 			)
 		}
 	}
+	// design.md "Test procedures": declared at file scope.
+	if member || scope == .Foreign {
+		if attribute, found := find_attribute(d.attributes, "test"); found {
+			errorf(k.c, attribute.span, "L0607", "`@(test)` cannot appear on %s", member ? "an `impl` member" : "a foreign declaration")
+		}
+	}
 	// A generic template never resolves, so its parameters and record are
 	// reached here rather than only at resolution.
 	if literal := decl_proc_literal(d); literal != nil {
@@ -458,8 +464,6 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 			}
 		case "require_results":
 			sym.require_results = true
-		case "test":
-			sym.is_test = sym.kind == .Proc
 		case "cpu_dispatch":
 			if text, ok := attribute_string_value(k.c, d.attributes, "cpu_dispatch"); ok && sym.kind == .Proc {
 				sym.dispatch_cpu, sym.dispatches = dispatch_cpu_level(text)

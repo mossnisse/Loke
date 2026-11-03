@@ -404,7 +404,7 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
 		span := symbol == nil ? no_span() : symbol.span
 		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
-	} else if symbol.is_test {
+	} else if symbol_is_test(symbol) {
 		// design.md "Test procedures": only a test build calls one.
 		errorf(c, symbol.span, "L0303", "`main` is a test procedure, so only a test build calls it; an executable needs an ordinary `main`")
 	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 ||
@@ -419,11 +419,15 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 		errorf(c, symbol.span, "L0303", "`main` is an ordinary `loke` procedure returning its status by value: `%s`", "main :: proc() -> i32 { ... }")
 	} else if c.error_count == errors_before {
 		c.entry_point = entry
-		// design.md "Program entry and exit": a failure is printed by its type.
-		if failure, fallible := entry_failure_type(c, info.result); fallible {
-			request_typeid(c, failure)
-			c.format_requested = true
-		}
+		request_entry_failure_printing(c, info.result)
+	}
+}
+
+// design.md "Program entry and exit": a failure is printed by its type.
+request_entry_failure_printing :: proc(c: ^Compiler, result: Type_Id) {
+	if failure, fallible := entry_failure_type(c, result); fallible {
+		request_typeid(c, failure)
+		c.format_requested = true
 	}
 }
 

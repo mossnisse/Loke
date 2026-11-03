@@ -167,13 +167,13 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 	}
 	if info.kind == .Slice {
 		// Only the read-only variant is defined; `[]mut T` shares its name.
-		if !type_is_supported(e.c, type) || slice_abi_type(e.c, type) != type {
+		if !type_is_supported(e.c, type) || carrier_abi_type(e.c, type) != type {
 			return
 		}
 	} else if info.kind == .Dyn {
 		// The same for a dyn view: one struct per interface application, named by
 		// the read-only variant, whatever capabilities the program spells.
-		if dyn_abi_type(e.c, type) != type {
+		if carrier_abi_type(e.c, type) != type {
 			return
 		}
 	} else if info.kind != .Struct {

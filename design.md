@@ -8462,8 +8462,9 @@ executable's entry.
 A test procedure is checked in every build, like any other declaration, so what
 it names must exist in every build. Only a [test build](#build-modes) emits its
 body, with the [static-duration](#storage-modifiers) locals and local procedures
-written in it, and only for tests of the root package: a package's test build
-does not run the tests of the packages it imports.
+written in it and the generic instances on a type declared in it, and only for
+tests of the root package: a package's test build does not run the tests of the
+packages it imports.
 
 A test build accepts any root package. Its executable entry runs tests in place
 of `main`, which, if the package has one, is an ordinary procedure. The

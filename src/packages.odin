@@ -143,6 +143,37 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 }
 
 // `written` is only for diagnostics; directory identity supplies the key.
+// What `pkg` declares by `name`. A package that is absent or not yet scoped
+// declares nothing.
+package_symbol_named :: proc(c: ^Compiler, pkg: ^Package, name: string) -> Symbol_Id {
+	if pkg == nil || pkg.scope == nil {
+		return INVALID_SYMBOL
+	}
+	return pkg.scope.names[intern_identifier(c, name)]
+}
+
+// A type `pkg` declares by `name`, directly or as an alias such as
+// `Writer :: dyn mut Sink` — a constant whose value is a type.
+package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id, bool) {
+	symbol_id := package_symbol_named(k.c, pkg, name)
+	symbol := symbol_of(k.c, symbol_id)
+	if symbol != nil && symbol.kind == .Type {
+		resolve_symbol_signature_in_place(k, symbol_id)
+		symbol = symbol_of(k.c, symbol_id)
+		return symbol.type, symbol.type != INVALID_TYPE
+	}
+	if symbol != nil && symbol.kind == .Const {
+		if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
+			check_symbol_decl_in_place(k, symbol_id)
+			symbol = symbol_of(k.c, symbol_id)
+		}
+		if const_names_type(k.c, symbol.const_value, symbol.type) {
+			return symbol.const_value.type_value, true
+		}
+	}
+	return INVALID_TYPE, false
+}
+
 load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -> (Package_Id, bool) {
 	canonical := canonical_dir(dir)
 	if existing, found := c.package_by_dir[dir_key(canonical)]; found {

@@ -8,13 +8,8 @@ ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	if identifier_text(k.c, name) != "format" || !type_is_printable(k.c, type) || type_is_untyped(k.c, type) {
 		return
 	}
-	writer, options: Type_Id
-	for pkg in k.c.packages {
-		if pkg.key != STD_FMT { continue }
-		writer, _ = package_type_named(k, package_of(k.c, pkg.id), "Writer")
-		options, _ = package_type_named(k, package_of(k.c, pkg.id), "Options")
-		break
-	}
+	writer, _ := package_type_named(k, standard_package(k.c, STD_FMT), "Writer")
+	options, _ := package_type_named(k, standard_package(k.c, STD_FMT), "Options")
 	if writer == INVALID_TYPE || options == INVALID_TYPE { return }
 	k.c.runtime_types["Writer"], k.c.runtime_types["Options"] = writer, options
 	// A public type's private `format` meets no slot (design.md "Interface
@@ -163,20 +158,17 @@ discover_formatters :: proc(c: ^Compiler) {
 		type := Type_Id(index)
 		check_formatter(c, type, writer, options, &reported)
 	}
-	k := Checker{c = c}
-	for pkg in c.packages {
-		if pkg.key != STD_FMT { continue }
-		k.pkg, k.lookup_pkg, k.scope = pkg.id, pkg.id, pkg.scope
-		view, exists := package_type_named(&k, package_of(c, pkg.id), "Format_View")
-		if !exists { return }
-		c.runtime_types["Format_View"] = view
-		dyn := underlying_info(c, view)
-		iface := interface_info_for(&k, dyn.dyn_interface)
-		for type in c.typeid_order {
-			if !type_is_printable(c, type) { continue }
-			c.formatters[type] = request_witness(&k, iface, type, nil, no_span())
-		}
-		break
+	pkg := standard_package(c, STD_FMT)
+	if pkg == nil { return }
+	k := Checker{c = c, pkg = pkg.id, lookup_pkg = pkg.id, scope = pkg.scope}
+	view, exists := package_type_named(&k, pkg, "Format_View")
+	if !exists { return }
+	c.runtime_types["Format_View"] = view
+	dyn := underlying_info(c, view)
+	iface := interface_info_for(&k, dyn.dyn_interface)
+	for type in c.typeid_order {
+		if !type_is_printable(c, type) { continue }
+		c.formatters[type] = request_witness(&k, iface, type, nil, no_span())
 	}
 }
 
@@ -270,29 +262,4 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 @(private = "file")
 local_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
 	return package_type_named(k, package_of(k.c, k.pkg), name)
-}
-
-// A type `pkg` declares by `name`, directly or as an alias such as
-// `Writer :: dyn mut Sink` — a constant whose value is a type.
-package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id, bool) {
-	if pkg == nil || pkg.scope == nil {
-		return INVALID_TYPE, false
-	}
-	symbol_id := pkg.scope.names[intern_identifier(k.c, name)]
-	symbol := symbol_of(k.c, symbol_id)
-	if symbol != nil && symbol.kind == .Type {
-		resolve_symbol_signature_in_place(k, symbol_id)
-		symbol = symbol_of(k.c, symbol_id)
-		return symbol.type, symbol.type != INVALID_TYPE
-	}
-	if symbol != nil && symbol.kind == .Const {
-		if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
-			check_symbol_decl_in_place(k, symbol_id)
-			symbol = symbol_of(k.c, symbol_id)
-		}
-		if const_names_type(k.c, symbol.const_value, symbol.type) {
-			return symbol.const_value.type_value, true
-		}
-	}
-	return INVALID_TYPE, false
 }

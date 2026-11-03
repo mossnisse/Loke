@@ -3511,8 +3511,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	}
 	// A `string` borrows as a `string_view` with no validation: it is already
 	// valid UTF-8.
-	if (underlying_kind(k.c, target) == .String_View && underlying_kind(k.c, base.type) == .String) ||
-	   array_views_as(k.c, base.type, target) || box_views_as(k.c, base.type, target) {
+	if type_views_as(k.c, base.type, target) {
 		// A named constant array is viewed in its read-only storage.
 		if base.is_const && underlying_kind(k.c, base.type) == .Array {
 			request_materialization(k, e)
@@ -3949,11 +3948,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		}
 		return false
 	}
-	if underlying_kind(c, from) == .String &&
-	   underlying_kind(c, to) == .String_View {
-		return true
-	}
-	if array_views_as(c, from, to) || box_views_as(c, from, to) {
+	if type_views_as(c, from, to) {
 		return true
 	}
 	if type_is_untyped(c, from) {

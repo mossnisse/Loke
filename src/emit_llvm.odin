@@ -302,13 +302,17 @@ backend_fail :: proc(e: ^Emitter, message: string) {
 	errorf(e.c, no_span(), "L0405", "internal backend contract violation: %s", message)
 }
 
-// Every symbol is named before any body, so an unnamed one is a contract break;
-// "null" only keeps the text well formed.
+// Every symbol is named before any body, so an unnamed one is a contract break,
+// unless it was omitted with its test: a witness or a format thunk on a test's
+// local type is still written, for a value no surviving code can make. "null"
+// keeps the text well formed.
 symbol_name :: proc(e: ^Emitter, id: Symbol_Id) -> string {
 	if name, named := e.names[id]; named {
 		return name
 	}
-	backend_fail(e, "a resolved operation has no emitted name")
+	if !omitted_with_test(e.c, id) {
+		backend_fail(e, "a resolved operation has no emitted name")
+	}
 	return "null"
 }
 
@@ -535,8 +539,7 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 					continue
 				}
 				// design.md "Test procedures": only a test build calls one.
-				if literal := decl_proc_literal(v); literal != nil &&
-				   test_procedure_emitted(e.c, symbol_of(e.c, v.symbols[0])) {
+				if literal := decl_proc_literal(v); literal != nil && !omitted_with_test(e.c, v.symbols[0]) {
 					emit_proc(e, v.symbols[0], literal)
 				}
 			case ^Item_Impl:

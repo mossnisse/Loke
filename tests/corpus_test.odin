@@ -1379,7 +1379,8 @@ migrating_moves_a_records_attributes_to_its_declaration :: proc(t: ^testing.T) {
 	cases := []Case {
 		{"S :: struct @(packed) { a: u8 }", "@(packed) S :: struct { a: u8 }"},
 		{"@(public) S :: struct @(packed, align=8) { a: u8 }", "@(public, packed, align=8) S :: struct { a: u8 }"},
-		{"@(public,) S :: struct @(packed,) { a: u8 }", "@(public, packed) S :: struct { a: u8 }"},
+		{"@(public,) S :: struct @(packed,) { a: u8 }", "@(public, packed,) S :: struct { a: u8 }"},
+		{"U :: union@(zero=none)where true { none, some: int }", "@(zero=none) U :: union where true { none, some: int }"},
 		{"S :: move_only struct { a: u8 }", "@(move_only) S :: struct { a: u8 }"},
 		{"S :: move_only struct @(thread_affine) @(wakes_on_drop) { a: u8 }", "@(move_only, thread_affine, wakes_on_drop) S :: struct { a: u8 }"},
 		{"@(public) @(require_results) S :: move_only struct @(thread_affine) { a: u8 }", "@(public) @(require_results, move_only, thread_affine) S :: struct { a: u8 }"},
@@ -1427,6 +1428,8 @@ migrating_refuses_what_it_cannot_move :: proc(t: ^testing.T) {
 		"f :: proc(y: union @(zero=a) { a, b: int }) {}",
 		"S :: struct @(packed) /* between */ @(align=8) { a: u8 }",
 		"S :: struct @(packed // why\n) { a: u8 }",
+		"S :: struct @(packed, /* between */ align=8) { a: u8 }",
+		"S :: struct @(x = proc() { T :: struct @(packed) { a: u8 } }) { b: u8 }",
 	}
 	dir := fmt.tprintf("%s/migrate_refused", TMP)
 	remove_tree(dir)

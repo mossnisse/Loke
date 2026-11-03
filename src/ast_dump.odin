@@ -26,14 +26,9 @@ dump_attributes :: proc(b: ^strings.Builder, attributes: []Attribute) {
 	}
 	fmt.sbprint(b, " @[")
 	for attribute, i in attributes {
-		if i > 0 {
-			fmt.sbprint(b, ",")
-		}
+		fmt.sbprint(b, i > 0 ? "," : "")
 		for name, j in attribute.path {
-			if j > 0 {
-				fmt.sbprint(b, ".")
-			}
-			fmt.sbprint(b, name.text)
+			fmt.sbprint(b, j > 0 ? "." : "", name.text, sep = "")
 		}
 		if attribute.value != nil {
 			fmt.sbprint(b, "=")
@@ -44,19 +39,88 @@ dump_attributes :: proc(b: ^strings.Builder, attributes: []Attribute) {
 }
 
 @(private = "file")
+LITERAL_TAG := [Literal_Kind]string {
+	.Int        = "int",
+	.Float      = "float",
+	.String     = "string",
+	.Raw_String = "raw_string",
+	.Rune       = "rune",
+}
+
+@(private = "file")
+DURATION_TAG := [Duration]string {
+	.None         = "",
+	.Static       = " static",
+	.Thread_Local = " thread_local",
+}
+
+@(private = "file")
+CAPTURE_TAG := [Capture_Mode]string {
+	.Copy       = "copy",
+	.Borrow     = "borrow",
+	.Borrow_Mut = "borrow-mut",
+	.Move       = "move",
+}
+
+@(private = "file")
+PARAM_TAG := [Param_Mode]string {
+	.Value    = "",
+	.Borrow   = " borrow",
+	.Inout    = " inout",
+	.Move     = " move",
+	.Variadic = " ..",
+}
+
+@(private = "file")
+ARGUMENT_TAG := [Argument_Mode]string {
+	.Value  = "",
+	.Inout  = " inout",
+	.Spread = " ..",
+}
+
+@(private = "file")
 dump_indent :: proc(b: ^strings.Builder, depth: int) {
 	for _ in 0 ..< depth {
 		fmt.sbprint(b, "  ")
 	}
 }
 
+// How a node on lines of its own opens, up to its first child.
+@(private = "file")
+dump_head :: proc(b: ^strings.Builder, head: string, attributes: []Attribute, depth: int) {
+	dump_indent(b, depth)
+	fmt.sbprint(b, head)
+	dump_attributes(b, attributes)
+}
+
+@(private = "file")
+dump_close :: proc(b: ^strings.Builder, depth: int) {
+	dump_indent(b, depth)
+	fmt.sbprintln(b, ")")
+}
+
+// `head`, one child, and the closing parenthesis, inline.
+@(private = "file")
+dump_wrapped :: proc(b: ^strings.Builder, head: string, expr: Expr, depth: int) {
+	fmt.sbprint(b, head)
+	dump_child(b, expr, depth)
+	fmt.sbprint(b, ")")
+}
+
+// Each item on a line of its own, then the node's close.
+@(private = "file")
+dump_members :: proc(b: ^strings.Builder, items: []Item, depth: int) {
+	for item in items {
+		dump_item(b, item, depth + 1)
+	}
+	dump_close(b, depth)
+}
+
 @(private = "file")
 dump_names :: proc(b: ^strings.Builder, names: []Name) {
 	fmt.sbprint(b, "[")
 	for name, i in names {
-		if i > 0 {
-			fmt.sbprint(b, ",")
-		}
+		fmt.sbprint(b, i > 0 ? "," : "")
 		fmt.sbprintf(b, "%q", name.text)
 	}
 	fmt.sbprint(b, "]")
@@ -73,56 +137,36 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 		fmt.sbprintln(b, "(error-item)")
 
 	case ^Item_Import:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(import")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(import", node.attributes, depth)
 		if node.alias.text != "" {
 			fmt.sbprintf(b, " alias=%q", node.alias.text)
 		}
 		fmt.sbprintfln(b, " %s)", node.path)
 
 	case ^Item_Foreign_Import:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(foreign-import")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(foreign-import", node.attributes, depth)
 		fmt.sbprintfln(b, " %q %q)", node.name.text, node.path)
 
 	case ^Item_Foreign_Block:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(foreign")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(foreign", node.attributes, depth)
 		fmt.sbprintfln(b, " %q", node.library.text)
-		for member in node.members {
-			dump_item(b, member, depth + 1)
-		}
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_members(b, node.members, depth)
 
 	case ^Item_Impl:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(impl")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(impl", node.attributes, depth)
 		dump_child(b, node.type, depth)
 		fmt.sbprintln(b)
-		for member in node.members {
-			dump_item(b, member, depth + 1)
-		}
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_members(b, node.members, depth)
 
 	case ^Item_Delegate:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(delegate")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(delegate", node.attributes, depth)
 		for symbol in node.symbols {
 			fmt.sbprintf(b, " %q", symbol)
 		}
 		fmt.sbprintln(b, ")")
 
 	case ^Item_When:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(when")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(when", node.attributes, depth)
 		fmt.sbprintln(b)
 		dump_labeled(b, "cond", node.cond, depth + 1)
 		dump_item(b, node.then, depth + 1)
@@ -130,27 +174,17 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 			dump_indent(b, depth + 1)
 			fmt.sbprintln(b, "(else")
 			dump_item(b, node.otherwise, depth + 2)
-			dump_indent(b, depth + 1)
-			fmt.sbprintln(b, ")")
+			dump_close(b, depth + 1)
 		}
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Item_Block:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(items")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(items", node.attributes, depth)
 		fmt.sbprintln(b)
-		for inner in node.items {
-			dump_item(b, inner, depth + 1)
-		}
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_members(b, node.items, depth)
 
 	case ^Item_Static_Assert:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(static_assert")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(static_assert", node.attributes, depth)
 		dump_child(b, node.call, depth)
 		fmt.sbprintln(b, ")")
 	}
@@ -162,13 +196,7 @@ dump_decl :: proc(b: ^strings.Builder, d: ^Decl, depth: int) {
 	fmt.sbprintf(b, "(%s names=", d.kind == .Const ? "const" : "var")
 	dump_names(b, d.names)
 	dump_attributes(b, d.attributes)
-	switch d.duration {
-	case .None:
-	case .Static:
-		fmt.sbprint(b, " static")
-	case .Thread_Local:
-		fmt.sbprint(b, " thread_local")
-	}
+	fmt.sbprint(b, DURATION_TAG[d.duration])
 	if d.declared_type != nil {
 		fmt.sbprint(b, " type=")
 		dump_expr(b, d.declared_type, depth)
@@ -192,8 +220,7 @@ dump_decl :: proc(b: ^strings.Builder, d: ^Decl, depth: int) {
 		}
 		fmt.sbprintln(b)
 	}
-	dump_indent(b, depth)
-	fmt.sbprintln(b, ")")
+	dump_close(b, depth)
 }
 
 @(private = "file")
@@ -203,15 +230,12 @@ dump_block :: proc(b: ^strings.Builder, block: ^Block, depth: int) {
 		fmt.sbprintln(b, "(no-block)")
 		return
 	}
-	dump_indent(b, depth)
-	fmt.sbprint(b, "(block")
-	dump_attributes(b, block.attributes)
+	dump_head(b, "(block", block.attributes, depth)
 	fmt.sbprintln(b)
 	for stmt in block.stmts {
 		dump_stmt(b, stmt, depth + 1)
 	}
-	dump_indent(b, depth)
-	fmt.sbprintln(b, ")")
+	dump_close(b, depth)
 }
 
 @(private = "file")
@@ -240,8 +264,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		if len(node.exprs) == 1 && len(node.attributes) == 0 {
 			dump_expr(b, node.exprs[0], depth)
 		} else {
-			fmt.sbprint(b, "(exprs")
-			dump_attributes(b, node.attributes)
+			dump_head(b, "(exprs", node.attributes, 0)
 			for expr in node.exprs {
 				dump_child(b, expr, depth)
 			}
@@ -264,9 +287,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		fmt.sbprintln(b, "))")
 
 	case ^Stmt_If:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(if")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(if", node.attributes, depth)
 		fmt.sbprintln(b)
 		if node.init != nil {
 			dump_stmt(b, node.init, depth + 1)
@@ -274,24 +295,18 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		dump_labeled(b, "cond", node.cond, depth + 1)
 		dump_block(b, node.then, depth + 1)
 		dump_else(b, node.otherwise, depth + 1)
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_When:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(when")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(when", node.attributes, depth)
 		fmt.sbprintln(b)
 		dump_labeled(b, "cond", node.cond, depth + 1)
 		dump_block(b, node.then, depth + 1)
 		dump_else(b, node.otherwise, depth + 1)
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_For:
-		dump_indent(b, depth)
-		fmt.sbprint(b, node.condition_only ? "(for cond-only" : "(for")
-		dump_attributes(b, node.attributes)
+		dump_head(b, node.condition_only ? "(for cond-only" : "(for", node.attributes, depth)
 		fmt.sbprintln(b)
 		if node.init != nil {
 			dump_stmt(b, node.init, depth + 1)
@@ -299,12 +314,15 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		if node.cond != nil {
 			dump_labeled(b, "cond", node.cond, depth + 1)
 		}
+		// Labelled, or `for (f();;)` and `for (;;f())` would print alike.
 		if node.post != nil {
-			dump_stmt(b, node.post, depth + 1)
+			dump_indent(b, depth + 1)
+			fmt.sbprintln(b, "(post")
+			dump_stmt(b, node.post, depth + 2)
+			dump_close(b, depth + 1)
 		}
 		dump_block(b, node.body, depth + 1)
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_Foreach:
 		dump_indent(b, depth)
@@ -315,88 +333,50 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		fmt.sbprintln(b)
 		dump_labeled(b, "in", node.iterable, depth + 1)
 		dump_block(b, node.body, depth + 1)
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_Switch:
-		dump_indent(b, depth)
-		fmt.sbprint(b, node.kind == .Value ? "(switch value" : "(switch pattern")
-		dump_attributes(b, node.attributes)
+		// Always a value switch: the pattern kind and a case's bindings are the
+		// checker's, and every dump is of a tree straight from `parse`.
+		dump_head(b, "(switch value", node.attributes, depth)
 		fmt.sbprintln(b)
 		if node.init != nil {
 			dump_stmt(b, node.init, depth + 1)
 		}
 		dump_labeled(b, "subject", node.subject, depth + 1)
 		for entry in node.cases {
-			dump_indent(b, depth + 1)
-			fmt.sbprint(b, "(case")
-			for value in entry.values {
-				dump_child(b, value, depth + 1)
-			}
-			if entry.binding.text != "" {
-				fmt.sbprintf(b, " (bind %s%q)", entry.binding_ref ? "&mut " : "", entry.binding.text)
-			}
-			for field in entry.fields {
-				fmt.sbprintf(b, " (bind %s%q)", field.is_ref ? "&mut " : "", field.name.text)
-			}
-			fmt.sbprintln(b)
-			for inner in entry.stmts {
-				dump_stmt(b, inner, depth + 2)
-			}
-			dump_indent(b, depth + 1)
-			fmt.sbprintln(b, ")")
+			dump_switch_case(b, entry, depth + 1)
 		}
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_Defer:
-		dump_indent(b, depth)
-		fmt.sbprint(b, node.on_failure ? "(errdefer" : "(defer")
-		dump_attributes(b, node.attributes)
+		dump_head(b, node.on_failure ? "(errdefer" : "(defer", node.attributes, depth)
 		fmt.sbprintln(b)
 		if node.stmt != nil {
 			dump_stmt(b, node.stmt, depth + 1)
 		}
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_Return:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(return")
-		dump_attributes(b, node.attributes)
-		if value := node.value; value != nil {
-			if value.is_inout {
-				fmt.sbprint(b, " (inout")
-				dump_child(b, value.expr, depth)
-				fmt.sbprint(b, ")")
-			} else {
-				dump_child(b, value.expr, depth)
-			}
-		}
+		dump_head(b, "(return", node.attributes, depth)
+		dump_return_value(b, node.value, depth)
 		fmt.sbprintln(b, ")")
 
 	case ^Stmt_Branch:
-		dump_indent(b, depth)
-		fmt.sbprint(b, node.kind == .Break ? "(break" : "(continue")
-		dump_attributes(b, node.attributes)
+		dump_head(b, node.kind == .Break ? "(break" : "(continue", node.attributes, depth)
 		fmt.sbprintln(b, ")")
 
 	case ^Stmt_Parallel:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(parallel")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(parallel", node.attributes, depth)
 		if node.executor != nil {
 			dump_child(b, node.executor, depth)
 		}
 		fmt.sbprintln(b)
 		dump_block(b, node.body, depth + 1)
-		dump_indent(b, depth)
-		fmt.sbprintln(b, ")")
+		dump_close(b, depth)
 
 	case ^Stmt_Spawn:
-		dump_indent(b, depth)
-		fmt.sbprint(b, "(spawn")
-		dump_attributes(b, node.attributes)
+		dump_head(b, "(spawn", node.attributes, depth)
 		if node.result != nil {
 			fmt.sbprintf(b, " result=%q", node.result.name)
 		}
@@ -416,25 +396,34 @@ dump_else :: proc(b: ^strings.Builder, otherwise: Stmt, depth: int) {
 	dump_indent(b, depth)
 	fmt.sbprintln(b, "(else")
 	dump_stmt(b, otherwise, depth + 1)
-	dump_indent(b, depth)
-	fmt.sbprintln(b, ")")
+	dump_close(b, depth)
 }
 
 @(private = "file")
-literal_tag :: proc(kind: Literal_Kind) -> string {
-	switch kind {
-	case .Int:
-		return "int"
-	case .Float:
-		return "float"
-	case .String:
-		return "string"
-	case .Raw_String:
-		return "raw_string"
-	case .Rune:
-		return "rune"
+dump_switch_case :: proc(b: ^strings.Builder, entry: Switch_Case, depth: int) {
+	dump_indent(b, depth)
+	fmt.sbprint(b, "(case")
+	for value in entry.values {
+		dump_child(b, value, depth)
 	}
-	return "literal"
+	fmt.sbprintln(b)
+	for inner in entry.stmts {
+		dump_stmt(b, inner, depth + 1)
+	}
+	dump_close(b, depth)
+}
+
+@(private = "file")
+dump_return_value :: proc(b: ^strings.Builder, value: ^Return_Value, depth: int) {
+	if value == nil {
+		return
+	}
+	if value.is_inout {
+		fmt.sbprint(b, " ")
+		dump_wrapped(b, "(inout", value.expr, depth)
+	} else {
+		dump_child(b, value.expr, depth)
+	}
 }
 
 // The exit of an `or_else`, inline: `(break)`, `(continue)`, `(return x)`.
@@ -445,15 +434,7 @@ dump_or_else_exit :: proc(b: ^strings.Builder, exit: Stmt, depth: int) {
 		fmt.sbprint(b, node.kind == .Break ? " (break)" : " (continue)")
 	case ^Stmt_Return:
 		fmt.sbprint(b, " (return")
-		if value := node.value; value != nil {
-			if value.is_inout {
-				fmt.sbprint(b, " (inout")
-				dump_child(b, value.expr, depth)
-				fmt.sbprint(b, ")")
-			} else {
-				dump_child(b, value.expr, depth)
-			}
-		}
+		dump_return_value(b, node.value, depth)
 		fmt.sbprint(b, ")")
 	}
 }
@@ -476,7 +457,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, "(error-expr)")
 
 	case ^Expr_Literal:
-		fmt.sbprintf(b, "(%s %q)", literal_tag(node.kind), node.text)
+		fmt.sbprintf(b, "(%s %q)", LITERAL_TAG[node.kind], node.text)
 
 	case ^Expr_Ident:
 		fmt.sbprintf(b, "(ident %q)", node.name)
@@ -555,28 +536,11 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Move:
-		fmt.sbprint(b, "(move")
-		dump_child(b, node.value, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, "(move", node.value, depth)
 
 	case ^Expr_Composite:
 		if node.capture != nil {
-			// `(capture (copy limit limit) (borrow cfg self.config) (proc ...))`
-			fmt.sbprint(b, "(capture")
-			for entry in node.capture.entries {
-				mode := "copy"
-				switch entry.mode {
-				case .Copy:
-				case .Borrow:     mode = "borrow"
-				case .Borrow_Mut: mode = "borrow-mut"
-				case .Move:       mode = "move"
-				}
-				fmt.sbprintf(b, " (%s %s", mode, entry.name.text)
-				dump_child(b, entry.value, depth)
-				fmt.sbprint(b, ")")
-			}
-			dump_child(b, node.capture.procedure, depth)
-			fmt.sbprint(b, ")")
+			dump_capture(b, node.capture, depth)
 			return
 		}
 		fmt.sbprint(b, "(composite")
@@ -621,24 +585,16 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Type_Pointer:
-		fmt.sbprint(b, node.mutable ? "(ptr mut" : "(ptr")
-		dump_child(b, node.elem, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, node.mutable ? "(ptr mut" : "(ptr", node.elem, depth)
 
 	case ^Type_C_Pointer:
-		fmt.sbprint(b, "(c-ptr")
-		dump_child(b, node.elem, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, "(c-ptr", node.elem, depth)
 
 	case ^Type_Slice:
-		fmt.sbprint(b, node.mutable ? "(slice mut" : "(slice")
-		dump_child(b, node.elem, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, node.mutable ? "(slice mut" : "(slice", node.elem, depth)
 
 	case ^Type_Dynamic_Array:
-		fmt.sbprint(b, "(dyn-array")
-		dump_child(b, node.elem, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, "(dyn-array", node.elem, depth)
 
 	case ^Type_Array:
 		fmt.sbprint(b, "(array")
@@ -657,14 +613,10 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Type_Distinct:
-		fmt.sbprint(b, "(distinct")
-		dump_child(b, node.elem, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, "(distinct", node.elem, depth)
 
 	case ^Type_Dyn:
-		fmt.sbprint(b, node.mutable ? "(dyn mut" : "(dyn")
-		dump_child(b, node.interface_expr, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, node.mutable ? "(dyn mut" : "(dyn", node.interface_expr, depth)
 
 	case ^Type_Type:
 		fmt.sbprint(b, "(type)")
@@ -689,45 +641,18 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, node.kind == .Union ? "(union" : "(struct")
 		dump_generic_params(b, node.generic_params, depth)
 		dump_where_clauses(b, node.where_clauses, depth)
-		for field in node.fields {
-			fmt.sbprint(b, " (field")
-			dump_attributes(b, field.attributes)
-			if field.is_using {
-				fmt.sbprint(b, " using")
-			}
-			fmt.sbprint(b, " ")
-			dump_names(b, field.names)
-			dump_child(b, field.type, depth)
-			fmt.sbprint(b, ")")
-		}
-		for variant in node.variants {
-			fmt.sbprintf(b, " (variant %q", variant.name.text)
-			if variant.type != nil {
-				dump_child(b, variant.type, depth)
-			}
-			fmt.sbprint(b, ")")
-		}
+		dump_fields(b, node.fields, depth)
+		dump_variants(b, node.variants, depth)
 		fmt.sbprint(b, ")")
 
 	case ^Type_Anon_Record:
 		fmt.sbprint(b, "(record")
-		for field in node.fields {
-			fmt.sbprint(b, " (field ")
-			dump_names(b, field.names)
-			dump_child(b, field.type, depth)
-			fmt.sbprint(b, ")")
-		}
+		dump_fields(b, node.fields, depth)
 		fmt.sbprint(b, ")")
 
 	case ^Type_Anon_Union:
 		fmt.sbprint(b, "(anonymous-union")
-		for variant in node.variants {
-			fmt.sbprintf(b, " (variant %q", variant.name.text)
-			if variant.type != nil {
-				dump_child(b, variant.type, depth)
-			}
-			fmt.sbprint(b, ")")
-		}
+		dump_variants(b, node.variants, depth)
 		fmt.sbprint(b, ")")
 
 	case ^Type_Enum:
@@ -755,12 +680,46 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	}
 }
 
+// `(capture (copy limit limit) (borrow cfg self.config) (proc ...))`
+@(private = "file")
+dump_capture :: proc(b: ^strings.Builder, capture: ^Capture_Literal, depth: int) {
+	fmt.sbprint(b, "(capture")
+	for entry in capture.entries {
+		fmt.sbprintf(b, " (%s %s", CAPTURE_TAG[entry.mode], entry.name.text)
+		dump_child(b, entry.value, depth)
+		fmt.sbprint(b, ")")
+	}
+	dump_child(b, capture.procedure, depth)
+	fmt.sbprint(b, ")")
+}
+
+@(private = "file")
+dump_fields :: proc(b: ^strings.Builder, fields: []Field, depth: int) {
+	for field in fields {
+		fmt.sbprint(b, " (field")
+		dump_attributes(b, field.attributes)
+		fmt.sbprint(b, field.is_using ? " using " : " ")
+		dump_names(b, field.names)
+		dump_child(b, field.type, depth)
+		fmt.sbprint(b, ")")
+	}
+}
+
+@(private = "file")
+dump_variants :: proc(b: ^strings.Builder, variants: []Variant, depth: int) {
+	for variant in variants {
+		fmt.sbprintf(b, " (variant %q", variant.name.text)
+		if variant.type != nil {
+			dump_child(b, variant.type, depth)
+		}
+		fmt.sbprint(b, ")")
+	}
+}
+
 @(private = "file")
 dump_where_clauses :: proc(b: ^strings.Builder, clauses: []Expr, depth: int) {
 	for clause in clauses {
-		fmt.sbprint(b, " (where")
-		dump_child(b, clause, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, " (where", clause, depth)
 	}
 }
 
@@ -778,34 +737,15 @@ dump_generic_params :: proc(b: ^strings.Builder, params: []Generic_Param, depth:
 dump_parameter :: proc(b: ^strings.Builder, param: Parameter, depth: int) {
 	fmt.sbprint(b, " (param")
 	dump_attributes(b, param.attributes)
-	switch param.mode {
-	case .Value:
-	case .Borrow:
-		fmt.sbprint(b, " borrow")
-	case .Inout:
-		fmt.sbprint(b, " inout")
-	case .Move:
-		fmt.sbprint(b, " move")
-	case .Variadic:
-		fmt.sbprint(b, " ..")
-	}
-	fmt.sbprint(b, " [")
+	fmt.sbprint(b, PARAM_TAG[param.mode], " [", sep = "")
 	for entry, i in param.names {
-		if i > 0 {
-			fmt.sbprint(b, ",")
-		}
-		if entry.is_poly {
-			fmt.sbprintf(b, "\"$%s\"", entry.name.text)
-		} else {
-			fmt.sbprintf(b, "%q", entry.name.text)
-		}
+		fmt.sbprint(b, i > 0 ? "," : "")
+		fmt.sbprintf(b, entry.is_poly ? "\"$%s\"" : "%q", entry.name.text)
 	}
 	fmt.sbprint(b, "]")
 	dump_child(b, param.type, depth)
 	if param.default != nil {
-		fmt.sbprint(b, " (default")
-		dump_child(b, param.default, depth)
-		fmt.sbprint(b, ")")
+		dump_wrapped(b, " (default", param.default, depth)
 	}
 	fmt.sbprint(b, ")")
 }
@@ -866,24 +806,15 @@ dump_argument :: proc(b: ^strings.Builder, arg: Argument, depth: int) {
 	if named {
 		fmt.sbprintf(b, " %q", arg.name.text)
 	}
-	switch arg.mode {
-	case .Value:
-	case .Inout:
-		fmt.sbprint(b, " inout")
-	case .Spread:
-		fmt.sbprint(b, " ..")
-	}
+	fmt.sbprint(b, ARGUMENT_TAG[arg.mode])
 	dump_child(b, arg.value, depth)
 	fmt.sbprint(b, ")")
 }
 
-// A group prints as a nested list.
 @(private = "file")
 dump_foreach_bindings :: proc(b: ^strings.Builder, bindings: []Foreach_Binding) {
 	for binding, i in bindings {
-		if i > 0 {
-			fmt.sbprint(b, ",")
-		}
+		fmt.sbprint(b, i > 0 ? "," : "")
 		if len(binding.group) > 0 {
 			fmt.sbprint(b, "[")
 			dump_foreach_bindings(b, binding.group)

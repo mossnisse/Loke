@@ -793,7 +793,6 @@ Symbol :: struct {
 	require_results:    bool,
 	// design.md "Test procedures": `@(test)`, which only a test build calls, so
 	// no code may name it.
-	is_test:            bool,
 	// design.md "@(cpu_dispatch=<string>)": a call runs a copy compiled for
 	// `dispatch_cpu` where the processor has it, when the build's level is lower.
 	dispatches:         bool,
@@ -1671,10 +1670,20 @@ pointer_to :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 // Mutability is static and leaves the ABI unchanged, so weakening is a no-op at
 // the value level rather than a copy through a second shape.
 carrier_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	if underlying_kind(c, id) == .Dyn {
-		return dyn_abi_type(c, id)
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil || !info.mutable {
+		return under
 	}
-	return slice_abi_type(c, id)
+	#partial switch info.kind {
+	case .Slice:
+		readonly, found := lookup_type(c, Type_Key{kind = .Slice, element = info.element, mutable = false})
+		assert(found, "a `[]mut T` was interned without the read-only variant it shares an ABI with")
+		return readonly
+	case .Dyn:
+		return c.dyn_types[dyn_key(c, info.dyn_interface, info.dyn_args, false)]
+	}
+	return under
 }
 
 // A mutable carrier implicitly weakens to a read-only one of the same shape; a

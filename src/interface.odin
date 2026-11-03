@@ -781,12 +781,8 @@ symbol_is_callable :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 
 // `interfaces.Callable`, which `base:runtime` imports, so it is always loaded.
 callable_interface :: proc(k: ^Checker) -> ^Interface_Info {
-	for pkg in k.c.packages {
-		if pkg.key == STD_INTERFACES && pkg.scope != nil {
-			return interface_info_for(k, lookup_symbol(pkg.scope, intern_identifier(k.c, "Callable")))
-		}
-	}
-	return nil
+	symbol := package_symbol_named(k.c, standard_package(k.c, STD_INTERFACES), "Callable")
+	return symbol == INVALID_SYMBOL ? nil : interface_info_for(k, symbol)
 }
 
 // standard-library.md "Standard interface catalogue": `Callable(Self, Signature)` holds

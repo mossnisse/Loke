@@ -1221,18 +1221,21 @@ reject_earlier_spelling :: proc(p: ^Parser, span: Span, attributes, keyword: str
 	add_notef(p.c, no_span(), "`lokec -migrate` rewrites this")
 }
 
-// The entry for `record`, added at its first earlier spelling.
+// The entry for `record`, added at its first earlier spelling. Keyed on the
+// source offset of its `struct` or `union`: a probe the parser rolled back wrote
+// the same record again, and the last parse of it is the one that counts.
 @(private = "file")
 earlier_spelling_of :: proc(p: ^Parser, record: ^Type_Record) -> ^Earlier_Spelling {
 	if p.earlier_spellings == nil {
 		p.earlier_spellings = make([dynamic]Earlier_Spelling, 0, 2, p.allocator)
 	}
 	for &spelling in p.earlier_spellings {
-		if spelling.record == record {
+		if spelling.offset == record.span.lo {
+			spelling.record = record
 			return &spelling
 		}
 	}
-	append(&p.earlier_spellings, Earlier_Spelling{record = record})
+	append(&p.earlier_spellings, Earlier_Spelling{offset = record.span.lo, record = record})
 	return &p.earlier_spellings[len(p.earlier_spellings) - 1]
 }
 
@@ -2996,8 +2999,8 @@ parse_type :: proc(p: ^Parser) -> Expr {
 			copy(attributes[1:], value.attributes)
 			value.attributes = attributes
 			value.move_only = true
-			value.span.lo = keyword.lo
 			earlier_spelling_of(p, value).keyword = span_of(p, keyword)
+			value.span.lo = keyword.lo
 			reject_earlier_spelling(p, span_of(p, keyword), "@(move_only)", "struct")
 		}
 		return record

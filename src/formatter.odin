@@ -13,10 +13,15 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 
-// Formats every `.loke` file of `input`, a file or a directory's direct
-// files, in place; with `check`, only lists the ones that would change. The
-// exit status is 1 when a file does not parse or, with `check`, would change.
+// Formats every `.loke` file of `input`.
 format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
+	return rewrite_files(c, input, check, format_source)
+}
+
+// Rewrites every `.loke` file of `input`, a file or a directory's direct files,
+// in place; with `check`, only lists the ones that would change. The exit status
+// is 1 when a file does not parse or, with `check`, would change.
+rewrite_files :: proc(c: ^Compiler, input: string, check: bool, rewrite: proc(c: ^Compiler, file: u32) -> (string, bool)) -> int {
 	status := 0
 	for path in input_sources(c, input) {
 		file, loaded := load_source(c, path)
@@ -24,19 +29,19 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 			status = 1
 			continue
 		}
-		formatted, ok := format_source(c, file)
+		rewritten, ok := rewrite(c, file)
 		if !ok {
 			status = 1
 			continue
 		}
-		defer delete(formatted)
-		if formatted == c.sources[file].text {
+		defer delete(rewritten)
+		if rewritten == c.sources[file].text {
 			continue
 		}
 		if check {
 			fmt.println(path)
 			status = 1
-		} else if os.write_entire_file(path, transmute([]u8)formatted) != nil {
+		} else if os.write_entire_file(path, transmute([]u8)rewritten) != nil {
 			errorf(c, no_span(), "L0401", "cannot write `%s`", path)
 			status = 1
 		}

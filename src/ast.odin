@@ -1363,6 +1363,7 @@ File :: struct {
 // and its in-type attribute groups, each span empty when absent. `declaration` is
 // the constant whose value it is, if any.
 Earlier_Spelling :: struct {
+	offset:      u32,
 	record:      ^Type_Record,
 	declaration: ^Decl,
 	keyword:     Span,

@@ -4,26 +4,12 @@ package lokec
 
 // A test procedure is a file-scope, non-generic `loke` procedure with the
 // signature `main` may have, less the `i32` status. Its attribute's position
-// and shape are `validate_attribute_list`'s.
+// and shape are `validate_decl_attributes`'s.
 check_test_procedures :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
-		k.file, k.file_node = file.file, file
 		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				check_test_declaration(k, v)
-			case ^Item_Impl:
-				for member in v.members {
-					if d, ok := member.(^Decl); ok {
-						reject_test_attribute(k, d.attributes, "an `impl` member")
-					}
-				}
-			case ^Item_Foreign_Block:
-				for member in v.members {
-					if d, ok := member.(^Decl); ok {
-						reject_test_attribute(k, d.attributes, "a foreign declaration")
-					}
-				}
+			if d, ok := item.(^Decl); ok {
+				check_test_declaration(k, d)
 			}
 		}
 	}
@@ -58,13 +44,6 @@ check_test_declaration :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
-@(private = "file")
-reject_test_attribute :: proc(k: ^Checker, attributes: []Attribute, position: string) {
-	if attribute, written := find_attribute(attributes, "test"); written {
-		errorf(k.c, attribute.span, "L0607", "`@(test)` cannot appear on %s", position)
-	}
-}
-
 // design.md "Test procedures": a use of the name is an error, so the test
 // build's entry is the only caller and other builds can leave the body out.
 reject_test_procedure_use :: proc(k: ^Checker, symbol: ^Symbol, name: string, span: Span) -> bool {
@@ -75,10 +54,10 @@ reject_test_procedure_use :: proc(k: ^Checker, symbol: ^Symbol, name: string, sp
 	return true
 }
 
-// `is_test` is installed with the signature; a file-scope `when` condition is
-// selected before that, so it reads the attribute.
+// Read from the attribute: a file-scope `when` condition is selected before any
+// signature is resolved.
 symbol_is_test :: proc(symbol: ^Symbol) -> bool {
-	return symbol.is_test || (symbol.kind == .Proc && symbol.decl != nil && has_attribute(symbol.decl.attributes, "test"))
+	return symbol.kind == .Proc && symbol.decl != nil && has_attribute(symbol.decl.attributes, "test")
 }
 
 // The root package's tests, in file-name order and then source order, which
@@ -97,41 +76,97 @@ collect_tests :: proc(c: ^Compiler, root: Package_Id) {
 				continue
 			}
 			symbol := symbol_of(c, d.symbols[0])
-			if symbol == nil || !symbol.is_test {
+			if symbol == nil || !symbol_is_test(symbol) {
 				continue
 			}
 			append(&c.tests, d.symbols[0])
-			if failure, fallible := entry_failure_type(c, symbol.result); fallible {
-				request_typeid(c, failure)
-				c.format_requested = true
-			}
+			request_entry_failure_printing(c, symbol.result)
 		}
 	}
 }
 
-// Whether the backend writes this procedure's body: a test procedure only in a
-// test build of its own package.
-test_procedure_emitted :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
-	return symbol == nil || !symbol.is_test || (c.build_mode == .Test && symbol.pkg == c.root_package)
+// design.md "Test procedures": whether the backend leaves this out: a test the
+// build omits, anything written inside one at any depth, or what only such a
+// test can reach, an instance on a type declared inside it. That instance's own
+// scope is the template's, so nothing but its arguments ties it to the test.
+omitted_with_test :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> bool {
+	seen: Type_Walk
+	defer delete(seen)
+	return symbol_omitted_with_test(c, symbol_id, &seen)
 }
 
-// design.md "Test procedures": whether the backend leaves this symbol out with
-// a test the build omits: the test itself, or anything written inside it, such
-// as a local procedure, an instance of a local generic, or a `static` or
-// `thread_local` local, however deeply nested.
-omitted_with_test :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> bool {
-	for symbol := symbol_of(c, symbol_id); symbol != nil; {
-		if !test_procedure_emitted(c, symbol) {
-			return true
+// One walk throughout: `Grid { next: Option(^Grid) }` reaches its own instance's
+// arguments again.
+@(private = "file")
+symbol_omitted_with_test :: proc(c: ^Compiler, symbol_id: Symbol_Id, seen: ^Type_Walk) -> bool {
+	symbol := symbol_of(c, symbol_id)
+	if symbol == nil {
+		return false
+	}
+	if symbol_is_test(symbol) && (c.build_mode != .Test || symbol.pkg != c.root_package) {
+		return true
+	}
+	for scope := symbol.def_scope; scope != nil; scope = scope.parent {
+		if scope.instance == nil {
+			continue
 		}
-		owner: ^Expr_Proc
-		for scope := symbol.def_scope; scope != nil && owner == nil; scope = scope.parent {
-			owner = (^Expr_Proc)(scope.owner_proc)
+		for binding in scope.instance.bindings {
+			if generic_arg_names_omitted_test(c, binding.arg, seen) {
+				return true
+			}
 		}
-		if owner == nil {
-			return false
+	}
+	if symbol.def_scope == nil || symbol.def_scope.owner_proc == nil {
+		return false
+	}
+	return symbol_omitted_with_test(c, (^Expr_Proc)(symbol.def_scope.owner_proc).symbol, seen)
+}
+
+@(private = "file")
+generic_arg_names_omitted_test :: proc(c: ^Compiler, arg: Generic_Arg, seen: ^Type_Walk) -> bool {
+	return type_names_omitted_test(c, arg.is_type ? arg.type : arg.value_type, seen)
+}
+
+@(private = "file")
+type_names_omitted_test :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
+	info := type_of(c, id)
+	if info == nil || !type_walk_enter(seen, id, info) {
+		return false
+	}
+	if symbol_omitted_with_test(c, info.symbol, seen) {
+		return true
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && type_names_omitted_test(c, sym.type, seen) {
+				return true
+			}
 		}
-		symbol = symbol_of(c, owner.symbol)
+	case .Union:
+		for variant in info.variants {
+			if type_names_omitted_test(c, variant, seen) {
+				return true
+			}
+		}
+	case .Proc:
+		for parameter in info.parameters {
+			if type_names_omitted_test(c, parameter, seen) {
+				return true
+			}
+		}
+		return type_names_omitted_test(c, info.result, seen)
+	case .Dyn:
+		for arg in info.dyn_args {
+			if generic_arg_names_omitted_test(c, arg, seen) {
+				return true
+			}
+		}
+		return symbol_omitted_with_test(c, info.dyn_interface, seen)
+	case .Map:
+		return type_names_omitted_test(c, info.key, seen) || type_names_omitted_test(c, info.element, seen)
+	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
+		return type_names_omitted_test(c, info.element, seen)
 	}
 	return false
 }

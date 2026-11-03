@@ -366,7 +366,7 @@ dyn_proc_source_signature :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
 // or the capture literal's witness.
 request_dyn_proc_view :: proc(k: ^Checker, from, view: Type_Id, span: Span) {
 	if underlying_kind(k.c, from) == .Proc {
-		enroll_synth(k.c, k.c.dyn_proc_adapters[dyn_abi_type(k.c, view)])
+		enroll_synth(k.c, k.c.dyn_proc_adapters[carrier_abi_type(k.c, view)])
 		return
 	}
 	dyn := underlying_info(k.c, view)
@@ -452,17 +452,6 @@ type_is_dyn :: proc(c: ^Compiler, id: Type_Id) -> bool {
 dyn_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	info := underlying_info(c, id)
 	return info != nil && info.kind == .Dyn && info.mutable
-}
-
-// Both capabilities share one representation, so weakening is free.
-dyn_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	under := type_underlying(c, id)
-	info := type_of(c, under)
-	if info == nil || info.kind != .Dyn || !info.mutable {
-		return under
-	}
-	readonly, found := c.dyn_types[dyn_key(c, info.dyn_interface, info.dyn_args, false)]
-	return found ? readonly : under
 }
 
 // The same interface and arguments, whatever the capability.

@@ -1487,41 +1487,34 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 // a mismatch is reported and gives INVALID_TYPE, still `resolved`.
 @(private = "file")
 runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
-	for index in 1 ..< len(k.c.packages) {
-		target := &k.c.packages[index]
-		if target.key != STD_RUNTIME || target.scope == nil {
-			continue
-		}
-		symbol_id := target.scope.names[intern_identifier(k.c, name)]
-		// Checked before any package importing it only if something imports it.
-		if found := symbol_of(k.c, symbol_id); found != nil && found.kind == .Type {
-			resolve_symbol_signature_in_place(k, symbol_id)
-		}
-		symbol := symbol_of(k.c, symbol_id)
-		if symbol == nil || symbol.kind != .Type || symbol.type == INVALID_TYPE {
-			continue
-		}
-		if recorded, checked := k.c.runtime_types[name]; checked {
-			return recorded, true
-		}
-		type := symbol.type
-		if !runtime_layout_matches(k, symbol_id, name) {
-			errorf(
-				k.c, symbol.span, "L0704",
-				"`runtime.%s` does not have the layout the compiler writes: the same fields, in the same order, with the same types, and enum members in design.md's order",
-				name,
-			)
-			// A speculative check's diagnostic is rolled back, so only a real one
-			// may settle the answer.
-			if !committing(k.c) {
-				return INVALID_TYPE, true
-			}
-			type = INVALID_TYPE
-		}
-		k.c.runtime_types[name] = type
-		return type, true
+	symbol_id := package_symbol_named(k.c, standard_package(k.c, STD_RUNTIME), name)
+	// Checked before any package importing it only if something imports it.
+	if found := symbol_of(k.c, symbol_id); found != nil && found.kind == .Type {
+		resolve_symbol_signature_in_place(k, symbol_id)
 	}
-	return INVALID_TYPE, false
+	symbol := symbol_of(k.c, symbol_id)
+	if symbol == nil || symbol.kind != .Type || symbol.type == INVALID_TYPE {
+		return INVALID_TYPE, false
+	}
+	if recorded, checked := k.c.runtime_types[name]; checked {
+		return recorded, true
+	}
+	type := symbol.type
+	if !runtime_layout_matches(k, symbol_id, name) {
+		errorf(
+			k.c, symbol.span, "L0704",
+			"`runtime.%s` does not have the layout the compiler writes: the same fields, in the same order, with the same types, and enum members in design.md's order",
+			name,
+		)
+		// A speculative check's diagnostic is rolled back, so only a real one
+		// may settle the answer.
+		if !committing(k.c) {
+			return INVALID_TYPE, true
+		}
+		type = INVALID_TYPE
+	}
+	k.c.runtime_types[name] = type
+	return type, true
 }
 
 // The public `Type_Kind` and `Member_Kind`, in the order `base:runtime`

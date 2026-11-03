@@ -23,7 +23,9 @@
             (int "0")
           )
           (cond (binary Lt (ident "i") (int "10")))
-          (assign Plus_Eq (lhs (ident "i")) (rhs (int "1")))
+          (post
+            (assign Plus_Eq (lhs (ident "i")) (rhs (int "1")))
+          )
           (block
           )
         )

@@ -200,10 +200,7 @@ thread_type :: proc(k: ^Checker, keyword: Span, name: string) -> Type_Id {
 		errorf(k.c, keyword, "L0329", "a `parallel` block needs `%s`, which no collection provides", STD_THREAD)
 		return INVALID_TYPE
 	}
-	if pkg.scope == nil {
-		return INVALID_TYPE
-	}
-	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, name)])
+	sym := symbol_of(k.c, package_symbol_named(k.c, pkg, name))
 	if sym == nil || sym.kind != .Type || sym.type == INVALID_TYPE {
 		errorf(k.c, no_span(), "L0727", "`%s` declares no `%s`, which a `parallel` block needs", STD_THREAD, name)
 		return INVALID_TYPE
@@ -217,16 +214,6 @@ task_scope_start :: proc(c: ^Compiler, scope_type: Type_Id) -> Symbol_Id {
 		return INVALID_SYMBOL
 	}
 	return member_named(c, info.members, intern_identifier(c, "start"))
-}
-
-@(private = "file")
-standard_package :: proc(c: ^Compiler, key: string) -> ^Package {
-	for &pkg in c.packages {
-		if pkg.key == key {
-			return &pkg
-		}
-	}
-	return nil
 }
 
 check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
@@ -628,11 +615,8 @@ frame_field_name :: proc(c: ^Compiler, task: ^Spawn_Task, field: int) -> string 
 unsafe_builtins :: proc(k: ^Checker) -> ([3]Symbol_Id, bool) {
 	out: [3]Symbol_Id
 	pkg := standard_package(k.c, STD_UNSAFE)
-	if pkg == nil || pkg.scope == nil {
-		return out, false
-	}
 	for name, index in ([]string{"take", "write", "free"}) {
-		out[index] = pkg.scope.names[intern_identifier(k.c, name)]
+		out[index] = package_symbol_named(k.c, pkg, name)
 		if out[index] == INVALID_SYMBOL {
 			return out, false
 		}

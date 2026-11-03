@@ -580,7 +580,7 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 			return
 		}
 	case .Test:
-		if !sym.is_test || sym.pkg != c.root_package {
+		if !symbol_is_test(sym) || sym.pkg != c.root_package {
 			return
 		}
 		described = "printing a failure a test returns"
