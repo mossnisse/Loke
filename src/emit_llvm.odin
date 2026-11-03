@@ -236,6 +236,12 @@ open_function :: proc(e: ^Emitter, format: string, args: ..any) {
 	fmt.sbprintln(&e.b, "entry:")
 }
 
+// A synthesized member's header: its receiver at `%arg0`, after any `%sret`.
+@(private)
+open_synth_receiver :: proc(e: ^Emitter, name: string, result: Type_Id) {
+	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, result), name, sret_param(e, result))
+}
+
 @(private)
 begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 	state := Function_Emission{parent = e.b, saved = e.fn}

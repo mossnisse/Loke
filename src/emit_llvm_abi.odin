@@ -556,6 +556,30 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 	return out
 }
 
+// Whether a union value's tag is `index`.
+@(private)
+emit_union_tag_is :: proc(e: ^Emitter, union_type: Type_Id, value: string, index: int) -> string {
+	tag := emit_union_tag(e, union_type, value)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", out, union_layout(e.c, union_type).tag_bytes * 8, tag, index)
+	return out
+}
+
+// A block from the runtime, and whether it was refused.
+@(private)
+emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (block, failed: string) {
+	block = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)", block, allocator, size, align)
+	failed = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, block)
+	return
+}
+
+@(private)
+emit_rt_free :: proc(e: ^Emitter, allocator, block: string, size, align: u64) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)", allocator, block, size, align)
+}
+
 // Spills a union value so its payload can be read at a variant's own type.
 @(private)
 emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {

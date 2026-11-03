@@ -39,10 +39,6 @@ impl_is_intrinsic :: proc(v: ^Item_Impl) -> bool {
 // Once per package, right after the compiler contributes its names, so each
 // declaration finds what it describes and a missing one is reported once.
 bind_intrinsic_declarations :: proc(k: ^Checker, pkg: ^Package) {
-	if pkg.intrinsics_bound {
-		return
-	}
-	pkg.intrinsics_bound = true
 	pkg.intrinsics = make([dynamic]Intrinsic_Decl, 0, len(pkg.contributions), k.c.semantic_allocator)
 	saved := save_checker_location(k)
 	defer restore_checker_location(k, saved)

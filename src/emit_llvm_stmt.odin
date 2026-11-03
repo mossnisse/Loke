@@ -163,13 +163,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	}
 
 	allocator := emit_default_allocator(e)
-	frame := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
-		frame, allocator, type_size(e.c, task.frame), type_align(e.c, task.frame),
-	)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, frame)
+	frame, failed := emit_rt_alloc(e, allocator, type_size(e.c, task.frame), type_align(e.c, task.frame))
 	fail_label, ok_label := new_label(e, "spawn.no_frame"), new_label(e, "spawn.frame")
 	branch_if(e, failed, fail_label, ok_label)
 	place_label(e, fail_label)

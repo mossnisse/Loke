@@ -5502,6 +5502,23 @@ prov_hold_owner :: proc(graph: ^Flow_Graph, value: Expr) {
 	}
 }
 
+// design.md "Evaluation order": a managed place given to `box` is read when it is
+// reached but cloned from the allocator evaluated after it, so it stays
+// borrowed until then, as a call's argument does.
+@(private = "file")
+prov_lend_copied_place :: proc(graph: ^Flow_Graph, value: Expr) -> []int {
+	if !type_is_managed(graph.k.c, prov_type(graph, value)) || !expression_is_borrowed_place(value) {
+		return nil
+	}
+	if root, path, named := prov_place_of(graph, value); named && !expression_converts_storage(value) {
+		return prov_borrow(graph, root, path, false, expr_span(value), "borrow")
+	}
+	if carriers, _, through := prov_read_through_carrier(graph, value, reads_only = true); through {
+		return prov_reborrow_traversal(graph, carriers, expr_span(value), false)
+	}
+	return nil
+}
+
 // A borrow stored where it outlives the statement, resolved as a place so fields,
 // elements, and writes through an alias are all seen.
 @(private = "file")
@@ -8406,7 +8423,11 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 			loans := walk_flow_expr(graph, v.bound[0])
 			prov_hold_owner(graph, v.bound[0])
 			if len(v.bound) > 1 {
+				lent := prov_lend_copied_place(graph, v.bound[0])
 				walk_flow_expr(graph, v.bound[1])
+				if len(lent) > 0 {
+					prov_emit(graph, Prov_Event{kind = .Live, sources = lent, span = v.span, hands_on = true})
+				}
 			}
 			allocation := v.operation.(Call_Allocation)
 			depth := allocation.fallible ? 2 : 1

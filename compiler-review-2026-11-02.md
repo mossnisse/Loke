@@ -28,14 +28,14 @@ section are revised when a fix changes them.
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
-| High and medium severity bugs | 182 (43 high, 139 medium) | An independent attempt to refute each one |
-| Low severity bugs | 175 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 694 | Only the reviewer |
-| Dead code | 372 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| High and medium severity bugs | 178 (42 high, 136 medium) | An independent attempt to refute each one |
+| Low severity bugs | 172 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 682 | Only the reviewer |
+| Dead code | 370 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
 | Data structures and algorithms | 128 | Only the reviewer |
-| Near copies | 453 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 286 | Only the reviewer |
-| Comments | 516 | Only the reviewer |
+| Near copies | 445 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 284 | Only the reviewer |
+| Comments | 497 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 357 overstates the number of separate
+  merges the ones found so far, so 350 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 453 suggests: the
+Near copies are real but smaller than the raw count of 445 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -105,7 +105,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). A zero union is `.Nil` ([check_expr.odin:3417](src/check_expr.odin#L3417)). `copied()` folds as `indexed()` ([expand.odin:290](src/expand.odin#L290)). BUG-eval.part1-1, -2, BUG-const_ops-2, BUG-hash-2, BUG-expand-1. About 40 lines.
 
-14. **Values over 4096 bytes fail to compile or segfault.** `extract`, `insert` and constants treat an address as a value at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198), [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532), [emit_llvm_adapters.odin:35](src/emit_llvm_adapters.odin#L35), [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361). Promote the helper at [emit_llvm_expr.odin:1735](src/emit_llvm_expr.odin#L1735) and run each path at 5000 bytes. BUG-emit_llvm_expr-1, -2, BUG-emit_llvm_adapters-1 to -3, BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10, -11. About 50 lines.
+14. **Values over 4096 bytes fail to compile or segfault.** `extract`, `insert` and constants treat an address as a value at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198), [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532), [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361). Use `record_part` and `build_record` and run each path at 5000 bytes. BUG-emit_llvm_expr-1, -2, BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10, -11. About 30 lines.
 
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
@@ -144,9 +144,9 @@ Shared form: a `receiver_checked` flag on `Expr_Selector`, set by a single `chec
 
 #### Values over 4096 bytes are addresses, and most part readers assume they are not
 
-`is_large_value` ([emit_llvm_expr.odin:598](src/emit_llvm_expr.odin#L598)) makes a large value an address. Two local helpers already read a part correctly for either form: `field_value` ([emit_llvm_expr.odin:1735](src/emit_llvm_expr.odin#L1735)) and `part_value` ([emit_llvm_expr.odin:1856](src/emit_llvm_expr.odin#L1856)). The sites that use `extract`, `insert` or a raw `load` on a possibly large value are [emit_llvm_adapters.odin:35](src/emit_llvm_adapters.odin#L35), [emit_llvm_adapters.odin:66](src/emit_llvm_adapters.odin#L66), [emit_llvm_adapters.odin:116](src/emit_llvm_adapters.odin#L116), [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361) and [emit_llvm_stmt.odin:1025](src/emit_llvm_stmt.odin#L1025). Constants break the same rule at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198) and [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532).
+`is_large_value` ([emit_llvm_expr.odin:598](src/emit_llvm_expr.odin#L598)) makes a large value an address. `record_part` and `build_record` in `emit_llvm_expr.odin` read and build a record in either form, and a local `part_value` ([emit_llvm_expr.odin:1856](src/emit_llvm_expr.odin#L1856)) reads a part. The sites that still use `extract`, `insert` or a raw `load` on a possibly large value are [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361) and [emit_llvm_stmt.odin:1025](src/emit_llvm_stmt.odin#L1025). Constants break the same rule at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198) and [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532).
 
-Shared form: promote `field_value` to `record_part(e, record, value, index)` and add `build_record(e, record, parts)`, both of which choose by size, and make `const_operand` return a global's name for a large type. Net lines stay about even. Fixes BUG-emit_llvm_adapters-1 to -3, BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10 and -11, BUG-emit_llvm_expr-1 and -2.
+Shared form: call those at the remaining sites, and make `const_operand` return a global's name for a large type. Net lines stay about even. Fixes BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10 and -11, BUG-emit_llvm_expr-1 and -2.
 
 #### Container operations classified in several tables
 
@@ -313,9 +313,9 @@ Shared form: `foreign_result(e, type, inout) -> (ret: string, indirect: bool)`, 
 
 #### Allocation failure branch
 
-`call void @loke_rt_v1_alloc_failed`, `unreachable` and `e.terminated = true` after a branch are at [emit_llvm_box.odin:93](src/emit_llvm_box.odin#L93), [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), [emit_llvm_calls.odin:962](src/emit_llvm_calls.odin#L962), [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073), [emit_llvm_cleanup.odin:1652](src/emit_llvm_cleanup.odin#L1652), [emit_llvm_containers.odin:699](src/emit_llvm_containers.odin#L699), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275) and [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176). Only labels and the test (`icmp eq ptr` or `icmp eq i32`) differ; [emit_llvm_stmt.odin:178](src/emit_llvm_stmt.odin#L178) has no `terminated` write and clears it after the label instead.
+`call void @loke_rt_v1_alloc_failed`, `unreachable` and `e.terminated = true` after a branch are at [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), [emit_llvm_calls.odin:962](src/emit_llvm_calls.odin#L962), [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073), [emit_llvm_cleanup.odin:1652](src/emit_llvm_cleanup.odin#L1652), [emit_llvm_containers.odin:699](src/emit_llvm_containers.odin#L699), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275) and [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176). Only labels and the test (`icmp eq ptr` or `icmp eq i32`) differ; [emit_llvm_stmt.odin:178](src/emit_llvm_stmt.odin#L178) has no `terminated` write and clears it after the label instead.
 
-Shared form: `alloc_failed_if(e, failed, provider)`, shaped like [emit_llvm_runtime.odin:532](src/emit_llvm_runtime.odin#L532) `panic_if`. [emit_llvm_box.odin:87](src/emit_llvm_box.odin#L87) can also use `emit_alloc_outcome` ([emit_llvm_calls.odin:643](src/emit_llvm_calls.odin#L643)). Saves about 40 lines.
+Shared form: `alloc_failed_if(e, failed, provider)`, shaped like [emit_llvm_runtime.odin:532](src/emit_llvm_runtime.odin#L532) `panic_if`. Saves about 35 lines.
 
 #### Integer lowering, scalar and lane-wise
 
@@ -331,9 +331,7 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 #### Small repeated IR shapes
 
-- Option tag against `some`: [emit_llvm_iteration.odin:650](src/emit_llvm_iteration.odin#L650), [emit_llvm_adapters.odin:50](src/emit_llvm_adapters.odin#L50), and the failure test at [emit_llvm_calls.odin:742](src/emit_llvm_calls.odin#L742). `emit_union_tag_is`, about 15 lines.
 - `loke_rt_v1_map_scan` and cursor store: [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [emit_llvm_iteration.odin:961](src/emit_llvm_iteration.odin#L961), [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945). `emit_map_scan`, about 10.
-- Synthesized `next` define line: [emit_llvm_containers.odin:283](src/emit_llvm_containers.odin#L283), [emit_llvm_iteration.odin:821](src/emit_llvm_iteration.odin#L821) and three more. About 10.
 - Internal parameter list: [emit_llvm.odin:642](src/emit_llvm.odin#L642) and [emit_llvm_dispatch.odin:111](src/emit_llvm_dispatch.odin#L111). `loke_param_list`, about 8.
 - Call then return: [emit_llvm_dispatch.odin:122](src/emit_llvm_dispatch.odin#L122), [emit_llvm_runtime.odin:1723](src/emit_llvm_runtime.odin#L1723). About 8.
 - Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8; BUG-emit_llvm_stmt-2 is an ordering slip beside the first.
@@ -399,7 +397,6 @@ Counts per file, then the findings themselves in the same order.
 | [abi.odin](src/abi.odin) | 342 | 3 | 4 | 1 | 1 | 4 | 2 | 1 |
 | [ast.odin](src/ast.odin) | 1488 | 1 | 5 | 2 | 1 | 1 | 1 | 6 |
 | [ast_clone.odin](src/ast_clone.odin) | 798 | 1 | 6 | 3 | 0 | 2 | 3 | 1 |
-| [atomics.odin](src/atomics.odin) | 312 | 1 | 6 | 0 | 0 | 0 | 2 | 4 |
 | [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 2 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
 | [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
@@ -418,15 +415,13 @@ Counts per file, then the findings themselves in the same order.
 | [emission_contract.odin](src/emission_contract.odin) | 221 | 1 | 3 | 1 | 1 | 3 | 2 | 2 |
 | [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
 | [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 2 | 6 | 4 | 7 |
-| [emit_llvm_adapters.odin](src/emit_llvm_adapters.odin) | 121 | 5 | 3 | 1 | 0 | 3 | 0 | 1 |
-| [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 1 | 0 | 0 | 0 | 2 | 0 | 0 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
 | [emit_llvm_containers.odin](src/emit_llvm_containers.odin) | 1436 | 2 | 15 | 3 | 3 | 8 | 4 | 7 |
 | [emit_llvm_debug.odin](src/emit_llvm_debug.odin) | 638 | 2 | 4 | 4 | 0 | 2 | 3 | 3 |
 | [emit_llvm_dispatch.odin](src/emit_llvm_dispatch.odin) | 180 | 3 | 3 | 2 | 1 | 3 | 0 | 4 |
 | [emit_llvm_expr.odin](src/emit_llvm_expr.odin) | 2549 | 4 | 13 | 8 | 3 | 11 | 4 | 6 |
-| [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) | 1057 | 4 | 7 | 3 | 0 | 5 | 4 | 6 |
+| [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) | 1057 | 4 | 7 | 3 | 0 | 4 | 4 | 6 |
 | [emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) | 1737 | 2 | 11 | 9 | 1 | 10 | 4 | 4 |
 | [emit_llvm_simd.odin](src/emit_llvm_simd.odin) | 372 | 0 | 4 | 2 | 0 | 7 | 1 | 6 |
 | [emit_llvm_stmt.odin](src/emit_llvm_stmt.odin) | 1047 | 11 | 7 | 6 | 0 | 7 | 3 | 7 |
@@ -446,7 +441,7 @@ Counts per file, then the findings themselves in the same order.
 | [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 3 | 3 | 5 |
 | [incremental.odin](src/incremental.odin) | 369 | 0 | 6 | 4 | 1 | 2 | 2 | 8 |
 | [interface.odin](src/interface.odin) | 1484 | 10 | 9 | 5 | 1 | 11 | 3 | 6 |
-| [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 7 | 4 | 0 | 3 | 0 | 2 |
+| [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 6 | 4 | 0 | 3 | 0 | 2 |
 | [iterate.odin](src/iterate.odin) | 1150 | 9 | 11 | 9 | 0 | 8 | 4 | 6 |
 | [iteration_adapters.odin](src/iteration_adapters.odin) | 291 | 2 | 3 | 4 | 0 | 6 | 3 | 2 |
 | [iteration_mutable.odin](src/iteration_mutable.odin) | 167 | 1 | 4 | 2 | 0 | 6 | 1 | 3 |
@@ -472,18 +467,17 @@ Counts per file, then the findings themselves in the same order.
 | [queries.odin](src/queries.odin) | 671 | 5 | 5 | 7 | 4 | 2 | 3 | 4 |
 | [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 5 | 1 | 2 |
 | [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 2 | 1 | 8 | 3 | 9 |
-| [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 5 |
+| [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 4 |
 | [select.odin](src/select.odin) | 504 | 3 | 7 | 3 | 2 | 4 | 0 | 6 |
 | [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 9 | 3 | 5 | 4 | 10 |
 | [session.odin](src/session.odin) | 299 | 1 | 3 | 10 | 0 | 1 | 2 | 7 |
 | [simd.odin](src/simd.odin) | 596 | 7 | 5 | 9 | 0 | 5 | 2 | 8 |
 | [slice.odin](src/slice.odin) | 91 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
 | [source.odin](src/source.odin) | 911 | 2 | 5 | 0 | 1 | 3 | 2 | 7 |
-| [stdlib.odin](src/stdlib.odin) | 278 | 0 | 2 | 1 | 0 | 1 | 0 | 13 |
 | [subprocess.odin](src/subprocess/subprocess.odin) | 350 | 4 | 2 | 2 | 1 | 1 | 2 | 4 |
 | [text.odin](src/text.odin) | 350 | 6 | 4 | 0 | 1 | 3 | 2 | 4 |
 | [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 2 | 2 | 7 |
-| [universe.odin](src/universe.odin) | 132 | 0 | 0 | 0 | 0 | 3 | 0 | 1 |
+| [universe.odin](src/universe.odin) | 132 | 0 | 0 | 0 | 0 | 2 | 0 | 1 |
 
 ### src/abi.odin
 
@@ -606,35 +600,6 @@ A complete, correct field-by-field cloner whose every copied field checks out ag
 **Comments**
 
 - [ast_clone.odin:10](src/ast_clone.odin#L10): the surprise is that `clone_slice` copies nothing. Shorter: `// Zeroed, for the caller to fill; empty stays nil.`
-
-### src/atomics.odin
-
-Small and readable, with one over-acceptance in the type gate. Its main excess is the type predicate written twice and hand-written lookups and argument loops that existing helpers already cover.
-
-**Bugs**
-
-- `BUG-atomics-1` **low** [atomics.odin:111](src/atomics.odin#L111) `atomic_option_of_pointer`: tests the niche shape, not `Option`, against [standard-library.md](standard-library.md#coresync). Scenario: `@(zero=nothing) Maybe :: union { nothing, ptr: ^int }` compiles and runs as `sync.Atomic(Maybe)`, though L0662 says "an `Option` of a `^T`". Fix: also require `instance_of == c.option_symbol`. *Not verified.*
-
-**Simplification**
-
-- [atomics.odin:67](src/atomics.odin#L67) `atomic_type_supported`: answers exactly `atomic_width_bits(c, type) != 0` case by case. Delete it, call that at line 245, and move the "No floats" note to `atomic_width_bits`. (about 15 lines)
-- [atomics.odin:184](src/atomics.odin#L184) `check_atomic_builtin`: `check_value_expr(k, e, INVALID_TYPE, "pass")` already checks without a target and returns false, and `check_argument_value` returns `e` unchanged. Set `bound[0]` above, then loop `1 ..< operands` with `bound[index] = ...; ok = check_value_expr(k, bound[index], element, "pass") && ok`. (about 9 lines)
-- [atomics.odin:43](src/atomics.odin#L43) `memory_order_matches`: a one-call wrapper; call `runtime_enum_matches(k.c, type, Memory_Order)` at line 32. (about 5 lines)
-- [atomics.odin:171](src/atomics.odin#L171) `check_atomic_builtin`: `ok := builtin_arguments_ok(k, v)` ([check_builtin.odin:198](src/check_builtin.odin#L198)) replaces the loop. Only the first bad shape is then reported, which is enough for a path only stdlib authors reach. (about 5 lines)
-- [atomics.odin:278](src/atomics.odin#L278) `check_atomic_order`: `require_const` already reports L0666 "must be a compile-time constant". Dropping the `is_const` pre-check loses only the `$` hint on this stdlib-author path; `tests/pkg_err/stdlib_atomic_order.expected` would change. (about 7 lines)
-- [atomics.odin:86](src/atomics.odin#L86) `atomic_width_bits`, [atomics.odin:120](src/atomics.odin#L120) `atomic_operation_supported`: `underlying_kind` already maps nil to `.Invalid`, so the `info` locals and nil checks go; line 100 is just `type_bits(c, type)`, which takes the underlying type itself. (about 5 lines)
-
-**Structure and boundaries**
-
-- [atomics.odin:49](src/atomics.odin#L49) `runtime_enum_matches`: a general runtime-layout check whose other two callers are in `runtime_layout_matches` ([check_builtin.odin:1588](src/check_builtin.odin#L1588)). It belongs beside that procedure; atomics only uses it.
-- [atomics.odin:111](src/atomics.odin#L111), [atomics.odin:117](src/atomics.odin#L117), [atomics.odin:128](src/atomics.odin#L128): `atomic_option_of_pointer`, `atomic_operation_supported` and `atomic_order_permitted` have no caller outside this file but are package-visible, unlike their `@(private = "file")` neighbours. Mark them private so the surface is `memory_order_type`, `atomic_width_bits` and `check_atomic_builtin`.
-
-**Comments**
-
-- [atomics.odin:64](src/atomics.odin#L64): "every pointer, and an `Option` of one" overstates line 113, which admits only `^T`. Keep with the move above: "No floats: an atomic float would promise arithmetic it lacks."
-- [atomics.odin:143](src/atomics.odin#L143): untrue before line 170, since an arity error returns with no argument checked. Use "Past the arity check, each operand and ordering reports its own error."
-- [atomics.odin:224](src/atomics.odin#L224): "A read-only `^` may write: atomic accesses do not conflict (design.md "Concurrency and the memory model"), which lets `Atomic(T)` work behind a `Shared(T)`." The first sentence and the return note can go. (about 2 lines)
-- [atomics.odin:248](src/atomics.odin#L248): this message and [core/sync/sync.loke:46](core/sync/sync.loke#L46) list rune types, but [standard-library.md](standard-library.md#coresync) does not, and `Atomic(rune)` compiles. The library document should say which is meant.
 
 ### src/attributes.odin
 
@@ -1613,7 +1578,7 @@ The per-built-in rules are readable, but one prologue and one operand pattern ar
 - [check_builtin.odin:1489](src/check_builtin.odin#L1489), [atomics.odin:19](src/atomics.odin#L19) and [format.odin:12](src/format.odin#L12): each scans `packages` for one key and resolves a type by name; [format.odin:277](src/format.odin#L277) `package_type_named` already does the second half. Add `package_with_key(c, key)` and use it in all three.
 - [check_builtin.odin:175](src/check_builtin.odin#L175), [text.odin:241](src/text.odin#L241) and [format.odin:258](src/format.odin#L258): the same loop over fixed target types with `check_argument_value`. Shared form: `bind_typed_arguments(k, v, targets) -> bool`, which sets `v.bound`.
 - [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164), with a variant at line 570: check against `TYPE_ALLOCATOR` and report "an allocator argument is an `Allocator`". Shared form: `check_allocator_argument(k, e) -> bool`; line 570 keeps its own wording only if tests pin it.
-- [check_builtin.odin:199](src/check_builtin.odin#L199) and [simd.odin:432](src/simd.odin#L432): simd's loop is `builtin_arguments_ok` inlined, so call it. [atomics.odin:172](src/atomics.odin#L172) differs by continuing after the error, so that one is fine.
+- [check_builtin.odin:199](src/check_builtin.odin#L199) and [simd.odin:432](src/simd.odin#L432): simd's loop is `builtin_arguments_ok` inlined, so call it.
 - [check_builtin.odin:1146](src/check_builtin.odin#L1146) and [check_builtin.odin:1226](src/check_builtin.odin#L1226): `const_storage` and `const_from_storage` both work out a member's type and byte range and refuse an `initialized_by` field. Shared form: `storage_member(c, type, info, index) -> (member, at, end, ok)`.
 - [check_builtin.odin:1378](src/check_builtin.odin#L1378), [check_builtin.odin:1246](src/check_builtin.odin#L1246) and [reflect.odin:308](src/reflect.odin#L308): `new(Const_Aggregate)` plus two field writes, in 15 sites across 9 files. Shared form: `aggregate_const(c, type, elements)`; it would also settle why only some sites set `type_value`.
 
@@ -2214,51 +2179,6 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 - [emit_llvm_abi.odin:1183](src/emit_llvm_abi.odin#L1183): repeats lines 481-483. Keep "`Option(T)` from a runtime presence flag."
 - [emit_llvm_abi.odin:956](src/emit_llvm_abi.odin#L956): keep the citation; the promotion list can go, since the switch spells it out. (about 25 lines across the file)
 
-### src/emit_llvm_adapters.odin
-
-Small and readable, with sparse useful comments, but every adapter body builds its wrappers as SSA aggregates, which breaks once a value exceeds `LARGE_VALUE_BYTES` (4096) and travels as an address. The two `next` bodies are near copies. All five bugs were reproduced with the current `lokec.exe`: a valid program fails with `L0403` because clang rejects the IR.
-
-**Bugs**
-
-- `BUG-emit_llvm_adapters-1` **medium** [emit_llvm_adapters.odin:35](src/emit_llvm_adapters.odin#L35) `emit_synth_adapter`: `.Adapter_Iter` does `insertvalue` on the result of `emit_call_result`, which is a slot address for a large iterator (also line 38). Scenario: `State_It :: struct { pad: [1000]int, at: int }` with `s.copied()` or `s.indexed()` gives `'%t877' defined with type 'ptr'`. Fix: when the result is large, store the parts through `element_address` into a `temporary_slot` and return the slot; a shared record builder would serve bugs 1, 2, 3 and 5. *Confirmed: Reproduced: small Source with a [1000]int Iterator; copied() and indexed() fail L0403 at the insertvalue ('%t860' defined with type 'ptr'), while [2]int and plain foreach work. Same-type iter(self) large also fails, at a separate call site. Medium fits.*
-- `BUG-emit_llvm_adapters-2` **medium** [emit_llvm_adapters.odin:66](src/emit_llvm_adapters.odin#L66) `emit_synth_adapter`: `.Indexed_Next` inserts `payload` into the pair, but `emit_union_payload` returns a snapshot address for a large element. Scenario: `next` returning `Option([1000]int)`, iterated by `foreach (v, i in s.indexed())`, gives `'%t915' defined with type 'ptr' but expected '[1000 x i64]'`. Fix: build the pair in storage when it is large. *Confirmed: Reproduced: next returning Option([1000]int) under foreach (v, i in s.indexed()) fails with L0403, clang: '%t886' defined with type 'ptr' but expected '[1000 x i64]'; the same probe with [2]int runs correctly. No record in the gap documents; medium fits.*
-- `BUG-emit_llvm_adapters-3` **medium** [emit_llvm_adapters.odin:116](src/emit_llvm_adapters.odin#L116) `own_yielded`: the record walk uses `extract` and `insert` as if `payload`, `part` and `built` were SSA aggregates, and large ones are addresses. Scenario: `xs: [dynamic][1000]int` with `foreach (p in xs.indexed().copied())` fails at line 118 with the same `L0403`. Fix: when `handed` is large use `element_address` plus `load_place`, and when `wanted` is large write parts into a slot. *Confirmed: Reproduced: foreach (p in xs.indexed().copied()) over [dynamic][1000]int fails with L0403: clang rejects insertvalue of a ptr as [1000 x i64], because load_place returns an address for a large value. [4]int runs and prints 7. Not recorded in the docs.*
-- `BUG-emit_llvm_adapters-4` **low** [emit_llvm_adapters.odin:29](src/emit_llvm_adapters.odin#L29) `emit_synth_adapter`: a value `self` is passed with `llvm_type`, but a large value travels as `ptr` (`param_llvm`, emit_llvm_abi.odin:662). Scenario: `Row` with a `[1000]int` field and `iter :: proc(self) -> Row_Cursor`; `r.indexed()` emits `call ... @loke.p.Row.iter(%struct.Row.143 %t1025)` on a pointer. Fix: `source_type = param_llvm(e, target.params[0], mode)`. *Not verified.*
-- `BUG-emit_llvm_adapters-5` **low** [emit_llvm_adapters.odin:18](src/emit_llvm_adapters.odin#L18) `emit_synth_adapter`: `.Adapter_View` over a by-value source inserts `load_place`'s result at line 20, which is an address for a large source. Scenario: the `Row` above is a mutable view, so `adapter_by_value` holds and `r.indexed()` emits `insertvalue %struct.Indexed... undef, %struct.Row.143 %t1054, 0` on a pointer. Fix: when large, `copy_bytes` from `%arg0` into the result slot. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_adapters.odin:12](src/emit_llvm_adapters.odin#L12) `emit_synth_adapter`: delete `e.terminated = false`; `begin_function_emission` already zeroes `e.fn`, which holds it, and the only caller sets it too (emit_llvm_runtime.odin:1388). (about 1 line)
-- [emit_llvm_adapters.odin:34](src/emit_llvm_adapters.odin#L34) `emit_synth_adapter`: both branches start with the same `insert`. Write `if info.adapter_kind != .Reversed { value = insert(...); if info.adapter_kind == .Indexed { value = insert(... "0", 1) } }`. (about 2 lines)
-- [emit_llvm_adapters.odin:68](src/emit_llvm_adapters.odin#L68) `emit_synth_adapter`: the add and store repeat `step_counter` (emit_llvm_iteration.odin:559). Drop that helper's file privacy and call `step_counter(e, counter, "i64")`; its extra load folds away. (about 2 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_adapters.odin:62](src/emit_llvm_adapters.odin#L62): this `own_yielded` call always returns `payload` at line 99. `iteration_proc_matches` pins `next`'s result to `option_type(item)`, and field 0 of the pair is that same `item` on all three paths (iteration_adapters.odin:128-152, 238-242; `anon_record_type` interns). Delete lines 61-62 and use `payload_type` at line 66.
-
-**Near copies**
-
-- [emit_llvm_adapters.odin:45](src/emit_llvm_adapters.odin#L45) and [emit_llvm_adapters.odin:74](src/emit_llvm_adapters.odin#L74): `.Indexed_Next` and `.Copied_Next` match for 13 lines and share the stop tail, differing only in the label prefix and what wraps the payload. Merge into `case .Indexed_Next, .Copied_Next:` with one branch; no test under `tests/ll` or `tests/run` names those labels. (about 15 lines)
-- [emit_llvm_adapters.odin:50](src/emit_llvm_adapters.odin#L50), [emit_llvm_iteration.odin:652](src/emit_llvm_iteration.odin#L652), [emit_llvm_calls.odin:742](src/emit_llvm_calls.odin#L742) and [emit_llvm_calls.odin:1807](src/emit_llvm_calls.odin#L1807): each reads a tag, then writes `icmp eq i%d` against one index. Share `emit_union_tag_is(e, type, value, index) -> string`. (about 3 lines per site)
-- [emit_llvm_adapters.odin:11](src/emit_llvm_adapters.odin#L11), [emit_llvm_containers.odin:283](src/emit_llvm_containers.odin#L283) and [emit_llvm_iteration.odin:821](src/emit_llvm_iteration.odin#L821) (also 886, 953, 1028): the same 130-column `define` header for a synthesized body taking `ptr %arg0`. Share `open_synth_receiver_function(e, name, result)`.
-
-**Comments**
-
-- [emit_llvm_adapters.odin:59](src/emit_llvm_adapters.odin#L59): delete with the dead call it describes; indexing never changes ownership here, so the comment misleads. (1 line)
-
-### src/emit_llvm_box.odin
-
-Small and well organised. The remaining bug is a use-after-free when a boxed place is changed by the allocator argument.
-
-**Bugs**
-
-- `BUG-emit_llvm_box-1` **high** [emit_llvm_box.odin:29](src/emit_llvm_box.odin#L29) `emit_box_new`: a copied place is loaded, then the allocator operand runs (:34), then the stale value is cloned (:52). Scenario: `box(d, pick(&mut d))` where `pick` does `d^ = {}` compiles and prints freed bytes for a `[dynamic]string`; `two(d, pick(&mut d))` gets L0511. Fix: at [cfg_provenance.odin:8415](src/cfg_provenance.odin#L8415), hold the place read across `bound[1]`, as a call does. *Confirmed: Reproduced: box(d, pick(&mut d)) compiles (warning L0507 only) and exits 0xC0000374 heap corruption; with pick not writing d it prints correctly; two(d, pick(&mut d)) gets L0511. Not in known-gaps.md or open-questions.md. High severity is fair.*
-
-**Near copies**
-
-- [emit_llvm_box.odin:87](src/emit_llvm_box.odin#L87) and [emit_llvm_calls.odin:643](src/emit_llvm_calls.odin#L643) `emit_alloc_outcome`: the same fallible-or-policy tail, differing only in label names, which no test pins. Make that proc package-private and `return emit_alloc_outcome(e, v, as_type, failed, published, allocator)`. (about 10 lines)
-- [emit_llvm_box.odin:60](src/emit_llvm_box.odin#L60), [emit_llvm_box.odin:202](src/emit_llvm_box.odin#L202) and [emit_llvm_stmt.odin:166](src/emit_llvm_stmt.odin#L166): call `loke_rt_v1_alloc`, then compare with null. Shared form: `emit_rt_alloc(e, allocator, size, align) -> (block, failed)`. The free line at :170 also repeats at [emit_llvm_cleanup.odin:591](src/emit_llvm_cleanup.odin#L591) and [emit_llvm_calls.odin:731](src/emit_llvm_calls.odin#L731).
-
 ### src/emit_llvm_calls.odin
 
 The lowering logic is careful, but one common call shape fails to compile and an unbounded stack allocation crashes valid programs. Much of the bulk is removable: a single-value `[]string` chain with a mostly dead dispatcher, repeated intrinsic declarations, and a variadic fill loop written twice.
@@ -2306,7 +2226,7 @@ The lowering logic is careful, but one common call shape fails to compile and an
 - [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) and [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113): the four-line "declare once" block appears at 201, 227, 254, 324, 348, 358, 376 and simd:274. Share `declare_intrinsic(e, key, text)`, and rename `simd_intrinsics`, which now holds every intrinsic. (about 20 lines)
 - [emit_llvm_calls.odin:251](src/emit_llvm_calls.odin#L251) and [emit_llvm_calls.odin:373](src/emit_llvm_calls.odin#L373): `emit_reverse_bits` and `emit_float_instruction` differ only in the key's suffix. Share `emit_unary_intrinsic(e, v, key)`, which also serves the `ctpop` arm of `emit_bit_count`. (about 10 lines)
 - [emit_llvm_calls.odin:197](src/emit_llvm_calls.odin#L197) and [emit_llvm_calls.odin:226](src/emit_llvm_calls.odin#L226): `emit_bit_count`'s `ctlz` path re-spells `emit_ctlz`; `emit_ctlz` with a `name` parameter covers `cttz` as well. (about 5 lines)
-- [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647) and [emit_llvm_box.odin:91](src/emit_llvm_box.odin#L91): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Also emit_llvm_containers.odin:798, emit_llvm_expr.odin:2273, emit_llvm_stmt.odin:174. Share `emit_alloc_policy_if(e, failed, allocator)`; box:87-97 is all of `emit_alloc_outcome`, so make that non-private. (about 20 lines)
+- [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Also emit_llvm_containers.odin:798, emit_llvm_expr.odin:2273, emit_llvm_stmt.odin:174. Share `emit_alloc_policy_if(e, failed, allocator)`. (about 15 lines)
 - [emit_llvm_calls.odin:438](src/emit_llvm_calls.odin#L438) and [emit_llvm_calls.odin:512](src/emit_llvm_calls.odin#L512): the same xor-then-multiply hash step; share `emit_hash_mix(e, seed, bits)`. (about 4 lines)
 - [emit_llvm_calls.odin:826](src/emit_llvm_calls.odin#L826) and [emit_llvm_calls.odin:910](src/emit_llvm_calls.odin#L910): a conditional `emit_stmt` followed by `unreachable` if still open; share `emit_conditional_exit(e, stmt)`. (about 6 lines)
 - [emit_llvm_calls.odin:1643](src/emit_llvm_calls.odin#L1643) and [emit_llvm_calls.odin:1680](src/emit_llvm_calls.odin#L1680): the same split of SIMD operands into lane types; share `conversion_lanes(c, from, to)`. (about 4 lines)
@@ -2378,7 +2298,7 @@ One reproduced double drop; the other replay paths I traced and ran held up. The
 - [emit_llvm_cleanup.odin:562](src/emit_llvm_cleanup.odin#L562), [:577](src/emit_llvm_cleanup.odin#L577), [:600](src/emit_llvm_cleanup.odin#L600): all three reserve an env slot, reserve the action, publish the address and register it. Share `register_published(e, &entry, address)`; each caller keeps only its literal and precondition. (about 10 lines)
 - [emit_llvm_cleanup.odin:1361](src/emit_llvm_cleanup.odin#L1361) and [:1591](src/emit_llvm_cleanup.odin#L1591): the same reverse cursor loop, differing by one per-element flag test and the guard. One `emit_drop_elements_reversed(e, element, items, count, flags := "")` serves both, and the dispatches on `flags` simplify. (about 15 lines)
 - [emit_llvm_cleanup.odin:406](src/emit_llvm_cleanup.odin#L406) and [emit_llvm.odin:727](src/emit_llvm.odin#L727): the same thunk, strip, prologue and write sequence, differing only in where the thunk's text goes. Send it to `pending_thunks` in both, remove `e.pending`, and call `end_generated_frame` from `emit_proc_definition`; check that `tests/ll` tolerates the new order. (about 8 lines)
-- [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073), [:1652](src/emit_llvm_cleanup.odin#L1652) and [emit_llvm_box.odin:93](src/emit_llvm_box.odin#L93), plus sites in `emit_llvm_calls`, `_containers`, `_expr` and `_stmt`: nine copies of the `alloc_failed` call and `unreachable`, most also setting `terminated`. Add `emit_alloc_failed(e, allocator)`. (about 13 lines)
+- [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073) and [:1652](src/emit_llvm_cleanup.odin#L1652), plus sites in `emit_llvm_calls`, `_containers`, `_expr` and `_stmt`: eight copies of the `alloc_failed` call and `unreachable`, most also setting `terminated`. Add `emit_alloc_failed(e, allocator)`. (about 13 lines)
 
 **Structure and boundaries**
 
@@ -2568,7 +2488,7 @@ Careful code with mostly useful why-comments, but constants of a large type brea
 
 - [emit_llvm_expr.odin:537](src/emit_llvm_expr.odin#L537) `llvm_float`: `hex_pattern` is a hand-written printf on a path that is not hot; use `fmt.aprintf("0xH%04X", u16(pattern))` and `fmt.aprintf("0x%016X", pattern)`, and delete `hex_pattern`. (about 10 lines)
 - [emit_llvm_expr.odin:562](src/emit_llvm_expr.odin#L562) `f32_pattern_as_f64`: only NaN needs bit surgery, since `f32` to `f64` is exact for every other value. Keep the `0xff` case (infinity is the same either way) and use the hardware conversion for the rest. (about 5 lines)
-- [emit_llvm_expr.odin:1855](src/emit_llvm_expr.odin#L1855) `emit_large_equal`: local `part_value` is `load_temporary` (line 629), as is the last line of `field_value` at line 1740; call it instead. (about 5 lines)
+- [emit_llvm_expr.odin:1855](src/emit_llvm_expr.odin#L1855) `emit_large_equal`: local `part_value` is `load_temporary` (line 629), as is the last line of `record_part`; call it instead. (about 5 lines)
 - [emit_llvm_expr.odin:171](src/emit_llvm_expr.odin#L171) `llvm_const`: `.Dyn`, `.Dynamic_Array`, `.Map` and a non-literal `.Slice` have no fields, so they always reach `zeroinitializer` through the record builder. Give them their own arm, and the `info.kind == .Struct &&` guards at lines 179-180 go. (about 6 lines)
 - [emit_llvm_expr.odin:2184](src/emit_llvm_expr.odin#L2184) `emit_text_parts`, and `emit_byte_slice_parts` at line 2409: hand-written `extractvalue` pairs; `return extract(e, storage, value, STRING_DATA), extract(e, storage, value, STRING_LEN)`. (about 6 lines)
 - [emit_llvm_expr.odin:1322](src/emit_llvm_expr.odin#L1322) `emit_slice_literal`: `element_address(e, backing, root, index)` replaces the hand-written GEP. Likewise `gep_at` at line 1001, `alloca` at line 2286 and `load` at line 2305. (about 8 lines)
@@ -2609,7 +2529,7 @@ Careful code with mostly useful why-comments, but constants of a large type brea
 - [emit_llvm_expr.odin:697](src/emit_llvm_expr.odin#L697), [801](src/emit_llvm_expr.odin#L801), [856](src/emit_llvm_expr.odin#L856) and [890](src/emit_llvm_expr.odin#L890): slot, store, `hold_addressed_temporary`. Share `hold_in_temporary(e, expr, type, value) -> string`. (about 6 lines)
 - [emit_llvm_expr.odin:2121](src/emit_llvm_expr.odin#L2121) and [emit_llvm_expr.odin:2133](src/emit_llvm_expr.odin#L2133): the two arms of `emit_cond` differ only in label, operand and clone flag; share `emit_cond_arm(...) -> (value, exit: string)`. (about 8 lines)
 - [emit_llvm_expr.odin:760](src/emit_llvm_expr.odin#L760) and [emit_llvm_expr.odin:781](src/emit_llvm_expr.odin#L781): the same symbol-storage lookup and failure; share `symbol_place(e, symbol) -> string`. (about 5 lines)
-- [emit_llvm_expr.odin:2272](src/emit_llvm_expr.odin#L2272) and [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), plus [emit_llvm_box.odin:93](src/emit_llvm_box.odin#L93), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176), [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073): the same branch to `alloc_failed`. Share `emit_alloc_failed_if(e, failed, provider, label)`. (about 25 lines overall)
+- [emit_llvm_expr.odin:2272](src/emit_llvm_expr.odin#L2272) and [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), plus [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176), [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073): the same branch to `alloc_failed`. Share `emit_alloc_failed_if(e, failed, provider, label)`. (about 25 lines overall)
 
 **Structure and boundaries**
 
@@ -2657,8 +2577,7 @@ Comments are mostly tight and the range arithmetic checks out, but protocol-loop
 **Near copies**
 
 - [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [961](src/emit_llvm_iteration.odin#L961) and [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945): the `loke_rt_v1_map_scan` call plus cursor store are identical; share `emit_map_scan(e, table, ops, cursor, cursor_slot, key_out, value_out) -> string`. (about 8 lines)
-- [emit_llvm_iteration.odin:650](src/emit_llvm_iteration.odin#L650) and [emit_llvm_adapters.odin:50](src/emit_llvm_adapters.odin#L50), [79](src/emit_llvm_adapters.odin#L79): the same `Option` test of tag against `some`; share `emit_option_is_some(e, option, value) -> string` beside `emit_option_some`. (about 8 lines)
-- [emit_llvm_iteration.odin:821](src/emit_llvm_iteration.odin#L821), [886](src/emit_llvm_iteration.odin#L886), [953](src/emit_llvm_iteration.odin#L953), [1028](src/emit_llvm_iteration.odin#L1028) and [emit_llvm_containers.odin:283](src/emit_llvm_containers.odin#L283): the same `define` line and stop block (lines 866-868, 935-937, 985-987, 1054-1056); share `open_synth_next` and `close_synth_next(e, option, stop_label)`, and use `branch_if` for the raw `br i1`. (about 15 lines)
+- [emit_llvm_iteration.odin:821](src/emit_llvm_iteration.odin#L821), [886](src/emit_llvm_iteration.odin#L886), [953](src/emit_llvm_iteration.odin#L953), [1028](src/emit_llvm_iteration.odin#L1028) and [emit_llvm_containers.odin:283](src/emit_llvm_containers.odin#L283): the same stop block (lines 866-868, 935-937, 985-987, 1054-1056); share `close_synth_next(e, option, stop_label)`, and use `branch_if` for the raw `br i1`. (about 10 lines)
 - [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61) and [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679): the same six-line save and restore of four loop targets; group them as one `Loop_Targets` field on `Emitter`, then `outer := e.loop; defer e.loop = outer`. (about 8 lines)
 - [emit_llvm_iteration.odin:206](src/emit_llvm_iteration.odin#L206) and [iterate.odin:982](src/iterate.odin#L982); [emit_llvm_iteration.odin:188](src/emit_llvm_iteration.odin#L188) and [iterate.odin:899](src/iterate.odin#L899): the projected-record test and projected-field lookup are written twice. Both take only `^Compiler`, so they belong in `iterate.odin`, shared. (about 10 lines)
 
@@ -2850,7 +2769,7 @@ Readable and well commented, but statement lowering has several ownership bugs, 
 
 - [emit_llvm_stmt.odin:419](src/emit_llvm_stmt.odin#L419) and [emit_llvm_stmt.odin:503](src/emit_llvm_stmt.odin#L503): identical address-preparation loops, since `retained[i] == !is_discard(target)` (check.odin:3573). The write loops at :431 and :515 match too, apart from the type stored. Share `emit_destinations` and a per-target write. (about 20 lines)
 - [emit_llvm_stmt.odin:446](src/emit_llvm_stmt.odin#L446), [emit_llvm_stmt.odin:527](src/emit_llvm_stmt.odin#L527) and [emit_llvm_stmt.odin:609](src/emit_llvm_stmt.odin#L609): displace, store, revive, finish guard, drop displaced. Merge into `emit_replacing_store(e, s, index, type, value, address, guard)`, which also ends `displace_place` setting the flag while callers revive. (about 8 lines)
-- [emit_llvm_stmt.odin:173](src/emit_llvm_stmt.odin#L173), [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647), [emit_llvm_box.odin:90](src/emit_llvm_box.odin#L90), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800) and [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Shared form: `emit_alloc_failed_if(e, failed, allocator)`, shaped like `panic_if`. (about 5 lines per site)
+- [emit_llvm_stmt.odin:173](src/emit_llvm_stmt.odin#L173), [emit_llvm_calls.odin:647](src/emit_llvm_calls.odin#L647), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800) and [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275): branch on failure, call `loke_rt_v1_alloc_failed`, `unreachable`, continue. Shared form: `emit_alloc_failed_if(e, failed, allocator)`, shaped like `panic_if`. (about 5 lines per site)
 - [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679) and [emit_llvm_iteration.odin:62](src/emit_llvm_iteration.odin#L62): the same save and restore of four loop fields. Group them in a `Loop_Targets` on `Emitter` (`outer := e.loop; defer e.loop = outer`), which is also where the frame depth from BUG-1 belongs. (about 8 lines)
 - [emit_llvm_stmt.odin:898](src/emit_llvm_stmt.odin#L898) and [emit_llvm_stmt.odin:956](src/emit_llvm_stmt.odin#L956): name `%bind.N`, alloca, `bind_local`. One helper returning the slot. (about 3 lines)
 - [emit_llvm_stmt.odin:162](src/emit_llvm_stmt.odin#L162) and [emit_llvm_stmt.odin:265](src/emit_llvm_stmt.odin#L265): the same field GEP. Hoist the nested `field_address` to file scope and use it in `emit_spawn_pack`.
@@ -3854,7 +3773,6 @@ Well-commented and cleanly owned; its linear scans run over a per-package, compi
 - [intrinsic.odin:269](src/intrinsic.odin#L269) `contributed_here`: at bind time `pkg.scope.names` holds only contributions, since line 133 of `check.odin` runs before any declaration is collected. Drop it and its tests at lines 83 and 147. (about 12 lines)
 - [intrinsic.odin:417](src/intrinsic.odin#L417) `check_intrinsic_signature`: replace the flag loop at lines 417-424 with `same := slice.equal(params, sym.params) && slice.equal(modes, info.param_modes) && result == sym.result && result_inout == sym.result_inout`. `info` is never nil for a `.Proc` here. (about 7 lines)
 - [intrinsic.odin:222](src/intrinsic.odin#L222) `validate_intrinsic_attributes`: the record is looked up twice (lines 222-226 and 235-242). Bind `record` once at the top, with `literal`. (about 4 lines)
-- [intrinsic.odin:42](src/intrinsic.odin#L42) `bind_intrinsic_declarations`: `intrinsics_bound` always equals `pkg.contributed`. Delete the field and guard, and in `prepare_package` write `if !pkg.contributed { contribute_standard_members(k, pkg); bind_intrinsic_declarations(k, pkg) }`. (about 4 lines)
 - [intrinsic.odin:94](src/intrinsic.odin#L94) `bind_intrinsic_impl`: `ensure_provider_members` already returns unless `info.provider`, so call it without the `type_is_region_provider` guard. (about 2 lines)
 - [intrinsic.odin:60](src/intrinsic.odin#L60) `bind_intrinsic_items`: the `file` parameter here and on `bind_intrinsic_impl` and `bind_intrinsic` is always `k.file_node` (set at line 51). Drop it and read `k.file_node` at line 197. (3 signatures, no lines)
 
@@ -5185,7 +5103,6 @@ Small and well scoped, with every declaration in use, but it has one real soundn
 - [region.odin:12](src/region.odin#L12): shorten and cite the heading, since line 13 has a bare `(design.md)`: "The region identity is the control block's address (design.md "Allocator regions and region provenance"), so moving or copying a handle keeps it and the region check follows one fact."
 - [region.odin:142](src/region.odin#L142): delete this paragraph, which restates the code and the constructors' signatures in `core/mem/api.loki`; if a pointer is wanted, standard-library.md "`core:mem`". Keep lines 146-148, unless the eager form above removes them along with the guard.
 - [region.odin:22](src/region.odin#L22): shorten to "Index of the one field, the control-block pointer."
-- [region.odin:3](src/region.odin#L3) and [stdlib.odin:74](src/stdlib.odin#L74): both state the no-ambient-allocator rule; keep the citation here and cut stdlib's copy to why the types are compiler-owned. (about 8 lines across the file)
 
 ### src/select.odin
 
@@ -5477,39 +5394,6 @@ Small, sound procedures for loading and diagnostics, sharing a file with the 380
 - [source.odin:674](src/source.odin#L674): keep the citation plus "`end_probe` fails if a probe grew the emission registries without a `begin_commit`"; the rest repeats compiler-architecture.md. Likewise cut [source.odin:733](src/source.odin#L733) to two lines. (about 6 lines)
 - [source.odin:483](src/source.odin#L483), line 488 and [source.odin:420](src/source.odin#L420) cite a spec without a heading: use `grammar.md "Source encoding"` and `design.md "Allocators"`; line 488 then repeats line 483 and can go. (1 line)
 
-### src/stdlib.odin
-
-A flat, correct table of what the compiler binds into each bundled package; every contributed name is used by its package, and no bug was found. The real debt is comments that have gone stale as the contributions grew, plus a package-by-key lookup that is hand-written across the checker.
-
-**Simplification**
-
-- [stdlib.odin:37](src/stdlib.odin#L37) `contribute_standard_members`: `pkg.contributed` and `intrinsics_bound` ([intrinsic.odin:42](src/intrinsic.odin#L42)) guard two calls that are adjacent in `prepare_package` ([check.odin:132](src/check.odin#L132)) and have no other production caller. Use one flag there: `if !pkg.contributed { pkg.contributed = true; contribute...; bind... }`, drop both guards and the `intrinsics_bound` field; "Called once per package" (line 32) then becomes true. (about 6 lines)
-- [stdlib.odin:269](src/stdlib.odin#L269) `contribute_symbol`: the `INVALID_SYMBOL` test and the nil test are one test, since `symbol_of` returns nil for an invalid id. Write `symbol := symbol_of(c, symbol_id); if symbol == nil { return }; symbol.public = true`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [stdlib.odin:37](src/stdlib.odin#L37): `pkg == nil || pkg.scope == nil` cannot hold. `prepare_package` returns on a nil package and creates the scope just before the call ([check.odin:129](src/check.odin#L129)), and the one test caller ([front_end_test.odin:1749](src/front_end_test.odin#L1749)) sets a scope too.
-
-**Near copies**
-
-- [stdlib.odin:234](src/stdlib.odin#L234) and [universe.odin:114](src/universe.odin#L114): the same `.Builtin` symbol literal, except `public`, and this copy re-interns the empty proc type that universe.odin:76 holds as `no_args`. Share `new_builtin_symbol(c, name, kind, public := false) -> Symbol_Id` in `universe.odin`; `contribute_builtin` keeps only the scope binding. (about 6 lines net)
-
-**Comments**
-
-- [stdlib.odin:6](src/stdlib.odin#L6): "M5" is a milestone name that appears nowhere else in `src/` or the documents; write "every provenance fact".
-- [stdlib.odin:13](src/stdlib.odin#L13): "in the order the switch below handles them" is false (`STD_MATH` is declared last but handled before `STD_LOG`, and `STD_THREAD` and `STD_INTERFACES` are not handled); delete the clause.
-- [stdlib.odin:23](src/stdlib.odin#L23): stale. `global_effects.odin` never uses this key; spawns are found by `param_cross_thread`. Write "Contributes nothing; `parallel.odin` and `packages.odin` find it by this key."
-- [stdlib.odin:48](src/stdlib.odin#L48): "Both are contributed" predates the five builtins below it. Keep the reason: "`Shared(T)` allocates and releases a `rawptr` control block, and this package is below `core:mem` and `core:unsafe`, so these are contributed privately rather than imported." (about 3 lines)
-- [stdlib.odin:65](src/stdlib.odin#L65): "as each wrapper below does" has no referent in this file (the wrappers are in `base/runtime/shared.loke`); end the sentence at "reports".
-- [stdlib.odin:74](src/stdlib.odin#L74): delete the first sentence, which restates the design rule; keep "Compiler-owned because the region lattice has to recognise them, not merely call them." (about 2 lines)
-- [stdlib.odin:90](src/stdlib.odin#L90): the "Cleanup ... release" heading also sits over `new` and `try_new`, which allocate; give those two their own reason or split the group.
-- [stdlib.odin:111](src/stdlib.odin#L111): the IR line counts are a dated measurement. Write "Contributed again rather than imported: `core:fmt` is in almost every program, and importing `core:strings` would emit that whole package." (about 1 line)
-- [stdlib.odin:125](src/stdlib.odin#L125): repeats compiler-architecture.md "Runtime and library boundary". Write "Copies known-valid UTF-8 from a supplied allocator, reporting failure; `core:strings` wraps it in `copy`/`try_copy`." (about 3 lines)
-- [stdlib.odin:138](src/stdlib.odin#L138): delete "`Atomic(T)` is a ... rather than chosen"; the constant-ordering reason and the `atomic_fence` naming note are what is needed. (about 2 lines)
-- [stdlib.odin:192](src/stdlib.odin#L192): "Allocated lazily, exactly as the other `LOKE_*` enums are" misleads, because this call creates them as soon as `core:log` is prepared. Write "Only a program loading `core:log` creates it here."
-- [stdlib.odin:204](src/stdlib.odin#L204): repeats the file header. Write `design.md "Allocators": one `Type_Id` under three spellings.` (about 2 lines)
-- [stdlib.odin:264](src/stdlib.odin#L264): "universe entries" is stale: `default_allocator_symbol` is deliberately not in the universe scope ([universe.odin:112](src/universe.odin#L112)) and `try_arena` never was. Write "Binds an existing symbol, reached as `pkg.name`, so it must be public." (about 1 line)
-
 ### src/subprocess/subprocess.odin
 
 Careful, well-reasoned Windows process code with correct handle ownership and quoting; there is no dead procedure. The one finding of real weight is the idle poll, whose 1 ms sleep really lasts about 15 ms and costs every launch time and every large output throughput; the bugs are all low severity.
@@ -5659,7 +5543,6 @@ A small, table-driven file whose bindings match design.md "Predeclared names"; n
 
 **Near copies**
 
-- [universe.odin:104](src/universe.odin#L104), [universe.odin:114](src/universe.odin#L114) and [stdlib.odin:234](src/stdlib.odin#L234): three spellings of a builtin symbol (`.Builtin`, `TYPE_VOID`, the empty proc type). Shared form: `new_builtin_symbol(c, name, kind, public := false) -> Symbol_Id`, which also removes `no_args`. (about 10 lines)
 - [box.odin:45](src/box.odin#L45), [iterate.odin:68](src/iterate.odin#L68) and [simd.odin:15](src/simd.odin#L15): the predeclared names with no universe entry use one proc three times; only the string differs. Shared form: `predeclared_callee(k, callee, "Box")`. (about 14 lines)
 - [check.odin:2330](src/check.odin#L2330) and [check.odin:2334](src/check.odin#L2334): `Simd` compares the name alone where `Box` uses `box_type_callee`, so a bare `x: Simd` naming a program's own generic `Simd` gets the `Simd(f32, 4)` message instead of L0431. Use `simd_callee` here too.
 

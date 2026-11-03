@@ -129,8 +129,11 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 		pkg.scope = new_scope(k.c, build_universe(k.c), .Package)
 	}
 	// First, so a declaration colliding with a contributed name is a redeclaration.
-	contribute_standard_members(k, pkg)
-	bind_intrinsic_declarations(k, pkg)
+	if !pkg.contributed {
+		pkg.contributed = true
+		contribute_standard_members(k, pkg)
+		bind_intrinsic_declarations(k, pkg)
+	}
 	k.pkg = package_id
 	k.lookup_pkg = package_id
 	k.scope = pkg.scope

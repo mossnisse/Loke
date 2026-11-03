@@ -58,9 +58,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		define_universe(c, entry.name, Symbol{kind = .Const, type = entry.type, const_value = entry.value, reserved = true})
 	}
 
-	// Built-ins share an empty signature: `check_builtin_call` settles arity and
-	// operand types.
-	no_args := intern_proc_type(c, nil, nil, INVALID_TYPE, false, "")
 	builtins := []struct{name: string, kind: Builtin_Kind} {
 		{"assert", .Assert},
 		{"panic", .Panic},
@@ -88,27 +85,29 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"exchange", .Exchange},
 	}
 	for entry in builtins {
-		define_universe(c, entry.name, Symbol {
-			kind      = .Builtin,
-			builtin   = entry.kind,
-			type      = TYPE_VOID,
-			proc_type = no_args,
-		})
+		c.universe.names[intern_identifier(c, entry.name)] = new_builtin_symbol(c, entry.name, entry.kind)
 	}
 
 	// Not predeclared: programs write `mem.default_allocator()`, which
 	// `core:mem` binds to this symbol, as does a hook's generated default argument.
-	c.default_allocator_symbol = new_symbol(c, Symbol {
-		kind      = .Builtin,
-		builtin   = .Default_Allocator,
-		name      = intern_identifier(c, "default_allocator"),
-		span      = no_span(),
-		type      = TYPE_VOID,
-		proc_type = no_args,
-	})
+	c.default_allocator_symbol = new_builtin_symbol(c, "default_allocator", .Default_Allocator)
 
 	predeclare_build_config(c)
 	return universe
+}
+
+// Built-ins share an empty signature: `check_builtin_call` settles arity and
+// operand types.
+new_builtin_symbol :: proc(c: ^Compiler, name: string, kind: Builtin_Kind, public := false) -> Symbol_Id {
+	return new_symbol(c, Symbol {
+		name      = intern_identifier(c, name),
+		span      = no_span(),
+		kind      = .Builtin,
+		builtin   = kind,
+		type      = TYPE_VOID,
+		proc_type = intern_proc_type(c, nil, nil, INVALID_TYPE, false, ""),
+		public    = public,
+	})
 }
 
 define_universe :: proc(c: ^Compiler, name: string, template: Symbol) {

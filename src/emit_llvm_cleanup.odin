@@ -588,10 +588,7 @@ begin_frame_release :: proc(e: ^Emitter, frame_type: Type_Id, frame: string) -> 
 
 @(private)
 emit_frame_release :: proc(e: ^Emitter, frame_type: Type_Id, frame: string) {
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
-		emit_default_allocator(e), frame, type_size(e.c, frame_type), type_align(e.c, frame_type),
-	)
+	emit_rt_free(e, emit_default_allocator(e), frame, type_size(e.c, frame_type), type_align(e.c, frame_type))
 }
 
 // Registers a box's allocation for panic replay while its payload is dropped,

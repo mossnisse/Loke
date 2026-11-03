@@ -555,7 +555,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	close_loop(e, loop)
 }
 
-@(private = "file")
+@(private)
 step_counter :: proc(e: ^Emitter, slot, type: string) {
 	current := load(e, type, slot)
 	next := temp(e)
@@ -627,9 +627,10 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	iter_sym := symbol_of(e.c, s.iter_symbol)
 	// An immutable `iter` receiver takes the source's address; a temporary
 	// source moves into the loop scope for the statement's duration.
-	subject_by_ptr := param_mode_is_pointer(symbol_param_mode(e.c, iter_sym, 0))
+	subject_mode := symbol_param_mode(e.c, iter_sym, 0)
+	subject_by_ptr := param_mode_is_pointer(subject_mode)
 	subject := subject_by_ptr ? spill_foreach_iterable_at(e, s.iterable, iter_sym.params[0]) : emit_expr(e, s.iterable)
-	subject_type := subject_by_ptr ? "ptr" : llvm_type(e, iter_sym.params[0])
+	subject_type := param_llvm(e, iter_sym.params[0], subject_mode)
 	iterator_type := llvm_type(e, s.iterator_type)
 	iterator := alloca(e, iterator_type)
 	made := emit_call_result(e, s.iterator_type, symbol_name(e, s.iter_symbol), fmt.aprintf("%s %s", subject_type, subject))
@@ -647,13 +648,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	yielded := foreach_yielded_type(e, s)
 	option := symbol_of(e.c, s.next_symbol).result
 	produced := emit_call_result(e, option, symbol_name(e, s.next_symbol), fmt.aprintf("ptr %s", iterator))
-	ok := temp(e)
-	shape := union_layout(e.c, option)
-	tag := emit_union_tag(e, option, produced)
-	fmt.sbprintfln(
-		&e.b, "  %s = icmp eq i%d %s, %d",
-		ok, shape.tag_bytes * 8, tag, union_index_of(e.c, option, "some"),
-	)
+	ok := emit_union_tag_is(e, option, produced, union_index_of(e.c, option, "some"))
 	slot := emit_union_spill(e, option, produced)
 	branch_if(e, ok, loop.body, loop.done)
 
@@ -818,7 +813,7 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	iterator := llvm_type(e, symbol.params[0])
 	signed := type_signed(e.c, step) || type_is_rune(e.c, step)
 
-	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, option), name, sret_param(e, option))
+	open_synth_receiver(e, name, option)
 	current_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_CURRENT)
 	current := load(e, element, current_ptr)
 	high_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_HIGH)
@@ -883,7 +878,7 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	stored := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
 	stored_llvm := llvm_type(e, stored)
 
-	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, option), name, sret_param(e, option))
+	open_synth_receiver(e, name, option)
 	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
 	index := load(e, "i64", index_ptr)
 	reversed_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED)
@@ -950,7 +945,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	subject := type_of(e.c, symbol.params[0]).key
 	ops := container_ops_global(e, subject)
 
-	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, option), name, sret_param(e, option))
+	open_synth_receiver(e, name, option)
 	table_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_TABLE)
 	table := load(e, "ptr", table_ptr)
 	cursor_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_CURSOR)
@@ -1025,7 +1020,7 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	option := symbol.result
 	yielded := option_payload(e.c, option)
 	iterator := llvm_type(e, symbol.params[0])
-	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, option), name, sret_param(e, option))
+	open_synth_receiver(e, name, option)
 
 	view := load(e, STRING_VIEW_TYPE, gep_field(e, iterator, "%arg0", ITER_TEXT_VIEW))
 	data := extract(e, STRING_VIEW_TYPE, view, STRING_DATA)

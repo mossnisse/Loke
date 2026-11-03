@@ -1,0 +1,33 @@
+// design.md "Evaluation order": `box` clones a managed place from the allocator
+// evaluated after it, so that operand may not write the place. A moved value or a
+// plain one was already taken.
+package main;
+
+import "core:mem";
+
+pick :: proc(d: ^mut [dynamic]string) -> Allocator {
+	d^ = {};
+	return mem.default_allocator();
+}
+
+named :: proc() {
+	d: [dynamic]string = {};
+	_ = box(d.clone(), pick(&mut d));
+	_ = box(d, pick(&mut d));
+}
+
+through_carrier :: proc(p: ^mut [dynamic]string) {
+	_ = box(p^, pick(p));
+}
+
+moved :: proc() {
+	d: [dynamic]string = {};
+	_ = box(move(d), mem.default_allocator());
+}
+
+plain :: proc() {
+	x := 1;
+	_ = box(x, mem.default_allocator());
+}
+
+main :: proc() {}

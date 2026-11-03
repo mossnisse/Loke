@@ -418,14 +418,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		current := seed
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
-			part := ""
-			if is_large_value(e, under) {
-				address := element_address(e, under, value, index)
-				part = is_large_value(e, symbol.type) ? address : load_place(e, symbol.type, address)
-			} else {
-				part = extract(e, llvm_type(e, under), value, index)
-			}
-			current = emit_hash_value(e, symbol.type, part, current)
+			current = emit_hash_value(e, symbol.type, record_part(e, under, value, index), current)
 		}
 		return current
 	}
@@ -639,7 +632,7 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 // design.md "Allocation failure": the `try_` form returns the failure as a
 // `Result`; the plain form applies the allocator's policy, which does not
 // return, and produces the value.
-@(private = "file")
+@(private)
 emit_alloc_outcome :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, failed, value, allocator: string) -> string {
 	if v.operation.(Call_Allocation).fallible {
 		return emit_alloc_result(e, as_type, failed, value)
@@ -728,24 +721,14 @@ emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 		backend_fail(e, "`unsafe.free` did not receive an allocation pointer")
 		return
 	}
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
-		allocator, pointer, type_size(e.c, info.element), type_align(e.c, info.element),
-	)
+	emit_rt_free(e, allocator, pointer, type_size(e.c, info.element), type_align(e.c, info.element))
 }
 
 // Whether this union value holds its designated failure variant.
 @(private)
 emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
 	info := type_of(e.c, type_underlying(e.c, union_type))
-	shape := union_layout(e.c, union_type)
-	tag := emit_union_tag(e, union_type, value)
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = icmp eq i%d %s, %d",
-		out, shape.tag_bytes * 8, tag, info.failure_variant,
-	)
-	return out
+	return emit_union_tag_is(e, union_type, value, info.failure_variant)
 }
 
 // Applies the explicit representations needed by propagated failures.
@@ -1804,9 +1787,7 @@ emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) -> string {
 	subject := type_underlying(e.c, expr_base(v.bound[0]).type)
 	value := emit_borrowed_operand(e, v.bound[0])
-	tag := emit_union_tag(e, subject, value)
-	matched := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, union_layout(e.c, subject).tag_bytes * 8, tag, index)
+	matched := emit_union_tag_is(e, subject, value, index)
 
 	slot := alloca(e, llvm_type(e, as_type))
 	store(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "none"), ""), slot)

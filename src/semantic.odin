@@ -877,7 +877,6 @@ Package :: struct {
 	// declarations that describe them (`src/intrinsic.odin`), bound once.
 	contributions:  [dynamic]Identifier_Id,
 	intrinsics:     [dynamic]Intrinsic_Decl,
-	intrinsics_bound: bool,
 }
 
 // Address space each per-body scratch arena reserves.

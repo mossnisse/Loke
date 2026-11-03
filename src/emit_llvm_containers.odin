@@ -275,7 +275,7 @@ emit_synth_chunks_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	element := llvm_type(e, slice_element(e.c, slice))
 	iterator := llvm_type(e, symbol.params[0])
 
-	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, option), name, sret_param(e, option))
+	open_synth_receiver(e, name, option)
 	e.terminated = false
 	rest_ptr := gep_field(e, iterator, "%arg0", CHUNKS_REST)
 	rest := load(e, header, rest_ptr)

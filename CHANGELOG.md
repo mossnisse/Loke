@@ -26,6 +26,11 @@ checklist.
   @(align=N) Generic :: struct($N: int) { ... }
   ```
 
+- `box(d, pick(&mut d))`, whose allocator operand writes the managed place being boxed, is now
+  `L0511`, as the same two operands of a call are ([Evaluation order](design.md#evaluation-order)).
+  It compiled, and cloned freed memory. Upgrade by evaluating the allocator first.
+- `sync.Atomic(T)` of a union that only has `Option`'s shape is now `L0662`
+  ([`core:sync`](standard-library.md#coresync)). Upgrade by using `Option(^T)`.
 - `@(required)` with `@(initialized)` on one field is now `L0691`, and `@(require_results)` on an
   interface is `L0607`. Neither had any effect. Upgrade by deleting the attribute.
 - `lokec` takes at most one of the options that select what a run does, such as `-fmt`, `-doc` and
@@ -1268,6 +1273,8 @@ checklist.
 
 ### Fixed
 
+- `indexed()`, `copied()`, and `reversed()` over a value, iterator, or element larger than 4096
+  bytes now compile, and so does `foreach` over one taken by value. Each failed with `L0403`.
 - A `-runtime` directory that exists but cannot be listed now says so in `L0551`, rather than
   calling the directory empty.
 - Editor completion now shows the type of `LOKE_OS` and the other `LOKE_*` enum constants before

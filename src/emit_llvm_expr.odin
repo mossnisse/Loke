@@ -630,6 +630,38 @@ load_temporary :: proc(e: ^Emitter, type: Type_Id, slot: string) -> string {
 	return is_large_value(e, type) ? slot : load_place(e, type, slot)
 }
 
+// One field of a record value. A large record is an address, read in place, and
+// a large field stays one.
+@(private)
+record_part :: proc(e: ^Emitter, record: Type_Id, value: string, index: int) -> string {
+	if !is_large_value(e, record) {
+		return extract(e, llvm_type(e, record), value, index)
+	}
+	address := element_address(e, record, value, index)
+	field := symbol_of(e.c, underlying_info(e.c, record).fields[index]).type
+	return is_large_value(e, field) ? address : load_place(e, field, address)
+}
+
+// A record of `parts`, in field order. A large one is built in storage, and a
+// large part is the address of its value.
+@(private)
+build_record :: proc(e: ^Emitter, record: Type_Id, parts: ..string) -> string {
+	fields := underlying_info(e.c, record).fields
+	if is_large_value(e, record) {
+		slot := temporary_slot(e, record)
+		for part, index in parts {
+			store(e, symbol_of(e.c, fields[index]).type, part, element_address(e, record, slot, index))
+		}
+		return slot
+	}
+	llvm := llvm_type(e, record)
+	built := "undef"
+	for part, index in parts {
+		built = insert(e, llvm, built, llvm_type(e, symbol_of(e.c, fields[index]).type), part, index)
+	}
+	return built
+}
+
 @(private)
 copy_bytes :: proc(e: ^Emitter, to, from: string, size: u64) {
 	fmt.sbprintfln(&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %d, i1 false)", to, from, size)
@@ -1731,20 +1763,12 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 emit_record_order :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
-	large := is_large_value(e, under)
-	field_value :: proc(e: ^Emitter, record: Type_Id, large: bool, value: string, index: int, type: Type_Id) -> string {
-		if !large {
-			return extract(e, llvm_type(e, record), value, index)
-		}
-		address := element_address(e, record, value, index)
-		return is_large_value(e, type) ? address : load_place(e, type, address)
-	}
 	swapped := op == .Gt || op == .Gt_Eq
 	result := op == .Lt_Eq || op == .Gt_Eq ? "true" : "false"
 	for index := len(info.fields) - 1; index >= 0; index -= 1 {
 		field := symbol_of(e.c, info.fields[index]).type
-		left := field_value(e, under, large, lhs, index, field)
-		right := field_value(e, under, large, rhs, index, field)
+		left := record_part(e, under, lhs, index)
+		right := record_part(e, under, rhs, index)
 		if swapped {
 			left, right = right, left
 		}

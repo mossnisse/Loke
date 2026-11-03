@@ -57,10 +57,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		guard = hold_temporary_value(e, payload, value)
 	}
 
-	block := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)", block, allocator, size, align)
-	no_memory := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, block)
+	block, no_memory := emit_rt_alloc(e, allocator, size, align)
 	release_label, publish_label := new_label(e, "box.release"), new_label(e, "box.publish")
 	branch_if(e, no_memory, release_label, publish_label)
 
@@ -87,17 +84,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	published := load(e, "ptr", block_slot)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, published)
-	if checked.fallible {
-		return emit_alloc_result(e, as_type, failed, published)
-	}
-	fail_label, ok_label := new_label(e, "box.failed"), new_label(e, "box.ok")
-	branch_if(e, failed, fail_label, ok_label)
-	place_label(e, fail_label)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-	place_label(e, ok_label)
-	return published
+	return emit_alloc_outcome(e, v, as_type, failed, published, allocator)
 }
 
 @(private)
@@ -166,11 +153,7 @@ box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 // the allocator stored at its start.
 @(private)
 emit_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) {
-	allocator := load(e, "ptr", block)
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
-		allocator, block, box_block_size(e.c, payload), box_block_align(e.c, payload),
-	)
+	emit_rt_free(e, load(e, "ptr", block), block, box_block_size(e.c, payload), box_block_align(e.c, payload))
 }
 
 // The payload is cloned before the allocation is made, as `box(place)` does,
@@ -198,13 +181,7 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 				place_label(e, cloned_label)
 			}
 			value := load_place(e, payload, source)
-			block := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %%a, i64 %d, i64 %d)",
-				block, box_block_size(e.c, payload), box_block_align(e.c, payload),
-			)
-			no_memory := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, block)
+			block, no_memory := emit_rt_alloc(e, "%a", box_block_size(e.c, payload), box_block_align(e.c, payload))
 			undo_label, publish_label := new_label(e, "boxclone.undo"), new_label(e, "boxclone.publish")
 			branch_if(e, no_memory, undo_label, publish_label)
 			place_label(e, undo_label)

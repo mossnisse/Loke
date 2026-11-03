@@ -3,6 +3,8 @@
 // symbol, annotated like any other call.
 package lokec
 
+import "core:fmt"
+
 check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbol_id: Symbol_Id, expected: Type_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	ident.symbol = symbol_id
@@ -1549,6 +1551,23 @@ TYPE_INFO_LAYOUT := [?]Runtime_Field {
 MEMBER_INFO_LAYOUT := [?]Runtime_Field {
 	{"kind", "Member_Kind"}, {"name", "string_view"}, {"type", "typeid"},
 	{"offset", "int"}, {"value_low", "u64"}, {"value_high", "u64"},
+}
+
+// Does a `base:runtime` enum declare exactly `E`'s members, by name, in order,
+// with each value its index? The compiler writes these values as numbers.
+runtime_enum_matches :: proc(c: ^Compiler, type: Type_Id, $E: typeid) -> bool {
+	info := type_of(c, type)
+	if info == nil || info.kind != .Enum || len(info.fields) != len(E) {
+		return false
+	}
+	for member, index in info.fields {
+		sym := symbol_of(c, member)
+		value, fits := bi_to_i64(c, sym.const_value.integer)
+		if sym.name != intern_identifier(c, fmt.tprint(E(index))) || !fits || value != i64(index) {
+			return false
+		}
+	}
+	return true
 }
 
 @(private = "file")
