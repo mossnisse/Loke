@@ -1399,15 +1399,21 @@ Waiting_Argument :: struct {
 // inference. Only a parameter whose written type names none of the
 // procedure's `$` parameters has one then, as `order: Euler_Order` beside
 // `first: $T` does, and so does a `$` parameter's, as `$mode: Mode`;
-// `Option(T)` waits for `T` (`generic_parameter_waits`).
-generic_parameter_context_type :: proc(k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int) -> Type_Id {
+// `Option(T)` waits for `T` (`generic_parameter_waits`). `has_parameter` is false
+// when the argument fills no parameter of this procedure.
+generic_parameter_context_type :: proc(
+	k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int,
+) -> (type: Type_Id, has_parameter: bool) {
 	written, _ := generic_parameter_written(k, template, name, position)
-	if written == nil || names_poly_parameter_in(template, written) {
-		return INVALID_TYPE
+	if written == nil {
+		return INVALID_TYPE, false
+	}
+	if names_poly_parameter_in(template, written) {
+		return INVALID_TYPE, true
 	}
 	saved := enter_instance(k, template, new_instance_scope(k, template))
 	defer k.location = saved
-	return resolve_type_syntax(k, clone_expr(k.c, written))
+	return resolve_type_syntax(k, clone_expr(k.c, written)), true
 }
 
 // design.md "Arguments typed after inference": whether an argument that needs

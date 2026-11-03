@@ -684,6 +684,52 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// Members resolve after declaration collection, including later declarations.
+resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Proc_Group) {
+	members := make([dynamic]Symbol_Id, 0, len(value.names), k.c.semantic_allocator)
+	for name in value.names {
+		id := name_identifier(k.c, name)
+		member := INVALID_SYMBOL
+		owner := symbol_of(k.c, group_id)
+		if owner != nil && owner.owner_type != INVALID_TYPE {
+			member = find_member(k, owner.owner_type, id)
+			if member == INVALID_SYMBOL && excluded_member(k, owner.owner_type, id) != nil {
+				continue
+			}
+		} else {
+			member = lookup_symbol(k.scope, id)
+		}
+		if member == INVALID_SYMBOL {
+			errorf(k.c, name.span, "L0395", "unknown name `%s` in this procedure group", name.text)
+			continue
+		}
+		if sym := symbol_of(k.c, member); sym != nil && sym.decl != nil && sym.decl.sig_state == .Unchecked {
+			resolve_declaration_signature(k, sym.decl)
+		}
+		sym := symbol_of(k.c, member)
+		if sym == nil || sym.kind != .Proc {
+			errorf(k.c, name.span, "L0393", "`%s` is not a procedure, so it cannot be a group member", name.text)
+			continue
+		}
+		// A group would make the hook an ordinary callable operation.
+		if reject_direct_hook_call(k, name.span, member) {
+			continue
+		}
+		// design.md "Test procedures": nor may a group make a test callable.
+		if reject_test_procedure_use(k, sym, name.text, name.span) {
+			continue
+		}
+		if slice.contains(members[:], member) {
+			errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
+			continue
+		}
+		append(&members, member)
+	}
+	if group := symbol_of(k.c, group_id); group != nil {
+		group.members = members[:]
+	}
+}
+
 // design.md "Distinct types": a nominal record is declared with `struct`, so
 // `distinct` does not give an anonymous record a second way to become one.
 @(private = "file")

@@ -1,0 +1,82 @@
+package main;
+import "core:fmt";
+
+// design.md "Operator lookup and overload resolution": what selection sees of
+// an argument. A `$` parameter consumes nothing, so ownership ties and
+// tie-breaker 4 prefers the non-parametric member. A member with no parameter
+// for an argument says nothing about its type, generic or not. A conditional
+// gives both operands the type its parameter gives it, through a group, a
+// generic, and a method as in a plain call, and waits like its operands
+// (design.md "Arguments typed after inference"). An `inout` parameter takes
+// exactly its own type, so a merely assignable place cannot select a member.
+
+Mode :: enum { A, B }
+
+plain :: proc(x: int) -> int { return 1; }
+compile_time :: proc($x: int) -> int { return 2; }
+tied :: proc{plain, compile_time}
+tied_reversed :: proc{compile_time, plain}
+
+consuming :: proc(x: move string) -> int { return 1; }
+compile_time_string :: proc($x: string) -> int { return 2; }
+consumes :: proc{compile_time_string, consuming}
+
+with_mode :: proc(x: int, m: Mode) -> int { return 10; }
+generic_one :: proc(x: $T) -> int { return 20; }
+optional_mode :: proc{with_mode, generic_one}
+optional_mode_reversed :: proc{generic_one, with_mode}
+
+one_arg :: proc(m: Mode) -> int { return 1 if m == .A else 2; }
+two_args :: proc(m: Mode, y: int) -> int { return (1 if m == .A else 2) + y; }
+by_arity :: proc{one_arg, two_args}
+
+generic_mode :: proc(x: $T, m: Mode) -> int { return 1 if m == .A else 2; }
+
+value_or :: proc(value: $T, fallback: Option(T)) -> T {
+	switch (fallback) {
+	case .some(found):
+		return found;
+	case .none:
+		return value;
+	}
+}
+
+many :: proc(first: $T, rest: ..T) -> int { return rest.len(); }
+
+Holder :: struct { base: int }
+impl Holder {
+	plus :: proc(self: ^, extra: Option(int)) -> int {
+		switch (extra) {
+		case .some(found):
+			return self.base + found;
+		case .none:
+			return self.base;
+		}
+	}
+}
+
+exact_view :: proc(x: inout []int, z: int) -> int { return 1; }
+exact_mutable :: proc(x: inout []mut int, z: f64) -> int { return 2; }
+by_inout :: proc{exact_view, exact_mutable}
+
+main :: proc() {
+	fmt.println(tied(1), tied_reversed(1));
+	fmt.println(consumes("text"));
+
+	fmt.println(optional_mode(1, .A), optional_mode(1, m = .B), optional_mode(1));
+	fmt.println(optional_mode_reversed(1, .A), optional_mode_reversed(1));
+
+	yes, no := true, false;
+	fmt.println(by_arity(.A if yes else .B), by_arity(.A if no else .B, 10));
+	fmt.println(generic_mode("x", .A if no else .B));
+	fmt.println(value_or(1, .none if yes else .some(5)));
+	fmt.println(value_or(1, .some(5) if yes else .none));
+	fmt.println(value_or(fallback = .some("b") if yes else .none, value = "a"));
+	fmt.println(many(Mode.A, .A if yes else .B, Mode.B));
+	holder := Holder{base = 100};
+	fmt.println(holder.plus(.none if no else .some(5)));
+
+	numbers := [3]int{1, 2, 3};
+	view := &mut numbers[0:2];
+	fmt.println(by_inout(inout view, 1));
+}

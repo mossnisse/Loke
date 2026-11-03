@@ -921,6 +921,11 @@ checklist.
   `hook(drop)` is `L0508`, as in a loop with no `&mut` leaf
   ([Destructuring](design.md#destructuring)). It compiled and the hook never ran. Upgrade by binding
   the part whole.
+- A group member no longer wins for taking an argument as a `$` parameter
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)).
+  With `plain(x: int)` and `gen($x: int)`, `pick(1)` called `gen`, because the ownership tie-breaker
+  counted the literal against `plain`; it now calls `plain`. Upgrade by calling `gen` by name where
+  it was the one meant.
 
 ### Added
 
@@ -2375,6 +2380,20 @@ checklist.
   false `L0511` ([Global write effects](design.md#global-write-effects)).
 - Asking whether a deeply nested record is copyable, and copying one, no longer takes time
   exponential in its nesting.
+- A conditional expression whose operands need a destination type, such as `.A if c else .B`, now
+  takes one through a procedure group, a generic and a method, as it did in a plain call, and waits
+  for inference as they do
+  ([Arguments typed after inference](design.md#arguments-typed-after-inference)); each was `L0385`.
+- A group member with no parameter for an argument no longer hides another member's parameter type
+  because it is generic. `g(1, .A)` was `L0385` with `f(x: int, m: Mode)` and `h(x: $T)` in `g`.
+- An `inout` argument no longer makes a member viable through a conversion an `inout` parameter
+  refuses, so `g(inout y, 1)` with `y: []mut int` selects the member that takes `[]mut int`; it was
+  an `L0391` ambiguity with one that takes `[]int`.
+- A rejected group member now names a missing or extra `inout`, where it said "argument 1 is `int`
+  where `int` is wanted". It advises `move(...)` only for a place of the right type, where a
+  temporary or a wrong type was told to write it too.
+- A failed overload's reasons are now worded only when they are reported. A call through a group of
+  128 members checks in about half the time.
 
 ## [0.9.0] - 2026-10-27
 

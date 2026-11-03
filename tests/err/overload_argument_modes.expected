@@ -1,0 +1,24 @@
+L0392
+@32:6
+`in_int` does not apply: it takes argument 1 by `inout`; write `inout` at the call site
+`in_string` does not apply: it takes argument 1 by `inout`; write `inout` at the call site
+L0392
+@33:6
+`by_int` does not apply: it does not take argument 1 by `inout`
+`by_string` does not apply: it does not take argument 1 by `inout`
+L0392
+@34:6
+`moves_foo` does not apply: argument 1 is `Bar` where `Foo` is wanted
+`moves_string` does not apply: argument 1 is `Bar` where `string` is wanted
+L0392
+@36:6
+`moves_foo` does not apply: argument 1 is `Bar` where `Foo` is wanted
+`moves_string` does not apply: argument 1 is `Bar` where `string` is wanted
+L0392
+@38:6
+`moves_foo` does not apply: it takes argument 1 by `move`, which is written `move(...)`
+`moves_string` does not apply: argument 1 is `Foo` where `string` is wanted
+L0392
+@39:6
+`in_bar` does not apply: argument 1 is `int` where `Bar` is wanted
+`in_foo` does not apply: argument 1 is `int` where `Foo` is wanted

@@ -152,7 +152,7 @@ Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false
 
 `Expr_Ident`: [capture.odin:102](src/capture.odin#L102), [capture.odin:137](src/capture.odin#L137), [check.odin:3889](src/check.odin#L3889), [check_calls.odin:329](src/check_calls.odin#L329), [expand.odin:636](src/expand.odin#L636), [hooks.odin:823](src/hooks.odin#L823), [parallel.odin:652](src/parallel.odin#L652).
 One-name `Decl`: [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140), [check.odin:3898](src/check.odin#L3898), [parallel.odin:182](src/parallel.odin#L182), [parallel.odin:724](src/parallel.odin#L724), [parallel.odin:736](src/parallel.odin#L736).
-Dereference: [check.odin:3857](src/check.odin#L3857), [parallel.odin:669](src/parallel.odin#L669), and with the place fields set, [check_expr.odin:1119](src/check_expr.odin#L1119) and [overload.odin:1011](src/overload.odin#L1011).
+Dereference: [check.odin:3857](src/check.odin#L3857), [parallel.odin:669](src/parallel.odin#L669), and with the place fields set, [check_expr.odin:1119](src/check_expr.odin#L1119) and `dereference_argument` in `check_calls.odin`.
 Selector: [check.odin:2878](src/check.odin#L2878), [check_calls.odin:204](src/check_calls.odin#L204), [expand.odin:627](src/expand.odin#L627), [optional.odin:269](src/optional.odin#L269), [parallel.odin:660](src/parallel.odin#L660).
 One-argument call: [check.odin:4796](src/check.odin#L4796), [expand.odin:640](src/expand.odin#L640), [hooks.odin:832](src/hooks.odin#L832), [optional.odin:259](src/optional.odin#L259), [optional.odin:272](src/optional.odin#L272), [parallel.odin:678](src/parallel.odin#L678).
 
@@ -172,7 +172,7 @@ Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves ab
 
 #### Operator binding and the built-in operator table
 
-[operators.odin:451](src/operators.odin#L451) `bind_operator_operands` repeats the slot loop of [overload.odin:902](src/overload.odin#L902). Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 10 lines.
+[operators.odin:451](src/operators.odin#L451) `bind_operator_operands` repeats the slot loop of `bind_chosen_call` in `check_calls.odin`. Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 10 lines.
 
 The table of what a built-in operator accepts is split across [check_expr.odin:2658](src/check_expr.odin#L2658), [check.odin:4197](src/check.odin#L4197), [operators.odin:336](src/operators.odin#L336) and [operators.odin:363](src/operators.odin#L363). Shared form: one `builtin_operator_applies` with shift and SIMD cases and `compound_applies` as that minus concatenation. Saves about 30 lines.
 
@@ -285,7 +285,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
-- Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 
@@ -1479,70 +1478,6 @@ Sound logic and mostly good comments, but it holds two unrelated subsystems, an 
 - [optional.odin:191](src/optional.odin#L191): shorten to `// design.md "The failure operand": builds `v.failure_exit`, the `return` a failure takes.`; the prose repeats the spec, and that heading is the exact one. (about 2 lines)
 - [optional.odin:73](src/optional.odin#L73): shorten to `// design.md "or_else expression": a payloadless success yields `Unit`.` (1 line)
 - [optional.odin:403](src/optional.odin#L403): delete; the next line says it.
-
-### src/overload.odin
-
-Ranking itself is sound and matches the spec's vector and tie-breaker order, but the candidate and context-typing paths have several wrong-selection or wrongly rejected cases (each reproduced with the `lokec.exe` built at this commit). The file also holds a dead layer of defensive guards and about 150 lines of argument binding that belong beside `bind_arguments`.
-
-**Bugs**
-
-- `BUG-overload-1` **medium** [overload.odin:525](src/overload.odin#L525) `build_candidate`: `unconsumed` skips a generic's `$` arguments, since only runtime arguments reach it, so tie-breaker 1 favors the generic. Scenario: `pick :: proc{plain, gen}` with `plain(x: int)`, `gen($x: int)`; `pick(1)` calls `gen`, against tie-breaker 4. *Confirmed: Probe: `pick :: proc{plain, gen}` with `gen($x: int)` prints 2 for `pick(1)` in either member order; with `gen(x: $T)` it prints 1. `$x` is not a `move` parameter, so tie-breaker 1 should tie and tie-breaker 4 pick `plain`. No recorded decision found.*
-  Fix: count `consumed` (`if mode == .Move`; `argument_rank` already requires ownership) and prefer more in `tie_break`.
-- `BUG-overload-2` **medium** [overload.odin:223](src/overload.odin#L223) `common_argument_type`: a generic member with no parameter at this position or name returns `INVALID_TYPE` for all, where a non-generic is skipped (line 249). Scenario: `f(x: int, m: Mode)`, `h(x: $T)`, `g :: proc{f, h}`; `g(1, .A)` gives L0385, yet it compiles with a non-generic `h(x: int)`. *Confirmed: Reproduced: g(1, .A) and g(1, m = .A) give L0385 with h(x: $T), but compile with h(x: int); line 223 bails on a missing generic parameter. Unrecorded and unpinned; design.md gives no reason. Severity is low-medium: rejected code, Mode.A works.*
-  Fix: have `generic_parameter_context_type` distinguish "no such parameter" and `continue`.
-- `BUG-overload-3` **medium** [overload.odin:172](src/overload.odin#L172) `argument_needs_context`: misses `^Expr_Cond`, though `check_cond` passes the expected type to its branches. Scenario: `f(.A if c else .B)` compiles for a plain call but gives L0385 through a group, generic, or method (`obj.m(.none if c else .some(5))`). *Confirmed: Reproduced: f(.A if c else .B) compiles for a plain call but gives L0385 via a group, a generic and a method, while bare .A/.none pass all three. Not recorded in the docs. Over-rejection with a workaround (name the type), so low rather than medium.*
-  Fix: add `case ^Expr_Cond:` returning whether either branch needs context; it then also waits correctly for `$` parameters.
-- `BUG-overload-4` **low** [overload.odin:355](src/overload.odin#L355) `argument_rank`: an `inout` parameter ranks a merely assignable type as viable, though `check_bound_argument_mode` always rejects it. Scenario: `a(x: inout []int, z: int)`, `b(x: inout []mut int, z: f64)`, `y: []mut int`; `g(inout y, 1)` gives L0391 ambiguity although only `b` can bind. *Not verified.*
-  Fix: return `RANK_NONE` for a non-receiver `mode == .Inout` when `arg.type != param`, and check that `tests/err` pins stay right.
-- `BUG-overload-5` **low** [overload.odin:514](src/overload.odin#L514) `build_candidate`: an `inout` mismatch falls through to the type message. Scenario: `a(x: inout int)` in a group, `g(y)` with `y: int` notes "argument 1 is `int` where `int` is wanted"; `h(inout y)` against `c(x: int)` says the same. *Not verified.*
-  Fix: test `(mode == .Inout) != (arg.mode == .Inout)` first and name the missing or extra `inout`.
-- `BUG-overload-6` **low** [overload.odin:497](src/overload.odin#L497) `build_candidate`: the move advice assumes a place, but a temporary of the wrong type also reaches it. Scenario: `a(x: move Foo)`, `g(mk())` with `mk() -> Bar` notes "which is written `move(...)`", and writing that still fails. *Not verified.*
-  Fix: give the move reason only when the argument is not owned, as line 493 does; a wrong-typed temporary takes the type message.
-
-**Simplification**
-
-- [overload.odin:35](src/overload.odin#L35) `ordering_ranks`: nothing reads `.ranks` after building, so `build_generic_candidate` can assign `cand.ranks = ordering`; drop the field and `candidate_ranks`. (about 7 lines)
-- [overload.odin:723](src/overload.odin#L723) `choose_candidate`: test `candidates_viable(all)`, then loop over `all` skipping non-viable ones; the `viable` index list and the `other != index` test go, since `candidate_better(a, a)` is false. (about 6 lines)
-- [overload.odin:311](src/overload.odin#L311) `argument_rank`: move `moved` into the receiver branch and make the other branch one condition: `(mode == .Inout) != (arg.mode == .Inout) || (mode == .Move && !expression_is_owned_argument(arg.expr))`. (about 6 lines)
-- [overload.odin:662](src/overload.odin#L662) `tie_break`: `parametric` is equal here and the inner `if` returns what falls through, so end with `return a.parametric ? compare_generic_specificity(k, a.template, b.template) : 0`. (about 5 lines)
-- [overload.odin:982](src/overload.odin#L982) `candidate_arguments`: a receiver is only ever first, so slice it off once (`args = cand.args[1:]`) instead of adjusting `count` and also skipping in the loop; `bind_chosen_call` line 886 tests the same thing. (about 4 lines)
-- [overload.odin:341](src/overload.odin#L341) `argument_rank`: test `!assignable` once before the untyped branch, since both paths end in `RANK_NONE` without it. (about 3 lines)
-- [overload.odin:530](src/overload.odin#L530) `build_candidate`: `if cand.filled[slot] || slot == pack { continue }`; line 462 is `proc_parameter_mode(k.c, sym.proc_type, slot)`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [overload.odin:612](src/overload.odin#L612): every non-viable return of `build_candidate` sets `reason`, and line 589 does too, so the fallback reason never applies.
-- (branch) [overload.odin:623](src/overload.odin#L623): `compare_vectors` compares only viable candidates over one argument list, each vector `len(args)` long, so the lengths never differ.
-- (branch) [overload.odin:837](src/overload.odin#L837): `maximal` holds viable candidates, for which `build_candidate` proved `sym` non-nil and `proc_type` a procedure, so the checks at 837 and 843 never fire.
-- (branch) [overload.odin:785](src/overload.odin#L785): `waiting_arg` indexes the same `args`, so `all[0].waiting_arg < len(args)` is always true.
-- (branch) [overload.odin:949](src/overload.odin#L949): `slots` of a viable candidate are always in range, since `build_candidate` indexed `sym.params` with them.
-- (branch) [overload.odin:921](src/overload.odin#L921): an unfilled slot of a viable non-variadic candidate passed the check at line 537, so `slot < len(sym.param_defaults)` always holds.
-- (branch) [overload.odin:957](src/overload.odin#L957): `arg.waiting = false` and the `is_const`/`const_value` writes at 971-974 are never read; after this point only `expr`, `type`, `name`, `span`, `mode` and `is_receiver` are.
-
-**Data structures and algorithms**
-
-- [overload.odin:436](src/overload.odin#L436) `build_candidate`: every rejected member formats a `reason` (`fmt.aprintf` plus `type_name`) into the semantic arena even when another member is chosen; only `report_no_match` reads them. Cost grows as members times call sites, so it matters only for wide groups and operator sets. Measure first; with the seam below, re-form on failure with an `explain` flag.
-
-**Near copies**
-
-- [overload.odin:514](src/overload.odin#L514) and [overload.odin:589](src/overload.odin#L589): the same "argument %d is `%s` where `%s` is wanted" formatting; a small `argument_mismatch_reason(k, index, found, want)` serves both.
-
-**Structure and boundaries**
-
-- [overload.odin:876](src/overload.odin#L876): lines 873-1023 (`bind_chosen_call`, `type_waiting_arguments`, `candidate_arguments`, `dereference_argument`, `materialize_argument`) bind arguments rather than select; the source map gives that to `check_calls.odin`, which holds their sibling `bind_arguments`. `pointer_to_element` fits beside `slice_element` in `slice.odin`.
-- [overload.odin:487](src/overload.odin#L487) `build_candidate`: the 150-line procedure spends about 45 lines on rejection wording (lines 479-522). Extract `rejection_reason(k, arg, index, want, mode) -> string`, leaving placement and ranking readable; bugs 5 and 6 are fixed there.
-- [overload.odin:68](src/overload.odin#L68) `resolve_group_members`: declaration checking called from `check.odin` and `operators.odin`, sharing nothing with ranking; `check.odin` is its natural owner.
-
-**Comments**
-
-- [overload.odin:280](src/overload.odin#L280): sits on `constant_conversion_preserves_kind` but describes `argument_rank`; move it there or delete it.
-- [overload.odin:310](src/overload.odin#L310): "Modes decide viability and ties, not conversion rank" is contradicted by `adjusted` at line 322; shorten to "A receiver's mode is implicit, so it costs `RANK_ADJUST` instead of needing a match."
-- [overload.odin:24](src/overload.odin#L24): `// design.md "Arguments typed after inference": unchecked until `bind_chosen_call` types it against the chosen parameter.`
-- [overload.odin:707](src/overload.odin#L707): delete; it restates the signature.
-- [overload.odin:782](src/overload.odin#L782): `// design.md "Arguments typed after inference": a sole generic reports at the waiting argument that alone could bind a `$` name.`
-- [overload.odin:840](src/overload.odin#L840): `// design.md "Operator lookup and overload resolution": signatures, not rank vectors.`
-- [overload.odin:935](src/overload.odin#L935): keep the citation and the first clause; the evaluation-order sentence repeats the spec.
-- [overload.odin:1001](src/overload.odin#L1001): delete; the one-line body says the same.
 
 ### src/parallel.odin
 

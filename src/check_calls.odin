@@ -876,6 +876,131 @@ bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, pr
 	return ok
 }
 
+// Binds the chosen candidate in parameter order and materializes constants.
+bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
+	sym := symbol_of(k.c, cand.symbol)
+	if sym == nil {
+		return false
+	}
+	if !type_waiting_arguments(k, v, sym, cand) {
+		return false
+	}
+	info := type_of(k.c, sym.proc_type)
+	if info != nil && info.c_vararg {
+		return bind_c_vararg_arguments(k, v, info, prechecked = true)
+	}
+	if variadic_parameter_index(info) >= 0 {
+		receiver: Expr
+		written := cand.args
+		if len(written) > 0 && written[0].is_receiver {
+			receiver = written[0].expr
+			written = written[1:]
+		}
+		bound_ok := bind_variadic_arguments(
+			k, v, info, cand.symbol, written_arguments(k.c, written),
+			prechecked = true, receiver = receiver,
+		)
+		if bound_ok {
+			require_argument_ownership(k, v, cand.symbol)
+		}
+		return bound_ok
+	}
+	count := len(sym.params)
+	bound := make([]Expr, count, k.c.semantic_allocator)
+	// design.md "Evaluation order": written arguments first, then defaults.
+	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
+	in_order := true
+	ok := true
+	for arg, index in cand.args {
+		slot := cand.slots[index]
+		in_order = in_order && slot == len(order)
+		append(&order, slot)
+		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
+		value, passed := bind_checked_argument(k, arg.expr, sym.params[slot], mode, arg.is_receiver)
+		bound[slot] = value
+		ok = ok && passed
+	}
+	for slot in 0 ..< count {
+		if !cand.filled[slot] {
+			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], v.span)
+			in_order = in_order && slot == len(order)
+			append(&order, slot)
+		}
+	}
+	v.bound = bound
+	if !in_order {
+		v.bound_order = order[:]
+	}
+	if ok {
+		require_argument_ownership(k, v, cand.symbol)
+	}
+	return ok
+}
+
+// design.md "Arguments typed after inference": each waiting argument is checked
+// against the chosen candidate's parameter, its `$` names now substituted (the
+// element type, for a variadic pack).
+@(private = "file")
+type_waiting_arguments :: proc(k: ^Checker, v: ^Expr_Call, sym: ^Symbol, cand: Candidate) -> bool {
+	info := type_of(k.c, sym.proc_type)
+	pack := variadic_parameter_index(info)
+	ok := true
+	for arg, index in cand.args {
+		if !arg.waiting {
+			continue
+		}
+		slot := cand.slots[index]
+		target := sym.params[slot]
+		if slot == pack {
+			target = slice_element(k.c, target)
+		}
+		if check_single_expr(k, arg.expr, target) != INVALID_TYPE {
+			continue
+		}
+		ok = false
+		// A group chose this member without it, which the error alone hides.
+		if len(v.overload_members) > 1 {
+			add_notef(
+				k.c, sym.span,
+				"the other arguments chose `%s`; an argument that takes its parameter's type does not take part in choosing",
+				identifier_text(k.c, sym.name),
+			)
+		}
+	}
+	return ok
+}
+
+@(private = "file")
+written_arguments :: proc(c: ^Compiler, args: []Arg_Info) -> []Argument {
+	out := make([]Argument, len(args), c.semantic_allocator)
+	for arg, index in args {
+		name := Name{}
+		if arg.name != INVALID_IDENTIFIER {
+			name = Name{text = identifier_text(c, arg.name), span = arg.span, id = arg.name}
+		}
+		out[index] = Argument{span = arg.span, name = name, mode = arg.mode, value = arg.expr}
+	}
+	return out
+}
+
+// `pointer^`, already checked: a borrowing parameter given the address takes
+// the place it names.
+dereference_argument :: proc(k: ^Checker, pointer: Expr) -> Expr {
+	info := type_of(k.c, expr_base(pointer).type)
+	deref := new(Expr_Postfix, k.c.semantic_allocator)
+	deref.span, deref.op_span, deref.op, deref.operand = expr_span(pointer), expr_span(pointer), .Caret, pointer
+	deref.type = info.element
+	deref.value_category = .Place
+	deref.addressable = true
+	deref.assignable = info.mutable
+	deref.immutable = info.mutable ? .None : .Through_Pointer
+	return deref
+}
+
+materialize_argument :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
+	return materialize_value_expr(k, e, target, "pass")
+}
+
 // `T(value)` is conversion only. Built-in source/target pairs are reserved;
 // every other pair may be supplied by an inherent `hook(convert)` on T.
 @(private = "file")

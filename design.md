@@ -7033,7 +7033,8 @@ foreach (v, i in array.indexed()) {
 
 An argument that takes its type from its parameter, an [implicit
 selector](#implicit-selector-expression) such as `.Red`, `.none`, or
-`.some(y)`, or a literal written without its type such as `{4, 5}`, has no
+`.some(y)`, a literal written without its type such as `{4, 5}`, or a
+[conditional expression](#conditional-expression) with such an operand, has no
 type of its own to infer from. When the runtime parameter it fills names the
 procedure's `$` parameters, the argument waits: the other arguments, and
 omitted `$` parameters' defaults, bind them first, and the argument is then

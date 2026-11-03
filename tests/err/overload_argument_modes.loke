@@ -1,0 +1,40 @@
+package main;
+
+// design.md "Operator lookup and overload resolution": a rejected member names
+// what is wrong with the call. A missing or an extra `inout` is the reason
+// even when the types match. `move(...)` is advice only for a place of the
+// right type: a temporary is owned already, and writing `move(...)` around a
+// wrong type would not help.
+
+Foo :: struct { v: int }
+Bar :: struct { v: int }
+
+make_bar :: proc() -> Bar { return Bar{1}; }
+
+in_int :: proc(x: inout int) -> int { return 1; }
+in_string :: proc(x: inout string) -> int { return 2; }
+takes_inout :: proc{in_int, in_string}
+
+by_int :: proc(x: int) -> int { return 1; }
+by_string :: proc(x: string) -> int { return 2; }
+takes_value :: proc{by_int, by_string}
+
+moves_foo :: proc(x: move Foo) -> int { return 1; }
+moves_string :: proc(x: move string) -> int { return 2; }
+takes_move :: proc{moves_foo, moves_string}
+
+in_bar :: proc(x: inout Bar) -> int { return 1; }
+in_foo :: proc(x: inout Foo) -> int { return 2; }
+inout_exact :: proc{in_bar, in_foo}
+
+main :: proc() {
+	y := 1;
+	_ = takes_inout(y);
+	_ = takes_value(inout y);
+	_ = takes_move(make_bar());
+	bar := make_bar();
+	_ = takes_move(bar);
+	foo := Foo{1};
+	_ = takes_move(foo);
+	_ = inout_exact(inout y);
+}

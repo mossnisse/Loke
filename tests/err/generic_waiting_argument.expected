@@ -19,3 +19,15 @@ L0392
 L0385
 @30:24
 `.Blue` needs an expected enum type here
+L0385
+@32:14
+argument 2 takes its type from parameter `b`, whose type names `U`, and no other argument binds `U`
+L0385
+@33:24
+`.Blue` needs an expected enum type here
+L0385
+@33:40
+`.Green` needs an expected enum type here
+L0310
+@34:24
+is not a value of `int`
