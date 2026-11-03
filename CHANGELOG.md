@@ -17,6 +17,17 @@ checklist.
 - `@(export)` on a member of a generic `impl` block is now `L0438`
   ([`@(export)`](design.md#export)). It compiled and exported nothing. Upgrade by removing it, or by
   exporting an ordinary procedure that calls the member.
+- A slice or field of a user unary, `operator([])` or `operator([:])` result is now `L0513` when
+  used after its statement, as one of a binary operator's already was
+  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  `first((-m)[:])` compiled and read the temporary after it was dropped. Upgrade by binding the
+  result to a local first.
+- A carrier bound by destructuring, as `out, n := holder`, now reaches what the field's carrier
+  points at, so an owner stored through it counts against a later reset or a local region, as
+  through `out := holder.output` (`L0536`, `L0537`,
+  [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  It compiled and left the owner dangling. Upgrade by keeping the allocator's region alive as long
+  as the destination.
 - A map's `iter_mut` is now a mutable borrow of the map, as a dynamic array's is
   ([By-reference iteration](design.md#by-reference-iteration)), so reading the map while an
   entry is still in use, or taking a second iterator, is now `L0511`. It compiled, though the
@@ -1388,6 +1399,10 @@ checklist.
   side is, where a mismatched one was `L0310`.
 - A declared `Simd`, unsuitable as a type, is `L0306` rather than a request for the predeclared
   constructor's arguments, and `$n := 5` says that a `$` parameter writes its type.
+- `&mut p^.items[:]` passed where a `[]T` is wanted now suspends nothing through the carrier, as
+  on a local and as `&mut p^.items` does; it was a false `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A conflict on such a slice is
+  also reported once, naming the carrier.
 - A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
   site's window never closed, so a write after its join was a false `L0731`
   ([Globals while tasks run](design.md#globals-while-tasks-run)).

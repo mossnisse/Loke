@@ -207,6 +207,12 @@ proj_dynamic_element :: proc(index: i64) -> Proj_Step {
 	return Proj_Step{kind = .Range, lo = index, hi = index + 1, shifts = true}
 }
 
+// Whether two steps name one place, whatever else each records of how it was
+// reached.
+same_step :: proc(a, b: Proj_Step) -> bool {
+	return a.kind == b.kind && a.lo == b.lo && a.hi == b.hi
+}
+
 // Two paths into one root overlap unless some step proves them disjoint, so a
 // prefix overlaps everything below it.
 paths_overlap :: proc(a, b: []Proj_Step) -> bool {

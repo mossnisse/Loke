@@ -1590,7 +1590,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 
 	case ^Expr_Unary:
 		if prov && v.op == .Amp {
-			return prov_address_of(graph, v)
+			return prov_borrow_place(graph, v.operand, v.mutable, v.span, "pointer")
 		}
 		if prov && v.resolution.kind == .User_Operator {
 			return prov_call(graph, prov_operator_call(graph, v))

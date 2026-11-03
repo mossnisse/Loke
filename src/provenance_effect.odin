@@ -15,7 +15,7 @@ Prov_Replay_Statistics :: struct {
 Prov_Effect_Declare :: struct { symbol: Symbol_Id, value: Value_Id, projected: int, copies: bool }
 Prov_Effect_Element :: struct { symbol: Symbol_Id, value: Value_Id, element: []Proj_Step, traversed: bool }
 Prov_Effect_Case :: struct { symbol: Symbol_Id, value: Value_Id, variants: []int, slot: int }
-Prov_Effect_Targets :: struct { storage: Storage_Id, value: Value_Id, path: []Proj_Step }
+Prov_Effect_Targets :: struct { storage: Storage_Id, value: Value_Id, path, source: []Proj_Step }
 Prov_Effect_Call :: struct { value: Value_Id, kind: enum { Result, Write, Invalidate } }
 Prov_Effect_Store :: struct { destination, value: Value_Id, element: bool }
 Prov_Effect_Spread :: struct { destination, value: Value_Id }
@@ -325,7 +325,7 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 	case Prov_Effect_Case:
 		prov_bind_case_region(graph, operation.symbol, operation.value, operation.variants, operation.slot)
 	case Prov_Effect_Targets:
-		prov_note_alias_source(graph, operation.storage, operation.value, operation.path)
+		prov_note_alias_source(graph, operation.storage, operation.value, operation.path, operation.source)
 	case Prov_Effect_Call:
 		call := prov_value(graph, operation.value).form.(Prov_Form_Call).call
 		switch operation.kind {

@@ -1,0 +1,45 @@
+// design.md "Allocator regions and region provenance": a store through a carrier a
+// destructuring bound lands where that field's carrier points, as one through a
+// local copied from the field does.
+package main;
+
+import "core:mem";
+
+Holder :: struct { output: ^mut [dynamic]int, count: int }
+
+declared :: proc(holder: Holder, allocator: mem.Allocator) {
+	out, n := holder;
+	out^ = make([dynamic]int, n, allocator);
+}
+
+assigned :: proc(holder: Holder, allocator: mem.Allocator) {
+	out: ^mut [dynamic]int;
+	n: int;
+	out, n = holder;
+	out^ = make([dynamic]int, n, allocator);
+}
+
+across_a_call :: proc(@(allocator_reset) allocator: mem.Allocator) {
+	output := make([dynamic]int, 0);
+	declared(Holder{&mut output, 2}, allocator);
+	free_all(allocator);
+	_ = output[0];
+}
+
+across_an_assigning_call :: proc(@(allocator_reset) allocator: mem.Allocator) {
+	output := make([dynamic]int, 0);
+	assigned(Holder{&mut output, 2}, allocator);
+	free_all(allocator);
+	_ = output[0];
+}
+
+in_the_body :: proc(@(allocator_reset) allocator: mem.Allocator) {
+	output := make([dynamic]int, 0);
+	holder := Holder{&mut output, 2};
+	out, n := holder;
+	out^ = make([dynamic]int, n, allocator);
+	free_all(allocator);
+	_ = output[0];
+}
+
+main :: proc() {}

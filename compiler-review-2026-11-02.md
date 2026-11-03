@@ -85,7 +85,7 @@ to work in if split, though that shortens nothing.
 
 7. **Holes in `foreach` safety.** The `indexed()` counter and a per-step projected record are marked lent ([iterate.odin:856](src/iterate.odin#L856), [iterate.odin:990](src/iterate.odin#L990)), so `return &e` compiles; public iterator fields let safe code segfault ([iterate.odin:172](src/iterate.odin#L172)). BUG-iterate-1, -3, -2. About 25 lines.
 
-8. **Safe code the checker accepts and then corrupts.** `exchange` of an unmoved owned place ([lifecycle.odin:194](src/lifecycle.odin#L194)); a user unary or `operator([])` result not seen as a temporary ([cfg_provenance.odin:7177](src/cfg_provenance.odin#L7177)); a destructured carrier with no written alias ([cfg_provenance.odin:7216](src/cfg_provenance.odin#L7216)). BUG-lifecycle-1, BUG-cfg_provenance.part3-1, -2. About 20 lines.
+8. **Safe code the checker accepts and then corrupts.** `exchange` of an unmoved owned place ([lifecycle.odin:194](src/lifecycle.odin#L194)). BUG-lifecycle-1. About 20 lines.
 
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
@@ -683,62 +683,28 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 
 **Simplification**
 
-- [cfg_provenance.odin:1839](src/cfg_provenance.odin#L1839) `prov_element_step`: `is_array` is decided by each caller, and the array arm ignores everything but `composite_element_slots`. Make arrays call `proj_range` on that directly (L1829, L7056) and keep this proc for fields. (about 6 lines)
-- [cfg_provenance.odin:1612](src/cfg_provenance.odin#L1612) `prov_root_for_symbol`: `symbol_of` already returns nil for `INVALID_SYMBOL` (semantic.odin:1182), so the first guard here, at L1640 and at L1900 repeats the `sym == nil` guard below it. Drop all three. (about 9 lines)
-- [cfg_provenance.odin:410](src/cfg_provenance.odin#L410) `prov_subject_view`: the read-only place case appears twice (L417, L458), differing only by the field path. Start with `if ok && !mutable { extend path when slot >= 0; return prov_borrow(...) }`, and the final `!ok` test becomes unconditional. (about 5 lines)
-- [cfg_provenance.odin:389](src/cfg_provenance.odin#L389) `prov_note_view_use`: "wildcard, then field when `slot >= 0`" is hand-built here and at L416, L432, L451. A `prov_payload_path(graph, base, slot)` covers all four. (about 5 lines)
-- [cfg_provenance.odin:802](src/cfg_provenance.odin#L802) `prov_note_reslice`: the optional constant bound is parsed three times (L802, L808, L831). A `prov_const_bound(graph, e, default) -> (i64, bool)` returning `default, true` for nil replaces the nested `constant` blocks. (about 6 lines)
-- [cfg_provenance.odin:2241](src/cfg_provenance.odin#L2241) `prov_drop_use`: `scope_drops` is lazily made here and at L2259, while its sibling maps are made in the graph setup at cfg.odin:467. Make it there too and keep only the assignment. (about 6 lines)
-- [cfg_provenance.odin:1584](src/cfg_provenance.odin#L1584) `prov_escape_region`: a missing map key already reads as zero, so this is `return graph.provider_parents[form.symbol]`, and `or_else Region_Set{}` at L1571 can go too. (about 3 lines)
-- [cfg_provenance.odin:356](src/cfg_provenance.odin#L356) `prov_root_view`: `prov_bind_view` is the only writer of `view_loans` and rejects `INVALID_SYMBOL`, so the symbol guard adds nothing. Keep the `NO_ROOT` test and return the map read. (about 4 lines)
-- [cfg_provenance.odin:752](src/cfg_provenance.odin#L752) `prov_note_view`: `prov_slot_fresh_loan` is computed twice under near-identical guards. Compute `fresh` once, then use a `switch` on the four cases. (about 3 lines)
-- [cfg_provenance.odin:491](src/cfg_provenance.odin#L491) `prov_place_loan`: call `prov_temp_slot` before the `append` and put `slot = slot` in the literal, which removes the patch through `loan`. (about 2 lines)
-- [cfg_provenance.odin:934](src/cfg_provenance.odin#L934) `prov_reach_mask`: the length test plus `path_has_exact_prefix` is `prov_same_path` (L6037).
 
 **Dead code**
 
-- (branch) [cfg_provenance.odin:2282](src/cfg_provenance.odin#L2282): `sym != nil` is always true, because `prov_slot_for_symbol` succeeded just above and only creates slots for real symbols. The two arms reduce to `if copies {...} else {...}`.
-- (branch) [cfg_provenance.odin:2403](src/cfg_provenance.odin#L2403): `entry.symbol != INVALID_SYMBOL` never fails when `traversed`, because the only writer (L2468) returns early on `INVALID_SYMBOL` at L2439.
-- (branch) [cfg_provenance.odin:1787](src/cfg_provenance.odin#L1787): `.Slice` looks unreachable. Every caller's literal type is the backing array (L7047) or follows a `backing` check that returned first (cfg.odin:2614, provenance_transfer.odin:144).
 
 **Data structures and algorithms**
 
-- [cfg_provenance.odin:1995](src/cfg_provenance.odin#L1995) `prov_select_content`: builds its result with `prov_join` plus `prov_one` per source, so n sources copy O(n^2) ints into the arena, on every content read. Use `make([dynamic]int, 0, len(sources), graph.alloc)` and `append`; the code gets shorter too.
-- [cfg_provenance.odin:1740](src/cfg_provenance.odin#L1740) `prov_composite_content`: `held` and the per-slot `sources` (L1763, L1769) grow by `prov_join` per element, so arena use is quadratic in elements holding borrows. Thousands of borrowed views in one array or map literal cost megabytes; append to dynamic arrays.
-- [cfg_provenance.odin:1737](src/cfg_provenance.odin#L1737) `prov_composite_content`: `prov_elements_may_write` rescans the remaining elements for each one, quadratic for a long literal of plain places. Find the last index that may write once before the loop and compare `index` to it, which also removes the helper.
 - [cfg_provenance.odin:2618](src/cfg_provenance.odin#L2618) `prov_capture`: scans all of `graph.reborrows` per captured slot, so it grows with captures times the body's reborrows. Only large generated bodies would notice, so a `derived`-to-reborrows index is worth adding only if `perf.ps1` shows it.
 - [cfg_provenance.odin:133](src/cfg_provenance.odin#L133) `Prov_Event`: about 540 bytes by hand count (not measured), and `borrow.odin` has a dozen by-value `for event in block.prov` loops, though each kind reads few fields. The "`Publish`:" and "`Reset`:" comments mark natural sub-structs; a pointer for Publish-only fields would save about 140 bytes per event.
 
 **Near copies**
 
-- [cfg_provenance.odin:1153](src/cfg_provenance.odin#L1153) and [cfg_provenance.odin:1272](src/cfg_provenance.odin#L1272): `prov_offset_paths` is `prov_add_offset` over bare paths. Add each path through `prov_add_offset` with storage 0, then map to paths; `prov_offset_covered` (L1312) goes away. (about 15 lines)
-- [cfg_provenance.odin:1790](src/cfg_provenance.odin#L1790) and [cfg_provenance.odin:1852](src/cfg_provenance.odin#L1852): both re-resolve a field by key name, yet the checker fills `field_indices` for named and positional elements (check_expr.odin:2977, 3022), as the emitter relies on. Read that one index in both, with -1 meaning unknown. (about 12 lines)
-- [cfg_provenance.odin:1926](src/cfg_provenance.odin#L1926) and [cfg_provenance.odin:1979](src/cfg_provenance.odin#L1979): the same five content fields are set from a `carrier_shape` path. A `prov_content_entry(symbol, path, shape) -> Prov_Slot` serves both. (about 8 lines)
 - [cfg_provenance.odin:2670](src/cfg_provenance.odin#L2670) and [cfg_provenance.odin:3948](src/cfg_provenance.odin#L3948): `prov_plain_slice_local` and `prov_plain_view_local` share all but the last test, and L2677, L2715 and L3954 repeat the erased-type choice. Share `prov_view_local(graph, e) -> (ident, type, ok)`. (about 8 lines)
-- [cfg_provenance.odin:1766](src/cfg_provenance.odin#L1766) and [cfg_provenance.odin:1885](src/cfg_provenance.odin#L1885): overlap test, suffix, then `prov_select_content`. A `prov_part_sources(graph, slot, prefix, loans, type)` serves both, and `len(loans) > 0` at L1885 is already redundant. (about 4 lines)
 - [cfg_provenance.odin:489](src/cfg_provenance.odin#L489) and [doc.odin:1372](src/doc.odin#L1372): span text is hand-indexed here, in a file-private `source_text`, and at [parallel.odin:81](src/parallel.odin#L81), [cfg.odin:1913](src/cfg.odin#L1913) and [check.odin:2394](src/check.odin#L2394). A `span_text(c, span)` in `source.odin` is the shared form.
-- [cfg_provenance.odin:1325](src/cfg_provenance.odin#L1325) and [cfg_provenance.odin:2379](src/cfg_provenance.odin#L2379): `prov_common_prefix` compares whole steps, including `precision`, `shifts` and `synchronized`; `path_has_exact_prefix` compares kind, lo and hi. Steps naming one place can end a merge's prefix early. Share one `same_step`.
 
 **Structure and boundaries**
 
 - [cfg_provenance.odin:846](src/cfg_provenance.odin#L846): lines 846-1329 are a self-contained engine (offsets, merging, reaching walk) with a small interface: `prov_value_offset`, `prov_note_offset`, `prov_carrier_offsets`, `prov_offset_paths`, `prov_offset_precision`, `prov_reach_invalidate`. Move them to `provenance_offsets.odin`, with `Prov_Reach*` and `Prov_Offset` from borrow.odin.
 - [cfg_provenance.odin:300](src/cfg_provenance.odin#L300): lines 300-702 are construction procedures sitting under the "provenance events" banner, above the "provenance construction" banner at L704, which hides where the vocabulary ends. Move them below that banner.
 - [cfg_provenance.odin:2351](src/cfg_provenance.odin#L2351): path helpers are scattered (L1323, L2351-2384, L3210-3223, L6037) with mixed `path_`/`prov_` prefixes, while `paths_overlap` and `proj_*` live at borrow.odin:175-194. Gather the graph-free ones beside those.
-- [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies`: a plain symbol predicate also used by `lifecycle.odin`, `parallel.odin`, `borrow.odin` and `provenance_input.odin`. It belongs with `symbol_of` in `semantic.odin`.
-- [cfg_provenance.odin:640](src/cfg_provenance.odin#L640) `prov_bind_case_region`: lines 640-673 build the borrowed binding's aliases, a separate job from the snapshot below. Extract `prov_case_region_aliases(...) -> (aliases, uncertain)`.
-- [cfg_provenance.odin:2101](src/cfg_provenance.odin#L2101) `prov_read_is_reads_only`: the only procedure in this part without `@(private)`, so it is visible to `lsp/` through the package import. Add the attribute.
 
 **Comments**
 
-- [cfg_provenance.odin:1372](src/cfg_provenance.odin#L1372): "A shape's conservative leaves are queried without expanding them again" repeats the inline comment at L1391-1393. Keep the inline one and delete this sentence.
-- [cfg_provenance.odin:2594](src/cfg_provenance.odin#L2594): cut 11 lines to about 5: the citation; "a value keeps what its carriers held when evaluated"; a mutable carrier is reborrowed, others copied; `keep_reborrows` keeps a mutable reborrow, since its carrier cannot be written meanwhile.
-- [cfg_provenance.odin:913](src/cfg_provenance.odin#L913): delete "Neither how many definitions a slot has nor how many blocks lie between them is limited."; compiler-architecture.md "Ownership, lifecycle, and provenance" says it.
-- [cfg_provenance.odin:1014](src/cfg_provenance.odin#L1014): cut to about 5 lines: what the mask means, plus "a depth-first walk over predecessors that keeps finished strongly connected components in `exits` until `prov_reach_invalidate`". `Prov_Reach` at borrow.odin:358 covers the rest.
-- [cfg_provenance.odin:515](src/cfg_provenance.odin#L515): "or -1 when none is emitted" is not quite true: `prov_access_through` returns `first` when every carrier is a through slot. Say "-1 without carriers"; L532-533 can then lose its repeat of it.
-- [cfg_provenance.odin:1836](src/cfg_provenance.odin#L1836): delete "which must never be compared with each other": `steps_overlap` does compare them and treats differing kinds as overlapping (borrow.odin:206).
-- [cfg_provenance.odin:1362](src/cfg_provenance.odin#L1362): the comment describes a use, not `Region_Query`. Replace it with one clause per member: `All` everything at the path, `Owners` owner fields only, `Own` the value's own backing entry.
-- [cfg_provenance.odin:1321](src/cfg_provenance.odin#L1321): delete; the name says it. Likewise [L1089](src/cfg_provenance.odin#L1089) and the header sentence at [L14](src/cfg_provenance.odin#L14), which repeats L2-3.
-- [cfg_provenance.odin:1722](src/cfg_provenance.odin#L1722): keep the citation and the `Pair{xs, xs}` example; the record sentence is one clause. The same trimming fits L461-468, L1733-1736 and L2105-2111. (about 60-80 of the part's 529 comment lines across the part)
 
 ### src/cfg_provenance.odin (part 2 of 4)
 
@@ -808,9 +774,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 
 **Bugs**
 
-- `BUG-cfg_provenance.part3-1` **high** [cfg_provenance.odin:7177](src/cfg_provenance.odin#L7177) `prov_expr_is_temporary`: a user unary, `operator([])` or `operator([:])` result is not a temporary, though the binary case is; `Expr_Unary`/`Expr_Slice` are absent and `Expr_Index` only asks its operand. Scenario: with `-m`, `m[0]`, `m[0:1]` returning `[dynamic]int`, `bad := first_half((-m)[:]); fmt.println(bad[0]);` compiles while `(m + m)[:]` is L0513; the IR drops the temporary before the use, a use-after-free. Fix: treat those nodes under `.User_Operator` as `v.value_category != .Place`. *Confirmed: Reproduced: (m + m)[:] gets L0513, but (-m)[:], m[0][:], m[0:1][:] compile. With a drop hook writing -999, "drop" prints before the use, which reads -999: a real use-after-free in safe code. No recorded decision; high severity is fair.*
-- `BUG-cfg_provenance.part3-2` **high** [cfg_provenance.odin:7216](src/cfg_provenance.odin#L7216) `prov_declare`: a destructuring declaration records no written alias (`if projected < 0`), so a store through the bound carrier reaches no target. Scenario: `out, n := holder; out^ = make([dynamic]int, n, allocator);` with `holder.output = &mut output`, then `free_all(allocator)` and a use of `output`, compiles; `out := holder.output` and `out, n = holder` are L0537, in the body and across a call. Fix: note the alias as `prov_assign` does at 7528, or project the field. *Confirmed: Probe: `out, n := holder; out^ = make(.., n, a)` in a callee, then `free_all` and `output[0]`, compiles and runs; `out := holder.output` and `out, n = holder` report L0537/L0536. prov_declare skips the alias when projected >= 0. Not recorded in known-gaps.*
-- `BUG-cfg_provenance.part3-3` **medium** [cfg_provenance.odin:6988](src/cfg_provenance.odin#L6988) `prov_slice`: a mutable slice through a carrier that weakens to `[]T` stays a write, since it reads the carriers as mutable and passes `prov_through_marker(graph, -1, -1, nil)`; design.md "Weakening and reborrows" says `&mut xs[0:2]` to `[]T` suspends nothing. Scenario: `v := p^.items[:]; n := look(&mut p^.items[:]); use(v)` is L0641, but `&mut h.items[:]` on a local and `&mut p^.items` to `^[4]int` are accepted. Fix: reuse `prov_borrow_place`'s path (6899-6909). The open question on fresh range borrows concerns element separation, not this. *Confirmed: Reproduced: look(&mut p^.items[:]) under a live v := p^.items[:] is L0641, while local &mut h.items[:], &mut p^.items and &mut p^.items[0] pass: the marker (-1,-1,nil) keeps its Write. False rejection, easy workaround (drop &mut), so low severity.*
 
 **Simplification**
 
@@ -821,7 +784,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 - [cfg_provenance.odin:8004](src/cfg_provenance.odin#L8004) `prov_call`: `explicit_view_operand` already rejects anything but `Call_Conversion`, so `case Call_Conversion, Call_Dyn_Conversion:` can hold both tests. (about 4 lines)
 - [cfg_provenance.odin:8000](src/cfg_provenance.odin#L8000) `prov_call`: `v == graph.spawning && !thread_facts_pending` is computed at 8000, 8089 and 8126, and nothing in the walk changes either side; one `spawned` at the top serves all three. (about 2 lines)
 - [cfg_provenance.odin:8135](src/cfg_provenance.odin#L8135) `prov_call`: `proc_parameter_mode(c, call_proc_type(c, v), index)` re-resolves what `input.arguments[index].mode` holds, as `prov_argument_is_inout` reads it. (about 1 line)
-- [cfg_provenance.odin:7212](src/cfg_provenance.odin#L7212) `prov_declare`: set `projected` once: `projected := -1; if d.destructure.active { projected = prov_destructure_index(...) }`. (about 1 line)
 - [cfg_provenance.odin:7273](src/cfg_provenance.odin#L7273) `prov_declare_region`: `source` is built from `projected` at 7274, 7325 and 7345; hoist it to the top, then `prov_result_region_at(graph, value, source)` also covers the branch at 7273. (about 7 lines)
 - [cfg_provenance.odin:7299](src/cfg_provenance.odin#L7299) `prov_declare_region`: `type_is_carrier` is already true of `TYPE_ALLOCATOR` (borrow.odin:529), so the test is just `type_is_carrier`; the same makes the `!= TYPE_ALLOCATOR` at 7522 redundant. (about 1 line)
 - [cfg_provenance.odin:7308](src/cfg_provenance.odin#L7308) `prov_declare_region`: `prov_type_has_region` already answers true for managed types, so `managed` goes and the test is `!prov_type_has_region`; likewise 7520-7521 reduce to `prov_type_has_region(c, target_type)`. (about 3 lines)
@@ -835,13 +797,11 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 **Dead code**
 
 - (branch) [cfg_provenance.odin:7341](src/cfg_provenance.odin#L7341): `set` is only filled under `type_is_container` at 7320, which is `.Dynamic_Array` or `.Map`, so this else branch and the `.Box` test at 7338 cannot run. Keep only the `prov_define_region_content` call.
-- (branch) [cfg_provenance.odin:6833](src/cfg_provenance.odin#L6833): `v.operand == nil` in `prov_range_step` guards nothing; `prov_slice` has used the operand unguarded at 6968 before calling it.
 - (branch) [cfg_provenance.odin:5585](src/cfg_provenance.odin#L5585): `prov_region_escape`'s defaults are never used by its one caller (7479), which passes every argument; the same holds for `prov_declare_region`'s defaults at 7262-7263.
 
 **Near copies**
 
 - [cfg_provenance.odin:5918](src/cfg_provenance.odin#L5918) and [cfg_provenance.odin:6251](src/cfg_provenance.odin#L6251): the same bound-the-path, scan `seen`, append visit. A `prov_first_alias_visit(seen, target, path, writable) -> (bounded, ok)` replaces both, beside `Written_Alias_Visit`.
-- [cfg_provenance.odin:6899](src/cfg_provenance.odin#L6899) and [cfg_provenance.odin:6988](src/cfg_provenance.odin#L6988): both take a place loan through carriers, but only `prov_borrow_place` settles weakening and uses held carriers. A shared `prov_borrow_through` fixes the weakening bug above and removes the copy.
 - [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
 - [cfg_provenance.odin:5737](src/cfg_provenance.odin#L5737) and [cfg_provenance.odin:7636](src/cfg_provenance.odin#L7636): the same test (managed, allocator, or a non-carrier with a region), written inverted at one site. Name it `prov_store_keeps_region(c, type)`.
 - [cfg_provenance.odin:5835](src/cfg_provenance.odin#L5835), [cfg_provenance.odin:4394](src/cfg_provenance.odin#L4394) and [borrow.odin:2974](src/borrow.odin#L2974): find an equal content entry, else grow a fresh slice with a cloned entry. `prov_define_region_content` still compares by hand and could use `prov_same_region_content` and `prov_clone_region_content`.

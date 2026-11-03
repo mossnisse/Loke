@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": a local's value extends the
+// temporary it borrows, whichever user operator made it.
+Vec :: struct { n: int }
+impl Vec {
+	negate :: operator(-) proc(v: Vec) -> [dynamic]int { return [dynamic]int{v.n, 2}; }
+	at :: operator([]) proc(v: Vec, i: int) -> [dynamic]int { return [dynamic]int{v.n, i}; }
+	part :: operator([:]) proc(v: Vec, lo, hi: int) -> [dynamic]int { return [dynamic]int{v.n, lo}; }
+}
+
+main :: proc() {
+	m := Vec{7};
+	a := (-m)[:];
+	b := m[3][:];
+	c := m[4:5][:];
+	fmt.println(a[0], b[1], c[1]);
+}

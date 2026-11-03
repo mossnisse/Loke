@@ -1,0 +1,39 @@
+// design.md "Temporaries and procedure boundaries": a user operator's result is
+// a temporary unless it returns a place, whichever operator it stands for.
+package main;
+
+import "core:fmt";
+
+Vec :: struct { n: int }
+impl Vec {
+	negate :: operator(-) proc(v: Vec) -> [dynamic]int { return [dynamic]int{v.n, 2}; }
+	add :: operator(+) proc(a, b: Vec) -> [dynamic]int { return [dynamic]int{a.n, 2}; }
+	at :: operator([]) proc(v: Vec, i: int) -> [dynamic]int { return [dynamic]int{v.n, i}; }
+	part :: operator([:]) proc(v: Vec, lo, hi: int) -> [dynamic]int { return [dynamic]int{v.n, lo}; }
+}
+
+Store :: struct { items: [dynamic]int }
+impl Store {
+	at :: operator([]) proc(self: inout Store, i: int) -> inout [dynamic]int { return inout self.items; }
+}
+
+first :: proc(s: []int) -> []int { return s[0:1]; }
+
+main :: proc() {
+	m := Vec{1};
+	a := first((m + m)[:]);
+	fmt.println(a[0]);
+	b := first((-m)[:]);
+	fmt.println(b[0]);
+	c := first(m[0][:]);
+	fmt.println(c[0]);
+	d := first(m[0:1][:]);
+	fmt.println(d[0]);
+	e := first((-m)[0:1]);
+	fmt.println(e[0]);
+
+	// The result of `operator([])` returning `inout` is a place, and no temporary.
+	store := Store{[dynamic]int{1}};
+	kept := first(store[0][:]);
+	fmt.println(kept[0]);
+}

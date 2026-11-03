@@ -1,0 +1,9 @@
+L0537
+@25:2
+this reset would end the region backing `output`, which is still live here
+L0537
+@32:2
+this reset would end the region backing `output`, which is still live here
+L0537
+@41:2
+this reset would end the region backing `output`, which is still live here

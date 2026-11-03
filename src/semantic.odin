@@ -1224,6 +1224,11 @@ symbol_of :: proc(c: ^Compiler, id: Symbol_Id) -> ^Symbol {
 	return c.symbols[index]
 }
 
+// Static, thread-local, or file-scope storage: it outlives every procedure body.
+symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
+	return sym.duration != .None || (sym.decl != nil && sym.decl.top_level)
+}
+
 new_type :: proc(c: ^Compiler, value: Type_Info) -> Type_Id {
 	init_semantic_stores(c)
 	id := Type_Id(len(c.types))
