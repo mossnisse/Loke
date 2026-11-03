@@ -1033,17 +1033,15 @@ completion_follows_a_pointer_whose_method_is_called :: proc(t: ^testing.T) {
 	text := "package main;\nP :: struct { x: int }\nimpl P {\n\tsize :: proc(self) -> int { return 0; }\n\tgrow :: proc(self: inout) { self.x += 1; }\n}\nkeep :: proc(p: ^P) -> ^P { return p; }\nmain :: proc() {\n\tp := P{1};\n\tr := &p;\n\t_ = r.x;\n\t_ = r.size();\n\t_ = keep(r).size();\n\t_ = r^.size();\n\t_ = p.size();\n\tq := &mut p;\n\tq.grow();\n\tb := box(P{2});\n\t_ = b.size();\n}\n"
 	open(&h, "main.loke", text)
 
-	// A pointer offers what `r.x` does, its own members with its pointee's.
-	through := "clone grow hash size try_clone x"
-	direct := "clone grow size try_clone x"
-	Case :: struct { needle: string, column: int, labels: string }
+	// A pointer offers what `r.x` does: its pointee's members.
+	Case :: struct { needle: string, column: int }
 	for c in ([]Case{
-		{"r.x", 2, through}, {"r.size", 2, through}, {"keep(r).size", 8, through}, {"q.grow", 2, through},
-		{"r^.size", 3, direct}, {"p.size", 2, direct}, {"b.size", 2, direct},
+		{"r.x", 2}, {"r.size", 2}, {"keep(r).size", 8}, {"q.grow", 2},
+		{"r^.size", 3}, {"p.size", 2}, {"b.size", 2},
 	}) {
 		reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, text, c.needle, c.column))
 		labels := completion_labels(reply)
-		testing.expectf(t, labels == c.labels, "at %q: %q", c.needle, labels)
+		testing.expectf(t, labels == "clone grow size try_clone x", "at %q: %q", c.needle, labels)
 	}
 }
 

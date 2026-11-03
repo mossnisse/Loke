@@ -1,0 +1,9 @@
+L0586
+@20:10
+`Equal` cannot be a map key
+L0363
+@23:6
+`Equal` has no field or member `hash`
+L0392
+@24:6
+no overload of method `hash`

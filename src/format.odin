@@ -26,10 +26,8 @@ ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 		}
 	}
 	if id == INVALID_SYMBOL {
-		id = synth_proc(k.c, "format", .Standard_Format, type,
+		id = synth_receiver_proc(k.c, "format", .Standard_Format, type,
 			[]Type_Id{type, writer, options}, []Param_Mode{.Borrow, .Value, .Value}, INVALID_TYPE, enroll = false)
-		sym := symbol_of(k.c, id)
-		sym.has_receiver, sym.receiver = true, .Borrow
 		add_members(k.c, type, []Symbol_Id{id})
 	}
 	if committing(k.c) {

@@ -38,6 +38,15 @@ cpu_level_name :: proc(cpu: Cpu_Level) -> string {
 	return "x86-64"
 }
 
+parse_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
+	for cpu in Cpu_Level {
+		if text == cpu_level_name(cpu) {
+			return cpu, true
+		}
+	}
+	return .X86_64, false
+}
+
 // `-Ofast` is deliberately absent: it changes floating-point semantics.
 OPT_CLANG_FLAGS := [Opt_Mode]string {
 	.None       = "-O0",

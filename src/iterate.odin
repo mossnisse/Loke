@@ -395,14 +395,10 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		item = yield_item_type(k, element, Yield_Desc{kind = .Record, fields = lent}, no_span())
 		if item == INVALID_TYPE { return }
 	}
-	next := synth_proc(
+	next := synth_receiver_proc(
 		k.c, "next", next_kind, iterator,
 		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, item),
 	)
-	if sym := symbol_of(k.c, next); sym != nil {
-		sym.has_receiver = true
-		sym.receiver = .Inout
-	}
 	add_members(k.c, iterator, []Symbol_Id{next})
 }
 
@@ -411,11 +407,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 // dependency is written here.
 @(private = "file")
 iter_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner, iterator: Type_Id) -> Symbol_Id {
-	id := synth_proc(c, name, kind, owner, []Type_Id{owner}, []Param_Mode{.Borrow}, iterator)
-	if sym := symbol_of(c, id); sym != nil {
-		sym.has_receiver = true
-		sym.receiver = .Borrow
-	}
+	id := synth_receiver_proc(c, name, kind, owner, []Type_Id{owner}, []Param_Mode{.Borrow}, iterator)
 	set_synth_result_summary(c, id, 0)
 	return id
 }

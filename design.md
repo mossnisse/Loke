@@ -1981,7 +1981,8 @@ so `Account{}`, a static-duration `Account` without an initializer, a `make`
 length, and `resize` are rejected too, and so is anything that contains an
 `Account` and would manufacture one. Use it where zero is representable but not
 a valid value of the field: an identifier, a handle whose zero is a live
-resource, a count that must be positive.
+resource, a count that must be positive. An [`@(initialized)`](#uninitialized-capacity)
+field holds no value to require, so it cannot be `@(required)`.
 
 A field that groups values without needing a type of its own is an anonymous
 record; a nested group that needs hooks, privacy, or attributes is a declared

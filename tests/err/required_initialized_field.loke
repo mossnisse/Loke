@@ -1,0 +1,8 @@
+// design.md "Required fields": an `@(initialized)` field holds no value to require.
+package main;
+
+import "core:unsafe";
+
+S :: struct { @(required, initialized = n) items: [4]int, n: int }
+
+main :: proc() {}

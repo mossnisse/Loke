@@ -800,16 +800,12 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kind, fallible: bool) -> Symbol_Id {
 	result := fallible ? result_type(k, type, TYPE_ALLOCATOR_ERROR) : type
 	// `enroll_lifecycle_members` enrolls it and records it in the lifecycle entry.
-	id := synth_proc(
+	id := synth_receiver_proc(
 		k.c, name, kind, type,
 		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Borrow, .Value}, result,
 		enroll = false,
 	)
-	if sym := symbol_of(k.c, id); sym != nil {
-		sym.has_receiver = true
-		sym.receiver = .Borrow
-		sym.param_defaults[1] = default_allocator_arg(k.c)
-	}
+	symbol_of(k.c, id).param_defaults[1] = default_allocator_arg(k.c)
 	return id
 }
 

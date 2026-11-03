@@ -343,6 +343,9 @@ package. An `obj` build selects the same way.
 
 ## Inspecting a compilation
 
+A run takes at most one of these, or of `-fmt`, `-migrate`, `-api`, and their
+`-check` forms; a second is a usage error.
+
 | Option | Result |
 | --- | --- |
 | `-parse-only` | Lex and parse one source file, then stop. No import discovery, type checking, or executable. |

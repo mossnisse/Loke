@@ -202,10 +202,9 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 @(private = "file")
 struct_body :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> string {
 	// The cached alignment and size are read below, so layout is computed first.
-	natural := record_natural_align(e.c, info)
 	type_size(e.c, type)
 	packed := info.packed
-	over_aligned := info.align > natural
+	over_aligned := info.align > info.natural_align
 	if !packed && !over_aligned {
 		b := strings.builder_make()
 		strings.write_string(&b, "{")
@@ -262,22 +261,6 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> string {
 	}
 	fmt.sbprintf(&b, " [0 x i%d] }", info.align * 8)
 	return strings.to_string(b)
-}
-
-// The alignment a struct would have with no `@(align=N)`: the maximum field
-// alignment, or 1 for a packed or empty record.
-@(private)
-record_natural_align :: proc(c: ^Compiler, info: ^Type_Info) -> u64 {
-	if info.packed {
-		return 1
-	}
-	natural := u64(1)
-	for field in info.fields {
-		if symbol := symbol_of(c, field); symbol != nil {
-			natural = max(natural, type_align(c, symbol.type))
-		}
-	}
-	return natural
 }
 
 // The struct a value-typed field depends on, looking through arrays and

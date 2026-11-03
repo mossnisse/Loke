@@ -26,6 +26,10 @@ checklist.
   @(align=N) Generic :: struct($N: int) { ... }
   ```
 
+- `@(required)` with `@(initialized)` on one field is now `L0691`, and `@(require_results)` on an
+  interface is `L0607`. Neither had any effect. Upgrade by deleting the attribute.
+- `lokec` takes at most one of the options that select what a run does, such as `-fmt`, `-doc` and
+  `-dump-ast`, and a second is a usage error. Before, the first in an internal order won silently.
 - `string` -> `string_view` no longer applies to a distinct type on either side, as the
   [conversion list](design.md#implicit-type-conversions) says and as `distinct [3]int` -> `[]int`
   already did not. `s: string_view = Name("abc")` with `Name :: distinct string` is now `L0310`.
@@ -1264,6 +1268,22 @@ checklist.
 
 ### Fixed
 
+- An enum's own `==` and `<` are now the ones used, as a struct's are ([Operator lookup and
+  overload resolution](design.md#operator-lookup-and-overload-resolution)): `x == y` ignored its
+  own `==` at the top level while `[2]E` used it. A generated `hash` no longer stands beside an
+  enum's own `==` or `hash`, so `Hashable(E)` agrees with `map[E]int`. Editor completion no longer lists the generated `hash`
+  on a built-in type, as it never did on a record; `x.hash(seed)` still compiles.
+- `E.A.hash(0)`, or `E.A.m()` with `self: ^`, no longer fails with `L0405`: an enum member is a
+  constant, and is materialized as one.
+- A layout measured in a discarded overload probe is measured again: `size_of(S)` printed 0 and
+  `L0364` was lost when a `where` bound measured `S`. `L0364` also reaches a record field or a
+  procedure's parameter type past the maximum, with a location and before the backend.
+- `@(zero=)` on unions that reach each other no longer depends on which is declared first: the
+  payload is judged once every record has its fields ([Zero values and
+  `@(zero=)`](design.md#zero-values-and-zero)).
+- `lokec <root directory> -fmt`, and any other run that writes no executable, no longer asks for
+  `-o`. `lokec .` at a drive root, and `lokec D:`, ask for `-o` or use the resolved name, instead
+  of writing `C:\.exe` or `D:.exe`.
 - A `@(test)` may use a local type or capture literal with a file-scope generic, a formatter or
   a `dyn` view, and an ordinary build of the package, or of an importer of it, still compiles. It
   failed with `L0405`. An ordinary build also leaves out those instances and their `static` and

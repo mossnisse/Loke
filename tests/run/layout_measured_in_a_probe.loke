@@ -1,0 +1,18 @@
+// source.odin `committing`: an overload probe measures `S` while its fields are
+// still resolving. The answer costs a diagnostic the probe rolls back, so it is
+// not kept: `S` is measured again once it has its fields.
+package main;
+
+import "core:fmt";
+
+twin :: proc(x: $T) -> int where size_of(S) > 100 { return 1; }
+plain :: proc(x: int) -> int { return 4; }
+pick :: proc{twin, plain};
+
+S :: struct { a: [pick(1)]int, b: i64 }
+
+main :: proc() {
+	s: S = {};
+	s.b = 7;
+	fmt.println(size_of(s), s.b);
+}

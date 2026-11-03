@@ -38,7 +38,7 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 	info.written_align = record_written_alignment(k, value)
 	info.thread_affine = has_attribute(value.attributes, "thread_affine")
 	info.wakes_on_drop = has_attribute(value.attributes, "wakes_on_drop")
-	resolve_union_zero(k, info, value)
+	resolve_union_zero(k, type, info, value)
 	resolve_union_failure(k, info, value)
 }
 
@@ -193,7 +193,7 @@ resolve_variant_payload :: proc(k: ^Checker, variant: Variant, name: Identifier_
 // the *first* variant may be named, so tag 0 plus a zero payload stays the
 // all-zero representation every container, global, and allocation depends on.
 @(private = "file")
-resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
+resolve_union_zero :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info, value: ^Type_Record) {
 	attribute, written := find_attribute(value.attributes, "zero")
 	if !written {
 		return
@@ -218,15 +218,29 @@ resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 		)
 		return
 	}
-	if payload := info.variants[0]; payload != TYPE_VOID && !type_has_zero(k.c, payload) {
+	info.zero_designated = true
+	// A probe can still reject an instance over this.
+	if info.instance_of != INVALID_SYMBOL {
+		check_union_zero_payload(k, type, value.attributes)
+	}
+}
+
+// design.md "Zero values": the payload `@(zero=)` designates needs a zero. Asked
+// once every record has its fields, or a cycle through `[]U` would read one that
+// has none yet.
+check_union_zero_payload :: proc(k: ^Checker, type: Type_Id, attributes: []Attribute) {
+	info := type_of(k.c, type)
+	attribute, written := find_attribute(attributes, "zero")
+	if info == nil || !written || !info.zero_designated {
+		return
+	}
+	if payload := info.variants[0]; !type_has_zero(k.c, payload) {
 		errorf(
 			k.c, attribute.span, "L0423",
 			"`@(zero=%s)` needs an all-zero payload, and `%s` has no zero value",
-			identifier_text(k.c, name), type_name(k.c, payload),
+			identifier_text(k.c, info.variant_names[0]), type_name(k.c, payload),
 		)
-		return
 	}
-	info.zero_designated = true
 }
 
 // design.md "The failure protocol and `@(failure=)`": `@(failure=name)`

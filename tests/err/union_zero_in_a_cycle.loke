@@ -1,0 +1,8 @@
+// design.md "Zero values and @(zero=)": the payload is judged once `S` has its
+// fields, though `U` is resolved while `S` is still resolving `link`.
+package main;
+
+S :: struct { link: []U, @(required) x: int }
+@(zero=a) U :: union { a: S, b: int }
+
+main :: proc() {}

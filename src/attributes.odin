@@ -1,6 +1,7 @@
 // Attribute discipline: one table of every attribute design.md defines, with the
 // positions it may appear in and the value shape it takes. Behaviour lives with
-// the owning feature; this file only reports misuse.
+// the owning feature; this file reports misuse and records what a declaration
+// says on its symbol or type.
 package lokec
 
 import "core:strings"
@@ -317,6 +318,13 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 			)
 		}
 	}
+	// design.md "@(require_results)": a property of a value's type, and no value
+	// has an interface's type.
+	if attribute, found := find_attribute(d.attributes, "require_results"); found && len(d.values) == 1 {
+		if _, is_interface := d.values[0].(^Type_Interface); is_interface {
+			errorf(k.c, attribute.span, "L0607", "`@(require_results)` cannot appear on an interface")
+		}
+	}
 	// design.md "Test procedures": declared at file scope.
 	if member || scope == .Foreign {
 		if attribute, found := find_attribute(d.attributes, "test"); found {
@@ -413,11 +421,8 @@ validate_cpu_dispatch :: proc(k: ^Checker, d: ^Decl, scope: Attr_Scope, member: 
 
 // The level a `@(cpu_dispatch)` value names, which is never baseline.
 dispatch_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
-	switch text {
-	case "x86-64-v2": return .X86_64_V2, true
-	case "x86-64-v3": return .X86_64_V3, true
-	}
-	return .X86_64, false
+	cpu, known := parse_cpu_level(text)
+	return cpu, known && cpu != .X86_64
 }
 
 record_attr_position :: proc(record: ^Type_Record) -> Attr_Pos {
@@ -469,6 +474,28 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 				sym.dispatch_cpu, sym.dispatches = dispatch_cpu_level(text)
 			}
 		}
+	}
+}
+
+has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
+	_, found := find_attribute(attributes, name)
+	return found
+}
+
+find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, bool) {
+	for attribute in attributes {
+		if len(attribute.path) == 1 && attribute.path[0].text == name {
+			return attribute, true
+		}
+	}
+	return {}, false
+}
+
+// design.md "@(require_results)": a type carrying it makes every value aggregate
+// containing it require its results too (`type_requires_results`).
+apply_type_metadata :: proc(k: ^Checker, d: ^Decl, type: Type_Id) {
+	if info := type_of(k.c, type); info != nil && has_attribute(d.attributes, "require_results") {
+		info.requires_results = true
 	}
 }
 

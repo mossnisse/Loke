@@ -260,6 +260,9 @@ Type_Info :: struct {
 	// Cached natural layout (`src/layout.odin`). `offsets` has one entry per
 	// struct field, in declaration order.
 	layout_state: Size_State,
+	// The maximum field alignment with no `@(align=N)`: 1 for a packed or empty
+	// record, and for anything else.
+	natural_align: u64,
 	size:         u64,
 	align:        u64,
 	offsets:      []u64,
@@ -1159,6 +1162,23 @@ synth_proc :: proc(
 		synth         = kind,
 	})
 	if enroll { enroll_synth(c, id) }
+	return id
+}
+
+// A member whose receiver is its first parameter.
+synth_receiver_proc :: proc(
+	c: ^Compiler,
+	name: string,
+	kind: Synth_Kind,
+	owner: Type_Id,
+	params: []Type_Id,
+	modes: []Param_Mode,
+	result: Type_Id,
+	enroll := true,
+) -> Symbol_Id {
+	id := synth_proc(c, name, kind, owner, params, modes, result, enroll)
+	sym := symbol_of(c, id)
+	sym.has_receiver, sym.receiver = true, modes[0]
 	return id
 }
 

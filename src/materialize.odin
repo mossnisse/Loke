@@ -33,7 +33,7 @@ constant_symbol_of :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 		id = v.resolution.symbol
 	}
 	sym := symbol_of(c, id)
-	return sym != nil && sym.kind == .Const ? id : INVALID_SYMBOL
+	return sym != nil && (sym.kind == .Const || sym.kind == .Enum_Member) ? id : INVALID_SYMBOL
 }
 
 // The named constant at the root of a selector or index chain.

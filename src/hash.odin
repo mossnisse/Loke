@@ -34,7 +34,9 @@ type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 		return false
 	}
 	#partial switch info.kind {
-	case .Bool, .Int, .Rune, .Enum, .Typeid,
+	case .Enum:
+		return record_hashes_structurally(c, id, under, info)
+	case .Bool, .Int, .Rune, .Typeid,
 	     .Raw_Pointer, .Pointer, .C_Pointer,
 	     .String, .String_View,
 	     .Untyped_Int, .Untyped_Bool, .Untyped_Rune, .Untyped_String:
@@ -87,8 +89,8 @@ part_is_hashable :: proc(c: ^Compiler, part: Type_Id, seen: ^Type_Walk) -> bool 
 	return type_is_hashable_walk(c, part, seen)
 }
 
-// A record or union with the generated `==`, which a structural `hash` is the
-// coherent partner of: none of its own, no `hash` of its own, not a callable,
+// A record, union, or enum with the generated `==`, which a structural `hash` is
+// the coherent partner of: none of its own, no `hash` of its own, not a callable,
 // and not packed, whose fields are read in place.
 @(private = "file")
 record_hashes_structurally :: proc(c: ^Compiler, id, under: Type_Id, info: ^Type_Info) -> bool {

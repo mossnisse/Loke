@@ -41,24 +41,15 @@ layout_sum :: proc(left, right: u64) -> (u64, bool) {
 	return left + right, true
 }
 
+// Every alignment is a power of two, and every value stays near `MAX_LAYOUT_SIZE`
+// at most.
 align_to :: proc(value, alignment: u64) -> u64 {
-	if alignment <= 1 {
-		return value
-	}
-	remainder := value % alignment
-	if remainder == 0 {
-		return value
-	}
-	padding := alignment - remainder
-	return value > max(u64)-padding ? max(u64) : value + padding
+	return (value + alignment - 1) &~ (alignment - 1)
 }
 
 @(private = "file")
 layout_overflow :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 	info := type_of(c, type)
-	if info == nil {
-		return
-	}
 	location := span
 	if location.file == NO_FILE {
 		if sym := symbol_of(c, info.symbol); sym != nil {
@@ -69,8 +60,7 @@ layout_overflow :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 		c, location, "L0364", "the layout of `%s` exceeds the maximum supported size of %d bytes",
 		type_name(c, type), MAX_LAYOUT_SIZE,
 	)
-	info = type_of(c, type)
-	info.size, info.align, info.offsets, info.layout_state = 0, 1, nil, .Finite
+	info.layout_state = .Finite
 }
 
 @(private = "file")
@@ -79,49 +69,43 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 	if info == nil || info.layout_state != .Unchecked {
 		return
 	}
+	// source.odin `committing`: a probe may roll back the diagnostic this answer
+	// cost, so it is not kept, here or in a record measured over this one.
+	errors := c.error_count
+	defer if !committing(c) && c.error_count > errors {
+		info.layout_state = .Unchecked
+	}
 	// Fields are incomplete while their declaration signature is resolving.
 	if info.kind == .Struct || info.kind == .Union {
 		if sym := symbol_of(c, info.symbol); sym != nil && sym.decl != nil && sym.decl.sig_state == .Checking {
 			errorf(c, sym.span, "L0364", "the layout of `%s` is written in terms of its own layout", type_name(c, type))
-			info.size, info.align, info.layout_state = 0, 1, .Finite
+			info.layout_state = .Finite
 			return
 		}
 	}
 	info.layout_state = .Checking
 
-	size, alignment := u64(0), u64(1)
+	word := u64(c.target.pointer_bits) / 8
+	size, alignment, natural_align := u64(0), u64(1), u64(1)
 	offsets: []u64
 	valid := true
 	switch info.kind {
-	case .Void, .Invalid:
-		size, alignment = 0, 1
-
-	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	case .Void, .Invalid, .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String, .Interface, .Type:
 
-	case .Bool:
-		size, alignment = 1, 1
-
-	case .Int, .Float, .Rune, .Enum, .Typeid:
+	case .Bool, .Int, .Float, .Rune, .Enum, .Typeid, .Allocator_Error:
 		size = u64(type_bits(c, type) + 7) / 8
 		alignment = min(size, u64(c.target.max_align))
 
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View, .Box:
 		// A box is the address of its allocation, which records the allocator.
-		size = u64(c.target.pointer_bits) / 8
-		alignment = size
+		size, alignment = word, word
 
 	case .String_View:
-		alignment = u64(c.target.pointer_bits) / 8
-		size = 2 * alignment
+		size, alignment = 2 * word, word
 
 	case .String:
-		alignment = u64(c.target.pointer_bits) / 8
-		size = 3 * alignment
-
-	case .Allocator_Error:
-		size = u64(type_bits(c, type) + 7) / 8
-		alignment = min(size, u64(c.target.max_align))
+		size, alignment = 3 * word, word
 
 	case .Distinct:
 		size, alignment = type_size(c, info.element, span), type_align(c, info.element, span)
@@ -139,28 +123,21 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 		shape := union_layout(c, type, span)
 		size, alignment = shape.size, shape.align
 		valid = size <= MAX_LAYOUT_SIZE
-		offsets = make([]u64, 2, c.semantic_allocator)
-		offsets[0] = 0
-		offsets[1] = shape.tag_offset
 
 	case .Struct, .Dyn, .Slice, .Dynamic_Array, .Map:
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)
 		for field, index in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol == nil { continue }
 			field_size := type_size(c, symbol.type, span)
 			field_align := info.packed ? u64(1) : type_align(c, symbol.type, span)
 			cursor = align_to(cursor, field_align)
-			if cursor > MAX_LAYOUT_SIZE {
-				valid = false
-				break
-			}
 			offsets[index] = cursor
 			cursor, valid = layout_sum(cursor, field_size)
 			if !valid { break }
 			alignment = max(alignment, field_align)
 		}
+		natural_align = alignment
 		alignment = max(alignment, info.written_align)
 		size = align_to(cursor, alignment)
 		valid = valid && size <= MAX_LAYOUT_SIZE
@@ -170,9 +147,9 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 		layout_overflow(c, type, span)
 		return
 	}
-	info = type_of(c, type)
 	info.size = size
 	info.align = max(alignment, 1)
+	info.natural_align = natural_align
 	info.offsets = offsets
 	info.layout_state = .Finite
 }

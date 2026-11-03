@@ -433,6 +433,19 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 		testing.expectf(t, strings.contains(string(stderr), "-cpu needs"), "%s was not rejected", cpu)
 	}
 
+	// A run does one thing, and only the one that writes an output needs its name.
+	both_state, _, both_stderr, both_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-fmt-check", "-doc"}},
+		context.allocator,
+	)
+	testing.expect(t, both_err == nil && both_state.exit_code == 2, "-fmt-check with -doc did not exit 2")
+	testing.expect(t, strings.contains(string(both_stderr), "cannot be combined"), "-fmt-check with -doc was not rejected")
+	_, _, root_stderr, root_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), `C:\`, "-fmt-check"}},
+		context.allocator,
+	)
+	testing.expectf(t, root_err == nil && !strings.contains(string(root_stderr), "needs -o"), "-fmt-check asked a root for -o:\n%s", string(root_stderr))
+
 	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
 		state, _, stderr, err := exec(
 			os.Process_Desc {

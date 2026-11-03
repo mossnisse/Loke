@@ -28,14 +28,14 @@ section are revised when a fix changes them.
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
-| High and medium severity bugs | 188 (44 high, 144 medium) | An independent attempt to refute each one |
-| Low severity bugs | 182 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 719 | Only the reviewer |
-| Dead code | 380 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
-| Data structures and algorithms | 132 | Only the reviewer |
-| Near copies | 464 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 296 | Only the reviewer |
-| Comments | 525 | Only the reviewer |
+| High and medium severity bugs | 182 (43 high, 139 medium) | An independent attempt to refute each one |
+| Low severity bugs | 177 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 701 | Only the reviewer |
+| Dead code | 372 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| Data structures and algorithms | 130 | Only the reviewer |
+| Near copies | 455 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 292 | Only the reviewer |
+| Comments | 518 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 370 overstates the number of separate
+  merges the ones found so far, so 359 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 464 suggests: the
+Near copies are real but smaller than the raw count of 455 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -130,7 +130,6 @@ These ids describe one defect each and need one fix. Each is also confirmed by a
 - BUG-check_calls-1 and BUG-container-1: the sort gate is called from two of three call paths. Call `require_sort_order_policy` ([container.odin:526](src/container.odin#L526)) from `check_container_element` ([check_calls.odin:508](src/check_calls.odin#L508)), which the direct path and the procedure-value path ([check_expr.odin:1184](src/check_expr.odin#L1184)) both reach, and delete the calls at [check_calls.odin:464](src/check_calls.odin#L464) and [check_calls.odin:625](src/check_calls.odin#L625).
 - BUG-ast_clone-1 and BUG-parallel-3: the assertion at [ast_clone.odin:672](src/ast_clone.odin#L672) meets a spawn result the capture rewrite turned into a selector.
 - BUG-expand-1 and BUG-iteration_adapters-2: [expand.odin:290](src/expand.odin#L290) treats `.Copied` as `.Indexed`.
-- BUG-customization-3 and BUG-operators-6: [operators.odin:325](src/operators.odin#L325) counts a package-declared enum as a built-in type.
 - BUG-check_expr.part2-6 and BUG-simd-2: [check_expr.odin:3523](src/check_expr.odin#L3523) splats a typed constant without the lane check a runtime scalar gets.
 - BUG-iterate-6 and BUG-iteration_yield-3: `yield_of` accepts a nominal record `Item`, and `yield_item_type` always builds an anonymous one ([iteration_yield.odin:115](src/iteration_yield.odin#L115)), so the match at [iterate.odin:783](src/iterate.odin#L783) fails.
 - BUG-eval.part1-2, BUG-const_ops-2 and BUG-hash-2: `zero_const` answers `.Nil` for a union ([check_expr.odin:3417](src/check_expr.odin#L3417)), where every other union constant is an `.Aggregate` with a variant. Fixing the constant's form, rather than the three readers, is the smaller change.
@@ -360,7 +359,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373), [attributes.odin:473](src/attributes.odin#L473) and [borrow.odin:639](src/borrow.odin#L639) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
 - `record_resolving` ([check.odin:1832](src/check.odin#L1832)) is spelled out at [abi.odin:280](src/abi.odin#L280) and [layout.odin:84](src/layout.odin#L84).
-- The non-null list: [zero.odin:46](src/zero.odin#L46) and its neighbours restate [union.odin:335](src/union.odin#L335) `type_is_non_null`, which [check_expr.odin:2935](src/check_expr.odin#L2935) can also call. About 11 lines.
 - Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93), with [doc.odin:1374](src/doc.odin#L1374) file-private. Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
 - `path_digest` ([packages.odin:682](src/packages.odin#L682)) hand-writes `hash.fnv64a`, already used at [emit_llvm_toolchain.odin:310](src/emit_llvm_toolchain.odin#L310).
 - The fuzz harness's pipe, poll and kill loop ([checker_fuzz_test.odin:108](tests/checker_fuzz_test.odin#L108)) is what [subprocess.odin:82](src/subprocess/subprocess.odin#L82) `exec` does, about 25 lines.
@@ -404,12 +402,12 @@ Counts per file, then the findings themselves in the same order.
 | [ast.odin](src/ast.odin) | 1488 | 1 | 5 | 2 | 1 | 1 | 1 | 6 |
 | [ast_clone.odin](src/ast_clone.odin) | 798 | 1 | 6 | 3 | 0 | 2 | 3 | 1 |
 | [atomics.odin](src/atomics.odin) | 312 | 1 | 6 | 0 | 1 | 0 | 2 | 4 |
-| [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 3 | 5 |
+| [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 2 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
 | [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
 | [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 16 | 24 |
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
-| [build_config.odin](src/build_config.odin) | 132 | 1 | 3 | 0 | 0 | 1 | 2 | 0 |
+| [build_config.odin](src/build_config.odin) | 132 | 1 | 3 | 0 | 0 | 0 | 2 | 0 |
 | [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 3 | 4 |
 | [cfg.odin](src/cfg.odin) | 3031 | 8 | 11 | 9 | 2 | 10 | 7 | 7 |
 | [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 53 | 14 | 15 | 34 | 21 | 31 |
@@ -419,11 +417,10 @@ Counts per file, then the findings themselves in the same order.
 | [check_expr.odin](src/check_expr.odin) | 4188 | 19 | 17 | 14 | 5 | 15 | 11 | 16 |
 | [const_ops.odin](src/const_ops.odin) | 888 | 3 | 5 | 3 | 1 | 8 | 3 | 6 |
 | [container.odin](src/container.odin) | 831 | 2 | 12 | 6 | 2 | 7 | 5 | 9 |
-| [customization.odin](src/customization.odin) | 118 | 3 | 4 | 2 | 0 | 2 | 0 | 2 |
 | [doc.odin](src/doc.odin) | 1375 | 7 | 9 | 4 | 1 | 6 | 5 | 5 |
 | [emission_contract.odin](src/emission_contract.odin) | 221 | 1 | 3 | 1 | 1 | 3 | 2 | 2 |
 | [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
-| [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 3 | 6 | 5 | 7 |
+| [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 2 | 6 | 4 | 7 |
 | [emit_llvm_adapters.odin](src/emit_llvm_adapters.odin) | 121 | 5 | 3 | 1 | 0 | 3 | 0 | 1 |
 | [emit_llvm_atomics.odin](src/emit_llvm_atomics.odin) | 271 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 1 | 0 | 0 | 0 | 2 | 0 | 0 |
@@ -450,7 +447,7 @@ Counts per file, then the findings themselves in the same order.
 | [global_effects.odin](src/global_effects.odin) | 2276 | 3 | 9 | 9 | 3 | 5 | 5 | 7 |
 | [hash.odin](src/hash.odin) | 383 | 5 | 5 | 2 | 0 | 2 | 2 | 7 |
 | [hooks.odin](src/hooks.odin) | 1260 | 2 | 8 | 5 | 2 | 6 | 4 | 8 |
-| [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 4 | 3 | 5 |
+| [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 3 | 3 | 5 |
 | [incremental.odin](src/incremental.odin) | 369 | 0 | 6 | 4 | 1 | 2 | 2 | 8 |
 | [install.odin](src/install.odin) | 46 | 1 | 2 | 0 | 0 | 0 | 1 | 0 |
 | [interface.odin](src/interface.odin) | 1484 | 10 | 9 | 5 | 1 | 11 | 3 | 6 |
@@ -459,11 +456,9 @@ Counts per file, then the findings themselves in the same order.
 | [iteration_adapters.odin](src/iteration_adapters.odin) | 291 | 2 | 3 | 4 | 0 | 6 | 3 | 2 |
 | [iteration_mutable.odin](src/iteration_mutable.odin) | 167 | 1 | 4 | 2 | 0 | 6 | 1 | 3 |
 | [iteration_yield.odin](src/iteration_yield.odin) | 213 | 6 | 3 | 1 | 0 | 2 | 2 | 0 |
-| [layout.odin](src/layout.odin) | 178 | 2 | 7 | 3 | 0 | 1 | 0 | 0 |
 | [lexer.odin](src/lexer.odin) | 769 | 1 | 6 | 0 | 1 | 3 | 1 | 3 |
 | [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 4 | 2 | 5 | 4 | 9 |
-| [main.odin](src/main.odin) | 463 | 2 | 5 | 2 | 0 | 2 | 1 | 2 |
-| [operators.odin](src/operators.odin) | 770 | 13 | 10 | 10 | 2 | 5 | 3 | 8 |
+| [operators.odin](src/operators.odin) | 770 | 12 | 10 | 10 | 2 | 5 | 3 | 8 |
 | [optional.odin](src/optional.odin) | 746 | 4 | 8 | 3 | 0 | 7 | 4 | 4 |
 | [overlays.odin](src/overlays.odin) | 61 | 0 | 1 | 0 | 0 | 0 | 1 | 0 |
 | [overload.odin](src/overload.odin) | 1023 | 6 | 8 | 7 | 1 | 4 | 3 | 8 |
@@ -495,9 +490,8 @@ Counts per file, then the findings themselves in the same order.
 | [stdlib.odin](src/stdlib.odin) | 278 | 0 | 2 | 1 | 0 | 1 | 0 | 14 |
 | [subprocess.odin](src/subprocess/subprocess.odin) | 350 | 4 | 2 | 2 | 1 | 1 | 2 | 4 |
 | [text.odin](src/text.odin) | 350 | 6 | 4 | 0 | 1 | 3 | 2 | 4 |
-| [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 3 | 2 | 7 |
+| [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 2 | 2 | 7 |
 | [universe.odin](src/universe.odin) | 132 | 0 | 0 | 0 | 0 | 3 | 0 | 1 |
-| [zero.odin](src/zero.odin) | 130 | 3 | 2 | 1 | 1 | 1 | 1 | 3 |
 
 ### src/abi.odin
 
@@ -689,7 +683,6 @@ A compact, table-driven validator in good shape overall; the table matches `desi
 **Structure and boundaries**
 
 - [attributes.odin:44](src/attributes.odin#L44): scope rules live in `global_only`, the `@(cold)` block (line 312), the first two reasons in `validate_cpu_dispatch` (lines 383-386) and `reject_test_attribute` ([test_procedures.odin:62](src/test_procedures.odin#L62)). Make `global_only` a `bit_set[Attr_Scope]` with a new `.Member`, dropping the `member` parameter. This closes both bugs but moves those L0739 cases to L0607, so expected files change. (about 25 lines)
-- [attributes.odin:1](src/attributes.odin#L1): the header says the file "only reports misuse", but `apply_proc_metadata` (line 442) writes symbol state, while its sibling `apply_type_metadata` is in [zero.odin:9](src/zero.odin#L9) and `find_attribute` and `has_attribute` are in [check.odin:754](src/check.odin#L754). Move those two accessors here and correct the header.
 - [attributes.odin:237](src/attributes.odin#L237) `validate_attributes`: the L0613 root-only rule belongs in `providers.odin`, which already owns the other rules over these attributes (L0657) and `source_provider_slot`; a one-line call remains here.
 
 **Comments**
@@ -1034,10 +1027,6 @@ Small and readable, with every symbol in use. The one real cost is the lazy crea
 - [build_config.odin:94](src/build_config.odin#L94) `build_config_enum_type`: create the types in `predeclare_build_config`: `enum_const(c, synth_enum(c, "Arch", {...}), 0)`, keeping only a `log_level_type` for [stdlib.odin:194](src/stdlib.odin#L194). `Build_Config`, `Build_Config_Enum`, `Symbol.build_config_enum` and the hook at [check_expr.odin:639](src/check_expr.odin#L639) all go. (about 30 lines)
 - [build_config.odin:95](src/build_config.odin#L95) the same change, its cost: laziness protects only `Type_Id` numbering, which `freeze_typeids` sorts away for typeids ([reflect.odin:417](src/reflect.odin#L417)) and which reaches just IR struct names ([emit_llvm_abi.odin:321](src/emit_llvm_abi.odin#L321)). Eager creation shifts those once, and adds 7 types and 21 member symbols per compile.
 - [build_config.odin:56](src/build_config.odin#L56) `Build_Config`: if laziness stays, this one-field struct can be `build_config_types: [Build_Config_Enum]Type_Id` on `Compiler`, beside `failure_policy_type` ([source.odin:187](src/source.odin#L187)), and the `bc` alias goes. (about 4 lines)
-
-**Near copies**
-
-- [build_config.odin:34](src/build_config.odin#L34), [main.odin:356](src/main.odin#L356) and [attributes.odin:411](src/attributes.odin#L411) each spell the CPU level names. Shared form: a `[Cpu_Level]string` table here plus `cpu_level_from_name(text) -> (Cpu_Level, bool)`; `dispatch_cpu_level` only adds a rejection of `.X86_64`. (about 8 lines)
 
 **Structure and boundaries**
 
@@ -2021,38 +2010,6 @@ The file has no dead symbols, but its checking gates have two reproduced bugs. I
 - [container.odin:577](src/container.odin#L577): the diagnostic directly below says the same; delete.
 - [container.odin:813](src/container.odin#L813): restates the three lines below it; delete. (about 15 comment lines across the file)
 
-### src/customization.odin
-
-Small and readable, with no dead symbols, but `hash` is contributed along two paths: the unconditional one lets an enum escape the record rules, and removing it fixes that and shortens the file by about a fifth. The bugs below were reproduced with the existing `lokec.exe`; two have their root outside this file.
-
-**Bugs**
-
-- `BUG-customization-1` **medium** [customization.odin:47](src/customization.odin#L47) `standard_hash_type`: only Struct and Union are excluded, so an enum gets the generated `hash` beside its own `==` or `hash`. Scenario: `E` with only `==` gives `Hashable(E)` true while `map[E]int` is L0586 and `[2]E` is false; with `hash :: proc(self) -> string`, `e.hash(0)` compiles and returns 0. Fix: the merge under Simplification, and apply `record_hashes_structurally`'s own-`hash` test to `.Enum` in `type_is_hashable_walk`. *Confirmed: Reproduced: with own `==`, Hashable(E)=1, Hashable([2]E)=0, map[E]int L0586, against design.md "Maps" (Hashable means usable key). With `hash(self)->string`, e.hash(0) compiles; a struct gets L0392. No gap recorded. Severity is nearer low: rare, no unsoundness.*
-- `BUG-customization-2` **medium** [emit_llvm_expr.odin:784](src/emit_llvm_expr.odin#L784) `emit_address_at`: a `.Borrow` receiver on `Enum.Member` has no storage, because `constant_symbol` ([materialize.odin:52](src/materialize.odin#L52)) takes only `.Const` symbols and `.Enum_Member` is not one. Scenario: `E.A.hash(0)`, or `E.A.h()` with `self: ^`, fails with internal L0405; `F : E : .B; F.hash(0)` works. Fix: let `constant_symbol` accept `.Enum_Member`. *Confirmed: Reproduced: `E.A.hash(0)` and `E.A.h()` with `self: ^` exit 2 with L0405 'a resolved place has no storage'; `F.hash(0)` works. design.md calls members named constants, and constant receivers materialize. Actual site: emit_llvm_expr.odin:784, not customization.odin.*
-- `BUG-customization-3` **medium** [operators.odin:325](src/operators.odin#L325) `operand_is_builtin`: an enum counts as built-in, so its own `==` is ignored at the top level but used as a part. Scenario: with `==` always true, `x == y` on `E` is false while `[2]E` compares true, against design.md "Comparison operators" (the same equality wherever nested). Fix: treat `.Enum` as this switch treats `.Distinct`. *Confirmed: Probe prints false for x == y and true for the [2]E compare, while a struct prints true for both; design.md requires the same equality when nested, and no record covers it. Code is operators.odin:325, not customization.odin.*
-
-**Simplification**
-
-- [customization.odin:21](src/customization.odin#L21) and [customization.odin:60](src/customization.odin#L60): delete the `hash` branch and `standard_hash_type`, and let the by-name path serve every type as `ensure_hash_member`: add `type_is_untyped` to the gate at line 61 and drop the kind filter at line 65. The own-`==` and existing-member checks then cover enums, which fixes BUG-customization-1's member half. (about 18 lines)
-- [customization.odin:21](src/customization.odin#L21) `ensure_standard_customization_members`: if the branch stays, test the kind first. Today the first lookup of any name on any struct walks its parts and resolves their `hash` signatures, and `standard_hash_type` then answers false regardless. (no lines; removes the work)
-- [customization.odin:108](src/customization.odin#L108) `standard_receiver_member`: `synth_proc` does not keep `modes` (literals are passed at [format.odin:35](src/format.odin#L35)), so replace lines 108-111 with `[]Param_Mode{.Borrow, .Value}[:len(params)]` at the call; the citation stays. (about 2 lines)
-- [customization.odin:31](src/customization.odin#L31) `standard_len_type`: inline as a `#partial switch info.kind` at line 15, since `info` is already the underlying type's and this is the only caller. Line 18 can test `info.kind` the same way. (about 6 lines)
-
-**Dead code**
-
-- (branch) [customization.odin:111](src/customization.odin#L111): `len(modes) > 0` is always true; all three callers pass at least the receiver in `params`.
-- (branch) [customization.odin:113](src/customization.odin#L113): `sym != nil` is always true for the symbol `synth_proc` just created; [format.odin:36](src/format.odin#L36) already omits the check.
-
-**Near copies**
-
-- [customization.odin:112](src/customization.odin#L112) and [iterate.odin:416](src/iterate.odin#L416): `synth_proc` then `has_receiver`/`receiver`, also at [iterate.odin:398](src/iterate.odin#L398), [format.odin:34](src/format.odin#L34), [container.odin:324](src/container.odin#L324) and [hooks.odin:803](src/hooks.odin#L803). The receiver is always `modes[0]`, so a `synth_receiver_proc` in semantic.odin beside `synth_proc` removes 3-4 lines per site.
-- [customization.odin:22](src/customization.odin#L22) and [customization.odin:81](src/customization.odin#L81): the same `hash` member construction, differing only in the owner. The merge under Simplification leaves one; otherwise extract `standard_hash_member(c, owner)`.
-
-**Comments**
-
-- [customization.odin:5](src/customization.odin#L5): delete; `ensure_contributed_members` ([impl.odin:407](src/impl.odin#L407)) already says these are contributed on demand, and laziness is not what lets built-in types meet interfaces.
-- [customization.odin:54](src/customization.odin#L54): shorten to `design.md "Maps": a record or union keeping its generated == hashes structurally, and a distinct type declaring neither half by its underlying policy. As with a generated format, it appears only when hash is looked up and the name is free.` (about 2 lines)
-
 ### src/doc.odin
 
 The API model and its two renderers work and are well commented, but the file also holds the doc-comment
@@ -2261,7 +2218,6 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 
 - [emit_llvm_abi.odin:348](src/emit_llvm_abi.odin#L348) `llvm_type`: called for nearly every emitted instruction (about 260 call sites), and each integer `aprintf`s a fresh string and each array re-spells its element, into an arena freed only after emission. A cache keyed by `Type_Id` would pay once per type. Unmeasured; check with `perf.ps1`.
 - [emit_llvm_abi.odin:45](src/emit_llvm_abi.odin#L45) `emit_foreign_declarations`: walks every package's items again, six levels deep, though [emit_llvm.odin:360](src/emit_llvm.odin#L360) has just visited the same foreign members to name them. Appending to a `foreign_symbols` list there leaves one loop here. (about 20 lines)
-- [emit_llvm_abi.odin:270](src/emit_llvm_abi.odin#L270) `record_natural_align`: re-derives on each query what [layout.odin:164](src/layout.odin#L164) computes just before applying `written_align`. Have layout store an `over_aligned` flag on `Type_Info`.
 
 **Near copies**
 
@@ -2276,7 +2232,6 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 
 - [emit_llvm_abi.odin:433](src/emit_llvm_abi.odin#L433): union construction, widening, tag and payload reads (to line 606), plus `emit_option_value`, `emit_alloc_result` and `emit_restore_refusal` (lines 1183-1217), are not ABI and not in the source-code map's entry. Move them to an `emit_llvm_union.odin`.
 - [emit_llvm_abi.odin:608](src/emit_llvm_abi.odin#L608): the Loke convention (`sret_param`, `emit_ret`, `emit_call_result`, `param_llvm`, the `synth_*` helpers, to line 726) sits between union code and the foreign signature. It belongs with `emit_llvm_calls.odin`, or the map entry should name it.
-- [emit_llvm_abi.odin:270](src/emit_llvm_abi.odin#L270) `record_natural_align`: a layout fact in the emitter; compiler-architecture.md says layout stays in `layout.odin`.
 - [emit_llvm_calls.odin:1276](src/emit_llvm_calls.odin#L1276): `param_is_by_ptr` and `proc_result_is_inout` are used only in this file. Move them here, without the stranded "Materializes the Windows x64 call-side ABI" comment above them.
 - [emit_llvm_abi.odin:1062](src/emit_llvm_abi.odin#L1062) `emit_foreign_call`: 120 lines with seams at result classification, argument lowering, the call, and result recovery; the near-copy fixes leave it about half that.
 
@@ -3785,7 +3740,6 @@ A compact file with mostly useful comments, and member-table scans that stay sma
 - [impl.odin:209](src/impl.odin#L209) and [generic.odin:3677](src/generic.odin#L3677): duplicate and field checks, plus the `Symbol` literal at [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693), differ only in `pkg` and subject. Share `impl_member_clash(k, subject, name)` and `new_impl_member(k, d, name, subject, pkg)`, which also ends the drift in BUG-impl-5. (about 25 lines)
 - [impl.odin:68](src/impl.odin#L68) and [impl.odin:136](src/impl.odin#L136): the same make, read table, declare, install sequence, one filtered to lifecycle hooks. Share `declare_impl_members(k, item, hooks_only := false)`. (about 6 lines)
 - [impl.odin:301](src/impl.odin#L301) and [semantic.odin:1120](src/semantic.odin#L1120): the same three lines concatenate two member slices. Share one helper taking both slices.
-- [impl.odin:327](src/impl.odin#L327) and [customization.odin:68](src/customization.odin#L68): `ensure_record_hash_member` hand-writes `member_named`; replace its loop with one `member_named(...) != INVALID_SYMBOL` test. (about 3 lines)
 
 **Structure and boundaries**
 
@@ -4174,39 +4128,6 @@ The yield-mode half (lines 10-128) is compact and sound apart from named record 
 - [iteration_yield.odin:1](src/iteration_yield.odin#L1): the header, and the "Source-code map" row in `compiler-architecture.md`, describe yield modes only, but lines 130-213 derive associated members, unrelated to `Yield_Desc`. The seam is line 130; extend the header and the row to say so, or move this half beside `associated_type_of` ([iterate.odin:471](src/iterate.odin#L471)).
 - [iteration_yield.odin:6](src/iteration_yield.odin#L6) `Item_Key`: this and `item_states` ([source.odin:215](src/source.odin#L215)) also key `Iterator` and `Mut_Iterator`. `Derived_Key` and `derived_members` would say what they hold.
 
-### src/layout.odin
-
-Compact and readable with no comment noise, but it caches a layout under a speculative probe, which breaks the rule in `source.odin` and can silently give a record size 0. Most of the rest is small: guards that cannot fire and switch arms that compute the same thing.
-
-**Bugs**
-
-- `BUG-layout-1` **high** [layout.odin:86](src/layout.odin#L86) `compute_layout`: lines 73 and 86 cache a poisoned layout with `.Finite` even inside a probe, whose rollback deletes the only L0364; `source.odin` `committing` says "no answer is cached with a diagnostic". *Confirmed: Reproduced: both programs exit 0 and print size_of 0; a_ll.ll has %struct.S = { [4 x i64], i64 }; Big outside a probe gives L0364. Same class as known-gaps 'A declaration first checked in a probe loses its rejection', but that traces only check_alias_template.*
-  Scenario (run on this commit): `twin :: proc(x: $T) -> int where size_of(S) > 100`, `pick :: proc{twin, plain}`, `S :: struct { a: [pick(1)]int, b: i64 }` compiles, `size_of(S)` prints 0, LLVM has `{ [4 x i64], i64 }`. Same for an oversized `Big` measured in a `where`: no error, `size_of(Big)` is 0.
-  Fix: note `c.error_count` on entry; when `!committing(c)` and it grew, restore `.Unchecked` and return, which also covers an enclosing record measured over the poisoned field.
-- `BUG-layout-2` **low** [layout.odin:63](src/layout.odin#L63) `layout_overflow`: an overflowing anonymous type measured with no span has neither a span nor a symbol, so L0364 is printed with no location, and only by the backend (`emit_session`, exit 2). *Not verified.*
-  Scenario (run on this commit): `S :: struct { a: [9223372036854775807]i128 }` with an empty `main`, or `f :: proc(a: [9223372036854775807]i128) {}`, reports no file or line, and the front-end check passes it.
-  Fix: measure field and parameter types in the checker with their spans, as [check.odin:2502](src/check.odin#L2502) does for storage.
-
-**Simplification**
-
-- [layout.odin:45](src/layout.odin#L45) `align_to`: every alignment is a power of two of at least 1 and no value nears `max(u64)` (layout values stay near 2^63, padding under 512), so the guards and saturation never matter. Body: `return (value + alignment - 1) &~ (alignment - 1)`. (about 8 lines)
-- [layout.odin:102](src/layout.odin#L102) `compute_layout`: `.Bool` has `bits = 8` and `.Allocator_Error` has `bits = int_bits` ([semantic.odin:1030](src/semantic.odin#L1030), [:1060](src/semantic.odin#L1060)), so both arms equal the `.Int` arm at line 105. Add them to that `case`. (about 6 lines)
-- [layout.odin:96](src/layout.odin#L96) `compute_layout`: `size, alignment = 0, 1` repeats the initial values at line 92, so `.Void, .Invalid` can join the empty arm at line 99. (about 3 lines)
-- [layout.odin:109](src/layout.odin#L109) `compute_layout`: `u64(c.target.pointer_bits) / 8` appears three times. With `word :=` before the switch the arms become `size, alignment = word, word`, `2 * word, word` and `3 * word, word`. (about 2 lines)
-- [layout.odin:155](src/layout.odin#L155) `compute_layout`: `layout_sum` at line 160 already rejects `left > MAX_LAYOUT_SIZE`, and `offsets` is discarded on overflow, so this `if` adds nothing. (about 4 lines)
-- [layout.odin:72](src/layout.odin#L72) and [layout.odin:173](src/layout.odin#L173): the `info = type_of(c, type)` re-fetches guard nothing, since each type is its own `new_clone` ([semantic.odin:1193](src/semantic.odin#L1193)) and the pointer stays valid while `c.types` grows. Delete both. (2 lines)
-- [layout.odin:73](src/layout.odin#L73) and [layout.odin:86](src/layout.odin#L86): `offsets` is only written at line 176, `size` starts at 0 and `type_align` already maps `align == 0` to 1, so both tuple assignments reduce to `info.layout_state = .Finite`.
-
-**Dead code**
-
-- (branch) [layout.odin:142](src/layout.odin#L142): a union's `offsets` is never read. `type_field_offset` callers index `info.fields`, which a union lacks, [emit_llvm_expr.odin:308](src/emit_llvm_expr.odin#L308) is the `.Struct` arm, and [semantic.odin:260](src/semantic.odin#L260) says struct fields. Delete lines 142-144.
-- (branch) [layout.odin:59](src/layout.odin#L59): `info == nil` cannot hold, because the only caller is past the same check at line 79 and `c.types` is append-only.
-- (branch) [layout.odin:151](src/layout.odin#L151): `symbol == nil` cannot hold, because `resolve_struct_fields` appends only valid bindings ([check.odin:1029](src/check.odin#L1029)); [emit_llvm_abi.odin:213](src/emit_llvm_abi.odin#L213) already dereferences the same symbols unchecked.
-
-**Near copies**
-
-- [layout.odin:162](src/layout.odin#L162) and [emit_llvm_abi.odin:270](src/emit_llvm_abi.odin#L270): `record_natural_align` redoes the field walk's max alignment, packed included, at each of its four emitter sites. Store the value before line 164 as `info.natural_align` and read that; the emitter may read this cache.
-
 ### src/lexer.odin
 
 A small, sound lexer that matches grammar.md "Lexical structure": the keyword list, the operator table and the literal forms all check out. Most of what can go is repeated error reporting and a long keyword switch; its comments are already mostly about why.
@@ -4307,44 +4228,6 @@ The dataflow core is sound and the file is readable, but `exchange` lets an owne
 - [lifecycle.odin:840](src/lifecycle.odin#L840): shorten to `// Never advise inout: it grants mutation and changes which aliases are legal (design.md).` (about 1 line)
 - [lifecycle.odin:587](src/lifecycle.odin#L587): delete; lines 101, 115 and 137 likewise narrate the check or message that follows. (about 4 lines)
 
-### src/main.odin
-
-A small, correct-in-the-common-case driver with two low-severity edge bugs in default output naming. Most of its length is duplicated configuration fields and hand-written option switches; `run` and `parse_args` could lose about 90 lines between them.
-
-**Bugs**
-
-- `BUG-main-1` **low** [main.odin:442](src/main.odin#L442) `default_output_path`: the root check runs before dots and a bare volume are resolved. Scenario: `lokec .` at `C:\` gives `C:\.exe`; `lokec D:` gives drive-relative `D:.exe` (`filepath.base("D:")` is `D:`), not "needs -o". *Not verified.*
-  Fix: resolve `.`, `..` and a bare volume with `abs(input)` first, trim separators, then return `""` when the result is empty or only its volume.
-- `BUG-main-2` **low** [main.odin:426](src/main.odin#L426) `parse_args`: the default output is derived for every mode, so one that writes no executable still needs it. Scenario: `lokec D:\ -fmt`, `-api` or `-doc` exits 2 with "a root directory input needs -o". *Not verified.*
-  Fix: derive it in `run` just before `emission` is built at line 249, once the modes that write nothing have returned.
-
-**Simplification**
-
-- [main.odin:88](src/main.odin#L88) `Options`: 15 fields restate `Compilation_Config` and `Emission_Options`. Hold `config: Compilation_Config` and `emission: Emission_Options` plus the two dynamic lists; lines 174-180, 249-252 and 269-270 shrink to `opts.config = DEFAULT_COMPILATION_CONFIG` and field passes. (about 20 lines)
-- [main.odin:181](src/main.odin#L181) `run`: `report(c)` appears 11 times, with `status :=`/`return status` pairs around it. Move everything after `init_session` into `run_action(&s, opts) -> int` and call `report(c)` once after it, then `run_tests`. Diagnostics own their text, so destroying the AST first is safe. (about 20 lines)
-- [main.odin:288](src/main.odin#L288) `parse_args`: the plain flags take two lines each. Use the one-line `case` form the file already uses at line 345. (about 17 lines)
-- [main.odin:333](src/main.odin#L333) `parse_args`: `-panic`, `-opt`, `-cpu`, `-log-level` and `-build-mode` are one nested switch and one hand-listed error each. A `choice(flag, value, names: ..string) -> (int, bool)` helper, used as `opts.opt_mode = Opt_Mode(choice(...) or_return)`, generates the error. (about 25 lines; keep the `-cpu needs` wording `tests/corpus_test.odin` checks)
-- [main.odin:89](src/main.odin#L89) `Options`: the 14 mode bools (help through `migrate_check`) are mutually exclusive in effect, since `run` silently honours the first by its order and `-fmt -doc` ignores `-doc`. One `Action` enum turns `run` into a `switch`, drops the ternaries at lines 196 and 229, and lets `parse_args` reject a second mode. (about 10 lines)
-
-**Dead code**
-
-- (branch) [main.odin:442](src/main.odin#L442): `&& input != ""` never matters, because `os.stat("")` returns `.Not_Exist` on Windows, so an empty input cannot enter the directory branch; `parse_args` rejects it too.
-- (branch) [main.odin:451](src/main.odin#L451): `if trimmed != ""` is always true: empty `trimmed` already returned at line 442, and `abs` gives a non-empty path. Assign `stem = trimmed` directly and drop the initialiser at line 438.
-
-**Near copies**
-
-- [main.odin:439](src/main.odin#L439) and [packages.odin:634](src/packages.odin#L634): the same `os.stat` and `.Directory` test; call `is_directory(input)`.
-- [main.odin:355](src/main.odin#L355), [build_config.odin:32](src/build_config.odin#L32) and [attributes.odin:409](src/attributes.odin#L409): the CPU spellings three times. Add `parse_cpu_level` beside `cpu_level_name`; `dispatch_cpu_level` becomes that plus rejecting baseline.
-
-**Structure and boundaries**
-
-- [main.odin:194](src/main.odin#L194) `run`: the 33 lines of `-parse-only`, `-dump-ast` and `-dump-tokens` implement a mode inline where the other modes call a procedure. Extract `run_syntax_stage(c, opts) -> int`, leaving `run` as dispatch.
-
-**Comments**
-
-- [main.odin:3](src/main.odin#L3): delete lines 2-4. They say a bad command line exits 1, but the code at lines 165 and 198, the comment at line 146 and compiler-guide.md "Inspecting a compilation" all say 2. Keep lines 146-147 as the one statement.
-- [main.odin:28](src/main.odin#L28): the `-o` usage text says "output executable" and omits the `.obj` default; shorten to "output path (default: input name with .exe, .obj or .test.exe by build mode)".
-
 ### src/operators.odin
 
 Lookup and shape tables read well, but the file has real gaps at its edges: delegation misses whole classes of overloads and the built-in-priority predicates disagree with the spec on enums and SIMD (every bug below was reproduced with `lokec.exe` at this commit). The delegate section carries the most removable code: seven parameters threaded through five procedures and a predicate evaluated twice.
@@ -4356,7 +4239,6 @@ Lookup and shape tables read well, but the file has real gaps at its edges: dele
 - `BUG-operators-3` **medium** [operators.odin:552](src/operators.odin#L552) `delegate_one`: the receiver filter (`params[0] == underlying`) applies to every symbol, against design.md "Delegating operators". Scenario: `delegate(in)` over `operator(in) proc(item: int, bag: Bag)` gives L0420; `f64 * V` is silently not forwarded, so `2.0 * w` gives L0392. Fix: filter on `slice.contains(sym.params, underlying)`, also at line 544. *Confirmed: Reproduced: delegate(in) over operator(in) proc(item: int, bag: Bag) gives L0420, and delegate(*) forwards V*f64 but not f64*V, so 2.0*w gives L0392. design.md "Delegating operators" substitutes in every operand; no gap is recorded.*
 - `BUG-operators-4` **medium** [operators.odin:273](src/operators.odin#L273) `operator_candidates_for_receiver`: a generic template has empty `params`, so the filter drops what `mark_template_operator` recorded for lookup. Scenario: `at :: operator([]) proc(v: V($T), i: int) -> T` then `a[0]` gives L0362 "`V(int)` cannot be indexed"; `delegate(+)` over a generic `+` gives L0420. Fix: keep `sym.generic` candidates, as `operator_exists` does. *Confirmed: Reproduced: file-scope generic operator([]) gives L0362 on a[0], [:] likewise, and delegate(+) over a generic + gives L0420; the concrete twins, generic + and at(a, 0) all work. No spec rule or recorded decision excludes templates.*
 - `BUG-operators-5` **medium** [operators.odin:84](src/operators.odin#L84) `mark_template_operator`: "Each instance's shape is checked when it is made" is false: the instance path (generic.odin:3127) calls only `resolve_proc_signature`, never `validate_operator_shape`. Scenario: `bad :: operator(==) proc(a, b: V($T)) -> int` is accepted and `a == b` is an `int`. Fix: validate instances of a template that has `operator` set. *Confirmed: Probe: operator(==) proc(a, b: V($T)) -> int compiles, and a == b has type int (c + 1 prints 2); the concrete form gets L0416. instantiate_procedure_signature calls only resolve_proc_signature, so the comment at line 84 is false.*
-- `BUG-operators-6` **medium** [operators.odin:325](src/operators.odin#L325) `operand_is_builtin`: an enum is nominal and package-owned but counts as built-in, breaking design.md "Operator lookup and overload resolution". Scenario: `impl Color { lt :: operator(<) proc(a, b: Color) -> bool { return true; } }` is accepted, yet `Color.Green < Color.Red` is false; `==` likewise. Fix: return false for `.Enum`. *Confirmed: Probe: with user < (true) and == (false) on an enum, Green < Red prints false and Red == Red true, no diagnostic; a struct's == is honored. design.md "Operator lookup and overload resolution" limits the priority to built-in types; no recorded decision found.*
 - `BUG-operators-7` **medium** [operators.odin:363](src/operators.odin#L363) `builtin_unary_defined`: it has no SIMD case, so check_expr.odin:2013 tries user overloads first, though binary operators check SIMD first (check_expr.odin:2238). Scenario: `impl Simd(f32, 4) { neg :: operator(-) proc(a: F4) -> F4 { return a; } }` makes `-a` run the overload, shadowing a built-in. Fix: answer SIMD here. *Confirmed: Probe: impl F4 operator(-)/I4 operator(~) overloads run for -a and ~i (a[0] stays 1.0), while binary a - a ignores its overload (0.0). design.md "Operator lookup": built-ins cannot be shadowed; check_unary tests SIMD after the user lookup. Not recorded.*
 - `BUG-operators-8` **medium** [operators.odin:469](src/operators.odin#L469) `bind_operator_operands`: it binds a default without `substitute_caller_location`, unlike overload.odin:922. Scenario: `operator([]) proc(v: V, i: int, loc: runtime.Source_Code_Location = caller_location())`: `v[1]` on line 10 reports the declaration's line 5; the same default on a named call reports its call. Fix: pass the span and substitute. *Confirmed: Probe q.loke: v[1] on line 14 reports line 7 and procedure `at` (the declaration), while V.at(v, 1) on line 15 reports 15 and `main`. design.md "caller_location()" says each omitting call; nothing recorded. Narrow case: low-to-medium.*
 - `BUG-operators-9` **medium** [operators.odin:45](src/operators.odin#L45) `resolve_operator_declaration`: never calls `apply_proc_metadata`, unlike plain procedures, groups (check.odin:915, 946) and hooks (hooks.odin:863). Scenario: `@(deprecated="no") plus :: operator(+) proc(a, b: V) -> int` then `plus(v, v)` gives no L0611, while the same on a named proc warns; `@(require_results)` is lost too. Fix: call it after the signature resolves. *Confirmed: Probe: @(deprecated) on operator(+) proc gives no L0611 on a direct call (named proc warns), and @(require_results) gives no L0612. Hooks and groups call apply_proc_metadata; operators do not. design.md calls these ordinary named procedures; no recorded gap.*
@@ -5854,7 +5736,6 @@ Well sized and readable, with one silent miscompile (`union_layout` ignores `dis
 
 - [union.odin:196](src/union.odin#L196) and [union.odin:236](src/union.odin#L236): `resolve_union_zero` and `resolve_union_failure` share find, name, search and "names no variant", differing only in the attribute word. Fold them with `attribute_variant_name` into `designated_variant(k, info, value, what) -> (attribute, index, ok)`. (about 15 lines)
 - [union.odin:16](src/union.odin#L16) and [union.odin:50](src/union.odin#L50): both loops intern, reject duplicates, and call `resolve_variant_payload`; only the noun and the failure policy differ. Share `resolve_variant_list(k, variants, noun) -> (names, payloads, ok)`; the anonymous path zips and returns `INVALID_TYPE` on `!ok`. (about 8 lines)
-- [union.odin:340](src/union.odin#L340) and [zero.odin:45](src/zero.odin#L45): `type_is_non_null` and the `.Struct` Shared test, `.Box` and `.Pointer, .Proc, .Dyn, .CString_View` arms of `type_has_zero_walk` both state the spec's one non-null list. Have the walk ask `type_is_non_null` first. (about 8 lines)
 
 **Structure and boundaries**
 
@@ -5884,40 +5765,3 @@ A small, table-driven file whose bindings match design.md "Predeclared names"; n
 **Comments**
 
 - [semantic.odin:2338](src/semantic.odin#L2338): says the allocator types print under the name `core:mem` binds, but `contribute_allocator_surface` sets no name; [universe.odin:49](src/universe.odin#L49) does. Reword to "named by `build_universe`".
-
-### src/zero.odin
-
-Small and readable, and it follows the spec's list of no-zero types. The real problems are at its edges: it reads union and struct state that may still be unresolved, it copies the non-null list from `union.odin`, and it hand-rolls the `Type_Walk` helper.
-
-**Bugs**
-
-- `BUG-zero-1` **medium** [zero.odin:41](src/zero.odin#L41) `type_has_zero_walk`: reads `zero_designated` and record fields that may not be resolved yet when [union.odin:221](src/union.odin#L221) asks during a cycle, so the verdict depends on declaration order. Scenario: `@(zero=x) V :: union { x, y: []U }` then `@(zero=a) U :: union { a: V, b: int }` gives a false L0423, and swapping the two is accepted; `S :: struct { link: []U, @(required) x: int }` then `@(zero=a) U :: union { a: S, b: int }` wrongly passes L0423. Fix: set `zero_designated` from the attribute early and defer the payload check until declarations are resolved; L41 then becomes `return info.zero_designated`. *Confirmed: Reproduced: V then U gives false L0423, U then V compiles; S then U passes L0423, U then S rejects. design.md "Zero values and @(zero=)" is order-free; not in known-gaps. Later L0424 still catches b's zero use, so no unsound zero; medium at most.*
-- `BUG-zero-2` **low** [zero.odin:53](src/zero.odin#L53) `type_has_zero_walk`: the `initialized_by` skip runs before the `required` test, and [check_expr.odin:3049](src/check_expr.odin#L3049) has the same order, so a required capacity field is never enforced. Scenario: `S :: struct { @(required, initialized = n) items: [4]int, n: int }` accepts both `s: S;` and `S{}`, against design.md "Required fields". Fix: reject the attribute pair where `@(initialized)` is validated. *Not verified.*
-- `BUG-zero-3` **low** [zero.odin:14](src/zero.odin#L14) `apply_type_metadata`: [check.odin:966](src/check.odin#L966) sets the flag on an interface, but no walk reads it, because a `dyn I` value has kind `.Dyn`. Scenario: `@(require_results) I :: interface($Self: type) {...}` compiles, and a bare call returning `dyn I` raises no error; design.md "`@(require_results)`" lists only union, struct, enum, and distinct. Fix: diagnose the attribute on an interface and drop that call. *Not verified.*
-
-**Simplification**
-
-- [zero.odin:9](src/zero.odin#L9) `apply_type_metadata`: one test is enough: `if info := type_of(k.c, type); info != nil && has_attribute(d.attributes, "require_results") { info.requires_results = true }`. (about 4 lines)
-- [zero.odin:111](src/zero.odin#L111) `type_requires_results_walk`: merge the `.Distinct` and `.Array` cases into `case .Distinct, .Array:`, as `synchronized_field_walk` does at [materialize.odin:129](src/materialize.odin#L129). (about 2 lines)
-
-**Dead code**
-
-- (branch) [zero.odin:41](src/zero.odin#L41): `len(info.variants) > 0` is always true, because the only writer of `zero_designated` ([union.odin:229](src/union.odin#L229)) runs after [union.odin:221](src/union.odin#L221) has already read `info.variants[0]`.
-
-**Data structures and algorithms**
-
-- [zero.odin:19](src/zero.odin#L19) and [zero.odin:91](src/zero.odin#L91): each query builds a `map[Type_Id]bool` and inserts even scalars, and `type_requires_results` runs per bare call and per local. Use `Type_Walk` and `type_walk_enter` ([semantic.odin:2189](src/semantic.odin#L2189)), which record only nominal types, so an `int` never touches the map. `if info == nil || !type_walk_enter(seen, type, info)` also absorbs the `INVALID_TYPE` test, since [semantic.odin:1028](src/semantic.odin#L1028) gives id 0 an `.Invalid` entry. (about 7 lines)
-
-**Near copies**
-
-- [zero.odin:46](src/zero.odin#L46), [zero.odin:63](src/zero.odin#L63) and [union.odin:335](src/union.odin#L335): the walker repeats the kind list and the `Shared` test of `type_is_non_null`. Call `if type_is_non_null(c, type) { return false }` before the switch, under one `design.md "Types with no zero value"` citation, and delete the `Shared` test and both cases, so the two lists cannot drift apart. (about 11 lines)
-
-**Structure and boundaries**
-
-- [zero.odin:9](src/zero.odin#L9): `apply_type_metadata` applies only `require_results` despite its general name, and it sits above the zero-value half, away from `type_requires_results`. Move it beside `apply_proc_metadata` at [attributes.odin:442](src/attributes.odin#L442), the owner of attribute application.
-
-**Comments**
-
-- [zero.odin:3](src/zero.odin#L3): "all-zero bits" is not why the check exists. Shorten to `design.md "Types with no zero value": every operation that manufactures a zero asks type_has_zero first.`
-- [zero.odin:40](src/zero.odin#L40): stale. An instance binding a no-zero payload gets L0423 and never sets `zero_designated`. Replace with `The payload may have been incomplete when resolve_union_zero checked it.`, and delete it once BUG-zero-1 is fixed.
-- [zero.odin:64](src/zero.odin#L64) and [zero.odin:67](src/zero.odin#L67): these restate the spec's rationale. If the cases stay, keep one line above them: `design.md "Types with no zero value": non-null types.` (about 3 lines)

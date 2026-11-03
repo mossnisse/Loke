@@ -1,0 +1,7 @@
+// design.md "@(require_results)": on a procedure or a value's type, and no value
+// has an interface's type.
+package main;
+
+@(require_results) I :: interface($Self: type) { slot size: proc(self) -> int; }
+
+main :: proc() {}

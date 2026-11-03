@@ -1,0 +1,17 @@
+// design.md "Zero values and @(zero=)": whether a designated payload has a zero
+// does not depend on which of two declarations reaching each other comes first.
+package main;
+
+import "core:fmt";
+
+@(zero=x) V :: union { x, y: []U }
+@(zero=a) U :: union { a: V, b: int }
+
+@(zero=b) Q :: union { b: P, c: int }
+@(zero=q) P :: union { q, r: []Q }
+
+main :: proc() {
+	u: U;
+	q: Q;
+	fmt.println(size_of(u) > 0, size_of(q) > 0);
+}

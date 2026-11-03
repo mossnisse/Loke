@@ -426,6 +426,23 @@ declaration settled in a probe should keep its report, or stay unsettled for the
 check that commits. Found on 2026-11-01 while fixing the instantiation limit for a
 parameter's type; traced for the alias only.
 
+### A generic union instantiated in a record's own fields misses L0423
+
+`check_union_zero_payload` in [src/union.odin](src/union.odin) judges a generic instance
+when it is instantiated, where a probe can still reject it, so an instance a record names
+in its own fields reads that record before it has any. [Zero values and
+`@(zero=)`](design.md#zero-values-and-zero) requires a designated payload to have a zero,
+and `S` has none, yet this compiles. A use that makes a zero still reports `L0424`, so no
+value goes wrong. A non-generic union is judged after every record has its fields, and does
+report it.
+
+```loke
+package main;
+@(zero=a) G :: union($T: type) { a: T, b: int }
+S :: struct { link: []G(S), @(required) x: int }
+main :: proc() {}
+```
+
 ### An `impl` on a record whose parameter type does not resolve reports L0350
 
 `check_generic_impl_subject` in [src/generic.odin](src/generic.odin) reads an `impl`

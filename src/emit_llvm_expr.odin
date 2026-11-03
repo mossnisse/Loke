@@ -177,7 +177,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			return slice_literal_constant(e, value, info)
 		}
 		packed := info.kind == .Struct && info.packed
-		over_aligned := info.kind == .Struct && info.align > record_natural_align(e.c, info)
+		over_aligned := info.kind == .Struct && info.align > info.natural_align
 		byte_array := packed && over_aligned
 		b := strings.builder_make()
 		strings.write_string(&b, byte_array ? "{" : (packed ? "<{" : "{"))
@@ -413,7 +413,7 @@ const_needs_image :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> boo
 		return index >= 0 && index < len(info.variants) && len(elements) > 0 &&
 			const_has_pointer(e, elements[0], info.variants[index])
 	case .Struct:
-		if info.packed && info.align > record_natural_align(e.c, info) {
+		if info.packed && info.align > info.natural_align {
 			return const_has_pointer(e, value, type)
 		}
 		for field, index in info.fields {
@@ -2017,7 +2017,7 @@ record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -
 	}
 	type_size(e.c, type)
 	current := type_of(e.c, type)
-	return current != nil && current.align > record_natural_align(e.c, current)
+	return current != nil && current.align > current.natural_align
 }
 
 // Field-wise equality with each field loaded at its own type through the GEP

@@ -262,7 +262,9 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	// Every record has its fields now.
 	check_deferred_foreign_signatures(k)
 
-	// Phase 2c: reject a type that contains itself by value.
+	// Phase 2c: reject a type that contains itself by value, a layout past the
+	// maximum, and a union's designated zero with no zero value: each needs every
+	// record's fields.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
@@ -755,20 +757,6 @@ in_generic_signature :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	return info != nil && info.instance_of != INVALID_SYMBOL
 }
 
-has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
-	_, found := find_attribute(attributes, name)
-	return found
-}
-
-find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, bool) {
-	for attribute in attributes {
-		if len(attribute.path) == 1 && attribute.path[0].text == name {
-			return attribute, true
-		}
-	}
-	return {}, false
-}
-
 // design.md "@(align=N)": `@(align=4) Name :: union {...}`, or `struct {...}`.
 // Only a power of two the target supports is accepted; a written
 // alignment under the natural one raises rather than lowers.
@@ -967,7 +955,6 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		apply_type_metadata(k, d, symbol.type)
 	case ^Type_Interface:
 		check_interface_declaration(k, d.symbols[0])
-		apply_type_metadata(k, d, symbol.type)
 	}
 }
 
@@ -1061,6 +1048,10 @@ resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Re
 			continue
 		}
 		_ = require_unsafe_import(k, attribute.span, "trusting an `@(initialized)` count")
+		// design.md "Required fields".
+		if has_attribute(field.attributes, "required") {
+			errorf(k.c, attribute.span, "L0691", "`@(initialized)` storage is left unset by a literal, so it cannot be `@(required)`")
+		}
 		for binding in field.symbols {
 			symbol := symbol_of(k.c, binding)
 			if symbol == nil {
@@ -1747,11 +1738,32 @@ check_declaration_size :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	symbol := symbol_of(k.c, d.symbols[0])
-	if symbol == nil || symbol.kind != .Type {
+	if symbol == nil {
+		return
+	}
+	// An anonymous type past the maximum has no span of its own, so each is
+	// measured here where its declaration can say where it is.
+	if symbol.kind == .Proc && !symbol.generic {
+		if info := type_of(k.c, symbol.proc_type); info != nil {
+			for parameter in info.parameters {
+				type_size(k.c, parameter, symbol.span)
+			}
+			type_size(k.c, info.result, symbol.span)
+		}
+	}
+	if symbol.kind != .Type {
 		return
 	}
 	path := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
-	check_finite_size(k, symbol.type, d.span, &path)
+	if check_finite_size(k, symbol.type, d.span, &path) {
+		info := type_of(k.c, symbol.type)
+		for field in info.fields {
+			if sym := symbol_of(k.c, field); sym != nil && info.kind == .Struct {
+				type_size(k.c, sym.type, sym.span)
+			}
+		}
+	}
+	check_union_zero_payload(k, symbol.type, d.attributes)
 }
 
 // Walks value edges only, since a pointer breaks a containment cycle.
@@ -3331,6 +3343,11 @@ check_local_declaration :: proc(k: ^Checker, d: ^Decl) {
 	install_symbols(k.scope, k.c, d.symbols)
 	create_nominal_type_shell(k, d)
 	resolve_declaration_signature(k, d)
+	if len(d.symbols) == 1 {
+		if symbol := symbol_of(k.c, d.symbols[0]); symbol != nil && symbol.kind == .Type {
+			check_union_zero_payload(k, symbol.type, d.attributes)
+		}
+	}
 	hoist_local_lifecycle_hooks(k, d)
 	hoist_body_local_proc(k, d)
 	// Local symbols do not exist during the package-wide attribute pass.
