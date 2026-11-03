@@ -406,8 +406,6 @@ Compiler :: struct {
 	shared_construct_symbol:  Symbol_Id,
 	try_shared_symbol:        Symbol_Id,
 	default_allocator_arg:    Expr,
-	// The constant `0` a defaulted container `shrink` floor uses.
-	zero_int_arg:             Expr,
 	// An explicitly dropped owner is dead and no longer blocks reset (design.md).
 	// Liveness answers that a pass earlier than the reset check, so the dead owners
 	// at each call or cleanup are recorded here (`src/lifecycle.odin`, `src/cfg.odin`).

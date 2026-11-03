@@ -179,8 +179,9 @@ first_unhashable_part :: proc(c: ^Compiler, type: Type_Id) -> (string, Type_Id, 
 }
 
 // design.md "Maps": the compiler supplies a key's `==`/`hash` pair, or the key
-// type declares both inherently; extensions never count.
-Key_Policy_Kind :: enum { Unresolved, Builtin, Inherent }
+// type declares both inherently; extensions never count. `Rejected` means already
+// reported.
+Key_Policy_Kind :: enum { Unresolved, Builtin, Inherent, Rejected }
 
 // Chosen during checking and read by CTFE and the backend.
 Key_Policy :: struct {
@@ -189,8 +190,12 @@ Key_Policy :: struct {
 	equal:     Symbol_Id,
 }
 
-// Checking is the only phase allowed to select a policy. Failed lookups are not
-// cached: discovery may still be installing inherent members.
+// Whether the policy names the operations to run.
+key_policy_settled :: proc(policy: Key_Policy) -> bool {
+	return policy.kind == .Builtin || policy.kind == .Inherent
+}
+
+// Does not cache: discovery may still be installing inherent members.
 resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, string) {
 	if key == INVALID_TYPE {
 		return Key_Policy{}, "is not a type"
@@ -234,6 +239,92 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 key_hash_signature_ok :: proc(sym: ^Symbol, key: Type_Id) -> bool {
 	return sym.has_receiver && (sym.receiver == .Borrow || sym.receiver == .Value) && sym.result == TYPE_UINT &&
 		len(sym.params) == 2 && sym.params[0] == key && sym.params[1] == TYPE_UINT
+}
+
+// design.md "Maps": a key needs a coherent inherent `==` and `hash`. Checked
+// where the map type is named.
+@(private = "file")
+require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
+	key := container_key(k.c, type)
+	if key == INVALID_TYPE {
+		return true
+	}
+	#partial switch k.c.map_key_policies[key].kind {
+	case .Builtin, .Inherent:
+		return true
+	case .Rejected:
+		return false // already reported, once, at this key
+	}
+	// A speculative probe's diagnostics are rolled back, so it must not cache one.
+	if committing(k.c) {
+		k.c.map_key_policies[key] = Key_Policy{kind = .Rejected}
+	}
+	if type_clone_disabled(k.c, key) {
+		errorf(
+			k.c, span, "L0586",
+			"`%s` cannot be a map key: it is move-only, and a key must be copyable",
+			type_name(k.c, key),
+		)
+		return false
+	}
+	settle_part_hashes(k, key)
+	policy, reason := resolve_map_key_policy(k.c, key)
+	if reason == "" && policy.kind == .Inherent {
+		resolve_symbol_signature_in_place(k, policy.hash)
+		if sym := symbol_of(k.c, policy.hash); sym == nil || !key_hash_signature_ok(sym, key) {
+			reason = "has an inherent `hash`, which must be written `proc(self, seed: uint) -> uint`"
+		}
+	}
+	if reason == "" {
+		k.c.map_key_policies[key] = policy
+		return true
+	}
+	errorf(
+		k.c, span, "L0586",
+		"`%s` cannot be a map key: it %s",
+		type_name(k.c, key), reason,
+	)
+	add_notef(
+		k.c, no_span(),
+		"an extension block does not qualify; wrap the key in a local `distinct` type with its own inherent operations",
+	)
+	return false
+}
+
+require_nested_map_key_policies :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
+	seen: Type_Walk
+	defer delete(seen)
+	return require_nested_map_key_policies_walk(k, type, span, &seen)
+}
+
+@(private = "file")
+require_nested_map_key_policies_walk :: proc(k: ^Checker, type: Type_Id, span: Span, seen: ^Type_Walk) -> bool {
+	if type == INVALID_TYPE { return true }
+	info := type_of(k.c, type)
+	if info == nil || !type_walk_enter(seen, type, info) { return true }
+	#partial switch info.kind {
+	case .Map:
+		return require_map_key_policy(k, type, span) &&
+		       require_nested_map_key_policies_walk(k, info.key, span, seen) &&
+		       require_nested_map_key_policies_walk(k, info.element, span, seen)
+	case .Array, .Dynamic_Array, .Slice, .Pointer, .C_Pointer, .Box, .Distinct:
+		return require_nested_map_key_policies_walk(k, info.element, span, seen)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(k.c, field); sym != nil &&
+			   !require_nested_map_key_policies_walk(k, sym.type, span, seen) { return false }
+		}
+	case .Union:
+		for variant in info.variants {
+			if !require_nested_map_key_policies_walk(k, variant, span, seen) { return false }
+		}
+	case .Proc:
+		for parameter in info.parameters {
+			if !require_nested_map_key_policies_walk(k, parameter, span, seen) { return false }
+		}
+		return require_nested_map_key_policies_walk(k, info.result, span, seen)
+	}
+	return true
 }
 
 // The key type's own non-synthesized `hash`; a `distinct` type inherits none.

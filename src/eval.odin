@@ -1354,7 +1354,7 @@ map_find :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (int, bool)
 eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) -> (bool, bool) {
 	if !eval_step(ev, ev.origin) { return false, false }
 	policy := ev.k.c.map_key_policies[container_key(ev.k.c, map_type)]
-	if policy.kind == .Unresolved {
+	if !key_policy_settled(policy) {
 		return false, eval_fail(ev, ev.origin, "L0405", "a map key operation was not resolved during checking")
 	}
 	if policy.kind == .Builtin {
@@ -1473,12 +1473,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !allocated { return nil, false }
 		self = place
 	}
-	// A slice's element too, so a slice sort sees its ordering as the checker's
-	// `require_sort_order_policy` does.
-	element := container_element(ev.k.c, self.type)
-	if element == INVALID_TYPE {
-		element = slice_element(ev.k.c, self.type)
-	}
+	element := sequence_element(ev.k.c, self.type)
 	none: []Eval_Value
 
 	argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (Eval_Value, bool) {
@@ -1506,7 +1501,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return int(number), true
 	}
 
-	fallible := symbol.result == ev.k.c.alloc_result_type
+	fallible := container_member_is_try(ev.k.c, symbol)
 	switch symbol.container_op {
 	case .None:
 		eval_fail(ev, v.span, "L0405", "a container call has no operation")
@@ -1746,7 +1741,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if len(self.elements) > before {
 			slot^ = value
 		}
-		return eval_one(ev, eval_map_slot(ev, symbol.result, slot))
+		return eval_one(ev, eval_map_slot(ev, symbol.result, slot, fallible))
 
 	case .Map_Try_Insert:
 		key, key_ok := argument(ev, v, 1)
@@ -2229,8 +2224,8 @@ eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 
 // `find_or_insert`'s `^mut V`, wrapped in `.ok` for the `try_` spelling.
 @(private = "file")
-eval_map_slot :: proc(ev: ^Evaluator, result: Type_Id, slot: ^Eval_Value) -> (Eval_Value, bool) {
-	if type_is_union(ev.k.c, result) {
+eval_map_slot :: proc(ev: ^Evaluator, result: Type_Id, slot: ^Eval_Value, fallible: bool) -> (Eval_Value, bool) {
+	if fallible {
 		payload := union_variant_payload(ev.k.c, result, union_index_of(ev.k.c, result, "ok"))
 		return eval_named_union(ev, result, "ok", Eval_Value{kind = .Nil, type = payload, target = slot})
 	}

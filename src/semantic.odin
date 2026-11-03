@@ -1187,6 +1187,18 @@ synth_self_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner: T
 	return id
 }
 
+// The constant zero of `type`, for a defaulted parameter of a synthesized member.
+zero_literal_arg :: proc(c: ^Compiler, type: Type_Id) -> Expr {
+	literal := new(Expr_Literal, c.semantic_allocator)
+	literal.span = no_span()
+	literal.kind = .Int
+	literal.type = type
+	literal.value_category = .Value
+	literal.is_const = true
+	literal.const_value = int_const(c, 0)
+	return literal
+}
+
 // A synthesized member stays on its type once created, but only a use that
 // commits it is emitted (compiler-architecture.md "Checking and overload
 // resolution"), so a use that finds one a probe created enrolls it here, along
@@ -2159,26 +2171,9 @@ record_order_blocker_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -
 type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	for text in ([6]string{"==", "!=", "<", "<=", ">", ">="}) {
 		callable, _ := inherent_self_operator(c, id, text)
-		if sym := symbol_of(c, callable); sym != nil && !operator_is_builtin(c, sym) {
+		if _, builtin := operator_delegate_end(c, callable); callable != INVALID_SYMBOL && !builtin {
 			return true
 		}
-	}
-	return false
-}
-
-// A delegated operator with no target is the built-in one; one with a target
-// forwards to that operator, which may itself delegate.
-@(private = "file")
-operator_is_builtin :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
-	current := sym
-	for _ in 0 ..< len(c.symbols) + 1 {
-		if current == nil || !current.delegated {
-			return false
-		}
-		if current.delegate_target == INVALID_SYMBOL {
-			return true
-		}
-		current = symbol_of(c, current.delegate_target)
 	}
 	return false
 }

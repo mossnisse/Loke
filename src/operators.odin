@@ -317,6 +317,42 @@ append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
 	}
 }
 
+// The procedure a type's own `symbol_text` operator runs over two of its
+// values, and the declaration naming it: that procedure, or the group it is a
+// member of (design.md "Explicit procedure overloading"), which is what
+// visibility asks about. A delegated operator is returned as itself.
+inherent_self_operator :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> (callable, declared: Symbol_Id) {
+	info := type_of(c, type)
+	if info == nil {
+		return INVALID_SYMBOL, INVALID_SYMBOL
+	}
+	for member in info.members {
+		sym := symbol_of(c, member)
+		if sym == nil || sym.operator != symbol_text {
+			continue
+		}
+		if sym.kind != .Proc_Group {
+			if operator_on_self(sym, type) {
+				return member, member
+			}
+			continue
+		}
+		for nested in sym.members {
+			if inner := symbol_of(c, nested); inner != nil && operator_on_self(inner, type) {
+				return nested, member
+			}
+		}
+	}
+	return INVALID_SYMBOL, INVALID_SYMBOL
+}
+
+// A binary operator over two values of `type`, the one a sort or a map key
+// uses; `(a: T, b: int)` is a different operation.
+@(private = "file")
+operator_on_self :: proc(sym: ^Symbol, type: Type_Id) -> bool {
+	return !sym.bound_excluded && len(sym.params) == 2 && sym.params[0] == type && sym.params[1] == type
+}
+
 // -------------------------------------------------- the built-in priority --
 
 // A distinct type never participates in unshadowable built-in operations, and an
@@ -508,6 +544,27 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 }
 
 // ----------------------------------------------------------------- delegate --
+
+// What an operator runs in the end: the first symbol of its delegate chain that
+// does not itself delegate, or `builtin` when a delegate with no target forwards
+// to the built-in operation. Neither for no operator at all.
+operator_delegate_end :: proc(c: ^Compiler, operator: Symbol_Id) -> (end: Symbol_Id, builtin: bool) {
+	current := operator
+	for _ in 0 ..< len(c.symbols) + 1 {
+		sym := symbol_of(c, current)
+		if sym == nil {
+			break
+		}
+		if !sym.delegated {
+			return current, false
+		}
+		if sym.delegate_target == INVALID_SYMBOL {
+			return INVALID_SYMBOL, true
+		}
+		current = sym.delegate_target
+	}
+	return INVALID_SYMBOL, false
+}
 
 // design.md "Delegating operators": for each listed symbol, generate the
 // overload found for the underlying type, with the distinct type substituted

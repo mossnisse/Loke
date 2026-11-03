@@ -45,7 +45,7 @@ validate_carrier_types :: proc(c: ^Compiler) -> bool {
 		}
 		// Synthesized map bodies need a settled key policy.
 		if info.kind == .Map && .Container in info.contributed &&
-		   c.map_key_policies[info.key].kind == .Unresolved {
+		   !key_policy_settled(c.map_key_policies[info.key]) {
 			return emission_contract_error(c, "a map key operation was not resolved during checking")
 		}
 	}

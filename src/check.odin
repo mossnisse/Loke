@@ -2675,6 +2675,94 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// design.md "Allocators": `T via expression` records the declaration's allocator
+// policy on its symbols. It selects for revival, copies in, and literals built
+// here; a live destination keeps the allocator its value was built with.
+@(private = "file")
+check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
+	if d.via == nil {
+		return true
+	}
+	// Static storage cannot run the allocator expression.
+	if d.top_level || d.duration != .None {
+		storage_kind :=
+			d.duration == .Thread_Local ? "`thread_local` storage" :
+			d.duration == .Static ? "`static` storage" : "file-scope storage"
+		errorf(
+			k.c,
+			expr_span(d.via),
+			"L0576",
+			"`via` selects a provider by running an expression, which %s cannot do; it starts allocator-unbound and binds on first use",
+			storage_kind,
+		)
+		return false
+	}
+	if declared == INVALID_TYPE {
+		return false // the written type already said why
+	}
+	// design.md "Shared ownership": the control block stores the allocator.
+	if type_is_shared_handle(k.c, declared) {
+		errorf(
+			k.c,
+			expr_span(d.via),
+			"L0671",
+			"`%s` stores its allocator in the control block, so a declaration cannot select one with `via`",
+			type_name(k.c, declared),
+		)
+		add_notef(
+			k.c,
+			no_span(),
+			"select it where the value is made: `shared(value, allocator=...)` or `try_shared(value, allocator)`",
+		)
+		return false
+	}
+	if !type_accepts_via(k.c, declared) {
+		errorf(
+			k.c,
+			expr_span(d.via),
+			"L0577",
+			"`via` selects the provider a value is built with, and `%s` has no destination allocation to select",
+			type_name(k.c, declared),
+		)
+		add_notef(
+			k.c,
+			no_span(),
+			"`via` applies to a managed owner whose storage is allocated as it grows, such as `[dynamic]T`, `map[K]V`, or a record with a `try_clone`",
+		)
+		return false
+	}
+	allocator := check_single_expr(k, d.via, TYPE_ALLOCATOR)
+	if allocator == INVALID_TYPE {
+		return false
+	}
+	if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+		errorf(
+			k.c,
+			expr_span(d.via),
+			"L0578",
+			"a `via` policy names an `Allocator`, found `%s`",
+			type_name(k.c, allocator),
+		)
+		return false
+	}
+	// A copy into this destination clones.
+	contribute_lifecycle_members(k, declared)
+	for symbol_id in d.symbols {
+		if sym := symbol_of(k.c, symbol_id); sym != nil {
+			sym.via = d.via
+		}
+	}
+	return true
+}
+
+// A trivial or borrowed value owns no allocation; a move-only value has no
+// clone to pass an allocator to; an immutable `string` shares storage through
+// a retain rather than allocating into a destination.
+@(private = "file")
+type_accepts_via :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type_is_managed(c, type) && !type_clone_disabled(c, type) && underlying_kind(c, type) != .String
+}
+
 // design.md "Storage modifiers": a file-scope variable, and a local `static` or
 // `thread_local`, is initialised before code runs, so its initializer is a
 // constant. Shared by a single binding and a destructuring declaration. The

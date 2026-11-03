@@ -79,7 +79,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 ## The changes most worth making
 
-4. **Five small independent fixes.** `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
+4. **Five small independent fixes.** Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
 
 6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
@@ -101,7 +101,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 17. **Borrow-check time and memory in long bodies.** [borrow.odin:6551](src/borrow.odin#L6551) with [borrow.odin:1610](src/borrow.odin#L1610) is cubic (204 s at 2000 overlapping pairs); gather live slots once per event. [borrow.odin:5227](src/borrow.odin#L5227) clones liveness per event (3.4 GB at 12,000 statements); use an undo log. Measure with `perf.ps1`. About 50 lines, moderate risk.
 
-18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1 and BUG-container-2, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
+18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
 
 19. **Mechanical removal of failure boilerplate.** Replace the 101 three-line guards in `eval.odin` part 1 with `or_return` ([eval.odin:662](src/eval.odin#L662) onward; about 300 lines), and drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
 
@@ -164,16 +164,15 @@ The key difference is BUG-ast-1. The other rows are unexplained, and `private_na
 
 #### Type-component walkers
 
-Owned parts are walked at [hooks.odin:166](src/hooks.odin#L166), [hooks.odin:277](src/hooks.odin#L277), [hooks.odin:330](src/hooks.odin#L330), [hooks.odin:370](src/hooks.odin#L370), [region.odin:123](src/region.odin#L123), [borrow.odin:761](src/borrow.odin#L761) and [container.odin:624](src/container.odin#L624). They differ in:
+Owned parts are walked at [hooks.odin:166](src/hooks.odin#L166), [hooks.odin:277](src/hooks.odin#L277), [hooks.odin:330](src/hooks.odin#L330), [hooks.odin:370](src/hooks.odin#L370), [region.odin:123](src/region.odin#L123), [borrow.odin:761](src/borrow.odin#L761) and `require_nested_map_key_policies_walk` in [hash.odin](src/hash.odin). They differ in:
 
-- `.Box`: [container.odin:628](src/container.odin#L628) omits it (BUG-container-2).
 - `Shared(T)`: only [borrow.odin:758](src/borrow.odin#L758) and `provider_reach_walk` in `region.odin` follow the payload.
 - Void variants and empty arrays: skipped by the drop walk only.
 - The recursion guard: a path-based one in [hooks.odin:413](src/hooks.odin#L413) makes that walk exponential (58 s measured), a visited map elsewhere.
 
 All parts are walked at [semantic.odin:2204](src/semantic.odin#L2204), [semantic.odin:2262](src/semantic.odin#L2262) and [reflect.odin:149](src/reflect.odin#L149), with `Type_Walk` in all three.
 
-Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false)`, returning element, key and element, field types or non-void variants, so each walker becomes its own test plus one loop; and one `type_any_part(c, id, seen, test)` for the second family. Saves about 60 lines in the first family and 70 in the second. The two bugs need their fixes either way, but a single kind list stops the next one.
+Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false)`, returning element, key and element, field types or non-void variants, so each walker becomes its own test plus one loop; and one `type_any_part(c, id, seen, test)` for the second family. Saves about 60 lines in the first family and 70 in the second. A single kind list stops the next bug of this kind.
 
 #### Synthesized syntax nodes
 
@@ -316,7 +315,7 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - A parameter's mode with the bounds test is written at 24 sites, for example [check_calls.odin:668](src/check_calls.odin#L668) and [emit_llvm_calls.odin:1423](src/emit_llvm_calls.odin#L1423), beside [semantic.odin:1339](src/semantic.odin#L1339) `proc_parameter_mode`. A `param_mode_at(info, index)` saves no lines but shortens every site.
 - `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
 - Copy cost then copy classification: `classify_copy_cost` at [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721) follows the same arguments' `classify_copy`. One wrapper, about 8 lines.
-- Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), [container.odin:723](src/container.odin#L723), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
+- Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
 - Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373), [attributes.odin:473](src/attributes.odin#L473) and [borrow.odin:639](src/borrow.odin#L639) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
 - Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93), with [doc.odin:1374](src/doc.odin#L1374) file-private. Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
@@ -1057,7 +1056,7 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 
 - [cfg_provenance.odin:5918](src/cfg_provenance.odin#L5918) and [cfg_provenance.odin:6251](src/cfg_provenance.odin#L6251): the same bound-the-path, scan `seen`, append visit. A `prov_first_alias_visit(seen, target, path, writable) -> (bounded, ok)` replaces both, beside `Written_Alias_Visit`.
 - [cfg_provenance.odin:6899](src/cfg_provenance.odin#L6899) and [cfg_provenance.odin:6988](src/cfg_provenance.odin#L6988): both take a place loan through carriers, but only `prov_borrow_place` settles weakening and uses held carriers. A shared `prov_borrow_through` fixes the weakening bug above and removes the copy.
-- [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), [container.odin:723](src/container.odin#L723) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
+- [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
 - [cfg_provenance.odin:5737](src/cfg_provenance.odin#L5737) and [cfg_provenance.odin:7636](src/cfg_provenance.odin#L7636): the same test (managed, allocator, or a non-carrier with a region), written inverted at one site. Name it `prov_store_keeps_region(c, type)`.
 - [cfg_provenance.odin:5835](src/cfg_provenance.odin#L5835), [cfg_provenance.odin:4394](src/cfg_provenance.odin#L4394) and [borrow.odin:2974](src/borrow.odin#L2974): find an equal content entry, else grow a fresh slice with a cloned entry. `prov_define_region_content` still compares by hand and could use `prov_same_region_content` and `prov_clone_region_content`.
 
@@ -1391,69 +1390,9 @@ The arithmetic is careful and the exact float algorithms hold up on reading, but
 
 ### src/container.odin
 
-The file has no dead symbols, but its checking gates have two reproduced bugs. Its member tables are much longer than they need to be because most of `container_member`'s arguments are derivable, and its sections have drifted, with member and key-policy code under the "ordering" banner.
-
-**Bugs**
-
-- `BUG-container-2` **high** [container.odin:628](src/container.odin#L628) `require_nested_map_key_policies_inner`: the element case omits `.Box`, so a map named only inside a `Box` never gets a key policy. *Confirmed: Reproduced: `x: Option(Box(map[u16]int)) = .none;` exits 2 with internal L0405; `S :: struct { p: Box(map[f64]int) }` compiles (rc 0), while `[dynamic]map[f64]int` gets L0586. Line 628 omits .Box; not in known-gaps. Severity high is fair: valid code hits an ICE.*
-  Scenario: valid `x: Option(Box(map[u16]int)) = .none;` fails with internal L0405 "a map key operation was not resolved during checking"; `S :: struct { p: Box(map[f64]int) }` is accepted with no L0586. Fix: add `.Box` to the case.
-
-**Simplification**
-
-- [container.odin:653](src/container.odin#L653) `container_member`: `receiver` always equals `modes[0]`, and `.Value` is always rewritten to `.Borrow`. Have callers write `.Borrow`, set `sym.receiver = modes[0]`, and delete the copy at 666-672 and the `, .Value` arguments, keeping the citation. (about 10 lines)
-- [container.odin:653](src/container.odin#L653) `container_member`: `params[0]` is always `owner`, and every other mode is `.Value` except `append`'s pack. Take only the trailing types, a receiver mode, and an optional variadic flag; most of the 37 calls shrink from 3-4 lines to 1. (about 40 lines)
-- [container.odin:186](src/container.odin#L186) `ensure_container_members`, `ensure_map_members`: seven panicking/`try_` pairs differ only in name and result, and the reserve/shrink pairs at 233-249 and 406-421 differ only in op. Add a helper that appends both spellings of one signature. (about 25 lines)
-- [container.odin:204](src/container.odin#L204) `ensure_container_members`, also 358-402: nine members repeat `x := container_member(...)`, `set_synth_result_summary(k.c, x, 0)`, `append(&members, x)`. Use one `append_lending_member` helper. (about 15 lines)
-- [container.odin:57](src/container.odin#L57) `ensure_container_fields`: pass the storage name from `dynamic_array_of` and `map_of` instead of re-deriving it by kind, and assign `info.fields` directly, since `type_of` pointers are stable. (about 10 lines)
-- [container.odin:795](src/container.odin#L795) `type_accepts_via`: one expression will do: `type_is_managed(c, type) && !type_clone_disabled(c, type) && underlying_kind(c, type) != .String`. (about 12 lines)
-- [container.odin:815](src/container.odin#L815) `bind_literal_allocator`: `if literal, ok := value.(^Expr_Composite); ok && type_is_container(c, literal.type) { literal.via = symbol_via_allocator(c, destination) }`. This line is the only writer of a literal's `via`, so storing nil is harmless. (about 6 lines)
-- [container.odin:480](src/container.odin#L480) `inherent_less_operator`: it has one caller (line 457); write `found, _ := inherent_self_operator(c, element, "<")` there. (about 5 lines)
-- [container.odin:643](src/container.odin#L643) `require_nested_map_key_policies_inner`: the `info.result != INVALID_TYPE` test repeats line 619, and the `.Map` arm can be one `&&` return. (about 3 lines)
-- [container.odin:88](src/container.odin#L88) `type_is_container`: `kind := underlying_kind(c, id); return kind == .Dynamic_Array || kind == .Map`, as its two neighbours do. (about 3 lines)
-- [container.odin:668](src/container.odin#L668): a fresh `synth_proc` id cannot be nil, as `synth_self_member` already assumes; drop the guard. (about 2 lines)
-
-**Dead code**
-
-- (branch) [container.odin:68](src/container.odin#L68): the default `case: return` is unreachable because the only two callers pass a dynamic array and a map; `info == nil` at line 59 is unreachable too.
-- (branch) [container.odin:454](src/container.odin#L454): "is not a type" is unreachable. Sort members exist only on real sequences, and `dynamic_array_of` and `slice_of` refuse an invalid element.
-- (branch) [container.odin:796](src/container.odin#L796): the sole caller has already rejected `INVALID_TYPE` at line 734, and `info == nil` at 803 cannot follow a managed type.
-- (branch) [container.odin:535](src/container.odin#L535): `len(chosen.params) > 0` is always true because every sort member has a receiver parameter.
-- (branch) [container.odin:661](src/container.odin#L661): `defaulted` is only ever 0 or 1, so it is a flag; make it a defaulted `bool` to drop `, 0` from the other calls, along with the comment at 650.
-
-**Data structures and algorithms**
-
-- [container.odin:612](src/container.odin#L612) `require_nested_map_key_policies`: `gate_type` runs this per written type, so cost grows as declarations times reachable types, each with a fresh map holding every type. At least use `Type_Walk` ([semantic.odin:2189](src/semantic.odin#L2189)), which records only nominal types; `type_is_supported` makes the same uncached walk, so any memo should serve both.
-- [container.odin:270](src/container.odin#L270) `ensure_slice_members`, also 347: capacity hints 4 and 8 are stale (5 and 15 members), and `add_members` copies the list, so the arena keeps both the outgrown and final arrays per type. Small input; a slice literal as at line 330 fixes it.
-
 **Near copies**
 
-- [container.odin:536](src/container.odin#L536) and [eval.odin:1472](src/eval.odin#L1472): both try `container_element`, then `slice_element`, and the eval comment says it must match. Share a `sequence_element(c, type)`.
-- [container.odin:696](src/container.odin#L696) and `region.odin`: `zero_int_arg` and `panic_policy_arg` build the same constant-0 literal and differ only in type and in whether it is cached. Share a `zero_literal_arg(c, type)` constructor.
-- [container.odin:458](src/container.odin#L458) and [semantic.odin:2140](src/semantic.odin#L2140): both follow a delegate chain to a non-delegated symbol or the built-in, with different bounds (64 and `len(c.symbols) + 1`). One helper returning the final symbol or "built-in" serves both.
-- [container.odin:325](src/container.odin#L325), [iterate.odin:402](src/iterate.odin#L402), [customization.odin:113](src/customization.odin#L113), [hooks.odin:809](src/hooks.odin#L809): `synth_proc` followed by setting `has_receiver` and `receiver`. Add `synth_method` in `semantic.odin`, taking the receiver from `modes[0]`.
-- [container.odin:628](src/container.odin#L628) and [semantic.odin:2224](src/semantic.odin#L2224): this walk and `type_contains_invalid` enumerate the same components by kind; the latter is exhaustive on purpose and handles `.Box`. A shared `type_components` would have prevented BUG-container-2.
-- [container.odin:16](src/container.odin#L16) and [eval.odin:1510](src/eval.odin#L1510): the emitter identifies a `try_` form by name and the evaluator by `result == alloc_result_type`, which `try_find_or_insert` does not match. Use one predicate; the name test is the general one.
-- [container.odin:444](src/container.odin#L444) and [container.odin:569](src/container.odin#L569): a reported rejection is `.Unordered` for sorts but a present `.Unresolved` entry for keys. Add `.Rejected` to `Key_Policy_Kind` so both caches use one encoding and `.Unresolved` always means unset.
-
-**Structure and boundaries**
-
-- [container.odin:562](src/container.odin#L562), also 650-709: the key-policy gate and `container_member`/`zero_int_arg` sit under the "ordering" banner. Move the member helpers to the "contributed members" section with `container_member_is_try` (line 16), and the gate to `hash.odin` beside `Key_Policy`.
-- [container.odin:490](src/container.odin#L490): `inherent_self_operator` and `operator_on_self` are general operator lookup, also used by [hash.odin:334](src/hash.odin#L334) and [semantic.odin:2129](src/semantic.odin#L2129). They belong in `operators.odin`, which owns operators and delegates.
-- [container.odin:158](src/container.odin#L158) `ensure_container_members`: it is both dispatcher and dynamic-array table, while its siblings are separate. Extract `ensure_dynamic_members`, mark `.Container` once, then switch on kind, replacing the three repeated marks at 164-176.
-- [container.odin:716](src/container.odin#L716) `check_via_policy`, `type_accepts_via`: this is a declaration rule that also covers records with a `try_clone`, and [check.odin:2508](src/check.odin#L2508) is its only caller. It fits `check.odin` or `hooks.odin` better than the container file.
-- [container.odin:517](src/container.odin#L517) `operator_on_self`, with `require_map_key_policy` (564) and `type_accepts_via` (795): none has a caller outside this file, so mark them `@(private = "file")` as their neighbours are.
-
-**Comments**
-
-- [container.odin:263](src/container.odin#L263): wrong: "The receiver is a value" contradicts line 671, which takes it by `.Borrow`. Say "The receiver is borrowed: the header is itself a borrow of the caller's elements", keeping the citation.
-- [container.odin:116](src/container.odin#L116): "the member's result type tells them apart" is untrue for the emitter, which reads the name (line 16). Shorten to "A panicking spelling and its `try_` form share one entry."
-- [container.odin:569](src/container.odin#L569): this cached rejection contradicts [hash.odin:190](src/hash.odin#L190), "Failed lookups are not cached". Reword the `hash.odin` comment to say only that `resolve_map_key_policy` itself does not cache.
-- [container.odin:55](src/container.odin#L55), also 87, 105, 610: each restates the name or signature; delete them.
-- [container.odin:202](src/container.odin#L202): repeats [borrow.odin:1317](src/borrow.odin#L1317) at one of nine sites that need it; delete.
-- [container.odin:309](src/container.odin#L309): cut to `standard-library.md "Chunks of a mutable slice": what `chunks_mut` returns, its own iterator.` The fields say the rest.
-- [container.odin:365](src/container.odin#L365), also 381: these narrate what the member names and `design.md` "Map container operations" already say; delete.
-- [container.odin:577](src/container.odin#L577): the diagnostic directly below says the same; delete.
-- [container.odin:813](src/container.odin#L813): restates the three lines below it; delete. (about 15 comment lines across the file)
+- `require_nested_map_key_policies_walk` in [hash.odin](src/hash.odin) and [semantic.odin:2224](src/semantic.odin#L2224): this walk and `type_contains_invalid` enumerate the same components by kind; the latter is exhaustive on purpose and handles `.Box`. A shared `type_components` would serve both.
 
 ### src/doc.odin
 
@@ -2706,12 +2645,11 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 
 **Structure and boundaries**
 
-- [hash.odin:255](src/hash.odin#L255): lines 255-339 are equality, not hashing, and most callers are comparison code such as `type_is_comparable` and [check_expr.odin:2494](src/check_expr.odin#L2494). They belong beside `type_is_comparable` in `semantic.odin`, with `inherent_self_operator` from [container.odin:490](src/container.odin#L490).
+- [hash.odin:255](src/hash.odin#L255): lines 255-339 are equality, not hashing, and most callers are comparison code such as `type_is_comparable` and [check_expr.odin:2494](src/check_expr.odin#L2494). They belong beside `type_is_comparable` in `semantic.odin`.
 - [hash.odin:200](src/hash.odin#L200) `resolve_map_key_policy`: selecting a policy and wording a rejection are mixed; the seam is lines 204-219, an `unhashable_key_reason(c, key) -> string`, which also gives the sentence repeated at lines 215 and 219 one home.
 
 **Comments**
 
-- [hash.odin:190](src/hash.odin#L190): delete both lines. The first repeats line 183, and "Failed lookups are not cached" contradicts `require_map_key_policy`, which caches a rejection ([container.odin:569](src/container.odin#L569)).
 - [hash.odin:16](src/hash.odin#L16): the catalogue is in standard-library.md, also misattributed on line 1. Shorten to: `standard-library.md "Standard interface catalogue" lists the hashable scalars; a record or union keeping its generated == hashes structurally (design.md "Maps").` The NaN rationale is there and in the message at line 205. (about 2 lines)
 - [hash.odin:48](src/hash.odin#L48): delete; `Type_Walk`'s comment at [semantic.odin:2185](src/semantic.odin#L2185) says this.
 - [hash.odin:27](src/hash.odin#L27) and [hash.odin:299](src/hash.odin#L299): the same two lines, also at [semantic.odin:1973](src/semantic.odin#L1973); say it once on `Type_Walk` and delete these. (about 4 lines)

@@ -1,0 +1,12 @@
+package main;
+
+// A map named only inside a `Box` is checked where it is named, like any other.
+@(move_only) Key :: struct { id: int }
+
+Holder :: struct {
+	floats: Box(map[f64]int),
+}
+
+main :: proc() {
+	keys: Option(Box(map[Key]int)) = .none;
+}

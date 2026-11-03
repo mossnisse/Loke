@@ -24,6 +24,9 @@ checklist.
   Upgrade by writing `int(C.B)`.
 - A constant zero divisor of a rune is `L0319` ([Integer operators](design.md#integer-operators)):
   `r % 0` and `r /= 0` compiled and panicked at run time.
+- A map named only inside a `Box`, as in `p: Box(map[f64]int)`, now has its key checked: a key
+  that cannot be hashed is `L0586` where the map type is named ([Maps](design.md#maps)). It
+  compiled. Upgrade by keying the map by a hashable type.
 - A destructuring assignment to a destination that would view or splat its field, such as
   `v, n = record` with a `string` field and a `string_view` `v`, is now `L0310`
   ([Destructuring](design.md#destructuring)). It compiled, and wrote the field's bytes past the
@@ -1326,6 +1329,8 @@ checklist.
 
 ### Fixed
 
+- A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
+  used to fail with internal `L0405`, "a map key operation was not resolved during checking".
 - A global larger than 4096 bytes passed by pointer, as `g.peek()` with `self: ^` or `set(inout g)`,
   compiles. It used to fail in clang with `L0403`.
 - A variadic pack with a spread among other operands, as `sum(1, ..big[:])`, panics with

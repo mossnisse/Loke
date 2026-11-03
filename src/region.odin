@@ -55,19 +55,6 @@ contribute_provider_types :: proc(k: ^Checker, pkg: ^Package) {
 	add_provider_members(c, scratch, policy)
 }
 
-// The `.Panic` an omitted `policy` argument means.
-@(private = "file")
-panic_policy_arg :: proc(c: ^Compiler, policy: Type_Id) -> Expr {
-	literal := new(Expr_Literal, c.semantic_allocator)
-	literal.span = no_span()
-	literal.kind = .Int
-	literal.type = policy
-	literal.value_category = .Value
-	literal.is_const = true
-	literal.const_value = int_const(c, 0)
-	return literal
-}
-
 @(private = "file")
 new_provider_type :: proc(c: ^Compiler, name: string) -> Type_Id {
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
@@ -173,7 +160,8 @@ provider_constructor :: proc(
 	id := provider_member(c, owner, name, op, []Type_Id{source, policy}, result)
 	sym := symbol_of(c, id)
 	sym.param_defaults[0] = source_default
-	sym.param_defaults[1] = panic_policy_arg(c, policy)
+	// The `.Panic` an omitted `policy` argument means.
+	sym.param_defaults[1] = zero_literal_arg(c, policy)
 	for parameter, index in ([]string{source_name, "policy"}) {
 		sym.param_symbols[index] = new_parameter(c, intern_identifier(c, parameter), sym.params[index], .Value)
 	}
