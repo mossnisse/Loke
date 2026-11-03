@@ -727,9 +727,6 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 **Comments**
 
-- [cfg_provenance.odin:3619](src/cfg_provenance.odin#L3619): delete sentences that only name callers or restate the name, at [:4959](src/cfg_provenance.odin#L4959), [:2905](src/cfg_provenance.odin#L2905), [:2912](src/cfg_provenance.odin#L2912) and [:3023](src/cfg_provenance.odin#L3023), which restate the name; keep the backticked type where it helps. (about 7 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4141](src/cfg_provenance.odin#L4141): 7 lines; keep "kept apart by field; the argument's prior value and the body's own regions say nothing new", and drop the rest, which the body and `Prov_Region_Content.from` say. (about 4 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:2921](src/cfg_provenance.odin#L2921): 9 lines, mostly the two branches read aloud, and similar paragraphs at [:2725](src/cfg_provenance.odin#L2725), [:3506](src/cfg_provenance.odin#L3506) and [:3597](src/cfg_provenance.odin#L3597). Cut each to the rule and the citation. (about 60 lines across this part) *Left open: not reached in this pass; the code still has it.*
 
 ### src/cfg_provenance.odin (part 3 of 4)
 
@@ -756,10 +753,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 
 **Comments**
 
-- [cfg_provenance.odin:5905](src/cfg_provenance.odin#L5905): repeats 5741-5743. Shorten to `// design.md "Allocator regions and region provenance": only owners are checked, as in prov_store_region.` (about 2 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:5879](src/cfg_provenance.odin#L5879): cut to the two facts `checked` encodes: a write through a carrier reaches the caller or the local place, and a static place rejects only where an owner is stored. (about 2 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:7530](src/cfg_provenance.odin#L7530), [cfg_provenance.odin:6553](src/cfg_provenance.odin#L6553), [cfg_provenance.odin:6461](src/cfg_provenance.odin#L6461), [cfg_provenance.odin:7844](src/cfg_provenance.odin#L7844): delete; each restates the next line or the name. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:6933](src/cfg_provenance.odin#L6933): rewrap, and shorten the stacked comments at 8007-8010 into one. Across this part, about 40 of the 368 comment lines could go in the same way. *Left open: not reached in this pass; the code still has it.*
 
 ### src/cfg_provenance.odin (part 4 of 4)
 
@@ -767,7 +760,6 @@ The logic holds up and every declaration here has a caller in `src/`, with none 
 
 **Simplification**
 
-- [cfg_provenance.odin:9685](src/cfg_provenance.odin#L9685) `prov_container_content`: three switches on `op` (9737, 9762, 9775) pick the same key and value. Fill one `parts` list of actual, type and path step, then loop it in the publish and define branches; hoist `c` and the receiver type. (about 12 lines) *Left open: not reached in this pass; the code still has it.*
 
 **Dead code**
 
@@ -780,25 +772,16 @@ The logic holds up and every declaration here has a caller in `src/`, with none 
 **Near copies**
 
 - [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017), [cfg.odin:2843](src/cfg.odin#L2843), [provenance_form.odin:112](src/provenance_form.odin#L112): the same two-cursor walk of `variadic_order`. A `call_next_variadic(call, is_spread, &next_element, &next_spread)` beside `call_packs` covers these. (about 12 lines)
-- [cfg_provenance.odin:10539](src/cfg_provenance.odin#L10539), [cfg_provenance.odin:10546](src/cfg_provenance.odin#L10546), [cfg_provenance.odin:10691](src/cfg_provenance.odin#L10691), [cfg_provenance.odin:10711](src/cfg_provenance.odin#L10711): the choice between `prov_caller_region` and `prov_region_closure` on `thread_facts_pending`. Name it `prov_visible_region(graph, set)`. (about 3 lines) *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9976](src/cfg_provenance.odin#L9976) and [cfg_provenance.odin:10071](src/cfg_provenance.odin#L10071): one note text five times (also 9983, 9990, 10082). Use a constant, and hoist the three L0725 copies below the switch. *Left open: not reached in this pass; the code still has it.*
 
 **Structure and boundaries**
 
 - [cfg_provenance.odin:8165](src/cfg_provenance.odin#L8165): no section header between 6843 and 10501, over spawn, builtins, arguments, retention, containers, text, transfer checks, results and allocator use. Split at those seams into `provenance_*` files, or at least add headers; moving means widening file-private helpers such as `prov_one`. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:9322](src/cfg_provenance.odin#L9322): the 100 lines from here to `carrier_leaves` are pure type queries taking only `c`, called from `borrow.odin`, `provenance_call.odin` and `provenance_transfer_facts.odin`. They belong beside `type_carries_borrow` in `borrow.odin`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950): `report_transfer_facts`, `prov_transfer_argument`, `viewed_subject` and `prov_transferred_type` need no graph and only report errors. Move them beside `transfer_facts` and `view_chain_text` in `hooks.odin`; the walk then only decides when to call them. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:8512](src/cfg_provenance.odin#L8512) `prov_call_argument`: 260 lines in one switch, while its `Prov_Argument_Kind` lives in `provenance_call.odin`. Extract the longest arms, `.Inout_Receiver` (8559) and `.Borrowed` (8685), and keep the shared tail for the arms that fall out of the switch. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:10137](src/cfg_provenance.odin#L10137) `prov_has_received_region`, with `prov_argument_regions` (10681) and `prov_call_allocator_use` (10727): their only callers are in `provenance_event.odin`, which can own them. *Left open: not reached in this pass; the code still has it.*
 
 **Comments**
 
-- [cfg_provenance.odin:10660](src/cfg_provenance.odin#L10660): stale in the same way; say "nil unless `prov_tracks_allocator_use`". [cfg_provenance.odin:10648](src/cfg_provenance.odin#L10648): says "given `e`", but the parameter is `id`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:8560](src/cfg_provenance.odin#L8560) and [cfg_provenance.odin:9897](src/cfg_provenance.odin#L9897): bare "(design.md)" breaks the citation rule; add the exact heading. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9813](src/cfg_provenance.odin#L9813): the comment is split by the attribute at 9815; put both parts above it. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9912](src/cfg_provenance.odin#L9912): shorten to `design.md "@(cross_thread)": @(escape=static) already rules out a thread_local borrow; this checks thread affinity, erasure, and the allocator region.` *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9994](src/cfg_provenance.odin#L9994): shorten to `design.md "Sharing with tasks", "Borrows crossing between tasks": the argument and result checks at a spawn; the solver checks thread_local borrows on crossing.` *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9524](src/cfg_provenance.odin#L9524): 12 lines; keep the citations, the two exclusions (parameter binding, lent carrier) and why, and drop the restated list of `landed` and `places`. Likewise [cfg_provenance.odin:8306](src/cfg_provenance.odin#L8306), [cfg_provenance.odin:8888](src/cfg_provenance.odin#L8888), [cfg_provenance.odin:8986](src/cfg_provenance.odin#L8986). (about 40 lines across the part) *Left open: not reached in this pass; the code still has it.*
 
 ### src/check.odin (part 1 of 2)
 

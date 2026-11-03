@@ -490,6 +490,136 @@ Transfer_Visit :: struct {
 	viewed: bool,
 }
 
+// What to do about a value whose erasure hides what a task needs to see.
+@(private = "file")
+CONCRETE_VALUE_NOTE :: "pass the concrete value instead, or convert it to the view at this call"
+
+// design.md "@(thread_affine)": a value crossing to another thread holds or
+// reaches nothing thread-affine, and no erased value whose eligibility the
+// compiler cannot see. A `dyn` view shows it through each type converted to it.
+@(private)
+report_transfer_facts :: proc(c: ^Compiler, base_type: Type_Id, facts: Transfer_Facts, span: Span) {
+	switch {
+	case facts.affine != INVALID_TYPE:
+		if facts.affine_via.view != INVALID_TYPE {
+			errorf(
+				c, span, "L0724", "%s, which is `@(thread_affine)`, so it cannot cross to another thread",
+				viewed_subject(c, base_type, facts.affine, facts.affine_via),
+			)
+		} else if facts.affine == base_type {
+			errorf(c, span, "L0724", "`%s` is `@(thread_affine)`, so it cannot cross to another thread", type_name(c, base_type))
+		} else {
+			errorf(
+				c, span, "L0724",
+				"`%s` holds or reaches `%s`, which is `@(thread_affine)`, so it cannot cross to another thread",
+				type_name(c, base_type), type_name(c, facts.affine),
+			)
+		}
+		if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
+			add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
+		}
+	case facts.erased != INVALID_TYPE && facts.erased_via.view != INVALID_TYPE:
+		errorf(
+			c, span, "L0725", "%s, which hides the type it erased, so nothing shows that it may cross to another thread",
+			viewed_subject(c, base_type, facts.erased, facts.erased_via),
+		)
+	case facts.erased == base_type:
+		errorf(
+			c, span, "L0725",
+			"`%s` hides the type it erased, so nothing shows that it may cross to another thread",
+			type_name(c, base_type),
+		)
+	case facts.erased != INVALID_TYPE:
+		errorf(
+			c, span, "L0725",
+			"`%s` reaches `%s`, which hides the type it erased, so nothing shows that it may cross to another thread",
+			type_name(c, base_type), type_name(c, facts.erased),
+		)
+	case:
+		return
+	}
+	if facts.affine == INVALID_TYPE {
+		add_notef(c, span, CONCRETE_VALUE_NOTE)
+	}
+}
+
+// One value crossing to a task, which it shares with the parent unless it is
+// the task's alone.
+@(private)
+prov_transfer_argument :: proc(c: ^Compiler, argument: Expr, shared: bool) {
+	base := expr_base(argument)
+	if base == nil || base.type == INVALID_TYPE {
+		return
+	}
+	span := expr_span(argument)
+	transferred := prov_transferred_type(c, argument)
+	facts := transfer_facts(c, transferred, through_views = true)
+	// A task may share an erased value only as its own, and moving one would
+	// still not show that it may cross (design.md "Sharing with tasks").
+	if shared && base.erased_from == INVALID_TYPE && (base.type == facts.erased && !carrier_is_mutable(c, base.type)) {
+		errorf(c, span, "L0729", "`%s` hides what it captures, so a task cannot share it", type_name(c, base.type))
+		add_notef(c, span, CONCRETE_VALUE_NOTE)
+		return
+	}
+	report_transfer_facts(c, base.type, facts, span)
+	// What a read-only view may view is shared however the view is passed:
+	// moving the view gives the task nothing of its own.
+	if facts.viewed != INVALID_TYPE {
+		errorf(
+			c, span, "L0729", "%s, so a task sharing it could write what the parent reaches too",
+			viewed_subject(c, base.type, facts.viewed, facts.viewed_via),
+		)
+		add_notef(c, span, CONCRETE_VALUE_NOTE)
+	}
+	if shared && facts.mutable != INVALID_TYPE && !carrier_is_mutable(c, transferred) {
+		// A view made at this call only borrows what it converts, so moving the
+		// view gives the task nothing of its own.
+		advice := ": move it into the task, or pass the mutable borrow itself"
+		if transferred != base.type {
+			advice = "; the view only borrows what it converts: pass the mutable borrow itself instead"
+			if dyn_proc_signature(c, base.type) != INVALID_TYPE {
+				advice = "; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead"
+			}
+		}
+		errorf(
+			c, span, "L0729", "`%s` reaches `%s`, so a task sharing it could write what the parent reaches too%s",
+			type_name(c, base.type), type_name(c, facts.mutable), advice,
+		)
+	}
+}
+
+// A fact reached through a read-only view, said of the value that holds it:
+// "`dyn I`, which may view ..." or "`Holder` reaches `dyn I`, which may view ...".
+@(private = "file")
+viewed_subject :: proc(c: ^Compiler, base, reached: Type_Id, via: Transfer_Via) -> string {
+	chain := view_chain_text(c, reached, via)
+	if via.view == base {
+		return chain
+	}
+	return fmt.tprintf("`%s` reaches %s", type_name(c, base), chain)
+}
+
+// What an argument takes across: a `dyn` made at the call is checked through
+// what it erased, which is known there. An explicit conversion to one is the
+// implicit one written out, so its operand is what was erased.
+@(private)
+prov_transferred_type :: proc(c: ^Compiler, argument: Expr) -> Type_Id {
+	base := expr_base(argument)
+	if base.erased_from != INVALID_TYPE {
+		return base.erased_from
+	}
+	if call, is_call := argument.(^Expr_Call); is_call && len(call.bound) == 1 && call.bound[0] != nil {
+		kind := underlying_kind(c, call.type)
+		#partial switch _ in call.operation {
+		case Call_Dyn_Conversion, Call_Conversion:
+			if kind == .Dyn {
+				return prov_transferred_type(c, call.bound[0])
+			}
+		}
+	}
+	return base.type
+}
+
 // How a transfer fact is reached: "`dyn I`, which may view a `W`, which
 // reaches `T`" through the read-only view `via` names, or "`T`" without one.
 view_chain_text :: proc(c: ^Compiler, reached: Type_Id, via: Transfer_Via) -> string {
