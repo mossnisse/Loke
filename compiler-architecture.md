@@ -876,7 +876,8 @@ be file-private. Paths below are relative to `src/`.
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
 | `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
-| `source.odin` | `Compiler`, sources, spans, and diagnostics; destruction lives in `semantic.odin`. |
+| `compiler.odin` | The `Compiler` record; destruction lives in `semantic.odin`. |
+| `source.odin` | Sources, spans, diagnostics, and probes. |
 | `lexer.odin` | Tokens, lexical scanning, and decoding a string or rune literal's spelling. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |

@@ -417,9 +417,9 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	}
 	entry := lookup_symbol(pkg.scope, intern_identifier(c, "main"))
 	if entry == INVALID_SYMBOL {
-		errorf(c, no_span(), "L0302", "package `main` has no `main` procedure")
+		errorf(c, NO_SPAN, "L0302", "package `main` has no `main` procedure")
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
-		span := symbol == nil ? no_span() : symbol.span
+		span := symbol == nil ? NO_SPAN : symbol.span
 		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
 	} else if symbol_is_test(symbol) {
 		// design.md "Test procedures": only a test build calls one.
@@ -2410,7 +2410,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 		)
 		add_notef(
 			k.c,
-			no_span(),
+			NO_SPAN,
 			"select it where the value is made: `shared(value, allocator=...)` or `try_shared(value, allocator)`",
 		)
 		return false
@@ -2425,7 +2425,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 		)
 		add_notef(
 			k.c,
-			no_span(),
+			NO_SPAN,
 			"`via` applies to a managed owner whose storage is allocated as it grows, such as `[dynamic]T`, `map[K]V`, or a record with a `try_clone`",
 		)
 		return false

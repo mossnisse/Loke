@@ -101,7 +101,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 new_builtin_symbol :: proc(c: ^Compiler, name: string, kind: Builtin_Kind, public := false) -> Symbol_Id {
 	return new_symbol(c, Symbol {
 		name      = intern_identifier(c, name),
-		span      = no_span(),
+		span      = NO_SPAN,
 		kind      = .Builtin,
 		builtin   = kind,
 		type      = TYPE_VOID,
@@ -113,6 +113,6 @@ new_builtin_symbol :: proc(c: ^Compiler, name: string, kind: Builtin_Kind, publi
 define_universe :: proc(c: ^Compiler, name: string, template: Symbol) {
 	symbol := template
 	symbol.name = intern_identifier(c, name)
-	symbol.span = no_span()
+	symbol.span = NO_SPAN
 	c.universe.names[symbol.name] = new_symbol(c, symbol)
 }

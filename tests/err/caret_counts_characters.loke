@@ -1,0 +1,9 @@
+// The snippet prints characters, so the caret line counts characters too: each
+// of these has several two-byte characters before its mark or inside it. The
+// location keeps counting bytes.
+package main;
+
+main :: proc() {
+	s := "åäöåäö" + 1;
+	t: int = "åäö";
+}

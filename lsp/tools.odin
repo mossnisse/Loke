@@ -40,8 +40,9 @@ format_document :: proc(s: ^Server, id: json.Value, params: json.Value) {
 first_error :: proc(c: ^lokec.Compiler) -> string {
 	for d in c.diagnostics {
 		if d.severity != .Error { continue }
-		if d.span.file == lokec.NO_FILE || int(d.span.file) >= len(c.sources) { return d.message }
-		line, _ := lokec.line_col(&c.sources[d.span.file], d.span.lo)
+		source := lokec.span_source(c, d.span)
+		if source == nil { return d.message }
+		line, _ := lokec.line_col(source, d.span.lo)
 		return fmt.tprintf("line %d: %s", line, d.message)
 	}
 	return "it does not parse"

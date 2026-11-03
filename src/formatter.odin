@@ -42,7 +42,7 @@ rewrite_files :: proc(c: ^Compiler, input: string, check: bool, rewrite: proc(c:
 			fmt.println(path)
 			status = 1
 		} else if os.write_entire_file(path, transmute([]u8)rewritten) != nil {
-			errorf(c, no_span(), "L0401", "cannot write `%s`", path)
+			errorf(c, NO_SPAN, "L0401", "cannot write `%s`", path)
 			status = 1
 		}
 	}

@@ -1392,7 +1392,7 @@ check_map_key :: proc(k: ^Checker, e: Expr, key: Type_Id, borrows: bool) -> bool
 			return true
 		}
 		errorf(k.c, expr_span(e), "L0310", "an inserted key must be an owned `string`, found `string_view`")
-		add_notef(k.c, no_span(), "`.copy()` makes a `string` from a `string_view`")
+		add_notef(k.c, NO_SPAN, "`.copy()` makes a `string` from a `string_view`")
 		return false
 	}
 	return materialize_value_expr(k, e, key, "look up")

@@ -184,7 +184,7 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 	d.symbols = symbols
 	d.top_level = true
 	// A contributed symbol has no source position; this is now its declaration.
-	if sym.span == no_span() {
+	if sym.span == NO_SPAN {
 		sym.span = d.names[0].span
 	}
 	append(&pkg.intrinsics, Intrinsic_Decl{decl = d, symbol = symbol_id, subject = subject, file = file})
@@ -283,7 +283,7 @@ described :: proc(pkg: ^Package, symbol_id: Symbol_Id) -> bool {
 @(private = "file")
 report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 	c := k.c
-	where_reported := len(pkg.files) > 0 ? pkg.files[0].package_span : no_span()
+	where_reported := len(pkg.files) > 0 ? pkg.files[0].package_span : NO_SPAN
 	for name in pkg.contributions {
 		symbol_id := pkg.scope.names[name]
 		sym := symbol_of(c, symbol_id)

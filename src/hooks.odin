@@ -660,7 +660,7 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 	}
 	sym := c.default_allocator_symbol
 	callee := new(Expr_Ident, c.semantic_allocator)
-	callee.span = no_span()
+	callee.span = NO_SPAN
 	callee.name = "default_allocator"
 	callee.name_id = intern_identifier(c, "default_allocator")
 	callee.symbol = sym
@@ -669,7 +669,7 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 	callee.value_category = .Value
 
 	call := new(Expr_Call, c.semantic_allocator)
-	call.span = no_span()
+	call.span = NO_SPAN
 	call.callee = callee
 	call.type = TYPE_ALLOCATOR
 	call.value_category = .Value

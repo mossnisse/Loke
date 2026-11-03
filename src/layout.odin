@@ -3,19 +3,19 @@ package lokec
 
 MAX_LAYOUT_SIZE :: u64(max(i64))
 
-type_size :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) -> u64 {
+type_size :: proc(c: ^Compiler, type: Type_Id, span := NO_SPAN) -> u64 {
 	compute_layout(c, type, span)
 	info := type_of(c, type)
 	return info == nil ? 0 : info.size
 }
 
-type_align :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) -> u64 {
+type_align :: proc(c: ^Compiler, type: Type_Id, span := NO_SPAN) -> u64 {
 	compute_layout(c, type, span)
 	info := type_of(c, type)
 	return info == nil || info.align == 0 ? 1 : info.align
 }
 
-type_field_offset :: proc(c: ^Compiler, type: Type_Id, index: int, span := Span{file = NO_FILE}) -> u64 {
+type_field_offset :: proc(c: ^Compiler, type: Type_Id, index: int, span := NO_SPAN) -> u64 {
 	under := type_underlying(c, type)
 	compute_layout(c, under, span)
 	info := type_of(c, under)

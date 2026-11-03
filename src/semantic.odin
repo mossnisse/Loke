@@ -1015,7 +1015,7 @@ new_symbol :: proc(c: ^Compiler, value: Symbol) -> Symbol_Id {
 new_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int, public := false) -> Symbol_Id {
 	return new_symbol(c, Symbol {
 		name   = intern_identifier(c, name),
-		span   = no_span(),
+		span   = NO_SPAN,
 		kind   = .Field,
 		type   = type,
 		index  = u32(index),
@@ -1034,7 +1034,7 @@ add_members :: proc(c: ^Compiler, type: Type_Id, added: []Symbol_Id) {
 new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -> Symbol_Id {
 	return new_symbol(c, Symbol {
 		name        = intern_identifier(c, name),
-		span        = no_span(),
+		span        = NO_SPAN,
 		kind        = .Const,
 		type        = TYPE_TYPE,
 		const_value = type_const(value),
@@ -1060,7 +1060,7 @@ synth_proc :: proc(
 	proc_type := intern_proc_type(c, params, modes, result, false, "")
 	id := new_symbol(c, Symbol {
 		name          = intern_identifier(c, name),
-		span          = no_span(),
+		span          = NO_SPAN,
 		kind          = .Proc,
 		public        = true,
 		owner_type    = owner,
@@ -1107,7 +1107,7 @@ synth_self_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner: T
 // The constant zero of `type`, for a defaulted parameter of a synthesized member.
 zero_literal_arg :: proc(c: ^Compiler, type: Type_Id) -> Expr {
 	literal := new(Expr_Literal, c.semantic_allocator)
-	literal.span = no_span()
+	literal.span = NO_SPAN
 	literal.kind = .Int
 	literal.type = type
 	literal.value_category = .Value

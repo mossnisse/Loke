@@ -73,12 +73,11 @@ path_key :: proc(path: string, allocator := context.allocator) -> string {
 // no position between them.
 offset_to_position :: proc(text: string, line_starts: []u32, offset: u32, utf8_units: bool) -> Position {
 	offset := min(int(offset), len(text))
-	line := 0
-	for lo, hi := 0, len(line_starts); lo < hi; {
-		mid := (lo + hi) / 2
-		if int(line_starts[mid]) <= offset { line, lo = mid, mid + 1 } else { hi = mid }
+	line, start := 0, 0
+	if len(line_starts) > 0 {
+		line = lokec.line_of_offset(line_starts, u32(offset))
+		start = int(line_starts[line])
 	}
-	start := len(line_starts) > 0 ? min(int(line_starts[line]), offset) : 0
 	if offset > start && offset < len(text) && text[offset] == '\n' && text[offset - 1] == '\r' { offset -= 1 }
 	return Position{line, utf8_units ? offset - start : utf16_length(text[start:offset])}
 }

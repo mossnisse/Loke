@@ -69,7 +69,7 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 @(private)
 write_artifact :: proc(c: ^Compiler, path, text: string) -> bool {
 	if os.write_entire_file(path, transmute([]u8)text) != nil {
-		errorf(c, no_span(), "L0401", "cannot write `%s`", path)
+		errorf(c, NO_SPAN, "L0401", "cannot write `%s`", path)
 		return false
 	}
 	return true
@@ -97,11 +97,11 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 	append(&command, "-Wno-override-module")
 	state, _, stderr, err := subprocess.run(os.Process_Desc{command = command[:]}, context.allocator)
 	if err != nil {
-		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
+		errorf(c, NO_SPAN, "L0402", CLANG_MISSING, clang)
 		return 2
 	}
 	if state.exit_code != 0 {
-		errorf(c, no_span(), "L0403", "`%s -c` failed:\n%s", clang, string(stderr))
+		errorf(c, NO_SPAN, "L0403", "`%s -c` failed:\n%s", clang, string(stderr))
 		return 2
 	}
 	return 0
@@ -125,7 +125,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		} else if listing != nil {
 			reason = fmt.tprintf("the directory cannot be listed: %s", os.error_string(listing))
 		}
-		errorf(c, no_span(), "L0551", "no seed runtime sources in `%s`: %s", runtime_dir == "" ? "<unknown>" : runtime_dir, reason)
+		errorf(c, NO_SPAN, "L0551", "no seed runtime sources in `%s`: %s", runtime_dir == "" ? "<unknown>" : runtime_dir, reason)
 		return 2
 	}
 
@@ -178,7 +178,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		context.allocator,
 	)
 	if err != nil {
-		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
+		errorf(c, NO_SPAN, "L0402", CLANG_MISSING, clang)
 		return 2
 	}
 	if state.exit_code != 0 {
@@ -187,14 +187,14 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		   (strings.contains(string(stderr), "unresolved external symbol") ||
 		    strings.contains(string(stderr), "undefined symbol")) {
 			errorf(
-				c, no_span(), "L0633",
+				c, NO_SPAN, "L0633",
 				"a foreign link name was not found in any imported library:\n%s",
 				string(stderr),
 			)
 			return 2
 		}
 		errorf(
-			c, no_span(), "L0403",
+			c, NO_SPAN, "L0403",
 			"`%s` failed (seed runtime: `%s`):\n%s",
 			clang, runtime_dir, string(stderr),
 		)

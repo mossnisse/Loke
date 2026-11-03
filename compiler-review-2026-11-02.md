@@ -278,7 +278,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`.
-- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78).
 
 ### Looked at and left alone
 
@@ -1500,7 +1499,7 @@ A sound snapshot layer whose comments mostly earn their place. The real problems
 **Simplification**
 
 - [queries.odin:123](src/queries.odin#L123) `query_file`: `dir_key` lowercases and `equal_fold` folds again; use `strings.equal_fold(canonical_dir(source.path), canonical_dir(path))` with no `key`, unless the map below replaces it. (about 1 line)
-- [queries.odin:499](src/queries.odin#L499) `build_snapshot_queries`: write `definition` as `written ? symbol.span : no_span()` and nest the document append under one `if written`, removing the `else` at line 509. (about 3 lines)
+- [queries.odin:499](src/queries.odin#L499) `build_snapshot_queries`: write `definition` as `written ? symbol.span : NO_SPAN` and nest the document append under one `if written`, removing the `else` at line 509. (about 3 lines)
 - [queries.odin:558](src/queries.odin#L558) `build_snapshot_queries`: `if symbol == nil || symbol.kind != .Proc_Group { continue }` replaces the index test plus nested `if`. (about 2 lines)
 - [queries.odin:581](src/queries.odin#L581) `build_snapshot_queries`: sort `regions` first, then one `for handles, file in q.documents` fills extents, nests, and scopes; passing `file` also removes lines 608-609 of `scope_query_locals`. (about 6 lines)
 - [queries.odin:654](src/queries.odin#L654) `nest_query_bindings`: seed `open` with `Nest{hi = max(u32)}` (id 0 is `INVALID_SYMBOL`); it never pops, so `parent`, the `len(open) > 0` tests, and the last `else` all go. (about 5 lines)
@@ -1525,7 +1524,6 @@ A sound snapshot layer whose comments mostly earn their place. The real problems
 **Near copies**
 
 - [queries.odin:204](src/queries.odin#L204) and [queries.odin:248](src/queries.odin#L248): the same scan and an identical result block; they differ in the list and in narrowing, which is a no-op for `operands` because their spans are names that never nest. One `occurrence_at(s, snapshot, list, file, offset)` makes both one-liners. (about 15 lines)
-- [queries.odin:536](src/queries.odin#L536) and [query_index.odin:9](src/query_index.odin#L9): the hand-written span check is `valid_query_span(c, span)`; an empty span falls through to the type name as it does now. (about 1 line)
 
 **Structure and boundaries**
 
@@ -1559,7 +1557,6 @@ A compact, readable AST walk with useful comments and no dead procedures. Its we
 
 **Dead code**
 
-- (branch) [query_index.odin:9](src/query_index.odin#L9): `span.file != NO_FILE` never decides. `NO_FILE` is `max(u32)`, so the next clause, `int(span.file) < len(c.sources)`, already rejects it.
 - (branch) [query_index.odin:48](src/query_index.odin#L48): `int(id) >= len(index.q.symbols)` cannot hold: `q.symbols` has `len(c.symbols)` entries, `c.symbols` only grows, and this walk adds none. `index_query_name` has no such check.
 - (branch) [query_index.odin:55](src/query_index.odin#L55): `int(extent.hi) > len(text)` cannot hold: `hi` is the larger of two spans the same file's source produced, and the `definition` span was validated by `written_query_binding`.
 - (branch) [query_index.odin:73](src/query_index.odin#L73): `len(decl.names) > 0` adds nothing, since `decl.symbols` holds one entry per name; an empty `names` means the loop does not run.
@@ -1574,7 +1571,6 @@ A compact, readable AST walk with useful comments and no dead procedures. Its we
 - [query_index.odin:202](src/query_index.odin#L202) and [query_index.odin:223](src/query_index.odin#L223): the same two lines choose a node's reported type, `INVALID_TYPE` for a package. Shared form: `query_node_type(base: ^Expr_Base) -> Type_Id`. (about 2 lines)
 - [query_index.odin:18](src/query_index.odin#L18), [query_index.odin:40](src/query_index.odin#L40) and [query_index.odin:192](src/query_index.odin#L192): each validates a span and compares its text with a name. Shared form: `query_span_spells(c, span, name) -> bool`, which also shortens the two longest guards.
 - [query_index.odin:82](src/query_index.odin#L82) and [query_index.odin:259](src/query_index.odin#L259): both find a symbol by name among candidates and record the written name; only the type differs. Shared form: `index_query_bound_name(index, name, candidates)`, typing a `.Proc` by `proc_type`, which removes the deepest nesting. (about 4 lines)
-- [query_index.odin:9](src/query_index.odin#L9) and [queries.odin:536](src/queries.odin#L536): the latter hand-writes the bounds checks of `valid_query_span`; an empty span yields the same `text == ""` there, so it can call the helper.
 
 **Structure and boundaries**
 
@@ -1733,45 +1729,11 @@ A small, focused file. What remains is the emitter's slice unpacking around it.
 
 ### src/source.odin
 
-Small, sound procedures for loading and diagnostics, sharing a file with the 380-line `Compiler` record. Every `Compiler` field has a non-test read, so no dead code was found; the two bugs are both in what `report` prints.
-
-**Bugs**
-
-- `BUG-source-1` **medium** [source.odin:811](src/source.odin#L811) `report`: it compares only with the previous diagnostic, but the sort at line 798 keys on `(file, lo)` alone, so two errors starting at one `lo` interleave and never match. Scenario: `f :: proc(v: $T) { missing_a + "x"; }` called with three types prints L0313 then L0315 three times (reproduced with the built lokec.exe). Fix: break sort ties on `hi`, code, message and label, so identical reports are adjacent. *Confirmed: Reproduced: probes/BUG-source-1/a.loke prints L0313 then L0315 three times at 2:20, while single.loke merges one L0315 with three notes, against report's own comment. Severity is low, not medium: only repeated output; errors and exit 1 are correct.*
-- `BUG-source-2` **low** [source.odin:878](src/source.odin#L878) `render`: the caret indent has one blank per byte of the prefix and `width` (line 873) counts bytes, though the snippet prints characters; the comment at line 554 calls this exact. Scenario: `s := "åäöåäö" + 1` puts the caret past the end of the line. Fix: one blank per rune of `text[:col - 1]` (tabs kept); count the marked range in runes. *Not verified.*
-
-**Simplification**
-
-- [source.odin:461](src/source.odin#L461) `load_source`: return `add_loaded_source` straight from the overlay branch, then read the file and report on `err != nil`; `data`, `read_ok` and `read_err` go. Line 462 goes too: `add_loaded_source` inits, and a failed read only calls `errorf`. (about 7 lines)
-- [source.odin:768](src/source.odin#L768) `hold_diagnostics`: the early return when nothing is past `wanted` is redundant; the loop, `resize` and `min` are all no-ops then. (about 3 lines)
-- [source.odin:647](src/source.odin#L647) `destroy_diagnostic`: the `d.label != ""` guard is redundant: deleting an empty string is a no-op. (about 2 lines)
-- [source.odin:546](src/source.odin#L546) `valid_utf8`: `text[i] >= utf8.RUNE_SELF` can never be false when `r == RUNE_ERROR && width == 1`; ASCII never decodes to `RUNE_ERROR`. Drop that test.
-- [source.odin:29](src/source.odin#L29) `no_span`: a constant `NO_SPAN :: Span{file = NO_FILE}` replaces the procedure, and the spelled-out defaults at [layout.odin:6](src/layout.odin#L6) and [union.odin:292](src/union.odin#L292). Mechanical across about 110 call sites. (about 2 lines)
-
-**Data structures and algorithms**
-
-- [source.odin:709](src/source.odin#L709) `emission_registries`: `for pkg in c.packages` copies a whole `Package` per iteration to read one length, twice per probe (`begin_probe`, `end_probe`). Cost grows with probes times packages; modest, but `for &pkg` removes it, as `build_snapshot_queries` already writes it.
+Small, sound procedures for loading and diagnostics.
 
 **Near copies**
 
 - [source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3355](src/check.odin#L3355) and `prov_drop_event_diagnostics`: each shrinks and clamps `last_noted_diagnostic`, and `hold_diagnostics` also undoes `error_count` by hand. Add one helper for `resize` plus the clamp. (about 5 lines)
-- [source.odin:863](src/source.odin#L863), [source.odin:904](src/source.odin#L904), [check_builtin.odin:1368](src/check_builtin.odin#L1368), [erased.odin:613](src/erased.odin#L613) and [query_index.odin:9](src/query_index.odin#L9) test `span.file != NO_FILE && int(span.file) < len(c.sources)`. `span_source(c, span) -> ^Source` (nil if none) fits; `NO_FILE` is `max(u32)`, so the range test alone decides.
-- [source.odin:557](src/source.odin#L557) and [paths.odin:77](lsp/paths.odin#L77): both find the line of an offset by binary search in `line_starts`, the LSP's by hand. Export `line_of_offset(line_starts, offset)` for both; the LSP keeps its empty-list guard. (about 3 lines)
-
-**Structure and boundaries**
-
-- [source.odin:78](src/source.odin#L78): `Compiler` is 380 of 911 lines and hides what the file is for. Move it to `compiler.odin`, leaving spans, sources, diagnostics and probes; update the "Source-code map" row. Probes stay put unless the `speculation_depth` guard at test-all.ps1:89, which names this file, moves with them.
-- [source.odin:840](src/source.odin#L840): `code_end` sits between `same_diagnostic` and `render` though only `render` and a test use it, and `errors_since` (line 759) splits `hold_diagnostics` from its comment. Put `code_end` beside `line_text`, `errors_since` before line 755.
-
-**Comments**
-
-- [source.odin:755](src/source.odin#L755): lines 755-756 document `hold_diagnostics` but sit above `errors_since`, reading as one comment with lines 757-758. Move them to line 766.
-- [source.odin:407](src/source.odin#L407): lines 407-408 describe `Yield` descriptor types that no field holds; they head `memory_order_type`, which has its own comment. Delete them: the citation goes only because the field it annotated is gone.
-- [source.odin:397](src/source.odin#L397): shorten to "The `default_allocator` builtin." and drop the M6 history; "the one call expression" describes `default_allocator_arg` 17 lines down, so move it there.
-- [source.odin:610](src/source.odin#L610): shorten to "A diagnostic that does not fail the compilation."; `warnf` has other callers than the copy-cost report it explains. (2 lines)
-- [source.odin:72](src/source.odin#L72): delete the `Context` naming note, and at [source.odin:425](src/source.odin#L425) drop "Parser ASTs remain per-file arenas.", which lines 75-77 say. Also delete line 632, which adds nothing to line 631. (4 lines)
-- [source.odin:674](src/source.odin#L674): keep the citation plus "`end_probe` fails if a probe grew the emission registries without a `begin_commit`"; the rest repeats compiler-architecture.md. Likewise cut [source.odin:733](src/source.odin#L733) to two lines. (about 6 lines)
-- [source.odin:483](src/source.odin#L483), line 488 and [source.odin:420](src/source.odin#L420) cite a spec without a heading: use `grammar.md "Source encoding"` and `design.md "Allocators"`; line 488 then repeats line 483 and can go. (1 line)
 
 ### src/text.odin
 

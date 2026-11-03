@@ -90,7 +90,7 @@ load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 	if !registered {
 		return INVALID_PACKAGE, false // reported at the first import that needs it
 	}
-	return load_package_dir(c, strings.concatenate({root, "/runtime"}, context.temp_allocator), STD_RUNTIME, no_span())
+	return load_package_dir(c, strings.concatenate({root, "/runtime"}, context.temp_allocator), STD_RUNTIME, NO_SPAN)
 }
 
 // Directory roots include their direct `.loke` files; file roots stand alone.
@@ -98,7 +98,7 @@ load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	if is_source_directory(c, input) {
 		c.root_dir = strings.clone(canonical_dir(input), c.semantic_allocator)
-		return load_package_dir(c, input, "", no_span())
+		return load_package_dir(c, input, "", NO_SPAN)
 	}
 	c.root_dir = strings.clone(canonical_dir(path_dir(input, context.temp_allocator)), c.semantic_allocator)
 	file, ok := parse_file(c, input)
@@ -315,7 +315,7 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	// nothing imports, so its declarations are public by default.
 	if identifier_text(c, package_of(c, target).name) == "main" {
 		errorf(c, imported.span, "L0719", "`%s` is a `package main`, which cannot be imported", path)
-		add_notef(c, no_span(), "move what both programs share into a package of its own")
+		add_notef(c, NO_SPAN, "move what both programs share into a package of its own")
 		return
 	}
 	append(&package_of(c, id).imports, Package_Import {
@@ -352,11 +352,11 @@ bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id) {
 	if why != .Ok || !os.is_dir(dir) {
 		return
 	}
-	target, loaded := load_package_dir(c, dir, STD_THREAD, no_span())
+	target, loaded := load_package_dir(c, dir, STD_THREAD, NO_SPAN)
 	if !loaded {
 		return
 	}
-	append(&package_of(c, id).imports, Package_Import{target = target, span = no_span()})
+	append(&package_of(c, id).imports, Package_Import{target = target, span = NO_SPAN})
 }
 
 // Available before decoding for stalled-condition checks.

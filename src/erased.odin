@@ -279,7 +279,7 @@ install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
 	)
 	member := new_symbol(k.c, Symbol {
 		name           = intern_identifier(k.c, "call"),
-		span           = no_span(),
+		span           = NO_SPAN,
 		kind           = .Proc,
 		public         = true,
 		owner_type     = dyn,
@@ -299,7 +299,7 @@ install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
 	adapter_params[0] = TYPE_RAWPTR
 	k.c.dyn_proc_adapters[dyn] = new_symbol(k.c, Symbol {
 		name           = intern_identifier(k.c, "call$procedure"),
-		span           = no_span(),
+		span           = NO_SPAN,
 		kind           = .Proc,
 		owner_type     = dyn,
 		params         = adapter_params,
@@ -526,10 +526,11 @@ dyn_composition_is_compatible :: proc(k: ^Checker, requirement: Requirement, sub
 
 @(private = "file")
 span_line :: proc(c: ^Compiler, span: Span) -> int {
-	if span.file == NO_FILE || int(span.file) >= len(c.sources) {
+	source := span_source(c, span)
+	if source == nil {
 		return 0
 	}
-	line, _ := line_col(&c.sources[span.file], span.lo)
+	line, _ := line_col(source, span.lo)
 	return line
 }
 

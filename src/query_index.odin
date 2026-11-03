@@ -6,7 +6,8 @@ package lokec
 Query_Index :: struct { c: ^Compiler, q: ^Snapshot_Queries, visited: map[rawptr]bool }
 
 valid_query_span :: proc(c: ^Compiler, span: Span) -> bool {
-	return span.file != NO_FILE && int(span.file) < len(c.sources) && span.lo < span.hi && int(span.hi) <= len(c.sources[span.file].text)
+	source := span_source(c, span)
+	return source != nil && span.lo < span.hi && int(span.hi) <= len(source.text)
 }
 
 // Inferred generic bindings and lowering temporaries can carry a use's span.

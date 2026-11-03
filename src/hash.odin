@@ -271,7 +271,7 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		type_name(k.c, key), reason,
 	)
 	add_notef(
-		k.c, no_span(),
+		k.c, NO_SPAN,
 		"an extension block does not qualify; wrap the key in a local `distinct` type with its own inherent operations",
 	)
 	return false

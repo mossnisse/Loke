@@ -202,7 +202,7 @@ Union_Layout :: struct {
 	niche:         bool,
 }
 
-union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) -> Union_Layout {
+union_layout :: proc(c: ^Compiler, type: Type_Id, span := NO_SPAN) -> Union_Layout {
 	info := underlying_info(c, type)
 	if info == nil || info.kind != .Union {
 		return Union_Layout{align = 1, tag_bytes = 1, size = 1}

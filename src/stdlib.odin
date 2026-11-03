@@ -232,7 +232,7 @@ contribute_type :: proc(c: ^Compiler, pkg: ^Package, name: string, type: Type_Id
 	append(&pkg.contributions, ident)
 	pkg.scope.names[ident] = new_symbol(c, Symbol {
 		name   = ident,
-		span   = no_span(),
+		span   = NO_SPAN,
 		kind   = .Type,
 		type   = type,
 		public = true,

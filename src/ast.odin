@@ -790,7 +790,7 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 
 expr_span :: proc(e: Expr) -> Span {
 	base := expr_base(e)
-	return base == nil ? no_span() : base.span
+	return base == nil ? NO_SPAN : base.span
 }
 
 expr_has_error :: proc(e: Expr) -> bool {
@@ -1145,7 +1145,7 @@ stmt_base :: proc(s: Stmt) -> ^Node_Base {
 
 stmt_span :: proc(s: Stmt) -> Span {
 	base := stmt_base(s)
-	return base == nil ? no_span() : base.span
+	return base == nil ? NO_SPAN : base.span
 }
 
 stmt_has_error :: proc(s: Stmt) -> bool {
@@ -1376,7 +1376,7 @@ item_base :: proc(item: Item) -> ^Node_Base {
 
 item_span :: proc(item: Item) -> Span {
 	base := item_base(item)
-	return base == nil ? no_span() : base.span
+	return base == nil ? NO_SPAN : base.span
 }
 
 File :: struct {

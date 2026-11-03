@@ -2971,7 +2971,7 @@ solve_loan_liveness :: proc(state: ^Prov_Solve) {
 		block := graph.blocks[id]
 		queued[id] = false
 		mem.zero_slice(state.live)
-		slice.fill(state.uses, no_span())
+		slice.fill(state.uses, NO_SPAN)
 		for successor in block.succs {
 			target := graph.blocks[successor]
 			for value, index in target.live_entry {
@@ -3751,7 +3751,7 @@ report_borrow_conflict :: proc(state: ^Prov_Solve, event: Prov_Event, loan: Prov
 @(private = "file")
 note_last_use_move :: proc(c: ^Compiler, verb: string) {
 	if verb == LAST_USE_VERB {
-		add_notef(c, no_span(), "a copy of a local that nothing reads afterwards moves it; write `.clone()` to copy it instead")
+		add_notef(c, NO_SPAN, "a copy of a local that nothing reads afterwards moves it; write `.clone()` to copy it instead")
 	}
 }
 

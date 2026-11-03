@@ -367,7 +367,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	item := lends ? pointer_to(k.c, element, false) : element
 	if next_kind == .Map_Next {
 		lent := yield_pair(k.c, Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed})
-		item = yield_item_type(k, element, lent, no_span())
+		item = yield_item_type(k, element, lent, NO_SPAN)
 		if item == INVALID_TYPE { return }
 	}
 	next := synth_receiver_proc(

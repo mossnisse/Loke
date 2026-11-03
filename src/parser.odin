@@ -1224,7 +1224,7 @@ reject_earlier_spelling :: proc(p: ^Parser, span: Span, attributes, keyword: str
 		"a record's attributes are written on its declaration: `%s Name :: %s {{ ... }}`",
 		attributes, keyword,
 	)
-	add_notef(p.c, no_span(), "`lokec -migrate` rewrites this")
+	add_notef(p.c, NO_SPAN, "`lokec -migrate` rewrites this")
 }
 
 // `move_only struct`, the earlier spelling of `@(move_only)`, puts it in the

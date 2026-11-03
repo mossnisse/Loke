@@ -569,7 +569,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 	for name in ([]string{"Probe", "Nested", "Rejected", "Probe"}) {
 		info := interface_info_for(&k, scope.names[intern_identifier(&p.c, name)])
 		if !testing.expectf(t, info != nil, "missing interface %s", name) { return }
-		held := interface_satisfied(&k, info, args, no_span(), report = false)
+		held := interface_satisfied(&k, info, args, NO_SPAN, report = false)
 		testing.expectf(t, held == (name != "Rejected"), "%s returned the wrong probe result", name)
 		after := emission_registries(&p.c)
 		testing.expectf(t, after == before, "%s changed emission state: before %v, after %v", name, before, after)
@@ -763,7 +763,7 @@ package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
 	init_semantic_stores(&c)
-	id, loaded := load_package_dir(&c, root, root, no_span())
+	id, loaded := load_package_dir(&c, root, root, NO_SPAN)
 	if !testing.expect(t, loaded, "a literal directory path containing glob syntax did not load") {
 		report(&c)
 		return
@@ -787,13 +787,13 @@ failed_package_loads_are_not_cached :: proc(t: ^testing.T) {
 	defer destroy_compilation(&c)
 	init_semantic_stores(&c)
 	before := len(c.packages)
-	id, loaded := load_package_dir(&c, root, root, no_span())
+	id, loaded := load_package_dir(&c, root, root, NO_SPAN)
 	testing.expect(t, !loaded && id == INVALID_PACKAGE && len(c.packages) == before, "a failed load created a package")
 
 	if !testing.expect(t, os.write_entire_file(path, transmute([]u8)string("package retry;")) == nil) {
 		return
 	}
-	id, loaded = load_package_dir(&c, root, root, no_span())
+	id, loaded = load_package_dir(&c, root, root, NO_SPAN)
 	testing.expect(t, loaded && id != INVALID_PACKAGE && len(package_of(&c, id).files) == 1, "a corrected package could not be retried")
 }
 
@@ -1984,11 +1984,11 @@ main :: proc() {}
 truncating_diagnostics_restores_the_error_count :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
-	errorf(&c, no_span(), "L9999", "kept")
+	errorf(&c, NO_SPAN, "L9999", "kept")
 	mark := len(c.diagnostics)
-	errorf(&c, no_span(), "L9998", "speculative")
-	warnf(&c, no_span(), "L9997", "speculative warning")
-	add_notef(&c, no_span(), "speculative note")
+	errorf(&c, NO_SPAN, "L9998", "speculative")
+	warnf(&c, NO_SPAN, "L9997", "speculative warning")
+	add_notef(&c, NO_SPAN, "speculative note")
 
 	truncate_diagnostics(&c, mark)
 	testing.expectf(t, len(c.diagnostics) == 1, "expected one diagnostic, got %d", len(c.diagnostics))
@@ -1996,7 +1996,7 @@ truncating_diagnostics_restores_the_error_count :: proc(t: ^testing.T) {
 
 	// A warning never raised the count, so dropping it must not lower it.
 	mark = len(c.diagnostics)
-	warnf(&c, no_span(), "L9997", "only a warning")
+	warnf(&c, NO_SPAN, "L9997", "only a warning")
 	truncate_diagnostics(&c, mark)
 	testing.expectf(t, c.error_count == 1, "dropping a warning changed the error count to %d", c.error_count)
 }

@@ -166,7 +166,7 @@ discover_formatters :: proc(c: ^Compiler) {
 	iface := interface_info_for(&k, dyn.dyn_interface)
 	for type in c.typeid_order {
 		if !type_is_printable(c, type) { continue }
-		c.formatters[type] = request_witness(&k, iface, type, nil, no_span())
+		c.formatters[type] = request_witness(&k, iface, type, nil, NO_SPAN)
 	}
 }
 

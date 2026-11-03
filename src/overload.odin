@@ -545,7 +545,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			waiting_arg  = inference.waiting_arg,
 		}
 	}
-	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
+	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, NO_SPAN, report = false)
 	if !made {
 		reason := "its `where` bounds are not satisfied by these arguments"
 		if instance != nil && instance.rejection.message != "" {
@@ -809,7 +809,7 @@ report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Ca
 			type_name(k.c, sym.proc_type),
 		)
 	}
-	add_notef(k.c, no_span(), "%s", failing_tie_breaker(all, maximal))
+	add_notef(k.c, NO_SPAN, "%s", failing_tie_breaker(all, maximal))
 }
 
 @(private = "file")

@@ -3,7 +3,7 @@
 package lokec
 
 emission_contract_error :: proc(c: ^Compiler, message: string) -> bool {
-	errorf(c, no_span(), "L0405", "internal backend contract violation: %s", message)
+	errorf(c, NO_SPAN, "L0405", "internal backend contract violation: %s", message)
 	return false
 }
 

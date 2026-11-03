@@ -203,7 +203,7 @@ query_signatures :: proc(s: ^Compilation_Session, handle: Symbol_Handle) -> ([]Q
 // disagreeing at the same source position yield no symbol/type for that part.
 query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32) -> (Query_Position, bool) {
 	if source, found := query_source(s, snapshot, file); !found || int(offset) >= len(source.text) { return {}, false }
-	best := Query_Occurrence{span = no_span()}
+	best := Query_Occurrence{span = NO_SPAN}
 	symbol_conflict, type_conflict := false, false
 	for occurrence in s.queries.occurrences {
 		span := occurrence.span
@@ -247,7 +247,7 @@ merge_occurrence :: proc(s: ^Compilation_Session, best: ^Query_Occurrence, occur
 // Instantiations disagreeing about it yield no symbol/type for that part.
 query_selector_operand :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32) -> (Query_Position, bool) {
 	if source, found := query_source(s, snapshot, file); !found || int(offset) >= len(source.text) { return {}, false }
-	best := Query_Occurrence{span = no_span()}
+	best := Query_Occurrence{span = NO_SPAN}
 	symbol_conflict, type_conflict := false, false
 	for occurrence in s.queries.operands {
 		span := occurrence.span
@@ -497,8 +497,8 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		q.symbols[index] = Query_Symbol{
 			handle = Symbol_Handle{s.snapshot, Symbol_Id(index)}, name = identifier_text(c, symbol.name), kind = symbol.kind,
 			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, symbol.span},
-			extent = Query_Location{s.snapshot, no_span()}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
-			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, no_span()},
+			extent = Query_Location{s.snapshot, NO_SPAN}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
+			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, NO_SPAN},
 			public = symbol.public, generic = symbol.generic, promotes = symbol.kind == .Field && symbol.is_using,
 		}
 		if id == Symbol_Id(index) && written {
@@ -506,7 +506,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		}
 		if written {
 			append(&q.occurrences, Query_Occurrence{span = symbol.span, symbol = Symbol_Id(index), type = type})
-		} else { q.symbols[index].definition.span = no_span() }
+		} else { q.symbols[index].definition.span = NO_SPAN }
 	}
 	for id, index in q.canonical {
 		if index > 0 && int(id) != index && q.symbols[id].type.id != q.symbols[index].type.id { q.symbols[id].type.id = INVALID_TYPE }
@@ -533,7 +533,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		if literal == nil && symbol.decl != nil { literal = decl_proc_literal(symbol.decl) }
 		if literal != nil && literal.signature != nil {
 			span := literal.signature.span
-			if span.file != NO_FILE && int(span.file) < len(c.sources) && int(span.hi) <= len(c.sources[span.file].text) {
+			if valid_query_span(c, span) {
 				text = c.sources[span.file].text[span.lo:span.hi]
 			}
 		}

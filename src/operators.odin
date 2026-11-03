@@ -321,7 +321,7 @@ template_overload_for_receiver :: proc(k: ^Checker, id: Symbol_Id, receiver: Typ
 	if !inference.ok {
 		return INVALID_SYMBOL
 	}
-	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
+	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, NO_SPAN, report = false)
 	return made ? instance.symbol : id
 }
 
@@ -725,7 +725,7 @@ template_instance_at :: proc(d: Delegation, template: ^Generic_Template, positio
 	if !inference.ok {
 		return INVALID_SYMBOL
 	}
-	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
+	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, NO_SPAN, report = false)
 	if !made || !slice.contains(symbol_of(k.c, instance.symbol).params, d.underlying) {
 		return INVALID_SYMBOL
 	}

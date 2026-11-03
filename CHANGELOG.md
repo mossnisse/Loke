@@ -1461,6 +1461,11 @@ checklist.
   map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
   ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a
   record holding a `D` keyed a map by that pair.
+- The same error reported several times from one position, as each instance of a generic procedure
+  does, now prints once with each instance as a note, also when another error at that position fell
+  between the repeats. Errors at one position now print narrowest first.
+- A diagnostic's caret line counts characters, so a mark after or across non-ASCII text in a string
+  or comment stands under what it marks.
 - `L0740` reads more of what a public declaration writes
   ([Private names in public declarations](design.md#private-names-in-public-declarations)). It now
   warns about a private name that a block's `$` name had hidden from every later declaration; a

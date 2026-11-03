@@ -148,7 +148,7 @@ check_hook_role :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) {
 			errorf(k.c, sym.span, "L0488", "a move-only type cannot also declare `hook(copy)`")
 			// Which arguments make it so is the block's to say, by a bound on the hook.
 			if info != nil && info.instance_of != INVALID_SYMBOL && !info.move_only {
-				add_notef(k.c, no_span(), "a field makes `%s` move-only; a bound on the hook, such as `where is_copyable(T)`, leaves it out of this instance", type_name(k.c, subject))
+				add_notef(k.c, NO_SPAN, "a field makes `%s` move-only; a bound on the hook, such as `where is_copyable(T)`, leaves it out of this instance", type_name(k.c, subject))
 			}
 			return
 		}
@@ -411,12 +411,12 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 	errorf(k.c, name_span, "L0747", "`%s` declares `hook(drop)`, so it must say how it is copied", name)
 	add_notef(k.c, written.drop_span, "`hook(drop)` is declared here")
 	if type_clone_disabled(k.c, subject) {
-		add_notef(k.c, no_span(), "`%s` is already move-only through a field; write `@(move_only)` on its declaration to say so", name)
+		add_notef(k.c, NO_SPAN, "`%s` is already move-only through a field; write `@(move_only)` on its declaration to say so", name)
 		return
 	}
-	add_notef(k.c, no_span(), "if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration")
-	add_notef(k.c, no_span(), "if a copy must do more than copy each field, declare `hook(copy)`")
-	add_notef(k.c, no_span(), "if copying each field is right, write `@(fieldwise_copy)` on its declaration")
+	add_notef(k.c, NO_SPAN, "if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration")
+	add_notef(k.c, NO_SPAN, "if a copy must do more than copy each field, declare `hook(copy)`")
+	add_notef(k.c, NO_SPAN, "if copying each field is right, write `@(fieldwise_copy)` on its declaration")
 }
 
 @(private = "file")

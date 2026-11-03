@@ -130,7 +130,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 adapter_source_next :: proc(k: ^Checker, iterator, element: Type_Id, fallback: Yield_Kind) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
 	next = iteration_member(k, iterator, "next")
 	yield = iterator_yield(k, iterator, element, fallback)
-	item = iterator_item_type(k, iterator, element, yield, no_span(), report = false)
+	item = iterator_item_type(k, iterator, element, yield, NO_SPAN, report = false)
 	ok = item != INVALID_TYPE && iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item))
 	return
 }

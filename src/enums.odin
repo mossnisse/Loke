@@ -124,7 +124,7 @@ synth_enum :: proc(c: ^Compiler, name: string, members: []string) -> Type_Id {
 	for member, index in members {
 		fields[index] = new_symbol(c, Symbol {
 			name        = intern_identifier(c, member),
-			span        = no_span(),
+			span        = NO_SPAN,
 			kind        = .Enum_Member,
 			type        = type,
 			index       = u32(index),

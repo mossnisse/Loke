@@ -337,13 +337,13 @@ warn_copy_cost :: proc(
 		COPY_SITE_TEXT[site], type_size(k.c, type), source_text,
 	)
 	if in_loop {
-		add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
+		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
 	}
 	// Never advise inout: it grants mutation and changes which aliases are legal (design.md).
 	if name != "" && transferable && site != .Return {
-		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", name, name)
+		add_notef(k.c, NO_SPAN, "write `move(%s)` if `%s` is no longer needed", name, name)
 	}
-	add_notef(k.c, no_span(), "take a pointer or `Shared(T)` if the two names should share one value")
+	add_notef(k.c, NO_SPAN, "take a pointer or `Shared(T)` if the two names should share one value")
 }
 
 @(private = "file")
@@ -361,9 +361,9 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 	}
 	warnf(k.c, span, "L0507", "this %s clones %s", COPY_SITE_TEXT[site], object)
 	if in_loop {
-		add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
+		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
 	}
-	add_notef(k.c, no_span(), "%s", hint)
+	add_notef(k.c, NO_SPAN, "%s", hint)
 }
 
 // The held reports, from `mark` on, whose copies last-use transfer left copies.

@@ -1,0 +1,8 @@
+// Each instance reports the same two errors from one position, the wider and the
+// narrower in turn, so a repeat does not directly follow what it repeats. Each
+// is still printed once, with what every instance adds as a note.
+package main;
+
+f :: proc(v: $T) { missing_a + "x"; }
+
+main :: proc() { f(1); f(2.5); f(true); }

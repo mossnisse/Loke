@@ -222,17 +222,17 @@ seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
 	for entry in defines {
 		split := strings.index_byte(entry, '=')
 		if split <= 0 {
-			errorf(c, no_span(), "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
+			errorf(c, NO_SPAN, "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
 			continue
 		}
 		name := entry[:split]
 		text := entry[split + 1:]
 		if !identifier_spelling(name) {
-			errorf(c, no_span(), "L0388", "`%s` is not a valid configuration name", name)
+			errorf(c, NO_SPAN, "L0388", "`%s` is not a valid configuration name", name)
 			continue
 		}
 		if _, duplicate := c.defines[name]; duplicate {
-			errorf(c, no_span(), "L0388", "`%s` is defined more than once", name)
+			errorf(c, NO_SPAN, "L0388", "`%s` is defined more than once", name)
 			continue
 		}
 		switch text {
@@ -265,21 +265,21 @@ register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	for entry in entries {
 		split := strings.index_byte(entry, '=')
 		if split <= 0 {
-			errorf(c, no_span(), "L0333", "`-collection %s` needs the form name=path", entry)
+			errorf(c, NO_SPAN, "L0333", "`-collection %s` needs the form name=path", entry)
 			continue
 		}
 		name := entry[:split]
 		root := entry[split + 1:]
 		if strings.index_byte(name, ':') >= 0 {
-			errorf(c, no_span(), "L0333", "collection name `%s` cannot contain `:`", name)
+			errorf(c, NO_SPAN, "L0333", "collection name `%s` cannot contain `:`", name)
 			continue
 		}
 		if root == "" {
-			errorf(c, no_span(), "L0333", "collection `%s` needs a path", name)
+			errorf(c, NO_SPAN, "L0333", "collection `%s` needs a path", name)
 			continue
 		}
 		if explicit[name] {
-			errorf(c, no_span(), "L0333", "collection `%s` is registered more than once", name)
+			errorf(c, NO_SPAN, "L0333", "collection `%s` is registered more than once", name)
 			continue
 		}
 		explicit[name] = true

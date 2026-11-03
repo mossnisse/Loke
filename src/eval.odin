@@ -131,7 +131,7 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 		end_commit(k.c, saved_speculation)
 	}
 	if instance, found := k.c.procedure_instances[symbol_id]; found {
-		promote_generic_instance(k, instance, no_span())
+		promote_generic_instance(k, instance, NO_SPAN)
 	}
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || symbol.kind != .Proc {

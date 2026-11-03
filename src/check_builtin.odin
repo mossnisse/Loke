@@ -948,8 +948,7 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Bui
 @(private = "file")
 source_location_const :: proc(k: ^Checker, type: Type_Id, span: Span, procedure: string) -> Const_Value {
 	file, line, column := "", 0, 0
-	if span.file != NO_FILE && int(span.file) < len(k.c.sources) {
-		source := &k.c.sources[span.file]
+	if source := span_source(k.c, span); source != nil {
 		file = source.path
 		line, column = line_col(source, span.lo)
 	}

@@ -108,7 +108,7 @@ migrate_spelling :: proc(c: ^Compiler, file: u32, spelling: Earlier_Spelling, ed
 			c, has_keyword ? spelling.keyword : spelling.groups, "L0752",
 			"`-migrate` moves a record's attributes to its declaration, and this record has none",
 		)
-		add_notef(c, no_span(), "declare the type, `Name :: struct {{ ... }}`, and write the attributes there")
+		add_notef(c, NO_SPAN, "declare the type, `Name :: struct {{ ... }}`, and write the attributes there")
 		return
 	}
 

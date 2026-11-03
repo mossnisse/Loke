@@ -64,7 +64,7 @@ bootstrap_symbol :: proc(k: ^Checker, pkg: ^Package, name: string, want: Bootstr
 		return id
 	}
 	errorf(
-		k.c, no_span(), "L0704",
+		k.c, NO_SPAN, "L0704",
 		"`base:runtime` must declare `%s` as a %s; the compiler cannot bootstrap without it",
 		name, want == .Proc_Group ? "procedure group" : "type",
 	)

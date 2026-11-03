@@ -105,13 +105,13 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 		context.allocator,
 	)
 	if err != nil || state.exit_code != 0 {
-		errorf(c, no_span(), "L0405", "cannot run the layout probe")
+		errorf(c, NO_SPAN, "L0405", "cannot run the layout probe")
 		return 2
 	}
 	text, _ := strings.replace_all(string(stdout), "\r\n", "\n")
 	lines := strings.split_lines(strings.trim_space(text))
 	if len(lines) != len(probes) {
-		errorf(c, no_span(), "L0405", "the layout probe produced %d values, expected %d", len(lines), len(probes))
+		errorf(c, NO_SPAN, "L0405", "the layout probe produced %d values, expected %d", len(lines), len(probes))
 		return 2
 	}
 	disagreements := 0
@@ -120,7 +120,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 		if !parsed || actual != probe.expected {
 			errorf(
 				c,
-				no_span(),
+				NO_SPAN,
 				"L0405",
 				"%s: the checker says %d, LLVM says %s",
 				probe.description,

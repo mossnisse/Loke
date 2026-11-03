@@ -70,7 +70,7 @@ write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool) -> int {
 			fmt.println(path)
 			status = 1
 		} else if os.write_entire_file(path, transmute([]u8)text) != nil {
-			errorf(c, no_span(), "L0401", "cannot write `%s`", path)
+			errorf(c, NO_SPAN, "L0401", "cannot write `%s`", path)
 			status = 1
 		}
 	}
@@ -120,7 +120,7 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 	defer destroy_compilation(&scratch)
 	formatted, ok := format_text(&scratch, INTERFACE_FILE, raw)
 	if !ok || a.damaged {
-		errorf(c, no_span(), "L0405", "internal error: the interface file of package `%s` would not match its source", a.name)
+		errorf(c, NO_SPAN, "L0405", "internal error: the interface file of package `%s` would not match its source", a.name)
 		return "", false
 	}
 	return formatted, true

@@ -84,9 +84,9 @@ try {
     # Whether a check's findings belong to the program is one question,
     # `committing` in source.odin; a raw depth test elsewhere is how an
     # enrollment used to slip through a probe (compiler-architecture.md
-    # "Checking and overload resolution").
+    # "Checking and overload resolution"). compiler.odin only declares it.
     $depth = Get-ChildItem src/*.odin |
-        Where-Object { $_.Name -notlike '*_test.odin' -and $_.Name -ne 'source.odin' } |
+        Where-Object { $_.Name -notlike '*_test.odin' -and $_.Name -notin 'source.odin', 'compiler.odin' } |
         Select-String -Pattern '\bspeculation_depth\b' -CaseSensitive
     if ($depth) {
         $depth | ForEach-Object { Write-Host "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }

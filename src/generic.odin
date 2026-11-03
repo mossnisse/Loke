@@ -2100,7 +2100,7 @@ note_instantiation_stack :: proc(k: ^Checker, from := -1) {
 		shown := 0
 		#reverse for frame in k.c.instantiation_stack {
 			if shown >= NOTED_INSTANTIATION_FRAMES {
-				append(&diagnostic.notes, Note{span = no_span(), message = fmt.aprintf(
+				append(&diagnostic.notes, Note{span = NO_SPAN, message = fmt.aprintf(
 					"and %d more instantiation%s", len(k.c.instantiation_stack) - shown,
 					len(k.c.instantiation_stack) - shown == 1 ? "" : "s",
 				)})
