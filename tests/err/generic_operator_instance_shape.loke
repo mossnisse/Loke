@@ -1,0 +1,20 @@
+// design.md "Operator declarations": each instance of a generic operator has
+// the shape its symbol takes, and its parameters are run-time operands.
+package main;
+
+Box :: struct($T: type) { a: T }
+
+not_bool :: operator(==) proc(a, b: Box($T)) -> int { return 1; }
+
+not_inout :: operator(+=) proc(a: Box($T), b: Box(T)) {}
+
+Fixed :: struct { n: int }
+
+compile_time :: operator(+) proc(f: Fixed, $n: int) -> int { return f.n + n; }
+
+main :: proc() {
+	a := Box(int){1};
+	same := a == a;
+	_ = same;
+	a += a;
+}

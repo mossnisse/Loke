@@ -2472,6 +2472,9 @@ instantiate_procedure_signature :: proc(
 	before := k.c.error_count
 	clone.sig_state = .Checked
 	resolve_proc_signature(k, literal, symbol_id)
+	if origin.operator != "" {
+		validate_operator_instance(k, clone, symbol_id)
+	}
 	if k.c.error_count > before {
 		if report {
 			note_instantiation_stack(k)

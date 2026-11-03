@@ -744,6 +744,8 @@ Scope :: struct {
 	// Set when a lookup finds a name here. Only a probe reads it: whether a
 	// `$` default resolves any of its procedure's parameters.
 	reached:    bool,
+	// Set when an operator is declared here, so most scopes skip that search.
+	declares_operator: bool,
 	// The generic instance whose bindings this scope holds, or nil. A type
 	// declared in one instance's body is told from another's by it.
 	instance:   ^Instance,
@@ -772,7 +774,7 @@ Package :: struct {
 	// unused import must not make an existing expression ambiguous, so this is
 	// never merged into the type itself.
 	extensions:     map[Type_Id][]Symbol_Id,
-	operators:      map[string]^[dynamic]Symbol_Id,
+	operators:      map[string][dynamic]Symbol_Id,
 	imports:        [dynamic]Package_Import,
 	// How many of `imports` already had their alias bound. The edge list only
 	// grows, so a later discovery round starts here instead of re-reporting an
@@ -1633,7 +1635,7 @@ new_package :: proc(c: ^Compiler, name: string, key := "") -> Package_Id {
 		key            = key,
 		files          = make([dynamic]^File, 0, 4, c.semantic_allocator),
 		extensions     = make(map[Type_Id][]Symbol_Id, c.semantic_allocator),
-		operators      = make(map[string]^[dynamic]Symbol_Id, c.semantic_allocator),
+		operators      = make(map[string][dynamic]Symbol_Id, c.semantic_allocator),
 		imports        = make([dynamic]Package_Import, 0, 4, c.semantic_allocator),
 		hoisted_procs  = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator),
 		instances      = make([dynamic]Instance_Decl, 0, 4, c.semantic_allocator),

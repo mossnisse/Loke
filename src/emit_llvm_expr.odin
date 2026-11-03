@@ -1594,6 +1594,22 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	left_data, left_len := emit_text_parts(e, v.lhs)
 	right_data, right_len := emit_text_parts(e, v.rhs)
+	return emit_text_concat_parts(e, left_data, left_len, right_data, right_len)
+}
+
+// Two evaluated operands of one text `type`, as a delegated `+` has them.
+@(private)
+emit_text_concat_values :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
+	storage := llvm_type(e, type)
+	return emit_text_concat_parts(
+		e,
+		extract(e, storage, lhs, STRING_DATA), extract(e, storage, lhs, STRING_LEN),
+		extract(e, storage, rhs, STRING_DATA), extract(e, storage, rhs, STRING_LEN),
+	)
+}
+
+@(private = "file")
+emit_text_concat_parts :: proc(e: ^Emitter, left_data, left_len, right_data, right_len: string) -> string {
 	provider := emit_default_allocator(e)
 	return emit_text_allocating_call(
 		e, "loke_rt_v1_string_concat",

@@ -423,10 +423,7 @@ Order_Policy :: struct {
 @(private = "file")
 resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_Policy, string) {
 	callable, _ := inherent_self_operator(c, element, "<")
-	less, builtin := operator_delegate_end(c, callable)
-	if builtin {
-		return Order_Policy{kind = .Builtin}, ""
-	}
+	less, _ := operator_delegate_end(c, callable)
 	if less != INVALID_SYMBOL {
 		return Order_Policy{kind = .Inherent, less = less}, ""
 	}

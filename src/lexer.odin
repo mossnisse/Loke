@@ -736,6 +736,39 @@ operator_spelling :: proc(kind: Token_Kind) -> string {
 	return ""
 }
 
+// The token an operator's spelling stands for, or `.EOF` for the index forms and
+// `in`, which no operator token spells.
+operator_token :: proc(symbol: string) -> Token_Kind {
+	for op in operator_table {
+		if op.text == symbol {
+			return op.kind
+		}
+	}
+	return .EOF
+}
+
+// The binary operator a compound assignment applies, or `.EOF`; the parser
+// recognizes a compound assignment by this answer.
+compound_operator :: proc(op: Token_Kind) -> Token_Kind {
+	#partial switch op {
+	case .Plus_Eq:         return .Plus
+	case .Minus_Eq:        return .Minus
+	case .Star_Eq:         return .Star
+	case .Plus_Wrap_Eq:    return .Plus_Wrap
+	case .Minus_Wrap_Eq:   return .Minus_Wrap
+	case .Star_Wrap_Eq:    return .Star_Wrap
+	case .Slash_Eq:        return .Slash
+	case .Percent_Eq:      return .Percent
+	case .Pipe_Eq:         return .Pipe
+	case .Tilde_Eq:        return .Tilde
+	case .Amp_Eq:          return .Amp
+	case .Amp_Tilde_Eq:    return .Amp_Tilde
+	case .Shl_Eq:          return .Shl
+	case .Shr_Eq:          return .Shr
+	}
+	return .EOF
+}
+
 @(private = "file")
 operator :: proc(l: ^Lexer) -> Token {
 	lo := l.pos

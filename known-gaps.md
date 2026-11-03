@@ -23,6 +23,24 @@ main :: proc() {
 }
 ```
 
+### `delegate` does not see an operator declared after it
+
+[Delegating operators](design.md#delegating-operators) forwards the underlying type's overloads,
+and a package's declarations are otherwise order-independent, but `delegate` looks the overloads up
+when its own `impl` block is resolved. One whose operator comes later in the package fails with
+`L0420`, "`+` is not defined for `V`":
+
+```loke
+package main;
+W :: distinct V;
+impl W { delegate(+); }
+V :: struct { a: int }
+impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
+main :: proc() {}
+```
+
+Found on 2026-11-03 (P3). Moving the `impl V` block above the `delegate` is the workaround.
+
 ### An export can still spell a generated name the compiler fixes
 
 [`@(export)`](design.md#export) reserves only the `loke_rt_` prefix, and the names the naming pass

@@ -25,6 +25,15 @@ checklist.
   allocates through an `Allocator` read from a global makes a block of two tasks `L0732`, where it
   compiled and both could use that region at once. Upgrade by having the hook use its owner's
   allocator, or by giving each task what it needs rather than a `thread_local` owner.
+- An instance of a generic operator is held to the operator's shape
+  ([Operator declarations](design.md#operator-declarations)), so `operator(==) proc(a, b: V($T)) -> int`
+  is now `L0416` where an instance is made. It compiled, and `a == b` was an `int`. Upgrade by giving
+  the operator the result its symbol takes.
+- `delegate` of a symbol is now `L0420` when a block of the distinct type declares an overload of it
+  with the type in any operand position, not only the first
+  ([Delegating operators](design.md#delegating-operators)).
+  `impl W { delegate(*); r :: operator(*) proc(s: f64, w: W) -> W { ... } }` compiled. Upgrade by
+  writing every overload of that symbol by hand.
 - A `slot` whose written `self` type is not the interface's subject is `L0442`
   ([Interface bodies](design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
   `interface($T: type)` compiled and was never met. Upgrade by writing the subject, or no type.
@@ -1446,6 +1455,26 @@ checklist.
   padding's; it was `L0457` ([Destructuring](design.md#destructuring)).
 - `foreach (a, b in ints)` reports that `int` is not a record, not that it has 0 fields and needs
   "1 or 0 parts" (`L0459`).
+- `delegate` now covers what [Delegating operators](design.md#delegating-operators) says it does:
+  `+` on a distinct `string` or `string_view`, which failed in clang with `L0403`; `<<` and `>>`, which
+  were `L0420`; the operators of a distinct `Simd`, also `L0420`; an overload with the underlying type
+  in any operand position, such as `f64 * V` or `operator(in)`; a generic overload; the built-in
+  operation beside a user overload that mentions the type; and an overload's parameter defaults.
+- A generic `operator([])`, `operator([]=)` or `operator([:])` declared outside an `impl` block is
+  found ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)),
+  where `a[0]` was `L0362`.
+- A user unary `-` or `~` no longer shadows the built-in one on a `Simd` type
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)), as a
+  binary overload already did not.
+- A `caller_location()` default on an operator reports the expression that used it, not the
+  declaration ([`caller_location()`](design.md#caller_location)).
+- `@(deprecated)` and `@(require_results)` take effect on an operator declaration, and a deprecated
+  operator warns where an expression uses it as well as where it is called by name.
+- An operator taking `self: ^` accepts a pointer operand, as its named call does; `p + v` was `L0310`.
+- Comparing a type whose inherent `==` is in a group that is not `@(public)` gets the same message as
+  one with a single overload (`L0355`).
+- An operator with a `$` parameter is `L0416` where it is declared
+  ([Operator declarations](design.md#operator-declarations)). Using one crashed the compiler.
 - `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
   statement ends, as `make_source().iter()` already did; it was never dropped
   ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).

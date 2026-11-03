@@ -1,0 +1,43 @@
+package main;
+
+import "base:runtime";
+import "core:fmt";
+
+// design.md "caller_location()": a default reports each use that omits it, an
+// operator's as a named call's. design.md "Receiver forms": a borrowing `self: ^`
+// takes a pointer, in an operator as in a named call.
+
+Grid :: struct { x: int }
+
+impl Grid {
+	line :: operator([]) proc(g: Grid, i: int, at: runtime.Source_Code_Location = caller_location()) -> int {
+		return int(at.line);
+	}
+	plus :: operator(+) proc(self: ^, other: Grid) -> int { return self.x + other.x; }
+}
+
+// A built-in unary operation on a vector is not shadowed; there being none on
+// unsigned lanes, the overload runs there.
+Float4 :: Simd(f32, 4);
+Unsigned4 :: Simd(u32, 4);
+
+impl Float4 {
+	same :: operator(-) proc(a: Float4) -> Float4 { return a; }
+}
+
+impl Unsigned4 {
+	same :: operator(-) proc(a: Unsigned4) -> Unsigned4 { return a; }
+}
+
+main :: proc() {
+	grid := Grid{1};
+	fmt.println(grid[1]);
+	fmt.println(Grid.line(grid, 1));
+	pointer := &grid;
+	fmt.println(pointer + grid);
+
+	lanes: Float4 = 1.0;
+	fmt.println((-lanes)[0]);
+	unsigned := Unsigned4{1, 2, 3, 4};
+	fmt.println((-unsigned)[1]);
+}

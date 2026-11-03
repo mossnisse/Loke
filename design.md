@@ -3296,6 +3296,9 @@ The following may be overloaded:
 | Compound assignment | `+=`, `-=`, `*=`, `+%=`, `-%=`, `*%=`, `/=`, `%=`, `\|=`, `~=`, `&=`, `&~=`, `<<=`, `>>=` |
 | Structural syntax | `[]`, `[]=`, `[:]` |
 
+A parameter of an operator is an operand, a value at run time, so none is a `$`
+parameter; its type may still name one, as `proc(left, right: Vector($T))` does.
+
 An `operator(in)` takes the tested value first and the container second, the
 order in which `x in c` writes them:
 

@@ -515,7 +515,7 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 	if !ok {
 		return true
 	}
-	chosen, bound := resolve_operator(k, s.op_span, "[]=", []Type_Id{operand}, args, among = setters)
+	chosen, bound := resolve_operator(k, s.op_span, "[]=", setters, args)
 	if chosen == INVALID_SYMBOL {
 		return true
 	}
@@ -972,7 +972,7 @@ check_user_compound :: proc(
 	direct_args[0] = arg_from_expr(s.lhs[0], .Inout)
 	direct_args[1] = arg_from_expr(s.rhs[0])
 	direct := form_operator_set(k, compound, operands, direct_args)
-	if operator_viable(direct) {
+	if candidates_viable(direct.formed) {
 		chosen, bound := resolve_operator_set(k, s.op_span, direct, direct_args)
 		if chosen == INVALID_SYMBOL {
 			return true
@@ -987,7 +987,7 @@ check_user_compound :: proc(
 	args[0] = arg_from_expr(s.lhs[0])
 	args[1] = arg_from_expr(s.rhs[0])
 	set := form_operator_set(k, binary, operands, args)
-	if !operator_viable(set) {
+	if !candidates_viable(set.formed) {
 		if operator_exists(k, direct.members, operands) {
 			resolve_operator_set(k, s.op_span, direct, direct_args)
 			return true

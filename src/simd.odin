@@ -353,20 +353,21 @@ simd_operator_applies :: proc(c: ^Compiler, op: Token_Kind, element: Type_Id) ->
 }
 
 // `-v` and `~v`. Not `!v`: a mask is negated with `~`, and `!` stays scalar.
+simd_unary_applies :: proc(c: ^Compiler, op: Token_Kind, element: Type_Id) -> bool {
+	#partial switch op {
+	case .Minus:
+		return (type_is_integer(c, element) && type_signed(c, element)) || type_is_float(c, element)
+	case .Tilde:
+		return type_is_integer(c, element) || type_is_boolean(c, element)
+	}
+	return false
+}
+
 check_simd_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) {
 	v.type = INVALID_TYPE
 	info := type_of(k.c, operand)
 	element := info.element
-	permitted := false
-	#partial switch v.op {
-	case .Minus:
-		permitted =
-			(type_is_integer(k.c, element) && type_signed(k.c, element)) ||
-			type_is_float(k.c, element)
-	case .Tilde:
-		permitted = type_is_integer(k.c, element) || type_is_boolean(k.c, element)
-	}
-	if !permitted {
+	if !simd_unary_applies(k.c, v.op, element) {
 		errorf(
 			k.c, v.op_span, "L0686",
 			"unary `%s` does not apply to `%s` lanes",

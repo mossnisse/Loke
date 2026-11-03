@@ -500,14 +500,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 			v.type = INVALID_TYPE
 			return
 		}
-		// design.md "`@(deprecated=<string>)`": a warning at each use.
-		if sym.deprecated {
-			if sym.deprecated_message != "" {
-				warnf(k.c, v.span, "L0611", "`%s` is deprecated: %s", name, sym.deprecated_message)
-			} else {
-				warnf(k.c, v.span, "L0611", "`%s` is deprecated", name)
-			}
-		}
+		warn_deprecated_use(k, sym, name, v.span)
 
 	case .Builtin:
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
@@ -1458,7 +1451,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, position
 	if !ok {
 		return true
 	}
-	chosen, bound := resolve_operator(k, v.span, "[]", []Type_Id{operand}, args, among = candidates)
+	chosen, bound := resolve_operator(k, v.span, "[]", candidates, args)
 	if chosen == INVALID_SYMBOL {
 		return true
 	}
@@ -1547,7 +1540,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 		}
 		return
 	}
-	chosen, bound := resolve_operator(k, v.span, "[:]", []Type_Id{operand}, args, among = slicers)
+	chosen, bound := resolve_operator(k, v.span, "[:]", slicers, args)
 	if chosen == INVALID_SYMBOL {
 		return
 	}
@@ -1906,18 +1899,31 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) -> bool {
 	symbol := operator_text(v.op)
 	operands := []Type_Id{operand}
-	if !operator_exists(k, operator_candidates(k, symbol, operands), operands) {
+	members := operator_candidates(k, symbol, operands)
+	if !operator_exists(k, members, operands) {
 		return false
 	}
 	args := make([]Arg_Info, 1, k.c.semantic_allocator)
 	args[0] = arg_from_expr(v.operand)
-	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args)
+	chosen, bound := resolve_operator(k, v.op_span, symbol, members, args)
 	if chosen == INVALID_SYMBOL {
 		return true
 	}
 	v.operand = bound[0]
 	annotate_user_operator(k, &v.base, chosen)
 	return true
+}
+
+// design.md "`@(deprecated=<string>)`": a warning at each use.
+warn_deprecated_use :: proc(k: ^Checker, sym: ^Symbol, name: string, span: Span) {
+	if !sym.deprecated {
+		return
+	}
+	if sym.deprecated_message != "" {
+		warnf(k.c, span, "L0611", "`%s` is deprecated: %s", name, sym.deprecated_message)
+	} else {
+		warnf(k.c, span, "L0611", "`%s` is deprecated", name)
+	}
 }
 
 // `v` as a call of the operator overload resolution chose.
@@ -1940,9 +1946,9 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bo
 	args[1] = arg_from_expr(v.rhs)
 	negate := false
 	set := form_operator_set(k, symbol, operands, args)
-	if !operator_viable(set) {
+	if !candidates_viable(set.formed) {
 		equal := v.op == .Not_Eq ? form_operator_set(k, "==", operands, args) : Operator_Set{}
-		if !operator_viable(equal) {
+		if !candidates_viable(equal.formed) {
 			if operator_exists(k, set.members, operands) {
 				resolve_operator_set(k, v.op_span, set, args)
 				return true
@@ -1954,6 +1960,11 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bo
 	}
 	chosen, bound := resolve_operator_set(k, v.op_span, set, args)
 	if chosen == INVALID_SYMBOL {
+		return true
+	}
+	// A delegated vector `==` produces a lane mask, which `!` does not apply to.
+	if negate && !type_is_boolean(k.c, symbol_of(k.c, chosen).result) {
+		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
 		return true
 	}
 	v.lhs, v.rhs = bound[0], bound[1]

@@ -1,0 +1,56 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Operator lookup and overload resolution": a generic operator is
+// found as a concrete one is. A receiver-shaped one is found from its receiver,
+// and `delegate` forwards one to the instance over the underlying type.
+
+Pair :: struct($T: type) { a: [2]T }
+
+at :: operator([]) proc(p: inout Pair($T), i: int) -> inout T { return inout p.a[i]; }
+cut :: operator([:]) proc(p: Pair($T), lo, hi: int) -> T { return p.a[lo]; }
+
+Store :: struct($T: type) { a: [2]T }
+
+put :: operator([]=) proc(s: inout Store($T), i: int, x: T) { s.a[i] = x; }
+get :: operator([]) proc(s: Store($T), i: int) -> T { return s.a[i]; }
+// The index type is still to be inferred when the receiver is known.
+sum :: operator([]) proc(s: Store($T), i: $I, j: I) -> T { return s.a[int(i) + int(j)]; }
+
+Box :: struct($T: type) { a: T }
+
+add :: operator(+) proc(l, r: Box($T)) -> Box(T) { return {l.a + r.a}; }
+peek :: operator([]) proc(b: Box($T), i: int) -> T { return b.a + T(i); }
+has :: operator(in) proc(item: $T, b: Box($T)) -> bool { return b.a == item; }
+before :: operator(<) proc(l, r: Box($T)) -> bool { return l.a < r.a; }
+
+Crate :: distinct Box(int);
+
+impl Crate {
+	delegate(+, [], in, <);
+}
+
+// A bare `$T` takes the whole underlying type.
+always :: operator(==) proc(l, r: $T) -> bool { return true; }
+
+Lid :: distinct Box(int);
+
+impl Lid {
+	delegate(==);
+}
+
+main :: proc() {
+	pair := Pair(int){{1, 2}};
+	pair[0] = 5;
+	fmt.println(pair[0], pair[1], pair[0:1]);
+
+	store := Store(int){{1, 2}};
+	store[0] = 5;
+	store[1] += 4;
+	fmt.println(store[0], store[1], store[u8(0), u8(1)]);
+
+	crate := Crate(Box(int){1});
+	fmt.println(Box(int)(crate + crate).a, crate[4], 1 in crate, 2 in crate, crate < crate);
+	fmt.println(Lid(Box(int){1}) == Lid(Box(int){2}));
+}

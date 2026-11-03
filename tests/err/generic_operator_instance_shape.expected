@@ -1,0 +1,9 @@
+L0416
+@13:45
+`operator(+)` takes its operands at run time, so `$n` cannot be one
+L0416
+@17:12
+`operator(==)` produces `bool`
+L0416
+@19:4
+`operator(+=)` takes its destination as `inout`

@@ -253,11 +253,19 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 	}
 	op := operator_token(symbol.operator)
 	underlying := symbol.delegate_underlying
+	simd := type_is_simd(e.c, underlying)
 	if len(bound) == 1 {
-		return emit_unary_op(e, op, underlying, emit_expr(e, bound[0]))
+		operand := emit_expr(e, bound[0])
+		return simd ? emit_simd_unary_value(e, op, underlying, operand) : emit_unary_op(e, op, underlying, operand)
 	}
-	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_expr(e, bound[0])
-	rhs := emit_expr(e, bound[1])
+	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_borrowed_operand(e, bound[0])
+	rhs := emit_borrowed_operand(e, bound[1])
+	if simd {
+		return emit_simd_binary_values(e, op, underlying, lhs, underlying, rhs, underlying)
+	}
+	if op == .Plus && type_is_utf8_text(e.c, underlying) {
+		return emit_text_concat_values(e, underlying, lhs, rhs)
+	}
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		return emit_compare(e, op, underlying, lhs, rhs)

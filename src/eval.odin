@@ -834,7 +834,7 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (out: Eval_Value, success:
 	operand := eval_expr(ev, v.operand) or_return
 	// design.md "SIMD vectors": lane-wise.
 	if type_is_simd(ev.k.c, v.type) {
-		return eval_simd_unary(ev, v, operand)
+		return eval_simd_unary(ev, v.op, v.op_span, v.type, operand)
 	}
 	return eval_unary_value(ev, v.op, v.op_span, const_of(operand), v.type)
 }
@@ -923,20 +923,22 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (out: Eval_Value, succes
 
 // `-v` and `~v`, one lane at a time. `+v` is the operand.
 @(private = "file")
-eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> (out: Eval_Value, success: bool) {
-	if v.op == .Plus {
+eval_simd_unary :: proc(
+	ev: ^Evaluator, op: Token_Kind, op_span: Span, type: Type_Id, operand: Eval_Value,
+) -> (out: Eval_Value, success: bool) {
+	if op == .Plus {
 		return operand, true
 	}
-	info := underlying_info(ev.k.c, v.type)
+	info := underlying_info(ev.k.c, type)
 	if info == nil {
 		return Eval_Value{}, false
 	}
 	elements := eval_elements(ev, int(info.count)) or_return
 	for index in 0 ..< int(info.count) {
 		lane := const_of(eval_simd_lane(operand, index))
-		elements[index] = eval_unary_value(ev, v.op, v.op_span, lane, info.element) or_return
+		elements[index] = eval_unary_value(ev, op, op_span, lane, info.element) or_return
 	}
-	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+	return Eval_Value{kind = .Aggregate, type = type, elements = elements}, true
 }
 
 // One lane at a time; either operand may be a splatted scalar.
@@ -2348,6 +2350,12 @@ eval_operator_call :: proc(
 		operands[index] = operand
 	}
 	op := operator_token(symbol.operator)
+	if type_is_simd(ev.k.c, symbol.delegate_underlying) {
+		if count == 1 {
+			return eval_simd_unary(ev, op, site, symbol.result, operands[0])
+		}
+		return eval_simd_binary_values(ev, op, site, symbol.result, operands[0], operands[1])
+	}
 	if count == 1 {
 		applied := eval_unary_value(ev, op, site, const_of(operands[0]), symbol.delegate_underlying) or_return
 		return scalar(const_of(applied), symbol.result), true

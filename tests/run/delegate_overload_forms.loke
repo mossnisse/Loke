@@ -1,0 +1,85 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Delegating operators": `delegate` forwards every overload with the
+// underlying type among its operands, whatever its position, with the distinct
+// type put in that position, and beside the built-in operation when the
+// underlying type has one too.
+
+Bag :: struct { only: int }
+
+impl Bag {
+	holds :: operator(in) proc(item: int, bag: Bag) -> bool { return bag.only == item; }
+}
+
+Sack :: distinct Bag;
+
+impl Sack {
+	delegate(in);
+}
+
+Vector :: struct { x: f64 }
+
+impl Vector {
+	scaled :: operator(*) proc(v: Vector, by: f64) -> Vector { return {v.x * by}; }
+	scales :: operator(*) proc(by: f64, v: Vector) -> Vector { return {v.x * by + 1}; }
+}
+
+Velocity :: distinct Vector;
+
+impl Velocity {
+	delegate(*);
+}
+
+Point :: struct { x: int }
+
+times :: operator(*) proc(p: Point, by: int) -> Point { return {p.x * by}; }
+scale_by :: operator(*) proc(by: int, p: Point) -> Point { return {p.x * by + 1}; }
+shifted :: operator(+) proc(by: int, p: Point) -> int { return by + p.x; }
+
+// The built-in `int * int` and `int + int` come along with what mentions `int`.
+Count :: distinct int;
+
+impl Count {
+	delegate(*, +);
+}
+
+// An overload in another type's block mentions this one without declaring its
+// operator, and one written out stands for the one `delegate` would generate.
+Span :: distinct int;
+
+Moment :: struct { at: int }
+
+impl Moment {
+	by_int :: operator(+) proc(m: Moment, i: int) -> int { return m.at + i; }
+	by_span :: operator(+) proc(m: Moment, s: Span) -> int { return m.at + int(s) + 1000; }
+}
+
+impl Span {
+	delegate(+);
+}
+
+// A generated overload keeps the parameter defaults of what it forwards to.
+Table :: struct { base: int }
+
+impl Table {
+	at :: operator([]) proc(t: Table, i: int, j: int = 7) -> int { return t.base + i + j; }
+}
+
+Sheet :: distinct Table;
+
+impl Sheet {
+	delegate([]);
+}
+
+main :: proc() {
+	fmt.println(3 in Sack(Bag{3}), 4 in Sack(Bag{3}));
+	velocity := Velocity(Vector{2});
+	fmt.println(Vector(velocity * 2.0).x, Vector(2.0 * velocity).x);
+	count := Count(3);
+	fmt.println(int(count * count), (count * Point{2}).x, (Point{2} * count).x, int(count + count), int(count + Point{1}));
+	fmt.println(int(Span(1) + Span(2)), Moment{1} + int(2), Moment{1} + Span(2));
+	table := Table{100};
+	fmt.println(table[1], Sheet(table)[1], Sheet(table)[1, 2]);
+}

@@ -215,14 +215,18 @@ simd_select :: proc(e: ^Emitter, info: ^Type_Info, llvm, condition, if_true, if_
 }
 
 emit_simd_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
+	return emit_simd_unary_value(e, v.op, as_type, emit_expr(e, v.operand))
+}
+
+// The operator over an already-evaluated operand, as a delegated one has it.
+emit_simd_unary_value :: proc(e: ^Emitter, op: Token_Kind, as_type: Type_Id, operand: string) -> string {
 	info := underlying_info(e.c, as_type)
 	llvm := llvm_type(e, as_type)
-	operand := emit_expr(e, v.operand)
-	if v.op == .Plus {
+	if op == .Plus {
 		return operand
 	}
 	out := temp(e)
-	if v.op != .Minus {
+	if op != .Minus {
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", out, llvm, operand, simd_all_ones(e, info))
 	} else if type_is_float(e.c, info.element) {
 		fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
