@@ -41,6 +41,9 @@ Lifecycle :: struct {
 Lifecycle_Operations :: struct {
 	using facts: Lifecycle,
 	clone_fallible: bool,
+	// Whether dropping one can run a user hook, and so panic. A container's
+	// element hooks run inside the runtime, so one with managed parts counts.
+	drop_may_panic: bool,
 }
 
 finalize_lifecycle_operations :: proc(c: ^Compiler) -> bool {
@@ -69,10 +72,23 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	operations := Lifecycle_Operations{facts = facts}
 	operations.state = .Checking
 	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container || facts.boxed
+	if facts.boxed {
+		operations.drop_may_panic = lifecycle_of(c, box_element(c, under)).managed
+	} else if facts.container {
+		operations.drop_may_panic = lifecycle_of(c, container_element(c, under)).managed
+		if type_is_map(c, under) {
+			operations.drop_may_panic ||= lifecycle_of(c, container_key(c, under)).managed
+		}
+	} else if !facts.intrinsic {
+		operations.drop_may_panic = facts.custom_drop != INVALID_SYMBOL
+	}
 	c.lifecycle_operations[under] = operations
 	for part in lifecycle_parts(c, under) {
 		if !finalize_type_lifecycle(c, part) { return false }
 		operations.clone_fallible ||= c.lifecycle_operations[type_underlying(c, part)].clone_fallible
+		if !facts.intrinsic {
+			operations.drop_may_panic ||= c.lifecycle_operations[type_underlying(c, part)].drop_may_panic
+		}
 	}
 	operations.state = .Finite
 	c.lifecycle_operations[under] = operations

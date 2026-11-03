@@ -27,7 +27,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	operations := emit_lifecycle(e, copied)
 	copies := operations.managed && expression_is_borrowed_place(v.bound[0])
 	value := copies && widened ? emit_expr_at(e, v.bound[0], copied) : emit_expr(e, v.bound[0])
-	guard := Deferred{slot = -1}
+	guard := Deferred{}
 	if !copies {
 		guard = hold_temporary_value(e, payload, value)
 	}

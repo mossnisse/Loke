@@ -84,12 +84,12 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 		}
 
 	case ^Stmt_Defer:
-		entry := Deferred{flag = e.defer_flags[s.slot], stmt = s.stmt, on_failure = s.on_failure}
+		entry := Deferred{kind = .Written, flag = e.defer_flags[s.slot], stmt = s.stmt, on_failure = s.on_failure}
 		unwind_reserve(e, &entry)
 		e.unwind.slot_by_defer[s.slot] = entry.slot
 		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", e.defer_flags[s.slot])
 		unwind_register(e, entry)
-		append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
+		append(&e.cleanups[len(e.cleanups) - 1], entry)
 
 	case ^Stmt_Return:
 		emit_return_values(e, s)
@@ -314,12 +314,7 @@ emit_destructure_fields :: proc(
 ) -> (values: []string, guards: []Deferred) {
 	record := emit_expr(e, operand)
 	values = make([]string, len(plan.fields))
-	// An unguarded field holds no registration; a zero slot would name the
-	// frame's first one, which binding the field would then clear.
 	guards = make([]Deferred, len(plan.fields))
-	for &guard in guards {
-		guard.slot = -1
-	}
 	for field_id, index in plan.fields {
 		field := symbol_of(e.c, field_id)
 		// A padding field fills no binding, so the field's own slot is read.
@@ -433,7 +428,6 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	for value, index in s.rhs {
 		target := s.lhs[index]
 		type := expr_base(target).type
-		guards[index] = Deferred{slot = -1}
 		clones := index < len(s.rhs_clones) && s.rhs_clones[index]
 		values[index] = emit_copied_expr(e, value, type, clones, destination = place_root_symbol(target))
 		if inserting_map_index(target) != nil || (len(s.lhs) > 1 && !is_discard(target)) {
@@ -501,7 +495,7 @@ Displaced :: struct {
 // old value.
 @(private = "file")
 emit_replacing_store :: proc(
-	e: ^Emitter, s: ^Stmt_Assign, index: int, type: Type_Id, value, address: string, guard := Deferred{slot = -1},
+	e: ^Emitter, s: ^Stmt_Assign, index: int, type: Type_Id, value, address: string, guard := Deferred{},
 ) {
 	displaced := displace_place(e, s, index, address)
 	store(e, type, value, address)
@@ -982,7 +976,7 @@ returned_failure :: proc(e: ^Emitter) -> string {
 	}
 	pending := false
 	for scope in e.cleanups {
-		for entry in scope.entries {
+		for entry in scope {
 			pending ||= entry.on_failure
 		}
 	}

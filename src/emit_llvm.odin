@@ -77,7 +77,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		witness_names = make(map[^Witness]string),
 		propagated_errors = make(map[^Expr_Postfix]Mapper_Error),
 		place_align  = make(map[string]u64),
-		cleanups     = make([dynamic]Cleanup_Scope),
+		cleanups     = make([dynamic][dynamic]Deferred),
 		param_values = make(map[Symbol_Id]Bound_Parameter),
 		pending      = make([dynamic]string),
 		pending_thunks = make([dynamic]string),
@@ -187,7 +187,7 @@ Function_State :: struct {
 	// The hidden `sret` pointer, which the result slot aliases, or "".
 	abi_sret:    string,
 	defer_flags: []string,
-	cleanups:    [dynamic]Cleanup_Scope,
+	cleanups:    [dynamic][dynamic]Deferred,
 	// design.md "Borrows and lifetimes": one frame per full expression, since a
 	// value temporary dies at its end.
 	temporaries: [dynamic][dynamic]Deferred,
@@ -757,7 +757,7 @@ emit_proc_definition :: proc(
 
 	// The thunk first: the locals it reads are the ones the body publishes.
 	emit_unwind_thunk(e)
-	body := without_unread_bindings(e, without_unpushed_pops(e, strings.to_string(e.b)))
+	body := unwind_finished_body(e)
 	e.b = module
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)

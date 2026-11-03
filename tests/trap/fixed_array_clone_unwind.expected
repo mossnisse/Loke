@@ -1,0 +1,9 @@
+copy 1
+copy 2
+copy 3
+drop 102
+drop 101
+drop 4
+drop 3
+drop 2
+drop 1

@@ -1360,6 +1360,13 @@ checklist.
 - Borrow checking no longer takes minutes on a recursive union with many alternatives, or a
   body with a thousand loans of one place, and a body's memory no longer grows with the square of
   its locals.
+- A panic while a record's `hook(drop)` empties an `@(initialized)` field drops what the count still
+  names ([Uninitialized capacity](design.md#uninitialized-capacity)). The unwind used the count from
+  before the hook, so it dropped the elements the hook had already taken a second time.
+- A panic from one element's drop, when an `or_return` leaves a variadic call's operands, leaves the
+  other staged elements to the unwind. They used to leak.
+- The generated copy of a fixed array of owning elements is one loop. It emitted each element's code
+  separately, so copying a `[20000]Value` of owning fields wrote a `.ll` of about 60 MB.
 - A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
   used to fail with internal `L0405`, "a map key operation was not resolved during checking".
 - `pointer[0:length]` on a C pointer panics for a negative `length`, as

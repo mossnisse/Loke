@@ -1,0 +1,5 @@
+elements.clone.head.
+elements.clone.fail.
+elements.drop.head.
+not i64 0, i64 999
+not i32 0, i32 999

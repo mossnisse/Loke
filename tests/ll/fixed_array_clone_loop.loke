@@ -1,0 +1,9 @@
+// A fixed array's generated clone is one runtime loop, so its code does not grow
+// with the array's length.
+package main;
+Value :: struct { name: string, items: [dynamic]int }
+main :: proc() {
+    source := [1000]Value{};
+    copied := source;
+    _ = copied[0].name;
+}

@@ -905,9 +905,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			drop_owned, dropped := new_label(e, "append.owned"), new_label(e, "append.dropped")
 			branch_if(e, flagged, drop_owned, dropped)
 			place_label(e, drop_owned)
-			count_slot := alloca(e, "i64")
-			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, count_slot)
-			emit_drop_flagged_array(e, element, data, "%owned", count_slot)
+			emit_drop_elements_reversed(e, element, data, count, "%owned")
 			branch(e, dropped)
 			place_label(e, dropped)
 			rejoin(e, kept)
@@ -925,7 +923,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 	case .Insert:
 		slot := value_storage(e, element, "%arg2")
-		guard := Deferred{slot = -1}
+		guard := Deferred{}
 		if moves {
 			framed, frame_header = true, begin_generated_frame(e, name)
 			guard = begin_temporary_drop(e, element, slot)
@@ -1042,7 +1040,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		framed, frame_header = true, begin_generated_frame(e, name)
 		key_slot := value_storage(e, container_key(e.c, container), "%arg1")
 		staged := alloca(e, element_llvm)
-		guard := Deferred{slot = -1}
+		guard := Deferred{}
 		if moves {
 			store(e, element, "%arg2", staged)
 			guard = begin_temporary_drop(e, element, staged)
@@ -1116,7 +1114,6 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		branch_if(e, cloned, clone_ready, clone_failed)
 		place_label(e, clone_failed)
 		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "true"))
-		e.terminated = true
 
 		place_label(e, clone_ready)
 		// The staged value is this body's until it is stored, across the key's
@@ -1131,13 +1128,11 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		finish_temporary_drop(e, guard)
 		emit_drop_place(e, element, staged)
 		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "true"))
-		e.terminated = true
 
 		place_label(e, ok_label)
 		emit_store_entry(e, element, place, inserted, load_place(e, element, staged), guard, "mins")
 		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "false"))
 		fmt.sbprintln(&e.b, "}")
-		e.terminated = true
 		return
 
 	case .Map_Entries, .Map_Keys, .Map_Values:
@@ -1389,11 +1384,11 @@ emit_map_key_slot :: proc(e: ^Emitter, index: Expr, container: Type_Id) -> (stri
 	given := expr_base(index).type
 	value := emit_expr(e, index)
 	if given != key {
-		return emit_borrowed_key_slot(e, value), Deferred{slot = -1}
+		return emit_borrowed_key_slot(e, value), Deferred{}
 	}
 	slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, slot)
-	cleanup := Deferred{slot = -1}
+	cleanup := Deferred{}
 	if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(index) {
 		cleanup = begin_temporary_drop(e, key, slot)
 	}

@@ -1396,69 +1396,12 @@ Only near copies shared with other emitter files remain.
 
 ### src/emit_llvm_cleanup.odin
 
-One reproduced double drop; the other replay paths I traced and ran held up. The file holds three subsystems, removes text it has already written by scanning for it, and carries several defensive checks that its callers and the checker make unreachable.
-
-**Bugs**
-
-- `BUG-emit_llvm_cleanup-1` **medium** [emit_llvm_cleanup.odin:1440](src/emit_llvm_cleanup.odin#L1440) `guard_record_part`: an `@(initialized)` field's guard copies the count before the record's drop hook runs, so replay ignores what the hook did to it, though design.md "Uninitialized capacity" promises an accurate count at every panic point. Scenario: a hook does `count -= 1`, `take`, `drop` over four elements and item 2's drop panics; a test program printed `drop 3, drop 2, panic, drop 3, drop 2` rather than then dropping 1 and 0. Fix: register the counter field's address (an `int`, so `i64`) as the cleanup's count, and range-check it in the thunk. *Confirmed: Probe with a design-order hook (shorten, take, drop): item 2 panics once, prints drop 3, 2, panic, 3, 2, 1, 0; panicking always aborts on replay. Guard stores the pre-hook count (line 1440); the normal path re-reads it. Not recorded anywhere; medium fits.*
-
-**Simplification**
-
-- [emit_llvm_cleanup.odin:221](src/emit_llvm_cleanup.odin#L221) `without_unread_bindings`, [:358](src/emit_llvm_cleanup.odin#L358) `without_unpushed_pops`: both rescan finished IR for lines they wrote. Record `{start, end, binding or pop}` in `bind_local` and `emit_unwind_pop`, then copy around the dropped ranges in one pass. Offsets hold: `e.b` is swapped before the first bind and nothing truncates it. (about 45 lines)
-- [emit_llvm_cleanup.odin:46](src/emit_llvm_cleanup.odin#L46) `Deferred.slot`: make "not registered" the zero value by storing index + 1. About 20 `Deferred{slot = -1}` sites become `Deferred{}`, and the loops at [:1235](src/emit_llvm_cleanup.odin#L1235), [:1452](src/emit_llvm_cleanup.odin#L1452) and [emit_llvm_stmt.odin:353](src/emit_llvm_stmt.odin#L353) go. (about 15 lines)
-- [emit_llvm_cleanup.odin:888](src/emit_llvm_cleanup.odin#L888) `run_cleanups`: `on_failure` entries come only from `Stmt_Defer`, which always sets `flag`, so `flag := failed` and the `entry.flag != ""` tests past line 893 always go one way. Test `flag == ""` first, handle `on_failure`, then load and branch. (about 8 lines)
-- [emit_llvm_cleanup.odin:1795](src/emit_llvm_cleanup.odin#L1795) `emit_union_try_clone_body`: the fallible and infallible arms end identically. Set `cloned` in an `if`/`else`, as `emit_clone_prefix` does at [:1538](src/emit_llvm_cleanup.odin#L1538), and share the rebuild and return. (about 7 lines)
-- [emit_llvm_cleanup.odin:1284](src/emit_llvm_cleanup.odin#L1284): `emit_ret` writes a terminator without setting `e.terminated`, so this site and [:1550](src/emit_llvm_cleanup.odin#L1550), [:1800](src/emit_llvm_cleanup.odin#L1800), [:1809](src/emit_llvm_cleanup.odin#L1809), [:1813](src/emit_llvm_cleanup.odin#L1813) set it by hand. Set it in [emit_ret](src/emit_llvm_abi.odin#L636). (about 5 lines)
-- [emit_llvm_cleanup.odin:82](src/emit_llvm_cleanup.odin#L82) `Cleanup_Scope`: a struct with one field. Use `[dynamic][dynamic]Deferred`, as `temporaries` already does. (about 5 lines)
-- [emit_llvm_cleanup.odin:1139](src/emit_llvm_cleanup.odin#L1139) `clone_result_of`: one caller, and the hook is always a resolved member. Inline `symbol_of(e.c, hook).result` at [:1154](src/emit_llvm_cleanup.odin#L1154). (about 6 lines)
-- [emit_llvm_cleanup.odin:759](src/emit_llvm_cleanup.odin#L759) `drain_temporaries`: `slice.clone` on `context.temp_allocator` and a temp-allocated `owed` replace the two `make`/`defer delete` pairs; at [:707](src/emit_llvm_cleanup.odin#L707), `delete(pop(&e.temporaries))` replaces three lines. (about 4 lines)
-- [emit_llvm_cleanup.odin:1059](src/emit_llvm_cleanup.odin#L1059) `emit_clone_value`: handle the string retain at [:1080](src/emit_llvm_cleanup.odin#L1080) first; every remaining path wants a provider, so the four-way test becomes `allocator == "" ? emit_default_allocator(e) : allocator`. (about 3 lines)
-- [emit_llvm_cleanup.odin:430](src/emit_llvm_cleanup.odin#L430) `emit_unwind_thunk`: `e.fn = parent` at [:545](src/emit_llvm_cleanup.odin#L545) already restores `unwind`, which lives in `Function_State`, so `parent_live` and line 546 can go. (about 2 lines)
-- [emit_llvm_cleanup.odin:1345](src/emit_llvm_cleanup.odin#L1345) `emit_prefix_count`: `widen_to_i64` is a no-op, since [check.odin:1090](src/check.odin#L1090) requires the counter to be `int`. [:180](src/emit_llvm_cleanup.odin#L180) `unwind_env_slot` can also call `unwind_reserve_env` for its first two lines. (about 3 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_cleanup.odin:1715](src/emit_llvm_cleanup.odin#L1715): [hooks.odin:909](src/hooks.odin#L909) rejects a hook on anything but a record, so an array never has one. Lines 1713-1724 become one `emit_drop_prefix_elements` call: no guard, no hook call, and no element-managed test, since a managed array has a managed element.
-- (branch) [emit_llvm_cleanup.odin:1727](src/emit_llvm_cleanup.odin#L1727): a union has no hook and `clone_part_count` is 0 for it, so `guard_record_parts` and `emit_drop_hook` do nothing on the way to line 1729. Test for a union first.
-- (branch) [emit_llvm_cleanup.odin:1476](src/emit_llvm_cleanup.odin#L1476), [:1523](src/emit_llvm_cleanup.odin#L1523), [:1436](src/emit_llvm_cleanup.odin#L1436): each element-managed test sits behind a test that the array part is managed ([:1487](src/emit_llvm_cleanup.odin#L1487), [:1254](src/emit_llvm_cleanup.odin#L1254), [:1431](src/emit_llvm_cleanup.odin#L1431)), and `has_managed_part` makes the two equivalent.
-- (branch) [emit_llvm_cleanup.odin:792](src/emit_llvm_cleanup.odin#L792): "no frame open" does not occur. Procedure bodies run through `emit_statements`, which pushes a frame per statement, and global initializers are constants, so lines 792-795 go. The comment at lines 784-786 goes with them, since it describes statements that always have a frame.
-- (branch) [emit_llvm_cleanup.odin:701](src/emit_llvm_cleanup.odin#L701): every `pop_temporaries` caller pairs it with a `push_temporaries`, so the empty test is unreachable.
-- (branch) [emit_llvm_cleanup.odin:538](src/emit_llvm_cleanup.odin#L538): `saved_names[index]` is never empty, because `env_bindings` grows only through `bind_local`, which sets the name first. Nothing should read a local's name after its function ends, so the whole restore (lines 449, 453, 537-543) looks removable; that wider claim is reasoned, not run.
-- (branch) [emit_llvm_cleanup.odin:211](src/emit_llvm_cleanup.odin#L211), [:348](src/emit_llvm_cleanup.odin#L348), [:313](src/emit_llvm_cleanup.odin#L313): `unwind_enabled` already requires `frame != ""`, and `frame` and `env` are set together, so these tests add nothing; at line 313, empty `actions` covers the frameless case.
-- (branch) [emit_llvm_cleanup.odin:302](src/emit_llvm_cleanup.odin#L302): `slot >= 0` exists only after `unwind_reserve` under `unwind_enabled`, which implies `panic_unwind`. Test `slot < 0` alone.
-- (branch) [emit_llvm_cleanup.odin:1398](src/emit_llvm_cleanup.odin#L1398): `|| operations.provider` is redundant, since [hooks.odin:139](src/hooks.odin#L139) makes every provider `intrinsic`.
-- (branch) [emit_llvm_cleanup.odin:1180](src/emit_llvm_cleanup.odin#L1180), [:1631](src/emit_llvm_cleanup.odin#L1631): `e.terminated = false` soon after `begin_function_emission`, which zeroes `e.fn`, with nothing setting it in between.
-- (branch) [emit_llvm_cleanup.odin:1331](src/emit_llvm_cleanup.odin#L1331): callers pass a valid field index for a struct, so the bounds half of the test is unreachable; keep the `.Struct` test, since arrays reach here.
-
-**Data structures and algorithms**
-
-- [emit_llvm_cleanup.odin:1247](src/emit_llvm_cleanup.odin#L1247) `emit_synth_try_clone`: a fixed array's clone emits each element's code separately, about 4 KB of IR each; `[20000]Value` produced an 81 MB `.ll`. Split the runtime loop out of `emit_clone_prefix` ([:1526](src/emit_llvm_cleanup.odin#L1526)) and give arrays that loop with `total = N`, for constant-size IR; `built_count`, `array_guard` and `guard_built_part` then go. (about 25 lines)
-- [emit_llvm_cleanup.odin:1389](src/emit_llvm_cleanup.odin#L1389) `drop_may_panic`: re-walks a type's parts at every drop site, and each nested `emit_drop_place` asks again, so the cost is quadratic in record nesting. The answer is fixed once lifecycles finalize: compute it bottom-up beside `clone_fallible` at [hooks.odin:68](src/hooks.odin#L68) and read a field. (about 30 lines)
-- [emit_llvm_cleanup.odin:14](src/emit_llvm_cleanup.odin#L14) `Deferred`: `temporary_place`, `array_cleanup`, `box_release`, `frame_release` and `stmt` are mutually exclusive, and three if-chains dispatch on them. A `kind` enum turns the chain at [:479](src/emit_llvm_cleanup.odin#L479) into a checked `switch`.
+What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
-- [emit_llvm_cleanup.odin:562](src/emit_llvm_cleanup.odin#L562), [:577](src/emit_llvm_cleanup.odin#L577), [:600](src/emit_llvm_cleanup.odin#L600): all three reserve an env slot, reserve the action, publish the address and register it. Share `register_published(e, &entry, address)`; each caller keeps only its literal and precondition. (about 10 lines)
-- [emit_llvm_cleanup.odin:1361](src/emit_llvm_cleanup.odin#L1361) and [:1591](src/emit_llvm_cleanup.odin#L1591): the same reverse cursor loop, differing by one per-element flag test and the guard. One `emit_drop_elements_reversed(e, element, items, count, flags := "")` serves both, and the dispatches on `flags` simplify. (about 15 lines)
 - [emit_llvm_cleanup.odin:406](src/emit_llvm_cleanup.odin#L406) and [emit_llvm.odin:727](src/emit_llvm.odin#L727): the same thunk, strip, prologue and write sequence, differing only in where the thunk's text goes. Send it to `pending_thunks` in both, remove `e.pending`, and call `end_generated_frame` from `emit_proc_definition`; check that `tests/ll` tolerates the new order. (about 8 lines)
 - [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073) and [:1652](src/emit_llvm_cleanup.odin#L1652), plus sites in `emit_llvm_calls`, `_containers`, `_expr` and `_stmt`: eight copies of the `alloc_failed` call and `unreachable`, most also setting `terminated`. Add `emit_alloc_failed(e, allocator)`. (about 13 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm_cleanup.odin:135](src/emit_llvm_cleanup.odin#L135): three subsystems share the file. Move lines 135-557 to an unwind file and lines 1134-1820 to a lifecycle file, leaving frames and scopes here. Put `emit_try_clone_into` (line 90) and `emit_clone_value` (line 1057) with lifecycle, and `register_array_cleanup` (line 1104) beside the `begin_*` procedures at line 559.
-- [emit_llvm_cleanup.odin:1169](src/emit_llvm_cleanup.odin#L1169) `emit_synth_try_clone`: 130 lines with a seam at line 1224. Split out `emit_fieldwise_try_clone_body` beside the union body, make the rest a chain of cases, and write the closing `}` once rather than on five paths.
-- [emit_llvm_cleanup.odin:419](src/emit_llvm_cleanup.odin#L419) `emit_unwind_thunk`: 130 lines. Lines 472-503 are `emit_replay_action`, and lines 508-524 are a procedure that marks which bindings the replay read.
-- [emit_llvm_cleanup.odin:52](src/emit_llvm_cleanup.odin#L52): `Unwind_Env_Binding`, `Unwind_State` ([:62](src/emit_llvm_cleanup.odin#L62)), `emit_prefix_count_check` ([:1352](src/emit_llvm_cleanup.odin#L1352)) and `emit_drop_place` ([:1673](src/emit_llvm_cleanup.odin#L1673)) lack `@(private)`, so they join the public surface of the package `lsp/` imports; `clone_result_of` can be file-private.
-
-**Comments**
-
-- [emit_llvm_cleanup.odin:632](src/emit_llvm_cleanup.odin#L632): lines 632-633 describe `hold_temporary_value` but sit above `guard_built_element`. Move them to line 644.
-- [emit_llvm_cleanup.odin:12](src/emit_llvm_cleanup.odin#L12): a bare "(design.md)" does not cite a heading as the project requires; also lines 287, 785, 943, 1055, 1167 and 1672. Add the exact heading.
-- [emit_llvm_cleanup.odin:1712](src/emit_llvm_cleanup.odin#L1712): stale, as no hook runs for an array; delete it with the dead branch at line 1715.
-- [emit_llvm_cleanup.odin:1621](src/emit_llvm_cleanup.odin#L1621): delete; lines 1053-1054 and 1638-1639 say the same.
-- [emit_llvm_cleanup.odin:217](src/emit_llvm_cleanup.odin#L217): lines 202-206, 217-219 and 314-316 explain the same stripping three times. Keep it at `bind_local`, and use "Removes the stores `bind_local` wrote for locals the thunk does not read." here.
-- [emit_llvm_cleanup.odin:424](src/emit_llvm_cleanup.odin#L424): shorten to "Keeps the parent's function state, whose actions it replays, but starts its output empty. Runs after the parent's body and before its prologue."
-- [emit_llvm_cleanup.odin:508](src/emit_llvm_cleanup.odin#L508): reword to "Mark the locals the replay's text names." (about 15 lines across the file)
 
 ### src/emit_llvm_containers.odin
 

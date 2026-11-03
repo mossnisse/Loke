@@ -3789,12 +3789,10 @@ user's allocator.
 
 ### Unwind thunks scan their replay's text for reads
 
-`without_unread_bindings` and `emit_unwind_thunk` find which bindings a cleanup
-replay reads by scanning the LLVM text it emitted, which ties them to the
-compiler's own spelling of an instruction. Recording each publication's span and
-marking uses through a shared accessor would remove about 50 lines, but it was not
-taken. The scan cannot miss a read: whatever the replay's text names is loaded,
-whichever emitter path wrote it. Tracking would have about eight sites that read
-`e.names` mark each use, where a site that forgets leaves an undefined name in a
-thunk only a panic path exercises, and its spans would have to survive
-`without_unpushed_pops`. Worth revisiting if the emitter stops producing text.
+`emit_unwind_thunk` finds which bindings a cleanup replay reads by scanning the
+LLVM text it emitted, which ties it to the compiler's own spelling of an
+instruction. Marking uses through a shared accessor was not taken. The scan cannot
+miss a read: whatever the replay's text names is loaded, whichever emitter path
+wrote it. Tracking would have about eight sites that read `e.names` mark each use,
+where a site that forgets leaves an undefined name in a thunk only a panic path
+exercises. Worth revisiting if the emitter stops producing text.

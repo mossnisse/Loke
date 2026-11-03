@@ -821,7 +821,7 @@ Under `-panic=unwind` a procedure that registers a cleanup pushes a frame whose
 thunk replays the registered actions. The thunk is emitted before the
 procedure's prologue, and only the locals it names are published: `bind_local`
 stores every local's address through its slot's name, then
-`without_unread_bindings` deletes the stores the thunk does not read, and the
+`unwind_finished_body` deletes the stores the thunk does not read, and the
 prologue names only the slots that remain. A procedure that registers nothing
 keeps no frame, live flags, or env at all.
 
@@ -939,7 +939,9 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |
 | `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
 | `emit_llvm_math.odin` | The `core:math` bit and floating-point instruction built-ins. |
-| `emit_llvm_cleanup.odin` | Lifecycle clone/drop, cleanup registration, and panic replay. |
+| `emit_llvm_cleanup.odin` | Cleanup registration: scopes, full-expression frames, and held values. |
+| `emit_llvm_unwind.odin` | Panic replay: a procedure's registration state and its generated thunk. |
+| `emit_llvm_lifecycle.odin` | Value clones and drops, and the generated `try_clone` and `clone` members. |
 | `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, and typed-comparator sort adapters. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |

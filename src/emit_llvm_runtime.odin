@@ -498,7 +498,7 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 		data = gep_field(e, llvm_type(e, under), slot, 0)
 	}
 	// A formatter that panics still drops the failure.
-	held := Deferred{slot = -1}
+	held := Deferred{}
 	if emit_lifecycle(e, failure).managed {
 		held = begin_temporary_drop(e, failure, data)
 	}

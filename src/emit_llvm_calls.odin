@@ -476,7 +476,6 @@ emit_pack_operands :: proc(
 	managed := emit_lifecycle(e, element).managed
 	static_count := len(v.variadic_elements)
 	out := Pack_Operands {
-		cleanup     = Deferred{slot = -1},
 		owns        = make([]string, static_count),
 		spread_data = make([]string, len(v.variadic_spreads)),
 		spread_len  = make([]string, len(v.variadic_spreads)),
@@ -547,7 +546,6 @@ emit_spread_pack :: proc(
 	buffer = temp(e)
 	alloca_count(e, buffer, element_llvm, operands.total)
 	flags := ""
-	cleanup = Deferred{slot = -1}
 	if managed {
 		flags = temp(e)
 		alloca_count(e, flags, "i1", operands.total)
@@ -774,7 +772,7 @@ emit_call_operands :: proc(
 	scope := begin_default_scope(e, symbol)
 	defer end_default_scope(e, &scope)
 
-	out := Bound_Operands{operands = make([]string, len(bound)), pack_cleanup = Deferred{slot = -1}}
+	out := Bound_Operands{operands = make([]string, len(bound)), }
 	operands := out.operands
 	pack := -1
 	if call_node != nil && call_node.is_variadic {
@@ -809,7 +807,7 @@ emit_call_operands :: proc(
 			}
 			if lends {
 				// Nothing owned crosses into a `try_` form: it copies every element.
-				out.owned_flags = consumed == pack && packed.cleanup.array_cleanup ? packed.cleanup.array_flags : "null"
+				out.owned_flags = consumed == pack && packed.cleanup.kind == .Array ? packed.cleanup.array_flags : "null"
 			}
 			operands[index] = packed.value
 			out.pack_cleanup = packed.cleanup
@@ -858,9 +856,9 @@ emit_call_operands :: proc(
 	}
 
 	// A consumed pack transfers to the callee.
-	if consumed >= 0 && consumed == pack && out.pack_cleanup.array_cleanup {
+	if consumed >= 0 && consumed == pack && out.pack_cleanup.kind == .Array {
 		unwind_clear(e, out.pack_cleanup.slot)
-		out.pack_cleanup = Deferred{slot = -1}
+		out.pack_cleanup = Deferred{}
 	}
 	// Ownership now crosses the call boundary.
 	for entry in handoff_cleanups {
@@ -889,8 +887,8 @@ emit_refusal_branch :: proc(
 	joined_slot = sret_slot != "" ? sret_slot : temporary_slot(e, callee_type.result)
 	branch_if(e, failed, refused, attempted)
 	place_label(e, refused)
-	if cleanup := call.refused_pack.cleanup; cleanup.array_cleanup {
-		emit_drop_flagged_array(e, cleanup.type, cleanup.array_buffer, cleanup.array_flags, cleanup.array_count)
+	if cleanup := call.refused_pack.cleanup; cleanup.kind == .Array {
+		emit_drop_staged_array(e, cleanup)
 	}
 	store(e, callee_type.result, emit_alloc_result(e, callee_type.result, "true", error = error), joined_slot)
 	branch(e, joined)
@@ -949,13 +947,13 @@ emit_call_instruction :: proc(
 @(private = "file")
 emit_after_call :: proc(e: ^Emitter, call: ^Bound_Operands, callee_type: ^Type_Info, result: string) {
 	pack := call.pack_cleanup
-	guard := Deferred{slot = -1}
+	guard := Deferred{}
 	if callee_type.result != INVALID_TYPE && !callee_type.result_inout &&
-	   (pack.array_cleanup || len(call.argument_cleanups) > 0) {
+	   (pack.kind == .Array || len(call.argument_cleanups) > 0) {
 		guard = hold_temporary_value(e, callee_type.result, result)
 	}
-	if pack.array_cleanup {
-		emit_drop_flagged_array(e, pack.type, pack.array_buffer, pack.array_flags, pack.array_count)
+	if pack.kind == .Array {
+		emit_drop_staged_array(e, pack)
 		unwind_clear(e, pack.slot)
 	}
 	#reverse for entry in call.argument_cleanups {
