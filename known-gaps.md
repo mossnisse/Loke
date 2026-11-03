@@ -7,6 +7,37 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### `L0740` reads a generic type's value argument as a type
+
+[Private names in public declarations](design.md#private-names-in-public-declarations) exempts a
+generic type's value argument, but the walk is by name and cannot tell a value parameter's argument
+from a type parameter's. So `Priv` warns here, where it would not in an array length:
+
+```loke
+package shapes;
+@(private) Priv :: struct { x: int }
+@(public) Vec :: struct($N: int) { x: [N]int }
+@(public) a :: proc(v: Vec(size_of(Priv))) {}
+```
+
+The fix is to read the callee's generic parameters where a call in type syntax has a template.
+
+### `L0740` misses a group's private member when another block declares its name
+
+Two blocks of one generic type share a member table by written subject, so a group in the first
+reads the second's member of that name, and `Box(int).h`'s private `Fill` is not reported:
+
+```loke
+package shapes;
+@(private) Fill :: enum { Solid }
+@(public) Box :: struct($V: type) { v: V }
+impl Box(int) { @(private) h :: proc(f: Fill) {} @(public) g :: proc{h}; }
+impl Box(string) { @(private) h :: proc(s: string) {} @(public) g :: proc{h}; }
+```
+
+A selection such as `Box(int).Inner` resolves this by asking the checker. A group would read the
+members its block declares.
+
 ### A local in a deferred block leaks when only a panic reaches the block
 
 [Scope-exit cleanup](design.md#what-the-unwind-runs-and-what-it-does-not) runs for every initialized

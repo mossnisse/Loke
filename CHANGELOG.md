@@ -1444,6 +1444,18 @@ checklist.
 
 ### Fixed
 
+- `L0740` reads more of what a public declaration writes
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)). It now
+  warns about a private name that a block's `$` name had hidden from every later declaration; a
+  procedure constant's written type; the application of a parametric alias in a generic `impl`; a
+  field written after `_`, as in `_, a: Fill`; a private type nested deeper than eight levels in a
+  constant's type; and a private group member in a block whose package declares the same name
+  publicly. It reports `impl ^Name`'s members under `Name` and no longer warns about them when
+  `Name` is a private type, and names any other subject as written, as `[]Point.spread`.
+- `L0740` no longer warns about a type named in an array length, as `[size_of(Hidden)]int`, or `_`
+  padding as a field, and a selection such as `Box(int).Inner` now reads `impl Box(int)`'s member
+  when `impl Box(string)` declares one of the same name.
+- `-api` now shows a struct field written after `_`, as in `_, a: int`.
 - `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
   `<name>.layout.exe`. A bare output name, which every build without `-o` has, no longer fails it
   with `L0405`, and `-g` no longer writes a PDB for the probe.

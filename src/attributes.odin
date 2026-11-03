@@ -561,6 +561,29 @@ written_is_public :: proc(attributes, file_attributes: []Attribute, by_default :
 	return has_attribute(attributes, "public") || by_default || has_attribute(file_attributes, "public")
 }
 
+// Whether an importer can name `d`. A declaration no symbol records, in an
+// untaken `when` branch or a generic `impl`, which is checked per instance,
+// takes its visibility from its written attributes, as the checker would.
+decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute = nil) -> bool {
+	if len(d.names) == 0 || d.names[0].text == "_" {
+		return false
+	}
+	if len(d.symbols) > 0 {
+		symbol := symbol_of(c, d.symbols[0])
+		return symbol != nil && symbol.public && !symbol_is_test(symbol)
+	}
+	if d.kind == .Var || has_attribute(d.attributes, "test") || has_attribute(d.attributes, "private") {
+		return false
+	}
+	if has_attribute(d.attributes, "public") {
+		return true
+	}
+	if has_attribute(block, "private") {
+		return false
+	}
+	return has_attribute(block, "public") || has_attribute(file.attributes, "public")
+}
+
 // design.md `@(escape=...)`: the written level, which only a parameter carrying
 // a borrow, or taking an owner by `move`, may have.
 check_escape_attribute :: proc(

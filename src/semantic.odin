@@ -794,6 +794,8 @@ Package :: struct {
 	// declarations that describe them (`src/intrinsic.odin`), bound once.
 	contributions:  [dynamic]Identifier_Id,
 	intrinsics:     [dynamic]Intrinsic_Decl,
+	// Its declarations by name, for the private-name reads (`src/private_names.odin`).
+	declared_names: ^Package_Names,
 }
 
 // Address space each per-body scratch arena reserves.
@@ -848,7 +850,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
 	c.pending_private_reads = make([dynamic]Pending_Private_Read, 0, 4, c.semantic_allocator)
-	c.private_constants_read = make(map[Span]bool, c.semantic_allocator)
+	c.private_reads_settled = make(map[Span]bool, c.semantic_allocator)
 	c.private_names_warned = make(map[Span]bool, c.semantic_allocator)
 	c.generic_impl_types = make(map[Span]bool, c.semantic_allocator)
 	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)

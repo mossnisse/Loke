@@ -1,0 +1,42 @@
+L0310
+@7:15
+warning[L0740]: public `after` names the private type `T`, which an importer cannot name
+@15:30
+warning[L0740]: public `Closed` names the private type `Box.Inner`
+@23:38
+warning[L0740]: public `Closed_Crate` names the private type `Crate.Inner`
+@28:46
+warning[L0740]: public `Picks.Chosen` names the private type `Box.Inner`
+@31:50
+warning[L0740]: `Rec.helper`, which the public group `Rec.group` exports, names the private type `Fill`
+@38:31
+warning[L0740]: public `callback` names the private type `Sig`
+@46:21
+warning[L0740]: public `Typed` names the private type `Meta`
+@47:18
+warning[L0740]: public `Lone.Direct` names the private type `Corner`
+@53:30
+warning[L0740]: public `Lone.Aliased` names the private type `Corner`
+@54:30
+warning[L0740]: public `Padded.after_padding` names the private type `Fill`
+@59:30
+warning[L0740]: public `Padded.before_padding` names the private type `Fill`
+@60:31
+warning[L0740]: public `Generic_Padded.generic_field` names the private type `Fill`
+@63:30
+warning[L0740]: public `limited` names the private `Corner` in a `where` clause
+@68:65
+warning[L0740]: public `DEEP` has the private type `Fill`
+@71:11
+warning[L0740]: public `Short.through` names the private type `Corner`
+@78:50
+warning[L0740]: public `[]Point.spread` names the private type `Corner`
+@80:50
+!public `Open`
+!public `Open_Crate`
+!`Padded._`
+!`Generic_Padded._`
+!public `sized`
+!`Hid.exempt`
+!public `exempt`
+!`Rec.area`

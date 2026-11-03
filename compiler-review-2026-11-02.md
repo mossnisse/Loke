@@ -202,7 +202,7 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 #### Interface file and private-name checks
 
-The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default, and the second is also the site of BUG-private_names-6. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
+The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
 
 [foreign.odin:21](src/foreign.odin#L21) and [doc.odin:544](src/doc.odin#L544) restate member-then-block-then-file visibility, which `written_is_public` ([check.odin:662](src/check.odin#L662)) can express by nesting; [foreign.odin:49](src/foreign.odin#L49) repeats the `L0332` text of [check.odin:649](src/check.odin#L649). About 15 lines.
 
@@ -284,7 +284,7 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
-- Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`.
+- Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 
 ### Looked at and left alone
@@ -824,7 +824,6 @@ reader and the L0260 check, and copies much of `private_names.odin`. Seven bugs,
 **Structure and boundaries**
 
 - [doc.odin:1151](src/doc.odin#L1151): lines 1151-1369, the doc-comment reader and the L0260 check, serve [check.odin:238](src/check.odin#L238) and [queries.odin:189](src/queries.odin#L189), not `-doc` or `-api`, and the source map's row omits them. Their seam is a `doc_comments.odin`.
-- [doc.odin:533](src/doc.odin#L533): `decl_is_public` is a visibility rule used mostly by `private_names.odin`; it belongs beside `written_is_public` at [check.odin:662](src/check.odin#L662).
 - [doc.odin:1105](src/doc.odin#L1105): `field_shown` and `public_struct` build the model but sit after both renderers; move them next to `api_decl`, so the file reads model, then rendering.
 - [doc.odin:439](src/doc.odin#L439) `api_decl`: about 90 lines; the seam is lines 476-497, the procedure's text with its block convention, as `proc_interface_text`.
 - [doc.odin:19](src/doc.odin#L19): `INTERFACE_FILE`, `documented_packages` (23), and `interface_text` (104) are used only in this file, so per the source map they should be `@(private = "file")`.
@@ -1448,71 +1447,11 @@ What remains here belongs to the groups under "Findings that span files".
 
 Coherent and well tested on its main paths, but three drivers have grown around one by-name walk, so setup and guards repeat and the by-name model has gaps. Every bug below was reproduced with the `lokec.exe` built at this commit; roughly a sixth of the file could go.
 
-**Bugs**
-
-- `BUG-private_names-1` **medium** [private_names.odin:227](src/private_names.odin#L227) `read_impl`: `x.bound` keeps the block's `$` names after it returns, so later declarations see them as bound. Scenario: private `T :: struct {...}`, then `impl Box($T) {...}`, then `@(public) after :: proc() -> T`: no L0740; without the `impl` it warns. Fix: `defer clear(&x.bound)` in `read_impl`. *Confirmed: Reproduced: private T, impl Box($T), then @(public) after -> T gives no L0740; removing the impl or moving after above it warns at 9:20. Not recorded anywhere. Severity is low: a missed warning, only when a private name equals a block's $ name.*
-- `BUG-private_names-2` **medium** [private_names.odin:153](src/private_names.odin#L153) `collect_named`: `impl Box(int)` and `impl Box(string)` share one member table and the last block wins, so `member_selected` can read the wrong one. Scenario: `Inner` public in the first, private in the second: `Twin(Box(int).Inner, int)` warns falsely; with the blocks swapped, `Twin(Box(string).Inner, int)` does not warn. Fix: resolve a selection with no `$` name in a probe, as `resolves_to_type` does. *Confirmed: Reproduced: Box(int).Inner warns L0740 citing Box(string)'s private Inner though an importer can name it; swapped blocks, Box(string).Inner gives no warning though an importer gets L0432. Only a wrong or missing warning, so low rather than medium.*
-- `BUG-private_names-3` **low** [private_names.odin:376](src/private_names.odin#L376) `read_group`: a group in an `impl` can list only that block's members (L0395), but `lookup` tries package names first. Scenario: public package `helper` beside private member `helper :: proc(f: Fill)` in `grp :: proc{helper, other}`: no warning; with a private package `helper`, that one is reported instead. Fix: read `x.members[x.subject]` when in an `impl`. *Not verified.*
-- `BUG-private_names-4` **low** [private_names.odin:269](src/private_names.odin#L269) `read_public_decl`: a procedure literal's written type is never read, though the spec lists "a constant's written type". Scenario: private `Sig :: distinct proc(x: int)`, `@(public) f: Sig : proc(x: int) {}`: no L0740, while `n: Num : 3` warns. Fix: `walk(x, d.declared_type, .Type)` before `read_signature`. *Not verified.*
-- `BUG-private_names-5` **low** [private_names.odin:882](src/private_names.odin#L882) `instantiates_generic_record`: a parametric alias's application is not classified as a type. Scenario: in `impl Box($T)` with no instance, `@(public) A :: Pair(T, Corner)` warns but `@(public) B :: Two(T, Corner)`, for `Two :: Pair($A, $B)`, does not; an instance does warn. Fix: also accept `.Alias`, and rename. *Not verified.*
-- `BUG-private_names-6` **low** [private_names.odin:403](src/private_names.odin#L403) `read_record`: a field's visibility and padding tests look only at its first name. Scenario: `@(public) _, a: Fill` gives no L0740; `@(public) a, _: Fill` warns for `Rec.a` and again for `Rec._`. Fix: loop over names, skip `_`, test `field.symbols` per name. `field_shown` ([doc.odin:1106](src/doc.odin#L1106)) has the same first-name test. *Not verified.*
-- `BUG-private_names-7` **low** [private_names.odin:588](src/private_names.odin#L588) `walk`: an array length is walked in `.Type` position, so a type named inside it warns, though the spec exempts an array length as a value. Scenario: `@(public) f :: proc(a: [size_of(Priv)]int)` warns, while `@(public) N :: size_of(Corner)` is pinned as not reported. Fix: walk the length only in `.Where` position. *Not verified.*
-- `BUG-private_names-8` **low** [private_names.odin:761](src/private_names.odin#L761) `private_type_in`: `depth > 8` silently stops the read, though `selected_member`'s comment says the spec sets no limit. Scenario: `@(public) D :: [1][1][1][1][1][1][1][1][1][1]Fill{}` gives no L0740; `[1][1]Fill{}` warns. Fix: guard any cycle with a visited slice instead of a depth. *Not verified.*
-- `BUG-private_names-9` **low** [private_names.odin:212](src/private_names.odin#L212) `subject_name`: returns "" for a subject that is not a name, losing both the subject in the owner and the private-subject exemption. Scenario: private `Hid`, `impl ^Hid { @(public) g :: proc() -> Corner ... }` warns as "public `g`", while the same member in `impl Hid` is exempt. Fix: unwrap `^` in `subject_name`. *Not verified.*
-
-**Simplification**
-
-- [private_names.odin:175](src/private_names.odin#L175) `add_named`: a constant binds exactly one name (L0233, [parser.odin:1078](src/parser.odin#L1078)) and `.Var` never reaches these, so the `for name, index in d.names` loops here and at lines 263, 856, 925, 949 reduce to `d.names[0]`, with one `decl_symbol(c, d)` helper for lines 180, 276, 926, 950. (about 20 lines)
-- [private_names.odin:23](src/private_names.odin#L23) `check_private_names`: the same "exports nothing" guard is at lines 23, 813, 901 and 1018; use one `package_exports_names(pkg)`. (about 6 lines)
-- [private_names.odin:26](src/private_names.odin#L26) `check_private_names`: the arena, `diagnostic_allocator` pin and allocator swap repeat at lines 973 and 1042; keep the arena in `Exposure` with an open and a close proc, leaving a line or two at each driver. (about 12 lines)
-- [private_names.odin:681](src/private_names.odin#L681) `found_name`: the two `warnf` calls differ only in their opening; compute it once and make one call. (about 7 lines)
-- [private_names.odin:735](src/private_names.odin#L735) `report_constant_type`: inline it at its one call site, line 313, as `if found := private_type_in(...); found != nil`, and drop the nil guard in `report_private_constant`, whose other caller has already tested it. (about 7 lines)
-- [private_names.odin:267](src/private_names.odin#L267) `read_public_decl`: `name if subject == "" else concatenate(...)` is also at lines 381 and 1067; one `qualified(subject, name)` serves them and the plain joins at 660, 1112 and 1149. (about 4 lines)
-- [private_names.odin:287](src/private_names.odin#L287) `read_public_decl`: `case ^Type_Distinct` is covered by the default branch: `writes_type` is true, `walk` has the arm, and a parametric `distinct` is rejected (L0744). (2 lines)
-- [private_names.odin:482](src/private_names.odin#L482) `bind_poly`: a one-line wrapper of `poly_names`; call that directly. (3 lines)
-
-**Dead code**
-
-- (branch) [private_names.odin:232](src/private_names.odin#L232): this `resize(&x.bound, mark)` and the one at line 995 undo nothing, since every path through `read_public_decl` already restores `bound`.
-- (branch) [private_names.odin:385](src/private_names.odin#L385): this `start(x, owner, "")` and the one at line 411 are overwritten: `read_public_decl` is the only caller and nothing is read before its next `start`.
-- (branch) [private_names.odin:262](src/private_names.odin#L262): parameter `subject` equals `x.subject` at every call that can report (lines 44, 49, 231, 994, 1064); use the field and delete the comment at line 260.
-- (branch) [private_names.odin:374](src/private_names.odin#L374): parameter `owner` of `read_group`, and of `read_record` at line 389, always equals `x.owner`, set by `start` at line 268.
-- (branch) [private_names.odin:264](src/private_names.odin#L264): this `_` test and the one at line 951 cannot fire: all callers gate on `decl_is_public`, which rejects a `_` name, and a constant has one name.
-- (branch) [private_names.odin:507](src/private_names.odin#L507): `lookup`'s member fallback fires for `walk` only in invalid programs: an unqualified member in a signature or value is L0306 or L0315, in plain and generic blocks. Only `read_group` needs members, so `lookup` can be file scope only.
-- (branch) [private_names.odin:611](src/private_names.odin#L611): `walk`'s `^Type_Record` arm needs a record in type position, which L0717 rejects; declared records go through `read_record`. It also reads private fields.
-- (branch) [private_names.odin:736](src/private_names.odin#L736): `x.scope != nil` cannot fail: the pass runs only once the package's scope exists ([check.odin:232](src/check.odin#L232)).
-- (branch) [private_names.odin:811](src/private_names.odin#L811): `is_call` is always true, because the sole caller ([impl.odin:364](src/impl.odin#L364)) tested it; pass `call` in.
-
-**Data structures and algorithms**
-
-- [private_names.odin:982](src/private_names.odin#L982) `read_instance_declarations`: `exposure_of` rescans the whole package, so B generic blocks cost B x D, and an undecided declaration costs D per instance. Small today, but the syntax pre-pass at line 1028 exists only to avoid it. One table per package, built once, removes the pre-pass and most of the arena copies. (about 30 lines)
-- [private_names.odin:161](src/private_names.odin#L161) `collect_named`: `blocks` gets an entry for every `impl` member on every build, but only line 1055 reads it, for one declaration; a per-package table settles this too.
-
 **Near copies**
 
 - [private_names.odin:515](src/private_names.odin#L515) `walk`, [doc.odin:578](src/doc.odin#L578) `api_refs` and [ast.odin:1388](src/ast.odin#L1388) `type_syntax_any_name` repeat one recursion and have drifted: the other two visit a composite's `via`, `walk` does not. A shared `syntax_children(e, out)`, like the `parts` in `pattern_shape`, leaves `walk` the Ident, Selector, `Type_Proc` and Composite arms. (about 60 lines here)
 - [private_names.odin:488](src/private_names.odin#L488) `poly_names` and [doc.odin:781](src/doc.odin#L781) `bind_poly_names` are identical; so are [private_names.odin:473](src/private_names.odin#L473) `bind_generic` and [doc.odin:771](src/doc.odin#L771) `bind_generic_params`. Keep one of each, not file-private. (about 15 lines)
 - [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` and [doc.odin:1106](src/doc.odin#L1106) `field_shown` have one body; doc's `package_name == "main"` is always false here, since this pass skips `main`. Share `field_exported(c, file, field)`. (about 9 lines)
-- [private_names.odin:840](src/private_names.odin#L840) and [private_names.odin:860](src/private_names.odin#L860) (with [generic.odin:345](src/generic.odin#L345) as a third) repeat probe, swap scope, clear `reached`, check a clone, restore; they differ only in the check. A local helper taking the expression and an `as_type` flag merges the two here. (about 4 lines)
-
-**Structure and boundaries**
-
-- [private_names.odin:961](src/private_names.odin#L961): `private_constants_read` ([source.odin:160](src/source.odin#L160)) holds three kinds of settled read, keyed by a name, a written type or a value span, and only one concerns a constant. Rename it `private_reads_settled`. The comment at [source.odin:165](src/source.odin#L165) says "public" members, though line 854 classifies private ones too.
-- [private_names.odin:810](src/private_names.odin#L810) `read_generic_impl_constants`: 65 lines that both classify members and report constants. The seam is a `member_is_type(k, stand_ins, d, value)` helper for the classification, leaving this proc the loop and the report.
-- [private_names.odin:240](src/private_names.odin#L240): "the subject is private" is decided separately here, at line 822 and at line 909. Lines 822 and 909 test the same thing on a symbol and can share `is_private_to(symbol, pkg)`.
-- [private_names.odin:43](src/private_names.odin#L43): this checker pass calls `decl_is_public`, which lives in `doc.odin`, the `-doc` owner. Move it beside `written_is_public` in `check.odin`.
-
-**Comments**
-
-- [private_names.odin:8](src/private_names.odin#L8): cut lines 10-18 to two sentences: the walk is over written syntax by name, as the interface file reads it; `read_generic_impl_constants`, `check_instance_private_names` and `check_generic_private_names` cover what only resolution or an instance can say. (about 50 lines across the file; 170 of its 1151 lines are comments)
-- [private_names.odin:801](src/private_names.odin#L801): delete this paragraph except "A member whose value is a type is a type alias, read by its target's syntax in `check_private_names`"; the rest recites the classification below it.
-- [private_names.odin:835](src/private_names.odin#L835): delete; it repeats lines 804-805.
-- [private_names.odin:854](src/private_names.odin#L854): delete; it repeats lines 820-821. Likewise line 904, which repeats lines 215-217.
-- [private_names.odin:892](src/private_names.odin#L892): shorten to "The block's public declarations are read here too, since only an instance says whether a private member they select is a type."
-- [private_names.odin:1002](src/private_names.odin#L1002): keep the citation and "read per instance, with the checker in its scope"; the list of declaration kinds repeats the spec, and lines 1007-1009 repeat it again.
-- [private_names.odin:303](src/private_names.odin#L303): drop "A type alias's target.", which line 290 says; keep the sentence on `$` names.
-- [private_names.odin:621](src/private_names.odin#L621): shorten the last sentences to "A chain of selections is followed until it repeats a member."
-- [private_names.odin:1122](src/private_names.odin#L1122): delete; it reads the switch below it aloud.
 
 ### src/provenance_effect.odin
 

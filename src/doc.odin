@@ -527,29 +527,6 @@ api_decl :: proc(
 	append(out, item)
 }
 
-// Whether an importer can name `d`. A declaration no symbol records, in an
-// untaken `when` branch or a generic `impl`, which is checked per instance,
-// takes its visibility from its written attributes, as the checker would.
-decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute = nil) -> bool {
-	if len(d.names) == 0 || d.names[0].text == "_" {
-		return false
-	}
-	if len(d.symbols) > 0 {
-		symbol := symbol_of(c, d.symbols[0])
-		return symbol != nil && symbol.public && !symbol_is_test(symbol)
-	}
-	if d.kind == .Var || has_attribute(d.attributes, "test") || has_attribute(d.attributes, "private") {
-		return false
-	}
-	if has_attribute(d.attributes, "public") {
-		return true
-	}
-	if has_attribute(block, "private") {
-		return false
-	}
-	return has_attribute(block, "public") || has_attribute(file.attributes, "public")
-}
-
 @(private = "file")
 decl_struct :: proc(d: ^Decl) -> ^Type_Record {
 	if len(d.values) == 1 {
@@ -1103,16 +1080,19 @@ written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
 // Whether a struct field is shown: a public one, but not padding.
 @(private = "file")
 field_shown :: proc(b: ^Api_Builder, field: ^Field) -> bool {
-	if len(field.names) == 1 && field.names[0].text == "_" {
-		return false
-	}
-	if len(field.symbols) > 0 {
-		symbol := symbol_of(b.c, field.symbols[0])
+	for name, index in field.names {
+		if name.text == "_" {
+			continue
+		}
+		// A generic record's fields are checked per instance, and an untaken
+		// `when` branch's not at all.
+		if index >= len(field.symbols) {
+			return written_is_public(field.attributes, b.file.attributes, b.file.package_name == "main")
+		}
+		symbol := symbol_of(b.c, field.symbols[index])
 		return symbol != nil && symbol.public
 	}
-	// A generic record's fields are checked per instance, and an untaken
-	// `when` branch's not at all.
-	return written_is_public(field.attributes, b.file.attributes, b.file.package_name == "main")
+	return false
 }
 
 // `Name :: struct { ... }`, written at `lo`, with only its public fields, one
