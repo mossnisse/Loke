@@ -48,11 +48,7 @@ prov_note_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span,
 	if owned && region_is_empty(set) {
 		visible.default = true
 	}
-	output := prov_output(graph)
-	if output.allocator_use.param_sources == nil {
-		output.allocator_use = new_allocator_use(len(output.param_symbols), output.alloc)
-	}
-	merge_allocator_use(&output.allocator_use, visible, Effect_Source{span = span})
+	merge_allocator_use(&prov_output(graph).allocator_use, visible)
 }
 
 // Whether allocator use is being recorded: while the thread summaries collect,

@@ -273,8 +273,7 @@ transfer_facts_walk :: proc(
 // pass after the effects, so these witnesses are not all known while checked.
 @(private = "file")
 view_is_printing :: proc(c: ^Compiler, view: ^Type_Info) -> bool {
-	format, found := c.runtime_types["Format_View"]
-	return found && underlying_info(c, format).dyn_interface == view.dyn_interface
+	return format_view_interface(c) == view.dyn_interface
 }
 
 // design.md "@(wakes_on_drop)": the `waker` of `transfer_facts`.

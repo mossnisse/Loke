@@ -14,6 +14,17 @@ checklist.
   ([Exchange](design.md#exchange)). `exchange(inout a, b)` on a `[dynamic]int` stored `b`'s bits
   unmoved, so both owned one allocation and the program corrupted its heap. Upgrade by writing
   `move(b)`, or `b.clone()` to keep it, as a part such as `h.items` must.
+- A map's `find_or_insert`, `try_insert` and `remove`, a `sort` or `reverse_sort`, and a `switch` on
+  a value now count the code of the program they run
+  ([Inferred effects](design.md#inferred-effects)). With `p := &mut counter` still in use, a
+  `hook(drop)` of the map's element or key, an `operator(<)` of the sorted element, or an
+  `operator(==)` of the switched type that writes `counter` is now `L0512`; each compiled, and a hook
+  clearing a global left a live view dangling. Upgrade by ending the borrow before the operation.
+- Every task of a `parallel` block now reserves what a `thread_local` owner's `hook(drop)` uses when
+  its thread exits ([Globals while tasks run](design.md#globals-while-tasks-run)). A hook that
+  allocates through an `Allocator` read from a global makes a block of two tasks `L0732`, where it
+  compiled and both could use that region at once. Upgrade by having the hook use its owner's
+  allocator, or by giving each task what it needs rather than a `thread_local` owner.
 - A `slot` whose written `self` type is not the interface's subject is `L0442`
   ([Interface bodies](design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
   `interface($T: type)` compiled and was never met. Upgrade by writing the subject, or no type.
@@ -1403,6 +1414,9 @@ checklist.
 
 ### Fixed
 
+- A map's `clear`, and a sequence's `clear` and `resize`, no longer count as using an unknown
+  allocator region for a `hook(drop)` of what they discard. Two tasks each clearing a map of their
+  own were `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).
 - `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
   statement ends, as `make_source().iter()` already did; it was never dropped
   ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).

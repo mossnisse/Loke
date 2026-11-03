@@ -170,6 +170,12 @@ discover_formatters :: proc(c: ^Compiler) {
 	}
 }
 
+// The interface of printing's `dyn fmt.Formattable`, once `core:fmt` is checked.
+format_view_interface :: proc(c: ^Compiler) -> Symbol_Id {
+	view, found := c.runtime_types["Format_View"]
+	return underlying_info(c, view).dyn_interface if found else INVALID_SYMBOL
+}
+
 // Whether `element` is printing's `dyn fmt.Formattable`.
 dyn_views_printing :: proc(c: ^Compiler, element: Type_Id) -> bool {
 	info := underlying_info(c, element)

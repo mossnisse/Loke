@@ -360,14 +360,14 @@ Compiler :: struct {
 	// design.md "Global write effects": the globals each body may write or read,
 	// and what an indirect call may reach, settled before provenance runs.
 	global_writes:       map[Symbol_Id][]Symbol_Id,
-	indirect_writes:     map[string][]Symbol_Id,
+	indirect_writes:     map[Effect_Key][]Symbol_Id,
 	global_reads:        map[Symbol_Id][]Symbol_Id,
-	indirect_reads:      map[string][]Symbol_Id,
+	indirect_reads:      map[Effect_Key][]Symbol_Id,
 	// Per body that calls a procedure value it received, its summaries apart
-	// from that value, which each call substitutes; and every body of a
-	// procedure type used as a value, once that is settled.
+	// from that value, which each call substitutes; and the bodies an indirect
+	// call may run, nil until there are bodies to choose from.
 	callback_summaries:  map[Symbol_Id]^Callback_Summary,
-	type_unions:         map[Type_Id][]int,
+	effect_unions:       map[Effect_Key][]int,
 	global_writes_ready: bool,
 	thread_spawns:       [dynamic]Thread_Spawn,
 	// The bodies the write effects settled over, for the summaries after them.
@@ -380,7 +380,7 @@ Compiler :: struct {
 	// program that a check reads them for pays for it.
 	thread_summaries_wanted: bool,
 	reach_effects:        map[Symbol_Id][]Global_Effect,
-	allocator_uses:       map[Symbol_Id]Allocator_Use,
+	allocator_uses:       map[Symbol_Id]Region_Set,
 	thread_exit_drops:    []Thread_Exit_Drop,
 	thread_facts_pending: bool,
 

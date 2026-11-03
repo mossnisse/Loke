@@ -1,0 +1,27 @@
+L0512
+@31:6
+`counter` cannot be modified by `release` here
+
+L0512
+@39:6
+`counter` cannot be modified by `release` here
+
+L0512
+@48:6
+`counter` cannot be modified by `release` here
+
+L0512
+@64:2
+`counter` cannot be modified by `less` here
+
+L0512
+@70:2
+`counter` cannot be modified by `less` here
+
+L0512
+@77:2
+`counter` cannot be modified by `sort(Ranked)` here
+
+L0512
+@91:7
+`counter` cannot be modified by `same` here

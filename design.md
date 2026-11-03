@@ -8000,8 +8000,13 @@ they run:
 
 - `hook(drop)` at scope exit, a `move` parameter's return, explicit `drop`,
   replacement assignment, container element removal, temporary cleanup at the
-  end of a statement or extended block, and panic unwinding;
+  end of a statement or extended block, and panic unwinding. A map's `remove`
+  drops the key it stored, and its `find_or_insert` and `try_insert` the element
+  they do not keep;
 - `hook(convert)` at its conversion;
+- a type's own `hash` and `==` where the language hashes or compares it: a
+  structural `==`, a `switch` testing a value, and a map operation on a key;
+- a type's own `<` where `sort` or `reverse_sort` orders it;
 - every `format` method printing may reach, since erased types are known only
   at runtime.
 

@@ -85,7 +85,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
-11. **Wrong inferred effects.** Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-global_effects-1, -2, -3. Merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
 
 
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
@@ -107,9 +106,9 @@ These ids describe one defect each and need one fix. Each is also confirmed by a
 
 #### Container operations classified in several tables
 
-`CONTAINER_OP_EFFECTS` in `container.odin` is exhaustive by construction. Beside it sit `KEY_HASHING_OPS` ([global_effects.odin:493](src/global_effects.odin#L493)), `ELEMENT_DROPPING_OPS` ([global_effects.odin:1069](src/global_effects.odin#L1069)), the insertion test at [global_effects.odin:525](src/global_effects.odin#L525), and the per-kind cases at [check_calls.odin:482](src/check_calls.odin#L482) and [emit_llvm_calls.odin:1298](src/emit_llvm_calls.odin#L1298). The partial sets are where the gaps are: `find_or_insert`, `try_insert` and map `remove` are missing from dropping.
+`CONTAINER_OP_EFFECTS` in `container.odin` is exhaustive by construction. Beside it sit `KEY_HASHING_OPS` ([global_effects.odin:493](src/global_effects.odin#L493)), the drop cases of `prov_container_drop_effects` ([global_effects.odin](src/global_effects.odin)), the insertion test at [global_effects.odin:525](src/global_effects.odin#L525), and the per-kind cases at [check_calls.odin:482](src/check_calls.odin#L482) and [emit_llvm_calls.odin:1298](src/emit_llvm_calls.odin#L1298).
 
-Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Element` to `Container_Op_Effect` and drop the sets. Saves about 10 lines; the gain is that every new operation must answer every question. Fixes BUG-global_effects-1.
+Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Element` to `Container_Op_Effect` and drop the sets. Saves about 10 lines; the gain is that every new operation must answer every question.
 
 ### Checker and front end
 
@@ -234,7 +233,7 @@ The two-cursor walk over `variadic_order` is at [cfg.odin:2843](src/cfg.odin#L28
 
 #### Worklists
 
-The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3585](src/borrow.odin#L3585), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941). The body stack with `queued` is at [global_effects.odin:955](src/global_effects.odin#L955), [global_effects.odin:1528](src/global_effects.odin#L1528) and [global_effects.odin:1987](src/global_effects.odin#L1987). They differ only in the join each performs. `Block_Queue` and `Body_Queue`, each with init, pop and push-if-absent, save about 45 lines.
+The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3585](src/borrow.odin#L3585), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941). They differ only in the join each performs. `Block_Queue`, with init, pop and push-if-absent, saves about 20 lines.
 
 #### Paths
 
@@ -624,7 +623,6 @@ The lowering design is sound and its comments mostly explain why, but the record
 **Dead code**
 
 - (branch) [capture.odin:178](src/capture.odin#L178): `literal.signature != nil` here and at line 196 is always true, because `proc_shape_ok` ([check.odin:2747](src/check.odin#L2747)) returns false for a nil signature first at line 28. Line 219 already relies on it.
-- (branch) [capture.odin:124](src/capture.odin#L124): this is the only write to `capture_records`, and `method` is never nil, so `method != nil` at [global_effects.odin:271](src/global_effects.odin#L271) is always true.
 - (branch) [capture.odin:281](src/capture.odin#L281): `outer` is a key of `capture_placeholders`, created by `new_symbol` at line 84, so `symbol_of` is never nil and the guard can go.
 - (branch) [capture.odin:227](src/capture.odin#L227): `Capture_Rewrite.receiver` is always `intern_identifier(CAPTURE_RECEIVER)`, as is the `receiver_id` parameter of `capture_field_place` from both callers; intern it inside `capture_field_place` and drop the field and parameter.
 
@@ -1322,74 +1320,11 @@ What remains needs a helper shared with `impl.odin`.
 
 ### src/global_effects.odin
 
-The solvers are sound in how they iterate and deterministic, and the comments are mostly about why; three kinds of implicit user-code call are missing from the effects. Allocator-use source plumbing and `Effect_Source.precision` carry data nothing reads, and three worklists plus two region substitutions are copies.
-
-**Bugs**
-
-- `BUG-global_effects-1` **high** [global_effects.odin:1069](src/global_effects.odin#L1069) `ELEMENT_DROPPING_OPS`: `find_or_insert` and `try_insert` drop a value and map `remove` drops the stored key, but no effect is counted (design.md "Inferred effects": container element removal). *Confirmed: Reproduced: find_or_insert, try_insert and remove (stored key) run the hook under a live borrow with no L0512, though design.md counts removal drops. A hook clearing a global made a live view read freed memory (7777), so high is fair. Not recorded as a gap.*
-  Scenario: `p := &mut counter; _ = m.find_or_insert(1, Res{2}); p^ = 100;` with a `hook(drop)` writing `counter` compiles and runs the hook; `m[1] = Res{2}` gets L0512. A hook clearing a global array leaves a live view dangling.
-  Fix: in `prov_container_drop_effects`, drop `container_element` for `.Map_Find_Or_Insert` and `.Map_Try_Insert`, and `container_key` for `.Map_Remove`; the comment at L1066 is wrong about keys.
-- `BUG-global_effects-2` **medium** [global_effects.odin:515](src/global_effects.odin#L515) `prov_implicit_call_effects`: `sort` and `reverse_sort` call an element's inherent `operator(<)`, and no effect is counted. *Confirmed: Reproduced: with `p := &mut counter` live, `xs.sort()`, `reverse_sort` and `slice.sort` compile and run the writing `operator(<)`, printing `less 1` then `100`. A direct `xs[0] < xs[1]` gets L0512. No gap or decision is recorded; medium fits.*
-  Scenario: `p := &mut counter; xs.sort(); p^ = 100;` where `less` writes `counter` compiles, and the run prints `less` then `100`, so the operator wrote while the borrow was live.
-  Fix: for `.Sort, .Reverse_Sort`, call `prov_effect_call` on the policy's `Order_Policy.less` ([container.odin:446](src/container.odin#L446)) when its kind is `.Inherent`.
-- `BUG-global_effects-3` **medium** [global_effects.odin:676](src/global_effects.odin#L676) `prov_operator_effects`: only `Expr_Binary` reaches `prov_equality_effects`, but a `switch` on a record with own `==` also runs it per case. *Confirmed: Probe: with `p := &mut counter` live, `switch (x) { case K{1}: }` whose `==` writes `counter` compiles and runs, printing hit/100, while `if (x == K{1})` gets L0512. walk_flow_switch only walks case values and emits no equality effect. Not recorded in any doc.*
-  Scenario: `p := &mut counter; switch (x) { case K{1}: ... } p^ = 100;` where `==` writes `counter` compiles and runs `==`; `x == K{1}` in the same position gets L0512.
-  Fix: call `prov_equality_effects` on the subject's type from `walk_flow_switch` ([cfg.odin:2198](src/cfg.odin#L2198)) for each value case.
-
-**Simplification**
-
-- [global_effects.odin:1709](src/global_effects.odin#L1709) `clone_effect_args`, `clone_symbols`: both are `slice.clone(x, c.semantic_allocator)`, which this file already uses at L1462 and L2045. Delete them. (about 12 lines)
-- [global_effects.odin:1458](src/global_effects.odin#L1458) `compute_global_writes`: `make` plus `append`/`copy` pairs at L1458-1464, L1501-1502 and L1960-1961 are `slice.clone_to_dynamic` and `slice.clone`. (about 6 lines)
-- [global_effects.odin:1648](src/global_effects.odin#L1648) `effect_targets`: this loop repeats L1670-1674 with the same predicate; replace it with `append(&out, ..effect_targets(c, Effect_Call{type = call.type}, program, visited))`, which also uses `type_unions`. (about 4 lines)
-- [global_effects.odin:2193](src/global_effects.odin#L2193) `collect_thread_exit_drops`: `call := callback_call(sym.span, owner)` replaces three lines, since `substitute_allocator_use` reads only `span` and `regions`. One-element slices at L802, L1220, L1780 are likewise `slice.clone([]T{x}, temp)`. (about 8 lines)
-- [global_effects.odin:1299](src/global_effects.odin#L1299) `effect_call_description`: return from a `switch` (`described`, no symbol, no `dropped`, `unnamed`, else) instead of `name := ""` and an else-if chain. (about 4 lines)
-- [global_effects.odin:1108](src/global_effects.odin#L1108) `prov_effect_call`: `regions_of != nil || drops` is tested twice; name it once as `deferred`. (about 1 line)
-- [global_effects.odin:1480](src/global_effects.odin#L1480) `compute_global_writes`: make `c.thread_spawns` with the other maps at L1439 and just `append`; the guards go. (about 4 lines)
-- [global_effects.odin:1564](src/global_effects.odin#L1564) `compute_global_writes`: `own` exists only for `warn_thread_races`, which is file-private like `Body_Effects`; pass `bodies[:]`. (about 3 lines)
-- [global_effects.odin:112](src/global_effects.odin#L112) `prov_note_static_write`, `prov_note_static_read`: share a `prov_root_global(graph, root) -> Symbol_Id`. The write also adds to `effect_writes` after the effects settle, where nothing reads it; gate it as the read is. (about 5 lines)
-
-**Dead code**
-
-- `param_sources` ([borrow.odin:1059](src/borrow.odin#L1059)): with `default_source` and `unknown_source`, read only by `thread_summaries_test.odin`. Removing them removes the `via` and `source` plumbing in `substitute_allocator_use`, L1936-1937, and most of `clone_allocator_use`.
-- `use` ([global_effects.odin:1753](src/global_effects.odin#L1753)): `Thread_Exit_Drop.use` is read only by tests, and [borrow.odin:6143](src/borrow.odin#L6143) skips every `hook == INVALID_SYMBOL` entry, so the `owns` branch at L2179-2183 and L2191-2197 serve tests alone. Consume it for the window check or remove it.
-- (branch) [global_effects.odin:1623](src/global_effects.odin#L1623): the `call.callee` case of `effect_targets` is unreachable; `call_parts`, `effect_call_globals` and `indirect_call_targets` all handle a callee first, and `forwarding_effect` and `any_value_call` set none.
-- (branch) [global_effects.odin:1924](src/global_effects.odin#L1924): `graph == nil` is unreachable: `check_proc_body` always checks a body and returns on a nil symbol, and L1453 has no such check. So are the `sym != nil` guards at L1455 and L1912.
-- (branch) [global_effects.odin:1161](src/global_effects.odin#L1161): `new_flow_graph` is the only creator and returns nil for a nil literal, so `graph.literal` is never nil here or at L565; `graph_body` is `graph.literal.symbol`.
-- (branch) [global_effects.odin:950](src/global_effects.odin#L950): `&& call.callee != INVALID_SYMBOL` here and at L967 and L2080 adds nothing to `found`: every body has a symbol, so `INVALID_SYMBOL` is never in `index_of`.
-- (branch) [global_effects.odin:1272](src/global_effects.odin#L1272): `callback_region` is reached only from `prov_window_effect_use`, which needs `parallel_depth > 0`, and `check_parallel` sets `thread_summaries_wanted`, so the regions are always settled. The fallback and its comment can go.
-- (branch) [global_effects.odin:1444](src/global_effects.odin#L1444): `c.type_unions = nil` is a no-op; the field is nil until L1495 and this procedure runs once per program.
-
-**Data structures and algorithms**
-
-- [global_effects.odin:1423](src/global_effects.odin#L1423) `effect_key`: formats a string with `fmt.aprintf` for each indirect call in each graph pass and for each `effect_targets` call, to key `indirect_writes`, `indirect_reads` and `visited`. A comparable struct `{interface, slot, type}` needs no formatting or allocation.
-- [global_effects.odin:1628](src/global_effects.odin#L1628) `effect_targets`: the `dyn` case scans all of `witness_order` and up to all bodies twice, uncached, per `dyn` call in `call_parts`, in both solvers; cost is `dyn` calls times (witnesses + bodies). Only type unions are cached. Cache by the struct key above when `seen == nil`.
-- [global_effects.odin:1685](src/global_effects.odin#L1685) `add_global_symbol`: a linear scan, so a revisit costs `|from| * |into|` per part, and a body near `main` can reach most globals. Small today since programs have few globals; if `perf.ps1` shows it, use a per-body bit row indexed by a dense global number, as `borrow.odin` does for loans.
+The solvers are sound in how they iterate and deterministic, and the comments are mostly about why.
 
 **Near copies**
 
 - [global_effects.odin:144](src/global_effects.odin#L144), L275, L359, L713 and [borrow.odin:2578](src/borrow.odin#L2578): the same `Ident`/`Selector`/`Proc` switch; share `expr_named_symbol(e) -> Symbol_Id`. L713 omits `Expr_Proc` since the race warning covers named procedures only, so keep that check at its caller. The tail of `effect_value` at L369-374 and borrow.odin:2587-2591 also match.
-- [global_effects.odin:955](src/global_effects.odin#L955), [L1528](src/global_effects.odin#L1528) and [L1987](src/global_effects.odin#L1987): the same `queued`/`pending` setup, pop and wake-readers code, at L961-991, L1534-1562 and L1993-2040. A small `Body_Queue` with `make`, `pop` and `wake(list)` saves about 25 lines.
-- [global_effects.odin:1351](src/global_effects.odin#L1351) `substituted_region` and [L2129](src/global_effects.odin#L2129) `substitute_allocator_use`: identical parameter switch. Once the sources above go, the second is `merge` of the first's result; [L1283](src/global_effects.odin#L1283) `region_through` differs only by having no `direct` case. (about 20 lines)
-- [global_effects.odin:534](src/global_effects.odin#L534) `prov_hash_effects` and [L547](src/global_effects.odin#L547) `prov_equality_effects`: differ only in `part_own_hash` versus `type_own_equality`, which share a signature; one body taking that proc saves about 8 lines.
-- [global_effects.odin:593](src/global_effects.odin#L593), L664, L1658 and [hooks.odin:560](src/hooks.odin#L560): each looks up `runtime_types["Format_View"]` and takes its `dyn_interface`; a `format_view_interface(c) -> Symbol_Id` shortens all four. (about 6 lines)
-
-**Structure and boundaries**
-
-- [global_effects.odin:2233](src/global_effects.odin#L2233): `clone_allocator_use`, `resize_allocator_use`, `merge_allocator_use_from`, with `clone_regions` at L2216 and `region_through` at L1283, are operations on types owned by [borrow.odin:981](src/borrow.odin#L981); they belong beside `region_merge` and `merge_allocator_use`.
-- [global_effects.odin:1437](src/global_effects.odin#L1437) `compute_global_writes`: 145 lines with natural seams: collecting a body (L1449-1488), building parts (L1506-1520), the fixed point (L1524-1563), publishing (L1564-1577).
-- [global_effects.odin:1902](src/global_effects.odin#L1902) `compute_thread_summaries`: 155 lines; the seams are collecting facts (L1907-1967, with the handle rule at L1945-1957 as its own helper), the fixed point (L1993-2041), publishing (L2042-2055).
-- [global_effects.odin:1770](src/global_effects.odin#L1770): `indirect_call_targets`, `call_effect_origins` and `callable_type_targets` sit under the thread-summaries header, but result summaries and diagnostics use them; move them to the per-call section. `prov_drop_effects` and its family (L1044-1086) interrupt that section's solver helpers and belong with the other `prov_*` hooks above L755.
-- [global_effects.odin:1722](src/global_effects.odin#L1722): this header is a natural file seam, about 550 lines of thread summaries, at the cost of making `call_parts`, `closing_parts`, `part_readers` and `call_values` `@(private)` rather than file-private. It would need the source-code map updated.
-
-**Comments**
-
-- [global_effects.odin:725](src/global_effects.odin#L725): restates the spec's bullets; shorten to `design.md "Global write effects"` plus: "`own` leaves out what received callbacks run, which is reported where the crossing call passes them." (about 5 lines)
-- [global_effects.odin:1176](src/global_effects.odin#L1176): keep the citation and "a helping join may run the block's pooled tasks and their descendants, so it writes and reads their `thread_local` storage." (about 4 lines)
-- [global_effects.odin:1136](src/global_effects.odin#L1136): repeats L39-42 and L1695; use "Not the parent's at the spawn; a pooled join counts them (`prov_pool_join_effects`)." (about 2 lines)
-- [global_effects.odin:1430](src/global_effects.odin#L1430): repeats the file header and `call_parts`, and has a stray line break; "Gathers every clean body's effects, then settles them; `call_parts` says what a call takes in." (about 5 lines)
-- [global_effects.odin:1375](src/global_effects.odin#L1375): repeats L828-833; "A union is settled once per key." Delete L1383. (about 3 lines)
-- [global_effects.odin:1606](src/global_effects.odin#L1606): delete, as it restates the name; likewise L2242. (about 2 lines; about 25 lines across the file with those above and similar overlap at L1328 and L2123)
-- [global_effects.odin:1066](src/global_effects.odin#L1066): "`pop` and `remove` hand theirs back" is false for a map's key; rewrite with the fix for the first bug above.
 
 ### src/hash.odin
 

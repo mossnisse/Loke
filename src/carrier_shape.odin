@@ -567,51 +567,55 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 	return into^ != before
 }
 
-// design.md "Allocators and tasks": the regions a
-// procedure may allocate from, resize or free in, reset, or destroy. A
-// parameter's is whatever each caller passes, and the call substitutes it; a
-// region the body creates is its own, and only its provider's parent, where
-// the provider draws and returns blocks, is a caller's concern
-// (`prov_caller_region`). `regions` never names a local.
-Allocator_Use :: struct {
-	regions: Region_Set,
-	// Where each part comes from: one per parameter, then the default
-	// provider's region and an unknown one.
-	param_sources:  []Effect_Source,
-	default_source: Effect_Source,
-	unknown_source: Effect_Source,
+// design.md "Allocators and tasks": a procedure's allocator use is the regions it
+// may allocate from, resize or free in, reset, or destroy. A parameter's is
+// whatever each caller passes, and the call substitutes it; a region the body
+// creates is its own, and only its provider's parent, where the provider draws and
+// returns blocks, is a caller's concern (`prov_caller_region`). So a use never
+// names a local: one in `set` is unknown here.
+merge_allocator_use :: proc(into: ^Region_Set, set: Region_Set) -> bool {
+	before := into^
+	into.params |= set.params
+	into.default ||= set.default
+	into.unknown ||= set.unknown || set.crowded || set.locals != 0
+	return into^ != before
 }
 
-new_allocator_use :: proc(param_count: int, allocator: mem.Allocator) -> Allocator_Use {
-	return Allocator_Use{param_sources = make([]Effect_Source, max(param_count, 1), allocator)}
-}
-
-allocator_use_is_empty :: proc(use: Allocator_Use) -> bool {
-	return region_is_empty(use.regions)
-}
-
-// Adds what `set` names, each part new to `into` attributed to `source`.
-merge_allocator_use :: proc(into: ^Allocator_Use, set: Region_Set, source: Effect_Source) -> bool {
-	grew := false
-	wanted := set.params
-	for index in next_region_param(&wanted) {
-		if index < len(into.param_sources) && !region_has_param(into.regions, index) {
-			region_add_param(&into.regions, index)
-			into.param_sources[index] = source
-			grew = true
+// `set`, in a callee's terms, in its caller's: each parameter region as the region
+// of the argument the call binds there, or an unknown one when the call's regions
+// are not known. A call that is not `direct`, through a value or a `dyn` slot, may
+// bind any argument to any parameter of the target. The callee's own local regions
+// are unknown to its caller.
+substituted_region :: proc(set: Region_Set, regions: []Region_Set, direct := true) -> Region_Set {
+	out := Region_Set{default = set.default, unknown = set.unknown || set.crowded || set.locals != 0}
+	params := set.params
+	for parameter in next_region_param(&params) {
+		switch {
+		case regions == nil:
+			out.unknown = true
+		case !direct:
+			for region in regions {
+				region_merge(&out, region)
+			}
+		case parameter < len(regions):
+			region_merge(&out, regions[parameter])
 		}
 	}
-	if set.default && !into.regions.default {
-		into.regions.default = true
-		into.default_source = source
-		grew = true
+	return out
+}
+
+// A callback's allocator use at a call that passes it: every argument it is given
+// is in `given`, the regions its callee passes it, in that callee's terms.
+callback_allocator_use :: proc(use, given: Region_Set, regions: []Region_Set) -> Region_Set {
+	return substituted_region(use, []Region_Set{substituted_region(given, regions)}, direct = false)
+}
+
+// `nil` is a call's regions not being known, which a clone keeps.
+clone_regions :: proc(regions: []Region_Set, allocator: mem.Allocator) -> []Region_Set {
+	if regions == nil {
+		return nil
 	}
-	if (set.unknown || set.crowded || set.locals != 0) && !into.regions.unknown {
-		into.regions.unknown = true
-		into.unknown_source = source
-		grew = true
-	}
-	return grew
+	return slice.clone(regions, allocator)
 }
 
 // ------------------------------------------------------- result summaries --

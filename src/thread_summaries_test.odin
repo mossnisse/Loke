@@ -63,13 +63,13 @@ expect_no_reach :: proc(t: ^testing.T, p: ^Checked, procedure, global: string, l
 }
 
 @(private = "file")
-use_of :: proc(t: ^testing.T, p: ^Checked, procedure: string) -> Allocator_Use {
+use_of :: proc(t: ^testing.T, p: ^Checked, procedure: string) -> Region_Set {
 	return p.c.allocator_uses[symbol_named(t, p, procedure, .Proc)]
 }
 
 @(private = "file")
-uses_param :: proc(use: Allocator_Use, index: int) -> bool {
-	return region_has_param(use.regions, index)
+uses_param :: proc(use: Region_Set, index: int) -> bool {
+	return region_has_param(use, index)
 }
 
 @(test)
@@ -182,10 +182,9 @@ eager :: proc(unused: int, a: Allocator) { apply(fill, a); }
 	expect_no_reach(t, &p, "calm", "shared")
 	expect_reach(t, &p, "busy", "shared", via = "touch")
 	testing.expect(t, uses_param(use_of(t, &p, "apply"), 1), "`apply` alone may be given `fill`")
-	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "lazy")), "`idle` uses no allocator")
+	testing.expect(t, region_is_empty(use_of(t, &p, "lazy")), "`idle` uses no allocator")
 	eager := use_of(t, &p, "eager")
 	testing.expect(t, uses_param(eager, 1) && !uses_param(eager, 0), "`fill` uses what `apply` passes it, `eager`'s allocator")
-	testing.expectf(t, eager.param_sources[1].via == symbol_named(t, &p, "fill", .Proc), "`eager` names `fill`")
 }
 
 @(test)
@@ -231,10 +230,10 @@ peek :: proc(list: ^[dynamic]int) -> int { return list[0]; }
 	testing.expect(t, uses_param(use_of(t, &p, "build"), 0), "`build` makes from its allocator")
 	forward := use_of(t, &p, "forward")
 	testing.expect(t, uses_param(forward, 1) && !uses_param(forward, 0), "`forward` uses its allocator parameter only")
-	testing.expect(t, !forward.regions.unknown, "`forward` uses no unknown region")
-	testing.expect(t, use_of(t, &p, "fresh").regions.default, "`fresh` grows a default-bound array")
-	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "idle")), "`idle` uses no allocator")
-	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "peek")), "`peek` only reads")
+	testing.expect(t, !forward.unknown, "`forward` uses no unknown region")
+	testing.expect(t, use_of(t, &p, "fresh").default, "`fresh` grows a default-bound array")
+	testing.expect(t, region_is_empty(use_of(t, &p, "idle")), "`idle` uses no allocator")
+	testing.expect(t, region_is_empty(use_of(t, &p, "peek")), "`peek` only reads")
 }
 
 @(test)
@@ -256,12 +255,8 @@ build :: proc(a: Allocator) { r := Real{1}; use_view((dyn Filler)(&r), a); }
 		return
 	}
 	testing.expect(t, uses_param(use_of(t, &p, "down"), 1), "`down` reaches `up`'s allocation")
-	apply := use_of(t, &p, "apply")
-	testing.expect(t, uses_param(apply, 1), "a call through a value binds the allocator argument")
-	testing.expectf(t, apply.param_sources[1].via == symbol_named(t, &p, "fill", .Proc), "`apply` names `fill`")
-	use_view := use_of(t, &p, "use_view")
-	testing.expect(t, uses_param(use_view, 1), "a `dyn` call reaches the witness's allocation")
-	testing.expectf(t, use_view.param_sources[1].via == symbol_named(t, &p, "fill_into", .Proc), "`use_view` names the witness")
+	testing.expect(t, uses_param(use_of(t, &p, "apply"), 1), "a call through a value binds the allocator argument")
+	testing.expect(t, uses_param(use_of(t, &p, "use_view"), 1), "a `dyn` call reaches the witness's allocation")
 	testing.expect(t, uses_param(use_of(t, &p, "build"), 0), "`build` substitutes its own parameter")
 }
 
@@ -282,16 +277,13 @@ consumed :: proc(values: move [dynamic]int) {}
 `) {
 		return
 	}
-	release := use_of(t, &p, "release")
-	testing.expect(t, release.regions.unknown, "an allocator read from a global is an unknown region")
-	scoped := use_of(t, &p, "scoped")
-	testing.expect(t, scoped.regions.unknown, "dropping a `Guard` runs its hook")
-	testing.expectf(t, scoped.unknown_source.via == symbol_named(t, &p, "release", .Proc), "`scoped` names the hook")
+	testing.expect(t, use_of(t, &p, "release").unknown, "an allocator read from a global is an unknown region")
+	testing.expect(t, use_of(t, &p, "scoped").unknown, "dropping a `Guard` runs its hook")
 	testing.expect(t, uses_param(use_of(t, &p, "deferred"), 0), "a deferred append is the body's")
 	testing.expect(t, uses_param(use_of(t, &p, "dropped"), 0), "`dropped` frees in its parameter's region")
 	consumed := use_of(t, &p, "consumed")
 	testing.expect(t, uses_param(consumed, 0), "a `move` owner is released in its argument's region")
-	testing.expect(t, !consumed.regions.default, "not in the default provider's")
+	testing.expect(t, !consumed.default, "not in the default provider's")
 }
 
 @(test)
@@ -311,29 +303,25 @@ remember :: proc() { local: thread_local Tracked; }
 		return
 	}
 	resource := symbol_named(t, &p, "resource", .Var)
-	names := symbol_named(t, &p, "names", .Var)
 	local := symbol_named(t, &p, "local", .Var)
 	release := symbol_named(t, &p, "release", .Proc)
 	total := symbol_named(t, &p, "total", .Var)
 	shared := symbol_named(t, &p, "shared", .Var)
-	hooked, released, local_hooked := false, false, false
+	hooked, local_hooked := false, false
 	for drop in p.c.thread_exit_drops {
 		testing.expect(t, drop.variable != symbol_named(t, &p, "plain", .Var), "a plain `thread_local` drops nothing")
+		testing.expect(t, drop.variable != symbol_named(t, &p, "names", .Var), "a hookless owner's release reserves nothing")
 		switch {
 		case drop.variable == resource && drop.hook == release:
 			hooked = true
 			testing.expect(t, len(drop.writes) == 1 && drop.writes[0] == total, "the hook's writes are the drop's")
 			testing.expect(t, len(drop.reach) == 1 && drop.reach[0].global == shared, "so is its reach")
 			testing.expect(t, len(drop.reach) == 1 && drop.reach[0].source.via == release, "naming the hook")
-		case drop.variable == names && drop.hook == INVALID_SYMBOL:
-			released = true
-			testing.expect(t, drop.use.regions.default, "a default-bound owner frees in the default region")
 		case drop.variable == local && drop.hook == release:
 			local_hooked = true
 		}
 	}
 	testing.expect(t, hooked, "the hooked owner's drop is listed")
-	testing.expect(t, released, "the managed owner's release is listed")
 	testing.expect(t, local_hooked, "a procedure's `thread_local` owner is listed too")
 }
 
@@ -357,8 +345,8 @@ count :: proc(s: string_view) -> int { return s.rune_count(); }
 	// A header read touches no bytes; a derived view handed back may be read.
 	expect_no_reach(t, &p, "header", "shared")
 	expect_reach(t, &p, "handed", "shared")
-	testing.expect(t, use_of(t, &p, "duplicate").regions.default, "`copy` allocates from the default provider")
-	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "count")), "counting runes allocates nothing")
+	testing.expect(t, use_of(t, &p, "duplicate").default, "`copy` allocates from the default provider")
+	testing.expect(t, region_is_empty(use_of(t, &p, "count")), "counting runes allocates nothing")
 }
 
 // A `@(move_only)` record of plain fields is managed for its lifecycle but frees
@@ -374,7 +362,7 @@ hold :: proc() { held := Token{1}; }
 `) {
 		return
 	}
-	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "hold")), "dropping a plain `Token` frees nothing")
+	testing.expect(t, region_is_empty(use_of(t, &p, "hold")), "dropping a plain `Token` frees nothing")
 	token := symbol_named(t, &p, "token", .Var)
 	for drop in p.c.thread_exit_drops {
 		testing.expect(t, drop.variable != token, "a plain `Token` owner releases no storage at thread exit")

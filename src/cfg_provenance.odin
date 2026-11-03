@@ -125,7 +125,7 @@ Prov_State :: struct {
 	thread_spawns: [dynamic]Thread_Spawn,
 	// The allocator use this body's own operations make, while the thread
 	// summaries collect (`prov_note_allocator_use`).
-	allocator_use: Allocator_Use,
+	allocator_use: Region_Set,
 	// A direct call's callee, which `prov_note_proc_value` does not count as
 	// a procedure used as a value.
 	callee_expr:   Expr,

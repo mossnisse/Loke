@@ -481,6 +481,18 @@ shared_region_text :: proc(state: ^Prov_Solve, a, b: Region_Set) -> string {
 	return "an allocator region this procedure cannot tell apart from it"
 }
 
+// What a task reserves: what its call may use and what its thread's exit drops may
+// (design.md "Globals while tasks run").
+@(private = "file")
+task_reservation :: proc(c: ^Compiler, site: Task_Site) -> Region_Set {
+	reserve := site.reserve
+	for drop in c.thread_exit_drops {
+		region_merge(&reserve, drop.use)
+	}
+	reserve.default = false
+	return reserve
+}
+
 // A task reserves the regions it may use until the join, so no other task
 // that may be running uses them, nor another from the same spawn in a loop.
 @(private = "file")
@@ -488,12 +500,14 @@ check_task_reservation :: proc(state: ^Prov_Solve, event: Prov_Event, window: []
 	graph := state.graph
 	c := state.k.c
 	site := graph.task_sites[event.slot]
+	reserve := task_reservation(c, site)
 	for other in running_sites(graph, window) {
 		reserved := graph.task_sites[other]
-		if !reservations_conflict(site.reserve, reserved.reserve) {
+		running := task_reservation(c, reserved)
+		if !reservations_conflict(reserve, running) {
 			continue
 		}
-		region := shared_region_text(state, site.reserve, reserved.reserve)
+		region := shared_region_text(state, reserve, running)
 		if other == event.slot {
 			errorf(
 				c, event.span, "L0732",
@@ -516,13 +530,14 @@ check_parent_allocator_use :: proc(state: ^Prov_Solve, event: Prov_Event, window
 	c := state.k.c
 	for other in running_sites(graph, window) {
 		reserved := graph.task_sites[other]
-		if !reservations_conflict(event.region, reserved.reserve) {
+		running := task_reservation(c, reserved)
+		if !reservations_conflict(event.region, running) {
 			continue
 		}
 		errorf(
 			c, event.span, "L0732",
 			"this uses %s, which a running task reserves until this `parallel` block joins",
-			shared_region_text(state, event.region, reserved.reserve),
+			shared_region_text(state, event.region, running),
 		)
 		add_notef(c, reserved.span, "that task is started here")
 		return
@@ -701,9 +716,6 @@ check_thread_exit_drops :: proc(state: ^Prov_Solve, event: Prov_Event, shared: ^
 		block = scope.span
 	}
 	for drop in c.thread_exit_drops {
-		if drop.hook == INVALID_SYMBOL {
-			continue
-		}
 		owner := symbol_of(c, drop.variable)
 		hook := symbol_of(c, drop.hook)
 		for global in drop.writes {

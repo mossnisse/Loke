@@ -1440,6 +1440,9 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 			}
 			for value in c.values {
 				walk_flow_expr(graph, value)
+				if graph.mode != .Lifecycle && s.subject != nil {
+					prov_equality_effects(graph, expr_base(s.subject).type, expr_span(value))
+				}
 				link(graph, graph.current, bodies[index])
 				next := new_flow_block(graph)
 				link(graph, graph.current, next)

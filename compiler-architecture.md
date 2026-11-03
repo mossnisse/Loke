@@ -407,7 +407,7 @@ behavioral controls for all of it.
 | What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
 | Global write and read effects and the callbacks a call passes | `compute_global_writes`, `Compiler.global_reads`, `prov_copy_effects`, `Expr_Base.copied_as`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |
-| Thread summaries for `parallel` blocks | `compute_thread_summaries`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
+| Thread summaries for `parallel` blocks | `compute_thread_summaries` in `thread_summaries.odin`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
 | Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `PROV_OFFSET_LIMIT`, `PROV_OFFSET_TOTAL`, `L0641`, `L0646`, `L0647`, `L0730` |
 
 Keep these contracts:
@@ -936,7 +936,8 @@ be file-private. Paths below are relative to `src/`.
 | `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
 | `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
 | `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
-| `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops, and what a `parallel` block's parent does with them while its tasks run. |
+| `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; what one call takes in from those and the thread summaries, and what a `parallel` block's parent does with them while its tasks run. |
+| `thread_summaries.odin` | The reach and allocator-use effects and thread-exit drops, settled over the calls the write effects resolved. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain
