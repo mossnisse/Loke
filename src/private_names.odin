@@ -256,7 +256,6 @@ note_group_exports :: proc(c: ^Compiler, file: ^File, into: ^map[string]Named, d
 
 // `Name` of `impl Name`, `impl Name($T)`, and `impl ^Name`, and otherwise the
 // subject as written, as `pkg.Name` or `[]Name`.
-@(private = "file")
 subject_name :: proc(c: ^Compiler, e: Expr) -> string {
 	#partial switch v in e {
 	case ^Expr_Call:
@@ -301,7 +300,6 @@ impl_members_read :: proc(x: ^Exposure, v: ^Item_Impl) -> bool {
 // for `Short :: Box($T)`, is on that public type, whose values an importer has.
 // A generic block's subject is resolved only per instance, and a block cannot
 // apply an alias to `$` names, so such a block names the private type itself.
-@(private = "file")
 subject_type_is_public :: proc(c: ^Compiler, v: ^Item_Impl) -> bool {
 	info := type_of(c, v.subject)
 	if info != nil && info.kind == .Pointer {

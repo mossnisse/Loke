@@ -46,7 +46,7 @@ EMPTY_COMPLETION :: `{"isIncomplete":false,"items":[]}`
 completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> string {
 	offset := u32(position_to_offset(text, position, s.utf8_positions))
 	comments := make([dynamic]lokec.Span, context.temp_allocator)
-	tokens := lex_text(text, &comments)
+	tokens := lokec.lex_text(text, &comments)
 	defer delete(tokens)
 	if inside_comment_or_literal(text, tokens, comments[:], offset) { return EMPTY_COMPLETION }
 	start := offset
@@ -163,7 +163,7 @@ symbol_detail :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_S
 // goes. Literals keep their text.
 @(private = "file")
 one_line :: proc(text: string) -> string {
-	tokens := lex_text(text)
+	tokens := lokec.lex_text(text)
 	defer delete(tokens)
 	b := strings.builder_make(context.temp_allocator)
 	for token, index in tokens {
@@ -186,7 +186,7 @@ one_line :: proc(text: string) -> string {
 signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> string {
 	offset := u32(position_to_offset(text, position, s.utf8_positions))
 	comments := make([dynamic]lokec.Span, context.temp_allocator)
-	tokens := lex_text(text, &comments)
+	tokens := lokec.lex_text(text, &comments)
 	defer delete(tokens)
 	if inside_comment_or_literal(text, tokens, comments[:], offset) { return "null" }
 	open := make([dynamic]int, context.temp_allocator)
@@ -275,7 +275,7 @@ write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, p
 		}
 		return
 	}
-	tokens := lex_text(label)
+	tokens := lokec.lex_text(label)
 	defer delete(tokens)
 	next, depth, names := 0, 0, true
 	for parameter, index in parameters {
@@ -327,17 +327,6 @@ literal_token :: proc(text: string, token: lokec.Token) -> (literal, open_ended:
 	escapes := 0
 	for i := len(written) - 2; i > 0 && written[i] == '\\' && quote != '`'; i -= 1 { escapes += 1 }
 	return true, escapes % 2 == 1
-}
-
-// The compiler's own tokens for a text: literals are whole, and comments are
-// left out, their spans appended to `comments` when it is given.
-lex_text :: proc(text: string, comments: ^[dynamic]lokec.Span = nil) -> []lokec.Token {
-	scratch: lokec.Compiler
-	defer lokec.destroy_compilation(&scratch)
-	append(&scratch.sources, lokec.Source{text = text})
-	tokens := lokec.lex(&scratch, 0)
-	if comments != nil { append(comments, ..scratch.sources[0].comments[:]) }
-	return tokens
 }
 
 // The tokens of a text as the compiler's parser left them: a contextual

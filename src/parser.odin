@@ -590,6 +590,7 @@ parse_attributes :: proc(p: ^Parser) -> []Attribute {
 
 @(private = "file")
 parse_package_clause :: proc(p: ^Parser, f: ^File) {
+	f.package_lo = current(p).lo
 	f.attributes = parse_attributes(p)
 
 	if _, ok := expect(p, .Package, "L0202", "a `package` clause"); !ok {
@@ -3692,7 +3693,7 @@ parse_record :: proc(p: ^Parser) -> ^Type_Record {
 	groups := span_to_here(p, first)
 	where_clauses := parse_where_clause(p)
 
-	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the body")
+	brace, opened := expect(p, .Lbrace, "L0239", "`{` to open the body")
 
 	fields: []Field
 	variants: []Variant
@@ -3710,6 +3711,7 @@ parse_record :: proc(p: ^Parser) -> ^Type_Record {
 	e.attributes = attributes
 	e.move_only = has_attribute(attributes, "move_only")
 	e.where_clauses = where_clauses
+	e.body_lo = brace.lo
 	e.fields = fields
 	e.variants = variants
 	e.has_error = !opened || !closed || !generics_ok || !members_ok

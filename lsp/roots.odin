@@ -183,10 +183,7 @@ clear_directory_scans :: proc(s: ^Server) {
 // literals do not count. Only for grouping files into roots; a `main` inside a
 // file-scope `when` is not seen, and the compiler decides what the file means.
 declares_entry :: proc(text: string) -> bool {
-	scratch: lokec.Compiler
-	defer lokec.destroy_compilation(&scratch)
-	append(&scratch.sources, lokec.Source{text = text})
-	tokens := lokec.lex(&scratch, 0)
+	tokens := lokec.lex_text(text)
 	defer delete(tokens)
 	depth := 0
 	for token, index in tokens {

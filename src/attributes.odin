@@ -565,23 +565,17 @@ written_is_public :: proc(attributes, file_attributes: []Attribute, by_default :
 // untaken `when` branch or a generic `impl`, which is checked per instance,
 // takes its visibility from its written attributes, as the checker would.
 decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute = nil) -> bool {
-	if len(d.names) == 0 || d.names[0].text == "_" {
+	if d.names[0].text == "_" {
 		return false
 	}
 	if len(d.symbols) > 0 {
 		symbol := symbol_of(c, d.symbols[0])
 		return symbol != nil && symbol.public && !symbol_is_test(symbol)
 	}
-	if d.kind == .Var || has_attribute(d.attributes, "test") || has_attribute(d.attributes, "private") {
+	if d.kind == .Var || has_attribute(d.attributes, "test") {
 		return false
 	}
-	if has_attribute(d.attributes, "public") {
-		return true
-	}
-	if has_attribute(block, "private") {
-		return false
-	}
-	return has_attribute(block, "public") || has_attribute(file.attributes, "public")
+	return written_is_public(d.attributes, has_attribute(block, "private") ? nil : file.attributes, has_attribute(block, "public"))
 }
 
 // design.md `@(escape=...)`: the written level, which only a parameter carrying

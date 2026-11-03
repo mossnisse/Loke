@@ -161,6 +161,19 @@ lex :: proc(c: ^Compiler, file: u32) -> []Token {
 	return tokens[:]
 }
 
+// The tokens of a text no file holds, comments left out, their spans appended
+// to `comments` when it is given. What the lexer would report goes unsaid.
+lex_text :: proc(text: string, comments: ^[dynamic]Span = nil) -> []Token {
+	scratch: Compiler
+	defer destroy_compilation(&scratch)
+	append(&scratch.sources, Source{text = text})
+	tokens := lex(&scratch, 0)
+	if comments != nil {
+		append(comments, ..scratch.sources[0].comments[:])
+	}
+	return tokens
+}
+
 // grammar.md "Whitespace and comments": a carriage return only ever begins a
 // `\r\n`. Checked over the whole text, comments and literals included, so that
 // every line table, which only `\n` ends, agrees with an editor's. The first

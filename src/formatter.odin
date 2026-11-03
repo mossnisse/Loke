@@ -83,10 +83,7 @@ format_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 	// The guarantee, checked rather than assumed: the same tokens, in order.
 	// The parser retagged contextual keywords and keyword member names, so a
 	// token is compared by its text; the same text lexes to the same kind.
-	scratch: Compiler
-	defer destroy_compilation(&scratch)
-	append(&scratch.sources, Source{path = c.sources[file].path, text = formatted, line_starts = {}})
-	again := lex(&scratch, 0)
+	again := lex_text(formatted)
 	defer delete(again)
 	same := len(again) == len(tokens)
 	for index := 0; same && index < len(tokens); index += 1 {

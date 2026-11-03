@@ -75,4 +75,45 @@ main :: proc() {
 	x := twice(2); /// Sharing its line with code.
 	fmt.println(x, undeclared);
 }
+
+/// Documented, with a field under an array.
+Grid :: [4](
+	/// A field.
+	x: int,
+);
+
+/// Documented, with a field under a pointer.
+Ptr :: ^(
+	/// A field.
+	y: int,
+);
+
+/// Documented, with a field under a slice.
+Many :: [](
+	/// A field.
+	s: int,
+);
+
+/// Documented, with a field in a map's value.
+Table :: map[int](
+	/// A field.
+	v: int,
+);
+
+/// Documented, with fields in a parameter's type and in the result.
+take :: proc(p: (
+	/// A field.
+	z: int,
+)) -> (
+	/// A field.
+	r: int,
+) { return {r = p.z}; }
+
+/// Documented, with a field under a field's array.
+Holder :: struct {
+	inner: [2](
+		/// A field.
+		q: int,
+	),
+}
 /// At the end of the file.

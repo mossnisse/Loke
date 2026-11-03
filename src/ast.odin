@@ -667,6 +667,8 @@ Type_Record :: struct {
 	generic_params: []Generic_Param,
 	attributes:     []Attribute,
 	where_clauses:  []Expr,
+	// Where the body's `{` is.
+	body_lo:        u32,
 	fields:         []Field,
 	variants:       []Variant,
 }
@@ -1383,7 +1385,9 @@ File :: struct {
 	file:         u32,
 	attributes:   []Attribute, // on the package clause
 	package_name: string,
-	package_span: Span,
+	package_span: Span, // its name
+	// Where the clause starts, at its first attribute.
+	package_lo:   u32,
 	items:        []Item,
 	// `items` with selected `when` branches flattened in, in source order. The
 	// checker reads this; `-dump-ast` prints `items`.

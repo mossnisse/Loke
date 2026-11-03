@@ -1,0 +1,82 @@
+/// The reproductions of the compiler review of 2026-11-02. A comment in the
+/// clause does not hide this one.
+@(public)
+package /* package */ regressions;
+
+import "./sizes";
+// Used only in a body, so the interface file does not import it, though a field
+// has its name.
+import "./member";
+
+/// A block written through a private alias is on the public type, and importers
+/// call what it holds.
+Pub :: struct {
+	n: int,
+}
+
+impl Pub {
+	/// In the public type's own block.
+	direct :: proc(self) -> int { return self.n; }
+}
+
+@(private) Al :: Pub;
+
+impl Al {
+	/// In a block written through the alias.
+	get :: proc(self) -> int { return self.n; }
+}
+
+// A block on a private type stays hidden until something names that type.
+@(private) Hidden :: struct {}
+
+impl Hidden {
+	unreached :: proc(self) {}
+}
+
+Cfg :: struct {
+	n: int,
+}
+
+/// The head ends at the body's brace, not at one in its `where` clause.
+Wh :: struct($T: type) where size_of(Cfg{n = 1}) > 0 {
+	a: T,
+}
+
+/// An import only an attribute uses is written.
+@(align=sizes.N)
+Aligned :: struct {
+	x: int,
+}
+
+// An array's key is a constant, which is shown once a shown array names it. A
+// field's name is no reference to the private constant it is spelled like.
+@(private) KEY :: 1;
+@(private) FIELD :: 2;
+
+TABLE :: [3]int{KEY = 5};
+
+Named :: struct {
+	FIELD: int,
+}
+
+NAMED :: Named{FIELD = 2};
+
+/// A field keeps its other attributes, whichever order or group they are in.
+Attributed :: struct {
+	@(required) @(public) w: int,
+	@(public, required) v: int,
+	@(required, private) hidden: int,
+	@(public) using base: Pub,
+	plain: int,
+}
+
+/// `member` is a field here, and no name is qualified with it.
+Wrapper :: struct {
+	member: (n: int),
+}
+
+WRAPPED :: Wrapper{}.member.n;
+
+uses_member :: proc() -> int {
+	return member.N;
+}

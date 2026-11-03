@@ -128,7 +128,7 @@ Shared form: assign only on success. Saves about 100 lines.
 
 | Child | ast | doc | private_names | select |
 | --- | --- | --- | --- | --- |
-| composite field-name key | walked | skipped | skipped | skipped unless keys are values |
+| composite field-name key | walked | skipped unless resolved or keys are values | skipped | skipped unless keys are values |
 | `or_else` exit value | walked | no | no | walked |
 | composite `via` | walked | walked | no | no |
 | parameter default | walked | walked | no | no |
@@ -202,7 +202,7 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
 
-[foreign.odin:21](src/foreign.odin#L21) and [doc.odin:544](src/doc.odin#L544) restate member-then-block-then-file visibility, which `written_is_public` ([check.odin:662](src/check.odin#L662)) can express by nesting; [foreign.odin:49](src/foreign.odin#L49) repeats the `L0332` text of [check.odin:649](src/check.odin#L649). About 15 lines.
+[foreign.odin:21](src/foreign.odin#L21) restates member-then-block-then-file visibility, which `written_is_public` ([check.odin:662](src/check.odin#L662)) can express by nesting; [foreign.odin:49](src/foreign.odin#L49) repeats the `L0332` text of [check.odin:649](src/check.odin#L649). About 15 lines.
 
 #### Diagnostics rollback
 
@@ -211,10 +211,6 @@ The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771)
 #### Configuration declared three times
 
 The same nine settings are fields of `Compilation_Config` ([session.odin:9](src/session.odin#L9)), `Options` ([main.odin:88](src/main.odin#L88)) and `Compiler` ([source.odin:278](src/source.odin#L278)), and are copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and [session.odin:87](src/session.odin#L87). One embedded `Build_Settings` struct saves about 25 lines. [session.odin:90](src/session.odin#L90) also sets `c.target`, which [semantic.odin:937](src/semantic.odin#L937) overwrites from the same `c.cpu`.
-
-#### File rewriting and scratch lexing
-
-[doc.odin:134](src/doc.odin#L134) repeats [formatter.odin:60](src/formatter.odin#L60) `format_text`.
 
 ### Provenance and borrow analysis
 
@@ -275,14 +271,14 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
 - Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373) and [attributes.odin:473](src/attributes.odin#L473) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
-- Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93), with [doc.odin:1374](src/doc.odin#L1374) file-private. Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
+- Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93). Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
 
 #### Code in the wrong file
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`.
-- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
+- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78).
 
 ### Looked at and left alone
 
@@ -639,7 +635,7 @@ What remains are near copies whose helper would span other files.
 - [cfg.odin:1092](src/cfg.odin#L1092), [1116](src/cfg.odin#L1116), [1253](src/cfg.odin#L1253), [1370](src/cfg.odin#L1370), [2881](src/cfg.odin#L2881) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356): build a `Reset_Key`, register in lifecycle, look up and assert in provenance. `reset_point(graph, node, id, span) -> (live, ok)` saves about 15 lines.
 - [cfg.odin:2863](src/cfg.odin#L2863) and [cfg_provenance.odin:9899](src/cfg_provenance.odin#L9899): the same loop over `proc_param_resets`, one as a test and one acting. They must agree, or the assert in `prov_reset` fires; an index-yielding helper would tie them together.
 - [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017): the same two-cursor merge of `variadic_order`. `call_pack_operands(v, allocator) -> []Expr` in written order saves about 4 lines per site.
-- [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [parallel.odin:81](src/parallel.odin#L81), [doc.odin:1374](src/doc.odin#L1374): slicing a span out of `sources`; `source_text` is file-private to `doc.odin`, and exporting a span form replaces them.
+- [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [parallel.odin:81](src/parallel.odin#L81): slicing a span out of `sources`; a span form in `source.odin` replaces them.
 
 ### src/cfg_provenance.odin (part 1 of 4)
 
@@ -647,7 +643,7 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 
 **Near copies**
 
-- [cfg_provenance.odin:489](src/cfg_provenance.odin#L489) and [doc.odin:1372](src/doc.odin#L1372): span text is hand-indexed here, in a file-private `source_text`, and at [parallel.odin:81](src/parallel.odin#L81), [cfg.odin:1913](src/cfg.odin#L1913) and [check.odin:2394](src/check.odin#L2394). A `span_text(c, span)` in `source.odin` is the shared form.
+- [cfg_provenance.odin:489](src/cfg_provenance.odin#L489): span text is hand-indexed here, and at [parallel.odin:81](src/parallel.odin#L81), [cfg.odin:1913](src/cfg.odin#L1913) and [check.odin:2394](src/check.odin#L2394). A `span_text(c, span)` in `source.odin` is the shared form.
 
 ### src/cfg_provenance.odin (part 2 of 4)
 
@@ -749,60 +745,7 @@ The exact float algorithms hold up on reading. What remains is around the file: 
 
 ### src/doc.odin
 
-The API model and its two renderers work and are well commented, but the file also holds the doc-comment
-reader and the L0260 check, and copies much of `private_names.odin`. Seven bugs, each reproduced with `lokec.exe`.
-
-**Bugs**
-
-- `BUG-doc-1` **medium** [doc.odin:382](src/doc.odin#L382) `api_impl`: a block written through a private alias of a public type is hidden. *Confirmed: Probe: `@(private) Al :: Pub; impl Al { get }` builds and an importer's p.get() runs, but -api and -doc show only impl Pub's direct. doc.odin keys private_subject on the written name, against design.md "Private names in public declarations"; no recorded gap.*
-  Scenario: `@(private) Al :: Pub; impl Al { get :: ... }`: an importer calls `p.get()`, but `api.loki` and `-doc` omit it (design.md "Private names in public declarations").
-  Fix: set `private_subject` only when `subject_type_is_public` ([private_names.odin:248](src/private_names.odin#L248), made shared) is false.
-- `BUG-doc-2` **medium** [doc.odin:1124](src/doc.odin#L1124) `public_struct`: the head is cut at the first `{`, which may be in a `where` clause. *Confirmed: Reproduced: the program builds and runs, but -api exits 1 with L0405, while -doc silently prints the cut head `where size_of(Cfg{`. A where clause without braces works. Grammar allows a nested literal; not recorded as a gap.*
-  Scenario: `Wh :: struct($T: type) where size_of(Cfg{n = 1}) > 0 { a: T }` checks, but `-api` fails with internal error L0405, status 1.
-  Fix: have the parser record the body's opening brace on `Type_Record` and cut there.
-- `BUG-doc-3` **low** [doc.odin:525](src/doc.odin#L525) `api_decl`: `text_qualifiers` reads `item.text`, which excludes the attributes. *Not verified.*
-  Scenario: `@(align=sub.N) A :: struct {...}` with no other use of `sub` writes no `import "sub";`, against compiler-guide.md "Interface files".
-  Fix: also collect qualifiers from each entry of `item.attributes`.
-- `BUG-doc-4` **low** [doc.odin:641](src/doc.odin#L641) `api_refs`: every identifier key counts as a field name, but an array key can be a constant. *Not verified.*
-  Scenario: `@(private) KEY :: 1; TABLE :: [3]int{KEY = 5};` shows `TABLE` and not `KEY`, so the file names an undeclared constant.
-  Fix: follow an identifier key that resolved to a symbol; skip only unresolved ones.
-- `BUG-doc-5` **low** [doc.odin:1335](src/doc.odin#L1335) `walk_documented_type`: it stops at the first type wrapper, so false L0260 warnings result. *Not verified.*
-  Scenario: a `///` on a field in `Grid :: [4](x: int)`, `Ptr :: ^(y: int)`, or `proc(p: (z: int))` warns; design.md "Doc comments" says "wherever the type is written".
-  Fix: descend through pointer, array, slice, map, and signature syntax.
-- `BUG-doc-6` **low** [doc.odin:1136](src/doc.odin#L1136) `public_struct`: visibility is stripped only as a leading, lone `@(public)` or `@(private)`. *Not verified.*
-  Scenario: `@(required) @(public) w: int` and `@(public, required) v: int` keep `@(public)` in the file, though `api_decl` drops it for a declaration.
-  Fix: filter `field.attributes` as lines 458-463 do (a shared helper) and copy text from `field.names[0]`, plus `using`.
-- `BUG-doc-7` **low** [doc.odin:953](src/doc.odin#L953) `text_qualifiers`: a member named like an import counts as a qualifier. *Not verified.*
-  Scenario: `V :: Wrapper{}.sub.n;` writes `import "sub";` though nothing qualifies a name with `sub`.
-  Fix: skip an identifier whose previous token is `.Period`.
-
-**Simplification**
-
-- [doc.odin:88](src/doc.odin#L88) `interface_of_source`: replace the nested search, which canonicalizes every source path, with
-  `c.package_by_dir[dir_key(canonical_dir(path_dir(path)))]`, falling back to the root package. (about 8 lines)
-- [doc.odin:503](src/doc.odin#L503) `api_decl`: make the `^Type_Record` case of `api_refs` filter by `field_shown`; a struct then takes the
-  `d.values` loop like everything else, and lines 503-514 go. (about 10 lines)
-- [doc.odin:133](src/doc.odin#L133) `interface_text`: `formatted, ok := format_text(&scratch, INTERFACE_FILE, raw)` ([formatter.odin:60](src/formatter.odin#L60)) already does this. (about 3 lines)
-- [doc.odin:526](src/doc.odin#L526): `Decl` and `Field` spans already start at the first `@`, so `written_start` is a no-op here and at 1308 and 1358:
-  use `doc_comment(c, d.span)`, `document_block(w, v.span.lo)`, and `document_block(w, field.span.lo)`. Only the package clause needs it. (about 3 lines shorter)
-- [doc.odin:1095](src/doc.odin#L1095) `written_start`: attributes are in source order, so the `min` loop only ever keeps `attributes[0]`; test that one. (about 2 lines)
-- [doc.odin:541](src/doc.odin#L541) `decl_is_public`: `written_is_public(d.attributes, has_attribute(block, "private") ? nil : file.attributes, has_attribute(block, "public"))`
-  states lines 544-550. (about 5 lines)
-- [doc.odin:897](src/doc.odin#L897) `shown_text`: every caller trims the result; trim inside it and drop the `strings.trim_space` wrappers at 378, 396, 413, 481, 499, 1124, 1134.
-- [doc.odin:914](src/doc.odin#L914): use `strings.is_space(rune(...))`, as [formatter.odin:386](src/formatter.odin#L386) does, and delete `is_space_byte`. (about 4 lines)
-- [doc.odin:56](src/doc.odin#L56) `write_interfaces`: `join_path({path_dir(...), INTERFACE_FILE})` ([packages.odin:641](src/packages.odin#L641)) drops the `_` and the `core:path/filepath` import. (about 2 lines)
-
-**Dead code**
-
-- (branch) [doc.odin:305](src/doc.odin#L305): `len(names) > 0` here and at 313, 320, 445, 534, 1307 is always true for an item: `parse_declaration` returns nil without a name and only body statements destructure.
-- (branch) [doc.odin:365](src/doc.odin#L365): `case ^Item_Block` in `api_items` is unreachable: `parse_top_level_block` is called only for a `when`'s branches ([parser.odin:809](src/parser.odin#L809), 817), and `api_when` unwraps both itself.
-- (branch) [doc.odin:758](src/doc.odin#L758): `signature == nil` never holds: the parser always sets it ([parser.odin:3440](src/parser.odin#L3440)), and `api_refs` at 649 would dereference a nil one right after.
-- (branch) [doc.odin:1139](src/doc.odin#L1139): `strings.trim_right(field_text, ",")` removes nothing: `field.span` ends at the type, before the comma ([parser.odin:3901](src/parser.odin#L3901)).
-
-**Data structures and algorithms**
-
-- [doc.odin:901](src/doc.odin#L901) `shown_text`: each call scans all of the file's comments, so a file costs declarations and fields times comments, while `comment_block` bisects the same sorted list.
-  Extract that bisection, start there, and stop at `comment.lo >= hi`. Minor: the largest bundled file (`core/fs/fs.loke`, 1347 lines) is far from slow; only generated bindings would notice.
+What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
@@ -812,26 +755,6 @@ reader and the L0260 check, and copies much of `private_names.odin`. Seven bugs,
   Share them over `^[dynamic]string`; the two rules on plain names need one decision. (about 20 lines)
 - [doc.odin:1105](src/doc.odin#L1105) and [private_names.odin:417](src/private_names.odin#L417): `field_shown` and `field_is_exported` differ only in the `package main` default, a case `private_names` never reads.
   Share one predicate, which also serves the padding test repeated at 1140. (about 10 lines)
-- [doc.odin:879](src/doc.odin#L879) and [private_names.odin:201](src/private_names.odin#L201): `leading_name` reads the subject's name from text, `subject_name` from syntax. At least replace `is_alnum_ascii` with `is_ident_part` in `lexer.odin`.
-  Using `subject_name` throughout would also stop `impl a.X` and `impl a.Y` sharing the key prefix `a`. (about 9 lines)
-- [doc.odin:945](src/doc.odin#L945) and [963](src/doc.odin#L963) and [formatter.odin:81](src/formatter.odin#L81): a scratch compiler lexes a text. A `lex_text(text) -> []Token` serves `text_qualifiers` and `token_texts`.
-  `line_starts = {}` at 151, 947, 965 is the zero value and can go. (about 8 lines)
-- [doc.odin:280](src/doc.odin#L280) and [doc.odin:1272](src/doc.odin#L1272): both find the clause by searching backward for the text `package`, which `package /* package */ x;` fools. Have `parse_package_clause` record the clause's start on `File`. (about 4 lines)
-
-**Structure and boundaries**
-
-- [doc.odin:1151](src/doc.odin#L1151): lines 1151-1369, the doc-comment reader and the L0260 check, serve [check.odin:238](src/check.odin#L238) and [queries.odin:189](src/queries.odin#L189), not `-doc` or `-api`, and the source map's row omits them. Their seam is a `doc_comments.odin`.
-- [doc.odin:1105](src/doc.odin#L1105): `field_shown` and `public_struct` build the model but sit after both renderers; move them next to `api_decl`, so the file reads model, then rendering.
-- [doc.odin:439](src/doc.odin#L439) `api_decl`: about 90 lines; the seam is lines 476-497, the procedure's text with its block convention, as `proc_interface_text`.
-- [doc.odin:19](src/doc.odin#L19): `INTERFACE_FILE`, `documented_packages` (23), and `interface_text` (104) are used only in this file, so per the source map they should be `@(private = "file")`.
-
-**Comments**
-
-- [doc.odin:1092](src/doc.odin#L1092): wrong: an attribute's span covers `name=value`. Write: `each one's span starts after the "@(".`
-- [doc.odin:260](src/doc.odin#L260): keep the citation, drop the list of cases that section gives: "An importer cannot name such a declaration but does reach it, so it is shown, marked private, once a shown item refers to it. A reference follows what the checker resolved, and only in syntax it never resolved goes by written name."
-- [doc.odin:99](src/doc.odin#L99): the layout is compiler-guide.md "Interface files"'s. Keep: "False, with a diagnostic, when the text would not parse or a copied declaration lost a token, either a compiler bug."
-- [doc.odin:1182](src/doc.odin#L1182): the rules are listed in the cited section: `// design.md "Doc comments": a block doc comment's lines.`
-- [doc.odin:18](src/doc.odin#L18), [34](src/doc.odin#L34), [298](src/doc.odin#L298), [843](src/doc.odin#L843), [960](src/doc.odin#L960), [975](src/doc.odin#L975): delete; each restates the name below it. At [990](src/doc.odin#L990) keep only the second sentence. (about 20 lines across the file)
 
 ### src/emit_llvm_calls.odin
 
@@ -1065,7 +988,7 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 **Near copies**
 
 - [foreign.odin:24](src/foreign.odin#L24), [foreign.odin:64](src/foreign.odin#L64), [foreign.odin:104](src/foreign.odin#L104), [attributes.odin:258](src/attributes.odin#L258), [doc.odin:312](src/doc.odin#L312), [doc.odin:351](src/doc.odin#L351), [private_names.odin:48](src/private_names.odin#L48), [emit_llvm.odin:353](src/emit_llvm.odin#L353): all filter `member.(^Decl)`. Only `^Decl` or an already reported `^Item_Error` occurs, so `parse_foreign` could drop errors and `Item_Foreign_Block.members` become `[]^Decl`. (about 15 lines)
-- [foreign.odin:41](src/foreign.odin#L41) and [doc.odin:544](src/doc.odin#L544): both state "member, then block, then file" for visibility, doc.odin for declarations no symbol records. `written_is_public` already composes: `written_is_public(d.attributes, nil, written_is_public(block, file.attributes))` replaces lines 544 to 550. (about 5 lines)
+- [foreign.odin:41](src/foreign.odin#L41): states "member, then block, then file" for visibility. `written_is_public` already composes, as `decl_is_public` now uses it. (about 5 lines)
 
 **Structure and boundaries**
 
@@ -1150,7 +1073,6 @@ A compact, linear token layout pass whose token-preservation check holds up, and
 - [formatter.odin:149](src/formatter.odin#L149) `layout`: `started` is `strings.builder_len(l.out) > 0`, since no comment or token is empty. (about 3 lines)
 - [formatter.odin:175](src/formatter.odin#L175) `layout`: `previous_hi == l.last.hi` replaces `l.last.kind != .EOF && l.last_line == l.line`, sending only a token right after a token to `spacing`; this is also half of the BUG-formatter-3 fix. (about 1 line)
 - [formatter.odin:303](src/formatter.odin#L303) `write_token`: this predicate and the one at line 506 are the same, `binary_operator(k) && (operand || !maybe_prefix(k))`; name it once as `used_as_binary(kind, operand)`. (about 1 line)
-- [formatter.odin:83](src/formatter.odin#L83) `format_source`: scratch diagnostics are never shown and `line_starts = {}` is the zero value, so write `Source{text = formatted}`, as `lsp/editing.odin` does. (part of a line)
 - [formatter.odin:448](src/formatter.odin#L448) `spacing`: the `.Rbrace` and `.Lbrace` cases have one body, so `case .Rbrace, .Lbrace:`. (about 2 lines)
 
 **Dead code**
@@ -1159,11 +1081,6 @@ A compact, linear token layout pass whose token-preservation check holds up, and
 - (branch) [formatter.odin:385](src/formatter.odin#L385): `token.lo > 0 && token.hi < u32(len(l.text))`; a parsed file neither starts nor ends with an arithmetic operator.
 - (branch) [formatter.odin:322](src/formatter.odin#L322): `at > int(brace.hi)`; when equal, `l.text[at - 1]` is the `{` itself, which already fails the `'\n'` test.
 - (branch) [formatter.odin:405](src/formatter.odin#L405): `.At` in `maybe_prefix`; line 496 returns first for `last == .At`, `binary_operator(.At)` is false, and no prefix operator can precede an attribute now that a type holds none.
-
-**Near copies**
-
-- [formatter.odin:60](src/formatter.odin#L60) and [doc.odin:133](src/doc.odin#L133): lines 133-136 of `doc.odin` are the body of `format_text`. Write `formatted, ok := format_text(&scratch, INTERFACE_FILE, raw)`. (about 3 lines)
-- [formatter.odin:81](src/formatter.odin#L81) and [doc.odin:149](src/doc.odin#L149): a scratch `Compiler`, one bare `Source` and `lex` recur at doc.odin:947, doc.odin:965, lsp/editing.odin:337, lsp/editing.odin:349 and lsp/roots.odin:188. A lexer helper taking `(scratch, text)` and returning tokens removes a line or two at each.
 
 **Structure and boundaries**
 

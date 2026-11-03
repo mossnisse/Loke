@@ -1484,6 +1484,20 @@ checklist.
   ([when statement](design.md#when-statement)). `N :: size_of(Handle); when (N == 8)` with `Handle`
   from another `when` compiles, where it was `L0315`, and a record's field type, a procedure's
   signature or body, and a procedure literal in the condition behave the same.
+- `-api` and `-doc` show an `impl` block written through a private alias of a public type, whose
+  members importers can call, with the alias marked private
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `-api` no longer fails with `L0405`, and `-doc` no longer prints a cut head, for a struct whose
+  `where` clause holds a brace.
+- An interface file writes the import that only an attribute's value qualifies a name with, and no
+  import for a member spelled like one, as `Wrapper{}.sub.n`. It shows a private constant that an
+  array literal's key names, and a field's attributes without `public` or `private` wherever they
+  are written ([Interface files](compiler-guide.md#interface-files)).
+- `L0260` no longer warns about a doc comment on a field or variant of a type written under a
+  pointer, array, slice, map, procedure signature or type application
+  ([Doc comments](design.md#doc-comments)).
+- The editor's documentation command shows a package's interface for a file of that directory the
+  check did not load, rather than the root package's.
 - `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
   `<name>.layout.exe`. A bare output name, which every build without `-o` has, no longer fails it
   with `L0405`, and `-g` no longer writes a PDB for the probe.

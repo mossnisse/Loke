@@ -11,15 +11,15 @@ package lokec
 
 import "core:fmt"
 import "core:os"
-import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
-// What `-api` writes in each package's directory.
+@(private = "file")
 INTERFACE_FILE :: "api.loki"
 
 // The root package, then each project package, in the order they were loaded.
 // A project package is one whose key names no collection.
+@(private = "file")
 documented_packages :: proc(c: ^Compiler, root: Package_Id) -> []Package_Id {
 	ids := make([dynamic]Package_Id)
 	append(&ids, root)
@@ -31,7 +31,6 @@ documented_packages :: proc(c: ^Compiler, root: Package_Id) -> []Package_Id {
 	return ids[:]
 }
 
-// The root package's page, then one for each project package.
 document_project :: proc(c: ^Compiler, root: Package_Id) -> string {
 	b := strings.builder_make()
 	for id, index in documented_packages(c, root) {
@@ -53,7 +52,7 @@ write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool) -> int {
 		if len(pkg.files) == 0 {
 			continue
 		}
-		path, _ := filepath.join({filepath.dir(c.sources[pkg.files[0].file].path), INTERFACE_FILE})
+		path := join_path({path_dir(c.sources[pkg.files[0].file].path), INTERFACE_FILE})
 		text, ok := interface_text(c, id)
 		if !ok {
 			status = 1
@@ -83,24 +82,13 @@ write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool) -> int {
 // the editor's documentation command shows (compiler-guide.md "Language
 // server").
 interface_of_source :: proc(c: ^Compiler, path: string) -> (string, bool) {
-	wanted := dir_key(canonical_dir(path))
-	id := c.root_package
-	search: for pkg in c.packages[1:] {
-		for file in pkg.files {
-			if dir_key(canonical_dir(c.sources[file.file].path)) == wanted {
-				id = pkg.id
-				break search
-			}
-		}
-	}
-	return interface_text(c, id)
+	id, found := c.package_by_dir[dir_key(canonical_dir(path_dir(path, context.temp_allocator)))]
+	return interface_text(c, found ? id : c.root_package)
 }
 
-// The interface file of package `id`: its overview and package clause, the
-// imports its declarations and conditions name, then its API in source order,
-// each declaration without a body after its doc comment, laid out as `-fmt`
-// lays it out. False, with a diagnostic, when the text would not parse or a
-// copied declaration lost a token, either of which is a compiler bug.
+// False, with a diagnostic, when the text would not parse or a copied
+// declaration lost a token, either a compiler bug.
+@(private = "file")
 interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 	a := api_package(c, id)
 	b := strings.builder_make()
@@ -130,10 +118,7 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 	raw = plain_comments(raw)
 	scratch: Compiler
 	defer destroy_compilation(&scratch)
-	formatted, ok := "", false
-	if file, added := add_loaded_source(&scratch, INTERFACE_FILE, transmute([]u8)strings.clone(raw)); added {
-		formatted, ok = format_source(&scratch, file)
-	}
+	formatted, ok := format_text(&scratch, INTERFACE_FILE, raw)
 	if !ok || a.damaged {
 		errorf(c, no_span(), "L0405", "internal error: the interface file of package `%s` would not match its source", a.name)
 		return "", false
@@ -146,13 +131,11 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 // nothing.
 @(private = "file")
 plain_comments :: proc(text: string) -> string {
-	scratch: Compiler
-	defer destroy_compilation(&scratch)
-	append(&scratch.sources, Source{text = text, line_starts = {}})
-	delete(lex(&scratch, 0))
+	comments := make([dynamic]Span)
+	delete(lex_text(text, &comments))
 	b := strings.builder_make()
 	at := u32(0)
-	for comment in scratch.sources[0].comments {
+	for comment in comments {
 		if written := text[comment.lo:comment.hi]; is_doc_comment(written) {
 			strings.write_string(&b, text[at:comment.lo])
 			strings.write_string(&b, written[:2])
@@ -257,14 +240,10 @@ Api_Builder :: struct {
 	private_names: map[string]bool,
 }
 
-// design.md "Private names in public declarations" lets a public declaration
-// name a private one: a public overload group may gather private procedures,
-// a default or an attribute may name a private constant, and a procedure that
-// returns a value of a private type is warned about but compiles. An importer
-// cannot name such a declaration, but does call it or read it, so it is shown,
-// marked private, once a shown item refers to it. A reference is followed by what the checker
-// resolved it to, and only in syntax the checker never resolved, an untaken
-// `when` branch or a generic template, by its written name.
+// design.md "Private names in public declarations". An importer cannot name such
+// a declaration but does reach it, so it is shown, marked private, once a shown
+// item refers to it. A reference follows what the checker resolved, and only in
+// syntax it never resolved goes by written name.
 @(private = "file")
 api_package :: proc(c: ^Compiler, id: Package_Id) -> Api_Package {
 	pkg := package_of(c, id)
@@ -276,11 +255,7 @@ api_package :: proc(c: ^Compiler, id: Package_Id) -> Api_Package {
 	}
 	for file in pkg.files {
 		b.file = file
-		// The clause's span is its name's.
-		text := c.sources[file.file].text
-		keyword := u32(strings.last_index(text[:file.package_span.lo], "package"))
-		start := written_start(text, keyword, file.attributes)
-		if doc := doc_comment(c, Span{file = file.file, lo = start}); doc != "" {
+		if doc := doc_comment(c, Span{file = file.file, lo = file.package_lo}); doc != "" {
 			append(&a.overview, doc)
 		}
 		api_items(&b, file.items, &a.items, in_when = false)
@@ -295,29 +270,25 @@ api_package :: proc(c: ^Compiler, id: Package_Id) -> Api_Package {
 	return a
 }
 
-// Every declaration's key, the names of the private ones, and every import's
-// name, in every `when` branch.
 @(private = "file")
 collect_declared :: proc(b: ^Api_Builder, items: []Item) {
 	for item in items {
 		#partial switch v in item {
 		case ^Decl:
-			if len(v.names) > 0 {
-				declare(b, v, v.names[0].text)
-				if !decl_is_public(b.c, b.file, v) {
-					b.private_names[v.names[0].text] = true
-				}
+			declare(b, v, v.names[0].text)
+			if !decl_is_public(b.c, b.file, v) {
+				b.private_names[v.names[0].text] = true
 			}
 		case ^Item_Foreign_Block:
 			for member in v.members {
-				if d, is_decl := member.(^Decl); is_decl && len(d.names) > 0 {
+				if d, is_decl := member.(^Decl); is_decl {
 					declare(b, d, d.names[0].text)
 				}
 			}
 		case ^Item_Impl:
-			subject := leading_name(source_text(b.c, v.type))
+			subject := subject_name(b.c, v.type)
 			for member in v.members {
-				if d, is_decl := member.(^Decl); is_decl && len(d.names) > 0 {
+				if d, is_decl := member.(^Decl); is_decl {
 					declare(b, d, fmt.aprintf("%s.%s", subject, d.names[0].text))
 				}
 			}
@@ -346,11 +317,11 @@ api_items :: proc(b: ^Api_Builder, items: []Item, out: ^[dynamic]Api_Item, in_wh
 	for item in items {
 		#partial switch v in item {
 		case ^Decl:
-			api_decl(b, v, "", nil, out, nil)
+			api_decl(b, v, nil, nil, out, nil)
 		case ^Item_Foreign_Block:
 			for member in v.members {
 				if d, is_decl := member.(^Decl); is_decl {
-					api_decl(b, d, "", v.attributes, out, nil)
+					api_decl(b, d, nil, v.attributes, out, nil)
 				}
 			}
 		case ^Item_Impl:
@@ -362,8 +333,6 @@ api_items :: proc(b: ^Api_Builder, items: []Item, out: ^[dynamic]Api_Item, in_wh
 			} else {
 				append(&b.a.imports, imported)
 			}
-		case ^Item_Block:
-			api_items(b, v.items, out, in_when)
 		case ^Item_When:
 			api_when(b, v, out)
 		}
@@ -373,13 +342,14 @@ api_items :: proc(b: ^Api_Builder, items: []Item, out: ^[dynamic]Api_Item, in_wh
 @(private = "file")
 api_impl :: proc(b: ^Api_Builder, v: ^Item_Impl, out: ^[dynamic]Api_Item) {
 	source := &b.c.sources[v.span.file]
-	subject := source_text(b.c, v.type)
 	impl := Api_Item{kind = .Impl}
-	impl.text = strings.trim_space(shown_text(b, source, v.span.lo, expr_span(v.type).hi))
+	impl.text = shown_text(b, source, v.span.lo, expr_span(v.type).hi)
 	w := Ref_Walk{b = b}
 	api_refs(&w, v.type)
 	impl.refs, impl.qualifiers = w.refs[:], text_qualifiers(b.a, impl.text)
-	if name := leading_name(subject); name in b.private_names {
+	// design.md "Private names in public declarations": a block written through
+	// a private alias of a public type is on the public type.
+	if name := subject_name(b.c, v.type); name in b.private_names && !subject_type_is_public(b.c, v) {
 		impl.private_subject = name
 	}
 	// `impl Box($T)` binds `T` for its members.
@@ -388,12 +358,12 @@ api_impl :: proc(b: ^Api_Builder, v: ^Item_Impl, out: ^[dynamic]Api_Item) {
 	for member in v.members {
 		#partial switch m in member {
 		case ^Decl:
-			api_decl(b, m, subject, nil, &impl.members, bound[:])
+			api_decl(b, m, v, nil, &impl.members, bound[:])
 		case ^Item_Delegate:
 			// `delegation_is_public`: the file's default decides.
 			if has_attribute(b.file.attributes, "public") {
 				delegated := Api_Item{kind = .Delegate}
-				delegated.text = strings.trim_right(strings.trim_space(shown_text(b, source, m.span.lo, m.span.hi)), ";")
+				delegated.text = strings.trim_right(shown_text(b, source, m.span.lo, m.span.hi), ";")
 				delegated.qualifiers = text_qualifiers(b.a, delegated.text)
 				append(&impl.members, delegated)
 			}
@@ -410,7 +380,7 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 	chosen := Api_Item{kind = .When}
 	node, prefix, selected := v, "", false
 	for {
-		head := strings.trim_space(shown_text(b, source, node.span.lo, node.then.span.lo))
+		head := shown_text(b, source, node.span.lo, node.then.span.lo)
 		branch := Api_Branch{head = strings.concatenate({prefix, head}), taken = node.state == .Taken && !selected}
 		selected ||= node.state == .Taken
 		w := Ref_Walk{b = b}
@@ -432,36 +402,31 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 	append(out, chosen)
 }
 
-// `subject` is the written subject of the `impl` `d` is a member of, `block`
-// the attributes of the foreign block it is a member of, which a member's own
-// override, and `bound` the names its `impl` binds.
+// `owner` is the `impl` `d` is a member of, `block` the attributes of the foreign
+// block it is a member of, which a member's own override, and `bound` the names
+// its `impl` binds.
 @(private = "file")
 api_decl :: proc(
-	b: ^Api_Builder, d: ^Decl, subject: string, block: []Attribute, out: ^[dynamic]Api_Item,
+	b: ^Api_Builder, d: ^Decl, owner: ^Item_Impl, block: []Attribute, out: ^[dynamic]Api_Item,
 	bound: []string,
 ) {
 	// design.md "Exported names": a variable is never public. design.md "Test
 	// procedures": no importer can call a test, and only `@(test)` makes one.
-	if len(d.names) == 0 || d.names[0].text == "_" || d.kind == .Var || has_attribute(d.attributes, "test") {
+	if d.names[0].text == "_" || d.kind == .Var || has_attribute(d.attributes, "test") {
 		return
 	}
 	c := b.c
 	source := &c.sources[d.span.file]
-	text := source.text
-	owner := leading_name(subject)
 	item := Api_Item{kind = .Decl, name = d.names[0].text, key = d.names[0].text}
-	if subject != "" {
-		item.name = fmt.aprintf("%s.%s", subject, item.name)
-		item.key = fmt.aprintf("%s.%s", owner, item.key)
+	subject := ""
+	if owner != nil {
+		subject = subject_name(c, owner.type)
+		item.name = fmt.aprintf("%s.%s", source_text(c, owner.type), item.name)
+		item.key = fmt.aprintf("%s.%s", subject, item.key)
 	}
 	item.private = !decl_is_public(c, b.file, d, block)
-	for attribute in d.attributes {
-		spelled := text[attribute.span.lo:attribute.span.hi]
-		if spelled != "public" && spelled != "private" {
-			append(&item.attributes, spelled)
-		}
-	}
-	w := Ref_Walk{b = b, subject = owner}
+	item.attributes = shown_attributes(b, source, d.attributes)
+	w := Ref_Walk{b = b, subject = subject}
 	append(&w.bound, ..bound)
 	// `@(align=N)` may name a generic parameter of the record it describes.
 	mark := len(w.bound)
@@ -473,13 +438,9 @@ api_decl :: proc(
 	attribute_refs(&w, d.attributes)
 	resize(&w.bound, mark)
 	api_refs(&w, d.declared_type)
-	lo, hi := d.names[0].span.lo, d.span.hi
+	lo := d.names[0].span.lo
 	if literal := decl_proc_literal(d); literal != nil {
-		if literal.body != nil {
-			hi = literal.body.span.lo
-		}
-		written := strings.trim_right(strings.trim_space(shown_text(b, source, lo, hi)), ";")
-		item.text = strings.trim_space(strings.trim_suffix(written, "---"))
+		item.text = proc_interface_text(b, d, literal, block)
 		item.terminator = " ---;"
 		api_refs(&w, literal)
 		// design.md "Foreign system": a member takes the block's calling
@@ -487,44 +448,57 @@ api_decl :: proc(
 		if has_attribute(block, "require_results") && !has_attribute(d.attributes, "require_results") {
 			append(&item.attributes, "require_results")
 		}
-		// The checker writes the block's convention into the signature, so the
-		// text says whether the member wrote its own.
-		after_colons := strings.index(item.text, "::") + 2
-		at := after_colons + strings.index(item.text[after_colons:], "proc") + len("proc")
-		rest := strings.trim_left_space(item.text[at:])
-		if convention, found := find_attribute(block, "default_calling_convention"); found && convention.value != nil && !strings.has_prefix(rest, "\"") {
-			item.text = fmt.aprintf("%s %s %s", item.text[:at], source_text(c, convention.value), rest)
-		}
 	} else {
-		written := strings.trim_space(shown_text(b, source, lo, hi))
+		written := shown_text(b, source, lo, d.span.hi)
 		item.text = strings.trim_right(written, ";")
 		if record := decl_struct(d); record != nil {
 			item.text = public_struct(b, record, lo)
-			bind_generic_params(&w.bound, record.generic_params)
-			for parameter in record.generic_params {
-				api_refs(&w, parameter.type)
-			}
-			for clause in record.where_clauses {
-				api_refs(&w, clause)
-			}
-			for &field in record.fields {
-				if field_shown(b, &field) {
-					api_refs(&w, field.type)
-				}
-			}
-		} else {
-			for value in d.values {
-				api_refs(&w, value)
-			}
+		}
+		for value in d.values {
+			api_refs(&w, value)
 		}
 		// A span that ends in `}` stops before a `;` written after it.
-		if strings.has_suffix(written, ";") || strings.has_prefix(strings.trim_left_space(text[hi:]), ";") {
+		if strings.has_suffix(written, ";") || strings.has_prefix(strings.trim_left_space(source.text[d.span.hi:]), ";") {
 			item.terminator = ";"
 		}
 	}
-	item.refs, item.qualifiers = w.refs[:], text_qualifiers(b.a, item.text)
-	item.doc = doc_comment(c, Span{file = d.span.file, lo = written_start(text, lo, d.attributes)})
+	item.refs = w.refs[:]
+	item.qualifiers = text_qualifiers(b.a, fmt.aprintf("%s %s", strings.join(item.attributes[:], " "), item.text))
+	item.doc = doc_comment(c, d.span)
 	append(out, item)
+}
+
+// The written attributes but `public` and `private`, each as written inside
+// `@(...)`.
+@(private = "file")
+shown_attributes :: proc(b: ^Api_Builder, source: ^Source, attributes: []Attribute) -> [dynamic]string {
+	shown := make([dynamic]string)
+	for attribute in attributes {
+		spelled := shown_text(b, source, attribute.span.lo, attribute.span.hi)
+		if spelled != "public" && spelled != "private" {
+			append(&shown, spelled)
+		}
+	}
+	return shown
+}
+
+// The procedure's signature, without its `---` or its body, and with the calling
+// convention `block` lends it.
+@(private = "file")
+proc_interface_text :: proc(b: ^Api_Builder, d: ^Decl, literal: ^Expr_Proc, block: []Attribute) -> string {
+	source := &b.c.sources[d.span.file]
+	hi := literal.body != nil ? literal.body.span.lo : d.span.hi
+	written := strings.trim_right(shown_text(b, source, d.names[0].span.lo, hi), ";")
+	text := strings.trim_space(strings.trim_suffix(written, "---"))
+	// The checker writes the block's convention into the signature, so the text
+	// says whether the member wrote its own.
+	after_colons := strings.index(text, "::") + 2
+	at := after_colons + strings.index(text[after_colons:], "proc") + len("proc")
+	rest := strings.trim_left_space(text[at:])
+	if convention, found := find_attribute(block, "default_calling_convention"); found && convention.value != nil && !strings.has_prefix(rest, "\"") {
+		return fmt.aprintf("%s %s %s", text[:at], source_text(b.c, convention.value), rest)
+	}
+	return text
 }
 
 @(private = "file")
@@ -535,6 +509,58 @@ decl_struct :: proc(d: ^Decl) -> ^Type_Record {
 		}
 	}
 	return nil
+}
+
+// Whether a struct field is shown: a public one, but not padding.
+@(private = "file")
+field_shown :: proc(b: ^Api_Builder, field: ^Field) -> bool {
+	for name, index in field.names {
+		if name.text == "_" {
+			continue
+		}
+		// A generic record's fields are checked per instance, and an untaken
+		// `when` branch's not at all.
+		if index >= len(field.symbols) {
+			return written_is_public(field.attributes, b.file.attributes, b.file.package_name == "main")
+		}
+		symbol := symbol_of(b.c, field.symbols[index])
+		return symbol != nil && symbol.public
+	}
+	return false
+}
+
+// `Name :: struct { ... }`, written at `lo`, with only its public fields, one
+// to a line, each after its doc comment.
+@(private = "file")
+public_struct :: proc(b: ^Api_Builder, record: ^Type_Record, lo: u32) -> string {
+	source := &b.c.sources[record.span.file]
+	head := shown_text(b, source, lo, record.body_lo + 1)
+	if len(record.fields) == 0 {
+		return fmt.aprintf("%s}", head)
+	}
+	out := strings.builder_make()
+	fmt.sbprintln(&out, head)
+	hidden := false
+	for &field in record.fields {
+		if field_shown(b, &field) {
+			write_doc_lines(&out, doc_comment(b.c, field.span), "\t")
+			strings.write_byte(&out, '\t')
+			for attribute in shown_attributes(b, source, field.attributes) {
+				fmt.sbprintf(&out, "@(%s) ", attribute)
+			}
+			if field.is_using {
+				strings.write_string(&out, "using ")
+			}
+			fmt.sbprintfln(&out, "%s,", shown_text(b, source, field.names[0].span.lo, field.span.hi))
+		} else if len(field.names) != 1 || field.names[0].text != "_" {
+			hidden = true
+		}
+	}
+	if hidden {
+		fmt.sbprintln(&out, "\t// and fields private to the package")
+	}
+	strings.write_string(&out, "}")
+	return strings.to_string(out)
 }
 
 @(private = "file")
@@ -614,8 +640,7 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		api_refs(w, v.type_expr)
 		api_refs(w, v.via)
 		for element in v.elements {
-			// A field's name is not a reference.
-			if _, is_name := element.key.(^Expr_Ident); !is_name {
+			if !key_names_field(v, element.key) {
 				api_refs(w, element.key)
 			}
 			api_refs(w, element.value)
@@ -673,8 +698,10 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		for clause in v.where_clauses {
 			api_refs(w, clause)
 		}
-		for field in v.fields {
-			api_refs(w, field.type)
+		for &field in v.fields {
+			if field_shown(w.b, &field) {
+				api_refs(w, field.type)
+			}
 		}
 		for variant in v.variants {
 			api_refs(w, variant.type)
@@ -713,6 +740,22 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 	}
 }
 
+// Whether a literal's `key` is the name of a field. An array's index or a map's
+// key is an expression, which the checker resolves; where it did not look, the
+// literal's written type says.
+@(private = "file")
+key_names_field :: proc(v: ^Expr_Composite, key: Expr) -> bool {
+	ident, is_ident := key.(^Expr_Ident)
+	if !is_ident || ident.resolution.symbol != INVALID_SYMBOL || ident.symbol != INVALID_SYMBOL {
+		return false
+	}
+	#partial switch _ in v.type_expr {
+	case ^Type_Array, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Map:
+		return false
+	}
+	return true
+}
+
 // The values of `attributes` that are expressions, as `N` in `@(align=N)`.
 // design.md "Attribute categories": the others' values are strings, or names
 // of variants, fields, and escape levels, which are not references.
@@ -732,9 +775,6 @@ attribute_refs :: proc(w: ^Ref_Walk, attributes: []Attribute) {
 // Each parameter's name, and each `$` name its types and defaults bind.
 @(private = "file")
 bind_signature :: proc(bound: ^[dynamic]string, signature: ^Type_Proc) {
-	if signature == nil {
-		return
-	}
 	for parameter in signature.params {
 		for name in parameter.names {
 			append(bound, name.name.text)
@@ -817,7 +857,6 @@ shown_branches :: proc(a: ^Api_Package, item: ^Api_Item) -> int {
 	return count
 }
 
-// What the shown items refer to.
 @(private = "file")
 collect_refs :: proc(a: ^Api_Package, items: []Api_Item) {
 	for &item in items {
@@ -851,32 +890,20 @@ import_text :: proc(imported: Api_Import) -> string {
 	return fmt.aprintf("import %s", imported.path)
 }
 
-// `Ordering` of `Ordering($T, $C)`.
-@(private = "file")
-leading_name :: proc(written: string) -> string {
-	end := 0
-	for end < len(written) && (written[end] == '_' || is_alnum_ascii(written[end])) {
-		end += 1
-	}
-	return written[:end]
-}
-
-@(private = "file")
-is_alnum_ascii :: proc(b: u8) -> bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
-}
-
-// `source.text[lo:hi]` without its comments other than doc comments: one on a
-// line of its own goes with its line, one ending a line with the spaces before
-// it, and one between two tokens leaves a space. The result must lex to the
-// same tokens; the package is marked damaged if it does not.
+// `source.text[lo:hi]`, trimmed, without its comments other than doc comments:
+// one on a line of its own goes with its line, one ending a line with the spaces
+// before it, and one between two tokens leaves a space. The result must lex to
+// the same tokens; the package is marked damaged if it does not.
 @(private = "file")
 shown_text :: proc(b: ^Api_Builder, source: ^Source, lo, hi: u32) -> string {
 	text := source.text
 	out := strings.builder_make()
 	at := lo
-	for comment in source.comments {
-		if comment.lo < lo || comment.hi > hi || is_doc_comment(text[comment.lo:comment.hi]) {
+	for comment in source.comments[first_comment_after(source, lo):] {
+		if comment.hi > hi {
+			break
+		}
+		if is_doc_comment(text[comment.lo:comment.hi]) {
 			continue
 		}
 		line_start := u32(strings.last_index_byte(text[:comment.lo], '\n') + 1)
@@ -888,7 +915,7 @@ shown_text :: proc(b: ^Api_Builder, source: ^Source, lo, hi: u32) -> string {
 		cut_lo, cut_hi := comment.lo, comment.hi
 		separator := ""
 		if !ends_line {
-			if cut_lo > at && !is_space_byte(text[cut_lo - 1]) && !is_space_byte(text[cut_hi]) {
+			if cut_lo > at && !strings.is_space(rune(text[cut_lo - 1])) && !strings.is_space(rune(text[cut_hi])) {
 				separator = " "
 			}
 		} else if line_start >= at && strings.trim_space(text[line_start:comment.lo]) == "" {
@@ -906,12 +933,7 @@ shown_text :: proc(b: ^Api_Builder, source: ^Source, lo, hi: u32) -> string {
 	if !slice.equal(token_texts(text[lo:hi]), token_texts(shown)) {
 		b.a.damaged = true
 	}
-	return shown
-}
-
-@(private = "file")
-is_space_byte :: proc(b: u8) -> bool {
-	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
+	return strings.trim_space(shown)
 }
 
 // The imports `text` qualifies a name with, as `mem` in `mem.Allocator`. The
@@ -919,28 +941,23 @@ is_space_byte :: proc(b: u8) -> bool {
 // may have resolved a qualified name to a declaration of its own package.
 @(private = "file")
 text_qualifiers :: proc(a: ^Api_Package, text: string) -> []string {
-	scratch: Compiler
-	defer destroy_compilation(&scratch)
-	append(&scratch.sources, Source{text = text, line_starts = {}})
-	tokens := lex(&scratch, 0)
+	tokens := lex_text(text)
 	defer delete(tokens)
 	found := make([dynamic]string)
 	for token, index in tokens {
 		name := text[token.lo:token.hi]
-		if token.kind == .Ident && index + 1 < len(tokens) && tokens[index + 1].kind == .Period && name in a.import_names {
+		// The name after a `.` is a member, whatever it is spelled like.
+		member := index > 0 && tokens[index - 1].kind == .Period
+		if token.kind == .Ident && !member && index + 1 < len(tokens) && tokens[index + 1].kind == .Period && name in a.import_names {
 			append(&found, name)
 		}
 	}
 	return found[:]
 }
 
-// The spelling of each of `text`'s tokens, its comments aside.
 @(private = "file")
 token_texts :: proc(text: string) -> []string {
-	scratch: Compiler
-	defer destroy_compilation(&scratch)
-	append(&scratch.sources, Source{text = text, line_starts = {}})
-	tokens := lex(&scratch, 0)
+	tokens := lex_text(text)
 	defer delete(tokens)
 	spelled := make([]string, len(tokens))
 	for token, index in tokens {
@@ -949,7 +966,6 @@ token_texts :: proc(text: string) -> []string {
 	return spelled
 }
 
-// The doc comments, then the package's own items, of `-doc`'s page for `id`.
 @(private = "file")
 document_package :: proc(c: ^Compiler, b: ^strings.Builder, id: Package_Id) {
 	a := api_package(c, id)
@@ -964,8 +980,8 @@ document_package :: proc(c: ^Compiler, b: ^strings.Builder, id: Package_Id) {
 	document_items(b, &a, a.items[:])
 }
 
-// Each declaration's signature, then its doc comment. The page describes the
-// target it was made for, so a `when` shows only its taken branch.
+// The page describes the target it was made for, so a `when` shows only its
+// taken branch.
 @(private = "file")
 document_items :: proc(b: ^strings.Builder, a: ^Api_Package, items: []Api_Item) {
 	for &item in items {
@@ -1065,286 +1081,3 @@ write_doc_lines :: proc(b: ^strings.Builder, doc: string, indent := "") {
 	}
 	fmt.sbprintfln(b, "%s*/", indent)
 }
-
-// Where something written at `lo` starts, counting its attributes: each one's
-// span is its name's, after the `@(`.
-@(private)
-written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
-	start := lo
-	for attribute in attributes {
-		start = min(start, u32(strings.last_index_byte(text[:attribute.span.lo], '@')))
-	}
-	return start
-}
-
-// Whether a struct field is shown: a public one, but not padding.
-@(private = "file")
-field_shown :: proc(b: ^Api_Builder, field: ^Field) -> bool {
-	for name, index in field.names {
-		if name.text == "_" {
-			continue
-		}
-		// A generic record's fields are checked per instance, and an untaken
-		// `when` branch's not at all.
-		if index >= len(field.symbols) {
-			return written_is_public(field.attributes, b.file.attributes, b.file.package_name == "main")
-		}
-		symbol := symbol_of(b.c, field.symbols[index])
-		return symbol != nil && symbol.public
-	}
-	return false
-}
-
-// `Name :: struct { ... }`, written at `lo`, with only its public fields, one
-// to a line, each after its doc comment.
-@(private = "file")
-public_struct :: proc(b: ^Api_Builder, record: ^Type_Record, lo: u32) -> string {
-	source := &b.c.sources[record.span.file]
-	written := shown_text(b, source, lo, record.span.hi)
-	head := strings.trim_space(written[:strings.index_byte(written, '{') + 1])
-	if len(record.fields) == 0 {
-		return fmt.aprintf("%s}", head)
-	}
-	out := strings.builder_make()
-	fmt.sbprintln(&out, head)
-	hidden := false
-	for &field in record.fields {
-		if field_shown(b, &field) {
-			write_doc_lines(&out, doc_comment(b.c, field.span), "\t")
-			field_text := strings.trim_space(shown_text(b, source, field.span.lo, field.span.hi))
-			// Every field shown is public.
-			for strings.has_prefix(field_text, "@(public)") || strings.has_prefix(field_text, "@(private)") {
-				field_text = strings.trim_left_space(field_text[strings.index_byte(field_text, ')') + 1:])
-			}
-			fmt.sbprintfln(&out, "\t%s,", strings.trim_right(field_text, ","))
-		} else if len(field.names) != 1 || field.names[0].text != "_" {
-			hidden = true
-		}
-	}
-	if hidden {
-		fmt.sbprintln(&out, "\t// and fields private to the package")
-	}
-	strings.write_string(&out, "}")
-	return strings.to_string(out)
-}
-
-// design.md "Doc comments": the text of the doc comments in the block directly
-// above `at`, in order, one line of text to a line.
-doc_comment :: proc(c: ^Compiler, at: Span) -> string {
-	source := &c.sources[at.file]
-	first, last := comment_block(source, at.lo)
-	lines := make([dynamic]string)
-	defer delete(lines)
-	for comment in source.comments[first:last] {
-		written := source.text[comment.lo:comment.hi]
-		if !is_doc_comment(written) {
-			continue
-		}
-		if strings.has_prefix(written, "///") {
-			written = written[3:]
-			append(&lines, strings.has_prefix(written, " ") ? written[1:] : written)
-		} else {
-			block_doc_lines(&lines, written)
-		}
-	}
-	return strings.join(lines[:], "\n")
-}
-
-// `///` but not `////`, or `/**` but not `/***` or the empty `/**/`.
-@(private = "file")
-is_doc_comment :: proc(written: string) -> bool {
-	if strings.has_prefix(written, "/**") {
-		return !strings.has_prefix(written, "/***") && written != "/**/"
-	}
-	return strings.has_prefix(written, "///") && !strings.has_prefix(written, "////")
-}
-
-// design.md "Doc comments": a block doc comment's lines between `/**` and
-// `*/`, without the indentation the lines after the first share, and without
-// blank lines at either end.
-@(private = "file")
-block_doc_lines :: proc(lines: ^[dynamic]string, written: string) {
-	body := strings.trim_suffix(written[len("/**"):], "*/")
-	written_lines := strings.split_lines(body, context.temp_allocator)
-	for &line in written_lines {
-		line = strings.trim_right_space(line)
-	}
-	margin, found := "", false
-	for line in written_lines[1:] {
-		if line == "" {
-			continue
-		}
-		indent := line[:len(line) - len(strings.trim_left(line, " \t"))]
-		if !found {
-			margin, found = indent, true
-		} else {
-			shared := 0
-			for shared < min(len(margin), len(indent)) && margin[shared] == indent[shared] {
-				shared += 1
-			}
-			margin = margin[:shared]
-		}
-	}
-	// The text after `/**` is not indented like the lines below it.
-	text := make([dynamic]string, context.temp_allocator)
-	append(&text, strings.trim_left(written_lines[0], " \t"))
-	for line in written_lines[1:] {
-		append(&text, line == "" ? line : line[len(margin):])
-	}
-	start, end := 0, len(text)
-	for start < end && text[start] == "" {
-		start += 1
-	}
-	for end > start && text[end - 1] == "" {
-		end -= 1
-	}
-	append(lines, ..text[start:end])
-}
-
-// The comments directly above `lo`, as a range of `source.comments`: each on a
-// line of its own, with no blank line between them or below the last.
-@(private = "file")
-comment_block :: proc(source: ^Source, lo: u32) -> (first, last: int) {
-	text := source.text
-	// The comments are in source order, so the first one ending after `lo`
-	// starts the search without visiting the later ones.
-	low, high := 0, len(source.comments)
-	for low < high {
-		middle := (low + high) / 2
-		if source.comments[middle].hi > lo {
-			high = middle
-		} else {
-			low = middle + 1
-		}
-	}
-	first = low
-	for index := low - 1; index >= 0; index -= 1 {
-		comment := source.comments[index]
-		below := lo if first == low else source.comments[first].lo
-		gap := text[comment.hi:below]
-		line_start := strings.last_index_byte(text[:comment.lo], '\n') + 1
-		if strings.count(gap, "\n") != 1 || strings.trim_space(gap) != "" ||
-		   strings.trim_space(text[line_start:comment.lo]) != "" {
-			break
-		}
-		first = index
-	}
-	return first, low
-}
-
-// design.md "Doc comments": a doc comment in no documented item's block is
-// reported. Every `when` branch counts, taken or not, so the report does not
-// depend on the target.
-check_doc_comments :: proc(c: ^Compiler, file: ^File) {
-	source := &c.sources[file.file]
-	found := false
-	for comment in source.comments {
-		if is_doc_comment(source.text[comment.lo:comment.hi]) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return
-	}
-	w := Doc_Walk{source = source, documented = make([]bool, len(source.comments), context.temp_allocator)}
-	if file.package_name != "" {
-		// The clause's span is its name's.
-		keyword := u32(strings.last_index(source.text[:file.package_span.lo], "package"))
-		document_block(&w, written_start(source.text, keyword, file.attributes))
-	}
-	for item in file.items {
-		walk_documented_item(&w, item)
-	}
-	for comment, index in source.comments {
-		if !w.documented[index] && is_doc_comment(source.text[comment.lo:comment.hi]) {
-			warnf(
-				c, comment, "L0260",
-				"this doc comment documents nothing: it must be directly above a declaration, field, variant, member, or `package` clause, with no blank line between",
-			)
-		}
-	}
-}
-
-@(private = "file")
-Doc_Walk :: struct {
-	source:     ^Source,
-	documented: []bool, // per comment
-}
-
-@(private = "file")
-document_block :: proc(w: ^Doc_Walk, lo: u32) {
-	first, last := comment_block(w.source, lo)
-	for index in first ..< last {
-		w.documented[index] = true
-	}
-}
-
-@(private = "file")
-walk_documented_item :: proc(w: ^Doc_Walk, item: Item) {
-	#partial switch v in item {
-	case ^Decl:
-		if len(v.names) > 0 {
-			document_block(w, written_start(w.source.text, min(v.span.lo, v.names[0].span.lo), v.attributes))
-		}
-		walk_documented_type(w, v.declared_type)
-		for value in v.values {
-			walk_documented_type(w, value)
-		}
-	case ^Item_Impl:
-		for member in v.members {
-			walk_documented_item(w, member)
-		}
-	case ^Item_Foreign_Block:
-		for member in v.members {
-			walk_documented_item(w, member)
-		}
-	case ^Item_Block:
-		for member in v.items {
-			walk_documented_item(w, member)
-		}
-	case ^Item_When:
-		walk_documented_item(w, v.then)
-		walk_documented_item(w, v.otherwise)
-	}
-}
-
-// The members of a type written in a declaration, and of the types written in
-// those members.
-@(private = "file")
-walk_documented_type :: proc(w: ^Doc_Walk, e: Expr) {
-	#partial switch v in e {
-	case ^Type_Record:
-		walk_documented_fields(w, v.fields)
-		walk_documented_variants(w, v.variants)
-	case ^Type_Anon_Record:
-		walk_documented_fields(w, v.fields)
-	case ^Type_Anon_Union:
-		walk_documented_variants(w, v.variants)
-	case ^Type_Enum:
-		for field in v.fields {
-			document_block(w, field.span.lo)
-		}
-	case ^Type_Interface:
-		for requirement in v.requirements {
-			document_block(w, requirement.span.lo)
-		}
-	}
-}
-
-@(private = "file")
-walk_documented_fields :: proc(w: ^Doc_Walk, fields: []Field) {
-	for field in fields {
-		document_block(w, written_start(w.source.text, field.span.lo, field.attributes))
-		walk_documented_type(w, field.type)
-	}
-}
-
-@(private = "file")
-walk_documented_variants :: proc(w: ^Doc_Walk, variants: []Variant) {
-	for variant in variants {
-		document_block(w, variant.span.lo)
-		walk_documented_type(w, variant.type)
-	}
-}
-

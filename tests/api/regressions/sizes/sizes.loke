@@ -1,0 +1,6 @@
+/// Sizes.
+@(public)
+package sizes;
+
+/// An alignment.
+N :: 8;

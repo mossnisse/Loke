@@ -428,6 +428,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.generic_params = clone_generic_params(c, v.generic_params)
 		n.attributes = clone_attributes(c, v.attributes)
 		n.where_clauses = clone_exprs(c, v.where_clauses)
+		n.body_lo = v.body_lo
 		n.fields = clone_fields(c, v.fields)
 		n.variants = clone_variants(c, v.variants)
 		return n

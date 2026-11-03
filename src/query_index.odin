@@ -35,14 +35,13 @@ index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: 
 // Records a written binding's declaration extent once, on the binding clones
 // share; the first walk is over written syntax.
 @(private = "file")
-index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span, attributes: []Attribute) {
+index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span) {
 	if id == INVALID_SYMBOL || int(id) >= len(index.q.symbols) { return }
 	symbol := &index.q.symbols[index.q.canonical[id]]
 	span := symbol.definition.span
 	if span.file == NO_FILE || span.file != written.file || symbol.extent.span.file != NO_FILE { return }
-	lo, hi := written.lo, written.hi
 	text := index.c.sources[span.file].text
-	extent := Span{file = span.file, lo = min(written_start(text, lo, attributes), span.lo), hi = max(hi, span.hi)}
+	extent := Span{file = span.file, lo = min(written.lo, span.lo), hi = max(written.hi, span.hi)}
 	if int(extent.hi) > len(text) { return }
 	symbol.extent.span = extent
 }
@@ -62,7 +61,7 @@ index_query_decl :: proc(index: ^Query_Index, decl: ^Decl) {
 	if !query_index_enter(index, decl) { return }
 	index_query_attributes(index, decl.attributes)
 	if len(decl.names) > 0 {
-		for symbol in decl.symbols { index_query_binding(index, symbol, Span{file = decl.names[0].span.file, lo = decl.names[0].span.lo, hi = decl.span.hi}, decl.attributes) }
+		for symbol in decl.symbols { index_query_binding(index, symbol, decl.span) }
 	}
 	index_query_expr(index, decl.declared_type)
 	index_query_expr(index, decl.via)
@@ -309,7 +308,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	case ^Type_Dyn: index_query_expr(index, v.interface_expr)
 	case ^Type_Proc:
 		for parameter in v.params {
-			for symbol in parameter.symbols { index_query_binding(index, symbol, parameter.span, parameter.attributes) }
+			for symbol in parameter.symbols { index_query_binding(index, symbol, parameter.span) }
 			index_query_attributes(index, parameter.attributes)
 			index_query_expr(index, parameter.type)
 			index_query_expr(index, parameter.default)
@@ -319,14 +318,14 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		for parameter in v.generic_params { index_query_expr(index, parameter.type) }
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		for field in v.fields {
-			for symbol in field.symbols { index_query_binding(index, symbol, field.span, field.attributes) }
+			for symbol in field.symbols { index_query_binding(index, symbol, field.span) }
 			index_query_attributes(index, field.attributes)
 			index_query_expr(index, field.type)
 		}
 		for variant in v.variants { index_query_expr(index, variant.type) }
 	case ^Type_Anon_Record:
 		for field in v.fields {
-			for symbol in field.symbols { index_query_binding(index, symbol, field.span, field.attributes) }
+			for symbol in field.symbols { index_query_binding(index, symbol, field.span) }
 			index_query_expr(index, field.type)
 		}
 	case ^Type_Anon_Union:
@@ -334,7 +333,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	case ^Type_Enum:
 		index_query_expr(index, v.backing)
 		for field in v.fields {
-			index_query_binding(index, field.symbol, field.span, nil)
+			index_query_binding(index, field.symbol, field.span)
 			index_query_expr(index, field.value)
 		}
 	case ^Type_Interface:

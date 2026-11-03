@@ -346,7 +346,7 @@ reads_as_keyword :: proc(text: string, edited: []u32, old, new_name: string) -> 
 @(private = "file")
 single_token :: proc(name: string) -> (lokec.Token_Kind, bool) {
 	if name == "" || name == "_" { return .EOF, false }
-	tokens := lex_text(name)
+	tokens := lokec.lex_text(name)
 	defer delete(tokens)
 	count := 0
 	for token in tokens { if token.kind != .EOF { count += 1 } }

@@ -882,6 +882,7 @@ be file-private. Paths below are relative to `src/`.
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
 | `migrate.odin` | `-migrate` and `-migrate-check`: rewrites earlier spellings, proving each result parses to the same tree. |
 | `doc.odin` | `-doc` Markdown and `-api` interface files for the checked root and imported project packages, from one model of each package's API. |
+| `doc_comments.odin` | The doc-comment reader and the `L0260` check. |
 | `semantic.odin`, `types.odin`, `universe.odin` | Semantic stores and interning, type queries and names, predeclared names, and compiler-contributed members. |
 
 ### Checking and language features
