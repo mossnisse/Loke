@@ -1,0 +1,18 @@
+// design.md "SIMD vectors": what `Simd(T, N)` reports about its arguments, once.
+package main;
+
+main :: proc() {
+	// An argument's mode has no place in a type, in value position too.
+	_ = size_of(Simd(inout f32, 4));
+	_ = size_of(Simd(f32, inout 4));
+	_ = size_of(Range(inout int));
+
+	// `$M` is what failed, not `Simd`.
+	unbound: Simd(f32, $M);
+	inner: [2]Simd(f32, $M);
+
+	// Reported by `Simd` alone, around another type or on a literal.
+	boxed: Box(Simd(rune, 4));
+	nested: Simd(Simd(rune, 4), 4);
+	_ = Simd(i32, -2){};
+}

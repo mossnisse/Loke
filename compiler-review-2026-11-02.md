@@ -108,9 +108,9 @@ Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Ele
 
 #### Built-in call opening and operands
 
-`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244), [simd.odin:427](src/simd.odin#L427) and `check_unsafe_builtin` in `check_builtin.odin`. A loop over fixed target types repeats at `check_typed_builtin_args` in `check_builtin.odin` and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
+`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244) and `check_unsafe_builtin` in `check_builtin.odin`. A loop over fixed target types repeats at `check_typed_builtin_args` in `check_builtin.odin` and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
 
-They differ in diagnostic code (`L0322`, `L0661`, `L0687`, `L0569`, `L0738`), and atomics reports every bad argument rather than the first.
+They differ in diagnostic code (`L0322`, `L0661`, `L0569`, `L0738`), and atomics reports every bad argument rather than the first.
 
 The operand path has the real divergence. `check_defaulted_operand` in `check_builtin.odin` reports `nil`, but [box.odin:147](src/box.odin#L147) calls `default_type` directly, and `materialize` then fails silently on `INVALID_TYPE`.
 
@@ -812,7 +812,6 @@ Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=n
 **Simplification**
 
 - [emit_llvm_simd.odin:63](src/emit_llvm_simd.odin#L63) `emit_simd_binary_values`: use one switch for the special cases, then `arith_mnemonic(op)` from `emit_llvm_expr.odin:1505` (drop its file privacy) instead of retyping the table at lines 77 and 85-93. `&~` falls through as `.Amp`; float `%` still reaches the `""` failure. (about 12 lines)
-- [emit_llvm_simd.odin:11](src/emit_llvm_simd.odin#L11) `simd_operand`: the checker admits only one vector type or a lane, so the underlying-type comparison is just `type_is_simd(e.c, written)`, the test line 41 already uses. (about 1 line, and a simpler condition)
 - [emit_llvm_simd.odin:127](src/emit_llvm_simd.odin#L127) `emit_simd_compare`, `emit_simd_divrem`, `emit_simd_shift`: pass the `llvm` the caller already computed in place of `vector`, as `emit_simd_checked` and `simd_select` do; `vector` is used for nothing else. (about 3 lines)
 - [emit_llvm_simd.odin:334](src/emit_llvm_simd.odin#L334) `emit_simd_reduce`: `name` is computed before the checked fold, which ignores it, and `fold` is then retested three times. Give each case of one switch its own whole lowering: `.Any, .All`, `.Add, .Mul`, `.Min`, `.Max`. (about 5 lines)
 
@@ -830,10 +829,6 @@ Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=n
 - [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113), [emit_llvm_simd.odin:274](src/emit_llvm_simd.odin#L274) and [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) (also `:228`, `:254`, `:324`, `:348`, `:358`, `:376`): the same declare-once block, nine times. Add `declare_intrinsic(e, key, declaration)` and rename `simd_intrinsics` (`emit_llvm.odin:59`), which also holds `llvm.ctpop` and `llvm.trap`. (about 18 lines)
 - [emit_llvm_simd.odin:36](src/emit_llvm_simd.odin#L36), [emit_llvm_abi.odin:1223](src/emit_llvm_abi.odin#L1223) and [emit_llvm_expr.odin:146](src/emit_llvm_expr.odin#L146): the mask test written out three times. Keep one unprivate `simd_is_mask` with body `type_is_boolean(e.c, info.element)` and call it from the other two.
 - [emit_llvm_simd.odin:260](src/emit_llvm_simd.odin#L260) and [emit_llvm_calls.odin:357](src/emit_llvm_calls.odin#L357) (also `:375`): both mangle a float spelling for an overloaded intrinsic. Rename `simd_mangled_lane` to a general name, make it package-visible, and use it at all three sites.
-
-**Structure and boundaries**
-
-- [emit_llvm_simd.odin:10](src/emit_llvm_simd.odin#L10): file-private `simd_operand` shadows the package-level `simd_operand` at `simd.odin:133`, which answers a different question. Rename it, for example `simd_splat_scalar`. Likewise [line 209](src/emit_llvm_simd.odin#L209)'s `simd_select` emits a raw `select` but shares the built-in's name that `emit_simd_select` lowers; `emit_mask_select` would separate them.
 
 **Comments**
 
@@ -1033,7 +1028,7 @@ Small and readable, with no dead procedures. `ensure_format_member` lets a `wher
 **Near copies**
 
 - [format.odin:184](src/format.odin#L184), [hooks.odin:559](src/hooks.odin#L559) and [global_effects.odin:1658](src/global_effects.odin#L1658): three tests for "this `dyn` is printing's", the first by name and the others by the recorded view. Share one predicate on the interface symbol; the name form also works while `core:fmt` is being checked.
-- [format.odin:241](src/format.odin#L241), [atomics.odin:164](src/atomics.odin#L164), [simd.odin:427](src/simd.odin#L427) and `check_unsafe_builtin` in `check_builtin.odin`: the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
+- [format.odin:241](src/format.odin#L241), [atomics.odin:164](src/atomics.odin#L164) and `check_unsafe_builtin` in `check_builtin.odin`: the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
 
 **Structure and boundaries**
 
@@ -1620,64 +1615,11 @@ A compact, sound orchestrator whose lifecycle ordering holds up. It carries abou
 
 ### src/simd.odin
 
-Readable and well scoped, with no dead symbols, but `check_simd_binary` skips operator overloads, and much of the intrinsic validation guards a caller that cannot get it wrong. Several helpers copy procedures that already exist in `check_expr.odin`, `check.odin`, and `const_ops.odin`. Bugs below were reproduced with the built `lokec.exe`.
-
-**Bugs**
-
-- `BUG-simd-1` **medium** [simd.odin:199](src/simd.odin#L199) `check_simd_binary`: any operand that is a vector ends here (dispatch at [check_expr.odin:2238](src/check_expr.odin#L2238)), so no user overload is tried; design.md "Operator lookup and overload resolution" says one is found where no built-in exists. *Confirmed: Reproduced: `m * v` and `v + m` give L0686 with matching operator overloads, while `v += m` compiles and runs (prints 3.0). check_binary sends any vector operand to check_simd_binary; design.md says an overload is found where no built-in exists. Nothing recorded.*
-  Scenario: with `operator(*) proc(m: Mat, v: Simd(f32, 4))`, `m * v` gives L0686, as does `v + m`, while `v += m` compiles through the same overload; float `v % v` is also closed to overloads.
-  Fix: enter only when the built-in is defined for these operands; otherwise call `check_user_binary`, then report L0686.
-  Scenario: `f32_vec + i32(1)`, `f32_vec + f64(0.1)`, `i32_vec + i64(5)` and `a: Simd(f32, 4) = i32(1)` compile, though `x: f32 = i32(1)` is L0310.
-  Fix: in `materialize`, require a typed constant to be assignable to the lane type before converting it.
-- `BUG-simd-3` **low** [simd.odin:362](src/simd.odin#L362) `check_simd_unary`: it never folds, so `-C` on a constant vector is not `is_const` and `reject_negative_count_lanes` cannot see it; design.md "Lane-wise operators" makes a constant negative lane an error. *Not verified.*
-  Scenario: `C :: Simd(i32, 4){1, 1, 1, 1}; w := v << -C;` compiles and panics at runtime with "negative shift count". Fix: fold constant operands lane by lane, as the binary path does.
-- `BUG-simd-4` **low** [simd.odin:226](src/simd.odin#L226) `check_simd_binary`: `constant_zero_divisor` is never applied, and the compound path returns before [check.odin:4029](src/check.odin#L4029); design.md "Integer operators" forbids a constant zero divisor, and lanes obey the scalar rule "unchanged". *Not verified.*
-  Scenario: runtime `a := simd.from_array([4]i32{1, 2, 3, 4}); q := a / 0;` compiles and panics, where scalar `x / 0` is L0319. Fix: reject a constant divisor with a zero lane on integer lanes in both paths.
-- `BUG-simd-5` **low** [simd.odin:29](src/simd.odin#L29) `resolve_simd_application`: the shape test omits `mode != .Value`, which [box.odin:97](src/box.odin#L97) includes; type position rejects this in the parser (L0253), but value position does not. *Not verified.*
-  Scenario: `size_of(Simd(inout f32, 4))` compiles and answers 16. Fix: add the mode test to both arguments; `resolve_range_application` ([iterate.odin:81](src/iterate.odin#L81)) has the same gap.
-- `BUG-simd-6` **low** [simd.odin:79](src/simd.odin#L79) `simd_lane_count`: an unbound `$N` returns false with no diagnostic, so `report_unresolved_type` blames the wrong name. *Not verified.*
-  Scenario: `y: Simd(f32, $M);` in a plain procedure reports L0306 "unknown type `Simd`". Fix: report L0683 here, saying `$M` is not bound.
-- `BUG-simd-7` **low** [check.odin:4001](src/check.odin#L4001) (calling [simd.odin:255](src/simd.odin#L255)): the result of `materialize_value_expr` is ignored, so `reject_negative_count_lanes` runs on the unconverted scalar, and `simd_lane_const` reads it as a splat. *Not verified.*
-  Scenario: `v <<= -1` on `Simd(u32, 4)` reports both L0352 and L0356; `v << -1` reports only L0352. Fix: return when materialization fails.
-
-**Simplification**
-
-- [simd.odin:576](src/simd.odin#L576) `simd_written_fold`: lines 576-593 become `enum_member_by_value` ([check.odin:4497](src/check.odin#L4497)) for the name, then `reflect.enum_from_name(Simd_Fold, name)` for the fold. (about 14 lines)
-- [simd.odin:438](src/simd.odin#L438) `check_simd_builtin`: the `[dynamic]Expr` threaded through three procedures only ever holds `args[0]`, or all three for select; build the slice once after the switch and drop the `bound` parameters. (about 6 lines)
-- [simd.odin:324](src/simd.odin#L324) `simd_splat_operands`: materialize a runtime scalar at `vector` as well, so [check_expr.odin:3510](src/check_expr.odin#L3510) records `splat_from`; the separate "left at the element type" convention goes, along with the emitter's `simd_operand` and its type parameters ([emit_llvm_simd.odin:10](src/emit_llvm_simd.odin#L10)). (about 5 lines here, 10 in the emitter)
-
-**Dead code**
-
-- (branch) [simd.odin:425](src/simd.odin#L425): the arity and argument-shape errors cannot fire: the builtins are private to `core:simd` ([stdlib.odin:151](src/stdlib.odin#L151)), and each call in `core/simd/simd.loke` is written correctly.
-- (branch) [simd.odin:467](src/simd.odin#L467): L0682 and the default case at line 475 are unreachable: the operand is a parameter typed `[$N]$T` or `Simd($T, $N)`, and `from_array`'s signature `-> Simd(T, N)` rejects a bad element or count first (L0682/L0683 "in the signature of").
-- (branch) [simd.odin:493](src/simd.odin#L493): every error in `check_simd_select` (lines 493-515) is unreachable, because `select` declares `mask: Simd(bool, $N), when_true: Simd($T, N), when_false: Simd(T, N)`; the checks reduce to the `append` and `v.type = left`.
-- (branch) [simd.odin:528](src/simd.odin#L528): the not-a-vector error, and the `Any`/`All` mask error at line 540, are unreachable because the parameter is a vector and `any`/`all` take `Simd(bool, $N)`. The `Add`..`Max` mask error at line 550 is live and tested.
-- (branch) [simd.odin:572](src/simd.odin#L572): the errors at lines 572-575 and 594 are unreachable, since every call writes a `Fold` member; `base == nil` also cannot follow a valid `check_single_expr`.
-- (branch) [simd.odin:149](src/simd.odin#L149): `index == nil` cannot be true, because `materialize` at line 147 returns false for a nil base.
-- (branch) [simd.odin:277](src/simd.odin#L277): `v.type == INVALID_TYPE` cannot be true, because the only caller sets `v.type` from `simd_of` on the line before.
-- (branch) [simd.odin:459](src/simd.odin#L459): `info == nil` cannot be true, because `operand` was just checked against `INVALID_TYPE`.
-- (branch) [simd.odin:304](src/simd.odin#L304): the out-of-range arm is unreachable, because a constant vector always has `count` elements: the literal path pads ([check_expr.odin:3305](src/check_expr.odin#L3305)) and `convert_const` refuses other lengths ([check_expr.odin:3818](src/check_expr.odin#L3818)). The length test at line 187 is unneeded for the same reason.
+What remains is the predeclared-callee near copy, shared with `box.odin` and `iterate.odin`.
 
 **Near copies**
 
-- [simd.odin:76](src/simd.odin#L76) and [check.odin:1965](src/check.odin#L1965): lane count and array length run the same poly lookup, `check_single_expr`, `require_const`, integer test, and `bi_to_i64`; they differ in wording and code. A shared `constant_count(k, written, what, code) -> (u64, bool)` removes about 20 lines here, and `simd_lane_count_permitted` already rejects 0.
 - [simd.odin:15](src/simd.odin#L15), [box.odin:45](src/box.odin#L45) and [iterate.odin:68](src/iterate.odin#L68): `simd_callee`, `box_type_callee` and `range_callee` differ only in the name; use `predeclared_callee(k, callee, "Simd")`.
-- [simd.odin:185](src/simd.odin#L185) and [check_expr.odin:1432](src/check_expr.odin#L1432): the same constant-element fold, except that the array path also sets `v.immutable = .Constant`; a small shared helper keeps the two from drifting further.
-
-**Structure and boundaries**
-
-- [simd.odin:133](src/simd.odin#L133) and [emit_llvm_simd.odin:10](src/emit_llvm_simd.odin#L10): two procedures named `simd_operand`, one a nominal type test and one that splats a value; rename the emitter's (`simd_splat_scalar`), unless the simplification above removes it.
-- [simd.odin:311](src/simd.odin#L311) and [check.odin:3995](src/check.odin#L3995): binary and compound assignment each decide whether an operand is the vector or one of its lanes, which is how they came to disagree in BUG-simd-1; give both one predicate here, such as `simd_operand_is_builtin(c, vector, other)`.
-
-**Comments**
-
-- [simd.odin:73](src/simd.odin#L73): delete; it sits on the wrong procedure and is inaccurate, since two of the three bounds share one diagnostic.
-- [simd.odin:405](src/simd.odin#L405), [simd.odin:564](src/simd.odin#L564) and [stdlib.odin:148](src/stdlib.odin#L148): the same "matched by name, no second identity" note appears three times; keep line 405 and delete the sentence at 565.
-- [simd.odin:417](src/simd.odin#L417): cites a "design.md entry" that does not exist (the intrinsics are not in design.md); shorten to "A built-in has no signature, so the shapes are checked here."
-- [simd.odin:56](src/simd.odin#L56), [simd.odin:273](src/simd.odin#L273), [simd.odin:389](src/simd.odin#L389) and [simd.odin:484](src/simd.odin#L484): delete; each repeats the procedure name, the code, or the diagnostic beneath it.
-- [simd.odin:520](src/simd.odin#L520): delete the second sentence, which `core/simd/simd.loke` and `stdlib.odin` already state.
-- [simd.odin:252](src/simd.odin#L252): shorten to `design.md "Lane-wise operators": also serves `v <<= c`.`
-- [simd.odin:4](src/simd.odin#L4): shorten to "`Simd` is predeclared, so it needs no import and can be shadowed." (about 15 lines across the file)
 
 ### src/slice.odin
 

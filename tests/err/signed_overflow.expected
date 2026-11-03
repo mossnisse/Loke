@@ -19,7 +19,7 @@ the result 33000 does not fit `i16`
 L0397
 @24:33
 L0397
-@26:49
+@26:80
 L0397
 @32:25
 unsigned overflow: the result 260 does not fit `u8`

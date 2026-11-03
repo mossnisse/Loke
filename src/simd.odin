@@ -1,9 +1,7 @@
 // `Simd(T, N)`: its element and lane-count rules, its lane-wise operators, and
 // the `core:simd` intrinsics (design.md "SIMD vectors").
 //
-// `Simd` is a predeclared name rather than a package symbol, because design.md
-// writes `Simd(f32, 4)` with no import in sight. It is shadowable like any
-// other predeclared name.
+// `Simd` is predeclared, so it needs no import and can be shadowed.
 package lokec
 
 import "core:reflect"
@@ -26,13 +24,13 @@ resolve_simd_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {
 		return v.denoted_type
 	}
-	if len(v.args) != 2 || v.args[0].name.text != "" || v.args[1].name.text != "" {
+	if len(v.args) != 2 || v.args[0].name.text != "" || v.args[1].name.text != "" ||
+	   v.args[0].mode != .Value || v.args[1].mode != .Value {
 		errorf(k.c, v.span, "L0681", "`Simd` takes an element type and a lane count, as in `Simd(f32, 4)`")
 		return INVALID_TYPE
 	}
-	element := resolve_type_syntax(k, v.args[0].value)
+	element := resolve_type_reporting(k, v.args[0].value)
 	if element == INVALID_TYPE {
-		report_unresolved_type(k, v.args[0].value)
 		return INVALID_TYPE
 	}
 	if !simd_element_permitted(k.c, element) {
@@ -43,8 +41,8 @@ resolve_simd_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 		)
 		return INVALID_TYPE
 	}
-	count, counted := simd_lane_count(k, v.args[1].value, element)
-	if !counted {
+	count, counted := constant_count(k, v.args[1].value, "a SIMD lane count", "L0683")
+	if !counted || !simd_lane_count_permitted(k, v.args[1].value, element, count) {
 		return INVALID_TYPE
 	}
 	v.denoted_type = simd_of(k.c, element, count)
@@ -53,8 +51,6 @@ resolve_simd_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	return v.denoted_type
 }
 
-// A boolean, an integer up to 64 bits, or a float — `distinct` over one of
-// those included.
 @(private = "file")
 simd_element_permitted :: proc(c: ^Compiler, element: Type_Id) -> bool {
 	info := underlying_info(c, element)
@@ -68,36 +64,6 @@ simd_element_permitted :: proc(c: ^Compiler, element: Type_Id) -> bool {
 		return info.bits <= 64
 	}
 	return false
-}
-
-// Held to all three bounds at once, so the diagnostic names the one it broke.
-@(private = "file")
-simd_lane_count :: proc(k: ^Checker, written: Expr, element: Type_Id) -> (u64, bool) {
-	if poly, is_poly := written.(^Type_Poly); is_poly {
-		// In a generic instance the count is a bound constant, like an array length.
-		count, bound := poly_array_length(k, poly)
-		if !bound {
-			return 0, false
-		}
-		return count, simd_lane_count_permitted(k, written, element, count)
-	}
-	if check_single_expr(k, written, TYPE_INT) == INVALID_TYPE {
-		return 0, false
-	}
-	folded, evaluated := require_const(k, written, "a SIMD lane count", "L0683")
-	if !evaluated {
-		return 0, false
-	}
-	if folded.kind != .Integer {
-		errorf(k.c, expr_span(written), "L0683", "a SIMD lane count must be a constant integer")
-		return 0, false
-	}
-	value, fits := bi_to_i64(k.c, folded.integer)
-	if !fits || value <= 0 {
-		errorf(k.c, expr_span(written), "L0683", "a SIMD lane count must be a positive constant")
-		return 0, false
-	}
-	return u64(value), simd_lane_count_permitted(k, written, element, u64(value))
 }
 
 @(private = "file")
@@ -146,9 +112,6 @@ check_simd_index :: proc(
 	}
 	if !materialize(k, v.indices[0], TYPE_INT) { return }
 	index := expr_base(v.indices[0])
-	if index == nil {
-		return
-	}
 	if !type_is_integer(k.c, index.type) {
 		errorf(k.c, expr_span(v.indices[0]), "L0684", "a lane index must be an integer, found `%s`", type_name(k.c, index.type))
 		return
@@ -175,14 +138,7 @@ check_simd_index :: proc(
 	v.type = info.element
 	v.value_category = .Place
 	inherit_capability(&v.base, operand, through_pointer, pointer_mutable)
-	// A constant vector's lane is a constant, as `ARRAY[2]` is.
-	if operand.is_const && operand.const_value.kind == .Aggregate {
-		aggregate := operand.const_value.aggregate
-		if aggregate != nil && int(value) < len(aggregate.elements) {
-			v.is_const = true
-			v.const_value = aggregate.elements[value]
-		}
-	}
+	fold_constant_element(v, operand, value)
 }
 
 // ----------------------------------------------------------- operators --
@@ -217,32 +173,33 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 		)
 		return
 	}
+	if reject_negative_count_lanes(k, v.op, v.rhs) || constant_zero_divisor(k, v.op, v.op_span, v.rhs) {
+		return
+	}
 	#partial switch v.op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		// A mask, not a `bool`: not an `if` condition until `simd.any` reduces it.
 		v.type = simd_of(k.c, TYPE_BOOL, info.count)
-		fold_simd_binary(k, v)
-	case .Shl, .Shr:
-		if reject_negative_count_lanes(k, v.rhs, int(info.count)) {
-			return
-		}
-		fallthrough
 	case:
 		v.type = vector
-		fold_simd_binary(k, v)
 	}
+	fold_simd_binary(k, v)
 }
 
-// design.md "Lane-wise operators": a constant negative count lane is an error,
-// as a constant negative scalar count is, whatever the left operand; `v << c`
-// and `v <<= c` share the rule.
-reject_negative_count_lanes :: proc(k: ^Checker, count: Expr, lanes: int) -> bool {
+// Whether `other` meets `vector` in a built-in lane-wise operator: `vector`
+// itself, or a scalar that splats to it. `v + x` and `v += x` both ask, and an
+// overload is found only where this says no.
+simd_operand_is_builtin :: proc(c: ^Compiler, vector, other: Type_Id) -> bool {
+	return other == vector || (!type_is_simd(c, other) && assignable(c, other, type_of(c, vector).element))
+}
+
+// design.md "Lane-wise operators": also serves `v <<= c`.
+reject_negative_count_lanes :: proc(k: ^Checker, op: Token_Kind, count: Expr) -> bool {
 	base := expr_base(count)
-	if !base.is_const {
+	if (op != .Shl && op != .Shr) || !base.is_const {
 		return false
 	}
-	for index in 0 ..< lanes {
-		lane := simd_lane_const(base.const_value, index)
+	for lane, index in base.const_value.aggregate.elements {
 		if lane.kind == .Integer && bi_sign(lane.integer) < 0 {
 			errorf(
 				k.c, expr_span(count), "L0356", "a shift count cannot be negative, found %s in lane %d",
@@ -254,18 +211,16 @@ reject_negative_count_lanes :: proc(k: ^Checker, count: Expr, lanes: int) -> boo
 	return false
 }
 
-// Constant operands fold one lane at a time at the element type, a comparison to
-// a constant mask.
 @(private = "file")
 fold_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary) {
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
-	if !left.is_const || !right.is_const || v.type == INVALID_TYPE {
+	if !left.is_const || !right.is_const {
 		return
 	}
 	info := underlying_info(k.c, v.type)
 	elements := make([]Const_Value, info.count, k.c.semantic_allocator)
 	for index in 0 ..< int(info.count) {
-		a, b := simd_lane_const(left.const_value, index), simd_lane_const(right.const_value, index)
+		a, b := left.const_value.aggregate.elements[index], right.const_value.aggregate.elements[index]
 		#partial switch v.op {
 		case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 			result, ok := fold_comparison(k.c, v.op, a, b)
@@ -282,25 +237,21 @@ fold_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary) {
 			elements[index] = folded
 		}
 	}
-	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-	aggregate.type = v.type
-	aggregate.elements = elements
-	v.is_const = true
-	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+	set_simd_const(k, &v.base, elements)
 }
 
-// One lane of a constant vector. A non-aggregate is the splatted scalar.
 @(private = "file")
-simd_lane_const :: proc(value: Const_Value, index: int) -> Const_Value {
-	if value.kind != .Aggregate || value.aggregate == nil {
-		return value
-	}
-	return index < len(value.aggregate.elements) ? value.aggregate.elements[index] : Const_Value{}
+set_simd_const :: proc(k: ^Checker, base: ^Expr_Base, elements: []Const_Value) {
+	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
+	aggregate.type = base.type
+	aggregate.elements = elements
+	base.is_const = true
+	base.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
 }
 
-// A scalar operand splats. Materialising at the vector type turns a written
-// constant into the splat aggregate; a runtime scalar is left at the element
-// type, which the backend reads as "splat me".
+// A scalar operand splats. Materialising it at the vector type makes a written
+// constant the splat aggregate and records `splat_from` on a runtime scalar, so
+// both operands reach the backend as the vector.
 @(private = "file")
 simd_splat_operands :: proc(k: ^Checker, v: ^Expr_Binary, vector, element: Type_Id) -> bool {
 	ok := true
@@ -309,13 +260,7 @@ simd_splat_operands :: proc(k: ^Checker, v: ^Expr_Binary, vector, element: Type_
 		if base.type == vector {
 			continue
 		}
-		if base.is_const {
-			if !materialize(k, side, vector) {
-				ok = false
-			}
-			continue
-		}
-		if !assignable(k.c, base.type, element) {
+		if !base.is_const && !assignable(k.c, base.type, element) {
 			errorf(
 				k.c, v.op_span, "L0686",
 				"`%s` is neither `%s` nor one of its lanes",
@@ -324,7 +269,7 @@ simd_splat_operands :: proc(k: ^Checker, v: ^Expr_Binary, vector, element: Type_
 			ok = false
 			continue
 		}
-		if !materialize(k, side, element) {
+		if !materialize(k, side, vector) {
 			ok = false
 		}
 	}
@@ -379,9 +324,22 @@ check_simd_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) {
 		return
 	}
 	v.type = operand
+	operand_base := expr_base(v.operand)
+	if !operand_base.is_const {
+		return
+	}
+	elements := make([]Const_Value, info.count, k.c.semantic_allocator)
+	for lane, index in operand_base.const_value.aggregate.elements {
+		folded, ok := fold_unary_const(k, v.op, v.op_span, lane, element)
+		if !ok {
+			v.type = INVALID_TYPE
+			return
+		}
+		elements[index] = folded
+	}
+	set_simd_const(k, &v.base, elements)
 }
 
-// `&&` and `||` short-circuit, and a short circuit has nothing lane-wise to mean.
 reject_simd_logical :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bool {
 	if !simd_operand(k.c, lhs) && !simd_operand(k.c, rhs) {
 		return false
@@ -409,116 +367,55 @@ Simd_Fold :: enum {
 	All,
 }
 
-// Each intrinsic takes exactly the operands its design.md entry describes, so
-// the shapes are checked here rather than through a signature no built-in has.
-check_simd_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+// Only `core:simd` reaches these, and its signatures settle the operands' shapes.
+check_simd_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
-	wanted := 1
-	if kind == .Simd_Select { wanted = 3 }
-	if kind == .Simd_Reduce { wanted = 2 }
-	if len(v.args) != wanted {
-		errorf(
-			k.c, v.span, "L0687", "`%s` takes %d argument%s, found %d",
-			ident.name, wanted, wanted == 1 ? "" : "s", len(v.args),
-		)
-		return
-	}
-	if !builtin_arguments_ok(k, v) {
-		return
-	}
-	bound := make([dynamic]Expr, 0, wanted, k.c.semantic_allocator)
 	#partial switch kind {
 	case .Simd_Cast:
-		check_simd_cast(k, v, &bound)
+		check_simd_cast(k, v)
 	case .Simd_Select:
-		check_simd_select(k, v, &bound)
+		check_simd_select(k, v)
 	case .Simd_Reduce:
-		check_simd_reduce(k, v, &bound)
+		check_simd_reduce(k, v)
 	}
-	v.bound = bound[:]
+	if v.type == INVALID_TYPE {
+		return
+	}
+	if kind == .Simd_Select {
+		v.bound = bound_exprs(k, v.args[0].value, v.args[1].value, v.args[2].value)
+	} else {
+		v.bound = bound_exprs(k, v.args[0].value)
+	}
 }
 
 // `from_array` and `to_array`, one built-in because the direction is the
 // operand's kind.
 @(private = "file")
-check_simd_cast :: proc(k: ^Checker, v: ^Expr_Call, bound: ^[dynamic]Expr) {
+check_simd_cast :: proc(k: ^Checker, v: ^Expr_Call) {
 	operand := check_single_expr(k, v.args[0].value)
 	if operand == INVALID_TYPE {
 		return
 	}
 	info := type_of(k.c, operand)
-	if info == nil {
-		return
-	}
-	append(bound, v.args[0].value)
-	#partial switch info.kind {
-	case .Simd:
-		v.type = array_of(k.c, info.element, info.count)
-	case .Array:
-		if !simd_element_permitted(k.c, info.element) {
-			errorf(
-				k.c, expr_span(v.args[0].value), "L0682",
-				"`%s` is not a SIMD lane type", type_name(k.c, info.element),
-			)
+	v.type = info.kind == .Simd ? array_of(k.c, info.element, info.count) : simd_of(k.c, info.element, info.count)
+}
+
+@(private = "file")
+check_simd_select :: proc(k: ^Checker, v: ^Expr_Call) {
+	for arg in v.args {
+		if check_single_expr(k, arg.value) == INVALID_TYPE {
 			return
 		}
-		v.type = simd_of(k.c, info.element, info.count)
-	case:
-		errorf(
-			k.c, expr_span(v.args[0].value), "L0687",
-			"this converts between a vector and an array; `%s` is neither",
-			type_name(k.c, operand),
-		)
 	}
+	v.type = expr_base(v.args[1].value).type
 }
 
-// `select(mask, a, b)`: a lane-wise choice between two vectors of one type.
+// The reductions, plus `any` and `all` over a mask.
 @(private = "file")
-check_simd_select :: proc(k: ^Checker, v: ^Expr_Call, bound: ^[dynamic]Expr) {
-	mask := check_single_expr(k, v.args[0].value)
-	left := check_single_expr(k, v.args[1].value)
-	right := check_single_expr(k, v.args[2].value, left)
-	if mask == INVALID_TYPE || left == INVALID_TYPE || right == INVALID_TYPE {
-		return
-	}
-	if !simd_operand(k.c, left) {
-		errorf(k.c, expr_span(v.args[1].value), "L0687", "`%s` is not a vector", type_name(k.c, left))
-		return
-	}
-	chosen := type_of(k.c, left)
-	materialize(k, v.args[2].value, left)
-	if expr_base(v.args[2].value).type != left {
-		errorf(
-			k.c, expr_span(v.args[2].value), "L0687",
-			"both selected vectors are one type; found `%s` and `%s`",
-			type_name(k.c, left), type_name(k.c, right),
-		)
-		return
-	}
-	wanted := simd_of(k.c, TYPE_BOOL, chosen.count)
-	if mask != wanted {
-		errorf(
-			k.c, expr_span(v.args[0].value), "L0687",
-			"a lane mask for `%s` is `%s`, found `%s`",
-			type_name(k.c, left), type_name(k.c, wanted), type_name(k.c, mask),
-		)
-		return
-	}
-	append(bound, v.args[0].value, v.args[1].value, v.args[2].value)
-	v.type = left
-}
-
-// The reductions, plus `any` and `all` over a mask. The fold is a constant
-// because it selects the instruction.
-@(private = "file")
-check_simd_reduce :: proc(k: ^Checker, v: ^Expr_Call, bound: ^[dynamic]Expr) {
+check_simd_reduce :: proc(k: ^Checker, v: ^Expr_Call) {
 	vector := check_single_expr(k, v.args[0].value)
 	if vector == INVALID_TYPE {
-		return
-	}
-	if !simd_operand(k.c, vector) {
-		errorf(k.c, expr_span(v.args[0].value), "L0687", "`%s` is not a vector", type_name(k.c, vector))
 		return
 	}
 	fold, known := simd_written_fold(k, v.args[1].value)
@@ -526,20 +423,11 @@ check_simd_reduce :: proc(k: ^Checker, v: ^Expr_Call, bound: ^[dynamic]Expr) {
 		return
 	}
 	info := type_of(k.c, vector)
-	mask := type_is_boolean(k.c, info.element)
 	switch fold {
 	case .Any, .All:
-		if !mask {
-			errorf(
-				k.c, expr_span(v.args[1].value), "L0687",
-				"`%s` reduces a lane mask, and `%s` has `%s` lanes",
-				reflect.enum_string(fold), type_name(k.c, vector), type_name(k.c, info.element),
-			)
-			return
-		}
 		v.type = TYPE_BOOL
 	case .Add, .Mul, .Min, .Max:
-		if mask {
+		if type_is_boolean(k.c, info.element) {
 			errorf(
 				k.c, expr_span(v.args[1].value), "L0687",
 				"`%s` folds numeric lanes, and `%s` is a lane mask",
@@ -550,39 +438,15 @@ check_simd_reduce :: proc(k: ^Checker, v: ^Expr_Call, bound: ^[dynamic]Expr) {
 		v.type = info.element
 	}
 	v.operation = Call_Simd_Reduce{fold = fold}
-	append(bound, v.args[0].value)
 }
 
-// The `Fold` member a call wrote. `core:simd` declares that enum in its own
-// source, so the written constant is read rather than bound a second identity.
+// The `Fold` member a call wrote.
 @(private = "file")
 simd_written_fold :: proc(k: ^Checker, written: Expr) -> (Simd_Fold, bool) {
 	if check_single_expr(k, written) == INVALID_TYPE {
 		return .Add, false
 	}
 	base := expr_base(written)
-	if base == nil || !base.is_const || !type_is_enum(k.c, base.type) {
-		errorf(k.c, expr_span(written), "L0687", "a reduction fold is a constant `Fold` member")
-		return .Add, false
-	}
-	name := ""
-	if info := underlying_info(k.c, base.type); info != nil {
-		for member in info.fields {
-			sym := symbol_of(k.c, member)
-			if sym == nil || sym.const_value.kind != .Integer {
-				continue
-			}
-			if bi_cmp(k.c, sym.const_value.integer, base.const_value.integer) == 0 {
-				name = identifier_text(k.c, sym.name)
-				break
-			}
-		}
-	}
-	for candidate in Simd_Fold {
-		if reflect.enum_string(candidate) == name {
-			return candidate, true
-		}
-	}
-	errorf(k.c, expr_span(written), "L0687", "`%s` is not a reduction fold", name == "" ? "this" : name)
-	return .Add, false
+	member := symbol_of(k.c, enum_member_by_value(k.c, base.type, base.const_value))
+	return reflect.enum_from_name(Simd_Fold, identifier_text(k.c, member.name))
 }

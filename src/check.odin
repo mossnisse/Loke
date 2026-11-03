@@ -1718,28 +1718,34 @@ resolve_array_type :: proc(k: ^Checker, value: ^Type_Array) -> Type_Id {
 	if value.denoted_type != INVALID_TYPE {
 		return value.denoted_type
 	}
-	// `[$N]E` inside an instance.
-	if poly, is_poly := value.length.(^Type_Poly); is_poly {
-		count, bound := poly_array_length(k, poly)
-		return bound ? denote(&value.base, array_of(k.c, element, count)) : INVALID_TYPE
+	length, counted := constant_count(k, value.length, "an array length", "L0384")
+	return counted ? denote(&value.base, array_of(k.c, element, length)) : INVALID_TYPE
+}
+
+// A written `[N]E` length or `Simd(T, N)` lane count: a constant, or `$N` bound
+// inside an instance. An unbound `$N` reports nothing here; `report_unresolved_type`
+// names it.
+constant_count :: proc(k: ^Checker, written: Expr, what, code: string) -> (u64, bool) {
+	if poly, is_poly := written.(^Type_Poly); is_poly {
+		return poly_array_length(k, poly)
 	}
-	if check_single_expr(k, value.length, TYPE_INT) == INVALID_TYPE {
-		return INVALID_TYPE
+	if check_single_expr(k, written, TYPE_INT) == INVALID_TYPE {
+		return 0, false
 	}
-	folded, evaluated := require_const(k, value.length, "an array length", "L0384")
+	folded, evaluated := require_const(k, written, what, code)
 	if !evaluated {
-		return INVALID_TYPE
+		return 0, false
 	}
 	if folded.kind != .Integer {
-		errorf(k.c, expr_span(value.length), "L0384", "an array length must be a constant integer")
-		return INVALID_TYPE
+		errorf(k.c, expr_span(written), code, "%s must be a constant integer", what)
+		return 0, false
 	}
-	length, fits := bi_to_i64(k.c, folded.integer)
-	if !fits || length < 0 {
-		errorf(k.c, expr_span(value.length), "L0384", "an array length must be a non-negative constant")
-		return INVALID_TYPE
+	count, fits := bi_to_i64(k.c, folded.integer)
+	if !fits || count < 0 {
+		errorf(k.c, expr_span(written), code, "%s must be a non-negative constant", what)
+		return 0, false
 	}
-	return denote(&value.base, array_of(k.c, element, u64(length)))
+	return u64(count), true
 }
 
 // design.md "Structs", "Unions": a declaration's value only. The type is still
@@ -2057,6 +2063,15 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 			errorf(k.c, call.span, "L0306", "this call does not compute a type: it returns nothing")
 		} else {
 			errorf(k.c, call.span, "L0306", "this call does not compute a type: it returns `%s`", type_name(k.c, returned))
+		}
+		return
+	}
+	// `resolve_simd_application` reports all but an unbound `Simd(f32, $M)`.
+	if simd_callee(k, call.callee) {
+		if len(call.args) == 2 {
+			if poly, is_poly := call.args[1].value.(^Type_Poly); is_poly {
+				report_unresolved_type(k, poly)
+			}
 		}
 		return
 	}

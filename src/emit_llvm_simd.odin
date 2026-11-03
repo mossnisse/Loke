@@ -5,15 +5,6 @@ package lokec
 import "core:fmt"
 import "core:strings"
 
-// An operand the checker left at the element type is a splat.
-@(private = "file")
-simd_operand :: proc(e: ^Emitter, value: string, written: Type_Id, vector: Type_Id) -> string {
-	if type_underlying(e.c, written) == type_underlying(e.c, vector) {
-		return value
-	}
-	return emit_simd_splat(e, value, vector)
-}
-
 emit_simd_splat :: proc(e: ^Emitter, value: string, vector: Type_Id) -> string {
 	info := underlying_info(e.c, vector)
 	llvm := llvm_type(e, vector)
@@ -37,27 +28,16 @@ simd_is_mask :: proc(e: ^Emitter, info: ^Type_Info) -> bool {
 }
 
 emit_simd_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
-	left_type := expr_base(v.lhs).type
-	vector := type_is_simd(e.c, left_type) ? left_type : expr_base(v.rhs).type
 	left := emit_expr(e, v.lhs)
 	right := emit_expr(e, v.rhs)
-	return emit_simd_binary_values(e, v.op, vector, left, left_type, right, expr_base(v.rhs).type)
+	return emit_simd_binary_values(e, v.op, expr_base(v.lhs).type, left, right)
 }
 
 // The operator over already-evaluated operands, as a compound assignment has.
-emit_simd_binary_values :: proc(
-	e: ^Emitter,
-	op: Token_Kind,
-	vector: Type_Id,
-	left_value: string,
-	left_type: Type_Id,
-	right_value: string,
-	right_type: Type_Id,
-) -> string {
+emit_simd_binary_values :: proc(e: ^Emitter, op: Token_Kind, vector: Type_Id, left, right_value: string) -> string {
+	right := right_value
 	info := underlying_info(e.c, vector)
 	llvm := llvm_type(e, vector)
-	left := simd_operand(e, left_value, left_type, vector)
-	right := simd_operand(e, right_value, right_type, vector)
 	float := type_is_float(e.c, info.element)
 
 	if !float {

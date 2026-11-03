@@ -1454,7 +1454,8 @@ width is defined exactly as it is for a scalar, the limit of the repeated
 one-bit shift, and a shift's right operand is a vector too, so `v << 2` splats
 the count. The count vector has the element type, which may be signed; a
 negative count lane panics the whole shift, as a negative scalar count does, and
-a constant negative lane is a compilation error.
+a constant negative lane is a compilation error. A constant zero divisor lane is
+a compilation error too, as a constant zero scalar divisor is.
 
 Floating-point lanes follow the scalar floating-point rules unchanged: no
 contraction the source did not write, and no reassociation.

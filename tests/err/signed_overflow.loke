@@ -23,7 +23,7 @@ EVALUATED :: bump();
 
 LANES :: Simd(i8, 2){127, -128} + Simd(i8, 2){1, -1};
 
-negated_lanes :: proc() -> Simd(i8, 2) { return -Simd(i8, 2){1, -128}; }
+negated_lanes :: proc() -> Simd(i8, 2) { lanes := Simd(i8, 2){1, -128}; return -lanes; }
 NEGATED_LANES :: negated_lanes();
 
 summed_lanes :: proc() -> i8 { return simd.reduce_add(Simd(i8, 4){100, 27, 1, -100}); }

@@ -441,8 +441,12 @@ builtin_binary_defined :: proc(k: ^Checker, op: Token_Kind, lhs, rhs: Type_Id) -
 	if !operand_is_builtin(k, lhs) || !operand_is_builtin(k, rhs) {
 		return false
 	}
-	if simd_operand(k.c, lhs) {
-		return lhs == rhs && simd_operator_applies(k.c, op, type_of(k.c, lhs).element)
+	if simd_operand(k.c, lhs) || simd_operand(k.c, rhs) {
+		vector, other := lhs, rhs
+		if !simd_operand(k.c, lhs) {
+			vector, other = rhs, lhs
+		}
+		return simd_operand_is_builtin(k.c, vector, other) && simd_operator_applies(k.c, op, type_of(k.c, vector).element)
 	}
 	if op == .Shl || op == .Shr {
 		if !type_is_integer(k.c, lhs) && !type_is_rune(k.c, lhs) {

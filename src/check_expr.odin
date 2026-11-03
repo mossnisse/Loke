@@ -1292,13 +1292,16 @@ check_array_index :: proc(
 		v.type = INVALID_TYPE
 		return
 	}
+	fold_constant_element(v, operand, value)
+}
+
+// A constant array's or vector's element, at an index already in range, is a
+// constant.
+fold_constant_element :: proc(v: ^Expr_Index, operand: ^Expr_Base, index: i64) {
 	if operand.is_const && operand.const_value.kind == .Aggregate {
-		aggregate := operand.const_value.aggregate
-		if aggregate != nil && int(value) < len(aggregate.elements) {
-			v.is_const = true
-			v.const_value = aggregate.elements[value]
-			v.immutable = .Constant
-		}
+		v.is_const = true
+		v.const_value = operand.const_value.aggregate.elements[index]
+		v.immutable = .Constant
 	}
 }
 
@@ -1862,9 +1865,18 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	if !operand_base.is_const {
 		return
 	}
-	value := operand_base.const_value
+	folded, ok := fold_unary_const(k, v.op, v.op_span, operand_base.const_value, operand)
+	if !ok {
+		return
+	}
+	v.is_const = true
+	v.const_value = folded
+}
+
+// One operand's folded operator at `type`: a scalar, or one lane of a vector.
+fold_unary_const :: proc(k: ^Checker, op: Token_Kind, op_span: Span, value: Const_Value, type: Type_Id) -> (Const_Value, bool) {
 	folded: Const_Value
-	#partial switch v.op {
+	#partial switch op {
 	case .Plus:
 		folded = value
 	case .Minus:
@@ -1880,19 +1892,23 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			folded = Const_Value{kind = value.kind, integer = bi_neg(k.c, value.integer)}
 		}
 	case .Tilde:
-		folded = Const_Value{kind = value.kind, integer = bi_not(k.c, value.integer)}
+		// `~` on a boolean is a mask lane's.
+		if value.kind == .Boolean {
+			folded = bool_const(!value.boolean)
+		} else {
+			folded = Const_Value{kind = value.kind, integer = bi_not(k.c, value.integer)}
+		}
 	case .Not:
 		folded = bool_const(!value.boolean)
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
-		if v.op == .Minus && !integer_fits(k.c, folded.integer, v.type) {
-			report_integer_overflow(k.c, v.op_span, folded.integer, v.type)
-			return
+		if op == .Minus && !integer_fits(k.c, folded.integer, type) {
+			report_integer_overflow(k.c, op_span, folded.integer, type)
+			return {}, false
 		}
-		folded.integer = wrap_to_type(k.c, folded.integer, v.type)
+		folded.integer = wrap_to_type(k.c, folded.integer, type)
 	}
-	v.is_const = true
-	v.const_value = folded
+	return folded, true
 }
 
 @(private = "file")
@@ -2050,15 +2066,15 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	// design.md "SIMD vectors": lane-wise, with its own operator table.
-	if simd_operand(k.c, lhs) || simd_operand(k.c, rhs) {
-		check_simd_binary(k, v, lhs, rhs)
-		return
-	}
 	if !builtin_binary_defined(k, v.op, lhs, rhs) {
 		if check_user_binary(k, v, lhs, rhs) {
 			return
 		}
+	}
+	// design.md "SIMD vectors": lane-wise, with its own operator table.
+	if simd_operand(k.c, lhs) || simd_operand(k.c, rhs) {
+		check_simd_binary(k, v, lhs, rhs)
+		return
 	}
 	if shift {
 		check_shift(k, v, expected, lhs, rhs)
@@ -2126,9 +2142,23 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 // the dividend is only known at run time.
 constant_zero_divisor :: proc(k: ^Checker, op: Token_Kind, op_span: Span, divisor: Expr) -> bool {
 	value := expr_base(divisor)
-	if (op != .Slash && op != .Percent) || !value.is_const ||
-	   (value.const_value.kind != .Integer && value.const_value.kind != .Rune) ||
-	   !bi_is_zero(value.const_value.integer) {
+	if (op != .Slash && op != .Percent) || !value.is_const {
+		return false
+	}
+	is_zero :: proc(value: Const_Value) -> bool {
+		return (value.kind == .Integer || value.kind == .Rune) && bi_is_zero(value.integer)
+	}
+	// design.md "Lane-wise operators": any zero lane fails the whole operation.
+	if value.const_value.kind == .Aggregate {
+		for lane, index in value.const_value.aggregate.elements {
+			if is_zero(lane) {
+				errorf(k.c, op_span, "L0319", "division by zero in lane %d", index)
+				return true
+			}
+		}
+		return false
+	}
+	if !is_zero(value.const_value) {
 		return false
 	}
 	errorf(k.c, op_span, "L0319", "division by zero")

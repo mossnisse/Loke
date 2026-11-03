@@ -76,7 +76,7 @@ resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {
 		return v.denoted_type
 	}
-	if len(v.args) != 1 || v.args[0].name.text != "" {
+	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0689", "`Range` takes one endpoint type, as in `Range(int)`")
 		return INVALID_TYPE
 	}

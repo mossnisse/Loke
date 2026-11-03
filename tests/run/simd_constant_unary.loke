@@ -1,0 +1,45 @@
+// design.md "Lane-wise operators": unary operators fold a constant vector lane by
+// lane, a runtime scalar splats on either side, and only an integer lane's zero
+// divisor is an error.
+package main;
+
+import "core:fmt";
+
+C :: Simd(i32, 4){1, 2, 3, 4};
+MASK :: Simd(bool, 4){true, false, true, false};
+NEGATED :: -C;
+INVERTED :: ~C;
+NOT_MASK :: ~MASK;
+LANE :: NEGATED[2];
+FLOATS :: -Simd(f32, 2){1.5, -2.5};
+
+doubled :: proc() -> Simd(f32, 4) {
+	x: f32 = 2.0;
+	v: Simd(f32, 4) = 1.0;
+	v *= x;
+	return x * v + x;
+}
+FOLDED :: doubled();
+
+main :: proc() {
+	fmt.println(NEGATED[0], NEGATED[3], INVERTED[1], LANE);
+	fmt.println(NOT_MASK[0], NOT_MASK[1]);
+	fmt.println(FLOATS[0], FLOATS[1], FOLDED[0]);
+
+	v: Simd(i32, 4) = 8;
+	shifted := v << -NEGATED;
+	fmt.println(shifted[0], shifted[3]);
+
+	f: Simd(f32, 4) = 1.0;
+	inf := f / 0;
+	also := f / Simd(f32, 4){};
+	f /= 0;
+	fmt.println(inf[0], also[1], f[2]);
+
+	x: i32 = 3;
+	left := x * v;
+	right := v - x;
+	mask := x < v;
+	count := v << x;
+	fmt.println(left[0], right[0], mask[0], count[0]);
+}

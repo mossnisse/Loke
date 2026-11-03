@@ -1,0 +1,24 @@
+L0681
+@6:14
+`Simd` takes an element type and a lane count, as in `Simd(f32, 4)`
+L0681
+@7:14
+`Simd` takes an element type and a lane count, as in `Simd(f32, 4)`
+L0689
+@8:14
+`Range` takes one endpoint type, as in `Range(int)`
+L0437
+@11:21
+`$M` is not bound here
+L0437
+@12:22
+`$M` is not bound here
+L0682
+@15:18
+`rune` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0682
+@16:20
+`rune` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0683
+@17:16
+a SIMD lane count must be a non-negative constant

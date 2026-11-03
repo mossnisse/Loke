@@ -261,7 +261,7 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_borrowed_operand(e, bound[0])
 	rhs := emit_borrowed_operand(e, bound[1])
 	if simd {
-		return emit_simd_binary_values(e, op, underlying, lhs, underlying, rhs, underlying)
+		return emit_simd_binary_values(e, op, underlying, lhs, rhs)
 	}
 	if op == .Plus && type_is_utf8_text(e.c, underlying) {
 		return emit_text_concat_values(e, underlying, lhs, rhs)

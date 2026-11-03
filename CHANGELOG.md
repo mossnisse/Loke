@@ -122,6 +122,15 @@ checklist.
   `L0310`, and `S("a") + view` and `S("a") == T("b")` with distinct strings are `L0354`. `a && b` on
   a `distinct bool` is `L0318`, as `!a` was `L0317`. `d: D = 1 << n` with `D :: distinct int` is
   `L0310`, as `D(1) << n` was `L0318`. Upgrade by writing the conversion.
+- A constant zero divisor lane of an integer vector is now `L0319`
+  ([Lane-wise operators](design.md#lane-wise-operators)), in `v / 0`, `v % Z` and `v /= 0`, as a
+  scalar's is. They compiled and panicked at run time. Upgrade by removing the division.
+- `-C` and `~C` on a constant vector are now constants ([Lane-wise
+  operators](design.md#lane-wise-operators)), so `v << -C` with a positive `C` is `L0356` and
+  `-C` overflowing a lane is `L0397`. They compiled and panicked at run time. Upgrade by removing
+  the negative count.
+- `Simd(inout f32, 4)` and `Range(inout int)` in value position, as in `size_of`, are now `L0681` and
+  `L0689`. They compiled and ignored the mode. Upgrade by removing it.
 - Only a scalar of the lane type splats, constant or not
   ([SIMD vectors](design.md#simd-vectors)): `v: Simd(f32, 4) = N` with `N : i64 : 3`, and
   `f32_vector + i32(1)`, are now `L0310`. They compiled, converting the constant. Upgrade by writing
@@ -1475,6 +1484,15 @@ checklist.
   ([string type conversions](design.md#string-type-conversions)). It truncated, so an `i128` of `-2^64`
   gave an empty view.
 - `unsafe.string_view(pointer, 1.5)` reports the length once, where it reported `L0353` and `L0569`.
+- An operator overload taking a vector is now found where no built-in lane-wise operation exists
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
+  `m * v`, `v + m`, `a + b` on two vector types, and `%` on float lanes were `L0686` with a matching
+  overload, though `v += m` found it.
+- `y: Simd(f32, $M)` where `$M` is not bound is now `L0437` naming `$M`, and an invalid `Simd(...)`
+  inside `Box(...)` or a composite literal no longer also says ``unknown type `Simd` ``.
+- `v <<= -1` on an unsigned vector reports `L0352` once, as `v << -1` does, and not `L0356` as well.
+- A negative `Simd` lane count now says that it is negative, and a zero one that a lane count is a
+  power of two from 1.
 - A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
   map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
   ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a

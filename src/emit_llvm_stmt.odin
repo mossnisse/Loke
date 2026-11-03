@@ -562,7 +562,7 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	op := compound_operator(s.op)
 	result: string
 	if type_is_simd(e.c, type) {
-		result = emit_simd_binary_values(e, op, type, current, type, rhs, expr_base(s.rhs[0]).type)
+		result = emit_simd_binary_values(e, op, type, current, rhs)
 	} else {
 		result = emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
 	}

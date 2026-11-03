@@ -929,16 +929,12 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		if rhs_type == INVALID_TYPE {
 			return
 		}
-		info := underlying_info(k.c, type)
-		builtin_rhs := type_underlying(k.c, rhs_type) == type_underlying(k.c, type) ||
-			(!type_is_simd(k.c, rhs_type) && assignable(k.c, rhs_type, info.element))
-		if !builtin_rhs && check_user_compound(k, s, op, type, rhs_type) {
+		if !simd_operand_is_builtin(k.c, type, rhs_type) && check_user_compound(k, s, op, type, rhs_type) {
 			return
 		}
-		materialize_value_expr(k, s.rhs[0], type, "assign")
-		// design.md "SIMD vectors": a vector shift splats its count.
-		if op == .Shl || op == .Shr {
-			reject_negative_count_lanes(k, s.rhs[0], int(info.count))
+		if materialize_value_expr(k, s.rhs[0], type, "assign") {
+			reject_negative_count_lanes(k, op, s.rhs[0])
+			constant_zero_divisor(k, op, s.op_span, s.rhs[0])
 		}
 		return
 	}
