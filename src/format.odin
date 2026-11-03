@@ -278,7 +278,7 @@ package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id
 	if pkg == nil || pkg.scope == nil {
 		return INVALID_TYPE, false
 	}
-	symbol_id := pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+	symbol_id := pkg.scope.names[intern_identifier(k.c, name)]
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol != nil && symbol.kind == .Type {
 		resolve_symbol_signature_in_place(k, symbol_id)

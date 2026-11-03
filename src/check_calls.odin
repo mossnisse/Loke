@@ -96,8 +96,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		if check_box_unbox(k, v, sel) ||
 		   check_as_call(k, v, sel) ||
 		   check_text_operation(k, v, sel) ||
-		   check_enum_values(k, v, sel) ||
-		   check_enum_from_int(k, v, sel) {
+		   check_enum_builtin(k, v, sel) {
 			return
 		}
 		// `field.get(value)` / `field.pointer(value)` on a descriptor constant. The

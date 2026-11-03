@@ -985,7 +985,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
 	c.dyn_proc_adapters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
-	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
+	c.materialized = make(map[Materialized_Key]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 	c.spawn_tasks = make([dynamic]^Spawn_Task, 0, 2, c.semantic_allocator)
 	c.spawn_calls = make(map[^Expr_Call]^Spawn_Task, 2, c.semantic_allocator)

@@ -203,7 +203,7 @@ thread_type :: proc(k: ^Checker, keyword: Span, name: string) -> Type_Id {
 	if pkg.scope == nil {
 		return INVALID_TYPE
 	}
-	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL)
+	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, name)])
 	if sym == nil || sym.kind != .Type || sym.type == INVALID_TYPE {
 		errorf(k.c, no_span(), "L0727", "`%s` declares no `%s`, which a `parallel` block needs", STD_THREAD, name)
 		return INVALID_TYPE
@@ -632,7 +632,7 @@ unsafe_builtins :: proc(k: ^Checker) -> ([3]Symbol_Id, bool) {
 		return out, false
 	}
 	for name, index in ([]string{"take", "write", "free"}) {
-		out[index] = pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+		out[index] = pkg.scope.names[intern_identifier(k.c, name)]
 		if out[index] == INVALID_SYMBOL {
 			return out, false
 		}

@@ -28,14 +28,14 @@ section are revised when a fix changes them.
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
-| High and medium severity bugs | 195 (46 high, 149 medium) | An independent attempt to refute each one |
-| Low severity bugs | 189 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 758 | Only the reviewer |
-| Dead code | 393 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| High and medium severity bugs | 190 (45 high, 145 medium) | An independent attempt to refute each one |
+| Low severity bugs | 186 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 743 | Only the reviewer |
+| Dead code | 389 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
 | Data structures and algorithms | 132 | Only the reviewer |
 | Near copies | 480 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 304 | Only the reviewer |
-| Comments | 549 | Only the reviewer |
+| Structure and boundaries | 303 | Only the reviewer |
+| Comments | 537 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 384 overstates the number of separate
+  merges the ones found so far, so 376 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -103,7 +103,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 12. **Re-checked expressions emit duplicate functions.** Hoisting at [check_expr.odin:2776](src/check_expr.odin#L2776) and the `erased_from` guard at [check_expr.odin:3536](src/check_expr.odin#L3536) break when [text.odin:43](src/text.odin#L43), [box.odin:211](src/box.odin#L211), [check.odin:2195](src/check.odin#L2195) or [check.odin:3640](src/check.odin#L3640) checks a receiver twice. A `hoisted` flag plus one receiver-checked flag also removes the doubling per call-chain link. BUG-check.part2-1, BUG-box-3, BUG-text-2, BUG-erased-2. About 30 lines.
 
-13. **Wrong constant values.** One materialized global serves an untyped constant at every type ([materialize.odin:84](src/materialize.odin#L84)). A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). A zero union is `.Nil` ([check_expr.odin:3417](src/check_expr.odin#L3417)). `copied()` folds as `indexed()` ([expand.odin:290](src/expand.odin#L290)). BUG-materialize-1, BUG-eval.part1-1, -2, BUG-const_ops-2, BUG-hash-2, BUG-expand-1. About 40 lines.
+13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). A zero union is `.Nil` ([check_expr.odin:3417](src/check_expr.odin#L3417)). `copied()` folds as `indexed()` ([expand.odin:290](src/expand.odin#L290)). BUG-eval.part1-1, -2, BUG-const_ops-2, BUG-hash-2, BUG-expand-1. About 40 lines.
 
 14. **Values over 4096 bytes fail to compile or segfault.** `extract`, `insert` and constants treat an address as a value at [emit_llvm_expr.odin:1198](src/emit_llvm_expr.odin#L1198), [emit_llvm_expr.odin:532](src/emit_llvm_expr.odin#L532), [emit_llvm_adapters.odin:35](src/emit_llvm_adapters.odin#L35), [emit_llvm_iteration.odin:1014](src/emit_llvm_iteration.odin#L1014), [emit_llvm_stmt.odin:361](src/emit_llvm_stmt.odin#L361). Promote the helper at [emit_llvm_expr.odin:1735](src/emit_llvm_expr.odin#L1735) and run each path at 5000 bytes. BUG-emit_llvm_expr-1, -2, BUG-emit_llvm_adapters-1 to -3, BUG-emit_llvm_iteration-3, BUG-emit_llvm_stmt-10, -11. About 50 lines.
 
@@ -412,7 +412,7 @@ Counts per file, then the findings themselves in the same order.
 | [atomics.odin](src/atomics.odin) | 312 | 1 | 7 | 0 | 1 | 1 | 2 | 4 |
 | [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 3 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
-| [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 4 | 1 | 0 | 3 | 0 | 6 |
+| [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
 | [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 16 | 24 |
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
 | [build_config.odin](src/build_config.odin) | 132 | 1 | 3 | 0 | 0 | 1 | 2 | 0 |
@@ -432,7 +432,7 @@ Counts per file, then the findings themselves in the same order.
 | [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 3 | 6 | 5 | 7 |
 | [emit_llvm_adapters.odin](src/emit_llvm_adapters.odin) | 121 | 5 | 3 | 1 | 0 | 3 | 0 | 1 |
 | [emit_llvm_atomics.odin](src/emit_llvm_atomics.odin) | 271 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 4 | 3 | 0 | 0 | 2 | 0 | 3 |
+| [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 1 | 0 | 0 | 0 | 2 | 0 | 0 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
 | [emit_llvm_containers.odin](src/emit_llvm_containers.odin) | 1436 | 2 | 16 | 3 | 3 | 8 | 4 | 7 |
@@ -444,7 +444,7 @@ Counts per file, then the findings themselves in the same order.
 | [emit_llvm_simd.odin](src/emit_llvm_simd.odin) | 372 | 0 | 4 | 2 | 0 | 7 | 1 | 6 |
 | [emit_llvm_stmt.odin](src/emit_llvm_stmt.odin) | 1047 | 11 | 7 | 6 | 0 | 7 | 3 | 7 |
 | [emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) | 843 | 8 | 6 | 2 | 1 | 2 | 5 | 5 |
-| [enums.odin](src/enums.odin) | 105 | 1 | 4 | 2 | 0 | 2 | 1 | 3 |
+| [enums.odin](src/enums.odin) | 105 | 0 | 0 | 0 | 0 | 2 | 1 | 0 |
 | [erased.odin](src/erased.odin) | 1216 | 5 | 9 | 5 | 4 | 8 | 5 | 6 |
 | [eval.odin](src/eval.odin) | 4169 | 9 | 22 | 10 | 5 | 13 | 8 | 14 |
 | [eval_memory.odin](src/eval_memory.odin) | 249 | 0 | 5 | 4 | 0 | 3 | 2 | 4 |
@@ -469,7 +469,6 @@ Counts per file, then the findings themselves in the same order.
 | [lexer.odin](src/lexer.odin) | 769 | 1 | 6 | 0 | 1 | 3 | 1 | 3 |
 | [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 4 | 2 | 5 | 4 | 9 |
 | [main.odin](src/main.odin) | 463 | 2 | 5 | 2 | 0 | 3 | 1 | 2 |
-| [materialize.odin](src/materialize.odin) | 152 | 4 | 4 | 1 | 0 | 0 | 1 | 0 |
 | [migrate.odin](src/migrate.odin) | 260 | 2 | 5 | 2 | 0 | 1 | 1 | 2 |
 | [operators.odin](src/operators.odin) | 770 | 13 | 10 | 10 | 2 | 5 | 3 | 8 |
 | [optional.odin](src/optional.odin) | 746 | 4 | 8 | 3 | 0 | 7 | 4 | 4 |
@@ -812,33 +811,13 @@ No bugs found: the rounding, shift, wrap and range logic held up against `core:m
 
 ### src/bootstrap.odin
 
-Small and sound, with no behavior bugs found. The binding half does each name in two steps that can be one, and three comments have gone stale: the yield markers, "called once", and a `nil` zero for `Shared`.
-
-**Simplification**
-
-- [bootstrap.odin:28](src/bootstrap.odin#L28) `bind_runtime_bootstrap`: have `bootstrap_symbol` bind into `c.universe` when it finds the name, then delete lines 40-49, `bind_universe_name` (86-91) and the `status` local. (about 15 lines)
-- [bootstrap.odin:95](src/bootstrap.odin#L95) `option_type`, `result_type`: `generic_template_for` already returns nil for `INVALID_SYMBOL`, so drop the symbol tests; keep the payload tests and pass `[]Type_Id{payload}` inline, as `container.odin` does. (about 6 lines)
-- [bootstrap.odin:114](src/bootstrap.odin#L114) `type_is_shared_handle`: the `shared_symbol` test only matters when `Weak` exists without `Shared`, an L0704 error. Body: `info := type_of(...)`, then `return info != nil && info.instance_of != INVALID_SYMBOL && (== shared || == weak)`. (about 5 lines)
-- [bootstrap.odin:58](src/bootstrap.odin#L58) `bootstrap_symbol`: `or_else INVALID_SYMBOL` is redundant, because a missing map key yields `Symbol_Id(0)`, which is `INVALID_SYMBOL`. The same clause repeats at `atomics.odin:28`, `check_builtin.odin:1495`, `format.odin:281`, `parallel.odin:206` and `providers.odin:249`.
-
-**Dead code**
-
-- (branch) [bootstrap.odin:22](src/bootstrap.odin#L22): `pkg == nil || pkg.scope == nil || pkg.scope.parent == nil` cannot hold. The one caller, `prepare_package`, returns on nil and sets the scope with `build_universe` as parent (`check.odin:123-129`). Keep `c.bootstrap_ready || pkg.key != STD_RUNTIME`.
+Small and sound, with no behavior bugs found. What remains is shared with sibling files.
 
 **Near copies**
 
 - [bootstrap.odin:71](src/bootstrap.odin#L71) and [generic.odin:3603](src/generic.odin#L3603): both test for one `^Expr_Proc_Group` value, and `decl_is_proc_group` is file-private. Export it; this case becomes `if sym.decl != nil && decl_is_proc_group(sym.decl) { return id }`. (about 3 lines)
 - [bootstrap.odin:121](src/bootstrap.odin#L121), [check_expr.odin:2935](src/check_expr.odin#L2935), [union.odin:344](src/union.odin#L344) and [zero.odin:46](src/zero.odin#L46): the last three spell `instance_of != INVALID_SYMBOL && instance_of == shared_symbol`. A small `type_info_is_shared(c, info)` here would give them one form.
 - [bootstrap.odin:58](src/bootstrap.odin#L58), [atomics.odin:25](src/atomics.odin#L25) and [check_builtin.odin:1492](src/check_builtin.odin#L1492): only this site has `base:runtime` in hand; the others scan `c.packages` for its key on a lookup. Recording the id in `load_runtime_bootstrap` (`packages.odin:98`) would remove both loops.
-
-**Comments**
-
-- [bootstrap.odin:2](src/bootstrap.odin#L2): stale. Nothing here binds yield markers and `base/runtime` declares no `Yield`. Delete "and the yield markers", and say "the shared handles and their constructors".
-- [bootstrap.odin:18](src/bootstrap.odin#L18): wrong. It runs from every `prepare_package`, part way through. Use "Called for every package, and acts once, when `base:runtime`'s names exist." and keep the second sentence.
-- [bootstrap.odin:44](src/bootstrap.odin#L44): repeats `source.odin:411-412`. Shorten to `// design.md "Shared ownership".`
-- [bootstrap.odin:51](src/bootstrap.odin#L51): repeats `source.odin:195-196`. Shorten to ``// design.md "Container insertion": `Status(Allocator_Error)`.``
-- [bootstrap.odin:102](src/bootstrap.odin#L102): delete; it restates the name and signature.
-- [bootstrap.odin:111](src/bootstrap.odin#L111): wrong. design.md "Shared ownership" says `Shared(T)` has no zero, as `zero.odin:46` enforces, and only `Weak(T)` has `{}`. Use ``// An instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership" rejects `via` on either.``
 
 ### src/borrow.odin (part 1 of 3)
 
@@ -2405,31 +2384,16 @@ The lowering is correct and has clear boundaries: I found no bugs, checking orde
 
 ### src/emit_llvm_box.odin
 
-Small and well organised, with tight comments and no dead symbols. All four bugs were reproduced or seen in emitted IR; the worst is a use-after-free when a boxed place is changed by the allocator argument, and the rest are failure-path defects.
+Small and well organised. The remaining bug is a use-after-free when a boxed place is changed by the allocator argument.
 
 **Bugs**
 
 - `BUG-emit_llvm_box-1` **high** [emit_llvm_box.odin:29](src/emit_llvm_box.odin#L29) `emit_box_new`: a copied place is loaded, then the allocator operand runs (:34), then the stale value is cloned (:52). Scenario: `box(d, pick(&mut d))` where `pick` does `d^ = {}` compiles and prints freed bytes for a `[dynamic]string`; `two(d, pick(&mut d))` gets L0511. Fix: at [cfg_provenance.odin:8415](src/cfg_provenance.odin#L8415), hold the place read across `bound[1]`, as a call does. *Confirmed: Reproduced: box(d, pick(&mut d)) compiles (warning L0507 only) and exits 0xC0000374 heap corruption; with pick not writing d it prints correctly; two(d, pick(&mut d)) gets L0511. Not in known-gaps.md or open-questions.md. High severity is fair.*
-- `BUG-emit_llvm_box-2` **medium** [emit_llvm_box.odin:68](src/emit_llvm_box.odin#L68) `emit_box_new`: the payload is dropped before the refusal note is read, and any allocation in its hook clears the note; the undo at :213 does the same. Scenario: over a 256-byte arena, `try_box(Big{})` reports `18446744073709551615` instead of 528, and `box` panics "with no size requested". Fix: `take_refusal` before the drop, `emit_restore_refusal` after. *Confirmed: Reproduced: an allocating drop hook makes try_box and box.try_clone return all bits instead of 520 (528 in the claim), and box panics 'no size requested'; an idle hook keeps 520. Violates design.md "Allocation failure". Severity is low: only the reported size is wrong.*
-- `BUG-emit_llvm_box-3` **low** [emit_llvm_box.odin:213](src/emit_llvm_box.odin#L213) `box_clone_thunk`: the thunk has no unwind frame, unlike `box_drop_thunk` (:161), so the undo drop registers no parts (`unwind_enabled` is false). Scenario: refused `a.try_clone(arena)` whose payload hook panics: a field's `hook(drop)` ran once where two copies existed, so the staged field is never dropped. Fix: `framed = true` and `emit_unwind_pop` before each `ret`. *Not verified.*
-- `BUG-emit_llvm_box-4` **low** [emit_llvm_box.odin:195](src/emit_llvm_box.odin#L195) `box_clone_thunk`: `ret i32 0` at :195 and :215 does not set `e.terminated`, so `place_label` writes `br` after the `ret`. Scenario: every clone thunk's IR has `ret i32 0` then `br label %boxclone.publish.N`, a stray unnamed dead block; LLVM accepts it. Fix: set `e.terminated = true` after those two `ret`s. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_box.odin:83](src/emit_llvm_box.odin#L83) `emit_box_new`: delete `e.terminated = false`; `place_label` on the line above already sets it. (1 line)
-- [emit_llvm_box.odin:187](src/emit_llvm_box.odin#L187) `box_clone_thunk`: use `source := origin`, reassign it to the alloca under `if managed`, then one `value := load_place(e, payload, source)` after the `if`. `emit_drop_place` is a no-op when unmanaged, so the `if` at :212 goes too. (about 6 lines)
-- [emit_llvm_box.odin:125](src/emit_llvm_box.odin#L125) `emit_box_try_clone_into`: `box_clone_thunk` has this one caller and never reaches C, so it can return `i1` (`ret i1 false`) and drop the `status` temp and `icmp`, which also ends the near copy at [emit_llvm_cleanup.odin:97](src/emit_llvm_cleanup.odin#L97). (about 3 lines)
 
 **Near copies**
 
 - [emit_llvm_box.odin:87](src/emit_llvm_box.odin#L87) and [emit_llvm_calls.odin:643](src/emit_llvm_calls.odin#L643) `emit_alloc_outcome`: the same fallible-or-policy tail, differing only in label names, which no test pins. Make that proc package-private and `return emit_alloc_outcome(e, v, as_type, failed, published, allocator)`. (about 10 lines)
 - [emit_llvm_box.odin:60](src/emit_llvm_box.odin#L60), [emit_llvm_box.odin:202](src/emit_llvm_box.odin#L202) and [emit_llvm_stmt.odin:166](src/emit_llvm_stmt.odin#L166): call `loke_rt_v1_alloc`, then compare with null. Shared form: `emit_rt_alloc(e, allocator, size, align) -> (block, failed)`. The free line at :170 also repeats at [emit_llvm_cleanup.odin:591](src/emit_llvm_cleanup.odin#L591) and [emit_llvm_calls.odin:731](src/emit_llvm_calls.odin#L731).
-
-**Comments**
-
-- [emit_llvm_box.odin:100](src/emit_llvm_box.odin#L100): delete; it restates the name and signature of `box_payload_at`.
-- [emit_llvm_box.odin:121](src/emit_llvm_box.odin#L121): repeats the contract at [emit_llvm_cleanup.odin:86](src/emit_llvm_cleanup.odin#L86), the only caller; shorten to "The boxed case of `emit_try_clone_into`." (1 line)
-- [emit_llvm_box.odin:225](src/emit_llvm_box.odin#L225): the clause after the colon narrates the body; shorten to "`move(b).unbox()`."
 
 ### src/emit_llvm_calls.odin
 
@@ -3101,26 +3065,7 @@ Careful code whose comments mostly explain why, with real failure handling for t
 
 ### src/enums.odin
 
-Small and correct on its ordinary paths (probes of distinct enums, wide values and bad arguments all behaved), with one real bug on a type still being resolved. About a fifth of the file is defensive plumbing and repeated error tails; the enum declaration logic lives in `check.odin`.
-
-**Bugs**
-
-- `BUG-enums-1` **medium** [enums.odin:17](src/enums.odin#L17) `enum_builtin_subject`: accepts an enum whose members are mid-resolution, when `info.fields` is still empty (assigned last in `resolve_enum_members`). *Confirmed: Reproduced: B = E.values().len() gives B == 0 with len 2 later; N :: E.values().len() used by a member gives N == 0; from_int(5) gives .none, later .some(A). design.md "Constant declarations" makes such a cycle an error; no gap is recorded.*
-  Scenario: `E :: enum { A = 5, B = E.values().len() }` compiles with `B == 0` while `E.values().len()` is later 2; `N :: E.values().len(); E :: enum { A = 5, B = N }` gives `N == 0`; `E.from_int(5)` in a member value is `.none`.
-  Fix: report an error when the type's `decl.sig_state == .Checking`, as `E.A` there already fails with L0408.
-
-**Simplification**
-
-- [enums.odin:12](src/enums.odin#L12) `enum_builtin_subject`: replace it and both `subject == INVALID_TYPE` guards with one `check_enum_builtin` entry that tests `enum_builtin_member`, resolves the subject, then dispatches on the name.
-  This drops the `name` parameter and a "subject" helper that writes to `v`, and [check_calls.odin:99](src/check_calls.odin#L99) needs one call, not two. (about 8 lines)
-- [enums.odin:34](src/enums.odin#L34) `check_enum_from_int`: set `v.type = INVALID_TYPE` once where `value_category` is set, as `check_union_construct` and `check_box_unbox` do; each error path is then `errorf` and `return true` (lines 34, 42, 47, 75). (about 4 lines)
-- [enums.odin:93](src/enums.odin#L93) `enum_member_constants`: has one caller. Once the dead branches go, inline a 4-line loop over `underlying_info(k.c, subject).fields` into `check_enum_values` and drop the `ok` test at lines 78-82. (about 13 lines)
-- [enums.odin:52](src/enums.odin#L52) `check_enum_from_int`: `v.args[0].value` and `v.bound[0]` are the `arg` local from line 38; write `v.bound[0] = arg` and `expr_base(arg)` at line 57.
-
-**Dead code**
-
-- (branch) [enums.odin:95](src/enums.odin#L95): `info == nil` is unreachable, because the only caller passes a type that passed `type_is_enum`, which needs a real `Type_Info`. So the `ok` result is always true; line 39 already reads the same call unchecked.
-- (branch) [enums.odin:100](src/enums.odin#L100): `sym != nil` never fails. `resolve_enum_members` appends only valid ids and `synth_enum` always makes one; [emit_llvm_calls.odin:24](src/emit_llvm_calls.odin#L24) dereferences the same lookup untested.
+Small and correct. The enum declaration logic lives in `check.odin`.
 
 **Near copies**
 
@@ -3132,12 +3077,6 @@ Small and correct on its ordinary paths (probes of distinct enums, wide values a
 **Structure and boundaries**
 
 - [check.odin:4497](src/check.odin#L4497) `enum_member_by_value` and [check.odin:1250](src/check.odin#L1250) `resolve_enum_members` belong here: "Source-code map" gives this file "Enums", yet it holds only the two built-in calls. Moving them gives enums one owner and shortens `check.odin` by about 100 lines.
-
-**Comments**
-
-- [enums.odin:1](src/enums.odin#L1): the header defines enums but the file holds only their built-ins. Write `` // `Enum.from_int` and `Enum.values`; members are resolved in check.odin. `` unless the move above happens.
-- [enums.odin:66](src/enums.odin#L66): the prose repeats the spec section it cites; shorten to `// design.md "Iterating an enumeration".` (about 1 line)
-- [enums.odin:37](src/enums.odin#L37): "Any integer type" is what line 45 says; keep `// An untyped constant takes the backing type.`
 
 ### src/erased.odin
 
@@ -4464,32 +4403,6 @@ A small, correct-in-the-common-case driver with two low-severity edge bugs in de
 - [main.odin:3](src/main.odin#L3): delete lines 2-4. They say a bad command line exits 1, but the code at lines 165 and 198, the comment at line 146 and compiler-guide.md "Inspecting a compilation" all say 2. Keep lines 146-147 as the one statement.
 - [main.odin:28](src/main.odin#L28): the `-o` usage text says "output executable" and omits the `.obj` default; shorten to "output path (default: input name with .exe, .obj or .test.exe by build mode)".
 
-### src/materialize.odin
-
-Small and readable with comments that already earn their place, but one global per symbol is wrong for an untyped constant, which has a different type at each use, and that miscompiles. About a fifth of the file also shortens away.
-
-**Bugs**
-
-- `BUG-materialize-1` **high** [materialize.odin:84](src/materialize.odin#L84) `request_materialization`: the global takes the type and value of the first use, but an untyped constant has a different type per use, and all uses share the entry. Scenario: `X :: 300`, `A :: distinct f64`, `B :: distinct int`, each with `get :: proc(self: ^)`; `A.get(X); B.get(X)` emits one `double` global and `B.get` prints 4643985272004935680, and with `distinct i16` first `B.get` reads 8 bytes of a 2-byte global. Fix: key untyped constants by (symbol, converted type), since one object per symbol holds only for a typed constant. *Confirmed: Reproduced: B.get prints 4643985272004935680; IR passes one `double` @.const.X.0 to A.get and B.get. With i16 first, an i16 global is read as a B (i64); it printed 300 by luck. Not recorded in the gap docs. A narrow trigger, but a silent miscompile.*
-- `BUG-materialize-2` **medium** [check_expr.odin:2002](src/check_expr.odin#L2002) `check_unary`: `&C` on an untyped constant gets type `^untyped int`, while design.md "Materialization" says it yields a `^T`. Scenario: `X :: 300; p: ^int = &X;` and `take(&X)` with a `^int` parameter are rejected with L0310 and `q: ^int = p` fails too, so the pointer fits no declarable type. Fix: convert the operand to the expected pointee or `default_type` before `request_materialization`. *Confirmed: Probes: with X :: 300, `p: ^int = &X`, `take(&X)` and `q: ^int = p` all give L0310 with `^untyped int`; X : int : 300 compiles. design.md Materialization says ^T; nothing recorded. Workaround is typing the constant, and p := &X; p^ runs, so medium is at most.*
-- `BUG-materialize-3` **medium** [check_expr.odin:1772](src/check_expr.odin#L1772) `check_builtin_slice`: the `base.is_const` guard skips materialization when a runtime index sits on the chain, though `constant_root_of` walks it and `&MIX[i]` works. Scenario: `MIX :: [?][2]int{{1,2},{3,4}}; s := MIX[i][:];` and `TAB[i].a[:]` get L0477 "has no storage to slice", while design.md "Materialization" allows a slice of a constant. Fix: drop the guard and let `request_materialization` decide. *Confirmed: lokec gives L0477 on MIX[i][:] and TAB[i].a[:], yet p := &MIX[i]; p^[:] compiles and runs, as do MIX[1][:] and C.a[:]. design.md Materialization allows it and no gap records it. Rejects valid code with an easy workaround: low-to-medium severity.*
-- `BUG-materialize-4` **low** [materialize.odin:60](src/materialize.odin#L60) `request_materialization`: `nil` is a `.Const` symbol with no runtime type, so it is registered like any constant. Scenario: `p := &nil;` passes the checker and ends in L0405 "internal backend contract violation: `untyped nil` has no backend representation". Fix: return false for `TYPE_UNTYPED_NIL`, so the caller's L0357 reports it. *Not verified.*
-
-**Simplification**
-
-- [materialize.odin:92](src/materialize.odin#L92) `materialization_of`: a missing map key already yields nil and `INVALID_SYMBOL` is never a key, so the body is `return c.materialized[constant_symbol_of(c, e)]`. (about 5 lines)
-- [materialize.odin:15](src/materialize.odin#L15) `constant_symbol_of` and [materialize.odin:50](src/materialize.odin#L50) `constant_symbol`: merge them. Set `id` in the two switch cases, then `sym := symbol_of(c, id); return sym != nil && sym.kind == .Const ? id : INVALID_SYMBOL`; `symbol_of` already returns nil for an invalid id. (about 9 lines)
-- [materialize.odin:31](src/materialize.odin#L31) `constant_root_of`: recursion drops the `current` variable and the second exit. Check `constant_symbol_of`, then `case ^Expr_Selector: return constant_root_of(c, v.operand)`, the same for `^Expr_Index`, then `return nil, INVALID_SYMBOL`. A nil operand falls out through `expr_base`. (about 8 lines)
-- [materialize.odin:102](src/materialize.odin#L102) `materialized_global_name`: with its dead fallback gone it is one `fmt.aprintf` with one caller; inline it at line 86, and `sym` at line 81 goes with it. (about 8 lines)
-
-**Dead code**
-
-- (branch) [materialize.odin:104](src/materialize.odin#L104): the `"const"` fallback is unreachable. `sym` comes from a symbol `constant_symbol` already found non-nil, and a `.Const` reached through an identifier or selector has a name: `define_universe`, `new_associated_type` and declarations all set one.
-
-**Structure and boundaries**
-
-- [materialize.odin:15](src/materialize.odin#L15) `constant_symbol_of` and [materialize.odin:113](src/materialize.odin#L113) `synchronized_field_within` are package-visible, but a grep of `src/`, `lsp/` and `tests/` finds callers only in this file; mark them `@(private = "file")` like their neighbours, leaving `request_materialization` and `materialization_of` as the file's interface.
-
 ### src/migrate.odin
 
 Small and correct on every realistic input, with a real proof step, but it re-derives from tokens what the tree already holds and copies `format_files` whole. Both bugs below were reproduced with a `lokec.exe` built from this commit; both need unusual source.
@@ -4815,7 +4728,7 @@ The checks read well and match the spec, but `spawn_field_kind` lends the task s
 - [parallel.odin:469](src/parallel.odin#L469) and [parallel.odin:579](src/parallel.odin#L579): `local := aprintf(...)`, take into a new local, then name or `move` it. Extract `spawn_take_local(k, stmts, name, field, span) -> Expr`, with a `synth_move` that [capture.odin:51](src/capture.odin#L51) and [lifecycle.odin:368](src/lifecycle.odin#L368) can also use. (about 8 lines)
 - [parallel.odin:421](src/parallel.odin#L421) and [emission_contract.odin:169](src/emission_contract.odin#L169): both compute the frame's field count as `spawn_callee_field(task) + (task.through_value ? 1 : 0)`. Add `spawn_field_count(task)` beside `spawn_callee_field`.
 - [parallel.odin:223](src/parallel.odin#L223) and [interface.odin:791](src/interface.odin#L791), [format.odin:167](src/format.odin#L167), [atomics.odin:25](src/atomics.odin#L25), [providers.odin:245](src/providers.odin#L245): scans of `c.packages` for a `STD_*` key. Move `standard_package` to [stdlib.odin:18](src/stdlib.odin#L18), beside the keys, and use it in all of them.
-- [parallel.odin:206](src/parallel.odin#L206), [parallel.odin:635](src/parallel.odin#L635) and [format.odin:281](src/format.odin#L281), [bootstrap.odin:58](src/bootstrap.odin#L58), [atomics.odin:28](src/atomics.odin#L28): `pkg.scope.names[intern_identifier(c, name)] or_else INVALID_SYMBOL`. Add `package_member(c, pkg, name)`.
+- [parallel.odin:206](src/parallel.odin#L206), [parallel.odin:635](src/parallel.odin#L635) and [format.odin:281](src/format.odin#L281), [bootstrap.odin:58](src/bootstrap.odin#L58), [atomics.odin:28](src/atomics.odin#L28): `pkg.scope.names[intern_identifier(c, name)]`. Add `package_member(c, pkg, name)`.
 - [parallel.odin:398](src/parallel.odin#L398), [parallel.odin:448](src/parallel.odin#L448): `index < len(info.param_modes) ? info.param_modes[index] : .Value`, 20 lines across `src/`. Add `param_mode_at(info, index)` next to [abi.odin:17](src/abi.odin#L17) `symbol_param_mode`.
 
 **Structure and boundaries**
@@ -5397,7 +5310,7 @@ A small, sound file with good boundary comments and no dead declarations. What i
 **Near copies**
 
 - [providers.odin:225](src/providers.odin#L225) and [providers.odin:244](src/providers.odin#L244): the same scan for `STD_LOG`, also at [parallel.odin:223](src/parallel.odin#L223) (`standard_package`, file-private), [atomics.odin:23](src/atomics.odin#L23), [check_builtin.odin:1490](src/check_builtin.odin#L1490), [interface.odin:791](src/interface.odin#L791), [format.odin:12](src/format.odin#L12), [format.odin:167](src/format.odin#L167). Make `standard_package` package-level; since `package_type_named` tolerates nil, lines 225-233 become three lines. (about 10 lines here)
-- [providers.odin:175](src/providers.odin#L175) and [providers.odin:249](src/providers.odin#L249): `pkg.scope.names[intern_identifier(c, name)] or_else INVALID_SYMBOL`, also at [format.odin:281](src/format.odin#L281), [atomics.odin:28](src/atomics.odin#L28), [check_builtin.odin:1495](src/check_builtin.odin#L1495), [bootstrap.odin:58](src/bootstrap.odin#L58), [parallel.odin:206](src/parallel.odin#L206), [parallel.odin:635](src/parallel.odin#L635). A nil-tolerant `package_symbol_named(c, pkg, name) -> Symbol_Id` shortens each.
+- [providers.odin:175](src/providers.odin#L175) and [providers.odin:249](src/providers.odin#L249): `pkg.scope.names[intern_identifier(c, name)]`, also at [format.odin:281](src/format.odin#L281), [atomics.odin:28](src/atomics.odin#L28), [check_builtin.odin:1495](src/check_builtin.odin#L1495), [bootstrap.odin:58](src/bootstrap.odin#L58), [parallel.odin:206](src/parallel.odin#L206), [parallel.odin:635](src/parallel.odin#L635). A nil-tolerant `package_symbol_named(c, pkg, name) -> Symbol_Id` shortens each.
 
 **Structure and boundaries**
 

@@ -1,0 +1,13 @@
+package main;
+
+// design.md "Constant declarations": the members are not known yet, so asking
+// for them is a cycle rather than an answer from an empty list.
+
+E :: enum { A = 5, B = E.values().len() }
+
+N :: F.values().len();
+F :: enum { A = 5, B = N }
+
+G :: enum { A = 5, B = G.from_int(5) }
+
+main :: proc() {}

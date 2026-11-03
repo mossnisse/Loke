@@ -172,7 +172,7 @@ resolve_provider_factories :: proc(k: ^Checker) {
 		pkg := package_of(c, selection.pkg)
 		symbol_id := INVALID_SYMBOL
 		if pkg != nil && pkg.scope != nil {
-			symbol_id = pkg.scope.names[intern_identifier(c, selection.name)] or_else INVALID_SYMBOL
+			symbol_id = pkg.scope.names[intern_identifier(c, selection.name)]
 		}
 		sym := symbol_of(c, symbol_id)
 		if sym == nil || !sym.public {
@@ -246,7 +246,7 @@ provider_logger_destination :: proc(k: ^Checker, wanted: Type_Id, span: Span) ->
 		if pkg.key != STD_LOG || pkg.scope == nil {
 			continue
 		}
-		symbol_id := pkg.scope.names[intern_identifier(k.c, "selected")] or_else INVALID_SYMBOL
+		symbol_id := pkg.scope.names[intern_identifier(k.c, "selected")]
 		resolve_symbol_signature_in_place(k, symbol_id)
 		sym := symbol_of(k.c, symbol_id)
 		// An `Option(Logger)`: a logger has no null state to mean "unselected".

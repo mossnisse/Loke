@@ -180,7 +180,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	}
 	for entry in c.materialized_order {
 		if entry == nil || entry.name == "" || entry.value.kind == .Invalid ||
-		   type_of(c, entry.type) == nil || c.materialized[entry.symbol] != entry {
+		   type_of(c, entry.type) == nil || c.materialized[entry.key] != entry {
 			return emission_contract_error(c, "a materialized constant has no registered definition")
 		}
 	}

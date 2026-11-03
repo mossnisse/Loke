@@ -1,5 +1,5 @@
 // The `base:runtime` bootstrap (design.md "Typed fallibility"). `Unit`, `Option`,
-// `Result`, `Status`, the shared handles, and the yield markers are ordinary
+// `Result`, `Status`, the shared handles and their constructors are ordinary
 // runtime source bound into the universe, so the compiler and a program name one
 // declaration each rather than two that print the same.
 package lokec
@@ -15,20 +15,20 @@ Bootstrap_Kind :: enum {
 	Proc_Group,
 }
 
-// Called once, right after `base:runtime` has been prepared. Every name is looked
-// up so each missing one is reported, and whatever was found is still bound.
+// Called for every package, and acts once, when `base:runtime`'s names exist.
+// Every name is looked up so each missing one is reported, and whatever was found is still bound.
 bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	c := k.c
-	if c.bootstrap_ready || pkg == nil || pkg.scope == nil || pkg.scope.parent == nil || pkg.key != STD_RUNTIME {
+	if c.bootstrap_ready || pkg.key != STD_RUNTIME {
 		return
 	}
 	c.bootstrap_ready = true
-	universe := pkg.scope.parent
 
 	unit := bootstrap_symbol(k, pkg, "Unit", .Type)
 	c.option_symbol = bootstrap_symbol(k, pkg, "Option", .Type)
 	c.result_symbol = bootstrap_symbol(k, pkg, "Result", .Type)
-	status := bootstrap_symbol(k, pkg, "Status", .Type_Or_Alias)
+	bootstrap_symbol(k, pkg, "Status", .Type_Or_Alias)
+	// design.md "Shared ownership".
 	c.shared_symbol = bootstrap_symbol(k, pkg, "Shared", .Type)
 	c.weak_symbol = bootstrap_symbol(k, pkg, "Weak", .Type)
 	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared", .Proc_Group)
@@ -37,43 +37,32 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 		c.unit_type = sym.type
 	}
 
-	bind_universe_name(c, universe, "Unit", unit)
-	bind_universe_name(c, universe, "Option", c.option_symbol)
-	bind_universe_name(c, universe, "Result", c.result_symbol)
-	bind_universe_name(c, universe, "Status", status)
-	// design.md "Shared ownership": `Shared` and `Weak` are the types, and
-	// `shared` is the constructor group.
-	bind_universe_name(c, universe, "Shared", c.shared_symbol)
-	bind_universe_name(c, universe, "Weak", c.weak_symbol)
-	bind_universe_name(c, universe, "shared", c.shared_construct_symbol)
-	bind_universe_name(c, universe, "try_shared", c.try_shared_symbol)
-
-	// design.md "Container insertion": what a `try_` operation that produces
-	// nothing returns, `Status(Allocator_Error)`.
+	// design.md "Container insertion": `Status(Allocator_Error)`.
 	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
 }
 
+// Binds the name into the universe when `base:runtime` declares it as wanted.
 @(private = "file")
 bootstrap_symbol :: proc(k: ^Checker, pkg: ^Package, name: string, want: Bootstrap_Kind) -> Symbol_Id {
-	id := pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+	name_id := intern_identifier(k.c, name)
+	id := pkg.scope.names[name_id]
+	found := false
 	if sym := symbol_of(k.c, id); sym != nil {
 		switch want {
 		case .Type:
-			if sym.kind == .Type {
-				return id
-			}
+			found = sym.kind == .Type
 		case .Type_Or_Alias:
-			if sym.kind == .Type || declaration_generic_kind(sym.decl) == .Alias {
-				return id
-			}
+			found = sym.kind == .Type || declaration_generic_kind(sym.decl) == .Alias
 		case .Proc_Group:
 			// A group's symbol kind is settled only when its signature resolves.
 			if sym.decl != nil && len(sym.decl.values) == 1 {
-				if _, is_group := sym.decl.values[0].(^Expr_Proc_Group); is_group {
-					return id
-				}
+				_, found = sym.decl.values[0].(^Expr_Proc_Group)
 			}
 		}
+	}
+	if found {
+		k.c.universe.names[name_id] = id
+		return id
 	}
 	errorf(
 		k.c, no_span(), "L0704",
@@ -83,42 +72,27 @@ bootstrap_symbol :: proc(k: ^Checker, pkg: ^Package, name: string, want: Bootstr
 	return INVALID_SYMBOL
 }
 
-@(private = "file")
-bind_universe_name :: proc(c: ^Compiler, universe: ^Scope, name: string, id: Symbol_Id) {
-	if id != INVALID_SYMBOL {
-		universe.names[intern_identifier(c, name)] = id
-	}
-}
-
 // `Option(T)`, through the one generic instance cache.
 option_type :: proc(k: ^Checker, payload: Type_Id, span := Span{}) -> Type_Id {
-	if k.c.option_symbol == INVALID_SYMBOL || payload == INVALID_TYPE {
+	if payload == INVALID_TYPE {
 		return INVALID_TYPE
 	}
-	args := [1]Type_Id{payload}
-	return instantiate_record_types(k, k.c.option_symbol, args[:], span)
+	return instantiate_record_types(k, k.c.option_symbol, []Type_Id{payload}, span)
 }
 
-// `Result(T, E)`.
 result_type :: proc(k: ^Checker, payload, error: Type_Id) -> Type_Id {
-	if k.c.result_symbol == INVALID_SYMBOL || payload == INVALID_TYPE || error == INVALID_TYPE {
+	if payload == INVALID_TYPE || error == INVALID_TYPE {
 		return INVALID_TYPE
 	}
-	args := [2]Type_Id{payload, error}
-	return instantiate_record_types(k, k.c.result_symbol, args[:], Span{})
+	return instantiate_record_types(k, k.c.result_symbol, []Type_Id{payload, error}, Span{})
 }
 
-// Is this an instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership"
-// gives both a `nil` zero and rejects a `via` declaration of either.
+// An instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership" rejects
+// `via` on either.
 type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	if c.shared_symbol == INVALID_SYMBOL {
-		return false
-	}
 	info := type_of(c, type_underlying(c, id))
-	if info == nil || info.instance_of == INVALID_SYMBOL {
-		return false
-	}
-	return info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol
+	return info != nil && info.instance_of != INVALID_SYMBOL &&
+	       (info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol)
 }
 
 // The payload type of a `Shared(T)` or `Weak(T)`, or INVALID_TYPE. The record

@@ -764,7 +764,7 @@ private_type_in :: proc(c: ^Compiler, scope: ^Scope, type: Type_Id, bound: []Typ
 	for id in ([]Symbol_Id{info.symbol, info.instance_of}) {
 		symbol := symbol_of(c, id)
 		if symbol != nil && symbol_names_type(c, symbol) && !symbol.public && symbol.decl != nil {
-			declared := symbol_of(c, scope.names[symbol.name] or_else INVALID_SYMBOL)
+			declared := symbol_of(c, scope.names[symbol.name])
 			if declared != nil && declared.decl == symbol.decl {
 				return symbol
 			}

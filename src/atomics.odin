@@ -25,7 +25,7 @@ memory_order_type :: proc(k: ^Checker) -> Type_Id {
 		if pkg.key != STD_RUNTIME || pkg.scope == nil {
 			continue
 		}
-		symbol_id := pkg.scope.names[intern_identifier(k.c, "Memory_Order")] or_else INVALID_SYMBOL
+		symbol_id := pkg.scope.names[intern_identifier(k.c, "Memory_Order")]
 		if sym := symbol_of(k.c, symbol_id); sym != nil && sym.kind == .Type {
 			resolve_symbol_signature_in_place(k, symbol_id)
 			type := symbol_of(k.c, symbol_id).type

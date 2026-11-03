@@ -241,7 +241,7 @@ Compiler :: struct {
 	// Materialised constants (`src/materialize.odin`): one read-only global per
 	// constant that runtime indexing or slicing needs storage for, keyed by the
 	// resolved symbol, which declaration cloning makes distinct per instance.
-	materialized:       map[Symbol_Id]^Materialized,
+	materialized:       map[Materialized_Key]^Materialized,
 	materialized_order: [dynamic]^Materialized,
 
 	// The committed spawns (`src/parallel.odin`), whose frames and run

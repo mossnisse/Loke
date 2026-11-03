@@ -1,0 +1,30 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocation failure": the refusal reports the size asked for, even
+// when dropping the payload allocates and so replaces the runtime's note.
+
+Big :: struct { bytes: [512]u8 }
+
+impl Big {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Big, Allocator_Error) {
+		return .ok(Big{});
+	}
+	release :: hook(drop) proc(self: inout) {
+		log: [dynamic]int = {};
+		log.append(1);
+	}
+}
+
+main :: proc() {
+	room: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+	switch (try_box(Big{}, arena.allocator())) {
+	case .ok: fmt.println("ok");
+	case .err(error): fmt.println(error);
+	}
+	source := box(Big{});
+	switch (source.try_clone(arena.allocator())) {
+	case .ok: fmt.println("ok");
+	case .err(error): fmt.println(error);
+	}
+}

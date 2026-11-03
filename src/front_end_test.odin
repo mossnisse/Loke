@@ -481,7 +481,7 @@ use_dependencies :: proc(value: ^Record, writer: Writer, options: Options) {
 	               p.c.witness_order[before.witness_order].concrete == record,
 	               "a real conversion lost the probed witness")
 	testing.expect(t, after.materialized == before.materialized + 1 && after.materialized_order == before.materialized_order + 1 &&
-	               p.c.materialized[table] != nil, "a real address lost the probed constant's storage")
+	               p.c.materialized[Materialized_Key{symbol = table}] != nil, "a real address lost the probed constant's storage")
 	testing.expect(t, after.instances == before.instances + 1 && after.checked_bodies == before.checked_bodies + 2,
 	               "a real call did not commit the probed generic body and its caller")
 	testing.expect(t, after.format_requested && after.type_info_requested,

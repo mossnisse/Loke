@@ -1,0 +1,40 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Materialization": storage for a constant has the type the use
+// gives it, so an untyped constant has one global per type, and a slice of a
+// constant array may reach it through a run-time index.
+
+X :: 300;
+
+A :: distinct f64;
+impl A { get :: proc(self: ^) -> f64 { return f64(self^); } }
+B :: distinct int;
+impl B { get :: proc(self: ^) -> int { return int(self^); } }
+C :: distinct i16;
+impl C { get :: proc(self: ^) -> int { return int(self^); } }
+
+take :: proc(p: ^int) -> int { return p^; }
+
+Pair :: struct { a: [2]int }
+MIX :: [?][2]int{{1, 2}, {3, 4}};
+TAB :: [?]Pair{{a = {5, 6}}, {a = {7, 8}}};
+
+main :: proc() {
+	fmt.println(A.get(X));
+	fmt.println(B.get(X));
+	fmt.println(C.get(X));
+
+	p: ^int = &X;
+	q: ^int = p;
+	fmt.println(q^, take(&X));
+	r := &X;
+	fmt.println(r^);
+
+	i := 1;
+	s := MIX[i][:];
+	fmt.println(s[0], s[1]);
+	t := TAB[i].a[:];
+	fmt.println(t[0], t[1]);
+}

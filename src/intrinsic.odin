@@ -79,7 +79,7 @@ bind_intrinsic_impl :: proc(k: ^Checker, pkg: ^Package, file: ^File, v: ^Item_Im
 	subject := INVALID_TYPE
 	if ident, is_ident := v.type.(^Expr_Ident); is_ident {
 		name := intern_identifier(k.c, ident.name)
-		if sym := symbol_of(k.c, pkg.scope.names[name] or_else INVALID_SYMBOL);
+		if sym := symbol_of(k.c, pkg.scope.names[name]);
 		   sym != nil && sym.kind == .Type && contributed_here(pkg, name) {
 			subject = sym.type
 		}
@@ -145,7 +145,7 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 	symbol_id := INVALID_SYMBOL
 	if subject == INVALID_TYPE {
 		if contributed_here(pkg, name) {
-			symbol_id = pkg.scope.names[name] or_else INVALID_SYMBOL
+			symbol_id = pkg.scope.names[name]
 		}
 	} else if info := type_of(c, subject); info != nil {
 		member := member_named(c, info.members, name)
@@ -292,7 +292,7 @@ report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 	c := k.c
 	where_reported := len(pkg.files) > 0 ? pkg.files[0].package_span : no_span()
 	for name in pkg.contributions {
-		symbol_id := pkg.scope.names[name] or_else INVALID_SYMBOL
+		symbol_id := pkg.scope.names[name]
 		sym := symbol_of(c, symbol_id)
 		if sym == nil || !sym.public {
 			continue

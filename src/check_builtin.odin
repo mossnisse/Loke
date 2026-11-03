@@ -1492,7 +1492,7 @@ runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
 		if target.key != STD_RUNTIME || target.scope == nil {
 			continue
 		}
-		symbol_id := target.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+		symbol_id := target.scope.names[intern_identifier(k.c, name)]
 		// Checked before any package importing it only if something imports it.
 		if found := symbol_of(k.c, symbol_id); found != nil && found.kind == .Type {
 			resolve_symbol_signature_in_place(k, symbol_id)

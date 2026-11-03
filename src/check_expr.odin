@@ -1769,7 +1769,7 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 	base := expr_base(v.operand)
 	// A constant array slices its materialised storage, which is static and
 	// read-only.
-	materialized := info.kind == .Array && base.is_const && request_materialization(k, v.operand)
+	materialized := info.kind == .Array && request_materialization(k, v.operand)
 	lo := v.lo == nil || check_slice_endpoint(k, v.lo)
 	hi := v.hi == nil || check_slice_endpoint(k, v.hi)
 	ok := lo && hi
@@ -1975,6 +1975,21 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			return
 		}
 		operand_base := expr_base(v.operand)
+		// design.md "Materialization" yields a `^T`, so an untyped constant takes
+		// the pointee asked for, or else its default type.
+		if !operand_base.addressable && operand_base.is_const && type_is_untyped(k.c, operand) {
+			target := pointee_of(k.c, expected)
+			if target == INVALID_TYPE {
+				target = default_type(k.c, operand)
+			}
+			if target != INVALID_TYPE {
+				if !materialize(k, v.operand, target) {
+					v.type = INVALID_TYPE
+					return
+				}
+				operand = operand_base.type
+			}
+		}
 		// A named constant gets read-only storage (design.md "Materialization"),
 		// so `&mut` is then rejected as a constant.
 		if !operand_base.addressable && request_materialization(k, v.operand) {

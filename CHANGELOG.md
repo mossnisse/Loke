@@ -1259,6 +1259,17 @@ checklist.
 
 ### Fixed
 
+- An untyped constant whose address is taken gets storage for each type it is used at, as
+  [Materialization](design.md#materialization) says. With `X :: 300`, the same `double` global
+  served every use, so a method on a `distinct int` read its bits as an integer. `&X` is now a `^T`
+  of the pointee the context asks for or the constant's default type, not `^untyped int`, so
+  `p: ^int = &X` compiles.
+- A slice of a constant array reached through a run-time index, `MIX[i][:]`, uses the constant's
+  read-only storage, where it was `L0477`. `&nil` is now `L0357` where it reached the backend.
+- `E.values()` and `E.from_int(...)` inside `E`'s own member values, directly or through another
+  constant, are `L0324`. They saw no members, so `B = E.values().len()` silently gave 0.
+- A box or a box clone refused for memory reports the size asked for even when dropping the payload
+  allocates, and a panic while undoing a refused box clone still drops what was staged.
 - `core:log`'s `Level` is called `log.Level` in diagnostics, where `Log_Level` named nothing a
   program could write.
 - An atomic operation on a pointer now stays a pointer in the generated code, where it went

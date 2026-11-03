@@ -65,7 +65,11 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	branch_if(e, no_memory, release_label, publish_label)
 
 	place_label(e, release_label)
+	// The drop may allocate, which would replace the refusal just noted.
+	refused := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
 	drop_temporary_value(e, guard)
+	emit_restore_refusal(e, allocator, refused)
 	branch(e, done_label)
 
 	place_label(e, publish_label)
@@ -80,7 +84,6 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	branch(e, done_label)
 
 	place_label(e, done_label)
-	e.terminated = false
 	published := load(e, "ptr", block_slot)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, published)
@@ -97,7 +100,6 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return published
 }
 
-// The payload's address inside a box's allocation.
 @(private)
 box_payload_at :: proc(e: ^Emitter, payload: Type_Id, block: string) -> string {
 	out := temp(e)
@@ -118,16 +120,14 @@ emit_box_drop :: proc(e: ^Emitter, box_type: Type_Id, address: string) {
 	fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", box_drop_thunk(e, box_type), address)
 }
 
-// Clones the box at `src` into `out` from `allocator`; the result is the `i1`
-// success flag, and `out` is written only on success.
+// The boxed case of `emit_try_clone_into`.
 @(private)
 emit_box_try_clone_into :: proc(e: ^Emitter, box_type: Type_Id, out, src, allocator: string) -> string {
-	status, ok := temp(e), temp(e)
+	ok := temp(e)
 	fmt.sbprintfln(
-		&e.b, "  %s = call i32 %s(ptr %s, ptr %s, ptr %s)",
-		status, box_clone_thunk(e, box_type), out, src, allocator,
+		&e.b, "  %s = call i1 %s(ptr %s, ptr %s, ptr %s)",
+		ok, box_clone_thunk(e, box_type), out, src, allocator,
 	)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, status)
 	return ok
 }
 
@@ -179,26 +179,25 @@ emit_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) {
 box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 	return container_thunk(
 		e, fmt.aprintf("@loke.boxclone.%d", int(type_underlying(e.c, box_type))), box_type,
-		"i32", "ptr %out, ptr %src, ptr %a",
+		"i1", "ptr %out, ptr %src, ptr %a",
 		proc(e: ^Emitter, box_type: Type_Id) {
 			payload := box_element(e.c, box_type)
 			origin := box_payload_at(e, payload, load(e, "ptr", "%src"))
 			managed := emit_lifecycle(e, payload).managed
-			value: string
-			staged := ""
+			// Plain data is its own clone.
+			source := origin
 			if managed {
-				staged = alloca(e, llvm_type(e, payload))
-				ok := emit_try_clone_into(e, payload, staged, origin, "%a")
+				source = alloca(e, llvm_type(e, payload))
+				ok := emit_try_clone_into(e, payload, source, origin, "%a")
 				cloned_label, refused_label := new_label(e, "boxclone.cloned"), new_label(e, "boxclone.refused")
 				branch_if(e, ok, cloned_label, refused_label)
 				place_label(e, refused_label)
-				fmt.sbprintln(&e.b, "  ret i32 0")
+				emit_unwind_pop(e)
+				fmt.sbprintln(&e.b, "  ret i1 false")
+				e.terminated = true
 				place_label(e, cloned_label)
-				value = load_place(e, payload, staged)
-			} else {
-				// Plain data is its own clone.
-				value = load_place(e, payload, origin)
 			}
+			value := load_place(e, payload, source)
 			block := temp(e)
 			fmt.sbprintfln(
 				&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %%a, i64 %d, i64 %d)",
@@ -210,19 +209,27 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 			branch_if(e, no_memory, undo_label, publish_label)
 			place_label(e, undo_label)
 			if managed {
-				emit_drop_place(e, payload, staged)
+				// The drop may allocate, which would replace the refusal just noted.
+				refused := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
+				emit_drop_place(e, payload, source)
+				emit_restore_refusal(e, "%a", refused)
 			}
-			fmt.sbprintln(&e.b, "  ret i32 0")
+			emit_unwind_pop(e)
+			fmt.sbprintln(&e.b, "  ret i1 false")
+			e.terminated = true
 			place_label(e, publish_label)
 			fmt.sbprintfln(&e.b, "  store ptr %%a, ptr %s", block)
 			store(e, payload, value, box_payload_at(e, payload, block))
 			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %%out", block)
-			fmt.sbprintln(&e.b, "  ret i32 1")
+			emit_unwind_pop(e)
+			fmt.sbprintln(&e.b, "  ret i1 true")
 		},
+		framed = true,
 	)
 }
 
-// `move(b).unbox()`: the payload leaves, then the allocation is released.
+// `move(b).unbox()`.
 @(private)
 emit_box_unbox :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	box_type := expr_base(v.bound[0]).type
