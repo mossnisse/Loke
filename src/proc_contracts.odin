@@ -109,7 +109,7 @@ record_proc_contract_check :: proc(c: ^Compiler, from, to: Type_Id, span: Span) 
 	a, b := underlying_info(c, from), underlying_info(c, to)
 	if a == nil || b == nil || a.kind != .Proc || b.kind != .Proc || a.proc_contract == b.proc_contract { return }
 	if b.proc_contract == INVALID_SYMBOL && discharged_escape(c, from, to) < 0 { return }
-	if !proc_escape_weakens_to(c, type_underlying(c, from), type_underlying(c, to)) { return }
+	if !proc_type_weakens_to(c, type_underlying(c, from), type_underlying(c, to)) { return }
 	add_contract_check(c, from, to, span)
 }
 

@@ -20,7 +20,7 @@ BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxs
 // never inlined into it, so nothing of the level's runs before the check.
 @(private = "file")
 open_program_entry :: proc(e: ^Emitter) {
-	if e.c.target.features == {} {
+	if e.c.target.cpu == .X86_64 {
 		open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
 	} else {
 		open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv) " + BASELINE_ATTRIBUTES)

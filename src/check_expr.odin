@@ -539,7 +539,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		errorf(k.c, v.span, "L0334", "`%s` names a package; write `%s.name` to use one of its declarations", name, name)
 
 	case .Proc_Group:
-		v.resolution = Resolution{kind = .Procedure_Group, symbol = symbol_id}
+		v.resolution = Resolution{kind = .Error, symbol = symbol_id}
 		errorf(k.c, v.span, "L0396", "`%s` is a procedure group and can only be called", name)
 
 	case .Invalid:
@@ -2836,7 +2836,7 @@ report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Valu
 // marks it for review. `base:` packages are the language's own runtime, which
 // cannot import `core:`; a span in no source file is compiler-synthesized.
 require_unsafe_import :: proc(k: ^Checker, span: Span, what: string) -> bool {
-	for &pkg in k.c.packages {
+	for pkg in k.c.packages {
 		for f in pkg.files {
 			if f.file != span.file {
 				continue

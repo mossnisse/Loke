@@ -10,6 +10,19 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
+// A name's text may be temporary: a name outlives whatever buffer spelled it.
+@(test)
+interned_identifier_keeps_its_own_text :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	buffer := [?]u8{'a', 'b'}
+	id := intern_identifier(&c, string(buffer[:]))
+	buffer[0] = 'x'
+	testing.expect(t, identifier_text(&c, id) == "ab", "the name's text changed with the caller's buffer")
+	testing.expect(t, intern_identifier(&c, "ab") == id, "the name was not found under its own text")
+	testing.expect(t, intern_identifier(&c, "xb") != id, "the name was found under the buffer's new text")
+}
+
 // Recursive errors keep recognizable instance names within a bounded width.
 @(test)
 recursive_generic_diagnostics_bound_instance_names :: proc(t: ^testing.T) {

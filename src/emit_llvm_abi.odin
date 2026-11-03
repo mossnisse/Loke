@@ -47,7 +47,7 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	seen["@loke_rt_v1_cpu_dispatch"] = true
 	// Declared above baseline, for the entry's or an object's check, which
 	// `tests/trap/cpu_level_unknown.loke` also binds.
-	if e.c.target.features != {} {
+	if e.c.target.cpu != .X86_64 {
 		seen["@loke_rt_v1_require_cpu"] = true
 	}
 	for id in package_order(e.c) {

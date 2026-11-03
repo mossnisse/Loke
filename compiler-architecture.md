@@ -783,8 +783,8 @@ string's reference-counted allocation directly.
 
 Platform declarations use `when (LOKE_OS == .Windows)`; filenames such as
 `_windows.loke` have no selection effect. Windows is currently the only target.
-`Target_Info` (`src/semantic.odin`) describes it: the triple, the layout widths,
-and the [CPU level](compiler-guide.md#cpu-levels) with the features it adds.
+`Target_Info` (`src/build_config.odin`) describes it: the triple, the layout
+widths, and the [CPU level](compiler-guide.md#cpu-levels).
 Every Clang command takes its code-generation flags from
 `append_codegen_flags`, so the module and the runtime cannot disagree on the
 level or on `-ffp-contract=off`. `runtime/cpu.c` is the one runtime file
@@ -878,7 +878,7 @@ be file-private. Paths below are relative to `src/`.
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
 | `migrate.odin` | `-migrate` and `-migrate-check`: rewrites earlier spellings, proving each result parses to the same tree. |
 | `doc.odin` | `-doc` Markdown and `-api` interface files for the checked root and imported project packages, from one model of each package's API. |
-| `semantic.odin`, `universe.odin` | Semantic stores, interning, predeclared names, and compiler-contributed members. |
+| `semantic.odin`, `types.odin`, `universe.odin` | Semantic stores and interning, type queries and names, predeclared names, and compiler-contributed members. |
 
 ### Checking and language features
 
@@ -886,7 +886,7 @@ be file-private. Paths below are relative to `src/`.
 | --- | --- |
 | `check.odin`, `check_stmt.odin`, `check_expr.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/signatures/type syntax, statements, expression dispatch/materialization/folding, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
 | `bigint.odin`, `const_ops.odin`, `const_float.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, exact float operations and encodings, zero-value rules and constants, and required-result classification. |
-| `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and the built-in `len`/`cap`/`hash` receiver members. |
+| `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates and comparability, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |

@@ -199,7 +199,7 @@ check_interface_application :: proc(k: ^Checker, v: ^Expr_Call, info: ^Interface
 		v.type = INVALID_TYPE
 		return
 	}
-	v.resolution = Resolution{kind = .Generic_Application, symbol = info.symbol}
+	v.resolution = Resolution{kind = .Call, symbol = info.symbol}
 	v.is_const = true
 	v.const_value = bool_const(interface_satisfied(k, info, args, v.span, report = false))
 }

@@ -34,8 +34,8 @@ copy_attributes :: proc(e: ^Emitter) -> string {
 }
 
 @(private)
-emitted_features :: proc(e: ^Emitter) -> Cpu_Features {
-	return e.copying ? windows_x64_target(e.copy_cpu).features : e.c.target.features
+emitted_has_fma :: proc(e: ^Emitter) -> bool {
+	return cpu_has_fma(e.copying ? e.copy_cpu : e.c.target.cpu)
 }
 
 // A copy's name for a level, and its check's.
@@ -72,7 +72,7 @@ cpu_copy_name :: proc(e: ^Emitter, symbol_id: Symbol_Id, cpu: Cpu_Level) -> stri
 // build does not already have.
 @(private)
 dispatched :: proc(e: ^Emitter, symbol: ^Symbol) -> bool {
-	return symbol.dispatches && symbol.dispatch_cpu > e.c.target.cpu
+	return symbol.dispatch_cpu > e.c.target.cpu
 }
 
 // The procedure as usual under an internal name, its copy for the level, and,

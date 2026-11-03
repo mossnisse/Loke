@@ -2943,7 +2943,7 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	}
 	v.denoted_type = instance.type
 	v.value_category = .Type
-	v.resolution = Resolution{kind = .Generic_Application, symbol = instance.symbol}
+	v.resolution = Resolution{kind = .Type, symbol = instance.symbol}
 	return instance.type
 }
 

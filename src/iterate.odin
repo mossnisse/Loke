@@ -50,7 +50,7 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	if existing, found := c.range_types[element]; found {
 		return existing
 	}
-	name := intern_identifier(c, fmt.aprintf("Range(%s)", type_name(c, element), allocator = c.semantic_allocator))
+	name := intern_identifier(c, fmt.tprintf("Range(%s)", type_name(c, element)))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_range = true})
 	fields := make([]Symbol_Id, 3, c.semantic_allocator)
 	fields[RANGE_LOW] = new_field(c, "low", element, RANGE_LOW, public = true)
@@ -112,7 +112,7 @@ ELEMENT_SECOND :: 1
 // A map's `Element`: `(key: K, value: V)` (design.md "Iteration adapters").
 map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	info := type_of(c, subject)
-	return anon_record_type(c, []Anon_Record_Field{
+	return anon_record_type(c, []Anon_Member{
 		{name = intern_identifier(c, "key"), type = info.key},
 		{name = intern_identifier(c, "value"), type = info.element},
 	})
@@ -120,7 +120,7 @@ map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 
 // `indexed()`'s `Element`: `(value: E, index: int)`.
 indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
-	return anon_record_type(c, []Anon_Record_Field{
+	return anon_record_type(c, []Anon_Member{
 		{name = intern_identifier(c, "value"), type = element},
 		{name = intern_identifier(c, "index"), type = TYPE_INT},
 	})
@@ -128,7 +128,7 @@ indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 
 // `rune_offsets()`'s `Element`: `(value: rune, offset: int)`, a byte offset.
 rune_offset_type :: proc(c: ^Compiler) -> Type_Id {
-	return anon_record_type(c, []Anon_Record_Field{
+	return anon_record_type(c, []Anon_Member{
 		{name = intern_identifier(c, "value"), type = TYPE_RUNE},
 		{name = intern_identifier(c, "offset"), type = TYPE_INT},
 	})
@@ -142,7 +142,7 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 		return existing
 	}
 	element := type_of(c, range).element
-	name := intern_identifier(c, fmt.aprintf("Range_Iterator(%s)", type_name(c, element), allocator = c.semantic_allocator))
+	name := intern_identifier(c, fmt.tprintf("Range_Iterator(%s)", type_name(c, element)))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 4, c.semantic_allocator)
 	fields[ITER_RANGE_CURRENT] = new_field(c, "current", element, ITER_RANGE_CURRENT, public = true)
@@ -166,7 +166,7 @@ array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE)
 	}
 	stored := holds == INVALID_TYPE ? array : holds
 	element := type_of(c, array).element
-	name := intern_identifier(c, fmt.aprintf("Array_Iterator(%s)", type_name(c, array), allocator = c.semantic_allocator))
+	name := intern_identifier(c, fmt.tprintf("Array_Iterator(%s)", type_name(c, array)))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 3, c.semantic_allocator)
 	fields[ITER_ARRAY_DATA] = new_field(c, "data", stored, ITER_ARRAY_DATA, public = true)
@@ -201,7 +201,7 @@ new_map_cursor_type :: proc(c: ^Compiler, subject, element: Type_Id, label: stri
 	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR, public = public)
 	return new_type(c, Type_Info{
 		kind = .Struct, element = element, key = subject, is_view = true, fields = fields,
-		name = intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, subject), allocator = c.semantic_allocator)),
+		name = intern_identifier(c, fmt.tprintf("%s(%s)", label, type_name(c, subject))),
 		backend_label = fmt.aprintf("%s.%s", label, type_name(c, subject), allocator = c.semantic_allocator),
 	})
 }
@@ -848,7 +848,7 @@ check_foreach_pattern :: proc(
 	}
 	info := underlying_info(k.c, logical)
 	// A padding field fills no binding (design.md "Destructuring").
-	if info == nil || info.kind != .Struct || len(named_fields(k.c, info)) != len(bindings) {
+	if info == nil || info.kind != .Struct || named_field_count(k.c, info) != len(bindings) {
 		report_pattern_arity(k, bindings, logical, info, raw_data(bindings) == raw_data(s.bindings))
 		return false
 	}
@@ -982,7 +982,7 @@ foreach_packed_source :: proc(k: ^Checker, s: ^Stmt_Foreach) -> string {
 @(private = "file")
 report_pattern_arity :: proc(k: ^Checker, bindings: []Foreach_Binding, element: Type_Id, info: ^Type_Info, header: bool) {
 	span := len(bindings) > 0 ? bindings[0].name.span : no_span()
-	count := info != nil && info.kind == .Struct ? len(named_fields(k.c, info)) : 0
+	count := info != nil && info.kind == .Struct ? named_field_count(k.c, info) : 0
 	errorf(
 		k.c, span, "L0459", "`%s` has %d fields, so this `foreach` pattern needs 1 or %d parts, not %d",
 		type_name(k.c, element), count, count, len(bindings),

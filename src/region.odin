@@ -21,7 +21,7 @@ package lokec
 // Index of the one field, the control-block pointer.
 PROVIDER_CONTROL :: 0
 
-Provider_Op :: enum {
+Provider_Op :: enum u8 {
 	None,
 	// `mem.Arena.init(parent, policy)` and `mem.Scratch.init(parent, policy)`.
 	Open,

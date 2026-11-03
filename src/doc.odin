@@ -23,7 +23,7 @@ INTERFACE_FILE :: "api.loki"
 documented_packages :: proc(c: ^Compiler, root: Package_Id) -> []Package_Id {
 	ids := make([dynamic]Package_Id)
 	append(&ids, root)
-	for &pkg in c.packages[1:] {
+	for pkg in c.packages[1:] {
 		if pkg.id != root && !strings.contains_rune(pkg.key, ':') {
 			append(&ids, pkg.id)
 		}
@@ -85,7 +85,7 @@ write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool) -> int {
 interface_of_source :: proc(c: ^Compiler, path: string) -> (string, bool) {
 	wanted := dir_key(canonical_dir(path))
 	id := c.root_package
-	search: for &pkg in c.packages[1:] {
+	search: for pkg in c.packages[1:] {
 		for file in pkg.files {
 			if dir_key(canonical_dir(c.sources[file.file].path)) == wanted {
 				id = pkg.id

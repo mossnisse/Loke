@@ -44,7 +44,7 @@ add_mutable_sequence_members :: proc(k: ^Checker, subject: Type_Id, info: ^Type_
 	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED)
 	iterator := new_type(c, Type_Info{
 		kind = .Struct, element = element, fields = fields,
-		name = intern_identifier(c, fmt.aprintf("Mutable_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator)),
+		name = intern_identifier(c, fmt.tprintf("Mutable_Iterator(%s)", type_name(c, subject))),
 		backend_label = fmt.aprintf("Mutable_Iterator.%d", subject, allocator = c.semantic_allocator),
 	})
 	next := synth_self_member(c, "next", .Slice_Mut_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))

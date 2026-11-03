@@ -97,7 +97,7 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 	record.kind = .Struct
 	record.fields = make([]Field, len(capture.entries), k.c.semantic_allocator)
 	for entry, index in capture.entries {
-		alias := intern_identifier(k.c, fmt.aprintf("capture$type$%d", index, allocator = k.c.semantic_allocator))
+		alias := intern_identifier(k.c, fmt.tprintf("capture$type$%d", index))
 		k.scope.names[alias] = new_associated_type(k.c, "capture$type", types[index], INVALID_TYPE)
 		field_type := new(Expr_Ident, k.c.semantic_allocator)
 		field_type.span = entry.span

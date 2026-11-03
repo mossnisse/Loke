@@ -12,6 +12,8 @@ import "core:mem"
 
 // The 64-bit FNV prime.
 HASH_MULTIPLIER :: u64(1099511628211)
+// The 64-bit FNV offset basis.
+HASH_OFFSET_BASIS :: u64(0xcbf29ce484222325)
 
 // design.md: `bool`, integers, runes, `string`, `string_view`, pointers,
 // enums, `typeid`, and fixed arrays of hashable elements. Not floats: NaN is
@@ -24,8 +26,6 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_is_hashable_walk(c, id, &seen)
 }
 
-// Guarded because a record diagnosed as containing itself still reaches
-// body checking.
 @(private = "file")
 type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
 	under := type_underlying(c, id)
@@ -389,8 +389,6 @@ own_equalities_called :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_I
 	own_equalities_walk(c, type, out, &seen, true)
 }
 
-// Guarded because a record diagnosed as containing itself still reaches
-// body checking.
 @(private = "file")
 own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, seen: ^Type_Walk, called: bool) {
 	if type_own_equality(c, type) != INVALID_SYMBOL {

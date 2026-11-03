@@ -31,9 +31,9 @@ STD_MATH :: "core:math"
 
 // A bundled package already in the build, by its key, or nil.
 standard_package :: proc(c: ^Compiler, key: string) -> ^Package {
-	for &pkg in c.packages {
+	for pkg in c.packages {
 		if pkg.key == key {
-			return &pkg
+			return pkg
 		}
 	}
 	return nil

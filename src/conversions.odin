@@ -42,7 +42,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true
 	}
 	// design.md "Escape levels".
-	if proc_escape_weakens_to(c, from, to) {
+	if proc_type_weakens_to(c, from, to) {
 		return true
 	}
 	if distinct_proc_converts(c, from, to) {
@@ -88,7 +88,7 @@ distinct_proc_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	source, dest := type_underlying(c, from), type_underlying(c, to)
-	return source == dest || proc_escape_weakens_to(c, source, dest)
+	return source == dest || proc_type_weakens_to(c, source, dest)
 }
 
 // Is `T(v)` legal? Built-in conversions only.

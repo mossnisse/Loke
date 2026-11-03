@@ -473,7 +473,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 	q.signatures = make([][dynamic]Query_Signature, len(c.symbols))
 	q.diagnostics = make([]Query_Diagnostic, len(c.diagnostics))
 	q.packages = make([]Package_Id, len(c.sources))
-	for &pkg in c.packages {
+	for pkg in c.packages {
 		for file in pkg.files {
 			if file != nil && int(file.file) < len(q.packages) { q.packages[file.file] = pkg.id }
 		}

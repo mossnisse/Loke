@@ -112,7 +112,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 		emit_entry(&e)
 	} else if c.build_mode == .Test {
 		emit_test_entry(&e)
-	} else if c.target.features != {} {
+	} else if c.target.cpu != .X86_64 {
 		emit_object_cpu_check(&e)
 	}
 	emit_type_info_tables(&e)

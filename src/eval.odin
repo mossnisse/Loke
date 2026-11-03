@@ -2583,7 +2583,7 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	// A compile-time value is the build's: no copy of a procedure for another
 	// level is evaluated (design.md "@(cpu_dispatch=<string>)").
 	case .Math_Fma_Available:
-		return scalar(bool_const(.FMA in ev.k.c.target.features), TYPE_BOOL), true
+		return scalar(bool_const(cpu_has_fma(ev.k.c.target.cpu)), TYPE_BOOL), true
 
 	// Rounded once from the exact value, as the instruction does, rather than
 	// by the host's arithmetic or its C library.

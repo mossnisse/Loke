@@ -22,11 +22,7 @@ slice_of :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 
 @(private = "file")
 intern_slice :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
-	type := intern_type(
-		c,
-		Type_Key{kind = .Slice, element = element, mutable = mutable},
-		Type_Info{kind = .Slice, element = element, mutable = mutable},
-	)
+	type := intern_type(c, Type_Key{kind = .Slice, element = element, mutable = mutable})
 	if info := type_of(c, type); len(info.fields) == 0 {
 		info.fields = make([]Symbol_Id, 2, c.semantic_allocator)
 		info.fields[SLICE_DATA] = new_field(c, "data", TYPE_RAWPTR, SLICE_DATA)

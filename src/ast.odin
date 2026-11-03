@@ -496,7 +496,7 @@ Type_Poly :: struct {
 // `Borrow` is a `self: ^` receiver, or a synthesized member's read-only receiver:
 // passed by address, which method syntax takes implicitly. It is last because a mode number
 // reaches the type identity key (`typeid_sort_key_walk`).
-Param_Mode :: enum {
+Param_Mode :: enum u8 {
 	Value,
 	Inout,
 	Move,
@@ -564,7 +564,7 @@ Expr_Proc_Group :: struct {
 	names:      []Name,
 }
 
-Hook_Kind :: enum {
+Hook_Kind :: enum u8 {
 	None,
 	Convert,
 	Copy,
@@ -1166,7 +1166,7 @@ Name :: struct {
 	id:   Identifier_Id,
 }
 
-Duration :: enum {
+Duration :: enum u8 {
 	None,
 	Static,
 	Thread_Local,

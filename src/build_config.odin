@@ -22,7 +22,7 @@ Build_Mode :: enum {
 
 // compiler-guide.md "CPU levels": the instruction set a build may use. Each
 // level adds to the one before it.
-Cpu_Level :: enum {
+Cpu_Level :: enum u8 {
 	X86_64,
 	X86_64_V2,
 	X86_64_V3,
@@ -45,6 +45,38 @@ parse_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
 		}
 	}
 	return .X86_64, false
+}
+
+// compiler-guide.md "CPU levels": whether the level has a fused multiply-add
+// instruction.
+cpu_has_fma :: proc(cpu: Cpu_Level) -> bool {
+	return cpu == .X86_64_V3
+}
+
+// The one target, at the CPU level the driver selected. Checker and emitter
+// read the same widths, so `int` cannot mean 64 bits in one and 32 in the other.
+Target_Info :: struct {
+	triple:       string,
+	pointer_bits: u16,
+	int_bits:     u16,
+	// The widest alignment a scalar takes. On x86-64 a 128-bit integer is
+	// 16-aligned and nothing is wider, which is what LLVM's own data layout for
+	// this triple says.
+	max_align:    u16,
+	// compiler-guide.md "CPU levels": the level the code generator may use. A
+	// level changes no result: arithmetic is never contracted at any of them
+	// (design.md "Floating-point operators").
+	cpu:          Cpu_Level,
+}
+
+windows_x64_target :: proc(cpu: Cpu_Level) -> Target_Info {
+	return Target_Info {
+		triple       = "x86_64-pc-windows-msvc",
+		pointer_bits = 64,
+		int_bits     = 64,
+		max_align    = 16,
+		cpu          = cpu,
+	}
 }
 
 // `-Ofast` is deliberately absent: it changes floating-point semantics.

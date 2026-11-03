@@ -1,5 +1,5 @@
-// User operator declarations, lookup, and delegation. Ranking is shared with
-// named overloads in overload.odin.
+// User operator declarations, lookup, and delegation, and which types compare.
+// Ranking is shared with named overloads in overload.odin.
 package lokec
 
 import "core:slice"
@@ -733,7 +733,7 @@ install_delegated_operator :: proc(
 	target: Symbol_Id,
 ) {
 	id := new_symbol(k.c, Symbol {
-		name       = intern_identifier(k.c, fmt.aprintf("delegate%s", symbol, allocator = k.c.semantic_allocator)),
+		name       = intern_identifier(k.c, fmt.tprintf("delegate%s", symbol)),
 		span       = item.span,
 		kind       = .Proc,
 		operator   = symbol,
@@ -825,4 +825,180 @@ operator_token :: proc(symbol: string) -> Token_Kind {
 		return .Not
 	}
 	return .EOF
+}
+
+// ------------------------------------------- comparability and ordering --
+
+// design.md "Comparison operators". Aggregates are comparable when every leaf
+// is; that recursion is what the backend then generates.
+type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	seen: Type_Walk
+	defer delete(seen)
+	return type_is_comparable_walk(c, id, &seen)
+}
+
+@(private = "file")
+type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
+	// design.md "Comparison operators": a type's own `==` makes it comparable,
+	// whatever its fields are.
+	if type_own_equality(c, id) != INVALID_SYMBOL {
+		return true
+	}
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil {
+		return false
+	}
+	if !type_walk_enter(seen, under, info) {
+		return true
+	}
+	#partial switch info.kind {
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .C_Pointer, .Proc, .Enum,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
+		return true
+	// A payloadless union variant carries `void`, and two of them are equal when
+	// their tags are.
+	case .Void:
+		return true
+	// `string` and `string_view` values are comparable and ordered, lexically
+	// byte-wise (design.md). A `cstring_view` is not: it promises no encoding and
+	// carries no length, so comparing two of them would compare addresses.
+	case .String, .String_View:
+		return true
+	// design.md "Allocation failure": an error code compares with its zero, no
+	// failure. An `Allocator` handle is comparable for the same reason a pointer
+	// is.
+	case .Allocator, .Allocator_Error:
+		return true
+	// design.md: two `type` values support `==` and `!=` during compilation, and
+	// `typeid` is an ordinary runtime scalar. Neither has an ordering.
+	case .Type, .Typeid:
+		return true
+	case .Array:
+		return type_is_comparable_walk(c, info.element, seen)
+	case .Struct:
+		// design.md "Capture literals": a callable is called, not compared.
+		if type_is_capture_record(c, under) {
+			return false
+		}
+		for field in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil || !type_is_comparable_walk(c, symbol.type, seen) {
+				return false
+			}
+		}
+		return true
+	case .Union:
+		// Comparable against another value of the same union when every variant is
+		// itself comparable.
+		for variant in info.variants {
+			if !type_is_comparable_walk(c, variant, seen) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch underlying_kind(c, id) {
+	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,
+	     .Untyped_String, .String, .String_View:
+		return true
+	// Ordering compares the addresses as unsigned `uintptr` values, producing a
+	// total order within one execution (design.md).
+	case .Pointer, .C_Pointer, .Raw_Pointer:
+		return true
+	case .Struct:
+		seen: Type_Walk
+		defer delete(seen)
+		return record_is_ordered_walk(c, id, &seen)
+	}
+	return false
+}
+
+// design.md "Comparison operators": an anonymous record is ordered when every
+// field is, by the built-in operators. Answers what stops it, as a diagnostic
+// note, or "" when nothing does.
+record_order_blocker :: proc(c: ^Compiler, id: Type_Id) -> string {
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil || info.kind != .Struct || !info.anonymous_record {
+		return ""
+	}
+	seen: Type_Walk
+	defer delete(seen)
+	type_walk_enter(&seen, under, info)
+	for field, index in info.fields {
+		symbol := symbol_of(c, field)
+		why := ""
+		if type_declares_comparison(c, symbol.type) {
+			why = "declares a comparison operator of its own"
+		} else if !field_is_ordered(c, symbol.type, &seen) {
+			why = "is not ordered"
+		} else {
+			continue
+		}
+		which := fmt.tprintf("field `%s`", identifier_text(c, symbol.name))
+		if field_is_positional(c, field) {
+			position := index + 1
+			suffix := "th"
+			if position % 100 < 11 || position % 100 > 13 {
+				switch position % 10 {
+				case 1: suffix = "st"
+				case 2: suffix = "nd"
+				case 3: suffix = "rd"
+				}
+			}
+			which = fmt.tprintf("%d%s field", position, suffix)
+		}
+		return fmt.tprintf("its %s is `%s`, which %s", which, type_name(c, symbol.type), why)
+	}
+	return ""
+}
+
+// `seen` holds the records being walked, so one met again is a cycle: a record
+// that holds itself by value through a `distinct` type is diagnosed, but still
+// reaches body checking. A record met twice side by side is no cycle.
+@(private = "file")
+record_is_ordered_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil || info.kind != .Struct || !info.anonymous_record || !type_walk_enter(seen, under, info) {
+		return false
+	}
+	defer delete_key(seen, under)
+	for field in info.fields {
+		type := symbol_of(c, field).type
+		if type_declares_comparison(c, type) || !field_is_ordered(c, type, seen) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+field_is_ordered :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk) -> bool {
+	if underlying_kind(c, type) == .Struct {
+		return record_is_ordered_walk(c, type, seen)
+	}
+	return type_is_ordered(c, type)
+}
+
+// Whether the type declares a comparison operator of its own over two of its
+// values. A group declares one when a member does, and a `delegate` does when
+// it forwards, however indirectly, to a user operator rather than the built-in
+// one (design.md "Delegating operators"). A `distinct` type that delegates
+// nothing compares by its underlying built-in operators.
+@(private = "file")
+type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	for text in ([6]string{"==", "!=", "<", "<=", ">", ">="}) {
+		callable, _ := inherent_self_operator(c, id, text)
+		if _, builtin := operator_delegate_end(c, callable); callable != INVALID_SYMBOL && !builtin {
+			return true
+		}
+	}
+	return false
 }

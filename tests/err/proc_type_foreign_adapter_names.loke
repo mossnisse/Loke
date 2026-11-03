@@ -1,0 +1,19 @@
+package main;
+
+// A foreign ABI adapter is part of a procedure type's identity, so a mismatch
+// report has to print it: otherwise it names the same text twice.
+foreign import libc "system:legacy_stdio_definitions.lib";
+foreign libc {
+    printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..) -> i32 ---;
+    only_varargs :: proc "c" (@(c_vararg) args: ..) ---;
+    consume :: proc "c" (@(by_ptr) value: int) ---;
+}
+
+main :: proc() {
+    a: proc "c" (fmt: cstring_view) -> i32 = printf;
+    b: proc "c" () = only_varargs;
+    c: proc "c" (value: int) = consume;
+    _ = a;
+    _ = b;
+    _ = c;
+}

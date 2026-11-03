@@ -442,7 +442,7 @@ Compiler :: struct {
 	// Procedure types, bucketed the same way by parameters, modes, and result.
 	proc_types:           map[u64][]Type_Id,
 	symbols:              [dynamic]^Symbol,
-	packages:             [dynamic]Package,
+	packages:             [dynamic]^Package,
 }
 
 // Loads a file and registers it, reporting the failure itself.

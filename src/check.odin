@@ -818,7 +818,7 @@ resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Re
 // lifecycle contribution closes (`src/hooks.odin`).
 @(private = "file")
 resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
-	specs := make([dynamic]Anon_Record_Field, 0, len(value.fields), context.temp_allocator)
+	specs := make([dynamic]Anon_Member, 0, len(value.fields), context.temp_allocator)
 	names := make([dynamic]Identifier_Id, 0, len(value.fields), context.temp_allocator)
 	bad := false
 	for &field, index in value.fields {
@@ -832,7 +832,7 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 			continue
 		}
 		if len(field.names) == 0 {
-			append(&specs, Anon_Record_Field{name = positional_field_name(k.c, index), type = field_type})
+			append(&specs, Anon_Member{name = positional_field_name(k.c, index), type = field_type})
 			continue
 		}
 		for name in field.names {
@@ -844,7 +844,7 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 			if name.text != "_" {
 				append(&names, name_id)
 			}
-			append(&specs, Anon_Record_Field{name = name_id, type = field_type})
+			append(&specs, Anon_Member{name = name_id, type = field_type})
 		}
 	}
 	if bad || len(specs) == 0 {
@@ -1571,7 +1571,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Type_C_Pointer:
 		if element := resolve_type_syntax(k, value.elem); element != INVALID_TYPE {
-			return denote(&value.base, intern_type(k.c, Type_Key{kind = .C_Pointer, element = element}, Type_Info{kind = .C_Pointer, element = element}))
+			return denote(&value.base, c_pointer_to(k.c, element))
 		}
 
 	case ^Type_Slice:

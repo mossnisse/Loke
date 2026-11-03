@@ -296,11 +296,8 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 		return
 	}
 	previous := impl_member_table(k, kind, subject, in_pkg)
-	merged := make([]Symbol_Id, len(previous) + len(added), k.c.semantic_allocator)
-	copy(merged, previous)
-	copy(merged[len(previous):], added)
 	if pkg := package_of(k.c, in_pkg); pkg != nil {
-		pkg.extensions[subject] = merged
+		pkg.extensions[subject] = slice.concatenate([][]Symbol_Id{previous, added}, k.c.semantic_allocator)
 	}
 }
 

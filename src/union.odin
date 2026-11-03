@@ -35,9 +35,9 @@ resolve_anon_union :: proc(k: ^Checker, value: ^Type_Anon_Union) -> Type_Id {
 	if !ok {
 		return INVALID_TYPE
 	}
-	specs := make([]Anon_Union_Variant, len(names), context.temp_allocator)
+	specs := make([]Anon_Member, len(names), context.temp_allocator)
 	for name, index in names {
-		specs[index] = Anon_Union_Variant{name = name, payload = payloads[index]}
+		specs[index] = Anon_Member{name = name, type = payloads[index]}
 	}
 	return anon_union_type(k.c, specs)
 }

@@ -304,10 +304,10 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `semantic.odin`.
+- Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
-- Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
+- Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`.
 - Transfer wording and type reach: the reports moved beside `transfer_facts` in `hooks.odin` belong with them in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 
@@ -1674,14 +1674,13 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 
 **Structure and boundaries**
 
-- [hash.odin:255](src/hash.odin#L255): lines 255-339 are equality, not hashing, and most callers are comparison code such as `type_is_comparable` and [check_expr.odin:2494](src/check_expr.odin#L2494). They belong beside `type_is_comparable` in `semantic.odin`.
+- [hash.odin:255](src/hash.odin#L255): lines 255-339 are equality, not hashing, and most callers are comparison code such as `type_is_comparable` and [check_expr.odin:2494](src/check_expr.odin#L2494). They belong beside `type_is_comparable` in `operators.odin`.
 - [hash.odin:200](src/hash.odin#L200) `resolve_map_key_policy`: selecting a policy and wording a rejection are mixed; the seam is lines 204-219, an `unhashable_key_reason(c, key) -> string`, which also gives the sentence repeated at lines 215 and 219 one home.
 
 **Comments**
 
 - [hash.odin:16](src/hash.odin#L16): the catalogue is in standard-library.md, also misattributed on line 1. Shorten to: `standard-library.md "Standard interface catalogue" lists the hashable scalars; a record or union keeping its generated == hashes structurally (design.md "Maps").` The NaN rationale is there and in the message at line 205. (about 2 lines)
 - [hash.odin:48](src/hash.odin#L48): delete; `Type_Walk`'s comment at [semantic.odin:2185](src/semantic.odin#L2185) says this.
-- [hash.odin:27](src/hash.odin#L27) and [hash.odin:299](src/hash.odin#L299): the same two lines, also at [semantic.odin:1973](src/semantic.odin#L1973); say it once on `Type_Walk` and delete these. (about 4 lines)
 - [hash.odin:149](src/hash.odin#L149): the array remark does not match the filter below it, which rejects arrays; delete it or write `An array has no named part.`
 - [hash.odin:90](src/hash.odin#L90): the list narrates the conditions below it; keep only `Packed fields are read in place.` (about 2 lines)
 - [hash.odin:129](src/hash.odin#L129): delete; the name says it.
@@ -1781,7 +1780,6 @@ A compact file with mostly useful comments, and member-table scans that stay sma
 
 - [impl.odin:209](src/impl.odin#L209) and [generic.odin:3677](src/generic.odin#L3677): duplicate and field checks, plus the `Symbol` literal at [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693), differ only in `pkg` and subject. Share `impl_member_clash(k, subject, name)` and `new_impl_member(k, d, name, subject, pkg)`, which also ends the drift in BUG-impl-5. (about 25 lines)
 - [impl.odin:68](src/impl.odin#L68) and [impl.odin:136](src/impl.odin#L136): the same make, read table, declare, install sequence, one filtered to lifecycle hooks. Share `declare_impl_members(k, item, hooks_only := false)`. (about 6 lines)
-- [impl.odin:301](src/impl.odin#L301) and [semantic.odin:1120](src/semantic.odin#L1120): the same three lines concatenate two member slices. Share one helper taking both slices.
 
 **Structure and boundaries**
 
@@ -2702,7 +2700,6 @@ Correct on the main paths; the weak spot is `typeid_sort_key`, whose key is neit
 
 - [reflect.odin:20](src/reflect.odin#L20), [reflect.odin:38](src/reflect.odin#L38), [reflect.odin:56](src/reflect.odin#L56): the three lazy `meta_*_type` procs differ in cache slot, name and second member. Use `descriptor_type(c, &c.meta_field_type, "meta.Field", "type", TYPE_TYPE)`; it writes the four members and `Descriptor_Field` goes. (about 30 lines)
 - [reflect.odin:216](src/reflect.odin#L216), [reflect.odin:245](src/reflect.odin#L245), [reflect.odin:267](src/reflect.odin#L267), [reflect.odin:292](src/reflect.odin#L292): four copies fill name, payload, index, owner. All three descriptors share that layout (expand.odin:194 already reads `META_FIELD_NAME` from any), so one `descriptor_const(c, type, name, payload, index, owner)` and 4 constants replace them and the 12 `META_*`. (about 25 lines)
-- [reflect.odin:90](src/reflect.odin#L90) and [semantic.odin:1103](src/semantic.odin#L1103): the `new_symbol` literal is exactly `new_field(c, name, type, index, public = ...)`. Call that. (about 7 lines)
 - [reflect.odin:317](src/reflect.odin#L317) and [const_ops.odin:73](src/const_ops.odin#L73): `typeid_const` is `type_const` byte for byte. Delete it and call `type_const` at line 772. (about 4 lines)
 - [reflect.odin:307](src/reflect.odin#L307) and [simd.odin:291](src/simd.odin#L291), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [check_expr.odin:3332](src/check_expr.odin#L3332): `aggregate_const` is the 3-line form these write by hand. Move it to const_ops.odin; only its `type_value = type` differs, and I found no reader of that on an aggregate.
 - [reflect.odin:196](src/reflect.odin#L196) and [check_builtin.odin:1374](src/check_builtin.odin#L1374), [check_expr.odin:331](src/check_expr.odin#L331), [emit_llvm_runtime.odin:1167](src/emit_llvm_runtime.odin#L1167): `string_view_const` is a private spelling of `Const_Value{kind = .String, text = ...}`. Make it `string_const` beside `rune_const` in const_ops.odin.
@@ -2789,76 +2786,11 @@ The selection fixed point is sound in outline and has no dead procedures, but a 
 
 ### src/semantic.odin
 
-The stores and interning are sound, and the `Symbol` and `Type_Info` definitions are mostly justified "why" comments. The bugs are small; the larger payoff is merging the two type walks, collapsing the kind predicates and procedure-type copies, removing a CPU feature model nobody reads, and moving about 700 lines of type queries to their own file.
-
-**Bugs**
-
-- `BUG-semantic-1` **low** [semantic.odin:2426](src/semantic.odin#L2426) `proc_type_name`: `c_vararg` and `param_by_ptr` are part of type identity but are not printed. Scenario (run): `f: proc "c" (fmt: cstring_view) -> i32 = printf;` with a `@(c_vararg)` `printf` reports "cannot initialise `proc "c"(cstring_view) -> i32` with `proc "c"(cstring_view) -> i32`". Fix: print `..` and `@(by_ptr)`. *Not verified.*
-- `BUG-semantic-2` **medium** [semantic.odin:1463](src/semantic.odin#L1463) `intern_type`: the first interner's `Type_Info` wins, and [check.odin:1929](src/check.odin#L1929) hand-writes `[^]T` without the `bits` that `c_pointer_to` sets. Scenario (run): `type_info_of(typeid_of([^]u8)).bits` prints 0, but 64 once an earlier `unsafe.raw_data` has interned it. Fix: call `c_pointer_to` there. *Confirmed: Reproduced: `[^]u8` bits prints 0 if typeid_of precedes raw_data, 64 if it follows; `[^]u16` gives 64 and `[^]u32` 0 in one program. Not recorded in the docs. Severity is low, not medium: only reflected `bits` shows it and no bundled .loke code reads it.*
-- `BUG-semantic-3` **low** [semantic.odin:1080](src/semantic.odin#L1080) `intern_identifier`: it keeps the caller's string, and [proc_contracts.odin:147](src/proc_contracts.odin#L147) passes a temp one. Scenario (from reading, not run): a checkpointed package joins two callbacks; [incremental.odin:309](src/incremental.odin#L309) destroys the scratch arena; printing that proc type reads released memory. Fix: clone on a miss. *Not verified.*
-
-**Simplification**
-
-- [semantic.odin:1893](src/semantic.odin#L1893) `type_is_untyped` through `type_is_aggregate`: seven `#partial switch` predicates become one line each, `return underlying_kind(c, id) in Type_Kinds{.Int, .Untyped_Int}`, with `Type_Kinds :: bit_set[Type_Kind]`. (about 28 lines)
-- [semantic.odin:1259](src/semantic.odin#L1259) `intern_proc_type`: four make-and-copy blocks plus `has_reset_effect`, `has_escape_level`, `equal_reset_effects` and `equal_escape_levels` reduce to two polymorphic helpers, `equal_padded(a, b, default)` and `clone_unless_default(xs, default, allocator)`, with `slice.clone` for the rest. (about 30 lines)
-- [semantic.odin:1450](src/semantic.odin#L1450) `equal_type_ids`, `equal_param_modes`: both are `slice.equal`; `core:slice` is already used across the package. (about 10 lines)
-- [semantic.odin:1463](src/semantic.odin#L1463) `intern_type`: every caller writes the same kind, element, key, count and mutable twice. Derive `Type_Info` from the key, as `intern_type(c, key, bits = 0)`, which also removes the cause of BUG-semantic-2. (about 15 lines across 9 callers)
-- [semantic.odin:2262](src/semantic.odin#L2262) `type_is_supported_walk`: if it is not merged (see Near copies), its 16 arms still collapse to six: always true, element, Map, and the three that loop. (about 20 lines)
-- [semantic.odin:2084](src/semantic.odin#L2084) `record_order_blocker_walk`: nested results are only compared with `""`, so "holds itself by value" and "is not an anonymous record" never reach a user, yet each failure formats text. Use a bool walk and format only in `record_order_blocker`. (about 10 lines)
-- [semantic.odin:1522](src/semantic.odin#L1522) `anon_record_type`, and [semantic.odin:1637](src/semantic.odin#L1637) `anon_union_type`: nothing needs `id` before its fields are known, so build one `Type_Info` literal instead of `new_type` plus `if info := type_of(...)`. (about 8 lines)
-- [semantic.odin:1525](src/semantic.odin#L1525) `anon_record_type`: the inline `new_symbol` is `new_field(c, identifier_text(c, field.name), field.type, index, public = true)`. (about 7 lines)
-- [semantic.odin:1811](src/semantic.odin#L1811) `positional_field_name`: once `intern_identifier` clones on a miss, this is `intern_identifier(c, fmt.tprintf("%d", position))`, and callers such as [iterate.odin:53](src/iterate.odin#L53) can use `tprintf` too. (about 3 lines here)
-- [semantic.odin:1390](src/semantic.odin#L1390) `parameters_weaken_to`: the first `if` is what the length check and loop already answer. At [semantic.odin:1403](src/semantic.odin#L1403), test the target's `Type_Info` rather than making a predicate intern a pointer type with `pointer_to`. (about 3 lines)
-- [semantic.odin:1367](src/semantic.odin#L1367) `proc_escape_weakens_to`: merge the two loops over the same range. The name is also too narrow: it decides receiver forms, cross-thread and contracts too, so `proc_type_weakens_to` fits. (about 2 lines)
-- [semantic.odin:1772](src/semantic.odin#L1772) `type_bits`, and [semantic.odin:1780](src/semantic.odin#L1780) `type_signed`: the `.Enum` recursion is redundant, since [check.odin:1269](src/check.odin#L1269) and [enums.odin:6](src/enums.odin#L6) copy both from the backing. (about 2 lines)
-- [semantic.odin:1148](src/semantic.odin#L1148) `synth_proc`: `intern_proc_type` already copies the parameters, so `params = type_of(c, proc_type).parameters` drops a second allocation. (about 2 lines)
-- [semantic.odin:1464](src/semantic.odin#L1464) `intern_type`, also `lookup_type`, `anon_record_type`, `anon_union_type`: `init_semantic_stores` is redundant, because reading a nil map is safe, `new_type` initializes before any write, and the anon forms take already interned names. (about 4 lines)
-
-**Dead code**
-
-- `Cpu_Feature` ([semantic.odin:309](src/semantic.odin#L309)): only `.FMA in` and `!= {}` read the set, and the LLVM attributes come from per-level strings. `cpu == .X86_64_V3` and `cpu != .X86_64` replace the enum, `Cpu_Features`, both constants, the switch and `features` (about 30 lines).
-- `dispatches` ([semantic.odin:800](src/semantic.odin#L800)): its one read is `symbol.dispatches && symbol.dispatch_cpu > e.c.target.cpu` ([emit_llvm_dispatch.odin:90](src/emit_llvm_dispatch.odin#L90)); the unset `dispatch_cpu` is `.X86_64`, never above any target, so the second test suffices.
-- `Procedure_Group` ([semantic.odin:358](src/semantic.odin#L358)): written once at [check_expr.odin:673](src/check_expr.odin#L673) and never read by name; only the "is not another kind" fact matters.
-- `Generic_Application` ([semantic.odin:360](src/semantic.odin#L360)): written at [generic.odin:2951](src/generic.odin#L2951) and [interface.odin:204](src/interface.odin#L204), never read by name.
-- `add_package_file` ([semantic.odin:2534](src/semantic.odin#L2534)): no caller reads its bool, and six of its seven callers are tests, so it can return nothing and drop the nil guard.
-- (branch) [semantic.odin:2205](src/semantic.odin#L2205): `type_of` returns the `.Invalid` entry for `INVALID_TYPE`, so `case .Invalid` already answers this early return.
-- (branch) [semantic.odin:2333](src/semantic.odin#L2333): the `#partial switch` above names every `Type_Kind`, so this `return false` is unreachable; the `.Invalid` and `.Interface` arms can instead fall to it.
-- (branch) [semantic.odin:1536](src/semantic.odin#L1536): the `info != nil` tests here and at 1495, 1500, 1600 and 1638 are on IDs this store just made or holds; `intern_proc_type` indexes `c.types` directly at 1244.
-- (branch) [semantic.odin:2086](src/semantic.odin#L2086): a record's field IDs come from `new_symbol`, so `symbol == nil` and its "did not resolve" text cannot occur.
-
-**Data structures and algorithms**
-
-- [semantic.odin:956](src/semantic.odin#L956) `c.packages`: `[dynamic]Package` holds values, so `package_of` pointers die on the next load, and [packages.odin:249](src/packages.odin#L249) and [packages.odin:316](src/packages.odin#L316) re-fetch to avoid it. `[dynamic]^Package`, as for symbols and types, removes the hazard.
-- [semantic.odin:645](src/semantic.odin#L645) `Symbol`: every local and field carries all of the roughly 75 fields, and most enums (`Symbol_Kind`, `Builtin_Kind`, `Synth_Kind`, `Duration`) default to 8-byte `int`. Symbols grow with the program; `enum u8` and grouped bools shrink each with declaration-only edits. Size not measured.
-- [semantic.odin:1859](src/semantic.odin#L1859) `named_fields`: each call allocates permanently per literal or destructuring, and [iterate.odin:881](src/iterate.odin#L881) and [iterate.odin:1022](src/iterate.odin#L1022) only take `len`. Return `info.fields` when there is no padding, and add a count helper.
+The stores and interning are sound, and the `Symbol` and `Type_Info` definitions are mostly justified "why" comments. What remains is merging the type walks, now in `types.odin`.
 
 **Near copies**
 
 - [semantic.odin:2204](src/semantic.odin#L2204), [semantic.odin:2262](src/semantic.odin#L2262) and [reflect.odin:149](src/reflect.odin#L149): the same component walk. "Supported" is "no component is Invalid, Interface or a descriptor"; "contains invalid" is the Invalid part. One walk taking a predicate serves all three. (about 70 lines)
-- [semantic.odin:1298](src/semantic.odin#L1298), [semantic.odin:1542](src/semantic.odin#L1542) and [semantic.odin:1644](src/semantic.odin#L1644): identical bucket growth, differing only in the map. Shared form: `bucket_append(c, &c.proc_types, hash, bucket, id)`. (about 9 lines)
-- [semantic.odin:1477](src/semantic.odin#L1477) and [semantic.odin:1584](src/semantic.odin#L1584): `Anon_Record_Field` and `Anon_Union_Variant` are one `{name, type}` struct, and the hash loops at 1488 and 1594 are the same. Use one struct and one `anon_hash`; keep the separate display and label code. (about 8 lines)
-- [semantic.odin:1212](src/semantic.odin#L1212) and [semantic.odin:1487](src/semantic.odin#L1487): the FNV offset basis is spelled by hand; name it beside `HASH_MULTIPLIER` in [hash.odin:14](src/hash.odin#L14). The rotated seed at [semantic.odin:1593](src/semantic.odin#L1593) gains nothing, as its buckets are in a separate map.
-- [semantic.odin:2488](src/semantic.odin#L2488) and [semantic.odin:2498](src/semantic.odin#L2498): `lookup_symbol` is `lookup_symbol_with_scope` without the scope; make it a wrapper. (about 6 lines)
-
-**Structure and boundaries**
-
-- [semantic.odin:1753](src/semantic.odin#L1753): lines 1753-2476 are type queries, walks and naming, while the "Source-code map" row gives this file stores and interning. The seam is a `types.odin` from `type_of` through `proc_type_name`.
-- [semantic.odin:1965](src/semantic.odin#L1965): comparability and ordering (1965-2152) belong with `type_own_equality` in [hash.odin:258](src/hash.odin#L258) or the delegates in [operators.odin:689](src/operators.odin#L689), since `operator_is_builtin` walks the chain that code builds.
-- [semantic.odin:287](src/semantic.odin#L287): `Target_Info` and the CPU types (287-348) belong in `build_config.odin`, which owns `Cpu_Level`. `compiler-architecture.md` line 783 cites this location and would move with them.
-- [semantic.odin:1885](src/semantic.odin#L1885): `underlying_info` and `underlying_kind` sit 100 lines from `type_underlying` (1785), with field helpers between them. Put them together and the field and record helpers (1802-1883) in one group.
-
-**Comments**
-
-- [semantic.odin:1800](src/semantic.odin#L1800): stranded when the field helpers were inserted; it describes `underlying_info` and `underlying_kind`. Move it to line 1885.
-- [semantic.odin:2028](src/semantic.odin#L2028): stale and wrong; unions have no nil state (`design.md` "Unions", and this file at 152-155). Delete "against nil always".
-- [semantic.odin:749](src/semantic.odin#L749): "step 6" refers to nothing now. Use "The declaring procedure literal, for the capture check."
-- [semantic.odin:287](src/semantic.odin#L287): "M2" is history; use "The one target". [semantic.odin:2177](src/semantic.odin#L2177): likewise, "a milestone answer" becomes "an unsupported-type error".
-- [semantic.odin:2429](src/semantic.odin#L2429): three comments (2429, 2439, 2452) give one reason. One at the top of the proc: "Everything in the type's identity prints, or a mismatch report names the same text twice." (about 6 lines)
-- [semantic.odin:429](src/semantic.odin#L429): delete the second sentence; an enum of kinds needs no defense. Likewise delete [semantic.odin:1114](src/semantic.odin#L1114), [semantic.odin:1442](src/semantic.odin#L1442) and [semantic.odin:2222](src/semantic.odin#L2222), which restate the code.
-- [semantic.odin:277](src/semantic.odin#L277): delete "A field of its own, not a spare bit of `count`...". [semantic.odin:1101](src/semantic.odin#L1101): delete "Every such type installs...". [semantic.odin:1306](src/semantic.odin#L1306): delete "so an unannotated signature interns exactly the type it always did".
-- [semantic.odin:938](src/semantic.odin#L938): keep the why, drop the incident: "`mem.Dynamic_Arena` rejects allocations over its block size, and `append`/`make` swallow the error." (about 2 lines)
-- [semantic.odin:513](src/semantic.odin#L513): `Builtin_Kind` comments repeat lowering and spec text (513-545 especially, naming LLVM intrinsics the emitter names anyway). Keep each citation with at most a one-line reason. (about 40 lines across the enum)
-- [semantic.odin:1344](src/semantic.odin#L1344): the rule belongs to the cited section; keep the citation and "Levels carry no ABI, so the assignment is a plain pointer copy." (about 3 lines; about 75 lines across the file)
 
 ### src/session.odin
 
@@ -2960,7 +2892,6 @@ Readable and well scoped, with no dead symbols, but `check_simd_binary` skips op
 
 - [simd.odin:73](src/simd.odin#L73): delete; it sits on the wrong procedure and is inaccurate, since two of the three bounds share one diagnostic.
 - [simd.odin:405](src/simd.odin#L405), [simd.odin:564](src/simd.odin#L564) and [stdlib.odin:148](src/stdlib.odin#L148): the same "matched by name, no second identity" note appears three times; keep line 405 and delete the sentence at 565.
-- [semantic.odin:546](src/semantic.odin#L546): "exactly as an atomic takes its ordering" contradicts `simd.odin:406` and `core/simd/simd.loke`, which say it differs from an atomic; delete that sentence.
 - [simd.odin:417](src/simd.odin#L417): cites a "design.md entry" that does not exist (the intrinsics are not in design.md); shorten to "A built-in has no signature, so the shapes are checked here."
 - [simd.odin:56](src/simd.odin#L56), [simd.odin:273](src/simd.odin#L273), [simd.odin:389](src/simd.odin#L389) and [simd.odin:484](src/simd.odin#L484): delete; each repeats the procedure name, the code, or the diagnostic beneath it.
 - [simd.odin:520](src/simd.odin#L520): delete the second sentence, which `core/simd/simd.loke` and `stdlib.odin` already state.
@@ -3071,13 +3002,9 @@ Short and readable, with why-comments that mostly earn their place. The main iss
 
 ### src/universe.odin
 
-A small, table-driven file whose bindings match design.md "Predeclared names"; no bugs here. What remains is a builtin symbol spelled three ways and one comment in another file.
+A small, table-driven file whose bindings match design.md "Predeclared names"; no bugs here. What remains is a builtin symbol spelled three ways.
 
 **Near copies**
 
 - [box.odin:45](src/box.odin#L45), [iterate.odin:68](src/iterate.odin#L68) and [simd.odin:15](src/simd.odin#L15): the predeclared names with no universe entry use one proc three times; only the string differs. Shared form: `predeclared_callee(k, callee, "Box")`. (about 14 lines)
 - [check.odin:2330](src/check.odin#L2330) and [check.odin:2334](src/check.odin#L2334): `Simd` compares the name alone where `Box` uses `box_type_callee`, so a bare `x: Simd` naming a program's own generic `Simd` gets the `Simd(f32, 4)` message instead of L0431. Use `simd_callee` here too.
-
-**Comments**
-
-- [semantic.odin:2338](src/semantic.odin#L2338): says the allocator types print under the name `core:mem` binds, but `contribute_allocator_surface` sets no name; [universe.odin:49](src/universe.odin#L49) does. Reword to "named by `build_universe`".

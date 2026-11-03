@@ -468,7 +468,7 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 			sym.require_results = true
 		case "cpu_dispatch":
 			if text, ok := attribute_string_value(k.c, d.attributes, "cpu_dispatch"); ok && sym.kind == .Proc {
-				sym.dispatch_cpu, sym.dispatches = dispatch_cpu_level(text)
+				sym.dispatch_cpu, _ = dispatch_cpu_level(text)
 			}
 		}
 	}

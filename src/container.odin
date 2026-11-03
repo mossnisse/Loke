@@ -21,11 +21,7 @@ dynamic_array_of :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	if element == INVALID_TYPE {
 		return INVALID_TYPE
 	}
-	type := intern_type(
-		c,
-		Type_Key{kind = .Dynamic_Array, element = element},
-		Type_Info{kind = .Dynamic_Array, element = element},
-	)
+	type := intern_type(c, Type_Key{kind = .Dynamic_Array, element = element})
 	ensure_container_fields(c, type, "data")
 	return type
 }
@@ -35,11 +31,7 @@ map_of :: proc(c: ^Compiler, key: Type_Id, value: Type_Id) -> Type_Id {
 	if key == INVALID_TYPE || value == INVALID_TYPE {
 		return INVALID_TYPE
 	}
-	type := intern_type(
-		c,
-		Type_Key{kind = .Map, element = value, key = key},
-		Type_Info{kind = .Map, element = value, key = key},
-	)
+	type := intern_type(c, Type_Key{kind = .Map, element = value, key = key})
 	ensure_container_fields(c, type, "table")
 	return type
 }
@@ -97,7 +89,7 @@ sequence_element :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // Which operation a contributed member is. A panicking spelling and its `try_`
 // form share one entry.
-Container_Op :: enum {
+Container_Op :: enum u8 {
 	None,
 	Append,
 	Insert,
@@ -255,7 +247,7 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id) {
 	none := INVALID_TYPE
 	// Both halves borrow the receiver, so the caller's slice stays suspended
 	// while either is live.
-	halves := anon_record_type(k.c, []Anon_Record_Field{
+	halves := anon_record_type(k.c, []Anon_Member{
 		{name = intern_identifier(k.c, "left"), type = type},
 		{name = intern_identifier(k.c, "right"), type = type},
 	})
@@ -281,7 +273,7 @@ CHUNKS_SIZE :: 1
 @(private = "file")
 chunks_mut_type :: proc(k: ^Checker, slice: Type_Id) -> Type_Id {
 	c := k.c
-	name := intern_identifier(c, fmt.aprintf("Chunks_Mut(%s)", type_name(c, slice), allocator = c.semantic_allocator))
+	name := intern_identifier(c, fmt.tprintf("Chunks_Mut(%s)", type_name(c, slice)))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = slice})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
 	fields[CHUNKS_REST] = new_field(c, "rest", slice, CHUNKS_REST)

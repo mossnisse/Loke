@@ -87,14 +87,7 @@ new_descriptor_type :: proc(c: ^Compiler, name: string, fields: []Descriptor_Fie
 	type := new_type(c, Type_Info{kind = .Struct, name = name_id, descriptor = true})
 	members := make([]Symbol_Id, len(fields), c.semantic_allocator)
 	for entry, index in fields {
-		members[index] = new_symbol(c, Symbol {
-			name   = intern_identifier(c, entry.name),
-			span   = no_span(),
-			kind   = .Field,
-			type   = entry.type,
-			index  = u32(index),
-			public = !entry.hidden,
-		})
+		members[index] = new_field(c, entry.name, entry.type, index, public = !entry.hidden)
 	}
 	if info := type_of(c, type); info != nil {
 		info.fields = members

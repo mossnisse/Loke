@@ -1378,6 +1378,10 @@ checklist.
 
 ### Fixed
 
+- A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
+  by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
+- `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`
+  first; it was 0 when the type was first written out.
 - An export whose link name starts with `loke.` stays external, and a procedure or global the
   compiler would give that same name takes another, so `@(export, link_name = "loke.host_api")`
   links and `"loke.p.helper"` beside `helper :: proc()` compiles

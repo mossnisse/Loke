@@ -152,7 +152,7 @@ emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 @(private)
 emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
-	if .FMA not_in emitted_features(e) {
+	if !emitted_has_fma(e) {
 		if "llvm.trap" not_in e.simd_intrinsics {
 			e.simd_intrinsics["llvm.trap"] = true
 			append(&e.globals, "declare void @llvm.trap()\n")

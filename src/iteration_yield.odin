@@ -98,7 +98,7 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 		}
 		return INVALID_TYPE
 	}
-	fields := make([]Anon_Record_Field, len(desc.fields), k.c.semantic_allocator)
+	fields := make([]Anon_Member, len(desc.fields), k.c.semantic_allocator)
 	for field_id, index in info.fields {
 		field := symbol_of(k.c, field_id)
 		if field == nil {

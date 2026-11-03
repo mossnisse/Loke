@@ -47,7 +47,7 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 			}
 		}
 		for index in 1 ..< len(c.packages) {
-			rebuild_active_items(c, &c.packages[index])
+			rebuild_active_items(c, c.packages[index])
 		}
 		if discover_imports(c, &k) {
 			changed = true
@@ -62,7 +62,7 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 
 	// The last unchanged round left every active view current.
 	for index in 1 ..< len(c.packages) {
-		report_stalled_whens(&k, &c.packages[index])
+		report_stalled_whens(&k, c.packages[index])
 	}
 	// Bodies wait until selections and imports are stable.
 	for id in package_order(c) {
@@ -253,7 +253,6 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 @(private)
 discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	changed := false
-	// Loading may reallocate `c.packages`, so retain IDs rather than pointers.
 	for index := 1; index < len(c.packages); index += 1 {
 		id := Package_Id(index)
 		for file in package_of(c, id).files[:] {

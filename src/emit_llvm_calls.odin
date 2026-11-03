@@ -83,7 +83,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		source := expr_base(v.bound[0]).type
 		return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
 	case .Math_Fma_Available:
-		return .FMA in emitted_features(e) ? "true" : "false"
+		return emitted_has_fma(e) ? "true" : "false"
 	case .Math_Fma_Instruction:
 		return emit_fma_instruction(e, v)
 	case .Math_Sqrt_Instruction:

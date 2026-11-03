@@ -698,7 +698,7 @@ synth_record :: proc(k: ^Checker, name, alias_prefix: string, field_names: []str
 	record.kind = .Struct
 	record.fields = make([]Field, len(types), c.semantic_allocator)
 	for type, index in types {
-		alias := intern_identifier(c, fmt.aprintf("%s$%d", alias_prefix, index, allocator = c.semantic_allocator))
+		alias := intern_identifier(c, fmt.tprintf("%s$%d", alias_prefix, index))
 		k.scope.names[alias] = new_associated_type(c, alias_prefix, type, INVALID_TYPE)
 		names := make([]Name, 1, c.semantic_allocator)
 		names[0] = synth_name(c, field_names[index], span)

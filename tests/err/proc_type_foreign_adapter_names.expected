@@ -1,0 +1,9 @@
+L0310
+@13:46
+cannot initialise `proc "c"(cstring_view) -> i32` with `proc "c"(cstring_view, ..) -> i32`
+L0310
+@14:22
+cannot initialise `proc "c"()` with `proc "c"(..)`
+L0310
+@15:32
+cannot initialise `proc "c"(int)` with `proc "c"(@(by_ptr) int)`
