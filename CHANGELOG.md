@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- The parser now rejects four shapes [grammar.md](grammar.md) never admitted. A capture clause with
+  no body, `T :: proc() capture(y);`, is `L0259`: it compiled and dropped the clause, so `y` need not
+  have existed; write a procedure type with no clause. `-> !` on a procedure type in result position,
+  `f :: proc() -> proc() -> ! { ... }`, is `L0257`, as it is elsewhere: calls through it never
+  diverged, so remove the `!`. A parenthesized slice, `&mut (a[1:2])`, is `L0357`, as `&(a[1:2])` is:
+  drop the parentheses for mutable slicing. Attributes on an empty statement, `@(x) ;` in a body, are
+  `L0206`, as at file scope: they applied to nothing, so remove them.
 - An extension `operator([]=)` no longer takes a store that built-in indexing answers
   ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
   with `impl [3]int { set :: operator([]=) ... }`, `a[0] = 1` now writes the element, as a read
@@ -1379,6 +1386,24 @@ checklist.
   redefinition error, and a foreign binding of `wmain` there refers to the entry
   ([`@(export)`](design.md#export)).
 - A debugger shows an instance's argument as written, `wrap.[]int` rather than `wrap.$5b$5dint`.
+- `if (case 1 = x) y;` and its `for` form report the missing `{` (`L0213`) rather than ending the
+  compiler with no diagnostic.
+- A variable declaration in a control-flow header takes attributes, as
+  [grammar.md](grammar.md#statements) has it: `if (@(tag) y := 1; y > 0) { }` was a cascade of errors.
+- One malformed construct is one diagnostic in `for ()`, `return );`, `S :: struct(1) { }`,
+  `x := (1 2);`, `move(1 2)` and `if (x := 1) { }`. A header's declaration that fails stops at the
+  header's `)`, so `for (x: ) { a(); } b();` keeps its body and what follows it, and deeply nested
+  blocks report the depth limit alone rather than hundreds of stray `}`.
+- A foreign import's path is decoded as an import's is, so `"sys\x74em:kernel32.lib"` names a system
+  library rather than a file with a backslash in its name.
+- An array length holding composite-literal arguments, `[g([g([1]int{})]int{})]int{}`, parses once
+  per level; each level used to double the time, so 22 of them in 250 bytes took 18 seconds.
+- A procedure literal inside a result type's array length or generic arguments has its body:
+  `f :: proc() -> [g(proc() -> int { return 2; })]int { ... }` was `L0253`.
+- A procedure body or group where only a type is grammatical, as in `x: proc { a };` and
+  `struct { a: proc() { } }`, is `L0210`, not `L0350` calling it a compiler defect.
+- A record type field's `=`, `inout`, `move` and `..` errors no longer advise declaring a `struct`,
+  whose fields have none of them either.
 - A store's receiver is a place, so `m["a"][1] = 5` and `o[0][1] = 5` with an `inout` `operator([])`
   compile when the element has an `operator([]=)`, as their `+=` forms did
   ([Indexing and slicing](design.md#indexing-and-slicing)).

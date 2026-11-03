@@ -1,0 +1,9 @@
+package main;
+
+// grammar.md "Statements": an `Init_Statement` may be a `Variable_Decl`, which
+// takes attributes; the checker validates them as it does any declaration's.
+main :: proc() {
+	if (@(unknown_one) y := 1; y > 0) { }
+	for (@(unknown_two) i := 0; i < 1; i += 1) { }
+	switch (@(unknown_three) k := 1; k) { case: }
+}

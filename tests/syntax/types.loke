@@ -71,4 +71,9 @@ Entry :: (key: string_view, value: int);
 nested: (inner: (a: int, b: int), count: int);
 in_carriers: []( a: int, b: int);
 
+// grammar.md "Procedures": an expression nested in a result type is an expression,
+// so a procedure literal there has its body.
+result_argument :: proc() -> [g(proc() -> int { return 2; })]int { }
+result_length :: proc() -> [(proc() -> int { return 2; })()]int { }
+
 main :: proc() { }

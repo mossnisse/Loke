@@ -9,4 +9,4 @@ L0259
 expected a capture name
 L0259
 @10:21
-a procedure with a capture clause needs a body, not `---`
+a procedure with a capture clause needs a body

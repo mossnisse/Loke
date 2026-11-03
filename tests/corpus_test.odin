@@ -840,7 +840,6 @@ UNPINNED :: []string {
 	// `parse_declaration`, entered only through `starts_declaration`, which has
 	// already scanned the names and the `:`.
 	"L0207",
-	"L0208",
 	// A constant always parses with a value, and `---` reaches the checker only
 	// as `x: T = ---`.
 	"L0307",

@@ -1,0 +1,9 @@
+package main;
+
+// A `case` header lowers to a switch, whose arm must not hold the block that never
+// opened: this ended the compiler with no diagnostic.
+main :: proc() {
+	x := 1;
+	if (case 1 = x) x = 2;
+	for (case 1 = x) x = 3;
+}

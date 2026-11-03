@@ -1,0 +1,24 @@
+// grammar.md "Procedures": a `Proc_Type` is a signature and nothing else. A
+// capture clause makes a definition, which has a body; `-> !` is for declarations,
+// in result position too; and where only a type is grammatical, a body or a
+// group is the writer's mistake rather than the checker's.
+package main;
+
+Captured :: proc() capture(y);
+
+returns_diverging :: proc() -> proc() -> ! { return nil; }
+
+group_as_type: proc { a };
+
+Fields :: struct {
+	body_as_type: proc() { }
+}
+
+// A struct's field has no default, mode, or variadic either, so a record type's
+// is not told to declare one.
+default_field: (a: int = 3);
+mode_field: (a: inout int);
+
+Generic :: struct(1) { }
+
+sentinel :: proc() { }

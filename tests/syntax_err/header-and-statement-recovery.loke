@@ -1,0 +1,24 @@
+// One mistake is one diagnostic: a malformed statement recovers past itself, and a
+// header's initial statement that fails stops at the header's `)`, so the body
+// after it is still a body and what follows is still statements.
+package main;
+
+main :: proc() {
+	for () { }
+	for (x: ) { after_type(); }
+	if (y: ) { after_type(); }
+	switch (z: ) { }
+	if (w := ) { after_value(); }
+	if (v := 1) { after_value(); }
+	if (@(tag) u > 0) { }
+	@(tag) ;
+	r := (1 2);
+	s := move(1 2);
+	after();
+}
+
+returns :: proc() -> int {
+	return );
+}
+
+sentinel :: proc() { }

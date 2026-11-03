@@ -813,6 +813,20 @@ Attribute :: struct {
 	value: Expr, // nil unless the attribute was written `name = value`
 }
 
+has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
+	_, found := find_attribute(attributes, name)
+	return found
+}
+
+find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, bool) {
+	for attribute in attributes {
+		if len(attribute.path) == 1 && attribute.path[0].text == name {
+			return attribute, true
+		}
+	}
+	return {}, false
+}
+
 Stmt :: union {
 	^Decl,
 	// An `impl` of a type declared in the same body.

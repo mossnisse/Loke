@@ -474,20 +474,6 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	}
 }
 
-has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
-	_, found := find_attribute(attributes, name)
-	return found
-}
-
-find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, bool) {
-	for attribute in attributes {
-		if len(attribute.path) == 1 && attribute.path[0].text == name {
-			return attribute, true
-		}
-	}
-	return {}, false
-}
-
 // design.md "@(require_results)": a type carrying it makes every value aggregate
 // containing it require its results too (`type_requires_results`).
 apply_type_metadata :: proc(k: ^Checker, d: ^Decl, type: Type_Id) {

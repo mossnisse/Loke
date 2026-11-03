@@ -122,6 +122,13 @@ main :: proc() {
 	return;
 }
 
+// grammar.md `Init_Statement`: a `Variable_Decl` takes attributes in a header too.
+with_header_attributes :: proc() {
+	if (@(tag) a := 1; a > 0) { }
+	for (@(tag) i := 0; i < 1; i += 1) { }
+	switch (@(tag) k := 1; k) { case: }
+}
+
 with_results :: proc() -> (a: int, b: int) {
 	return {a = 1, b = 2};
 }

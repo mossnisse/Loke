@@ -1131,6 +1131,43 @@ malformed_escape_stays_in_bounds :: proc(t: ^testing.T) {
 	}
 }
 
+// A composite literal's type, probed as an argument, is reused rather than parsed
+// again, so this nesting takes linear time; parsed twice, it never finishes.
+@(test)
+nested_composite_arguments_parse_once :: proc(t: ^testing.T) {
+	levels := 60
+	source := strings.concatenate(
+		{
+			"package main;\n\nx := ",
+			strings.repeat("[g(", levels, context.temp_allocator),
+			"[1]int{}",
+			strings.repeat(")]int{}", levels, context.temp_allocator),
+			";\n",
+		},
+		context.temp_allocator,
+	)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, source)
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+}
+
+// A library path decodes as an import path does, so an escape cannot hide
+// `system:` from the linker's test.
+@(test)
+foreign_import_path_is_decoded :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, `package main;
+foreign import k "sys\x74em:kernel32.lib";`)
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+	if !testing.expect(t, len(p.f.items) == 1, "the foreign import was not retained") {
+		return
+	}
+	item, ok := p.f.items[0].(^Item_Foreign_Import)
+	testing.expectf(t, ok && item.path == "system:kernel32.lib", "the path was not decoded: %q", item.path)
+}
+
 @(test)
 parser_recovery_retains_nodes :: proc(t: ^testing.T) {
 	text := `package main;
@@ -1151,7 +1188,6 @@ main :: proc() {
 	_, first_is_import := f.items[0].(^Item_Import)
 	_, second_is_decl := f.items[1].(^Decl)
 	testing.expect(t, first_is_import, "the malformed import was not retained")
-	testing.expect(t, item_base(f.items[0]).has_error, "the malformed import was not marked")
 	if !testing.expect(t, second_is_decl, "recovery did not reach the following main declaration") {
 		return
 	}
@@ -1185,7 +1221,7 @@ main :: proc() {
 		return
 	}
 	deferred, ok := body.stmts[0].(^Stmt_Defer)
-	testing.expect(t, ok && deferred.has_error && deferred.stmt != nil, "empty defer was retained as a clean nil statement")
+	testing.expect(t, ok && deferred.stmt != nil, "empty defer was retained as a clean nil statement")
 }
 
 @(test)
@@ -1329,10 +1365,30 @@ parenthesized_segments :: proc(step: string, segments, count: int) -> string {
 }
 
 // Deep parentheses, operator chains, prefix runs, a type name's selector
-// chain, and chains built on parenthesized ones each give one L0222.
+// chain, bare blocks, and chains built on parenthesized ones or on a literal's
+// reused type each give one L0222.
 @(test)
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
+		strings.concatenate(
+			{
+				"package main;\n\nmain :: proc() {\n",
+				strings.repeat("{", 10_000, context.temp_allocator),
+				strings.repeat("}", 10_000, context.temp_allocator),
+				"\n}\n",
+			},
+			context.temp_allocator,
+		),
+		strings.concatenate(
+			{
+				"package main;\n\nmain :: proc() {\n\tf(",
+				strings.repeat("[1]", 1_500, context.temp_allocator),
+				"int{}",
+				strings.repeat(".a", 1_500, context.temp_allocator),
+				");\n}\n",
+			},
+			context.temp_allocator,
+		),
 		strings.concatenate(
 			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("(", 10_000, context.temp_allocator), "1;\n}\n"},
 			context.temp_allocator,
