@@ -575,31 +575,24 @@ resolved_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> Order_P
 	return c.order_policies[element]
 }
 
-// The gate on `sort` and `reverse_sort`, reported at the call.
-require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> bool {
-	if chosen == nil || chosen.synth != .Container_Op {
-		return true
-	}
-	#partial switch chosen.container_op {
-	case .Sort, .Reverse_Sort:
-	case:
-		return true
-	}
-	receiver := len(chosen.params) > 0 ? chosen.params[0] : INVALID_TYPE
+// The gate on `sort` and `reverse_sort`: it settles the element's `<`, which the
+// emitted sort reads.
+@(private = "file")
+require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
 	element := container_element(k.c, receiver)
 	if element == INVALID_TYPE {
 		element = slice_element(k.c, receiver)
 	}
 	#partial switch resolved_element_order_policy(k.c, element).kind {
 	case .Builtin, .Inherent:
-		return true
+		return
 	case .Unordered:
-		return false // already reported, once, at this element
+		return // already reported, once, at this element
 	}
 	policy, reason := resolve_element_order_policy(k.c, element)
 	if reason == "" {
 		k.c.order_policies[element] = policy
-		return true
+		return
 	}
 	if committing(k.c) {
 		k.c.order_policies[element] = Order_Policy{kind = .Unordered}
@@ -609,7 +602,64 @@ require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> b
 		"`%s` cannot be sorted: its element `%s` %s",
 		type_name(k.c, receiver), type_name(k.c, element), reason,
 	)
-	return false
+}
+
+// The bound slot of the element a container insertion takes, or -1 for any other
+// operation.
+container_inserted_slot :: proc(op: Container_Op) -> int {
+	#partial switch op {
+	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
+		return 2
+	}
+	return -1
+}
+
+// The requirements of a container operation, whichever spelling called it:
+// `values.resize(1)`, `([dynamic]T).resize(inout values, 1)`, or a group. They
+// leave the call's type alone, so a destructuring keeps its arity.
+check_container_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
+	if chosen == nil {
+		return
+	}
+	check_container_element(k, v.span, chosen)
+	element := container_element(k.c, len(chosen.params) > 0 ? chosen.params[0] : INVALID_TYPE)
+	// design.md "Container insertion": taken like an initialization, so a
+	// borrowed place is copied and a move-only one needs `move(...)`.
+	if slot := container_inserted_slot(chosen.container_op); slot >= 0 && slot < len(v.bound) {
+		classify_copy_cost(k, v.bound[slot], element, .Insertion)
+		if type_clone_disabled(k.c, element) {
+			classify_copy(k, v.bound[slot], element, .Insertion)
+		}
+	}
+	// A lone spread lends its slice instead of building a pack, and `append`
+	// would keep the elements.
+	if chosen.container_op == .Append && type_clone_disabled(k.c, element) && v.variadic_forwards && len(v.bound) > 1 {
+		report_move_only_spread(k, v.bound[1], element)
+	}
+}
+
+// What a container operation requires of its element type alone, so it holds
+// for a call and for the operation taken as a procedure value.
+check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol) {
+	if chosen.container_op == .None || len(chosen.params) == 0 {
+		return
+	}
+	element := container_element(k.c, chosen.params[0])
+	#partial switch chosen.container_op {
+	case .Resize:
+		// design.md "Zero values": growth fills new slots with the element's zero.
+		require_type_has_zero(k, element, span, "growing a container")
+	case .Map_Lookup_Value:
+		if type_clone_disabled(k.c, element) {
+			errorf(
+				k.c, span, "L0491",
+				"`%s` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows",
+				type_name(k.c, element),
+			)
+		}
+	case .Sort, .Reverse_Sort:
+		require_sort_order_policy(k, chosen.params[0], span)
+	}
 }
 
 // design.md "Maps": a key needs a coherent inherent `==` and `hash`. Checked

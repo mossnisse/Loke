@@ -83,7 +83,6 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 2. **`break` and `continue` double-drop.** [emit_llvm_stmt.odin:687](src/emit_llvm_stmt.odin#L687) takes `break_depth` before `push_scope`, so `for (r := mk(3); ; ) { break; }` drops `r` twice; [emit_llvm_stmt.odin:102](src/emit_llvm_stmt.odin#L102) drains every temporary frame rather than those opened inside the loop. BUG-emit_llvm_stmt-2, -1. About 10 lines.
 
-3. **A sort can silently do nothing.** The gate at [container.odin:526](src/container.odin#L526) misses the direct call and the procedure value, so `([dynamic]int).sort(inout v)` emits an empty body. Call it from [check_calls.odin:508](src/check_calls.odin#L508) and delete the two other calls. BUG-check_calls-1, BUG-container-1. About 5 lines.
 
 4. **Five small independent fixes.** Spill test on `@global` operands, [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516) (BUG-emit_llvm_calls-1). `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
 
@@ -127,7 +126,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
 
-- BUG-check_calls-1 and BUG-container-1: the sort gate is called from two of three call paths. Call `require_sort_order_policy` ([container.odin:526](src/container.odin#L526)) from `check_container_element` ([check_calls.odin:508](src/check_calls.odin#L508)), which the direct path and the procedure-value path ([check_expr.odin:1184](src/check_expr.odin#L1184)) both reach, and delete the calls at [check_calls.odin:464](src/check_calls.odin#L464) and [check_calls.odin:625](src/check_calls.odin#L625).
 - BUG-check_expr.part2-6 and BUG-simd-2: [check_expr.odin:3523](src/check_expr.odin#L3523) splats a typed constant without the lane check a runtime scalar gets.
 - BUG-eval.part1-2, BUG-const_ops-2 and BUG-hash-2: `zero_const` answers `.Nil` for a union ([check_expr.odin:3417](src/check_expr.odin#L3417)), where every other union constant is an `.Aggregate` with a variant. Fixing the constant's form, rather than the three readers, is the smaller change.
 
@@ -219,7 +217,7 @@ Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves ab
 
 #### Operator binding and the built-in operator table
 
-[operators.odin:451](src/operators.odin#L451) `bind_operator_operands` with [operators.odin:480](src/operators.odin#L480) `check_operator_modes` is a cut-down copy of [overload.odin:902](src/overload.odin#L902). It has lost `substitute_caller_location` (BUG-operators-8) and the pointer dereference. Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 25 lines. The dereference step also repeats at [check_calls.odin:736](src/check_calls.odin#L736).
+[operators.odin:451](src/operators.odin#L451) `bind_operator_operands` with [operators.odin:480](src/operators.odin#L480) `check_operator_modes` is a cut-down copy of [overload.odin:902](src/overload.odin#L902). It has lost `substitute_caller_location` (BUG-operators-8) and the pointer dereference. Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 25 lines.
 
 The table of what a built-in operator accepts is split across [check_expr.odin:2658](src/check_expr.odin#L2658), [check.odin:4197](src/check.odin#L4197), [operators.odin:336](src/operators.odin#L336), [operators.odin:363](src/operators.odin#L363) and the case-by-case restatement at [check_expr.odin:2028](src/check_expr.odin#L2028). Shifts are only in the second and third, SIMD only in the second, which is BUG-operators-2 and BUG-operators-7. Shared form: one `builtin_operator_applies` with shift and SIMD cases, `compound_applies` as that minus concatenation, and `check_unary` asking `builtin_unary_defined`. Saves about 30 lines.
 
@@ -1123,7 +1121,7 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 - [cfg_provenance.odin:7612](src/cfg_provenance.odin#L7612) `prov_assign`: both branches repeat `len(paths) == 1 && prov_offsets_agree(...) && prov_path_names_one_place(paths[0])`. Test that once, set `path` and `place_path`, then branch on `prov_path_names_one_place(below)` versus `lands == nil && publish.linked`. (about 3 lines)
 - [cfg_provenance.odin:7582](src/cfg_provenance.odin#L7582) `prov_assign`: `linked_sources` is only ever measured; use `links := !replaces_read && len(sources) > 0` at 7587 and 7593. Also `stored` (7580) and the `prov_type` at 7647 are `target_type`, `!place_ok` at 7652 is always true, and the `value_loans != nil` at 7467 and 7474 add nothing to the length tests. (about 4 lines)
 - [cfg_provenance.odin:6972](src/cfg_provenance.odin#L6972) `prov_slice`: the `lo`/`hi` walk is written three times (6972, 6989, 7005) and the tail at 7014-7021 has two returns of `source`. A `prov_walk_slice_bounds` helper and `if array && prov_expr_is_temporary(v.operand) {...}; return source` do it. (about 11 lines)
-- [cfg_provenance.odin:8004](src/cfg_provenance.odin#L8004) `prov_call`: `explicit_erasure_operand` already rejects anything but `Call_Conversion`, so `case Call_Conversion, Call_Dyn_Conversion:` can hold both tests. (about 4 lines)
+- [cfg_provenance.odin:8004](src/cfg_provenance.odin#L8004) `prov_call`: `explicit_view_operand` already rejects anything but `Call_Conversion`, so `case Call_Conversion, Call_Dyn_Conversion:` can hold both tests. (about 4 lines)
 - [cfg_provenance.odin:8000](src/cfg_provenance.odin#L8000) `prov_call`: `v == graph.spawning && !thread_facts_pending` is computed at 8000, 8089 and 8126, and nothing in the walk changes either side; one `spawned` at the top serves all three. (about 2 lines)
 - [cfg_provenance.odin:8135](src/cfg_provenance.odin#L8135) `prov_call`: `proc_parameter_mode(c, call_proc_type(c, v), index)` re-resolves what `input.arguments[index].mode` holds, as `prov_argument_is_inout` reads it. (about 1 line)
 - [cfg_provenance.odin:7212](src/cfg_provenance.odin#L7212) `prov_declare`: set `projected` once: `projected := -1; if d.destructure.active { projected = prov_destructure_index(...) }`. (about 1 line)
@@ -1487,69 +1485,10 @@ The per-built-in rules are readable, but one prologue and one operand pattern ar
 
 The file is readable and its comments mostly say why, and every declaration has a caller. Its weak spot is that the direct, method, and group call paths each finish a call by hand with different subsets of the same steps, which is the root of the one serious bug; the bugs below were reproduced with the `lokec.exe` built from this commit.
 
-**Bugs**
-
-- `BUG-check_calls-1` **high** [check_calls.odin:194](src/check_calls.odin#L194) `check_call`: the direct path never calls `require_sort_order_policy`, so nothing settles the element's `<` and the emitted sort is an empty body. Scenario: `([dynamic]int).sort(inout values)` on `{3, 1}` builds and leaves `3, 1`; `f := ([dynamic]int).sort; f(inout values)` does too, and a `[dynamic]Opaque` gets no L0651. *Confirmed: Reproduced: `([dynamic]int).sort(inout values)` and `f := ...sort; f(inout values)` on {3, 1} print 3 1 while `values.sort()` prints 1 3; `[dynamic]Opaque` builds without L0651 on both spellings. Not recorded in known-gaps.md.*
-  Fix: call `require_sort_order_policy` from `check_container_element`, which every call spelling and the procedure-value path already reach, and drop the calls at lines 464 and 625.
-- `BUG-check_calls-2` **medium** [check_calls.odin:997](src/check_calls.odin#L997) `builtin_conversion`: `convertible` accepts any assignable pair, but the view forms are never materialized, so `T(v)` emits a value of the source's representation. Scenario: `string_view(s)`, `([]int)(dyn)`, and `([]int)(array)` each end in L0403 with clang rejecting the LLVM; `([]int)(dyn)` first warns that it clones. *Confirmed: Reproduced: string_view(s), ([]int)(dyn) (after an L0507 clone warning) and ([]int)(array) all pass the checker and fail with L0403 in clang (type mismatch in the LLVM); the implicit forms v: string_view = s, w: []int = d, x: []int = a compile and run. Not recorded.*
-  Fix: materialize to the target when the pair is assignable and the representations differ, or reject it with L0373.
-- `BUG-check_calls-3` **low** [check_calls.odin:531](src/check_calls.odin#L531) `fold_standard_customization_call`: only `check_method_call` folds `len()`, so constness depends on the spelling, though design.md "Receiver forms" calls the two forms the same call. Scenario: with `a: [4]int`, `static_assert(a.len() == 4)` passes and `static_assert(([4]int).len(a) == 4)` fails with L0341. Fix: fold on the direct path as well. *Not verified.*
-- `BUG-check_calls-4` **low** [check_calls.odin:661](src/check_calls.odin#L661) `report_argument_copies`: the skip meant for the inserted element covers every container operation, so map keys lose their copy site. Scenario: at `-copy-cost=64`, `f(big)` warns L0507 but `m.find(big)` and `m.try_insert(big, 1)` on a `map[Big]int` do not. *Not verified.*
-  Fix: skip only the slot `check_container_call` classifies (`bound[2]` of the insertions).
-- `BUG-check_calls-5` **low** [check_calls.odin:869](src/check_calls.odin#L869) `bind_arguments`: `require_argument_ownership` also runs over arguments that already failed, though line 836 says a failed argument is not a second mistake. Scenario: `f :: proc(a: move string)` with `f(n)`, `n: int`, reports L0310 and then L0501 at the same span. Fix: call it only when `ok`; line 771 likewise. *Not verified.*
-- `BUG-check_calls-6` **low** [check_calls.odin:766](src/check_calls.odin#L766) `bind_arguments`: only this binder knows `info.c_vararg`; `build_candidate` and `bind_chosen_call` in overload.odin do not, so a C-variadic group member refuses its variadic arguments. Scenario: `g :: proc{printf, other}; g("hi %d\n", 1)` says `printf` takes 1 argument, found 2, while `printf("%d", 1)` works. *Not verified.*
-  Fix: reject such a member in `resolve_group_members`, or teach both overload procedures.
-
-**Simplification**
-
-- [check_calls.odin:39](src/check_calls.odin#L39) `check_call`: `named_callee_symbol` already handles `f` and `pkg.f`, so read it once at the top. One `.Builtin` test (qualifying a selector callee) replaces lines 39-49, and one `.Proc_Group` or generic-template test replaces lines 57 and 65; `callee_package_builtin`, `callee_group`, and `callee_generic_procedure` go. (about 25 lines)
-- [check_calls.odin:775](src/check_calls.odin#L775) `bind_arguments`: `filled` always equals `bound[slot] != nil`, because a bound value is never nil even on failure; `bind_variadic_arguments` already tests `bound` at line 1154. Drop the slice. (about 4 lines)
-- [check_calls.odin:741](src/check_calls.odin#L741) `bind_written_argument`: end with `return value, check_bound_argument_mode(k, value, target, expected, "an `inout` argument")` after the `passed` test. (about 4 lines)
-- [check_calls.odin:1040](src/check_calls.odin#L1040) `check_conversion_hook_call`: it has one caller, and `args` and `attempted` both derive from `v.args[0]`. Take neither, and build the one-element `args` after the `usable` test instead of at line 980 on a path that may only report. (about 3 lines)
-- [check_calls.odin:650](src/check_calls.odin#L650) `report_argument_copies`: lines 650 and 661 fetch the same symbol; test `.Builtin` and `container_op` on one `sym`. (about 2 lines)
-- [check_calls.odin:19](src/check_calls.odin#L19) `call_through_value`: every checker writer of a call `Resolution` sets `symbol` and `chosen_overload` equal, so the second of the two identical tests is redundant. (about 3 lines)
-- [check_calls.odin:393](src/check_calls.odin#L393) `check_method_call`: lines 369, 393, 424, 796, and 1148 re-intern a name the parser already interned, and line 332 does so for `ident.name_id`; `name_identifier` (check.odin:1727) or `name.id` says it without a hash.
-
-**Dead code**
-
-- (branch) [check_calls.odin:476](src/check_calls.odin#L476): `check_container_element` returns `true` on every path, contrary to its comment at line 507, so lines 476-479, 461-463, and check_expr.odin:1184-1187 never fire. Line 460 wants the type kept after a report, so make it return nothing rather than return false.
-- (branch) [check_calls.odin:1288](src/check_calls.odin#L1288): `parameter_slot_named`'s nil guard is unreachable; lines 791 and 1143 report a nil declaration first and overload.odin:406 returns on nil. The clause about procedure values at line 1285 goes with it.
-- (branch) [check_calls.odin:548](src/check_calls.odin#L548): the default `operation` text and `case .None` at line 553 cannot be reached past the guard at line 545; `Hook_Kind` has only the other three members. Use `operation: string` and a `#partial switch`.
-- (branch) [check_calls.odin:1117](src/check_calls.odin#L1117): `pack` is the last index of `param_modes`, so `len(info.param_modes) > 0` here and the `slot < len(info.param_modes)` tests at lines 1130 and 1159 always hold; index directly.
-- (branch) [check_calls.odin:1312](src/check_calls.odin#L1312): both callers of `check_spread_argument` pass `prechecked`, so its `= false` default never applies.
-
-**Data structures and algorithms**
-
-- [check_calls.odin:40](src/check_calls.odin#L40) `check_call`: a plain `f(x)` walks the scope chain for the same name about seven times (lines 40, 51, 57, 65, 69, and twice at 90) before `check_expr` looks it up again, on every call in the program, multiplied by scope depth. The lookup cannot change between these lines; compute `callee_symbol` once and pass it, as in the first Simplification bullet.
-
 **Near copies**
 
-- [check_calls.odin:789](src/check_calls.odin#L789) and [check_calls.odin:1143](src/check_calls.odin#L1143): the same named-argument resolution with the same three L0371 reports, differing in the `limit` and in `filled` versus `bound`. With `filled` gone, `named_argument_slot(k, arg, declared, bound, limit) -> int` serves both. (about 12 lines)
-- [check_calls.odin:1287](src/check_calls.odin#L1287) and [overload.odin:230](src/overload.odin#L230): `common_argument_type` hand-writes `parameter_slot_named`, whose comment says it is shared so the two cannot disagree. Likewise [overload.odin:241](src/overload.odin#L241) hand-writes `variadic_parameter_index` at [check_calls.odin:1080](src/check_calls.odin#L1080); call both. (about 12 lines)
-- [check_calls.odin:812](src/check_calls.odin#L812) and [check_calls.odin:850](src/check_calls.odin#L850): one L0322 report, identical across nine lines each, with an "at least" variant at lines 879 and 1179. `report_argument_count(k, v, expected, found, at_least := false)` covers all four. (about 15 lines)
-- [check_calls.odin:436](src/check_calls.odin#L436) and [check_calls.odin:687](src/check_calls.odin#L687): the packed-field L0614 report followed by the assignable test, differing in span and subject. `check_inout_place(k, value, span, subject) -> bool` is the shared form. (about 8 lines)
-- [check_calls.odin:495](src/check_calls.odin#L495) and [check_calls.odin:1253](src/check_calls.odin#L1253): the same L0503 spread message; `report_move_only_spread(k, spread, element)`. (about 4 lines)
-- [check_calls.odin:455](src/check_calls.odin#L455) and [check_calls.odin:595](src/check_calls.odin#L595): bind the candidate, invalidate on failure, set the result, check the container; lines 452-454 and 634-636 likewise repeat the resolution, operation, and `enroll_synth`. One `finish_chosen_call` keeps the paths from drifting as they have in the first bug. (about 8 lines)
 - [check_calls.odin:668](src/check_calls.odin#L668) and [semantic.odin:1341](src/semantic.odin#L1341): `index < len(info.param_modes) ? ... : Param_Mode.Value` recurs at lines 826 and 899 and about fifteen times across the emitter, `parallel.odin`, and others. A `parameter_mode(info, index)` beside `proc_parameter_mode`, which then calls it, replaces them all.
 - [check_calls.odin:78](src/check_calls.odin#L78) and [iterate.odin:68](src/iterate.odin#L68): `range_callee`, [box.odin:45](src/box.odin#L45) `box_type_callee`, and [simd.odin:15](src/simd.odin#L15) `simd_callee` differ only in one string. `unshadowed_callee(k, callee, "Range")` replaces the three. (about 15 lines)
-
-**Structure and boundaries**
-
-- [check_calls.odin:30](src/check_calls.odin#L30) `check_call` runs 165 lines over three jobs. Natural seams: `check_compile_time_callee` for the forms that are not values (lines 38-111), `report_not_callable` (lines 152-168), and the direct procedure call (lines 170-194).
-- [check_calls.odin:472](src/check_calls.odin#L472): `check_container_call` and `check_container_element` are container semantics and belong in `container.odin`, beside `require_sort_order_policy`; `fold_standard_customization_call` at line 531 belongs in `customization.odin`, which contributes `len`.
-- [check_calls.odin:560](src/check_calls.odin#L560): `callee_argument_denotes_type` has its only caller at box.odin:74 and belongs in `box.odin`.
-- [check_calls.odin:232](src/check_calls.odin#L232): `set_type_call`, `annotate_chosen_callee` (line 623), and `fold_standard_customization_call` (line 531) have no caller outside this file but are not `@(private = "file")`, as the Source-code map asks.
-- [check_calls.odin:1287](src/check_calls.odin#L1287): `parameter_slot_named` and `pass_argument` (line 1302) sit under the "variadics" banner but serve every binder; move them next to `bind_arguments` and `check_argument_value`.
-
-**Comments**
-
-- [check_calls.odin:124](src/check_calls.odin#L124): delete; the header at line 379 says it and the next test is not about it.
-- [check_calls.odin:337](src/check_calls.odin#L337): delete; it restates `callee_is_descriptor`.
-- [check_calls.odin:348](src/check_calls.odin#L348): delete; it restates `callee_generic_procedure`.
-- [check_calls.odin:505](src/check_calls.odin#L505): drop "False when the operation cannot be used at all", which is untrue.
-- [check_calls.odin:567](src/check_calls.odin#L567): shorten to "A call through a group or generic procedure"; the steps are the body.
-- [check_calls.odin:761](src/check_calls.odin#L761): replace with what the body does not say: "The binder for a call with no candidates: a single named procedure or a procedure value."
-- [check_calls.odin:1195](src/check_calls.odin#L1195): delete; the header at line 1089 says it. (about 8 lines across the file)
 
 ### src/check_expr.odin (part 1 of 2)
 
@@ -1756,8 +1695,6 @@ The file has no dead symbols, but its checking gates have two reproduced bugs. I
 
 **Bugs**
 
-- `BUG-container-1` **high** [container.odin:526](src/container.odin#L526) `require_sort_order_policy`: only call paths settle a sort's `<` ([check_calls.odin:464](src/check_calls.odin#L464), [:625](src/check_calls.odin#L625)); the procedure-value path ([check_expr.odin:1184](src/check_expr.odin#L1184)) does not, and an unsettled body is emitted empty ([emit_llvm_containers.odin:150](src/emit_llvm_containers.odin#L150)). *Confirmed: Reproduced: `f := ([dynamic]int).sort` and `([]mut int).sort` leave 3 1 2 unsorted; `([dynamic]Opaque).sort` skips L0651. Even the direct `([dynamic]int).sort(inout values)` call no-ops: emit_synth_sort emits `ret void`. Not recorded; high is fair.*
-  Scenario: `f := ([dynamic]int).sort; f(inout values);` on `{3, 1, 2}` prints `3 1 2`, as does `([]mut int).sort`; `([dynamic]Opaque).sort` compiles with no L0651. Fix: call the gate from `check_container_element` ([check_calls.odin:508](src/check_calls.odin#L508)), which both paths reach.
 - `BUG-container-2` **high** [container.odin:628](src/container.odin#L628) `require_nested_map_key_policies_inner`: the element case omits `.Box`, so a map named only inside a `Box` never gets a key policy. *Confirmed: Reproduced: `x: Option(Box(map[u16]int)) = .none;` exits 2 with internal L0405; `S :: struct { p: Box(map[f64]int) }` compiles (rc 0), while `[dynamic]map[f64]int` gets L0586. Line 628 omits .Box; not in known-gaps. Severity high is fair: valid code hits an ICE.*
   Scenario: valid `x: Option(Box(map[u16]int)) = .none;` fails with internal L0405 "a map key operation was not resolved during checking"; `S :: struct { p: Box(map[f64]int) }` is accepted with no L0586. Fix: add `.Box` to the case.
 
@@ -1771,14 +1708,12 @@ The file has no dead symbols, but its checking gates have two reproduced bugs. I
 - [container.odin:795](src/container.odin#L795) `type_accepts_via`: one expression will do: `type_is_managed(c, type) && !type_clone_disabled(c, type) && underlying_kind(c, type) != .String`. (about 12 lines)
 - [container.odin:815](src/container.odin#L815) `bind_literal_allocator`: `if literal, ok := value.(^Expr_Composite); ok && type_is_container(c, literal.type) { literal.via = symbol_via_allocator(c, destination) }`. This line is the only writer of a literal's `via`, so storing nil is harmless. (about 6 lines)
 - [container.odin:480](src/container.odin#L480) `inherent_less_operator`: it has one caller (line 457); write `found, _ := inherent_self_operator(c, element, "<")` there. (about 5 lines)
-- [container.odin:530](src/container.odin#L530) `require_sort_order_policy`: replace the empty-case `#partial switch` with `if chosen.container_op != .Sort && chosen.container_op != .Reverse_Sort { return true }`. (about 2 lines)
 - [container.odin:643](src/container.odin#L643) `require_nested_map_key_policies_inner`: the `info.result != INVALID_TYPE` test repeats line 619, and the `.Map` arm can be one `&&` return. (about 3 lines)
 - [container.odin:88](src/container.odin#L88) `type_is_container`: `kind := underlying_kind(c, id); return kind == .Dynamic_Array || kind == .Map`, as its two neighbours do. (about 3 lines)
 - [container.odin:668](src/container.odin#L668): a fresh `synth_proc` id cannot be nil, as `synth_self_member` already assumes; drop the guard. (about 2 lines)
 
 **Dead code**
 
-- (branch) [container.odin:526](src/container.odin#L526): `require_sort_order_policy`'s `bool` result is discarded by both callers, so it can return nothing unless the BUG-container-1 fix comes to use it.
 - (branch) [container.odin:68](src/container.odin#L68): the default `case: return` is unreachable because the only two callers pass a dynamic array and a map; `info == nil` at line 59 is unreachable too.
 - (branch) [container.odin:454](src/container.odin#L454): "is not a type" is unreachable. Sort members exist only on real sequences, and `dynamic_array_of` and `slice_of` refuse an invalid element.
 - (branch) [container.odin:796](src/container.odin#L796): the sole caller has already rejected `INVALID_TYPE` at line 734, and `info == nil` at 803 cannot follow a managed type.
@@ -2657,7 +2592,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 - [erased.odin:747](src/erased.odin#L747) and [interface.odin:1396](src/interface.odin#L1396), [interface.odin:1356](src/interface.odin#L1356): all do `composed_interface_of`, clone, cast, `bound_arguments`. Shared form: `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)`.
 - [erased.odin:725](src/erased.odin#L725) and [interface.odin:1326](src/interface.odin#L1326), [interface.odin:1388](src/interface.odin#L1388), [interface.odin:583](src/interface.odin#L583): same scope, package, and file setup for an application. Shared form: `enter_interface(k, info, args)`.
 - [erased.odin:893](src/erased.odin#L893) and [interface.odin:1018](src/interface.odin#L1018): same loop over `slot_candidates` and `slot_matches`, differing only in `result_inout` and the returned value. One `matching_slot` returning the symbol replaces `find_witness_slot`.
-- [erased.odin:1165](src/erased.odin#L1165) and [check_calls.odin:782](src/check_calls.odin#L782): same written-argument-to-slot loop with the same L0371 and L0372 messages. Extract the named and positional slot choice; the receiver offset and error flow stay with each caller.
 - [erased.odin:475](src/erased.odin#L475) `dyn_same_application` and [erased.odin:492](src/erased.odin#L492) `view_witness_types`: same argument-list comparison. Shared form: `generic_args_equal(c, a, b: []Generic_Arg)`.
 - [erased.odin:415](src/erased.odin#L415) and [generic.odin:1536](src/generic.odin#L1536): same type-or-length-prefixed-constant key text. Shared form: `write_generic_arg_key(c, b, arg)`.
 - [erased.odin:47](src/erased.odin#L47) and [erased.odin:57](src/erased.odin#L57): `variadic_view_satisfied` and `dyn_view_witness` open identically, differing only in `report`. One helper taking `report` serves both.
@@ -3784,7 +3718,6 @@ Ranking itself is sound and matches the spec's vector and tie-breaker order, but
 
 **Simplification**
 
-- [overload.odin:227](src/overload.odin#L227) `common_argument_type`: use `parameter_slot_named`, `variadic_parameter_index`, `min(slot, pack)` and `slice_element` in place of the hand-written name loop, mode loop and element read. (about 15 lines)
 - [overload.odin:35](src/overload.odin#L35) `ordering_ranks`: nothing reads `.ranks` after building, so `build_generic_candidate` can assign `cand.ranks = ordering`; drop the field and `candidate_ranks`. (about 7 lines)
 - [overload.odin:723](src/overload.odin#L723) `choose_candidate`: test `candidates_viable(all)`, then loop over `all` skipping non-viable ones; the `viable` index list and the `other != index` test go, since `candidate_better(a, a)` is false. (about 6 lines)
 - [overload.odin:311](src/overload.odin#L311) `argument_rank`: move `moved` into the receiver branch and make the other branch one condition: `(mode == .Inout) != (arg.mode == .Inout) || (mode == .Move && !expression_is_owned_argument(arg.expr))`. (about 6 lines)
@@ -3809,10 +3742,8 @@ Ranking itself is sound and matches the spec's vector and tie-breaker order, but
 
 **Near copies**
 
-- [overload.odin:908](src/overload.odin#L908) and [check_calls.odin:736](src/check_calls.odin#L736): both dereference a `Borrow` argument given as `^T`, materialize, then call `check_bound_argument_mode`; [overload.odin:338](src/overload.odin#L338) repeats the test. A shared `bind_checked_argument(k, value, target, mode)` covers both binders, with the receiver case excluded by the caller.
 - [overload.odin:383](src/overload.odin#L383) and [generic.odin:2351](src/generic.odin#L2351): the same "it takes %d argument%s, found %d" reason. Remove `@(private = "file")` from `arity_reason` and call it from `infer_generic_arguments`.
 - [overload.odin:514](src/overload.odin#L514) and [overload.odin:589](src/overload.odin#L589): the same "argument %d is `%s` where `%s` is wanted" formatting; a small `argument_mismatch_reason(k, index, found, want)` serves both.
-- [overload.odin:1021](src/overload.odin#L1021), [check_calls.odin:758](src/check_calls.odin#L758) and [erased.odin:104](src/erased.odin#L104): `materialize_argument` wraps `materialize_value_expr(..., "pass")`, which the other two spell out; use one form everywhere.
 
 **Structure and boundaries**
 
@@ -4415,7 +4346,6 @@ Correct on the main paths; the weak spot is `typeid_sort_key`, whose key is neit
 
 - [reflect.odin:554](src/reflect.odin#L554) `typeid_sort_key_walk`: 140 lines. The natural seam is line 652: `write_shape_key` for the structural tail, leaving the walker as identity dispatch.
 - [reflect.odin:540](src/reflect.odin#L540): `typeid_sort_key` also builds backend labels for anonymous types (semantic.odin:1576, 1633), and lines 314-700 share almost nothing with the descriptors. They would stand alone as `typeid.odin`.
-- [reflect.odin:815](src/reflect.odin#L815) and [check_calls.odin:339](src/check_calls.odin#L339): `callee_is_descriptor` pre-filters and `check_descriptor_operation` re-tests the same operand, with `check_single_expr` between them at the call site. Move the filter and that call into `check_descriptor_operation`.
 
 **Comments**
 

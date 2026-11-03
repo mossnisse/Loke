@@ -1,0 +1,19 @@
+package main;
+
+// design.md "Copy-cost diagnostics": a container operation's `value: T` parameter
+// is a copy site like any other; only the inserted element reports as the insertion
+// it is, once.
+
+Big :: struct { bytes: [600]u8 }
+
+main :: proc() {
+	big := Big{};
+	map_ := map[Big]int{};
+	_ = map_.find(big);
+	_ = map_.try_insert(big, 1);
+	values := map[int]Big{};
+	_ = values.try_insert(1, big);
+	list := [dynamic]Big{};
+	list.insert(0, big);
+	not_declared();
+}

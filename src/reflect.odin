@@ -810,8 +810,18 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 
 // design.md: both take a `^T` so one expansion body can use either without
 // restructuring its parameter, and the result type follows the descriptor
-// constant — which is why this is a builtin rather than a method.
+// constant — which is why this is a builtin rather than a method. The operand is
+// a plain name, so checking it again when this returns false is harmless.
 check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	ident, is_ident := sel.operand.(^Expr_Ident)
+	if !is_ident {
+		return false
+	}
+	named := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	if named == nil || named.kind != .Const || !type_is_descriptor(k.c, named.type) {
+		return false
+	}
+	check_single_expr(k, sel.operand)
 	base := expr_base(sel.operand)
 	if base == nil || !base.is_const || base.const_value.kind != .Aggregate {
 		return false

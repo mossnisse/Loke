@@ -531,7 +531,9 @@ constructor returning `Option(T)`, such as
 [`string.from_utf8(bytes)`](#string-type-conversions).
 
 Assigning between different types requires an explicit conversion unless an
-implicit conversion rule applies.
+implicit conversion rule applies. Where one applies, `T(v)` is that conversion
+written out: `string_view(s)` borrows `s` as the implicit conversion does, and
+clones nothing.
 
 An integer, rune, or enum value converts to an integer or rune type only if its
 value fits. Out-of-range conversions [panic](#panics-and-unwinding); constants
@@ -7662,9 +7664,9 @@ starts at the value the local receives and goes on through:
 - `&` and `&mut`, which borrow their operand;
 - slicing an array, string, or dynamic array, which borrows the operand, and
   reslicing a view, which goes on into the view;
-- an implicit conversion to a view: a `string_view` or `[]T` of an owner, the
-  `^T` of a box, or a `dyn` or `dyn proc` view, each of which
-  borrows the converted value;
+- an implicit conversion to a view, or that conversion written as `T(v)`: a
+  `string_view` or `[]T` of an owner, the `^T` of a box, or a `dyn` or `dyn proc`
+  view, each of which borrows the converted value;
 - a field, an element, or a box's payload, which is part of the temporary
   holding it.
 
@@ -10998,6 +11000,11 @@ foreign libc {
 The parameter writes `..` with no type: a C variadic argument has no Loke element
 type, and each uses the C default argument promotions. A bare `..` is legal only
 with the attribute; any other variadic parameter names its element type.
+
+Such a procedure may be a member of a [procedure
+group](#explicit-procedure-overloading). Each argument past its fixed parameters
+then ranks as "any other built-in implicit conversion" when it can be passed at
+all, and the candidate counts as variadic for the tie-breakers.
 
 ##### `@(by_ptr)`
 

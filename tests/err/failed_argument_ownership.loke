@@ -1,0 +1,19 @@
+package main;
+
+// An argument that already failed is not a second mistake: `move` is not asked of
+// it, for a single procedure, a variadic one, or a group's chosen member.
+
+single :: proc(text: move string) {}
+variadic :: proc(text: move string, rest: ..int) {}
+right :: proc(text: move string) {}
+
+main :: proc() {
+	number := 1;
+	text := "kept";
+	single(number);
+	variadic(number);
+	// With no failure, a place is still refused.
+	single(text);
+	variadic(text);
+	right(text);
+}

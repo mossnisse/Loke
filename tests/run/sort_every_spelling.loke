@@ -1,0 +1,39 @@
+package main;
+import "core:fmt";
+
+// design.md "Receiver forms": however a sort is spelled, it settles the element's
+// `<` and sorts. These used to emit an empty body and leave the values alone.
+
+Reversed :: struct { value: int }
+impl Reversed {
+	less :: operator(<) proc(a, b: Reversed) -> bool { return a.value > b.value; }
+}
+
+Ascending :: struct { value: int }
+impl Ascending {
+	less :: operator(<) proc(a, b: Ascending) -> bool { return a.value < b.value; }
+}
+
+main :: proc() {
+	direct := [dynamic]int{3, 1, 2};
+	([dynamic]int).sort(inout direct);
+	fmt.println(direct[0], direct[1], direct[2]);
+
+	value := [dynamic]f64{3, 1, 2};
+	sorter := ([dynamic]f64).sort;
+	sorter(inout value);
+	fmt.println(value[0], value[1], value[2]);
+
+	slice := []mut u8{3, 1, 2};
+	slice_sorter := ([]mut u8).sort;
+	slice_sorter(slice);
+	fmt.println(slice[0], slice[1], slice[2]);
+
+	reversed := [dynamic]Reversed{{1}, {3}, {2}};
+	([dynamic]Reversed).sort(inout reversed);
+	fmt.println(reversed[0].value, reversed[1].value, reversed[2].value);
+
+	backwards := [dynamic]Ascending{{1}, {3}, {2}};
+	([dynamic]Ascending).reverse_sort(inout backwards);
+	fmt.println(backwards[0].value, backwards[1].value, backwards[2].value);
+}

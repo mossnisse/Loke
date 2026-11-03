@@ -56,7 +56,7 @@ box_type_callee :: proc(k: ^Checker, callee: Expr) -> bool {
 // position, or in value position with a type argument. `weak` names nothing.
 report_handle_type_spelling :: proc(k: ^Checker, call: ^Expr_Call, type_position: bool) -> bool {
 	ident, is_ident := call.callee.(^Expr_Ident)
-	if !is_ident {
+	if !is_ident || (ident.name != "weak" && ident.name != "box" && ident.name != "shared") {
 		return false
 	}
 	named := lookup_symbol(k.scope, identifier_of(k.c, ident))
@@ -76,6 +76,15 @@ report_handle_type_spelling :: proc(k: ^Checker, call: ^Expr_Call, type_position
 	}
 	errorf(k.c, ident.span, "L0713", "the handle type is spelled `%s(...)`, not `%s(...)`", spelled, ident.name)
 	return true
+}
+
+// Whether a one-argument application names a type; the probe is silent.
+@(private = "file")
+callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+		return false
+	}
+	return resolve_type_syntax(k, v.args[0].value) != INVALID_TYPE
 }
 
 // The payload a successful `box(value)` holds, or nil for any other call. Not

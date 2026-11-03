@@ -1,0 +1,22 @@
+package main;
+import "core:fmt";
+
+// design.md "Receiver forms": `a.len()` and `([4]int).len(a)` are one call, so a
+// fixed array's or vector's `len` is constant in either spelling, and the receiver
+// still runs once.
+
+fresh :: proc() -> [4]int {
+	fmt.println("ran");
+	return [4]int{};
+}
+
+main :: proc() {
+	a := [4]int{};
+	v := Simd(f32, 4){};
+	static_assert(a.len() == 4);
+	static_assert(([4]int).len(a) == 4);
+	static_assert(v.len() == 4);
+	static_assert((Simd(f32, 4)).len(v) == 4);
+	fmt.println(([4]int).len(fresh()));
+	fmt.println(fresh().len());
+}

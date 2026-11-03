@@ -1297,6 +1297,20 @@ checklist.
   `@(failure=)`, which were judged against the variants left over.
 - The `L0425` for a bare payload variant advises `.name(value)`, with its dot, and the one for a
   call to a payloadless variant no longer offers a bare name.
+- `([dynamic]T).sort(inout values)` and a sort taken as a procedure value, `f := ([dynamic]T).sort`,
+  now sort. Both compiled to an empty body and left the values alone, and neither got `L0651` for
+  an element with no `<`.
+- `T(v)` of an implicit view or splat is now that conversion written out. `string_view(s)`,
+  `([]int)(list)`, `([]int)(array)`, and `Simd(f32, 4)(x)` failed in clang with `L0403`, and
+  `(^T)(owner)` of a box read freed memory; they now borrow as the implicit forms do, including a
+  temporary a local borrows ([Type conversion](design.md#type-conversion)).
+- `([4]int).len(a)` is now constant, as `a.len()` is.
+- A `value: T` parameter of a container operation is now a copy site: `m.find(big)` and a map key in
+  `m.try_insert(big, 1)` warn `L0507` as `f(big)` does.
+- An argument that already failed no longer also reports `L0501` for a `move` parameter.
+- A `@(c_vararg)` procedure in a procedure group now takes its variadic arguments, where a call
+  through the group said the procedure took too many
+  ([`@(c_vararg)`](design.md#c_vararg)).
 - Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
   a wrong pointer to it, and same-named types, from two packages or two procedures, each show their
   own layout. A later such type is named `Name$<n>` in the debugger.

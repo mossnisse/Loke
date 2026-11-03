@@ -1,0 +1,17 @@
+package main;
+
+// The gate on `sort` holds however the sort is spelled, not only as a method.
+
+Direct :: struct { value: int }
+Taken :: struct { value: int }
+Slice :: struct { value: int }
+
+main :: proc() {
+	direct := [dynamic]Direct{};
+	([dynamic]Direct).sort(inout direct);
+	sorter := ([dynamic]Taken).sort;
+	slice_sorter := ([]mut Slice).reverse_sort;
+	values := [dynamic]Taken{};
+	sorter(inout values);
+	slice_sorter([]mut Slice{});
+}

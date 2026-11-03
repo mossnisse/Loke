@@ -101,7 +101,7 @@ pass_variadic_element :: proc(k: ^Checker, e: Expr, element: Type_Id, prechecked
 			)
 			return e, false
 		}
-		return e, materialize_value_expr(k, e, element, "pass")
+		return e, materialize_argument(k, e, element)
 	}
 	if type_is_untyped(k.c, base.type) && !materialize(k, e, default_type(k.c, base.type)) {
 		return e, false
@@ -1125,10 +1125,8 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		return true
 	}
 	bound := make([]Expr, len(params), k.c.semantic_allocator)
-	filled := make([]bool, len(params), k.c.semantic_allocator)
 	order := make([dynamic]int, 0, len(params), k.c.semantic_allocator)
 	bound[0] = sel.operand
-	filled[0] = true
 	append(&order, 0)
 	named := false
 	for arg, position in v.args {
@@ -1143,13 +1141,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 					break
 				}
 			}
-			if slot < 0 {
-				errorf(k.c, arg.span, "L0371", "no parameter named `%s`", arg.name.text)
-				v.type = INVALID_TYPE
-				return true
-			}
-			if filled[slot] {
-				errorf(k.c, arg.span, "L0371", "`%s` is given twice", arg.name.text)
+			if !named_slot_is_open(k, arg, slot, bound) {
 				v.type = INVALID_TYPE
 				return true
 			}
@@ -1158,7 +1150,6 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 			v.type = INVALID_TYPE
 			return true
 		}
-		filled[slot] = true
 		append(&order, slot)
 		if arg.mode == .Spread {
 			errorf(k.c, arg.span, "L0371", "`..` needs a variadic parameter to spread into")

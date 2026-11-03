@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Implicit type conversions": `T(v)` of a view borrows `v`, exactly as
+// the implicit conversion does, and clones nothing.
+
+returned_string :: proc() -> string_view {
+	text := "made" + " here";
+	return string_view(text);
+}
+
+returned_array :: proc() -> []int {
+	array := [3]int{4, 5, 6};
+	return ([]int)(array);
+}
+
+returned_box :: proc() -> ^int {
+	owner := box(7);
+	return (^int)(owner);
+}
+
+invalidated :: proc() {
+	list := [dynamic]int{1};
+	view := ([]int)(list);
+	list.append(2);
+	_ = view[0];
+}
+
+main :: proc() {}

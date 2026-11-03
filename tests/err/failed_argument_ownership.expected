@@ -1,0 +1,15 @@
+L0310
+@13:9
+cannot pass `string` with `int`
+L0310
+@14:11
+cannot pass `string` with `int`
+L0501
+@16:9
+`text` is a `move` parameter
+L0501
+@17:11
+`text` is a `move` parameter
+L0501
+@18:8
+`text` is a `move` parameter

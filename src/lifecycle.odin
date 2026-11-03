@@ -442,7 +442,7 @@ mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]boo
 	if base.erased_from != INVALID_TYPE || base.view_from != INVALID_TYPE {
 		mark_borrowed_temporary(value, into)
 	}
-	if operand, erasing := explicit_erasure_operand(value); erasing {
+	if operand, viewing := explicit_view_operand(value); viewing {
 		mark_extending_path(c, operand, into)
 		return
 	}
@@ -464,10 +464,11 @@ mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]boo
 	}
 }
 
-// The erased operand of an explicit conversion to `dyn proc`, whose result is
-// that operand. Identity conversions wrapped around it are
-// looked through: their result is their operand.
-explicit_erasure_operand :: proc(value: Expr) -> (Expr, bool) {
+// The operand of an explicit conversion to a view, a `string_view` or `[]T` of an
+// owner, the `^T` of a box, or a `dyn proc`, whose result is that operand.
+// Identity conversions wrapped around it are looked through: their result is
+// their operand.
+explicit_view_operand :: proc(value: Expr) -> (Expr, bool) {
 	call, is_call := value.(^Expr_Call)
 	if !is_call || len(call.bound) != 1 || call.bound[0] == nil {
 		return nil, false
@@ -480,11 +481,11 @@ explicit_erasure_operand :: proc(value: Expr) -> (Expr, bool) {
 	if base == nil {
 		return nil, false
 	}
-	if base.erased_from == INVALID_TYPE {
+	if base.erased_from == INVALID_TYPE && base.view_from == INVALID_TYPE {
 		if base.type != call.type {
 			return nil, false
 		}
-		return explicit_erasure_operand(operand)
+		return explicit_view_operand(operand)
 	}
 	return operand, true
 }

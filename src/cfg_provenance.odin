@@ -8030,11 +8030,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
 	case Call_Conversion:
-		// design.md "Borrowed callable views": a `dyn proc` conversion is the
-		// implicit conversion written out.
-		// The operand is erased and is the result, so it borrows what it views
-		// as at a typed destination.
-		if operand, erasing := explicit_erasure_operand(v); erasing {
+		// design.md "Implicit type conversions", "Borrowed callable views": a view
+		// conversion is the implicit conversion written out. The operand is the
+		// result, so it borrows what it views as at a typed destination.
+		if operand, viewing := explicit_view_operand(v); viewing {
 			return walk_flow_expr(graph, operand)
 		}
 		if viewed, is_view := prov_read_only_conversion(graph, v); is_view {

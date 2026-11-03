@@ -20,6 +20,20 @@ ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 	}
 }
 
+// A fixed array's or vector's `len()` is constant, though the receiver is still
+// evaluated once for its effects.
+fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
+	if chosen == nil || chosen.synth != .Standard_Len || len(chosen.params) == 0 {
+		return
+	}
+	info := underlying_info(k.c, chosen.params[0])
+	if info == nil || (info.kind != .Array && info.kind != .Simd) {
+		return
+	}
+	v.is_const = true
+	v.const_value = int_const(k.c, i64(info.count))
+}
+
 // design.md "Maps": a type that keeps its generated `==` and declares no `hash`
 // has that `hash` as a member. As with a generated `format`, it appears only
 // when `hash` is looked up and the name is free.

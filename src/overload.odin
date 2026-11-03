@@ -224,35 +224,13 @@ common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identif
 			common = type
 			continue
 		}
-		slot := position
-		if name != INVALID_IDENTIFIER {
-			slot = -1
-			for binding, index in sym.param_symbols {
-				if param := symbol_of(k.c, binding); param != nil && param.name == name {
-					slot = index
-					break
-				}
-			}
-		}
+		slot := name != INVALID_IDENTIFIER ? parameter_slot_named(k.c, sym, name) : position
 		if slot < 0 { continue }
 		// A written variadic element wants `T`, not the pack's `[]T`.
-		variadic := -1
-		if signature := underlying_info(k.c, sym.proc_type); signature != nil {
-			for mode, index in signature.param_modes {
-				if mode == .Variadic {
-					variadic = index
-					break
-				}
-			}
-		}
-		if variadic >= 0 && slot > variadic { slot = variadic }
+		pack := variadic_parameter_index(underlying_info(k.c, sym.proc_type))
+		if pack >= 0 { slot = min(slot, pack) }
 		if slot >= len(sym.params) { continue }
-		type := sym.params[slot]
-		if slot == variadic {
-			pack := underlying_info(k.c, type)
-			if pack == nil { return INVALID_TYPE }
-			type = pack.element
-		}
+		type := slot == pack ? slice_element(k.c, sym.params[slot]) : sym.params[slot]
 		if common != INVALID_TYPE && common != type { return INVALID_TYPE }
 		common = type
 	}
@@ -390,6 +368,32 @@ arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
 	)
 }
 
+// design.md "`@(c_vararg)`": why an argument past the fixed parameters cannot be
+// passed, or "" when it can.
+@(private = "file")
+c_vararg_rejection :: proc(k: ^Checker, arg: Arg_Info, position: int) -> string {
+	reason := ""
+	switch {
+	case arg.mode == .Spread:
+		reason = "a C-variadic call cannot spread"
+	case arg.mode == .Inout:
+		reason = "a C-variadic argument is passed by value, so it cannot be `inout`"
+	case arg.waiting:
+		reason = "a C-variadic argument needs a concrete type"
+	case:
+		concrete := type_is_untyped(k.c, arg.type) ? default_type(k.c, arg.type) : arg.type
+		if concrete == INVALID_TYPE {
+			reason = "a C-variadic argument needs a concrete type"
+		} else if safe, why := foreign_abi_safe(k.c, concrete); !safe {
+			reason = why
+		}
+	}
+	if reason == "" {
+		return ""
+	}
+	return fmt.aprintf("argument %d: %s", position + 1, reason, allocator = k.c.semantic_allocator)
+}
+
 // Places, ranks, and records a diagnostic reason for a rejected candidate.
 @(private = "file")
 build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> Candidate {
@@ -423,9 +427,9 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 	pack := variadic_parameter_index(info)
 	element := INVALID_TYPE
 	if pack >= 0 {
-		cand.variadic = true
 		element = slice_element(k.c, sym.params[pack])
 	}
+	cand.variadic = pack >= 0 || info.c_vararg
 	named := false
 	for arg, index in args {
 		slot := index
@@ -453,6 +457,17 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		} else if pack >= 0 && slot >= pack {
 			slot = pack
+		} else if info.c_vararg && slot >= count {
+			if rejection := c_vararg_rejection(k, arg, index); rejection != "" {
+				cand.reason = rejection
+				return cand
+			}
+			cand.slots[index] = -1
+			cand.ranks[index] = RANK_BUILTIN
+			if expression_is_owned_argument(arg.expr) {
+				cand.unconsumed += 1
+			}
+			continue
 		} else if slot >= count {
 			cand.reason = arity_reason(k.c, count, len(args))
 			return cand
@@ -873,7 +888,11 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	if !type_waiting_arguments(k, v, sym, cand) {
 		return false
 	}
-	if info := type_of(k.c, sym.proc_type); variadic_parameter_index(info) >= 0 {
+	info := type_of(k.c, sym.proc_type)
+	if info != nil && info.c_vararg {
+		return bind_c_vararg_arguments(k, v, info, prechecked = true)
+	}
+	if variadic_parameter_index(info) >= 0 {
 		receiver: Expr
 		if len(cand.args) > 0 && cand.args[0].is_receiver {
 			receiver = cand.args[0].expr
@@ -882,7 +901,9 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 			k, v, info, cand.symbol, candidate_arguments(k.c, cand),
 			prechecked = true, receiver = receiver,
 		)
-		require_argument_ownership(k, v, cand.symbol)
+		if bound_ok {
+			require_argument_ownership(k, v, cand.symbol)
+		}
 		return bound_ok
 	}
 	count := len(sym.params)
@@ -895,19 +916,10 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 		slot := cand.slots[index]
 		in_order = in_order && slot == len(order)
 		append(&order, slot)
-		value := arg.expr
 		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
-		if mode == .Borrow && !arg.is_receiver && pointer_to_element(k.c, arg.type) == sym.params[slot] {
-			value = dereference_argument(k, value)
-		}
-		if !materialize_argument(k, value, sym.params[slot]) {
-			ok = false
-			continue
-		}
-		if !check_bound_argument_mode(k, value, sym.params[slot], mode, "an `inout` argument") {
-			ok = false
-		}
+		value, passed := bind_checked_argument(k, arg.expr, sym.params[slot], mode, arg.is_receiver)
 		bound[slot] = value
+		ok = ok && passed
 	}
 	for slot in 0 ..< count {
 		if !cand.filled[slot] && slot < len(sym.param_defaults) {
@@ -920,7 +932,9 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	if !in_order {
 		v.bound_order = order[:]
 	}
-	require_argument_ownership(k, v, cand.symbol)
+	if ok {
+		require_argument_ownership(k, v, cand.symbol)
+	}
 	return ok
 }
 

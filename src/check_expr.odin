@@ -1104,9 +1104,8 @@ select_associated_member :: proc(
 	}
 	// A call checks its container operation with its arguments; a procedure
 	// value is checked here, since nothing will check its calls.
-	if sym := symbol_of(k.c, member); !callee && sym != nil && !check_container_element(k, v.span, sym) {
-		v.type = INVALID_TYPE
-		return true
+	if sym := symbol_of(k.c, member); !callee && sym != nil {
+		check_container_element(k, v.span, sym)
 	}
 	annotate_symbol_use(k, &v.base, member, v.name.text, callee)
 	return true
