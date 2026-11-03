@@ -1417,6 +1417,14 @@ checklist.
 - A map's `clear`, and a sequence's `clear` and `resize`, no longer count as using an unknown
   allocator region for a `hook(drop)` of what they discard. Two tasks each clearing a map of their
   own were `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).
+- A union aligned past 16 bytes, such as one holding a `Simd(f32, 8)`, now has the layout the
+  checker reports. LLVM aligned its storage to 16, so `size_of` and `align_of` disagreed with the
+  code, and copying an array of records holding one overran its storage and crashed.
+- A constant of an all-payloadless union with a written alignment above its tag's, such as
+  `@(align=8) U :: union { a:, b: }`, now compiles; clang rejected the initializer.
+- A foreign binding of any name the runtime or the generated module declares or defines, such as
+  `loke_rt_v1_frame_pop`, now refers to that one; only a few such names did, and the others
+  failed with `L0403`, clang's "invalid redefinition of function".
 - `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
   statement ends, as `make_source().iter()` already did; it was never dropped
   ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).

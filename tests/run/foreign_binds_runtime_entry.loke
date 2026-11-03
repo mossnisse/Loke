@@ -1,0 +1,24 @@
+// A foreign binding of a name the module declares or defines itself refers to
+// that one: from the runtime's declarations, from the entries the module writes,
+// and from a declaration written after the foreign ones.
+package main;
+
+import "core:fmt";
+
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_cstring_len")
+	c_length :: proc "c" (text: cstring_view) -> i64 ---;
+	@(link_name="loke_rt_v1_frame_pop")
+	frame_pop :: proc "c" (frame: rawptr) ---;
+	@(link_name="loke_rt_v1_program_tls_cleanup")
+	program_tls_cleanup :: proc "c" () ---;
+	@(link_name="loke_rt_v1_sink_write")
+	sink_write :: proc "c" (writer: rawptr, bytes: rawptr, count: i64) ---;
+	@(link_name="loke_rt_v1_write_std")
+	write_std :: proc "c" (stream: rawptr, bytes: rawptr, count: i64) ---;
+}
+
+main :: proc() {
+	fmt.println(c_length("four"));
+	program_tls_cleanup();
+}

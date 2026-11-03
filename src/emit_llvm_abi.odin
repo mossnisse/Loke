@@ -20,7 +20,8 @@ foreign_llvm_name :: proc(sym: ^Symbol) -> string {
 	return llvm_external_name(sym.link_name)
 }
 
-// Emit each foreign symbol once unless this module defines the same name.
+// Emit each foreign symbol once, unless this module already declares the name
+// or goes on to declare or define it: the binding then refers to that one.
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
 	seen := make(map[string]bool, context.temp_allocator)
@@ -30,56 +31,28 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 			seen[name] = true
 		}
 	}
+	// Only `emit_preamble`'s declarations have been written so far.
+	written := strings.to_string(e.b)
+	for line in strings.split_lines_iterator(&written) {
+		if strings.has_prefix(line, "declare ") {
+			name := line[strings.index_byte(line, '@'):strings.index_byte(line, '(')]
+			seen[strings.clone(name, context.temp_allocator)] = true
+		}
+	}
+	seen["@loke_rt_v1_program_tls_cleanup"] = true
+	seen["@loke_rt_v1_sink_write"] = true
+	seen["@loke_rt_v1_write_std"] = true
 	if any_provider_selected(e.c) {
 		seen["@loke_rt_v1_program_init"] = true
 	}
-	// A foreign binding of an executable's own entry refers to that definition.
 	if e.c.build_mode != .Obj {
 		seen["@wmain"] = true
 	}
-	// `emit_runtime_declarations` already declares these for `wmain`, and
-	// `core:thread` binds them for the threads it starts; `core:process` binds
-	// the flush a failing `main`'s report makes. The processor check a dispatcher
-	// calls is a documented entry a program may bind too.
-	seen["@loke_rt_v1_thread_attach"] = true
-	seen["@loke_rt_v1_thread_detach"] = true
-	seen["@loke_rt_v1_flush_stdout"] = true
-	seen["@loke_rt_v1_cpu_dispatch"] = true
-	// Declared above baseline, for the entry's or an object's check, which
-	// `tests/trap/cpu_level_unknown.loke` also binds.
-	if e.c.target.cpu != .X86_64 {
-		seen["@loke_rt_v1_require_cpu"] = true
-	}
-	for id in package_order(e.c) {
-		pkg := package_of(e.c, id)
-		if pkg == nil {
-			continue
-		}
-		for file in pkg.files {
-			for item in file.active_items {
-				block, ok := item.(^Item_Foreign_Block)
-				if !ok {
-					continue
-				}
-				for member in block.members {
-					d, is_decl := member.(^Decl)
-					if !is_decl {
-						continue
-					}
-					for sid in d.symbols {
-						sym := symbol_of(e.c, sid)
-						if sym == nil || !sym.is_foreign {
-							continue
-						}
-						name := foreign_llvm_name(sym)
-						if seen[name] {
-							continue
-						}
-						seen[name] = true
-						emit_foreign_declare(e, sym)
-					}
-				}
-			}
+	for id in e.foreign_symbols {
+		sym := symbol_of(e.c, id)
+		if name := foreign_llvm_name(sym); !seen[name] {
+			seen[name] = true
+			emit_foreign_declare(e, sym)
 		}
 	}
 }
@@ -93,179 +66,104 @@ emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol) {
 	}
 	proc_info := type_of(e.c, sym.proc_type)
 	ret, indirect := foreign_result_llvm(e, sym.result, proc_info)
-	fmt.sbprintf(&e.b, "declare %s %s(", ret, name)
-	need_comma := false
+	params := make([dynamic]string, 0, len(sym.params) + 2)
 	if indirect {
-		fmt.sbprintf(&e.b, "ptr sret(%s) align %d", llvm_type(e, sym.result), type_align(e.c, sym.result))
-		need_comma = true
+		append(&params, fmt.aprintf("ptr sret(%s) align %d", llvm_type(e, sym.result), type_align(e.c, sym.result)))
 	}
 	for parameter, index in sym.params {
-		if need_comma {
-			fmt.sbprint(&e.b, ", ")
-		}
-		need_comma = true
-		fmt.sbprint(&e.b, foreign_param_type(e, sym, parameter, index))
+		append(&params, foreign_param_llvm(e, proc_info, parameter, index, attributes = true))
 	}
-	if proc_info != nil && proc_info.c_vararg {
-		if need_comma {
-			fmt.sbprint(&e.b, ", ")
-		}
-		fmt.sbprint(&e.b, "...")
+	if proc_info.c_vararg {
+		append(&params, "...")
 	}
-	fmt.sbprintln(&e.b, ")")
+	fmt.sbprintfln(&e.b, "declare %s %s(%s)", ret, name, strings.join(params[:], ", "))
 }
 
 // ------------------------------------------------------------ LLVM types --
 
-// Named struct definitions, in containment order. The checker has already
-// rejected a by-value cycle, so a value edge cannot come back here.
+// One named definition per record. LLVM reads a by-value member's name ahead of
+// its definition, so the order is the type table's.
 @(private)
 emit_struct_definitions :: proc(e: ^Emitter) {
-	emitted := make(map[Type_Id]bool)
-	defer delete(emitted)
 	for index in 0 ..< len(e.c.types) {
-		define_struct(e, Type_Id(index), &emitted)
+		define_struct(e, Type_Id(index))
 	}
 	fmt.sbprintln(&e.b, "")
 }
 
 @(private = "file")
-define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
+define_struct :: proc(e: ^Emitter, type: Type_Id) {
 	info := type_of(e.c, type)
-	if info == nil || emitted[type] {
-		return
-	}
 	// A labelled record is spelled by its unlabelled counterpart's definition.
-	if shared := record_abi_type(e.c, type); shared != type {
-		emitted[type] = true
-		define_struct(e, shared, emitted)
+	if info == nil || record_abi_type(e.c, type) != type {
 		return
 	}
 	// A generic record's own shell is a placeholder for its instances and has no
 	// layout of its own.
 	if sym := symbol_of(e.c, info.symbol); sym != nil && sym.generic {
-		emitted[type] = true
 		return
 	}
-	if info.kind == .Union {
-		if !type_is_supported(e.c, type) {
-			return
+	#partial switch info.kind {
+	case .Union:
+		if type_is_supported(e.c, type) {
+			fmt.sbprintfln(&e.b, "%s = type %s", struct_name(e, type), union_storage_definition(e, type))
 		}
-		emitted[type] = true
-		fmt.sbprintfln(&e.b, "%s = type %s", struct_name(e, type), union_storage_definition(e, type))
 		return
-	}
-	if info.kind == .Slice {
+	case .Slice:
 		// Only the read-only variant is defined; `[]mut T` shares its name.
 		if !type_is_supported(e.c, type) || carrier_abi_type(e.c, type) != type {
 			return
 		}
-	} else if info.kind == .Dyn {
+	case .Dyn:
 		// The same for a dyn view: one struct per interface application, named by
 		// the read-only variant, whatever capabilities the program spells.
 		if carrier_abi_type(e.c, type) != type {
 			return
 		}
-	} else if info.kind != .Struct {
+	case .Struct:
+	case:
 		return
 	}
-	emitted[type] = true
-	for field in info.fields {
-		symbol := symbol_of(e.c, field)
-		if symbol == nil {
-			continue
-		}
-		// A pointer edge stops here: `ptr` needs no definition of its pointee.
-		define_struct(e, struct_dependency(e.c, symbol.type), emitted)
-	}
-	name := struct_name(e, type)
-	// `{` is a format directive to core:fmt, so the brace is printed separately.
-	fmt.sbprintf(&e.b, "%s = type", name)
-	fmt.sbprintln(&e.b, strings.concatenate({" ", struct_body(e, type, info)}))
+	fmt.sbprintfln(&e.b, "%s = type %s", struct_name(e, type), struct_body(e, type, info))
 }
 
-// The LLVM aggregate body of a struct: a natural record keeps its plain
-// `{ ... }` spelling; a `@(packed)`/`@(align=N)` record is laid out byte-exact
-// so LLVM's size, alignment, and field offsets match the checker's cached
-// ones. Field GEP indices
-// equal the logical field index in every form, so field walks are unchanged.
+// A `@(packed)`/`@(align=N)` record is spelled so LLVM's layout matches the
+// checker's; GEP indices equal field indices in every form.
 @(private = "file")
 struct_body :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> string {
-	// The cached alignment and size are read below, so layout is computed first.
-	type_size(e.c, type)
-	packed := info.packed
-	over_aligned := info.align > info.natural_align
-	if !packed && !over_aligned {
-		b := strings.builder_make()
-		strings.write_string(&b, "{")
-		for field, index in info.fields {
-			symbol := symbol_of(e.c, field)
-			if index > 0 {
-				strings.write_string(&b, ",")
-			}
-			fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
-		}
-		strings.write_string(&b, " }")
-		return strings.to_string(b)
-	}
-
+	byte_members := record_uses_byte_members(e, type, info)
+	angled := info.packed && !byte_members
 	b := strings.builder_make()
-	if packed && over_aligned {
-		// Byte members keep packed offsets; the zero-length tail raises alignment.
-		strings.write_string(&b, "{")
-		for field, index in info.fields {
-			symbol := symbol_of(e.c, field)
-			if index > 0 {
-				strings.write_string(&b, ",")
-			}
-			fmt.sbprintf(&b, " [%d x i8]", type_size(e.c, symbol.type))
-		}
-		if len(info.fields) > 0 {
-			strings.write_string(&b, ",")
-		}
-		fmt.sbprintf(&b, " [0 x i%d] }", info.align * 8)
-		return strings.to_string(b)
-	}
-	if packed {
-		strings.write_string(&b, "<{")
-		for field, index in info.fields {
-			symbol := symbol_of(e.c, field)
-			if index > 0 {
-				strings.write_string(&b, ",")
-			}
-			fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
-		}
-		strings.write_string(&b, " }>")
-		return strings.to_string(b)
-	}
-	strings.write_string(&b, "{")
+	strings.write_string(&b, angled ? "<{" : "{")
 	for field, index in info.fields {
 		symbol := symbol_of(e.c, field)
 		if index > 0 {
 			strings.write_string(&b, ",")
 		}
-		fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
+		if byte_members {
+			fmt.sbprintf(&b, " [%d x i8]", type_size(e.c, symbol.type))
+		} else {
+			fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
+		}
 	}
-	if len(info.fields) > 0 {
-		strings.write_string(&b, ",")
+	// The zero-length tail raises alignment.
+	if info.align > info.natural_align {
+		if len(info.fields) > 0 {
+			strings.write_string(&b, ",")
+		}
+		fmt.sbprintf(&b, " [0 x i%d]", info.align * 8)
 	}
-	fmt.sbprintf(&b, " [0 x i%d] }", info.align * 8)
+	strings.write_string(&b, angled ? " }>" : " }")
 	return strings.to_string(b)
 }
 
-// The struct a value-typed field depends on, looking through arrays and
-// distinct wrappers but never through a pointer.
-@(private = "file")
-struct_dependency :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	current := type_underlying(c, type)
-	for i := 0; i < 32; i += 1 {
-		info := type_of(c, current)
-		if info == nil || info.kind != .Array {
-			return current
-		}
-		current = type_underlying(c, info.element)
-	}
-	return current
+// Whether this record is the combined `@(packed, align=N)` body, whose LLVM
+// members are byte arrays that keep packed offsets. It computes the layout, so
+// the record's cached alignment and size may be read after it.
+@(private)
+record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
+	type_size(e.c, type)
+	return info.packed && info.align > info.natural_align
 }
 
 @(private)
@@ -278,23 +176,14 @@ struct_name :: proc(e: ^Emitter, raw: Type_Id) -> string {
 		return name
 	}
 	info := type_of(e.c, type)
-	prefix := info != nil && info.kind == .Union ? "union" : "struct"
-	name := ""
-	spelled := type_spelling(e, type)
-	if info != nil && (spelled != "" || info.name != INVALID_IDENTIFIER) {
-		// An instantiation or a compiler-made type has its own backend spelling;
-		// a written name may still mention punctuation LLVM would need quoting for.
-		text := spelled
-		if text == "" {
-			text = identifier_text(e.c, info.name)
-			if !llvm_plain_name(text) {
-				text = llvm_safe(text)
-			}
-		}
-		name = fmt.aprintf("%%%s.%s.%d", prefix, text, int(type))
-	} else {
-		name = fmt.aprintf("%%%s.anon.%d", prefix, int(type))
+	// An instantiation or a compiler-made type has its own backend spelling; a
+	// written name may still mention punctuation LLVM would need quoting for.
+	text := type_spelling(e, type)
+	if text == "" && info != nil && info.name != INVALID_IDENTIFIER {
+		text = llvm_safe(identifier_text(e.c, info.name))
 	}
+	prefix := info != nil && info.kind == .Union ? "union" : "struct"
+	name := fmt.aprintf("%%%s.%s.%d", prefix, text == "" ? "anon" : text, int(type))
 	e.struct_names[type] = name
 	return name
 }
@@ -313,9 +202,7 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 	case .Void:
 		return "void"
 	case .Bool:
-		// ponytail: `i1` everywhere, so a `bool` alloca is not one byte. Nothing
-		// in M2 observes a bool's storage size; switch to i8-in-memory when the
-		// foreign ABI lands in M7.
+		// `i1` everywhere; LLVM stores it in one byte.
 		return "i1"
 	case .Int, .Enum, .Allocator_Error:
 		return fmt.aprintf("i%d", type_bits(e.c, under))
@@ -336,9 +223,6 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		}
 		return "double"
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View, .Box:
-		// A `box` is the address of its allocation. An `Allocator` is a one-word handle on the provider record; a
-		// `cstring_view` is one zero-terminated address; a C pointer is one
-		// address with neither a length nor a capability.
 		return "ptr"
 	case .String:
 		return STRING_TYPE
@@ -369,358 +253,17 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return "i64"
 }
 
-// The union storage type, built so LLVM's own layout matches the checker's
-// cached facts: an alignment-carrying payload head, explicit payload padding,
-// the tag, and tail padding. A bare `[N x i8]` payload would be byte-aligned,
-// which is wrong when a union is allocated directly, nested in a struct, or
-// used as an array element.
-@(private = "file")
-union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
-	shape := union_layout(e.c, type)
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ")
-	if shape.payload_size > 0 {
-		fmt.sbprintf(&b, "i%d", shape.align * 8)
-		if pad := shape.payload_size - shape.align; pad > 0 {
-			fmt.sbprintf(&b, ", [%d x i8]", pad)
-		}
-		if shape.niche {
-			strings.write_string(&b, " }")
-			return strings.to_string(b)
-		}
-		strings.write_string(&b, ", ")
-	} else if shape.align > shape.tag_bytes {
-		fmt.sbprintf(&b, "[0 x i%d], ", shape.align * 8)
+// A vector lane's backend type. It is the element's own spelling except for a
+// lane mask: design.md gives `Simd(bool, N)` one byte per lane, while a scalar
+// `bool` is `i1`.
+simd_lane_llvm_type :: proc(e: ^Emitter, info: ^Type_Info) -> string {
+	if info.kind == .Simd && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool {
+		return "i8"
 	}
-	fmt.sbprintf(&b, "i%d", shape.tag_bytes * 8)
-	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
-		fmt.sbprintf(&b, ", [%d x i8]", tail)
-	}
-	strings.write_string(&b, " }")
-	return strings.to_string(b)
+	return llvm_type(e, info.element)
 }
 
-// Constructing a variant: zero the storage, write the payload through a typed
-// pointer, then write the tag. `value` is empty for a payloadless variant,
-// which is nothing but its tag.
-@(private)
-emit_union_value :: proc(e: ^Emitter, union_type: Type_Id, index: int, value: string) -> string {
-	llvm := llvm_type(e, union_type)
-	slot := temporary_slot(e, union_type)
-	store(e, union_type, "zeroinitializer", slot)
-	if payload_type := union_variant_payload(e.c, union_type, index); payload_type != TYPE_VOID {
-		store(e, payload_type, value, gep_field(e, llvm, slot, 0))
-	}
-	emit_union_store_tag(e, union_type, slot, index)
-	return load_temporary(e, union_type, slot)
-}
-
-@(private)
-emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> string {
-	return emit_union_value(e, option_type, union_index_of(e.c, option_type, "some"), payload)
-}
-
-// design.md "Widening by label": each alternative keeps its payload under the
-// wider union's tag for its label. The layouts differ, so the payload is moved
-// into the wider storage, one arm per alternative.
-@(private)
-emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> string {
-	source := type_of(e.c, from)
-	llvm := llvm_type(e, to)
-	slot := temporary_slot(e, to)
-	store(e, to, "zeroinitializer", slot)
-	spilled := emit_union_spill(e, from, value)
-	tag := emit_union_tag(e, from, value)
-	width := union_layout(e.c, from).tag_bytes * 8
-	done := new_label(e, "widen.done")
-	for payload, index in source.variants {
-		matched := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, width, tag, index)
-		hit, next := new_label(e, "widen.hit"), new_label(e, "widen.next")
-		branch_if(e, matched, hit, next)
-		place_label(e, hit)
-		if payload != TYPE_VOID {
-			store(e, payload, emit_union_payload(e, from, payload, spilled), gep_field(e, llvm, slot, 0))
-		}
-		emit_union_store_tag(e, to, slot, widened_variant(e.c, from, to, index))
-		branch(e, done)
-		place_label(e, next)
-	}
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-	place_label(e, done)
-	e.terminated = false
-	return load_temporary(e, to, slot)
-}
-
-// A two-variant union built from a runtime condition: each payload is written
-// only on the branch where it is the active one, so an absent `Option` and a
-// failed `Result` never publish uninitialized bytes.
-//
-// A payload string may be empty when that variant is payloadless. Both must
-// already be computed: this branches, it does not evaluate.
-@(private)
-emit_union_either :: proc(
-	e: ^Emitter,
-	union_type: Type_Id,
-	condition: string,
-	true_index: int, true_payload: string,
-	false_index: int, false_payload: string,
-) -> string {
-	llvm := llvm_type(e, union_type)
-	slot := temporary_slot(e, union_type)
-	store(e, union_type, "zeroinitializer", slot)
-	yes, no, done := new_label(e, "variant.yes"), new_label(e, "variant.no"), new_label(e, "variant.done")
-	branch_if(e, condition, yes, no)
-
-	arm :: proc(e: ^Emitter, union_type: Type_Id, llvm, slot: string, index: int, payload: string) {
-		// An empty operand means the caller has nothing to write: the variant is
-		// payloadless, or its payload is zero-sized and the zeroed slot is already
-		// the whole value.
-		if payload_type := union_variant_payload(e.c, union_type, index);
-		   payload != "" && payload_type != TYPE_VOID {
-			store(e, payload_type, payload, gep_field(e, llvm, slot, 0))
-		}
-		emit_union_store_tag(e, union_type, slot, index)
-	}
-
-	place_label(e, yes)
-	arm(e, union_type, llvm, slot, true_index, true_payload)
-	branch(e, done)
-
-	place_label(e, no)
-	arm(e, union_type, llvm, slot, false_index, false_payload)
-	branch(e, done)
-
-	place_label(e, done)
-	e.terminated = false
-	return load_temporary(e, union_type, slot)
-}
-
-@(private)
-emit_union_choice :: proc(
-	e: ^Emitter,
-	union_type: Type_Id,
-	present: string,
-	present_index, absent_index: int,
-	payload: string,
-) -> string {
-	return emit_union_either(e, union_type, present, present_index, payload, absent_index, "")
-}
-
-// A niche union's tag is its payload: the zeroed slot is already the
-// payloadless variant, and a written reference is never null.
-@(private = "file")
-emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag: int) {
-	llvm := llvm_type(e, union_type)
-	shape := union_layout(e.c, union_type)
-	if shape.niche {
-		return
-	}
-	address := gep_field(e, llvm, slot, union_tag_member(e, union_type))
-	fmt.sbprintfln(&e.b, "  store i%d %d, ptr %s", shape.tag_bytes * 8, tag, address)
-}
-
-// The tag of a union *value*, which is what every extraction and type switch
-// tests.
-@(private)
-emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	if shape := union_layout(e.c, union_type); shape.niche {
-		head := fmt.aprintf("i%d", shape.align * 8)
-		word: string
-		if is_large_value(e, union_type) {
-			word = load(e, head, gep_field(e, llvm_type(e, union_type), value, 0))
-		} else {
-			word = extract(e, llvm_type(e, union_type), value, 0)
-		}
-		present, out := temp(e), temp(e)
-		some := union_niche_variant(e.c, union_type)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne %s %s, 0", present, head, word)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i8 %d, i8 %d", out, present, some, 1 - some)
-		return out
-	}
-	if is_large_value(e, union_type) {
-		shape := union_layout(e.c, union_type)
-		tag := gep_field(e, llvm_type(e, union_type), value, union_tag_member(e, union_type))
-		return load(e, fmt.aprintf("i%d", shape.tag_bytes * 8), tag)
-	}
-	out := extract(e, llvm_type(e, union_type), value, union_tag_member(e, union_type))
-	return out
-}
-
-// Whether a union value's tag is `index`.
-@(private)
-emit_union_tag_is :: proc(e: ^Emitter, union_type: Type_Id, value: string, index: int) -> string {
-	tag := emit_union_tag(e, union_type, value)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", out, union_layout(e.c, union_type).tag_bytes * 8, tag, index)
-	return out
-}
-
-// A block from the runtime, and whether it was refused.
-@(private)
-emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (block, failed: string) {
-	block = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)", block, allocator, size, align)
-	failed = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, block)
-	return
-}
-
-@(private)
-emit_rt_free :: proc(e: ^Emitter, allocator, block: string, size, align: u64) {
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)", allocator, block, size, align)
-}
-
-// Spills a union value so its payload can be read at a variant's own type.
-@(private)
-emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	slot := temporary_slot(e, union_type)
-	store(e, union_type, value, slot)
-	return slot
-}
-
-@(private)
-emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot: string) -> string {
-	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
-	out := load_place(e, payload_type, payload)
-	return out
-}
-
-// Which member of that storage type holds the tag.
-@(private = "file")
-union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
-	shape := union_layout(e.c, type)
-	if shape.payload_size == 0 {
-		return shape.align > shape.tag_bytes ? 1 : 0
-	}
-	index := 1
-	if shape.payload_size > shape.align {
-		index += 1
-	}
-	return index
-}
-
-// design.md: a procedure returns at most one value. An `inout` result is a
-// place, so it travels as its address. A large result is written through a
-// leading `ptr %sret` into the caller's storage.
-@(private)
-llvm_result_type :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
-	if result == INVALID_TYPE || !inout && is_large_value(e, result) {
-		return "void"
-	}
-	return inout ? "ptr" : llvm_type(e, result)
-}
-
-@(private)
-returns_sret :: proc(e: ^Emitter, result: Type_Id, inout: bool) -> bool {
-	return !inout && is_large_value(e, result)
-}
-
-// `ptr %sret, ` ahead of a procedure's own parameters when its result is
-// large; the procedure then returns with `emit_ret`.
-@(private)
-sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
-	if !returns_sret(e, result, inout) {
-		return ""
-	}
-	e.abi_sret = "%sret"
-	return "ptr %sret, "
-}
-
-@(private)
-emit_ret :: proc(e: ^Emitter, result: Type_Id, value: string) {
-	emit_unwind_pop(e)
-	e.terminated = true
-	if returns_sret(e, result, false) {
-		store(e, result, value, "%sret")
-		fmt.sbprintln(&e.b, "  ret void")
-		return
-	}
-	fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), value)
-}
-
-// Calls `callee` with the written `arguments` and returns its result, which a
-// large result receives through storage passed ahead of them.
-@(private)
-emit_call_result :: proc(e: ^Emitter, result: Type_Id, callee, arguments: string) -> string {
-	if returns_sret(e, result, false) {
-		out := temporary_slot(e, result)
-		fmt.sbprintfln(&e.b, "  call void %s(ptr %s%s%s)", callee, out, arguments == "" ? "" : ", ", arguments)
-		return out
-	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", out, llvm_type(e, result), callee, arguments)
-	return out
-}
-
-// A pointer-mode parameter, or a large value, travels as an address.
-@(private)
-param_llvm :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
-	return param_mode_is_pointer(mode) || is_large_value(e, type) ? "ptr" : llvm_type(e, type)
-}
-
-// design.md "Types with no zero value": a non-null type held as one address,
-// and the address a pointer-mode or large parameter arrives at, is never null.
-@(private)
-param_nonnull :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
-	if param_mode_is_pointer(mode) || is_large_value(e, type) {
-		return " nonnull"
-	}
-	#partial switch underlying_kind(e.c, type) {
-	case .Pointer, .Box, .Proc, .CString_View:
-		return " nonnull"
-	}
-	return ""
-}
-
-@(private)
-result_inout_of :: proc(e: ^Emitter, proc_type: Type_Id) -> bool {
-	info := type_of(e.c, proc_type)
-	return info != nil && info.result_inout
-}
-
-// The LLVM type of one parameter of a compiler-synthesized member. design.md
-// "Receiver forms": a `self: ^` receiver arrives as a pointer to the caller's
-// storage, exactly as an `inout` one does.
-@(private)
-synth_param_llvm :: proc(e: ^Emitter, symbol: ^Symbol, index: int) -> string {
-	return param_llvm(e, symbol.params[index], symbol_param_mode(e.c, symbol, index))
-}
-
-// The receiver of a synthesized member as a *value*. The bodies below read
-// their receiver's words with `extractvalue`, so one that arrived as a pointer
-// is loaded once here rather than every body learning both spellings.
-@(private)
-synth_receiver_value :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
-	if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
-		return "%arg0"
-	}
-	return load_place(e, symbol.params[0], "%arg0")
-}
-
-// The receiver operand for a direct call to `hook` when the caller holds the
-// receiver as a value. design.md "Receiver forms": a `self: ^` receiver wants
-// the address of the value, so a held one is spilled here — once, and LLVM folds
-// the round trip away. A caller that already has the address passes it straight.
-@(private)
-call_receiver_operand :: proc(
-	e: ^Emitter, hook: Symbol_Id, type: Type_Id, value: string,
-) -> (receiver_type: string, receiver: string) {
-	sym := symbol_of(e.c, hook)
-	if sym == nil || !param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
-		return param_llvm(e, type, .Value), value
-	}
-	slot := temporary_slot(e, type)
-	store(e, type, value, slot)
-	return "ptr", slot
-}
-
-@(private)
-proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
-	info := type_of(e.c, symbol.proc_type)
-	return info == nil ? "" : info.convention
-}
+// ----------------------------------------------------------- foreign calls --
 
 // The `define` signature of a foreign-convention procedure's body under the
 // Windows x64 classification, which no caller may inline
@@ -728,29 +271,32 @@ proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 // leading `sret` pointer and a `void` return; `e.abi_sret` records it.
 @(private)
 emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
-	ret, params := foreign_signature(e, symbol)
+	ret, params, sret := foreign_signature(e, symbol)
+	e.abi_sret = sret
 	fmt.sbprintf(&e.b, "define %s%s %s(%s) noinline", llvm_linkage(llvm_name), ret, llvm_name, strings.join(params, ", "))
 	// design.md "@(cold)": the body is `noinline` already.
 	fmt.sbprintln(&e.b, cold_attributes(symbol) != "" ? " cold {" : " {")
 }
 
 // The return type and the parameters, each with its attributes and name, as
-// a `define` writes them and a call that forwards them writes them again.
+// a `define` writes them and a call that forwards them writes them again, and
+// the name of the hidden `sret` pointer among them, or "".
 @(private = "file")
-foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol) -> (ret: string, params: []string) {
+foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol) -> (ret: string, params: []string, sret: string) {
 	out := make([dynamic]string, 0, len(symbol.params) + 1)
+	proc_info := type_of(e.c, symbol.proc_type)
 	indirect: bool
-	ret, indirect = foreign_result_llvm(e, symbol.result, type_of(e.c, symbol.proc_type))
+	ret, indirect = foreign_result_llvm(e, symbol.result, proc_info)
 	if indirect {
-		e.abi_sret = "%arg.sret"
+		sret = "%arg.sret"
 		append(&out, fmt.aprintf(
-			"ptr sret(%s) align %d %s", llvm_type(e, symbol.result), type_align(e.c, symbol.result), e.abi_sret,
+			"ptr sret(%s) align %d %s", llvm_type(e, symbol.result), type_align(e.c, symbol.result), sret,
 		))
 	}
 	for parameter, index in symbol.params {
-		append(&out, fmt.aprintf("%s %%arg%d", foreign_param_type(e, symbol, parameter, index), index))
+		append(&out, fmt.aprintf("%s %%arg%d", foreign_param_llvm(e, proc_info, parameter, index, attributes = true), index))
 	}
-	return ret, out[:]
+	return ret, out[:], sret
 }
 
 // design.md "Floating-point operators": MXCSR's control bits, the rounding
@@ -764,14 +310,9 @@ MXCSR_LOKE :: 0x1f80
 @(private = "file")
 MXCSR_FLAGS :: 0x3f
 
-// The guard of a Loke procedure with a foreign calling convention, with its
-// signature.
 @(private)
 emit_foreign_entry_guard :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name, body: string) {
-	// Between functions: the `sret` name this records belongs to none.
-	saved := e.abi_sret
-	defer e.abi_sret = saved
-	ret, params := foreign_signature(e, symbol)
+	ret, params, _ := foreign_signature(e, symbol)
 	emit_entry_guard(e, llvm_name, ret, params, body)
 }
 
@@ -785,6 +326,18 @@ emit_foreign_entry_guard :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name, body: 
 // one does no floating-point arithmetic of its own.
 @(private)
 emit_entry_guard :: proc(e: ^Emitter, llvm_name, ret: string, params: []string, body: string) {
+	// Calls `body`, binding what it returns to `result`, and gives the `ret` that
+	// returns the same. A `ret` names the type without the return attribute a
+	// `define` carries.
+	call_body :: proc(e: ^Emitter, ret, body, arguments, result: string) -> (ret_line: string) {
+		if ret == "void" {
+			fmt.sbprintfln(&e.b, "  call void %s(%s)", body, arguments)
+			return "  ret void"
+		}
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", result, ret, body, arguments)
+		return fmt.aprintf("  ret %s %s", strings.trim_prefix(ret, "zeroext "), result)
+	}
+
 	arguments := strings.join(params, ", ")
 	open_function(e, "define %s%s %s(%s)", llvm_linkage(llvm_name), ret, llvm_name, arguments)
 	fmt.sbprintln(&e.b, "  %mxcsr = alloca i32, align 4")
@@ -794,33 +347,24 @@ emit_entry_guard :: proc(e: ^Emitter, llvm_name, ret: string, params: []string, 
 	fmt.sbprintfln(&e.b, "  %%mxcsr.ours = icmp eq i32 %%mxcsr.control, %d", MXCSR_LOKE)
 	fmt.sbprintln(&e.b, "  br i1 %mxcsr.ours, label %same, label %switched")
 
-	result := ret == "void" ? "" : "%result = "
 	fmt.sbprintln(&e.b, "same:")
-	fmt.sbprintfln(&e.b, "  %scall %s %s(%s)", result, ret, body, arguments)
-	fmt.sbprintln(&e.b, ret == "void" ? "  ret void" : strings.concatenate({"  ret ", foreign_return_type(ret), " %result"}))
+	fmt.sbprintln(&e.b, call_body(e, ret, body, arguments, "%result"))
 
 	fmt.sbprintln(&e.b, "switched:")
 	fmt.sbprintfln(&e.b, "  %%mxcsr.held = and i32 %%mxcsr.caller, %d", MXCSR_FLAGS)
 	fmt.sbprintfln(&e.b, "  %%mxcsr.loke = or i32 %%mxcsr.held, %d", MXCSR_LOKE)
 	fmt.sbprintln(&e.b, "  store i32 %mxcsr.loke, ptr %mxcsr, align 4")
 	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.ldmxcsr(ptr %mxcsr)")
-	switched := ret == "void" ? "" : "%switched.result = "
-	fmt.sbprintfln(&e.b, "  %scall %s %s(%s)", switched, ret, body, arguments)
+	ret_line := call_body(e, ret, body, arguments, "%switched.result")
 	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.stmxcsr(ptr %mxcsr)")
 	fmt.sbprintln(&e.b, "  %mxcsr.after = load i32, ptr %mxcsr, align 4")
 	fmt.sbprintfln(&e.b, "  %%mxcsr.raised = and i32 %%mxcsr.after, %d", MXCSR_FLAGS)
 	fmt.sbprintln(&e.b, "  %mxcsr.back = or i32 %mxcsr.control, %mxcsr.raised")
 	fmt.sbprintln(&e.b, "  store i32 %mxcsr.back, ptr %mxcsr, align 4")
 	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.ldmxcsr(ptr %mxcsr)")
-	fmt.sbprintln(&e.b, ret == "void" ? "  ret void" : strings.concatenate({"  ret ", foreign_return_type(ret), " %switched.result"}))
+	fmt.sbprintln(&e.b, ret_line)
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
-}
-
-// A `ret` names the type without the return attribute a `define` carries.
-@(private = "file")
-foreign_return_type :: proc(ret: string) -> string {
-	return strings.trim_prefix(ret, "zeroext ")
 }
 
 // design.md "Floating-point operators": with `-debug`, a call into foreign code
@@ -877,18 +421,16 @@ foreign_result_llvm :: proc(e: ^Emitter, result: Type_Id, info: ^Type_Info) -> (
 	unreachable()
 }
 
-// The LLVM type (with any ABI attribute) one foreign parameter occupies.
 @(private = "file")
-foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, index: int) -> string {
+foreign_param_llvm :: proc(e: ^Emitter, info: ^Type_Info, parameter: Type_Id, index: int, attributes: bool) -> string {
 	// design.md: a `self: ^` receiver, `inout T`, and `@(by_ptr) T` cross as a pointer.
-	proc_info := type_of(e.c, symbol.proc_type)
-	if foreign_param_is_pointer(proc_info.param_modes, proc_info.param_by_ptr, index) {
+	if foreign_param_is_pointer(info.param_modes, info.param_by_ptr, index) {
 		return "ptr"
 	}
 	switch abi_pass(e.c, parameter) {
 	case .Bool_I1:
 		// A parameter attribute follows the type, unlike the return attribute.
-		return "i1 zeroext"
+		return attributes ? "i1 zeroext" : "i1"
 	case .Reg_Int:
 		return fmt.aprintf("i%d", abi_reg_bits(e.c, parameter))
 	case .Indirect:
@@ -896,7 +438,7 @@ foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, ind
 	case .Direct:
 		return llvm_type(e, parameter)
 	}
-	return llvm_type(e, parameter)
+	unreachable()
 }
 
 // Materializes a foreign value parameter's addressable storage from its incoming
@@ -906,24 +448,21 @@ foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, ind
 @(private)
 emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> string {
 	arg := fmt.aprintf("%%arg%d", index)
-	switch abi_pass(e.c, parameter) {
-	case .Indirect:
+	pass := abi_pass(e.c, parameter)
+	if pass == .Indirect {
 		return arg
-	case .Reg_Int:
-		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
-		alloca_named(e, slot, llvm_type(e, parameter))
+	}
+	slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
+	alloca_named(e, slot, llvm_type(e, parameter))
+	if pass == .Reg_Int {
 		fmt.sbprintfln(
 			&e.b, "  store i%d %s, ptr %s, align %d",
 			abi_reg_bits(e.c, parameter), arg, slot, type_align(e.c, parameter),
 		)
-		return slot
-	case .Bool_I1, .Direct:
-		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
-		alloca_named(e, slot, llvm_type(e, parameter))
+	} else {
 		store(e, parameter, arg, slot)
-		return slot
 	}
-	return arg
+	return slot
 }
 
 // The classified `ret` of a foreign-convention procedure: a
@@ -950,19 +489,44 @@ emit_foreign_return :: proc(e: ^Emitter) {
 		v := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", v, bits, slot, type_align(e.c, result))
 		fmt.sbprintfln(&e.b, "  ret i%d %s", bits, v)
-	case .Bool_I1:
-		v := load(e, "i1", slot)
-		fmt.sbprintfln(&e.b, "  ret i1 %s", v)
-	case .Direct:
+	case .Bool_I1, .Direct:
 		v := load_place(e, result, slot)
 		fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), v)
 	}
 }
 
-// design.md "`@(c_vararg)`": the C default argument promotions — `f32` widens
-// to `double`; `bool`, an enum, and an integer narrower than 32 bits widen to
-// `i32`; an aggregate follows the ordinary by-value classification. Returns
-// the promoted `<type> <value>` operand.
+// A value spilled to a slot, as the `ptr <slot>` operand that crosses for it.
+@(private = "file")
+foreign_spill_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
+	slot := alloca(e, llvm_type(e, type))
+	store(e, type, operand, slot)
+	return fmt.aprintf("ptr %s", slot)
+}
+
+// A by-value argument under the ordinary classification, as a `<type> <value>`
+// operand.
+@(private = "file")
+foreign_value_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
+	switch abi_pass(e.c, type) {
+	case .Bool_I1:
+		return fmt.aprintf("i1 zeroext %s", operand)
+	case .Reg_Int:
+		slot, loaded := temp(e), temp(e)
+		bits, align := abi_reg_bits(e.c, type), type_align(e.c, type)
+		alloca_named(e, slot, llvm_type(e, type))
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, type), operand, slot, align)
+		fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
+		return fmt.aprintf("i%d %s", bits, loaded)
+	case .Indirect:
+		return foreign_spill_operand(e, type, operand)
+	case .Direct:
+		return fmt.aprintf("%s %s", llvm_type(e, type), operand)
+	}
+	unreachable()
+}
+
+// design.md "`@(c_vararg)`": the C default argument promotions. Returns the
+// promoted `<type> <value>` operand.
 @(private = "file")
 emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
 	under := type_underlying(e.c, type)
@@ -977,34 +541,19 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 			fmt.sbprintfln(&e.b, "  %s = fpext float %s to double", out, operand)
 			return fmt.aprintf("double %s", out)
 		}
-		return fmt.aprintf("%s %s", llvm_type(e, under), operand)
 	case .Bool:
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, operand)
 		return fmt.aprintf("i32 %s", out)
 	case .Int, .Enum:
-		bits := type_bits(e.c, under)
-		if bits < 32 {
+		if bits := type_bits(e.c, under); bits < 32 {
 			out := temp(e)
 			op := type_signed(e.c, under) ? "sext" : "zext"
 			fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i32", out, op, bits, operand)
 			return fmt.aprintf("i32 %s", out)
 		}
-		return fmt.aprintf("i%d %s", bits, operand)
 	case .Struct, .Array, .Union:
-		#partial switch abi_pass(e.c, under) {
-		case .Reg_Int:
-			slot, loaded := temp(e), temp(e)
-			bits, align := abi_reg_bits(e.c, under), type_align(e.c, under)
-			alloca_named(e, slot, llvm_type(e, under))
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, under), operand, slot, align)
-			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
-			return fmt.aprintf("i%d %s", bits, loaded)
-		case .Indirect:
-			slot := alloca(e, llvm_type(e, under))
-			store(e, under, operand, slot)
-			return fmt.aprintf("ptr %s", slot)
-		}
+		return foreign_value_operand(e, under, operand)
 	}
 	return fmt.aprintf("%s %s", llvm_type(e, type), operand)
 }
@@ -1014,43 +563,71 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 @(private = "file")
 foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) -> string {
 	ret, _ := foreign_result_llvm(e, callee_type.result, callee_type)
-	b := strings.builder_make()
-	fmt.sbprintf(&b, "%s (", ret)
-	need_comma := false
+	parts := make([dynamic]string, 0, len(callee_type.parameters) + 2)
 	if has_sret {
-		fmt.sbprint(&b, "ptr")
-		need_comma = true
+		append(&parts, "ptr")
 	}
 	for parameter, index in callee_type.parameters {
-		if need_comma {
-			fmt.sbprint(&b, ", ")
-		}
-		need_comma = true
-		if foreign_param_is_pointer(callee_type.param_modes, callee_type.param_by_ptr, index) {
-			fmt.sbprint(&b, "ptr")
-			continue
-		}
-		#partial switch abi_pass(e.c, parameter) {
-		case .Bool_I1:
-			fmt.sbprint(&b, "i1")
-		case .Reg_Int:
-			fmt.sbprintf(&b, "i%d", abi_reg_bits(e.c, parameter))
-		case .Indirect:
-			fmt.sbprint(&b, "ptr")
-		case .Direct:
-			fmt.sbprint(&b, llvm_type(e, parameter))
-		}
+		append(&parts, foreign_param_llvm(e, callee_type, parameter, index, attributes = false))
 	}
-	if need_comma {
-		fmt.sbprint(&b, ", ")
-	}
-	fmt.sbprint(&b, "...)")
-	return strings.to_string(b)
+	append(&parts, "...")
+	return fmt.aprintf("%s (%s)", ret, strings.join(parts[:], ", "))
 }
 
+// The operands of a foreign call, ahead of them the `sret` pointer it writes its
+// result through, if any.
 @(private = "file")
-param_is_by_ptr :: proc(info: ^Type_Info, index: int) -> bool {
-	return index < len(info.param_by_ptr) && info.param_by_ptr[index]
+foreign_arguments :: proc(e: ^Emitter, callee_type: ^Type_Info, operands: []string, bound: []Expr, sret: string) -> []string {
+	args := make([dynamic]string, 0, len(operands) + 1)
+	if sret != "" {
+		append(&args, fmt.aprintf(
+			"ptr sret(%s) align %d %s", llvm_type(e, callee_type.result), type_align(e.c, callee_type.result), sret,
+		))
+	}
+	for operand, index in operands {
+		// design.md "`@(c_vararg)`": arguments past the fixed parameters are concrete
+		// C variadics with the default promotions applied here.
+		if callee_type.c_vararg && index >= len(callee_type.parameters) {
+			append(&args, emit_c_vararg_promote(e, expr_base(bound[index]).type, operand))
+			continue
+		}
+		parameter := callee_type.parameters[index]
+		// An `inout` operand is already the address; a `@(by_ptr)` value gets one.
+		switch {
+		case foreign_param_is_pointer(callee_type.param_modes, nil, index):
+			append(&args, fmt.aprintf("ptr %s", operand))
+		case foreign_param_is_pointer(callee_type.param_modes, callee_type.param_by_ptr, index):
+			append(&args, foreign_spill_operand(e, parameter, operand))
+		case:
+			append(&args, foreign_value_operand(e, parameter, operand))
+		}
+	}
+	return args[:]
+}
+
+// What a foreign call's result is to its caller, from what the call returned or
+// wrote through `sret`.
+@(private = "file")
+foreign_call_result :: proc(e: ^Emitter, callee_type: ^Type_Info, call, sret: string) -> string {
+	result := callee_type.result
+	if result == INVALID_TYPE {
+		return "0"
+	}
+	if callee_type.result_inout {
+		return call
+	}
+	#partial switch abi_pass(e.c, result) {
+	case .Indirect:
+		return load_place(e, result, sret)
+	case .Reg_Int:
+		slot, v := temp(e), temp(e)
+		align := type_align(e.c, result)
+		alloca_named(e, slot, llvm_type(e, result))
+		fmt.sbprintfln(&e.b, "  store i%d %s, ptr %s, align %d", abi_reg_bits(e.c, result), call, slot, align)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", v, llvm_type(e, result), slot, align)
+		return v
+	}
+	return call
 }
 
 @(private)
@@ -1058,147 +635,24 @@ emit_foreign_call :: proc(
 	e: ^Emitter, callee: string, callee_type: ^Type_Info, operands: []string,
 	symbol: ^Symbol, bound: []Expr,
 ) -> string {
-	result_type := callee_type.result
-	ret, indirect := foreign_result_llvm(e, result_type, callee_type)
+	ret, indirect := foreign_result_llvm(e, callee_type.result, callee_type)
 	sret := ""
 	if indirect {
 		sret = temp(e)
-		alloca_named(e, sret, llvm_type(e, result_type))
+		alloca_named(e, sret, llvm_type(e, callee_type.result))
 	}
-
-	// design.md "`@(c_vararg)`": arguments past the fixed parameters are concrete
-	// C variadics with the default promotions applied here.
-	fixed := len(callee_type.parameters)
-	c_vararg := callee_type.c_vararg
-
-	args := make([dynamic]string, 0, len(operands) + 1)
-	if sret != "" {
-		append(&args, fmt.aprintf(
-			"ptr sret(%s) align %d %s", llvm_type(e, result_type), type_align(e.c, result_type), sret,
-		))
-	}
-	for operand, index in operands {
-		if c_vararg && index >= fixed {
-			append(&args, emit_c_vararg_promote(e, expr_base(bound[index]).type, operand))
-			continue
-		}
-		parameter := callee_type.parameters[index]
-		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		// An `inout` or `@(by_ptr)` parameter both cross as a pointer to storage.
-		if param_mode_is_pointer(mode) {
-			append(&args, fmt.aprintf("ptr %s", operand))
-			continue
-		}
-		if param_is_by_ptr(callee_type, index) {
-			slot := alloca(e, llvm_type(e, parameter))
-			store(e, parameter, operand, slot)
-			append(&args, fmt.aprintf("ptr %s", slot))
-			continue
-		}
-		switch abi_pass(e.c, parameter) {
-		case .Bool_I1:
-			append(&args, fmt.aprintf("i1 zeroext %s", operand))
-		case .Reg_Int:
-			slot, loaded := temp(e), temp(e)
-			bits, align := abi_reg_bits(e.c, parameter), type_align(e.c, parameter)
-			alloca_named(e, slot, llvm_type(e, parameter))
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, parameter), operand, slot, align)
-			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
-			append(&args, fmt.aprintf("i%d %s", bits, loaded))
-		case .Indirect:
-			slot := alloca(e, llvm_type(e, parameter))
-			store(e, parameter, operand, slot)
-			append(&args, fmt.aprintf("ptr %s", slot))
-		case .Direct:
-			append(&args, fmt.aprintf("%s %s", llvm_type(e, parameter), operand))
-		}
-	}
+	args := strings.join(foreign_arguments(e, callee_type, operands, bound, sret), ", ")
 
 	// A variadic call names the explicit function type in place of the plain
 	// return type; a fixed call names only the return type.
-	head := ret
-	if c_vararg {
-		head = foreign_call_type(e, callee_type, sret != "")
-	}
+	head := callee_type.c_vararg ? foreign_call_type(e, callee_type, indirect) : ret
 	call := ""
 	if ret == "void" {
-		fmt.sbprintf(&e.b, "  call %s %s(", head, callee)
+		fmt.sbprintfln(&e.b, "  call %s %s(%s)", head, callee, args)
 	} else {
 		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, head, callee)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", call, head, callee, args)
 	}
-	for arg, index in args {
-		if index > 0 {
-			fmt.sbprint(&e.b, ", ")
-		}
-		fmt.sbprint(&e.b, arg)
-	}
-	fmt.sbprintln(&e.b, ")")
 	emit_foreign_environment_check(e, symbol)
-
-	if callee_type.result == INVALID_TYPE {
-		return "0"
-	}
-	if callee_type.result_inout {
-		return call
-	}
-	switch abi_pass(e.c, result_type) {
-	case .Indirect:
-		return load_place(e, result_type, sret)
-	case .Reg_Int:
-		slot, v := temp(e), temp(e)
-		align := type_align(e.c, result_type)
-		alloca_named(e, slot, llvm_type(e, result_type))
-		fmt.sbprintfln(&e.b, "  store i%d %s, ptr %s, align %d", abi_reg_bits(e.c, result_type), call, slot, align)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", v, llvm_type(e, result_type), slot, align)
-		return v
-	case .Bool_I1, .Direct:
-	}
-	return call
-}
-
-// `Option(T)` from a runtime presence flag. The payload is written only on the
-// present branch, so an absent option never publishes uninitialized bytes.
-@(private)
-emit_option_value :: proc(e: ^Emitter, option_type: Type_Id, present, payload: string) -> string {
-	return emit_union_choice(
-		e, option_type, present,
-		union_index_of(e.c, option_type, "some"), union_index_of(e.c, option_type, "none"),
-		payload,
-	)
-}
-
-// `Result(T, Allocator_Error)` from a runtime failure flag. The error is the
-// refused size (design.md "Allocation failure"): `error` when the failure is
-// already an `Allocator_Error`, else taken from the runtime's note. `value` is
-// the success payload, empty when success carries `Unit`.
-@(private)
-emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value := "", error := "") -> string {
-	refused := error
-	if refused == "" && failed != "false" {
-		refused = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
-	}
-	return emit_union_either(
-		e, result, failed,
-		union_index_of(e.c, result, "err"), refused,
-		union_index_of(e.c, result, "ok"), value,
-	)
-}
-
-// An `Allocator_Error` turning back into a status or a policy call: its size
-// returns to the runtime's note, charged to `allocator`.
-@(private)
-emit_restore_refusal :: proc(e: ^Emitter, allocator, error: string) {
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_restore_refusal(ptr %s, i64 %s)", allocator, error)
-}
-
-// A vector lane's backend type. It is the element's own spelling except for a
-// lane mask: design.md gives `Simd(bool, N)` one byte per lane, while a scalar
-// `bool` is `i1`.
-simd_lane_llvm_type :: proc(e: ^Emitter, info: ^Type_Info) -> string {
-	if info.kind == .Simd && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool {
-		return "i8"
-	}
-	return llvm_type(e, info.element)
+	return foreign_call_result(e, callee_type, call, sret)
 }

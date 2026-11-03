@@ -28,6 +28,17 @@ Widths :: struct {
 	natural: Simd(int, 4),
 }
 
+// A union takes its alignment from a vector past any integer's, with a payload,
+// and with only a zero-sized one.
+@(zero=narrow) Wide_Union :: union { narrow: i32, vector: Simd(f32, 8) }
+@(zero=narrow) Widest_Union :: union { narrow: i32, vector: Simd(f64, 8) }
+@(zero=none) Empty_Wide_Union :: union { none:, nothing: [0]Simd(f32, 8) }
+
+Hold_Wide_Union :: struct { lead: u8, value: Wide_Union, tail: u8 }
+Hold_Widest_Union :: struct { lead: u8, value: Widest_Union, tail: u8 }
+Hold_Empty_Wide_Union :: struct { lead: u8, value: Empty_Wide_Union, tail: u8 }
+Wide_Union_Array :: [3]Hold_Wide_Union;
+
 main :: proc() {
 	frame: Frame = {};
 	widths: Widths = {};

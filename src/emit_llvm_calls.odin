@@ -1268,3 +1268,126 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 	place_label(e, done_label)
 	return load_place(e, as_type, slot)
 }
+
+// ------------------------------------------- the Loke calling convention --
+
+// design.md: a procedure returns at most one value. An `inout` result is a
+// place, so it travels as its address. A large result is written through a
+// leading `ptr %sret` into the caller's storage.
+@(private)
+llvm_result_type :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
+	if result == INVALID_TYPE || !inout && is_large_value(e, result) {
+		return "void"
+	}
+	return inout ? "ptr" : llvm_type(e, result)
+}
+
+@(private)
+returns_sret :: proc(e: ^Emitter, result: Type_Id, inout: bool) -> bool {
+	return !inout && is_large_value(e, result)
+}
+
+// `ptr %sret, ` ahead of a procedure's own parameters when its result is
+// large; the procedure then returns with `emit_ret`.
+@(private)
+sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
+	if !returns_sret(e, result, inout) {
+		return ""
+	}
+	e.abi_sret = "%sret"
+	return "ptr %sret, "
+}
+
+@(private)
+emit_ret :: proc(e: ^Emitter, result: Type_Id, value: string) {
+	emit_unwind_pop(e)
+	e.terminated = true
+	if returns_sret(e, result, false) {
+		store(e, result, value, "%sret")
+		fmt.sbprintln(&e.b, "  ret void")
+		return
+	}
+	fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), value)
+}
+
+// Calls `callee` with the written `arguments` and returns its result, which a
+// large result receives through storage passed ahead of them.
+@(private)
+emit_call_result :: proc(e: ^Emitter, result: Type_Id, callee, arguments: string) -> string {
+	if returns_sret(e, result, false) {
+		out := temporary_slot(e, result)
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s%s%s)", callee, out, arguments == "" ? "" : ", ", arguments)
+		return out
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", out, llvm_type(e, result), callee, arguments)
+	return out
+}
+
+// A pointer-mode parameter, or a large value, travels as an address.
+@(private)
+param_llvm :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
+	return param_mode_is_pointer(mode) || is_large_value(e, type) ? "ptr" : llvm_type(e, type)
+}
+
+// design.md "Types with no zero value": a non-null type held as one address,
+// and the address a pointer-mode or large parameter arrives at, is never null.
+@(private)
+param_nonnull :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
+	if param_mode_is_pointer(mode) || is_large_value(e, type) {
+		return " nonnull"
+	}
+	#partial switch underlying_kind(e.c, type) {
+	case .Pointer, .Box, .Proc, .CString_View:
+		return " nonnull"
+	}
+	return ""
+}
+
+@(private)
+result_inout_of :: proc(e: ^Emitter, proc_type: Type_Id) -> bool {
+	info := type_of(e.c, proc_type)
+	return info != nil && info.result_inout
+}
+
+// The LLVM type of one parameter of a compiler-synthesized member. design.md
+// "Receiver forms": a `self: ^` receiver arrives as a pointer to the caller's
+// storage, exactly as an `inout` one does.
+@(private)
+synth_param_llvm :: proc(e: ^Emitter, symbol: ^Symbol, index: int) -> string {
+	return param_llvm(e, symbol.params[index], symbol_param_mode(e.c, symbol, index))
+}
+
+// The receiver of a synthesized member as a *value*. The bodies below read
+// their receiver's words with `extractvalue`, so one that arrived as a pointer
+// is loaded once here rather than every body learning both spellings.
+@(private)
+synth_receiver_value :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
+	if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
+		return "%arg0"
+	}
+	return load_place(e, symbol.params[0], "%arg0")
+}
+
+// The receiver operand for a direct call to `hook` when the caller holds the
+// receiver as a value. design.md "Receiver forms": a `self: ^` receiver wants
+// the address of the value, so a held one is spilled here — once, and LLVM folds
+// the round trip away. A caller that already has the address passes it straight.
+@(private)
+call_receiver_operand :: proc(
+	e: ^Emitter, hook: Symbol_Id, type: Type_Id, value: string,
+) -> (receiver_type: string, receiver: string) {
+	sym := symbol_of(e.c, hook)
+	if sym == nil || !param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
+		return param_llvm(e, type, .Value), value
+	}
+	slot := temporary_slot(e, type)
+	store(e, type, value, slot)
+	return "ptr", slot
+}
+
+@(private)
+proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
+	info := type_of(e.c, symbol.proc_type)
+	return info == nil ? "" : info.convention
+}

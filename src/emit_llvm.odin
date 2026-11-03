@@ -26,6 +26,8 @@ Emitter :: struct {
 	// abort instead of failing the build.
 	synth_bodies: bool,
 	names:        map[Symbol_Id]string,
+	// Every foreign member the naming pass met, in declaration order.
+	foreign_symbols: [dynamic]Symbol_Id,
 	// Every internal procedure name handed out, across all packages (`claim_name`).
 	taken_names:  map[string]bool,
 	struct_names: map[Type_Id]string,

@@ -23,6 +23,21 @@ emit_default_allocator :: proc(e: ^Emitter) -> string {
 	return out
 }
 
+// A block from the runtime, and whether it was refused.
+@(private)
+emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (block, failed: string) {
+	block = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)", block, allocator, size, align)
+	failed = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, block)
+	return
+}
+
+@(private)
+emit_rt_free :: proc(e: ^Emitter, allocator, block: string, size, align: u64) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)", allocator, block, size, align)
+}
+
 // The runtime entries that end the program, as `LOKE_RT_FAILURE` in
 // runtime/loke_rt.h declares them.
 @(private = "file")

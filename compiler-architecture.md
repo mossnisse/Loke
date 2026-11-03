@@ -949,9 +949,10 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_names.odin` | LLVM symbol names: the naming pass, mangling, escaping, and linkage. |
 | `emit_llvm_entry.odin` | Program entry: `wmain` for an executable and a test build, an object's CPU check, and the provider initializer. |
 | `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's floating-point guard and `-debug`'s check after a foreign call. |
+| `emit_llvm_union.odin` | Union storage, construction, widening, and tag and payload reads. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
 | `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |
-| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, and allocation built-ins. |
+| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and the Loke calling convention. |
 | `emit_llvm_erased.odin` | Erased views: `dyn` values and slot calls, witness tables and their thunks, and the forwarding bodies of `dyn I` and `dyn proc`. |
 | `emit_llvm_math.odin` | The `core:math` bit and floating-point instruction built-ins. |
 | `emit_llvm_cleanup.odin` | Cleanup registration: scopes, full-expression frames, and held values. |

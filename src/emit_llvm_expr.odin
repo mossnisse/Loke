@@ -11,7 +11,7 @@ import "core:strings"
 // -------------------------------------------------------------- constants --
 
 // design.md "Zero values": a union constant is the payload's little-endian byte
-// image, split across the integer head and byte-array tail, plus the tag.
+// image, split across the head and byte-array tail, plus the tag.
 @(private = "file")
 union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
@@ -20,7 +20,6 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	}
 	index := value.aggregate.variant
 	payload_type := union_variant_payload(e.c, type, index)
-	head := "0"
 	payload_bytes := make([]u8, int(shape.payload_size), context.temp_allocator)
 	if payload_type != TYPE_VOID && type_size(e.c, payload_type) != 0 {
 		payload_size := int(type_size(e.c, payload_type))
@@ -28,12 +27,6 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 		   !write_const_bytes(e, payload_bytes[:payload_size], value.aggregate.elements[0], payload_type) {
 			backend_fail(e, fmt.aprintf("a union payload constant cannot be represented as bytes: %s in %s", type_name(e.c, payload_type), type_name(e.c, type)))
 		}
-		bits := bi_zero(e.c)
-		for byte, byte_index in payload_bytes[:int(shape.align)] {
-			part := bi_shl(e.c, bi_from_u64(e.c, u64(byte)), byte_index * 8)
-			bits = bi_add(e.c, bits, part)
-		}
-		head = bi_text(e.c, bits)
 	}
 	if index == 0 && slice.all_of(payload_bytes, 0) {
 		return "zeroinitializer"
@@ -43,7 +36,7 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	strings.write_string(&b, "{ ")
 	// An all-payloadless union stores its tag and nothing else.
 	if shape.payload_size > 0 {
-		fmt.sbprintf(&b, "i%d %s", shape.align * 8, head)
+		write_union_head_constant(e, &b, payload_bytes[:int(shape.align)])
 		if pad := shape.payload_size - shape.align; pad > 0 {
 			strings.write_string(&b, ", ")
 			write_byte_array_constant(&b, payload_bytes[int(shape.align):int(shape.payload_size)])
@@ -53,6 +46,8 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 			return strings.to_string(b)
 		}
 		strings.write_string(&b, ", ")
+	} else if shape.align > shape.tag_bytes {
+		fmt.sbprintf(&b, "[0 x %s] zeroinitializer, ", union_head_type(shape.align))
 	}
 	fmt.sbprintf(&b, "i%d %d", shape.tag_bytes * 8, index)
 	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
@@ -60,6 +55,25 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	}
 	strings.write_string(&b, " }")
 	return strings.to_string(b)
+}
+
+// The head member of `union_head_type`, typed, holding `head`'s bytes.
+@(private = "file")
+write_union_head_constant :: proc(e: ^Emitter, b: ^strings.Builder, head: []u8) {
+	strings.write_string(b, union_head_type(u64(len(head))))
+	if len(head) > UNION_INT_HEAD_BYTES {
+		strings.write_string(b, " <")
+		for byte, index in head {
+			fmt.sbprintf(b, "%si8 %d", index > 0 ? ", " : "", byte)
+		}
+		strings.write_string(b, ">")
+		return
+	}
+	bits := bi_zero(e.c)
+	for byte, index in head {
+		bits = bi_add(e.c, bits, bi_shl(e.c, bi_from_u64(e.c, u64(byte)), index * 8))
+	}
+	fmt.sbprintf(b, " %s", bi_text(e.c, bits))
 }
 
 // A type's zero value as an LLVM constant, when it has one. design.md "Zero
@@ -164,8 +178,9 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			return "zeroinitializer"
 		}
 		byte_array := record_uses_byte_members(e, under, info)
+		angled := info.packed && !byte_array
 		b := strings.builder_make()
-		strings.write_string(&b, byte_array ? "{" : (info.packed ? "<{" : "{"))
+		strings.write_string(&b, angled ? "<{" : "{")
 		zero := !byte_array
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -188,7 +203,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		if info.align > info.natural_align {
 			fmt.sbprintf(&b, ", [0 x i%d] zeroinitializer", info.align * 8)
 		}
-		strings.write_string(&b, byte_array ? " }" : (info.packed ? " }>" : " }"))
+		strings.write_string(&b, angled ? " }>" : " }")
 		return strings.to_string(b)
 	}
 	return "0"
@@ -2015,14 +2030,6 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	}
 	place_label(e, done)
 	return load(e, "i1", answer)
-}
-
-// Whether this record is the combined `@(packed, align=N)` body from
-// `struct_body`, whose LLVM members are byte arrays.
-@(private = "file")
-record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
-	type_size(e.c, type)
-	return info.packed && info.align > info.natural_align
 }
 
 // Field-wise equality, with each field read by `read`. An `@(initialized)` array

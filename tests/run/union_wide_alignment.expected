@@ -1,0 +1,7 @@
+64 32 128 96
+narrow 0
+vector 9.0 2.0
+7
+narrow 7
+vector 1.0 8.0
+.nothing([]) .second .third

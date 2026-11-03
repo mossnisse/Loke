@@ -247,12 +247,6 @@ The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L34
 
 ### LLVM emitter
 
-#### Foreign result and parameter spelling
-
-The parameter switch is at [emit_llvm_abi.odin:882](src/emit_llvm_abi.odin#L882) and [emit_llvm_abi.odin:1043](src/emit_llvm_abi.odin#L1043), which differ in the `zeroext` attribute.
-
-Shared form: one `foreign_param_llvm(e, info, parameter, index, attributes: bool)`. Saves about 15 lines.
-
 #### Allocation failure branch
 
 `call void @loke_rt_v1_alloc_failed`, `unreachable` and `e.terminated = true` after a branch are at [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), [emit_llvm_calls.odin:962](src/emit_llvm_calls.odin#L962), [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073), [emit_llvm_cleanup.odin:1652](src/emit_llvm_cleanup.odin#L1652), [emit_llvm_containers.odin:699](src/emit_llvm_containers.odin#L699), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275) and [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176). Only labels and the test (`icmp eq ptr` or `icmp eq i32`) differ; [emit_llvm_stmt.odin:178](src/emit_llvm_stmt.odin#L178) has no `terminated` write and clears it after the label instead.
@@ -275,7 +269,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 - `loke_rt_v1_map_scan` and cursor store: [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [emit_llvm_iteration.odin:961](src/emit_llvm_iteration.odin#L961), [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945). `emit_map_scan`, about 10.
 - Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8.
-- Union storage head: [emit_llvm_abi.odin:410](src/emit_llvm_abi.odin#L410) and [emit_llvm_expr.odin:42](src/emit_llvm_expr.odin#L42) spell the same `i%d`, so the BUG-emit_llvm_abi-1 fix must change both. Share the head spelling.
 
 ### Small idioms and misplaced code
 
@@ -856,62 +849,6 @@ reader and the L0260 check, and copies much of `private_names.odin`. Seven bugs,
 - [doc.odin:1182](src/doc.odin#L1182): the rules are listed in the cited section: `// design.md "Doc comments": a block doc comment's lines.`
 - [doc.odin:18](src/doc.odin#L18), [34](src/doc.odin#L34), [298](src/doc.odin#L298), [843](src/doc.odin#L843), [960](src/doc.odin#L960), [975](src/doc.odin#L975): delete; each restates the name below it. At [990](src/doc.odin#L990) keep only the second sentence. (about 20 lines across the file)
 
-### src/emit_llvm_abi.odin
-
-Mostly correct, with one confirmed layout miscompile for unions holding wide vectors. The foreign lowering repeats its classification switches four times, `struct_body` repeats one loop four times, and about a third of the file (union values, the Loke calling convention) is not what the source-code map says it owns.
-
-**Bugs**
-
-- `BUG-emit_llvm_abi-1` **high** [emit_llvm_abi.odin:410](src/emit_llvm_abi.odin#L410) `union_storage_definition`: the `i%d` head does not carry alignment above 16: LLVM aligns `i256`/`i512` to 16, the largest integer in the target layout. Scenario: `@(zero=n) U :: union { n: i32, v: Simd(f32, 8) }` in `S :: struct { x: u8, u: U, tail: u8 }`, then `a: [100]S = {}; b := a;`: `-check-layout` says `align_of(U)` 32 vs 16 and `size_of` of a struct `{ x: u8, u: U }` 96 vs 80, and the 12800-byte memcpy overruns a 9600-byte alloca, so it segfaults at `-opt=none` (`Simd(f32, 4)` runs correctly). Fix: spell the head `<N x i8>` above 16 bytes, here and in the constant at [emit_llvm_expr.odin:42](src/emit_llvm_expr.odin#L42), and add such a union to `tests/layout`. *Confirmed: Reproduced: IR has %union.U = type { i256, i8, [31 x i8] }; -check-layout reports align_of(U) 32 vs 16 and size_of(T) 96 vs 80; [100]S copy segfaults (rc 139). Simd(f32, 4) and a plain-struct Simd(f32, 8) both run fine. Not recorded in the docs; high severity is fair.*
-- `BUG-emit_llvm_abi-2` **low** [emit_llvm_abi.odin:37](src/emit_llvm_abi.odin#L37) `emit_foreign_declarations`: the hand-kept `seen` list covers only a few of the names `emit_runtime_declarations` declares. Scenario: `foreign rt { loke_rt_v1_frame_pop :: proc(frame: rawptr) ---; }` fails with L0403, clang's "invalid redefinition of function", instead of compiling or a diagnostic. Fix: record each runtime declaration in a set this loop consults, which also removes lines 31-44. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_abi.odin:143](src/emit_llvm_abi.odin#L143) `define_struct`: LLVM text allows forward references to named types (checked with clang 22: an outer struct before its by-value inner one gets the right size), and no `*_abi_type` interns during emission. Visit each `Type_Id` once and print it, dropping recursion, the `emitted` map and `struct_dependency`. (about 30 lines)
-- [emit_llvm_abi.odin:203](src/emit_llvm_abi.odin#L203) `struct_body`: four copies of one loop. One loop picks `[N x i8]` when packed and over-aligned, else the field type; `<{`/`}>` only for packed-alone; the `[0 x iN]` tail only when over-aligned. (about 40 lines)
-- [emit_llvm_abi.odin:192](src/emit_llvm_abi.odin#L192) `define_struct`: the brace only matters in a format string, not an argument. Use `fmt.sbprintfln(&e.b, "%s = type %s", name, struct_body(...))`, as line 165 does, and drop the comment. (3 lines)
-- [emit_llvm_abi.odin:309](src/emit_llvm_abi.odin#L309) `struct_name`: `llvm_safe` already leaves a plain name unchanged, and the id makes names unique. `text := type_spelling(e, type)`, fall back to `llvm_safe(identifier_text(...))`, then one `aprintf` with `text == "" ? "anon" : text`. (about 8 lines)
-- [emit_llvm_abi.odin:526](src/emit_llvm_abi.odin#L526) `emit_union_choice`: its only caller is `emit_option_value` at line 1187. Call `emit_union_either` there directly. (about 9 lines)
-- [emit_llvm_abi.odin:477](src/emit_llvm_abi.odin#L477) `emit_union_widen`, and line 521 in `emit_union_either`: `e.terminated = false` repeats what `place_label` just did. Delete both. (2 lines)
-- [emit_llvm_abi.odin:552](src/emit_llvm_abi.odin#L552) `emit_union_tag`: fetch `shape` once and put the "large means GEP and load, else extract" read in one local helper used by both the niche and tag paths; lines 572-573 and 587-588 can return directly. (about 8 lines)
-- [emit_llvm_abi.odin:754](src/emit_llvm_abi.odin#L754) `foreign_signature`: writing `e.abi_sret` as a side effect is the only reason `emit_foreign_entry_guard` saves and restores it (lines 788-790). Return the sret name and let `emit_foreign_signature` store it. (about 3 lines)
-- [emit_llvm_abi.odin:901](src/emit_llvm_abi.odin#L901) `emit_foreign_param_slot`: return early for `.Indirect`, then share the slot and alloca, branching only on the store. (about 5 lines)
-- [emit_llvm_abi.odin:947](src/emit_llvm_abi.odin#L947) `emit_foreign_return`: `.Bool_I1` is `.Direct` with the same result, since `llvm_type(bool)` is `i1`; merge the cases, as line 1177 already does. (3 lines)
-- [emit_llvm_abi.odin:814](src/emit_llvm_abi.odin#L814) `emit_entry_guard`: the void-or-value call and return are written twice. A nested proc taking the result name holds both. (about 5 lines)
-- [emit_llvm_abi.odin:1142](src/emit_llvm_abi.odin#L1142) `emit_foreign_call`: `strings.join(args[:], ", ")` and one print replace the comma loop; `result_type` (line 1068), `fixed` and `c_vararg` (lines 1090-1091) only alias `callee_type` fields. (about 12 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_abi.odin:288](src/emit_llvm_abi.odin#L288): the bound of 32 in `struct_dependency` guards nothing, since array nesting cannot cycle; it also goes with the `define_struct` simplification above.
-
-**Data structures and algorithms**
-
-- [emit_llvm_abi.odin:348](src/emit_llvm_abi.odin#L348) `llvm_type`: called for nearly every emitted instruction (about 260 call sites), and each integer `aprintf`s a fresh string and each array re-spells its element, into an arena freed only after emission. A cache keyed by `Type_Id` would pay once per type. Unmeasured; check with `perf.ps1`.
-- [emit_llvm_abi.odin:45](src/emit_llvm_abi.odin#L45) `emit_foreign_declarations`: walks every package's items again, six levels deep, though [emit_llvm.odin:360](src/emit_llvm.odin#L360) has just visited the same foreign members to name them. Appending to a `foreign_symbols` list there leaves one loop here. (about 20 lines)
-
-**Near copies**
-
-- [emit_llvm_abi.odin:1036](src/emit_llvm_abi.odin#L1036) and [line 876](src/emit_llvm_abi.odin#L876): `foreign_call_type` re-classifies parameters as `foreign_param_type` does, differing only in dropping `zeroext`. Take `^Type_Info` in `foreign_param_type` and trim the attribute. The `mode` lookup at line 1105 also repeats `foreign_param_is_pointer`. (about 15 lines)
-- [emit_llvm_abi.odin:991](src/emit_llvm_abi.odin#L991) and [line 1121](src/emit_llvm_abi.odin#L1121): the same spill and reload through `iN`; lines 998, 1112 and 1128 are the same spill to a pointer. A `foreign_value_operand(e, type, operand)` serves the promotion's aggregate case and the fixed-argument switch. (about 12 lines)
-- [emit_llvm_abi.odin:441](src/emit_llvm_abi.odin#L441), [line 467](src/emit_llvm_abi.odin#L467) and [line 505](src/emit_llvm_abi.odin#L505): write the payload at member 0, then the tag. Hoist the nested `arm` to file scope and use it in all three. (about 6 lines)
-- [emit_llvm_abi.odin:208](src/emit_llvm_abi.odin#L208) and [emit_llvm_expr.odin:180](src/emit_llvm_expr.odin#L180): the type's and the constant's spelling of a record each derive packed, over-aligned and byte-member form. With the flag above, both read the same two facts.
-
-**Structure and boundaries**
-
-- [emit_llvm_abi.odin:433](src/emit_llvm_abi.odin#L433): union construction, widening, tag and payload reads (to line 606), plus `emit_option_value`, `emit_alloc_result` and `emit_restore_refusal` (lines 1183-1217), are not ABI and not in the source-code map's entry. Move them to an `emit_llvm_union.odin`.
-- [emit_llvm_abi.odin:608](src/emit_llvm_abi.odin#L608): the Loke convention (`sret_param`, `emit_ret`, `emit_call_result`, `param_llvm`, the `synth_*` helpers, to line 726) sits between union code and the foreign signature. It belongs with `emit_llvm_calls.odin`, or the map entry should name it.
-- [emit_llvm_abi.odin:1062](src/emit_llvm_abi.odin#L1062) `emit_foreign_call`: 120 lines with seams at result classification, argument lowering, the call, and result recovery; the near-copy fixes leave it about half that.
-
-**Comments**
-
-- [emit_llvm_abi.odin:343](src/emit_llvm_abi.odin#L343): stale history: the foreign ABI landed, and LLVM already gives `i1` one byte of storage. Delete, or "`i1` everywhere; LLVM stores it in one byte."
-- [emit_llvm_abi.odin:197](src/emit_llvm_abi.odin#L197): shorten to "A `@(packed)`/`@(align=N)` record is spelled so LLVM's layout matches the checker's; GEP indices equal field indices in every form."
-- [emit_llvm_abi.odin:366](src/emit_llvm_abi.odin#L366): delete; the case label already lists the kinds.
-- [emit_llvm_abi.odin:660](src/emit_llvm_abi.odin#L660), [line 784](src/emit_llvm_abi.odin#L784), [line 874](src/emit_llvm_abi.odin#L874) and [line 576](src/emit_llvm_abi.odin#L576): restate the code. Delete.
-- [emit_llvm_abi.odin:591](src/emit_llvm_abi.odin#L591): "that storage type" points at a definition 190 lines up. "The storage member of `union_storage_definition` that holds the tag."
-- [emit_llvm_abi.odin:1183](src/emit_llvm_abi.odin#L1183): repeats lines 481-483. Keep "`Option(T)` from a runtime presence flag."
-- [emit_llvm_abi.odin:956](src/emit_llvm_abi.odin#L956): keep the citation; the promotion list can go, since the switch spells it out. (about 25 lines across the file)
-
 ### src/emit_llvm_calls.odin
 
 Only near copies shared with other emitter files remain.
@@ -1037,7 +974,7 @@ Careful code whose comments mostly explain why, with real failure handling for t
 
 **Dead code**
 
-- (branch) [emit_llvm_toolchain.odin:619](src/emit_llvm_toolchain.odin#L619): `package_order` yields only ids in `1 ..< len(c.packages)` and dereferences `package_of` unchecked itself, so this `nil` test cannot fire. The same dead test is at [check.odin:460](src/check.odin#L460) and [emit_llvm_abi.odin:47](src/emit_llvm_abi.odin#L47).
+- (branch) [emit_llvm_toolchain.odin:619](src/emit_llvm_toolchain.odin#L619): `package_order` yields only ids in `1 ..< len(c.packages)` and dereferences `package_of` unchecked itself, so this `nil` test cannot fire. The same dead test is at [check.odin:460](src/check.odin#L460).
 - (branch) [emit_llvm_toolchain.odin:504](src/emit_llvm_toolchain.odin#L504): `link`'s `exe_path` is `opts.output` at both call sites (lines 67 and 209), beside `opts` itself. Drop it, unless the fix for bug 1 above makes the probe's path differ.
 
 **Data structures and algorithms**
@@ -1198,7 +1135,7 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 
 **Near copies**
 
-- [foreign.odin:24](src/foreign.odin#L24), [foreign.odin:64](src/foreign.odin#L64), [foreign.odin:104](src/foreign.odin#L104), [attributes.odin:258](src/attributes.odin#L258), [doc.odin:312](src/doc.odin#L312), [doc.odin:351](src/doc.odin#L351), [private_names.odin:48](src/private_names.odin#L48), [emit_llvm.odin:353](src/emit_llvm.odin#L353), [emit_llvm_abi.odin:56](src/emit_llvm_abi.odin#L56): all filter `member.(^Decl)`. Only `^Decl` or an already reported `^Item_Error` occurs, so `parse_foreign` could drop errors and `Item_Foreign_Block.members` become `[]^Decl`. (about 15 lines)
+- [foreign.odin:24](src/foreign.odin#L24), [foreign.odin:64](src/foreign.odin#L64), [foreign.odin:104](src/foreign.odin#L104), [attributes.odin:258](src/attributes.odin#L258), [doc.odin:312](src/doc.odin#L312), [doc.odin:351](src/doc.odin#L351), [private_names.odin:48](src/private_names.odin#L48), [emit_llvm.odin:353](src/emit_llvm.odin#L353): all filter `member.(^Decl)`. Only `^Decl` or an already reported `^Item_Error` occurs, so `parse_foreign` could drop errors and `Item_Foreign_Block.members` become `[]^Decl`. (about 15 lines)
 - [foreign.odin:41](src/foreign.odin#L41) and [doc.odin:544](src/doc.odin#L544): both state "member, then block, then file" for visibility, doc.odin for declarations no symbol records. `written_is_public` already composes: `written_is_public(d.attributes, nil, written_is_public(block, file.attributes))` replaces lines 544 to 550. (about 5 lines)
 
 **Structure and boundaries**
