@@ -644,10 +644,7 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 		// A payloadless variant passes the `Unit{}` constant, which has no owner.
 		argument: Expr = payload
 		if consumes && union_variant_payload(k.c, subject, index) != TYPE_VOID {
-			moved := new(Expr_Move, k.c.semantic_allocator)
-			moved.span = span
-			moved.value = payload
-			argument = moved
+			argument = synth_move(k.c, payload, span)
 		}
 		arm.args[0] = Argument{span = span, name = Name{text = label, span = span}, value = argument}
 		entry.arm = arm

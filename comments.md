@@ -238,6 +238,15 @@ until any later point, so a write to a global there is only a likely race. A
 task runs between its spawn and the join, which the compiler sees, so the same
 write while a task may be running is an error.
 
+**A copy from a temporary, a lend of a widened place.** A task cannot be lent a
+field of a temporary, which ends with its statement, and the whole temporary
+cannot go into the frame either: an element's index is evaluated on the parent
+and the task would have to project it again on the worker. So the task gets a
+copy of the part, as `x := make().part` would. A widened place is still lent as
+any argument is ([Widening by label](#widening-by-label)), since its payload
+lasts: only the widened form is new, and it goes in the task's frame rather than
+one temporary shared by every spawn of a loop.
+
 **An erased view by its conversions.** A `dyn` view stored in a global hides
 what it views, yet a registry of handlers is a common reason to store one.
 [Globals while tasks run](design.md#globals-while-tasks-run) takes every type

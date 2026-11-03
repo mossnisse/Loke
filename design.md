@@ -9791,7 +9791,11 @@ A managed `value: T` argument, such as a record containing a container, is
 borrowed until the join. Move or clone it to give the task its own value.
 
 Temporaries made for a spawn's arguments belong to the task and are dropped on
-the worker when the call returns. A result cannot borrow their storage.
+the worker when the call returns. A result cannot borrow their storage. A field
+or element in such a temporary's own storage, reached without following a pointer
+or slice, is copied into the task as a binding would copy it, and that copy is the
+task's; the temporary is dropped on the parent when the statement ends. An
+argument or receiver of a move-only type cannot be copied, so it is an error.
 
 A [variadic pack](#variadic-parameters) belongs to the task too. Its elements
 are evaluated and copied into it on the parent, in written order, as at any

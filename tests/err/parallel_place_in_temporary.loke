@@ -1,0 +1,27 @@
+// design.md "Spawn statements": a field or element of a temporary is copied into
+// the task, so a move-only one cannot be.
+package main;
+
+import "core:fmt";
+
+@(move_only) Only :: struct { n: int }
+
+impl Only {
+	release :: hook(drop) proc(self: inout) {}
+	read :: proc(self: ^) -> int { return self.n; }
+}
+
+Holder :: struct { only: Only }
+
+holder :: proc() -> Holder { return Holder{Only{1}}; }
+
+read_only :: proc(only: Only) -> int { return only.n; }
+
+main :: proc() {
+	a, b: int;
+	parallel {
+		spawn a = read_only(holder().only);
+		spawn b = holder().only.read();
+	}
+	fmt.println(a, b);
+}

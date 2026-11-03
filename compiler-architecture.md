@@ -665,7 +665,9 @@ hook(drop) on Task_Scope                // joins every started thread,
 - **Each spawn site.** Checking a spawn synthesizes a frame record and a run
   procedure, as `capture.odin` does for capture literals, and records them in
   `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
-  argument (copied, owned, or as an address), the result local's address, and,
+  argument (copied, owned, or as an address; a place in a temporary is an owned
+  copy, and a widened place is its widened form, copied, with the payload still
+  lent), the result local's address, and,
   for a call through a procedure value (`Spawn_Task.through_value`), that value,
   which the parent evaluates before the arguments. The run procedure takes the
   owned arguments out of the frame, makes the call, by name or through the

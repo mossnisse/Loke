@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A move-only field or element of a temporary, as a `spawn` argument or receiver, is now `L0728`
+  ([Spawn statements](design.md#spawn-statements)). It compiled, and the task read storage the
+  parent had already dropped. Upgrade by binding the temporary to a local declared before the
+  block, and lending that.
 - A managed place as the replacement of `exchange` is now `L0501`
   ([Exchange](design.md#exchange)). `exchange(inout a, b)` on a `[dynamic]int` stored `b`'s bits
   unmoved, so both owned one allocation and the program corrupted its heap. Upgrade by writing
@@ -1452,6 +1456,17 @@ checklist.
 - The cached runtime objects now follow the value of `INCLUDE` and the upgrade of a clang found on
   `PATH`, either of which reused the old objects. A link that loses the race to install a set no
   longer waits two seconds, and neither does one that finds a damaged set in place.
+- `spawn read(make().items);`, `spawn show(make_list()[0]);` and `spawn make().part.read();` no
+  longer give the task storage the parent drops as the statement ends: the task gets its own copy
+  of the field or element ([Spawn statements](design.md#spawn-statements)). It could read freed
+  memory, an empty string, or a value after its `hook(drop)` ran.
+- A widened place as a `spawn` argument, as in `foreach (i in 0..<n) { spawn show(items[i]); }` with
+  a smaller union's elements, now reaches its own task. Every task read the one temporary the
+  widening shared, so all saw the loop's last element.
+- A warning from a `parallel` block's executor expression no longer gets the note about the
+  executor's type.
+- A `spawn` under a replaced `core:thread` with no `Task_Scope.start`, or that does not load
+  `core:unsafe`, is now `L0727` where it was an internal backend error `L0405`.
 - A map's `clear`, and a sequence's `clear` and `resize`, no longer count as using an unknown
   allocator region for a `hook(drop)` of what they discard. Two tasks each clearing a map of their
   own were `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).

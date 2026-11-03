@@ -1,0 +1,16 @@
+// design.md "Parallel blocks": a warning from the executor expression is not a
+// wrong executor, so it gets no note about the executor's type.
+package main;
+
+import "core:thread";
+
+Big :: struct { a, b: int }
+
+pick :: proc(pool: ^thread.Pool, big: Big) -> ^thread.Pool { return pool; }
+
+main :: proc() {
+	pool := thread.Pool.init(1);
+	big := Big{1, 2};
+	parallel (pick(&pool, big)) {}
+	no_such_name();
+}

@@ -48,10 +48,7 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 			address.operand = entry.value
 			value = address
 		case .Move:
-			moved := new(Expr_Move, k.c.semantic_allocator)
-			moved.span = entry.span
-			moved.value = entry.value
-			value = moved
+			value = synth_move(k.c, entry.value, entry.span)
 		}
 		v.elements[index] = Element{span = entry.span, value = value}
 		type := check_single_expr(k, value)

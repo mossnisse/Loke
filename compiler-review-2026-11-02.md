@@ -79,7 +79,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
-10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
 
 
@@ -1437,57 +1436,13 @@ What remains here waits on helpers shared across files.
 
 ### src/parallel.odin
 
-The checks read well and match the spec, but `spawn_field_kind` lends the task storage that does not last until the join: two miscompiles, both reproduced with the built compiler. `lower_spawn` is long, and much of the file's synthesized-syntax code repeats other files or itself.
-
-**Bugs**
-
-- `BUG-parallel-1` **high** [parallel.odin:608](src/parallel.odin#L608) `spawn_field_kind`: a place rooted in a temporary counts as lendable, so `.Address` points into a temporary the parent drops at the statement's end (also line 602, `self: ^`). Against design.md "Spawn statements" on temporaries. *Confirmed: Reproduced: spawn read(mkw().items) printed sum 0 (expected 64512), spawn show(mk()[0]) printed empty, and spawn mkh().t.read() ran drop before read; spawn read(mkw()) is correct. Contradicts design.md "Spawn statements"; not recorded. High is fair: silent use-after-drop.*
-  Scenario: `spawn read(mkw().items);` printed `sum 0 expected 66016`, and `spawn show(mk()[0]);` printed an empty string; a `hook(drop)` printed before the task read. Fix: lend only a place with a lasting root; otherwise copy the projected value into the frame as `.Owned`, and report L0728 for a move-only type.
-- `BUG-parallel-2` **high** [parallel.odin:608](src/parallel.odin#L608) `spawn_field_kind`: a widened managed place gets `.Address`, but `emit_address` ([emit_llvm_expr.odin:694](src/emit_llvm_expr.odin#L694)) widens it into one temporary slot per site, which a loop's next spawn overwrites while earlier tasks read it. *Confirmed: Reproduced: [6]Small of hook-copy payloads, foreach { spawn show(items[i]); } with show(v: Big) prints 6 six times; the same program without widening prints 1 to 6. emit_address hands every frame the one temporary slot; design.md allows no such overwrite.*
-  Scenario: `foreach (i in 0..<items.len()) { spawn show(items[i]); }`, with `Small` elements and `show(v: Big)`, printed `sixth sixth sixth sixth sixth sixth`. Fix: test `expression_converts_storage` here and make it `.Owned`, with the `.Owned` arm of `emit_spawn` copying the place as design.md "Widening by label" says.
-- `BUG-parallel-4` **low** [parallel.odin:119](src/parallel.odin#L119) `check_parallel`: counts `len(diagnostics)`, so a warning from the executor expression gets the executor-type note. *Not verified.*
-  Scenario: `parallel (pick(pool, big2))` under `-copy-cost=1` attaches "a `parallel` block's executor is a `^thread.Pool`" to the L0507 warning. Fix: compare `c.error_count`, as line 523 does.
-- `BUG-parallel-5` **low** [parallel.odin:367](src/parallel.odin#L367) `lower_spawn`: a missing `unsafe` builtin (line 367) or `Task_Scope.start` (line 379) returns with no diagnostic, unlike `thread_type`'s L0727 at line 208, and the spawn then fails in the backend. *Not verified.*
-  Scenario: `-collection core=<dir>` whose `thread` package declares only `Task_Scope` gives `L0405 internal backend contract violation: an unchecked spawn reached emission`. Fix: report L0727 on both paths.
-
-**Simplification**
-
-- [parallel.odin:423](src/parallel.odin#L423) `lower_spawn`, `frame_field_name`: names are decoded from an index, then rebuilt with `aprintf`. Append `(name, type)` in layout order instead, and use `field_names[...]`, `"result"`, and `"callee"` at lines 449, 487, 497; `frame_field_name` goes. (about 14 lines)
-- [parallel.odin:396](src/parallel.odin#L396) `lower_spawn`: the two loops over `call.bound` (396 and 447) repeat the mode lookup and pack and spread tests. The frame is only named in the synthesized body, so one loop can build each field and argument, with the record declared after it. (about 8 lines)
-- [parallel.odin:406](src/parallel.odin#L406) `lower_spawn`: `mode == .Variadic` is the same test as `call.is_variadic && index == call.variadic_slot` (see [check_calls.odin:1085](src/check_calls.odin#L1085)). Make `.Variadic` return `.Copy` in `spawn_field_kind`, drop 406-409, and test the mode at 454. (about 4 lines)
-- [parallel.odin:437](src/parallel.odin#L437) `unsafe_builtins`: returns a `[3]Symbol_Id` that lines 437-439 bind through a second parallel list of names. One `bind_unsafe_builtins(k) -> bool` looping over `{take, write, free}` removes the array. (about 8 lines)
-- [parallel.odin:471](src/parallel.odin#L471) `lower_spawn`: `synth_ident(k, "spawn$take", intern_identifier(c, "spawn$take"), span)` and its `write` and `free` forms recur at 471, 498, 501, 581. Add `spawn_builtin_call(k, name, args, span)`; also fold `frame_of` plus `synth_selector` (449, 487, 497) into `frame_select`. (about 6 lines)
-- [parallel.odin:427](src/parallel.odin#L427) `lower_spawn`, `spawn_pack_record`: the `span.lo` suffixes on `spawn$frame$`, `spawn$run$`, `spawn$pack$` are not needed. Each lives in a fresh scope, generic instances already repeat them, and [emit_llvm.odin:376](src/emit_llvm.odin#L376) makes run names unique. Use fixed names; `spawn$type$frame` keeps the type apart from the parameter. (about 3 lines)
-- [parallel.odin:305](src/parallel.odin#L305) `spawn_result_symbol`: takes `s`, then asserts `s.call.(^Expr_Call)` three times (328, 333, 340). Pass `result: ^Expr_Ident` and `call: ^Expr_Call`, which `check_spawn` already holds. (about 2 lines)
-- [parallel.odin:214](src/parallel.odin#L214) `task_scope_start`: one caller, and it is public. Inline it at line 377, and mark `spawn_pack_field_name` ([parallel.odin:557](src/parallel.odin#L557)) `@(private = "file")`, since the emitter finds pack fields by position. (about 5 lines)
-
-**Dead code**
-
-- (branch) [parallel.odin:397](src/parallel.odin#L397): `index < len(info.parameters)` is always true, since `call.bound` has one slot per parameter and [emit_llvm_stmt.odin:198](src/emit_llvm_stmt.odin#L198) indexes the same array unguarded. The `INVALID_TYPE` arm never runs.
-- (branch) [parallel.odin:376](src/parallel.odin#L376): `scope != nil` always holds, because `check_spawn` returns at line 253 when `block.scope` is invalid, and `symbol_of` is nil only for an out-of-range id.
+What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
 - [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [capture.odin:137](src/capture.odin#L137), [check_calls.odin:204](src/check_calls.odin#L204) hand-build these nodes too. Share one set of `synth_*`, of which the ident, selector and deref builders are already package-visible.
 - [parallel.odin:181](src/parallel.odin#L181), [parallel.odin:723](src/parallel.odin#L723), [parallel.odin:735](src/parallel.odin#L735) and [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140): one-name `Decl` builders differing only in `kind` and type. Use one `synth_decl(c, kind, name, type, value, span)` built on `synth_name`, which interns, so callers drop their `id`. (about 20 lines here)
 - [parallel.odin:700](src/parallel.odin#L700) and [capture.odin:95](src/capture.odin#L95): a local struct whose field types are aliases only its scope binds. They differ in field names and spans; `synth_record` taking `[]Name`, with each field's span from its `Name`, serves both, moving capture fields from `entry.span` to `entry.name.span`. (about 15 lines)
-- [parallel.odin:469](src/parallel.odin#L469) and [parallel.odin:579](src/parallel.odin#L579): `local := aprintf(...)`, take into a new local, then name or `move` it. Extract `spawn_take_local(k, stmts, name, field, span) -> Expr`, with a `synth_move` that [capture.odin:51](src/capture.odin#L51) and [lifecycle.odin:368](src/lifecycle.odin#L368) can also use. (about 8 lines)
-- [parallel.odin:206](src/parallel.odin#L206), [parallel.odin:635](src/parallel.odin#L635) and [format.odin:281](src/format.odin#L281), [bootstrap.odin:58](src/bootstrap.odin#L58), [atomics.odin:28](src/atomics.odin#L28): `pkg.scope.names[intern_identifier(c, name)]`. Add `package_member(c, pkg, name)`.
-- [parallel.odin:398](src/parallel.odin#L398), [parallel.odin:448](src/parallel.odin#L448): `index < len(info.param_modes) ? info.param_modes[index] : .Value`, 20 lines across `src/`. Add `param_mode_at(info, index)` next to `proc_parameter_mode` in `semantic.odin`.
-
-**Structure and boundaries**
-
-- [parallel.odin:363](src/parallel.odin#L363) `lower_spawn` is 172 lines with three seams: the frame layout and record (393-431), the run body (445-502), and the run procedure's declaration (505-528, a `synth_proc` of about 20 lines of plain node building). Split them, leaving `lower_spawn` to set up the task and commit it.
-
-**Comments**
-
-- [parallel.odin:352](src/parallel.odin#L352): the sketch spells fields `arg$0` and `arg$1`, but `frame_field_name` makes `arg0`, and locals are `spawn$owned$N`, not `owned$1`. Correct the spelling, and add the `callee` field it omits.
-- [parallel.odin:4](src/parallel.odin#L4): lines 4-12 repeat compiler-architecture.md "Lowering parallel blocks", with line 7 unwrapped. Shorten to: "Checked as ordinary code: a block gains a hidden `Task_Scope` local, and a spawn a frame record and `run` procedure (compiler-architecture.md "Lowering parallel blocks")." (about 5 lines)
-- [parallel.odin:590](src/parallel.odin#L590): restates the spec's paragraphs on copied, borrowed, and temporary arguments. Shorten to: `// design.md "Spawn statements": which arguments are copied, lent, or owned.` (about 3 lines)
-- [parallel.odin:537](src/parallel.odin#L537): lines 538-540 repeat the spec's pack rules. Keep: `// design.md "Spawn statements": the record holding a pack's operands until the worker packs them again.` (about 2 lines)
-- [parallel.odin:561](src/parallel.odin#L561): narrates the three branches below it. Keep only "The worker's arguments for a held pack, in written order." (about 1 line)
-- [parallel.odin:416](src/parallel.odin#L416): repeats the spec's sentence. Shorten to: `// design.md "Spawn statements": the task's own copy of a procedure value.` (about 1 line)
-- [ast.odin:1048](src/ast.odin#L1048): the `Stmt_Parallel` comment calls the executor "the later pool form, parsed so the syntax is reserved", but this file implements it. Delete those two lines.
 
 ### src/private_names.odin
 

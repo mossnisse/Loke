@@ -1,0 +1,6 @@
+L0728
+@23:23
+`Only` is move-only, so a task cannot have a copy of this part of a temporary
+L0728
+@24:13
+`Only` is move-only, so a task cannot have a copy of this part of a temporary

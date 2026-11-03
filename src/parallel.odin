@@ -1,15 +1,9 @@
 // `parallel` blocks and `spawn` statements (design.md "Structured
 // concurrency").
 //
-// A block is checked as the block a programmer would write with a hidden local
-// declared first: a `core:thread` `Task_Scope`, whose drop joins every task
-// (design.md "Parallel blocks"). `parallel (pool)` declares the executor
-// first, as a `^thread.Pool` local, and its scope borrows it until the join. Later phases run that block,
-// `Stmt_Parallel.lowered`, instead of the statement. A spawn is checked as the
-// call it starts. Its arguments are prepared on the parent into a frame record,
-// and a synthesized `run` procedure, checked as ordinary code, makes the call
-// on the worker from that frame (compiler-architecture.md "Lowering parallel
-// blocks").
+// Checked as ordinary code: a block gains a hidden `Task_Scope` local, and a
+// spawn a frame record and `run` procedure (compiler-architecture.md "Lowering
+// parallel blocks").
 package lokec
 
 import "core:fmt"
@@ -17,10 +11,11 @@ import "core:fmt"
 // How one argument reaches the task, which decides its frame field.
 Spawn_Field_Kind :: enum u8 {
 	// Copied into the task: a `value: T` argument whose type copies without a
-	// hook or an allocation. Only what the value borrows lasts to the join.
+	// hook or an allocation, or a widened place's widened form, whose payload
+	// stays lent. Only what the value borrows lasts to the join.
 	Copy,
-	// A temporary or moved value the task owns; the worker drops what its call
-	// does not consume.
+	// A temporary or moved value the task owns, or its copy of a place in a
+	// temporary; the worker drops what its call does not consume.
 	Owned,
 	// The address of the parent's place, which stays lent to the task until the
 	// join: an `inout` or `self: ^` argument, or a managed `value: T` one.
@@ -92,6 +87,8 @@ spawn_callee_name :: proc(c: ^Compiler, call: ^Expr_Call) -> string {
 PARALLEL_SCOPE :: "parallel$scope"
 @(private = "file")
 PARALLEL_POOL :: "parallel$pool"
+@(private = "file")
+SPAWN_FRAME :: "spawn$frame"
 
 check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	outer_block := k.parallel_block
@@ -121,9 +118,9 @@ check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	pool: ^Decl
 	if s.executor != nil {
 		pool = hidden_pool_declaration(k, s, pool_type)
-		errors := len(k.c.diagnostics)
+		errors := k.c.error_count
 		check_local_declaration(k, pool)
-		if len(k.c.diagnostics) > errors {
+		if k.c.error_count != errors {
 			add_notef(k.c, expr_span(s.executor), "a `parallel` block's executor is a `^thread.Pool`, such as `&pool`")
 		}
 		append(&hidden, pool)
@@ -213,14 +210,6 @@ thread_type :: proc(k: ^Checker, keyword: Span, name: string) -> Type_Id {
 	return sym.type
 }
 
-task_scope_start :: proc(c: ^Compiler, scope_type: Type_Id) -> Symbol_Id {
-	info := type_of(c, scope_type)
-	if info == nil {
-		return INVALID_SYMBOL
-	}
-	return member_named(c, info.members, intern_identifier(c, "start"))
-}
-
 check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	block := k.parallel_block
 	if block == nil {
@@ -255,7 +244,7 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 		return FLOWS
 	}
 	proc_type, callee_ok := spawned_callee(k, call)
-	result, result_ok := spawn_result_symbol(k, s, block, type)
+	result, result_ok := spawn_result_symbol(k, s.result, call, block, type)
 	if !callee_ok || !result_ok {
 		return FLOWS
 	}
@@ -302,12 +291,12 @@ spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (Type_Id, bool) {
 // design.md "Spawn statements": `result` names a lexical local declared
 // outside the block, of exactly the call's one result type.
 @(private = "file")
-spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, type: Type_Id) -> (Symbol_Id, bool) {
+spawn_result_symbol :: proc(k: ^Checker, result: ^Expr_Ident, call: ^Expr_Call, block: ^Stmt_Parallel, type: Type_Id) -> (Symbol_Id, bool) {
 	c := k.c
-	if s.result == nil {
+	if result == nil {
 		return INVALID_SYMBOL, true
 	}
-	id := s.result.symbol
+	id := result.symbol
 	sym := symbol_of(c, id)
 	if sym == nil {
 		return INVALID_SYMBOL, false
@@ -315,9 +304,9 @@ spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, 
 	inside := sym.span.file == block.span.file && sym.span.lo >= block.span.lo && sym.span.hi <= block.span.hi
 	if sym.kind != .Var || symbol_outlives_bodies(sym) || sym.borrowed_binding != .None || inside {
 		errorf(
-			c, s.result.span, "L0728",
+			c, result.span, "L0728",
 			"a task's result goes to a local variable declared before the `parallel` block, and `%s` is not one",
-			s.result.name,
+			result.name,
 		)
 		if inside {
 			add_notef(c, sym.span, "declared inside the block, so it ends before the join")
@@ -325,21 +314,21 @@ spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, 
 		return INVALID_SYMBOL, false
 	}
 	if type == TYPE_VOID {
-		errorf(c, s.call.(^Expr_Call).span, "L0728", "this call has no result to assign to `%s`", s.result.name)
+		errorf(c, call.span, "L0728", "this call has no result to assign to `%s`", result.name)
 		return INVALID_SYMBOL, false
 	}
 	if info := type_of(c, type); info != nil && info.anonymous_record {
 		errorf(
-			c, s.call.(^Expr_Call).span, "L0728",
+			c, call.span, "L0728",
 			"this call has several results, so a task has nowhere to put them; return one record from the procedure the task runs",
 		)
 		return INVALID_SYMBOL, false
 	}
 	if type != sym.type {
 		errorf(
-			c, s.call.(^Expr_Call).span, "L0728",
+			c, call.span, "L0728",
 			"this call returns `%s`, and `%s` is a `%s`; the worker assigns the result without converting it",
-			type_name(c, type), s.result.name, type_name(c, sym.type),
+			type_name(c, type), result.name, type_name(c, sym.type),
 		)
 		return INVALID_SYMBOL, false
 	}
@@ -349,36 +338,40 @@ spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, 
 // The frame record and `run` procedure for one spawn, declared in a scope of
 // their own: `run` takes every argument out of the frame and makes the call.
 //
-//     frame :: struct { run: rawptr, arg$0: ..., result: ^mut R }
-//     run :: proc(frame: ^mut frame) {
-//         owned$1 := unsafe.take(frame.arg$1);
-//         unsafe.write(frame.result^, callee(frame.arg$0^, inout ..., move(owned$1)));
-//         unsafe.free(frame);
+//     spawn$type$frame :: struct { run: rawptr, arg0: ..., arg1: ..., result: ^mut R, callee: ... }
+//     spawn$run :: proc(spawn$frame: ^mut spawn$type$frame) {
+//         spawn$owned$1 := unsafe.take(spawn$frame.arg1);
+//         unsafe.write(spawn$frame.result^, callee(spawn$frame.arg0^, move(spawn$owned$1)));
+//         unsafe.free(spawn$frame);
 //     }
 //
 // design.md "Spawn statements": a variadic pack's slot holds a record of its
-// operands, `pack :: struct { p0: T, p1: []T }`, and `run` packs them again:
-// `callee(..., move(pack$owned$0), ..frame.arg$2.p1)`.
+// operands, `spawn$pack :: struct { p0: T, p1: []T }`, and `run` packs them
+// again: `callee(..., move(spawn$pack$owned$0), ..spawn$frame.arg2.p1)`.
 @(private = "file")
 lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_type: Type_Id, result: Symbol_Id) {
 	c := k.c
 	call := s.call.(^Expr_Call)
-	info := underlying_info(c, proc_type)
-	builtins, found := unsafe_builtins(k)
-	if !found {
+	span := call.span
+
+	scope_info := type_of(c, symbol_of(c, block.scope).type)
+	start := scope_info != nil ? member_named(c, scope_info.members, intern_identifier(c, "start")) : INVALID_SYMBOL
+	if start == INVALID_SYMBOL {
+		errorf(c, no_span(), "L0727", "`%s` declares no `Task_Scope.start`, which a `spawn` needs", STD_THREAD)
 		return
 	}
-	span := call.span
+
+	outer := k.scope
+	k.scope = new_scope(c, outer, .Local)
+	defer k.scope = outer
+	if !bind_unsafe_builtins(k) {
+		return
+	}
 
 	task := new(Spawn_Task, c.semantic_allocator)
 	task.scope = block.scope
+	task.start = start
 	task.pooled = block.executor != nil
-	if scope := symbol_of(c, block.scope); scope != nil {
-		task.start = task_scope_start(c, scope.type)
-	}
-	if task.start == INVALID_SYMBOL {
-		return
-	}
 	task.result = result
 	task.through_value = call_through_value(c, call)
 	task.call = call
@@ -386,140 +379,24 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 		task.parent = k.proc_literal.symbol
 	}
 
-	outer := k.scope
-	k.scope = new_scope(c, outer, .Local)
-	defer k.scope = outer
-
-	task.kinds = make([]Spawn_Field_Kind, len(call.bound), c.semantic_allocator)
-	field_types := make([]Type_Id, len(call.bound) + 3, c.semantic_allocator)
-	field_types[0] = TYPE_RAWPTR
-	for argument, index in call.bound {
-		type := index < len(info.parameters) ? info.parameters[index] : INVALID_TYPE
-		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		kind := spawn_field_kind(c, argument, type, mode)
-		if call_packs(call, index) {
-			pack := spawn_pack_record(k, task, call, type, span)
-			if pack == INVALID_TYPE {
-				return
-			}
-			kind, type = .Owned, pack
-		} else if call.is_variadic && index == call.variadic_slot {
-			// A lone spread forwards the slice it views, as at any call.
-			kind = .Copy
-		}
-		task.kinds[index] = kind
-		field_types[spawn_argument_field(index)] = kind == .Address ? pointer_to(c, type, mode == .Inout) : type
+	layout: Spawn_Layout
+	if !spawn_lay_out_arguments(k, task, proc_type, &layout) {
+		return
 	}
 	if result != INVALID_SYMBOL {
-		field_types[spawn_result_field(task)] = pointer_to(c, symbol_of(c, result).type, true)
+		spawn_add_field(&layout, "result", pointer_to(c, symbol_of(c, result).type, true))
 	}
-	// design.md "Spawn statements": a procedure value is evaluated on the
-	// parent, and copied into the task as a value argument would be.
+	// design.md "Spawn statements": the task's own copy of a procedure value.
 	if task.through_value {
-		field_types[spawn_callee_field(task)] = proc_type
+		spawn_add_field(&layout, "callee", proc_type)
 	}
-	fields := field_types[:spawn_frame_field_count(task)]
-
-	field_names := make([]string, len(fields), c.semantic_allocator)
-	for &name, index in field_names {
-		name = frame_field_name(c, task, index)
-	}
-	frame_name := fmt.aprintf("spawn$frame$%d", span.lo, allocator = c.semantic_allocator)
-	task.frame = synth_record(k, frame_name, "spawn$type", field_names, fields, span)
+	task.frame = synth_record(k, "spawn$type$frame", "spawn$type", layout.field_names[:], layout.field_types[:], span)
 	if task.frame == INVALID_TYPE {
 		return
 	}
 
-	callee_alias := intern_identifier(c, "spawn$callee")
-	if !task.through_value {
-		k.scope.names[callee_alias] = call.resolution.symbol
-	}
-	for name, index in ([]string{"spawn$take", "spawn$write", "spawn$free"}) {
-		k.scope.names[intern_identifier(c, name)] = builtins[index]
-	}
-
-	frame_param := intern_identifier(c, "spawn$frame")
-	frame_of :: proc(k: ^Checker, id: Identifier_Id, span: Span) -> Expr {
-		return synth_ident(k.c, "spawn$frame", id, span)
-	}
-	stmts := make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
-	args := make([dynamic]Argument, 0, len(call.bound) + len(task.pack), c.semantic_allocator)
-	for kind, index in task.kinds {
-		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		field := synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_argument_field(index)), span)
-		if call_packs(call, index) {
-			spawn_repack(k, task, call, field, &stmts, &args, span)
-			continue
-		}
-		if call.is_variadic && index == call.variadic_slot {
-			append(&args, Argument{span = span, mode = .Spread, value = field})
-			continue
-		}
-		value: Expr
-		argument_mode := Argument_Mode.Value
-		switch kind {
-		case .Copy:
-			value = field
-		case .Address:
-			value = synth_deref(c, field, span)
-			if mode == .Inout {
-				argument_mode = .Inout
-			}
-		case .Owned:
-			local := fmt.aprintf("spawn$owned$%d", index, allocator = c.semantic_allocator)
-			local_id := intern_identifier(c, local)
-			taken := synth_call(c, synth_ident(k.c, "spawn$take", intern_identifier(c, "spawn$take"), span), {field}, span)
-			append(&stmts, synth_var(c, local, local_id, taken, span))
-			value = synth_ident(k.c, local, local_id, span)
-			if mode == .Move {
-				moved := new(Expr_Move, c.semantic_allocator)
-				moved.span = span
-				moved.value = value
-				value = moved
-			}
-		}
-		append(&args, Argument{span = span, mode = argument_mode, value = value})
-	}
-	inner := new(Expr_Call, c.semantic_allocator)
-	inner.span = span
-	inner.args = args[:]
-	if task.through_value {
-		inner.callee = synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_callee_field(task)), span)
-	} else if _, slot := call.operation.(Call_Dyn_Slot); slot {
-		// The view is the receiver argument, which the slot is selected on.
-		inner.callee = synth_selector(c, args[0].value, call.callee.(^Expr_Selector).name.text, span)
-		inner.args = args[1:]
-	} else {
-		inner.callee = synth_ident(k.c, "spawn$callee", callee_alias, span)
-	}
-	made: Expr = inner
-	if result != INVALID_SYMBOL {
-		destination := synth_deref(c, synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_result_field(task)), span), span)
-		made = synth_call(c, synth_ident(k.c, "spawn$write", intern_identifier(c, "spawn$write"), span), {destination, inner}, span)
-	}
-	append(&stmts, synth_expr_stmt(c, made, span))
-	freed := synth_call(c, synth_ident(k.c, "spawn$free", intern_identifier(c, "spawn$free"), span), {frame_of(k, frame_param, span)}, span)
-	append(&stmts, synth_expr_stmt(c, freed, span))
-
-	// `proc(spawn$frame: ^mut <frame>)`, its type spelled as one more alias.
-	frame_pointer := intern_identifier(c, "spawn$frame$pointer")
-	k.scope.names[frame_pointer] = new_associated_type(c, "spawn$frame", pointer_to(c, task.frame, true), INVALID_TYPE)
-	param_names := make([]Param_Name, 1, c.semantic_allocator)
-	param_names[0] = Param_Name{name = Name{text = "spawn$frame", span = span, id = frame_param}}
-	params := make([]Parameter, 1, c.semantic_allocator)
-	params[0] = Parameter{span = span, names = param_names, mode = .Value, type = synth_ident(k.c, "spawn$frame", frame_pointer, span)}
-	signature := new(Type_Proc, c.semantic_allocator)
-	signature.span = span
-	signature.params = params
-	body := new(Block, c.semantic_allocator)
-	body.span = span
-	body.stmts = stmts[:]
-	literal := new(Expr_Proc, c.semantic_allocator)
-	literal.span = span
-	literal.signature = signature
-	literal.body = body
-	run_name := fmt.aprintf("spawn$run$%d", span.lo, allocator = c.semantic_allocator)
-	run_decl := synth_const(k, run_name, intern_identifier(c, run_name), literal, span)
+	inner := spawn_make_call(k, task, &layout)
+	run_decl := synth_const(k, "spawn$run", intern_identifier(c, "spawn$run"), spawn_run_literal(k, task, layout.stmts[:]), span)
 	errors := c.error_count
 	check_local_declaration(k, run_decl)
 	if c.error_count != errors || len(run_decl.symbols) != 1 {
@@ -534,10 +411,127 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 	}
 }
 
-// design.md "Spawn statements": the record a variadic pack's operands are
-// held in until the worker packs them again. An element is copied into the
-// task, or owned by it when its type is managed, as the pack would own it; a
-// spread is the `[]T` it views, which the task borrows until the join.
+// What the one walk over a spawn's arguments builds: the frame's fields in
+// layout order, and `run`'s statements and the arguments of the call it makes.
+@(private = "file")
+Spawn_Layout :: struct {
+	field_names: [dynamic]string,
+	field_types: [dynamic]Type_Id,
+	stmts:       [dynamic]Stmt,
+	args:        [dynamic]Argument,
+}
+
+@(private = "file")
+spawn_add_field :: proc(layout: ^Spawn_Layout, name: string, type: Type_Id) {
+	append(&layout.field_names, name)
+	append(&layout.field_types, type)
+}
+
+// The leading `run` slot and each bound argument's field, with what `run` does
+// to pass that argument on.
+@(private = "file")
+spawn_lay_out_arguments :: proc(k: ^Checker, task: ^Spawn_Task, proc_type: Type_Id, layout: ^Spawn_Layout) -> bool {
+	c := k.c
+	call := task.call
+	span := call.span
+	parameters := underlying_info(c, proc_type).parameters
+	task.kinds = make([]Spawn_Field_Kind, len(call.bound), c.semantic_allocator)
+	layout.field_names = make([dynamic]string, 0, len(call.bound) + 3, c.semantic_allocator)
+	layout.field_types = make([dynamic]Type_Id, 0, len(call.bound) + 3, c.semantic_allocator)
+	layout.stmts = make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
+	layout.args = make([dynamic]Argument, 0, len(call.bound) + len(call.variadic_order), c.semantic_allocator)
+	spawn_add_field(layout, "run", TYPE_RAWPTR)
+	for argument, index in call.bound {
+		type := parameters[index]
+		mode := proc_parameter_mode(c, proc_type, index)
+		name := fmt.aprintf("arg%d", index, allocator = c.semantic_allocator)
+		field := frame_select(c, name, span)
+		kind := spawn_field_kind(k, argument, type, mode)
+		field_type := kind == .Address ? pointer_to(c, type, mode == .Inout) : type
+		switch {
+		case call_packs(call, index):
+			kind = .Owned
+			field_type = spawn_pack_record(k, task, call, type, span)
+			if field_type == INVALID_TYPE {
+				return false
+			}
+			spawn_repack(k, task, call, field, layout, span)
+		case mode == .Variadic:
+			// A lone spread forwards the slice it views, as at any call.
+			append(&layout.args, Argument{span = span, mode = .Spread, value = field})
+		case kind == .Copy:
+			append(&layout.args, Argument{span = span, value = field})
+		case kind == .Address:
+			append(&layout.args, Argument{span = span, mode = mode == .Inout ? .Inout : .Value, value = synth_deref(c, field, span)})
+		case:
+			local := fmt.aprintf("spawn$owned$%d", index, allocator = c.semantic_allocator)
+			value := spawn_take_local(c, &layout.stmts, local, field, span)
+			append(&layout.args, Argument{span = span, value = mode == .Move ? synth_move(c, value, span) : value})
+		}
+		task.kinds[index] = kind
+		spawn_add_field(layout, name, field_type)
+	}
+	return true
+}
+
+// Ends `run`'s statements: the call, its result written through the frame, and
+// the frame freed. Answers the call, which the effects resolve through
+// `Compiler.spawn_calls`.
+@(private = "file")
+spawn_make_call :: proc(k: ^Checker, task: ^Spawn_Task, layout: ^Spawn_Layout) -> ^Expr_Call {
+	c := k.c
+	call := task.call
+	span := call.span
+	inner := new(Expr_Call, c.semantic_allocator)
+	inner.span = span
+	inner.args = layout.args[:]
+	if task.through_value {
+		inner.callee = frame_select(c, "callee", span)
+	} else if _, slot := call.operation.(Call_Dyn_Slot); slot {
+		// The view is the receiver argument, which the slot is selected on.
+		inner.callee = synth_selector(c, layout.args[0].value, call.callee.(^Expr_Selector).name.text, span)
+		inner.args = layout.args[1:]
+	} else {
+		callee_alias := intern_identifier(c, "spawn$callee")
+		k.scope.names[callee_alias] = call.resolution.symbol
+		inner.callee = synth_ident(c, "spawn$callee", callee_alias, span)
+	}
+	made: Expr = inner
+	if task.result != INVALID_SYMBOL {
+		made = spawn_builtin_call(c, "spawn$write", {synth_deref(c, frame_select(c, "result", span), span), inner}, span)
+	}
+	append(&layout.stmts, synth_expr_stmt(c, made, span))
+	freed := spawn_builtin_call(c, "spawn$free", {synth_ident(c, SPAWN_FRAME, intern_identifier(c, SPAWN_FRAME), span)}, span)
+	append(&layout.stmts, synth_expr_stmt(c, freed, span))
+	return inner
+}
+
+// `proc(spawn$frame: ^mut <frame>) { stmts }`, its type spelled as one more alias.
+@(private = "file")
+spawn_run_literal :: proc(k: ^Checker, task: ^Spawn_Task, stmts: []Stmt) -> ^Expr_Proc {
+	c := k.c
+	span := task.call.span
+	frame_pointer := intern_identifier(c, "spawn$frame$pointer")
+	k.scope.names[frame_pointer] = new_associated_type(c, SPAWN_FRAME, pointer_to(c, task.frame, true), INVALID_TYPE)
+	param_names := make([]Param_Name, 1, c.semantic_allocator)
+	param_names[0] = Param_Name{name = synth_name(c, SPAWN_FRAME, span)}
+	params := make([]Parameter, 1, c.semantic_allocator)
+	params[0] = Parameter{span = span, names = param_names, mode = .Value, type = synth_ident(c, SPAWN_FRAME, frame_pointer, span)}
+	signature := new(Type_Proc, c.semantic_allocator)
+	signature.span = span
+	signature.params = params
+	body := new(Block, c.semantic_allocator)
+	body.span = span
+	body.stmts = stmts
+	literal := new(Expr_Proc, c.semantic_allocator)
+	literal.span = span
+	literal.signature = signature
+	literal.body = body
+	return literal
+}
+
+// design.md "Spawn statements": the record holding a pack's operands until the
+// worker packs them again.
 @(private = "file")
 spawn_pack_record :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, pack: Type_Id, span: Span) -> Type_Id {
 	c := k.c
@@ -550,91 +544,136 @@ spawn_pack_record :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, pack
 		types[index] = is_spread ? pack : element
 		task.pack[index] = !is_spread && type_is_managed(c, element) ? .Owned : .Copy
 	}
-	name := fmt.aprintf("spawn$pack$%d", span.lo, allocator = c.semantic_allocator)
-	return synth_record(k, name, "spawn$pack$type", names, types, span)
+	return synth_record(k, "spawn$pack", "spawn$pack$type", names, types, span)
 }
 
+@(private = "file")
 spawn_pack_field_name :: proc(c: ^Compiler, index: int) -> string {
 	return fmt.aprintf("p%d", index, allocator = c.semantic_allocator)
 }
 
-// The worker's arguments for a held pack, in its written order: an owned
-// element moved out of the frame, a copied one read, and a spread forwarded.
+// The worker's arguments for a held pack, in written order.
 @(private = "file")
-spawn_repack :: proc(
-	k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, field: Expr,
-	stmts: ^[dynamic]Stmt, args: ^[dynamic]Argument, span: Span,
-) {
+spawn_repack :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, field: Expr, layout: ^Spawn_Layout, span: Span) {
 	c := k.c
 	for is_spread, index in call.variadic_order {
 		operand := synth_selector(c, field, spawn_pack_field_name(c, index), span)
 		if is_spread {
-			append(args, Argument{span = span, mode = .Spread, value = operand})
+			append(&layout.args, Argument{span = span, mode = .Spread, value = operand})
 			continue
 		}
 		if task.pack[index] == .Copy {
-			append(args, Argument{span = span, value = operand})
+			append(&layout.args, Argument{span = span, value = operand})
 			continue
 		}
 		local := fmt.aprintf("spawn$pack$owned$%d", index, allocator = c.semantic_allocator)
-		local_id := intern_identifier(c, local)
-		taken := synth_call(c, synth_ident(k.c, "spawn$take", intern_identifier(c, "spawn$take"), span), {operand}, span)
-		append(stmts, synth_var(c, local, local_id, taken, span))
-		moved := new(Expr_Move, c.semantic_allocator)
-		moved.span = span
-		moved.value = synth_ident(k.c, local, local_id, span)
-		append(args, Argument{span = span, value = moved})
+		value := spawn_take_local(c, &layout.stmts, local, operand, span)
+		append(&layout.args, Argument{span = span, value = synth_move(c, value, span)})
 	}
 }
 
-// design.md "Spawn statements": a `value: T` argument is copied into the
-// task when `T` copies without a hook and without allocating; a managed one
-// stays borrowed, as an ordinary call borrows it, unless it is a temporary,
-// which belongs to the task.
+// `name := unsafe.take(field);` in `run`, and the name.
 @(private = "file")
-spawn_field_kind :: proc(c: ^Compiler, argument: Expr, type: Type_Id, mode: Param_Mode) -> Spawn_Field_Kind {
+spawn_take_local :: proc(c: ^Compiler, stmts: ^[dynamic]Stmt, name: string, field: Expr, span: Span) -> Expr {
+	id := intern_identifier(c, name)
+	append(stmts, synth_var(c, name, id, spawn_builtin_call(c, "spawn$take", {field}, span), span))
+	return synth_ident(c, name, id, span)
+}
+
+// A call of the `unsafe` builtin `bind_unsafe_builtins` bound to `name`.
+@(private = "file")
+spawn_builtin_call :: proc(c: ^Compiler, name: string, values: []Expr, span: Span) -> Expr {
+	return synth_call(c, synth_ident(c, name, intern_identifier(c, name), span), values, span)
+}
+
+// A field of the frame `run` takes.
+@(private = "file")
+frame_select :: proc(c: ^Compiler, field: string, span: Span) -> Expr {
+	return synth_selector(c, synth_ident(c, SPAWN_FRAME, intern_identifier(c, SPAWN_FRAME), span), field, span)
+}
+
+// design.md "Spawn statements": which arguments are copied, lent, or owned.
+@(private = "file")
+spawn_field_kind :: proc(k: ^Checker, argument: Expr, type: Type_Id, mode: Param_Mode) -> Spawn_Field_Kind {
 	switch mode {
 	case .Inout:
 		return .Address
-	case .Move, .Variadic:
+	case .Move:
 		return .Owned
-	case .Borrow:
-		return expression_is_borrowed_place(argument) ? .Address : .Owned
-	case .Value:
-	}
-	if !type_is_managed(c, type) {
+	case .Variadic:
 		return .Copy
-	}
-	return expression_is_borrowed_place(argument) ? .Address : .Owned
-}
-
-@(private = "file")
-frame_field_name :: proc(c: ^Compiler, task: ^Spawn_Task, field: int) -> string {
-	if field == 0 {
-		return "run"
-	}
-	if task.result != INVALID_SYMBOL && field == spawn_result_field(task) {
-		return "result"
-	}
-	if task.through_value && field == spawn_callee_field(task) {
-		return "callee"
-	}
-	return fmt.aprintf("arg%d", field - 1, allocator = c.semantic_allocator)
-}
-
-// `unsafe.take`, `unsafe.write`, and `unsafe.free`, which `core:thread`
-// imports, so its `parallel` dependency loaded them.
-@(private = "file")
-unsafe_builtins :: proc(k: ^Checker) -> ([3]Symbol_Id, bool) {
-	out: [3]Symbol_Id
-	pkg := standard_package(k.c, STD_UNSAFE)
-	for name, index in ([]string{"take", "write", "free"}) {
-		out[index] = package_symbol_named(k.c, pkg, name)
-		if out[index] == INVALID_SYMBOL {
-			return out, false
+	case .Borrow:
+	case .Value:
+		if !type_is_managed(k.c, type) {
+			return .Copy
 		}
 	}
-	return out, true
+	if !place_in_temporary(k.c, argument) {
+		// comments.md "Widening by label": a widened place is lent as any
+		// argument is, and only its widened form is the task's.
+		return expression_converts_storage(argument) ? .Copy : .Address
+	}
+	if expression_is_borrowed_place(argument) {
+		spawn_copy_from_temporary(k, argument, type)
+	}
+	return .Owned
+}
+
+// Whether a value or place is in a temporary's own storage, which ends with its
+// statement: a path of fields and elements that follows no pointer or slice. A
+// call's `inout` result has a mutable place behind it, which no temporary is.
+@(private = "file")
+place_in_temporary :: proc(c: ^Compiler, place: Expr) -> bool {
+	if !expression_is_borrowed_place(place) {
+		return true
+	}
+	#partial switch v in place {
+	case ^Expr_Selector:
+		return v.resolution.kind == .Field && !type_is_pointer(c, expr_base(v.operand).type) && place_in_temporary(c, v.operand)
+	case ^Expr_Postfix:
+		return v.boxed && place_in_temporary(c, v.operand)
+	case ^Expr_Index:
+		#partial switch underlying_kind(c, expr_base(v.operand).type) {
+		case .Slice, .C_Pointer, .Pointer:
+			return false
+		}
+		return len(v.bound) == 0 && place_in_temporary(c, v.operand)
+	}
+	return false
+}
+
+// design.md "Spawn statements": a field or element of a temporary is copied into
+// the task, as a binding would copy it.
+@(private = "file")
+spawn_copy_from_temporary :: proc(k: ^Checker, argument: Expr, type: Type_Id) {
+	copied := copied_type(argument, type)
+	if type_clone_disabled(k.c, copied) {
+		errorf(
+			k.c, expr_span(argument), "L0728",
+			"`%s` is move-only, so a task cannot have a copy of this part of a temporary, which ends with this statement; bind the temporary to a local declared before the `parallel` block",
+			type_name(k.c, copied),
+		)
+		return
+	}
+	record_copy(k, .Argument, expr_span(argument), argument, copied)
+	classify_copy(k, argument, type, .Argument)
+}
+
+// `unsafe.take`, `unsafe.write`, and `unsafe.free` under the names `run` calls
+// them by. `core:thread` imports the package, so its `parallel` dependency
+// loaded it.
+@(private = "file")
+bind_unsafe_builtins :: proc(k: ^Checker) -> bool {
+	pkg := standard_package(k.c, STD_UNSAFE)
+	for name in ([]string{"take", "write", "free"}) {
+		builtin := package_symbol_named(k.c, pkg, name)
+		if builtin == INVALID_SYMBOL {
+			errorf(k.c, no_span(), "L0727", "a `spawn` needs `%s` from `%s`, which `%s` has not loaded", name, STD_UNSAFE, STD_THREAD)
+			return false
+		}
+		k.scope.names[intern_identifier(k.c, fmt.tprintf("spawn$%s", name))] = builtin
+	}
+	return true
 }
 
 // ------------------------------------------------------- synthesized syntax --
@@ -665,6 +704,13 @@ synth_deref :: proc(c: ^Compiler, operand: Expr, span: Span) -> Expr {
 	deref.op, deref.op_span = .Caret, span
 	deref.operand = operand
 	return deref
+}
+
+synth_move :: proc(c: ^Compiler, value: Expr, span: Span) -> Expr {
+	moved := new(Expr_Move, c.semantic_allocator)
+	moved.span = span
+	moved.value = value
+	return moved
 }
 
 @(private = "file")

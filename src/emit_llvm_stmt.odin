@@ -226,7 +226,8 @@ emit_spawn_arguments :: proc(
 			bound = emit_expr(e, argument)
 			store(e, type, bound, field)
 		case .Owned:
-			bound = emit_expr(e, argument)
+			// A place here is in a temporary the parent drops, so the task gets a copy.
+			bound = emit_copied_expr(e, argument, type, expression_is_borrowed_place(argument))
 			append(&owned, hold_temporary_value(e, type, bound))
 			store(e, type, bound, field)
 		}

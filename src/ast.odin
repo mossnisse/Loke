@@ -1078,8 +1078,7 @@ Stmt_Branch :: struct {
 }
 
 // `parallel { ... }`, which joins every task it starts before it is left
-// (design.md "Parallel blocks"). The parenthesized executor is the later
-// pool form, parsed so the syntax is reserved.
+// (design.md "Parallel blocks").
 Stmt_Parallel :: struct {
 	using base: Node_Base,
 	keyword:    Span,
