@@ -478,7 +478,7 @@ traversal binding (P3, over-rejection).
 ### A declaration first checked in a probe loses its rejection
 
 A probe rolls back what it reports, but `check_alias_template` in
-[src/generic.odin](src/generic.odin) keeps `template.rejected` and the declaration
+[src/generic_alias.odin](src/generic_alias.odin) keeps `template.rejected` and the declaration
 stays settled, so what was wrong with it is never reported. The
 [parametric alias](design.md#parametric-aliases) rule below compiles, and moving
 `Bad` above `Record` reports `L0744`:
@@ -525,7 +525,7 @@ main :: proc() {}
 
 ### An `impl` on a record whose parameter type does not resolve reports L0350
 
-`check_generic_impl_subject` in [src/generic.odin](src/generic.odin) reads an `impl`
+`check_generic_impl_subject` in [src/generic_impl.odin](src/generic_impl.odin) reads an `impl`
 subject's constant argument as a type when its parameter's type does not resolve, and
 reports it as a compiler defect:
 
