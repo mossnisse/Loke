@@ -1,0 +1,33 @@
+package main;
+
+// design.md "Distinct types": a distinct type over a union keeps its variants, so
+// a `switch` takes its variant cases, and must cover them. It is not a union to
+// `is_union`, so what that bound admits, an expanded case and `..`, rejects it.
+Plain :: union { first: int, second: int, third }
+Fresh :: distinct Plain;
+
+take :: proc(first: int, second: int) {}
+
+missing :: proc(value: Fresh) {
+	switch (value) {
+	case .first(first): _ = first;
+	}
+}
+
+expanded :: proc(value: Fresh) {
+	switch (value) {
+	case $variant(payload): _ = payload;
+	}
+}
+
+spread :: proc(value: Fresh) {
+	take(..value);
+}
+
+main :: proc() {
+	static_assert(!is_union(Fresh));
+	value: Fresh = Fresh.first(1);
+	missing(value);
+	expanded(value);
+	spread(value);
+}

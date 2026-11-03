@@ -514,7 +514,7 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 	// A niche union's null payload is its other variant; it has no tag member.
 	if !shape.niche {
 		tag := debug_node(d, `!DIBasicType(name: "tag", size: %d, encoding: DW_ATE_unsigned)`, shape.tag_bytes * 8)
-		debug_member_node(d, &members, "tag", tag, u64(shape.tag_bytes) * 8, u64(shape.tag_offset) * 8)
+		debug_member_node(d, &members, "tag", tag, u64(shape.tag_bytes) * 8, u64(shape.payload_size) * 8)
 	}
 	debug_composite(d, id, name, shape.size * 8, strings.to_string(members))
 }

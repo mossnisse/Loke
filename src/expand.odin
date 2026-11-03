@@ -431,7 +431,8 @@ expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> 
 		return true
 	}
 	written := s.cases[position]
-	if !type_is_union(k.c, subject) {
+	// design.md "Distinct types": a distinct type over a union is not a subject here.
+	if type_kind(k.c, subject) != .Union {
 		errorf(
 			k.c, expr_span(written.values[0]), "L0426",
 			"an expanded case needs a union subject, and this switch is over `%s`", type_name(k.c, subject),
@@ -597,7 +598,8 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 		return false
 	}
 	subject := check_expr(k, operand)
-	if subject == INVALID_TYPE || subject == TYPE_VOID || !type_is_union(k.c, subject) {
+	// design.md "Distinct types": a distinct type over a union is not a subject here.
+	if subject == INVALID_TYPE || subject == TYPE_VOID || type_kind(k.c, subject) != .Union {
 		v.args[spread].checked = true
 		return false
 	}

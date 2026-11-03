@@ -1,0 +1,10 @@
+package main;
+
+// A rejected variant is already reported, so `@(zero=)` and `@(failure=)` are not
+// then judged against a list that no longer holds what was written.
+@(zero=a) Payload_Zero :: union { a: Missing, b }
+@(failure=e) Payload_Failure :: union { o: Missing, e: int }
+@(zero=a) Shifted_Zero :: union { b: Missing, a: int, c }
+@(failure=o) Duplicate_Failure :: union { o: int, o: int, e: int }
+
+main :: proc() {}

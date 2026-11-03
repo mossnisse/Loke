@@ -1052,8 +1052,9 @@ check_as_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 		}
 	}
 	subject := check_single_expr(k, sel.operand)
-	if type_is_union(k.c, type_underlying(k.c, subject)) {
-		return check_union_as(k, v, sel, subject)
+	if type_is_union(k.c, subject) {
+		check_union_as(k, v, sel, subject)
+		return true
 	}
 	return false
 }

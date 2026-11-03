@@ -1288,6 +1288,15 @@ checklist.
 
 ### Fixed
 
+- A distinct type over a union stores its variants as the union does. Its tag used to overwrite the
+  payload, so `D.a(9)` read back as `.a(0)` and a reference payload was corrupted. `==` on such a
+  type now compiles rather than failing in clang, and a constant comparison tells two variants with
+  equal payloads apart. A `switch` over one takes variant cases and must cover them
+  ([Distinct types](design.md#distinct-types)).
+- A union variant that is itself rejected no longer adds an `L0423` about the union's `@(zero=)` or
+  `@(failure=)`, which were judged against the variants left over.
+- The `L0425` for a bare payload variant advises `.name(value)`, with its dot, and the one for a
+  call to a payloadless variant no longer offers a bare name.
 - Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
   a wrong pointer to it, and same-named types, from two packages or two procedures, each show their
   own layout. A later such type is named `Name$<n>` in the debugger.

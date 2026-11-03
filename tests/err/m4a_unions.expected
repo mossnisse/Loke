@@ -39,13 +39,13 @@ L0425
 `Value.number` takes its payload as one unnamed value
 L0425
 @45:13
-`Value.flag` carries a payload: write `flag(value)`
+`Value.flag` carries a payload: write `.flag(value)`
 L0352
 @46:13
 1 is not representable by `Value`
 L0425
 @47:17
-`Three_Way.c` carries no payload: write `c` without a call
+`Three_Way.c` carries no payload: write it without a call
 L0366
 @51:2
 L0426
@@ -71,4 +71,4 @@ L0428
 `or_else` needs a union with a designated failure variant on its left, found `bool`
 L0425
 @78:25
-`Result(i32, bool).ok` carries a payload: write `ok(value)`
+`Result(i32, bool).ok` carries a payload: write `.ok(value)`

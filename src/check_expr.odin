@@ -641,9 +641,9 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 		enum_type := type_underlying(k.c, expected)
 		if !type_is_enum(k.c, enum_type) {
 			wanted := underlying_info(k.c, expected)
-			if type_is_union(k.c, enum_type) {
+			if type_is_union(k.c, expected) {
 				errorf(k.c, v.span, "L0425", "`%s` has no variant `%s`", type_name(k.c, expected), v.name.text)
-			} else if wanted != nil && wanted.kind == .Proc && type_is_union(k.c, type_underlying(k.c, wanted.result)) &&
+			} else if wanted != nil && wanted.kind == .Proc && type_is_union(k.c, wanted.result) &&
 			          union_variant_index(k.c, wanted.result, intern_identifier(k.c, v.name.text)) >= 0 {
 				// A constructor value names its union: the destination never picks one.
 				errorf(

@@ -85,7 +85,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 3. **A sort can silently do nothing.** The gate at [container.odin:526](src/container.odin#L526) misses the direct call and the procedure value, so `([dynamic]int).sort(inout v)` emits an empty body. Call it from [check_calls.odin:508](src/check_calls.odin#L508) and delete the two other calls. BUG-check_calls-1, BUG-container-1. About 5 lines.
 
-4. **Five small independent fixes.** Distinct union layout, `underlying_info` at [union.odin:293](src/union.odin#L293) (BUG-union-1). Spill test on `@global` operands, [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516) (BUG-emit_llvm_calls-1). `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
+4. **Five small independent fixes.** Spill test on `@global` operands, [emit_llvm_calls.odin:1516](src/emit_llvm_calls.odin#L1516) (BUG-emit_llvm_calls-1). `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
 
 5. **Temporaries dropped on paths that never made them.** [emit_llvm_stmt.odin:669](src/emit_llvm_stmt.odin#L669) (`else if` init), [emit_llvm_stmt.odin:757](src/emit_llvm_stmt.odin#L757) (case values) and [emit_llvm_stmt.odin:875](src/emit_llvm_stmt.odin#L875) (expansion arms) register in an enclosing frame unflagged, dropping garbage. Give each its own frame or conditional. BUG-emit_llvm_stmt-5, -6, -7. About 20 lines.
 
@@ -1981,8 +1981,6 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 
 **Dead code**
 
-- (branch) [emit_llvm_abi.odin:418](src/emit_llvm_abi.odin#L418): `gap` is always 0, because `union_layout` sets `tag_offset = payload_size` ([union.odin:306](src/union.odin#L306)).
-- (branch) [emit_llvm_abi.odin:602](src/emit_llvm_abi.odin#L602): the matching test in `union_tag_member` is never true, for the same reason.
 - (branch) [emit_llvm_abi.odin:288](src/emit_llvm_abi.odin#L288): the bound of 32 in `struct_dependency` guards nothing, since array nesting cannot cycle; it also goes with the `define_struct` simplification above.
 
 **Data structures and algorithms**
@@ -4782,53 +4780,6 @@ Short and readable, with why-comments that mostly earn their place. The main iss
 - [text.odin:254](src/text.odin#L254): delete the signature table, which copies design.md and adds `string_view`, a form its list omits. Write: `design.md "unsafe.raw_data procedure", and the two view constructors whose operands the compiler cannot trace to an owner.` (about 5 lines)
 - [text.odin:90](src/text.odin#L90): delete; `mutable = false` on the next line says it.
 - [text.odin:143](src/text.odin#L143): this covers `check_from_utf8` too but sits on `check_from_runes` alone; keep one copy above the shared helper once the two are merged.
-
-### src/union.odin
-
-Well sized and readable, with one silent miscompile (`union_layout` ignores `distinct`) and one declaration-order bug in `@(zero=)`. The rest is two near-copy pairs, a redundant layout field, and a few restating comments. Bugs were reproduced with the `lokec.exe` built from this commit.
-
-**Bugs**
-
-- `BUG-union-1` **high** [union.odin:293](src/union.odin#L293) `union_layout`: uses `type_of`, so a distinct union hits the fallback `{align=1, tag_bytes=1, size=1}`, while `union_niche_variant` and the variant queries see through it. Scenario: `D :: distinct U`, `U :: union { a: u64, b: u32, c }`, `x: u64 = 9; g: D = D.a(x);`: the tag store lands on member 0, so `U(g)` reads `.a(0)`. *Confirmed: Reproduced: D.a(u64 9) then U(g) prints a 0 and D.b(u32 5) prints a 1, but D(U.a(9)) prints a 9. Niche D.a(&n) reads a pointer with its low byte zeroed. union_layout's type_of misses distinct; no gap recorded, and silent miscompile justifies high.*
-  A niche `U :: union { a: ^int, b }` corrupts the pointer and derefs garbage. Fix: `info := underlying_info(c, type)`.
-- `BUG-union-2` **medium** [union.odin:221](src/union.odin#L221) `resolve_union_zero`: tests `type_has_zero` while a payload's own `@(zero=)` may not be resolved yet, so validity depends on declaration order. Scenario: `@(zero=v) Z :: union { v, w: ^A }` then `@(zero=a) A :: union { a: Z, b }` reports L0423 "`Z` has no zero value"; with `A` written first it compiles. *Confirmed: Reproduced: Z-first gives L0423, A-first compiles, and design.md "Zero values and @(zero=)" permits both. Two unions sharing payload M fail in all 6 orders, so reordering is no general fix. Not recorded in known-gaps, open-questions or comments. Medium is fair.*
-  Fix: run this payload check after all type signatures settle; use-time checks already re-walk through `type_has_zero`.
-- `BUG-union-3` **low** [union.odin:26](src/union.odin#L26) `resolve_union_variants`: a variant with a bad payload is dropped, then attributes are validated against the shortened list. Scenario: `@(zero=a) U :: union { a: Missing, b }` also reports "names no variant"; `@(failure=e) R :: union { o: Missing, e: int }` also reports "exactly two variants, found 1". Fix: skip `resolve_union_zero` and `resolve_union_failure` once a variant failed. *Not verified.*
-- `BUG-union-4` **low** [union.odin:570](src/union.odin#L570) `reject_incomplete_variant`: the advice drops the dot, though its only caller ([check_expr.odin:713](src/check_expr.odin#L713)) is the contextual `.name` path. Scenario: `x: App_Error = .io;` says write `io(value)`, which is an unknown name. Fix: print `.%s(value)`, as also at [check_calls.odin:154](src/check_calls.odin#L154), and update `tests/err/m4a_unions.expected` and `variant_constructor.expected`. *Not verified.*
-
-**Simplification**
-
-- [union.odin:368](src/union.odin#L368) `union_variant_index`: replace the hand-written loop with `at, _ := slice.linear_search(info.variant_names, name); return at`, which returns -1 on a miss, as this file's other searches use. (about 4 lines)
-- [union.odin:364](src/union.odin#L364) `type_of(c, type_underlying(c, x))`: also at lines 378, 391, 506 and 634; `underlying_info(c, x)` is the existing helper.
-- [union.odin:580](src/union.odin#L580) `check_union_as`: every path returns `true`. Drop the result; the caller at [erased.odin:1088](src/erased.odin#L1088) becomes `check_union_as(...); return true`.
-- [union.odin:517](src/union.odin#L517) `variant_payload_is_constant`: a missing element is `Const_Value{}`, which line 503 accepts, so the array and struct arms need only walk `value.aggregate.elements`. That drops both `index < len(...) ?` lines and the walk over `info.count`. (about 4 lines)
-- [union.odin:134](src/union.odin#L134) `note_union_widening`: `widened_variant` is called and its search then repeated at line 139. Search once and test `!found`, then `dest.variants[at] != source.variants[index]`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [union.odin:306](src/union.odin#L306): `tag_offset` always equals `payload_size`, so the `gap` branches at [emit_llvm_abi.odin:418](src/emit_llvm_abi.odin#L418), [emit_llvm_abi.odin:602](src/emit_llvm_abi.odin#L602) and [emit_llvm_expr.odin:51](src/emit_llvm_expr.odin#L51) cannot run. Remove the field and read `payload_size`. (about 12 lines)
-- (branch) [union.odin:221](src/union.odin#L221): `payload != TYPE_VOID` is redundant; `type_has_zero` answers true for `TYPE_VOID`, whose kind falls through `type_has_zero_walk` to `return true`.
-- (branch) [union.odin:503](src/union.odin#L503): `payload == TYPE_VOID` is covered by `type_size(c, payload) == 0`, since `compute_layout` gives `.Void` size 0.
-
-**Near copies**
-
-- [union.odin:196](src/union.odin#L196) and [union.odin:236](src/union.odin#L236): `resolve_union_zero` and `resolve_union_failure` share find, name, search and "names no variant", differing only in the attribute word. Fold them with `attribute_variant_name` into `designated_variant(k, info, value, what) -> (attribute, index, ok)`. (about 15 lines)
-- [union.odin:16](src/union.odin#L16) and [union.odin:50](src/union.odin#L50): both loops intern, reject duplicates, and call `resolve_variant_payload`; only the noun and the failure policy differ. Share `resolve_variant_list(k, variants, noun) -> (names, payloads, ok)`; the anonymous path zips and returns `INVALID_TYPE` on `!ok`. (about 8 lines)
-
-**Structure and boundaries**
-
-- [union.odin:617](src/union.odin#L617): `union_const`, `union_index_of` and `variant_count` trail the file away from their kin: move the last two to the queries at lines 361-400. `check_union_as` is inspection under the "variant construction" banner, and the widening block at lines 71-155 separates `resolve_variant_payload` from its callers at lines 13-69.
-- [union.odin:398](src/union.odin#L398) `type_is_union`: reads identity while its neighbours see through `distinct`, so callers wrap it in `type_underlying` (union.odin:409, erased.odin, impl.odin) or get a different answer. [check.odin:4349](src/check.odin#L4349) does not wrap it, so `D.a(x)` constructs while `switch` over `D` demands a default case. Pick one meaning.
-
-**Comments**
-
-- [union.odin:12](src/union.odin#L12): keep only `// design.md "Unions"`; the rest restates the heading.
-- [union.odin:192](src/union.odin#L192): repeats [semantic.odin:158](src/semantic.odin#L158) and the spec. Shorten to one line: the first variant only, so that tag 0 plus a zero payload stays all-zero.
-- [union.odin:232](src/union.odin#L232): keep the citation and "`or_else`/`or_return` recognise the shape, never a privileged type name"; delete the middle line, which restates the spec.
-- [union.odin:303](src/union.odin#L303): delete; it narrates the `max` on the next line, and design.md "Representation" states the tag rule.
-- [union.odin:361](src/union.odin#L361): `// -1 when the union has no such variant.` The first sentence repeats the file header at line 3.
-- [union.odin:376](src/union.odin#L376): `// INVALID_TYPE for an index out of range.` `TYPE_VOID` as payloadless is already stated at line 157.
-- [union.odin:575](src/union.odin#L575): keep the citation and shorten lines 575-577 to one line, `u.as(.name)` copies the payload out as `Option(P)`; the spec spells out the rest.
 
 ### src/universe.odin
 

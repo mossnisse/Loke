@@ -382,15 +382,12 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 			strings.write_string(&b, " }")
 			return strings.to_string(b)
 		}
-		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
-			fmt.sbprintf(&b, ", [%d x i8]", gap)
-		}
 		strings.write_string(&b, ", ")
 	} else if shape.align > shape.tag_bytes {
 		fmt.sbprintf(&b, "[0 x i%d], ", shape.align * 8)
 	}
 	fmt.sbprintf(&b, "i%d", shape.tag_bytes * 8)
-	if tail := shape.size - shape.tag_offset - shape.tag_bytes; tail > 0 {
+	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
 		fmt.sbprintf(&b, ", [%d x i8]", tail)
 	}
 	strings.write_string(&b, " }")
@@ -588,9 +585,6 @@ union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
 	}
 	index := 1
 	if shape.payload_size > shape.align {
-		index += 1
-	}
-	if shape.tag_offset > shape.payload_size {
 		index += 1
 	}
 	return index

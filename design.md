@@ -1720,6 +1720,12 @@ conversion hooks, interfaces, and formatting. Compared with its underlying type:
   representation, so it follows the ordinary copy rule: a managed operand read
   from a place is cloned, and `move(x)` or a temporary transfers instead. A
   move-only operand must be moved.
+- **Variants** are kept: a distinct type over a union constructs its variants,
+  answers `.as(.name)`, and a `switch` over it takes [variant
+  cases](#inspecting-a-union) and must cover them. It is still not a union to
+  [`is_union`](#built-in-procedures), so [per-variant switch
+  cases](#per-variant-switch-cases) and [union argument
+  expansion](#union-argument-expansion) reject it until it is converted.
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct: two
 declarations with the same fields are two types.

@@ -491,7 +491,8 @@ check_type_predicate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Id
 	}
 	v.type = TYPE_BOOL
 	v.is_const = true
-	holds := builtin == .Is_Union ? type_is_union(k.c, operand) : !type_clone_disabled(k.c, operand)
+	// design.md "Distinct types": a distinct type over a union is not one here.
+	holds := builtin == .Is_Union ? type_kind(k.c, operand) == .Union : !type_clone_disabled(k.c, operand)
 	v.const_value = bool_const(holds)
 }
 

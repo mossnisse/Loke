@@ -48,13 +48,10 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 			strings.write_string(&b, " }")
 			return strings.to_string(b)
 		}
-		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
-			fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", gap)
-		}
 		strings.write_string(&b, ", ")
 	}
 	fmt.sbprintf(&b, "i%d %d", shape.tag_bytes * 8, index)
-	if tail := shape.size - shape.tag_offset - shape.tag_bytes; tail > 0 {
+	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
 		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", tail)
 	}
 	strings.write_string(&b, " }")
@@ -338,7 +335,7 @@ write_const_bytes :: proc(
 			return true
 		}
 		for byte_index in 0 ..< int(shape.tag_bytes) {
-			out[int(shape.tag_offset) + byte_index] = u8(u64(index) >> u64(byte_index * 8))
+			out[int(shape.payload_size) + byte_index] = u8(u64(index) >> u64(byte_index * 8))
 		}
 		return true
 	case .Typeid:

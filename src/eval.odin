@@ -297,7 +297,7 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 		holder := type != INVALID_TYPE ? type : cv.aggregate.type
 		value.type = holder
 		value.variant = cv.aggregate.variant
-		is_union := type_is_union(ev.k.c, type_underlying(ev.k.c, holder))
+		is_union := type_is_union(ev.k.c, holder)
 		elements, allocated := eval_elements(ev, len(cv.aggregate.elements))
 		if !allocated {
 			return Eval_Value{}, false
@@ -547,7 +547,7 @@ eval_constant_hooks_supported :: proc(ev: ^Evaluator, cv: Const_Value, type: Typ
 	if cv.kind != .Aggregate || cv.aggregate == nil || type_is_container(c, type) {
 		return true
 	}
-	is_union := type_is_union(c, type_underlying(c, type))
+	is_union := type_is_union(c, type)
 	for element, index in cv.aggregate.elements {
 		member := is_union ? union_variant_payload(c, type, cv.aggregate.variant) : element_type_at(c, type, index)
 		if !eval_constant_hooks_supported(ev, element, member, site) {
@@ -3823,7 +3823,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 	if !ok {
 		return .Fail
 	}
-	if s.kind != .Value && type_is_union(ev.k.c, type_underlying(ev.k.c, expr_base(s.subject).type)) {
+	if s.kind != .Value && type_is_union(ev.k.c, expr_base(s.subject).type) {
 		return eval_variant_switch(ev, s, subject)
 	}
 	default_index := -1

@@ -4865,7 +4865,7 @@ type_has_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> boo
 	if type_is_enum(c, underlying) {
 		return enum_member(c, underlying, name) != INVALID_SYMBOL
 	}
-	return type_is_union(c, underlying) && union_variant_index(c, type, name) >= 0
+	return union_variant_index(c, type, name) >= 0
 }
 
 // design.md "or_else expression": `break`, `continue`, and `return value` in the

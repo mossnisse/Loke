@@ -153,8 +153,8 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		   union_variant_payload(k.c, sel.variant_union, sel.variant_index) == TYPE_VOID {
 			errorf(
 				k.c, v.span, "L0425",
-				"`%s.%s` carries no payload: write `%s` without a call",
-				type_name(k.c, sel.variant_union), sel.name.text, sel.name.text,
+				"`%s.%s` carries no payload: write it without a call",
+				type_name(k.c, sel.variant_union), sel.name.text,
 			)
 			v.type = INVALID_TYPE
 			return

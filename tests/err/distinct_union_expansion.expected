@@ -1,0 +1,9 @@
+L0427
+@12:2
+this switch over `Fresh` does not cover .second, .third
+L0426
+@19:7
+an expanded case needs a union subject, and this switch is over `Fresh`
+L0371
+@24:7
+`..` needs a variadic parameter to spread into

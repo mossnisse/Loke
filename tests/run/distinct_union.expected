@@ -1,0 +1,14 @@
+true true
+wide 9
+wide 9
+narrow 5
+empty
+narrow 7
+42
+42
+true false
+true false false
+.some(9) .none
+held
+true
+failed 1
