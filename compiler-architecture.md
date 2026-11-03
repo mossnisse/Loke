@@ -914,6 +914,7 @@ be file-private. Paths below are relative to `src/`.
 | --- | --- |
 | `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, allocator regions, and call effects. |
+| `provenance_offsets.odin`, `provenance_aliases.odin` | Where a carrier may point below its storage, merged past the limits, with the definitions reaching a block; written aliases, what a local's carriers may reach. |
 | `provider_end.odin` | Where a provider's region ends, which both walks ask at the same `Reset_Key`. |
 | `panic_free.odin` | Which statements cannot panic, so they need no unwind path. |
 | `provenance_input.odin`, `provenance_form.odin`, `provenance_transfer.odin`, `provenance_transfer_facts.odin`, `provenance_call.odin`, `provenance_read.odin` | Normalized provenance input: storage, values, places, value forms, transfers, call inputs, and leaf reads ([Normalized provenance input](#normalized-provenance-input)). |

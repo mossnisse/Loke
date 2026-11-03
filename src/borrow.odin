@@ -239,6 +239,53 @@ steps_overlap :: proc(a, b: Proj_Step) -> bool {
 	return true
 }
 
+@(private)
+path_is_indistinct :: proc(path: []Proj_Step) -> bool {
+	for step in path {
+		if step.kind == .Wild || step.kind == .Range && step.hi - step.lo > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// Whether `path` selects one place: fields and single constant elements,
+// none merged.
+@(private)
+prov_path_names_one_place :: proc(path: []Proj_Step) -> bool {
+	for step in path {
+		if step.kind != .Field && !(step.kind == .Range && step.hi == step.lo + 1) || step.precision != {} {
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+path_has_exact_prefix :: proc(path, prefix: []Proj_Step) -> bool {
+	if len(prefix) > len(path) {
+		return false
+	}
+	for step, index in prefix {
+		if !same_step(step, path[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Whether the place `path` names may be the one `tail` names inside a value
+// stored at some place: whether its last steps may overlap `tail`.
+@(private)
+prov_path_may_end_in :: proc(path, tail: []Proj_Step) -> bool {
+	return len(path) >= len(tail) && paths_overlap(path[len(path) - len(tail):], tail)
+}
+
+@(private)
+prov_same_path :: proc(a, b: []Proj_Step) -> bool {
+	return len(a) == len(b) && path_has_exact_prefix(a, b)
+}
+
 // ---------------------------------------------------------------- loans --
 
 // One borrow. A `mutable` one excludes every competing access; an immutable one
@@ -1635,7 +1682,7 @@ merge_loan_provenance :: proc(state: ^Prov_Solve, into: ^Result_Dependencies, in
 
 // Narrows a parameter dependency to the shape paths the loan overlaps, so a
 // caller substitutes only those fields. Nil means the whole parameter.
-@(private = "file")
+@(private)
 merge_param_paths :: proc(
 	state: ^Prov_Solve,
 	into: ^Result_Dependencies,
@@ -1741,7 +1788,7 @@ analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 // An error in a generic instance's body names the call that selected it, as
 // the checker's do, which run before this pass: the body may be a library's,
 // and the call the caller's.
-@(private = "file")
+@(private)
 note_instance_sites :: proc(k: ^Checker, literal: ^Expr_Proc, first: int) {
 	instance := k.c.procedure_instances[literal.symbol]
 	if instance == nil || instance.selected_at.file == NO_FILE {
@@ -1879,7 +1926,7 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 }
 
 // Links each store's copies to the slots it lands in, at the settled reach.
-@(private = "file")
+@(private)
 link_landed_stores :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	if !graph.has_linked_store {
@@ -1990,7 +2037,7 @@ solve_reaching :: proc(state: ^Prov_Solve) {
 // link it was copied by, and a new value in a slot ends what was taken from the old, so
 // which definition reaches is in the row: a reborrow of a value no slot holds any more
 // suspends nothing, on the paths where that is so.
-@(private = "file")
+@(private)
 solve_links_held :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	links := len(graph.reborrows)
@@ -2288,7 +2335,7 @@ run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended
 // too. A definition that makes no such borrow the walk has ruled out, if it had met one
 // (`prov_may_point_at_element`), and one it had not uses all of `s`, and so conflicts with
 // what is left in it. Given `loan_held`, only the carriers holding that loan count.
-@(private = "file")
+@(private)
 carriers_element :: proc(state: ^Prov_Solve, carriers: []int, reach: []u8, loan_held := -1) -> Prov_Element_Slots {
 	found: Prov_Element_Slots
 	for slot in carriers {
@@ -2318,7 +2365,7 @@ carriers_element :: proc(state: ^Prov_Solve, carriers: []int, reach: []u8, loan_
 // or that place's store with nothing known of where it lands when a borrow they may hold
 // here names another: `p` in a loop that ends in `p = &mut r^.b` names `r^.b` from the
 // second iteration on, as the walk had not reached when it met a store through `p`.
-@(private = "file")
+@(private)
 publish_place_settled :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) -> Prov_Event {
 	settled := event
 	if event.through_element && event.store == nil {
@@ -2810,7 +2857,7 @@ resolve_content_reads :: proc(state: ^Prov_Solve) {
 // holds now, and so on through any carrier held there. Whatever a carrier is handed
 // to may read what it reaches, so what that storage borrows stays live for the
 // call.
-@(private = "file")
+@(private)
 with_held_content :: proc(state: ^Prov_Solve, sources, content_loans: []int) -> []int {
 	if len(content_loans) == 0 {
 		return nil
@@ -2836,7 +2883,7 @@ with_held_content :: proc(state: ^Prov_Solve, sources, content_loans: []int) -> 
 }
 
 // `view_element_loan`'s loan, narrowed or not; a store needs no `known`.
-@(private = "file")
+@(private)
 publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Prov_Loan {
 	loan, _ := view_element_loan(graph, event.element, one)
 	return loan
@@ -2953,7 +3000,7 @@ solve_loan_liveness :: proc(state: ^Prov_Solve) {
 // the write never reaches, so what lands there carries the carrier's precision as
 // well. When `one`, the store's carriers name only this loan, so a slot holding
 // exactly that place is replaced instead (`publish_replaces`).
-@(private = "file")
+@(private)
 publish_into_loan :: proc(state: ^Prov_Solve, reach: []u8, loan_index: int, event: Prov_Event, one: bool, carrier_loss: Precision_Loss) {
 	graph := state.graph
 	loan := publish_view_loan(graph, event, loan_index) if one else graph.loans[loan_index]
@@ -3020,7 +3067,7 @@ land_in_slot :: proc(state: ^Prov_Solve, reach: []u8, index: int, replaces: bool
 // Only a slot of one place is replaced (`caller_replaces`). True when the
 // store is `linked` and each slot it lands in is one its copies are linked
 // to, so the parameter itself need not hold it.
-@(private = "file")
+@(private)
 publish_into_caller :: proc(
 	state: ^Prov_Solve, reach: []u8, slots: []int, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id,
 	carrier_loss: Precision_Loss, linked: Type_Id, by_type: Type_Id,
@@ -3044,7 +3091,7 @@ publish_into_caller :: proc(
 // Whether a store of `stored` at `path` below a parameter loan's caller storage
 // replaces `slot`, one of its caller slots: the storage is one place, or one
 // element of a view, and `replaces_at` holds.
-@(private = "file")
+@(private)
 caller_replaces :: proc(c: ^Compiler, slot: Prov_Slot, path: []Proj_Step, stored: Type_Id) -> bool {
 	if stored == INVALID_TYPE || !slot.caller_one && !slot.caller_element || slot.content_type == INVALID_TYPE ||
 	   !path_is_exact(slot.path) || !path_is_exact(path) || !paths_overlap(slot.path, path) {

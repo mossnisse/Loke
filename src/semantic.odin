@@ -1383,6 +1383,18 @@ proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Par
 	return info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 }
 
+// The procedure type a call goes through: the chosen overload's, or the callee
+// value's for an indirect call, which is where `@(escape=...)` matters most.
+call_proc_type :: proc(c: ^Compiler, v: ^Expr_Call) -> Type_Id {
+	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil {
+		return sym.proc_type
+	}
+	if base := expr_base(v.callee); base != nil {
+		return base.type
+	}
+	return INVALID_TYPE
+}
+
 symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mode {
 	return proc_parameter_mode(c, symbol.proc_type, index)
 }
