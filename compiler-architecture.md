@@ -896,8 +896,8 @@ be file-private. Paths below are relative to `src/`.
 | `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked; a generic `impl`'s untyped constant is read by its value's type at the declaration or per instance, and one whose value is a type by its target's syntax, as any type alias is. A selection of a generic `impl`'s private member is read in each instance of the generic declaration that writes it, queued in `pending_private_reads` since an instance can appear inside a probe. |
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
-| `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, ownership/borrow modes of yielded bindings, and the associated types that follow from protocol signatures. |
+| `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, and the iteration protocol members of built-ins. |
+| `iteration_foreach.odin`, `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | The runtime `foreach` checker and binder, iterable adapters, mutable lending, ownership/borrow modes of yielded bindings, and the associated types that follow from protocol signatures. |
 
 ### Generics, compile-time features, and bootstrap
 

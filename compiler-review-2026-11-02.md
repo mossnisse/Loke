@@ -1458,17 +1458,13 @@ Well-commented and cleanly owned; its linear scans run over a per-package, compi
 
 ### src/iterate.odin
 
-What remains are near copies that need helpers shared across files, and one move.
+What remains are near copies that need helpers shared across files.
 
 **Near copies**
 
 - [iterate.odin:49](src/iterate.odin#L49) and [iteration_mutable.odin:41](src/iteration_mutable.odin#L41), [container.odin:313](src/container.odin#L313): name, `new_type`, fields, label. Share `new_compiler_struct(c, proto, name, label, ..fields)`; about 30 lines here on top of the literal change.
 - [iterate.odin:68](src/iterate.odin#L68), [simd.odin:15](src/simd.odin#L15) and [box.odin:45](src/box.odin#L45): identical apart from the name. Share `predeclared_callee(k, callee, "Range")`.
 - [iterate.odin:1064](src/iterate.odin#L1064), [optional.odin:607](src/optional.odin#L607) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share one proc taking the identifier, span and shadow-lookup scope.
-
-**Structure and boundaries**
-
-- [iterate.odin:492](src/iterate.odin#L492): the file holds type constructors and contributions (lines 47-490) and the `foreach` checker and binder (492-1088). The checker could be its own file next to `iteration_mutable.odin`, whose foreach path shares its binder.
 
 ### src/lifecycle.odin
 
