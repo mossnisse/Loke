@@ -16,7 +16,9 @@ Token_Kind :: enum {
 	Raw_String,
 	Rune,
 
-	// keywords, reserved in every position
+	// Keywords, reserved in every position. `reserved_keyword` and `any_keyword`
+	// read these ranges, so a new one goes inside its range, with a row in
+	// `keyword_table`.
 	Break,
 	Case,
 	Continue,
@@ -38,7 +40,6 @@ Token_Kind :: enum {
 	Interface,
 	Map,
 	Move,
-	Move_Only,
 	Mut,
 	Or_Else,
 	Or_Return,
@@ -61,6 +62,10 @@ Token_Kind :: enum {
 	Spawn,
 	Via,
 	Where,
+
+	// `move_only` is a name. The parser retags it directly before `struct`, where
+	// it is the earlier spelling of `@(move_only)`.
+	Move_Only,
 
 	// operators and punctuation
 	Plus,
@@ -198,20 +203,17 @@ span_from :: proc(l: ^Lexer, lo: u32) -> Span {
 @(private = "file")
 is_digit :: proc(ch: u8) -> bool {return ch >= '0' && ch <= '9'}
 
-@(private = "file")
-is_hex :: proc(ch: u8) -> bool {
-	return is_digit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
-}
-
-@(private = "file")
-hex_value :: proc(ch: u8) -> u32 {
-	switch {
-	case ch <= '9':
-		return u32(ch - '0')
-	case ch <= 'F':
-		return u32(ch - 'A' + 10)
+// A digit's value in any base up to 16; anything else is larger than every radix.
+digit_value :: proc(ch: u8) -> int {
+	switch ch {
+	case '0' ..= '9':
+		return int(ch - '0')
+	case 'a' ..= 'f':
+		return int(ch - 'a') + 10
+	case 'A' ..= 'F':
+		return int(ch - 'A') + 10
 	}
-	return u32(ch - 'a' + 10)
+	return 99
 }
 
 @(private = "file")
@@ -219,9 +221,17 @@ is_ident_start :: proc(ch: u8) -> bool {
 	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
-@(private = "file")
 is_ident_part :: proc(ch: u8) -> bool {
 	return is_ident_start(ch) || is_digit(ch)
+}
+
+// Whether `text` is spelled as a name, keyword or not.
+identifier_spelling :: proc(text: string) -> bool {
+	if text == "" || !is_ident_start(text[0]) { return false }
+	for i in 1 ..< len(text) {
+		if !is_ident_part(text[i]) { return false }
+	}
+	return true
 }
 
 @(private = "file")
@@ -231,7 +241,7 @@ at_literal_end :: proc(l: ^Lexer) -> bool {
 
 @(private = "file")
 skip_ident_tail :: proc(l: ^Lexer) {
-	for !at_end(l) && is_ident_part(peek(l)) {
+	for is_ident_part(peek(l)) {
 		l.pos += 1
 	}
 }
@@ -293,6 +303,20 @@ block_comment :: proc(l: ^Lexer) {
 	)
 }
 
+// Reports over the text since `lo`, which becomes one bad token.
+@(private = "file")
+error_token :: proc(l: ^Lexer, lo: u32, code, format: string, args: ..any) -> Token {
+	errorf(l.c, span_from(l, lo), code, format, ..args)
+	return Token{kind = .Error, lo = lo, hi = l.pos}
+}
+
+// Reports at the opening quote of what never closes.
+@(private = "file")
+unterminated :: proc(l: ^Lexer, lo: u32, code, what: string) -> Token {
+	errorf(l.c, Span{file = l.file, lo = lo, hi = lo + 1}, code, "unterminated %s", what)
+	return Token{kind = .Error, lo = lo, hi = l.pos}
+}
+
 @(private = "file")
 next_token :: proc(l: ^Lexer) -> Token {
 	skip_trivia(l)
@@ -314,18 +338,12 @@ next_token :: proc(l: ^Lexer) -> Token {
 	case ch == '\'':
 		return rune_literal(l)
 	case ch >= 0x80:
-		// Everything outside strings, comments and rune literals is ASCII.
+		// grammar.md "Source encoding"
 		l.pos += 1
-		for !at_end(l) && peek(l) >= 0x80 {
+		for peek(l) >= 0x80 {
 			l.pos += 1
 		}
-		errorf(
-			l.c,
-			span_from(l, lo),
-			"L0102",
-			"non-ASCII character outside a string, comment or character literal",
-		)
-		return Token{kind = .Error, lo = lo, hi = l.pos}
+		return error_token(l, lo, "L0102", "non-ASCII character outside a string, comment or character literal")
 	}
 
 	return operator(l)
@@ -337,80 +355,71 @@ reserved_keyword :: proc(kind: Token_Kind) -> bool {
 	return kind >= .Break && kind <= .When
 }
 
+// A reserved or a contextual keyword.
+any_keyword :: proc(kind: Token_Kind) -> bool {
+	return kind >= .Break && kind <= .Where
+}
+
+// Every keyword's spelling, the reserved ones first. Read-only data, as
+// `operator_table` is.
+@(rodata)
+keyword_table := [?]struct {
+	text: string,
+	kind: Token_Kind,
+}{
+	{"break", .Break},
+	{"case", .Case},
+	{"continue", .Continue},
+	{"default", .Default},
+	{"defer", .Defer},
+	{"distinct", .Distinct},
+	{"dyn", .Dyn},
+	{"else", .Else},
+	{"enum", .Enum},
+	{"errdefer", .Errdefer},
+	{"for", .For},
+	{"foreach", .Foreach},
+	{"foreign", .Foreign},
+	{"if", .If},
+	{"impl", .Impl},
+	{"import", .Import},
+	{"in", .In},
+	{"inout", .Inout},
+	{"interface", .Interface},
+	{"map", .Map},
+	{"move", .Move},
+	{"mut", .Mut},
+	{"or_else", .Or_Else},
+	{"or_return", .Or_Return},
+	{"package", .Package},
+	{"proc", .Proc},
+	{"return", .Return},
+	{"struct", .Struct},
+	{"switch", .Switch},
+	{"type", .Type},
+	{"union", .Union},
+	{"when", .When},
+	{"dynamic", .Dynamic},
+	{"hook", .Hook},
+	{"operator", .Operator},
+	{"parallel", .Parallel},
+	{"spawn", .Spawn},
+	{"via", .Via},
+	{"where", .Where},
+}
+
 @(private = "file")
 ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	skip_ident_tail(l)
-
-	// Contextual keywords and shadowable predeclared names remain identifiers.
-	kind: Token_Kind = .Ident
-	switch l.src[lo:l.pos] {
-	case "break":
-		kind = .Break
-	case "case":
-		kind = .Case
-	case "continue":
-		kind = .Continue
-	case "default":
-		kind = .Default
-	case "defer":
-		kind = .Defer
-	case "distinct":
-		kind = .Distinct
-	case "dyn":
-		kind = .Dyn
-	case "else":
-		kind = .Else
-	case "enum":
-		kind = .Enum
-	case "errdefer":
-		kind = .Errdefer
-	case "for":
-		kind = .For
-	case "foreach":
-		kind = .Foreach
-	case "foreign":
-		kind = .Foreign
-	case "if":
-		kind = .If
-	case "impl":
-		kind = .Impl
-	case "import":
-		kind = .Import
-	case "in":
-		kind = .In
-	case "inout":
-		kind = .Inout
-	case "interface":
-		kind = .Interface
-	case "map":
-		kind = .Map
-	case "move":
-		kind = .Move
-	case "mut":
-		kind = .Mut
-	case "or_else":
-		kind = .Or_Else
-	case "or_return":
-		kind = .Or_Return
-	case "package":
-		kind = .Package
-	case "proc":
-		kind = .Proc
-	case "return":
-		kind = .Return
-	case "struct":
-		kind = .Struct
-	case "switch":
-		kind = .Switch
-	case "type":
-		kind = .Type
-	case "union":
-		kind = .Union
-	case "when":
-		kind = .When
+	word := l.src[lo:l.pos]
+	for keyword in keyword_table {
+		if !reserved_keyword(keyword.kind) { break }
+		if keyword.text == word {
+			return Token{kind = keyword.kind, lo = lo, hi = l.pos}
+		}
 	}
-	return Token{kind = kind, lo = lo, hi = l.pos}
+	return Token{kind = .Ident, lo = lo, hi = l.pos}
 }
 
 @(private = "file")
@@ -420,37 +429,27 @@ number :: proc(l: ^Lexer) -> Token {
 
 	if peek(l) == '0' && (peek(l, 1) == 'b' || peek(l, 1) == 'o' || peek(l, 1) == 'x') {
 		base := peek(l, 1)
+		radix := base == 'b' ? 2 : (base == 'o' ? 8 : 16)
 		l.pos += 2
 		digits := 0
-		for !at_end(l) {
+		for {
 			ch := peek(l)
-			valid: bool
-			switch base {
-			case 'b':
-				valid = ch == '0' || ch == '1'
-			case 'o':
-				valid = ch >= '0' && ch <= '7'
-			case:
-				valid = is_hex(ch)
-			}
-			if !valid && ch != '_' {
-				break
-			}
-			if ch != '_' {
+			if digit_value(ch) < radix {
 				digits += 1
+			} else if ch != '_' {
+				break
 			}
 			l.pos += 1
 		}
 		// With a tail still to come (`0o8`, `0xzz`) `number_end` gives the better
 		// message; L0110 is for a prefix with nothing after it at all.
 		if digits == 0 && !is_ident_part(peek(l)) {
-			errorf(l.c, span_from(l, lo), "L0110", "expected digits after `0%c`", base)
-			return Token{kind = .Error, lo = lo, hi = l.pos}
+			return error_token(l, lo, "L0110", "expected digits after `0%c`", base)
 		}
 		return number_end(l, lo, .Int)
 	}
 
-	for !at_end(l) && (is_digit(peek(l)) || peek(l) == '_') {
+	for is_digit(peek(l)) || peek(l) == '_' {
 		l.pos += 1
 	}
 
@@ -459,26 +458,20 @@ number :: proc(l: ^Lexer) -> Token {
 	if peek(l) == '.' && is_digit(peek(l, 1)) {
 		kind = .Float
 		l.pos += 1
-		for !at_end(l) && (is_digit(peek(l)) || peek(l) == '_') {
+		for is_digit(peek(l)) || peek(l) == '_' {
 			l.pos += 1
 		}
 	}
 
 	if peek(l) == 'e' || peek(l) == 'E' {
-		offset: u32 = 1
-		if peek(l, 1) == '+' || peek(l, 1) == '-' {
-			offset = 2
-		}
-		if !is_digit(peek(l, offset)) {
+		l.pos += peek(l, 1) == '+' || peek(l, 1) == '-' ? 2 : 1
+		if !is_digit(peek(l)) {
 			// Take a bad exponent as one token, like other malformed numbers.
-			l.pos += offset
 			skip_ident_tail(l)
-			errorf(l.c, span_from(l, lo), "L0112", "an exponent needs at least one digit")
-			return Token{kind = .Error, lo = lo, hi = l.pos}
+			return error_token(l, lo, "L0112", "an exponent needs at least one digit")
 		}
 		kind = .Float
-		l.pos += offset
-		for !at_end(l) && is_digit(peek(l)) {
+		for is_digit(peek(l)) {
 			l.pos += 1
 		}
 	}
@@ -491,80 +484,89 @@ number :: proc(l: ^Lexer) -> Token {
 // identifier a line later.
 @(private = "file")
 number_end :: proc(l: ^Lexer, lo: u32, kind: Token_Kind) -> Token {
-	if at_end(l) || !is_ident_part(peek(l)) {
+	if !is_ident_part(peek(l)) {
 		return Token{kind = kind, lo = lo, hi = l.pos}
 	}
 	bad := l.pos
 	skip_ident_tail(l)
-	errorf(l.c, span_from(l, lo), "L0113", "unexpected `%s` in a number", l.src[bad:l.pos])
-	return Token{kind = .Error, lo = lo, hi = l.pos}
+	return error_token(l, lo, "L0113", "unexpected `%s` in a number", l.src[bad:l.pos])
+}
+
+Escape_Problem :: enum {
+	None,
+	Incomplete,
+	Short_Hex,
+	Octal,
+	Unknown,
+	Not_A_Character,
+}
+
+@(private = "file")
+hex_escape_digits :: proc(ch: u8) -> int {
+	return ch == 'x' ? 2 : (ch == 'u' ? 4 : 8)
+}
+
+// The escape that `text` begins with, backslash first: its value and how many
+// bytes it spans, which on a problem end where reading stopped. A line ending is
+// not something a backslash escapes. Leaving it unread is what lets a literal end
+// there instead of scanning into the next line for a closing quote.
+scan_escape :: proc(text: string) -> (value: rune, width: int, problem: Escape_Problem) {
+	if len(text) < 2 || text[1] == '\n' || text[1] == '\r' {
+		return 0, 1, .Incomplete
+	}
+	ch := text[1]
+	switch ch {
+	case 'a': return '\a', 2, .None
+	case 'b': return '\b', 2, .None
+	case 'e': return 0x1b, 2, .None
+	case 'f': return '\f', 2, .None
+	case 'n': return '\n', 2, .None
+	case 'r': return '\r', 2, .None
+	case 't': return '\t', 2, .None
+	case 'v': return '\v', 2, .None
+	case '\\', '"', '\'': return rune(ch), 2, .None
+	case 'x', 'u', 'U':
+		digits: u32 = 0
+		width = 2
+		for _ in 0 ..< hex_escape_digits(ch) {
+			digit := width < len(text) ? digit_value(text[width]) : 99
+			if digit >= 16 { return 0, width, .Short_Hex }
+			digits = digits * 16 + u32(digit)
+			width += 1
+		}
+		// `\x` is a raw byte; `\u` and `\U` name a character, and the surrogate
+		// range has no character in it.
+		if ch != 'x' && (digits > 0x10ffff || (digits >= 0xd800 && digits <= 0xdfff)) {
+			return 0, width, .Not_A_Character
+		}
+		return rune(digits), width, .None
+	case '0' ..= '9':
+		return 0, 2, .Octal
+	}
+	return 0, 2, .Unknown
 }
 
 @(private = "file")
 escape :: proc(l: ^Lexer) -> bool {
 	lo := l.pos
-	l.pos += 1 // the backslash
-	if at_end(l) {
-		errorf(l.c, span_from(l, lo), "L0105", "incomplete escape sequence")
-		return false
-	}
-	ch := peek(l)
-	// A line ending is not something a backslash escapes. Leaving it unconsumed
-	// is what lets the caller end the literal here instead of scanning into the
-	// next line looking for a closing quote.
-	if ch == '\n' || ch == '\r' {
-		errorf(l.c, span_from(l, lo), "L0105", "incomplete escape sequence")
-		return false
-	}
-	switch ch {
-	case 'a', 'b', 'e', 'f', 'n', 'r', 't', 'v', '\\', '"', '\'':
-		l.pos += 1
+	_, width, problem := scan_escape(l.src[lo:])
+	l.pos += u32(width)
+	switch problem {
+	case .None:
 		return true
-	case 'x', 'u', 'U':
-		count := 2 if ch == 'x' else (4 if ch == 'u' else 8)
-		l.pos += 1
-		value: u32 = 0
-		for i := 0; i < count; i += 1 {
-			if !is_hex(peek(l)) {
-				errorf(
-					l.c,
-					span_from(l, lo),
-					"L0105",
-					"`\\%c` needs %d hexadecimal digits",
-					ch,
-					count,
-				)
-				return false
-			}
-			value = value * 16 + hex_value(peek(l))
-			l.pos += 1
-		}
-		// `\x` is a raw byte; `\u` and `\U` name a character, and the surrogate
-		// range has no character in it.
-		if ch != 'x' && (value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) {
-			errorf(
-				l.c,
-				span_from(l, lo),
-				"L0114",
-				"`%s` is not a Unicode character",
-				l.src[lo:l.pos],
-			)
-			return false
-		}
-		return true
-	case '0' ..= '9':
+	case .Incomplete:
+		errorf(l.c, span_from(l, lo), "L0105", "incomplete escape sequence")
+	case .Short_Hex:
+		ch := l.src[lo + 1]
+		errorf(l.c, span_from(l, lo), "L0105", "`\\%c` needs %d hexadecimal digits", ch, hex_escape_digits(ch))
+	case .Not_A_Character:
+		errorf(l.c, span_from(l, lo), "L0114", "`%s` is not a Unicode character", l.src[lo:l.pos])
+	case .Octal:
 		// C's octal byte escape; Loke has none (comments.md "No octal escapes").
-		l.pos += 1
-		errorf(
-			l.c,
-			span_from(l, lo),
-			"L0105",
-			"there are no octal escapes; write a byte as `\\xNN` or a character as `\\uNNNN`",
-		)
-		return false
+		errorf(l.c, span_from(l, lo), "L0105", "there are no octal escapes; write a byte as `\\xNN` or a character as `\\uNNNN`")
+	case .Unknown:
+		errorf(l.c, span_from(l, lo), "L0105", "unknown escape sequence")
 	}
-	l.pos += 1
-	errorf(l.c, span_from(l, lo), "L0105", "unknown escape sequence")
 	return false
 }
 
@@ -575,8 +577,7 @@ string_literal :: proc(l: ^Lexer) -> Token {
 	valid := true
 	for {
 		if at_literal_end(l) {
-			errorf(l.c, Span{file = l.file, lo = lo, hi = lo + 1}, "L0104", "unterminated string literal")
-			return Token{kind = .Error, lo = lo, hi = l.pos}
+			return unterminated(l, lo, "L0104", "string literal")
 		}
 		switch peek(l) {
 		case '"':
@@ -585,7 +586,7 @@ string_literal :: proc(l: ^Lexer) -> Token {
 		case '\\':
 			escape_ok := escape(l)
 			valid = escape_ok && valid
-			// The escape already diagnosed the literal ending.
+			// One diagnostic per literal: no L0104 after a failed escape.
 			if !escape_ok && at_literal_end(l) {
 				return Token{kind = .Error, lo = lo, hi = l.pos}
 			}
@@ -603,13 +604,7 @@ raw_string_literal :: proc(l: ^Lexer) -> Token {
 		l.pos += 1
 	}
 	if at_end(l) {
-		errorf(
-			l.c,
-			Span{file = l.file, lo = lo, hi = lo + 1},
-			"L0111",
-			"unterminated raw string literal",
-		)
-		return Token{kind = .Error, lo = lo, hi = l.pos}
+		return unterminated(l, lo, "L0111", "raw string literal")
 	}
 	l.pos += 1
 	return Token{kind = .Raw_String, lo = lo, hi = l.pos}
@@ -620,20 +615,13 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	l.pos += 1
 	if at_literal_end(l) {
-		errorf(
-			l.c,
-			Span{file = l.file, lo = lo, hi = lo + 1},
-			"L0106",
-			"unterminated character literal",
-		)
-		return Token{kind = .Error, lo = lo, hi = l.pos}
+		return unterminated(l, lo, "L0106", "character literal")
 	}
 
 	// Consume a closed but empty literal without scanning past it.
 	if peek(l) == '\'' {
 		l.pos += 1
-		errorf(l.c, span_from(l, lo), "L0107", "a character literal holds exactly one character")
-		return Token{kind = .Error, lo = lo, hi = l.pos}
+		return error_token(l, lo, "L0107", "a character literal holds exactly one character")
 	}
 
 	valid := true
@@ -642,7 +630,7 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 	} else {
 		// One Unicode scalar: step over a whole UTF-8 sequence.
 		l.pos += 1
-		for !at_end(l) && peek(l) >= 0x80 && peek(l) < 0xc0 {
+		for peek(l) >= 0x80 && peek(l) < 0xc0 {
 			l.pos += 1
 		}
 	}
@@ -662,12 +650,7 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 				)
 			}
 		} else if valid {
-			errorf(
-				l.c,
-				Span{file = l.file, lo = lo, hi = lo + 1},
-				"L0106",
-				"unterminated character literal",
-			)
+			return unterminated(l, lo, "L0106", "character literal")
 		}
 		return Token{kind = .Error, lo = lo, hi = l.pos}
 	}
@@ -675,14 +658,23 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 	return Token{kind = valid ? .Rune : .Error, lo = lo, hi = l.pos}
 }
 
-// First match wins, so longer operators must precede their prefixes. `:` stays
-// separate because `::` and `:=` are token pairs. Read-only data rather than a
-// constant, so a scan does not materialize the table first.
+// First match wins, so longer operators must precede their prefixes. The most
+// common come first, none of them a prefix. `:` stays separate because `::` and
+// `:=` are token pairs. Read-only data rather than a constant, so a scan does not
+// materialize the table first.
 @(private, rodata)
 operator_table := [?]struct {
 	text: string,
 	kind: Token_Kind,
 }{
+	{"(", .Lparen},
+	{")", .Rparen},
+	{"[", .Lbracket},
+	{"]", .Rbracket},
+	{"{", .Lbrace},
+	{"}", .Rbrace},
+	{";", .Semicolon},
+	{",", .Comma},
 	{"&~=", .Amp_Tilde_Eq},
 	{"+%=", .Plus_Wrap_Eq},
 	{"-%=", .Minus_Wrap_Eq},
@@ -727,19 +719,11 @@ operator_table := [?]struct {
 	{">", .Gt},
 	{"=", .Assign},
 	{":", .Colon},
-	{";", .Semicolon},
-	{",", .Comma},
 	{".", .Period},
 	{"?", .Question},
 	{"$", .Dollar},
 	{"^", .Caret},
 	{"@", .At},
-	{"(", .Lparen},
-	{")", .Rparen},
-	{"[", .Lbracket},
-	{"]", .Rbracket},
-	{"{", .Lbrace},
-	{"}", .Rbrace},
 }
 
 operator_spelling :: proc(kind: Token_Kind) -> string {
@@ -764,6 +748,5 @@ operator :: proc(l: ^Lexer) -> Token {
 		}
 	}
 	l.pos += 1
-	errorf(l.c, span_from(l, lo), "L0101", "invalid character `%s`", l.src[lo:l.pos])
-	return Token{kind = .Error, lo = lo, hi = l.pos}
+	return error_token(l, lo, "L0101", "invalid character `%s`", l.src[lo:l.pos])
 }

@@ -527,7 +527,7 @@ interface_check :: proc(
 	application_pkg := lookup_package(k)
 	for requirement in info.node.requirements {
 		// Checking annotates syntax, and one interface is applied to many types.
-		clone := clone_requirement_syntax(k.c, requirement)
+		clone := clone_requirement(k.c, requirement)
 		body := new_scope(k.c, scope, .Local)
 		k.scope = body
 		k.pkg = info.pkg
@@ -611,12 +611,6 @@ interface_predicates_check :: proc(
 		}
 	}
 	return Requirement_Failure{}, true
-}
-
-clone_requirement_syntax :: proc(c: ^Compiler, requirement: Requirement) -> Requirement {
-	one := make([]Requirement, 1, c.semantic_allocator)
-	one[0] = requirement
-	return clone_requirements(c, one)[0]
 }
 
 @(private = "file")
@@ -1346,7 +1340,7 @@ application_constant :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic
 			continue
 		}
 		// Clone before annotating: one declaration serves many applications.
-		call, is_call := clone_requirement_syntax(k.c, requirement).expr.(^Expr_Call)
+		call, is_call := clone_expr(k.c, requirement.expr).(^Expr_Call)
 		if !is_call {
 			continue
 		}
@@ -1386,7 +1380,7 @@ composed_callable :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Ar
 			continue
 		}
 		// Clone before annotating: one declaration serves many applications.
-		call, is_call := clone_requirement_syntax(k.c, requirement).expr.(^Expr_Call)
+		call, is_call := clone_expr(k.c, requirement.expr).(^Expr_Call)
 		if !is_call {
 			continue
 		}

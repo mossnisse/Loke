@@ -1866,7 +1866,7 @@ emit_own_equal :: proc(e: ^Emitter, equal: Symbol_Id, type: Type_Id, lhs, rhs: s
 	}
 	out := temp(e)
 	fmt.sbprintfln(
-		&e.b, "  %s = call i1 %s(%s, %s)", out, symbol_name(e, equal),
+		&e.b, "  %s = call i1 %s(%s, %s)", out, callee_name(e, equal),
 		hook_argument(e, equal, 0, type, left), hook_argument(e, equal, 1, type, right),
 	)
 	return out

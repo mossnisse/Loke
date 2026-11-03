@@ -114,14 +114,8 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 	if digits == "" {
 		return bi_zero(c), false
 	}
-	for ch in digits {
-		digit := 99
-		switch ch {
-		case '0' ..= '9': digit = int(ch - '0')
-		case 'a' ..= 'f': digit = int(ch - 'a') + 10
-		case 'A' ..= 'F': digit = int(ch - 'A') + 10
-		}
-		if digit >= radix {
+	for i in 0 ..< len(digits) {
+		if digit_value(digits[i]) >= radix {
 			return bi_zero(c), false
 		}
 	}

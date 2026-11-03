@@ -50,7 +50,7 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 	defer delete(tokens)
 	if inside_comment_or_literal(text, tokens, comments[:], offset) { return EMPTY_COMPLETION }
 	start := offset
-	for start > 0 && is_name_byte(text[start - 1]) { start -= 1 }
+	for start > 0 && lokec.is_ident_part(text[start - 1]) { start -= 1 }
 	before := -1
 	for token, index in tokens {
 		if token.hi > start { break }
@@ -82,8 +82,8 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 			if !known { continue }
 			append(&items, Completion_Item{symbol.name, completion_kind(session, symbol, member = false), symbol_detail(session, symbol), handle})
 		}
-		for kind in lokec.Token_Kind.Break ..= lokec.Token_Kind.Where {
-			append(&items, Completion_Item{label = strings.to_lower(fmt.tprint(kind), context.temp_allocator), kind = .Keyword})
+		for keyword in lokec.keyword_table {
+			append(&items, Completion_Item{label = keyword.text, kind = .Keyword})
 		}
 	}
 	b := strings.builder_make(context.temp_allocator)

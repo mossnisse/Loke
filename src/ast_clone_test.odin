@@ -88,6 +88,8 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Attribute, "span path value", ""},
 		{Argument, "span name mode value", "checked"},
 		{Element, "span key value", ""},
+		{Capture_Literal, "procedure entries clause_span", "record method"},
+		{Capture_Entry, "span mode name value", ""},
 		{Parameter, "span attributes names mode type default", "symbols"},
 		{Result, "span is_inout type diverges", ""},
 		{Field, "span attributes is_using names type", "symbols"},

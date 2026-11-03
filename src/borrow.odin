@@ -2651,24 +2651,6 @@ call_callback_reads :: proc(
 	return out[:]
 }
 
-// design.md "Procedure result contracts": a call through a contract reads the
-// callbacks its result may hold from the contract's own declaration, so a
-// substitute may read no others. The first read of `from` that `to` lacks.
-callback_reads_within :: proc(c: ^Compiler, from, to: Symbol_Id) -> (Callback_Read, bool) {
-	for member in contract_members(c, from) {
-		for read in c.callback_result_reads[member] {
-			found := false
-			for bound in contract_members(c, to) {
-				found = found || slice.contains(c.callback_result_reads[bound], read)
-			}
-			if !found {
-				return read, false
-			}
-		}
-	}
-	return {}, true
-}
-
 // The parameter of the calling body a call goes through: `f(out)`, or
 // `f.call(out)` on a callable view.
 @(private = "file")

@@ -333,7 +333,7 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 }
 
 // The lexer has already validated the spelling; a raw string has no escapes at
-// all and a quoted one reuses the rune decoder for each of its own.
+// all.
 decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string, bool) {
 	if len(text) < 2 {
 		return "", false
@@ -349,16 +349,12 @@ decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string,
 			i += 1
 			continue
 		}
-		width := escape_width(body[i:])
-		if width == 0 {
-			return "", false
-		}
-		value, ok := decode_rune_literal(concat_quoted(c, body[i:i + width]))
-		if !ok {
+		value, width, problem := scan_escape(body[i:])
+		if problem != .None {
 			return "", false
 		}
 		// `\xNN` is one byte; every other escape names a code point.
-		if width >= 2 && body[i + 1] == 'x' {
+		if body[i + 1] == 'x' {
 			strings.write_byte(&out, u8(value))
 		} else {
 			strings.write_rune(&out, value)
@@ -368,43 +364,6 @@ decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string,
 	return strings.to_string(out), true
 }
 
-// How many bytes of `\...` this escape spans.
-@(private = "file")
-escape_width :: proc(s: string) -> int {
-	if len(s) < 2 {
-		return 0
-	}
-	digits :: proc(s: string, count: int, base: int) -> int {
-		if len(s) < 2 + count {
-			return 0
-		}
-		for i in 2 ..< 2 + count {
-			if _, ok := strconv.parse_u64_of_base(s[i:i + 1], base); !ok {
-				return 0
-			}
-		}
-		return 2 + count
-	}
-	switch s[1] {
-	case 'x':
-		return digits(s, 2, 16)
-	case 'u':
-		return digits(s, 4, 16)
-	case 'U':
-		return digits(s, 8, 16)
-	}
-	return 2
-}
-
-@(private = "file")
-concat_quoted :: proc(c: ^Compiler, body: string) -> string {
-	out := make([]u8, len(body) + 2, c.semantic_allocator)
-	out[0] = '\''
-	copy(out[1:], body)
-	out[len(out) - 1] = '\''
-	return string(out)
-}
-
 // The lexer has already validated the spelling, so this only has to decode it.
 @(private = "file")
 decode_rune_literal :: proc(text: string) -> (value: rune, ok: bool) {
@@ -412,44 +371,12 @@ decode_rune_literal :: proc(text: string) -> (value: rune, ok: bool) {
 		return 0, false
 	}
 	body := text[1:len(text) - 1]
-	if body == "" {
-		return 0, false
-	}
 	if body[0] != '\\' {
 		decoded, width := utf8.decode_rune_in_string(body)
 		return decoded, width == len(body)
 	}
-	if len(body) < 2 {
-		return 0, false
-	}
-	switch body[1] {
-	case 'a':
-		return '\a', len(body) == 2
-	case 'b':
-		return '\b', len(body) == 2
-	case 'e':
-		return 0x1b, len(body) == 2
-	case 'f':
-		return '\f', len(body) == 2
-	case 'n':
-		return '\n', len(body) == 2
-	case 'r':
-		return '\r', len(body) == 2
-	case 't':
-		return '\t', len(body) == 2
-	case 'v':
-		return '\v', len(body) == 2
-	case '\\':
-		return '\\', len(body) == 2
-	case '"':
-		return '"', len(body) == 2
-	case '\'':
-		return '\'', len(body) == 2
-	case 'x', 'u', 'U':
-		digits, parsed := strconv.parse_u64_of_base(body[2:], 16)
-		return rune(digits), parsed
-	}
-	return 0, false
+	decoded, width, problem := scan_escape(body)
+	return decoded, problem == .None && width == len(body)
 }
 
 // ------------------------------------------------------------ identifiers --

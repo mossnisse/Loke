@@ -406,7 +406,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		out := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i64 %s(%s, i64 %s)",
-			out, symbol_name(e, own), hook_argument(e, own, 0, type, address), seed,
+			out, callee_name(e, own), hook_argument(e, own, 0, type, address), seed,
 		)
 		return out
 	}

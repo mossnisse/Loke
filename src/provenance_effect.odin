@@ -35,17 +35,9 @@ Prov_Fact_Operation :: union {
 	Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner,
 }
 
-// `first` and `count` are the construction events emitted while the operation
-// ran; `sequence` orders it among the recorded events.
 Prov_Effect_Site :: struct {
 	operation: Prov_Fact_Operation,
-	block: Block_Id,
-	expansion: Defer_Expansion,
-	first, count: int,
-	sequence: int,
-	// The walk state its replay reads.
-	parallel_depth: int,
-	task: int,
+	using at: Prov_Site,
 }
 
 // What every round of one body reads and the facts do not change: its storage
@@ -122,7 +114,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		prov_seed_regions(graph, carry)
 		replayed_diagnostics := len(k.c.diagnostics)
 		prov_replay_fact_operations(graph, program)
-		truncate_diagnostics(k.c, replayed_diagnostics)
+		assert(len(k.c.diagnostics) == replayed_diagnostics, "fact replay reported a diagnostic")
 		current_weight := prov_fact_weight(&graph.facts)
 		settled := current_weight == seeded
 		if !settled {
@@ -227,9 +219,10 @@ prov_effect_symbol_relevant :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 // The record helpers below run only while prov_effect_active holds.
 prov_effect_begin :: proc(graph: ^Flow_Graph, operation: Prov_Fact_Operation) {
 	program := graph.effect_program
+	at := prov_site_here(graph)
 	program.sequence += 1
-	first := graph.current == NO_BLOCK ? 0 : len(graph.blocks[graph.current].prov)
-	append(&program.operations, Prov_Effect_Site{operation, graph.current, graph.expansion, first, 0, program.sequence, graph.parallel_depth, prov_task_index(graph)})
+	at.sequence = program.sequence
+	append(&program.operations, Prov_Effect_Site{operation, at})
 	graph.effect_depth += 1
 }
 
@@ -238,7 +231,7 @@ prov_effect_end :: proc(graph: ^Flow_Graph, recorded: bool) {
 	graph.effect_depth -= 1
 	site := &graph.effect_program.operations[len(graph.effect_program.operations) - 1]
 	assert(site.block == graph.current, "a fact operation changed blocks")
-	if site.block != NO_BLOCK { site.count = len(graph.blocks[site.block].prov) - site.first }
+	site.count = prov_next_event(graph) - site.first
 }
 
 prov_effect_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Value_Id {

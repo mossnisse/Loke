@@ -28,14 +28,14 @@ section are revised when a fix changes them.
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
-| High and medium severity bugs | 167 (39 high, 128 medium) | An independent attempt to refute each one |
-| Low severity bugs | 169 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 664 | Only the reviewer |
-| Dead code | 363 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
-| Data structures and algorithms | 126 | Only the reviewer |
-| Near copies | 429 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 276 | Only the reviewer |
-| Comments | 493 | Only the reviewer |
+| High and medium severity bugs | 165 (39 high, 126 medium) | An independent attempt to refute each one |
+| Low severity bugs | 165 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 637 | Only the reviewer |
+| Dead code | 354 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| Data structures and algorithms | 122 | Only the reviewer |
+| Near copies | 410 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 263 | Only the reviewer |
+| Comments | 483 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 336 overstates the number of separate
+  merges the ones found so far, so 330 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 429 suggests: the
+Near copies are real but smaller than the raw count of 410 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -97,7 +97,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 9. **Provider ends that end no region.** Replacing a provider through a `&mut` binding ([cfg.odin:1143](src/cfg.odin#L1143)), a `move` parameter's provider ([cfg.odin:1130](src/cfg.odin#L1130)), `try_insert` replacing one ([provenance_call.odin:85](src/provenance_call.odin#L85)) and one inside `Shared` ([region.odin:124](src/region.odin#L124)) all leave reads of freed memory. BUG-cfg-1, -2, BUG-provenance_call-2, BUG-region-1. About 60 lines, with care around the lifecycle and provenance walks agreeing.
 
-10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. The captured-result crash at [ast_clone.odin:672](src/ast_clone.odin#L672) belongs with these. BUG-parallel-1, -2, -3, BUG-ast_clone-1. About 40 lines.
+10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
 11. **Wrong inferred effects.** One `seen` map spans all queries of a call ([borrow.odin:2457](src/borrow.odin#L2457)), so a repeated argument loses its thread-local write-back. Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-borrow.part2-1, BUG-global_effects-1, -2, -3. Clear the map at 3 sites; merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
 
@@ -128,7 +128,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
 
 - BUG-check_calls-1 and BUG-container-1: the sort gate is called from two of three call paths. Call `require_sort_order_policy` ([container.odin:526](src/container.odin#L526)) from `check_container_element` ([check_calls.odin:508](src/check_calls.odin#L508)), which the direct path and the procedure-value path ([check_expr.odin:1184](src/check_expr.odin#L1184)) both reach, and delete the calls at [check_calls.odin:464](src/check_calls.odin#L464) and [check_calls.odin:625](src/check_calls.odin#L625).
-- BUG-ast_clone-1 and BUG-parallel-3: the assertion at [ast_clone.odin:672](src/ast_clone.odin#L672) meets a spawn result the capture rewrite turned into a selector.
 - BUG-check_expr.part2-6 and BUG-simd-2: [check_expr.odin:3523](src/check_expr.odin#L3523) splats a typed constant without the lane check a runtime scalar gets.
 - BUG-eval.part1-2, BUG-const_ops-2 and BUG-hash-2: `zero_const` answers `.Nil` for a union ([check_expr.odin:3417](src/check_expr.odin#L3417)), where every other union constant is an `.Aggregate` with a variant. Fixing the constant's form, rather than the three readers, is the smaller change.
 
@@ -198,13 +197,13 @@ Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false
 
 #### Synthesized syntax nodes
 
-`Expr_Ident`: [ast_clone.odin:131](src/ast_clone.odin#L131), [capture.odin:102](src/capture.odin#L102), [capture.odin:137](src/capture.odin#L137), [check.odin:3889](src/check.odin#L3889), [check_calls.odin:329](src/check_calls.odin#L329), [expand.odin:636](src/expand.odin#L636), [hooks.odin:823](src/hooks.odin#L823), [parallel.odin:652](src/parallel.odin#L652).
+`Expr_Ident`: [capture.odin:102](src/capture.odin#L102), [capture.odin:137](src/capture.odin#L137), [check.odin:3889](src/check.odin#L3889), [check_calls.odin:329](src/check_calls.odin#L329), [expand.odin:636](src/expand.odin#L636), [hooks.odin:823](src/hooks.odin#L823), [parallel.odin:652](src/parallel.odin#L652).
 One-name `Decl`: [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140), [check.odin:3898](src/check.odin#L3898), [parallel.odin:182](src/parallel.odin#L182), [parallel.odin:724](src/parallel.odin#L724), [parallel.odin:736](src/parallel.odin#L736).
-Dereference: [ast_clone.odin:141](src/ast_clone.odin#L141), [check.odin:3857](src/check.odin#L3857), [parallel.odin:669](src/parallel.odin#L669), and with the place fields set, [check_expr.odin:1119](src/check_expr.odin#L1119) and [overload.odin:1011](src/overload.odin#L1011).
-Selector: [ast_clone.odin:134](src/ast_clone.odin#L134), [check.odin:2878](src/check.odin#L2878), [check_calls.odin:204](src/check_calls.odin#L204), [expand.odin:627](src/expand.odin#L627), [optional.odin:269](src/optional.odin#L269), [parallel.odin:660](src/parallel.odin#L660).
+Dereference: [check.odin:3857](src/check.odin#L3857), [parallel.odin:669](src/parallel.odin#L669), and with the place fields set, [check_expr.odin:1119](src/check_expr.odin#L1119) and [overload.odin:1011](src/overload.odin#L1011).
+Selector: [check.odin:2878](src/check.odin#L2878), [check_calls.odin:204](src/check_calls.odin#L204), [expand.odin:627](src/expand.odin#L627), [optional.odin:269](src/optional.odin#L269), [parallel.odin:660](src/parallel.odin#L660).
 One-argument call: [check.odin:4796](src/check.odin#L4796), [expand.odin:640](src/expand.odin#L640), [hooks.odin:832](src/hooks.odin#L832), [optional.odin:259](src/optional.odin#L259), [optional.odin:272](src/optional.odin#L272), [parallel.odin:678](src/parallel.odin#L678).
 
-They differ only in whether the identifier id is passed or interned and in the `Decl` kind. [parallel.odin:651](src/parallel.odin#L651) already has the complete set, file-private. Shared form: move `synth_*` to `ast_clone.odin` or a new `synth.odin`, with `synth_decl(c, kind, name, value, declared_type = nil)`, and build `success_selector` and the failure selector on it. [parallel.odin:700](src/parallel.odin#L700) `synth_record` can also serve the record at [capture.odin:95](src/capture.odin#L95). Saves about 80 lines.
+They differ only in whether the identifier id is passed or interned and in the `Decl` kind. [parallel.odin:651](src/parallel.odin#L651) already has the complete set, with `synth_ident`, `synth_selector` and `synth_deref` package-visible and the rest file-private. Shared form: move `synth_*` to `ast_clone.odin` or a new `synth.odin`, with `synth_decl(c, kind, name, value, declared_type = nil)`, and build `success_selector` and the failure selector on it. [parallel.odin:700](src/parallel.odin#L700) `synth_record` can also serve the record at [capture.odin:95](src/capture.odin#L95). Saves about 80 lines.
 
 #### Impl member declaration
 
@@ -253,10 +252,6 @@ The `next` check with its `L0456` text repeats at [iterate.odin:781](src/iterate
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 - A big integer is rounded to a float at [bigint.odin:354](src/bigint.odin#L354), [bigint.odin:463](src/bigint.odin#L463) and [const_ops.odin:391](src/const_ops.odin#L391). `dyadic_to_float` is exact and general; the other two can call it once it releases its temporaries, which CTFE's charged allocator needs. Saves about 30.
 
-#### Literal and identifier spelling
-
-The escape grammar is parsed at [lexer.odin:504](src/lexer.odin#L504) and again at [check_expr.odin:373](src/check_expr.odin#L373) and [check_expr.odin:410](src/check_expr.odin#L410). One `decode_escape` in `lexer.odin` saves about 40 lines. The identifier rule is [lexer.odin:218](src/lexer.odin#L218), restated at [query_index.odin:23](src/query_index.odin#L23) and [session.odin:250](src/session.odin#L250), which accept the same strings: keep one `is_identifier` in the lexer, about 12 lines. Keyword-range tests are at [formatter.odin:424](src/formatter.odin#L424), and an enum-name lowercasing in [editing.odin:85](lsp/editing.odin#L85) relies on token order. A `keyword_table` shaped like `operator_table` replaces the switch at [lexer.odin:346](src/lexer.odin#L346) and gives the LSP real spellings, about 60 lines.
-
 #### Interface file and private-name checks
 
 The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default, and the second is also the site of BUG-private_names-6. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
@@ -265,7 +260,7 @@ The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771)
 
 #### Diagnostics rollback
 
-[source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3350](src/check.odin#L3350) and [provenance_event.odin:185](src/provenance_event.odin#L185) each undo `error_count`, shrink the list and clamp `last_noted_diagnostic`; the last forgets the clamp. Have `destroy_diagnostic` undo the count, and add `shrink_diagnostics(c, length)` for the rest. Saves about 10 lines and removes one latent stale index.
+[source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3350](src/check.odin#L3350) and `prov_drop_event_diagnostics` each shrink the list and clamp `last_noted_diagnostic`, and the second also undoes `error_count` by hand. A `shrink_diagnostics(c, length)` saves about 5 lines.
 
 #### Configuration declared three times
 
@@ -290,10 +285,6 @@ The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L34
 [cfg_provenance.odin:3210](src/cfg_provenance.odin#L3210) `prov_extend`, [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218) `prov_concat_path`, [borrow.odin:949](src/borrow.odin#L949) `carrier_steps`, [borrow.odin:1266](src/borrow.odin#L1266) `path_with_field` and the inline copies at [borrow.odin:1245](src/borrow.odin#L1245) and [borrow.odin:1256](src/borrow.odin#L1256) differ only in the allocator. `path_extend` and `path_concat` beside `proj_*` save about 15 lines. The depth bound 8 is a literal at both [borrow.odin:1223](src/borrow.odin#L1223) and [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616).
 
 [borrow.odin:1970](src/borrow.odin#L1970) and [cfg_provenance.odin:9058](src/cfg_provenance.odin#L9058) restate `slot_carrier_type`; the shared form is the existing procedure, made package-visible.
-
-#### Event and effect sites
-
-`Prov_Effect_Site` ([provenance_effect.odin:40](src/provenance_effect.odin#L40)) and `Prov_Event_Site` ([provenance_event.odin:129](src/provenance_event.odin#L129)) share all fields but the operation and diagnostics. Embed one `Prov_Site` with one capture and one enter procedure: about 20 lines.
 
 #### Naming a callable value, and reset points
 
@@ -330,8 +321,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 #### Small repeated IR shapes
 
 - `loke_rt_v1_map_scan` and cursor store: [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [emit_llvm_iteration.odin:961](src/emit_llvm_iteration.odin#L961), [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945). `emit_map_scan`, about 10.
-- Internal parameter list: [emit_llvm.odin:642](src/emit_llvm.odin#L642) and [emit_llvm_dispatch.odin:111](src/emit_llvm_dispatch.odin#L111). `loke_param_list`, about 8.
-- Call then return: [emit_llvm_dispatch.odin:122](src/emit_llvm_dispatch.odin#L122), [emit_llvm_runtime.odin:1723](src/emit_llvm_runtime.odin#L1723). About 8.
 - Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8; BUG-emit_llvm_stmt-2 is an ordering slip beside the first.
 - Frame finish: [emit_llvm.odin:727](src/emit_llvm.odin#L727) and [emit_llvm_cleanup.odin:406](src/emit_llvm_cleanup.odin#L406) are the same sequence, except that one writes `e.pending` straight out. About 8.
 - Union storage head: [emit_llvm_abi.odin:410](src/emit_llvm_abi.odin#L410) and [emit_llvm_expr.odin:42](src/emit_llvm_expr.odin#L42) spell the same `i%d`, so the BUG-emit_llvm_abi-1 fix must change both. Share the head spelling.
@@ -361,7 +350,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- Capture lowering lives in the cloner: [ast_clone.odin:108](src/ast_clone.odin#L108) to line 147 belongs in `capture.odin`, leaving two checks in `clone_expr`.
 - [abi.odin:27](src/abi.odin#L27) `param_borrows_caller_storage` and [cfg_provenance.odin:7922](src/cfg_provenance.odin#L7922) `prov_argument_borrows_caller` form a chain with one caller at [provenance_call.odin:212](src/provenance_call.odin#L212). Inline both there.
 - Constant reinterpretation ([check_builtin.odin:1096](src/check_builtin.odin#L1096) to `const_from_storage`, also called from [eval.odin:3019](src/eval.odin#L3019)) belongs in `const_ops.odin`; runtime type binding ([check_builtin.odin:1489](src/check_builtin.odin#L1489), [check_builtin.odin:1562](src/check_builtin.odin#L1562)) in `bootstrap.odin`, with [atomics.odin:49](src/atomics.odin#L49) `runtime_enum_matches`, whose other callers are [check_builtin.odin:1588](src/check_builtin.odin#L1588) and [check_builtin.odin:1592](src/check_builtin.odin#L1592).
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `semantic.odin`.
@@ -369,7 +357,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
 - Enum logic: [check.odin:1250](src/check.odin#L1250) and [check.odin:4497](src/check.odin#L4497) belong in `enums.odin`, which the map names as owner.
 - Layering: [check_expr.odin:4158](src/check_expr.odin#L4158) `binding_initial_const` is used only by the emitter ([emit_llvm_runtime.odin:256](src/emit_llvm_runtime.odin#L256), [emit_llvm_runtime.odin:361](src/emit_llvm_runtime.odin#L361)). [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
-- Single-caller helpers: [borrow.odin:2657](src/borrow.odin#L2657) belongs in `proc_contracts.odin` ([proc_contracts.odin:77](src/proc_contracts.odin#L77)); [borrow.odin:638](src/borrow.odin#L638) in `check.odin` ([check.odin:679](src/check.odin#L679)).
+- Single-caller helper: [borrow.odin:638](src/borrow.odin#L638) in `check.odin` ([check.odin:679](src/check.odin#L679)).
 - Transfer wording and type reach: [borrow.odin:5494](src/borrow.odin#L5494), [borrow.odin:5588](src/borrow.odin#L5588), [borrow.odin:5750](src/borrow.odin#L5750) and [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belong beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Provenance state in the shared walk: [cfg.odin:247](src/cfg.odin#L247) `Prov_State` and [cfg.odin:404](src/cfg.odin#L404) `Prov_Facts` are read only by provenance and belong in `cfg_provenance.odin` behind `new_prov_state`.
 - Test-only and pipeline code: [packages.odin:102](src/packages.odin#L102) `ensure_runtime_bootstrap` has only test callers; [packages.odin:84](src/packages.odin#L84) `finalize_semantics` has one caller at [session.odin:168](src/session.odin#L168).
@@ -394,32 +382,30 @@ Counts per file, then the findings themselves in the same order.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [abi.odin](src/abi.odin) | 342 | 3 | 4 | 1 | 1 | 4 | 2 | 1 |
 | [ast.odin](src/ast.odin) | 1488 | 1 | 5 | 2 | 1 | 1 | 1 | 6 |
-| [ast_clone.odin](src/ast_clone.odin) | 798 | 1 | 6 | 3 | 0 | 2 | 3 | 1 |
 | [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 2 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
 | [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
-| [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 16 | 24 |
+| [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 15 | 24 |
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
-| [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 3 | 4 |
+| [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 2 | 4 |
 | [cfg.odin](src/cfg.odin) | 3031 | 8 | 11 | 9 | 2 | 10 | 7 | 7 |
-| [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 52 | 14 | 15 | 34 | 21 | 31 |
+| [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 52 | 14 | 15 | 33 | 21 | 31 |
 | [check.odin](src/check.odin) | 4915 | 20 | 26 | 7 | 6 | 15 | 13 | 16 |
 | [check_builtin.odin](src/check_builtin.odin) | 1598 | 9 | 13 | 4 | 1 | 6 | 6 | 11 |
 | [check_calls.odin](src/check_calls.odin) | 1336 | 6 | 7 | 5 | 1 | 8 | 5 | 7 |
-| [check_expr.odin](src/check_expr.odin) | 4188 | 19 | 17 | 14 | 5 | 15 | 11 | 16 |
+| [check_expr.odin](src/check_expr.odin) | 4188 | 19 | 16 | 14 | 5 | 14 | 11 | 16 |
 | [const_ops.odin](src/const_ops.odin) | 888 | 3 | 5 | 3 | 1 | 8 | 3 | 6 |
 | [container.odin](src/container.odin) | 831 | 2 | 12 | 6 | 2 | 7 | 5 | 9 |
 | [doc.odin](src/doc.odin) | 1375 | 7 | 9 | 4 | 1 | 6 | 5 | 5 |
 | [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
-| [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 2 | 6 | 4 | 7 |
+| [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 13 | 3 | 2 | 6 | 4 | 7 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
 | [emit_llvm_containers.odin](src/emit_llvm_containers.odin) | 1436 | 2 | 15 | 3 | 3 | 8 | 4 | 7 |
 | [emit_llvm_debug.odin](src/emit_llvm_debug.odin) | 638 | 2 | 4 | 4 | 0 | 2 | 3 | 3 |
-| [emit_llvm_dispatch.odin](src/emit_llvm_dispatch.odin) | 180 | 3 | 3 | 2 | 1 | 3 | 0 | 4 |
 | [emit_llvm_expr.odin](src/emit_llvm_expr.odin) | 2549 | 4 | 13 | 8 | 3 | 11 | 4 | 6 |
 | [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) | 1057 | 3 | 7 | 3 | 0 | 4 | 4 | 6 |
-| [emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) | 1737 | 2 | 11 | 9 | 1 | 10 | 4 | 4 |
+| [emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) | 1737 | 2 | 10 | 9 | 1 | 10 | 4 | 4 |
 | [emit_llvm_simd.odin](src/emit_llvm_simd.odin) | 372 | 0 | 4 | 2 | 0 | 7 | 1 | 6 |
 | [emit_llvm_stmt.odin](src/emit_llvm_stmt.odin) | 1047 | 11 | 7 | 6 | 0 | 7 | 3 | 7 |
 | [emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) | 843 | 8 | 6 | 2 | 1 | 2 | 5 | 5 |
@@ -437,34 +423,31 @@ Counts per file, then the findings themselves in the same order.
 | [hooks.odin](src/hooks.odin) | 1260 | 2 | 8 | 5 | 2 | 6 | 4 | 8 |
 | [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 3 | 3 | 5 |
 | [incremental.odin](src/incremental.odin) | 369 | 0 | 6 | 4 | 1 | 2 | 2 | 8 |
-| [interface.odin](src/interface.odin) | 1484 | 10 | 9 | 5 | 1 | 11 | 3 | 6 |
+| [interface.odin](src/interface.odin) | 1484 | 10 | 8 | 5 | 1 | 11 | 3 | 6 |
 | [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 6 | 4 | 0 | 3 | 0 | 2 |
 | [iterate.odin](src/iterate.odin) | 1150 | 8 | 11 | 9 | 0 | 7 | 4 | 6 |
 | [iteration_mutable.odin](src/iteration_mutable.odin) | 167 | 1 | 2 | 2 | 0 | 5 | 1 | 3 |
-| [lexer.odin](src/lexer.odin) | 769 | 1 | 6 | 0 | 1 | 3 | 1 | 3 |
 | [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 4 | 2 | 5 | 4 | 9 |
 | [operators.odin](src/operators.odin) | 770 | 12 | 10 | 10 | 2 | 5 | 3 | 8 |
 | [optional.odin](src/optional.odin) | 746 | 4 | 8 | 3 | 0 | 7 | 4 | 4 |
 | [overload.odin](src/overload.odin) | 1023 | 6 | 8 | 7 | 1 | 4 | 3 | 8 |
 | [packages.odin](src/packages.odin) | 689 | 1 | 8 | 2 | 0 | 2 | 2 | 2 |
-| [parallel.odin](src/parallel.odin) | 744 | 5 | 8 | 2 | 0 | 6 | 1 | 7 |
+| [parallel.odin](src/parallel.odin) | 744 | 4 | 8 | 2 | 0 | 6 | 1 | 7 |
 | [parser.odin](src/parser.odin) | 4270 | 17 | 24 | 11 | 0 | 10 | 4 | 15 |
 | [private_names.odin](src/private_names.odin) | 1151 | 9 | 8 | 9 | 2 | 5 | 4 | 9 |
-| [proc_contracts.odin](src/proc_contracts.odin) | 321 | 0 | 4 | 2 | 0 | 4 | 5 | 2 |
 | [provenance_call.odin](src/provenance_call.odin) | 281 | 2 | 6 | 1 | 0 | 1 | 2 | 5 |
-| [provenance_effect.odin](src/provenance_effect.odin) | 369 | 0 | 4 | 3 | 1 | 3 | 1 | 7 |
-| [provenance_event.odin](src/provenance_event.odin) | 371 | 0 | 3 | 2 | 2 | 3 | 2 | 0 |
+| [provenance_effect.odin](src/provenance_effect.odin) | 369 | 0 | 4 | 3 | 1 | 2 | 1 | 7 |
 | [provenance_form.odin](src/provenance_form.odin) | 145 | 0 | 1 | 0 | 0 | 2 | 0 | 0 |
 | [provenance_input.odin](src/provenance_input.odin) | 368 | 0 | 4 | 5 | 2 | 1 | 2 | 3 |
 | [provenance_read.odin](src/provenance_read.odin) | 64 | 0 | 1 | 0 | 0 | 1 | 2 | 0 |
 | [provenance_transfer.odin](src/provenance_transfer.odin) | 303 | 0 | 4 | 3 | 2 | 2 | 4 | 3 |
 | [queries.odin](src/queries.odin) | 671 | 5 | 5 | 7 | 4 | 2 | 3 | 4 |
-| [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 5 | 1 | 2 |
+| [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 4 | 1 | 2 |
 | [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 2 | 1 | 8 | 3 | 9 |
 | [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 4 |
 | [select.odin](src/select.odin) | 504 | 3 | 7 | 3 | 2 | 4 | 0 | 6 |
 | [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 9 | 3 | 5 | 4 | 10 |
-| [session.odin](src/session.odin) | 299 | 1 | 3 | 10 | 0 | 1 | 2 | 7 |
+| [session.odin](src/session.odin) | 299 | 1 | 2 | 10 | 0 | 1 | 2 | 7 |
 | [simd.odin](src/simd.odin) | 596 | 7 | 5 | 9 | 0 | 5 | 2 | 8 |
 | [slice.odin](src/slice.odin) | 91 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
 | [source.odin](src/source.odin) | 911 | 2 | 5 | 0 | 1 | 3 | 2 | 7 |
@@ -555,45 +538,6 @@ Mostly plain node definitions, in good shape: a scan of every struct field found
 - [ast.odin:69](src/ast.odin#L69): cut to "Named types are `Expr_Ident` / `Expr_Selector`; a generic application is an `Expr_Call`." The header already gives the reason.
 - [ast.odin:652](src/ast.odin#L652): "`fields` for a struct, `variants` for a union. A generic instance clones the record alone, so `attributes` repeats the declaration's list to keep `@(align=N)` reachable."
 - [ast.odin:495](src/ast.odin#L495): "`Borrow` is a `self: ^` receiver or a synthesized read-only one, passed by address. It is last because a mode number reaches the type identity key (`typeid_sort_key_walk`)."
-
-### src/ast_clone.odin
-
-A complete, correct field-by-field cloner whose every copied field checks out against the classification test, with one crash where the capture rewrite meets `spawn`. Much of its length is repeated node setup and item kinds that an impl's member list can never hold.
-
-**Bugs**
-
-- `BUG-ast_clone-1` **medium** [ast_clone.odin:672](src/ast_clone.odin#L672) `clone_stmt`: `clone_expr(c, v.result).(^Expr_Ident)` panics when the capture rewrite turns the result name into a place. Scenario: `proc() capture(&mut total) { parallel { spawn total = work(); } }` ends lokec with "Invalid type assertion ... actual type: ^Expr_Postfix" (exit 132; `^Expr_Selector` for a copy capture), reproduced with lokec.exe at this commit, where design.md "Spawn statements" wants L0728. *Confirmed: Reproduced: `spawn total = work();` in a literal capturing total panics at ast_clone.odin(672) with exit 132 (^Expr_Postfix for &mut, ^Expr_Selector for copy), not L0728. No known-gaps/open-questions entry. Medium fits a crash on invalid input.*
-  Fix: clone the name without the rewrite, as `clone_elements` does for a bare key, so it resolves to the reserved placeholder, and have `spawn_result_symbol` reject a symbol in `capture_placeholders`.
-
-**Simplification**
-
-- [ast_clone.odin:33](src/ast_clone.odin#L33) `new_clone`, `clone_node_base`: the 24 `n := new(Stmt_X, ...)` plus `clone_node_base(...)` pairs become `n := new_node_clone(c, v)`, with `src: ^$T` inferring the type; `new_clone(c, Expr_X, &v.base)` likewise becomes `new_clone(c, v)`, and single-use `clone_base` goes. (about 28 lines)
-- [ast_clone.odin:42](src/ast_clone.odin#L42) `clone_attributes`, `clone_elements`, `clone_capture`, `clone_result`, `clone_variants`, `clone_requirements`: these structs have no checker-filled field, so `out[index] = entry` plus reassigning the `Expr` fields replaces restating each field; the test still forces classifying a new one. (about 15 lines)
-- [ast_clone.odin:151](src/ast_clone.odin#L151) `clone_nested_procedure`: save, clear and restore `capture_rewrite` in the `^Expr_Proc` case itself; line 161 becomes `clone_expr(c, v.procedure).(^Expr_Proc)`, and the helper and the re-entry at lines 406-408 go. (about 7 lines)
-- [ast_clone.odin:87](src/ast_clone.odin#L87) `clone_elements`: `saved := c.capture_rewrite; if is_name { c.capture_rewrite = nil }; key := clone_expr(c, entry.key); c.capture_rewrite = saved` replaces the two-armed branch. (about 5 lines)
-- [ast_clone.odin:290](src/ast_clone.odin#L290) `clone_expr`, `clone_stmt`: delete the `== nil` guards here and at line 548; a nil union matches no case and reaches the trailing `return nil`, which `clone_item` already relies on at line 749. (about 6 lines)
-- [ast_clone.odin:121](src/ast_clone.odin#L121) `rewrite_capture`: the ternary is `identifier_of(c, v)` ([check.odin:1731](src/check.odin#L1731)), which `capture_place_of` already uses. (about 1 line)
-
-**Dead code**
-
-- (branch) [ast_clone.odin:709](src/ast_clone.odin#L709): `clone_item` is entered only with an `^Item_Impl` (generic.odin:3593, line 556), whose members are declarations, delegates and error items (grammar.md `Impl_Member`, `parse_member_list`, capture.odin:151). So `Item_Import`, `Item_Foreign_Import`, `Item_Foreign_Block`, `Item_When`, `Item_Block`, `Item_Static_Assert` can share one `unreachable()` case, about 39 lines; their rows in ast_clone_test.odin stay for its exhaustiveness check.
-- (branch) [ast_clone.odin:410](src/ast_clone.odin#L410): `v.signature != nil` never fails: the parser (parser.odin:3387, 3440), capture.odin:239 and parallel.odin:519 all set it, and capture.odin:219 asserts the same clone with no guard.
-- (branch) [ast_clone.odin:684](src/ast_clone.odin#L684): `clone_decl`'s nil guard: its callers pass a union's non-nil variant or `template.decl`, and `register_generic_template` is the only place that builds a template, from a declaration it has in hand.
-
-**Near copies**
-
-- [ast_clone.odin:131](src/ast_clone.odin#L131) and [parallel.odin:651](src/parallel.odin#L651): `capture_field_place` hand-builds the ident, selector and deref that `synth_ident`, `synth_selector` and `synth_deref` build. Make those package-visible (taking `c`, with `Name` for the selector) and the procedure is about 4 lines. (about 10 lines)
-- [ast_clone.odin:270](src/ast_clone.odin#L270) and [interface.odin:623](src/interface.odin#L623): `clone_requirement_syntax` builds a one-element arena slice to reuse the loop. Split a single `clone_requirement` here and delete the wrapper; interface.odin:1361, 1401 and erased.odin:752 read only `.expr`, so they want `clone_expr(k.c, requirement.expr)` and need not clone the bindings. (about 5 lines)
-
-**Structure and boundaries**
-
-- [ast_clone.odin:105](src/ast_clone.odin#L105): `Capture_Rewrite`, `Capture_Field`, `rewrite_capture` and `capture_field_place` are capture lowering, which compiler-architecture.md "Source-code map" gives to capture.odin, and capture.odin is their other user. Move them there; only the two `capture_rewrite` checks in `clone_expr` remain here.
-- [ast_clone.odin:39](src/ast_clone.odin#L39): `clone_attributes`, `clone_exprs` (line 51), `clone_stmt` (line 547) and `clone_items` (line 767) have no user outside this file, while their sibling helpers are `@(private = "file")`. Mark them so that the interface is what is actually called: `clone_expr`, `clone_block`, `clone_decl`, `clone_item`, `clone_requirements`.
-- [ast_clone.odin:159](src/ast_clone.odin#L159): `Capture_Literal` and `Capture_Entry` have no row in `ast_clone_classifies_every_node_field` (ast_clone_test.odin:19), the test that exists to catch a field left out of a clone, so a new field on either is dropped silently. Add both rows (`record method` dropped).
-
-**Comments**
-
-- [ast_clone.odin:10](src/ast_clone.odin#L10): the surprise is that `clone_slice` copies nothing. Shorter: `// Zeroed, for the caller to fill; empty stays nil.`
 
 ### src/attributes.odin
 
@@ -836,7 +780,6 @@ The solvers and the view-start fixed point are carefully reasoned, but this stre
 
 - [borrow.odin:2380](src/borrow.odin#L2380): the callback substitution (2380-2865) reads summaries through `Compiler` and never touches `Prov_State`; it pairs with `indirect_call_targets` and `callable_type_targets`. Its seam is its own file, or global_effects.odin.
 - [borrow.odin:4385](src/borrow.odin#L4385): the view-start solver (`publish_view_*`, `view_element_*`, `solve_view_defs`, about 500 lines) takes only a `Flow_Graph` and is the natural file to split out. Also rename `publish_view_*`, since loads and accesses use it too; `view_start_*` fits.
-- [borrow.odin:2657](src/borrow.odin#L2657) `callback_reads_within`: its only caller is proc_contracts.odin:77, where its sibling `written_contract_within` lives. Move it there.
 - [borrow.odin:2886](src/borrow.odin#L2886) and [borrow.odin:2895](src/borrow.odin#L2895) `parameter_writes_caller`/`param_writes_caller`: names two letters apart with different meanings (holds a borrow vs any mutable carrier). Rename the first, for example `parameter_may_hold_written_borrow`.
 - [borrow.odin:3082](src/borrow.odin#L3082) `collect_escape_provenance`: the 40-line, six-level `.Escape` branch is the seam; extract `merge_escape_event(state, event, declaration, into)`.
 - [borrow.odin:3541](src/borrow.odin#L3541) `solve_links_held`: indexing links (3547-3582) and solving (3583-3617) are two jobs; extract `index_links(state)`.
@@ -984,7 +927,7 @@ The lowering design is sound and its comments mostly explain why, but the record
 - (branch) [capture.odin:178](src/capture.odin#L178): `literal.signature != nil` here and at line 196 is always true, because `proc_shape_ok` ([check.odin:2747](src/check.odin#L2747)) returns false for a nil signature first at line 28. Line 219 already relies on it.
 - (branch) [capture.odin:124](src/capture.odin#L124): this is the only write to `capture_records`, and `method` is never nil, so `method != nil` at [erased.odin:336](src/erased.odin#L336), [erased.odin:347](src/erased.odin#L347) and [global_effects.odin:271](src/global_effects.odin#L271) is always true.
 - (branch) [capture.odin:281](src/capture.odin#L281): `outer` is a key of `capture_placeholders`, created by `new_symbol` at line 84, so `symbol_of` is never nil and the guard can go.
-- (branch) [capture.odin:227](src/capture.odin#L227): `Capture_Rewrite.receiver` is always `intern_identifier(CAPTURE_RECEIVER)`, as is the `receiver_id` parameter at [ast_clone.odin:130](src/ast_clone.odin#L130) from both callers; intern it inside `capture_field_place` and drop the field and parameter.
+- (branch) [capture.odin:227](src/capture.odin#L227): `Capture_Rewrite.receiver` is always `intern_identifier(CAPTURE_RECEIVER)`, as is the `receiver_id` parameter of `capture_field_place` from both callers; intern it inside `capture_field_place` and drop the field and parameter.
 
 **Data structures and algorithms**
 
@@ -1000,7 +943,6 @@ The lowering design is sound and its comments mostly explain why, but the record
 
 - [capture.odin:21](src/capture.odin#L21) `lower_capture_literal`: four jobs in 140 lines. Natural seams: the entry values and their types (36-66), the fields and placeholders (75-87), declaring the record (92-134), and declaring `call` (137-153). The procedure then reads as those four calls.
 - [capture.odin:78](src/capture.odin#L78): the `"capture$"` field prefix is spelled here and again in `trim_prefix` at [impl.odin:522](src/impl.odin#L522); make it a constant beside `CAPTURE_RECEIVER`, so the two cannot drift.
-- [capture.odin:252](src/capture.odin#L252): `Capture_Field` and `capture_field_place` ([ast_clone.odin:114](src/ast_clone.odin#L114), [ast_clone.odin:130](src/ast_clone.odin#L130)) are lowering, not cloning; move them here and leave only the rewrite hook in `ast_clone.odin`.
 
 **Comments**
 
@@ -1126,7 +1068,6 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 - [cfg_provenance.odin:1790](src/cfg_provenance.odin#L1790) and [cfg_provenance.odin:1852](src/cfg_provenance.odin#L1852): both re-resolve a field by key name, yet the checker fills `field_indices` for named and positional elements (check_expr.odin:2977, 3022), as the emitter relies on. Read that one index in both, with -1 meaning unknown. (about 12 lines)
 - [cfg_provenance.odin:1926](src/cfg_provenance.odin#L1926) and [cfg_provenance.odin:1979](src/cfg_provenance.odin#L1979): the same five content fields are set from a `carrier_shape` path. A `prov_content_entry(symbol, path, shape) -> Prov_Slot` serves both. (about 8 lines)
 - [cfg_provenance.odin:2670](src/cfg_provenance.odin#L2670) and [cfg_provenance.odin:3948](src/cfg_provenance.odin#L3948): `prov_plain_slice_local` and `prov_plain_view_local` share all but the last test, and L2677, L2715 and L3954 repeat the erased-type choice. Share `prov_view_local(graph, e) -> (ident, type, ok)`. (about 8 lines)
-- [cfg_provenance.odin:717](src/cfg_provenance.odin#L717) and [provenance_event.odin:335](src/provenance_event.odin#L335): both decide `has_region_event` from an event by the same rule. A `prov_event_needs_region_solve(event) -> bool` keeps them from drifting. (about 6 lines)
 - [cfg_provenance.odin:1766](src/cfg_provenance.odin#L1766) and [cfg_provenance.odin:1885](src/cfg_provenance.odin#L1885): overlap test, suffix, then `prov_select_content`. A `prov_part_sources(graph, slot, prefix, loans, type)` serves both, and `len(loans) > 0` at L1885 is already redundant. (about 4 lines)
 - [cfg_provenance.odin:489](src/cfg_provenance.odin#L489) and [doc.odin:1372](src/doc.odin#L1372): span text is hand-indexed here, in a file-private `source_text`, and at [parallel.odin:81](src/parallel.odin#L81), [cfg.odin:1913](src/cfg.odin#L1913) and [check.odin:2394](src/check.odin#L2394). A `span_text(c, span)` in `source.odin` is the shared form.
 - [cfg_provenance.odin:1325](src/cfg_provenance.odin#L1325) and [cfg_provenance.odin:2379](src/cfg_provenance.odin#L2379): `prov_common_prefix` compares whole steps, including `precision`, `shifts` and `synchronized`; `path_has_exact_prefix` compares kind, lo and hi. Steps naming one place can end a merge's prefix early. Share one `same_step`.
@@ -1208,7 +1149,7 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 **Structure and boundaries**
 
 - [cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986): the regions section (to about line 5503) and its other half at [:1353](src/cfg_provenance.odin#L1353) to [:1574](src/cfg_provenance.odin#L1574) are about 1700 lines of one subsystem separated by unrelated carrier code. Move both to their own file beside `provenance_transfer_facts.odin`; the seam is the `prov_region_*`, `prov_provider_*` and `prov_copied_*` procedures, at the cost of widening some `@(private = "file")`.
-- [cfg_provenance.odin:5380](src/cfg_provenance.odin#L5380): `prov_materialize_reset`, `prov_reset_temporary`, `prov_reset_promise` and `prov_parameter_symbol` are event materialization and belong in `provenance_event.odin`, which already owns `prov_returning_region` and the replacement of fact-dependent events. Within it, the blocker search from [:5415](src/cfg_provenance.odin#L5415) to [:5471](src/cfg_provenance.odin#L5471) is a natural `prov_reset_blocker`.
+- [cfg_provenance.odin:5380](src/cfg_provenance.odin#L5380): `prov_materialize_reset`, `prov_reset_temporary`, `prov_reset_promise` and `prov_parameter_symbol` are event materialization and belong in `provenance_event.odin`, with `prov_returning_region`, since that file owns the replacement of fact-dependent events. Within it, the blocker search from [:5415](src/cfg_provenance.odin#L5415) to [:5471](src/cfg_provenance.odin#L5471) is a natural `prov_reset_blocker`.
 - [cfg_provenance.odin:3227](src/cfg_provenance.odin#L3227) `prov_bind_parameters`: about 95 lines at five nesting levels. Extract the region seed ([:3248](src/cfg_provenance.odin#L3248)), the aggregate shape loans ([:3281](src/cfg_provenance.odin#L3281)) and the pointee loans ([:3303](src/cfg_provenance.odin#L3303)).
 
 **Comments**
@@ -1473,7 +1414,7 @@ Declaration, procedure and statement checking is sound and its comments are most
 **Near copies**
 
 - [check.odin:4514](src/check.odin#L4514) and [const_ops.odin:693](src/const_ops.odin#L693): `const_equal` repeats `fold_comparison` for `.Eq_Eq` but lacks aggregates, so `case X: case Y:` with equal struct constants gets no L0367. Delegate to `fold_comparison`, which also compares across numeric kinds; callers compare one type. (about 18 lines)
-- [check.odin:3888](src/check.odin#L3888) and [parallel.odin:652](src/parallel.odin#L652): `lowered_name`, `lowered_deref` and `lowered_temporary` match `synth_ident`, `synth_deref` and `synth_var`, with `synth_const` and `hidden_declaration` as further `Decl` copies. Promote one set, file-private today, to `ast_clone.odin`. (about 25 lines)
+- [check.odin:3888](src/check.odin#L3888) and [parallel.odin:652](src/parallel.odin#L652): `lowered_name`, `lowered_deref` and `lowered_temporary` match `synth_ident`, `synth_deref` and `synth_var`, with `synth_const` and `hidden_declaration` as further `Decl` copies. Use the package-visible `synth_ident` and `synth_deref`, and promote the rest. (about 25 lines)
 - [check.odin:2876](src/check.odin#L2876) and [optional.odin:269](src/optional.odin#L269): `success_selector` and the `or_return` failure selector are the same builder for a variant index; the one-argument call at 4796 repeats [optional.odin:272](src/optional.odin#L272). Share `variant_selector` and `synth_call`. (about 10 lines)
 - [check.odin:2860](src/check.odin#L2860) and [check.odin:4595](src/check.odin#L4595): both build the `Return_Value` of a bare success at an empty span; `bare_success_value(k, at)` serves both. (about 4 lines)
 - [check.odin:4218](src/check.odin#L4218), [check.odin:4266](src/check.odin#L4266), [check.odin:4327](src/check.odin#L4327) and [optional.odin:449](src/optional.odin#L449): scope, deferred `report_unread_required_results` with its comment, and `init` check. An `@(deferred_in_out)` `enter_statement_header(k, init)` holds all of it. (about 15 lines)
@@ -1488,7 +1429,7 @@ Declaration, procedure and statement checking is sound and its comments are most
 - [check.odin:2846](src/check.odin#L2846): bare-success analysis (2846-3065) and success returns (4679-4857) are one feature, split by the rest of the file, and use `fallible_of` from `optional.odin`, which owns the failure protocol. Move them there.
 - [check.odin:3219](src/check.odin#L3219): `hoist_local_lifecycle_hooks` and its walkers exist to call `declare_local_impl_hooks`; they belong in `impl.odin` beside it.
 - [check.odin:4497](src/check.odin#L4497): `enum_member_by_value` has callers in six files and belongs in `enums.odin`; `const_equal` (4514) belongs in `const_ops.odin`; `check_or_else_exit` (4861), called only from [optional.odin:94](src/optional.odin#L94), belongs in `optional.odin`.
-- [check.odin:3349](src/check.odin#L3349): `check_partial_statement` edits `diagnostics`, `error_count` and `last_noted_diagnostic` directly, as [provenance_event.odin:186](src/provenance_event.odin#L186) nearly does. Give `source.odin`, which owns `truncate_diagnostics`, a drop-by-predicate helper for both.
+- [check.odin:3349](src/check.odin#L3349): `check_partial_statement` filters `diagnostics` and clamps `last_noted_diagnostic` directly, as `prov_drop_event_diagnostics` does. Give `source.odin`, which owns `truncate_diagnostics`, a drop-by-predicate helper for both.
 - [check.odin:2452](src/check.odin#L2452): `check_decl_inner` runs 215 lines; the seams are `a, b := record` (2532-2567) and the per-value body (2586-2664). The second can take `value`, `symbol_id` and `declared`.
 - [check.odin:4718](src/check.odin#L4718): `check_returned_value` runs 88 lines; split out the `nil` diagnostics (4752-4772) and building `.ok(value)` (4794-4803).
 
@@ -1682,7 +1623,6 @@ The logic is sound and the spec citations are good, but the code is long mostly 
 
 - [check_expr.odin:44](src/check_expr.odin#L44) `check_expr`: lines 1-2109 hold 88 `.type = INVALID_TYPE` writes (129 in the file), most before a return where nothing has set a type. Default `base.type` to `INVALID_TYPE` and `base.value_category` to `.Value` here beside `immutable`. Keep writes after a type is set (714, 1429) and in `check_package_selector`, which check.odin:1908 reaches without `check_expr`. (about 80 lines)
 - [check_expr.odin:2022](src/check_expr.odin#L2022) `check_unary`: the Distinct test and the switch at 2028-2051 restate `builtin_unary_defined` (operators.odin:363). Take `defined := builtin_unary_defined(...)`, try the user overload if `!defined`, handle SIMD, then `if !defined` report `operator_mismatch`. (about 25 lines)
-- [check_expr.odin:337](src/check_expr.odin#L337) `decode_string_literal`, `escape_width`, `concat_quoted`, `decode_rune_literal`: each escape is re-wrapped in quotes to reuse the rune decoder, and its digits re-validated after the lexer did so. One `decode_escape(s) -> (value: rune, width: int)` serves both, dropping `concat_quoted`, `digits`, and a per-escape allocation. (about 40 lines)
 - [check_expr.odin:841](src/check_expr.odin#L841) `check_selector`: `promoted_field_path` already starts with `struct_field` (line 1081), so call only it. A path of length 1 is a declared field; pass `through_pointer, pointer_mutable` to the final `select_field`, since the loop clears them. `field`, the second struct test, and line 910 go, and the method path is no longer nested. (about 10 lines)
 - [check_expr.odin:920](src/check_expr.odin#L920) `select_call_method`: the box and pointer arms differ only in the wrapper. Test for `.Box` or `.Pointer` once, select on `info.element`, then pick the deref; do this together with bug 5. (about 5 lines)
 - [check_expr.odin:477](src/check_expr.odin#L477) `check_ident`: lines 477-481 are `identifier_of` (check.odin:1731), so write `name_id := identifier_of(k.c, v)`. (about 4 lines)
@@ -1716,7 +1656,6 @@ The logic is sound and the spec citations are good, but the code is long mostly 
 - [check_expr.odin:890](src/check_expr.odin#L890) and [check_expr.odin:935](src/check_expr.odin#L935): the same receiver default, `operand == TYPE_UNTYPED_STRING ? TYPE_STRING_VIEW : default_type(...)`. Name it `unfixed_receiver_type`, since it is a rule of its own that differs from `default_type`.
 - [check_expr.odin:1609](src/check_expr.odin#L1609), [check_expr.odin:1706](src/check_expr.odin#L1706), [check_expr.odin:2104](src/check_expr.odin#L2104) and [check_expr.odin:2140](src/check_expr.odin#L2140): the same `sym`, `Resolution{kind = .User_Operator, ...}`, and `v.type = sym.result`. An `annotate_user_operator(k, &v.base, chosen)` returning the symbol replaces them. (about 6 lines)
 - [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852): scalar unary folding is the same switch and the same overflow and wrap step, differing in allocator, failure reporting, and the float's decimal text. Move it to `const_ops.odin` as `fold_unary`. (about 20 lines)
-- [check_expr.odin:410](src/check_expr.odin#L410) and [lexer.odin:504](src/lexer.odin#L504): the lexer's `escape` and this decoder each hold the escape letters and digit counts. Keeping them side by side, as the Structure bullet below proposes, is the practical fix.
 
 **Structure and boundaries**
 
@@ -1775,7 +1714,7 @@ Well commented and mostly sound, but the rules for non-constant unfixed operands
 **Dead code**
 
 - `const_value_of` ([check_expr.odin:4177](src/check_expr.odin#L4177)): both uses follow a passing `is_const_expr`, so its nil arm never runs; `expr_base(x).const_value` replaces it. Only `binding_initial_const` calls it, and grep finds no other use in `src/`, `lsp/` or `tests/`.
-- (branch) [check_expr.odin:2155](src/check_expr.odin#L2155): `check_postfix` sees only `.Caret` and `.Or_Return`; [parser.odin:2470](src/parser.odin#L2470) makes only those, and the synthesized nodes ([ast_clone.odin:143](src/ast_clone.odin#L143), [check.odin:3859](src/check.odin#L3859), [check_expr.odin:1126](src/check_expr.odin#L1126)) are `.Caret`.
+- (branch) [check_expr.odin:2155](src/check_expr.odin#L2155): `check_postfix` sees only `.Caret` and `.Or_Return`; [parser.odin:2470](src/parser.odin#L2470) makes only those, and the synthesized nodes (`synth_deref`, [check.odin:3859](src/check.odin#L3859), [check_expr.odin:1126](src/check_expr.odin#L1126)) are `.Caret`.
 - (branch) [check_expr.odin:2149](src/check_expr.odin#L2149): the default of `position` is never used; the only caller, line 75, passes it.
 - (branch) [check_expr.odin:3395](src/check_expr.odin#L3395): `const_element_count` returns 1 for `.Dyn`, `.Slice`, `.Dynamic_Array` and `.Map`, so those can never pass the budget test. The whole switch can go, as every non-aggregate counts as 1.
 - (branch) [check_expr.odin:3306](src/check_expr.odin#L3306): `index < len(values)` is always true because both callers size `values` to the count; the comment at line 3296 is stale with it.
@@ -2002,7 +1941,7 @@ reader and the L0260 check, and copies much of `private_names.odin`. Seven bugs,
   Share them over `^[dynamic]string`; the two rules on plain names need one decision. (about 20 lines)
 - [doc.odin:1105](src/doc.odin#L1105) and [private_names.odin:417](src/private_names.odin#L417): `field_shown` and `field_is_exported` differ only in the `package main` default, a case `private_names` never reads.
   Share one predicate, which also serves the padding test repeated at 1140. (about 10 lines)
-- [doc.odin:879](src/doc.odin#L879) and [private_names.odin:201](src/private_names.odin#L201): `leading_name` reads the subject's name from text, `subject_name` from syntax. At least replace `is_alnum_ascii` with `is_ident_part` ([lexer.odin:223](src/lexer.odin#L223), made shared).
+- [doc.odin:879](src/doc.odin#L879) and [private_names.odin:201](src/private_names.odin#L201): `leading_name` reads the subject's name from text, `subject_name` from syntax. At least replace `is_alnum_ascii` with `is_ident_part` in `lexer.odin`.
   Using `subject_name` throughout would also stop `impl a.X` and `impl a.Y` sharing the key prefix `a`. (about 9 lines)
 - [doc.odin:945](src/doc.odin#L945) and [963](src/doc.odin#L963) and [formatter.odin:81](src/formatter.odin#L81): a scratch compiler lexes a text. A `lex_text(text) -> []Token` serves `text_qualifiers` and `token_texts`.
   `line_starts = {}` at 151, 947, 965 is the zero value and can go. (about 8 lines)
@@ -2089,7 +2028,6 @@ Mostly correct, with one confirmed layout miscompile for unions holding wide vec
 - [emit_llvm_abi.odin:526](src/emit_llvm_abi.odin#L526) `emit_union_choice`: its only caller is `emit_option_value` at line 1187. Call `emit_union_either` there directly. (about 9 lines)
 - [emit_llvm_abi.odin:477](src/emit_llvm_abi.odin#L477) `emit_union_widen`, and line 521 in `emit_union_either`: `e.terminated = false` repeats what `place_label` just did. Delete both. (2 lines)
 - [emit_llvm_abi.odin:552](src/emit_llvm_abi.odin#L552) `emit_union_tag`: fetch `shape` once and put the "large means GEP and load, else extract" read in one local helper used by both the niche and tag paths; lines 572-573 and 587-588 can return directly. (about 8 lines)
-- [emit_llvm_abi.odin:627](src/emit_llvm_abi.odin#L627) `sret_param`: `last` is passed only by `emit_proc_definition` ([emit_llvm.odin:642](src/emit_llvm.odin#L642)); building that parameter list as [emit_llvm_dispatch.odin:108](src/emit_llvm_dispatch.odin#L108) does removes it. (about 3 lines)
 - [emit_llvm_abi.odin:754](src/emit_llvm_abi.odin#L754) `foreign_signature`: writing `e.abi_sret` as a side effect is the only reason `emit_foreign_entry_guard` saves and restores it (lines 788-790). Return the sret name and let `emit_foreign_signature` store it. (about 3 lines)
 - [emit_llvm_abi.odin:901](src/emit_llvm_abi.odin#L901) `emit_foreign_param_slot`: return early for `.Indirect`, then share the slot and alloca, branching only on the store. (about 5 lines)
 - [emit_llvm_abi.odin:947](src/emit_llvm_abi.odin#L947) `emit_foreign_return`: `.Bool_I1` is `.Direct` with the same result, since `llvm_type(bool)` is `i1`; merge the cases, as line 1177 already does. (3 lines)
@@ -2390,44 +2328,6 @@ The marker-then-rewrite design is compact and its comments mostly explain why, b
 - [emit_llvm_debug.odin:224](src/emit_llvm_debug.odin#L224): delete; the six-line loop below reads the same.
 - [emit_llvm_debug.odin:421](src/emit_llvm_debug.odin#L421): shorten to `// design.md "string type" and "Slices".`; the member calls below state the rest. (the file's other comments earn their place)
 
-### src/emit_llvm_dispatch.odin
-
-A small, well-bounded file whose IR held up under probes (sret, inout results, cold, `-debug`, nested levels). Its weak spots are two global names that bypass the collision handling the rest of the emitter has, a copy that does not reach iterator and hook callees, and name handling for shapes that cannot occur.
-
-**Bugs**
-
-- `BUG-emit_llvm_dispatch-1` **low** [emit_llvm_dispatch.odin:157](src/emit_llvm_dispatch.odin#L157) `dispatch_check`: appends its own `declare`, which `emit_foreign_declarations` cannot see. Scenario: `foreign loke_runtime { @(link_name="loke_rt_v1_cpu_dispatch") ask :: proc "c" (level: i32) -> i32 ---; }` (compiler-guide.md documents the entry) beside a dispatched procedure; `-emit-ll` then clang gives "invalid redefinition of function". Fix: declare it unconditionally in `emit_runtime_declarations` and add it to the `seen` list at [emit_llvm_abi.odin:39](src/emit_llvm_abi.odin#L39). *Not verified.*
-- `BUG-emit_llvm_dispatch-2` **low** [emit_llvm_dispatch.odin:159](src/emit_llvm_dispatch.odin#L159) `dispatch_check`: the `.state` global's name is not claimed, though `reserve_link_names` exists so that late names avoid link names. Scenario: `@(export, link_name="loke.cpu_dispatch.v3.state") x: i32 = 7;` beside a v3 dispatched procedure; clang gives "redefinition of global". Fix: `state := claim_name(e, strings.concatenate({name, ".state"}))`. *Not verified.*
-- `BUG-emit_llvm_dispatch-3` **low** [emit_llvm_dispatch.odin:56](src/emit_llvm_dispatch.odin#L56) `callee_name`: only the two ordinary call paths use it, so implicit direct calls in a copy stay at the build's level, against design.md "@(cpu_dispatch=<string>)". Scenario: `foreach` over a user iterator in a v3 copy calls `@loke.p.Count_It.next`, and a `hook(drop)` calls `@loke.p.Res.release`; results stay right, but `math.fma` under `next` takes the slow path. Fix: use `callee_name` at [emit_llvm_iteration.odin:635](src/emit_llvm_iteration.odin#L635), [:649](src/emit_llvm_iteration.odin#L649) and the hook sites, or state the limit in the spec. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm_dispatch.odin:70](src/emit_llvm_dispatch.odin#L70) `cpu_copy_name`: only the first `switch` case is reachable (see Dead code), so lines 70-80 become `name := claim_name(e, fmt.aprintf("%s.%s", symbol_name(e, symbol_id), suffix))`, with identical names. (about 9 lines)
-- [emit_llvm_dispatch.odin:98](src/emit_llvm_dispatch.odin#L98) `emit_dispatched_proc`: `llvm_name` always starts `@loke.`, so stripping and re-adding that prefix is a no-op: `claim_name(e, strings.concatenate({llvm_name, ".plain"}))`. (shorter line, no line saved)
-- [emit_llvm_dispatch.odin:27](src/emit_llvm_dispatch.odin#L27) `cpu_level_attributes`: its only caller is `copy_attributes`, which adds a space. Merge them: `if !e.copying { return "" }`, then a `#partial switch` returning each string with its leading space. (about 4 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_dispatch.odin:29](src/emit_llvm_dispatch.odin#L29): the `.X86_64` attributes are never used; a copy's level comes from `dispatch_cpu_level`, which yields only v2 or v3 ([attributes.odin:409](src/attributes.odin#L409)), and it must also exceed the build's.
-- (branch) [emit_llvm_dispatch.odin:76](src/emit_llvm_dispatch.odin#L76): the plain and quoted-name cases are unreachable. `e.bodies` holds only Loke-convention procedures ([emit_llvm.odin:585](src/emit_llvm.odin#L585)), an exported one must be foreign-convention ([check.odin:519](src/check.odin#L519)), and the rest are named `@loke.p.` ([emit_llvm.odin:1148](src/emit_llvm.odin#L1148)).
-
-**Data structures and algorithms**
-
-- [emit_llvm_dispatch.odin:151](src/emit_llvm_dispatch.odin#L151) `dispatch_check`: `e.dispatch_checks` is a map over a three-member enum, used for its `len` at line 156. Once the `declare` moves (bug 1), `[Cpu_Level]string` does the job and drops the `make` at [emit_llvm.odin:95](src/emit_llvm.odin#L95). A tidiness gain only; the path is cold.
-
-**Near copies**
-
-- [emit_llvm_dispatch.odin:107](src/emit_llvm_dispatch.odin#L107) and [emit_llvm.odin:642](src/emit_llvm.odin#L642): both spell a Loke procedure's parameter list, optional `ptr %sret` then `param_llvm`/`param_nonnull` per parameter; they differ only in target (joined string, builder). Shared form: `loke_param_list(e, symbol, inout) -> string`, with `e.abi_sret` set by the definition.
-- [emit_llvm_dispatch.odin:122](src/emit_llvm_dispatch.odin#L122) and [emit_llvm_runtime.odin:1722](src/emit_llvm_runtime.odin#L1722): both call a forwarded callee and return its result, branching on void; the guard's `same:` arm at [emit_llvm_abi.odin:814](src/emit_llvm_abi.odin#L814) has the same shape. Shared form: `emit_forward_ret(e, call_word, result, callee, arguments)`, where `call_word` is `call` or `tail call`.
-- [emit_llvm_dispatch.odin:71](src/emit_llvm_dispatch.odin#L71) and [emit_llvm_dispatch.odin:154](src/emit_llvm_dispatch.odin#L154): both spell `cpu == .X86_64_V3 ? "v3" : "v2"`. Shared form: a `cpu_suffix(cpu)` beside `cpu_level_attributes`.
-
-**Comments**
-
-- [emit_llvm_dispatch.odin:7](src/emit_llvm_dispatch.odin#L7): repeats the `comments.md` section it cites. Shorten to "A copy calls copies, and LLVM never inlines a function into one whose features lack the callee's, so the level's code stays behind the check" plus the citation. (about 2 lines)
-- [emit_llvm_dispatch.odin:17](src/emit_llvm_dispatch.odin#L17): delete; the two fields say it.
-- [emit_llvm_dispatch.odin:45](src/emit_llvm_dispatch.odin#L45): delete; it reads the ternary below aloud.
-- [emit_llvm_dispatch.odin:51](src/emit_llvm_dispatch.odin#L51): shorten to "In a copy, the callee's copy for the level, made on first use; a procedure with no body has none." The procedure-value sentence repeats the spec and is not about this code. (about 2 lines)
-
 ### src/emit_llvm_expr.odin
 
 Careful code with mostly useful why-comments, but constants of a large type break the "a large value is an address" rule, and a C-pointer slice misses its negative-length panic. The main savings are in near copies among the constant and equality walkers, plus a text-slice validation that costs O(n) where O(1) would do. The bugs below were reproduced with the built `lokec.exe`.
@@ -2571,7 +2471,6 @@ Correct on the paths exercised, with two low-severity printing divergences. It h
 - [emit_llvm_runtime.odin:584](src/emit_llvm_runtime.odin#L584) `emit_format_thunks`: the name-table entry repeats `text_constant`, including the zero case for an empty name; call `text_constant(e, Const_Value{kind = .String, text = name}, false)`. (about 7 lines)
 - [emit_llvm_runtime.odin:558](src/emit_llvm_runtime.odin#L558) `emit_format_thunks`: merge the `typeid_order` loops at 558 and 567 into one that sets `names[id]` and emits the thunk when printable. (about 5 lines)
 - [emit_llvm_runtime.odin:1134](src/emit_llvm_runtime.odin#L1134) `emit_type_info_tables`: drop the `entries[0]` assignment and the fill loop at 1142; write `entry == "" ? "zeroinitializer" : entry` in the print loop at 1154. (about 5 lines)
-- [emit_llvm_runtime.odin:1722](src/emit_llvm_runtime.odin#L1722) `emit_forwarding_call`: two of the three call branches and the `ret` test say the same thing; one `if symbol.result == INVALID_TYPE || sret { call void; ret void } else { call; ret }` covers it. (about 6 lines)
 - [emit_llvm_runtime.odin:1067](src/emit_llvm_runtime.odin#L1067) `emit_fmt_builtin`: the call site passes only the three handled kinds ([emit_llvm_calls.odin:164](src/emit_llvm_calls.odin#L164)), so the trailing `return "0"` can go; move `writer_type` into its case and use `insert` as `emit_dyn_value` does. (about 5 lines)
 - [emit_llvm_runtime.odin:850](src/emit_llvm_runtime.odin#L850) `emit_format_type_name`: `data, length := load_pair(e, STRING_VIEW_TYPE, view, VIEW_DATA, VIEW_LEN)` replaces three lines and the misnamed `stride`. (about 3 lines)
 - [emit_llvm_runtime.odin:443](src/emit_llvm_runtime.odin#L443) `emit_formatted_panic`: `types` parallels `addresses` and is `expr_base(arg).type` of the same `v.bound[message_index + 1:]`; keep one array and read the other from `v.bound`. (about 3 lines)
@@ -3156,7 +3055,7 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 
 **Near copies**
 
-- [foreign.odin:24](src/foreign.odin#L24), [foreign.odin:64](src/foreign.odin#L64), [foreign.odin:104](src/foreign.odin#L104), [attributes.odin:258](src/attributes.odin#L258), [doc.odin:312](src/doc.odin#L312), [doc.odin:351](src/doc.odin#L351), [private_names.odin:48](src/private_names.odin#L48), [emit_llvm.odin:353](src/emit_llvm.odin#L353), [emit_llvm_abi.odin:56](src/emit_llvm_abi.odin#L56): all filter `member.(^Decl)`. Only `^Decl` or an already reported `^Item_Error` occurs, so `parse_foreign` could drop errors and `Item_Foreign_Block.members` become `[]^Decl`. (about 15 lines, less a small loop in `ast_clone`)
+- [foreign.odin:24](src/foreign.odin#L24), [foreign.odin:64](src/foreign.odin#L64), [foreign.odin:104](src/foreign.odin#L104), [attributes.odin:258](src/attributes.odin#L258), [doc.odin:312](src/doc.odin#L312), [doc.odin:351](src/doc.odin#L351), [private_names.odin:48](src/private_names.odin#L48), [emit_llvm.odin:353](src/emit_llvm.odin#L353), [emit_llvm_abi.odin:56](src/emit_llvm_abi.odin#L56): all filter `member.(^Decl)`. Only `^Decl` or an already reported `^Item_Error` occurs, so `parse_foreign` could drop errors and `Item_Foreign_Block.members` become `[]^Decl`. (about 15 lines)
 - [foreign.odin:41](src/foreign.odin#L41) and [doc.odin:544](src/doc.odin#L544): both state "member, then block, then file" for visibility, doc.odin for declarations no symbol records. `written_is_public` already composes: `written_is_public(d.attributes, nil, written_is_public(block, file.attributes))` replaces lines 544 to 550. (about 5 lines)
 
 **Structure and boundaries**
@@ -3239,7 +3138,7 @@ A compact, linear token layout pass whose token-preservation check holds up, and
 - [formatter.odin:327](src/formatter.odin#L327) `write_out`, `line_indent`: every line start goes through `indent`, so set `l.indent = max(depth, 0)` there and read it at line 285. This drops `write_out`, `line_indent` and `line_start` for plain `write_string`, and fixes BUG-formatter-6. (about 19 lines)
 - [formatter.odin:206](src/formatter.odin#L206) `horizontal`: it is the identity. Each call is on a gap `break_line` just found free of `\n`, and a lone `\r` is L0115, refused before layout. Use `gap` directly. (about 5 lines)
 - [formatter.odin:195](src/formatter.odin#L195) `would_merge`: only the prefix rule at line 504 can drop a space between operator characters, so test there instead of patching at lines 177-179; only `&&`, `&~`, `--` can occur after a prefix operator. (about 8 lines)
-- [formatter.odin:380](src/formatter.odin#L380) `written_tight`: its list is exactly the enum range `.Plus ..= .Shr`, so use a range test as `is_keyword` does. `binary_operator` (line 363) likewise is `.Plus ..= .Shr_Eq` minus `.Not`, plus six named kinds. (about 5 lines)
+- [formatter.odin:380](src/formatter.odin#L380) `written_tight`: its list is exactly the enum range `.Plus ..= .Shr`, so use a range test as `any_keyword` does. `binary_operator` (line 363) likewise is `.Plus ..= .Shr_Eq` minus `.Not`, plus six named kinds. (about 5 lines)
 - [formatter.odin:151](src/formatter.odin#L151) `layout`: pass the tokens with their EOF, whose `lo` is `len(text)`. `for token in tokens` then drops the ternaries at lines 153 and 162 and the `index == len(tokens)` exit. (about 4 lines)
 - [formatter.odin:149](src/formatter.odin#L149) `layout`: `started` is `strings.builder_len(l.out) > 0`, since no comment or token is empty. (about 3 lines)
 - [formatter.odin:175](src/formatter.odin#L175) `layout`: `previous_hi == l.last.hi` replaces `l.last.kind != .EOF && l.last_line == l.line`, sending only a token right after a token to `spacing`; this is also half of the BUG-formatter-3 fix. (about 1 line)
@@ -3658,7 +3557,6 @@ The satisfaction path is sound for ordinary programs, but the composition walks 
 - [interface.odin:1463](src/interface.odin#L1463) `slot_matches`: `Maybe(bool)` exists only for [erased.odin:898](src/erased.odin#L898), whose caller discards the value at [erased.odin:802](src/erased.odin#L802) after satisfaction already compared it. Pass it and take a plain `bool`. (about 3 lines)
 - [interface.odin:1476](src/interface.odin#L1476) `slot_matches`: `proc_parameter_mode(k.c, sym.proc_type, index)` is this expression, as line 874 already uses. (about 1 line)
 - [interface.odin:249](src/interface.odin#L249) `interface_arguments_for`: `interface_scope(k, info, nil)` is the same scope. (about 1 line)
-- [interface.odin:623](src/interface.odin#L623) `clone_requirement_syntax`: builds a one-element slice to reuse `clone_requirements`. Extract `clone_requirement` in ast_clone.odin; the composed walks need only `clone_expr(k.c, requirement.expr)`. (about 4 lines)
 - [interface.odin:1263](src/interface.odin#L1263) `required_associated_constant`: the empty test before the loop does nothing the loop does not. (about 3 lines)
 - [interface.odin:553](src/interface.odin#L553) `interface_check`: `declared != nil && declared.decl != nil` holds for any `info`, since `interface_info_for` returned one. (about 2 lines)
 
@@ -3855,43 +3753,6 @@ Small, correct on the mutable traversals I ran (`indexed`, `reversed`, and both 
 - [iteration_mutable.odin:12](src/iteration_mutable.odin#L12): delete "so the map is walked as `key, &value`", which is stale (the spelling is now `&mut value`): `// design.md "By-reference iteration": an entry lends its key read-only and its value mutably.`
 - [iteration_mutable.odin:54](src/iteration_mutable.odin#L54): repeats lines 63-66 and the comment on `is_mutable_view`. Shorten to `// A view walks as any value; a container needs a mutable place.`
 - [iteration_mutable.odin:63](src/iteration_mutable.odin#L63): the first sentence paraphrases the spec. `// design.md "By-reference iteration": an `inout` `iter_mut` belongs to a container, which must be a mutable place; any other receiver to a mutable view.`
-
-### src/lexer.odin
-
-A small, sound lexer that matches grammar.md "Lexical structure": the keyword list, the operator table and the literal forms all check out. Most of what can go is repeated error reporting and a long keyword switch; its comments are already mostly about why.
-
-**Bugs**
-
-- `BUG-lexer-1` **low** [lexer.odin:41](src/lexer.odin#L41) `Token_Kind.Move_Only`: it sits in the "reserved in every position" range, but `move_only` is a plain name (grammar.md "Keywords"). Scenario: [lsp/editing.odin:85](lsp/editing.odin#L85) walks `.Break ..= .Where`, so LSP completion offers `move_only` as a keyword, though the parser rejects `move_only struct`. Fix: move the member after `.Where` under its own comment (the parser tag at [parser.odin:270](src/parser.odin#L270) is all that makes it), and correct line 19. *Not verified.*
-
-**Simplification**
-
-- [lexer.odin:346](src/lexer.odin#L346) `ident_or_keyword`: replace the 66-line string switch with a `keyword_table` of `{"break", .Break}` rows in the shape of `operator_table`, plus a short lookup loop. It also gives the LSP real spellings to list. (about 25 lines)
-- [lexer.odin:322](src/lexer.odin#L322) `next_token` and siblings: `errorf` followed by `return Token{kind = .Error, lo = lo, hi = l.pos}` recurs at 322, 447, 476, 499, 635 and 767. Add `error_token(l, lo, code, format, ..args) -> Token`. Add `unterminated(l, lo, code, what)` for the opening-quote form at 578, 606 and 623. (about 20 lines)
-- [lexer.odin:507](src/lexer.odin#L507) `escape`: the `at_end` and line-ending checks report the same L0105, and `at_literal_end(l)` is exactly their union. Use one `if` and keep the comment on it. (about 6 lines)
-- [lexer.odin:425](src/lexer.odin#L425) `number`: replace the per-byte `switch base` with `radix` computed once and `digit_value(ch) >= radix` (see Near copies), using a `for` that stops on the first non-digit. (about 7 lines)
-- [lexer.odin:234](src/lexer.odin#L234) `skip_ident_tail`: `peek` returns 0 at the end and no character class holds 0, so `!at_end(l) &&` is redundant here and at 319, 453, 462, 481 and 645, as is `at_end(l) ||` at 494. Line 446 already relies on this. (no line change, seven clauses)
-- [lexer.odin:474](src/lexer.odin#L474) `number`: `l.pos += offset` is in both exponent paths; do it once before the `is_digit` test, which then reads `peek(l)`. (about 1 line)
-
-**Data structures and algorithms**
-
-- [lexer.odin:758](src/lexer.odin#L758) `operator`: each operator token scans up to 57 rows, and the most common (`( ) [ ] { } ; ,`) sit last, so they cost about 50 byte compares each; the cost is constant per token. These prefix nothing, so moving them to the top is free and passes `operator_table_is_ordered_longest_first`. Confirm with `perf.ps1`; a first-byte index is not worth it.
-
-**Near copies**
-
-- [lexer.odin:218](src/lexer.odin#L218) `is_ident_start`/`is_ident_part`, [query_index.odin:23](src/query_index.odin#L23) `identifier_spelling`, [session.odin:250](src/session.odin#L250) `is_config_name` and [lsp/requests.odin:204](lsp/requests.odin#L204) `is_name_byte`: the middle two accept exactly the same strings. Keep one `identifier_spelling` in the lexer, built on these two predicates, and export `is_ident_part` for the LSP. (about 12 lines)
-- [lexer.odin:207](src/lexer.odin#L207) `hex_value`, [bigint.odin:118](src/bigint.odin#L118) and [lsp/paths.odin:138](lsp/paths.odin#L138): the same digit decoding, differing only in the non-digit result. One total `digit_value(ch) -> int`, large on a non-digit, also replaces `is_hex` (`digit_value(ch) < 16`) and serves `number`'s radix test.
-- [lexer.odin:519](src/lexer.odin#L519) `escape` and [check_expr.odin:373](src/check_expr.odin#L373) `escape_width` with [check_expr.odin:410](src/check_expr.odin#L410) `decode_rune_literal`: both parse the same escape grammar, and `escape` already computes the value. A `scan_escape(text) -> (value, width, problem)` in the lexer lets the checker drop `escape_width` and `concat_quoted`, leaving the lexer to turn `problem` into a diagnostic.
-
-**Structure and boundaries**
-
-- [lexer.odin:336](src/lexer.odin#L336) `reserved_keyword`: the enum's order is an unstated contract shared with [formatter.odin:424](src/formatter.odin#L424) `is_keyword` and [lsp/editing.odin:85](lsp/editing.odin#L85), and the LSP derives spellings by lowercasing enum names, so renaming a member changes completion. Put an `any_keyword` predicate here for both and say at the enum that order matters.
-
-**Comments**
-
-- [lexer.odin:317](src/lexer.odin#L317): repeats the error message below it. Replace with the citation `// grammar.md "Source encoding"`.
-- [lexer.odin:345](src/lexer.odin#L345): the contextual half repeats lines 54-56, and predeclared names have no case here. Delete.
-- [lexer.odin:588](src/lexer.odin#L588): inaccurate for `"\q` at a line end, where the escape reports the unknown escape and not the ending. Use `// One diagnostic per literal: no L0104 after a failed escape.`
 
 ### src/lifecycle.odin
 
@@ -4200,8 +4061,6 @@ The checks read well and match the spec, but `spawn_field_kind` lends the task s
   Scenario: `spawn read(mkw().items);` printed `sum 0 expected 66016`, and `spawn show(mk()[0]);` printed an empty string; a `hook(drop)` printed before the task read. Fix: lend only a place with a lasting root; otherwise copy the projected value into the frame as `.Owned`, and report L0728 for a move-only type.
 - `BUG-parallel-2` **high** [parallel.odin:608](src/parallel.odin#L608) `spawn_field_kind`: a widened managed place gets `.Address`, but `emit_address` ([emit_llvm_expr.odin:694](src/emit_llvm_expr.odin#L694)) widens it into one temporary slot per site, which a loop's next spawn overwrites while earlier tasks read it. *Confirmed: Reproduced: [6]Small of hook-copy payloads, foreach { spawn show(items[i]); } with show(v: Big) prints 6 six times; the same program without widening prints 1 to 6. emit_address hands every frame the one temporary slot; design.md allows no such overwrite.*
   Scenario: `foreach (i in 0..<items.len()) { spawn show(items[i]); }`, with `Small` elements and `show(v: Big)`, printed `sixth sixth sixth sixth sixth sixth`. Fix: test `expression_converts_storage` here and make it `.Owned`, with the `.Owned` arm of `emit_spawn` copying the place as design.md "Widening by label" says.
-- `BUG-parallel-3` **medium** [parallel.odin:310](src/parallel.odin#L310) `spawn_result_symbol` never sees a captured destination: [ast_clone.odin:672](src/ast_clone.odin#L672) asserts the cloned `Stmt_Spawn.result` is `^Expr_Ident`, and the capture rewrite makes it a selector. *Confirmed: Reproduced: lokec exits 132 at ast_clone.odin(672:15), failed assertion to ^Expr_Ident (actual ^Expr_Selector, or ^Expr_Postfix for capture(&x)), for spawn x = f() in a capture literal. No known-gaps entry; design.md requires a compile error, not a crash.*
-  Scenario: `g := proc() capture(x) { parallel { spawn x = f(); } };` crashes lokec with a failed type assertion instead of L0728. Fix: copy the name without the rewrite when cloning, and reject a capture placeholder here (`c.capture_placeholders`).
 - `BUG-parallel-4` **low** [parallel.odin:119](src/parallel.odin#L119) `check_parallel`: counts `len(diagnostics)`, so a warning from the executor expression gets the executor-type note. *Not verified.*
   Scenario: `parallel (pick(pool, big2))` under `-copy-cost=1` attaches "a `parallel` block's executor is a `^thread.Pool`" to the L0507 warning. Fix: compare `c.error_count`, as line 523 does.
 - `BUG-parallel-5` **low** [parallel.odin:367](src/parallel.odin#L367) `lower_spawn`: a missing `unsafe` builtin (line 367) or `Task_Scope.start` (line 379) returns with no diagnostic, unlike `thread_type`'s L0727 at line 208, and the spawn then fails in the backend. *Not verified.*
@@ -4225,7 +4084,7 @@ The checks read well and match the spec, but `spawn_field_kind` lends the task s
 
 **Near copies**
 
-- [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [ast_clone.odin:131](src/ast_clone.odin#L131), [capture.odin:137](src/capture.odin#L137), [check_calls.odin:204](src/check_calls.odin#L204) hand-build these nodes too. Share one set of `synth_*` beside `ast_clone.odin`.
+- [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [capture.odin:137](src/capture.odin#L137), [check_calls.odin:204](src/check_calls.odin#L204) hand-build these nodes too. Share one set of `synth_*`, of which the ident, selector and deref builders are already package-visible.
 - [parallel.odin:181](src/parallel.odin#L181), [parallel.odin:723](src/parallel.odin#L723), [parallel.odin:735](src/parallel.odin#L735) and [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140): one-name `Decl` builders differing only in `kind` and type. Use one `synth_decl(c, kind, name, type, value, span)` built on `synth_name`, which interns, so callers drop their `id`. (about 20 lines here)
 - [parallel.odin:700](src/parallel.odin#L700) and [capture.odin:95](src/capture.odin#L95): a local struct whose field types are aliases only its scope binds. They differ in field names and spans; `synth_record` taking `[]Name`, with each field's span from its `Name`, serves both, moving capture fields from `entry.span` to `entry.name.span`. (about 15 lines)
 - [parallel.odin:469](src/parallel.odin#L469) and [parallel.odin:579](src/parallel.odin#L579): `local := aprintf(...)`, take into a new local, then name or `move` it. Extract `spawn_take_local(k, stmts, name, field, span) -> Expr`, with a `synth_move` that [capture.odin:51](src/capture.odin#L51) and [lifecycle.odin:368](src/lifecycle.odin#L368) can also use. (about 8 lines)
@@ -4469,42 +4328,6 @@ Coherent and well tested on its main paths, but three drivers have grown around 
 - [private_names.odin:621](src/private_names.odin#L621): shorten the last sentences to "A chain of selections is followed until it repeats a member."
 - [private_names.odin:1122](src/private_names.odin#L1122): delete; it reads the switch below it aloud.
 
-### src/proc_contracts.odin
-
-Sound and compact: probes of substitution, join, `none`-discharge and region cases through `lokec.exe` behaved as `design.md` says, and no bug turned up. The gains are small merges of duplicated code, one long checking procedure, and two helpers unrelated to contracts.
-
-**Simplification**
-
-- [proc_contracts.odin:293](src/proc_contracts.odin#L293) `written_contract_within`: fold the loop body to `if !region_is_empty(set) && (index >= len(bound) || !region_contract_within(set, bound[index])) { return index }`. (about 5 lines)
-- [proc_contracts.odin:130](src/proc_contracts.odin#L130) `join_callback_types`: build `members` with `slice.concatenate` on the two `contract_members`, and set `members = slice.clone(unique, c.semantic_allocator)` in place of `stored` at line 140. (about 3 lines)
-- [proc_contracts.odin:240](src/proc_contracts.odin#L240) `dependency_contract_within`: the bounds ternaries at 240 and 242 can be plain `b.param_paths[index]` and `a.param_paths[index]`: `param_paths` is allocated parallel to `params` (borrow.odin:1167, 1401), and line 239 checked `b`. (about 0 lines, clearer)
-- [proc_contracts.odin:47](src/proc_contracts.odin#L47) `record_proc_contract_check`: `from == to` is already covered by the `a.proc_contract == b.proc_contract` return on line 49; it only skips two table lookups. (1 line)
-
-**Dead code**
-
-- (branch) [proc_contracts.odin:31](src/proc_contracts.odin#L31): `.Allocator` is unreachable. Only `TYPE_ALLOCATOR` has that kind (semantic.odin:1059), and `type_is_carrier` already returns true for it at line 25.
-- (branch) [proc_contracts.odin:63](src/proc_contracts.odin#L63): `a == nil || a.kind != .Proc` never holds. Line 49 checks both before the call on line 50, and `check_proc_contracts` dereferences `a` as a procedure on line 73. Keep only the `proc_contract` test.
-
-**Near copies**
-
-- [proc_contracts.odin:41](src/proc_contracts.odin#L41) and [proc_contracts.odin:155](src/proc_contracts.odin#L155): the same field-by-field `intern_proc_type` call, differing only in the contract. Shared form: `proc_type_with_contract(c, info, contract)`; line 154's `p` then goes, since `x` has the same fields. A new type field then has one site.
-- [proc_contracts.odin:52](src/proc_contracts.odin#L52) and [proc_contracts.odin:194](src/proc_contracts.odin#L194): the same dedupe scan and append. Shared form: a file-private `add_contract_check(c, from, to, span)` called by both recorders. (about 3 lines)
-- [proc_contracts.odin:230](src/proc_contracts.odin#L230) and [proc_contracts.odin:240](src/proc_contracts.odin#L240): "an empty bound covers all, lengths must match, every used path is in the bound". Shared form: `paths_within(a, b: []bool) -> bool`, making each five-line block one line. (about 3 lines net)
-- [proc_contracts.odin:10](src/proc_contracts.odin#L10), [cfg_provenance.odin:7721](src/cfg_provenance.odin#L7721) and [check_calls.odin:703](src/check_calls.odin#L703): all list the same four `*_from` fields. Shared form: `conversion_source(base: ^Expr_Base) -> Type_Id`, the set field or `INVALID_TYPE`; the other two test or print it.
-
-**Structure and boundaries**
-
-- [proc_contracts.odin:70](src/proc_contracts.odin#L70) `check_proc_contracts`: 50 lines nested six deep. Natural seams: `check_contract_bound` for lines 74-107, with the note selection at 81-102 as its own helper, leaving the loop to run the bound check and then the `none` discharge.
-- [proc_contracts.odin:8](src/proc_contracts.odin#L8) `expression_converts_storage`: an AST predicate unrelated to contracts, called by `check_calls`, `cfg_provenance` and `emit_llvm_expr`. It belongs beside `expr_base` in `ast.odin`.
-- [proc_contracts.odin:14](src/proc_contracts.odin#L14) `check_borrow_argument`: one caller, `check_bound_argument_mode` (check_calls.odin:681), which handles the `.Inout` sibling inline. Move it there and drop "immutable borrow arguments" from compiler-architecture.md:918.
-- [proc_contracts.odin:192](src/proc_contracts.odin#L192): the order hides the flow. The second recorder sits 146 lines from the first, and the private helpers of `check_proc_contracts` (line 70) follow join code. Order it as type operations, recording, checking, then `call_contract_declaration`.
-- [borrow.odin:2657](src/borrow.odin#L2657) `callback_reads_within`: its only caller is [proc_contracts.odin:77](src/proc_contracts.odin#L77). Move it here as file-private, beside its sibling `written_contract_within`.
-
-**Comments**
-
-- [proc_contracts.odin:176](src/proc_contracts.odin#L176): misplaced. "Members share the signature, so the first one names the parameter." describes `contract_param_name`, not `receiver_contract`; move it to line 201.
-- [proc_contracts.odin:304](src/proc_contracts.odin#L304): does not say what the procedure returns. Use: "The declaration whose contract a call substitutes; an indirect call takes its callee type's contract."
-
 ### src/provenance_call.odin
 
 A small, well-commented classification file whose tables are the risk: two rows or contracts claim less than the operation does, and both let a dangling read compile. The rest is modest trimming, mostly fields and a helper that repeat what `Expr_Call` and `input.arguments` already give.
@@ -4568,7 +4391,6 @@ Sound and readable: the saturation loop, arena handling, and recording disciplin
 **Near copies**
 
 - [provenance_effect.odin:261](src/provenance_effect.odin#L261) and [provenance_effect.odin:272](src/provenance_effect.odin#L272): `prov_merge_provider_parent` and `prov_assign_value_region` differ only in the final merge, and `Prov_Effect_Parent` and `Prov_Effect_Assign` are the same struct. One proc and operation with a `provider: bool` serves both, passed at [cfg_provenance.odin:7518](src/cfg_provenance.odin#L7518) and [cfg_provenance.odin:7525](src/cfg_provenance.odin#L7525). (about 12 lines)
-- [provenance_effect.odin:40](src/provenance_effect.odin#L40) and [provenance_event.odin:129](src/provenance_event.odin#L129): `Prov_Effect_Site` and `Prov_Event_Site` share every field but `operation` and `diagnostics`, and [provenance_effect.odin:231](src/provenance_effect.odin#L231) repeats [provenance_event.odin:158](src/provenance_event.odin#L158). Embed one `Prov_Site`, with one capture and one restore proc for [provenance_event.odin:290](src/provenance_event.odin#L290) and line 305. (about 10 lines)
 - [provenance_effect.odin:267](src/provenance_effect.odin#L267) and [cfg_provenance.odin:4019](src/cfg_provenance.odin#L4019): the same three lines merge a region into `provider_parents`. A small `prov_merge_parent(graph, symbol, set)` serves both, since the seed must not call the recording proc. (about 2 lines)
 
 **Structure and boundaries**
@@ -4584,37 +4406,6 @@ Sound and readable: the saturation loop, arena handling, and recording disciplin
 - [provenance_effect.odin:46](src/provenance_effect.odin#L46): "The walk state materialization restores." Saturation rounds (lines 315-318) never restore it, so "its replay reads" misleads.
 - [provenance_effect.odin:322](src/provenance_effect.odin#L322): one line is enough, citing `compiler-architecture.md "Normalized provenance input"`, which states this rule; `assert`s enforce it.
 - [provenance_effect.odin:139](src/provenance_effect.odin#L139): "Only fact-dependent events change once the facts settle; they are materialized again, interleaved with one more replay."
-
-### src/provenance_event.odin
-
-Sound and well commented, with no bugs found and no comment worth trimming. The savings are in `prov_materialize_events` and `prov_drop_event_diagnostics`, which recompute or hand-write what existing code already provides.
-
-**Simplification**
-
-- [provenance_event.odin:314](src/provenance_event.odin#L314) `prov_materialize_events`: drop the reset and the rescan of every event (314-315, 334-348, a copy of the flag logic in [cfg_provenance.odin:716](src/cfg_provenance.odin#L716) `prov_emit`). `final`'s `prov_emit` already flagged each replacement, so `graph.has_region_event ||= final.has_region_event` and the same for `has_window_event` suffice; only borrow.odin:3388 and 5294 read them, facts only grow, and a stale true only costs a fast path. (about 13 lines)
-- [provenance_event.odin:174](src/provenance_event.odin#L174) `prov_drop_event_diagnostics`: the `kept := -1` and `dropped` states are not needed. Start `kept` at 0, test `next < len(events) && events[next].diagnostics[0] <= index` directly, always copy down and always `resize`. (about 10 lines)
-- [provenance_event.odin:158](src/provenance_event.odin#L158) `prov_event`: 158, 164, 294 and 306 hand-write `current == NO_BLOCK ? 0 : len(...prov)`, as do [provenance_effect.odin:231](src/provenance_effect.odin#L231) and [cfg_provenance.odin:2527](src/cfg_provenance.odin#L2527). Make [cfg_provenance.odin:6555](src/cfg_provenance.odin#L6555) `prov_next_event` package-visible and call it. (about 2 lines, six ternaries)
-
-**Dead code**
-
-- (branch) [provenance_event.odin:231](src/provenance_event.odin#L231): `case: unreachable()` catches only a nil operation, which `prov_event` never receives, and a default clause also switches off the compiler's exhaustiveness check on the union. It is the only such arm in `src/`; delete it.
-- (branch) [provenance_event.odin:292](src/provenance_event.odin#L292): the truncation at 292-293 and [provenance_effect.odin:124](src/provenance_effect.odin#L124) undoes nothing. Every `errorf` a provenance graph can reach sits in spawn and cross-thread checks called from the walk, or in the L0726 arm recorded only there, and replay never walks (asserted at cfg.odin:2329). Delete both, or assert the length is unchanged.
-
-**Data structures and algorithms**
-
-- [provenance_event.odin:297](src/provenance_event.odin#L297) `prov_materialize_events`: 297 and 309 clone each site's new events, copying every materialized event once per body, though they stay in `final`'s block in the same arena. Store a start and length into that block in `Replacement` and slice at the splice; that removes both clones and the `core:slice` import.
-- [provenance_event.odin:299](src/provenance_event.odin#L299) `prov_materialize_events`: a fact operation that emitted nothing (`count == 0`, no new events) still appends a `Replacement`, so its block is reallocated and copied unchanged. The input grows linearly with operations, so this is only a constant factor; skip such sites with one guard.
-
-**Near copies**
-
-- [provenance_event.odin:129](src/provenance_event.odin#L129) and [provenance_effect.odin:40](src/provenance_effect.odin#L40): both sites carry block, expansion, first, count, sequence, depth and task, captured at 162-167 and effect:232 and restored at 289-290, 304-305. Embed one `using at: Prov_Site` (as `Expr_Base` is) with one capture and one `prov_enter_site` that also returns `first`.
-- [provenance_event.odin:185](src/provenance_event.odin#L185), [check.odin:3357](src/check.odin#L3357) and [source.odin:664](src/source.odin#L664): each undoes `error_count` and destroys a diagnostic; share a `discard_diagnostic`. This is the only shrink site that leaves `last_noted_diagnostic` unclamped (source.odin:671, 779, check.odin:3364); harmless while no instantiation note follows the analysis, but worth matching.
-- [provenance_event.odin:30](src/provenance_event.odin#L30) and [cfg_provenance.odin:4932](src/cfg_provenance.odin#L4932): `Prov_Event_Escape` repeats all four fields of `Prov_Returning`, and [cfg.odin:2511](src/cfg.odin#L2511) fills both from the same values. Embed `Prov_Returning` in the event. (about 3 lines)
-
-**Structure and boundaries**
-
-- [provenance_event.odin:257](src/provenance_event.odin#L257) `prov_returning_region`: not a materializer. Its only caller ([cfg_provenance.odin:5467](src/cfg_provenance.odin#L5467)), its type and both helpers are in `cfg_provenance.odin`; move it beside `prov_materialize_reset` as file-private. That also rejoins `prov_materialize_escape` and `prov_materialize_effect_use`, now split by it and the driver.
-- [provenance_event.odin:267](src/provenance_event.odin#L267) `prov_materialize_events`: 83 lines doing replay, root regions, splicing and flags. With the flag scan gone, the natural seam is the splice at 319-332 as `prov_splice_events(graph, old, replacements)`, leaving the driver as the merge loop.
 
 ### src/provenance_form.odin
 
@@ -4826,7 +4617,6 @@ A compact, readable AST walk with useful comments and no dead procedures. Its we
 - [query_index.odin:202](src/query_index.odin#L202) and [query_index.odin:223](src/query_index.odin#L223): the same two lines choose a node's reported type, `INVALID_TYPE` for a package. Shared form: `query_node_type(base: ^Expr_Base) -> Type_Id`. (about 2 lines)
 - [query_index.odin:18](src/query_index.odin#L18), [query_index.odin:40](src/query_index.odin#L40) and [query_index.odin:192](src/query_index.odin#L192): each validates a span and compares its text with a name. Shared form: `query_span_spells(c, span, name) -> bool`, which also shortens the two longest guards.
 - [query_index.odin:82](src/query_index.odin#L82) and [query_index.odin:259](src/query_index.odin#L259): both find a symbol by name among candidates and record the written name; only the type differs. Shared form: `index_query_bound_name(index, name, candidates)`, typing a `.Proc` by `proc_type`, which removes the deepest nesting. (about 4 lines)
-- [query_index.odin:23](src/query_index.odin#L23) and [lexer.odin:218](src/lexer.odin#L218): `identifier_spelling` restates `is_ident_start` and `is_ident_part`. Move it to lexer.odin, where those file-private helpers can express it, so the two cannot drift. (about 1 line)
 - [query_index.odin:9](src/query_index.odin#L9) and [queries.odin:536](src/queries.odin#L536): the latter hand-writes the bounds checks of `valid_query_span`; an empty span yields the same `text == ""` there, so it can call the helper.
 
 **Structure and boundaries**
@@ -5075,7 +4865,6 @@ A compact, sound orchestrator whose lifecycle ordering holds up. It carries abou
 
 - [session.odin:93](src/session.odin#L93) `configure_session`: `seed_defines`, `register_collections` and `configure_session` only return `error_count == 0`. Drop the bools, call both, and set `s.configured = s.compiler.error_count == 0` at line 66; a bad `-define` then no longer hides a bad `-collection` behind `&&`. (about 5 lines)
 - [session.odin:154](src/session.odin#L154) `finish_session_check`: `root` is `c.root_package` whenever it is read, and `compiled` is false only after a reported error (`load_source`, `load_package_dir`, `check_import_cycles`). Reduce to `finish_session_check(s, documentation)` with `if c.error_count == 0`. (2 parameters, about 1 line)
-- [session.odin:250](src/session.odin#L250) `is_config_name`: restates grammar.md `Identifier`, which [lexer.odin:218](src/lexer.odin#L218) `is_ident_start` and `is_ident_part` implement. Drop their file-private attribute and loop with `i == 0 ? is_ident_start(ch) : is_ident_part(ch)`. (about 4 lines)
 
 **Dead code**
 
@@ -5097,7 +4886,7 @@ A compact, sound orchestrator whose lifecycle ordering holds up. It carries abou
 **Structure and boundaries**
 
 - [session.odin:156](src/session.odin#L156): `finish_session_check` infers "this was a full check" from an empty `rechecked_packages`. Move the block to the full path after line 146, so the shared finish step only finishes and the two paths each record their own stats.
-- [session.odin:213](src/session.odin#L213): lines 213-299 parse `-define` and `-collection`, while the source map gives this file orchestration and `build_config.odin` build configuration. Move `seed_defines` and `is_config_name` to `build_config.odin`, and `register_collections` to `project.odin`, whose comment already states the `-collection` precedence.
+- [session.odin:213](src/session.odin#L213): lines 213-299 parse `-define` and `-collection`, while the source map gives this file orchestration and `build_config.odin` build configuration. Move `seed_defines` to `build_config.odin`, and `register_collections` to `project.odin`, whose comment already states the `-collection` precedence.
 
 **Comments**
 
@@ -5208,7 +4997,7 @@ Small, sound procedures for loading and diagnostics, sharing a file with the 380
 
 **Near copies**
 
-- [source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3355](src/check.odin#L3355) and [provenance_event.odin:185](src/provenance_event.odin#L185): each undoes `error_count` then frees or moves, then shrinks. Let `destroy_diagnostic` do the decrement and add one helper for `resize` plus the `last_noted_diagnostic` clamp, which provenance_event omits. (about 9 lines)
+- [source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3355](src/check.odin#L3355) and `prov_drop_event_diagnostics`: each shrinks and clamps `last_noted_diagnostic`, and `hold_diagnostics` also undoes `error_count` by hand. Add one helper for `resize` plus the clamp. (about 5 lines)
 - [source.odin:863](src/source.odin#L863), [source.odin:904](src/source.odin#L904), [check_builtin.odin:1368](src/check_builtin.odin#L1368), [erased.odin:613](src/erased.odin#L613), [generic.odin:3274](src/generic.odin#L3274) and [query_index.odin:9](src/query_index.odin#L9) test `span.file != NO_FILE && int(span.file) < len(c.sources)`. `span_source(c, span) -> ^Source` (nil if none) fits; `NO_FILE` is `max(u32)`, so the range test alone decides.
 - [source.odin:557](src/source.odin#L557) and [paths.odin:77](lsp/paths.odin#L77): both find the line of an offset by binary search in `line_starts`, the LSP's by hand. Export `line_of_offset(line_starts, offset)` for both; the LSP keeps its empty-list guard. (about 3 lines)
 

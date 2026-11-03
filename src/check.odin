@@ -3375,10 +3375,7 @@ check_partial_statement :: proc(k: ^Checker, s: ^Stmt_Error) {
 		diagnostic := k.c.diagnostics[index]
 		span := diagnostic.span
 		if span.file == s.span.file && span.lo >= s.span.lo && span.hi <= s.span.hi {
-			if diagnostic.severity == .Error {
-				k.c.error_count -= 1
-			}
-			destroy_diagnostic(k.c, &k.c.diagnostics[index])
+			discard_diagnostic(k.c, &k.c.diagnostics[index])
 			continue
 		}
 		k.c.diagnostics[kept] = diagnostic

@@ -1,0 +1,25 @@
+// design.md "@(cpu_dispatch=<string>)": a dispatcher's own names stay clear of
+// what a program spells. compiler-guide.md "CPU levels" documents the runtime's
+// processor check, so a program may bind it, and an exported name may spell
+// `loke.` too. Either was a redefinition in the module clang read.
+package main;
+
+import "core:fmt";
+
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_cpu_dispatch")
+	ask :: proc "c" (level: i32) -> i32 ---;
+}
+
+@(export, link_name="loke.cpu_dispatch.v3.state")
+state: i32 = 7;
+
+@(cpu_dispatch="x86-64-v3")
+work :: proc(a: int) -> int { return a + 1; }
+
+main :: proc() {
+	fmt.println(work(1));
+	fmt.println(state);
+	// Every processor runs the baseline.
+	fmt.println(ask(0));
+}

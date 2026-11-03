@@ -210,6 +210,34 @@ capture_literal_shape_ok :: proc(k: ^Checker, v: ^Expr_Composite) -> bool {
 	return ok
 }
 
+// design.md "Capture literals": in the body a captured name is the place it
+// captured, the receiver's field for a copy or a move and what the field
+// points at for a borrow.
+Capture_Rewrite :: struct {
+	receiver: Identifier_Id,
+	captures: map[Identifier_Id]Capture_Field,
+}
+
+// A capture's field, whose name the source cannot spell, and its mode.
+Capture_Field :: struct {
+	mode:  Capture_Mode,
+	field: Name,
+}
+
+rewrite_capture :: proc(c: ^Compiler, v: ^Expr_Ident) -> Expr {
+	field, captured := c.capture_rewrite.captures[identifier_of(c, v)]
+	if !captured {
+		return nil
+	}
+	return capture_field_place(c, c.capture_rewrite.receiver, field, v.span)
+}
+
+// `self.field`, or `self.field^` for a borrow, spelled at `span`.
+capture_field_place :: proc(c: ^Compiler, receiver_id: Identifier_Id, field: Capture_Field, span: Span) -> Expr {
+	selected := synth_selector(c, synth_ident(c, "self", receiver_id, span), field.field.text, span)
+	return field.mode == .Copy || field.mode == .Move ? selected : synth_deref(c, selected, span)
+}
+
 // `call :: proc(self, <the literal's parameters>) -> <its result> { <body> }`,
 // with every captured name in the body rewritten to the receiver's field.
 @(private = "file")

@@ -1279,6 +1279,14 @@ checklist.
 
 ### Fixed
 
+- `spawn total = work();` where `total` is a capture of the enclosing capture literal now reports
+  `L0728`. It crashed the compiler.
+- In a `@(cpu_dispatch)` copy, a `foreach`'s `iter` and `next`, a `hook(drop)` at a scope's end, and a
+  part's own `==` now reach copies for the level too. They ran as written, which gave the same
+  results more slowly ([@(cpu_dispatch)](design.md#cpu_dispatchstring)).
+- A program may bind `loke_rt_v1_cpu_dispatch`, or export a name spelling `loke.cpu_dispatch.v3.state`,
+  beside a dispatched procedure. Either was a redefinition that clang rejected.
+- Editor completion no longer offers `move_only` as a keyword.
 - An adapter stored over a mutable view that owns something now holds a clone of it, and one over a
   mutable view that cannot be copied borrows it read-only. The source and the view each dropped the
   same value, which freed it twice ([Iteration adapters](design.md#iteration-adapters)).

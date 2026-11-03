@@ -157,7 +157,7 @@ hidden_pool_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, pool_type: Type_
 	k.scope.names[alias] = new_associated_type(k.c, "Pool", pool_type, INVALID_TYPE)
 	pointer := new(Type_Pointer, k.c.semantic_allocator)
 	pointer.span = span
-	pointer.elem = synth_ident(k, "Pool", alias, span)
+	pointer.elem = synth_ident(k.c, "Pool", alias, span)
 	return hidden_declaration(k, PARALLEL_POOL, pointer, s.executor, span)
 }
 
@@ -168,11 +168,11 @@ hidden_scope_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, scope_type: Typ
 	span := s.keyword
 	alias := intern_identifier(k.c, "parallel$scope$type")
 	k.scope.names[alias] = new_associated_type(k.c, "Task_Scope", scope_type, INVALID_TYPE)
-	type := synth_ident(k, "Task_Scope", alias, span)
+	type := synth_ident(k.c, "Task_Scope", alias, span)
 	value: Expr
 	if pool != nil {
-		pooled := synth_selector(k.c, synth_ident(k, "Task_Scope", alias, span), "pooled", span)
-		executor := synth_ident(k, PARALLEL_POOL, intern_identifier(k.c, PARALLEL_POOL), span)
+		pooled := synth_selector(k.c, synth_ident(k.c, "Task_Scope", alias, span), "pooled", span)
+		executor := synth_ident(k.c, PARALLEL_POOL, intern_identifier(k.c, PARALLEL_POOL), span)
 		value = synth_call(k.c, pooled, {executor}, span)
 	} else {
 		composite := new(Expr_Composite, k.c.semantic_allocator)
@@ -236,7 +236,15 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	}
 	result_type := INVALID_TYPE
 	if s.result != nil {
-		result_type = check_expr(k, s.result, position = .Place)
+		if capture_place_of(k, s.result) != nil {
+			errorf(
+				k.c, s.result.span, "L0728",
+				"a task's result goes to a local variable declared before the `parallel` block, and `%s` is a capture",
+				s.result.name,
+			)
+		} else {
+			result_type = check_expr(k, s.result, position = .Place)
+		}
 	}
 	type := check_expr(k, call)
 	if s.result == nil {
@@ -432,7 +440,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 
 	frame_param := intern_identifier(c, "spawn$frame")
 	frame_of :: proc(k: ^Checker, id: Identifier_Id, span: Span) -> Expr {
-		return synth_ident(k, "spawn$frame", id, span)
+		return synth_ident(k.c, "spawn$frame", id, span)
 	}
 	stmts := make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
 	args := make([dynamic]Argument, 0, len(call.bound) + len(task.pack), c.semantic_allocator)
@@ -460,9 +468,9 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 		case .Owned:
 			local := fmt.aprintf("spawn$owned$%d", index, allocator = c.semantic_allocator)
 			local_id := intern_identifier(c, local)
-			taken := synth_call(c, synth_ident(k, "spawn$take", intern_identifier(c, "spawn$take"), span), {field}, span)
+			taken := synth_call(c, synth_ident(k.c, "spawn$take", intern_identifier(c, "spawn$take"), span), {field}, span)
 			append(&stmts, synth_var(c, local, local_id, taken, span))
-			value = synth_ident(k, local, local_id, span)
+			value = synth_ident(k.c, local, local_id, span)
 			if mode == .Move {
 				moved := new(Expr_Move, c.semantic_allocator)
 				moved.span = span
@@ -482,15 +490,15 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 		inner.callee = synth_selector(c, args[0].value, call.callee.(^Expr_Selector).name.text, span)
 		inner.args = args[1:]
 	} else {
-		inner.callee = synth_ident(k, "spawn$callee", callee_alias, span)
+		inner.callee = synth_ident(k.c, "spawn$callee", callee_alias, span)
 	}
 	made: Expr = inner
 	if result != INVALID_SYMBOL {
 		destination := synth_deref(c, synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_result_field(task)), span), span)
-		made = synth_call(c, synth_ident(k, "spawn$write", intern_identifier(c, "spawn$write"), span), {destination, inner}, span)
+		made = synth_call(c, synth_ident(k.c, "spawn$write", intern_identifier(c, "spawn$write"), span), {destination, inner}, span)
 	}
 	append(&stmts, synth_expr_stmt(c, made, span))
-	freed := synth_call(c, synth_ident(k, "spawn$free", intern_identifier(c, "spawn$free"), span), {frame_of(k, frame_param, span)}, span)
+	freed := synth_call(c, synth_ident(k.c, "spawn$free", intern_identifier(c, "spawn$free"), span), {frame_of(k, frame_param, span)}, span)
 	append(&stmts, synth_expr_stmt(c, freed, span))
 
 	// `proc(spawn$frame: ^mut <frame>)`, its type spelled as one more alias.
@@ -499,7 +507,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 	param_names := make([]Param_Name, 1, c.semantic_allocator)
 	param_names[0] = Param_Name{name = Name{text = "spawn$frame", span = span, id = frame_param}}
 	params := make([]Parameter, 1, c.semantic_allocator)
-	params[0] = Parameter{span = span, names = param_names, mode = .Value, type = synth_ident(k, "spawn$frame", frame_pointer, span)}
+	params[0] = Parameter{span = span, names = param_names, mode = .Value, type = synth_ident(k.c, "spawn$frame", frame_pointer, span)}
 	signature := new(Type_Proc, c.semantic_allocator)
 	signature.span = span
 	signature.params = params
@@ -570,11 +578,11 @@ spawn_repack :: proc(
 		}
 		local := fmt.aprintf("spawn$pack$owned$%d", index, allocator = c.semantic_allocator)
 		local_id := intern_identifier(c, local)
-		taken := synth_call(c, synth_ident(k, "spawn$take", intern_identifier(c, "spawn$take"), span), {operand}, span)
+		taken := synth_call(c, synth_ident(k.c, "spawn$take", intern_identifier(c, "spawn$take"), span), {operand}, span)
 		append(stmts, synth_var(c, local, local_id, taken, span))
 		moved := new(Expr_Move, c.semantic_allocator)
 		moved.span = span
-		moved.value = synth_ident(k, local, local_id, span)
+		moved.value = synth_ident(k.c, local, local_id, span)
 		append(args, Argument{span = span, value = moved})
 	}
 }
@@ -636,15 +644,13 @@ synth_name :: proc(c: ^Compiler, text: string, span: Span) -> Name {
 	return Name{text = text, span = span, id = intern_identifier(c, text)}
 }
 
-@(private = "file")
-synth_ident :: proc(k: ^Checker, text: string, id: Identifier_Id, span: Span) -> ^Expr_Ident {
-	ident := new(Expr_Ident, k.c.semantic_allocator)
+synth_ident :: proc(c: ^Compiler, text: string, id: Identifier_Id, span: Span) -> ^Expr_Ident {
+	ident := new(Expr_Ident, c.semantic_allocator)
 	ident.span = span
 	ident.name, ident.name_id = text, id
 	return ident
 }
 
-@(private = "file")
 synth_selector :: proc(c: ^Compiler, operand: Expr, field: string, span: Span) -> Expr {
 	selector := new(Expr_Selector, c.semantic_allocator)
 	selector.span = span
@@ -653,7 +659,6 @@ synth_selector :: proc(c: ^Compiler, operand: Expr, field: string, span: Span) -
 	return selector
 }
 
-@(private = "file")
 synth_deref :: proc(c: ^Compiler, operand: Expr, span: Span) -> Expr {
 	deref := new(Expr_Postfix, c.semantic_allocator)
 	deref.span = span
@@ -697,7 +702,7 @@ synth_record :: proc(k: ^Checker, name, alias_prefix: string, field_names: []str
 		k.scope.names[alias] = new_associated_type(c, alias_prefix, type, INVALID_TYPE)
 		names := make([]Name, 1, c.semantic_allocator)
 		names[0] = synth_name(c, field_names[index], span)
-		record.fields[index] = Field{span = span, names = names, type = synth_ident(k, alias_prefix, alias, span)}
+		record.fields[index] = Field{span = span, names = names, type = synth_ident(k.c, alias_prefix, alias, span)}
 	}
 	decl := synth_const(k, name, intern_identifier(c, name), record, span)
 	check_local_declaration(k, decl)

@@ -33,10 +33,12 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	}
 	// `emit_runtime_declarations` already declares these for `wmain`, and
 	// `core:thread` binds them for the threads it starts; `core:process` binds
-	// the flush a failing `main`'s report makes.
+	// the flush a failing `main`'s report makes. The processor check a dispatcher
+	// calls is a documented entry a program may bind too.
 	seen["@loke_rt_v1_thread_attach"] = true
 	seen["@loke_rt_v1_thread_detach"] = true
 	seen["@loke_rt_v1_flush_stdout"] = true
+	seen["@loke_rt_v1_cpu_dispatch"] = true
 	// Declared above baseline, for the entry's or an object's check, which
 	// `tests/trap/cpu_level_unknown.loke` also binds.
 	if e.c.target.features != {} {
@@ -631,12 +633,12 @@ returns_sret :: proc(e: ^Emitter, result: Type_Id, inout: bool) -> bool {
 // `ptr %sret, ` ahead of a procedure's own parameters when its result is
 // large; the procedure then returns with `emit_ret`.
 @(private)
-sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false, last := false) -> string {
+sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
 	if !returns_sret(e, result, inout) {
 		return ""
 	}
 	e.abi_sret = "%sret"
-	return last ? "ptr %sret" : "ptr %sret, "
+	return "ptr %sret, "
 }
 
 @(private)

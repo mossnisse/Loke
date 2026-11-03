@@ -677,7 +677,12 @@ report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 
 check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mode: Param_Mode, subject: string) -> bool {
 	if mode == .Borrow {
-		return check_borrow_argument(k, value)
+		if field, packed := packed_field_reached(k, value); packed {
+			errorf(k.c, expr_span(value), "L0614", "cannot borrow `%s`: it is reached through a packed struct", field)
+			return false
+		}
+		request_materialization(k, value)
+		return true
 	}
 	if mode != .Inout {
 		return true
@@ -699,10 +704,8 @@ check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mod
 	// caller's variable itself, so no conversion may stand between them.
 	if base != nil && (base.type != target || expression_converts_storage(value)) {
 		found := base.type
-		for from in ([]Type_Id{base.view_from, base.erased_from, base.splat_from, base.widened_from}) {
-			if from != INVALID_TYPE {
-				found = from
-			}
+		if from := conversion_source(base); from != INVALID_TYPE {
+			found = from
 		}
 		errorf(
 			k.c, expr_span(value), "L0310", "%s must be a `%s`, found `%s`",

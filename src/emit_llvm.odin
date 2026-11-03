@@ -64,7 +64,7 @@ Emitter :: struct {
 	bodies:           map[Symbol_Id]^Expr_Proc,
 	cpu_copies:       map[Cpu_Copy]string,
 	unwritten_copies: [dynamic]Cpu_Copy,
-	dispatch_checks:  map[Cpu_Level]string,
+	dispatch_checks:  [Cpu_Level]string,
 }
 
 // The only `Emitter` literal, so no map is left uninitialized.
@@ -92,7 +92,6 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		bodies       = make(map[Symbol_Id]^Expr_Proc),
 		cpu_copies   = make(map[Cpu_Copy]string),
 		unwritten_copies = make([dynamic]Cpu_Copy),
-		dispatch_checks = make(map[Cpu_Level]string),
 	}
 	strings.builder_init(&e.b)
 	return e
@@ -624,6 +623,34 @@ cold_attributes :: proc(symbol: ^Symbol) -> string {
 	return symbol.decl != nil && has_attribute(symbol.decl.attributes, "cold") ? " cold noinline" : ""
 }
 
+// A Loke procedure's parameters as its definition spells them.
+@(private)
+loke_param_list :: proc(e: ^Emitter, symbol: ^Symbol, inout: bool) -> string {
+	params := make([dynamic]string)
+	if returns_sret(e, symbol.result, inout) {
+		e.abi_sret = "%sret"
+		append(&params, "ptr %sret")
+	}
+	for parameter, index in symbol.params {
+		mode := symbol_param_mode(e.c, symbol, index)
+		append(&params, fmt.aprintf("%s%s %%arg%d", param_llvm(e, parameter, mode), param_nonnull(e, parameter, mode), index))
+	}
+	return strings.join(params[:], ", ")
+}
+
+// Calls `callee` and returns what it returned.
+@(private)
+emit_forward_ret :: proc(e: ^Emitter, call_word, result, callee, arguments: string) {
+	if result == "void" {
+		fmt.sbprintfln(&e.b, "  %s void %s(%s)", call_word, callee, arguments)
+		fmt.sbprintln(&e.b, "  ret void")
+		return
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = %s %s %s(%s)", out, call_word, result, callee, arguments)
+	fmt.sbprintfln(&e.b, "  ret %s %s", result, out)
+}
+
 // The procedure's own function, under `llvm_name`; a foreign-convention one is
 // a guard's body, which no caller may inline (`emit_foreign_entry_guard`). With
 // `copy_cpu`, the copy compiled for that level.
@@ -644,19 +671,11 @@ emit_proc_definition :: proc(
 	if e.abi_foreign {
 		emit_foreign_signature(e, symbol, llvm_name)
 	} else {
-		fmt.sbprintf(
-			&e.b, "define %s%s %s(",
+		fmt.sbprintfln(
+			&e.b, "define %s%s %s(%s)%s%s {{",
 			llvm_linkage(llvm_name), llvm_result_type(e, symbol.result, e.result_inout), llvm_name,
+			loke_param_list(e, symbol, e.result_inout), cold_attributes(symbol), copy_attributes(e),
 		)
-		fmt.sbprint(&e.b, sret_param(e, symbol.result, e.result_inout, last = len(symbol.params) == 0))
-		for parameter, index in symbol.params {
-			if index > 0 {
-				fmt.sbprint(&e.b, ", ")
-			}
-			mode := symbol_param_mode(e.c, symbol, index)
-			fmt.sbprintf(&e.b, "%s%s %%arg%d", param_llvm(e, parameter, mode), param_nonnull(e, parameter, mode), index)
-		}
-		fmt.sbprintfln(&e.b, ")%s%s {{", cold_attributes(symbol), copy_attributes(e))
 	}
 	debug_mark_proc(e, symbol_id)
 	fmt.sbprintln(&e.b, "entry:")

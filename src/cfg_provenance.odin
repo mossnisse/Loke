@@ -2519,7 +2519,7 @@ prov_materialize_view_publish :: proc(graph: ^Flow_Graph, op: Prov_Event_View_Pu
 	aliases, current, expansion := output.region_aliases, output.current, output.expansion
 	output.region_aliases, output.current, output.expansion = graph.region_aliases, graph.current, graph.expansion
 	defer output.region_aliases, output.current, output.expansion = aliases, current, expansion
-	first := graph.current == NO_BLOCK ? 0 : len(output.blocks[graph.current].prov)
+	first := prov_next_event(output)
 	prov_publish_view_content(output, prov_root_for_symbol(output, op.symbol), nil, op.path, op.sources, op.span, op.type, op.through)
 	if graph.current == NO_BLOCK { return }
 	// The events are the materialization's, which replaces the site's.
@@ -5463,6 +5463,16 @@ prov_materialize_reset :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset) {
 	prov_emit(graph, event)
 }
 
+// What a result already handed to the caller holds while its return's
+// deferred statements run.
+@(private = "file")
+prov_returning_region :: proc(graph: ^Flow_Graph, returning: Prov_Returning) -> Region_Set {
+	if propagated, known := returning.propagated.?; known {
+		return prov_reset_fields_region(graph, returning.result, prov_error_region_fields(graph, propagated, returning.result))
+	}
+	return prov_reset_value_region(graph, returning.value)
+}
+
 // design.md "Temporaries and procedure boundaries": a converted view still
 // lends from its managed temporary until that root's actual cleanup boundary.
 @(private = "file")
@@ -6557,7 +6567,7 @@ prov_note_walk_reads :: proc(graph: ^Flow_Graph, walk: ^[dynamic]Prov_Event_At, 
 }
 
 // The index of the next event in the current block.
-@(private = "file")
+@(private)
 prov_next_event :: proc(graph: ^Flow_Graph) -> int {
 	return graph.current == NO_BLOCK ? 0 : len(graph.blocks[graph.current].prov)
 }
@@ -7724,10 +7734,7 @@ prov_names_same_place :: proc(c: ^Compiler, a, b: Expr) -> bool {
 		equal, comparable := const_equal(c, x.const_value, y.const_value)
 		return x.is_const && y.is_const && comparable && equal
 	}
-	converted :: proc(e: ^Expr_Base) -> bool {
-		return e.erased_from != INVALID_TYPE || e.view_from != INVALID_TYPE || e.splat_from != INVALID_TYPE || e.widened_from != INVALID_TYPE
-	}
-	if converted(x) || converted(y) {
+	if conversion_source(x) != INVALID_TYPE || conversion_source(y) != INVALID_TYPE {
 		return false
 	}
 	#partial switch first in a {

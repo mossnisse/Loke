@@ -54,6 +54,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_flush_stdout()")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_cpu_dispatch(i32)")
 	// Only where the entry or an object's constructor calls it, so a baseline
 	// program's own binding is its only declaration; above baseline,
 	// `emit_foreign_declarations` skips that binding.
@@ -1717,19 +1718,6 @@ emit_forwarding_call :: proc(
 		append(&args, fmt.tprintf("%s %%arg%d", param_llvm(e, symbol.params[position], signature.param_modes[position]), position))
 	}
 	joined := strings.join(args[:], ", ", context.temp_allocator)
-	call := ""
-	if sret {
-		fmt.sbprintfln(&e.b, "  call void %s(%s)", callee, joined)
-	} else if symbol.result != INVALID_TYPE {
-		call = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", call, result_type, callee, joined)
-	} else {
-		fmt.sbprintfln(&e.b, "  call void %s(%s)", callee, joined)
-	}
-	if symbol.result == INVALID_TYPE || sret {
-		fmt.sbprintln(&e.b, "  ret void")
-	} else {
-		fmt.sbprintfln(&e.b, "  ret %s %s", result_type, call)
-	}
+	emit_forward_ret(e, "call", sret || symbol.result == INVALID_TYPE ? "void" : result_type, callee, joined)
 	fmt.sbprintln(&e.b, "}")
 }

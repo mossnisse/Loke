@@ -19,15 +19,6 @@ written_query_binding :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
 	return text == identifier_text(c, symbol.name) && identifier_spelling(text)
 }
 
-@(private)
-identifier_spelling :: proc(text: string) -> bool {
-	if text == "" || (text[0] >= '0' && text[0] <= '9') { return false }
-	for b in transmute([]byte)text {
-		if !(b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')) { return false }
-	}
-	return true
-}
-
 @(private = "file")
 query_index_enter :: proc(index: ^Query_Index, node: rawptr) -> bool {
 	if node == nil || index.visited[node] { return false }

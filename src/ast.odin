@@ -689,6 +689,18 @@ Type_Interface :: struct {
 }
 
 // Exhaustive, so a new node kind is a compile error here.
+conversion_source :: proc(base: ^Expr_Base) -> Type_Id {
+	for from in ([]Type_Id{base.widened_from, base.splat_from, base.erased_from, base.view_from}) {
+		if from != INVALID_TYPE { return from }
+	}
+	return INVALID_TYPE
+}
+
+expression_converts_storage :: proc(value: Expr) -> bool {
+	base := expr_base(value)
+	return base != nil && conversion_source(base) != INVALID_TYPE
+}
+
 expr_base :: proc(e: Expr) -> ^Expr_Base {
 	switch v in e {
 	case ^Expr_Error:

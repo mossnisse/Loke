@@ -633,7 +633,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	subject_type := param_llvm(e, iter_sym.params[0], subject_mode)
 	iterator_type := llvm_type(e, s.iterator_type)
 	iterator := alloca(e, iterator_type)
-	made := emit_call_result(e, s.iterator_type, symbol_name(e, s.iter_symbol), fmt.aprintf("%s %s", subject_type, subject))
+	made := emit_call_result(e, s.iterator_type, callee_name(e, s.iter_symbol), fmt.aprintf("%s %s", subject_type, subject))
 	store(e, s.iterator_type, made, iterator)
 	register_scope_place(e, s.iterator_type, iterator)
 
@@ -647,7 +647,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	place_label(e, loop.head)
 	yielded := foreach_yielded_type(e, s)
 	option := symbol_of(e.c, s.next_symbol).result
-	produced := emit_call_result(e, option, symbol_name(e, s.next_symbol), fmt.aprintf("ptr %s", iterator))
+	produced := emit_call_result(e, option, callee_name(e, s.next_symbol), fmt.aprintf("ptr %s", iterator))
 	ok := emit_union_tag_is(e, option, produced, union_index_of(e.c, option, "some"))
 	slot := emit_union_spill(e, option, produced)
 	branch_if(e, ok, loop.body, loop.done)

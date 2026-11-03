@@ -10505,11 +10505,14 @@ scope with a body, is not generic, and has the Loke calling convention.
 
 When the build's level is below the named one, the procedure is emitted twice:
 once for the build's level, and once for the named level, and that copy's
-direct calls reach copies of their callees for the same level, made the same
+direct calls, including a `foreach`'s `iter` and `next` and the `hook(drop)` at a
+scope's end, reach copies of their callees for the same level, made the same
 way. A call to the procedure, direct or through a procedure value, asks once
 per process whether the processor has the level and runs one copy or the other.
 A call a copy makes through a procedure value or a `dyn` value reaches the
-procedure as written. The copies are one procedure: one procedure value, and
+procedure as written, and so does one in code the compiler shares between
+levels, such as a generated copy of a value, a container's drop of its elements,
+or a task's start. The copies are one procedure: one procedure value, and
 one of each of its `static` variables. At the named level or above, the
 attribute has no effect.
 

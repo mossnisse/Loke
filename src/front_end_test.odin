@@ -840,6 +840,20 @@ static self slot using delegate thread_local manual
 	}
 }
 
+// `reserved_keyword` and `any_keyword` read the enum's ranges, and the lexer stops
+// at the table's first contextual row.
+@(test)
+keyword_table_lists_every_keyword_in_enum_order :: proc(t: ^testing.T) {
+	kind := Token_Kind.Break
+	for keyword in keyword_table {
+		testing.expect_value(t, keyword.kind, kind)
+		testing.expect_value(t, keyword.text, strings.to_lower(fmt.tprint(keyword.kind), context.temp_allocator))
+		kind = Token_Kind(int(kind) + 1)
+	}
+	testing.expect_value(t, kind, Token_Kind.Move_Only)
+	testing.expect(t, !any_keyword(.Move_Only) && !reserved_keyword(.Move_Only), "`move_only` is a name")
+}
+
 // `operator` takes the first match in `operator_table`, so longer operators
 // must come first to honour grammar.md's longest match.
 @(test)

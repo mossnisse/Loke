@@ -126,22 +126,12 @@ percent_decode :: proc(text: string, allocator := context.allocator) -> (string,
 			continue
 		}
 		if i + 2 >= len(text) { return "", false }
-		hi, lo := hex_value(text[i + 1]), hex_value(text[i + 2])
-		if hi < 0 || lo < 0 { return "", false }
+		hi, lo := lokec.digit_value(text[i + 1]), lokec.digit_value(text[i + 2])
+		if hi >= 16 || lo >= 16 { return "", false }
 		strings.write_byte(&b, u8(hi << 4 | lo))
 		i += 2
 	}
 	return strings.to_string(b), true
-}
-
-@(private = "file")
-hex_value :: proc(ch: u8) -> int {
-	switch ch {
-	case '0' ..= '9': return int(ch - '0')
-	case 'a' ..= 'f': return int(ch - 'a' + 10)
-	case 'A' ..= 'F': return int(ch - 'A' + 10)
-	}
-	return -1
 }
 
 @(private = "file")

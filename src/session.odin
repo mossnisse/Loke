@@ -220,7 +220,7 @@ seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
 		}
 		name := entry[:split]
 		text := entry[split + 1:]
-		if !is_config_name(name) {
+		if !identifier_spelling(name) {
 			errorf(c, no_span(), "L0388", "`%s` is not a valid configuration name", name)
 			continue
 		}
@@ -242,18 +242,6 @@ seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
 		}
 	}
 	return c.error_count == 0
-}
-
-@(private = "file")
-is_config_name :: proc(name: string) -> bool {
-	for i in 0 ..< len(name) {
-		ch := name[i]
-		letter := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
-		if !letter && !(i > 0 && ch >= '0' && ch <= '9') {
-			return false
-		}
-	}
-	return len(name) > 0
 }
 
 // Explicit entries replace bundled `base:` and `core:` roots.

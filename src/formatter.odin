@@ -424,11 +424,6 @@ spaced_keyword :: proc(kind: Token_Kind) -> bool {
 	return false
 }
 
-@(private = "file")
-is_keyword :: proc(kind: Token_Kind) -> bool {
-	return kind >= .Break && kind <= .Where
-}
-
 // The whitespace between the last token and `next` on one line. `written` is
 // what the author put there; where no rule decides, it is kept.
 @(private = "file")
@@ -485,10 +480,10 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 				return written
 			}
 		}
-		if operand || is_keyword(last) && (next.kind == .Lparen || last == .Map) {
+		if operand || any_keyword(last) && (next.kind == .Lparen || last == .Map) {
 			return ""
 		}
-		if is_keyword(last) {
+		if any_keyword(last) {
 			return at_least_one // `impl []int`, `return [2]int{1, 2}`
 		}
 	case .Caret, .Question:
@@ -514,7 +509,7 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 	if l.last_tight {
 		return ""
 	}
-	if binary_operator(last) || is_keyword(last) {
+	if binary_operator(last) || any_keyword(last) {
 		return at_least_one
 	}
 	return written

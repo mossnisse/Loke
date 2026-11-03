@@ -3,8 +3,6 @@
 // recorded inputs are materialized again and replace those events.
 package lokec
 
-import "core:slice"
-
 // Where a reset's region comes from: fixed by the walk, the region of a value,
 // or the providers of live owners that something may have been lent.
 Prov_Reset_Indirect :: struct { owners: []Symbol_Id }
@@ -28,11 +26,8 @@ Prov_Event_Reset :: struct {
 // A result handed back by `return` or a propagated error; `sources` and `into`
 // are its settled carrier slots.
 Prov_Event_Escape :: struct {
-	sources, into: []int,
-	span:          Span,
-	value:         Value_Id,
-	propagated:    Maybe(Prov_Form_Error),
-	result:        Type_Id,
+	sources, into:   []int,
+	using returning: Prov_Returning,
 }
 
 // An owner stored into `target`'s storage, which may outlive its region.
@@ -123,18 +118,40 @@ Prov_Root_Region :: struct {
 	receiver: Value_Id,
 }
 
-// `first` and `count` are the construction events the operation produced in
-// `block`, and `diagnostics` its construction diagnostics; `sequence` orders
-// it among the fact operations. The walk state it reads is the site's.
-Prov_Event_Site :: struct {
-	operation:      Prov_Event_Operation,
+// Where a recorded operation ran. `first` and `count` are the construction events
+// it produced in `block`; `sequence` orders it among all the recorded operations.
+// The rest is the walk state it reads.
+Prov_Site :: struct {
 	block:          Block_Id,
 	expansion:      Defer_Expansion,
 	first, count:   int,
 	sequence:       int,
 	parallel_depth: int,
 	task:           int,
-	diagnostics:    [2]int,
+}
+
+// `diagnostics` are the operation's construction diagnostics.
+Prov_Event_Site :: struct {
+	operation:   Prov_Event_Operation,
+	using at:    Prov_Site,
+	diagnostics: [2]int,
+}
+
+// The site of an operation starting now, for the caller to number.
+@(private)
+prov_site_here :: proc(graph: ^Flow_Graph) -> Prov_Site {
+	return Prov_Site {
+		block = graph.current, expansion = graph.expansion, first = prov_next_event(graph),
+		parallel_depth = graph.parallel_depth, task = prov_task_index(graph),
+	}
+}
+
+// Puts `graph` where `site` ran, and answers where its events will start.
+@(private = "file")
+prov_enter_site :: proc(graph: ^Flow_Graph, site: Prov_Site) -> int {
+	graph.current, graph.expansion = site.block, site.expansion
+	graph.parallel_depth, graph.task_effects, graph.task_index = site.parallel_depth, site.task >= 0, site.task
+	return prov_next_event(graph)
 }
 
 // The task site a spawned call's effects reserve for, or -1.
@@ -155,43 +172,32 @@ prov_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operation) {
 		prov_materialize_event(graph, operation)
 		return
 	}
-	first := graph.current == NO_BLOCK ? 0 : len(graph.blocks[graph.current].prov)
+	at := prov_site_here(graph)
 	reported := len(graph.k.c.diagnostics)
 	prov_materialize_event(graph, operation)
+	at.count = prov_next_event(graph) - at.first
+	// After what the materialization itself recorded.
 	program.sequence += 1
-	append(&program.events, Prov_Event_Site {
-		operation = operation, block = graph.current, expansion = graph.expansion,
-		first = first, count = graph.current == NO_BLOCK ? 0 : len(graph.blocks[graph.current].prov) - first,
-		sequence = program.sequence, parallel_depth = graph.parallel_depth, task = prov_task_index(graph),
-		diagnostics = {reported, len(graph.k.c.diagnostics)},
-	})
+	at.sequence = program.sequence
+	append(&program.events, Prov_Event_Site{operation = operation, at = at, diagnostics = {reported, len(graph.k.c.diagnostics)}})
 }
 
 // The construction diagnostics of recorded events, which their settled
 // materialization reports again.
 @(private)
 prov_drop_event_diagnostics :: proc(c: ^Compiler, program: ^Prov_Effect_Program) {
-	kept := -1
-	next := 0
-	for index := 0; index < len(c.diagnostics); index += 1 {
+	kept, next := 0, 0
+	for index in 0 ..< len(c.diagnostics) {
 		for next < len(program.events) && program.events[next].diagnostics[1] <= index { next += 1 }
-		dropped := false
-		if next < len(program.events) {
-			range := program.events[next].diagnostics
-			dropped = range[0] <= index && index < range[1]
-		}
-		if dropped {
-			if kept < 0 { kept = index }
-			if c.diagnostics[index].severity == .Error { c.error_count -= 1 }
-			destroy_diagnostic(c, &c.diagnostics[index])
+		if next < len(program.events) && program.events[next].diagnostics[0] <= index {
+			discard_diagnostic(c, &c.diagnostics[index])
 			continue
 		}
-		if kept >= 0 {
-			c.diagnostics[kept] = c.diagnostics[index]
-			kept += 1
-		}
+		c.diagnostics[kept] = c.diagnostics[index]
+		kept += 1
 	}
-	if kept >= 0 { resize(&c.diagnostics, kept) }
+	resize(&c.diagnostics, kept)
+	c.last_noted_diagnostic = min(c.last_noted_diagnostic, kept)
 }
 
 @(private)
@@ -228,7 +234,6 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 				name = "storage that lasts for the whole process", region = region,
 			})
 		}
-	case: unreachable()
 	}
 }
 
@@ -251,101 +256,82 @@ prov_materialize_escape :: proc(graph: ^Flow_Graph, op: Prov_Event_Escape) {
 	})
 }
 
-// What a result already handed to the caller holds while its return's
-// deferred statements run.
-@(private)
-prov_returning_region :: proc(graph: ^Flow_Graph, returning: Prov_Returning) -> Region_Set {
-	if propagated, known := returning.propagated.?; known {
-		return prov_reset_fields_region(graph, returning.result, prov_error_region_fields(graph, propagated, returning.result))
-	}
-	return prov_reset_value_region(graph, returning.value)
+// One recorded operation's events: `count` construction events from `first` give
+// way to `length` from `start` in `final`'s block. A fact operation keeps the ones
+// the walk owns.
+@(private = "file")
+Prov_Replacement :: struct {
+	first, count:  int,
+	fact:          bool,
+	start, length: int,
 }
 
 // Replaces the construction graph's fact-dependent events with ones built
 // from the settled facts in `final`, a fact graph seeded with them.
 @(private)
 prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect_Program) {
-	Replacement :: struct {
-		first, count: int,
-		fact:         bool,
-		events:       []Prov_Event,
-	}
 	// Interleaved in recorded order, so each event sees the flow-sensitive
 	// replay state, such as a borrowed binding's region aliases, of its site.
 	// Each block's replacements are therefore appended in recorded order too,
 	// which is the order of their ranges. Summary outputs read from facts are
 	// rebuilt into `graph`.
-	by_block := make([][dynamic]Replacement, len(graph.blocks), graph.alloc)
-	for &replacements in by_block { replacements = make([dynamic]Replacement, graph.alloc) }
+	by_block := make([][dynamic]Prov_Replacement, len(graph.blocks), graph.alloc)
+	for &replacements in by_block { replacements = make([dynamic]Prov_Replacement, graph.alloc) }
 	final.materialized = graph
 	defer final.materialized = nil
 	graph.allocator_use = {}
 	for &site in graph.task_sites { site.reserve = {} }
 	facts, events := 0, 0
 	for facts < len(program.operations) || events < len(program.events) {
-		if events == len(program.events) || (facts < len(program.operations) && program.operations[facts].sequence < program.events[events].sequence) {
-			site := program.operations[facts]
-			facts += 1
-			final.current, final.expansion = site.block, site.expansion
-			final.parallel_depth, final.task_effects, final.task_index = site.parallel_depth, site.task >= 0, site.task
+		fact := events == len(program.events) || (facts < len(program.operations) && program.operations[facts].sequence < program.events[events].sequence)
+		at := fact ? program.operations[facts].at : program.events[events].at
+		start := prov_enter_site(final, at)
+		if fact {
 			// A replayed fact operation reports nothing: its construction did.
-			diagnostics := len(graph.k.c.diagnostics)
-			defer truncate_diagnostics(graph.k.c, diagnostics)
-			first := site.block == NO_BLOCK ? 0 : len(final.blocks[site.block].prov)
-			prov_replay_fact_operation(final, site.operation)
-			if site.block == NO_BLOCK { continue }
-			emitted := slice.clone(final.blocks[site.block].prov[first:], graph.alloc)
-			for event in emitted { assert(event.kind in PROV_FACT_EVENTS, "fact replay emitted an event the walk owns") }
-			append(&by_block[site.block], Replacement{site.first, site.count, true, emitted})
-			continue
+			reported := len(graph.k.c.diagnostics)
+			prov_replay_fact_operation(final, program.operations[facts].operation)
+			assert(len(graph.k.c.diagnostics) == reported, "fact replay reported a diagnostic")
+			facts += 1
+		} else {
+			prov_materialize_event(final, program.events[events].operation)
+			events += 1
 		}
-		site := program.events[events]
-		events += 1
-		final.current, final.expansion = site.block, site.expansion
-		final.parallel_depth, final.task_effects, final.task_index = site.parallel_depth, site.task >= 0, site.task
-		first := site.block == NO_BLOCK ? 0 : len(final.blocks[site.block].prov)
-		prov_materialize_event(final, site.operation)
-		if site.block == NO_BLOCK { continue }
-		append(&by_block[site.block], Replacement{site.first, site.count, false, slice.clone(final.blocks[site.block].prov[first:], graph.alloc)})
+		if at.block == NO_BLOCK { continue }
+		emitted := final.blocks[at.block].prov[start:]
+		if fact {
+			for event in emitted { assert(event.kind in PROV_FACT_EVENTS, "fact replay emitted an event the walk owns") }
+		}
+		if at.count > 0 || len(emitted) > 0 {
+			append(&by_block[at.block], Prov_Replacement{at.first, at.count, fact, start, len(emitted)})
+		}
 	}
 	for entry in program.root_regions {
 		graph.roots[int(entry.root)].region, _ = prov_handle_region(final, entry.call, entry.receiver)
 	}
-	graph.has_region_event = false
-	window := graph.has_window_event
-	for &replacements, index in by_block {
-		block := graph.blocks[index]
-		if len(replacements) > 0 {
-			old := block.prov
-			spliced := make([dynamic]Prov_Event, 0, len(old), graph.alloc)
-			cursor := 0
-			for replacement in replacements {
-				assert(replacement.first >= cursor, "recorded event ranges overlap")
-				append(&spliced, ..old[cursor:replacement.first])
-				for event in old[replacement.first:][:replacement.count] {
-					if replacement.fact && event.kind not_in PROV_FACT_EVENTS { append(&spliced, event) }
-				}
-				append(&spliced, ..replacement.events)
-				cursor = replacement.first + replacement.count
-			}
-			append(&spliced, ..old[cursor:])
-			block.prov = spliced
-		}
-		for event in block.prov {
-			switch event.kind {
-			case .Reset, .Region_Escape:
-				graph.has_region_event = true
-			case .Escape:
-				graph.has_region_event ||= !region_is_empty(event.region)
-				for content in event.region_content { graph.has_region_event ||= !region_is_empty(content.region) }
-			case .Region_Use:
-				window = true
-			case .Def, .Live, .Access, .Root_End, .Rebind, .Retain, .Publish, .Load, .Rearrange, .Through, .Reach, .Cross,
-			     .Task_Start, .Task_Join, .Shared_Effect:
-			}
-		}
+	for replacements, index in by_block {
+		if len(replacements) > 0 { prov_splice_events(graph, graph.blocks[index], final.blocks[index].prov[:], replacements[:]) }
 	}
-	graph.has_window_event = window
+	// Facts only grow, so `final` flags whatever its replacements need.
+	graph.has_region_event ||= final.has_region_event
+	graph.has_window_event ||= final.has_window_event
+}
+
+@(private = "file")
+prov_splice_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, settled: []Prov_Event, replacements: []Prov_Replacement) {
+	old := block.prov
+	spliced := make([dynamic]Prov_Event, 0, len(old), graph.alloc)
+	cursor := 0
+	for replacement in replacements {
+		assert(replacement.first >= cursor, "recorded event ranges overlap")
+		append(&spliced, ..old[cursor:replacement.first])
+		for event in old[replacement.first:][:replacement.count] {
+			if replacement.fact && event.kind not_in PROV_FACT_EVENTS { append(&spliced, event) }
+		}
+		append(&spliced, ..settled[replacement.start:][:replacement.length])
+		cursor = replacement.first + replacement.count
+	}
+	append(&spliced, ..old[cursor:])
+	block.prov = spliced
 }
 
 @(private = "file")

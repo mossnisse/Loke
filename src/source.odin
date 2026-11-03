@@ -648,16 +648,21 @@ destroy_diagnostic :: proc(c: ^Compiler, d: ^Diagnostic) {
 	d^ = {}
 }
 
+// Undoes one report: its `error_count` and what it owns.
+discard_diagnostic :: proc(c: ^Compiler, d: ^Diagnostic) {
+	if d.severity == .Error {
+		c.error_count -= 1
+	}
+	destroy_diagnostic(c, d)
+}
+
 // Rolls the list back to `length`, undoing the `error_count` the dropped errors
 // raised: a speculative check that reports and then rolls back must leave the
 // compilation exactly as it found it.
 truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 	wanted := clamp(length, 0, len(c.diagnostics))
 	for index := wanted; index < len(c.diagnostics); index += 1 {
-		if c.diagnostics[index].severity == .Error {
-			c.error_count -= 1
-		}
-		destroy_diagnostic(c, &c.diagnostics[index])
+		discard_diagnostic(c, &c.diagnostics[index])
 	}
 	resize(&c.diagnostics, wanted)
 	// An instantiation stack is remembered by the length that attached it, so a

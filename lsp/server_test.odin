@@ -948,6 +948,9 @@ completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
 		labels := strings.split(completion_labels(reply, kinds = true), " ", context.temp_allocator)
 		testing.expectf(t, len(labels) > 6 && labels[0] == "inner/6" && labels[1] == "c/6" && labels[2] == "p/6", "names: %v", labels)
 		testing.expect(t, slice.contains(labels, listed ? "Point/22" : "Point/7") && slice.contains(labels, "lib/9") && slice.contains(labels, "add/3") && slice.contains(labels, "int/7"))
+		// grammar.md "Keywords": `move_only` is a name, and `or_else` is spelled as written.
+		testing.expect(t, completion_item(reply, "or_else") != nil && completion_item(reply, "where") != nil)
+		testing.expect(t, completion_item(reply, "move_only") == nil)
 		testing.expect(t, !slice.contains(labels, "later/6") && !slice.contains(labels, "x/5") && !slice.contains(labels, "twice/3"))
 		keyword, _ := member_int(completion_item(reply, "foreach"), "kind")
 		testing.expect_value(t, keyword, i64(Completion_Kind.Keyword))

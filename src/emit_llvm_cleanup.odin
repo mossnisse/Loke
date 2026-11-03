@@ -1093,7 +1093,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	}
 	receiver_type, receiver := call_receiver_operand(e, hook, type, value)
 	return emit_call_result(
-		e, type, symbol_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, provider),
+		e, type, callee_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, provider),
 	)
 }
 
@@ -1151,7 +1151,7 @@ emit_clone_call :: proc(
 	result := clone_result_of(e, hook)
 	receiver_type, receiver := call_receiver_operand(e, hook, subject, value)
 	returned := emit_call_result(
-		e, result, symbol_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, allocator),
+		e, result, callee_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, allocator),
 	)
 	slot := emit_union_spill(e, result, returned)
 	failed = emit_union_failed(e, result, returned)
@@ -1736,7 +1736,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 @(private = "file")
 emit_drop_hook :: proc(e: ^Emitter, hook: Symbol_Id, address: string) {
 	if hook != INVALID_SYMBOL {
-		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", symbol_name(e, hook), address)
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", callee_name(e, hook), address)
 	}
 }
 

@@ -730,7 +730,7 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 			continue
 		}
 		// Clone before annotating: one declaration serves many applications.
-		call, is_call := clone_requirement_syntax(k.c, requirement).expr.(^Expr_Call)
+		call, is_call := clone_expr(k.c, requirement.expr).(^Expr_Call)
 		if !is_call {
 			continue
 		}
