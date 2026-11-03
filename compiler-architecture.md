@@ -125,8 +125,9 @@ resolved, since its body's names belong to another scope.
 ### Disposable control-flow graphs
 
 `cfg.odin` builds `Flow_Graph` blocks referencing typed AST nodes.
-`cfg_provenance.odin` supplies carrier projections, allocator regions, and call
-effects. Graphs serve analysis; LLVM still walks the AST directly.
+`cfg_provenance.odin` and the `provenance_*` files beside it supply carrier
+projections, allocator regions, and call effects. Graphs serve analysis; LLVM
+still walks the AST directly.
 
 | Mode | Purpose |
 | --- | --- |
@@ -394,8 +395,8 @@ behavioral controls for all of it.
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
 | Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
-| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed`, `prov_link_retained` in `cfg_provenance.odin` |
-| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `cfg_provenance.odin` |
+| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `cfg_provenance.odin`; `prov_link_retained` in `provenance_retention.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
 | Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -914,7 +915,9 @@ be file-private. Paths below are relative to `src/`.
 | Files | Responsibility |
 | --- | --- |
 | `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
-| `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, allocator regions, and call effects. |
+| `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, places, and the statement hooks. |
+| `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
+| `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |
 | `provenance_offsets.odin`, `provenance_aliases.odin` | Where a carrier may point below its storage, merged past the limits, with the definitions reaching a block; written aliases, what a local's carriers may reach. |
 | `provider_end.odin` | Where a provider's region ends, which both walks ask at the same `Reset_Key`. |
 | `panic_free.odin` | Which statements cannot panic, so they need no unwind path. |

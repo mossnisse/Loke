@@ -22,6 +22,13 @@ main :: proc() { _ = f(); }
 
 Found on 2026-11-03 (P3).
 
+### A long chain of reborrows in one body takes cubic time to solve
+
+A generated body of `p1 := p0; keep(p1); p2 := p1; keep(p2); ...` compiled by an optimized `lokec`
+takes 0.6 s at 1000 links, 3.8 s at 2000 and 34 s at 4000. Walking the body is 75 ms of the last;
+the rest is `solve_provenance` in [src/borrow.odin](src/borrow.odin). The cause is not established.
+Found on 2026-11-03 (P3).
+
 ### A store through one field of a record parameter blames the sibling field's target at the call
 
 [Minimum provenance precision](design.md#minimum-provenance-precision) keeps a record's carrier
@@ -250,7 +257,7 @@ main :: proc() {}
 ```
 
 This reports `L0538`, though the reset can only reach `allowed`'s region. Region facts
-in [src/cfg_provenance.odin](src/cfg_provenance.odin) only grow and do not follow
+in [src/provenance_regions.odin](src/provenance_regions.odin) only grow and do not follow
 control flow, so `prov_add_received_allocator` cannot tell this from the same write
 under an `if`, and keeps the incoming region. An `Allocator` parameter reassigned from
 another is treated the same way, for the same reason. Resetting `allowed` itself says
@@ -586,7 +593,7 @@ main :: proc() {
 
 [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
 has an owner end with its provider, but `prov_handle_region` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) follows a carrier only when it is a
+[src/provenance_regions.odin](src/provenance_regions.odin) follows a carrier only when it is a
 direct `held.get()`, or a local pointer whose written targets name the provider. A pointer
 stored from a call names no target, so the region is unknown, which a provider's end does
 not check against a returned value. This compiles, and the result is read from freed memory:

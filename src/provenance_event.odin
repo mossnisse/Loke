@@ -355,3 +355,294 @@ prov_materialize_effect_use :: proc(graph: ^Flow_Graph, op: Prov_Event_Effect_Us
 prov_output :: proc(graph: ^Flow_Graph) -> ^Flow_Graph {
 	return graph.materialized != nil ? graph.materialized : graph
 }
+
+// What a recorded reset ends, from the facts at hand.
+@(private)
+prov_materialize_reset :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset) {
+	set: Region_Set
+	switch region in op.region {
+	case Region_Set:
+		set = region
+	case Value_Id:
+		set = prov_region_of(graph, region)
+	case Prov_Reset_Indirect:
+		// Only a provider something was lent can be reached through a pointer.
+		set = Region_Set{}
+		for id in region.owners {
+			if graph.lent_locals[id] { region_merge(&set, prov_provider_region(graph, id)) }
+		}
+		if region_is_empty(set) { return }
+	}
+	// A region the analysis cannot name, such as an allocator in a received
+	// record's field, is pre-existing: it stays uncovered.
+	// A locally created region needs no promise (design.md "@(allocator_reset)").
+	covered, unmarked := true, ""
+	if !region_is_local_only(set) {
+		covered, unmarked = prov_reset_promise(graph, set)
+	}
+	event := Prov_Event {
+		kind          = .Reset,
+		span          = op.span,
+		access        = op.direct ? .Invalidate : .Write,
+		name          = unmarked,
+		region        = set,
+		reset_covered = covered,
+		ends          = op.ends,
+		provider_end  = op.provider_end,
+		unwind_from   = op.unwind_from,
+	}
+	if owner := prov_reset_blocker(graph, op, set); owner != nil {
+		event.verb = identifier_text(graph.k.c, owner.name)
+		event.owner_span = owner.span
+	}
+	// Evaluated operands remain live while later operands run.
+	if event.verb == "" {
+		for held in op.held {
+			region := op.provider_end ? prov_result_region(graph, held) : prov_reset_value_region(graph, held)
+			if !region_is_empty(region) && regions_may_overlap(region, set) {
+				event.verb = "this temporary"
+				event.owner_span = expr_span(prov_value(graph, held).origin)
+				break
+			}
+		}
+	}
+	if event.verb == "" {
+		for root in op.temporaries {
+			if prov_reset_temporary(graph, root, &event) { break }
+		}
+	}
+	// design.md "Allocators": a result reaches the caller before the deferred
+	// statements run, so it is live across a reset among them.
+	if returning, held := op.returning.?; held && event.verb == "" && !op.provider_end {
+		if regions_may_overlap(prov_returning_region(graph, returning), set) {
+			event.ends_result = true
+			event.owner_span = returning.span
+		}
+	}
+	prov_emit(graph, event)
+}
+
+// design.md "Allocator regions and region provenance": a live owner in an
+// overlapping region blocks the reset, since its cleanup still runs; a dropped
+// owner no longer blocks. A live child provider depends on its parent's region.
+@(private = "file")
+prov_reset_blocker :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset, set: Region_Set) -> ^Symbol {
+	for id in op.live.owners {
+		owner := symbol_of(graph.k.c, id)
+		// The local being ended is what ends the region, not a dependant of it.
+		if owner == nil || id == op.ending {
+			continue
+		}
+		region: Region_Set
+		switch {
+		case type_is_region_provider(graph.k.c, owner.type):
+			region = graph.provider_parents[id]
+		case op.provider_end:
+			region = prov_region_for_symbol(graph, id)
+		case:
+			region = prov_reset_symbol_region(graph, id, owner.type)
+		}
+		if !region_is_empty(region) && regions_may_overlap(region, set) {
+			return owner
+		}
+	}
+	return nil
+}
+
+// What a result already handed to the caller holds while its return's
+// deferred statements run.
+@(private = "file")
+prov_returning_region :: proc(graph: ^Flow_Graph, returning: Prov_Returning) -> Region_Set {
+	if propagated, known := returning.propagated.?; known {
+		return prov_reset_fields_region(graph, returning.result, prov_error_region_fields(graph, propagated, returning.result))
+	}
+	return prov_reset_value_region(graph, returning.value)
+}
+
+// design.md "Temporaries and procedure boundaries": a converted view still
+// lends from its managed temporary until that root's actual cleanup boundary.
+@(private = "file")
+prov_reset_temporary :: proc(graph: ^Flow_Graph, root: Root_Id, event: ^Prov_Event) -> bool {
+	temporary := graph.roots[int(root)]
+	region := Region_Set{}
+	// All of it for a provider's end, or the part a reset ends.
+	join :: proc(graph: ^Flow_Graph, region: ^Region_Set, type: Type_Id, fields: []Prov_Region_Content, all: bool) {
+		if !all {
+			region_merge(region, prov_reset_fields_region(graph, type, fields))
+			return
+		}
+		for field in fields { region_merge(region, field.region) }
+	}
+	if temporary.owner != nil {
+		fields := prov_result_region_fields(graph, prov_input_value(graph, temporary.owner), temporary.dropped)
+		join(graph, &region, temporary.dropped, fields, event.provider_end)
+	}
+	// Later writes into a temporary's backing storage are live until its
+	// actual cleanup, just as its initial owners are (design.md
+	// "Allocator regions and region provenance").
+	if storage := prov_storage(graph, temporary.storage); storage.key.temporary != nil && type_is_managed(graph.k.c, storage.type) {
+		join(graph, &region, storage.type, graph.region_content[temporary.storage], event.provider_end)
+	}
+	if region_is_empty(region) || !regions_may_overlap(region, event.region) { return false }
+	event.verb, event.owner_span = temporary.name, temporary.span
+	return true
+}
+
+// Whether every allocator parameter the set names carries the reset promise,
+// or the name of one that does not.
+@(private = "file")
+prov_reset_promise :: proc(graph: ^Flow_Graph, set: Region_Set) -> (covered: bool, name: string) {
+	params := set.params
+	for index in next_region_param(&params) {
+		sym := prov_parameter_symbol(graph, index)
+		if sym == nil {
+			continue
+		}
+		if !sym.allocator_reset {
+			return false, identifier_text(graph.k.c, sym.name)
+		}
+		covered = true
+	}
+	// Every alternative that is not this body's own needs the promise; the
+	// default or an unknown allocator never has it.
+	if set.default || set.unknown {
+		return false, ""
+	}
+	return covered, ""
+}
+
+@(private = "file")
+prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
+	return index < len(graph.param_symbols) ? symbol_of(graph.k.c, graph.param_symbols[index]) : nil
+}
+
+// Whether `set` names a region this body received and has not had checked: an
+// owner that arrived through a `@(cross_thread)` `move` parameter was checked
+// at the call that passed it.
+@(private)
+prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
+	if graph.literal.signature == nil {
+		return region_is_parameter_backed(set)
+	}
+	for id, index in graph.param_symbols {
+		if !region_has_param(set, index) {
+			continue
+		}
+		if sym := symbol_of(graph.k.c, id); sym == nil || !sym.cross_thread || sym.mode != .Move {
+			return true
+		}
+	}
+	return false
+}
+
+// Each argument's region by callee parameter, which a followed callee's
+// allocator use is substituted with; nil when no argument has one.
+@(private)
+prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set {
+	c := graph.k.c
+	arguments := prov_call_values(graph, v)
+	count := len(arguments)
+	out: []Region_Set
+	for argument, index in arguments {
+		if argument == 0 || !prov_type_has_region(c, prov_value(graph, argument).type) {
+			continue
+		}
+		set := prov_visible_region(graph, prov_used_region(graph, argument))
+		if region_is_empty(set) {
+			continue
+		}
+		if out == nil {
+			out = make([]Region_Set, count, graph.alloc)
+		}
+		out[index] = set
+	}
+	// A pack built from separate arguments has no bound value: it is in its
+	// elements' regions, and known to be in none when they have none, so a
+	// callee using it does not read as using an unknown region.
+	if call_packs(v, v.variadic_slot) && v.variadic_slot < count {
+		form := prov_value(graph, prov_operand_value(graph, v, graph.expansion)).form.(Prov_Form_Call)
+		pack := Region_Set{}
+		for element in form.pack {
+			if element == 0 || !prov_type_has_region(c, prov_value(graph, element).type) {
+				continue
+			}
+			region_merge(&pack, prov_visible_region(graph, prov_used_region(graph, element)))
+		}
+		if out == nil {
+			out = make([]Region_Set, count, graph.alloc)
+		}
+		out[v.variadic_slot] = pack
+	}
+	return out
+}
+
+// The allocator use of a call the summaries do not follow into a body: a
+// builtin, a compiler-supplied member, a foreign procedure, or a conversion.
+// A followed call's, direct or through a value, comes from what its callees'
+// summaries settle to. Either way an owner copied from a place may be cloned
+// for the call.
+@(private)
+prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	c := graph.k.c
+	if !prov_tracks_allocator_use(graph) || v.dispatch != nil {
+		return
+	}
+	builtin := Builtin_Kind.None
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil {
+		builtin = sym.builtin
+	}
+	// `drop` and `free_all` note their operand where they are walked.
+	if builtin == .Drop || builtin == .Free_All {
+		return
+	}
+	// A supplied member changes storage only as a growing or shrinking
+	// container operation does.
+	member := symbol_of(c, v.resolution.chosen_overload)
+	supplied := member != nil && member.synth != .None
+	changes_storage := !supplied || (member.synth == .Container_Op && .Allocates in CONTAINER_OP_EFFECTS[member.container_op])
+	followed := call_follows_bodies(c, v)
+	info := underlying_info(c, call_proc_type(c, v))
+	// A text operation borrows its operands rather than copying them.
+	_, text := v.operation.(Call_Text)
+	_, conversion := v.operation.(Call_Text_Conversion)
+	text ||= conversion
+	allocators := Region_Set{}
+	for argument, index in prov_call_values(graph, v) {
+		if argument == 0 {
+			continue
+		}
+		value := prov_value(graph, argument)
+		type := value.type
+		span := expr_span(value.origin)
+		mode := Param_Mode.Value
+		if info != nil && index < len(info.param_modes) {
+			mode = info.param_modes[index]
+		}
+		owns := type_owns_allocation(c, type)
+		switch {
+		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(value.origin):
+			prov_note_allocator_use(graph, Region_Set{}, span, owned = true)
+		case followed:
+		case type_underlying(c, type) == TYPE_ALLOCATOR:
+			set := prov_used_region(graph, argument)
+			region_merge(&allocators, set)
+			prov_note_allocator_use(graph, set, span)
+		case !changes_storage:
+		case owns && (mode == .Inout || mode == .Move):
+			prov_note_allocator_use(graph, prov_storage_region(graph, argument), span, owned = true)
+		case !supplied && carrier_is_mutable(c, type) && !type_is_region_provider(c, type):
+			if set := prov_viewed_region(graph, argument); !region_is_empty(set) {
+				prov_note_allocator_use(graph, set, span)
+			}
+		}
+	}
+	if followed || type_is_region_provider(c, prov_type(graph, v)) {
+		return
+	}
+	// An owner a builtin or a supplied member makes, such as `make`'s, `box`'s,
+	// or a clone, comes from the allocator it is given or the default.
+	allocates := builtin == .Unsafe_New || builtin == .Unsafe_Try_New || builtin == .Unsafe_Free
+	if type_owns_allocation(c, prov_type(graph, v)) || allocates {
+		prov_note_allocator_use(graph, allocators, v.span, owned = true)
+	}
+}

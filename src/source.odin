@@ -213,6 +213,8 @@ Compiler :: struct {
 	// Carrier shapes (`src/carrier_shape.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,
+	reaches_destination: map[Type_Id]bool,
+	reaches_mutable:    map[Type_Id]bool,
 	provider_carriers:  map[Type_Id]bool,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
 	// Per type, `region_field_shape` with every region empty.

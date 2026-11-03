@@ -74,8 +74,6 @@ Near copies are real but smaller than the raw count of 388 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
-The largest file, `cfg_provenance.odin`, has natural seams and would be easier
-to work in if split, though that shortens nothing.
 
 ## The changes most worth making
 
@@ -310,9 +308,8 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
-- Transfer wording and type reach: [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belongs beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
+- Transfer wording and type reach: the reports moved beside `transfer_facts` in `hooks.odin` belong with them in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
-- Seams in the largest file: `cfg_provenance.odin` still splits at the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)).
 
 ### Looked at and left alone
 
@@ -678,26 +675,9 @@ What remains are near copies whose helper would span other files.
 
 This part is careful and I found no bugs; the reaching-places walk (Tarjan with epochs) held up when traced by hand, and every top-level declaration has a user. The cost is bulk: repeated small path and slot idioms, a few quadratic list builds, and a place-offset engine that deserves its own file.
 
-**Simplification**
-
-
-**Dead code**
-
-
-**Data structures and algorithms**
-
-- [cfg_provenance.odin:2618](src/cfg_provenance.odin#L2618) `prov_capture`: scans all of `graph.reborrows` per captured slot, so it grows with captures times the body's reborrows. Only large generated bodies would notice, so a `derived`-to-reborrows index is worth adding only if `perf.ps1` shows it. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:133](src/cfg_provenance.odin#L133) `Prov_Event`: about 540 bytes by hand count (not measured), and `borrow.odin` has a dozen by-value `for event in block.prov` loops, though each kind reads few fields. The "`Publish`:" and "`Reset`:" comments mark natural sub-structs; a pointer for Publish-only fields would save about 140 bytes per event. *Left open: not reached in this pass; the code still has it.*
-
 **Near copies**
 
 - [cfg_provenance.odin:489](src/cfg_provenance.odin#L489) and [doc.odin:1372](src/doc.odin#L1372): span text is hand-indexed here, in a file-private `source_text`, and at [parallel.odin:81](src/parallel.odin#L81), [cfg.odin:1913](src/cfg.odin#L1913) and [check.odin:2394](src/check.odin#L2394). A `span_text(c, span)` in `source.odin` is the shared form.
-
-**Structure and boundaries**
-
-
-**Comments**
-
 
 ### src/cfg_provenance.odin (part 2 of 4)
 
@@ -707,76 +687,21 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 - [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616): the literal depth 8 here and at [:4647](src/cfg_provenance.odin#L4647), [:5207](src/cfg_provenance.odin#L5207) and [borrow.odin:1222](src/borrow.odin#L1222) is one limit on one shape walk; name it beside `CARRIER_DEPTH`.
 
-**Dead code**
-
-
-**Data structures and algorithms**
-
-- [cfg_provenance.odin:3075](src/cfg_provenance.odin#L3075) `prov_slot_is_reborrow`, [:3025](src/cfg_provenance.odin#L3025) `prov_slot_is_pending`, [:2799](src/cfg_provenance.odin#L2799) and [:2946](src/cfg_provenance.odin#L2946): each scans all of `graph.reborrows`, once per stored slot or per solved load, and the list grows with carrier copies in the body, so long bodies go quadratic. Index by `derived` and by `source` (per-slot lists), rebuilt after `prov_settle_pending_reborrows`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:2748](src/cfg_provenance.odin#L2748) `prov_reborrow`: scans every place loan per weakened slot, which also grows with the body; a slot-to-place-loans index fits. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:4403](src/cfg_provenance.odin#L4403) `prov_define_region_content`: copies the whole entry list into a new arena array for each new path, plus a linear scan per define, so a record of k region fields costs O(k^2) time and arena per whole store, per round. Matters only for wide records; a `[dynamic]` value in `region_content` removes the copying. *Left open: not reached in this pass; the code still has it.*
-
-**Near copies**
-
-
-**Structure and boundaries**
-
-- [cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986): the regions section (to about line 5503) and its other half at [:1353](src/cfg_provenance.odin#L1353) to [:1574](src/cfg_provenance.odin#L1574) are about 1700 lines of one subsystem separated by unrelated carrier code. Move both to their own file beside `provenance_transfer_facts.odin`; the seam is the `prov_region_*`, `prov_provider_*` and `prov_copied_*` procedures, at the cost of widening some `@(private = "file")`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:5380](src/cfg_provenance.odin#L5380): `prov_materialize_reset`, `prov_reset_temporary`, `prov_reset_promise` and `prov_parameter_symbol` are event materialization and belong in `provenance_event.odin`, with `prov_returning_region`, since that file owns the replacement of fact-dependent events. Within it, the blocker search from [:5415](src/cfg_provenance.odin#L5415) to [:5471](src/cfg_provenance.odin#L5471) is a natural `prov_reset_blocker`. *Left open: not reached in this pass; the code still has it.*
-
-**Comments**
-
-
 ### src/cfg_provenance.odin (part 3 of 4)
 
 Region stores, written aliases, place walking, and the statement and call hooks: the comments mostly earn their place, but `prov_assign`, `prov_call` and `prov_declare_region` do too many jobs and hold most of the local repetition.
-
-**Bugs**
-
-
-**Simplification**
-
-
-**Dead code**
-
 
 **Near copies**
 
 - [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
 
-**Structure and boundaries**
-
-
-**Comments**
-
-
 ### src/cfg_provenance.odin (part 4 of 4)
 
 The logic holds up and every declaration here has a caller in `src/`, with none existing only for tests; I found no bug I could demonstrate. The cost is near copies in call-result and retention code, a few never-varying parameters, and about 2,600 lines with no section header covering nine separate concerns.
 
-**Simplification**
-
-
-**Dead code**
-
-
-**Data structures and algorithms**
-
-- [cfg_provenance.odin:9322](src/cfg_provenance.odin#L9322) `prov_type_reaches_destination`, `prov_type_reaches_mutable`: a fresh map and type walk per query, and queries run per call and parameter ([provenance_call.odin:264](src/provenance_call.odin#L264), [borrow.odin:2889](src/borrow.odin#L2889)), so they grow with the program. Memoize per type as `type_carries_borrow` does; check with `perf.ps1`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9553](src/cfg_provenance.odin#L9553) `prov_link_retained`: scans all of `graph.reborrows` per temporary source, per retained store, so it is quadratic in one body's size and only large bodies with many `stored` calls feel it. [cfg_provenance.odin:8318](src/cfg_provenance.odin#L8318) has the same scan; the solver's `reborrows_of` index would fit, were it reachable from `graph`. *Left open: not reached in this pass; the code still has it.*
-
 **Near copies**
 
 - [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017), [cfg.odin:2843](src/cfg.odin#L2843), [provenance_form.odin:112](src/provenance_form.odin#L112): the same two-cursor walk of `variadic_order`. A `call_next_variadic(call, is_spread, &next_element, &next_spread)` beside `call_packs` covers these. (about 12 lines)
-
-**Structure and boundaries**
-
-- [cfg_provenance.odin:8165](src/cfg_provenance.odin#L8165): no section header between 6843 and 10501, over spawn, builtins, arguments, retention, containers, text, transfer checks, results and allocator use. Split at those seams into `provenance_*` files, or at least add headers; moving means widening file-private helpers such as `prov_one`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:9322](src/cfg_provenance.odin#L9322): the 100 lines from here to `carrier_leaves` are pure type queries taking only `c`, called from `borrow.odin`, `provenance_call.odin` and `provenance_transfer_facts.odin`. They belong beside `type_carries_borrow` in `borrow.odin`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:10137](src/cfg_provenance.odin#L10137) `prov_has_received_region`, with `prov_argument_regions` (10681) and `prov_call_allocator_use` (10727): their only callers are in `provenance_event.odin`, which can own them. *Left open: not reached in this pass; the code still has it.*
-
-**Comments**
-
 
 ### src/check.odin (part 1 of 2)
 

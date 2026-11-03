@@ -120,6 +120,123 @@ type_carries_borrow :: proc(c: ^Compiler, type: Type_Id) -> Carrier_Reach {
 	return reach
 }
 
+// Whether a callee receiving `type` can write a borrow through it: through a
+// mutable carrier, at any depth, to storage that can hold one, as `p^.view =
+// values` or `ctx.destination.view = values` does. Searched over the types
+// reached, each once, so no depth hides one.
+prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.reaches_destination[type]; found {
+		return cached
+	}
+	visited := make(map[Type_Id]bool, context.temp_allocator)
+	reaches := type_reaches_destination(c, type, &visited)
+	c.reaches_destination[type] = reaches
+	return reaches
+}
+
+// design.md "Allocator regions and region provenance": whether a callee
+// receiving `type` can write an owner through it: through a mutable carrier at
+// any depth, whatever it points at, as `outs[0]^ = make(...)` does through
+// `outs: ..^mut [dynamic]int`.
+prov_type_reaches_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.reaches_mutable[type]; found {
+		return cached
+	}
+	visited := make(map[Type_Id]bool, context.temp_allocator)
+	reaches := type_reaches_destination(c, type, &visited, owners = true)
+	c.reaches_mutable[type] = reaches
+	return reaches
+}
+
+// With `owners`, any mutable carrier is a destination, not only one whose
+// pointee can hold a borrow.
+@(private = "file")
+type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool, owners := false) -> bool {
+	if visited[type] {
+		return false
+	}
+	visited[type] = true
+	for path in carrier_shape(c, type) {
+		if path.truncated {
+			if truncated_reaches_destination(c, path, visited, owners) {
+				return true
+			}
+			continue
+		}
+		info := underlying_info(c, path.type)
+		if info == nil {
+			continue
+		}
+		if path.mutable && (owners || type_carries_borrow(c, info.element).any) {
+			return true
+		}
+		if type_reaches_destination(c, info.element, visited, owners) {
+			return true
+		}
+	}
+	return false
+}
+
+// A truncated path names no carrier, so the value it cut is searched instead:
+// a mutable carrier in it is a destination, and a read-only one leads to one
+// when its pointee reaches one, as `ptr: ^Leaf` does with `Leaf{out: ^mut ^int}`
+// below the depth budget.
+@(private)
+truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited: ^map[Type_Id]bool, owners := false) -> bool {
+	if path.mutable {
+		return true
+	}
+	leaves := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
+	walking := make(map[Type_Id]bool, context.temp_allocator)
+	carrier_leaves(c, path.cut, &leaves, &walking)
+	for leaf in leaves {
+		info := underlying_info(c, leaf)
+		if info != nil && type_reaches_destination(c, info.element, visited, owners) {
+			return true
+		}
+	}
+	return false
+}
+
+// The carrier types in a value of `type`, without following any of them; the
+// same walk `type_carries_borrow` takes.
+@(private = "file")
+carrier_leaves :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, walking: ^map[Type_Id]bool) {
+	if type == INVALID_TYPE || walking[type] {
+		return
+	}
+	if type_is_carrier(c, type) {
+		append(out, type)
+		return
+	}
+	info := underlying_info(c, type)
+	if info == nil || !type_carries_borrow(c, type).any {
+		return
+	}
+	walking[type] = true
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		carrier_leaves(c, payload, out, walking)
+		return
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				carrier_leaves(c, sym.type, out, walking)
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			carrier_leaves(c, variant, out, walking)
+		}
+	case .Array, .Dynamic_Array, .Box:
+		carrier_leaves(c, info.element, out, walking)
+	case .Map:
+		carrier_leaves(c, info.key, out, walking)
+		carrier_leaves(c, info.element, out, walking)
+	}
+}
+
 @(private = "file")
 carrier_reach_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> Carrier_Reach {
 	if type == INVALID_TYPE {
