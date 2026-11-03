@@ -14,6 +14,17 @@ checklist.
   `v, n = record` with a `string` field and a `string_view` `v`, is now `L0310`
   ([Destructuring](design.md#destructuring)). It compiled, and wrote the field's bytes past the
   destination. Upgrade by assigning that field by name.
+- A provider received through a `move` parameter is now a region of the procedure, as a local one
+  is: returning what it backs is `L0592`, and ending it while something it backs is live is `L0537`
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  Replacing a provider through a `&mut` loop element or case binding also ends its region, as through
+  a pointer, and `return` is `L0537` when a panic in it would end a region under an older owner,
+  however its value is evaluated. These compiled, and read freed memory. Upgrade by ending the owner
+  first.
+- A `defer` or `errdefer` reading a local that is dead where a later statement may panic is now
+  `L0500`, as it is at an exit ([defer statement](design.md#defer-statement)). It compiled, and read
+  a moved or unset value during the unwind. Upgrade by giving the local its value before the
+  `defer`.
 - `f16` at a foreign boundary, directly or as a record's field, is now `L0619`: the Win64 C ABI
   does not classify it ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)). Upgrade by
   passing an `f32`, or by passing a `^f16`.
@@ -1328,6 +1339,13 @@ checklist.
 - Values above 4096 bytes: destructuring one, `errdefer` over a `Result` holding one, comparing or
   switching on a constant one, a large constant holding a pointer, and an iterator record holding
   one no longer segfault or fail in clang (`L0403`).
+- A panic now drops a local that every normal exit moves out, under the `unwind` strategy
+  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not)).
+  It was skipped unless some exit left it live.
+- A last-use copy stays a clone when a deferred statement that only a panic runs reads the source
+  ([Last-use transfer](design.md#last-use-transfer)). It read the emptied source.
+- `L0698` no longer reports a required result in code nothing reaches, as after an `if` whose
+  branches both return.
 - Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
   a wrong pointer to it, and same-named types, from two packages or two procedures, each show their
   own layout. A later such type is named `Name$<n>` in the debugger.

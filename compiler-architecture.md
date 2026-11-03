@@ -397,7 +397,7 @@ behavioral controls for all of it.
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
-| Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Prov_State.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
+| Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Flow_Graph.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
 | Written aliases: what a local's carriers may reach | `Written_Alias`, `written_aliases`, `prov_written_targets`, `prov_call_written_aliases`, `WRITTEN_ALIAS_DEPTH` |
 | What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
@@ -913,6 +913,8 @@ be file-private. Paths below are relative to `src/`.
 | --- | --- |
 | `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, allocator regions, and call effects. |
+| `provider_end.odin` | Where a provider's region ends, which both walks ask at the same `Reset_Key`. |
+| `panic_free.odin` | Which statements cannot panic, so they need no unwind path. |
 | `provenance_input.odin`, `provenance_form.odin`, `provenance_transfer.odin`, `provenance_transfer_facts.odin`, `provenance_call.odin`, `provenance_read.odin` | Normalized provenance input: storage, values, places, value forms, transfers, call inputs, and leaf reads ([Normalized provenance input](#normalized-provenance-input)). |
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |

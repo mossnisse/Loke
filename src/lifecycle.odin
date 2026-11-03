@@ -973,7 +973,9 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 			}
 		}
 		copy(block.entry_state, state)
-		run_events(block, state)
+		for event in block.events {
+			run_event(event, state)
+		}
 		if block.visited && states_equal(block.exit_state, state) {
 			continue
 		}
@@ -991,13 +993,19 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	// A second walk with the fixed point in hand: this is where the events that
 	// need an answer — a use, a cleanup point — read their state.
 	assigned := make(map[Assigned_Destination]bool, allocator = graph.alloc)
+	owners := make([dynamic]int, 0, tracked, graph.alloc)
+	for local, slot in graph.tracked {
+		if sym := symbol_of(k.c, local.symbol); sym != nil && type_is_managed(k.c, sym.type) {
+			append(&owners, slot)
+		}
+	}
 	for block in graph.blocks {
 		if !block.visited {
 			continue
 		}
 		mem.zero_slice(state)
 		copy(state, block.entry_state)
-		report_events(k, graph, block, state, &assigned)
+		report_events(k, graph, block, state, owners[:], &assigned)
 	}
 }
 
@@ -1019,21 +1027,19 @@ states_equal :: proc(a, b: []Liveness) -> bool {
 }
 
 @(private = "file")
-run_events :: proc(block: ^Flow_Block, state: []Liveness) {
-	for event in block.events {
-		#partial switch event.kind {
-		case .Init, .Assign, .Spawn_Result:
-			state[event.slot] = .Live
-		case .Kill, .Cleanup, .Declare:
-			state[event.slot] = .Dead
-		}
+run_event :: proc(event: Flow_Event, state: []Liveness) {
+	#partial switch event.kind {
+	case .Init, .Assign, .Spawn_Result:
+		state[event.slot] = .Live
+	case .Kill, .Cleanup, .Declare:
+		state[event.slot] = .Dead
 	}
 }
 
 // The diagnostics and the cleanup obligations, with the solved entry state.
 @(private = "file")
 report_events :: proc(
-	k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness,
+	k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness, owners: []int,
 	assigned: ^map[Assigned_Destination]bool,
 ) {
 	for event in block.events {
@@ -1041,13 +1047,17 @@ report_events :: proc(
 			record_reset_liveness(k, graph, event, state)
 			continue
 		}
-		if block.unwind {
-			#partial switch event.kind {
-			case .Init, .Assign, .Spawn_Result:
-				state[event.slot] = .Live
-			case .Kill, .Cleanup, .Declare:
-				state[event.slot] = .Dead
+		if event.kind == .Panic_Point {
+			for slot in owners {
+				graph.tracked[slot].live_at_panic ||= state[slot] != .Dead
 			}
+			continue
+		}
+		// An unwind's deferred statements read what they name, which must be live
+		// as it must be on any exit; its cleanups are no cleanup points, and what it
+		// writes decides nothing for the normal paths' assignments.
+		if block.unwind && event.kind != .Use && event.kind != .Kill {
+			run_event(event, state)
 			continue
 		}
 		local := &graph.tracked[event.slot]
@@ -1092,7 +1102,7 @@ report_events :: proc(
 			state[event.slot] = .Live
 		case .Kill:
 			if state[event.slot] != .Live {
-				report_not_live(k, event, state[event.slot], local.ever_written)
+				report_not_live(k, block, event, state[event.slot], local.ever_written)
 			}
 			state[event.slot] = .Dead
 		case .Use:
@@ -1100,7 +1110,7 @@ report_events :: proc(
 			// ordinary read, borrow, or address of it is accepted (design.md
 			// "Built-in values"). `move` and `drop` still are not: they are `.Kill`.
 			if state[event.slot] != .Live && !local.unchecked {
-				report_not_live(k, event, state[event.slot], local.ever_written)
+				report_not_live(k, block, event, state[event.slot], local.ever_written)
 			}
 		case .Cleanup:
 			// Every cleanup point of one local votes: any disagreement between
@@ -1148,7 +1158,7 @@ record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event
 }
 
 @(private = "file")
-report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness, ever_written: bool) {
+report_not_live :: proc(k: ^Checker, block: ^Flow_Block, event: Flow_Event, state: Liveness, ever_written: bool) {
 	action := event.verb == "" ? "used" : event.verb
 	if state == .Dead {
 		// design.md "Variable declarations": a local starts dead, so one nothing
@@ -1158,16 +1168,19 @@ report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness, ever_wr
 			message = "`%s` cannot be %s here: it has already been moved, dropped, or released"
 		}
 		errorf(k.c, event.span, "L0500", message, event.name, action)
-		return
+	} else {
+		errorf(
+			k.c,
+			event.span,
+			"L0500",
+			"`%s` cannot be %s here: it is live on only some of the paths that reach this point",
+			event.name,
+			action,
+		)
 	}
-	errorf(
-		k.c,
-		event.span,
-		"L0500",
-		"`%s` cannot be %s here: it is live on only some of the paths that reach this point",
-		event.name,
-		action,
-	)
+	if block.unwind {
+		add_notef(k.c, block.unwind_at, "a panic in this statement runs the deferred statement")
+	}
 }
 
 // A managed local declaration places an implicit conditional
@@ -1188,6 +1201,7 @@ assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		}
 		// Reaching a cleanup point live is what gives a local an implicit drop.
 		sym.drop_at_exit = local.live_exit
+		sym.drop_on_unwind = local.live_at_panic
 		// A hidden flag exists only where a lowering has to tell the runtime paths
 		// apart: cleanup points that disagree, or an assignment whose destination
 		// is live on one path and dead on another (design.md "Managed values and

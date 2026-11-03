@@ -1,0 +1,23 @@
+// design.md "Last-use transfer": a read by a deferred statement counts, and an
+// `errdefer` that runs only on a panic reads after the copy too, so it is a clone.
+package main;
+import "core:fmt";
+
+Err :: enum { Bad }
+
+Y :: struct { id: int }
+impl Y {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Y, Allocator_Error) { return .ok(Y{self.id}); }
+}
+
+risky :: proc() { panic("risky"); }
+
+f :: proc() -> Result(Y, Err) {
+	y := Y{5};
+	errdefer fmt.println("read", y.id);
+	z := y;
+	risky();
+	return .ok(move(z));
+}
+
+main :: proc() { _ = f(); }

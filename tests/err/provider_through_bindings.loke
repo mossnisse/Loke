@@ -1,0 +1,58 @@
+// design.md "Allocators": replacing a provider through a `&mut` binding, which
+// views the storage holding it, ends its region as through a pointer does.
+package main;
+import "core:fmt";
+import "core:mem";
+
+loop_element :: proc() {
+	arenas: [2]mem.Arena = {mem.Arena.init(), mem.Arena.init()};
+	b := box(1, arenas[0].allocator());
+	foreach (&mut a in arenas) {
+		a = mem.Arena.init();
+	}
+	fmt.println(b^);
+}
+
+case_payload :: proc() {
+	o: Option(mem.Arena) = .some(mem.Arena.init());
+	switch (o) {
+	case .some(&mut a):
+		b := box(1, a.allocator());
+		a = mem.Arena.init();
+		fmt.println(b^);
+	case .none:
+	}
+}
+
+exchanged :: proc() {
+	arenas: [1]mem.Arena = {mem.Arena.init()};
+	b := box(1, arenas[0].allocator());
+	foreach (&mut a in arenas) {
+		_ = exchange(inout a, mem.Arena.init());
+	}
+	fmt.println(b^);
+}
+
+Holder :: struct { arena: mem.Arena }
+
+through_a_field :: proc() {
+	holders: [1]Holder = {Holder{mem.Arena.init()}};
+	b := box(1, holders[0].arena.allocator());
+	foreach (&mut h in holders) {
+		h.arena = mem.Arena.init();
+	}
+	fmt.println(b^);
+}
+
+// Nothing the region backs is left when it ends.
+ended_first :: proc() {
+	arenas: [1]mem.Arena = {mem.Arena.init()};
+	b := box(1, arenas[0].allocator());
+	fmt.println(b^);
+	drop(b);
+	foreach (&mut a in arenas) {
+		a = mem.Arena.init();
+	}
+}
+
+main :: proc() {}

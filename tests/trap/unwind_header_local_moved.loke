@@ -1,0 +1,24 @@
+// design.md "What the unwind runs, and what it does not": a local a control-flow
+// header declares is live for what the header goes on to evaluate.
+package main;
+import "core:fmt";
+
+@(move_only) Res :: struct { id: int }
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+
+risky :: proc(n: int) -> int {
+	if (n > 0) { panic("risky"); }
+	return n;
+}
+
+header :: proc(n: int) -> Res {
+	if (h := Res{n}; risky(n) > 0) {
+		return h;
+	} else {
+		return h;
+	}
+}
+
+main :: proc() { _ = header(1); }

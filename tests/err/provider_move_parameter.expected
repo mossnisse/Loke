@@ -1,0 +1,21 @@
+L0592
+@8:9
+this result is backed by `a`
+L0537
+@13:2
+dropping `a` would end the region backing `b`
+L0537
+@19:7
+moving `a` would end the region backing `b`
+L0537
+@27:2
+assigning over `a` would end the region backing `b`
+L0536
+@32:2
+cannot be stored in `out`
+L0592
+@38:9
+this result is backed by `h`
+L0537
+@47:2
+dropping `parent` would end the region backing `child`

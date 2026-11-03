@@ -87,8 +87,6 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 8. **Safe code the checker accepts and then corrupts.** `exchange` of an unmoved owned place ([lifecycle.odin:194](src/lifecycle.odin#L194)); a user unary or `operator([])` result not seen as a temporary ([cfg_provenance.odin:7177](src/cfg_provenance.odin#L7177)); a destructured carrier with no written alias ([cfg_provenance.odin:7216](src/cfg_provenance.odin#L7216)). BUG-lifecycle-1, BUG-cfg_provenance.part3-1, -2. About 20 lines.
 
-9. **Provider ends that end no region.** Replacing a provider through a `&mut` binding ([cfg.odin:1143](src/cfg.odin#L1143)) and a `move` parameter's provider ([cfg.odin:1130](src/cfg.odin#L1130)) both leave reads of freed memory. BUG-cfg-1, -2. About 30 lines, with care around the lifecycle and provenance walks agreeing.
-
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
 11. **Wrong inferred effects.** One `seen` map spans all queries of a call ([borrow.odin:2457](src/borrow.odin#L2457)), so a repeated argument loses its thread-local write-back. Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-borrow.part2-1, BUG-global_effects-1, -2, -3. Clear the map at 3 sites; merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
@@ -271,7 +269,7 @@ The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L34
 
 [borrow.odin:2574](src/borrow.odin#L2574) and [global_effects.odin:344](src/global_effects.odin#L344) unwrap a move and switch on identifier, selector and literal in the same way, then classify differently. `named_value_symbol(e) -> Symbol_Id` saves about 10 lines.
 
-[cfg.odin:1092](src/cfg.odin#L1092) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356) build `Reset_Key` by hand, and the assert at the second depends on the first. One constructor is where the unwinding flag BUG-cfg-3 needs would go. [cfg.odin:2867](src/cfg.odin#L2867) and [cfg_provenance.odin:9904](src/cfg_provenance.odin#L9904) loop over `proc_param_resets` separately and must agree; a `call_reset_arguments` iterator ties them. Saves about 10 lines.
+[cfg.odin:1092](src/cfg.odin#L1092) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356) build `Reset_Key` by hand, and the assert at the second depends on the first. [cfg.odin:2867](src/cfg.odin#L2867) and [cfg_provenance.odin:9904](src/cfg_provenance.odin#L9904) loop over `proc_param_resets` separately and must agree; a `call_reset_arguments` iterator ties them. Saves about 10 lines.
 
 ### LLVM emitter
 
@@ -336,7 +334,6 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Layering: [check_expr.odin:4158](src/check_expr.odin#L4158) `binding_initial_const` is used only by the emitter ([emit_llvm_runtime.odin:256](src/emit_llvm_runtime.odin#L256), [emit_llvm_runtime.odin:361](src/emit_llvm_runtime.odin#L361)). [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
 - Single-caller helper: [borrow.odin:638](src/borrow.odin#L638) in `check.odin` ([check.odin:679](src/check.odin#L679)).
 - Transfer wording and type reach: [borrow.odin:5494](src/borrow.odin#L5494), [borrow.odin:5588](src/borrow.odin#L5588), [borrow.odin:5750](src/borrow.odin#L5750) and [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belong beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
-- Provenance state in the shared walk: [cfg.odin:247](src/cfg.odin#L247) `Prov_State` and [cfg.odin:404](src/cfg.odin#L404) `Prov_Facts` are read only by provenance and belong in `cfg_provenance.odin` behind `new_prov_state`.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Formatting in [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541) onward. Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 - Seams in the two largest files: `cfg_provenance.odin` (10,813 lines) splits at the offset engine ([cfg_provenance.odin:846](src/cfg_provenance.odin#L846)) and the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)). `borrow.odin` (7,130 lines) splits at the carrier shapes and region lattice ([borrow.odin:661](src/borrow.odin#L661)), the callback substitution ([borrow.odin:2380](src/borrow.odin#L2380)) and the view-start solver ([borrow.odin:4385](src/borrow.odin#L4385)).
 
@@ -881,82 +878,14 @@ The lowering design is sound and its comments mostly explain why, but the record
 
 ### src/cfg.odin
 
-The walk is sound in shape, but two provider-end holes and the unwind path produce wrong programs (every bug below was reproduced with the current `lokec.exe`). `walk_flow_expr` and `Prov_State` carry much provenance code that has no reason to live here; no declared symbol is dead, though several lifecycle-only paths still test the mode.
-
-**Bugs**
-
-- `BUG-cfg-1` **high** [cfg.odin:1143](src/cfg.odin#L1143) `provider_local`: a `borrowed_binding` root ends no region, though `provider_place_root` accepts it and `place_is_direct` calls it direct. Scenario: `b := box(1, arenas[0].allocator()); foreach (&mut a in arenas) { a = mem.Arena.init(); } fmt.println(b^);` is accepted; `arenas[0] = ...` and `p^ = ...` give L0537. Fix: `place_is_direct` false for such a root, and route a bare ident to `provider_place_end`. *Confirmed: Reproduced with foreach and case .some(&mut a): both compile, while arenas[0]= and p^= give L0537. At runtime the old array read 9 from another array, then the runtime aborted: a use-after-free. Not in known-gaps.md; design.md "Allocators" forbids it. High is right.*
-- `BUG-cfg-2` **high** [cfg.odin:1130](src/cfg.odin#L1130) `provider_region_end`: `provider_local` needs `.Var` and the comment calls a parameter's region the caller's, untrue of a `move` parameter this body drops. Scenario: `take :: proc(a: move mem.Arena, n: int) -> Box(int) { return box(n, a.allocator()); }` is accepted, and two calls print `2 0`, not `1 2`; `drop(a); b^` is also accepted. Fix: a `move` parameter's region is local until moved on (L0592, L0537). *Confirmed: Reproduced: the move-parameter `take` compiles and two calls print `2 0`, not `1 2`; `drop(a)` then `b^` is accepted too. The same body with a local arena gets L0592. No gap, question or comments.md decision records it; design.md "Allocators" demands the region outlive its owners.*
-- `BUG-cfg-3` **medium** [cfg.odin:762](src/cfg.odin#L762) `emit_unwind_branch`: at a `return` the unwind's exit is the same pointer as the return's (`Reset_Key`, `Defer_Expansion`), and `record_reset_liveness` keeps the last block's answer. Scenario: moving an arena into a returned record under a `defer`, with `b` still backed by it: `ok = yes()` gives L0537, `ok = yes() && yes()` is accepted. Fix: add `unwinding: bool` to both keys. *Confirmed: Reproduced with lokec: `return Rec{arena = move(arena), ok = yes()}` under a defer with b backed by arena gives L0537; `yes() && yes()` and `yes() || yes()` compile. Unwind and return both key cfg.odin provider_region_end on the same Stmt_Return; the same-key entry is overwritten.*
-- `BUG-cfg-4` **medium** [cfg.odin:2987](src/cfg.odin#L2987) `reads_at_exit`: last-use transfer ignores unwind reads, but an `errdefer` can run only there; design.md "Last-use transfer" counts a deferred read after the copy. Scenario: with `y` a `hook(copy)` record, `errdefer println(y.id); z := y; g(); return .ok(move(z));` with `g` panicking prints `0`; with `y.clone()`, `5`. Fix: skip unwind edges only for the L0698 check, not for candidates. *Confirmed: Reproduced: errdefer reading y after z := y then a panicking g() prints 0; with y.clone() it prints 5. A plain defer with panic also prints 0. design.md Last-use transfer counts deferred reads; reads_at_exit skips unwind successors. Not recorded as a gap.*
-- `BUG-cfg-5` **medium** [cfg.odin:1027](src/cfg.odin#L1027) `emit_cleanups`: an `errdefer` expanded on an unwind is unreported (`block.unwind`, [lifecycle.odin:1043](src/lifecycle.odin#L1043)), against the rule at [cfg.odin:132](src/cfg.odin#L132). Scenario: `errdefer println(y.id); z := move(y); g(); return .ok(move(z));` compiles and reads the moved `y` on a panic in `g`. Fix: report a dead read in an unwind expansion of an `errdefer`. *Confirmed: Probe compiles and on panic prints 'errdefer reads 0' for the moved y; the same read in a plain defer gets L0500. Even z := y, with no move, empties y, and y[999] then aborts with 'panic while unwinding'. Not recorded in the docs.*
-- `BUG-cfg-6` **medium** [cfg.odin:2395](src/cfg.odin#L2395) `walk_flow_expr`: only a direct diverging call adds an unwind cleanup point, so a local every normal exit moves gets `drop_at_exit` false ([lifecycle.odin:1190](src/lifecycle.odin#L1190)). Scenario: `z := Res{5}; _ = g(n); return move(z);` with `g` panicking never runs `z`'s drop, against design.md "What the unwind runs, and what it does not". Fix: a live local at a may-panic statement needs the drop. *Confirmed: Reproduced under default unwind: z := Res{5}; _ = g(n); return move(z) panics in g with no "drop 5"; adding an early return that leaves z live prints it. Not recorded in known-gaps, open-questions or comments; medium fits.*
-- `BUG-cfg-7` **low** [cfg.odin:1849](src/cfg.odin#L1849) `walk_flow_if`: `merge` stays current with no predecessors, so `settle_last_uses` reports L0698 in unreachable code, unlike after a plain `return` (`emit` skips it). Scenario: `if (c) { return; } else { return; } r := req(); r = req(); println(r);` errors. Fix: resume at `NO_BLOCK` when the merge has no predecessors, as `Expr_Cond` does; the same for `for`'s `done` and `switch`'s `merge`. *Not verified.*
-- `BUG-cfg-8` **low** [cfg.odin:226](src/cfg.odin#L226) `Flow_Graph.required`: the only walk array neither made in `new_flow_graph` nor made lazily, so `append` at [cfg.odin:1670](src/cfg.odin#L1670) uses `context.allocator`, outside the arena `analyze_ownership` frees. Scenario: each body with a stored required result leaks its array, which lasts in `loke-lsp`. Fix: `make` it with `allocator`. *Not verified.*
-
-**Simplification**
-
-- [cfg.odin:1785](src/cfg.odin#L1785) `walk_flow_assign`: two identical `is_ident && s.op == .Assign` tests and a third on `s.op`; one `if s.op == .Assign` holding an ident/else split does it. (about 4 lines)
-- [cfg.odin:373](src/cfg.odin#L373) `held_owners`: lives in `Prov_State`, so lifecycle cannot touch it; on `Flow_Graph`, the `held := 0; if mode...` idiom at 1577, 1713 and 2603 becomes `held := len(...)`, and `emit_return_cleanups` loses its lifecycle branch. (about 8 lines)
-- [cfg.odin:1514](src/cfg.odin#L1514) `Stmt_Parallel`: the `depth` pointer exists only to avoid the nil `prov`, but `prov != nil` is exactly `mode != .Lifecycle`; bump `parallel_depth` inside the existing mode test and after the walk. (about 3 lines)
-- [cfg.odin:2378](src/cfg.odin#L2378) `Expr_Move`: the lifecycle path is `walk_flow_operand(graph, v.value, .Kill, v.span, "moved")`. (about 6 lines)
-- [cfg.odin:616](src/cfg.odin#L616) `walk_flow_argument`, [cfg.odin:2840](src/cfg.odin#L2840) `walk_variadic_pack`: both run in lifecycle only, so neither needs a result; inline the first as an `if stores` and make the second file-private and void. (about 10 lines)
-- [cfg.odin:128](src/cfg.odin#L128) `Flow_Scope`: a struct around one int; `scopes: [dynamic]int` makes `enter_flow_scope` one line, keeping the comment on the field. (about 6 lines)
-- [cfg.odin:761](src/cfg.odin#L761) `emit_unwind_branch`: `(^rawptr)(&node)^` relies on union layout for an identity `stmt_base(stmt)` gives, as line 1370 uses (the same address, so BUG-cfg-3 still needs its flag). (about 2 lines)
-- [cfg.odin:2099](src/cfg.odin#L2099) `walk_foreach_binding_provenance`: the condition is `lent` from line 2069; and [cfg.odin:2609](src/cfg.odin#L2609) is `type_is_container`. (about 2 lines)
-- [cfg.odin:238](src/cfg.odin#L238) `Last_Use`: compute `last_use_site` once at [cfg.odin:647](src/cfg.odin#L647) and store `site, clone, via`, not `decl, assign, index`; the two calls in `settle_last_uses` and its nil and `via` tests go. (about 10 lines)
-- [cfg.odin:946](src/cfg.odin#L946) `emit_deferred`: drop `index` and the `resize`, since the next iteration of `emit_cleanups` or its `defer` always resizes. (about 4 lines)
-- [cfg.odin:1581](src/cfg.odin#L1581) `walk_flow_decl`, [cfg.odin:1752](src/cfg.odin#L1752) `walk_flow_assign`: make `value_loans` for any provenance walk; a `make` of 0 is harmless, and the nil tests inside the loops go (see Dead code). (about 4 lines)
-
-**Dead code**
-
-- (branch) [cfg.odin:2832](src/cfg.odin#L2832): lifecycle-only path (provenance returned at 2791), and `prov_container_drop_effects` returns at once in lifecycle; delete the call.
-- (branch) [cfg.odin:2878](src/cfg.odin#L2878): `graph.mode != .Lifecycle` is never true; `note_reset_point`'s one caller is on that same lifecycle-only path.
-- (branch) [cfg.odin:617](src/cfg.odin#L617): `graph.mode == .Lifecycle` is always true; `walk_flow_argument`'s two callers are lifecycle-only.
-- (branch) [cfg.odin:2840](src/cfg.odin#L2840): `walk_variadic_pack`'s result and the `stores := false` default are unused; its one caller discards the result and always passes `stores`, and every operand's loans are nil.
-- (branch) [cfg.odin:1063](src/cfg.odin#L1063): `.Local` cleanups are registered only in lifecycle (provenance appends only `.Prov_Root`), so both `mode != .Lifecycle` branches in that case never run.
-- (branch) [cfg.odin:692](src/cfg.odin#L692): with no `.Local` cleanups in provenance, the guard does nothing the loop's `continue` would not.
-- (branch) [cfg.odin:704](src/cfg.odin#L704): `sym == nil` here and at 705, 1059 and 1073 cannot hold; every `tracked` entry was appended with a resolved symbol.
-- (branch) [cfg.odin:951](src/cfg.odin#L951): the `resize` is redundant with [cfg.odin:1023](src/cfg.odin#L1023) and the restoring `defer`.
-- (branch) [cfg.odin:1601](src/cfg.odin#L1601): `value_loans != nil` is always true there and at [cfg.odin:1758](src/cfg.odin#L1758), since the loop runs only with values and in a provenance walk.
-
-**Data structures and algorithms**
-
-- [cfg.odin:647](src/cfg.odin#L647) `walk_flow_bound_value`: every `x := y` of a tracked local is a candidate, scalars included, so `settle_last_uses` solves the whole body and then discards them on `!clone^`. Append only when the clone flag is set; most bodies then skip the solve.
-- [cfg.odin:2903](src/cfg.odin#L2903) `settle_last_uses`: `read_in` is a `[][]bool` of blocks × tracked, and every round rewalks all blocks, which unwind paths multiply. Packed bit rows, as `Flow_Block.reach_entry` uses, make `reads_at_exit` a word OR.
+What remains are near copies whose helper would span other files.
 
 **Near copies**
 
-- [cfg.odin:1032](src/cfg.odin#L1032), [2406](src/cfg.odin#L2406), [2454](src/cfg.odin#L2454), [2679](src/cfg.odin#L2679), [2687](src/cfg.odin#L2687): the same fork of a skippable path. A `fork_flow_branch(graph) -> Block_Id` that links both edges, enters the branch and returns the join block saves about 15 lines.
-- [cfg.odin:1092](src/cfg.odin#L1092), [1116](src/cfg.odin#L1116), [1253](src/cfg.odin#L1253), [1370](src/cfg.odin#L1370), [2881](src/cfg.odin#L2881) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356): build a `Reset_Key`, register in lifecycle, look up and assert in provenance. `reset_point(graph, node, id, span) -> (live, ok)` saves about 15 lines and gives BUG-cfg-3's flag one home.
-- [cfg.odin:678](src/cfg.odin#L678), [1628](src/cfg.odin#L1628), [2165](src/cfg.odin#L2165): find or add a `tracked` slot and register a cleanup if managed. `track_local(graph, id, sym) -> int` saves about 12 lines.
-- [cfg.odin:701](src/cfg.odin#L701) and [1069](src/cfg.odin#L1069): the same `.Cleanup` event for a slot. `emit_local_cleanup(graph, slot)` saves about 8 lines.
-- [cfg.odin:1150](src/cfg.odin#L1150), [1160](src/cfg.odin#L1160), [1178](src/cfg.odin#L1178): check `provider_local`, then end the region with a phrase. `provider_ident_end(graph, ident, node, span, verb)` saves about 8 lines.
-- [cfg.odin:2435](src/cfg.odin#L2435), [2533](src/cfg.odin#L2533), [2562](src/cfg.odin#L2562): read a place by root, else through a carrier; the Index case puts the plain-slice test between. Two helpers save about 12 lines; check whether the Box case's missing `place = v` is intended.
-- [cfg.odin:1295](src/cfg.odin#L1295) and [1312](src/cfg.odin#L1312): the same container-op guard over `chosen_overload`. One helper returning the op's effects saves about 4 lines.
+- [cfg.odin:1092](src/cfg.odin#L1092), [1116](src/cfg.odin#L1116), [1253](src/cfg.odin#L1253), [1370](src/cfg.odin#L1370), [2881](src/cfg.odin#L2881) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356): build a `Reset_Key`, register in lifecycle, look up and assert in provenance. `reset_point(graph, node, id, span) -> (live, ok)` saves about 15 lines.
 - [cfg.odin:2863](src/cfg.odin#L2863) and [cfg_provenance.odin:9899](src/cfg_provenance.odin#L9899): the same loop over `proc_param_resets`, one as a test and one acting. They must agree, or the assert in `prov_reset` fires; an index-yielding helper would tie them together.
 - [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017): the same two-cursor merge of `variadic_order`. `call_pack_operands(v, allocator) -> []Expr` in written order saves about 4 lines per site.
 - [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [parallel.odin:81](src/parallel.odin#L81), [doc.odin:1374](src/doc.odin#L1374): slicing a span out of `sources`; `source_text` is file-private to `doc.odin`, and exporting a span form replaces them.
-
-**Structure and boundaries**
-
-- [cfg.odin:246](src/cfg.odin#L246): `Prov_State`, `Prov_Facts` and their 52 `make`s ([cfg.odin:455](src/cfg.odin#L455)) are about 230 lines only provenance reads. Move them to `cfg_provenance.odin` behind `new_prov_state(allocator, input)`; `Flow_Graph` keeps the `using`.
-- [cfg.odin:773](src/cfg.odin#L773): `stmt_cannot_panic` and its helpers (170 lines to 941) are a pure AST predicate taking only `^Compiler`, with nothing of the graph; they are a separate unit beside the walk's single caller.
-- [cfg.odin:1112](src/cfg.odin#L1112): the `provider_*` family (to 1336, about 225 lines) is region-end policy, six of them called from `cfg_provenance.odin`. Its only tie here is the file-private `emit`; give it a file of its own.
-- [cfg.odin:1436](src/cfg.odin#L1436) `Stmt_Return` (56 lines) and [cfg.odin:2453](src/cfg.odin#L2453) `Or_Return` (76 lines) are inline cases that hide the switch's flow. Extract `walk_flow_return` and `walk_flow_or_return`; the provenance halves of the Selector and Index cases belong in `cfg_provenance.odin`.
-- [cfg.odin:2022](src/cfg.odin#L2022) `walk_foreach_binding_provenance` and [cfg.odin:2284](src/cfg.odin#L2284) `prov_bind_case_name` are provenance-only, with no use of this file's privates beyond the walk; they belong in `cfg_provenance.odin`.
-- [cfg.odin:2898](src/cfg.odin#L2898) `settle_last_uses`: three jobs under a name for one: solve reads, report L0698, rewrite clones. Split at lines 2921 and 2938, so the diagnostic is not hidden in a settling pass.
-- [cfg.odin:1573](src/cfg.odin#L1573) `walk_flow_decl`: a provenance half ending in `return` at 1617 and a lifecycle half; split at that point into the two modes' own procedures.
-
-**Comments**
-
-- [cfg.odin:175](src/cfg.odin#L175): keep "Temporaries ending with the current statement (design.md \"Temporaries and procedure boundaries\"); alternative branches keep theirs apart." The rest narrates `cfg_provenance.odin`. (about 6 lines)
-- [cfg.odin:2089](src/cfg.odin#L2089): cut to "A lent or mutable element is the source's storage (design.md \"Borrowing iteration\"), so the binding views what `&iterable` would; the loop's own reads already hold that." (about 6 lines)
-- [cfg.odin:2857](src/cfg.odin#L2857): "shared by both passes" is false; only `note_reset_point` calls it. Delete the clause and make the procedure file-private.
-- [cfg.odin:1129](src/cfg.odin#L1129): wrong for a `move` parameter (BUG-cfg-2); it should say a borrowed parameter.
-- [cfg.odin:2712](src/cfg.odin#L2712): delete; it restates the five-line body. Likewise [cfg.odin:2996](src/cfg.odin#L2996). (about 2 lines)
-- [cfg.odin:2161](src/cfg.odin#L2161): repeats [cfg.odin:671](src/cfg.odin#L671); keep the citation and "see `track_move_parameters`". (about 1 line)
-- [cfg.odin:175](src/cfg.odin#L175), [1003](src/cfg.odin#L1003), [1176](src/cfg.odin#L1176), [1392](src/cfg.odin#L1392), [1475](src/cfg.odin#L1475), [1621](src/cfg.odin#L1621), [1818](src/cfg.odin#L1818), [1926](src/cfg.odin#L1926), [2219](src/cfg.odin#L2219), [2795](src/cfg.odin#L2795), [30](src/cfg.odin#L30): a bare `design.md` with no heading, against the citation rule; `check-citations.ps1` cannot see these.
 
 ### src/cfg_provenance.odin (part 1 of 4)
 

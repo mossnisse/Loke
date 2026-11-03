@@ -949,7 +949,7 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) 
 	if flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", live, flag)
 	}
-	if !sym.drop_at_exit || len(e.cleanups) == 0 {
+	if !sym.drop_at_exit && !sym.drop_on_unwind || len(e.cleanups) == 0 {
 		return
 	}
 	entry := Deferred{flag = flag, place = symbol_name(e, symbol_id), place_symbol = symbol_id, type = sym.type}
@@ -958,7 +958,9 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) 
 	if live {
 		unwind_register(e, entry)
 	}
-	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
+	if sym.drop_at_exit {
+		append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
+	}
 }
 
 // A whole-local assignment makes the place hold a value again, so a flagged

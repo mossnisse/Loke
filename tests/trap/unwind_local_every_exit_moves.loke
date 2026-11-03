@@ -1,0 +1,45 @@
+// design.md "What the unwind runs, and what it does not": a panic drops a live
+// local though every normal exit moves it out.
+package main;
+import "core:fmt";
+
+@(move_only) Res :: struct { id: int }
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+
+risky :: proc(n: int) -> int {
+	if (n > 0) { panic("risky"); }
+	return n;
+}
+
+moved_out :: proc(n: int) -> Res {
+	z := Res{n};
+	_ = risky(n);
+	return move(z);
+}
+
+parameter :: proc(p: move Res, n: int) -> Res {
+	_ = risky(n);
+	return p;
+}
+
+header :: proc(n: int) -> Res {
+	if (h := Res{n + 10}; risky(n) > 0) {
+		return h;
+	} else {
+		return h;
+	}
+}
+
+main :: proc() {
+	a := moved_out(0);
+	b := parameter(Res{1}, 0);
+	c := header(0);
+	fmt.println(a.id, b.id, c.id);
+	drop(a);
+	drop(b);
+	drop(c);
+	d := parameter(Res{2}, 1);
+	fmt.println("unreached", d.id);
+}

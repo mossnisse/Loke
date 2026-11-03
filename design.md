@@ -6151,6 +6151,15 @@ discarded, so a panic raised by an older cleanup after a success return does not
 run it. The error is not bound: the deferred statement reads locals like any
 other.
 
+Under `unwind`, a statement that may panic is a path to every pending `defer` and
+`errdefer`, so what they read must be live there as well as at each exit (`L0500`):
+
+```loke
+x: int;
+defer fmt.println(x);
+x = next();             // L0500: a panic in `next` runs the `defer` before `x` has a value
+```
+
 A deferred operation that returns a `Result` must handle that result within the
 deferred action. It cannot propagate failure with `or_return`:
 
@@ -9304,6 +9313,10 @@ region provenance. Result provenance follows these rules:
   argument the callee may write, or into static storage. A managed record keeps
   this dependency even when all its fields are unmanaged, including through
   locals, nested records, and procedure results.
+- A provider received through a `move` parameter is a region of the body, as a
+  local provider is: what it backs must end first, and may not be returned or
+  stored for the caller. Moved on or returned whole, it keeps its own dependency on
+  the regions it was built from.
 - Returning an ordinary borrowed managed parameter follows the clone rule under
   [Parameter semantics](#parameter-semantics-and-abi-lowering). A mutable clone
   takes the result allocator's region provenance; a shared-storage logical clone

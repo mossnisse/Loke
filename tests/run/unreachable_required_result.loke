@@ -1,0 +1,54 @@
+// design.md "@(require_results)": code no path reaches has no obligation, wherever
+// the paths ended.
+package main;
+import "core:fmt";
+
+@(require_results)
+req :: proc() -> int { return 1; }
+
+after_both_branches :: proc(c: bool) {
+	if (c) { return; } else { return; }
+	r := req();
+	r = req();
+	fmt.println(r);
+}
+
+after_endless_loop :: proc() {
+	for (;;) {
+		return;
+	}
+	r := req();
+	r = req();
+	fmt.println(r);
+}
+
+Side :: enum { Left, Right }
+
+after_exhaustive_switch :: proc(side: Side) {
+	switch (side) {
+	case .Left:
+		return;
+	case .Right:
+		return;
+	}
+	r := req();
+	r = req();
+	fmt.println(r);
+}
+
+inside_later_statement :: proc() {
+	return;
+	if (true) {
+		r := req();
+		r = req();
+		fmt.println(r);
+	}
+}
+
+main :: proc() {
+	after_both_branches(true);
+	after_endless_loop();
+	after_exhaustive_switch(.Left);
+	inside_later_statement();
+	fmt.println("done");
+}

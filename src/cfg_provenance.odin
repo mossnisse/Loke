@@ -9,6 +9,235 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 
+// The state only the provenance modes build.
+Prov_State :: struct {
+	input: ^Prov_Input,
+	// The conversions the walk is evaluating the sources of (`prov_repr`).
+	converting: [dynamic]Prov_Converting,
+	roots:          [dynamic]Prov_Root,
+	loans:          [dynamic]Prov_Loan,
+	prov_slots:     [dynamic]Prov_Slot,
+	reborrows:      [dynamic]Prov_Reborrow,
+	// The loans of places reached through carriers (`prov_place_loan`).
+	place_loans:    [dynamic]Prov_Place_Loan,
+	entry_defs:     [dynamic]Prov_Entry_Def,
+	root_by_symbol: map[Symbol_Id]Root_Id,
+	root_by_storage: map[Storage_Id]Root_Id,
+	captured_values: map[Value_Id][]int,
+	slot_by_symbol: map[Symbol_Id]int,
+	// What a non-owning binding (a loop element, a switch payload over a place)
+	// views: every access and borrow through it also uses the source.
+	view_loans:     map[Symbol_Id][]int,
+	// The stored carrier a switch payload binding over a place names, which a
+	// use of the binding uses (`prov_note_view_use`).
+	view_uses:      map[Symbol_Id]Prov_View_Use,
+	// The view bindings whose own loans end with their step (design.md
+	// "By-reference iteration"), so `&binding` borrows the binding too.
+	step_views:     map[Symbol_Id]bool,
+	// The carrier slots of a lent loop element, which is the stored carrier
+	// rather than a copy: a copy taken from one reborrows these instead.
+	lent_aliases:   map[int][]int,
+	// The `&mut` loop bindings, and where a store through each lands
+	// (`prov_note_traversal`).
+	traversals:     map[Symbol_Id]Prov_Traversal,
+	// The slots standing for what the caller storage each parameter loan names
+	// holds (`prov_caller_slots`).
+	caller_slots:   map[Loan_Id][dynamic]int,
+	// Per view parameter's own loan and constant index, the caller slots
+	// standing for that one element (`prov_view_element`).
+	view_elements:  map[Prov_View_Element][]int,
+	// Per named slot, how each of its definitions relates its view to a fresh
+	// borrow, and the reslice the definition being emitted makes, if any
+	// (`prov_note_view`).
+	view_defs:      map[int][dynamic]Prov_View_Def,
+	view_reslice:   Prov_View_Def,
+	// Per call with a `self: ^` receiver, what the receiver's place holds, which
+	// the call's actual joins with its borrow of that place: a load through the
+	// receiver reads these at its path rather than through them.
+	receiver_content: map[^Expr_Call][]int,
+	// Per `parallel` block's hidden scope, the slot holding what its tasks
+	// lend (`prov_spawn`), and each task's reborrows of mutable carriers, one
+	// slot per spawn site, all registered as the block is entered
+	// (`prov_enter_parallel`); `spawning` is the call whose lending is
+	// collected into `spawn_held`.
+	task_slots:     map[Symbol_Id]int,
+	task_holds:     map[Symbol_Id][dynamic]int,
+	// design.md "Parallel blocks": a pooled block's tasks, by its hidden scope,
+	// which its join may run on the joining thread.
+	pool_tasks:     map[Symbol_Id][dynamic]Pool_Task,
+	// Each spawn site's slot in `task_holds`.
+	spawn_holds:    map[^Stmt_Spawn]int,
+	spawning:       ^Expr_Call,
+	spawn_held:     []int,
+	// Loans of the spawned call's temporaries, which its frame holds, so the
+	// task's use of them ends with the task (design.md "Spawn statements").
+	spawn_owned:    []int,
+	// The call being spawned belongs to a pooled block.
+	spawning_pooled: bool,
+	// design.md "Globals while tasks run": how many `parallel` blocks enclose
+	// the statement being walked, and each block's hidden scope by its index.
+	parallel_depth:   int,
+	parallel_scopes:  [dynamic]Symbol_Id,
+	has_window_event: bool,
+	// The effects being recorded are a spawned call's, which run on its task;
+	// `effect_name` describes the call whose writes are being recorded.
+	task_effects:     bool,
+	effect_name:      string,
+	// design.md "Allocators and tasks": the regions the spawned call's task
+	// reserves, collected while its effects are, and each spawn in the order
+	// walked: its block's window bit, its reservation, and where it is.
+	task_reserve:     Region_Set,
+	// While a body's events materialize: the task site its spawned call's
+	// effects reserve for, and the graph receiving the summary outputs.
+	task_index:       int,
+	materialized:     ^Flow_Graph,
+	task_sites:       [dynamic]Task_Site,
+	// Per named slot, what each of its definitions may point at, so a borrow
+	// through it takes the places of those reaching it (`prov_reaching_offsets`).
+	offset_reach:   Prov_Reach,
+	// A local's own slots (`root_own_slots`): its carrier's one, or one per
+	// `carrier_shape` path when it holds carriers.
+	own_slots: map[Symbol_Id][]int,
+	// Call results settled for this fact-building pass.
+	call_results:   map[^Expr_Call]Prov_Call_Result,
+	// The call each user operator stands for, keyed by its node.
+	operator_calls: map[rawptr]^Expr_Call,
+	// Summary mode: the direct callees whose result summaries this body reads.
+	summary_callees: [dynamic]Symbol_Id,
+	// Calls through a procedure type with no result contract, for notes.
+	plain_calls: [dynamic]^Expr_Call,
+	// design.md "Global write effects": this body's own writes and reads of
+	// globals, and its calls while the effects are still settling.
+	effect_writes: [dynamic]Symbol_Id,
+	effect_reads:  [dynamic]Symbol_Id,
+	effect_calls:  [dynamic]Effect_Call,
+	// The `hook(copy)`s this body's copies may run, which only read.
+	effect_copy_hooks: [dynamic]Symbol_Id,
+	// Procedures this body uses as values, and the callee being walked, which is
+	// a call rather than a use.
+	effect_values: [dynamic]Symbol_Id,
+	// What each variable holding a procedure may be given.
+	effect_stores: [dynamic]Effect_Store,
+	// `thread.spawn` calls, kept on the graph so a repeated pass notes each once.
+	thread_spawns: [dynamic]Thread_Spawn,
+	// The allocator use this body's own operations make, while the thread
+	// summaries collect (`prov_note_allocator_use`).
+	allocator_use: Allocator_Use,
+	// A direct call's callee, which `prov_note_proc_value` does not count as
+	// a procedure used as a value.
+	callee_expr:   Expr,
+	// The facts the fixed point carries between rounds.
+	using facts: Prov_Facts,
+	// Borrowed payload bindings name storage in their switch subject.
+	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
+	// Set while a store into a writable parameter reads its regions.
+	self_reads:      ^Prov_Self_Reads,
+	param_count:     int,
+	// One bit per local `mem.Arena`/`mem.Scratch`.
+	provider_bits:    map[Symbol_Id]u64,
+	provider_symbols: [dynamic]Symbol_Id,
+	// Per local, one token per provider position its type fixes, and the tokens
+	// of providers moved in, which may sit at any position.
+	provider_paths: map[Symbol_Id][]Provider_Path,
+	provider_moved: map[Symbol_Id]u64,
+	// A temporary provider, as in `mem.Arena.init().allocator()`: the token of
+	// each handle taken of one, and the ones the current statement ends.
+	temp_provider_bits: map[^Expr_Call]u64,
+	// The value a `return` hands back while its deferred statements are walked.
+	returning: ^Prov_Returning,
+	temp_providers:     [dynamic]Temp_Provider,
+	has_region_event: bool,
+	// The uses that are a local's `drop` at scope exit, for the note naming them.
+	scope_drops:      map[Span]bool,
+	has_content_load: bool,
+	// A store through carriers that may replace what one place held
+	// (`Prov_Event.one_place`), which the solve settles once reaching has.
+	has_replacing_store: bool,
+	// A `Publish` the solve links to where it lands (`link_landed_stores`).
+	has_linked_store: bool,
+}
+
+// design.md "Allocator regions and region provenance": the flow-insensitive
+// facts a body's fixed point carries from one round to the next. They only
+// grow, and their weight (`prov_fact_weight`) tells when a round read every
+// one at its final value. A round rebuilds everything else it holds from the
+// frozen input and the body's topology (`Prov_Topology`).
+Prov_Facts :: struct {
+	// Each local's allocator regions, and the path-indexed regions of storage.
+	region_of:        map[Symbol_Id]Region_Set,
+	region_content:   map[Storage_Id][]Prov_Region_Content,
+	// The parent allocator a provider depends on until it is dropped.
+	provider_parents: map[Symbol_Id]Region_Set,
+	// Locals a mutable loan was ever taken of: only these can be reached through
+	// a pointer or slice.
+	lent_locals:      map[Symbol_Id]bool,
+	// What each local's carriers were ever set to reach, at the path in the local
+	// holding them: a writable parameter's storage, so a write through it is a
+	// write the caller learns of, or a variable's place `&mut place` lent, so a
+	// reset sees an owner written there and static storage rejects one.
+	written_aliases:  map[Storage_Id][]Written_Alias,
+}
+
+@(private)
+new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_State {
+	state := new(Prov_State, allocator)
+	state.input = input
+	state.converting = make([dynamic]Prov_Converting, allocator)
+	state.roots = make([dynamic]Prov_Root, allocator)
+	state.loans = make([dynamic]Prov_Loan, allocator)
+	state.prov_slots = make([dynamic]Prov_Slot, allocator)
+	state.place_loans = make([dynamic]Prov_Place_Loan, allocator)
+	state.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
+	state.root_by_symbol = make(map[Symbol_Id]Root_Id, allocator)
+	state.root_by_storage = make(map[Storage_Id]Root_Id, allocator)
+	state.captured_values = make(map[Value_Id][]int, allocator)
+	state.slot_by_symbol = make(map[Symbol_Id]int, allocator)
+	state.view_loans = make(map[Symbol_Id][]int, allocator)
+	state.view_uses = make(map[Symbol_Id]Prov_View_Use, allocator)
+	state.step_views = make(map[Symbol_Id]bool, allocator)
+	state.lent_aliases = make(map[int][]int, allocator)
+	state.traversals = make(map[Symbol_Id]Prov_Traversal, allocator)
+	state.caller_slots = make(map[Loan_Id][dynamic]int, allocator)
+	state.view_elements = make(map[Prov_View_Element][]int, allocator)
+	state.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
+	state.receiver_content = make(map[^Expr_Call][]int, allocator)
+	state.offset_reach = Prov_Reach {
+		places  = make(map[int][dynamic]Prov_Offset, allocator),
+		defined = make(map[Prov_Reach_Key]u128, allocator),
+		exits   = make(map[Prov_Reach_Key]Prov_Reach_Exit, allocator),
+		frames  = make([dynamic]Prov_Reach_Frame, allocator),
+		blocks  = make([dynamic]Prov_Reach_Block, allocator),
+		scc     = make([dynamic]Block_Id, allocator),
+		stale   = make([dynamic]Block_Id, allocator),
+	}
+	state.own_slots = make(map[Symbol_Id][]int, allocator)
+	state.call_results = make(map[^Expr_Call]Prov_Call_Result, allocator)
+	state.operator_calls = make(map[rawptr]^Expr_Call, allocator)
+	state.summary_callees = make([dynamic]Symbol_Id, allocator)
+	state.plain_calls = make([dynamic]^Expr_Call, allocator)
+	state.effect_writes = make([dynamic]Symbol_Id, allocator)
+	state.effect_reads = make([dynamic]Symbol_Id, allocator)
+	state.effect_copy_hooks = make([dynamic]Symbol_Id, allocator)
+	state.effect_calls = make([dynamic]Effect_Call, allocator)
+	state.effect_values = make([dynamic]Symbol_Id, allocator)
+	state.effect_stores = make([dynamic]Effect_Store, allocator)
+	state.thread_spawns = make([dynamic]Thread_Spawn, allocator)
+	state.region_of = make(map[Symbol_Id]Region_Set, allocator)
+	state.region_content = make(map[Storage_Id][]Prov_Region_Content, allocator)
+	state.region_aliases = make(map[Symbol_Id][]Prov_Region_Alias, allocator)
+	state.provider_parents = make(map[Symbol_Id]Region_Set, allocator)
+	state.provider_bits = make(map[Symbol_Id]u64, allocator)
+	state.reborrows = make([dynamic]Prov_Reborrow, allocator)
+	state.provider_symbols = make([dynamic]Symbol_Id, allocator)
+	state.provider_paths = make(map[Symbol_Id][]Provider_Path, allocator)
+	state.provider_moved = make(map[Symbol_Id]u64, allocator)
+	state.temp_provider_bits = make(map[^Expr_Call]u64, allocator)
+	state.temp_providers = make([dynamic]Temp_Provider, allocator)
+	state.lent_locals = make(map[Symbol_Id]bool, allocator)
+	state.written_aliases = make(map[Storage_Id][]Written_Alias, allocator)
+	return state
+}
+
 // ------------------------------------------------------ provenance events --
 
 // Kept apart from cfg.odin's lifecycle events: the analyses share block topology,
@@ -3219,6 +3448,303 @@ prov_concat_path :: proc(graph: ^Flow_Graph, prefix, path: []Proj_Step) -> []Pro
 	return out
 }
 
+// A place read by its root, when it has one.
+@(private = "file")
+prov_read_rooted :: proc(graph: ^Flow_Graph, e: Expr) -> (content: []int, ok: bool) {
+	root, path, rooted := prov_place_of(graph, e)
+	if !rooted {
+		return nil, false
+	}
+	prov_walk_subscripts(graph, e)
+	prov_access(graph, root, path, .Read, expr_span(e))
+	// The read yields the place's content, with no lasting borrow.
+	return prov_read_content(graph, root, path, prov_type(graph, e), expr_span(e)), true
+}
+
+// A place read through the carriers reaching it, when it has any.
+@(private = "file")
+prov_read_carried :: proc(graph: ^Flow_Graph, e: Expr) -> (content: []int, ok: bool) {
+	only := prov_read_is_reads_only(graph.k.c, prov_type(graph, e))
+	carriers, path, through := prov_read_through_carrier(graph, e, only)
+	if !through {
+		return nil, false
+	}
+	return prov_load_content(graph, carriers, path, prov_type(graph, e), expr_span(e), only, place = e), true
+}
+
+@(private)
+prov_read_deref :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix) -> []int {
+	// design.md "Owned values": reading `b^` reads the box, as reading `xs[i]`
+	// reads a dynamic array.
+	if type_is_box(graph.k.c, prov_type(graph, v.operand)) {
+		if content, ok := prov_read_rooted(graph, v); ok {
+			return content
+		}
+		if content, ok := prov_read_carried(graph, v); ok {
+			return content
+		}
+		loans := walk_flow_expr(graph, v.operand)
+		return prov_project_content(graph, loans, prov_type(graph, v.operand), {proj_wild()}, prov_type(graph, v), v.span)
+	}
+	only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
+	carriers, _, _ := prov_read_through_carrier(graph, v, only)
+	return prov_load_content(graph, carriers, nil, prov_type(graph, v), v.span, only)
+}
+
+@(private)
+prov_read_selector :: proc(graph: ^Flow_Graph, v: ^Expr_Selector) -> []int {
+	if content, ok := prov_read_rooted(graph, v); ok {
+		return content
+	}
+	if content, ok := prov_read_carried(graph, v); ok {
+		return content
+	}
+	loans := walk_flow_expr(graph, v.operand)
+	if v.resolution.kind == .Field && v.operand != nil {
+		return prov_project_content(
+			graph, loans, prov_type(graph, v.operand), {prov_field_step(graph, v)}, prov_type(graph, v), v.span,
+		)
+	}
+	return nil
+}
+
+@(private)
+prov_read_index :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []int {
+	if v.resolution.kind == .User_Operator {
+		return prov_call(graph, prov_operator_call(graph, v))
+	}
+	// Reading a map's element clones it out, which writing one does not.
+	if len(v.bound) == 0 && underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map {
+		prov_copy_effects(graph, prov_type(graph, v), v.span)
+	}
+	if content, ok := prov_read_rooted(graph, v); ok {
+		return content
+	}
+	// An element of plain data read out of a slice local only reads the
+	// carrier (design.md "Weakening and reborrows").
+	if ident, plain := prov_plain_slice_local(graph, v.operand); plain && len(v.bound) == 0 &&
+	   !prov_indices_may_write(v.indices) {
+		carriers := prov_read_ident(graph, ident, reads_only = true)
+		for index in v.indices {
+			walk_flow_expr(graph, index)
+		}
+		return prov_load_content(graph, carriers, nil, prov_type(graph, v), v.span)
+	}
+	if content, ok := prov_read_carried(graph, v); ok {
+		return content
+	}
+	loans := walk_flow_expr(graph, v.operand)
+	for index in v.indices {
+		loans = prov_join(graph, loans, walk_flow_expr(graph, index))
+	}
+	return prov_project_content(
+		graph, loans, prov_type(graph, v.operand), prov_index_path(graph, v), prov_type(graph, v), v.span,
+	)
+}
+
+// What a `return` hands back: the borrows it carries and what they reach escape,
+// and the slots holding them stay live through the cleanups. `graph.returning`
+// names the value while they run, which the caller restores.
+@(private)
+prov_return_value :: proc(graph: ^Flow_Graph, value: ^Return_Value) -> []int {
+	// design.md "`inout` results": `return inout place` hands back a
+	// borrow of the place, which must outlive the frame.
+	sources: []int
+	if value.is_inout {
+		sources = prov_borrow_place(graph, value.expr, true, expr_span(value.expr), "`inout` result")
+	} else {
+		sources = walk_flow_expr(graph, value.expr)
+	}
+	returned := prov_input_value(graph, value.expr)
+	if !value.is_inout {
+		graph.returning = new_clone(Prov_Returning{value = returned, span = expr_span(value.expr)}, graph.alloc)
+	}
+	result_type := prov_type(graph, value.expr)
+	if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
+		result_type = sym.result
+	}
+	contents := prov_load_deep(graph, sources, expr_span(value.expr))
+	prov_event(graph, Prov_Event_Escape{sources = sources, into = contents, returning = {value = returned, result = result_type, span = expr_span(value.expr)}})
+	return prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
+}
+
+// What an `or_return` propagates, as `prov_return_value` for a `return`.
+@(private)
+prov_or_return_escape :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, operand_loans: []int) -> []int {
+	proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
+	if proc_symbol == nil || proc_symbol.result == INVALID_TYPE {
+		return nil
+	}
+	shape, operand_fallible := fallible_of(graph.k, prov_type(graph, v.operand))
+	target, target_fallible := fallible_of(graph.k, proc_symbol.result)
+	if !operand_fallible || !target_fallible {
+		return nil
+	}
+	from := shape.info.variants[shape.failure]
+	into := target.info.variants[target.failure]
+	escaping := prov_payload_content(graph, operand_loans, prov_type(graph, v.operand), from, v.span)
+	if failure_assignment_borrows(graph.k.c, from, into) {
+		if root, path, is_place := prov_place_of(graph, v.operand); is_place {
+			block, index := prov_access(graph, root, path, .Read, v.span)
+			escaping = prov_join(graph, escaping, prov_borrow(graph, root, path, false, v.span, "view", block, index))
+		} else {
+			escaping = prov_join(graph, escaping, prov_borrow(graph, prov_temp_root(graph, v.span), nil, false, v.span, "view"))
+		}
+	}
+	contents := prov_load_deep(graph, escaping, v.span)
+	propagated := prov_error_form(graph, v, graph.expansion)
+	graph.returning = new_clone(Prov_Returning{propagated = propagated, result = proc_symbol.result, span = v.span}, graph.alloc)
+	prov_event(graph, Prov_Event_Escape{sources = escaping, into = contents, returning = graph.returning^})
+	return prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
+}
+
+// What a level of a `foreach` pattern takes apart: a map entry's and an
+// `indexed()` pair's fields are no fields of what the source stores.
+@(private = "file")
+Foreach_Pattern :: enum { Value, Map_Entry, Indexed_Pair }
+
+@(private = "file")
+foreach_element_pattern :: proc(s: ^Stmt_Foreach) -> Foreach_Pattern {
+	if s.indexed {
+		return .Indexed_Pair
+	}
+	return s.kind == .Map ? .Map_Entry : .Value
+}
+
+// Binds what each of a `foreach`'s bindings holds at a step.
+@(private)
+prov_bind_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated, elements, through: []int) {
+	walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements, through, s.element_type, foreach_element_pattern(s), nil)
+}
+
+// `below` is where this level of the pattern is inside the element, which
+// a `&mut` leaf names (`prov_note_traversal`).
+@(private = "file")
+walk_foreach_binding_provenance :: proc(
+	graph: ^Flow_Graph, s: ^Stmt_Foreach, bindings: []Foreach_Binding, iterated, elements, through: []int,
+	logical: Type_Id, pattern: Foreach_Pattern, below: []Proj_Step,
+) {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		walk_foreach_binding_provenance(graph, s, bindings[0].group, iterated, elements, through, logical, pattern, below)
+		return
+	}
+	// design.md "Destructuring": a padding field fills no binding.
+	fields: []Symbol_Id
+	if info := underlying_info(graph.k.c, logical); len(bindings) > 1 && info != nil && info.kind == .Struct {
+		fields = named_fields(graph.k.c, info)
+	}
+	for binding, position in bindings {
+		part, part_pattern, at := logical, pattern, below
+		if position < len(fields) {
+			field := symbol_of(graph.k.c, fields[position])
+			part, part_pattern = field.type, .Value
+			switch pattern {
+			case .Value:
+				at = prov_extend(graph, below, proj_field(int(field.index)))
+			case .Map_Entry:
+				at = prov_extend(graph, below, proj_field(position == 0 ? PROJ_MAP_KEY : PROJ_MAP_VALUE))
+			case .Indexed_Pair:
+				if s.kind == .Map { part_pattern = .Map_Entry }
+			}
+		}
+		if len(binding.group) > 0 {
+			walk_foreach_binding_provenance(graph, s, binding.group, iterated, elements, through, part, part_pattern, at)
+			continue
+		}
+		// What a leaf holds is what the element holds. Only a borrow of it takes
+		// the traversal's own loans, which the view below gives it.
+		loans := iterated
+		if s.kind != .Protocol && len(elements) > 0 {
+			loans = elements
+		}
+		// standard-library.md "Chunks of a mutable slice": a chunk takes the view's loans
+		// without reborrowing the view, so the view advances while earlier
+		// chunks are held. The chunks are disjoint by construction.
+		if foreach_yields_chunks(graph.k.c, s) && prov_bind_chunk(graph, binding.symbol, loans, expr_span(s.iterable)) {
+			continue
+		}
+		// A lent element is the stored carrier, not a copy of it, so it does not
+		// reborrow what the container holds (design.md "Borrowing iteration"):
+		// reading it reads that carrier, which the iterator loan already guards.
+		sym := symbol_of(graph.k.c, binding.symbol)
+		lent := sym != nil && sym.borrowed_binding != .None
+		carrier := s.kind != .Protocol && len(elements) > 0 && type_is_carrier(graph.k.c, prov_type(graph, s.iterable))
+		// design.md "Procedure result contracts": the value of a carrier's lent
+		// element is what `values[i]` would load through the carrier, so a copy
+		// of it keeps only the element's own borrows; reading the binding still
+		// uses the carrier through the view below.
+		if lent && carrier {
+			loans = prov_load_content(
+				graph, elements, binding.is_ref ? at : nil, sym.type, expr_span(s.iterable),
+				reads_only = prov_read_is_reads_only(graph.k.c, sym.type),
+			)
+		}
+		// The leaf starts as what the element holds, which only a store through
+		// it afterwards adds to.
+		delete_key(&graph.traversals, binding.symbol)
+		prov_forget_region_binding(graph, binding.symbol)
+		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
+		// A user's iterator says nothing of where in the source it lends.
+		element := s.kind == .Protocol ? nil : prov_concat_path(graph, prov_extend(graph, nil, proj_wild()), at)
+		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable), element, binding.is_ref)
+		// A lent or mutable element is the source's storage (design.md "Borrowing
+		// iteration"), so the binding views what `&iterable` would; the loop's own
+		// reads already hold that.
+		if lent {
+			viewed := iterated
+			if carrier {
+				viewed = elements
+			} else if len(through) > 0 {
+				viewed = through
+			} else if s.kind != .Protocol {
+				if carriers, _, reached := prov_read_through_carrier(graph, s.iterable); reached && len(carriers) > 0 {
+					viewed = carriers
+				}
+			}
+			prov_bind_view(graph, binding.symbol, viewed, lends = !foreach_is_place_loop(s))
+		}
+		if binding.is_ref {
+			prov_note_traversal(graph, s, binding.symbol, at, element, iterated, elements, through)
+		}
+	}
+}
+
+@(private = "file")
+foreach_yields_chunks :: proc(c: ^Compiler, s: ^Stmt_Foreach) -> bool {
+	next := symbol_of(c, s.next_symbol)
+	return s.kind == .Protocol && next != nil && next.synth == .Chunks_Next
+}
+
+// One name a case binds: the payload, or with `slot` one of its fields.
+@(private)
+prov_bind_case_name :: proc(
+	graph: ^Flow_Graph, s: ^Stmt_Switch, symbol: Symbol_Id, is_ref: bool, sources: []int, span: Span,
+	consumes: bool, variants: []int, slot := -1,
+) {
+	// Over a place, the binding is the stored payload, not a copy of it.
+	// A deferred switch can be expanded more than once in the same graph.
+	prov_forget_region_binding(graph, symbol)
+	prov_bind_value(graph, symbol, sources, span, copies = consumes)
+	prov_bind_case_region(graph, symbol, prov_input_value(graph, s.subject), variants, slot)
+	// A place subject keeps its payload, so the binding views its storage;
+	// a consumed one is the binding's own, which ends with its case
+	// (design.md "Switch ownership").
+	if !consumes {
+		// design.md "Switch ownership": `cursor = &mut node.next` keeps a
+		// loan of this case's `node`, which the next pass binds afresh.
+		if is_ref && symbol != INVALID_SYMBOL {
+			prov_emit(graph, Prov_Event{kind = .Rebind, root = prov_root_for_symbol(graph, symbol), span = span})
+		}
+		prov_bind_view(graph, symbol, prov_subject_view(graph, s.subject, is_ref, slot))
+		if !is_ref {
+			prov_note_view_use(graph, symbol, s.subject, slot)
+		}
+	} else if symbol != INVALID_SYMBOL {
+		root := prov_root_for_symbol(graph, symbol)
+		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
+	}
+}
+
 // design.md: a borrowed parameter starts with one loan of the caller's root.
 @(private)
 prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
@@ -3253,6 +3779,15 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			// the argument's region.
 			if parameter.mode == .Move {
 				prov_scope_drop_effects(graph, id, sym.span)
+				// A provider moved in is this body's to end, as a local's is: what it
+				// backs must end first. Its own parents are still the argument's.
+				if provider_local(graph.k.c, id) {
+					if type_is_region_provider(graph.k.c, sym.type) {
+						graph.provider_parents[id] = graph.region_of[id]
+						graph.region_of[id] = prov_provider_region(graph, id)
+					}
+					append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = prov_root_for_symbol(graph, id), span = sym.span})
+				}
 			}
 			slot, is_carrier := prov_slot_for_symbol(graph, id)
 			// An aggregate parameter gets one loan per shape path.
@@ -5394,7 +5929,7 @@ prov_reset :: proc(
 		region = region, span = span, direct = direct, live = live, ends = ends, ending = ending,
 		provider_end = provider_end, held = held, temporaries = temporaries[:],
 	}
-	if graph.unwinding { op.unwind_from = graph.unwind_at }
+	if graph.expansion.unwinding { op.unwind_from = graph.unwind_at }
 	if graph.returning != nil { op.returning = graph.returning^ }
 	prov_event(graph, op)
 }
@@ -7552,11 +8087,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			if index >= len(s.destination_live) || s.destination_live[index] != .Dead {
 				prov_drop_effects(graph, target_type, expr_span(target), region = prov_drop_region(graph, target))
 			}
-			if ident, is_ident := target.(^Expr_Ident); is_ident {
-				provider_assign_end(graph, ident)
-			} else {
-				provider_field_assign_end(graph, target)
-			}
+			provider_assign_end(graph, target)
 			if root := provider_place_root(graph, target); root != INVALID_SYMBOL && value != nil {
 				prov_merge_moved_bits(graph, root, prov_input_value(graph, value))
 			}

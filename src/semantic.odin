@@ -775,6 +775,10 @@ Symbol :: struct {
 	// a definite state needs no runtime flag.
 	drop_at_exit:     bool,
 	drop_conditional: bool,
+	// Live where a statement may panic, so the unwind may drop it though every
+	// normal exit finds it moved out (design.md "What the unwind runs, and what it
+	// does not").
+	drop_on_unwind:   bool,
 	cleanup_slot:     int,
 	// design.md "Allocators": the written `via` expression, or nil for the lazy
 	// default. Kept on the *declaration* because it survives drop and move and is

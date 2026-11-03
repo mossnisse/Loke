@@ -3750,6 +3750,22 @@ other gap first blamed on the lattice, a swap of owners not being seen, was fixe
 today's facts. Reconsider if a real program meets that over-rejection, or if a
 soundness gap turns up that does need facts by program point.
 
+### What a panic may drop is decided apart from what an exit drops
+
+A local that every normal exit moves out still has to drop if a statement before
+those moves panics, so a statement that may panic marks what is live there
+(`Flow_Event_Kind.Panic_Point`), which sets `Symbol.drop_on_unwind`. It could have
+voted as a cleanup point instead, as an early return leaving the local live does.
+That would give the local a runtime flag and a test at each normal exit that always
+finds it dead, and `prov_scope_drop_effects`, which reads `drop_at_exit`, would
+report a hook's writes at a scope exit that never runs it. A panic's effects are
+modeled where a `defer` can observe them, by the unwind path.
+
+It is a mark rather than a path because a path per statement multiplies the blocks
+of every body holding a managed local, to learn one bit about each. It covers every
+managed owner, not only those with a `drop` hook, since a drop can also reach a
+user's allocator.
+
 ### Unwind thunks scan their replay's text for reads
 
 `without_unread_bindings` and `emit_unwind_thunk` find which bindings a cleanup
