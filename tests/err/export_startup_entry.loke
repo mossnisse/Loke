@@ -1,0 +1,9 @@
+package main;
+
+// design.md "@(export)": an executable writes `wmain` itself, so an export of
+// that name is a diagnostic rather than clang's redefinition.
+
+@(export, link_name="wmain")
+startup :: proc "c" () -> i32 { return 1; }
+
+main :: proc() {}

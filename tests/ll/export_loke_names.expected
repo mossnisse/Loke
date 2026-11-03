@@ -1,0 +1,11 @@
+define i32 @"loke.host_api"() {
+define i32 @"loke.p.helper"() {
+not define internal i32 @"loke
+not define internal i32 @loke.host_api()
+define internal i32 @loke.p.helper.1()
+@"loke.g.counter" = global i32 4
+@loke.g.counter.1 = global i32 5
+declare void @"loke.p.main"()
+define internal void @loke.p.main.1()
+not declare i32 @wmain
+define i32 @wmain(i32 %argc, ptr %argv)

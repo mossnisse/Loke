@@ -1,0 +1,1 @@
+define i32 @wmain(i32 %arg0, ptr %arg1)

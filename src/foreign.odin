@@ -176,8 +176,9 @@ check_c_vararg_param :: proc(k: ^Checker, is_foreign: bool, literal: ^Expr_Proc,
 }
 
 // design.md "@(export)": a whole-program pass, so clashing external symbols are
-// reported with locations rather than failing at link time.
-check_exports :: proc(c: ^Compiler) {
+// reported with locations rather than failing at link time. `defines_entry` says
+// the build writes the startup entry, whose name no export can then take.
+check_exports :: proc(c: ^Compiler, defines_entry: bool) {
 	claimed := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	linked := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	for id in package_order(c) {
@@ -201,6 +202,9 @@ check_exports :: proc(c: ^Compiler) {
 				}
 			}
 		}
+	}
+	if entry, taken := claimed["wmain"]; taken && defines_entry {
+		errorf(c, symbol_of(c, entry).span, "L0635", "an exported symbol cannot use `wmain`, this build's startup entry")
 	}
 	// A foreign binding of an exported name links to that definition.
 	for name, bound_id in linked {

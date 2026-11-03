@@ -7,6 +7,21 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### An export can still spell a generated name the compiler fixes
+
+[`@(export)`](design.md#export) reserves only the `loke_rt_` prefix, and the names the naming pass
+hands out step aside for a link name, but the rest are written as they stand: `loke.fmt.*`,
+`loke.f.<n>`, the container and box thunks, and a replay's `loke.u<n>.*`. This fails in clang with `L0403`, "invalid redefinition", rather than compiling:
+
+```loke
+package main;
+@(export, link_name = "loke.fmt.std_write")
+f :: proc "c" () -> i32 { return 1; }
+main :: proc() { _ = f(); }
+```
+
+Found on 2026-11-03 (P3).
+
 ### A switch of thousands of `return` cases is slow, then crashes the compiler
 
 Neither is a checker cost: a `switch` over an enum, with each `case .Mi: return i;`, takes 1 s at

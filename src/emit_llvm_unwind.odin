@@ -246,9 +246,10 @@ emit_unwind_pop :: proc(e: ^Emitter) {
 }
 
 // design.md "What the unwind runs, and what it does not": a generated body that
-// holds owners registers them as a procedure does. It starts the frame while
-// still in its entry block; what it emits next is written aside, since the
-// prologue depends on all of it. `emit_ret` pops the frame.
+// holds owners registers them as a procedure does, and a procedure's starts here
+// too. It starts the frame while still in its entry block; what it emits next is
+// written aside, since the prologue depends on all of it. `emit_ret` pops the
+// frame.
 @(private)
 begin_generated_frame :: proc(e: ^Emitter, name: string) -> strings.Builder {
 	begin_unwind_frame(e, name)
@@ -260,18 +261,16 @@ begin_generated_frame :: proc(e: ^Emitter, name: string) -> strings.Builder {
 // Called once the body's closing brace is written.
 @(private)
 end_generated_frame :: proc(e: ^Emitter, header: strings.Builder) {
+	// The thunk first: the locals it reads are the ones the body publishes.
 	emit_unwind_thunk(e)
 	body := unwind_finished_body(e)
 	e.b = header
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)
-	// The thunk is a function of its own, so it waits for the end of the module.
-	append(&e.pending_thunks, ..e.pending[:])
-	clear(&e.pending)
 }
 
 // The generated thunk: replay every still-registered action of one frame,
-// newest first. Emitted into `e.pending` because LLVM functions do not nest.
+// newest first. LLVM functions do not nest, so it waits for the end of the module.
 @(private)
 emit_unwind_thunk :: proc(e: ^Emitter) {
 	u := &e.unwind
@@ -345,7 +344,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	}
 	text := strings.concatenate({replay[:loads_at], strings.to_string(loads), replay[loads_at:]})
 
-	append(&e.pending, splice_prologue(e, text, e.prologue[:]))
+	append(&e.pending_thunks, splice_prologue(e, text, e.prologue[:]))
 	e.fn, e.b = parent, parent_body
 }
 

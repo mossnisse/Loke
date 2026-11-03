@@ -393,7 +393,7 @@ hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, a
 	return fmt.aprintf("%s %s", param_llvm(e, type, mode), load_temporary(e, type, address))
 }
 
-// A memoised private function with one entry block, parked in `e.pending`.
+// A memoised private function with one entry block, parked in `e.pending_thunks`.
 // Each body writes its own `ret`.
 @(private)
 container_thunk :: proc(

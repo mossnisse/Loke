@@ -7,9 +7,11 @@ import "core:fmt"
 import "core:strings"
 
 // Preserve an external symbol byte-for-byte; LLVM quotes names with punctuation.
+// One that starts `loke.` is quoted too, to read apart from a generated name
+// (`llvm_linkage`).
 @(private)
 llvm_external_name :: proc(name: string) -> string {
-	plain := llvm_plain_name(name) && !(name[0] >= '0' && name[0] <= '9')
+	plain := llvm_plain_name(name) && !(name[0] >= '0' && name[0] <= '9') && !strings.has_prefix(name, "loke.")
 	return plain ? fmt.aprintf("@%s", name) : fmt.aprintf("@\"%s\"", llvm_escape(name))
 }
 
@@ -30,6 +32,10 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	}
 	if any_provider_selected(e.c) {
 		seen["@loke_rt_v1_program_init"] = true
+	}
+	// A foreign binding of an executable's own entry refers to that definition.
+	if e.c.build_mode != .Obj {
+		seen["@wmain"] = true
 	}
 	// `emit_runtime_declarations` already declares these for `wmain`, and
 	// `core:thread` binds them for the threads it starts; `core:process` binds

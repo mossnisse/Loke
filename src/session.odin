@@ -168,7 +168,7 @@ finish_session_check :: proc(s: ^Compilation_Session, root: Package_Id, compiled
 	if compiled {
 		if c.build_mode == .Exe && !documentation { validate_executable(c, root) }
 		if c.build_mode == .Test && !documentation { collect_tests(c, root) }
-		check_exports(c)
+		check_exports(c, defines_entry = c.build_mode != .Obj && !documentation)
 	}
 	if c.error_count > 0 { return false }
 	if !documentation {

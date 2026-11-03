@@ -283,7 +283,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 - `loke_rt_v1_map_scan` and cursor store: [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [emit_llvm_iteration.odin:961](src/emit_llvm_iteration.odin#L961), [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945). `emit_map_scan`, about 10.
 - Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8.
-- Frame finish: [emit_llvm.odin:727](src/emit_llvm.odin#L727) and [emit_llvm_cleanup.odin:406](src/emit_llvm_cleanup.odin#L406) are the same sequence, except that one writes `e.pending` straight out. About 8.
 - Union storage head: [emit_llvm_abi.odin:410](src/emit_llvm_abi.odin#L410) and [emit_llvm_expr.odin:42](src/emit_llvm_expr.odin#L42) spell the same `i%d`, so the BUG-emit_llvm_abi-1 fix must change both. Share the head spelling.
 - Slice from data and length: [emit_llvm_containers.odin:236](src/emit_llvm_containers.odin#L236) open-codes [emit_llvm_expr.odin:2159](src/emit_llvm_expr.odin#L2159) `emit_ptr_len` twice.
 
@@ -312,7 +311,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
 - Transfer wording and type reach: [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belongs beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
-- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
+- Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 - Seams in the largest file: `cfg_provenance.odin` still splits at the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)).
 
 ### Looked at and left alone
@@ -1015,53 +1014,6 @@ reader and the L0260 check, and copies much of `private_names.odin`. Seven bugs,
 - [doc.odin:1182](src/doc.odin#L1182): the rules are listed in the cited section: `// design.md "Doc comments": a block doc comment's lines.`
 - [doc.odin:18](src/doc.odin#L18), [34](src/doc.odin#L34), [298](src/doc.odin#L298), [843](src/doc.odin#L843), [960](src/doc.odin#L960), [975](src/doc.odin#L975): delete; each restates the name below it. At [990](src/doc.odin#L990) keep only the second sentence. (about 20 lines across the file)
 
-### src/emit_llvm.odin
-
-Comments and instruction helpers are in good shape, but the file holds three jobs (module orchestration, name mangling, program entry) and the naming pass has real gaps around exports that spell `loke.`. Most of the removable text is the redundant `make` list and the duplicated entry code.
-
-**Bugs**
-
-- `BUG-emit_llvm-1` **medium** [emit_llvm.odin:293](src/emit_llvm.odin#L293) `llvm_linkage`: it classifies by text prefix, so a plain export name that starts with `loke.` turns internal. Scenario: `@(export, link_name = "loke.host_api") f :: proc "c" ...` emits `define internal i32 @loke.host_api()`, so the host cannot link it, though design.md "@(export)" reserves only `loke_rt_`. Fix: have `llvm_external_name` quote such a name, or pass exportedness to `llvm_linkage`. *Confirmed: Reproduced: in the -build-mode=obj COFF, loke.host_api is static and plain_host_api external; IR says `define internal`. L0635 reserves only `loke_rt_` (design.md "@(export)"); no doc records this. Exported variables stay external, so only procedures are hit. Medium is fair.*
-- `BUG-emit_llvm-2` **low** [emit_llvm.odin:123](src/emit_llvm.odin#L123) `emit_llvm_module`: `reserve_link_names` runs after every naming pass, and global names (line 328) never go through `claim_name`. Scenario: `@(export, link_name = "loke.p.helper")` beside `helper :: proc()`, or `"loke.g.counter"` beside global `counter`, gives clang's raw "invalid redefinition" (L0403). Fix: reserve first and claim global names. *Not verified.*
-- `BUG-emit_llvm-3` **low** [emit_llvm.odin:781](src/emit_llvm.odin#L781) `emit_entry`: `@wmain` is written unconditionally and no check reserves it. Scenario: `@(export, link_name = "wmain")` in an exe or test build gives clang's "invalid redefinition of function 'wmain'" (L0403) instead of a diagnostic like L0634. Fix: reject that export in `check_exports` for those build modes. *Not verified.*
-- `BUG-emit_llvm-4` **low** [emit_llvm.odin:388](src/emit_llvm.odin#L388) `name_package_symbols`: already-escaped spellings are escaped again (also 349, 427, 481), while `debug_proc_name` undoes one layer. Scenario: under `-g`, `wrap([]int{})` shows as `wrap.$5b$5dint`, not `wrap.[]int`; IR has `$245b`. Fix: `qualified_member_name` escapes its `type_name` fallback and callers drop the outer `llvm_safe`; update `tests/ll/container_views.expected`. *Not verified.*
-
-**Simplification**
-
-- [emit_llvm.odin:71](src/emit_llvm.odin#L71) `make_emitter`: Odin allocates a zero map or dynamic array on first insert, and `begin_function_emission` already relies on that by clearing `cleanups` and `param_values` with `e.fn = {}`. Use `Emitter{c = c, b = strings.builder_make()}`. (about 24 lines)
-- [emit_llvm.odin:447](src/emit_llvm.odin#L447) `name_witnesses`: the hand-written repeat check is `claim_name`. Use `e.witness_names[witness] = claim_name(e, strings.to_string(b))`, which also stops the suffix shifting with commit order. (about 4 lines)
-- [emit_llvm.odin:460](src/emit_llvm.odin#L460) `type_spelling`: `llvm_safe("")` is `""`, so after an `info == nil` return and the instance case, the rest is `return llvm_safe(info.backend_label)`. (about 4 lines)
-- [emit_llvm.odin:580](src/emit_llvm.odin#L580) `emit_proc` and [emit_llvm.odin:840](src/emit_llvm.odin#L840) `emit_test_entry`: both repeat `symbol_name`'s lookup and failure; use `symbol_name(e, id)`, since a failed emission's text is discarded. Line 782 keeps its message, which `emit_llvm_test.odin:274` pins. (about 8 lines)
-- [emit_llvm.odin:523](src/emit_llvm.odin#L523) `emit_package_items`: order does not matter in LLVM text, so globals can move into the second walk's `^Decl` case, and lines 545-550 fold into one `continue` condition. Check `tests/ll` expected order. (about 8 lines)
-- [emit_llvm.odin:1067](src/emit_llvm.odin#L1067) `element_address`: the struct branch's GEP is `gep_field`; write `out := gep_field(e, llvm_type(e, owner), base, index)`, keeping a temp only for the array branch. (about 3 lines)
-- [emit_llvm.odin:1094](src/emit_llvm.odin#L1094) `place_label`: its first three lines are `branch(e, label)`. (about 2 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm.odin:317](src/emit_llvm.odin#L317): `pkg == nil` here, at line 520, and at line 1188 cannot hold. `package_order` yields only valid ids, and `visit_for_order` already dereferences `package_of(c, id)` unguarded.
-- (branch) [emit_llvm.odin:577](src/emit_llvm.odin#L577): `literal == nil` cannot hold, because all four callers pass a literal they have checked or iterated.
-- (branch) [emit_llvm.odin:244](src/emit_llvm.odin#L244): `e.result_type = INVALID_TYPE` follows `e.fn = {}`, and `INVALID_TYPE` is `Type_Id(0)` (`semantic.odin:18`).
-- (branch) [emit_llvm.odin:783](src/emit_llvm.odin#L783): `entry == ""` here and `name == ""` at line 841 cannot hold; no name in `e.names` is written empty, and the `!found` test covers the rest.
-
-**Near copies**
-
-- [emit_llvm.odin:790](src/emit_llvm.odin#L790) and [emit_llvm.odin:868](src/emit_llvm.odin#L868): the same eight startup lines (args, thread, panic trace, providers) after `open_entry`. Make one `open_program_entry(e)`; the `noinline` choice at 802 and 835 can be one `entry_call_attributes(e)`. (about 8 lines)
-- [emit_llvm.odin:807](src/emit_llvm.odin#L807) and [emit_llvm.odin:909](src/emit_llvm.odin#L909): a fallible `main` and a fallible test both frame, report, and pop. Have `emit_entry` call an `emit_test_report`-style private wrapper returning `i32`, which removes `header` and its three `if fallible`. (about 10 lines)
-- [emit_llvm.odin:727](src/emit_llvm.odin#L727) and [emit_llvm_cleanup.odin:418](src/emit_llvm_cleanup.odin#L418): the same thunk, strip, and prologue sequence, differing only in where `e.pending` goes. Use `begin_generated_frame` at 656 and `end_generated_frame` at 727, dropping 633; thunks then land at module end, so check expected IR. (about 8 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm.odin:738](src/emit_llvm.odin#L738): program entry (lines 738-972) is a separate job from orchestration. Move it to `emit_llvm_runtime.odin`, beside `emit_entry_failure_report`, or a new `emit_llvm_entry.odin`; update `compiler-architecture.md` "LLVM and toolchain", which also credits this file with globals though `emit_global` is in the runtime file.
-- [emit_llvm.odin:1142](src/emit_llvm.odin#L1142): the mangling helpers (lines 1142-1192) are separated from the naming pass they serve (lines 315-502) by entry code and instruction plumbing. Group naming, mangling, and `llvm_linkage` as one section, or one `emit_llvm_names.odin`.
-- [emit_llvm.odin:622](src/emit_llvm.odin#L622) `emit_proc_definition`: 115 lines with natural seams at the plain signature (638-650), parameter binding (659-686), and the result slot (688-702). Extract those three.
-- [emit_llvm.odin:1138](src/emit_llvm.odin#L1138): `FAILURE_ATTRIBUTES` is not used in this file; its uses are four in `emit_llvm_runtime.odin` and one in `emit_llvm_containers.odin`. Move it to the runtime file, which owns runtime declarations.
-
-**Comments**
-
-- [emit_llvm.odin:231](src/emit_llvm.odin#L231): the reason is wrong, since lines 650 and 772 write `{{` in a format string. Shorten to "`define <signature> {` and the entry label."
-- [emit_llvm.odin:268](src/emit_llvm.odin#L268): delete; it restates `splice_prologue`'s name and code. Line 70 also goes with the `make` list, as nothing is left uninitialized.
-- [emit_llvm.odin:392](src/emit_llvm.odin#L392): shorten to "`base`, or the first free `base.<n>`. Spellings alone collide: `f(alpha.Item)` and `f(beta.Item)` read alike, and an impl member spells its owner unqualified." (about 2 lines)
-
 ### src/emit_llvm_abi.odin
 
 Mostly correct, with one confirmed layout miscompile for unions holding wide vectors. The foreign lowering repeats its classification switches four times, `struct_body` repeats one loop four times, and about a third of the file (union values, the Loke calling convention) is not what the source-code map says it owns.
@@ -1133,7 +1085,6 @@ What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
-- [emit_llvm_cleanup.odin:406](src/emit_llvm_cleanup.odin#L406) and [emit_llvm.odin:727](src/emit_llvm.odin#L727): the same thunk, strip, prologue and write sequence, differing only in where the thunk's text goes. Send it to `pending_thunks` in both, remove `e.pending`, and call `end_generated_frame` from `emit_proc_definition`; check that `tests/ll` tolerates the new order. (about 8 lines)
 - [emit_llvm_cleanup.odin:1073](src/emit_llvm_cleanup.odin#L1073) and [:1652](src/emit_llvm_cleanup.odin#L1652), plus sites in `emit_llvm_calls`, `_containers`, `_expr` and `_stmt`: eight copies of the `alloc_failed` call and `unreachable`, most also setting `terminated`. Add `emit_alloc_failed(e, allocator)`. (about 13 lines)
 
 ### src/emit_llvm_containers.odin

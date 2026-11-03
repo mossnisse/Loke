@@ -1,4 +1,4 @@
-// LLVM module orchestration, emitter state, naming, and instruction plumbing.
+// LLVM module orchestration, emitter state, procedures, and instruction plumbing.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
@@ -41,9 +41,8 @@ Emitter :: struct {
 	place_align:  map[string]u64,
 	// The function being written; saved and cleared around a nested thunk.
 	using fn: Function_State,
-	// Panic-cleanup replay functions, empty under `-panic=abort`.
-	pending: [dynamic]string,
-	// Thunks generated mid-body, flushed at the end of the module.
+	// Thunks and panic-cleanup replays generated mid-body, flushed at the end of
+	// the module.
 	pending_thunks: [dynamic]string,
 	// Interned per type or per name, so each is emitted once.
 	container_ops: map[Type_Id]string,
@@ -66,33 +65,8 @@ Emitter :: struct {
 	dispatch_checks:  [Cpu_Level]string,
 }
 
-// The only `Emitter` literal, so no map is left uninitialized.
 make_emitter :: proc(c: ^Compiler) -> Emitter {
-	e := Emitter {
-		c            = c,
-		names        = make(map[Symbol_Id]string),
-		taken_names  = make(map[string]bool),
-		struct_names = make(map[Type_Id]string),
-		witness_names = make(map[^Witness]string),
-		propagated_errors = make(map[^Expr_Postfix]Mapper_Error),
-		place_align  = make(map[string]u64),
-		cleanups     = make([dynamic][dynamic]Deferred),
-		param_values = make(map[Symbol_Id]Bound_Parameter),
-		pending      = make([dynamic]string),
-		pending_thunks = make([dynamic]string),
-		container_ops = make(map[Type_Id]string),
-		container_move_ops = make(map[Type_Id]string),
-		consuming_ops = make(map[Symbol_Id]bool),
-		container_thunks = make(map[string]bool),
-		literals     = make(map[string]string),
-		simd_intrinsics = make(map[string]bool),
-		globals      = make([dynamic]string),
-		bodies       = make(map[Symbol_Id]^Expr_Proc),
-		cpu_copies   = make(map[Cpu_Copy]string),
-		unwritten_copies = make([dynamic]Cpu_Copy),
-	}
-	strings.builder_init(&e.b)
-	return e
+	return Emitter{c = c, b = strings.builder_make()}
 }
 
 // The whole checked program as one LLVM module, in memory.
@@ -112,12 +86,12 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 
 	// Every procedure is named before any body refers to it.
 	order := package_order(c)
+	reserve_link_names(&e)
 	for id in order {
 		name_package_symbols(&e, package_of(c, id))
 	}
 	name_synth_procs(&e)
 	name_witnesses(&e)
-	reserve_link_names(&e)
 	emit_foreign_declarations(&e)
 	emit_static_locals(&e)
 	for id in order {
@@ -229,7 +203,7 @@ Large_Slot :: struct {
 	type, name: string,
 }
 
-// `define <signature> {` and the entry label; `{` can't go in a format string.
+// `define <signature> {` and the entry label.
 @(private)
 open_function :: proc(e: ^Emitter, format: string, args: ..any) {
 	fmt.sbprintf(&e.b, format, ..args)
@@ -248,7 +222,6 @@ begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 	state := Function_Emission{parent = e.b, saved = e.fn}
 	e.b = strings.builder_make()
 	e.fn = {}
-	e.result_type = INVALID_TYPE
 	return state
 }
 
@@ -272,7 +245,6 @@ finish_pending_thunk :: proc(e: ^Emitter, state: Function_Emission) {
 	append(&e.pending_thunks, end_function_emission(e, state))
 }
 
-// Places the collected `alloca` lines right after the entry label.
 @(private)
 splice_prologue :: proc(e: ^Emitter, body: string, prologue: []string) -> string {
 	if len(prologue) == 0 {
@@ -293,13 +265,6 @@ splice_prologue :: proc(e: ^Emitter, body: string, prologue: []string) -> string
 	return strings.to_string(out)
 }
 
-// design.md "@(export)": only exports need linker-visible names; `internal`
-// lets LLVM drop everything else once inlined.
-@(private)
-llvm_linkage :: proc(name: string) -> string {
-	return strings.has_prefix(name, "@loke.") ? "internal " : ""
-}
-
 @(private)
 backend_fail :: proc(e: ^Emitter, message: string) {
 	if e.failed {
@@ -309,253 +274,25 @@ backend_fail :: proc(e: ^Emitter, message: string) {
 	emission_contract_error(e.c, message)
 }
 
-// Every symbol is named before any body, so an unnamed one is a contract break,
-// unless it was omitted with its test: a witness or a format thunk on a test's
-// local type is still written, for a value no surviving code can make. "null"
-// keeps the text well formed.
-symbol_name :: proc(e: ^Emitter, id: Symbol_Id) -> string {
-	if name, named := e.names[id]; named {
-		return name
-	}
-	if !omitted_with_test(e.c, id) {
-		backend_fail(e, "a resolved operation has no emitted name")
-	}
-	return "null"
-}
-
-@(private = "file")
-name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
-	if pkg == nil {
-		return
-	}
-	for file in pkg.files {
-		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				for symbol_id in v.symbols {
-					if sym := symbol_of(e.c, symbol_id); sym != nil && sym.kind == .Var && !sym.is_foreign {
-						e.names[symbol_id] = sym.exported \
-							? llvm_external_name(sym.link_name) \
-							: llvm_global_name(pkg, identifier_text(e.c, sym.name))
-					}
-				}
-				// Only a template's instances are named and emitted.
-				if decl_proc_literal(v) != nil && len(v.symbols) > 0 && !symbol_is_template(e.c, v.symbols[0]) {
-					if sym := symbol_of(e.c, v.symbols[0]); sym != nil && sym.exported {
-						e.names[v.symbols[0]] = llvm_external_name(sym.link_name)
-					} else {
-						e.names[v.symbols[0]] = claim_name(e, llvm_proc_name(pkg, v.names[0].text))
-					}
-				}
-			case ^Item_Impl:
-				for member in v.members {
-					d, is_decl := member.(^Decl)
-					if !is_decl || decl_proc_literal(d) == nil || len(d.symbols) == 0 {
-						continue
-					}
-					sym := symbol_of(e.c, d.symbols[0])
-					if sym == nil {
-						continue
-					}
-					e.names[d.symbols[0]] = claim_name(e, llvm_proc_name(pkg, llvm_safe(qualified_member_name(e, sym))))
-				}
-			case ^Item_Foreign_Block:
-				// design.md "Foreign system": foreign members keep their link names.
-				for member in v.members {
-					d, is_decl := member.(^Decl)
-					if !is_decl {
-						continue
-					}
-					for sid in d.symbols {
-						if sym := symbol_of(e.c, sid); sym != nil && sym.is_foreign {
-							e.names[sid] = foreign_llvm_name(sym)
-						}
-					}
-				}
-			}
-		}
-	}
-	for literal, index in pkg.hoisted_procs {
-		if omitted_with_test(e.c, literal.symbol) {
-			continue
-		}
-		// The index keeps two bodies' same-named local procedures apart.
-		written := "lambda"
-		if sym := symbol_of(e.c, literal.symbol); sym != nil && sym.decl != nil {
-			written = llvm_safe(identifier_text(e.c, sym.name))
-		}
-		e.names[literal.symbol] = claim_name(e, llvm_proc_name(pkg, fmt.aprintf("%s.%d", written, index)))
-	}
-	for instance in pkg.instances {
-		if omitted_with_test(e.c, instance.symbol) {
-			continue
-		}
-		spelled: string
-		if instance.template == INVALID_SYMBOL {
-			spelled = qualified_member_name(e, symbol_of(e.c, instance.symbol))
-		} else {
-			spelled = instance_spelling(e, instance.template, instance.args)
-		}
-		e.names[instance.symbol] = claim_name(e, llvm_proc_name(pkg, llvm_safe(spelled)))
-	}
-}
-
-// `base`, or the first `base.<n>` no earlier procedure took. The spellings
-// alone are not unique: `f(alpha.Item)` and `f(beta.Item)` read alike, an impl
-// member spells its owner unqualified (`Point.show` for two packages' `Point`),
-// an instance `wrap.int` can meet a member `int` of a type `wrap`, and the root
-// package has no key, so its `pt.x` meets package `pt`'s own `x`.
-@(private)
-claim_name :: proc(e: ^Emitter, base: string) -> string {
-	name := base
-	for n := 1; e.taken_names[name]; n += 1 {
-		name = fmt.aprintf("%s.%d", base, n)
-	}
-	e.taken_names[name] = true
-	return name
-}
-
-// A name claimed while bodies are written, such as an object's CPU check or a
-// guard's body, stays clear of every link name the program gives, exported or
-// foreign, which may spell `loke.` too.
-@(private = "file")
-reserve_link_names :: proc(e: ^Emitter) {
-	for sym in e.c.symbols {
-		if sym != nil && sym.link_name != "" {
-			e.taken_names[llvm_external_name(sym.link_name)] = true
-		}
-	}
-}
-
-// Compiler-contributed members belong to no package.
-@(private = "file")
-name_synth_procs :: proc(e: ^Emitter) {
-	for symbol_id in e.c.synth_procs {
-		symbol := symbol_of(e.c, symbol_id)
-		if symbol == nil {
-			continue
-		}
-		e.names[symbol_id] = claim_name(e, fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e, symbol))))
-	}
-}
-
-// Spelled from names rather than ids, which shift on unrelated changes. The
-// spelling need not be unique, since two packages may both have a `Shape`, so a
-// repeat takes its position in commit order.
-@(private = "file")
-name_witnesses :: proc(e: ^Emitter) {
-	for witness, index in e.c.witness_order {
-		b := strings.builder_make()
-		interface_name := "interface"
-		if sym := symbol_of(e.c, witness.interface_symbol); sym != nil {
-			interface_name = identifier_text(e.c, sym.name)
-		}
-		fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name), llvm_safe(type_name(e.c, witness.concrete)))
-		for arg in witness.args {
-			part := arg.is_type ? type_name(e.c, arg.type) : fmt.aprintf("v%s:%s", type_name(e.c, arg.value_type), const_key_text(e.c, arg.value))
-			fmt.sbprintf(&b, ".%s", llvm_safe(part, dots = false))
-		}
-		name := strings.to_string(b)
-		if e.taken_names[name] {
-			name = fmt.aprintf("%s.%d", name, index)
-		}
-		e.taken_names[name] = true
-		e.witness_names[witness] = name
-	}
-}
-
-// A type's backend spelling, escaped, or "" for one known only by its name. An
-// instance is spelled from its template and arguments, a compiler-made type
-// from the label the checker gave it.
-@(private)
-type_spelling :: proc(e: ^Emitter, type: Type_Id) -> string {
-	info := type_of(e.c, type)
-	switch {
-	case info == nil:
-		return ""
-	case info.instance_of != INVALID_SYMBOL:
-		return instance_spelling(e, info.instance_of, info.instance_args)
-	case info.backend_label != "":
-		return llvm_safe(info.backend_label)
-	}
-	return ""
-}
-
-// `Table.int.i32`. Each argument is escaped on its own, so distinct vectors stay
-// distinct.
-@(private = "file")
-instance_spelling :: proc(e: ^Emitter, template: Symbol_Id, args: []Generic_Arg) -> string {
-	b := strings.builder_make()
-	if sym := symbol_of(e.c, template); sym != nil {
-		// `Atomic(int).load` and `Atomic(bool).load` are two templates named `load`.
-		if sym.owner_type != INVALID_TYPE {
-			strings.write_string(&b, llvm_safe(qualified_member_name(e, sym)))
-		} else {
-			strings.write_string(&b, identifier_text(e.c, sym.name))
-		}
-	}
-	for arg in args {
-		part := arg.is_type ? type_name(e.c, arg.type) : const_key_text(e.c, arg.value)
-		fmt.sbprintf(&b, ".%s", llvm_safe(part, dots = false))
-	}
-	return strings.to_string(b)
-}
-
-// The backend name of a method, unique within a package: `Pair.int.member` for
-// an instantiation's.
-@(private)
-qualified_member_name :: proc(e: ^Emitter, sym: ^Symbol) -> string {
-	owner := type_spelling(e, sym.owner_type)
-	if owner == "" {
-		owner = type_name(e.c, sym.owner_type)
-	}
-	return fmt.aprintf("%s.%s", owner, identifier_text(e.c, sym.name))
-}
-
-@(private = "file")
-symbol_is_template :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> bool {
-	sym := symbol_of(c, symbol_id)
-	if sym == nil {
-		return false
-	}
-	if sym.generic {
-		return true
-	}
-	// An unused generic's signature may never have been checked, so fall back to
-	// its syntax; instances keep that syntax but have `instance_of`.
-	return sym.instance_of == INVALID_SYMBOL && declaration_generic_kind(sym.decl) != .None
-}
-
 @(private = "file")
 emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
-	if pkg == nil {
-		return
-	}
-	for file in pkg.files {
-		for item in file.active_items {
-			if d, ok := item.(^Decl); ok && decl_proc_literal(d) == nil {
-				emit_global(e, d)
-			}
-		}
-	}
 	for file in pkg.files {
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
-				if len(v.symbols) == 0 || symbol_is_template(e.c, v.symbols[0]) {
+				// design.md "Test procedures": only a test build calls one.
+				if len(v.symbols) == 0 || symbol_is_template(e.c, v.symbols[0]) || omitted_with_test(e.c, v.symbols[0]) {
 					continue
 				}
-				// design.md "Test procedures": only a test build calls one.
-				if literal := decl_proc_literal(v); literal != nil && !omitted_with_test(e.c, v.symbols[0]) {
+				if literal := decl_proc_literal(v); literal != nil {
 					emit_proc(e, v.symbols[0], literal)
+				} else {
+					emit_global(e, v)
 				}
 			case ^Item_Impl:
 				for member in v.members {
 					d, is_decl := member.(^Decl)
-					if !is_decl || len(d.symbols) == 0 {
-						continue
-					}
-					if symbol_is_template(e.c, d.symbols[0]) {
+					if !is_decl || len(d.symbols) == 0 || symbol_is_template(e.c, d.symbols[0]) {
 						continue
 					}
 					if literal := decl_proc_literal(d); literal != nil {
@@ -584,14 +321,10 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 @(private = "file")
 emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	symbol := symbol_of(e.c, symbol_id)
-	if symbol == nil || literal == nil || literal.body == nil || compile_time_only_procedure(e.c, symbol) {
+	if symbol == nil || literal.body == nil || compile_time_only_procedure(e.c, symbol) {
 		return
 	}
-	llvm_name, named := e.names[symbol_id]
-	if !named {
-		backend_fail(e, "a procedure has no mangled name")
-		return
-	}
+	llvm_name := symbol_name(e, symbol_id)
 	if !convention_is_foreign(proc_convention_of(e, symbol)) {
 		e.bodies[symbol_id] = literal
 		if dispatched(e, symbol) {
@@ -606,15 +339,6 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	body := entry_body_name(e, llvm_name)
 	emit_proc_definition(e, symbol_id, literal, body)
 	emit_foreign_entry_guard(e, symbol, llvm_name, body)
-}
-
-// The internal name of the body behind `emit_entry_guard`'s function
-// `llvm_name`. A quoted export name, such as a decorated C++ one, lends it no
-// spelling.
-@(private)
-entry_body_name :: proc(e: ^Emitter, llvm_name: string) -> string {
-	plain := llvm_plain_name(llvm_name[1:])
-	return claim_name(e, plain ? strings.concatenate({"@loke.entry.", llvm_name[1:]}) : "@loke.entry")
 }
 
 // design.md "@(cold)": what follows the signature of each function the
@@ -668,26 +392,56 @@ emit_proc_definition :: proc(
 	e.result_type = symbol.result
 	e.result_inout = result_inout_of(e, symbol.proc_type)
 	e.abi_foreign = convention_is_foreign(proc_convention_of(e, symbol))
-	begin_unwind_frame(e, llvm_name)
 
 	if e.abi_foreign {
 		emit_foreign_signature(e, symbol, llvm_name)
 	} else {
-		fmt.sbprintfln(
-			&e.b, "define %s%s %s(%s)%s%s {{",
-			llvm_linkage(llvm_name), llvm_result_type(e, symbol.result, e.result_inout), llvm_name,
-			loke_param_list(e, symbol, e.result_inout), cold_attributes(symbol), copy_attributes(e),
-		)
+		emit_loke_signature(e, symbol, llvm_name)
 	}
 	debug_mark_proc(e, symbol_id)
 	fmt.sbprintln(&e.b, "entry:")
+	header := begin_generated_frame(e, llvm_name)
 
-	// The unwind prologue depends on the whole body, so the body is written aside.
-	module := e.b
-	e.b = strings.builder_make()
+	bind_parameters(e, symbol)
+	open_result_slot(e, symbol)
 
-	// A value parameter gets its own storage; a pointer-mode one is already an
-	// alias (design.md "Receiver forms").
+	// One flag per syntactic defer, set when its registration is reached.
+	e.defer_flags = make([]string, literal.defer_count)
+	for index in 0 ..< literal.defer_count {
+		flag := fmt.aprintf("%%defer%d.%d", index, next_id(e))
+		alloca_named(e, flag, "i1")
+		e.defer_flags[index] = flag
+	}
+
+	// design.md "Parameter semantics and ABI lowering": the callee drops a `move`
+	// parameter, in a scope outside the body's.
+	push_scope_stmts(e, nil)
+	for binding in symbol.param_symbols {
+		register_implicit_drop(e, binding)
+	}
+
+	emit_scoped_block(e, literal.body)
+	if !e.terminated {
+		emit_epilogue(e)
+	}
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	end_generated_frame(e, header)
+}
+
+@(private = "file")
+emit_loke_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
+	fmt.sbprintfln(
+		&e.b, "define %s%s %s(%s)%s%s {{",
+		llvm_linkage(llvm_name), llvm_result_type(e, symbol.result, e.result_inout), llvm_name,
+		loke_param_list(e, symbol, e.result_inout), cold_attributes(symbol), copy_attributes(e),
+	)
+}
+
+// A value parameter gets its own storage; a pointer-mode one is already an
+// alias (design.md "Receiver forms").
+@(private = "file")
+bind_parameters :: proc(e: ^Emitter, symbol: ^Symbol) {
 	for parameter, index in symbol.params {
 		binding := symbol.param_symbols[index]
 		if binding == INVALID_SYMBOL {
@@ -714,288 +468,27 @@ emit_proc_definition :: proc(
 		store(e, parameter, fmt.aprintf("%%arg%d", index), slot)
 		bind_local(e, binding, slot)
 	}
-
-	// The result slot starts at zero, so `or_return` can publish into it. An
-	// `sret` result writes straight into the caller's storage.
-	if result := symbol.result; result != INVALID_TYPE {
-		type := e.result_inout ? "ptr" : llvm_type(e, result)
-		e.result_slot = e.abi_sret
-		if e.result_slot == "" {
-			e.result_slot = fmt.aprintf("%%r0.%d", next_id(e))
-			alloca_named(e, e.result_slot, type)
-		}
-		if e.result_inout {
-			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", e.result_slot)
-		} else if zero, ok := llvm_zero(e, result); ok {
-			store(e, result, zero, e.result_slot)
-		}
-	}
-
-	// One flag per syntactic defer, set when its registration is reached.
-	e.defer_flags = make([]string, literal.defer_count)
-	for index in 0 ..< literal.defer_count {
-		flag := fmt.aprintf("%%defer%d.%d", index, next_id(e))
-		alloca_named(e, flag, "i1")
-		e.defer_flags[index] = flag
-	}
-
-	// design.md "Parameter semantics and ABI lowering": the callee drops a `move`
-	// parameter, in a scope outside the body's.
-	push_scope_stmts(e, nil)
-	for binding in symbol.param_symbols {
-		register_implicit_drop(e, binding)
-	}
-
-	emit_scoped_block(e, literal.body)
-	if !e.terminated {
-		emit_epilogue(e)
-	}
-	fmt.sbprintln(&e.b, "}")
-	fmt.sbprintln(&e.b, "")
-
-	// The thunk first: the locals it reads are the ones the body publishes.
-	emit_unwind_thunk(e)
-	body := unwind_finished_body(e)
-	e.b = module
-	emit_unwind_prologue(e)
-	strings.write_string(&e.b, body)
-	for text in e.pending {
-		strings.write_string(&e.b, text)
-	}
-	clear(&e.pending)
 }
 
-// compiler-guide.md "CPU levels": above baseline, `wmain` itself is baseline
-// code and first asks the runtime whether the processor runs the build's level.
-// The explicit feature list is what makes it baseline: a `target-cpu` alone
-// keeps the command line's features. A callee compiled for the level is then
-// never inlined into it, so nothing of the level's runs before the check.
+// The result slot starts at zero, so `or_return` can publish into it. An `sret`
+// result writes straight into the caller's storage.
 @(private = "file")
-open_entry :: proc(e: ^Emitter) {
-	if e.c.target.features == {} {
-		open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
+open_result_slot :: proc(e: ^Emitter, symbol: ^Symbol) {
+	result := symbol.result
+	if result == INVALID_TYPE {
 		return
 	}
-	open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv) " + BASELINE_ATTRIBUTES)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_require_cpu(i32 %d)", int(e.c.target.cpu))
-}
-
-// The attributes that make a function baseline x86-64 whatever `-march` says.
-@(private = "file")
-BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"`
-
-// compiler-guide.md "CPU levels": an object build has no entry to check from,
-// so above baseline it carries a baseline static constructor that does, which
-// the host's C runtime runs before the host's `main`.
-@(private = "file")
-emit_object_cpu_check :: proc(e: ^Emitter) {
-	name := claim_name(e, "@loke.require_cpu")
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	open_function(e, "define internal void %s() %s", name, BASELINE_ATTRIBUTES)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_require_cpu(i32 %d)", int(e.c.target.cpu))
-	fmt.sbprintln(&e.b, "  ret void")
-	fmt.sbprintln(&e.b, "}")
-	append(
-		&e.globals,
-		fmt.aprintf(
-			"@llvm.global_ctors = appending global [1 x {{ i32, ptr, ptr }}] [{{ i32, ptr, ptr }} {{ i32 65535, ptr %s, ptr null }}]\n",
-			name,
-		),
-	)
-}
-
-// design.md "Executable startup ABI": `wmain` initializes the arguments, the
-// thread, and the providers, in that order, then calls `main`.
-@(private = "file")
-emit_entry :: proc(e: ^Emitter) {
-	entry, found := e.names[e.c.entry_point]
-	if !found || entry == "" {
-		backend_fail(e, "the validated entry procedure has no emitted name")
-		return
+	type := e.result_inout ? "ptr" : llvm_type(e, result)
+	e.result_slot = e.abi_sret
+	if e.result_slot == "" {
+		e.result_slot = fmt.aprintf("%%r0.%d", next_id(e))
+		alloca_named(e, e.result_slot, type)
 	}
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	open_entry(e)
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
-	if e.c.debug_info {
-		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_enable_panic_trace()")
+	if e.result_inout {
+		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", e.result_slot)
+	} else if zero, ok := llvm_zero(e, result); ok {
+		store(e, result, zero, e.result_slot)
 	}
-	if any_provider_selected(e.c) {
-		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
-	}
-	// design.md "Program entry and exit": an `i32` result is the exit status.
-	status := "0"
-	// `wmain` has no debug information, and LLVM drops the locations of code
-	// inlined into it, so a `-g` build keeps `main` a frame of its own.
-	attributes := e.c.debug_info ? " noinline" : ""
-	symbol := symbol_of(e.c, e.c.entry_point)
-	failure, fallible := entry_failure_type(e.c, symbol.result)
-	// design.md "What the unwind runs, and what it does not": the failure a
-	// fallible `main` hands back is registered while it is printed and dropped.
-	header: strings.Builder
-	if fallible {
-		header = begin_generated_frame(e, "@wmain")
-	}
-	if symbol.result == TYPE_I32 {
-		status = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 %s()%s", status, entry, attributes)
-	} else if fallible {
-		status = emit_entry_failure_report(e, entry, symbol.result, failure, attributes)
-	} else {
-		fmt.sbprintfln(&e.b, "  call void %s()%s", entry, attributes)
-	}
-	if fallible {
-		emit_unwind_pop(e)
-	}
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
-	fmt.sbprintfln(&e.b, "  ret i32 %s", status)
-	fmt.sbprintln(&e.b, "}")
-	if fallible {
-		end_generated_frame(e, header)
-	}
-}
-
-// design.md "Test procedures": with no argument, run every test in order and
-// stop at the first failure; with a test's name, run that one alone. The
-// runtime matches the name and exits 2 on one no test has.
-@(private = "file")
-emit_test_entry :: proc(e: ^Emitter) {
-	attributes := e.c.debug_info ? " noinline" : ""
-	// A fallible test is printed and dropped in a frame of its own, as `main` is.
-	runners := make([]string, len(e.c.tests))
-	reported := make([]bool, len(e.c.tests))
-	for test, index in e.c.tests {
-		name, found := e.names[test]
-		if !found || name == "" {
-			backend_fail(e, "a test procedure has no emitted name")
-			return
-		}
-		runners[index] = name
-		symbol := symbol_of(e.c, test)
-		if failure, fallible := entry_failure_type(e.c, symbol.result); fallible {
-			runners[index] = emit_test_report(e, index, name, symbol.result, failure, attributes)
-			reported[index] = true
-		}
-	}
-	names := "null"
-	if len(e.c.tests) > 0 {
-		entries := make([]string, len(e.c.tests))
-		for test, index in e.c.tests {
-			entries[index] = text_literal_global(e, identifier_text(e.c, symbol_of(e.c, test).name))
-		}
-		names = "@loke.tests"
-		append_constant_array(e, names, "ptr", entries)
-	}
-
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	open_entry(e)
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
-	if e.c.debug_info {
-		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_enable_panic_trace()")
-	}
-	if any_provider_selected(e.c) {
-		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
-	}
-	selected, every := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_test_select(ptr %s, i64 %d)", selected, names, len(e.c.tests))
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, -1", every, selected)
-	failed := new_label(e, "test.failed")
-	for runner, index in runners {
-		picked, run := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", picked, selected, index)
-		fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", run, every, picked)
-		body, next := new_label(e, "test.run"), new_label(e, "test.next")
-		branch_if(e, run, body, next)
-		place_label(e, body)
-		if !reported[index] {
-			fmt.sbprintfln(&e.b, "  call void %s()%s", runner, attributes)
-			branch(e, next)
-		} else {
-			status, bad := temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = call i32 %s()", status, runner)
-			fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", bad, status)
-			branch_if(e, bad, failed, next)
-		}
-		place_label(e, next)
-	}
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
-	fmt.sbprintln(&e.b, "  ret i32 0")
-	e.terminated = true
-	place_label(e, failed)
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
-	fmt.sbprintln(&e.b, "  ret i32 1")
-	fmt.sbprintln(&e.b, "}")
-}
-
-// One fallible test's call, failure report, and drop, returning its status.
-@(private = "file")
-emit_test_report :: proc(e: ^Emitter, index: int, test: string, result, failure: Type_Id, attributes: string) -> string {
-	name := fmt.aprintf("@loke.test.%d", index)
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	open_function(e, "define private i32 %s()", name)
-	header := begin_generated_frame(e, name)
-	status := emit_entry_failure_report(e, test, result, failure, attributes)
-	emit_unwind_pop(e)
-	fmt.sbprintfln(&e.b, "  ret i32 %s", status)
-	fmt.sbprintln(&e.b, "}")
-	end_generated_frame(e, header)
-	return name
-}
-
-// design.md "Build-selected providers": run once, allocator first so the logger
-// factory already allocates through it. The runtime keeps the once-only state.
-// The host calls it, so it is guarded as a foreign entry is (design.md
-// "Floating-point operators").
-@(private = "file")
-emit_program_init :: proc(e: ^Emitter) {
-	body := entry_body_name(e, "@loke_rt_v1_program_init")
-	emit_program_init_body(e, body)
-	emit_entry_guard(e, "@loke_rt_v1_program_init", "void", nil, body)
-}
-
-@(private = "file")
-emit_program_init_body :: proc(e: ^Emitter, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	open_function(e, "define internal void %s() noinline", name)
-	go, run := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_provider_init_begin()", go)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", run, go)
-	body, done := new_label(e, "init.run"), new_label(e, "init.done")
-	branch_if(e, run, body, done)
-	place_label(e, body)
-
-	if allocator := e.c.providers[.Allocator].factory; allocator != INVALID_SYMBOL {
-		handle := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call ptr %s()", handle, symbol_name(e, allocator))
-		// The runtime rejects a zero or foreign handle.
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_publish_allocator(ptr %s)", handle)
-	}
-	if logger := e.c.providers[.Logger].factory; logger != INVALID_SYMBOL {
-		factory := symbol_of(e.c, logger)
-		global, found := e.names[e.c.providers[.Logger].destination]
-		if factory == nil || !found {
-			backend_fail(e, "the selected logger has no factory or nowhere to be published")
-		} else {
-			handle := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = call %s %s()",
-				handle, llvm_type(e, factory.result), symbol_name(e, logger),
-			)
-			destination := symbol_of(e.c, e.c.providers[.Logger].destination).type
-			store(e, destination, emit_option_some(e, destination, handle), global)
-		}
-	}
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_provider_init_end()")
-	branch(e, done)
-	place_label(e, done)
-	fmt.sbprintln(&e.b, "  ret void")
-	fmt.sbprintln(&e.b, "}")
 }
 
 @(private)
@@ -1080,8 +573,8 @@ gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -
 @(private)
 element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
 	info := underlying_info(e.c, owner)
-	out := temp(e)
 	if info != nil && info.kind == .Array {
+		out := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
 			out, llvm_type(e, owner), base, index,
@@ -1091,10 +584,7 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 		}
 		return out
 	}
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		out, llvm_type(e, owner), base, index,
-	)
+	out := gep_field(e, llvm_type(e, owner), base, index)
 	// design.md "@(packed)": a packed field is loaded and stored unaligned.
 	if info != nil && info.kind == .Struct && index < len(info.fields) {
 		if field := symbol_of(e.c, info.fields[index]); field != nil {
@@ -1119,9 +609,7 @@ gep_at :: proc(e: ^Emitter, element: string, address: string, index: string) -> 
 
 @(private)
 place_label :: proc(e: ^Emitter, label: string) {
-	if !e.terminated {
-		fmt.sbprintfln(&e.b, "  br label %%%s", label)
-	}
+	branch(e, label)
 	fmt.sbprintfln(&e.b, "%s:", label)
 	e.terminated = false
 }
@@ -1159,61 +647,3 @@ branch_if_unlikely :: proc(e: ^Emitter, cond: string, then_label, else_label: st
 	e.terminated = true
 }
 
-// The runtime entries that end the program, as `LOKE_RT_FAILURE` in
-// runtime/loke_rt.h declares them.
-@(private)
-FAILURE_ATTRIBUTES :: "cold noreturn"
-
-// Names carry the package's key; the root package's is empty.
-@(private)
-llvm_global_name :: proc(pkg: ^Package, name: string) -> string {
-	return fmt.aprintf("@loke.g.%s%s", mangled_key(pkg), name)
-}
-
-@(private = "file")
-llvm_proc_name :: proc(pkg: ^Package, name: string) -> string {
-	return fmt.aprintf("@loke.p.%s%s", mangled_key(pkg), name)
-}
-
-// Whether `name` needs no escaping.
-@(private)
-llvm_plain_name :: proc(name: string) -> bool {
-	for i in 0 ..< len(name) {
-		if !llvm_name_byte(name[i]) {
-			return false
-		}
-	}
-	return len(name) > 0
-}
-
-@(private = "file")
-llvm_name_byte :: proc(ch: u8) -> bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-		ch == '_' || ch == '.'
-}
-
-// Escapes every byte LLVM would need quoted, `$` included, as `$XX`: injective
-// and still readable. `dots = false` also escapes `.`, for a part that a `.`
-// joins to others.
-llvm_safe :: proc(name: string, dots := true) -> string {
-	hex := "0123456789abcdef"
-	out := make([dynamic]u8, 0, len(name) + 8)
-	for i in 0 ..< len(name) {
-		ch := name[i]
-		if llvm_name_byte(ch) && (dots || ch != '.') {
-			append(&out, ch)
-			continue
-		}
-		append(&out, '$', hex[ch >> 4], hex[ch & 0x0f])
-	}
-	return string(out[:])
-}
-
-// The key's own dots are escaped: `util.v2` + `f` must not meet `util` + `v2.f`.
-@(private = "file")
-mangled_key :: proc(pkg: ^Package) -> string {
-	if pkg == nil || pkg.key == "" {
-		return ""
-	}
-	return fmt.aprintf("%s.", llvm_safe(pkg.key, dots = false))
-}

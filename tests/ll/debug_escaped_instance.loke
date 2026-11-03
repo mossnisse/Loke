@@ -1,0 +1,9 @@
+// A debugger shows an instance's argument as written: `debug_proc_name` undoes
+// one layer of `llvm_safe`, so the name must have only one.
+package main;
+
+wrap :: proc(value: $T) -> T { return value; }
+
+main :: proc() {
+	_ = wrap([]int{});
+}

@@ -23,6 +23,11 @@ emit_default_allocator :: proc(e: ^Emitter) -> string {
 	return out
 }
 
+// The runtime entries that end the program, as `LOKE_RT_FAILURE` in
+// runtime/loke_rt.h declares them.
+@(private = "file")
+FAILURE_ATTRIBUTES :: "cold noreturn"
+
 @(private = "file")
 emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_alloc(ptr, i64, i64)")
@@ -168,7 +173,7 @@ emit_static_locals :: proc(e: ^Emitter) {
 		if sym == nil || sym.kind != .Var || omitted_with_test(e.c, symbol_id) {
 			continue
 		}
-		name := fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name)))
+		name := claim_name(e, fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name))))
 		e.names[symbol_id] = name
 		position, _ := slice.linear_search(sym.decl.symbols, symbol_id)
 		emit_var_global(e, name, sym, sym.decl, position)

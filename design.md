@@ -10632,7 +10632,9 @@ exported.
 The exported name is the declaration's name or its
 [`@(link_name)`](#link_namestring). Names are program-wide: duplicates produce a
 compile-time error identifying both declarations. The `loke_rt_` prefix is
-reserved for the runtime. A declaration in a [foreign block](#foreign-system)
+reserved for the runtime, and an [executable or test
+build](#build-configuration) cannot export `wmain`, its [startup
+entry](#executable-startup-abi). A declaration in a [foreign block](#foreign-system)
 may bind an exported name; it then refers to the exported definition and must
 declare the same kind and type, as two foreign declarations of one symbol must.
 

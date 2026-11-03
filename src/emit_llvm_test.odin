@@ -93,7 +93,7 @@ main :: proc() { _ = answer(); _ = prefixed(); }
 `)
 	defer destroy_checked(&p)
 	c := &p.c
-	check_exports(c)
+	check_exports(c, defines_entry = true)
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	c.debug_info = true
 	finalize_semantics(c)

@@ -1,0 +1,6 @@
+// design.md "@(export)": an object build writes no entry of its own, so its
+// host may have Loke define `wmain`.
+package lib;
+
+@(export)
+wmain :: proc "c" (argc: i32, argv: rawptr) -> i32 { return argc; }

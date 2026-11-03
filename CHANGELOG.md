@@ -1371,6 +1371,14 @@ checklist.
 
 ### Fixed
 
+- An export whose link name starts with `loke.` stays external, and a procedure or global the
+  compiler would give that same name takes another, so `@(export, link_name = "loke.host_api")`
+  links and `"loke.p.helper"` beside `helper :: proc()` compiles
+  ([`@(export)`](design.md#export)).
+- Exporting `wmain` from an executable or a test build is now `L0635` rather than clang's
+  redefinition error, and a foreign binding of `wmain` there refers to the entry
+  ([`@(export)`](design.md#export)).
+- A debugger shows an instance's argument as written, `wrap.[]int` rather than `wrap.$5b$5dint`.
 - A store's receiver is a place, so `m["a"][1] = 5` and `o[0][1] = 5` with an `inout` `operator([])`
   compile when the element has an `operator([]=)`, as their `+=` forms did
   ([Indexing and slicing](design.md#indexing-and-slicing)).
