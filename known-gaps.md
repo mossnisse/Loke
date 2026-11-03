@@ -234,6 +234,26 @@ release a value twice. `reject_unhoisted_local_hook` in
 [src/impl.odin](src/impl.odin) reports it. Found on 2026-11-01 while fixing the lost
 hooks of a body-local record.
 
+### A file-scope `when` cannot call a member declared in a package still selecting
+
+[when statement](design.md#when-statement) lets a condition read what its names
+declare, but an `impl` block is declared only once its subject's package has no
+pending `when`, as a record's fields may come from one. The condition is itself
+pending, so the valid member call is rejected with `L0408`:
+
+```loke
+package main;
+import "core:fmt";
+S :: struct { x: int }
+impl S { size :: proc() -> int { return 1; } }
+when (S.size() == 1) { A :: 1; } else { A :: 2; }
+main :: proc() { fmt.println(A); }
+```
+
+Calling a free procedure compiles. A fix has to say which blocks a condition may
+reach before they are declared, the same question as the gap below. Found on
+2026-11-03 while making conditions wait on what they reach.
+
 ### A file-scope `when` answers `is_copyable` without a later hook's bound
 
 [where clauses](design.md#where-clauses) leave a `hook(copy)` out of an instance that

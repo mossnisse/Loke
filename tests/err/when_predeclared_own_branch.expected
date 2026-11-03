@@ -1,0 +1,9 @@
+L0389
+@6:7
+`string` is predeclared, but a `when` branch may declare it, so this `when` condition cannot be answered
+L0389
+@8:7
+`f32` is predeclared, but a `when` branch may declare it, so this `when` condition cannot be answered
+L0389
+@9:7
+`f64` is predeclared, but a `when` branch may declare it, so this `when` condition cannot be answered

@@ -1316,17 +1316,22 @@ Item_Delegate :: struct {
 	symbols:    []string,
 }
 
-// File-scope `when`. Once `resolved`, the choice is final, and only the taken
-// branch reaches `File.active_items`.
+Item_When_State :: enum {
+	Pending,
+	Taken, // this node's own condition was true
+	Not_Taken,
+	// Reported as unanswerable, and selects nothing.
+	Stalled,
+}
+
+// File-scope `when`. Once it leaves `Pending`, the choice is final, and only the
+// selected branch reaches `File.active_items`.
 Item_When :: struct {
 	using base: Node_Base,
 	cond:       Expr,
 	then:       ^Item_Block,
 	otherwise:  Item, // `^Item_When` for `else when`, `^Item_Block` for `else`
-	resolved:   bool,
-	taken:      bool, // this node's own condition was true
-	// Reported as unanswerable, and selects nothing.
-	stalled:    bool,
+	state:      Item_When_State,
 }
 
 // `Top_Level_Block`

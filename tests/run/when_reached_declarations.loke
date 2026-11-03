@@ -1,0 +1,71 @@
+// design.md "when statement": a file-scope condition is answered once what it
+// reads has settled, whatever the order of the source, and it reads what the names
+// it writes declare: a constant's value, a record's fields, a procedure's signature
+// and, since evaluating a call runs it, its body.
+package main;
+import "core:fmt";
+
+// A branch selected in an earlier round, through a constant.
+when (true) { Handle :: rawptr; } else { Handle :: i8; }
+HANDLE_SIZE :: size_of(Handle);
+when (HANDLE_SIZE == size_of(rawptr)) { BY_CONSTANT :: 1; } else { BY_CONSTANT :: 2; }
+
+// The same chain written before what it needs, under an `else when`.
+when (false) { BY_CHAIN :: 1; } else when (CHAIN == 2) { BY_CHAIN :: 2; } else { BY_CHAIN :: 3; }
+CHAIN :: LINK + 1;
+when (true) { LINK :: 1; }
+
+// Through a record's field, a generic record's, an enum's value and a variable's type.
+Holder :: struct { value: Late_Field }
+when (size_of(Holder) == 8) { BY_RECORD :: 1; } else { BY_RECORD :: 2; }
+when (true) { Late_Field :: int; }
+
+Generic_Holder :: struct($T: type) { value: T, other: Late_Generic }
+when (size_of(Generic_Holder(int)) == 16) { BY_GENERIC :: 1; } else { BY_GENERIC :: 2; }
+when (true) { Late_Generic :: int; }
+
+Kind :: enum { First, Second = LATE_VALUE }
+when (int(Kind.Second) == 3) { BY_ENUM :: 1; } else { BY_ENUM :: 2; }
+when (true) { LATE_VALUE :: 3; }
+
+variable: Late_Variable = 3;
+when (size_of(variable) == 8) { BY_VARIABLE :: 1; } else { BY_VARIABLE :: 2; }
+when (true) { Late_Variable :: int; }
+
+// A procedure literal's signature, written in the condition or reached.
+when (size_of(proc(x: Late_Parameter) {}) == size_of(rawptr)) { BY_LITERAL :: 1; } else { BY_LITERAL :: 2; }
+when (true) { Late_Parameter :: int; }
+
+returns_late :: proc() -> Late_Result { return 1; }
+when (returns_late() == 1) { BY_SIGNATURE :: 1; } else { BY_SIGNATURE :: 2; }
+when (true) { Late_Result :: int; }
+
+// A body that evaluating the condition runs, through a call.
+outer :: proc() -> int { return inner(); }
+inner :: proc() -> int { return LATE_BODY; }
+when (outer() == 1) { BY_BODY :: 1; } else { BY_BODY :: 2; }
+when (true) { LATE_BODY :: 1; }
+
+// What a declaration binds for itself is not waited on, though a branch declares
+// the same name: not a parameter, a generic parameter, a local or a field key.
+own_names :: proc(a: int) -> int {
+	b := a;
+	foreach (c in 0 ..< 2) {
+		b += c;
+	}
+	return b;
+}
+Own_Names :: struct($d: type) { value: d }
+Point :: struct { e: int }
+POINT :: Point{e = 2};
+when (own_names(1) == 2 && size_of(Own_Names(i8)) == 1 && POINT.e == 2) {
+	a :: 1; b :: 1; c :: 1; d :: 1; e :: 1;
+	BY_OWN_NAMES :: 1;
+} else {
+	BY_OWN_NAMES :: 2;
+}
+
+main :: proc() {
+	fmt.println(BY_CONSTANT, BY_CHAIN, BY_RECORD, BY_GENERIC, BY_ENUM, BY_VARIABLE);
+	fmt.println(BY_LITERAL, BY_SIGNATURE, BY_BODY, BY_OWN_NAMES);
+}

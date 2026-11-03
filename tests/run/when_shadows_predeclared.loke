@@ -1,0 +1,30 @@
+// design.md "when statement": selected contents behave as if written in place, so a
+// predeclared name a branch shadows means the same to every condition, one written
+// first and one that reaches the name through a declaration included.
+package main;
+import "core:fmt";
+
+when (size_of(string) == 4) { DIRECT :: 1; } else { DIRECT :: 2; }
+when (true) { string :: i32; }
+
+when (true) { byte :: i64; }
+BYTE_SIZE :: size_of(byte);
+when (BYTE_SIZE == 8) { THROUGH_CONSTANT :: 1; } else { THROUGH_CONSTANT :: 2; }
+
+reads_u8 :: proc() -> int { return size_of(u8); }
+when (reads_u8() == 2) { THROUGH_BODY :: 1; } else { THROUGH_BODY :: 2; }
+when (true) { u8 :: i16; }
+
+// `Simd` has no binding in the universe for a branch to shadow.
+when (Simd(1, 2) == 1) { CONSTRUCTOR :: 1; } else { CONSTRUCTOR :: 2; }
+when (true) { Simd :: proc(a, b: int) -> int { return 1; } }
+
+// A branch that declares a name no condition reads holds nothing up.
+when (LOKE_OS == .Windows) { size_of_os :: 1; } else { size_of_os :: 2; }
+when (size_of_os > 0) { UNRELATED :: 1; } else { UNRELATED :: 2; }
+
+main :: proc() {
+	fmt.println(DIRECT, size_of(string));
+	fmt.println(THROUGH_CONSTANT, BYTE_SIZE);
+	fmt.println(THROUGH_BODY, CONSTRUCTOR, UNRELATED);
+}

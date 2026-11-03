@@ -82,7 +82,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 
 
-15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
 18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1. Removes about 250 lines; no behavior change beyond those.
 
@@ -1728,56 +1727,12 @@ Small and well scoped; what is left is the walk over owned parts it shares with 
 
 ### src/select.odin
 
-The selection fixed point is sound in outline and has no dead procedures, but a condition is only checked for its direct names, which wrongly rejects ordinary programs. The name walker and the two activation entry points can lose roughly a fifth of the file.
-
-**Bugs**
-
-- `BUG-select-1` **high** [select.odin:176](src/select.odin#L176) `resolve_item_when`: only names written in the condition are tested, so one reached through a declared constant or type is evaluated too early. *Confirmed: Reproduced L0315 via N :: size_of(Handle), L0306 only once a when reads S (S alone compiles); design.md "Constant declarations" allows any order, no gap recorded. Worse: with a when-supplied byte :: i64, N :: size_of(byte) stays 1 and picks the wrong branch silently.*
-  Scenario: `when (LOKE_ARCH == .Amd64) { Handle :: rawptr; } else { Handle :: int; } N :: size_of(Handle); when (N == 8) {...}` gives L0315 unknown `Handle` (`S :: struct { x: T }` likewise gives L0306); run on this commit's `lokec.exe`.
-  Fix: have the walk follow each resolved package-scope symbol's declaration, with a seen set, so the condition stays pending.
-- `BUG-select-2` **medium** [select.odin:366](src/select.odin#L366) `first_unresolved_name`: a name found in the universe counts as answered, though a branch not yet selected may shadow it (design.md "when statement": as if written in place). *Confirmed: Reproduced: the when-supplied `string :: i32` prints `2 4`, even with that when written first; a direct declaration prints `1 4`. Conditions resolve against the universe within a round; no gap or decision is recorded. Silent, but contrived: low-to-medium.*
-  Scenario: `when (size_of(string) == 4) { A :: 1; } else { A :: 2; } when (true) { string :: i32; }` prints `2 4`; with `string :: i32;` written directly it prints `1 4`. The wrong branch is taken silently.
-  Fix: report when a selected branch declares a name an answered condition read from the universe, or wait on universe names while others are pending.
-- `BUG-select-3` **low** [select.odin:475](src/select.odin#L475) `first_unresolved_name`: `^Expr_Proc` is listed as having nothing to wait on, but its signature names types, and the walk covers `^Type_Proc` for that reason. *Not verified.*
-  Scenario: `when (size_of(proc(x: T) {}) == 8) {...} when (true) { T :: int; }` gives L0306, while `T :: int;` at file scope compiles.
-  Fix: `case ^Expr_Proc: return first_unresolved_name(k, v.signature)`.
-
-**Simplification**
-
-- [select.odin:313](src/select.odin#L313) `first_unresolved_name`: add a variadic `first_unresolved_in(k, ..Expr)`, so `^Expr_Cond` becomes `return first_unresolved_in(k, v.cond, v.then, v.otherwise)`; likewise Array, Map, Postfix, Binary, Slice, Range, Or_Else. (about 25 lines)
-- [select.odin:72](src/select.odin#L72) `collect_pending_whens`: the nil-`out` mode and `found` serve only `package_has_pending_whens`, which can collect into a temp array and test `len`; early exit helps only while something is pending, and an empty array allocates nothing. (about 10 lines)
-- [select.odin:239](src/select.odin#L239) `self_bootstrap_import`: make `find_import_binding` take one `Item` (Import, Block, When over `then` and `otherwise`; nil falls through) and call it with `item` at line 220. The helper and its temp array go. (about 10 lines)
-- [select.odin:502](src/select.odin#L502) `when_selected_block`: equals `s.selected`, since only `check_when_stmt` sets it, after `resolved`, nothing resets it and clones copy neither; [query_index.odin:154](src/query_index.odin#L154) already reads it directly. Replace the seven calls. (about 5 lines)
-- [select.odin:373](src/select.odin#L373) `first_unresolved_name`: merge the two identical `concat` returns: `if target != nil && target.scope != nil && intern_identifier(k.c, v.name.text) in target.scope.names { return "" }`, then one return. (about 4 lines)
-- [select.odin:392](src/select.odin#L392) `first_unresolved_name`: move `^Expr_Propagated_Error` into the nothing-to-wait-on list at line 475. (2 lines)
-- [select.odin:28](src/select.odin#L28) `rebuild_active_items`: `file.active_items = slice.clone(out[:], c.semantic_allocator)` replaces the `make` and `copy`. (2 lines)
-
-**Dead code**
-
-- (branch) [select.odin:213](src/select.odin#L213): `missing == ""` cannot occur. Both callers report right after a round with no progress, and `resolve_item_when` settles any pending `when` with no missing name. No test expects the bare message.
-- (branch) [select.odin:149](src/select.odin#L149) and [select.odin:197](src/select.odin#L197): the `pkg == nil || pkg.scope == nil` guards. Both callers ([packages.odin:49](src/packages.odin#L49), [incremental.odin:109](src/incremental.odin#L109)) have run `prepare_package`, which creates the scope, on every such package.
-- (branch) [select.odin:127](src/select.odin#L127) and [select.odin:132](src/select.odin#L132): `int(id) >= len(seen)` and `pkg == nil`. `seen` spans `c.packages`, which the walk does not grow, and `package_of` returns nil only for ids already excluded (`INVALID_PACKAGE` is 0).
-
-**Data structures and algorithms**
-
-- [select.odin:120](src/select.odin#L120) `package_closure_has_pending_whens`: [check.odin:171](src/check.odin#L171) calls it per `impl` per `prepare_package`, already-declared blocks included, and each call allocates `seen` and scans every item in the closure: impls x closure items x rounds. Test `!impl.declared` first and keep a per-package settled flag, as having no pending `when` is final.
-- [ast.odin:1294](src/ast.odin#L1294) `Item_When`: `resolved`, `taken`, `stalled` encode four states in three bools; `resolved` and `stalled` are never both set ([select.odin:186](src/select.odin#L186), [select.odin:189](src/select.odin#L189), [select.odin:211](src/select.odin#L211)), so `!node.stalled` at [doc.odin:426](src/doc.odin#L426) tests nothing. An enum `Pending, Taken, Not_Taken, Stalled` fits.
+What remains is the predeclared-callee near copies, shared with `box.odin`, `simd.odin` and `iterate.odin`.
 
 **Near copies**
 
-- [select.odin:148](src/select.odin#L148) and [select.odin:196](src/select.odin#L196): the same location save, scope setup, file loop and pending collection around a different per-item action. Share `visit_pending_whens(k, pkg, visit: proc(^Checker, ^Item_When) -> bool) -> bool`; `activate_when_items` keeps only `impls_declaring`. (about 10 lines)
-- [select.odin:44](src/select.odin#L44), [select.odin:77](src/select.odin#L77), [intrinsic.odin:355](src/intrinsic.odin#L355) and [query_index.odin:107](src/query_index.odin#L107): each decides the selected branch from `resolved` and `taken`. Share `item_when_selected(v) -> Item`, nil when none, the file-scope counterpart of `s.selected`; this also removes `[1]Item` at line 91. (about 8 lines)
 - [select.odin:293](src/select.odin#L293) and [box.odin:34](src/box.odin#L34): `callee_is_builtin` and `box_callee` differ only in the kind. Drop the `file` privacy and make `box_callee` call it with `.Box_New`. (about 5 lines)
-- [simd.odin:15](src/simd.odin#L15), [iterate.odin:68](src/iterate.odin#L68) and [box.odin:45](src/box.odin#L45), combined at [select.odin:440](src/select.odin#L440): the same procedure but for the spelling. Share `unbound_callee(k, callee, name)`, and at line 440 test only once `missing != ""` rather than three lookups on every call.
-
-**Comments**
-
-- [select.odin:1](src/select.odin#L1): the header claims procedure scope too, but that selection is `check_when_stmt` ([check.odin:3480](src/check.odin#L3480)), tied there by the file-private `check_stmt_sequence`. Say "File-scope selection, and the condition rule both scopes share."
-- [select.odin:3](src/select.odin#L3): lines 3-6 repeat the spec at length. Shorten to: `design.md "when statement": an unselected branch is parsed and nothing else.`
-- [select.odin:16](src/select.odin#L16): delete the first sentence, keeping "Parser-owned item lists are never mutated" and why an unchanged view keeps its array.
-- [select.odin:103](src/select.odin#L103): "selects neither branch" is restated at lines 79-80, 103-104, 181-185 and 209-210, and on `Item_When.stalled`. Delete 103-104 and 209-210; make 181-185 "Rejected: settles as stalled, as `check_when_stmt` does; `false` would check the `else` on a refused condition."
-- [select.odin:306](src/select.odin#L306): shorten lines 306-312 to "Type syntax counts: `size_of(^T)` depends on `T` as `size_of(T)` does." The record and enum clause misleads, since L0717 rejects both when written in place; "the switch is exhaustive" is what the code shows.
-- [select.odin:236](src/select.odin#L236): delete; it restates the name and signature. Lines 444-445 repeat line 304, so drop the `build_config` key from line 304. (about 18 lines across the file)
+- [simd.odin:15](src/simd.odin#L15), [iterate.odin:68](src/iterate.odin#L68) and [box.odin:45](src/box.odin#L45), combined at [select.odin:440](src/select.odin#L440): the same procedure but for the spelling. Share `unbound_callee(k, callee, name)`.
 
 ### src/semantic.odin
 

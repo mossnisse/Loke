@@ -704,6 +704,29 @@ would require reproducing runtime copies, moves, cleanup, and their order;
 getting that wrong could make compile-time and runtime results disagree. See
 [Compile-time phases](design.md#compile-time-phases).
 
+### A `when` condition waits on what it reaches
+
+File-scope selection is a fixed point, and the [when
+statement](design.md#when-statement) promises selected contents behave as if
+written in place, so an answer must not depend on the round that gave it. A
+condition therefore waits on its reach, not only on its own text. A declaration
+holds the name it reads, and evaluating a condition reads a called procedure's
+body, so the walk follows both.
+
+A predeclared name always resolves, so a condition could read one that a branch
+is about to shadow. Waiting on every predeclared name while anything is pending
+deadlocks, as nearly every condition reads a build constant. Answering first and
+reporting a later shadow would reject a program a better order answers. What a
+branch may declare is syntax, so a condition waits only on the names a pending
+branch actually writes. A program that shadows nothing it reads never waits, and
+one that can never be answered is an error rather than an arbitrary choice.
+
+Past the condition's own text, a name resolving nowhere does not wait unless a
+branch may declare it. A typo there keeps its diagnostic at its declaration, not
+as an unanswerable condition. It also means that binding forms the walk fails to
+recognize cost only a wait on a branch declaring that very name, never a false
+error on a name no branch mentions.
+
 ### Build-selected services and explicit runtime state
 
 The final build selects one default allocator and one logging provider.

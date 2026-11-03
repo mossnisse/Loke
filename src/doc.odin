@@ -411,8 +411,8 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 	node, prefix, selected := v, "", false
 	for {
 		head := strings.trim_space(shown_text(b, source, node.span.lo, node.then.span.lo))
-		branch := Api_Branch{head = strings.concatenate({prefix, head}), taken = node.taken && !selected}
-		selected ||= node.taken
+		branch := Api_Branch{head = strings.concatenate({prefix, head}), taken = node.state == .Taken && !selected}
+		selected ||= node.state == .Taken
 		w := Ref_Walk{b = b}
 		api_refs(&w, node.cond)
 		branch.refs, branch.qualifiers = w.refs[:], text_qualifiers(b.a, head)
@@ -423,7 +423,7 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 			node, prefix = next, "else "
 			continue
 		case ^Item_Block:
-			otherwise := Api_Branch{head = "else", taken = node.resolved && !node.stalled && !selected}
+			otherwise := Api_Branch{head = "else", taken = node.state == .Not_Taken && !selected}
 			api_items(b, next.items, &otherwise.items, in_when = true)
 			append(&chosen.branches, otherwise)
 		}

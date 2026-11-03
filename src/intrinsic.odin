@@ -345,13 +345,8 @@ report_intrinsics_in_when :: proc(k: ^Checker, items: []Item, selected: bool) {
 		case ^Item_Block:
 			report_intrinsics_in_when(k, v.items, selected)
 		case ^Item_When:
-			if !v.resolved {
-				continue
-			}
-			if v.taken {
-				report_intrinsics_in_when(k, v.then.items, true)
-			} else if v.otherwise != nil {
-				report_intrinsics_in_when(k, []Item{v.otherwise}, true)
+			if branch := item_when_selected(v); branch != nil {
+				report_intrinsics_in_when(k, []Item{branch}, true)
 			}
 		}
 	}

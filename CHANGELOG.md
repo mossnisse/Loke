@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A file-scope `when` now waits for a branch that may shadow a predeclared name it reads, directly or
+  through a declaration ([when statement](design.md#when-statement)). A condition that read a
+  predeclared `string` and took one branch, while another `when` declared `string`, now reads that
+  declaration and may take the other. One whose own branch declares the name is now `L0389`, where it
+  compiled and read the predeclared name. Upgrade by renaming the declaration in the branch.
 - A move-only field or element of a temporary, as a `spawn` argument or receiver, is now `L0728`
   ([Spawn statements](design.md#spawn-statements)). It compiled, and the task read storage the
   parent had already dropped. Upgrade by binding the temporary to a local declared before the
@@ -1463,6 +1468,10 @@ checklist.
   package an iteration adapter was made for.
 - `typeid_of(Nope)`, `fields_of(Nope)`, `enum_values_of(Nope)` and `variants_of(Nope)` report an
   unknown name once, not again as `L0451` "needs a type", and `type_of([]Nope)` reports it once.
+- A file-scope `when` condition now waits for what it reaches, not only for the names it writes
+  ([when statement](design.md#when-statement)). `N :: size_of(Handle); when (N == 8)` with `Handle`
+  from another `when` compiles, where it was `L0315`, and a record's field type, a procedure's
+  signature or body, and a procedure literal in the condition behave the same.
 - `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
   `<name>.layout.exe`. A bare output name, which every build without `-o` has, no longer fails it
   with `L0405`, and `-g` no longer writes a PDB for the probe.

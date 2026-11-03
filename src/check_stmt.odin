@@ -37,8 +37,8 @@ report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
 		}
 		// design.md "when statement": the selected branch has no scope of its own.
 		if w, is_when := inner.(^Stmt_When); is_when {
-			if selected := when_selected_block(w); selected != nil {
-				report_local_copy_decisions(k, selected.stmts)
+			if w.selected != nil {
+				report_local_copy_decisions(k, w.selected.stmts)
 			}
 			continue
 		}
@@ -85,8 +85,8 @@ report_unread_required_results :: proc(k: ^Checker, stmts: []Stmt) {
 		}
 		// design.md "when statement": the selected branch has no scope of its own.
 		if w, is_when := inner.(^Stmt_When); is_when {
-			if selected := when_selected_block(w); selected != nil {
-				report_unread_required_results(k, selected.stmts)
+			if w.selected != nil {
+				report_unread_required_results(k, w.selected.stmts)
 			}
 			continue
 		}
@@ -329,7 +329,7 @@ check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 	#partial switch otherwise in s.otherwise {
 	case ^Stmt_When:
 		flow := check_when_stmt(k, otherwise)
-		s.selected = when_selected_block(otherwise)
+		s.selected = otherwise.selected
 		return flow
 	case ^Block:
 		s.selected = otherwise

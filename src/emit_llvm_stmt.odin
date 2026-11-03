@@ -105,7 +105,7 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 	case ^Stmt_When:
 		// The chosen branch shares the surrounding block's scope.
-		emit_block_statements(e, when_selected_block(s))
+		emit_block_statements(e, s.selected)
 
 	case ^Stmt_Foreach:
 		if s.kind == .Unresolved {

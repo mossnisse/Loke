@@ -368,8 +368,8 @@ reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 				unwind_clear(e, e.unwind.slot_by_symbol[symbol_id])
 			}
 		case ^Stmt_When:
-			if selected := when_selected_block(s); selected != nil {
-				reset_defer_flags(e, selected.stmts)
+			if s.selected != nil {
+				reset_defer_flags(e, s.selected.stmts)
 			}
 		}
 	}

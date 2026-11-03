@@ -1,0 +1,11 @@
+// design.md "when statement": a condition reading a predeclared name that a branch
+// may shadow waits for that branch, and selecting its own branch is not something
+// it can wait for.
+package main;
+
+when (size_of(string) == 4) { string :: i64; }
+
+when (size_of(f32) == 4) { f64 :: i8; }
+when (size_of(f64) == 8) { f32 :: i8; }
+
+main :: proc() {}

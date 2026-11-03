@@ -810,8 +810,8 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 		walk_flow_block(graph, s)
 
 	case ^Stmt_When:
-		if selected := when_selected_block(s); selected != nil {
-			walk_flow_stmts(graph, selected.stmts)
+		if s.selected != nil {
+			walk_flow_stmts(graph, s.selected.stmts)
 		}
 
 	case ^Stmt_Parallel:

@@ -2824,8 +2824,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 
 	case ^Stmt_When:
 		// Not a scope: its `defer`s belong to the surrounding one.
-		selected := when_selected_block(s)
-		return selected == nil ? .Normal : eval_stmts(ev, selected.stmts, false)
+		return s.selected == nil ? .Normal : eval_stmts(ev, s.selected.stmts, false)
 
 	case ^Stmt_Foreach:
 		return eval_foreach(ev, s)

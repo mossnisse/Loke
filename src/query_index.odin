@@ -97,9 +97,7 @@ index_query_item :: proc(index: ^Query_Index, item: Item) {
 	case ^Item_Block: for member in v.items { index_query_item(index, member) }
 	case ^Item_When:
 		index_query_expr(index, v.cond)
-		if v.resolved {
-			if v.taken { index_query_item(index, v.then) } else { index_query_item(index, v.otherwise) }
-		}
+		index_query_item(index, item_when_selected(v))
 	case ^Item_Static_Assert: index_query_expr(index, v.call)
 	}
 }

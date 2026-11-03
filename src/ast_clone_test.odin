@@ -80,7 +80,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		// `kind` is filled in by the checker, but an instance reads its template's.
 		{Item_Impl, "kind type members", "subject declared"},
 		{Item_Delegate, "symbols", ""},
-		{Item_When, "cond then otherwise", "resolved taken stalled"},
+		{Item_When, "cond then otherwise", "state"},
 		{Item_Block, "items", ""},
 		{Item_Static_Assert, "call", ""},
 
