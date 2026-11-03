@@ -1,0 +1,46 @@
+// design.md "Parametric aliases": an alias reached again from inside its own body
+// is rejected, and finding that does not revisit an alias however many references
+// to it a body holds. `A` only reaches the cycle, so it is not itself reported.
+package main;
+
+Pair :: struct($L: type, $R: type) { left: L, right: R }
+
+A :: B($T);
+B :: Pair(C($T), C($T));
+C :: Pair(B($T), B($T));
+
+// A valid chain doubling at every level, which a walk without a visited set would
+// take 2^30 steps to clear.
+D0 :: Pair(D1($T), D1($T));
+D1 :: Pair(D2($T), D2($T));
+D2 :: Pair(D3($T), D3($T));
+D3 :: Pair(D4($T), D4($T));
+D4 :: Pair(D5($T), D5($T));
+D5 :: Pair(D6($T), D6($T));
+D6 :: Pair(D7($T), D7($T));
+D7 :: Pair(D8($T), D8($T));
+D8 :: Pair(D9($T), D9($T));
+D9 :: Pair(D10($T), D10($T));
+D10 :: Pair(D11($T), D11($T));
+D11 :: Pair(D12($T), D12($T));
+D12 :: Pair(D13($T), D13($T));
+D13 :: Pair(D14($T), D14($T));
+D14 :: Pair(D15($T), D15($T));
+D15 :: Pair(D16($T), D16($T));
+D16 :: Pair(D17($T), D17($T));
+D17 :: Pair(D18($T), D18($T));
+D18 :: Pair(D19($T), D19($T));
+D19 :: Pair(D20($T), D20($T));
+D20 :: Pair(D21($T), D21($T));
+D21 :: Pair(D22($T), D22($T));
+D22 :: Pair(D23($T), D23($T));
+D23 :: Pair(D24($T), D24($T));
+D24 :: Pair(D25($T), D25($T));
+D25 :: Pair(D26($T), D26($T));
+D26 :: Pair(D27($T), D27($T));
+D27 :: Pair(D28($T), D28($T));
+D28 :: Pair(D29($T), D29($T));
+D29 :: Pair(D30($T), D30($T));
+D30 :: Pair($T, $T);
+
+main :: proc() {}

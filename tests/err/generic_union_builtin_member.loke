@@ -1,0 +1,16 @@
+// design.md "Inspecting a union": `u.as(.a)` is built in, so a generic union's
+// `impl` cannot declare a member `as`, which no use could reach, any more than a
+// union's can.
+package main;
+
+U :: union($T: type) { a: T, b }
+
+impl U($T) {
+	as :: proc(self) -> int { return 1; }
+	fine :: proc(self) -> int { return 2; }
+}
+
+main :: proc() {
+	u: U(int) = .b;
+	_ = u.fine();
+}

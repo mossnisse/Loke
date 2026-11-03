@@ -1941,7 +1941,7 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 			return
 		}
 		// A chained selector, `S.Iterator.Item`, names an associated type.
-		head := written_text(k, value.operand)
+		head := source_text(k.c, value.operand)
 		errorf(
 			k.c, value.span, "L0306", "unknown type `%s.%s`: `%s` has no associated type `%s`",
 			head, value.name.text, head, value.name.text,
@@ -2011,14 +2011,7 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 		}
 		return
 	}
-	errorf(k.c, expr_span(call.callee), "L0306", "unknown type `%s`", written_text(k, call.callee))
-}
-
-// The source text of an expression, for a message that names what was written.
-@(private = "file")
-written_text :: proc(k: ^Checker, e: Expr) -> string {
-	span := expr_span(e)
-	return k.c.sources[span.file].text[span.lo:span.hi]
+	errorf(k.c, expr_span(call.callee), "L0306", "unknown type `%s`", source_text(k.c, call.callee))
 }
 
 // The component of a composed type that did not resolve, or nil.

@@ -405,12 +405,8 @@ interface_scope :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg)
 @(private = "file")
 write_arg_keys :: proc(c: ^Compiler, b: ^strings.Builder, args: []Generic_Arg) {
 	for arg in args {
-		if arg.is_type {
-			fmt.sbprintf(b, "|T%d", u32(arg.type))
-		} else {
-			text := const_key_text(c, arg.value)
-			fmt.sbprintf(b, "|V%d:%d:%s", u32(arg.value_type), len(text), text)
-		}
+		strings.write_string(b, "|")
+		write_generic_arg_key(c, b, arg)
 	}
 }
 

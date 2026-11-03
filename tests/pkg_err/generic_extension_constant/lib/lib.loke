@@ -1,0 +1,3 @@
+package lib;
+
+@(public) Holder :: struct($T: type) { x: T }

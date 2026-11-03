@@ -145,6 +145,8 @@ Compiler :: struct {
 	// a deep instantiation does not attach it once per level.
 	last_noted_diagnostic: int,
 	pending_impl_instances: [dynamic]Pending_Impl,
+	// The first of them `check_pending_impl_instances` has yet to check.
+	next_pending_impl:     int,
 	// Instances of generic declarations that `check_pending_impl_instances` has yet
 	// to read for private names.
 	pending_private_reads: [dynamic]Pending_Private_Read,
@@ -547,6 +549,17 @@ line_col :: proc(src: ^Source, offset: u32) -> (line: int, col: int) {
 		i -= 1
 	}
 	return i + 1, int(offset-src.line_starts[i]) + 1
+}
+
+// The source text of an expression, or empty for one with no source.
+source_text :: proc(c: ^Compiler, e: Expr) -> string {
+	span := expr_span(e)
+	if span.file == NO_FILE || int(span.file) >= len(c.sources) {
+		return ""
+	}
+	text := c.sources[span.file].text
+	hi := min(int(span.hi), len(text))
+	return int(span.lo) < hi ? text[span.lo:hi] : ""
 }
 
 @(private = "file")

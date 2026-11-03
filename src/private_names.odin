@@ -824,8 +824,7 @@ read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, template: ^Ge
 	poly_names(call, &names)
 	stand_ins := new_scope(k.c, k.scope, .Local)
 	for name in names {
-		id := intern_identifier(k.c, name)
-		stand_ins.names[id] = new_symbol(k.c, Symbol{name = id, span = expr_span(call), pkg = k.pkg})
+		declare_stand_in(k, stand_ins, name, expr_span(call))
 	}
 	for member in item.members {
 		d, is_decl := member.(^Decl)
@@ -902,7 +901,7 @@ check_instance_private_names :: proc(k: ^Checker, pending: Pending_Impl) {
 		return
 	}
 	// The members of a private type are reached only through a value of it.
-	subject_info := type_of(c, pending.subject)
+	subject_info := type_of(c, pending.impl_type)
 	if subject_info == nil {
 		return
 	}

@@ -1799,8 +1799,9 @@ note_instance_sites :: proc(k: ^Checker, literal: ^Expr_Proc, first: int) {
 		return
 	}
 	append(&k.c.instantiation_stack, Instantiation_Frame {
-		description = identifier_text(k.c, symbol_of(k.c, literal.symbol).name),
-		span        = instance.selected_at,
+		symbol   = instance.template,
+		bindings = instance.bindings,
+		span     = instance.selected_at,
 	})
 	defer pop(&k.c.instantiation_stack)
 	note_instantiation_stack(k, first)

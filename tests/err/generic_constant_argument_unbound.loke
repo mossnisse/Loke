@@ -1,0 +1,24 @@
+// design.md "Generics": a `$` name is written only where it binds. In a type
+// application's constant argument it stands for a constant the enclosing instance
+// bound, so one that is unbound, or bound to a type, is reported rather than
+// leaving the type invalid with nothing said.
+package main;
+
+Vec :: struct($N: int) { x: int }
+
+by_type :: proc($T: type) -> int {
+	v := Vec($T){x = 1};
+	return v.x;
+}
+
+by_constant :: proc($N: int) -> int {
+	v := Vec($N){x = N};
+	return v.x;
+}
+
+main :: proc() {
+	v := Vec($M){x = 1};
+	_ = v;
+	_ = by_type(int);
+	_ = by_constant(2);
+}

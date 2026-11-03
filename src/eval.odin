@@ -152,7 +152,7 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	defer k.location = outer_location
 	// A member of an instantiated generic block is checked inside it, where its
 	// `where` clause has the block's parameters in scope.
-	if !enter_pending_impl_member(k, d) {
+	if !enter_instance_impl_member(k, symbol) {
 		enter_symbol_location(k, symbol)
 	}
 	k.body = {}

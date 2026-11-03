@@ -866,6 +866,13 @@ checklist.
   old procedure. The distributions that call these functions on every value
   are slower, `beta` by Jöhnk's method most, from 13 to 205 ns; `normal` and
   `exponential` are not.
+- A member `as` in an `impl` of a generic union is now `L0409`, as in an `impl` of any other union
+  ([Inspecting a union](design.md#inspecting-a-union)). It compiled and no use could reach it, since
+  `u.as(.a)` selects the built-in. Upgrade by renaming it.
+- A public constant in a generic extension is no longer exported under its package
+  ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)): `ext.K` is now
+  `L0335`. With `impl lib.Holder($T) { @(public) K :: size_of(T); }` it took its value from whichever
+  instance came first. Upgrade by exporting an ordinary constant, or a procedure of the block.
 
 ### Added
 
@@ -2214,6 +2221,21 @@ checklist.
   `node := p^^.head`, with `p: ^mut ^mut List`, compile, and so does copying
   another field, as `other := cur^.other`, beside a binding of
   `case .some(next):` over `cur^.next`. Both were rejected with `L0641`.
+
+- A parametric alias whose body refers more than once to another alias no longer takes exponential
+  time to check ([Parametric aliases](design.md#parametric-aliases)):
+  `B :: Pair(C($T), C($T)); C :: Pair(B($T), B($T));` hung instead of reporting `L0745`, and a valid
+  chain of 24 such aliases took seconds. A cycle longer than 64 aliases now reports `L0745` too.
+- A `$` parameter's default can name an earlier parameter in its type across calls
+  ([Default values](design.md#default-values)): with `$N: int, $A: [N]int = [N]int{}`, `f(2); f(3);`
+  rejected the second call, as the type was read once.
+- A `$` name in a type application's constant argument that is unbound, or bound to a type, is now
+  `L0437`: `v: Vec($N);` stopped with an internal `L0405` and no span.
+- A rejected generic signature now reports its first error, not a deprecation warning that came
+  before it.
+- `f(nil)` for `f :: proc($v: $I)` now says `nil` has no type to infer `$I` from, and a named argument
+  no parameter of a generic procedure takes now says `no parameter named` or `is given twice` rather
+  than a count of arguments.
 
 ## [0.9.0] - 2026-10-27
 

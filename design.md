@@ -3017,7 +3017,9 @@ the extension. A public extension is also exported under its declaring package:
 if the `impl` above is in package `geometry`, importers may call
 `geometry.to_string(v)`. Importing `geometry` does not add the extension to
 receiver or operator lookup. An importer that wants method syntax declares a
-local forwarding extension.
+local forwarding extension. A generic extension exports only its public
+procedures, each name a group of every instance's procedure; a constant has no
+such name, since each instance gives it its own value.
 
 Generic declarations use **definition-site lookup**: substituting concrete
 arguments may reveal inherent operations of those types but does not add the

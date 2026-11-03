@@ -354,7 +354,6 @@ variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int 
 
 // ----------------------------------------------------------------- candidates --
 
-@(private = "file")
 arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
 	return fmt.aprintf(
 		"it takes %d argument%s, found %d",

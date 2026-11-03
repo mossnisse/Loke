@@ -56,9 +56,7 @@ bootstrap_symbol :: proc(k: ^Checker, pkg: ^Package, name: string, want: Bootstr
 			found = sym.kind == .Type || declaration_generic_kind(sym.decl) == .Alias
 		case .Proc_Group:
 			// A group's symbol kind is settled only when its signature resolves.
-			if sym.decl != nil && len(sym.decl.values) == 1 {
-				_, found = sym.decl.values[0].(^Expr_Proc_Group)
-			}
+			found = sym.decl != nil && decl_is_proc_group(sym.decl)
 		}
 	}
 	if found {

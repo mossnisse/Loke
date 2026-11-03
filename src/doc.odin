@@ -1368,8 +1368,3 @@ walk_documented_variants :: proc(w: ^Doc_Walk, variants: []Variant) {
 	}
 }
 
-@(private = "file")
-source_text :: proc(c: ^Compiler, e: Expr) -> string {
-	span := expr_span(e)
-	return c.sources[span.file].text[span.lo:span.hi]
-}
