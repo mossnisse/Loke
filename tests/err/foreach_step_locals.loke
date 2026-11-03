@@ -1,0 +1,69 @@
+package main;
+import "core:fmt";
+
+// design.md "Element bindings": what a traversal hands over owned is a local of
+// its step, so a pointer to it cannot outlive the step. That holds for the
+// `indexed()` counter and for a part `next` owns, beside lent siblings, and for
+// the record of pointers one name receives, which is the step's own slot rather
+// than storage in the source.
+
+counter_returned :: proc(xs: []int) -> ^int {
+	foreach (x, i in xs.indexed()) { return &i; }
+	panic("empty");
+}
+
+record_returned :: proc(xs: []int) -> ^(value: ^int, index: int) {
+	foreach (e in xs.indexed()) { return &e; }
+	panic("empty");
+}
+
+counter_kept :: proc(xs: []int) {
+	kept: Option(^int) = .none;
+	foreach (x, i in xs.indexed()) { kept = .some(&i); }
+	switch (kept) { case .some(p): fmt.println(p^); case .none: }
+}
+
+entry_kept :: proc(table: map[int]int) {
+	kept: Option(^(key: ^int, value: ^int)) = .none;
+	foreach (entry in table) { kept = .some(&entry); }
+	switch (kept) { case .some(p): fmt.println(p^.key^); case .none: }
+}
+
+// A range's element, for comparison, has always been one.
+range_kept :: proc() {
+	kept: Option(^int) = .none;
+	foreach (x in 0 ..< 2) { kept = .some(&x); }
+	switch (kept) { case .some(p): fmt.println(p^); case .none: }
+}
+
+Row :: struct { lent: int, owned: int }
+Rows :: struct { values: []int }
+Rows_Cursor :: struct { values: []int, at: int }
+impl Rows {
+	Element :: Row;
+	iter :: proc(self) -> Rows_Cursor { return {self.values, 0}; }
+}
+impl Rows_Cursor {
+	next :: proc(self: inout Rows_Cursor) -> Option((lent: ^int, owned: int)) {
+		if (self.at >= self.values.len()) { return .none; }
+		p := &self.values[self.at];
+		self.at += 1;
+		return .some({lent = p, owned = self.at});
+	}
+}
+
+owned_part_kept :: proc(values: []int) {
+	kept: Option(^int) = .none;
+	foreach (lent, owned in Rows{values}) { kept = .some(&owned); }
+	switch (kept) { case .some(p): fmt.println(p^); case .none: }
+}
+
+// A borrowed element keeps the source's provenance (design.md "Borrowing
+// iteration"), so this one may outlive its step.
+element_kept :: proc(xs: []int) {
+	kept: Option(^int) = .none;
+	foreach (x, i in xs.indexed()) { kept = .some(&x); }
+	switch (kept) { case .some(p): fmt.println(p^); case .none: }
+}
+
+main :: proc() {}

@@ -900,6 +900,18 @@ checklist.
   ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)): `ext.K` is now
   `L0335`. With `impl lib.Holder($T) { @(public) K :: size_of(T); }` it took its value from whichever
   instance came first. Upgrade by exporting an ordinary constant, or a procedure of the block.
+- The fields of a built-in array, slice, dynamic array, range or map iterator are private
+  ([Iteration protocol](design.md#iteration-protocol)): `it.index` is now `L0471`. Writing
+  `x.iter().index` let safe code read outside the array and segfault. Upgrade by calling `next`.
+- What a `foreach` step owns no longer outlives the step
+  ([Element bindings](design.md#element-bindings)): a pointer to the `indexed()` counter, or to the
+  record one name receives over a map or an `indexed()` loop, is `L0526` when returned and `L0513`
+  when kept past the step. `foreach (e in xs.indexed()) { return &e; }` compiled and left a dangling
+  pointer. Upgrade by copying what the step binds, or by keeping `e.value`, which the source owns.
+- `foreach ((p, q), &mut c in t)` that takes apart an owned part with a custom `hook(copy)` or
+  `hook(drop)` is `L0508`, as in a loop with no `&mut` leaf
+  ([Destructuring](design.md#destructuring)). It compiled and the hook never ran. Upgrade by binding
+  the part whole.
 
 ### Added
 
@@ -1425,6 +1437,15 @@ checklist.
 - A foreign binding of any name the runtime or the generated module declares or defines, such as
   `loke_rt_v1_frame_pop`, now refers to that one; only a few such names did, and the others
   failed with `L0403`, clang's "invalid redefinition of function".
+- An owned `foreach` leaf can be moved beside lent and `&mut` ones, as
+  [Element bindings](design.md#element-bindings) says: `move(i)` of an `indexed()` counter and
+  `foreach (&mut a, s in t) { take(move(s)); }` with `s` owned by `next` were `L0690`.
+- `reversed()` over a map or text runs the `iter_reverse` the program supplies
+  ([Iteration adapters](design.md#iteration-adapters)); it was `L0460`.
+- An `&mut` leaf after a `_` padding field of a record `Item` takes that field's mode, not the
+  padding's; it was `L0457` ([Destructuring](design.md#destructuring)).
+- `foreach (a, b in ints)` reports that `int` is not a record, not that it has 0 fields and needs
+  "1 or 0 parts" (`L0459`).
 - `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
   statement ends, as `make_source().iter()` already did; it was never dropped
   ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).

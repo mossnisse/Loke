@@ -1,0 +1,18 @@
+L0526
+@11:42
+`i` ends when this procedure returns
+L0526
+@16:39
+`e` ends when this procedure returns
+L0513
+@23:10
+after `i`, the local it borrows, has ended
+L0513
+@29:10
+after `entry`, the local it borrows, has ended
+L0513
+@36:10
+after `x`, the local it borrows, has ended
+L0513
+@58:10
+after `owned`, the local it borrows, has ended

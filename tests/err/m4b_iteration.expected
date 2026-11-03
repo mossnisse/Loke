@@ -9,7 +9,7 @@ L0457
 a range produces values
 L0459
 @58:11
-`int` has 0 fields
+`int` is not a record
 L0458
 @60:20
 a range needs integer or rune endpoints

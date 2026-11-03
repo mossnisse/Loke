@@ -81,8 +81,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
-7. **Holes in `foreach` safety.** The `indexed()` counter and a per-step projected record are marked lent ([iterate.odin:856](src/iterate.odin#L856), [iterate.odin:990](src/iterate.odin#L990)), so `return &e` compiles; public iterator fields let safe code segfault ([iterate.odin:172](src/iterate.odin#L172)). BUG-iterate-1, -3, -2. About 25 lines.
-
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
 
@@ -190,7 +188,7 @@ In the same area, the candidate loop repeats at [erased.odin:893](src/erased.odi
 
 #### Iterator types and synthesized members
 
-Struct-shaped iterator types are built by hand in `iterate.odin` (`new_map_cursor_type` for the `{table, cursor}` ones), `add_mutable_sequence_members` in `iteration_mutable.odin` and `new_adapter_iterator` in `iteration_adapters.odin`. They differ in the `public` flag (the cause of BUG-iterate-2) and in the cache key.
+Struct-shaped iterator types are built by hand in `iterate.odin` (`new_map_cursor_type` for the `{table, cursor}` ones), `add_mutable_sequence_members` in `iteration_mutable.odin` and `new_adapter_iterator` in `iteration_adapters.odin`. They differ in the cache key.
 
 Shared form: `new_iterator_type(c, name, label, element, key, fields)`. Saves about 30 lines.
 
@@ -1460,76 +1458,17 @@ Well-commented and cleanly owned; its linear scans run over a per-package, compi
 
 ### src/iterate.odin
 
-The value-loop path is sound for elements but mishandles parts a traversal owns: probes returned dangling pointers or crashed from safe code. Beyond that the file is readable but repetitive, with seven hand-written struct constructors and a place-loop checker that repeats the common path.
-
-**Bugs**
-
-- `BUG-iterate-1` **high** [iterate.odin:856](src/iterate.odin#L856) `check_foreach_body`: built-in loops bind with the default `Borrowed`, ignoring the exact desc from `foreach_record_yield`, so the `indexed()` counter is "lent". *Confirmed: Reproduced: returning &i from foreach over xs.indexed() compiles and later reads garbage (2, then 140694871556112); a range's &x gets L0526, not L0513. move(i) gets L0690, though design.md says indexed() owns its counter; over a range it compiles.*
-  Scenario: `foreach (x, i in xs.indexed()) { return &i; }` compiles and prints garbage (a range's `&x` gets L0513); `move(i)` gets L0690. Fix: pass that desc to the pattern.
-- `BUG-iterate-2` **high** [iterate.odin:172](src/iterate.odin#L172) `array_iterator_type`: `public = true` lets safe code write the cursor (also [148](src/iterate.odin#L148), [195](src/iterate.odin#L195)); `next` tests only `index < len`. *Confirmed: Probes with no unsafe: it.index = -4000000 then it.next() segfaults on arrays and slices; index = -1 reads garbage. next tests only index < bound. Not recorded in the docs. Map cursor probes returned none, and range fields hold no pointer, so only array iterators reproduce.*
-  Scenario: `it := x.iter(); it.index = -4000000; it.next()` then `p^` segfaults. Fix: make these fields private like the text and map-view iterators; a grep of tests and core found no reader.
-- `BUG-iterate-3` **high** [iterate.odin:990](src/iterate.odin#L990) `bind_pattern_leaf`: a single name bound to the projected record (`bound == item`) is marked lent, yet that record is a per-step slot, not source storage. *Confirmed: `foreach (e in xs.indexed()) { return &e; }` compiles; after another call p^.index printed 140696012795928 and p^.value^ segfaulted. The same return over `.copied()` gets L0526. `return &entry` over a map also compiles. No recorded gap or decision.*
-  Scenario: `foreach (e in xs.indexed()) { return &e; }` and `p = .some(&entry)` over a map compile, leaving a dangling pointer. Fix: treat a leaf with `bound == item` as owned.
-- `BUG-iterate-4` **medium** [iterate.odin:891](src/iterate.odin#L891) `check_foreach_pattern`: `!foreach_is_place_loop(s)` skips the hooked-destructure check for an owned part of a mutable traversal. *Confirmed: Reproduced: foreach ((p, q), &mut c in t) over an owned hooked part compiles and never prints the hook(drop) line; binding the part whole does run it, and the same split in a value loop gets L0508. design.md "Destructuring" forbids it; no recorded gap.*
-  Scenario: `foreach ((p, q), &mut c in t)` with an owned `h: Hooked` part compiles and `hook(drop)` never runs; the value loop gets L0508. Fix: drop that condition.
-- `BUG-iterate-5` **medium** [iterate.odin:990](src/iterate.odin#L990) `bind_pattern_leaf`: `!foreach_is_place_loop(s) &&` makes every place-loop leaf lent, against design.md "Element bindings" and the comment at line 974. *Confirmed: Probe a: foreach (&mut a, s in t) with s owned by next gives L0690 on move(s); the same record lent read-only (probe c) compiles and runs. No recorded decision. Drop still runs once (probe e), so only valid moves are rejected, as is move(i) of an indexed() counter.*
-  Scenario: `foreach (&mut a, s in t) { take(move(s)); }` with `next` handing `s` over owned gets L0690. Fix: `owned := part.kind == .Owned || (!place && !s.borrows)`.
-- `BUG-iterate-7` **low** [iterate.odin:654](src/iterate.odin#L654) `check_adapter_applies`: rejects `reversed()` over a map or text even when the program supplies the `iter_reverse` that design.md "Iteration adapters" asks for. *Not verified.*
-  Scenario: `impl M { iter_reverse :: proc(self: ^) -> M.Iterator {...} }`, `foreach (e in t.reversed())` gets L0460. Fix: do not peel `reversed()` there, so it takes the protocol path.
-- `BUG-iterate-8` **low** [iterate.odin:1024](src/iterate.odin#L1024) `report_pattern_arity`: a non-record element reports a nonsense count. *Not verified.*
-  Scenario: `foreach (a, b in ints)` prints "`int` has 0 fields, so this `foreach` pattern needs 1 or 0 parts, not 2". Fix: use `destructure_fields`' "is not a record" wording (see Simplification).
-- `BUG-iterate-9` **low** [iterate.odin:908](src/iterate.odin#L908) `check_foreach_pattern`: indexes `desc.fields` by binding position, while `desc` and the emitter's `bind_foreach_pattern` count slots including padding. *Not verified.*
-  Scenario: latent; a padded record `Item` cannot be spelled today, since `yield_of` compares the padding's names. Once it can, the wrong part's mode applies. Fix: `desc.fields[slot]`.
-
-**Simplification**
-
-- [iterate.odin:721](src/iterate.odin#L721) `check_range_foreach`: delete it and the branch at line 510. In the `info.is_range` arm set `s.kind` to `.Range` or `.Stored_Range` by the expr's form; the rest of the path is identical, and a peeled range is no longer checked twice. (about 20 lines)
-- [iterate.odin:665](src/iterate.odin#L665) `check_place_foreach`: join `.Map` with `.Array, .Dynamic` for the one assignable check, and replace both tails with `s.element_type = foreach_element_type(...)`, one `gate_type` and one pattern call. Use `#partial switch`. (about 15 lines)
-- [iterate.odin:881](src/iterate.odin#L881) `check_foreach_pattern`: delete the arity check and `report_pattern_arity`; `destructure_fields` at line 885 already reports non-records and wrong counts under the same L0459. Keep only the "never invents an index" note, added on failure. (about 15 lines)
-- [iterate.odin:917](src/iterate.odin#L917) `check_foreach_pattern`: the group and leaf dispatch repeats lines 869-878. Replace lines 917-925 with one recursive call on `bindings[index:index+1]`. (about 6 lines)
-- [iterate.odin:835](src/iterate.odin#L835) `check_foreach_body`: inline `foreach_lends_elements` and `foreach_builds_lent_record` into one `if s.kind != .Protocol` block that sets `s.borrows`, `yield` and `s.item_type` together, which also fixes BUG-iterate-1. (about 12 lines)
-- [iterate.odin:59](src/iterate.odin#L59) `range_type` and six siblings: `new_type` only clones its argument, so build `fields` and the label first and pass them in the `Type_Info` literal, dropping each `if info := type_of(...); info != nil` block (also at lines 152, 175, 197, 237, 260, 281). (about 20 lines)
-- [iterate.odin:300](src/iterate.odin#L300) `ensure_iteration_members`: start with `element := info.element` and drop five arm assignments; drop `lends_halves` by naming `.Map_Keys_Next, .Map_Values_Next` at line 368. (about 8 lines)
-- [iterate.odin:798](src/iterate.odin#L798) `check_protocol_foreach`: the `effective_*` copies add nothing; reassign `yield`, `element` and `item` inside `if s.indexed`. (about 5 lines)
-- [iterate.odin:679](src/iterate.odin#L679) `check_place_foreach`: lines 679, 716, 856 and [iteration_mutable.odin:114](src/iteration_mutable.odin#L114) all pass `s.bindings, s.element_type, foreach_packed_source(k, s)` and then call `check_foreach_block`. One helper taking `item` and `desc` folds them. (about 4 lines)
-- [iterate.odin:993](src/iterate.odin#L993) `bind_pattern_leaf`: `!owned` is implied by `binding.is_ref`, which makes the loop a place loop; write `packed != "" && binding.is_ref`. (1 line)
-- [iterate.odin:163](src/iterate.odin#L163) `array_iterator_type`: only the slice arm omits `holds`; have it pass `under` and drop the default and `stored`. (about 2 lines)
-
-**Dead code**
-
-- (branch) [iterate.odin:601](src/iterate.odin#L601): `foreach_lends_elements` never sees a place loop; its only caller, `check_foreach_body`, is reached only after all three paths have dispatched place loops elsewhere.
-- (branch) [iterate.odin:669](src/iterate.odin#L669): `indexed()` over a map in a place loop is unreachable. A map's `iter_mut` takes `inout`, so its adapter has no `iter_mut`, `peel_resolved_adapter` stops, and the protocol path reports it (probed). No test holds this message.
-- (branch) [iterate.odin:694](src/iterate.odin#L694): `.Range` never reaches `check_place_foreach`, since line 510 returns first; only `.Stored_Range` does.
-- (branch) [iterate.odin:708](src/iterate.odin#L708): `.Unresolved, .Static, .Protocol` cannot occur here; the same holds for `.None` at lines 217 and 359. They exist only for exhaustiveness; use `#partial switch`.
-- (branch) [iterate.odin:595](src/iterate.odin#L595): the `ref_span` fallback is unreachable, because every caller runs on a place loop, so `first_ref_binding` finds a leaf.
-- (branch) [iterate.odin:908](src/iterate.odin#L908): `index < len(desc.fields)` is always true; `yield_item_type` already required `len(desc.fields) == len(info.fields)`, and bindings equal the named fields.
-- (branch) [iterate.odin:1057](src/iterate.odin#L1057): `bind_loop_name`'s `mutable` is always `binding.is_ref`, and `borrows`' default is never used. `binding.is_ref ||` at line 1084 is implied too. Take `(k, binding, type, borrows)`.
-- (branch) [iterate.odin:867](src/iterate.odin#L867): the `packed := ""` defaults here and at line 979 are never used; every call passes `packed`.
-- (branch) [iterate.odin:402](src/iterate.odin#L402): `sym != nil` right after `synth_proc`, here and at line 415, cannot fail; so too `field == nil` at line 898 on a field `destructure_fields` just returned.
+What remains are near copies that need helpers shared across files, and one move.
 
 **Near copies**
 
 - [iterate.odin:49](src/iterate.odin#L49) and [iteration_mutable.odin:41](src/iteration_mutable.odin#L41), [container.odin:313](src/container.odin#L313): name, `new_type`, fields, label. Share `new_compiler_struct(c, proto, name, label, ..fields)`; about 30 lines here on top of the literal change.
 - [iterate.odin:68](src/iterate.odin#L68), [simd.odin:15](src/simd.odin#L15) and [box.odin:45](src/box.odin#L45): identical apart from the name. Share `predeclared_callee(k, callee, "Range")`.
-- [iterate.odin:614](src/iterate.odin#L614) and [iterate.odin:957](src/iterate.odin#L957): the yield builders differ only in the stored part's kind. Share `builtin_yield(k, s, stored: Yield_Kind)`, and with it the `indexed()` wrap also at line 801 and [iteration_mutable.odin:100](src/iteration_mutable.odin#L100).
-- [iterate.odin:90](src/iterate.odin#L90) and [iterate.odin:1111](src/iterate.odin#L1111): the same endpoint test and L0458 text, differing only in span. Share `require_range_endpoint(k, type, span) -> bool`.
 - [iterate.odin:1064](src/iterate.odin#L1064), [optional.odin:607](src/optional.odin#L607) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share one proc taking the identifier, span and shadow-lookup scope.
 
 **Structure and boundaries**
 
-- [iterate.odin:293](src/iterate.odin#L293) `ensure_iteration_members`: 115 lines doing two jobs. The seam is line 365: a `switch` choosing element, iterator and kinds, then installing members. Return the choice in a small struct from a separate proc.
 - [iterate.odin:492](src/iterate.odin#L492): the file holds type constructors and contributions (lines 47-490) and the `foreach` checker and binder (492-1088). The checker could be its own file next to `iteration_mutable.odin`, whose foreach path shares its binder.
-- [iterate.odin:1094](src/iterate.odin#L1094): `check_range` and `unify_range_endpoints` sit at the far end from `range_type` and `resolve_range_application` (lines 49-103), though all are the same concern. Keep them together.
-- [iterate.odin:130](src/iterate.odin#L130): `rune_offset_type`, `foreach_lends_elements`, `place_loop_yield` and `bind_loop_name` are used only in this file, so `compiler-architecture.md` "Source-code map" wants them file-private.
-
-**Comments**
-
-- [iterate.odin:323](src/iterate.odin#L323): stale; an array's `next` is usually `.Slice_Ref_Next` too. Write "An array's `iter`, holding the slice itself."
-- [iterate.odin:333](src/iterate.odin#L333): delete; `map_entry_type` on the next line says it.
-- [iterate.odin:576](src/iterate.odin#L576): delete; the name and body say it. Likewise line 930.
-- [iterate.odin:855](src/iterate.odin#L855): delete; misleading, since the call does reach the `&mut` leaf check and nothing near it depends on the claim.
-- [iterate.odin:972](src/iterate.odin#L972): the "except a part `next` hands over owned" sentence is not what line 990 does for a place loop; keep it and fix the code (BUG-iterate-5).
-- [iterate.odin:1027](src/iterate.odin#L1027): keep only `// design.md "Element bindings"`; the note below states the rest. (about 8 lines across the file)
 
 ### src/lifecycle.odin
 

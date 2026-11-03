@@ -7,10 +7,9 @@ Adapter_Kind :: enum { None, Indexed, Reversed, Copied }
 Adapter_Key :: struct { source: Type_Id, kind: Adapter_Kind, pkg: Package_Id }
 
 // Peel contributed adapters so foreach can use direct loop lowering.
-peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
+peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) {
 	source := s.iterable
 	indexed, reversed := false, false
-	reported: Name
 	for {
 		call, ok := source.(^Expr_Call)
 		if !ok { break }
@@ -26,20 +25,18 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 		}
 		kind := type_of(k.c, call.type).adapter_kind
 		if kind == .Indexed {
-			if indexed || reversed { return Name{} }
+			if indexed || reversed { return }
 			indexed = true
 		} else if kind == .Reversed {
-			if reversed { return Name{} }
+			if reversed { return }
 			reversed = true
 		} else {
 			break // copied() is a real protocol view, not a direct-header hint
 		}
-		if selector, selected := call.callee.(^Expr_Selector); selected { reported = selector.name }
 		source = call.bound[0]
 	}
 	s.iterable, s.indexed = source, indexed
 	if reversed { s.adapter = .Reversed }
-	return reported
 }
 
 @(private = "file")

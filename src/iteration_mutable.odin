@@ -81,12 +81,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	next, yield, item, usable := foreach_next_member(k, s, iterator, element, .Mutable)
 	if !usable { return FLOWS }
 	if !gate_type(k, element, expr_span(s.iterable)) { return FLOWS }
-	logical, handed, projected := element, yield, item
-	if s.indexed {
-		handed = indexed_yield(k.c, yield)
-		logical = indexed_element_type(k.c, element)
-		projected = indexed_element_type(k.c, item)
-	}
+	logical, projected, handed := foreach_numbered(k.c, s, element, item, yield)
 	// A record of lent parts binds through its projection, as a lending loop's does.
 	if yield.kind == .Record {
 		s.item_type = projected
@@ -95,8 +90,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	s.iter_symbol, s.next_symbol = iter, next
 	enroll_synth(k.c, iter)
 	enroll_synth(k.c, next)
-	if !check_foreach_pattern(k, s, s.bindings, s.element_type, s.item_type, handed, foreach_packed_source(k, s)) { return FLOWS }
-	return check_foreach_block(k, s)
+	return check_foreach_pattern_and_block(k, s, s.item_type, handed)
 }
 
 // What a type's mutable traversal is made of.

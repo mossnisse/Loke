@@ -3536,7 +3536,8 @@ An indexing or slicing overload is responsible for its own bounds checks.
 A type is iterable when `iter` gives an iterator whose `next` returns
 `.some(item)` for each step and `.none` at the end ([Typed
 fallibility](#typed-fallibility)). Ranges, strings, string views, fixed arrays,
-slices, dynamic arrays, and maps all follow this protocol. Use
+slices, dynamic arrays, and maps all follow this protocol, with iterators whose
+fields are private, since `next` relies on the position they hold. Use
 [`Enum.values()`](#iterating-an-enumeration) to iterate an enum's members.
 
 ```loke
@@ -3726,7 +3727,9 @@ provenance, which is how a pointer to an element is taken.
 
 A single binding over a record yield receives that record with its pointer
 fields, read through `entry.value^`; destructuring binds the pointees directly.
-No transparent borrowed-record type is introduced.
+No transparent borrowed-record type is introduced. The record is the step's own,
+as an owned leaf is: its pointer fields carry the source's provenance, and
+`&entry` does not outlive the step.
 
 A loop never invents an index, key, or byte offset. To receive one, use an
 adapter or view whose element carries it: `sequence.indexed()` for an index, and

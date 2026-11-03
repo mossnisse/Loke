@@ -1,0 +1,24 @@
+package main;
+
+// A built-in iterator's cursor is its own: `next` trusts it, so safe code that
+// could write it could read outside the source.
+
+Array :: [2]int;
+
+main :: proc() {
+	values := [2]int{1, 2};
+	array := values.iter();
+	array.index = -4000000;
+	slice := values[:].iter();
+	slice.index = -1;
+	series := (0 ..< 3).iter();
+	series.current = 9;
+	table: map[int]int = {};
+	defer drop(table);
+	entries := table.iter();
+	entries.cursor = 9;
+	first, second, third := array;
+	forged := Array.Iterator{index = 1};
+	copied := Array.Iterator{values[:], 1, false};
+	fresh: Array.Iterator;
+}

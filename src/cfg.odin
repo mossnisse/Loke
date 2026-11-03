@@ -1398,7 +1398,11 @@ add_foreach_ref_cleanups :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding
 	for binding in bindings {
 		if len(binding.group) > 0 {
 			add_foreach_ref_cleanups(graph, binding.group, all)
-		} else if (all || binding.is_ref) && binding.symbol != INVALID_SYMBOL {
+			continue
+		}
+		// An owned leaf is a local of its step, even beside lent siblings.
+		sym := symbol_of(graph.k.c, binding.symbol)
+		if sym != nil && (all || binding.is_ref || sym.borrowed_binding == .None) {
 			root := prov_root_for_symbol(graph, binding.symbol)
 			append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = binding.name.span})
 		}
