@@ -208,9 +208,7 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 		param_symbols := make([]Symbol_Id, len(params), k.c.semantic_allocator)
 		for written, position in slot_parameter_names(k, entry) {
 			if written != INVALID_IDENTIFIER && position < len(params) {
-				param_symbols[position] = new_symbol(k.c, Symbol {
-					name = written, kind = .Parameter, type = params[position], mode = modes[position],
-				})
+				param_symbols[position] = new_parameter(k.c, written, params[position], modes[position])
 			}
 		}
 		id := new_symbol(k.c, Symbol {

@@ -26,6 +26,12 @@ checklist.
   @(align=N) Generic :: struct($N: int) { ... }
   ```
 
+- An owner built from a provider inside a `Shared` payload may not outlive any strong handle holding
+  it, which is now `L0537`, and one built from it or through a local pointer to a provider may not be
+  returned, which is now `L0592`; `some_map.try_insert` on a map holding providers ends their regions, also
+  `L0537` while an owner backed by one is live; and `clone()` of a type holding a `hook(copy)` taking
+  `self: ^` borrows its receiver, so its result may not outlive it (`L0526`, `L0512`). Upgrade by
+  ending the owner first, or by giving the hook a value `self`.
 - A declared `Iterator` or `Mut_Iterator` that disagrees with `iter` or `iter_mut`, or a declared
   `Item` that disagrees with `next`, is now `L0694` whether or not anything looks it up, and in
   whatever order the members are declared ([Iteration protocol](design.md#iteration-protocol)).
@@ -1279,6 +1285,18 @@ checklist.
 
 ### Fixed
 
+- An owner built from a provider inside a `Shared` payload is now checked: one built from
+  `held.get().allocator()` that outlives `held` is now `L0537`, and returning it is `L0592`. Both
+  compiled and read a dead region ([Shared ownership](design.md#shared-ownership)). The same goes for
+  an owner built through a local pointer to a provider (`p := &arena; ... via p.allocator()`).
+- A generated `clone` of a type holding a `hook(copy)` that takes `self: ^` now borrows what it clones,
+  as that hook's own type does. Its result could keep a dangling pointer to the original.
+- `some_map.try_insert(key, elem)` now ends the regions of a provider it may replace, as `m[key] = elem`
+  does. An owner backed by the replaced provider read freed memory.
+- `indexed()` over a map, iterated by reference, now says to count with a variable rather than suggesting
+  a mutable view a map does not have.
+- A package file with no `package` clause no longer draws `L0328` against an empty name beside the
+  `L0202` it already reports.
 - `spawn total = work();` where `total` is a capture of the enclosing capture literal now reports
   `L0728`. It crashed the compiler.
 - In a `@(cpu_dispatch)` copy, a `foreach`'s `iter` and `next`, a `hook(drop)` at a scope's end, and a

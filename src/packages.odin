@@ -28,7 +28,6 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	// discovery needs no semantic preparation. Checking each dependency, its
 	// own selection included, before its dependents gives checkpoints a boundary
 	// with no references back into a later package.
-	for index in 1 ..< len(c.packages) { rebuild_active_items(c, &c.packages[index]) }
 	_ = discover_imports(c, &k)
 	if !check_import_cycles(c) { return root, false }
 	if static_package_graph(c) {
@@ -37,21 +36,24 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		return root, c.error_count == 0
 	}
 	for {
-		for index in 1 ..< len(c.packages) {
-			rebuild_active_items(c, &c.packages[index])
-		}
-		changed := discover_imports(c, &k)
-		if !check_import_cycles(c) {
-			return root, false
-		}
 		order := package_order(c)
 		for id in order {
 			prepare_package(&k, id)
 		}
+		changed := false
 		for id in order {
 			if activate_when_items(&k, package_of(c, id)) {
 				changed = true
 			}
+		}
+		for index in 1 ..< len(c.packages) {
+			rebuild_active_items(c, &c.packages[index])
+		}
+		if discover_imports(c, &k) {
+			changed = true
+		}
+		if !check_import_cycles(c) {
+			return root, false
 		}
 		if !changed {
 			break
@@ -80,13 +82,6 @@ finish_program_analysis :: proc(k: ^Checker) {
 	k.c.program_analyzed = true
 }
 
-// Makes a checked program ready for emission. Each step is idempotent.
-finalize_semantics :: proc(c: ^Compiler) {
-	freeze_typeids(c)
-	discover_formatters(c)
-	_ = finalize_lifecycle_operations(c)
-}
-
 // ------------------------------------------------------------------ loading --
 
 // Uses ordinary collection loading so an explicit import reuses this package.
@@ -96,29 +91,6 @@ load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 		return INVALID_PACKAGE, false // reported at the first import that needs it
 	}
 	return load_package_dir(c, strings.concatenate({root, "/runtime"}, context.temp_allocator), STD_RUNTIME, no_span())
-}
-
-// Bootstraps direct checker entry points that bypass `compile_program`.
-ensure_runtime_bootstrap :: proc(k: ^Checker) {
-	if k.c.bootstrap_ready {
-		return
-	}
-	init_semantic_stores(k.c)
-	if _, seeded := k.c.collections["base"]; !seeded {
-		// Test binaries need the working-directory fallback.
-		root := install_component("base")
-		if root == "" || !is_directory(strings.concatenate({root, "/runtime"}, context.temp_allocator)) {
-			root = "base"
-		}
-		k.c.collections["base"] = strings.clone(root, k.c.semantic_allocator)
-	}
-	id, loaded := load_runtime_bootstrap(k.c)
-	if !loaded {
-		return
-	}
-	saved_pkg, saved_lookup, saved_scope := k.pkg, k.lookup_pkg, k.scope
-	prepare_package(k, id)
-	k.pkg, k.lookup_pkg, k.scope = saved_pkg, saved_lookup, saved_scope
 }
 
 // Directory roots include their direct `.loke` files; file roots stand alone.
@@ -135,6 +107,7 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	}
 	id := new_package(c, file.package_name, "")
 	add_package_file(c, id, file)
+	rebuild_active_items(c, package_of(c, id))
 	// A sibling importing `.` must reuse this package.
 	c.package_by_dir[dir_key(c.root_dir, c.semantic_allocator)] = id
 	return id, true
@@ -199,20 +172,28 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 		return INVALID_PACKAGE, false
 	}
 
-	id := new_package(c, files[0].package_name, package_key(c, canonical))
+	// A file with no `package` clause has been reported, and names nothing.
+	established := files[0]
+	for file in files {
+		if file.package_name != "" {
+			established = file
+			break
+		}
+	}
+	id := new_package(c, established.package_name, package_key(c, canonical))
 	c.package_by_dir[dir_key(canonical, c.semantic_allocator)] = id
 	pkg := package_of(c, id)
 	for file in files {
-		if file.package_name != files[0].package_name {
+		if file.package_name != "" && file.package_name != established.package_name {
 			errorf(
 				c,
 				file.package_span,
 				"L0328",
 				"package `%s` does not match `%s`",
 				file.package_name,
-				files[0].package_name,
+				established.package_name,
 			)
-			add_notef(c, files[0].package_span, "the package was established here")
+			add_notef(c, established.package_span, "the package was established here")
 		}
 		append(&pkg.files, file)
 	}
@@ -230,20 +211,17 @@ package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 		return nil
 	}
 	paths := make([dynamic]string, 0, len(entries), c.semantic_allocator)
-	seen: map[string]bool
-	if len(overlays) > 0 { seen = make(map[string]bool, context.temp_allocator) }
+	seen := make(map[string]bool, context.temp_allocator)
 	for entry in entries {
-		if entry.type == .Regular && strings.to_lower(filepath.ext(entry.name), context.temp_allocator) == ".loke" {
+		if entry.type == .Regular && strings.equal_fold(filepath.ext(entry.name), ".loke") {
 			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
-			if len(overlays) > 0 { seen[dir_key(canonical_dir(entry.fullpath))] = true }
+			seen[dir_key(canonical_dir(entry.fullpath))] = true
 		}
 	}
-	if len(overlays) > 0 {
-		key := dir_key(canonical_dir(dir))
-		for path, overlay in overlays {
-			if !seen[path] && dir_key(canonical_dir(path_dir(overlay.path, context.temp_allocator))) == key {
-				append(&paths, strings.clone(overlay.path, c.semantic_allocator))
-			}
+	key := dir_key(canonical_dir(dir))
+	for path, overlay in overlays {
+		if !seen[path] && dir_key(canonical_dir(path_dir(overlay.path, context.temp_allocator))) == key {
+			append(&paths, strings.clone(overlay.path, c.semantic_allocator))
 		}
 	}
 	// By name: listed paths end `\name` on Windows, unsaved ones `/name`, and
@@ -278,8 +256,7 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	// Loading may reallocate `c.packages`, so retain IDs rather than pointers.
 	for index := 1; index < len(c.packages); index += 1 {
 		id := Package_Id(index)
-		for position := 0; position < len(package_of(c, id).files); position += 1 {
-			file := package_of(c, id).files[position]
+		for file in package_of(c, id).files[:] {
 			if !file.parallel_bound && selects_parallel(file) {
 				file.parallel_bound = true
 				changed = true
@@ -342,7 +319,6 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 		add_notef(c, no_span(), "move what both programs share into a package of its own")
 		return
 	}
-	// Loading may have reallocated the package store.
 	append(&package_of(c, id).imports, Package_Import {
 		target = target,
 		span   = imported.span,
@@ -386,14 +362,11 @@ bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id) {
 
 // Available before decoding for stalled-condition checks.
 import_binding_name :: proc(imported: ^Item_Import) -> string {
-	if imported.alias.text != "" {
-		return imported.alias.text
-	}
 	raw := imported.path
 	if len(raw) >= 2 {
 		raw = raw[1:len(raw) - 1] // the literal's quotes
 	}
-	return path_tail(raw)
+	return import_alias(imported, raw)
 }
 
 @(private = "file")
@@ -475,9 +448,6 @@ package_key :: proc(c: ^Compiler, canonical: string) -> string {
 	if best_root >= 0 {
 		return best
 	}
-	if c.root_dir != "" && dir_key(canonical) == dir_key(c.root_dir) {
-		return ""
-	}
 	return root_relative_key(c, canonical)
 }
 
@@ -505,7 +475,6 @@ path_under :: proc(root: string, sub: string) -> (rest: string, ok: bool) {
 	return sub[offset:], true
 }
 
-// Also used to name the offending prefix in the provider diagnostics.
 collection_prefix :: proc(path: string) -> string {
 	if colon := strings.index_byte(path, ':'); colon > 0 {
 		return path[:colon]
@@ -527,7 +496,7 @@ root_relative_key :: proc(c: ^Compiler, dir: string) -> string {
 	if cleaned == "." {
 		return ""
 	}
-	return strings.clone(stored_case(canonical_dir(c.root_dir), cleaned), c.semantic_allocator)
+	return strings.clone(stored_case(c.root_dir, cleaned), c.semantic_allocator)
 }
 
 // `rest`, a relative directory below `root`, spelled as the directories are
@@ -542,21 +511,11 @@ stored_case :: proc(root, rest: string) -> string {
 	dir := root
 	for &part in parts {
 		if entries, err := os.read_all_directory_by_path(dir, context.temp_allocator); err == nil {
-			match := ""
 			for entry in entries {
-				if entry.type != .Directory {
-					continue
-				}
-				if entry.name == part {
-					match = entry.name
+				if entry.type == .Directory && strings.equal_fold(entry.name, part) {
+					part = entry.name
 					break
 				}
-				if match == "" && strings.equal_fold(entry.name, part) {
-					match = entry.name
-				}
-			}
-			if match != "" {
-				part = match
 			}
 		}
 		dir = strings.concatenate({dir, "/", part}, context.temp_allocator)
@@ -572,14 +531,12 @@ stored_case :: proc(root, rest: string) -> string {
 check_import_cycles :: proc(c: ^Compiler) -> bool {
 	state := make([]u8, len(c.packages), context.temp_allocator) // 0 new, 1 on stack, 2 done
 	path := make([dynamic]Package_Import, 0, 8, context.temp_allocator)
-	ok := true
 	for index in 1 ..< len(c.packages) {
 		if !visit_for_cycle(c, Package_Id(index), state, &path) {
-			ok = false
-			break
+			return false
 		}
 	}
-	return ok
+	return true
 }
 
 @(private = "file")
@@ -597,8 +554,10 @@ visit_for_cycle :: proc(c: ^Compiler, id: Package_Id, state: []u8, path: ^[dynam
 			}
 		}
 		errorf(c, path[len(path) - 1].span, "L0330", "import cycle")
+		from := id
 		for edge in cycle {
-			add_notef(c, edge.span, "`%s` imports `%s` here", package_label(c, edge), identifier_text(c, package_of(c, edge.target).name))
+			add_notef(c, edge.span, "`%s` imports `%s` here", identifier_text(c, package_of(c, from).name), identifier_text(c, package_of(c, edge.target).name))
+			from = edge.target
 		}
 		return false
 	}
@@ -606,9 +565,6 @@ visit_for_cycle :: proc(c: ^Compiler, id: Package_Id, state: []u8, path: ^[dynam
 	defer state[id] = 2
 	pkg := package_of(c, id)
 	for edge in pkg.imports {
-		if edge.target == INVALID_PACKAGE {
-			continue
-		}
 		append(path, edge)
 		if !visit_for_cycle(c, edge.target, state, path) {
 			return false
@@ -616,21 +572,6 @@ visit_for_cycle :: proc(c: ^Compiler, id: Package_Id, state: []u8, path: ^[dynam
 		pop(path)
 	}
 	return true
-}
-
-@(private = "file")
-package_label :: proc(c: ^Compiler, edge: Package_Import) -> string {
-	if edge.span.file == NO_FILE || int(edge.span.file) >= len(c.sources) {
-		return "a package"
-	}
-	for index in 1 ..< len(c.packages) {
-		for file in c.packages[index].files {
-			if file.file == edge.span.file {
-				return identifier_text(c, c.packages[index].name)
-			}
-		}
-	}
-	return "a package"
 }
 
 // Dependency-first order, deterministic because the edge list is built in
@@ -651,68 +592,7 @@ visit_for_order :: proc(c: ^Compiler, id: Package_Id, visited: []bool, order: ^[
 	}
 	visited[id] = true
 	for edge in package_of(c, id).imports {
-		if edge.target != INVALID_PACKAGE {
-			visit_for_order(c, edge.target, visited, order)
-		}
+		visit_for_order(c, edge.target, visited, order)
 	}
 	append(order, id)
-}
-
-// ------------------------------------------------------------------- paths --
-
-is_directory :: proc(path: string) -> bool {
-	info, err := os.stat(path, context.temp_allocator)
-	return err == nil && info.type == .Directory
-}
-
-// `filepath.join` with its allocation error dropped: a path the compiler
-// cannot allocate is not one it can go on with either.
-join_path :: proc(elems: []string, allocator := context.allocator) -> string {
-	return filepath.join(elems, allocator) or_else ""
-}
-
-// Deletes `path` and everything below it, entry by entry. `os.remove_all`
-// deletes through the Windows shell, which raises and then handles an access
-// violation of its own; a test runner's vectored exception handler sees that
-// first and stops the test as a segmentation fault.
-remove_tree :: proc(path: string) -> os.Error {
-	if entries, err := os.read_all_directory_by_path(path, context.temp_allocator); err == nil {
-		for entry in entries {
-			if entry.type == .Directory {
-				remove_tree(entry.fullpath)
-			} else {
-				os.remove(entry.fullpath)
-			}
-		}
-	}
-	return os.remove(path)
-}
-
-// The cleaned directory part of `path`, `.` when it has none. `filepath.dir`
-// only splits, so `a/../b/x` would keep its `..` and `x` would give "".
-path_dir :: proc(path: string, allocator := context.allocator) -> string {
-	return filepath.clean(filepath.dir(path), allocator) or_else "."
-}
-
-// Produces a temporary absolute, cleaned, `/`-separated path.
-canonical_dir :: proc(path: string) -> string {
-	absolute, abs_err := filepath.abs(path, context.temp_allocator)
-	cleaned := filepath.clean(abs_err == nil ? absolute : path, context.temp_allocator) or_else path
-	slashed, _ := strings.replace_all(cleaned, "\\", "/", context.temp_allocator)
-	return slashed
-}
-
-// Windows paths are case-insensitive, so package identity must be too.
-dir_key :: proc(dir: string, allocator := context.temp_allocator) -> string {
-	return strings.to_lower(dir, allocator)
-}
-
-// FNV-1a distinguishes otherwise identical visible path names.
-path_digest :: proc(path: string) -> u64 {
-	key := strings.to_lower(path, context.temp_allocator)
-	digest := u64(14695981039346656037) // FNV-1a offset basis
-	for index in 0 ..< len(key) {
-		digest = (digest ~ u64(key[index])) * HASH_MULTIPLIER
-	}
-	return digest
 }

@@ -525,7 +525,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	sources, listing := runtime_sources(runtime_dir)
 	if len(sources) == 0 {
 		reason := "the directory holds no `.c` files"
-		if !is_directory(runtime_dir) {
+		if !os.is_dir(runtime_dir) {
 			reason = "the directory does not exist; pass `-runtime=<dir>`"
 		} else if listing != nil {
 			reason = fmt.tprintf("the directory cannot be listed: %s", os.error_string(listing))

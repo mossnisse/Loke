@@ -173,7 +173,7 @@ checked AST + settled lifecycle annotations
 | [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
 | [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
 | [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
-| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a container operation does (`CONTAINER_OP_EFFECTS`), what a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
+| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: parameter modes, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
 | [provenance_read.odin](src/provenance_read.odin) | A leaf alias read, derived from a value and its form. |
 | [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
 | [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
@@ -868,7 +868,7 @@ be file-private. Paths below are relative to `src/`.
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
-| `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
+| `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
 | `source.odin` | `Compiler`, sources, spans, and diagnostics; destruction lives in `semantic.odin`. |
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |

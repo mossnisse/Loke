@@ -52,7 +52,7 @@ rewrite_files :: proc(c: ^Compiler, input: string, check: bool, rewrite: proc(c:
 // `input` as a list of files. Listed as a package's sources are, never as a
 // pattern, so a directory name holding `[` or `*` is only a name.
 input_sources :: proc(c: ^Compiler, input: string) -> []string {
-	if is_directory(input) {
+	if os.is_dir(input) {
 		return package_sources(c, input)
 	}
 	paths := make([]string, 1, context.temp_allocator)

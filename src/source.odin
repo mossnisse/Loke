@@ -176,11 +176,7 @@ Compiler :: struct {
 	meta_enum_value_type: Type_Id,
 	meta_variant_type:    Type_Id,
 	// The two local region providers (`src/region.odin`), created on first use.
-	arena_type:           Type_Id,
-	scratch_type:         Type_Id,
 	// `mem.Failure_Policy`, and the `.Panic` its constructors default to.
-	failure_policy_type:  Type_Id,
-	panic_policy_arg:     Expr,
 	// design.md "Typed fallibility": the `base:runtime` declarations the
 	// compiler bootstraps and binds into the universe. `Unit` is a type; the
 	// others are generic templates instantiated through `src/bootstrap.odin`.
@@ -217,6 +213,7 @@ Compiler :: struct {
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,
+	provider_carriers:  map[Type_Id]bool,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
 	// Whether a map type's shape gives constant keys entries of their own.
 	map_keyed:          map[Type_Id]bool,

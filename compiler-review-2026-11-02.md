@@ -28,14 +28,14 @@ section are revised when a fix changes them.
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
-| High and medium severity bugs | 165 (39 high, 126 medium) | An independent attempt to refute each one |
-| Low severity bugs | 165 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 637 | Only the reviewer |
-| Dead code | 354 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
-| Data structures and algorithms | 122 | Only the reviewer |
-| Near copies | 410 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 263 | Only the reviewer |
-| Comments | 483 | Only the reviewer |
+| High and medium severity bugs | 162 (36 high, 126 medium) | An independent attempt to refute each one |
+| Low severity bugs | 163 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 612 | Only the reviewer |
+| Dead code | 347 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| Data structures and algorithms | 121 | Only the reviewer |
+| Near copies | 399 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 258 | Only the reviewer |
+| Comments | 469 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 330 overstates the number of separate
+  merges the ones found so far, so 325 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 410 suggests: the
+Near copies are real but smaller than the raw count of 399 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -95,7 +95,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 8. **Safe code the checker accepts and then corrupts.** `exchange` of an unmoved owned place ([lifecycle.odin:194](src/lifecycle.odin#L194)); a user unary or `operator([])` result not seen as a temporary ([cfg_provenance.odin:7177](src/cfg_provenance.odin#L7177)); a destructured carrier with no written alias ([cfg_provenance.odin:7216](src/cfg_provenance.odin#L7216)). BUG-lifecycle-1, BUG-cfg_provenance.part3-1, -2. About 20 lines.
 
-9. **Provider ends that end no region.** Replacing a provider through a `&mut` binding ([cfg.odin:1143](src/cfg.odin#L1143)), a `move` parameter's provider ([cfg.odin:1130](src/cfg.odin#L1130)), `try_insert` replacing one ([provenance_call.odin:85](src/provenance_call.odin#L85)) and one inside `Shared` ([region.odin:124](src/region.odin#L124)) all leave reads of freed memory. BUG-cfg-1, -2, BUG-provenance_call-2, BUG-region-1. About 60 lines, with care around the lifecycle and provenance walks agreeing.
+9. **Provider ends that end no region.** Replacing a provider through a `&mut` binding ([cfg.odin:1143](src/cfg.odin#L1143)) and a `move` parameter's provider ([cfg.odin:1130](src/cfg.odin#L1130)) both leave reads of freed memory. BUG-cfg-1, -2. About 30 lines, with care around the lifecycle and provenance walks agreeing.
 
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
@@ -113,7 +113,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 17. **Borrow-check time and memory in long bodies.** [borrow.odin:6551](src/borrow.odin#L6551) with [borrow.odin:1610](src/borrow.odin#L1610) is cubic (204 s at 2000 overlapping pairs); gather live slots once per event. [borrow.odin:5227](src/borrow.odin#L5227) clones liveness per event (3.4 GB at 12,000 statements); use an undo log. Measure with `perf.ps1`. About 50 lines, moderate risk.
 
-18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1, BUG-container-2 and BUG-region-1, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
+18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1 and BUG-container-2, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
 
 19. **Mechanical removal of failure boilerplate.** Replace the 101 three-line guards in `eval.odin` part 1 with `or_return` ([eval.odin:662](src/eval.odin#L662) onward; about 300 lines), and set `base.type = INVALID_TYPE` once at [check_expr.odin:44](src/check_expr.odin#L44) (about 150 to 200 lines across 297 writes). Low risk; do the first any time and the second after item 12.
 
@@ -147,9 +147,9 @@ Shared form: call those at the remaining sites, and make `const_operand` return 
 
 #### Container operations classified in several tables
 
-`CONTAINER_OP_EFFECTS` ([provenance_call.odin:66](src/provenance_call.odin#L66)) is exhaustive by construction. Beside it sit `KEY_HASHING_OPS` ([global_effects.odin:493](src/global_effects.odin#L493)), `ELEMENT_DROPPING_OPS` ([global_effects.odin:1069](src/global_effects.odin#L1069)), the insertion test at [global_effects.odin:525](src/global_effects.odin#L525), and the per-kind cases at [check_calls.odin:482](src/check_calls.odin#L482) and [emit_llvm_calls.odin:1298](src/emit_llvm_calls.odin#L1298). The partial sets are where the gaps are: `find_or_insert`, `try_insert` and map `remove` are missing from dropping, and `.Map_Try_Insert` lacks `.Drops_Provider`.
+`CONTAINER_OP_EFFECTS` in `container.odin` is exhaustive by construction. Beside it sit `KEY_HASHING_OPS` ([global_effects.odin:493](src/global_effects.odin#L493)), `ELEMENT_DROPPING_OPS` ([global_effects.odin:1069](src/global_effects.odin#L1069)), the insertion test at [global_effects.odin:525](src/global_effects.odin#L525), and the per-kind cases at [check_calls.odin:482](src/check_calls.odin#L482) and [emit_llvm_calls.odin:1298](src/emit_llvm_calls.odin#L1298). The partial sets are where the gaps are: `find_or_insert`, `try_insert` and map `remove` are missing from dropping.
 
-Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Element` to `Container_Op_Effect` and drop the sets. Move the enum and table to `container.odin` beside `Container_Op` ([container.odin:118](src/container.odin#L118)), since `cfg.odin` and `emit_llvm_calls.odin` read it too. Saves about 10 lines; the gain is that every new operation must answer every question. Fixes BUG-global_effects-1 and BUG-provenance_call-2.
+Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Element` to `Container_Op_Effect` and drop the sets. Saves about 10 lines; the gain is that every new operation must answer every question. Fixes BUG-global_effects-1.
 
 ### Checker and front end
 
@@ -187,7 +187,7 @@ The key difference is BUG-ast-1. The other rows are unexplained, and `private_na
 Owned parts are walked at [hooks.odin:166](src/hooks.odin#L166), [hooks.odin:277](src/hooks.odin#L277), [hooks.odin:330](src/hooks.odin#L330), [hooks.odin:370](src/hooks.odin#L370), [region.odin:123](src/region.odin#L123), [borrow.odin:761](src/borrow.odin#L761) and [container.odin:624](src/container.odin#L624). They differ in:
 
 - `.Box`: [container.odin:628](src/container.odin#L628) omits it (BUG-container-2).
-- `Shared(T)`: only [borrow.odin:758](src/borrow.odin#L758) follows the payload, and [region.odin:123](src/region.odin#L123) not doing so is BUG-region-1.
+- `Shared(T)`: only [borrow.odin:758](src/borrow.odin#L758) and `provider_reach_walk` in `region.odin` follow the payload.
 - Void variants and empty arrays: skipped by the drop walk only.
 - The recursion guard: a path-based one in [hooks.odin:413](src/hooks.odin#L413) makes that walk exponential (58 s measured), a visited map elsewhere.
 
@@ -233,13 +233,11 @@ In the same area, the candidate loop repeats at [erased.odin:893](src/erased.odi
 
 #### Iterator types and synthesized members
 
-Struct-shaped iterator types are built by hand at [iterate.odin:170](src/iterate.odin#L170), [iterate.odin:193](src/iterate.odin#L193), [iterate.odin:255](src/iterate.odin#L255), [iteration_mutable.odin:15](src/iteration_mutable.odin#L15), [iteration_mutable.odin:41](src/iteration_mutable.odin#L41) and `new_adapter_iterator` in `iteration_adapters.odin`, with 35 `new_field` calls in all. They differ in the `public` flag (the cause of BUG-iterate-2), in whether the field index is a named constant or a literal 0, 1, 2, and in the cache key. The three `{table, cursor}` builds are identical apart from `public`, label and element.
+Struct-shaped iterator types are built by hand in `iterate.odin` (`new_map_cursor_type` for the `{table, cursor}` ones), `add_mutable_sequence_members` in `iteration_mutable.odin` and `new_adapter_iterator` in `iteration_adapters.odin`. They differ in the `public` flag (the cause of BUG-iterate-2) and in the cache key.
 
-Shared form: `new_iterator_type(c, name, label, element, key, fields)` plus `new_map_cursor_type`. Saves about 60 lines.
+Shared form: `new_iterator_type(c, name, label, element, key, fields)`. Saves about 30 lines.
 
 `synth_proc` followed by setting `has_receiver` and `receiver` repeats at [customization.odin:112](src/customization.odin#L112), [iterate.odin:398](src/iterate.odin#L398), [format.odin:34](src/format.odin#L34) and [hooks.odin:803](src/hooks.odin#L803). Have `synth_proc` take the receiver from `modes[0]` under a `has_receiver` flag: saves about 15 lines.
-
-The `next` check with its `L0456` text repeats at [iterate.odin:781](src/iterate.odin#L781) and [iteration_mutable.odin:91](src/iteration_mutable.odin#L91); sharing it saves about 15.
 
 #### Switch checking
 
@@ -343,14 +341,13 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
 - `record_resolving` ([check.odin:1832](src/check.odin#L1832)) is spelled out at [abi.odin:280](src/abi.odin#L280) and [layout.odin:84](src/layout.odin#L84).
 - Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93), with [doc.odin:1374](src/doc.odin#L1374) file-private. Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
-- `path_digest` ([packages.odin:682](src/packages.odin#L682)) hand-writes `hash.fnv64a`, already used at [emit_llvm_toolchain.odin:310](src/emit_llvm_toolchain.odin#L310).
 - The fuzz harness's pipe, poll and kill loop ([checker_fuzz_test.odin:108](tests/checker_fuzz_test.odin#L108)) is what [subprocess.odin:82](src/subprocess/subprocess.odin#L82) `exec` does, about 25 lines.
 
 #### Code in the wrong file
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- [abi.odin:27](src/abi.odin#L27) `param_borrows_caller_storage` and [cfg_provenance.odin:7922](src/cfg_provenance.odin#L7922) `prov_argument_borrows_caller` form a chain with one caller at [provenance_call.odin:212](src/provenance_call.odin#L212). Inline both there.
+- [abi.odin:27](src/abi.odin#L27) `param_borrows_caller_storage` has one caller, `prov_argument_kind` in `provenance_call.odin`. Inline it there.
 - Constant reinterpretation ([check_builtin.odin:1096](src/check_builtin.odin#L1096) to `const_from_storage`, also called from [eval.odin:3019](src/eval.odin#L3019)) belongs in `const_ops.odin`; runtime type binding ([check_builtin.odin:1489](src/check_builtin.odin#L1489), [check_builtin.odin:1562](src/check_builtin.odin#L1562)) in `bootstrap.odin`, with [atomics.odin:49](src/atomics.odin#L49) `runtime_enum_matches`, whose other callers are [check_builtin.odin:1588](src/check_builtin.odin#L1588) and [check_builtin.odin:1592](src/check_builtin.odin#L1592).
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `semantic.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
@@ -360,7 +357,6 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Single-caller helper: [borrow.odin:638](src/borrow.odin#L638) in `check.odin` ([check.odin:679](src/check.odin#L679)).
 - Transfer wording and type reach: [borrow.odin:5494](src/borrow.odin#L5494), [borrow.odin:5588](src/borrow.odin#L5588), [borrow.odin:5750](src/borrow.odin#L5750) and [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belong beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Provenance state in the shared walk: [cfg.odin:247](src/cfg.odin#L247) `Prov_State` and [cfg.odin:404](src/cfg.odin#L404) `Prov_Facts` are read only by provenance and belong in `cfg_provenance.odin` behind `new_prov_state`.
-- Test-only and pipeline code: [packages.odin:102](src/packages.odin#L102) `ensure_runtime_bootstrap` has only test callers; [packages.odin:84](src/packages.odin#L84) `finalize_semantics` has one caller at [session.odin:168](src/session.odin#L168).
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Formatting in [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541) onward. Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
 - Seams in the two largest files: `cfg_provenance.odin` (10,813 lines) splits at the offset engine ([cfg_provenance.odin:846](src/cfg_provenance.odin#L846)) and the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)). `borrow.odin` (7,130 lines) splits at the carrier shapes and region lattice ([borrow.odin:661](src/borrow.odin#L661)), the callback substitution ([borrow.odin:2380](src/borrow.odin#L2380)) and the view-start solver ([borrow.odin:4385](src/borrow.odin#L4385)).
 
@@ -389,7 +385,7 @@ Counts per file, then the findings themselves in the same order.
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
 | [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 2 | 4 |
 | [cfg.odin](src/cfg.odin) | 3031 | 8 | 11 | 9 | 2 | 10 | 7 | 7 |
-| [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 52 | 14 | 15 | 33 | 21 | 31 |
+| [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 51 | 14 | 15 | 33 | 21 | 31 |
 | [check.odin](src/check.odin) | 4915 | 20 | 26 | 7 | 6 | 15 | 13 | 16 |
 | [check_builtin.odin](src/check_builtin.odin) | 1598 | 9 | 13 | 4 | 1 | 6 | 6 | 11 |
 | [check_calls.odin](src/check_calls.odin) | 1336 | 6 | 7 | 5 | 1 | 8 | 5 | 7 |
@@ -424,18 +420,15 @@ Counts per file, then the findings themselves in the same order.
 | [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 3 | 3 | 5 |
 | [incremental.odin](src/incremental.odin) | 369 | 0 | 6 | 4 | 1 | 2 | 2 | 8 |
 | [interface.odin](src/interface.odin) | 1484 | 10 | 8 | 5 | 1 | 11 | 3 | 6 |
-| [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 6 | 4 | 0 | 3 | 0 | 2 |
-| [iterate.odin](src/iterate.odin) | 1150 | 8 | 11 | 9 | 0 | 7 | 4 | 6 |
-| [iteration_mutable.odin](src/iteration_mutable.odin) | 167 | 1 | 2 | 2 | 0 | 5 | 1 | 3 |
+| [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 5 | 4 | 0 | 3 | 0 | 2 |
+| [iterate.odin](src/iterate.odin) | 1150 | 8 | 11 | 9 | 0 | 5 | 4 | 6 |
 | [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 4 | 2 | 5 | 4 | 9 |
 | [operators.odin](src/operators.odin) | 770 | 12 | 10 | 10 | 2 | 5 | 3 | 8 |
 | [optional.odin](src/optional.odin) | 746 | 4 | 8 | 3 | 0 | 7 | 4 | 4 |
 | [overload.odin](src/overload.odin) | 1023 | 6 | 8 | 7 | 1 | 4 | 3 | 8 |
-| [packages.odin](src/packages.odin) | 689 | 1 | 8 | 2 | 0 | 2 | 2 | 2 |
 | [parallel.odin](src/parallel.odin) | 744 | 4 | 8 | 2 | 0 | 6 | 1 | 7 |
 | [parser.odin](src/parser.odin) | 4270 | 17 | 24 | 11 | 0 | 10 | 4 | 15 |
 | [private_names.odin](src/private_names.odin) | 1151 | 9 | 8 | 9 | 2 | 5 | 4 | 9 |
-| [provenance_call.odin](src/provenance_call.odin) | 281 | 2 | 6 | 1 | 0 | 1 | 2 | 5 |
 | [provenance_effect.odin](src/provenance_effect.odin) | 369 | 0 | 4 | 3 | 1 | 2 | 1 | 7 |
 | [provenance_form.odin](src/provenance_form.odin) | 145 | 0 | 1 | 0 | 0 | 2 | 0 | 0 |
 | [provenance_input.odin](src/provenance_input.odin) | 368 | 0 | 4 | 5 | 2 | 1 | 2 | 3 |
@@ -444,7 +437,7 @@ Counts per file, then the findings themselves in the same order.
 | [queries.odin](src/queries.odin) | 671 | 5 | 5 | 7 | 4 | 2 | 3 | 4 |
 | [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 4 | 1 | 2 |
 | [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 2 | 1 | 8 | 3 | 9 |
-| [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 4 |
+| [region.odin](src/region.odin) | 251 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
 | [select.odin](src/select.odin) | 504 | 3 | 7 | 3 | 2 | 4 | 0 | 6 |
 | [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 9 | 3 | 5 | 4 | 10 |
 | [session.odin](src/session.odin) | 299 | 1 | 2 | 10 | 0 | 1 | 2 | 7 |
@@ -1181,7 +1174,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 - [cfg_provenance.odin:8004](src/cfg_provenance.odin#L8004) `prov_call`: `explicit_erasure_operand` already rejects anything but `Call_Conversion`, so `case Call_Conversion, Call_Dyn_Conversion:` can hold both tests. (about 4 lines)
 - [cfg_provenance.odin:8000](src/cfg_provenance.odin#L8000) `prov_call`: `v == graph.spawning && !thread_facts_pending` is computed at 8000, 8089 and 8126, and nothing in the walk changes either side; one `spawned` at the top serves all three. (about 2 lines)
 - [cfg_provenance.odin:8135](src/cfg_provenance.odin#L8135) `prov_call`: `proc_parameter_mode(c, call_proc_type(c, v), index)` re-resolves what `input.arguments[index].mode` holds, as `prov_argument_is_inout` reads it. (about 1 line)
-- [cfg_provenance.odin:7922](src/cfg_provenance.odin#L7922) `prov_argument_borrows_caller`: its one caller (provenance_call.odin:212) passes fields of `input`. Move it there, take `input`, and read `arguments[index].mode` and `.type`. (about 10 lines)
 - [cfg_provenance.odin:7212](src/cfg_provenance.odin#L7212) `prov_declare`: set `projected` once: `projected := -1; if d.destructure.active { projected = prov_destructure_index(...) }`. (about 1 line)
 - [cfg_provenance.odin:7273](src/cfg_provenance.odin#L7273) `prov_declare_region`: `source` is built from `projected` at 7274, 7325 and 7345; hoist it to the top, then `prov_result_region_at(graph, value, source)` also covers the branch at 7273. (about 7 lines)
 - [cfg_provenance.odin:7299](src/cfg_provenance.odin#L7299) `prov_declare_region`: `type_is_carrier` is already true of `TYPE_ALLOCATOR` (borrow.odin:529), so the test is just `type_is_carrier`; the same makes the `!= TYPE_ALLOCATOR` at 7522 redundant. (about 1 line)
@@ -1849,7 +1841,7 @@ The file has no dead symbols, but its checking gates have two reproduced bugs. I
 **Near copies**
 
 - [container.odin:536](src/container.odin#L536) and [eval.odin:1472](src/eval.odin#L1472): both try `container_element`, then `slice_element`, and the eval comment says it must match. Share a `sequence_element(c, type)`.
-- [container.odin:696](src/container.odin#L696) and [region.odin:64](src/region.odin#L64): `zero_int_arg` and `panic_policy_arg` build the same cached constant-0 literal and differ only in type. Share a `zero_literal_arg(c, type)` constructor, with each cache kept by its caller.
+- [container.odin:696](src/container.odin#L696) and `region.odin`: `zero_int_arg` and `panic_policy_arg` build the same constant-0 literal and differ only in type and in whether it is cached. Share a `zero_literal_arg(c, type)` constructor.
 - [container.odin:458](src/container.odin#L458) and [semantic.odin:2140](src/semantic.odin#L2140): both follow a delegate chain to a non-delegated symbol or the built-in, with different bounds (64 and `len(c.symbols) + 1`). One helper returning the final symbol or "built-in" serves both.
 - [container.odin:325](src/container.odin#L325), [iterate.odin:402](src/iterate.odin#L402), [customization.odin:113](src/customization.odin#L113), [hooks.odin:809](src/hooks.odin#L809): `synth_proc` followed by setting `has_receiver` and `receiver`. Add `synth_method` in `semantic.odin`, taking the receiver from `modes[0]`.
 - [container.odin:628](src/container.odin#L628) and [semantic.odin:2224](src/semantic.odin#L2224): this walk and `type_contains_invalid` enumerate the same components by kind; the latter is exhaustive on purpose and handles `.Box`. A shared `type_components` would have prevented BUG-container-2.
@@ -2686,7 +2678,7 @@ Careful code whose comments mostly explain why, with real failure handling for t
 
 - [emit_llvm_toolchain.odin:130](src/emit_llvm_toolchain.odin#L130): the only banner, "layout agreement", appears to cover everything after it, and `link` sits far below its caller `emit_package`. Seams: `check_layout_agreement` and `layout_probeable` to an `emit_llvm_layout_probe.odin`; lines 282-498 to a runtime-cache file; banners for artifacts, foreign inputs and discovery.
 - [emit_llvm_toolchain.odin:282](src/emit_llvm_toolchain.odin#L282): the runtime-object cache is about a quarter of the file, yet this file's row in compiler-architecture.md "Source-code map" does not mention it. Add it there, or give the cache its own row with the split above.
-- [emit_llvm_toolchain.odin:273](src/emit_llvm_toolchain.odin#L273) `replace_ext`: a general path helper between the layout probe and the cache; it belongs with `path_dir` and `join_path` under the "paths" banner in [packages.odin:632](src/packages.odin#L632).
+- [emit_llvm_toolchain.odin:273](src/emit_llvm_toolchain.odin#L273) `replace_ext`: a general path helper between the layout probe and the cache; it belongs with `path_dir` and `join_path` in `paths.odin`.
 - [emit_llvm_toolchain.odin:545](src/emit_llvm_toolchain.odin#L545) `link`: 98 lines doing input collection, cache choice, command assembly and failure classification. Natural seam: `runtime_link_inputs(...) -> (inputs: []string, bitcode: bool)` for lines 545-553, which also isolates the fallback rule.
 - [emit_llvm_toolchain.odin:360](src/emit_llvm_toolchain.odin#L360), [emit_llvm_toolchain.odin:364](src/emit_llvm_toolchain.odin#L364), [emit_llvm_toolchain.odin:18](src/emit_llvm_toolchain.odin#L18) and [emit_llvm_toolchain.odin:468](src/emit_llvm_toolchain.odin#L468): `RUNTIME_MANIFEST`, `RUNTIME_CACHE_FAILURE`, `CLANG_MISSING` and `CPU_CHECK_SOURCE` are named nowhere else in the repository; mark them `@(private = "file")`.
 
@@ -3357,7 +3349,7 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 **Near copies**
 
 - [hash.odin:154](src/hash.odin#L154) and [hash.odin:83](src/hash.odin#L83): the nested `unhashable` is `part_is_hashable` negated plus a void check. Move the void check into `part_is_hashable`, which also removes the filter at line 65, and call that with one shared `seen`. (about 8 lines)
-- [hash.odin:382](src/hash.odin#L382), [eval.odin:4153](src/eval.odin#L4153), [packages.odin:686](src/packages.odin#L686) and [semantic.odin:1214](src/semantic.odin#L1214) (about 18 sites there): the same `(h ~ v) * HASH_MULTIPLIER`; a `hash_mix(h, v)` beside the constant gives the step one name.
+- [hash.odin:382](src/hash.odin#L382), [eval.odin:4153](src/eval.odin#L4153) and [semantic.odin:1214](src/semantic.odin#L1214) (about 18 sites there): the same `(h ~ v) * HASH_MULTIPLIER`; a `hash_mix(h, v)` beside the constant gives the step one name.
 
 **Structure and boundaries**
 
@@ -3622,7 +3614,6 @@ Well-commented and cleanly owned; its linear scans run over a per-package, compi
 - [intrinsic.odin:269](src/intrinsic.odin#L269) `contributed_here`: at bind time `pkg.scope.names` holds only contributions, since line 133 of `check.odin` runs before any declaration is collected. Drop it and its tests at lines 83 and 147. (about 12 lines)
 - [intrinsic.odin:417](src/intrinsic.odin#L417) `check_intrinsic_signature`: replace the flag loop at lines 417-424 with `same := slice.equal(params, sym.params) && slice.equal(modes, info.param_modes) && result == sym.result && result_inout == sym.result_inout`. `info` is never nil for a `.Proc` here. (about 7 lines)
 - [intrinsic.odin:222](src/intrinsic.odin#L222) `validate_intrinsic_attributes`: the record is looked up twice (lines 222-226 and 235-242). Bind `record` once at the top, with `literal`. (about 4 lines)
-- [intrinsic.odin:94](src/intrinsic.odin#L94) `bind_intrinsic_impl`: `ensure_provider_members` already returns unless `info.provider`, so call it without the `type_is_region_provider` guard. (about 2 lines)
 - [intrinsic.odin:60](src/intrinsic.odin#L60) `bind_intrinsic_items`: the `file` parameter here and on `bind_intrinsic_impl` and `bind_intrinsic` is always `k.file_node` (set at line 51). Drop it and read `k.file_node` at line 197. (3 signatures, no lines)
 
 **Dead code**
@@ -3695,10 +3686,8 @@ The value-loop path is sound for elements but mishandles parts a traversal owns:
 **Near copies**
 
 - [iterate.odin:49](src/iterate.odin#L49) and [iteration_mutable.odin:41](src/iteration_mutable.odin#L41), [container.odin:313](src/container.odin#L313): name, `new_type`, fields, label. Share `new_compiler_struct(c, proto, name, label, ..fields)`; about 30 lines here on top of the literal change.
-- [iterate.odin:187](src/iterate.odin#L187), [iterate.odin:249](src/iterate.odin#L249) and [iteration_mutable.odin:15](src/iteration_mutable.odin#L15): the same `{table, cursor}` iterator, differing in `public` (gone with BUG-iterate-2), element and cache key. Share one `map_walker_type`.
 - [iterate.odin:68](src/iterate.odin#L68), [simd.odin:15](src/simd.odin#L15) and [box.odin:45](src/box.odin#L45): identical apart from the name. Share `predeclared_callee(k, callee, "Range")`.
 - [iterate.odin:614](src/iterate.odin#L614) and [iterate.odin:957](src/iterate.odin#L957): the yield builders differ only in the stored part's kind. Share `builtin_yield(k, s, stored: Yield_Kind)`, and with it the `indexed()` wrap also at line 801 and [iteration_mutable.odin:100](src/iteration_mutable.odin#L100).
-- [iterate.odin:781](src/iterate.odin#L781) and [iteration_mutable.odin:91](src/iteration_mutable.odin#L91): same `next` lookup, match, L0456 message and excluded note; the tails at line 814 and [iteration_mutable.odin:110](src/iteration_mutable.odin#L110) also match. Share `check_iterator_next(k, s, iterator, item)`.
 - [iterate.odin:90](src/iterate.odin#L90) and [iterate.odin:1111](src/iterate.odin#L1111): the same endpoint test and L0458 text, differing only in span. Share `require_range_endpoint(k, type, span) -> bool`.
 - [iterate.odin:1064](src/iterate.odin#L1064), [optional.odin:607](src/optional.odin#L607) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share one proc taking the identifier, span and shadow-lookup scope.
 
@@ -3717,42 +3706,6 @@ The value-loop path is sound for elements but mishandles parts a traversal owns:
 - [iterate.odin:855](src/iterate.odin#L855): delete; misleading, since the call does reach the `&mut` leaf check and nothing near it depends on the claim.
 - [iterate.odin:972](src/iterate.odin#L972): the "except a part `next` hands over owned" sentence is not what line 990 does for a place loop; keep it and fix the code (BUG-iterate-5).
 - [iterate.odin:1027](src/iterate.odin#L1027): keep only `// design.md "Element bindings"`; the note below states the rest. (about 8 lines across the file)
-
-### src/iteration_mutable.odin
-
-Small, correct on the mutable traversals I ran (`indexed`, `reversed`, and both combined over a record-yielding view; explicit `iter_mut` on a map and `iter_mut_reverse` on array and dynamic array); nearly all its weight is in code that repeats `iterate.odin` and `iteration_adapters.odin`. One misleading diagnostic for maps, one unreachable check.
-
-**Bugs**
-
-- `BUG-iteration_mutable-1` **low** [iteration_mutable.odin:143](src/iteration_mutable.odin#L143) `report_not_mutably_iterable`: `indexed()` over a map gets advice that does not apply. Scenario: `foreach ((k, &mut v), i in m.indexed())` reports L0457 with a note to use `(&mut values[:]).indexed()` "for an array" or `items.slice()` "for a `Small_Array`". Fix: when `info.key` is a map, report the "count with a variable" text from [iterate.odin:670](src/iterate.odin#L670), which is unreachable (peel never peels it) and can go. *Not verified.*
-
-**Simplification**
-
-- [iteration_mutable.odin:121](src/iteration_mutable.odin#L121) `mutable_iteration_receiver`: every caller only compares the mode to `.Inout`, so drop the loop and `param_modes` read: `if iteration_proc_matches(k, sym, subject, .Inout, iterator) { return .Inout, true }` then `return .Borrow, iteration_proc_matches(k, sym, subject, .Borrow, iterator)`. (about 6 lines)
-- [iteration_mutable.odin:22](src/iteration_mutable.odin#L22) `ensure_mutable_iteration_members`: `new_field` and `aprintf` need no type id, and `new_type` clones its argument, so build `fields` first and pass `fields` and `backend_label` in the `Type_Info` literal at both sites; this drops `iterator_info` and the two `type_of(c, iterator)` lines. (about 4 lines)
-
-**Dead code**
-
-- (branch) [iteration_mutable.odin:82](src/iteration_mutable.odin#L82): the L0460 check cannot fail. `s.adapter` is set only by `peel_resolved_adapter`, which here peels a `reversed()` only if the view has `iter_mut`, and `add_mutable_adapter_members` adds that only after the same check. Keep `iter = iteration_member(k, subject, "iter_mut_reverse")`; line 139 is what reports it. (about 5 lines)
-- (branch) [iteration_mutable.odin:135](src/iteration_mutable.odin#L135): the `info != nil` tests at 135, 143 and 157 never fail. The only caller's `subject` was already found valid by `check_runtime_foreach`, and `underlying_info` of a valid type is non-nil.
-
-**Near copies**
-
-- [iteration_mutable.odin:15](src/iteration_mutable.odin#L15), [iterate.odin:192](src/iterate.odin#L192) and [iterate.odin:256](src/iterate.odin#L256): three builders of the `{table, cursor}` struct, differing in label, element, field visibility and caching. A shared `new_map_cursor_type(c, subject, element, label)` leaves callers their cache. (about 12 lines)
-- [iteration_mutable.odin:41](src/iteration_mutable.odin#L41) and [iterate.odin:169](src/iterate.odin#L169): both build the array cursor, and the emitter reads it through `ITER_ARRAY_*` for both. Lines 47-49 use literals 0, 1, 2 and other field names; at least use `ITER_ARRAY_DATA`, `ITER_ARRAY_INDEX`, `ITER_ARRAY_REVERSED`, as the map branch here does with `ITER_MAP_*`.
-- [iteration_mutable.odin:88](src/iteration_mutable.odin#L88), [iterate.odin:776](src/iterate.odin#L776): identical yield, item and `next` validation with the same L0456 text and `note_excluded_member`, differing only in the `iterator_yield` fallback. Share `foreach_next_member(k, s, iterator, element, fallback) -> (next, yield, item, ok)`. (about 15 lines)
-- [iteration_mutable.odin:68](src/iteration_mutable.odin#L68) and `add_mutable_adapter_members` in `iteration_adapters.odin`: the same lookup of `Element`, `Mut_Iterator`, `iter_mut` and its receiver. A helper returning all four, with `ok`, also serves `is_mutable_view`. (about 4 lines)
-- [iteration_mutable.odin:97](src/iteration_mutable.odin#L97) and [iterate.odin:831](src/iterate.odin#L831): the same `gate_type` on the element, but this one reports at `s.span`, the whole statement; every sibling uses `expr_span(s.iterable)`. Use that here.
-
-**Structure and boundaries**
-
-- [iteration_mutable.odin:5](src/iteration_mutable.odin#L5) `ensure_mutable_iteration_members`: two unrelated builders share one 57-line procedure, split by an early return and a negated guard at line 38. Seam: `add_mutable_map_members` and `add_mutable_sequence_members`, chosen by a `switch info.kind`.
-
-**Comments**
-
-- [iteration_mutable.odin:12](src/iteration_mutable.odin#L12): delete "so the map is walked as `key, &value`", which is stale (the spelling is now `&mut value`): `// design.md "By-reference iteration": an entry lends its key read-only and its value mutably.`
-- [iteration_mutable.odin:54](src/iteration_mutable.odin#L54): repeats lines 63-66 and the comment on `is_mutable_view`. Shorten to `// A view walks as any value; a container needs a mutable place.`
-- [iteration_mutable.odin:63](src/iteration_mutable.odin#L63): the first sentence paraphrases the spec. `// design.md "By-reference iteration": an `inout` `iter_mut` belongs to a container, which must be a mutable place; any other receiver to a mutable view.`
 
 ### src/lifecycle.odin
 
@@ -4011,45 +3964,6 @@ Ranking itself is sound and matches the spec's vector and tie-breaker order, but
 - [overload.odin:840](src/overload.odin#L840): `// design.md "Operator lookup and overload resolution": signatures, not rank vectors.`
 - [overload.odin:935](src/overload.odin#L935): keep the citation and the first clause; the evaluation-order sentence repeats the spec.
 - [overload.odin:1001](src/overload.odin#L1001): delete; the one-line body says the same.
-
-### src/packages.odin
-
-A sound file with tight comments and correct graph handling; one spurious follow-on diagnostic. What remains is small redundancy, a test-only helper in production code, and a block of general path utilities that has outgrown a file about packages.
-
-**Bugs**
-
-- `BUG-packages-1` **low** [packages.odin:177](src/packages.odin#L177) `load_package_dir`: a file with no `package` clause has `package_name == ""` and still takes part in the agreement check. Scenario: `dep/a.loke` holds `x :: 1;`, `dep/b.loke` holds `package dep;`: after L0202 comes L0328 "package `dep` does not match ``", whose note points at `base/runtime/runtime.loke:1:1` (zero span; run with the built `lokec.exe`). Fix: establish the name from the first file that has one, and skip files with an empty name. *Not verified.*
-
-**Simplification**
-
-- [packages.odin:571](src/packages.odin#L571) `visit_for_cycle`: `cycle[0]` always leaves `id`, and each later edge leaves the previous edge's target, so track `from := id` in this loop and delete `package_label` (line 593), which searches every package's files for what is already known. Parallel edges also get a real name instead of "a package". (about 12 lines)
-- [packages.odin:508](src/packages.odin#L508) `stored_case`: the exact-match-first pass only matters for two spellings in one directory, which `dir_key` already treats as one package. Take the first `equal_fold` entry and break. (about 6 lines)
-- [packages.odin:449](src/packages.odin#L449) `package_key`: the root check repeats line 498, since `filepath.rel` answers `.` for paths equal under `equal_fold` and fails for an empty root as before. Delete it; on line 501 `canonical_dir(c.root_dir)` is also just `c.root_dir`. (about 3 lines)
-- [packages.odin:39](src/packages.odin#L39) `compile_program`: the first round repeats the rebuild, discovery and cycle check of lines 31-33 and finds nothing. Rotate the loop to prepare, activate, rebuild, discover, cycle check, exit test; line 31 only serves a file root, so rebuild in `load_root_package`. (about 3 lines)
-- [packages.odin:543](src/packages.odin#L543) `check_import_cycles`: return false from the loop and true after it, dropping `ok`. (about 3 lines)
-- [packages.odin:682](src/packages.odin#L682) `path_digest`: same seed and prime as `hash.fnv64a`, which `emit_llvm_toolchain.odin:310` already calls: `hash.fnv64a(transmute([]byte)strings.to_lower(path, context.temp_allocator))`. (about 3 lines)
-- [packages.odin:207](src/packages.odin#L207) `package_sources`: use `strings.equal_fold(filepath.ext(entry.name), ".loke")` as `overlays.odin:10` does, without allocating; drop the guard on line 212, since ranging over an empty map does nothing, and make `seen` unconditionally. (about 3 lines)
-- [packages.odin:252](src/packages.odin#L252) `discover_imports`: a package's own file list does not grow while it is walked (loading only fills new packages), so `for file in package_of(c, id).files[:]` replaces the index loop. (about 2 lines)
-
-**Dead code**
-
-- `ensure_runtime_bootstrap` ([packages.odin:102](src/packages.odin#L102)): test-only; its callers are `emit_llvm_test.odin:21` and `front_end_test.odin:53,424`. Move it to a test file; all three pass a fresh `Checker`, so the save and restore on lines 121 and 123 can go too.
-- (branch) [packages.odin:580](src/packages.odin#L580): `edge.target == INVALID_PACKAGE` here and on line 625 cannot hold; both production appends (lines 317, 355) return first on a failed load, and `front_end_test.odin:428` passes a real package.
-
-**Near copies**
-
-- [packages.odin:634](src/packages.odin#L634) and `os.is_directory` (`core/os/file.odin:529`, alias `os.is_dir`): same stat and type test, and line 348 already calls the core one. Delete `is_directory` and use the core name at its 6 call sites. (about 4 lines)
-- [packages.odin:359](src/packages.odin#L359) and [packages.odin:371](src/packages.odin#L371): `import_binding_name` and `import_alias` repeat the alias test and differ only in raw or decoded path. Strip the quotes, then call `import_alias(imported, raw)`. (about 3 lines)
-
-**Structure and boundaries**
-
-- [packages.odin:632](src/packages.odin#L632): `is_directory`, `join_path`, `remove_tree`, `path_dir`, `canonical_dir`, `dir_key` and `path_digest` are general utilities used by the toolchain, formatter, doc, overlays, project and `lsp/`; `remove_tree` and `join_path` have nothing to do with packages. They fit a `paths.odin` of their own.
-- [packages.odin:84](src/packages.odin#L84): `finalize_semantics` prepares a checked program for emission and is not package discovery; its only production caller is `session.odin:168`, so it belongs there.
-
-**Comments**
-
-- [packages.odin:316](src/packages.odin#L316): delete; line 249 says the same, and the code looks the package up by ID anyway.
-- [packages.odin:479](src/packages.odin#L479): delete; "Also used to name..." records a caller that a grep finds and explains nothing about the procedure.
 
 ### src/parallel.odin
 
@@ -4328,45 +4242,6 @@ Coherent and well tested on its main paths, but three drivers have grown around 
 - [private_names.odin:621](src/private_names.odin#L621): shorten the last sentences to "A chain of selections is followed until it repeats a member."
 - [private_names.odin:1122](src/private_names.odin#L1122): delete; it reads the switch below it aloud.
 
-### src/provenance_call.odin
-
-A small, well-commented classification file whose tables are the risk: two rows or contracts claim less than the operation does, and both let a dangling read compile. The rest is modest trimming, mostly fields and a helper that repeat what `Expr_Call` and `input.arguments` already give.
-
-**Bugs**
-
-- `BUG-provenance_call-1` **high** [provenance_call.odin:137](src/provenance_call.odin#L137) `prov_receiver_contract`: it checks only the owner's own `custom_try_clone`, so a generated clone of a type containing a `hook(copy)` taking `self: ^` is `.Copies` and takes no loan. Scenario: `Outer :: struct { inner: Hooked }`, whose hook returns `&self.v`; `proc(value: Outer) -> Outer { return value.clone(); }` and `c := xs.clone(); xs.clear(); c[0].p^` compile (`Hooked` alone gets L0526/L0511), and the first printed `140696865417104` where `1` was due. Fix: return `.Unwritten` if any hook in `type_copy_hooks(c, callee.owner_type)` ([hooks.odin:305](src/hooks.odin#L305)) takes a pointer. *Confirmed: Reproduced: Outer's value.clone() returned compiles and x.inner.p^ reads a dead frame (printed 99, 1 due), and xs.clone(); xs.clear(); c[0].p^ compiles; Hooked alone gets L0526 and L0512. No note in known-gaps, open-questions or comments.*
-- `BUG-provenance_call-2` **high** [provenance_call.odin:85](src/provenance_call.odin#L85) `CONTAINER_OP_EFFECTS`: `.Map_Try_Insert` lacks `.Drops_Provider`, though design.md "Map container operations" calls it the call form of `m[key] = elem`, which replaces and drops the old value. Scenario: with `map[int]Holder` and `xs` via `arena.allocator()`, `try_insert(1, Holder{move(arena)})` then `try_insert(1, Holder{mem.Arena.init()})` compiles and `xs[0]` read `777` from freed memory, not `11`; `all[1] = ...` gets L0537. Fix: add the effect, and stop returning early at [cfg.odin:1316](src/cfg.odin#L1316) so the stored provider still merges. *Confirmed: Reproduced: two try_insert(1, Holder{...}) calls compile and xs[0] prints 777 from freed memory, then the exit aborts; one try_insert prints 11, and the same replacement via all[1] = is L0537. High is fair; no record in the gap docs.*
-
-**Simplification**
-
-- [provenance_call.odin:212](src/provenance_call.odin#L212) `prov_argument_kind`: this is the only caller of `prov_argument_borrows_caller` ([cfg_provenance.odin:7922](src/cfg_provenance.odin#L7922)), whose five parameters rebuild what `input` holds. Inline `index == 0 && input.has_receiver ? input.receiver == .Borrow : param_borrows_caller_storage(c, part.mode, part.type)`. (about 15 lines)
-- [provenance_call.odin:227](src/provenance_call.odin#L227) `prov_argument_kind`: `part := input.arguments[index]` after line 184 replaces `prov_parameter_type` here, which repeats the map lookup for the `input` already in hand, and the mode test at line 188. (about 1 line)
-- [provenance_call.odin:241](src/provenance_call.odin#L241) `prov_input_call`: `signature` is read only at [provenance_effect.odin:342](src/provenance_effect.odin#L342), and always equals the cheap `call_proc_type(c, call)` that the aliases half of the same replay already calls ([cfg_provenance.odin:6184](src/cfg_provenance.odin#L6184)). Drop the field, and also the never-varying `proc_type` parameter of `prov_call_written_regions`. (about 3 lines)
-- [provenance_call.odin:250](src/provenance_call.odin#L250) `prov_input_call`: `order` is read only by the construction walk ([cfg_provenance.odin:8110](src/cfg_provenance.odin#L8110)) and one test, never by replay. Call `call_slot_at(v, step)` there, as [cfg.odin:2819](src/cfg.odin#L2819) and both emitter sites do, and remove the field, allocation and clone. (about 3 lines)
-- [provenance_call.odin:276](src/provenance_call.odin#L276) `prov_clone_call_input`: `arguments` and `order` are never written after `prov_input_call`, and the seed outlives the query's copy, which already shares `synthetic_calls` pointers with it ([provenance_input.odin:133](src/provenance_input.odin#L133)). Copy the entry at [provenance_input.odin:132](src/provenance_input.odin#L132), and delete this proc and both imports. (about 10 lines)
-- [provenance_call.odin:205](src/provenance_call.odin#L205) `prov_argument_kind`: `len(prov_place_hops(...)) > 0` allocates a walk of every hop to ask whether there is one. `_, through := prov_input_place(graph, argument).base.(Value_Id)` is the same test; [cfg_provenance.odin:2698](src/cfg_provenance.odin#L2698) is the only other such use. (no net lines)
-
-**Dead code**
-
-- (branch) [provenance_call.odin:188](src/provenance_call.odin#L188): `index < len(input.arguments)` is always true, since line 184 has already indexed `v.bound[index]` and `arguments` has `len(call.bound)` entries (line 249).
-
-**Near copies**
-
-- [provenance_call.odin:269](src/provenance_call.odin#L269), [cfg_provenance.odin:8111](src/cfg_provenance.odin#L8111) and [cfg_provenance.odin:8120](src/cfg_provenance.odin#L8120): all spell the `.Lends_Receiver` plus present-receiver test. `input.capture` is nonzero exactly when it holds, so the two walk sites become `index == 0 && input.capture != 0` and `input.capture != 0`.
-
-**Structure and boundaries**
-
-- [provenance_call.odin:38](src/provenance_call.odin#L38): `Container_Op_Effect` and its table (55 lines) describe `Container_Op`, not call inputs, and are read by `cfg.odin` and the emitter ([emit_llvm_calls.odin:1424](src/emit_llvm_calls.odin#L1424)) too. Move them beside the enum at [container.odin:118](src/container.odin#L118), and say "provenance and lowering" in the comment.
-- [provenance_call.odin:8](src/provenance_call.odin#L8): `Prov_Synthetic_Call_Key` is only the key type of `Prov_Input.synthetic_calls`, and nothing here uses it. It belongs beside `Prov_Input_Key` at [provenance_input.odin:62](src/provenance_input.odin#L62).
-
-**Comments**
-
-- [provenance_call.odin:1](src/provenance_call.odin#L1): the header's second clause repeats compiler-architecture.md "Normalized provenance input" and the file holds more than it says. Shorten to `// Checked call inputs, and what a compiler-known callee and each argument are to a call.`
-- [provenance_call.odin:48](src/provenance_call.odin#L48): delete; `Empties` already says it.
-- [provenance_call.odin:158](src/provenance_call.odin#L158): delete; it restates `Lookup_Receiver`, and the switch arm has the reason.
-- [provenance_call.odin:83](src/provenance_call.odin#L83): the one missing why, because the omission reads as a slip: `// No .Stores_Provider: a present key drops the element.` (design.md "Map container operations").
-- [compiler-architecture.md:176](compiler-architecture.md#L176): the row lists "contract" and "result type" among the call inputs, but `Prov_Call_Input` has neither field.
-
 ### src/provenance_effect.odin
 
 Sound and readable: the saturation loop, arena handling, and recording discipline held up under checking, and no bug was found. What can go is bookkeeping: statistics fields and a topology struct that restate what is already at hand, plus two near-identical fact writers.
@@ -4426,7 +4301,7 @@ Compact and well ordered, with no bug found. The weight is in two mechanisms tha
 
 **Simplification**
 
-- [provenance_input.odin:93](src/provenance_input.odin#L93) `prov_writable_input`: production reads `program.input` only during `build_provenance_replay`; `normalized_effects` is read only by tests, and the `weight == 0` path already lets a finished graph write it directly. Clear `frozen` as the build returns, or reduce this to the assert; drop `seed`, `prov_clone_transfer` and `prov_clone_call_input`. `normalization_parameter_seed` and two test checks need adjusting. (about 60 lines)
+- [provenance_input.odin:93](src/provenance_input.odin#L93) `prov_writable_input`: production reads `program.input` only during `build_provenance_replay`; `normalized_effects` is read only by tests, and the `weight == 0` path already lets a finished graph write it directly. Clear `frozen` as the build returns, or reduce this to the assert; drop `seed` and `prov_clone_transfer`. `normalization_parameter_seed` and two test checks need adjusting. (about 60 lines)
 - [provenance_input.odin:120](src/provenance_input.odin#L120) `new_prov_input`: if the copy stays, it can be shallow. Seed and copy share the analysis arena, no recorded path is written in place, and `Prov_Value.form` slices are already shared at L122. Keep the map loops; drop the clones at L123, L125-129, L130, L132 and L134. (about 45 lines)
 - [provenance_input.odin:75](src/provenance_input.odin#L75) `Prov_Input.alloc`: its one reader is `strings.clone(name, graph.input.alloc)` at [cfg_provenance.odin:6808](src/cfg_provenance.odin#L6808), where it equals `graph.alloc`, which already holds `name`; replay asserts first. Store `name` and delete the field and L104. (about 3 lines)
 - [provenance_input.odin:242](src/provenance_input.odin#L242) `prov_input_key`: its only caller is `prov_input_place`; build the key there, or lose both with the `places` change below. (about 6 lines)
@@ -4652,7 +4527,7 @@ Correct on the main paths; the weak spot is `typeid_sort_key`, whose key is neit
 
 **Dead code**
 
-- (branch) [reflect.odin:99](src/reflect.odin#L99): `new_type` has just returned this id, so `info` cannot be nil; iteration_mutable.odin:50 assigns `type_of(c, iterator).fields` directly.
+- (branch) [reflect.odin:99](src/reflect.odin#L99): `new_type` has just returned this id, so `info` cannot be nil.
 - (branch) [reflect.odin:835](src/reflect.odin#L835): every `meta.Field` constant comes from line 223 with four elements, and hand-written literals are refused (L0453 on `meta.Field{}`, also inside `foreach`), so a nil or short aggregate cannot get past lines 816 and 821.
 
 **Data structures and algorithms**
@@ -4690,42 +4565,11 @@ Correct on the main paths; the weak spot is `typeid_sort_key`, whose key is neit
 
 ### src/region.odin
 
-Small and well scoped, with every declaration in use, but it has one real soundness hole (a provider held through `Shared`) and about a fifth of it is lazy-creation scaffolding and creation boilerplate that `core:mem` loading and existing helpers make unnecessary.
-
-**Bugs**
-
-- `BUG-region-1` **high** [region.odin:124](src/region.odin#L124) `provider_reach_walk`: a provider inside `Shared(T)` is missed, since the handle's record holds its block as a `rawptr`, so no region end is recorded (design.md "Allocator regions and region provenance"). Scenario: in a nested block, `held := shared(mem.Arena.init()); inner: [dynamic]int via held.get().allocator() = {}; inner.append(1); outer = move(inner);` compiles, then the run prints `outer[0]` and dies "allocator record does not match this runtime's ABI"; `box(...)` in place of `shared(...)` gets L0537. Fix: reject a provider payload in `Shared`/`Weak` (a design.md rule), or follow the strong handle's `shared_payload_type` as [borrow.odin:758](src/borrow.odin#L758) does and tie `get()`'s handle to `held`. *Confirmed: Reproduced: an arena in shared(...), inner moved to an outer array or returned, compiles (also as a struct field), prints 1, then dies with the ABI error. box(...) gets L0537/L0592. Shared holds block: rawptr, and no gap is recorded. Severity high is fair.*
-
-**Simplification**
-
-- [region.odin:79](src/region.odin#L79) `new_provider_type`: use `new_field(c, "control", TYPE_RAWPTR, PROVIDER_CONTROL)` from [semantic.odin:1103](src/semantic.odin#L1103), build `fields` first, and pass `fields` and `backend_label` in the `new_type` literal; no later `type_of` patch-up is needed. (about 10 lines)
-- [region.odin:39](src/region.odin#L39) `arena_type`, `scratch_type`, `failure_policy_type`: three lazy getters whose only outside caller is the once-per-package `STD_MEM` case at [stdlib.odin:78](src/stdlib.odin#L78). Create the three types there once; `Compiler.scratch_type` then goes, and `arena_type` is needed only for the `from_buffer` test at line 159. (about 15 lines)
-- [region.odin:149](src/region.odin#L149) `ensure_provider_members`: laziness buys nothing, as [intrinsic.odin:311](src/intrinsic.odin#L311) already forces the members for each described provider at package setup ([check.odin:133](src/check.odin#L133)). One call in the `STD_MEM` case replaces the calls at intrinsic.odin:94, intrinsic.odin:311, [check.odin:2297](src/check.odin#L2297) and [impl.odin:422](src/impl.odin#L422), plus `Contribution.Provider` and the guard. (about 12 lines)
-- [region.odin:180](src/region.odin#L180) `provider_member`: `modes` is always all `.Value` and `has_receiver` is true at one call. Allocate zeroed modes inside and set `has_receiver` at the `allocator` site at line 172. (about 6 lines)
-- [region.odin:204](src/region.odin#L204) `provider_constructor`: two of three callers then set `param_defaults[0]` (lines 166 and 237). Add `source_default: Expr = nil` and assign it with the policy default. (about 6 lines)
-- [region.odin:64](src/region.odin#L64) `panic_policy_arg`: nothing compares this node's identity and it is built for five symbols, so the cache and `Compiler.panic_policy_arg` can go in favor of a fresh literal per constructor. (about 4 lines)
-- [region.odin:247](src/region.odin#L247) `call_provider_op`: `provider_op` is set only at line 196, on `.Provider_Op` symbols, and defaults to `.None`, so the `synth` test is redundant: `sym := symbol_of(...); return sym != nil ? sym.provider_op : .None`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [region.odin:194](src/region.odin#L194): `sym.receiver = .Value` assigns the zero value of `Param_Mode` ([ast.odin:498](src/ast.odin#L498)) on a fresh symbol; `mode = .Value` at line 222 likewise.
-- (branch) [region.odin:89](src/region.odin#L89): the nil tests on `type_of` of a type just made, and on `symbol_of` of a symbol just made at lines 166, 191, 217 and 237, cannot fail; `synth_enum` at [enums.odin:24](src/enums.odin#L24) writes through unguarded.
-
-**Data structures and algorithms**
-
-- [region.odin:106](src/region.odin#L106) `type_carries_provider`: allocates a map per call from a temp allocator the compiler never frees ([main.odin:135](src/main.odin#L135) only under tracking), and calls grow with locals times exits plus every non-ident assignment ([cfg.odin:1286](src/cfg.odin#L1286)). A top-level memo as in `type_carries_borrow` ([borrow.odin:728](src/borrow.odin#L728)) fits; the saving is unmeasured and likely modest.
+Small and well scoped; what is left is the walk over owned parts it shares with several files.
 
 **Near copies**
 
 - [region.odin:123](src/region.odin#L123), [hooks.odin:370](src/hooks.odin#L370), [hooks.odin:330](src/hooks.odin#L330), [hooks.odin:165](src/hooks.odin#L165) and [borrow.odin:761](src/borrow.odin#L761): the same switch over owned parts (element, key, field types, variants). A `type_owned_part_next(c, info, &i)` iterator would reduce each to a `for` over parts and give one place to define what is owned, which is where the `Shared` bug above sits.
-- [region.odin:220](src/region.odin#L220), [container.odin:685](src/container.odin#L685), [intrinsic.odin:449](src/intrinsic.odin#L449) and [erased.odin:216](src/erased.odin#L216): each builds a `.Parameter` symbol from name, type and mode. A `new_parameter` beside `new_field` covers all four.
-
-**Comments**
-
-- [region.odin:243](src/region.odin#L243): delete the second sentence ("One lookup, so the checker and the backend agree"), which is wrong: the emitter reads `symbol.provider_op` directly ([emit_llvm_containers.odin:726](src/emit_llvm_containers.odin#L726)) and only `cfg` and `cfg_provenance` call this.
-- [region.odin:12](src/region.odin#L12): shorten and cite the heading, since line 13 has a bare `(design.md)`: "The region identity is the control block's address (design.md "Allocator regions and region provenance"), so moving or copying a handle keeps it and the region check follows one fact."
-- [region.odin:142](src/region.odin#L142): delete this paragraph, which restates the code and the constructors' signatures in `core/mem/api.loki`; if a pointer is wanted, standard-library.md "`core:mem`". Keep lines 146-148, unless the eager form above removes them along with the guard.
-- [region.odin:22](src/region.odin#L22): shorten to "Index of the one field, the control-block pointer."
 
 ### src/select.odin
 
@@ -4830,7 +4674,7 @@ The stores and interning are sound, and the `Symbol` and `Type_Info` definitions
 - [semantic.odin:2204](src/semantic.odin#L2204), [semantic.odin:2262](src/semantic.odin#L2262) and [reflect.odin:149](src/reflect.odin#L149): the same component walk. "Supported" is "no component is Invalid, Interface or a descriptor"; "contains invalid" is the Invalid part. One walk taking a predicate serves all three. (about 70 lines)
 - [semantic.odin:1298](src/semantic.odin#L1298), [semantic.odin:1542](src/semantic.odin#L1542) and [semantic.odin:1644](src/semantic.odin#L1644): identical bucket growth, differing only in the map. Shared form: `bucket_append(c, &c.proc_types, hash, bucket, id)`. (about 9 lines)
 - [semantic.odin:1477](src/semantic.odin#L1477) and [semantic.odin:1584](src/semantic.odin#L1584): `Anon_Record_Field` and `Anon_Union_Variant` are one `{name, type}` struct, and the hash loops at 1488 and 1594 are the same. Use one struct and one `anon_hash`; keep the separate display and label code. (about 8 lines)
-- [semantic.odin:1212](src/semantic.odin#L1212), [semantic.odin:1487](src/semantic.odin#L1487) and [packages.odin:684](src/packages.odin#L684): the FNV offset basis is spelled by hand; name it beside `HASH_MULTIPLIER` in [hash.odin:14](src/hash.odin#L14). The rotated seed at [semantic.odin:1593](src/semantic.odin#L1593) gains nothing, as its buckets are in a separate map.
+- [semantic.odin:1212](src/semantic.odin#L1212) and [semantic.odin:1487](src/semantic.odin#L1487): the FNV offset basis is spelled by hand; name it beside `HASH_MULTIPLIER` in [hash.odin:14](src/hash.odin#L14). The rotated seed at [semantic.odin:1593](src/semantic.odin#L1593) gains nothing, as its buckets are in a separate map.
 - [semantic.odin:2488](src/semantic.odin#L2488) and [semantic.odin:2498](src/semantic.odin#L2498): `lookup_symbol` is `lookup_symbol_with_scope` without the scope; make it a wrapper. (about 6 lines)
 
 **Structure and boundaries**

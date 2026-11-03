@@ -73,11 +73,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_symbol(c, pkg, "default_allocator", c.default_allocator_symbol)
 		// Compiler-owned because the region lattice has to recognise them, not
 		// merely call them.
-		contribute_type(c, pkg, "Arena", arena_type(c))
-		contribute_type(c, pkg, "Scratch", scratch_type(c))
-		contribute_type(c, pkg, "Failure_Policy", failure_policy_type(c))
-		contribute_symbol(c, pkg, "try_arena", provider_try_proc(k, arena_type(c), "try_arena"))
-		contribute_symbol(c, pkg, "try_scratch", provider_try_proc(k, scratch_type(c), "try_scratch"))
+		contribute_provider_types(k, pkg)
 	case STD_UNSAFE:
 		// Every one of these makes a lost capability visible at the call site — the
 		// whole reason they are spelled `unsafe.` rather than applied implicitly.
@@ -228,7 +224,6 @@ contribute_builtin :: proc(c: ^Compiler, pkg: ^Package, name: string, kind: Buil
 // A type the compiler owns, under this package's spelling for it. An unresolved
 // one binds nothing: a name for `<invalid>` reports as a broken member of a type
 // that exists, when the truth is that the type never arrived.
-@(private = "file")
 contribute_type :: proc(c: ^Compiler, pkg: ^Package, name: string, type: Type_Id) {
 	if type == INVALID_TYPE {
 		return
@@ -245,7 +240,6 @@ contribute_type :: proc(c: ^Compiler, pkg: ^Package, name: string, type: Type_Id
 }
 
 // Binds an existing symbol, reached as `pkg.name`, so it must be public.
-@(private = "file")
 contribute_symbol :: proc(c: ^Compiler, pkg: ^Package, name: string, symbol_id: Symbol_Id) {
 	symbol := symbol_of(c, symbol_id)
 	if symbol == nil {

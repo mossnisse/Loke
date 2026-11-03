@@ -188,19 +188,22 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	if existing, found := c.iterator_types[subject]; found {
 		return existing
 	}
-	element := map_entry_type(c, subject)
-	name := intern_identifier(c, fmt.aprintf("Map_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_view = true})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE, public = true)
-	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR, public = true)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.key = subject // `next` needs the map's operation table
-		info.backend_label = fmt.aprintf("Map_Iterator.%s", type_name(c, subject), allocator = c.semantic_allocator)
-	}
+	type := new_map_cursor_type(c, subject, map_entry_type(c, subject), "Map_Iterator", public = true)
 	c.iterator_types[subject] = type
 	return type
+}
+
+// `{ table, cursor }` over `subject`, named `label`. `key` is there because `next`
+// needs the map's operation table.
+new_map_cursor_type :: proc(c: ^Compiler, subject, element: Type_Id, label: string, public := false) -> Type_Id {
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE, public = public)
+	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR, public = public)
+	return new_type(c, Type_Info{
+		kind = .Struct, element = element, key = subject, is_view = true, fields = fields,
+		name = intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, subject), allocator = c.semantic_allocator)),
+		backend_label = fmt.aprintf("%s.%s", label, type_name(c, subject), allocator = c.semantic_allocator),
+	})
 }
 
 // --------------------------------------------------------- container views --
@@ -251,17 +254,7 @@ map_view_iterator_type :: proc(c: ^Compiler, view: Type_Id, label: string) -> Ty
 		return existing
 	}
 	info := type_of(c, view)
-	subject := info.key
-	name := intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, subject), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = info.element, is_view = true})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
-	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
-	if made := type_of(c, type); made != nil {
-		made.fields = fields
-		made.key = subject
-		made.backend_label = fmt.aprintf("%s.%s", label, type_name(c, subject), allocator = c.semantic_allocator)
-	}
+	type := new_map_cursor_type(c, info.key, info.element, label)
 	c.iterator_types[view] = type
 	return type
 }
@@ -641,10 +634,6 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 	switch s.kind {
 	case .Map:
 		// Keys stay immutable; `place_loop_yield` lends only the value mutably.
-		if s.indexed {
-			errorf(k.c, ref_span(s), "L0457", "`indexed()` over a map entry is not a mutable traversal; count with a variable")
-			return FLOWS
-		}
 		if !expr_base(s.iterable).assignable {
 			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
 			return FLOWS
@@ -747,26 +736,8 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		}
 		iter = reverse
 	}
-	// `next`'s `Item` says how the element is handed over.
-	yield := iterator_yield(k, iterator, element)
-	item := iterator_item_type(k, iterator, element, yield, expr_span(s.iterable))
-	if item == INVALID_TYPE {
-		return FLOWS
-	}
-	next := iteration_member(k, iterator, "next")
-	next_sym := symbol_of(k.c, next)
-	if !iteration_proc_matches(k, next_sym, iterator, .Inout, option_type(k, item)) {
-		errorf(
-			k.c,
-			expr_span(s.iterable),
-			"L0456",
-			"`%s` needs `next :: proc(self: inout %s) -> Option(%s)`",
-			type_name(k.c, iterator),
-			type_name(k.c, iterator),
-			type_name(k.c, item),
-		)
-		// `next` may exist but be excluded by a failed `where`.
-		note_excluded_member(k, iterator, "next")
+	next, yield, item, usable := foreach_next_member(k, s, iterator, element, .Owned)
+	if !usable {
 		return FLOWS
 	}
 
@@ -791,6 +762,33 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	enroll_synth(k.c, iter)
 	enroll_synth(k.c, next)
 	return check_foreach_body(k, s, effective_yield)
+}
+
+// The iterator's `next`, how it yields against `element`, and what it hands back,
+// reporting a `next` the protocol cannot call.
+foreach_next_member :: proc(k: ^Checker, s: ^Stmt_Foreach, iterator, element: Type_Id, fallback: Yield_Kind) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
+	// `next`'s `Item` says how the element is handed over.
+	yield = iterator_yield(k, iterator, element, fallback)
+	item = iterator_item_type(k, iterator, element, yield, expr_span(s.iterable))
+	if item == INVALID_TYPE {
+		return
+	}
+	next = iteration_member(k, iterator, "next")
+	if !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
+		errorf(
+			k.c,
+			expr_span(s.iterable),
+			"L0456",
+			"`%s` needs `next :: proc(self: inout %s) -> Option(%s)`",
+			type_name(k.c, iterator),
+			type_name(k.c, iterator),
+			type_name(k.c, item),
+		)
+		// `next` may exist but be excluded by a failed `where`.
+		note_excluded_member(k, iterator, "next")
+		return
+	}
+	return next, yield, item, true
 }
 
 // design.md "Element bindings": the one binder for every value loop. One name

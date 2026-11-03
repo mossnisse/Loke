@@ -87,9 +87,6 @@ bind_intrinsic_impl :: proc(k: ^Checker, pkg: ^Package, file: ^File, v: ^Item_Im
 		)
 		return
 	}
-	if type_is_region_provider(k.c, subject) {
-		ensure_provider_members(k, subject)
-	}
 	for member in v.members {
 		d, is_decl := member.(^Decl)
 		if !is_decl || !decl_is_intrinsic(d) {
@@ -304,7 +301,6 @@ report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 		if sym.kind != .Type || !type_is_region_provider(c, sym.type) {
 			continue
 		}
-		ensure_provider_members(k, sym.type)
 		info := type_of(c, sym.type)
 		for member in info.members {
 			if found := symbol_of(c, member); found != nil && found.synth == .Provider_Op && !described(pkg, member) {
@@ -442,9 +438,7 @@ check_intrinsic_signature :: proc(k: ^Checker, d: ^Decl, signature: ^Type_Proc, 
 			if !receiver && written != "" && flat < len(sym.param_symbols) {
 				written_id := intern_identifier(c, written)
 				if existing := symbol_of(c, sym.param_symbols[flat]); existing == nil {
-					sym.param_symbols[flat] = new_symbol(c, Symbol {
-						name = written_id, kind = .Parameter, type = sym.params[flat], mode = modes[flat],
-					})
+					sym.param_symbols[flat] = new_parameter(c, written_id, sym.params[flat], modes[flat])
 				} else if existing.name != written_id {
 					errorf(
 						c, parameter.span, "L0736", "the compiler supplies this parameter of `%s` as `%s`",

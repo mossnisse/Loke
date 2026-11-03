@@ -2313,9 +2313,6 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if !require_nested_map_key_policies(k, type, span) {
 		return false
 	}
-	if type_is_region_provider(k.c, type) {
-		ensure_provider_members(k, type_underlying(k.c, type))
-	}
 	return true
 }
 

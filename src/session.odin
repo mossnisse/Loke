@@ -67,6 +67,13 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 	return s.configured
 }
 
+// Makes a checked program ready for emission. Each step is idempotent.
+finalize_semantics :: proc(c: ^Compiler) {
+	freeze_typeids(c)
+	discover_formatters(c)
+	_ = finalize_lifecycle_operations(c)
+}
+
 // External input changes invalidate the whole checked result. Keep copied
 // configuration, overlays, and package checkpoints: an incremental check re-reads
 // every input before reusing one, and `check_session` still rebuilds everything

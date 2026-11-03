@@ -131,7 +131,6 @@ Contribution :: enum u8 {
 	// `xs.append(1)` an ordinary method call.
 	Container,
 	// The constructors and handle of a local region provider (`src/region.odin`).
-	Provider,
 }
 
 Type_Info :: struct {
@@ -950,6 +949,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.capture_records = make(map[Type_Id]^Expr_Proc, c.semantic_allocator)
 	c.capture_placeholders = make(map[Symbol_Id]Capture_Placeholder, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
+	c.provider_carriers = make(map[Type_Id]bool, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
 	c.variant_constructors = make(map[Variant_Key]Symbol_Id, c.semantic_allocator)
@@ -1104,6 +1104,10 @@ new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -
 		owner_type  = owner,
 		public      = true,
 	})
+}
+
+new_parameter :: proc(c: ^Compiler, name: Identifier_Id, type: Type_Id, mode: Param_Mode) -> Symbol_Id {
+	return new_symbol(c, Symbol{name = name, kind = .Parameter, type = type, mode = mode})
 }
 
 synth_proc :: proc(

@@ -1,6 +1,7 @@
 // Session-owned unsaved .loke files, consumed by ordinary source/package loading.
 package lokec
 
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
@@ -56,7 +57,7 @@ compiler_overlays :: proc(c: ^Compiler) -> map[string]Source_Overlay {
 // disk, including its parent directories. Package discovery still loads only
 // direct children.
 is_source_directory :: proc(c: ^Compiler, path: string) -> bool {
-	if is_directory(path) { return true }
+	if os.is_dir(path) { return true }
 	prefix := strings.concatenate({strings.trim_right(dir_key(canonical_dir(path)), "/"), "/"}, context.temp_allocator)
 	for key in compiler_overlays(c) {
 		if strings.has_prefix(key, prefix) { return true }

@@ -880,8 +880,9 @@ main :: proc() {}`) { return }
 	halves := normalization_decl(t, &p, graph.literal, "halves")
 	through := normalization_decl(t, &p, graph.literal, "through")
 	if named == nil || halves == nil || through == nil { return }
-	call := prov_input_call(graph, named.values[0].(^Expr_Call))
-	testing.expect(t, len(call.order) == 2 && call.order[0] == 1 && call.order[1] == 0, "named arguments lost their written order")
+	named_call := named.values[0].(^Expr_Call)
+	call := prov_input_call(graph, named_call)
+	testing.expect(t, call_slot_at(named_call, 0) == 1 && call_slot_at(named_call, 1) == 0, "named arguments lost their written order")
 	testing.expect(t, len(call.arguments) == 2 && call.arguments[0].type == TYPE_INT, "checked parameter metadata was reconstructed incorrectly")
 	testing.expect(t, call.callee == 0, "a call to a named procedure recorded a callee value")
 	indirect_call := through.values[0].(^Expr_Call)

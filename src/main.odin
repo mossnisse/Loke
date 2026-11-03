@@ -208,7 +208,7 @@ run_action :: proc(s: ^Compilation_Session, opts: ^Options) -> int {
 	case .Parse_Only, .Dump_Ast, .Dump_Tokens:
 		return run_syntax_stage(c, opts)
 	case .Api, .Api_Check:
-		if !is_directory(opts.input) {
+		if !os.is_dir(opts.input) {
 			fmt.eprintfln("error: %s needs a directory input", ACTION_FLAGS[opts.action])
 			return 2
 		}
@@ -242,7 +242,7 @@ run_action :: proc(s: ^Compilation_Session, opts: ^Options) -> int {
 
 @(private = "file")
 run_syntax_stage :: proc(c: ^Compiler, opts: ^Options) -> int {
-	if is_directory(opts.input) {
+	if os.is_dir(opts.input) {
 		fmt.eprintfln("error: %s needs a file input", ACTION_FLAGS[opts.action])
 		return 2
 	}
@@ -389,7 +389,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 // and a bare volume name no component until resolved, and a root has none.
 default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	stem := strings.trim_suffix(input, filepath.ext(input))
-	if is_directory(input) {
+	if os.is_dir(input) {
 		stem = strings.trim_right(input, "/\\")
 		base := filepath.base(stem)
 		if stem == "" || base == "." || base == ".." || stem == filepath.volume_name(input) {

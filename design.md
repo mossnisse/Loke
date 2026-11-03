@@ -9555,7 +9555,10 @@ so the allocator may not be reset while either kind of handle is live, and a
 handle may not escape a local allocator's lifetime. A payload moved into shared
 storage keeps its owner regions too; a cloned payload follows the copy rule
 under [Allocator regions and region
-provenance](#allocator-regions-and-region-provenance).
+provenance](#allocator-regions-and-region-provenance). A [provider](#allocators)
+in the payload, or a handle made from one, is treated as ending with each strong
+handle that holds it, since any of them may be the last, so an owner backed by
+it may not outlive any such handle.
 
 Construction uses `mem.default_allocator()` unless an `allocator` argument
 selects another. Use `try_shared` to handle failure. The shared allocation

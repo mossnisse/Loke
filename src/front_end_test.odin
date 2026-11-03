@@ -47,6 +47,27 @@ main_body :: proc(f: ^File) -> ^Block {
 // The bootstrap instantiates `Result(Unit, Allocator_Error)`.
 BOOTSTRAP_INSTANCES :: 1
 
+// Bootstraps direct checker entry points that bypass `compile_program`.
+ensure_runtime_bootstrap :: proc(k: ^Checker) {
+	if k.c.bootstrap_ready {
+		return
+	}
+	init_semantic_stores(k.c)
+	if _, seeded := k.c.collections["base"]; !seeded {
+		// Test binaries need the working-directory fallback.
+		root := install_component("base")
+		if root == "" || !os.is_dir(strings.concatenate({root, "/runtime"}, context.temp_allocator)) {
+			root = "base"
+		}
+		k.c.collections["base"] = strings.clone(root, k.c.semantic_allocator)
+	}
+	id, loaded := load_runtime_bootstrap(k.c)
+	if !loaded {
+		return
+	}
+	prepare_package(k, id)
+}
+
 // The single-package half of `compile_program`, without `when` discovery.
 check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	k := Checker{c = c}

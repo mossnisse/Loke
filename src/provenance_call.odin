@@ -1,17 +1,6 @@
-// Checked call inputs. Evaluation order and parameter order are separate;
-// summaries and evaluated operand facts never belong to this description.
+// Checked call inputs, and what a compiler-known callee and each argument are to a
+// call.
 package lokec
-
-import "core:mem"
-import "core:slice"
-
-Prov_Synthetic_Call_Key :: struct {
-	callee: Symbol_Id,
-	type: Type_Id,
-	span: Span,
-	expansion: Defer_Expansion,
-	indexes: bool,
-}
 
 Prov_Call_Argument :: struct {
 	type: Type_Id,
@@ -20,11 +9,9 @@ Prov_Call_Argument :: struct {
 }
 
 Prov_Call_Input :: struct {
-	signature: Type_Id,
 	result_inout: bool,
 	writes_facts: bool,
 	arguments: []Prov_Call_Argument,
-	order: []int,
 	receiver: Param_Mode,
 	has_receiver: bool,
 	container: Container_Op,
@@ -33,63 +20,6 @@ Prov_Call_Input :: struct {
 	// The procedure value a call through one evaluates before its arguments;
 	// zero for a call to a named procedure or method.
 	callee: Value_Id,
-}
-
-// What a container operation does to provenance that its signature does not say.
-Container_Op_Effect :: enum {
-	// Its arguments land in the receiver's content.
-	Stores_Content,
-	// A provider moved into it is stored there and carries its region along.
-	Stores_Provider,
-	// It may drop a provider the receiver holds.
-	Drops_Provider,
-	// It may allocate, resize, or free storage, or drop elements that own storage.
-	Allocates,
-	// It leaves the receiver's content empty.
-	Empties,
-	// It reorders the elements in place, storing none.
-	Permutes,
-	// A carrier in one element may end up in another.
-	Moves_Elements,
-	// It returns what an element held, not a borrow of the container.
-	Removes_Element,
-	// design.md "Iteration adapters": a map view read-borrows the map.
-	Returns_View,
-	// standard-library.md "Splitting a mutable slice", "Chunks of a mutable slice": the
-	// result views what the receiver views, so the receiver is lent as a mutable
-	// carrier argument is.
-	Lends_Receiver,
-}
-
-// One row per operation, and not `#partial`, so a new operation has to say.
-@(rodata)
-CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
-	.None               = {},
-	.Append             = {.Stores_Content, .Stores_Provider, .Allocates},
-	.Insert             = {.Stores_Content, .Stores_Provider, .Allocates, .Moves_Elements},
-	.Pop                = {.Drops_Provider, .Removes_Element},
-	.Remove             = {.Drops_Provider, .Moves_Elements, .Removes_Element},
-	.Remove_Unordered   = {.Drops_Provider, .Moves_Elements, .Removes_Element},
-	.Clear              = {.Drops_Provider, .Allocates, .Empties},
-	.Resize             = {.Drops_Provider, .Allocates},
-	.Reserve            = {.Allocates},
-	.Shrink             = {.Allocates},
-	.Sort               = {.Permutes, .Moves_Elements},
-	.Reverse_Sort       = {.Permutes, .Moves_Elements},
-	.Swap               = {.Permutes, .Moves_Elements},
-	.Split_At_Mut       = {.Lends_Receiver},
-	.Chunks_Mut         = {.Lends_Receiver},
-	.Map_Find           = {},
-	.Map_Find_Or_Insert = {.Stores_Content, .Allocates},
-	.Map_Lookup_Value   = {},
-	.Map_Try_Insert     = {.Stores_Content, .Stores_Provider, .Allocates},
-	.Map_Remove         = {.Drops_Provider, .Allocates, .Removes_Element},
-	.Map_Clear          = {.Drops_Provider, .Allocates, .Empties},
-	.Map_Reserve        = {.Allocates},
-	.Map_Shrink         = {.Allocates},
-	.Map_Entries        = {.Returns_View},
-	.Map_Keys           = {.Returns_View},
-	.Map_Values         = {.Returns_View},
 }
 
 // What a compiler-known procedure, which has no body to summarize, does with
@@ -132,10 +62,13 @@ prov_receiver_contract :: proc(c: ^Compiler, callee: ^Symbol) -> Prov_Receiver_C
 	case .Clone, .Try_Clone:
 		// design.md "Standard customization procedures": a clone is
 		// ownership-recursive, so a generated one's result carries what its receiver
-		// carries. A `hook(copy)` taking `self: ^` is the exception, since its body
-		// could hand a loan of the receiver out.
-		hook := symbol_of(c, lifecycle_of(c, callee.owner_type).custom_try_clone)
-		return .Copies if hook == nil || !param_mode_is_pointer(symbol_param_mode(c, hook, 0)) else .Unwritten
+		// carries. A `hook(copy)` taking `self: ^` is the exception, its own or that of
+		// anything the receiver owns, since its body could hand a loan of its receiver
+		// out.
+		for hook in type_copy_hooks(c, callee.owner_type) {
+			if param_mode_is_pointer(symbol_param_mode(c, symbol_of(c, hook), 0)) { return .Unwritten }
+		}
+		return .Copies
 	}
 	return .Unwritten
 }
@@ -155,7 +88,6 @@ Prov_Argument_Kind :: enum u8 {
 	// An `inout` argument naming a root's place, or one reached through carriers.
 	Inout_Place,
 	Inout_Through,
-	// The receiver of a map's `lookup_value`.
 	Lookup_Receiver,
 	// A slice local of plain data given to what only reads its receiver.
 	Only_Read_Slice,
@@ -185,7 +117,8 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 	if argument == nil {
 		return .Absent
 	}
-	inout := index < len(input.arguments) && input.arguments[index].mode == .Inout
+	part := input.arguments[index]
+	inout := part.mode == .Inout
 	if index == 0 && input.receiver == .Move {
 		return .Moved_Receiver
 	}
@@ -202,14 +135,16 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		if _, _, place := prov_place_of(graph, argument); place {
 			return .Inout_Place
 		}
-		if len(prov_place_hops(graph, argument)) > 0 {
+		if _, through := prov_input_place(graph, argument).base.(Value_Id); through {
 			return .Inout_Through
 		}
 	}
 	if index == 0 && input.container == .Map_Lookup_Value {
 		return .Lookup_Receiver
 	}
-	if prov_argument_borrows_caller(graph, v, index, input.receiver, input.has_receiver) {
+	// A receiver answers with its declared mode: a provider handle takes a managed
+	// receiver by value.
+	if index == 0 && input.has_receiver ? input.receiver == .Borrow : param_borrows_caller_storage(c, part.mode, part.type) {
 		#partial switch prov_receiver_contract(c, symbol_of(c, v.resolution.chosen_overload)) {
 		case .Only_Reads:
 			if _, plain := prov_plain_slice_local(graph, argument); plain {
@@ -224,7 +159,7 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		}
 		return .Borrowed
 	}
-	if !(index == 0 && input.has_receiver) && prov_argument_only_read(graph, argument, prov_parameter_type(graph, v, index)) {
+	if !(index == 0 && input.has_receiver) && prov_argument_only_read(graph, argument, part.type) {
 		return .Read_Only
 	}
 	return .Value
@@ -238,16 +173,15 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 	if input, found := graph.input.calls[key]; found { return input }
 	prov_writable_input(graph)
 	c := graph.k.c
-	input := Prov_Call_Input{signature = call_proc_type(c, call)}
+	input: Prov_Call_Input
 	if member := symbol_of(c, call.resolution.chosen_overload); member != nil && member.has_receiver {
 		input.receiver, input.has_receiver = member.receiver, true
 		if member.synth == .Container_Op { input.container = member.container_op }
 	}
-	info := underlying_info(c, input.signature)
+	info := underlying_info(c, call_proc_type(c, call))
 	if info != nil { input.result_inout = info.result_inout }
 	if call_through_value(c, call) { input.callee = prov_input_value(graph, call.callee) }
 	input.arguments = make([]Prov_Call_Argument, len(call.bound), graph.alloc)
-	input.order = make([]int, len(call.bound), graph.alloc)
 	for argument, index in call.bound {
 		part: Prov_Call_Argument
 		// Freeze region-carrying operands before replay reads their facts. Scalar
@@ -264,18 +198,10 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 			                     carrier_is_mutable(c, part.type) || prov_type_reaches_mutable(c, part.type)
 		}
 		input.arguments[index] = part
-		input.order[index] = call_slot_at(call, index)
 	}
 	if .Lends_Receiver in CONTAINER_OP_EFFECTS[input.container] && len(call.bound) > 0 && call.bound[0] != nil {
 		input.capture = prov_input_capture(graph, call, call.bound[0])
 	}
 	graph.input.calls[key] = input
 	return input
-}
-
-prov_clone_call_input :: proc(input: Prov_Call_Input, allocator: mem.Allocator) -> Prov_Call_Input {
-	out := input
-	out.arguments = slice.clone(input.arguments, allocator)
-	out.order = slice.clone(input.order, allocator)
-	return out
 }

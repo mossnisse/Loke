@@ -1,0 +1,17 @@
+// design.md "Map container operations": `try_insert` is the call form of
+// `m[key] = elem`, which drops what the key held, and with it a provider's region.
+package main;
+
+import "core:mem";
+
+Holder :: struct { arena: mem.Arena }
+
+main :: proc() {
+    all: map[int]Holder = {};
+    arena := mem.Arena.init();
+    xs: [dynamic]int via arena.allocator() = {};
+    xs.append(11);
+    _ = all.try_insert(1, Holder{move(arena)});
+    _ = all.try_insert(1, Holder{mem.Arena.init()});
+    _ = xs[0];
+}

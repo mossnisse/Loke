@@ -421,7 +421,6 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 	ensure_callable_result_member(k, type, name)
 	ensure_lifecycle_members(k, type, name)
 	ensure_container_members(k, type)
-	ensure_provider_members(k, type)
 }
 
 // Every visible member of `type` named `name`, with groups expanded for the

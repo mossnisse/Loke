@@ -59,6 +59,14 @@ Prov_Value :: struct {
 	unknown_alias: bool,
 }
 
+Prov_Synthetic_Call_Key :: struct {
+	callee: Symbol_Id,
+	type: Type_Id,
+	span: Span,
+	expansion: Defer_Expansion,
+	indexes: bool,
+}
+
 Prov_Input_Key :: struct {
 	node: ^Expr_Base,
 	repr: Prov_Repr,
@@ -129,7 +137,7 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 	}
 	for id, transfer in seed.transfers { input.transfers[id] = prov_clone_transfer(transfer, allocator) }
 	for type, operation in seed.copy_operations { input.copy_operations[type] = operation }
-	for key, input_call in seed.calls { input.calls[key] = prov_clone_call_input(input_call, allocator) }
+	for key, input_call in seed.calls { input.calls[key] = input_call }
 	for key, call in seed.synthetic_calls { input.synthetic_calls[key] = call }
 	for key, entry in seed.map_key_entries { input.map_key_entries[strings.clone(key, allocator)] = entry }
 	return input

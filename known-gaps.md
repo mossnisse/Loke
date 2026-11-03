@@ -508,3 +508,33 @@ main :: proc() {
     a64 := mem.Arena.init();
 }
 ```
+
+### An owner built through a pointer a call returned has no known provider
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+has an owner end with its provider, but `prov_handle_region` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) follows a carrier only when it is a
+direct `held.get()`, or a local pointer whose written targets name the provider. A pointer
+stored from a call names no target, so the region is unknown, which a provider's end does
+not check against a returned value. This compiles, and the result is read from freed memory:
+
+```loke
+package main;
+import "core:mem";
+stored :: proc() -> [dynamic]int {
+    held := shared(mem.Arena.init());
+    q := held.get();
+    inner: [dynamic]int via q.allocator() = {};
+    inner.append(1);
+    return inner;
+}
+main :: proc() {
+    r := stored();
+    _ = r[0];
+}
+```
+
+`q := pick(&arena)`, with `pick` returning its `^mem.Arena` parameter, does the same. Treating
+every unknown region as local at a return would reject a provider received as a parameter, so
+the fix is for a call's result to name what the call's result dependencies say it points at.
+Found on 2026-11-03 (P2).

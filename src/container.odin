@@ -153,6 +153,65 @@ Container_Op :: enum {
 	Map_Values,
 }
 
+// What a container operation does that its signature does not say, for provenance
+// and lowering.
+Container_Op_Effect :: enum {
+	// Its arguments land in the receiver's content.
+	Stores_Content,
+	// A provider moved into it is stored there and carries its region along.
+	Stores_Provider,
+	// It may drop a provider the receiver holds.
+	Drops_Provider,
+	// It may allocate, resize, or free storage, or drop elements that own storage.
+	Allocates,
+	Empties,
+	// It reorders the elements in place, storing none.
+	Permutes,
+	// A carrier in one element may end up in another.
+	Moves_Elements,
+	// It returns what an element held, not a borrow of the container.
+	Removes_Element,
+	// design.md "Iteration adapters": a map view read-borrows the map.
+	Returns_View,
+	// standard-library.md "Splitting a mutable slice", "Chunks of a mutable slice": the
+	// result views what the receiver views, so the receiver is lent as a mutable
+	// carrier argument is.
+	Lends_Receiver,
+}
+
+// One row per operation, and not `#partial`, so a new operation has to say.
+@(rodata)
+CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
+	.None               = {},
+	.Append             = {.Stores_Content, .Stores_Provider, .Allocates},
+	.Insert             = {.Stores_Content, .Stores_Provider, .Allocates, .Moves_Elements},
+	.Pop                = {.Drops_Provider, .Removes_Element},
+	.Remove             = {.Drops_Provider, .Moves_Elements, .Removes_Element},
+	.Remove_Unordered   = {.Drops_Provider, .Moves_Elements, .Removes_Element},
+	.Clear              = {.Drops_Provider, .Allocates, .Empties},
+	.Resize             = {.Drops_Provider, .Allocates},
+	.Reserve            = {.Allocates},
+	.Shrink             = {.Allocates},
+	.Sort               = {.Permutes, .Moves_Elements},
+	.Reverse_Sort       = {.Permutes, .Moves_Elements},
+	.Swap               = {.Permutes, .Moves_Elements},
+	.Split_At_Mut       = {.Lends_Receiver},
+	.Chunks_Mut         = {.Lends_Receiver},
+	.Map_Find           = {},
+	// No `.Stores_Provider`: a present key drops the element (design.md "Map
+	// container operations").
+	.Map_Find_Or_Insert = {.Stores_Content, .Allocates},
+	.Map_Lookup_Value   = {},
+	.Map_Try_Insert     = {.Stores_Content, .Stores_Provider, .Drops_Provider, .Allocates},
+	.Map_Remove         = {.Drops_Provider, .Allocates, .Removes_Element},
+	.Map_Clear          = {.Drops_Provider, .Allocates, .Empties},
+	.Map_Reserve        = {.Allocates},
+	.Map_Shrink         = {.Allocates},
+	.Map_Entries        = {.Returns_View},
+	.Map_Keys           = {.Returns_View},
+	.Map_Values         = {.Returns_View},
+}
+
 // design.md "Dynamic arrays": the operations are real members, so calls reuse
 // overload ranking, `..T` packing, defaults, and the `inout` receiver rule.
 ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
@@ -676,11 +735,7 @@ container_member :: proc(
 	// Named `key` for named-argument binding.
 	#partial switch op {
 	case .Map_Find, .Map_Find_Or_Insert, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove:
-		key_symbol := new_symbol(k.c, Symbol{
-			name = intern_identifier(k.c, "key"), kind = .Parameter,
-			type = params[1], mode = modes[1],
-		})
-		symbol_of(k.c, id).param_symbols[1] = key_symbol
+		symbol_of(k.c, id).param_symbols[1] = new_parameter(k.c, intern_identifier(k.c, "key"), params[1], modes[1])
 	}
 	return id
 }

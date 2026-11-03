@@ -1313,8 +1313,9 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	if .Drops_Provider in CONTAINER_OP_EFFECTS[sym.container_op] {
-		provider_place_end(graph, v.bound[0], v, v.span, "removing", "from")
-		return
+		// `try_insert` replaces an entry where the key is present.
+		stores := .Stores_Provider in CONTAINER_OP_EFFECTS[sym.container_op]
+		provider_place_end(graph, v.bound[0], v, v.span, stores ? "replacing an entry" : "removing", stores ? "of" : "from")
 	}
 	root := provider_place_root(graph, v.bound[0])
 	if root != INVALID_SYMBOL && .Stores_Provider in CONTAINER_OP_EFFECTS[sym.container_op] && graph.mode != .Lifecycle {

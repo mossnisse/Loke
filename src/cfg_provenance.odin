@@ -2690,7 +2690,9 @@ prov_reads_as_place :: proc(graph: ^Flow_Graph, argument: Expr) -> bool {
 		return true
 	}
 	_, _, place := prov_place_of(graph, argument)
-	return place || prov_reads_plainly_through(graph, argument) && len(prov_place_hops(graph, argument)) > 0
+	if place { return true }
+	_, through := prov_input_place(graph, argument).base.(Value_Id)
+	return through && prov_reads_plainly_through(graph, argument)
 }
 
 // A carrier place passed to a parameter that can write through nothing it
@@ -4489,7 +4491,7 @@ prov_provider_positions :: proc(graph: ^Flow_Graph, type: Type_Id, prefix: []Pro
 		return
 	}
 	info := underlying_info(c, type)
-	if type_is_region_provider(c, type) || info == nil || info.kind != .Struct || depth >= CARRIER_DEPTH {
+	if type_is_region_provider(c, type) || info == nil || info.kind != .Struct || type_is_shared_handle(c, type) || depth >= CARRIER_DEPTH {
 		append(out, Provider_Path{key = prefix})
 		return
 	}
@@ -4889,27 +4891,58 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id
 	if call_provider_op(graph.k.c, v) != .Handle || len(v.bound) == 0 {
 		return Region_Set{}, false
 	}
-	receiver := prov_value(graph, receiver)
+	id := receiver
+	receiver := prov_value(graph, id)
 	ident, is_ident := receiver.form.(Prov_Form_Symbol)
 	if !is_ident && receiver.temporary {
 		return prov_temp_provider_region(graph, v), true
 	}
-	if !is_ident {
-		// A provider inside a local record or container: the token of its position.
-		if root, path, ok := prov_root_place(graph, receiver.place); ok {
-			if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
-				return prov_provider_region_at(graph, descriptor.symbol, path), true
-			}
+	if is_ident {
+		if set, found := graph.region_of[ident.symbol]; found {
+			return set, true
 		}
-		set := prov_empty_region(graph)
-		set.unknown = true
-		return set, true
+	} else if root, path, ok := prov_root_place(graph, receiver.place); ok {
+		// A provider inside a local record or container: the token of its position.
+		if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
+			return prov_provider_region_at(graph, descriptor.symbol, path), true
+		}
 	}
-	if set, found := graph.region_of[ident.symbol]; found {
+	if set, known := prov_provider_through_carrier(graph, id); known {
 		return set, true
 	}
 	set := prov_empty_region(graph)
 	set.unknown = true
+	return set, true
+}
+
+// A provider reached through a carrier, when that names local ones: what a local
+// pointer points at, or the handle whose `get()` lends it, which ends the provider
+// (design.md "Shared ownership"). A received pointer names none.
+@(private = "file")
+prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Region_Set, bool) {
+	value := prov_value(graph, id)
+	carrier := id
+	if base, indirect := value.place.base.(Value_Id); indirect { carrier = base }
+	if form, is_call := prov_value(graph, carrier).form.(Prov_Form_Call); is_call && prov_receiver_is_shared_handle(graph, form.call) {
+		handle := prov_value(graph, prov_receiver_value(prov_bound_values(form)))
+		if root, path, ok := prov_root_place(graph, handle.place); ok {
+			if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
+				return prov_provider_region_at(graph, descriptor.symbol, path), true
+			}
+		}
+		return {}, false
+	}
+	if !type_is_pointer(graph.k.c, prov_value(graph, carrier).type) { return {}, false }
+	aliases := prov_value_aliases(graph, carrier)
+	if len(aliases) == 0 { return {}, false }
+	set := prov_empty_region(graph)
+	for alias in aliases {
+		if alias.target == 0 { return {}, false }
+		descriptor := graph.roots[int(prov_root_for_storage(graph, alias.target))]
+		holder := symbol_of(graph.k.c, descriptor.symbol)
+		if descriptor.kind != .Local || holder == nil || holder.kind != .Var || !type_carries_provider(graph.k.c, holder.type) { return {}, false }
+		region_merge(&set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
+	}
 	return set, true
 }
 
@@ -6292,13 +6325,14 @@ prov_forget_storage_aliases :: proc(
 // the arguments they came from. With no body to summarize, every allocator or
 // moved-owner argument may land in every such argument.
 @(private)
-prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id, proc_type: Type_Id) {
+prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
 	form := prov_value(graph, id).form.(Prov_Form_Call)
 	v, bound := form.call, prov_bound_values(form)
 	recorded := prov_effect_active(graph) && prov_input_call(graph, v).writes_facts
 	if recorded { prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, id), .Write}) }
 	defer prov_effect_end(graph, recorded)
 	c := graph.k.c
+	proc_type := call_proc_type(c, v)
 	info := underlying_info(c, proc_type)
 	if info == nil {
 		return
@@ -7929,27 +7963,6 @@ prov_with_content :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int
 	return prov_join(graph, slots, prov_load_deep(graph, slots, span))
 }
 
-// Whether an argument names the caller's storage. A receiver answers with its
-// declared mode: a provider handle takes a managed receiver by value.
-@(private)
-prov_argument_borrows_caller :: proc(
-	graph: ^Flow_Graph,
-	v: ^Expr_Call,
-	index: int,
-	receiver: Param_Mode,
-	has_receiver: bool,
-) -> bool {
-	if index == 0 && has_receiver {
-		return receiver == .Borrow
-	}
-	c := graph.k.c
-	return param_borrows_caller_storage(
-		c,
-		proc_parameter_mode(c, call_proc_type(graph.k.c, v), index),
-		prov_parameter_type(graph, v, index),
-	)
-}
-
 // A call dispatching through the `dyn` view it takes as its receiver: a slot
 // call, or a view's forwarding member.
 @(private)
@@ -8120,8 +8133,9 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	// borrows before a later one invalidates.
 	split_receiver: []int
 	split_value: Value_Id
-	for index in input.order {
-		if index == 0 && .Lends_Receiver in CONTAINER_OP_EFFECTS[container_op] && v.bound[0] != nil {
+	for step in 0 ..< len(v.bound) {
+		index := call_slot_at(v, step)
+		if index == 0 && input.capture != 0 {
 			split_receiver = walk_flow_expr(graph, v.bound[0])
 			split_value = input.capture
 			graph.captured_values[split_value] = prov_snapshot(graph, split_receiver, expr_span(v.bound[0]))
@@ -8130,7 +8144,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		actuals[index] = prov_call_argument(graph, v, index, input, &borrowed)
 		prov_hold_owner(graph, v.bound[index])
 	}
-	if .Lends_Receiver in CONTAINER_OP_EFFECTS[container_op] && len(v.bound) > 0 && v.bound[0] != nil {
+	if input.capture != 0 {
 		actuals[0] = prov_lend_split_receiver(graph, split_receiver, graph.captured_values[split_value], expr_span(v.bound[0]))
 		borrowed = prov_join(graph, borrowed, actuals[0])
 	}
@@ -9098,7 +9112,7 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 	if info == nil {
 		return
 	}
-	prov_call_written_regions(graph, prov_input_value(graph, v), proc_type)
+	prov_call_written_regions(graph, prov_input_value(graph, v))
 	prov_call_thread_local_writes(graph, v, actuals)
 	destinations: []int
 	for held, index in actuals {

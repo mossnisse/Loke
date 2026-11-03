@@ -176,21 +176,18 @@ new_wrapping_iterator :: proc(k: ^Checker, kind: Adapter_Kind, source, iterator,
 // A type whose `iter_mut` takes no `inout` receiver: any value of it walks
 // mutably (design.md "By-reference iteration").
 is_mutable_view :: proc(k: ^Checker, type: Type_Id) -> bool {
-	iterator := associated_type_of(k, type, "Mut_Iterator")
-	if iterator == INVALID_TYPE { return false }
-	receiver, found := mutable_iteration_receiver(k, iteration_member(k, type, "iter_mut"), type, iterator)
-	return found && receiver != .Inout
+	protocol, found := mutable_protocol(k, type)
+	return found && protocol.receiver != .Inout
 }
 
 // design.md "Iteration adapters": over a mutable view, an adapter walks its
 // source through the source's own `iter_mut`.
 @(private = "file")
 add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Adapter_Kind) {
-	if !is_mutable_view(k, source) { return }
+	protocol, found := mutable_protocol(k, source)
+	if !found || protocol.receiver == .Inout { return }
 	c := k.c
-	element := associated_type_of(k, source, "Element")
-	iterator := associated_type_of(k, source, "Mut_Iterator")
-	iter := iteration_member(k, source, "iter_mut")
+	element, iterator, iter := protocol.element, protocol.iterator, protocol.iter
 	next, _, item, usable := adapter_source_next(k, iterator, element, .Mutable)
 	if !usable { return }
 	if kind == .Reversed {

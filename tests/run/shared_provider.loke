@@ -1,0 +1,38 @@
+// design.md "Shared ownership": a provider may live in a shared payload, with owners
+// built from it that end before the handles do, and a `Weak` handle keeps no payload.
+// A provider only received through a pointer stays the caller's concern.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+through_param :: proc(p: ^mem.Arena) -> [dynamic]int {
+    scratch := mem.Scratch.init();
+    temp: [dynamic]int via scratch.allocator() = {};
+    temp.append(5);
+    inner: [dynamic]int via p.allocator() = {};
+    inner.append(temp[0]);
+    return inner;
+}
+
+main :: proc() {
+    arena := mem.Arena.init();
+    pointer := &arena;
+    local: [dynamic]int via pointer.allocator() = {};
+    local.append(4);
+    fmt.println(local[0]);
+    {
+        received := through_param(&arena);
+        fmt.println(received[0]);
+    }
+    held := shared(mem.Arena.init());
+    second := held;
+    weak := held.downgrade();
+    {
+        inner: [dynamic]int via second.get().allocator() = {};
+        inner.append(1);
+        fmt.println(inner[0]);
+    }
+    fmt.println(held.strong_count());
+    _ = weak;
+}
