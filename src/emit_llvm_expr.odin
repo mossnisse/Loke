@@ -608,7 +608,7 @@ text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
 // `text` as a literal `string_view`.
 @(private)
 text_view_constant :: proc(e: ^Emitter, text: string) -> string {
-	return text_constant(e, Const_Value{kind = .String, text = text}, false)
+	return text_constant(e, string_const(text), false)
 }
 
 // ------------------------------------------------------------------ places --

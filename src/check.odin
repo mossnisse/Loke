@@ -1643,7 +1643,11 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		// A fresh identity; a named one got its shell in `prepare_package`.
 		if value.denoted_type == INVALID_TYPE {
 			element := resolve_distinct_element(k, value)
-			value.denoted_type = new_type(k.c, Type_Info{kind = .Distinct, element = element})
+			value.denoted_type = new_type(k.c, Type_Info {
+				kind = .Distinct,
+				element = element,
+				site = Type_Site{lookup_package(k), value.span, k.scope},
+			})
 		}
 		return denote(&value.base, value.denoted_type)
 

@@ -96,7 +96,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		kind = .Struct, name = intern_identifier(c, fmt.tprintf("%s(%s)", label, type_name(c, source))),
 		key = source, element = element, is_view = true, adapter_kind = kind,
 		fields = fields, adapter_by_value = by_value, descriptor = type_is_compile_time_only(c, source),
-		contributed = {.Iteration},
+		contributed = {.Iteration}, site = Type_Site{pkg = key.pkg},
 		backend_label = fmt.aprintf("%s.%d.%d", label, source, key.pkg, allocator = c.semantic_allocator),
 	})
 	result_iterator := iterator
@@ -148,6 +148,7 @@ new_adapter_iterator :: proc(k: ^Checker, backend_label: string, kind: Adapter_K
 		name = intern_identifier(c, fmt.tprintf("%s_Iterator(%s)", kind == .Indexed ? "Indexed" : "Copied", type_name(c, iterator))),
 		key = iterator, element = element, adapter_kind = kind, fields = fields,
 		descriptor = type_is_compile_time_only(c, source), contributed = {.Iteration},
+		site = type_of(c, view).site,
 		backend_label = fmt.aprintf("%s.%d", backend_label, view, allocator = c.semantic_allocator),
 	})
 }

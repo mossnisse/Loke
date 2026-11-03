@@ -63,6 +63,10 @@ rune_const :: proc(value: Big_Int) -> Const_Value {
 	return Const_Value{kind = .Rune, integer = value}
 }
 
+string_const :: proc(text: string) -> Const_Value {
+	return Const_Value{kind = .String, text = text}
+}
+
 bool_const :: proc(value: bool) -> Const_Value {
 	return Const_Value{kind = .Boolean, boolean = value}
 }
@@ -164,7 +168,7 @@ fold_arithmetic :: proc(
 		return Const_Value{}, false
 	case a.kind == .String && b.kind == .String && op == .Plus:
 		joined, err := strings.concatenate({a.text, b.text}, value_allocator(c, allocator))
-		return Const_Value{kind = .String, text = joined}, err == nil
+		return string_const(joined), err == nil
 	case a.kind == .Float && b.kind == .Float:
 		if result, ok := fold_float(op, a.float, b.float); ok {
 			bits := type_is_untyped(c, type) ? 64 : u16(type_bits(c, type))

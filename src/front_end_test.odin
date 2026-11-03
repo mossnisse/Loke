@@ -288,6 +288,95 @@ applied_typeids_do_not_key_on_display_names :: proc(t: ^testing.T) {
 		typeid_sort_key(&c, applied(&c, dyn_name, interface_symbol, second, true)),
 		"two dyn views collided on their shared display name",
 	)
+	testing.expect(
+		t,
+		typeid_sort_key(&c, range_type(&c, first)) != typeid_sort_key(&c, range_type(&c, second)),
+		"two compiler-made types collided on their shared display name",
+	)
+}
+
+// Types that differ only in something the display leaves out, each pair requested
+// by one source. Equal keys would number them by request order.
+@(test)
+requested_types_have_their_own_typeid_keys :: proc(t: ^testing.T) {
+	sources := [?]string {
+		`package main;
+main :: proc() {
+	a := typeid_of(proc(@(escape=stored) p: ^int));
+	b := typeid_of(proc(p: ^int));
+	c := typeid_of(proc(@(cross_thread) f: proc()));
+	d := typeid_of(proc(f: proc()));
+}`,
+		`package main;
+main :: proc() {
+	a := typeid_of(distinct int);
+	b := typeid_of(distinct int);
+}`,
+		`package main;
+each :: proc($T: type) -> typeid { return typeid_of(distinct int); }
+main :: proc() {
+	a := each(int);
+	b := each(f64);
+}`,
+		`package main;
+f :: proc() -> typeid { Box :: struct($T: type) { value: T }; return typeid_of(Box(int)); }
+g :: proc() -> typeid { Box :: struct($T: type) { value: T }; return typeid_of(Box(int)); }
+main :: proc() {
+	a := f();
+	b := g();
+}`,
+		`package main;
+each :: proc($T: type) -> typeid { Box :: struct($U: type) { value: U }; return typeid_of(Box(int)); }
+main :: proc() {
+	a := each(int);
+	b := each(f64);
+}`,
+		`package main;
+R :: struct { x: int, y: f64 }
+main :: proc() {
+	foreach ($field in fields_of(R)) {
+		Local :: struct { value: int };
+		a := typeid_of(Local);
+		foreach ($inner in fields_of(R)) {
+			Nested :: struct { value: int };
+			b := typeid_of(Nested);
+		}
+	}
+}`,
+		`package main;
+Shape :: union { a: int, b: f64 }
+main :: proc() {
+	s: Shape = .a(1);
+	switch (s) {
+	case $variant(payload):
+		Local :: struct { value: int };
+		a := typeid_of(Local);
+	}
+}`,
+		// Each string holds what would end the other's first argument.
+		`package main;
+Pair :: struct($a: string_view, $b: string_view) {}
+main :: proc() {
+	a := typeid_of(Pair("x}:v{y", "z"));
+	b := typeid_of(Pair("x", "y}:v{z"));
+}`,
+	}
+	for source in sources {
+		p: Checked
+		check_source(&p, source)
+		defer destroy_checked(&p)
+		c := &p.c
+		if !testing.expectf(t, c.error_count == 0, "the probe source did not check: %s", source) {
+			continue
+		}
+		testing.expectf(t, len(c.typeid_order) >= 2, "too few types were requested: %s", source)
+		seen := make(map[string]bool, context.temp_allocator)
+		for type in c.typeid_order {
+			key := typeid_sort_key(c, type)
+			testing.expectf(t, !seen[key], "two types share the key %q: %s", key, source)
+			seen[key] = true
+		}
+	}
 }
 
 // A structural key wraps each nested type's own key in braces, so types that

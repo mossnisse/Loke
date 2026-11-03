@@ -1,0 +1,35 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// What a type's number depends on: its identity, never the order types were
+// declared or requested in. `typeid_identity_order_b` swaps both.
+T1 :: struct { value: int }
+T2 :: struct { value: int }
+Rec :: struct { id: typeid, count: int }
+Foo :: struct($v: Rec) { value: int }
+
+raw :: proc(id: typeid) -> i64 {
+	p := &id;
+	return (^i64)(rawptr(p))^;
+}
+
+local_in_f :: proc($T: type) -> typeid {
+	Box :: struct($U: type) { value: U };
+	return typeid_of(Box(int));
+}
+
+local_in_g :: proc($T: type) -> typeid {
+	Box :: struct($U: type) { value: U };
+	return typeid_of(Box(int));
+}
+
+main :: proc() {
+	f_box := local_in_f(int);
+	g_box := local_in_g(int);
+	escaping := typeid_of(proc(@(escape=stored) p: ^int));
+	plain := typeid_of(proc(p: ^int));
+	first := typeid_of(Foo(Rec{typeid_of(T1), 1}));
+	second := typeid_of(Foo(Rec{typeid_of(T2), 1}));
+	fmt.println(raw(f_box), raw(g_box));
+	fmt.println(raw(escaping), raw(plain));
+	fmt.println(raw(first), raw(second));
+}

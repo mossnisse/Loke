@@ -954,8 +954,8 @@ source_location_const :: proc(k: ^Checker, type: Type_Id, span: Span, procedure:
 		line, column = line_col(source, span.lo)
 	}
 	elements := make([]Const_Value, 4, k.c.semantic_allocator)
-	elements[0] = Const_Value{kind = .String, text = file}
-	elements[1] = Const_Value{kind = .String, text = procedure}
+	elements[0] = string_const(file)
+	elements[1] = string_const(procedure)
 	elements[2] = int_const(k.c, i64(line))
 	elements[3] = int_const(k.c, i64(column))
 	aggregate := new(Const_Aggregate, k.c.semantic_allocator)

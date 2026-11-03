@@ -136,6 +136,14 @@ Contribution :: enum u8 {
 	// The constructors and handle of a local region provider (`src/region.odin`).
 }
 
+// What tells apart two types that are alike in everything else: where one is
+// written, or for a type made per package, only `pkg`.
+Type_Site :: struct {
+	pkg:   Package_Id,
+	span:  Span,
+	scope: ^Scope,
+}
+
 Type_Info :: struct {
 	kind:       Type_Kind,
 	name:       Identifier_Id,
@@ -241,6 +249,10 @@ Type_Info :: struct {
 	// as `Range.int`; the emitter escapes and spells it. An instance is spelled
 	// from `instance_of` and `instance_args` instead.
 	backend_label: string,
+	// An in-place `distinct`, a fresh identity at each place and copy of its text,
+	// or an iteration adapter, made per package because its members are looked up
+	// from one.
+	site:          Type_Site,
 	// A `dyn Interface(args...)` type: the interface it erases behind, and the
 	// non-subject arguments of the application.
 	dyn_interface: Symbol_Id,
@@ -749,6 +761,9 @@ Scope :: struct {
 	// The generic instance whose bindings this scope holds, or nil. A type
 	// declared in one instance's body is told from another's by it.
 	instance:   ^Instance,
+	// Which copy of a static expansion or expanded case this scope holds, from 1,
+	// or 0. It tells a type declared in one copy from the others', as `instance` does.
+	expansion:  int,
 }
 
 // One resolved `import` edge, with the statement that wrote it: a cycle is

@@ -1456,6 +1456,13 @@ checklist.
   padding as a field, and a selection such as `Box(int).Inner` now reads `impl Box(int)`'s member
   when `impl Box(string)` declares one of the same name.
 - `-api` now shows a struct field written after `_`, as in `_, a: int`.
+- A `typeid` no longer depends on the order types were declared or requested in when two types differ
+  only in a procedure type's `@(escape=...)` or `@(cross_thread)`, in the package a `Range(T)` or
+  iterator's `T` comes from, in which procedure or expansion declares a local generic or a local type,
+  in where an in-place `distinct` is written, in a `typeid_of` inside a value argument, or in which
+  package an iteration adapter was made for.
+- `typeid_of(Nope)`, `fields_of(Nope)`, `enum_values_of(Nope)` and `variants_of(Nope)` report an
+  unknown name once, not again as `L0451` "needs a type", and `type_of([]Nope)` reports it once.
 - `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
   `<name>.layout.exe`. A bare output name, which every build without `-o` has, no longer fails it
   with `L0405`, and `-g` no longer writes a PDB for the probe.

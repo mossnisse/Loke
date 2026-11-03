@@ -170,9 +170,9 @@ Compiler :: struct {
 	// The `<` one `sort` uses, per element type (`src/container.odin`).
 	order_policies:        map[Type_Id]Order_Policy,
 
-	// Compile-time reflection (`src/reflect.odin`). The descriptor types are
-	// created on first use; `typeid` identity is symbolic during checking and
-	// numeric only after `freeze_typeids`.
+	// Compile-time reflection (`src/reflect.odin`, `src/typeid.odin`). The descriptor
+	// types are created on first use; `typeid` identity is symbolic during checking
+	// and numeric only after `freeze_typeids`.
 	meta_field_type:      Type_Id,
 	meta_enum_value_type: Type_Id,
 	meta_variant_type:    Type_Id,

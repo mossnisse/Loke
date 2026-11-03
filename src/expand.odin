@@ -55,6 +55,7 @@ expand_one_element :: proc(
 	copy_block := clone_block(k.c, s.body)
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
+	k.scope.expansion = index + 1
 	defer k.scope = outer
 
 	if !bind_static_element(k, s, element, element_type, index) {
@@ -187,10 +188,10 @@ bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, t
 
 @(private = "file")
 static_element_text :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> string {
-	// Both descriptors put the name first.
-	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > META_FIELD_NAME {
+	// Every descriptor puts its name first.
+	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > META_NAME {
 		return fmt.aprintf(
-			"`%s`", value.aggregate.elements[META_FIELD_NAME].text,
+			"`%s`", value.aggregate.elements[META_NAME].text,
 			allocator = c.semantic_allocator,
 		)
 	}
@@ -538,6 +539,7 @@ expanded_case_bindings :: proc(k: ^Checker, value: Expr) -> (descriptor: Name, p
 // scope, and for a payloadless variant the `Unit{}` its payload binding names
 // (design.md "Per-variant switch cases").
 bind_expanded_case :: proc(k: ^Checker, entry: ^Switch_Case, payload: Type_Id) {
+	k.scope.expansion = entry.variant_indices[0] + 1
 	bind_static(k, Foreach_Binding{name = entry.expanded}, entry.descriptor, meta_variant_type(k.c))
 	if payload != TYPE_VOID || entry.binding.text == "" {
 		return
@@ -556,7 +558,7 @@ note_expanded_case :: proc(k: ^Checker, entry: Switch_Case, before: int) {
 		add_notef(
 			k.c, entry.values[0].(^Expr_Selector).span, "%s `.%s`",
 			entry.arm != nil ? "in the union argument expansion for" : "in the expanded case for",
-			entry.descriptor.aggregate.elements[META_VARIANT_NAME].text,
+			entry.descriptor.aggregate.elements[META_NAME].text,
 		)
 	}
 }

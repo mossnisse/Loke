@@ -119,7 +119,7 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 
 #### Failure writes that the default in `check_expr` makes unnecessary
 
-`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [text.odin](src/text.odin) 18, [reflect.odin](src/reflect.odin) 14. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
+`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [text.odin](src/text.odin) 18. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
 Shared form: assign only on success. Saves about 100 lines.
 
@@ -196,7 +196,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 #### Constant values
 
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
-- [reflect.odin:317](src/reflect.odin#L317) `typeid_const` is [const_ops.odin:73](src/const_ops.odin#L73) `type_const`. Saves about 25.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 - A big integer is rounded to a float at [bigint.odin:354](src/bigint.odin#L354), [bigint.odin:463](src/bigint.odin#L463) and [const_ops.odin:391](src/const_ops.odin#L391). `dyadic_to_float` is exact and general; the other two can call it once it releases its temporaries, which CTFE's charged allocator needs. Saves about 30.
 
@@ -1033,7 +1032,6 @@ Readable and well commented, but the static `foreach` half re-implements binding
 
 **Comments**
 
-- [expand.odin:193](src/expand.odin#L193): stale, reflect.odin defines three descriptor types. "Every descriptor puts its name first."
 - [expand.odin:219](src/expand.odin#L219): cite the exact heading: `design.md "Static `foreach` expansion": loops in the body own their branches, so they are not walked.`
 - [expand.odin:385](src/expand.odin#L385): delete; the signature and two-line body say it.
 - [expand.odin:404](src/expand.odin#L404): the first sentence restates the spec. `design.md "Per-variant switch cases": each copy is an ordinary case with its own clone of the body, so nothing after the checker sees an expanded case. False after a diagnostic.`
@@ -1716,61 +1714,9 @@ A compact, readable AST walk with useful comments and no dead procedures. Its we
 
 ### src/reflect.odin
 
-Correct on the main paths; the weak spot is `typeid_sort_key`, whose key is neither injective nor independent of `Type_Id` as its comment claims. The descriptor half is very repetitive and could lose about a quarter of its lines.
-
-**Bugs**
-
-- `BUG-reflect-1` **low** [reflect.odin:666](src/reflect.odin#L666) `typeid_sort_key_walk`: the proc shape omits `param_escapes` and `param_cross_thread`, which `proc_type` interns on (semantic.odin:1252), so two proc types tie. Scenario: `proc(@(escape=stored) p: ^int)` and `proc(p: ^int)`: swapping their `typeid_of` statements swapped IDs 8 and 9; a control pair kept its IDs. Fix: add both to the `:p` entry. *Not verified.*
-- `BUG-reflect-2` **low** [reflect.odin:646](src/reflect.odin#L646) `typeid_sort_key_walk`: the `named:` key is the display name, and "unique compilation-wide" is false for `Range(Token)`, iterators and views. Scenario: `Range(a.Token)` and `Range(b.Token)` tie; swapping the requests swapped IDs 1 and 2. Fix: append the `element` and `key` sub-keys to `named:`. *Not verified.*
-- `BUG-reflect-3` **low** [reflect.odin:583](src/reflect.odin#L583) `typeid_sort_key_walk`: distinct types share a key and number by request order: `Box(int)` of a local generic `Box` in two procs (the instance path lacks line 595's scope suffix), a local type in each `foreach` expansion, and two in-place `distinct int`. Scenario: their `.ll` labels are equal bar the emitter's suffix. Fix: scope suffix on instances, an expansion index. *Not verified.*
-- `BUG-reflect-4` **low** [reflect.odin:495](src/reflect.odin#L495) `write_applied_args`: `const_key_text` spells a `typeid_of(T)` inside a value argument as raw `t<Type_Id>` (generic.odin:1563), against line 534's "independent of ... allocation order". Scenario: with `Foo :: struct($v: Rec)`, reordering the declarations of `T1` and `T2` swaps the IDs of `Foo(Rec{typeid_of(T1), 1})` and its `T2` twin. Fix: key `.Type` values with `typeid_sort_key_walk`. *Not verified.*
-- `BUG-reflect-5` **low** [reflect.odin:746](src/reflect.odin#L746) `check_reflection_builtin`: a failed operand is reported twice. Scenario: `typeid_of(Nope)` and `fields_of(Nope)` give L0315 and then L0451 "needs a type" at the same span. Fix: snapshot `k.c.error_count` before `check_single_expr` and report L0451 only if it did not grow (as check_builtin.odin:506). *Not verified.*
-
-**Simplification**
-
-- [reflect.odin:708](src/reflect.odin#L708) `check_reflection_builtin` and [reflect.odin:844](src/reflect.odin#L844) `check_descriptor_operation`: 14 `v.type = INVALID_TYPE` lines before returns. Set it once (at the top; at line 841 in the second), as `check_assert_or_panic` does, and let each failure just return. (about 14 lines)
-- [reflect.odin:774](src/reflect.odin#L774) `check_reflection_builtin`: the `.Fields_Of`, `.Enum_Values_Of` and `.Variants_Of` cases differ in the callee and one word. Pick `type, value, ok` and `wanted` in the switch, then share one error and one assignment. (about 15 lines)
-- [reflect.odin:563](src/reflect.odin#L563) `typeid_sort_key_walk`: `visiting` is redundant. Store the sentinel in `memo[type]` before walking and overwrite it in the `defer`; the first lookup then answers both. Removes a map and a parameter from 3 procs. (about 12 lines)
-- [reflect.odin:584](src/reflect.odin#L584) `typeid_sort_key_walk`: six `strings.builder_make` calls, each ending in `to_string`. Make one builder after the `info == nil` check. (about 6 lines)
-- [reflect.odin:654](src/reflect.odin#L654) `typeid_sort_key_walk`: `b`, `s` and `a` add nothing here: `signed` and `written_align` are set only on predeclared and declared types, which returned earlier, and `bits` follows from `kind`. Use `"shape:%d:m%t"`. (about 3 lines)
-- [reflect.odin:589](src/reflect.odin#L589) `typeid_sort_key_walk`: `info.symbol != INVALID_SYMBOL` is implied by `sym != nil`; lines 687 and 875 already rely on `symbol_of` answering nil. (1 condition)
-- [reflect.odin:695](src/reflect.odin#L695) `typeid_value`: an Odin map index yields zero when the key is absent, so the body is `return c.typeid_values[type]`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [reflect.odin:99](src/reflect.odin#L99): `new_type` has just returned this id, so `info` cannot be nil.
-- (branch) [reflect.odin:835](src/reflect.odin#L835): every `meta.Field` constant comes from line 223 with four elements, and hand-written literals are refused (L0453 on `meta.Field{}`, also inside `foreach`), so a nil or short aggregate cannot get past lines 816 and 821.
-
-**Data structures and algorithms**
-
-- [reflect.odin:415](src/reflect.odin#L415) `freeze_typeids`: each requested type gets a fresh memo, so shared sub-keys are rebuilt per requester and kept in the semantic arena; cost grows as requested types times graph size, and `fmt` closes the set over reachable types. Freeze runs only after a clean check (session.odin:166), so no sentinel can arise: one temp-allocated memo can span the loop. Modest in practice.
-
 **Near copies**
 
-- [reflect.odin:20](src/reflect.odin#L20), [reflect.odin:38](src/reflect.odin#L38), [reflect.odin:56](src/reflect.odin#L56): the three lazy `meta_*_type` procs differ in cache slot, name and second member. Use `descriptor_type(c, &c.meta_field_type, "meta.Field", "type", TYPE_TYPE)`; it writes the four members and `Descriptor_Field` goes. (about 30 lines)
-- [reflect.odin:216](src/reflect.odin#L216), [reflect.odin:245](src/reflect.odin#L245), [reflect.odin:267](src/reflect.odin#L267), [reflect.odin:292](src/reflect.odin#L292): four copies fill name, payload, index, owner. All three descriptors share that layout (expand.odin:194 already reads `META_FIELD_NAME` from any), so one `descriptor_const(c, type, name, payload, index, owner)` and 4 constants replace them and the 12 `META_*`. (about 25 lines)
-- [reflect.odin:317](src/reflect.odin#L317) and [const_ops.odin:73](src/const_ops.odin#L73): `typeid_const` is `type_const` byte for byte. Delete it and call `type_const` at line 772. (about 4 lines)
 - [reflect.odin:307](src/reflect.odin#L307) and [simd.odin:291](src/simd.odin#L291), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [check_expr.odin:3332](src/check_expr.odin#L3332): `aggregate_const` is the 3-line form these write by hand. Move it to const_ops.odin; only its `type_value = type` differs, and I found no reader of that on an aggregate.
-- [reflect.odin:196](src/reflect.odin#L196) and [check_builtin.odin:1374](src/check_builtin.odin#L1374), [check_expr.odin:331](src/check_expr.odin#L331), [emit_llvm_runtime.odin:1167](src/emit_llvm_runtime.odin#L1167): `string_view_const` is a private spelling of `Const_Value{kind = .String, text = ...}`. Make it `string_const` beside `rune_const` in const_ops.odin.
-- [reflect.odin:163](src/reflect.odin#L163) and [reflect.odin:447](src/reflect.odin#L447): both list element, key, result, parameters, variants and struct fields. A temp-allocated `type_components(c, info) -> []Type_Id` beside `Type_Walk` in semantic.odin reduces each to one loop; neither is hot. (about 15 lines)
-- [reflect.odin:689](src/reflect.odin#L689) and [reflect.odin:596](src/reflect.odin#L596): the contract key spells package, name and position by hand, with a source path. Use `symbol_key` plus `declaring_file_index` as the local-type key does, in one `symbol_site_key`. (about 2 lines)
-
-**Structure and boundaries**
-
-- [reflect.odin:554](src/reflect.odin#L554) `typeid_sort_key_walk`: 140 lines. The natural seam is line 652: `write_shape_key` for the structural tail, leaving the walker as identity dispatch.
-- [reflect.odin:540](src/reflect.odin#L540): `typeid_sort_key` also builds backend labels for anonymous types (semantic.odin:1576, 1633), and lines 314-700 share almost nothing with the descriptors. They would stand alone as `typeid.odin`.
-
-**Comments**
-
-- [reflect.odin:547](src/reflect.odin#L547): the first sentence is false: keys embed child keys as text, so length follows the expanded tree (`Pair(P, P)` doubles per level). Say "Memoization saves rework, not key length."
-- [reflect.odin:645](src/reflect.odin#L645): delete with BUG-reflect-2's fix; it contradicts line 535.
-- [reflect.odin:3](src/reflect.odin#L3): drop "reusing the existing constant representation instead of inventing a third one".
-- [reflect.odin:201](src/reflect.odin#L201): keep the citation and "observes only what is visible from the lookup package"; the "cannot leak" clause is obscure, since an array formed in the declaring package does hold private fields.
-- [reflect.odin:255](src/reflect.odin#L255): shorten to `Every member and variant is listed (design.md "Compile-time reflection"); an enum member's value stays enum_values_of's.`
-- [reflect.odin:386](src/reflect.odin#L386) and [reflect.odin:411](src/reflect.odin#L411): both explain the non-capturing sort; keep "stable, so equal keys keep request order" at line 411 and delete line 386's.
-- [reflect.odin:394](src/reflect.odin#L394): repeats the header at lines 8-11. Shorten to "Numbers requested types by canonical key, from 1."
-- [reflect.odin:572](src/reflect.odin#L572): shorten to "Distinct identities can share a shape (`int`, `i64`), so these key on their name."
-- [reflect.odin:906](src/reflect.odin#L906) and [reflect.odin:914](src/reflect.odin#L914): both restate the spec paragraph; cite design.md "Compile-time reflection" and keep "a place, so nothing drops it as a temporary". (about 20 lines across the file)
 
 ### src/region.odin
 

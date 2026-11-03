@@ -336,7 +336,7 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 		}
 		v.type = TYPE_UNTYPED_STRING
 		v.is_const = true
-		v.const_value = Const_Value{kind = .String, text = text}
+		v.const_value = string_const(text)
 	}
 }
 
@@ -824,8 +824,8 @@ select_field :: proc(
 			// design.md "Compile-time reflection": an `Enum_Value`'s `value` has its
 			// enum's backing type, so a `u64` member above `max(int)` keeps its value.
 			if operand_base.type == k.c.meta_enum_value_type && operand_base.type != INVALID_TYPE &&
-			   sym.index == META_ENUM_VALUE {
-				if owner := underlying_info(k.c, aggregate.elements[META_ENUM_OWNER].type_value); owner != nil {
+			   sym.index == META_PAYLOAD {
+				if owner := underlying_info(k.c, aggregate.elements[META_OWNER].type_value); owner != nil {
 					v.type = owner.element
 				}
 			}

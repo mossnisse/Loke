@@ -243,6 +243,22 @@ type_walk_enter :: proc(seen: ^Type_Walk, id: Type_Id, info: ^Type_Info) -> bool
 	return true
 }
 
+// Every type `info` is built from, in the temp allocator; some may be INVALID_TYPE.
+type_components :: proc(c: ^Compiler, info: ^Type_Info) -> []Type_Id {
+	components := make([dynamic]Type_Id, 0, 3 + len(info.parameters) + len(info.variants) + len(info.fields), context.temp_allocator)
+	append(&components, info.element, info.key, info.result)
+	append(&components, ..info.parameters)
+	append(&components, ..info.variants)
+	if info.kind == .Struct {
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				append(&components, sym.type)
+			}
+		}
+	}
+	return components[:]
+}
+
 @(private = "file")
 type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
 	info := type_of(c, id)
