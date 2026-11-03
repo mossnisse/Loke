@@ -231,6 +231,18 @@ Written_Alias_Visit :: struct {
 	writable: bool,
 }
 
+// `path`, cut to the depth aliases keep, and whether this is the first visit to
+// that place of `target` with this capability.
+@(private)
+prov_first_alias_visit :: proc(seen: ^[dynamic]Written_Alias_Visit, target: Storage_Id, path: []Proj_Step, writable: bool) -> (bounded: []Proj_Step, first: bool) {
+	bounded = path[:min(len(path), WRITTEN_ALIAS_DEPTH)]
+	for visit in seen^ {
+		if visit.target == target && visit.writable == writable && prov_same_path(visit.path, bounded) { return bounded, false }
+	}
+	append(seen, Written_Alias_Visit{target, bounded, writable})
+	return bounded, true
+}
+
 @(private = "file")
 prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Value_Id, seen: ^[dynamic]Written_Alias_Visit) {
 	if root, path, ok := prov_value_place_of(graph, place); ok {
@@ -255,11 +267,8 @@ prov_forget_storage_aliases :: proc(
 ) {
 	type := prov_storage(graph, target).type
 	if type == INVALID_TYPE { return }
-	path := storage[:min(len(storage), WRITTEN_ALIAS_DEPTH)]
-	for visit in seen^ {
-		if visit.target == target && visit.writable == writable && prov_same_path(visit.path, path) { return }
-	}
-	append(seen, Written_Alias_Visit{target, path, writable})
+	path, first := prov_first_alias_visit(seen, target, storage, writable)
+	if !first { return }
 	for alias in graph.region_aliases[prov_storage(graph, target).key.symbol] {
 		if alias.root != NO_ROOT {
 			prov_forget_storage_aliases(graph, prov_storage_for_root(graph, alias.root),

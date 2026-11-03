@@ -723,7 +723,6 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 - [cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986): the regions section (to about line 5503) and its other half at [:1353](src/cfg_provenance.odin#L1353) to [:1574](src/cfg_provenance.odin#L1574) are about 1700 lines of one subsystem separated by unrelated carrier code. Move both to their own file beside `provenance_transfer_facts.odin`; the seam is the `prov_region_*`, `prov_provider_*` and `prov_copied_*` procedures, at the cost of widening some `@(private = "file")`. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:5380](src/cfg_provenance.odin#L5380): `prov_materialize_reset`, `prov_reset_temporary`, `prov_reset_promise` and `prov_parameter_symbol` are event materialization and belong in `provenance_event.odin`, with `prov_returning_region`, since that file owns the replacement of fact-dependent events. Within it, the blocker search from [:5415](src/cfg_provenance.odin#L5415) to [:5471](src/cfg_provenance.odin#L5471) is a natural `prov_reset_blocker`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:3227](src/cfg_provenance.odin#L3227) `prov_bind_parameters`: about 95 lines at five nesting levels. Extract the region seed ([:3248](src/cfg_provenance.odin#L3248)), the aggregate shape loans ([:3281](src/cfg_provenance.odin#L3281)) and the pointee loans ([:3303](src/cfg_provenance.odin#L3303)). *Left open: not reached in this pass; the code still has it.*
 
 **Comments**
 
@@ -743,13 +742,10 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 
 **Near copies**
 
-- [cfg_provenance.odin:5918](src/cfg_provenance.odin#L5918) and [cfg_provenance.odin:6251](src/cfg_provenance.odin#L6251): the same bound-the-path, scan `seen`, append visit. A `prov_first_alias_visit(seen, target, path, writable) -> (bounded, ok)` replaces both, beside `Written_Alias_Visit`. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
 
 **Structure and boundaries**
 
-- [cfg_provenance.odin:7397](src/cfg_provenance.odin#L7397) `prov_assign`: 260 lines. Seams: capture of values a target redefines (7404-7424), early destination reads (7433-7456), the store through a carrier (7549-7632), and within that building the publish event (7591-7624). *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:7257](src/cfg_provenance.odin#L7257) `prov_declare_region`: 100 lines with a provider path and a storage check. Split out the provider part (7288-7298) and the `static`/`thread_local` check (7344-7359). *Left open: not reached in this pass; the code still has it.*
 
 **Comments**
 
@@ -777,7 +773,6 @@ The logic holds up and every declaration here has a caller in `src/`, with none 
 
 - [cfg_provenance.odin:8165](src/cfg_provenance.odin#L8165): no section header between 6843 and 10501, over spawn, builtins, arguments, retention, containers, text, transfer checks, results and allocator use. Split at those seams into `provenance_*` files, or at least add headers; moving means widening file-private helpers such as `prov_one`. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:9322](src/cfg_provenance.odin#L9322): the 100 lines from here to `carrier_leaves` are pure type queries taking only `c`, called from `borrow.odin`, `provenance_call.odin` and `provenance_transfer_facts.odin`. They belong beside `type_carries_borrow` in `borrow.odin`. *Left open: not reached in this pass; the code still has it.*
-- [cfg_provenance.odin:8512](src/cfg_provenance.odin#L8512) `prov_call_argument`: 260 lines in one switch, while its `Prov_Argument_Kind` lives in `provenance_call.odin`. Extract the longest arms, `.Inout_Receiver` (8559) and `.Borrowed` (8685), and keep the shared tail for the arms that fall out of the switch. *Left open: not reached in this pass; the code still has it.*
 - [cfg_provenance.odin:10137](src/cfg_provenance.odin#L10137) `prov_has_received_region`, with `prov_argument_regions` (10681) and `prov_call_allocator_use` (10727): their only callers are in `provenance_event.odin`, which can own them. *Left open: not reached in this pass; the code still has it.*
 
 **Comments**
