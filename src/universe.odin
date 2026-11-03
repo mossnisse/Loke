@@ -1,5 +1,5 @@
-// The predeclared scope. Every predeclared name is a real, shadowable symbol, so
-// `byte` is a second name for `u8`, not a second type.
+// Predeclared names as symbols, so `byte` is a second name for `u8`, not a second
+// type.
 package lokec
 
 // One universe per compilation, not per package: `bind_runtime_bootstrap`
@@ -8,7 +8,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	if c.universe != nil {
 		return c.universe
 	}
-	init_semantic_stores(c)
 	universe := new_scope(c, nil, .Universe)
 	c.universe = universe
 
@@ -32,7 +31,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"f64", TYPE_F64},
 		{"rune", TYPE_RUNE},
 		{"rawptr", TYPE_RAWPTR},
-		{"byte", TYPE_U8},
 		{"typeid", TYPE_TYPEID},
 		{"string", TYPE_STRING},
 		{"string_view", TYPE_STRING_VIEW},
@@ -44,32 +42,21 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	}
 	for entry in types {
 		define_universe(c, entry.name, Symbol{kind = .Type, type = entry.id})
-		// The first name wins in diagnostics, so `u8` beats `byte`.
-		if info := type_of(c, entry.id); info != nil && info.name == INVALID_IDENTIFIER {
-			info.name = intern_identifier(c, entry.name)
-		}
+		// The typeid sort key reads this name, and `Allocator` prints by it.
+		type_of(c, entry.id).name = intern_identifier(c, entry.name)
 	}
+	define_universe(c, "byte", Symbol{kind = .Type, type = TYPE_U8})
 
 	// design.md "Predeclared names": literals are `reserved`, so no declaration
 	// can change what `true` means.
-	define_universe(c, "true", Symbol {
-		kind        = .Const,
-		type        = TYPE_UNTYPED_BOOL,
-		const_value = bool_const(true),
-		reserved    = true,
-	})
-	define_universe(c, "false", Symbol {
-		kind        = .Const,
-		type        = TYPE_UNTYPED_BOOL,
-		const_value = bool_const(false),
-		reserved    = true,
-	})
-	define_universe(c, "nil", Symbol {
-		kind        = .Const,
-		type        = TYPE_UNTYPED_NIL,
-		const_value = nil_const(),
-		reserved    = true,
-	})
+	literals := []struct{name: string, type: Type_Id, value: Const_Value} {
+		{"true", TYPE_UNTYPED_BOOL, bool_const(true)},
+		{"false", TYPE_UNTYPED_BOOL, bool_const(false)},
+		{"nil", TYPE_UNTYPED_NIL, nil_const()},
+	}
+	for entry in literals {
+		define_universe(c, entry.name, Symbol{kind = .Const, type = entry.type, const_value = entry.value, reserved = true})
+	}
 
 	// Built-ins share an empty signature: `check_builtin_call` settles arity and
 	// operand types.

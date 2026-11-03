@@ -1259,6 +1259,10 @@ checklist.
 
 ### Fixed
 
+- `core:log`'s `Level` is called `log.Level` in diagnostics, where `Log_Level` named nothing a
+  program could write.
+- An atomic operation on a pointer now stays a pointer in the generated code, where it went
+  through an integer that hid it from LLVM's alias analysis.
 - A `loke.project` found by walking up from the input is read once. A dependency that required it
   back read it a second time and repeated its diagnostics.
 - The provenance note for a merged path names both depth limits, 4 aggregate projection steps and

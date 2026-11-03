@@ -1,5 +1,4 @@
-// Leaf reads shared by replay. Source-form classification belongs to input
-// construction; following the selected storage and its facts belongs to replay.
+// What a value with no transfer reaches, read from its place and form.
 package lokec
 
 Prov_Read_Input :: struct {
@@ -57,8 +56,7 @@ prov_read_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_A
 		if input.fallback != 0 { aliases = prov_value_aliases(graph, input.fallback) }
 	}
 	if len(aliases) == 0 && input.unknown_alias {
-		out := make([]Written_Alias, 1, graph.alloc)
-		return out
+		return make([]Written_Alias, 1, graph.alloc)
 	}
 	return aliases
 }

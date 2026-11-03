@@ -23,5 +23,13 @@ main :: proc() {
 	wide.add(u128(1));
 	fmt.println(wide.load() == (u128(1) << 100) + 1);
 
+	// A pointer stays a pointer, with no round trip through an integer.
+	target := 7;
+	pointer: sync.Atomic(rawptr) = {};
+	pointer.store(rawptr(&target));
+	pointer.exchange(rawptr(&target));
+	pointer.compare_exchange(rawptr(&target), nil);
+	fmt.println(pointer.load() == nil);
+
 	sync.fence(Order.Acquire_Release);
 }

@@ -303,7 +303,7 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string, documentat
 	semantic_arena := c.semantic_arena
 	c^ = checkpoint.state
 	c.semantic_arena = semantic_arena
-	c.analysis_arena, c.replay_carry_arena, c.replay_round_arena, c.emission_arena = {}, {}, {}, {}
+	c.emission_arena = {}
 	init_analysis_arenas(c)
 	checkpoint.mark = virtual.arena_temp_begin(&c.semantic_arena)
 	virtual.arena_destroy(&s.scratch_arena)

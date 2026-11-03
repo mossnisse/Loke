@@ -106,7 +106,7 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 // backend's fusion mode (design.md "Floating-point operators").
 @(private = "file")
 append_codegen_flags :: proc(command: ^[dynamic]string, target: Target_Info, opt_mode: Opt_Mode) {
-	append(command, opt_clang_flag(opt_mode))
+	append(command, OPT_CLANG_FLAGS[opt_mode])
 	append(command, strings.concatenate({"-march=", cpu_level_name(target.cpu)}, context.temp_allocator))
 	append(command, "-ffp-contract=off")
 }

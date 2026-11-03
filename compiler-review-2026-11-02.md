@@ -29,13 +29,13 @@ section are revised when a fix changes them.
 | Findings | Count | Checked by |
 | --- | ---: | --- |
 | High and medium severity bugs | 195 (46 high, 149 medium) | An independent attempt to refute each one |
-| Low severity bugs | 190 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 773 | Only the reviewer |
-| Dead code | 396 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| Low severity bugs | 189 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 758 | Only the reviewer |
+| Dead code | 393 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
 | Data structures and algorithms | 132 | Only the reviewer |
-| Near copies | 481 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 305 | Only the reviewer |
-| Comments | 562 | Only the reviewer |
+| Near copies | 480 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
+| Structure and boundaries | 304 | Only the reviewer |
+| Comments | 549 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -47,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 385 overstates the number of separate
+  merges the ones found so far, so 384 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -70,7 +70,7 @@ that reach users. Many of them come from code written twice. One copy gets a
 check or a case and the other does not, which is why fixing the shared root
 often closes several ids at once.
 
-Near copies are real but smaller than the raw count of 481 suggests: the
+Near copies are real but smaller than the raw count of 480 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
@@ -415,7 +415,7 @@ Counts per file, then the findings themselves in the same order.
 | [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 4 | 1 | 0 | 3 | 0 | 6 |
 | [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 16 | 24 |
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
-| [build_config.odin](src/build_config.odin) | 132 | 2 | 4 | 0 | 0 | 1 | 2 | 2 |
+| [build_config.odin](src/build_config.odin) | 132 | 1 | 3 | 0 | 0 | 1 | 2 | 0 |
 | [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 3 | 4 |
 | [cfg.odin](src/cfg.odin) | 3031 | 8 | 11 | 9 | 2 | 10 | 7 | 7 |
 | [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 53 | 14 | 15 | 34 | 21 | 31 |
@@ -431,7 +431,7 @@ Counts per file, then the findings themselves in the same order.
 | [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
 | [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 3 | 6 | 5 | 7 |
 | [emit_llvm_adapters.odin](src/emit_llvm_adapters.odin) | 121 | 5 | 3 | 1 | 0 | 3 | 0 | 1 |
-| [emit_llvm_atomics.odin](src/emit_llvm_atomics.odin) | 271 | 0 | 6 | 1 | 1 | 1 | 0 | 2 |
+| [emit_llvm_atomics.odin](src/emit_llvm_atomics.odin) | 271 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 4 | 3 | 0 | 0 | 2 | 0 | 3 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
@@ -484,9 +484,9 @@ Counts per file, then the findings themselves in the same order.
 | [provenance_call.odin](src/provenance_call.odin) | 281 | 2 | 6 | 1 | 0 | 1 | 2 | 5 |
 | [provenance_effect.odin](src/provenance_effect.odin) | 369 | 0 | 4 | 3 | 1 | 3 | 1 | 7 |
 | [provenance_event.odin](src/provenance_event.odin) | 371 | 0 | 3 | 2 | 2 | 3 | 2 | 0 |
-| [provenance_form.odin](src/provenance_form.odin) | 145 | 0 | 2 | 0 | 0 | 2 | 1 | 4 |
+| [provenance_form.odin](src/provenance_form.odin) | 145 | 0 | 1 | 0 | 0 | 2 | 0 | 0 |
 | [provenance_input.odin](src/provenance_input.odin) | 368 | 0 | 4 | 5 | 2 | 1 | 2 | 3 |
-| [provenance_read.odin](src/provenance_read.odin) | 64 | 0 | 2 | 1 | 0 | 1 | 3 | 1 |
+| [provenance_read.odin](src/provenance_read.odin) | 64 | 0 | 1 | 1 | 0 | 1 | 3 | 0 |
 | [provenance_transfer.odin](src/provenance_transfer.odin) | 303 | 0 | 4 | 3 | 2 | 2 | 4 | 3 |
 | [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | 143 | 2 | 6 | 0 | 1 | 2 | 0 | 0 |
 | [providers.odin](src/providers.odin) | 264 | 1 | 6 | 2 | 0 | 2 | 1 | 1 |
@@ -494,7 +494,7 @@ Counts per file, then the findings themselves in the same order.
 | [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 5 | 1 | 2 |
 | [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 2 | 1 | 8 | 3 | 9 |
 | [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 5 |
-| [scratch_arena.odin](src/scratch_arena.odin) | 188 | 0 | 3 | 2 | 0 | 1 | 0 | 3 |
+| [scratch_arena.odin](src/scratch_arena.odin) | 188 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | [select.odin](src/select.odin) | 504 | 3 | 7 | 3 | 2 | 4 | 0 | 6 |
 | [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 9 | 3 | 5 | 4 | 10 |
 | [session.odin](src/session.odin) | 299 | 1 | 3 | 10 | 0 | 2 | 2 | 7 |
@@ -506,7 +506,7 @@ Counts per file, then the findings themselves in the same order.
 | [test_procedures.odin](src/test_procedures.odin) | 137 | 1 | 3 | 1 | 0 | 1 | 1 | 3 |
 | [text.odin](src/text.odin) | 350 | 6 | 4 | 0 | 1 | 3 | 2 | 4 |
 | [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 3 | 2 | 7 |
-| [universe.odin](src/universe.odin) | 132 | 0 | 3 | 0 | 0 | 3 | 0 | 3 |
+| [universe.odin](src/universe.odin) | 132 | 0 | 0 | 0 | 0 | 3 | 0 | 1 |
 | [zero.odin](src/zero.odin) | 130 | 3 | 2 | 1 | 1 | 1 | 1 | 3 |
 
 ### src/abi.odin
@@ -1099,7 +1099,6 @@ Small and readable, with every symbol in use. The one real cost is the lazy crea
 
 **Bugs**
 
-- `BUG-build_config-1` **low** [build_config.odin:107](src/build_config.odin#L107) `build_config_enum_type`: `core:log`'s `Level` is named `Log_Level`, which no source can write. Scenario (run): `x: log.Level = 3;` gives L0310 "use `Log_Level.from_int(value)`", advice that does not compile. Fix: name it `"log.Level"`, as [region.odin:57](src/region.odin#L57) does with `"mem.Failure_Policy"`. *Not verified.*
 - `BUG-build_config-2` **low** [build_config.odin:88](src/build_config.odin#L88) `enum_const`: the type stays invalid until a read, and [queries.odin:496](src/queries.odin#L496) copies `symbol.type` as is. Scenario: LSP completion where nothing has read `LOKE_OS` gives it no detail ([editing.odin:153](lsp/editing.odin#L153)), while `LOKE_DEBUG` shows its type. Fix: create the types eagerly (see Simplification). *Not verified.*
 
 **Simplification**
@@ -1107,7 +1106,6 @@ Small and readable, with every symbol in use. The one real cost is the lazy crea
 - [build_config.odin:94](src/build_config.odin#L94) `build_config_enum_type`: create the types in `predeclare_build_config`: `enum_const(c, synth_enum(c, "Arch", {...}), 0)`, keeping only a `log_level_type` for [stdlib.odin:194](src/stdlib.odin#L194). `Build_Config`, `Build_Config_Enum`, `Symbol.build_config_enum` and the hook at [check_expr.odin:639](src/check_expr.odin#L639) all go. (about 30 lines)
 - [build_config.odin:95](src/build_config.odin#L95) the same change, its cost: laziness protects only `Type_Id` numbering, which `freeze_typeids` sorts away for typeids ([reflect.odin:417](src/reflect.odin#L417)) and which reaches just IR struct names ([emit_llvm_abi.odin:321](src/emit_llvm_abi.odin#L321)). Eager creation shifts those once, and adds 7 types and 21 member symbols per compile.
 - [build_config.odin:56](src/build_config.odin#L56) `Build_Config`: if laziness stays, this one-field struct can be `build_config_types: [Build_Config_Enum]Type_Id` on `Compiler`, beside `failure_policy_type` ([source.odin:187](src/source.odin#L187)), and the `bc` alias goes. (about 4 lines)
-- [build_config.odin:42](src/build_config.odin#L42) `opt_clang_flag`: an enumerated array `OPT_CLANG_FLAGS := [Opt_Mode]string{.None = "-O0", ...}` is still checked for completeness and drops the switch and the unreachable `return "-O0"` at line 50. (about 3 lines)
 
 **Near copies**
 
@@ -1117,11 +1115,6 @@ Small and readable, with every symbol in use. The one real cost is the lazy crea
 
 - [semantic.odin:815](src/semantic.odin#L815) and [semantic.odin:829](src/semantic.odin#L829): `Build_Config_Enum` and `Log_Level` sit in `semantic.odin`, but they are this file's data, siblings of `Build_Mode` and `Opt_Mode`. Move them here, if `Build_Config_Enum` survives the change above.
 - [build_config.odin:60](src/build_config.odin#L60) `synth_enum`: a general helper, also used for `mem.Failure_Policy` at [region.odin:57](src/region.odin#L57); nothing in it concerns build configuration. It belongs in `enums.odin`.
-
-**Comments**
-
-- [build_config.odin:1](src/build_config.odin#L1): cites the wrong section. `design.md "Build configuration"` is the `build_config(NAME, default)` keys, implemented at [check_builtin.odin:327](src/check_builtin.odin#L327); the `LOKE_*` constants are `design.md "Build constants"`.
-- [build_config.odin:8](src/build_config.odin#L8): delete the five `// -O0` etc. on `Opt_Mode`. They repeat the switch at line 44, and read like the command line, whose spelling is `-opt=none` ([main.odin:345](src/main.odin#L345)).
 
 ### src/capture.odin
 
@@ -2404,33 +2397,11 @@ Small and readable, with sparse useful comments, but every adapter body builds i
 
 ### src/emit_llvm_atomics.odin
 
-The lowering is correct and has clear boundaries: I found no bugs, checking orderings, widths, the `Option` word, and compare-exchange against `atomics.odin` and `runtime/atomic.c`. The helpers can lose about 40 of its 271 lines, mostly small procedures whose answers the width or the opcode already give.
-
-**Simplification**
-
-- [emit_llvm_atomics.odin:88](src/emit_llvm_atomics.odin#L88) `atomic_storage_type`: every arm spells `i<bits>`, since `atomic_width_bits` gives 8 for `bool` and `llvm_type` gives `i<type_bits>` for int, enum, and rune. Delete it; line 149 becomes `storage := fmt.aprintf("i%d", bits)`. No IR change. (about 12 lines)
-- [emit_llvm_atomics.odin:8](src/emit_llvm_atomics.odin#L8) `atomic_width_is_native`: `atomic_width_bits` only returns 8, 16, 32, 64, or 128 for a checked type, so its one caller at line 80 can test `bits == 128`, with the line 6 comment moved there. (about 7 lines)
-- [emit_llvm_atomics.odin:70](src/emit_llvm_atomics.odin#L70) `emit_atomic_builtin`: lines 148, 206, and 269 re-assert `v.operation.(Call_Atomic)` that this line already did. Pass `checked` down and drop the `order` parameter, which is `checked.order`. (about 3 lines)
-- [emit_llvm_atomics.odin:173](src/emit_llvm_atomics.odin#L173) `emit_native_atomic`: lines 181-182 hand-write the `extract` helper (`emit_llvm.odin:1001`). Use `observed := extract(e, pair_type, pair, 0)` and `swapped := extract(e, pair_type, pair, 1)`; only `pair` needs a `temp` first. (about 1 line)
-- [emit_llvm_atomics.odin:209](src/emit_llvm_atomics.odin#L209) `emit_fallback_atomic`: `out` is allocated on the store and compare-exchange paths, which never use it, so create it in the load and read-modify-write paths. `result := load(...)` then `return result` at lines 216-217 and 253-254 become `return load(...)`. (about 2 lines)
-- [emit_llvm_atomics.odin:107](src/emit_llvm_atomics.odin#L107) `atomic_to_storage`, `atomic_from_storage` (line 127): an alternative to the first bullet is to use `ptr` as a pointer's storage type, since `load atomic`, `store atomic`, `cmpxchg`, and `atomicrmw xchg` all accept it. This drops both `ptrtoint`/`inttoptr` arms and the round trip that pessimizes alias analysis. (about 10 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_atomics.odin:44](src/emit_llvm_atomics.odin#L44): the `.Atomic_Load`, `.Atomic_Store`, and `.Atomic_Compare_Exchange` arms of `atomic_helper_name` (lines 44, 45, 47) are never used: `helper` is read only at line 250, after those three kinds have returned with their names hard-coded.
+The lowering is correct and has clear boundaries: I found no bugs, checking orderings, widths, the `Option` word, and compare-exchange against `atomics.odin` and `runtime/atomic.c`. What remains is typing the orderings of `Call_Atomic`.
 
 **Data structures and algorithms**
 
 - [emit_llvm_atomics.odin:71](src/emit_llvm_atomics.odin#L71) `emit_atomic_builtin`: [`Call_Atomic`](src/ast.odin#L228) stores `order` and `failure_order` as `int` though `Memory_Order` is in the same package. Typing them removes the casts here, at line 177, and at `atomics.odin:200` and `:204`; the C calls keep `int(...)`.
-
-**Near copies**
-
-- [emit_llvm_atomics.odin:29](src/emit_llvm_atomics.odin#L29) and [emit_llvm_atomics.odin:42](src/emit_llvm_atomics.odin#L42): once its dead arms go, `atomic_helper_name` covers the same six kinds as `atomic_rmw_opcode` with the same strings except `xchg`/`exchange`. Delete it and use `kind == .Atomic_Exchange ? "exchange" : atomic_rmw_opcode(kind)` at line 208. (about 15 lines)
-
-**Comments**
-
-- [emit_llvm_atomics.odin:179](src/emit_llvm_atomics.odin#L179): delete. `{{` is the `core:fmt` escape (as at `emit_llvm_simd.odin:112`), so line 180 becomes `fmt.aprintf("{{ %s, i1 }}", storage)` and needs no explanation.
-- [emit_llvm_atomics.odin:73](src/emit_llvm_atomics.odin#L73): delete; it restates the branch, which uses no width.
 
 ### src/emit_llvm_box.odin
 
@@ -5246,28 +5217,16 @@ Sound and well commented, with no bugs found and no comment worth trimming. The 
 
 ### src/provenance_form.odin
 
-Small, focused and in good shape: every form, field and accessor has a reader, and no bugs turned up. What remains is one re-derived checker flag, one accessor that leaves its sibling hand-written, a pack walk copied across the compiler, and a few comments that repeat the code.
+Small, focused and in good shape: every form, field and accessor has a reader, and no bugs turned up. What remains is one accessor that leaves its sibling hand-written and a pack walk copied across the compiler.
 
 **Simplification**
 
-- [provenance_form.odin:57](src/provenance_form.odin#L57) `prov_describe_form`: re-derives what the checker stored in `Expr_Postfix.boxed` (set at [check_expr.odin:2169](src/check_expr.odin#L2169) and [:1150](src/check_expr.odin#L1150)). Pass `v.boxed` and drop the `boxed` local and `c` at line 40; the only reader tests `op == .Caret && boxed`, so `or_return` is unaffected. (about 2 lines)
 - [provenance_form.odin:143](src/provenance_form.odin#L143) `prov_call_values`: [cfg_provenance.odin:10704](src/cfg_provenance.odin#L10704) spells out the same lookup because it needs `.pack`, in a procedure that already called this at 10683. Return the form as `prov_call_form`; 10683 keeps it, 10704 goes, and `prov_operand_value` can become file-private. (about 1 line)
 
 **Near copies**
 
 - [provenance_form.odin:111](src/provenance_form.odin#L111), [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [:10017](src/cfg_provenance.odin#L10017), [emit_llvm_stmt.odin:264](src/emit_llvm_stmt.odin#L264): each keeps `next_element`/`next_spread` to pick the next pack operand. Shared form in `ast.odin`: `call_pack_next(call, is_spread, &cursor) -> Expr`, about 6 lines off each of the first two.
 - [provenance_form.odin:57](src/provenance_form.odin#L57), [provenance_input.odin:334](src/provenance_input.odin#L334), [cfg.odin:2434](src/cfg.odin#L2434), [cfg_provenance.odin:2131](src/cfg_provenance.odin#L2131): all recompute box-ness of a `^` operand, while [cfg.odin:870](src/cfg.odin#L870) and [cfg_provenance.odin:6707](src/cfg_provenance.odin#L6707) read `v.boxed`. Read `v.boxed` everywhere.
-
-**Structure and boundaries**
-
-- [provenance_form.odin:87](src/provenance_form.odin#L87) `prov_operator_value`: a reader's accessor sits among the construction helpers. Move it beside `prov_bound_values` and `prov_receiver_value` so the file reads as construction, then queries.
-
-**Comments**
-
-- [provenance_form.odin:73](src/provenance_form.odin#L73): delete; line 18 already says what `Prov_Form_Error` is.
-- [provenance_form.odin:85](src/provenance_form.odin#L85): repeats line 10; shorten to `// 0 for a form without a user operator.`
-- [provenance_form.odin:126](src/provenance_form.odin#L126): the two lines restate the one-line body; shorten to `// By parameter; `arguments` may instead be the written ones.`
-- [provenance_form.odin:133](src/provenance_form.odin#L133): delete; the name and body say it.
 
 ### src/provenance_input.odin
 
@@ -5315,7 +5274,6 @@ Small and readable, with no confirmed bugs. Its main costs are a two-field struc
 **Simplification**
 
 - [provenance_read.odin:5](src/provenance_read.odin#L5) `Prov_Read_Input`, `prov_input_read`: `unknown_alias` only copies `value.unknown_alias`, and every caller has the value or reads one field. Replace both with `prov_read_fallback(form: Prov_Form) -> Value_Id`. (about 9 lines)
-- [provenance_read.odin:60](src/provenance_read.odin#L60) `prov_read_value_aliases`: the local `out` is only returned; write `return make([]Written_Alias, 1, graph.alloc)`. (1 line)
 
 **Dead code**
 
@@ -5330,10 +5288,6 @@ Small and readable, with no confirmed bugs. Its main costs are a two-field struc
 - [provenance_read.odin:55](src/provenance_read.odin#L55): recursion relies on operands already being described, because `prov_value_aliases` reads `transfers[id]` raw ([provenance_transfer_facts.odin:20](src/provenance_transfer_facts.odin#L20)). Call `prov_value_transfer` there and delete the `_ =` calls at [cfg_provenance.odin:6127](src/cfg_provenance.odin#L6127) and [6210](src/cfg_provenance.odin#L6210). No wrong program found.
 - [provenance_read.odin:37](src/provenance_read.odin#L37): the read logic crosses three files: `prov_value_aliases` here, this file, then `prov_written_aliases_of` and back. Move `Written_Alias`, `prov_written_aliases_at` and `prov_written_aliases_of` ([cfg_provenance.odin:5996](src/cfg_provenance.odin#L5996), [6046](src/cfg_provenance.odin#L6046), [6066](src/cfg_provenance.odin#L6066)) here.
 - [provenance_read.odin:16](src/provenance_read.odin#L16): a user `operator([])` value forwards its receiver's targets, while `prov_region_of` follows the operator call ([cfg_provenance.odin:4700](src/cfg_provenance.odin#L4700)) and a plain call is unresolved. Probes with known receiver targets rejected the same as a plain call, so align them or say why they differ.
-
-**Comments**
-
-- [provenance_read.odin:1](src/provenance_read.odin#L1): the header says classification belongs elsewhere, yet line 14 classifies forms, and construction also calls this code. Shorter: `// What a value with no transfer reaches, read from its place and form.`
 
 ### src/provenance_transfer.odin
 
@@ -5656,18 +5610,7 @@ Small and well scoped, with every declaration in use, but it has one real soundn
 
 ### src/scratch_arena.odin
 
-Small, well bounded and correct: chaining, the zero-past-`used` invariant and in-place growth all hold on every path I traced, and a bump allocator with chained ranges is the right structure. What remains is special cases and protocol arms inherited from Odin's virtual arena (core/mem/virtual/arena.odin) that nothing here reaches.
-
-**Simplification**
-
-- [scratch_arena.odin:153](src/scratch_arena.odin#L153) `scratch_allocator_proc`: delete the nil, same-size and zero-size guards (153-155, 157-162) and write `if aligned && size <= old_size { return old[:size], nil }`. Odin's `_mem_resize` already filters all three except a same-size call raising alignment, which this returns misaligned; the general path handles nil, since its offset wraps and it copies zero bytes. (about 9 lines)
-- [scratch_arena.odin:89](src/scratch_arena.odin#L89) `scratch_alloc`: drop `alignment & (alignment - 1) == 0`; `mem.align_forward_uint` on the next line asserts a power of two itself (base/runtime/internal.odin:40), and that assert also rejects 0, which this clause lets through. Keep the `PAGE_SIZE` bound, which is the part specific to this arena.
-- [scratch_arena.odin:51](src/scratch_arena.odin#L51) `scratch_arena_destroy`: delete `arena^ = {}`; nothing reads the arena afterwards (`c^ = {}` at semantic.odin:2577, `c^ = checkpoint.state` at incremental.odin:304). Likewise [incremental.odin:306](src/incremental.odin#L306) need clear only `emission_arena`, because line 42 overwrites the whole arena. (about 1 line)
-
-**Dead code**
-
-- (branch) [scratch_arena.odin:180](src/scratch_arena.odin#L180): the `.Query_Features` arm has no reader: no `query_features` call in `src/`, `lsp/` or `tests/`, and the tracking allocators that query wrap `context.allocator` (main.odin:130, provenance_normalization_test.odin:772). Merge with `.Free` and `.Query_Info` into one `Mode_Not_Implemented` case. (about 6 lines)
-- (branch) [scratch_arena.odin:48](src/scratch_arena.odin#L48): `arena.base != nil` never fails in the compiler: a failed init panics (semantic.odin:914) and destroy runs only after init (semantic.odin:2571, incremental.odin:301). Even with a nil base, `virtual.release` is a harmless failed `VirtualFree`. (about 2 lines)
+Small, well bounded and correct: chaining, the zero-past-`used` invariant and in-place growth all hold on every path I traced, and a bump allocator with chained ranges is the right structure. What remains is repetition around it in `semantic.odin`.
 
 **Near copies**
 
@@ -5675,8 +5618,6 @@ Small, well bounded and correct: chaining, the zero-past-`used` invariant and in
 
 **Comments**
 
-- [scratch_arena.odin:102](src/scratch_arena.odin#L102): delete; it restates the name `scratch_alloc_chained`, and the header already says a body that outgrows a range chains another.
-- [scratch_arena.odin:58](src/scratch_arena.odin#L58): delete; the body is one line and the field comments at lines 19 and 29 define both terms.
 - [semantic.odin:905](src/semantic.odin#L905): repeats this file's header on committed pages. Shorten to `// Address space each per-body scratch arena reserves.` (about 2 lines)
 
 ### src/select.odin
@@ -6216,13 +6157,7 @@ Well sized and readable, with one silent miscompile (`union_layout` ignores `dis
 
 ### src/universe.odin
 
-A small, table-driven file whose bindings match design.md "Predeclared names"; no bugs here. What remains is one redundant call, one untabled group, a never-varying parameter, and two comments that misdescribe the code.
-
-**Simplification**
-
-- [universe.odin:55](src/universe.odin#L55) `build_universe`: `true`, `false` and `nil` repeat one `Symbol` literal; a `{name, type, value}` table and a loop that sets `reserved = true` matches the two other tables here. (about 10 lines)
-- [universe.odin:48](src/universe.odin#L48) `build_universe`: the guard exists only for the `byte` row, and `info != nil` cannot fire for a predeclared id. Bind `byte` after the loop, then `type_of(c, entry.id).name = intern_identifier(c, entry.name)`. (about 3 lines)
-- [universe.odin:11](src/universe.odin#L11) `build_universe`: delete `init_semantic_stores(c)`; `new_scope` on the next line starts with the same call ([semantic.odin:2479](src/semantic.odin#L2479)). (1 line)
+A small, table-driven file whose bindings match design.md "Predeclared names"; no bugs here. What remains is a builtin symbol spelled three ways and one comment in another file.
 
 **Near copies**
 
@@ -6232,8 +6167,6 @@ A small, table-driven file whose bindings match design.md "Predeclared names"; n
 
 **Comments**
 
-- [universe.odin:1](src/universe.odin#L1): says every predeclared name is a shadowable symbol, but `true`, `false` and `nil` are reserved, and `Box`, `Range` and `Simd` have no symbol ([select.odin:439](src/select.odin#L439)). Shorter: "Predeclared names as symbols, so `byte` is a second name for `u8`, not a second type."
-- [universe.odin:47](src/universe.odin#L47): misleading, since `u8` prints from `PREDECLARED_NAMES` ([semantic.odin:2341](src/semantic.odin#L2341)) whatever this does. This name serves the typeid sort key ([reflect.odin:646](src/reflect.odin#L646)) and printing `Allocator`. Say that, or delete with the guard above.
 - [semantic.odin:2338](src/semantic.odin#L2338): says the allocator types print under the name `core:mem` binds, but `contribute_allocator_surface` sets no name; [universe.odin:49](src/universe.odin#L49) does. Reword to "named by `build_universe`".
 
 ### src/zero.odin

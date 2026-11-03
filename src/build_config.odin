@@ -1,15 +1,15 @@
-// design.md "Build configuration": the predeclared `LOKE_*` constants and their
+// design.md "Build constants": the predeclared `LOKE_*` constants and their
 // synthesized enum types.
 package lokec
 
 import "core:reflect"
 
 Opt_Mode :: enum {
-	None,       // -O0
-	Minimal,    // -O1
-	Size,       // -Os
-	Speed,      // -O2
-	Aggressive, // -O3
+	None,
+	Minimal,
+	Size,
+	Speed,
+	Aggressive,
 }
 
 Build_Mode :: enum {
@@ -39,15 +39,12 @@ cpu_level_name :: proc(cpu: Cpu_Level) -> string {
 }
 
 // `-Ofast` is deliberately absent: it changes floating-point semantics.
-opt_clang_flag :: proc(mode: Opt_Mode) -> string {
-	switch mode {
-	case .None:       return "-O0"
-	case .Minimal:    return "-O1"
-	case .Size:       return "-Os"
-	case .Speed:      return "-O2"
-	case .Aggressive: return "-O3"
-	}
-	return "-O0"
+OPT_CLANG_FLAGS := [Opt_Mode]string {
+	.None       = "-O0",
+	.Minimal    = "-O1",
+	.Size       = "-Os",
+	.Speed      = "-O2",
+	.Aggressive = "-O3",
 }
 
 LOKE_VERSION_STRING :: "0.9.0"
@@ -104,7 +101,7 @@ build_config_enum_type :: proc(c: ^Compiler, which: Build_Config_Enum) -> Type_I
 		bc.types[.Build_Mode] = synth_enum(c, "Build_Mode", reflect.enum_field_names(Build_Mode))
 		bc.types[.Optimization_Mode] = synth_enum(c, "Optimization_Mode", reflect.enum_field_names(Opt_Mode))
 		bc.types[.Vendor] = synth_enum(c, "Vendor", {"Loke"})
-		bc.types[.Log_Level] = synth_enum(c, "Log_Level", reflect.enum_field_names(Log_Level))
+		bc.types[.Log_Level] = synth_enum(c, "log.Level", reflect.enum_field_names(Log_Level))
 	}
 	return bc.types[which]
 }
