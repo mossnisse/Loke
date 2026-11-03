@@ -64,7 +64,7 @@ prov_use_region :: proc(graph: ^Flow_Graph, source: Prov_Use_Region) -> Region_S
 	case Value_Id:   return prov_region_of(graph, region)
 	case Symbol_Id:  return prov_region_for_symbol(graph, region)
 	}
-	return prov_empty_region(graph)
+	return Region_Set{}
 }
 
 // `prov_note_allocator_use` of a region read where it is used.

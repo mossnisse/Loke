@@ -156,7 +156,7 @@ L0512
 `z` cannot be assigned here: a mutable pointer of it is still in use
 L0641
 @498:12
-`wide` cannot be used here: a mutable reborrow of it is still in use
+`wide` cannot be used here: a mutable reborrow of it that may cover this place is still in use
 L0592
 @511:9
 this result is backed by `arena`, an allocator region that ends when this procedure returns

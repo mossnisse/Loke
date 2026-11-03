@@ -3975,6 +3975,7 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 
 		restore_checker_location(k, saved)
 	}
+	check_deferred_escape_parts(k)
 
 	if len(k.c.pending_private_reads) == 0 {
 		return

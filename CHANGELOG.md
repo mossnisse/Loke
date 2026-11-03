@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A map's `iter_mut` is now a mutable borrow of the map, as a dynamic array's is
+  ([By-reference iteration](design.md#by-reference-iteration)), so reading the map while an
+  entry is still in use, or taking a second iterator, is now `L0511`. It compiled, though the
+  loan was meant to be exclusive. Upgrade by finishing with the entry before using the map
+  again.
+- A task whose call passes one callback to several arguments, as in
+  `both :: proc(f: proc(out: ^mut ^int), a, b: ^mut ^int) { f(a); f(b); }`, is now `L0730` when
+  the callback leaves a borrow of `thread_local` storage in either
+  ([Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)). Only the first
+  argument used to be checked, and a procedure value that may be either of two only as the
+  first. Upgrade by not returning that borrow across the task.
 - A distinct type converts only as written in more places
   ([Distinct types](design.md#distinct-types)): `r: rawptr = P(&n)` with `P :: distinct ^int` is now
   `L0310`, and `S("a") + view` and `S("a") == T("b")` with distinct strings are `L0354`. `a && b` on
@@ -1334,6 +1345,21 @@ checklist.
 
 ### Fixed
 
+- A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
+  site's window never closed, so a write after its join was a false `L0731`
+  ([Globals while tasks run](design.md#globals-while-tasks-run)).
+- `@(escape=...)` on a parameter whose record names itself now asks whether the record carries
+  a borrow once its fields are known, so a record whose carrier field comes after the procedure
+  field is no longer a false `L0648` ([`@(escape=<level>)`](design.md#escapelevel)).
+- Storing an allocator handle in a field and then storing another over it no longer changes the
+  first handle's own region, which was a false `L0538` when the second came from a parameter
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+- `L0731` and `L0641` say "may" and name the limit when an array's merged elements caused them,
+  and an allocator parameter past the 64th now names that limit on its `L0538`
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+- Borrow checking no longer takes minutes on a recursive union with many alternatives, or a
+  body with a thousand loans of one place, and a body's memory no longer grows with the square of
+  its locals.
 - A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
   used to fail with internal `L0405`, "a map key operation was not resolved during checking".
 - `pointer[0:length]` on a C pointer panics for a negative `length`, as

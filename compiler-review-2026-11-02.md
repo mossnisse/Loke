@@ -74,8 +74,8 @@ Near copies are real but smaller than the raw count of 388 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
 boilerplate in `eval.odin` and the checker, and comments that narrate the code.
-The two largest files, `cfg_provenance.odin` and `borrow.odin`, have natural
-seams and would be easier to work in if split, though that shortens nothing.
+The largest file, `cfg_provenance.odin`, has natural seams and would be easier
+to work in if split, though that shortens nothing.
 
 ## The changes most worth making
 
@@ -89,7 +89,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 10. **Spawn lends storage that does not last.** [parallel.odin:608](src/parallel.odin#L608) gives `.Address` to a place rooted in a temporary and to a widened place, so tasks read dropped or overwritten slots; [emit_llvm_stmt.odin:217](src/emit_llvm_stmt.odin#L217) then needs its `.Owned` arm to copy a place. BUG-parallel-1, -2. About 35 lines.
 
-11. **Wrong inferred effects.** One `seen` map spans all queries of a call ([borrow.odin:2457](src/borrow.odin#L2457)), so a repeated argument loses its thread-local write-back. Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-borrow.part2-1, BUG-global_effects-1, -2, -3. Clear the map at 3 sites; merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
+11. **Wrong inferred effects.** Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-global_effects-1, -2, -3. Merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
 
 12. **Re-checked expressions emit duplicate functions.** Hoisting at [check_expr.odin:2776](src/check_expr.odin#L2776) and the `erased_from` guard at [check_expr.odin:3536](src/check_expr.odin#L3536) break when [text.odin:43](src/text.odin#L43), [box.odin:211](src/box.odin#L211), [check.odin:2195](src/check.odin#L2195) or [check.odin:3640](src/check.odin#L3640) checks a receiver twice. A `hoisted` flag plus one receiver-checked flag also removes the doubling per call-chain link. BUG-check.part2-1, BUG-box-3, BUG-text-2, BUG-erased-2. About 30 lines.
 
@@ -98,8 +98,6 @@ seams and would be easier to work in if split, though that shortens nothing.
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
 16. **Compiler crashes and hangs on simple input.** `if (case 1 = x) y;` stores a nil block ([parser.odin:1623](src/parser.odin#L1623)); mutual aliases go exponential ([generic.odin:1308](src/generic.odin#L1308)). BUG-parser.part1-1, BUG-generic-1. About 10 lines.
-
-17. **Borrow-check time and memory in long bodies.** [borrow.odin:6551](src/borrow.odin#L6551) with [borrow.odin:1610](src/borrow.odin#L1610) is cubic (204 s at 2000 overlapping pairs); gather live slots once per event. [borrow.odin:5227](src/borrow.odin#L5227) clones liveness per event (3.4 GB at 12,000 statements); use an undo log. Measure with `perf.ps1`. About 50 lines, moderate risk.
 
 18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
 
@@ -257,11 +255,9 @@ The two-cursor walk over `variadic_order` is at [cfg.odin:2843](src/cfg.odin#L28
 
 The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3585](src/borrow.odin#L3585), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941). The body stack with `queued` is at [global_effects.odin:955](src/global_effects.odin#L955), [global_effects.odin:1528](src/global_effects.odin#L1528) and [global_effects.odin:1987](src/global_effects.odin#L1987). They differ only in the join each performs. `Block_Queue` and `Body_Queue`, each with init, pop and push-if-absent, save about 45 lines.
 
-#### Paths and slot types
+#### Paths
 
-[cfg_provenance.odin:3210](src/cfg_provenance.odin#L3210) `prov_extend`, [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218) `prov_concat_path`, [borrow.odin:949](src/borrow.odin#L949) `carrier_steps`, [borrow.odin:1266](src/borrow.odin#L1266) `path_with_field` and the inline copies at [borrow.odin:1245](src/borrow.odin#L1245) and [borrow.odin:1256](src/borrow.odin#L1256) differ only in the allocator. `path_extend` and `path_concat` beside `proj_*` save about 15 lines. The depth bound 8 is a literal at both [borrow.odin:1223](src/borrow.odin#L1223) and [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616).
-
-[borrow.odin:1970](src/borrow.odin#L1970) and [cfg_provenance.odin:9058](src/cfg_provenance.odin#L9058) restate `slot_carrier_type`; the shared form is the existing procedure, made package-visible.
+[cfg_provenance.odin:3210](src/cfg_provenance.odin#L3210) `prov_extend`, [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218) `prov_concat_path` and [borrow.odin:949](src/borrow.odin#L949) `carrier_steps` differ only in the allocator. `path_extend` and `path_concat` beside `proj_*` save about 15 lines. The depth bound 8 is a literal at both [borrow.odin:1223](src/borrow.odin#L1223) and [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616).
 
 #### Naming a callable value, and reset points
 
@@ -316,7 +312,7 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
 - Copy cost then copy classification: `classify_copy_cost` at [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721) follows the same arguments' `classify_copy`. One wrapper, about 8 lines.
 - Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
-- Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373), [attributes.odin:473](src/attributes.odin#L473) and [borrow.odin:639](src/borrow.odin#L639) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
+- Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373) and [attributes.odin:473](src/attributes.odin#L473) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
 - Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93), with [doc.odin:1374](src/doc.odin#L1374) file-private. Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
 
@@ -329,10 +325,9 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
 - Enum logic: [check.odin:1250](src/check.odin#L1250) and [check.odin:4497](src/check.odin#L4497) belong in `enums.odin`, which the map names as owner.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`. [cfg_provenance.odin:7854](src/cfg_provenance.odin#L7854) `call_proc_type` and [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies` serve other subsystems and belong by [semantic.odin:1339](src/semantic.odin#L1339).
-- Single-caller helper: [borrow.odin:638](src/borrow.odin#L638) in `check.odin` ([check.odin:679](src/check.odin#L679)).
-- Transfer wording and type reach: [borrow.odin:5494](src/borrow.odin#L5494), [borrow.odin:5588](src/borrow.odin#L5588), [borrow.odin:5750](src/borrow.odin#L5750) and [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belong beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
+- Transfer wording and type reach: [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950) belongs beside [hooks.odin:474](src/hooks.odin#L474) and [hooks.odin:565](src/hooks.odin#L565), in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). Formatting in [emit_llvm_runtime.odin:541](src/emit_llvm_runtime.odin#L541) onward. Program entry at [emit_llvm.odin:738](src/emit_llvm.odin#L738). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
-- Seams in the two largest files: `cfg_provenance.odin` (10,813 lines) splits at the offset engine ([cfg_provenance.odin:846](src/cfg_provenance.odin#L846)) and the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)). `borrow.odin` (7,130 lines) splits at the carrier shapes and region lattice ([borrow.odin:661](src/borrow.odin#L661)), the callback substitution ([borrow.odin:2380](src/borrow.odin#L2380)) and the view-start solver ([borrow.odin:4385](src/borrow.odin#L4385)).
+- Seams in the largest file: `cfg_provenance.odin` (10,813 lines) splits at the offset engine ([cfg_provenance.odin:846](src/cfg_provenance.odin#L846)) and the regions ([cfg_provenance.odin:3986](src/cfg_provenance.odin#L3986)).
 
 ### Looked at and left alone
 
@@ -578,213 +573,26 @@ Small and sound, with no behavior bugs found. What remains is shared with siblin
 
 Lines 1-2376 hold the shared vocabulary (roots, paths, carrier shapes, region sets, summaries) and the summary pass. The logic is careful but repeats small patterns, and two walks over types have no bound; three bugs were reproduced with the built `lokec.exe`.
 
-**Bugs**
-
-- `BUG-borrow.part1-1` **medium** [borrow.odin:552](src/borrow.odin#L552) `carrier_is_mutable`: `Mutable_Map_Iterator` ([iteration_mutable.odin:15](src/iteration_mutable.odin#L15)) is `is_view` with no `mutable`, and non-adapter views answer false. Scenario: `it := m.iter_mut(); e := it.next(); x := m[1]; _ = it.next();` is accepted, while the `[dynamic]` form gives L0511; a second `iter_mut` says "read-only borrow". Fix: set `mutable = true` there and test `info.is_view` alone. *Confirmed: Probed: on a map, `it := m.iter_mut(); e := it.next(); x := m[1];` then writing through e or `_ = it.next()` compiles; [dynamic] and map foreach give L0511, per design.md "By-reference iteration". Second iter_mut's L0512 says read-only. As claimed, with e dead before the 2nd next.*
-- `BUG-borrow.part1-2` **medium** [borrow.odin:1220](src/borrow.odin#L1220) `region_field_shape_into`: only prefix depth 8 bounds it, with no width budget, so a recursive union's entries multiply and later code joins them pairwise. Scenario: a union of 10 structs with 3 `[dynamic]Expr` fields gives about 38k entries; `id :: proc(e: Expr) -> Expr` takes 21 s, and `x := e; _ = x;` passes 150 s, against 0.14 s for `e: ^Expr`. Fix: collapse past a width limit, as `carrier_shape` does. *Confirmed: Reproduced with -emit-ll: 10x3 id 36 s, ^Expr 0.13 s; x := e and 16 variants exceed 90 s; a 16-variant, 2-Box AST takes 67 s. 6/8/10 variants give 1.7/9.1/36 s, quadratic in the shape sizes I computed (8.6k/20k/38k). Not recorded in the docs.*
-- `BUG-borrow.part1-3` **low** [borrow.odin:733](src/borrow.odin#L733) `type_carries_borrow`: `check_escape_attribute` ([check.odin:692](src/check.odin#L692)) asks while a record's fields are unresolved, and the empty answer is cached; the comment at line 668 says this cannot happen. Scenario: `A :: struct { f: proc(@(escape=none) a: A), p: ^int }` is rejected with L0648 "`A` carries none". Fix: defer that check until the type is complete. *Not verified.*
-
-**Simplification**
-
-- [borrow.odin:1824](src/borrow.odin#L1824) `summarize_body`: the no-result branch repeats the solve-and-collect block at line 1866. Record dependencies once, return early only when nothing needs solving, and run `collect_escape_provenance` under `sym.result != INVALID_TYPE`. (about 12 lines)
-- [borrow.odin:1037](src/borrow.odin#L1037) `merge_region_provenance`: make `region_merge` return whether `into` grew and delete this wrapper; Odin lets the other callers ignore the result. (about 12 lines)
-- [borrow.odin:1220](src/borrow.odin#L1220) `region_field_shape_into`: test leaf conditions together at the top (`info == nil`, provider, depth, not compound), append once and return; that removes the nested `if`/`else` and the second identical `append` at line 1261. (about 8 lines)
-- [borrow.odin:638](src/borrow.odin#L638) `attribute_escape_level`: use `find_attribute` ([check.odin:759](src/check.odin#L759)) instead of the hand-written loop, and move it beside `check_escape_attribute`, its only caller. (about 6 lines)
-- [borrow.odin:205](src/borrow.odin#L205) `steps_overlap`: with `Deref` gone, use a `#partial switch` with `.Field` and `.Range` cases and a final `return true`. (about 6 lines)
-- [borrow.odin:1159](src/borrow.odin#L1159) `Proc_Summary`: a one-field wrapper around `Result_Provenance`; make the map `map[Symbol_Id]^Result_Provenance` and drop `.result` at each use.
-- [borrow.odin:1952](src/borrow.odin#L1952) `collect_carrier_moves`: lines 1952 and 1984, and 2339 and 2364 in `stored_*`, hand-write what `live_loans(state, nil, slots)` iterates. Guard empty lists, or give "every slot" its own constructor, because a nil `slots` at line 1633 means every slot. (about 8 lines)
-- [borrow.odin:1647](src/borrow.odin#L1647) `next_live_loan`: `it.slots == nil ? it.at : it.slots[it.at]` appears three times; compute it once when the row is fetched and keep it in a `slot` field. (about 2 lines)
-- [borrow.odin:1925](src/borrow.odin#L1925) `collect_carrier_moves`: `count` is threaded through `note_carrier_move` and `merge_carrier_move`, and `collect_thread_local_writes` takes it too; it is always `len(sym.param_symbols)` of `declaration`, so read it where rows are allocated. (about 3 lines)
-- [borrow.odin:1437](src/borrow.odin#L1437) `joined_result_summary`: `position < len(...)` here and at line 1441 is implied by the length equality beside it; drop it.
-- [borrow.odin:1452](src/borrow.odin#L1452) `load_paths_at`: the literal 8 here and in the `1 ..= 8` loop at line 1465 is `param_loads`' bit width, while `load_depth` caps depths at `CARRIER_DEPTH` (4); use the constant in both.
-- [borrow.odin:1188](src/borrow.odin#L1188) `new_result_provenance`: `slice.clone` replaces the `make` and `copy` pair here and, under their nil guards, at lines 1474 and 1497. (about 3 lines)
-- [borrow.odin:575](src/borrow.odin#L575) `root_satisfies_retention`: the first case returns what the fall-through already returns; delete it. (2 lines)
-- [borrow.odin:2026](src/borrow.odin#L2026) `note_carrier_move`: test `loan.pointee == 0 && len(pointee) > 0` and drop line 2029, which only restores `loan.mutable`. (about 2 lines)
-
-**Dead code**
-
-- (branch) [borrow.odin:216](src/borrow.odin#L216): `case .Wild` in `steps_overlap` is unreachable, since line 206 returns first for either step being `Wild`.
-- (branch) [borrow.odin:643](src/borrow.odin#L643): the `attribute.value == nil` test is covered by the comma-ok assertion at line 646, which is false on a nil `Expr` union and returns the same values.
-- (branch) [borrow.odin:1073](src/borrow.odin#L1073): `params == nil ||` adds nothing to `region_is_empty`, which is already true for a zero set, and every merge target comes from `new_allocator_use`.
-- (branch) [borrow.odin:1467](src/borrow.odin#L1467): `index >= len(into.param_load_paths)` cannot hold; line 1462 checks `param_loads`, and both builders of `Result_Dependencies` give the two the same length.
-- (branch) [borrow.odin:2057](src/borrow.odin#L2057): `path.type == INVALID_TYPE` holds only for a truncated path, per `carrier_shape_walk` and `carrier_truncated`, and `path.truncated` is tested beside it.
-- (branch) [borrow.odin:2237](src/borrow.odin#L2237): `declaration in ...` is unneeded; all readers of `result_summary_dependencies` treat an absent entry as empty, so `added == 0` suffices.
-- (branch) [borrow.odin:2319](src/borrow.odin#L2319): `root.param_index < 0` cannot hold once `root.kind == .Param`; all three writers set a real index, and `-1` remains only on non-`Param` roots.
-
-**Data structures and algorithms**
-
-- [borrow.odin:1610](src/borrow.odin#L1610) `place_loan_use`: each overlapping place loan of each `.Through` event scans every slot, which is cubic in body size. `q := &mut p^.a; use(q);` repeated took 0.55, 3.2, then 24 s at 250, 500, 1000 (fresh loans at 1000: 0.6 s; not profiled). OR the live rows once per event, test the bit, and scan only on a hit.
-- [borrow.odin:756](src/borrow.odin#L756) `carrier_reach_walk`: `defer delete_key` makes `visiting` a path set, so a chain of `{a, b: Next}` records is walked 2^depth times. The answer is an OR over everything reachable, so a set never cleared gives the same result in linear time; delete the line. Other walks also double on such chains, so this alone will not fix them.
-- [borrow.odin:1213](src/borrow.odin#L1213) `region_field_shape`: rebuilt, with paths, at seven `cfg_provenance.odin` sites for each value of a type. Cache the shape per type and copy only the `region` part callers fill in.
-- [borrow.odin:981](src/borrow.odin#L981) `Region_Set.params`: a `[]bool` forces an allocation at 19 sites, element loops in every merge, and a shifted copy in `receiver_region`. A `u64` like `locals`, with past-64 parameters taken as `crowded` or `unknown`, makes the set plain data and `receiver_region` a shift.
-- [borrow.odin:1424](src/borrow.odin#L1424) `joined_result_summary`: this and `receiver_result_summary` allocate a new summary from `semantic_allocator` on each `result_summary` request, which never frees, so the arena grows with call sites times rounds. Take a shorter-lived allocator, if no caller keeps the result.
-
 **Near copies**
 
-- [borrow.odin:2101](src/borrow.odin#L2101) and [borrow.odin:2460](src/borrow.odin#L2460): the same walk from `callee_values` to call targets, differing only in the `.Parameter` case. Use one `call_summary_targets(c, call, body, forward) -> (targets, stand_ins)`, called with `forward = false` here. (about 20 lines)
-- [borrow.odin:1516](src/borrow.odin#L1516), [borrow.odin:2079](src/borrow.odin#L2079), [borrow.odin:2406](src/borrow.odin#L2406) and [borrow.odin:2419](src/borrow.odin#L2419): "if absent, grow the slice by one". A parapoly `set_add(set: ^[]$T, item: T, allocator) -> bool` serves these, `record_summary_dependencies` and the union at line 2144. (about 25 lines)
-- [borrow.odin:2335](src/borrow.odin#L2335) and [borrow.odin:2359](src/borrow.odin#L2359): `stored_thread_local` and `stored_forwarded` run the same loan loop over `sources` for one caller; one loop returning both shortens them. (about 15 lines)
-- [borrow.odin:1471](src/borrow.odin#L1471) and [borrow.odin:1494](src/borrow.odin#L1494): the same join of a row where nil means every path. Use `join_path_row(c, into: ^[]bool, from: []bool, first: bool)`, with `load_paths_at` supplying the first site's `into`. (about 15 lines)
-- [borrow.odin:1320](src/borrow.odin#L1320) and [borrow.odin:1342](src/borrow.odin#L1342): `set_synth_content_summary` differs by `with_content = true` and one loop that is empty otherwise. Use one procedure with `per_path := false`; the managed-result block does not apply to its slice records. (about 10 lines)
-- [borrow.odin:1929](src/borrow.odin#L1929) and [borrow.odin:2280](src/borrow.odin#L2280), with lines 3075, 3313, 3431, 4319 and 5221: the visited test and three `copy` calls restoring a block's entry state. Use `prov_enter_block(state, block) -> bool`. (about 25 lines across the file)
 - [borrow.odin:949](src/borrow.odin#L949), [borrow.odin:1266](src/borrow.odin#L1266) and [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218), plus lines 1245 and 1255: "copy a path and add steps" with different allocators. One `path_concat(prefix, extra, allocator)` replaces them. (about 15 lines)
-- [borrow.odin:1970](src/borrow.odin#L1970) and [cfg_provenance.odin:9058](src/cfg_provenance.odin#L9058): both restate `slot_carrier_type` ([borrow.odin:2181](src/borrow.odin#L2181)), testing `len(path) == 0` where it tests for the bare slot; call it instead. (about 6 lines)
-
-**Structure and boundaries**
-
-- [borrow.odin:242](src/borrow.odin#L242): `Prov_Reach*`, `Prov_Fresh_Borrow` and `Prov_Through_Borrow` are used only by `cfg.odin` and `cfg_provenance.odin`, apart from their declarations here. Move them beside `Prov_Event` ([cfg_provenance.odin:133](src/cfg_provenance.odin#L133)), which those files build.
-- [borrow.odin:661](src/borrow.odin#L661): carrier shapes (661-971), the region lattice (973-1097) and result summaries (1099-1530) need no `Prov_State`, and `check.odin`, `lifecycle.odin` and the emitter call them. They are the natural seam to split from the 5,600-line solver, for example a `carrier_shape.odin`.
-- [borrow.odin:1699](src/borrow.odin#L1699) `analyze_program_provenance`: 75 of its 90 lines are the summary fixed point, with nested procedures threading the same arrays. Extract `settle_result_summaries(k)`, and the driver reads as five steps.
-- [borrow.odin:1925](src/borrow.odin#L1925) `collect_carrier_moves`: three event kinds nested six levels deep in one 75-line procedure; give `.Publish`, `.Def` and `.Rearrange` a helper each, leaving the replay loop to dispatch.
-
-**Comments**
-
-- [borrow.odin:663](src/borrow.odin#L663): shorten to "Where inside a value a borrow can be, as `Proj_Step` paths, kept finite by the budgets below (design.md "Minimum provenance precision")." The walk says the rest, and the "after all checking" claim is false (see the third bug). (about 5 lines)
-- [borrow.odin:828](src/borrow.odin#L828): this is hard to parse; use "Retry with one path per dynamic array before collapsing to one path."
-- [borrow.odin:1701](src/borrow.odin#L1701): shorten to "A caller may precede its callee, so every body is queued again; one is revisited only if a summary it read grew since its last visit (`clock` stamps `grew_at` and `visited_at`)." (about 4 lines)
-- [borrow.odin:341](src/borrow.odin#L341): use "Places past the limits were merged into a shared prefix (`prov_union_offsets`), so this covers places the value may never point at (design.md "Minimum provenance precision")." (about 1 line)
-- [borrow.odin:358](src/borrow.odin#L358): the "overwritten in its own block" reasoning repeats compiler-architecture.md "Ownership, lifecycle, and provenance"; keep the mask's meaning, `defined`, `exits`, and "the rest is scratch". (about 3 lines)
-- [borrow.odin:435](src/borrow.odin#L435): `Prov_View_At` and `Prov_Place_Loan` at line 497, and `Carrier_Move` at line 1880, retell the architecture document's contracts; keep the field meanings and link it. (about 12 lines across the three)
-- [borrow.odin:1035](src/borrow.odin#L1035): delete with the wrapper; it restates the signature, as does line 1339's opening once the two `set_synth_*` merge.
-- Across this part, about 60 of the 417 comment lines could go; most of the rest are justified, explaining why or giving context from other files.
 
 ### src/borrow.odin (part 2 of 3)
 
 The solvers and the view-start fixed point are carefully reasoned, but this stretch holds three separate subsystems, repeats its worklist, block-entry and bit-scan shapes, and carries long prose comments. One real soundness bug sits in the callback substitution, and no procedure is dead.
 
-**Bugs**
-
-- `BUG-borrow.part2-1` **high** [borrow.odin:2457](src/borrow.odin#L2457) `call_thread_local_left`: one `seen` map spans every query of a call, so a repeat of (procedure, argument) answers none. Scenario, run on lokec.exe: `both(publish, &mut mine, out)` with `both` calling `f(a); f(b)` leaves nothing in `out`, so `spawn wrapper(&mut slot)` passes without L0730; `two(nothing, publish, true, slot)` likewise. Fix: `clear(&seen)` before each top-level `value_left`/`type_left_at`, here and at 2641, 2841. *Confirmed: Reproduced: both(publish, &mut mine, out) in w lets spawn w(slot) compile; swapped order gives L0730. h := f; if (first) { h = g; } h(out) and the same on a result lose g's stand-in. Separate f(out)/g(out) calls do not. No doc records it.*
-
-**Simplification**
-
-- [borrow.odin:3886](src/borrow.odin#L3886) `publish_one_loan`: take the event already settled; both callers can compute it once, and each store now walks `publish_place_settled` two or three times (3786, 3887, 4902). (about 3 lines)
-- [borrow.odin:4236](src/borrow.odin#L4236) `load_through_loan`: `return found` inside `if !found` is always false. Write `if found { return true }`, then `if !read_caller_slots(...) && !(pointee case) { bit_mark(...) }; return false`. (about 3 lines)
-- [borrow.odin:3188](src/borrow.odin#L3188) `merge_param_paths`: the two whole-parameter exits are the same; `shape := sym == nil || type_is_carrier(...) ? nil : carrier_shape(...)` then one `len(shape) == 0` test. (about 4 lines)
-- [borrow.odin:4081](src/borrow.odin#L4081) `load_writable_content`: make `pending` a row and use `bytes_or(pending, row)` in place of the bit loops at 4084 and 4155, reading it with `bit_get` at 4094. (about 8 lines)
-- [borrow.odin:4343](src/borrow.odin#L4343) `resolve_content_reads`: `keeps_live` is both input and output, kept when no content loan exists and dropped otherwise. No event separates it from its read, so `from := hands_on ? sources : keeps_live; keeps_live = with_held_content(...)` suffices. (about 4 lines)
-- [borrow.odin:4391](src/borrow.odin#L4391) `publish_view_loan`: a two-line wrapper discarding `known`, with five comment lines repeating `view_element_loan`'s. Inline it at its two callers (4899, 4984), or keep it with one comment line. (about 6 lines)
-- [borrow.odin:4028](src/borrow.odin#L4028) `load_pointee_content`: the `event.element.slot > 0` test repeats the one in `view_element_in`, which allocates nothing when unknown; call `view_element_loan` directly. (about 2 lines)
-- [borrow.odin:3621](src/borrow.odin#L3621) `append_link`: exists only to give zero `[dynamic]` rows an allocator. Set `context.allocator = graph.alloc` at the top of `solve_links_held` and use plain `append`. (about 7 lines)
-- [borrow.odin:2714](src/borrow.odin#L2714) `value_left`: return `(Thread_Local_Left, bool)`, so the `left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL` test at 2519, 2642, 2842 and the `none` value go away. (about 6 lines)
-- [borrow.odin:3084](src/borrow.odin#L3084) `collect_escape_provenance`: `region_is_empty` guards a merge that is a no-op on an empty set. Compute the 3099/3116 test once per `content` rather than writing it and its negation. (about 4 lines)
-- [borrow.odin:2598](src/borrow.odin#L2598) `body_parameter`: a parameter's `index` is its position in `param_symbols` (check.odin:1539, 1566), which 2516 already assumes, so bounds-check and index instead of scanning. (about 3 lines)
-- [borrow.odin:3402](src/borrow.odin#L3402) `prepare_state`: the `max(state.slots, 1)` rows are never indexed with no slots, and `precision_entry` and `ended_entry` beside them already do without it; drop it from those rows and `merged`.
-
-**Dead code**
-
-- (branch) [borrow.odin:3134](src/borrow.odin#L3134) `merge_loan_provenance`: `root.forwarded` is unreachable; both callers (3114, 3119) sit after the `continue` on a forwarded root at 3109.
-- (branch) [borrow.odin:3500](src/borrow.odin#L3500) `solve_reaching`: `if !seen` cannot fire. A block is queued only by a predecessor already marked visited, and `link` in cfg.odin:564 appends `preds` and `succs` together; the same test is in `solve_view_defs` at 4807.
-- (branch) [borrow.odin:3719](src/borrow.odin#L3719) `run_links_held_event`: the `.Publish` test is redundant, as `replaces` is only ever assigned for a `.Publish` (4341); write `replaces := event.replaces`.
-- (branch) [borrow.odin:2488](src/borrow.odin#L2488) `call_thread_local_left`: `info == nil` cannot hold, as `call_writes_caller` returned true on the same `info` at 2452.
-- (branch) [borrow.odin:2513](src/borrow.odin#L2513) `callback >= len(param_symbols)`, also at 2636, 2768, 2792: the index comes from `body_parameter` on the same declaration the row is keyed by (`prov_forwarded_root`, 3110), so it is always in range.
-
-**Data structures and algorithms**
-
-- [borrow.odin:4544](src/borrow.odin#L4544) `publish_view_of`: pure once `solve_view_defs` ran, yet redone with fresh maps per loan, per constant-index event, per walk: events x walks x defs x loans (the scan in `publish_view_readable`, 4626). Memoize on (slot, reaching, loan, range), and precompute the borrowed symbols.
-- [borrow.odin:4039](src/borrow.odin#L4039) `load_pointee_content`: `expanded` takes `state.loans` bytes from the arena per deep load per walk, and 4081/4090 two rows of temp. Loans and loads both grow with body size, so bytes are quadratic per walk. Keep one scratch row in `Prov_State`, as `merged` is.
-- [borrow.odin:3667](src/borrow.odin#L3667) `end_links_of_value`: scans every slot per link and interns per (link, slot) hit, on each definition of a reborrowed slot in each round. Build a mask of `links` once, then one pass over `held` with one intern per changed row.
-- [borrow.odin:3775](src/borrow.odin#L3775) `run_prov_event` `.Rebind`: slots x loans on each event, though few loans match. Swap the nest so slots are visited only for matching loans: loans + matches x slots.
-- [borrow.odin:3029](src/borrow.odin#L3029) `written_region_summary`: a view or join query allocates new rows from `semantic_allocator` on each call of each graph build (also 3008, 3055), and all callers only read them. Use the temp allocator, or memoize per declaration.
-- [borrow.odin:2917](src/borrow.odin#L2917) `collect_written_regions`: `written_regions`, `written_owner_regions`, `written_region_content` (source.odin:330-335) share a key and are made together. One map to a struct gives one lookup and drops `table` at 3030. (about 10 lines)
-
 **Near copies**
 
-- [borrow.odin:2401](src/borrow.odin#L2401) and [borrow.odin:2414](src/borrow.odin#L2414) `add_callback_read`/`add_callback_write`: identical but for the table and type. One `add_unique(c, table: ^map[Symbol_Id][]$T, declaration, value)` replaces both. (about 11 lines)
-- [borrow.odin:2643](src/borrow.odin#L2643), [borrow.odin:2832](src/borrow.odin#L2832) and [borrow.odin:2843](src/borrow.odin#L2843): lazy `if out == nil { make }` beside an unconditional `seen` map, so it saves nothing. `make` the temp array once at the top, as `call_thread_local_left` does at 2456. (about 12 lines)
-- [borrow.odin:2677](src/borrow.odin#L2677) and [borrow.odin:2814](src/borrow.odin#L2814): both step past `f.call` on a callable view. `callable_view_operand(c, callee) -> Expr` serves both; `called_parameter`'s non-view selector then fails the `^Expr_Ident` test anyway. (about 6 lines)
 - [borrow.odin:2573](src/borrow.odin#L2573) and [global_effects.odin:343](src/global_effects.odin#L343) `passed_values`/`effect_value`: same move unwrap and ident/selector/literal switch to a symbol. Share `named_value_symbol(e: Expr) -> Symbol_Id` from global_effects.odin; each keeps its own classification. (about 10 lines)
-- [borrow.odin:3078](src/borrow.odin#L3078), [borrow.odin:3316](src/borrow.odin#L3316), [borrow.odin:3434](src/borrow.odin#L3434) and [borrow.odin:4322](src/borrow.odin#L4322), also 1932, 2283, 5242: the same three `copy` calls from a block's entry. `enter_block(state, block)` replaces all seven. (about 14 lines)
 - [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3583](src/borrow.odin#L3583), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941): the same forward worklist setup and successor push. A small `Block_Queue` with `block_queue_make` and `block_queue_push_succs` serves all four. (about 20 lines)
-- [borrow.odin:4132](src/borrow.odin#L4132), [borrow.odin:4232](src/borrow.odin#L4232), [borrow.odin:4280](src/borrow.odin#L4280) and [borrow.odin:4332](src/borrow.odin#L4332): `if reads != nil && !slice.contains(reads[:], slot) { append }`. `note_read(reads, slot)` serves them. (about 6 lines)
-
-**Structure and boundaries**
-
-- [borrow.odin:2380](src/borrow.odin#L2380): the callback substitution (2380-2865) reads summaries through `Compiler` and never touches `Prov_State`; it pairs with `indirect_call_targets` and `callable_type_targets`. Its seam is its own file, or global_effects.odin.
-- [borrow.odin:4385](src/borrow.odin#L4385): the view-start solver (`publish_view_*`, `view_element_*`, `solve_view_defs`, about 500 lines) takes only a `Flow_Graph` and is the natural file to split out. Also rename `publish_view_*`, since loads and accesses use it too; `view_start_*` fits.
-- [borrow.odin:2886](src/borrow.odin#L2886) and [borrow.odin:2895](src/borrow.odin#L2895) `parameter_writes_caller`/`param_writes_caller`: names two letters apart with different meanings (holds a borrow vs any mutable carrier). Rename the first, for example `parameter_may_hold_written_borrow`.
-- [borrow.odin:3082](src/borrow.odin#L3082) `collect_escape_provenance`: the 40-line, six-level `.Escape` branch is the seam; extract `merge_escape_event(state, event, declaration, into)`.
-- [borrow.odin:3541](src/borrow.odin#L3541) `solve_links_held`: indexing links (3547-3582) and solving (3583-3617) are two jobs; extract `index_links(state)`.
-
-**Comments**
-
-- [borrow.odin:3965](src/borrow.odin#L3965): "an endedation" is a rename accident. Write "A loop head re-establishes the loans, so an end inside the body does not reach its entry through the back edge."
-- [borrow.odin:2867](src/borrow.odin#L2867) and [borrow.odin:2899](src/borrow.odin#L2899): delete; each restates its procedure's name.
-- [borrow.odin:2882](src/borrow.odin#L2882) and [borrow.odin:2892](src/borrow.odin#L2892): neither says how the two differ. Say that once: the first counts only a mutable carrier that can hold a borrow, the second any, as an owner can be left through it.
-- [borrow.odin:4385](src/borrow.odin#L4385): one line, "`view_element_loan`'s loan, narrowed or not; a store needs no `known`."
-- [borrow.odin:4517](src/borrow.odin#L4517): the 26-line block repeats `publish_view_lengths` and `publish_view_agree`. Keep the contract, the least-fixed-point reason and the two `s = &mut s[..]` examples; about 10 lines go.
-- [borrow.odin:3929](src/borrow.odin#L3929): drop the dated trial: "Rows change only at released loans, and most events release none; this beat looping loans outside slots on bench/dense.loke."
-- [borrow.odin:4265](src/borrow.odin#L4265): "A loan with no caller slots has no entry." The rest narrates the lookup on the next line.
-- [borrow.odin:4618](src/borrow.odin#L4618): replace with the reason: "False for an unrecorded slot, or one a loan borrows, as a store through that loan changes it unseen."
-- [borrow.odin:4712](src/borrow.odin#L4712): reflow the broken wrap, and [borrow.odin:2437](src/borrow.odin#L2437): cut the 12 lines to the shift rule and the `forward` rule. Dense prose like this recurs: of 308 comment lines here, about 70 can go.
 
 ### src/borrow.odin (part 3 of 3)
 
 The checks are sound in intent and well cited, but overlapping place loans make `check_place_loans` cubic, the per-event liveness snapshots make memory quadratic in a long body, and task diagnostics drop the precision the spec requires them to name. The reporting half repeats its loan-scan and message shapes, and the task code is split across sections.
 
-**Bugs**
-
-- `BUG-borrow.part3-1` **medium** [borrow.odin:6122](src/borrow.odin#L6122) `check_task_globals`: L0731 ignores `Global_Effect.source.precision`, also at 6104 and in `report_shared_reach` (5443), so a budget rejection names no limit (design.md "Minimum provenance precision"); nothing reads the field but copies. Scenario: `values: [9][]int` holding a `[]mut int` global at `[8]`, `spawn work(values[0])`: certain L0731, no note; `[8][]int` is accepted. Fix: hedge, and call `add_precision_notes`. *Confirmed: Reproduced: [9][]int gives L0731 stated as certain with no limit note, spawned and in the parent; [8][]int compiles. source.precision is never reported and no gap is recorded. Diagnostic-only, so closer to low than medium.*
-- `BUG-borrow.part3-2` **low** [borrow.odin:5380](src/borrow.odin#L5380) `window_step`: site bit 63 is never cleared, so after 64 spawn sites the window stays open to the end of the body. Scenario: 64 one-spawn `parallel` blocks, then `parallel { g = 1; spawn work(); }`: L0731 on a setup write, no limit named; 63 blocks compile. Fix: one bit per site in a `[]u8` row, as `Prov_State` rows do. *Not verified.*
-- `BUG-borrow.part3-3` **low** [borrow.odin:6825](src/borrow.odin#L6825) `report_suspended_reborrow`: the only L0641 wording that states the conflict as certain when precision merged it; `report_place_borrowed` at 6850 hedges. Scenario: `[9][]mut int`, `r := &mut a[8][:]`, read `a[0][0]`, use `r`: "a mutable reborrow of it is still in use", while `[8]` is accepted. Fix: fold `state.precision[derived]` in first (6307), then use "may" wording. *Not verified.*
-
-**Simplification**
-
-- [borrow.odin:6214](src/borrow.odin#L6214), [6348](src/borrow.odin#L6348), [7049](src/borrow.odin#L7049), [5649](src/borrow.odin#L5649): replace the slot and loan loops with `live_loans(state, nil, slots)`, as `check_retention` does at 7008. First fix its trap: nil `slots` means every slot, and `event.sources` may be nil. (about 15 lines)
-- [borrow.odin:6326](src/borrow.odin#L6326) `check_prov_event`: the `Region_Set` clone is needless, since `region_has_local` reads only `locals` and `crowded`. Test `event.region` and use `event.name` directly. (about 5 lines, one allocation per `Escape`)
-- [borrow.odin:6394](src/borrow.odin#L6394) `check_prov_event`: the two L0536 errors differ in one phrase. Pick `region_has_local(event.region) ? "created in this procedure" : "this procedure received"` and format once. (about 10 lines)
-- [borrow.odin:5211](src/borrow.odin#L5211) `report_provenance`: `prov_visited` equals what the BFS in `settle_pool_joins` (5333) computes. Move the BFS into `solve_window` and drop its `reached` parameter and the `visited` copy. (about 5 lines)
-- [borrow.odin:4893](src/borrow.odin#L4893) `publish_replaced_slots`: choose `slots` (element or caller) first, then run one `caller_replaces` filter, in place of two identical loops. (about 6 lines)
-- [borrow.odin:4993](src/borrow.odin#L4993) `publish_into_loan`: `event.store.(Prov_Store_Retained)` is tested on both arms of the `if`. Test it once above. (about 2 lines)
-- [borrow.odin:4759](src/borrow.odin#L4759) `solve_view_defs`: `first[slot] = 0` is a placeholder overwritten at 4771. Assign `first[slot] = bits` and advance `bits` at insertion, in one local `follow` helper, so the second loop only walks `defs`. (about 5 lines)
-- [borrow.odin:5466](src/borrow.odin#L5466) `shared_carrier_hazard`: `INVALID_TYPE` is zero, so `none` is `{}` and the mutable case is `{type = facts.mutable}`. (about 2 lines)
-- [borrow.odin:6850](src/borrow.odin#L6850) `report_place_borrowed`: one format with `merged ? " that may cover this place" : ""`. Likewise [6890](src/borrow.odin#L6890) `report_root_outlived`: one `is used`/`may be used` verb and the span computed once. (about 12 lines)
-- [borrow.odin:6384](src/borrow.odin#L6384), [6670](src/borrow.odin#L6670), [6765](src/borrow.odin#L6765), [6898](src/borrow.odin#L6898), [7069](src/borrow.odin#L7069): `errorf` with one argument per line, where 5851 and 6096 in this file group the arguments on three lines. (about 40 lines)
-
-**Dead code**
-
-- (branch) [borrow.odin:6739](src/borrow.odin#L6739) `check_region_reset`: the "this reset ends every allocation" error is unreachable, since `reset_ends_root` (6730) is false unless `root.kind == .Provider`. No test expects its text. Keep only the provider error.
-- (branch) [borrow.odin:6330](src/borrow.odin#L6330) `check_prov_event`: `event.name` is already `prov_region_name` of this region (provenance_event.odin:250, the only `.Escape` emitter), so the recomputation cannot find a name.
-- (branch) [borrow.odin:5519](src/borrow.odin#L5519) `check_join_retention`: `event.slot` comes only from `prov_window_bit`, always an index of `parallel_scopes`.
-- (branch) [borrow.odin:5540](src/borrow.odin#L5540) `check_join_retention`: `min(state.slots, len(graph.prov_slots))` is `state.slots`, set from that length in `prepare_state` (3386).
-- (branch) [borrow.odin:6537](src/borrow.odin#L6537) `reborrows_of`: every caller passes a valid slot, which 3577 and 6274 index unguarded.
-- (branch) [borrow.odin:6422](src/borrow.odin#L6422) `live_reborrow_of`: `link_row_bytes == 0` means no reborrows, so `len(links) == 0` already holds.
-- (branch) [borrow.odin:4775](src/borrow.odin#L4775) `solve_view_defs`: `def.reaching = nil` clears a field only this procedure sets, and each graph is prepared once.
-- (branch) [borrow.odin:4807](src/borrow.odin#L4807) `solve_view_defs`: `!seen` cannot hold, since a block is queued only by a visited predecessor, so `seen` goes too.
-- (branch) [borrow.odin:4846](src/borrow.odin#L4846) `solve_view_defs`: `prov_note_view` returns a valid index, so this bound and `index < count` at 4874 never fail.
-
-**Data structures and algorithms**
-
-- [borrow.odin:6551](src/borrow.odin#L6551) `check_place_loans`: each `.Through` event scans every place loan, and each overlapping one scans every slot in `place_loan_use` (1610), so time is cubic in body length. Measured on repeats of `q := &mut p^[0]; q^ += 1;`: 500 pairs 3.5 s, 1000 26 s; `p^.a` at 2000 took 204 s; disjoint `p^[i]` at 2000 took 1.85 s. Gather the live slots once per event and scan only those.
-- [borrow.odin:5227](src/borrow.odin#L5227) `report_provenance`: `live_after` and `use_after` clone about 13 bytes per slot for nearly every event, quadratic in block length. Peak grew from 255 MB at 3,000 statements to 3.4 GB at 12,000; by estimate this is the main term, not profiled. An undo log of the changes `run_live_event` makes, replayed forward, costs only the changes.
-
 **Near copies**
 
-- [borrow.odin:5042](src/borrow.odin#L5042) and [borrow.odin:5074](src/borrow.odin#L5074): `publish_into_slot` and `publish_into_caller` share the landed note and the replace-or-join update. One `land_in_slot(state, reach, index, replaces, loan_path, carrier_loss)` serves both. (about 8 lines)
-- [borrow.odin:5097](src/borrow.odin#L5097) and [borrow.odin:5119](src/borrow.odin#L5119): the tails of `caller_replaces` and `publish_replaces` differ only in the offset `at` and the slot's type. Share `replaces_at(c, slot_path, at, stored, type)`. (about 5 lines)
-- [borrow.odin:6929](src/borrow.odin#L6929) and [borrow.odin:6987](src/borrow.odin#L6987): both scan `task_slots` for a scope declared at `later`. Share `later_is_task_hold(state, later)`. (about 4 lines)
-- [borrow.odin:6369](src/borrow.odin#L6369) and [borrow.odin:7099](src/borrow.odin#L7099): the same "declared here" and "created here" note pair. Share `add_root_notes(state, root, loan)`. (about 4 lines)
-- [borrow.odin:5919](src/borrow.odin#L5919) and [cfg_provenance.odin:4586](src/cfg_provenance.odin#L4586): `shared_region_text` hand-walks the common local bits that `prov_region_name` already names. Call it with `Region_Set{locals = common}`; several names would then get the generic wording. (about 5 lines)
 - [borrow.odin:4931](src/borrow.odin#L4931): the backward worklist of `solve_loan_liveness` repeats the setup and push that the part 2 forward `Block_Queue` finding covers; give that type a predecessor push too. (about 6 lines)
-
-**Structure and boundaries**
-
-- [borrow.odin:5280](src/borrow.odin#L5280): the task-window section is cut in two by "join retention" (5507), and its allocator and global checks resume unheaded at 5882. Together, 5280-6247 is one subsystem using few file-private helpers; a `borrow_tasks.odin` is the seam.
-- [borrow.odin:5588](src/borrow.odin#L5588): `path_waker`, `collect_pointees`, `type_holds_inline` and `same_storage_type` read only types, no flow state. They belong beside `type_reaches_waker` in hooks.odin or with the task code, not among borrow diagnostics.
-- [borrow.odin:6283](src/borrow.odin#L6283) `check_prov_event`: 145 lines, where most cases delegate but `.Escape` and `.Region_Escape` are inline. Extract `check_escape` and `check_region_escape` to match `check_crossing` and `check_retention`.
-- [borrow.odin:6087](src/borrow.odin#L6087) `check_task_globals`: its tail (6133-6174) is a separate once-per-block job. Extract `check_thread_exit_drops(state, event, shared)`.
-- [borrow.odin:6628](src/borrow.odin#L6628): `prov_slot_is_stored`, `root_own_slots` and `loan_own_slots` are package-wide slot and root queries inside the reporting section; move them beside `Prov_Slot` and `Prov_Root`.
-- [borrow.odin:5494](src/borrow.odin#L5494): `view_chain_text` describes `Transfer_Via`, so it belongs beside `transfer_facts` in hooks.odin, near its other caller's concern (cfg_provenance.odin:10105).
-
-**Comments**
-
-- [borrow.odin:4742](src/borrow.odin#L4742): keep the citation and: "Which definitions of each followed local view reach each element store, place loan and reslice, so `publish_view_of` takes only those. A slot has a bit per recorded definition and one for any other." (about 5 lines)
-- [borrow.odin:4971](src/borrow.odin#L4971): narrates each branch below it; keep what a merged carrier's precision means and the `one` rule. (about 4 lines)
-- [borrow.odin:5030](src/borrow.odin#L5030), [5360](src/borrow.odin#L5360), [5645](src/borrow.odin#L5645), [6260](src/borrow.odin#L6260), [6604](src/borrow.odin#L6604), [6962](src/borrow.odin#L6962): delete; each restates the name and signature. (about 8 lines)
-- [borrow.odin:5086](src/borrow.odin#L5086) and [5104](src/borrow.odin#L5104): both explain a value holding carriers replacing each one inside. Say it once at `publish_replaces`, cross-reference from the other. (about 3 lines)
-- [borrow.odin:6359](src/borrow.odin#L6359), [6570](src/borrow.odin#L6570), [6753](src/borrow.odin#L6753), [6848](src/borrow.odin#L6848), [6888](src/borrow.odin#L6888): the merged-precision hedge is explained five times. Keep the reason at `report_borrow_conflict`, and elsewhere one short line with any citation kept. (about 8 lines)
-- [borrow.odin:5579](src/borrow.odin#L5579): drop the last sentence, which narrates the union and fallback branches. (about 2 lines)
-- [borrow.odin:6513](src/borrow.odin#L6513): the first sentence repeats the `reborrow_starts` field comment; keep only why the index is rebuilt. (about 1 line)
 
 ### src/box.odin
 
@@ -928,7 +736,7 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 
 **Structure and boundaries**
 
-- [cfg_provenance.odin:846](src/cfg_provenance.odin#L846): lines 846-1329 are a self-contained engine (offsets, merging, reaching walk) with a small interface: `prov_value_offset`, `prov_note_offset`, `prov_carrier_offsets`, `prov_offset_paths`, `prov_offset_precision`, `prov_reach_invalidate`. Move them to `provenance_offsets.odin`, with `Prov_Offset` and `Prov_Reach*` from borrow.odin:353-410.
+- [cfg_provenance.odin:846](src/cfg_provenance.odin#L846): lines 846-1329 are a self-contained engine (offsets, merging, reaching walk) with a small interface: `prov_value_offset`, `prov_note_offset`, `prov_carrier_offsets`, `prov_offset_paths`, `prov_offset_precision`, `prov_reach_invalidate`. Move them to `provenance_offsets.odin`, with `Prov_Reach*` and `Prov_Offset` from borrow.odin.
 - [cfg_provenance.odin:300](src/cfg_provenance.odin#L300): lines 300-702 are construction procedures sitting under the "provenance events" banner, above the "provenance construction" banner at L704, which hides where the vocabulary ends. Move them below that banner.
 - [cfg_provenance.odin:2351](src/cfg_provenance.odin#L2351): path helpers are scattered (L1323, L2351-2384, L3210-3223, L6037) with mixed `path_`/`prov_` prefixes, while `paths_overlap` and `proj_*` live at borrow.odin:175-194. Gather the graph-free ones beside those.
 - [cfg_provenance.odin:1597](src/cfg_provenance.odin#L1597) `symbol_outlives_bodies`: a plain symbol predicate also used by `lifecycle.odin`, `parallel.odin`, `borrow.odin` and `provenance_input.odin`. It belongs with `symbol_of` in `semantic.odin`.
@@ -949,13 +757,7 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 
 ### src/cfg_provenance.odin (part 2 of 4)
 
-This range holds reborrows, parameter loans and caller slots, read-only views, and the allocator-region section; the logic is careful but repeats its predicates and region idioms, and 384 of its 2770 lines are comments, many of them long restatements of the spec. One real over-rejection comes from `Region_Set.params` being a shared slice.
-
-**Bugs**
-
-- `BUG-cfg_provenance.part2-1` **medium** [cfg_provenance.odin:4405](src/cfg_provenance.odin#L4405) `prov_define_region_content`: stores `region` without copying, but `prov_handle_region` ([:4918](src/cfg_provenance.odin#L4918)) returns `region_of[arena]` itself, so the later `region_merge(&entry.region, ...)` at [:4396](src/cfg_provenance.odin#L4396) writes into the arena's `params`. *Confirmed: Reproduced: storing arena.allocator() then a in h.alloc gives false L0538 on free_all(arena.allocator()); swapped stores, or no Holder, compile. Region_Set.params is a shared slice merged in place. Not recorded. Over-rejection only with an easy workaround, so low, not medium.*
-  Scenario (run on `lokec.exe`): `f :: proc(a: Allocator) { arena := mem.Arena.init(); h: Holder = {}; h.alloc = arena.allocator(); h.alloc = a; free_all(arena.allocator()); }` reports false L0538; with the two stores swapped it compiles, and design.md "@(allocator_reset)" allows it.
-  Fix: copy the set into a fresh `prov_empty_region` when creating the entry. This is not the control-flow gap in `known-gaps.md`.
+This range holds reborrows, parameter loans and caller slots, read-only views, and the allocator-region section; the logic is careful but repeats its predicates and region idioms, and 384 of its 2770 lines are comments, many of them long restatements of the spec.
 
 **Simplification**
 
@@ -980,7 +782,6 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 **Data structures and algorithms**
 
-- [borrow.odin:982](src/borrow.odin#L982) `Region_Set.params: []bool`: `prov_empty_region` ([:3989](src/cfg_provenance.odin#L3989)) allocates it at 55 sites in this file, including per recursive region query and per replay round, and sets sharing the slice caused BUG-1. A `u64` plus an overflow flag, as `locals`/`crowded` already are, removes the allocation, the cloning and the `index < len(params)` guards; more than 64 parameters would then lose precision.
 - [cfg_provenance.odin:3075](src/cfg_provenance.odin#L3075) `prov_slot_is_reborrow`, [:3025](src/cfg_provenance.odin#L3025) `prov_slot_is_pending`, [:2799](src/cfg_provenance.odin#L2799) and [:2946](src/cfg_provenance.odin#L2946): each scans all of `graph.reborrows`, once per stored slot or per solved load, and the list grows with carrier copies in the body, so long bodies go quadratic. Index by `derived` and by `source` (per-slot lists), rebuilt after `prov_settle_pending_reborrows`.
 - [cfg_provenance.odin:2748](src/cfg_provenance.odin#L2748) `prov_reborrow`: scans every place loan per weakened slot, which also grows with the body; a slot-to-place-loans index fits.
 - [cfg_provenance.odin:4403](src/cfg_provenance.odin#L4403) `prov_define_region_content`: copies the whole entry list into a new arena array for each new path, plus a linear scan per define, so a record of k region fields costs O(k^2) time and arena per whole store, per round. Matters only for wide records; a `[dynamic]` value in `region_content` removes the copying.
@@ -1130,7 +931,7 @@ The logic holds up and every declaration here has a caller in `src/`, with none 
 
 - [cfg_provenance.odin:8165](src/cfg_provenance.odin#L8165): no section header between 6843 and 10501, over spawn, builtins, arguments, retention, containers, text, transfer checks, results and allocator use. Split at those seams into `provenance_*` files, or at least add headers; moving means widening file-private helpers such as `prov_one`.
 - [cfg_provenance.odin:9322](src/cfg_provenance.odin#L9322): the 100 lines from here to `carrier_leaves` are pure type queries taking only `c`, called from `borrow.odin`, `provenance_call.odin` and `provenance_transfer_facts.odin`. They belong beside `type_carries_borrow` in `borrow.odin`.
-- [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950): `report_transfer_facts`, `prov_transfer_argument`, `viewed_subject` and `prov_transferred_type` need no graph and only report errors. Move them beside `transfer_facts` in `hooks.odin`, with `view_chain_text` from `borrow.odin`; the walk then only decides when to call them.
+- [cfg_provenance.odin:9950](src/cfg_provenance.odin#L9950): `report_transfer_facts`, `prov_transfer_argument`, `viewed_subject` and `prov_transferred_type` need no graph and only report errors. Move them beside `transfer_facts` and `view_chain_text` in `hooks.odin`; the walk then only decides when to call them.
 - [cfg_provenance.odin:8512](src/cfg_provenance.odin#L8512) `prov_call_argument`: 260 lines in one switch, while its `Prov_Argument_Kind` lives in `provenance_call.odin`. Extract the longest arms, `.Inout_Receiver` (8559) and `.Borrowed` (8685), and keep the shared tail for the arms that fall out of the switch.
 - [cfg_provenance.odin:10810](src/cfg_provenance.odin#L10810) `prov_root_is_parameter`: its one caller is at 1449, yet it sits at the end of the thread-summaries section. Move it next to that caller.
 - [cfg_provenance.odin:10137](src/cfg_provenance.odin#L10137) `prov_has_received_region`, with `prov_argument_regions` (10681) and `prov_call_allocator_use` (10727): their only callers are in `provenance_event.odin`, which can own them.
@@ -2508,7 +2309,6 @@ The solvers are sound in how they iterate and deterministic, and the comments ar
 
 **Dead code**
 
-- `precision` ([global_effects.odin:1733](src/global_effects.odin#L1733)): `Effect_Source.precision` is set at [borrow.odin:3335](src/borrow.odin#L3335) and copied at L2003 and L2026; a grep of `src/` finds no read, and `note_reach_chain` uses only `via` and `span`. Drop it and its comment.
 - `param_sources` ([borrow.odin:1059](src/borrow.odin#L1059)): with `default_source` and `unknown_source`, read only by `thread_summaries_test.odin`. Removing them removes the `via` and `source` plumbing in `substitute_allocator_use`, L1936-1937, and most of `clone_allocator_use`.
 - `use` ([global_effects.odin:1753](src/global_effects.odin#L1753)): `Thread_Exit_Drop.use` is read only by tests, and [borrow.odin:6143](src/borrow.odin#L6143) skips every `hook == INVALID_SYMBOL` entry, so the `owns` branch at L2179-2183 and L2191-2197 serve tests alone. Consume it for the window check or remove it.
 - (branch) [global_effects.odin:1623](src/global_effects.odin#L1623): the `call.callee` case of `effect_targets` is unreachable; `call_parts`, `effect_call_globals` and `indirect_call_targets` all handle a callee first, and `forwarding_effect` and `any_value_call` set none.

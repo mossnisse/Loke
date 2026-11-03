@@ -1120,7 +1120,7 @@ prov_effect_call :: proc(
 			caller = fmt.tprintf("`%s`", identifier_text(c, sym.name))
 		}
 		for reached in effect_call_reach(c, graph_body(graph), target) {
-			prov_note_shared_effect(graph, reached, .Read, span, caller)
+			prov_note_shared_effect(graph, reached.global, .Read, span, caller, reached.source.precision)
 		}
 	}
 	if regions_of != nil || drops {
@@ -1221,7 +1221,6 @@ prov_window_effect_use :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Sp
 		call := target
 		if part.callback >= 0 {
 			given := make([]Region_Set, 1, context.temp_allocator)
-			given[0] = prov_empty_region(graph)
 			region_through(&given[0], callback_region(c, part), target.regions)
 			call.regions = given
 		}
@@ -1286,9 +1285,9 @@ callback_region :: proc(c: ^Compiler, part: Call_Part) -> Region_Set {
 region_through :: proc(into: ^Region_Set, set: Region_Set, regions: []Region_Set) {
 	into.default ||= set.default
 	into.unknown ||= set.unknown || set.crowded || set.locals != 0
-	for wanted, parameter in set.params {
+	params := set.params
+	for parameter in next_region_param(&params) {
 		switch {
-		case !wanted:
 		case regions == nil:
 			into.unknown = true
 		case parameter < len(regions):
@@ -1318,11 +1317,17 @@ effect_call_description :: proc(c: ^Compiler, target: Effect_Call, verb, dropped
 // The globals whose stored carriers one call may reach, from the thread
 // summaries, with its callbacks resolved as its writes are.
 @(private = "file")
-effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
+effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Global_Effect {
+	out := make([dynamic]Global_Effect, 0, 2, context.temp_allocator)
 	for part in call_parts(c, body, target, open = true) {
-		for reached in part_reach(c, part) {
-			add_global_symbol(&out, reached.global)
+		next: for reached in part_reach(c, part) {
+			for &known in out {
+				if known.global == reached.global {
+					known.source.precision |= reached.source.precision
+					continue next
+				}
+			}
+			append(&out, reached)
 		}
 	}
 	return out[:]
@@ -1335,7 +1340,7 @@ effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) ->
 // and a `@(synchronized)` variable, whose package vouches for every access, are
 // not shared writes; a carrier stored in `thread_local` storage is still
 // reached.
-prov_note_shared_effect :: proc(graph: ^Flow_Graph, global: Symbol_Id, access: Access_Kind, span: Span, name := "") {
+prov_note_shared_effect :: proc(graph: ^Flow_Graph, global: Symbol_Id, access: Access_Kind, span: Span, name := "", precision: Precision_Loss = {}) {
 	c := graph.k.c
 	if graph.parallel_depth == 0 || graph.task_effects || !c.global_writes_ready || c.thread_facts_pending {
 		return
@@ -1345,20 +1350,16 @@ prov_note_shared_effect :: proc(graph: ^Flow_Graph, global: Symbol_Id, access: A
 		return
 	}
 	described := name if name != "" else graph.effect_name
-	prov_emit(graph, Prov_Event{kind = .Shared_Effect, symbol = global, access = access, span = span, name = described})
+	prov_emit(graph, Prov_Event{kind = .Shared_Effect, symbol = global, access = access, span = span, name = described, precision = precision})
 }
 
 // A callee's allocator use at one call, in the caller's terms, as
 // `substitute_allocator_use` settles it.
 @(private = "file")
 substituted_region :: proc(graph: ^Flow_Graph, from: Allocator_Use, call: Effect_Call, direct: bool) -> Region_Set {
-	out := prov_empty_region(graph)
-	out.default = from.regions.default
-	out.unknown = from.regions.unknown
-	for wanted, parameter in from.regions.params {
-		if !wanted {
-			continue
-		}
+	out := Region_Set{default = from.regions.default, unknown = from.regions.unknown}
+	params := from.regions.params
+	for parameter in next_region_param(&params) {
 		switch {
 		case call.regions == nil:
 			out.unknown = true
@@ -1892,9 +1893,9 @@ runtime_handle_operation :: proc(c: ^Compiler, symbol: Symbol_Id) -> bool {
 
 @(private = "file")
 unknown_as_receiver :: proc(set: ^Region_Set) {
-	if set.unknown && len(set.params) > 0 {
+	if set.unknown {
 		set.unknown = false
-		set.params[0] = true
+		region_add_param(set, 0)
 	}
 }
 
@@ -1930,7 +1931,7 @@ compute_thread_summaries :: proc(k: ^Checker) {
 		}
 		own := &facts[index]
 		handle := runtime_handle_operation(c, body.literal.symbol)
-		if graph.allocator_use.regions.params != nil {
+		if graph.allocator_use.param_sources != nil {
 			resize_allocator_use(&own.use, graph.param_count)
 			merge_allocator_use_from(&own.use, graph.allocator_use)
 		}
@@ -1952,7 +1953,7 @@ compute_thread_summaries :: proc(k: ^Checker) {
 				if callee := symbol_of(c, call.callee); callee != nil { count = max(len(callee.param_symbols), 1) }
 				kept.regions = make([]Region_Set, count, context.temp_allocator)
 				for &set in kept.regions {
-					set = Region_Set{params = make([]bool, len(own.use.regions.params), context.temp_allocator), unknown = true}
+					set = Region_Set{unknown = true}
 				}
 			}
 			if handle {
@@ -1972,7 +1973,7 @@ compute_thread_summaries :: proc(k: ^Checker) {
 	parts := make([][]Call_Part, len(facts), context.temp_allocator)
 	closing := make([][]Call_Part, len(facts), context.temp_allocator)
 	for &body, index in facts {
-		body.whole_use = new_allocator_use(len(body.use.regions.params), context.temp_allocator)
+		body.whole_use = new_allocator_use(len(body.use.param_sources), context.temp_allocator)
 		list := make([dynamic]Call_Part, 0, len(body.calls), context.temp_allocator)
 		for each in body.parts {
 			append(&list, ..each)
@@ -1981,9 +1982,6 @@ compute_thread_summaries :: proc(k: ^Checker) {
 		closing[index] = closing_parts(c, index)
 		if summary := c.callback_summaries[program.bodies[index].symbol]; summary != nil {
 			body.regions = make([]Region_Set, len(summary.called), context.temp_allocator)
-			for &set in body.regions {
-				set.params = make([]bool, len(body.use.regions.params), context.temp_allocator)
-			}
 		}
 	}
 	readers := part_readers(parts, closing)
@@ -2008,7 +2006,7 @@ compute_thread_summaries :: proc(k: ^Checker) {
 				}
 				use := facts[part.body].whole_use if part.whole else facts[part.body].use
 				if part.callback >= 0 {
-					given := Region_Set{params = make([]bool, len(body.use.regions.params), context.temp_allocator)}
+					given: Region_Set
 					region_through(&given, facts[part.via].regions[part.callback], call.regions)
 					grew |= substitute_allocator_use(&body.use, use, callback_call(call.span, given), false, via)
 				} else {
@@ -2091,9 +2089,9 @@ note_callback_regions :: proc(c: ^Compiler, facts: []Thread_Body, index: int, ca
 				if arg.binding != callback.parameter || arg.kind != .Parameter || own < 0 {
 					continue
 				}
-				given := Region_Set{params = make([]bool, len(body.regions[own].params), context.temp_allocator)}
+				given: Region_Set
 				region_through(&given, facts[target].regions[position], call.regions)
-				grew |= merge_region_provenance(&body.regions[own], given)
+				grew |= region_merge(&body.regions[own], given)
 			}
 		}
 	} else if followed {
@@ -2103,10 +2101,10 @@ note_callback_regions :: proc(c: ^Compiler, facts: []Thread_Body, index: int, ca
 				continue
 			}
 			if call.regions == nil {
-				grew |= merge_region_provenance(&body.regions[own], Region_Set{unknown = true})
+				grew |= region_merge(&body.regions[own], Region_Set{unknown = true})
 			}
 			for set in call.regions {
-				grew |= merge_region_provenance(&body.regions[own], set)
+				grew |= region_merge(&body.regions[own], set)
 			}
 		}
 	}
@@ -2141,10 +2139,8 @@ substitute_allocator_use :: proc(into: ^Allocator_Use, from: Allocator_Use, call
 	if from.regions.unknown {
 		grew |= merge_allocator_use(into, Region_Set{unknown = true}, source)
 	}
-	for wanted, parameter in from.regions.params {
-		if !wanted {
-			continue
-		}
+	params := from.regions.params
+	for parameter in next_region_param(&params) {
 		switch {
 		case call.regions == nil:
 			grew |= merge_allocator_use(into, Region_Set{unknown = true}, source)
@@ -2220,32 +2216,20 @@ clone_regions :: proc(regions: []Region_Set, allocator: mem.Allocator) -> []Regi
 	if regions == nil {
 		return nil
 	}
-	out := make([]Region_Set, len(regions), allocator)
-	for set, index in regions {
-		out[index] = set
-		out[index].params = nil
-		if set.params != nil {
-			out[index].params = make([]bool, len(set.params), allocator)
-			copy(out[index].params, set.params)
-		}
-	}
-	return out
+	return slice.clone(regions, allocator)
 }
 
 @(private = "file")
 clone_allocator_use :: proc(use: Allocator_Use, allocator: mem.Allocator) -> Allocator_Use {
-	out := new_allocator_use(len(use.regions.params), allocator)
-	copy(out.regions.params, use.regions.params)
-	copy(out.param_sources, use.param_sources)
-	out.regions.default, out.regions.unknown = use.regions.default, use.regions.unknown
-	out.default_source, out.unknown_source = use.default_source, use.unknown_source
+	out := use
+	out.param_sources = slice.clone(use.param_sources, allocator)
 	return out
 }
 
 // Grows a body's parameter rows to what its graph counts.
 @(private = "file")
 resize_allocator_use :: proc(use: ^Allocator_Use, count: int) {
-	if count <= len(use.regions.params) {
+	if count <= len(use.param_sources) {
 		return
 	}
 	grown := new_allocator_use(count, context.temp_allocator)
@@ -2257,9 +2241,10 @@ resize_allocator_use :: proc(use: ^Allocator_Use, count: int) {
 @(private = "file")
 merge_allocator_use_from :: proc(into: ^Allocator_Use, from: Allocator_Use) -> bool {
 	grew := false
-	for wanted, index in from.regions.params {
-		if wanted && index < len(into.regions.params) && !into.regions.params[index] {
-			into.regions.params[index] = true
+	params := from.regions.params
+	for index in next_region_param(&params) {
+		if index < len(into.param_sources) && !region_has_param(into.regions, index) {
+			region_add_param(&into.regions, index)
 			into.param_sources[index] = from.param_sources[index]
 			grew = true
 		}

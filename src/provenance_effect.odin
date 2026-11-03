@@ -257,7 +257,7 @@ prov_merge_provider_parent :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value:
 	defer prov_effect_end(graph, recorded)
 	if value == 0 { return }
 	region := storage ? prov_storage_region(graph, value) : prov_result_region_at(graph, value, source)
-	parent := graph.provider_parents[symbol] or_else prov_empty_region(graph)
+	parent := graph.provider_parents[symbol] or_else Region_Set{}
 	region_merge(&parent, region)
 	graph.provider_parents[symbol] = parent
 }
@@ -287,7 +287,7 @@ prov_store_permuted_region :: proc(graph: ^Flow_Graph, receiver: Value_Id) {
 	recorded := prov_effect_active(graph)
 	if recorded { prov_effect_begin(graph, Prov_Effect_Permute{prov_effect_value(graph, receiver)}) }
 	defer prov_effect_end(graph, recorded)
-	nothing := prov_empty_region(graph)
+	nothing := Region_Set{}
 	element := slice.clone([]Proj_Step{proj_wild()}, graph.alloc)
 	contents := make([]Prov_Region_Content, 2, graph.alloc)
 	contents[0] = Prov_Region_Content{path = element, region = nothing, handle = true, from = Prov_Region_Source{element, .All}}

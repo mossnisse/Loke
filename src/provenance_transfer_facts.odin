@@ -116,7 +116,7 @@ prov_copy_component_region :: proc(graph: ^Flow_Graph, component: Prov_Component
 }
 
 prov_transfer_region :: proc(graph: ^Flow_Graph, transfer: Prov_Transfer, path: []Proj_Step, query: Region_Query) -> Region_Set {
-	out := prov_empty_region(graph)
+	out := Region_Set{}
 	#partial switch operation in transfer {
 	case Prov_Transfer_Borrow:
 		if len(path) == 0 && query == .All { return prov_result_region_at(graph, operation.owner, nil, .All) }

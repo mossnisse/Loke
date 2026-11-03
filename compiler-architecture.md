@@ -395,7 +395,7 @@ behavioral controls for all of it.
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed`, `prov_link_retained` in `cfg_provenance.odin` |
 | What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `cfg_provenance.odin` |
-| Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
+| Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
@@ -430,7 +430,7 @@ Keep these contracts:
   loan, and a local view's is worked out from where the view starts in the
   range a fresh borrow lends, from the definitions `solve_view_defs` finds
   reaching each access, as for a store (`view_element_in`,
-  `publish_view_of`).
+  `view_start_of`).
 - **Paths are below the pointee, and bounded.** Slot offsets, place-loan
   paths, written-alias paths, and region content paths all start below where
   the carriers point, so a write lands only where it names. Each offset
@@ -471,10 +471,10 @@ Keep these contracts:
   (`solve_view_defs`), so `s = &mut s[1:]` before a loop is known there, but
   not inside it, where the reslice reaches itself and moves the view each
   round, and not in a multiple assignment that also writes `s`
-  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). Where a
+  (`Prov_View_Def`, `prov_local_view_element`, `view_start_of`). Where a
   reslice reaches itself, the starts are the least fixed point over the
   definitions, so `s = &mut s[:2]` in a loop keeps the start. The lengths
-  settle first, in a fixed point of their own (`publish_view_lengths`), as a
+  settle first, in a fixed point of their own (`view_start_lengths`), as a
   length still short would otherwise look like a reslice past its source. The
   definitions need not agree on its length, as an index past a shorter one
   panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
@@ -586,8 +586,8 @@ Keep these contracts:
   a container's elements and backing, a shared handle's control block and
   payload, and a union's variants each have an entry of their own.
   Written-argument summaries keep the owners' part apart from allocator
-  handles (`written_owner_regions`) and keep each part at the path the body
-  wrote (`written_region_content`); a copy within one argument is a copy
+  handles (`Written_Summary.owners`) and keep each part at the path the body
+  wrote (`Written_Summary.content`); a copy within one argument is a copy
   entry the call resolves in its caller. A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
@@ -715,10 +715,9 @@ The checks run on the `Prov_Diagnose` graph:
 - **The task window.** A spawn emits a `Task_Start` event naming its site in
   `task_sites`, with what its arguments hold and the regions its task
   reserves, and the hidden local's drop emits `Task_Join` for its block. The
-  window solver in `borrow.odin` is a may-analysis over blocks with one bit
-  per spawn site, so a branch that has not spawned is outside the window and a
-  spawn in a loop holds it open around the back edge; past 64 sites, the last
-  bit is shared and never cleared. Writes and reaches inside a block are
+  window solver in `borrow_tasks.odin` is a may-analysis over blocks with one
+  bit per spawn site, so a branch that has not spawned is outside the window
+  and a spawn in a loop holds it open around the back edge. Writes and reaches inside a block are
   `Shared_Effect` events in `global_effects.odin`, the parent's allocator use
   `Region_Use` events, and the solver reports both against the tasks that may
   be running. The emission contract validates each recorded spawn.
@@ -921,7 +920,11 @@ be file-private. Paths below are relative to `src/`.
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |
 | `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
-| `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
+| `borrow.odin` | The provenance solver: root loans, publication, retention, escape contracts, and their diagnostics. |
+| `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
+| `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
+| `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
+| `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
 | `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops, and what a `parallel` block's parent does with them while its tasks run. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 

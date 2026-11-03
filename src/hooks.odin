@@ -8,6 +8,9 @@
 // written default is rejected.
 package lokec
 
+import "core:fmt"
+import "core:slice"
+
 // What a type's lifecycle is, cached per underlying type. Resolved lazily because
 // a record's fields may be checked after the `impl` block that gives it a hook.
 Lifecycle :: struct {
@@ -471,6 +474,21 @@ Transfer_Visit :: struct {
 	viewed: bool,
 }
 
+// How a transfer fact is reached: "`dyn I`, which may view a `W`, which
+// reaches `T`" through the read-only view `via` names, or "`T`" without one.
+view_chain_text :: proc(c: ^Compiler, reached: Type_Id, via: Transfer_Via) -> string {
+	if via.view == INVALID_TYPE {
+		return fmt.tprintf("`%s`", type_name(c, reached))
+	}
+	if via.witness == reached {
+		return fmt.tprintf("`%s`, which may view a `%s`", type_name(c, via.view), type_name(c, reached))
+	}
+	return fmt.tprintf(
+		"`%s`, which may view a `%s`, which reaches `%s`",
+		type_name(c, via.view), type_name(c, via.witness), type_name(c, reached),
+	)
+}
+
 transfer_facts :: proc(c: ^Compiler, type: Type_Id, through_views := false) -> Transfer_Facts {
 	none := Transfer_Via{INVALID_TYPE, INVALID_TYPE}
 	facts := Transfer_Facts {
@@ -564,6 +582,167 @@ view_is_printing :: proc(c: ^Compiler, view: ^Type_Info) -> bool {
 // design.md "@(wakes_on_drop)": the `waker` of `transfer_facts`.
 type_reaches_waker :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 	return transfer_facts(c, type).waker
+}
+
+// The `@(wakes_on_drop)` type the carrier at `path` in a `type` value belongs
+// to: a marked type the path passes through, or one the carrier, or a
+// truncated path's subtree, reaches. INVALID_TYPE for a carrier outside every
+// marked subvalue. A generic record whose type argument reaches a marked type
+// may hold one where no field shows it, behind a `rawptr`, so each of its
+// carriers belongs to that type.
+@(private)
+path_waker :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
+	info := type_of(c, type)
+	if info == nil {
+		return INVALID_TYPE
+	}
+	if info.wakes_on_drop {
+		return type
+	}
+	if len(path) == 0 || type_is_carrier(c, type) {
+		return type_reaches_waker(c, type)
+	}
+	step, rest := path[0], path[1:]
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		return path_waker(c, payload, rest)
+	}
+	#partial switch info.kind {
+	case .Distinct:
+		return path_waker(c, info.element, path)
+	case .Struct:
+		for arg in info.instance_args {
+			if arg.is_type {
+				if found := type_reaches_waker(c, arg.type); found != INVALID_TYPE {
+					return found
+				}
+			}
+		}
+		if step.kind == .Field {
+			for field in info.fields {
+				if sym := symbol_of(c, field); sym != nil && i64(sym.index) == step.lo {
+					return path_waker(c, sym.type, rest)
+				}
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if found := path_waker(c, variant, rest); found != INVALID_TYPE {
+				return found
+			}
+		}
+		return INVALID_TYPE
+	case .Array, .Dynamic_Array, .Box:
+		return path_waker(c, info.element, rest)
+	case .Map:
+		if len(rest) > 0 && rest[0].kind == .Field {
+			return path_waker(c, rest[0].lo == PROJ_MAP_KEY ? info.key : info.element, rest[1:])
+		}
+	}
+	return type_reaches_waker(c, type)
+}
+
+// Appends to `objects` the type of each object a value of `type` points to,
+// owns out of line, or views; false when it holds a raw or foreign pointer or
+// an erased view, whose target may be storage of any type. An allocator's
+// state is its own, and a procedure value holds no state. `inside` holds the
+// types the walk is within, so a record already diagnosed as holding itself
+// by value counts as unknown storage rather than recursing forever. A
+// body-local type skips the package's finite-size phase, so `size_state`
+// alone would miss its cycle, and a path rather than a visited set keeps two
+// sibling fields of one type from looking like a cycle.
+@(private)
+collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id, inside: ^[dynamic]Type_Id) -> bool {
+	add :: proc(objects: ^[dynamic]Type_Id, type: Type_Id) {
+		if !slice.contains(objects[:], type) {
+			append(objects, type)
+		}
+	}
+	info := type_of(c, type)
+	if info == nil || slice.contains(inside[:], type) {
+		return false
+	}
+	append(inside, type)
+	defer pop(inside)
+	#partial switch info.kind {
+	case .Raw_Pointer, .C_Pointer, .Dyn, .Interface, .Type, .Invalid:
+		return false
+	case .Distinct, .Array, .Simd:
+		return collect_pointees(c, info.element, objects, inside)
+	case .Pointer, .Slice, .Dynamic_Array, .Box:
+		add(objects, info.element)
+	case .Map:
+		add(objects, info.key)
+		add(objects, info.element)
+	case .String, .String_View, .CString_View:
+		add(objects, TYPE_U8)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && !collect_pointees(c, sym.type, objects, inside) {
+				return false
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if !collect_pointees(c, variant, objects, inside) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Whether storage of type `outer` holds storage of type `inner` within its own
+// bytes: itself, or a field, element, or variant, at any depth. A distinct type
+// shares its storage with what it wraps, and a view's mutability is not part
+// of its storage. `outer` must be one `collect_pointees` walked without finding
+// unknown storage, which rules out a record holding itself by value along the
+// same edges this follows.
+@(private)
+type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id) -> bool {
+	if same_storage_type(c, outer, inner) {
+		return true
+	}
+	info := type_of(c, outer)
+	if info == nil {
+		return true
+	}
+	#partial switch info.kind {
+	case .Distinct, .Array, .Simd:
+		return type_holds_inline(c, info.element, inner)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && type_holds_inline(c, sym.type, inner) {
+				return true
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if type_holds_inline(c, variant, inner) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Two types share one storage layout: the same underlying type, or pointers or
+// views of such. A distinct pointer to itself bounds the walk as
+// `type_underlying` bounds its own.
+@(private = "file")
+same_storage_type :: proc(c: ^Compiler, a, b: Type_Id) -> bool {
+	first, second := a, b
+	for _ in 0 ..< len(c.types) + 1 {
+		first, second = type_underlying(c, first), type_underlying(c, second)
+		if first == second {
+			return true
+		}
+		x, y := type_of(c, first), type_of(c, second)
+		if x == nil || y == nil || x.kind != y.kind || x.kind != .Pointer && x.kind != .Slice {
+			return false
+		}
+		first, second = x.element, y.element
+	}
+	return true
 }
 
 // ------------------------------------------------- generated copy members --

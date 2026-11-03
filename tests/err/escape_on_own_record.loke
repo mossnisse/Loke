@@ -1,0 +1,10 @@
+// design.md "`@(escape=<level>)`": whether a parameter's type carries a borrow is asked
+// once every record has its fields, so a record may name itself under the
+// attribute in a field's procedure type before the field that carries one. One
+// that carries none is still refused.
+package main;
+
+Carries :: struct { f: proc(@(escape=none) a: Carries), p: ^int }
+Nothing :: struct { f: proc(@(escape=none) a: Nothing), n: int }
+
+main :: proc() {}

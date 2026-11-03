@@ -260,9 +260,9 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id) {
 		{name = intern_identifier(k.c, "right"), type = type},
 	})
 	split := container_member(k, type, "split_at_mut", .Split_At_Mut, .Borrow, {TYPE_INT}, halves)
-	set_synth_content_summary(k.c, split, 0)
+	set_synth_result_summary(k.c, split, 0, per_path = true)
 	chunks := container_member(k, type, "chunks_mut", .Chunks_Mut, .Borrow, {TYPE_INT}, chunks_mut_type(k, type))
-	set_synth_content_summary(k.c, chunks, 0)
+	set_synth_result_summary(k.c, chunks, 0, per_path = true)
 	add_members(k.c, type, []Symbol_Id{
 		container_member(k, type, "sort", .Sort, .Borrow, nil, none),
 		container_member(k, type, "reverse_sort", .Reverse_Sort, .Borrow, nil, none),

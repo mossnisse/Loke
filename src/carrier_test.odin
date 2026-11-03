@@ -187,6 +187,29 @@ main :: proc() { }`)
 	)
 }
 
+// A recursive union's entries would multiply up to the depth limit, and later code
+// joins them pairwise.
+@(test)
+a_wide_region_shape_collapses_to_the_whole_value :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+Expr :: union { a: A, b: B, c: C }
+A :: struct { x, y, z: [dynamic]Expr }
+B :: struct { x, y, z: [dynamic]Expr }
+C :: struct { x, y, z: [dynamic]Expr }
+Narrow :: struct { x: [dynamic]int, y: ^int }
+main :: proc() { }`)
+	if !testing.expect(t, p.c.error_count == 0, "fixture should check") { report(&p.c); return }
+
+	wide := region_field_shape(&p.c, named_type(t, &p, "Expr"), context.temp_allocator)
+	if !testing.expectf(t, len(wide) == 1, "expected one entry, got %d", len(wide)) { return }
+	testing.expect(t, len(wide[0].path) == 0 && !wide[0].own && !wide[0].handle, "the entry should stand for the whole managed value")
+
+	narrow := region_field_shape(&p.c, named_type(t, &p, "Narrow"), context.temp_allocator)
+	testing.expectf(t, len(narrow) > 1, "a narrow record lost its fields: %d", len(narrow))
+}
+
 @(test)
 map_keys_and_values_are_separate_paths :: proc(t: ^testing.T) {
 	p: Checked

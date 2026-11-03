@@ -210,11 +210,13 @@ Compiler :: struct {
 	// The names a capture literal reserves in its lowering scope, each with the
 	// field it stands for and the `call` whose body may read it.
 	capture_placeholders: map[Symbol_Id]Capture_Placeholder,
-	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
+	// Carrier shapes (`src/carrier_shape.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,
 	provider_carriers:  map[Type_Id]bool,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
+	// Per type, `region_field_shape` with every region empty.
+	region_shapes:      map[Type_Id][]Prov_Region_Content,
 	// Whether a map type's shape gives constant keys entries of their own.
 	map_keyed:          map[Type_Id]bool,
 	synth_procs:        [dynamic]Symbol_Id,
@@ -315,15 +317,10 @@ Compiler :: struct {
 	// Compile-time declaration metadata for cross-package checking; it does not
 	// change the runtime ABI (design.md "Temporaries and procedure boundaries").
 	// Keyed per declaration or instance, so two instances may differ.
-	result_summaries: map[Symbol_Id]^Proc_Summary,
+	result_summaries: map[Symbol_Id]^Result_Provenance,
 	// Per parameter, the regions of owners a body may leave in the storage that
 	// argument names (design.md "Allocator regions and region provenance").
-	written_regions: map[Symbol_Id][]Region_Set,
-	// The part of `written_regions` backing owners, not allocator handles.
-	written_owner_regions: map[Symbol_Id][]Region_Set,
-	// The same regions per parameter at the paths the body leaves them, below
-	// what the argument names, so a call keeps unrelated fields apart.
-	written_region_content: map[Symbol_Id][][]Prov_Region_Content,
+	written_summaries: map[Symbol_Id]Written_Summary,
 	// Per parameter, what a body may store in the storage that argument names
 	// out of what that same argument held (design.md "Values that contain
 	// borrows").

@@ -103,9 +103,9 @@ main :: proc() {}`) { return }
 	}
 	initial, stored := false, false
 	for content in graph.region_content[storage] {
-		if content.handle || len(content.region.params) < 2 { continue }
-		initial ||= content.region.params[0]
-		stored ||= content.region.params[1]
+		if content.handle { continue }
+		initial ||= region_has_param(content.region, 0)
+		stored ||= region_has_param(content.region, 1)
 	}
 	testing.expect(t, initial && stored, "initial or later stored owners lost their received region")
 	ended := false
@@ -212,7 +212,7 @@ main :: proc() {}`) { return }
 		if body == nil { continue }
 		summary, found := p.c.result_summaries[body.symbol]
 		if !testing.expectf(t, found, "%s lost its result summary", name) { continue }
-		testing.expectf(t, result_uses_param(summary.result.dependencies, 0) && !summary.result.local && !summary.result.unknown,
+		testing.expectf(t, result_uses_param(summary.dependencies, 0) && !summary.local && !summary.unknown,
 		                "%s lost its precise source dependency", name)
 	}
 	hooked := normalization_body(t, &p, "hooked")
@@ -221,8 +221,8 @@ main :: proc() {}`) { return }
 		copy_hook := lifecycle_of(&p.c, held).custom_try_clone
 		hook_summary, found := p.c.result_summaries[copy_hook]
 		if testing.expect(t, copy_hook != INVALID_SYMBOL && found, "the checked copy hook must have a result summary") {
-			testing.expect(t, result_uses_param(hook_summary.result.dependencies, 0), "the hook lost its borrowed input")
-			testing.expect(t, len(hook_summary.result.region.params) > 1 && hook_summary.result.region.params[1], "the hook lost its destination allocator")
+			testing.expect(t, result_uses_param(hook_summary.dependencies, 0), "the hook lost its borrowed input")
+			testing.expect(t, region_has_param(hook_summary.region, 1), "the hook lost its destination allocator")
 			testing.expect(t, slice.contains(p.c.result_summary_dependencies[hooked.symbol], copy_hook),
 			               "a generated copy must register the nested checked hook's summary dependency")
 		}
@@ -240,23 +240,22 @@ main :: proc() {}`) { return }
 		if body == nil { continue }
 		summary, found := p.c.result_summaries[body.symbol]
 		if !testing.expect(t, found) { continue }
-		region := summary.result.region
-		testing.expect(t, len(region.params) > 0 && region.params[0] != copies, "a clone replaces backing while a move keeps it")
-		if copies { testing.expect(t, len(region.params) > 1 && region.params[1], "new backing must use the destination allocator") }
+		region := summary.region
+		testing.expect(t, region_has_param(region, 0) != copies, "a clone replaces backing while a move keeps it")
+		if copies { testing.expect(t, region_has_param(region, 1), "new backing must use the destination allocator") }
 	}
 	separate := normalization_body(t, &p, "separate")
 	if separate == nil { return }
 	summary, found := p.c.result_summaries[separate.symbol]
 	if !testing.expect(t, found) { return }
 	handle, owner := false, false
-	for content in summary.result.region_content {
+	for content in summary.region_content {
 		if len(content.path) != 1 || content.path[0].kind != .Field { continue }
-		if !testing.expect(t, len(content.region.params) == 2, "field regions must retain the parameter shape") { continue }
 		if content.path[0].lo == 0 && content.handle {
-			handle ||= content.region.params[0] && !content.region.params[1]
+			handle ||= region_has_param(content.region, 0) && !region_has_param(content.region, 1)
 		}
 		if content.path[0].lo == 1 && content.own && !content.handle {
-			owner ||= !content.region.params[0] && content.region.params[1]
+			owner ||= !region_has_param(content.region, 0) && region_has_param(content.region, 1)
 		}
 	}
 	testing.expect(t, handle && owner, "an allocator handle contaminated the independent owner's region")
@@ -589,15 +588,15 @@ main :: proc() {}`) { return }
 		if body == nil { continue }
 		summary := p.c.result_summaries[body.symbol]
 		kept := false
-		for content in summary.result.region_content {
-			kept ||= len(content.region.params) > 0 && content.region.params[0]
+		for content in summary.region_content {
+			kept ||= region_has_param(content.region, 0)
 		}
-		testing.expectf(t, kept, "%s lost the source's payload region: %v", name, summary.result.region_content)
+		testing.expectf(t, kept, "%s lost the source's payload region: %v", name, summary.region_content)
 	}
 	extracted := normalization_body(t, &p, "extracted")
 	if extracted != nil {
-		region := p.c.result_summaries[extracted.symbol].result.region
-		testing.expectf(t, region.default && !region.unknown && (len(region.params) == 0 || !region.params[0]),
+		region := p.c.result_summaries[extracted.symbol].region
+		testing.expectf(t, region.default && !region.unknown && !region_has_param(region, 0),
 		                "checked extraction must replace the source backing allocation: %v", region)
 	}
 }
@@ -698,14 +697,13 @@ main :: proc() {}`) { return }
 	if !testing.expect(t, operation.hook != INVALID_SYMBOL && prov_has_direct_body(&p.c, operation.hook)) { return }
 	original := p.c.result_summaries[operation.hook]
 	defer p.c.result_summaries[operation.hook] = original
-	growing: Proc_Summary
+	growing: Result_Provenance
 	p.c.result_summaries[operation.hook] = &growing
 	before := prov_transfer_region(graph, transfer, nil, .All)
-	params := [2]bool{true, true}
-	growing.result.region = Region_Set{params = params[:]}
+	growing.region = Region_Set{params = 0b11}
 	after := prov_transfer_region(graph, transfer, nil, .All)
-	testing.expect(t, !before.default && (len(before.params) == 0 || !before.params[0]), "an empty hook summary supplied settled dependencies")
-	testing.expect(t, after.default && len(after.params) > 0 && after.params[0], "replay did not observe the grown source and allocator dependencies")
+	testing.expect(t, !before.default && !region_has_param(before, 0), "an empty hook summary supplied settled dependencies")
+	testing.expect(t, after.default && region_has_param(after, 0), "replay did not observe the grown source and allocator dependencies")
 	testing.expect(t, slice.contains(graph.summary_callees[:], operation.hook), "replay omitted the nested hook dependency")
 	count := len(graph.input.transfers)
 	again := prov_value_transfer(graph, prov_input_value(graph, ret.value.expr))
@@ -741,7 +739,7 @@ main :: proc() {}`
 	// The first iteration allocates from the default; later ones from what
 	// `allocator` reached through the chain.
 	current := prov_region_for_symbol(graph, normalization_symbol(t, &p, "contents"))
-	testing.expect(t, len(current.params) > 0 && current.params[0], "the replay stopped before the forwarding chain reached the owner")
+	testing.expect(t, region_has_param(current, 0), "the replay stopped before the forwarding chain reached the owner")
 	testing.expect(t, current.default, "the replay lost the default allocator of the first iteration")
 	testing.expect(t, !current.unknown, "a local forwarding chain made the region unknown")
 	program := graph.normalized_effects
@@ -821,7 +819,6 @@ main :: proc() {}`) { return }
 	// Growing the round that was carried leaves the carry as it was.
 	for id, set in graph.region_of {
 		grown := set
-		grown.params = slice.clone(set.params, graph.alloc)
 		grown.unknown = true
 		graph.region_of[id] = grown
 		break
@@ -829,17 +826,8 @@ main :: proc() {}`) { return }
 	graph.lent_locals[INVALID_SYMBOL] = true
 	testing.expect(t, prov_fact_weight(&graph.facts) > weight, "the carried round did not grow")
 	testing.expect_value(t, prov_fact_weight(carry), weight)
-	// So does changing its buffers in place: a parameter bit, and the paths
-	// of the copy `pair.b = pair.a` records.
-	shared_bit := false
-	for id, set in graph.region_of {
-		if len(set.params) == 0 || !set.params[0] { continue }
-		set.params[0] = false
-		testing.expect(t, carry.region_of[id].params[0], "a carried region shares its parameter buffer")
-		shared_bit = true
-		break
-	}
-	testing.expect(t, shared_bit, "no local's region holds the allocator parameter")
+	// So does changing its buffers in place: the paths of the copy
+	// `pair.b = pair.a` records.
 	shared_paths := false
 	for storage, content in graph.region_content {
 		for entry, index in content {
@@ -924,21 +912,20 @@ main :: proc() {}`) { return }
 	hook := prov_input_copy_operation(graph, held).hook
 	original := p.c.result_summaries[hook]
 	defer p.c.result_summaries[hook] = original
-	growing: Proc_Summary
+	growing: Result_Provenance
 	p.c.result_summaries[hook] = &growing
 	entry := normalization_parameter_seed(&k, graph, program)
 	before_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
 	prov_seed_regions(before_graph, &entry.facts)
 	prov_replay_fact_operations(before_graph, program)
 	before := prov_region_for_symbol(before_graph, normalization_symbol(t, &p, "output"))
-	params := [2]bool{true, true}
-	growing.result.region = Region_Set{params = params[:]}
+	growing.region = Region_Set{params = 0b11}
 	after_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
 	prov_seed_regions(after_graph, &entry.facts)
 	prov_replay_fact_operations(after_graph, program)
 	after := prov_region_for_symbol(after_graph, normalization_symbol(t, &p, "output"))
-	testing.expect(t, !before.default && (len(before.params) == 0 || !before.params[0]), "an empty hook summary supplied dependencies")
-	testing.expect(t, after.default && len(after.params) > 0 && after.params[0], "the replay did not read the grown hook summary")
+	testing.expect(t, !before.default && !region_has_param(before, 0), "an empty hook summary supplied dependencies")
+	testing.expect(t, after.default && region_has_param(after, 0), "the replay did not read the grown hook summary")
 	testing.expect_value(t, len(program.input.values), values)
 	testing.expect_value(t, len(program.input.storages), storage)
 	testing.expect_value(t, len(program.input.calls), calls)

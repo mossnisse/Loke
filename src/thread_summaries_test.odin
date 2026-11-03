@@ -69,7 +69,7 @@ use_of :: proc(t: ^testing.T, p: ^Checked, procedure: string) -> Allocator_Use {
 
 @(private = "file")
 uses_param :: proc(use: Allocator_Use, index: int) -> bool {
-	return index < len(use.regions.params) && use.regions.params[index]
+	return region_has_param(use.regions, index)
 }
 
 @(test)

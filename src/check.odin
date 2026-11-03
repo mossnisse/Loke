@@ -12,6 +12,8 @@ Checker :: struct {
 	// Parts of foreign signatures that named a record still resolving its fields
 	// (`check_deferred_foreign_parts`).
 	deferred_foreign_parts: [dynamic]Foreign_Part,
+	// Likewise, the types under `@(escape=...)` (`check_deferred_escape_parts`).
+	deferred_escape_parts: [dynamic]Escape_Part,
 	file:  u32,
 	// The file being checked. Its package-clause attributes decide the default
 	// visibility of the declarations in it.
@@ -264,6 +266,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 
 	// Every record has its fields now.
 	check_deferred_foreign_parts(k)
+	check_deferred_escape_parts(k)
 
 	// Phase 2c: reject a type that contains itself by value, a layout past the
 	// maximum, and a union's designated zero with no zero value: each needs every
@@ -317,6 +320,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	}
 	// And any a body's own procedure type deferred.
 	check_deferred_foreign_parts(k)
+	check_deferred_escape_parts(k)
 
 	// Every symbol has its kind and its constant its type.
 	check_private_names(k, package_id)
@@ -698,15 +702,53 @@ check_escape_attribute :: proc(
 	}
 	// A generic signature serves bindings with and without borrows, such as
 	// `Small_Array(string_view, N)` and `Small_Array(int, N)`, so it is exempt.
-	if !generic_instance && !borrowing && type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
-		errorf(
-			k.c, span, "L0648",
-			"`@(escape=...)` describes what a call may keep of a borrow, and `%s` carries none",
-			type_name(k.c, type),
-		)
-		return .Result
+	if !generic_instance && !borrowing && type != INVALID_TYPE {
+		if cap(k.deferred_escape_parts) == 0 {
+			k.deferred_escape_parts = make([dynamic]Escape_Part, 0, 4, k.c.semantic_allocator)
+		}
+		append(&k.deferred_escape_parts, Escape_Part{type, span})
 	}
 	return level
+}
+
+// A value parameter's type under `@(escape=...)`, and where it was written.
+Escape_Part :: struct {
+	type: Type_Id,
+	span: Span,
+}
+
+// A signature may name a record still resolving its fields, so whether the type
+// carries a borrow waits until every record has them.
+check_deferred_escape_parts :: proc(k: ^Checker) {
+	for part in k.deferred_escape_parts {
+		if !type_is_carrier(k.c, part.type) && !type_carries_borrow(k.c, part.type).any {
+			errorf(
+				k.c, part.span, "L0648",
+				"`@(escape=...)` describes what a call may keep of a borrow, and `%s` carries none",
+				type_name(k.c, part.type),
+			)
+		}
+	}
+	clear(&k.deferred_escape_parts)
+}
+
+// The written `@(escape=<level>)`, a bare identifier. `valid` is false for any
+// other value, which the caller reports.
+@(private = "file")
+attribute_escape_level :: proc(attributes: []Attribute) -> (level: Escape_Level, written: bool, valid: bool) {
+	attribute, found := find_attribute(attributes, "escape")
+	if !found {
+		return .Result, false, true
+	}
+	if ident, is_ident := attribute.value.(^Expr_Ident); is_ident {
+		switch ident.name {
+		case "none":   return .None, true, true
+		case "result": return .Result, true, true
+		case "stored": return .Stored, true, true
+		case "static": return .Static, true, true
+		}
+	}
+	return .Result, true, false
 }
 
 // design.md "@(cross_thread)": an argument that crosses to another thread. A

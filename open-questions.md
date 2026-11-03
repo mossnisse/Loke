@@ -1224,6 +1224,16 @@ error context survives; and compare the diagnostics after adding, renaming,
 and removing a variant or a label. Document an idiom in a tutorial only after
 it has been compared this way.
 
+## A collapsed region shape in a rejection
+
+A region shape wider than `REGION_SHAPE_WIDTH` (256 entries, against the 64 paths
+[Minimum provenance precision](design.md#minimum-provenance-precision) guarantees) collapses to
+one entry for the whole value. That section says a diagnostic a budget causes must name the
+budget, and a collapsed shape carries no precision reason to name. Records of 300 fields probed
+with resets of one field's region rejected and accepted as they do at 100, so no reproduction
+of a rejection this causes is known. If one turns up, the collapse should record `.Width` in
+what it returns.
+
 ## The diverging arrow's spelling
 
 [`-> !`](design.md#diverging-procedures) means the procedure never returns

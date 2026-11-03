@@ -25,6 +25,7 @@ add_mutable_map_members :: proc(k: ^Checker, subject: Type_Id) {
 	c := k.c
 	entry := map_entry_type(c, subject)
 	iterator := new_map_cursor_type(c, subject, entry, "Mutable_Map_Iterator")
+	type_of(c, iterator).mutable = true
 	lent := yield_pair(c, Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Mutable})
 	item := yield_item_type(k, entry, lent, no_span(), report = false)
 	next := synth_self_member(c, "next", .Map_Next, iterator, .Inout, option_type(k, item))
