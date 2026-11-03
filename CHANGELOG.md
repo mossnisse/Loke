@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A `slot` whose written `self` type is not the interface's subject is `L0442`
+  ([Interface bodies](design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
+  `interface($T: type)` compiled and was never met. Upgrade by writing the subject, or no type.
+- A slot written with a calling convention is met only by a method with that convention
+  ([Interface bodies](design.md#interface-bodies)). `slot f: proc "c" (self) -> int;` was met by a
+  Loke method and not by a `proc "c"` one. Upgrade by removing the convention from the slot, or by
+  giving the method the one the slot names.
 - The parser now rejects four shapes [grammar.md](grammar.md) never admitted. A capture clause with
   no body, `T :: proc() capture(y);`, is `L0259`: it compiled and dropped the clause, so `y` need not
   have existed; write a procedure type with no clause. `-> !` on a procedure type in result position,
@@ -1389,6 +1396,15 @@ checklist.
   by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
 - `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`
   first; it was 0 when the type was first written out.
+- An application whose composition has arguments that do not resolve is false, as
+  [Interface bodies](design.md#interface-bodies) says: `Inner(T, T.N)` in `Outer(T)` made
+  `static_assert(!Outer(int))` an `L0408`, and `Callable(C, proc(n: C.Arg) -> int)` an `L0306`.
+- An interface that composes itself is false however it does so. Looking up an associated constant
+  or a slot through one overflowed the compiler's stack, and `Bad(T) || Bad(T)`, or a composition
+  repeated at each level, ran for hours.
+- A bare bound grants what its composition requires when the interface names what it composes by a
+  name only it can see, when a composed `Callable` has another subject, as in
+  `Callable(T.Fn, sig)`, and when that `Callable`'s signature names an associated constant.
 - An export whose link name starts with `loke.` stays external, and a procedure or global the
   compiler would give that same name takes another, so `@(export, link_name = "loke.host_api")`
   links and `"loke.p.helper"` beside `helper :: proc()` compiles

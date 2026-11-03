@@ -1,0 +1,25 @@
+package main;
+
+// design.md "Interface bodies": a slot's first parameter is `self` in a receiver
+// mode, and design.md "Receiver forms": written, its type is the subject's.
+Every_Form :: interface($Self: type) {
+	slot a: proc(self) -> int;
+	slot b: proc(self: ^) -> int;
+	slot c: proc(self: inout) -> int;
+	slot d: proc(self: move) -> int;
+	slot e: proc(self: Self) -> int;
+	slot f: proc(self: ^Self) -> int;
+	slot g: proc(self: inout Self) -> int;
+	slot h: proc(self: move Self) -> int;
+	slot i: proc(self, other: Self) -> int;
+}
+
+Other_Type :: interface($T: type) { slot f: proc(self: int) -> int; }
+Other_Pointer :: interface($T: type) { slot f: proc(self: ^int) -> int; }
+Deep_Pointer :: interface($T: type) { slot f: proc(self: ^^T) -> int; }
+Holds_Subject :: interface($T: type) { slot f: proc(self: []T) -> int; }
+
+// Its `dyn` view stops at the declaration, and never reaches the backend.
+read :: proc(v: dyn Deep_Pointer) {}
+
+main :: proc() {}

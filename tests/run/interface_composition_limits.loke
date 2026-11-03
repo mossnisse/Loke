@@ -1,0 +1,62 @@
+package main;
+
+import "core:fmt";
+import "base:interfaces";
+
+// design.md "Interface bodies": evaluating an application may simply produce
+// false, including when what it composes has arguments that do not resolve.
+Sized_By :: interface($T: type, $N: int) {}
+Outer :: interface($T: type) { Sized_By(T, T.N); }
+Has_N :: struct { value: int }
+impl Has_N { N :: 3; }
+static_assert(!Outer(int));
+static_assert(Outer(Has_N));
+
+Takes_Arg :: interface($C: type) { interfaces.Callable(C, proc(n: C.Arg) -> int); }
+static_assert(!Takes_Arg(int));
+
+// An interface that composes itself is false however it does so, and answers
+// promptly: looking for a constant through the composition, through a cycle,
+// on ever larger arguments, or on several branches at each level.
+Constant_Cycle :: interface($T: type) { T.X -> type; Constant_Cycle(T); }
+static_assert(!Constant_Cycle(int));
+
+Cycle_A :: interface($T: type) { T.X -> type; Cycle_B(T); }
+Cycle_B :: interface($T: type) { Cycle_A(T); }
+static_assert(!Cycle_A(int));
+
+Constant_Growth :: interface($T: type) { T.X -> type; Constant_Growth([]T); Constant_Growth([^]T); }
+static_assert(!Constant_Growth(int));
+
+Either :: interface($T: type) { Either(T) || Either(T); }
+static_assert(!Either(int));
+
+Growing :: interface($T: type) { Growing([]T) || Growing([^]T); }
+static_assert(!Growing(int));
+
+Predicate :: interface($T: type) where Predicate(T) || Predicate(T) {}
+static_assert(!Predicate(int));
+
+Names_A :: interface($T: type) { T.Missing == 1; Names_B(T); Names_B(T); }
+Names_B :: interface($T: type) { Names_A(T); Names_A(T); }
+static_assert(!Names_A(int));
+
+// A slot's calling convention must match exactly.
+Foreign_Slot :: interface($T: type) { slot f: proc "c" (self) -> int; }
+Loke_Method :: struct { value: int }
+impl Loke_Method { f :: proc(self) -> int { return self.value; } }
+C_Method :: struct { value: int }
+impl C_Method { f :: proc "c" (self) -> int { return self.value; } }
+Loke_Slot :: interface($T: type) { slot f: proc(self) -> int; }
+static_assert(!Foreign_Slot(Loke_Method));
+static_assert(Foreign_Slot(C_Method));
+static_assert(Loke_Slot(Loke_Method));
+static_assert(!Loke_Slot(C_Method));
+
+main :: proc() {
+	when (Outer(int)) {
+		fmt.println("held");
+	} else {
+		fmt.println("false");
+	}
+}

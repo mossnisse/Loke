@@ -1449,6 +1449,22 @@ Additional reflection can be introduced when an actual tool needs it.
 form, `T.Element -> type;`, whose result is necessarily compile-time known.
 A separate associated-constant declaration grammar adds little to that model.
 
+### What stops an interface composing itself
+
+An interface can name itself, and such an application is false, so something has
+to end the check. A depth limit alone does not: `Bad(T) || Bad(T)` under a limit
+of 32 asks 2^32 questions. Nor does failing on re-entry to an application already
+in progress, since `Bad([]T) || Bad([^]T)` never repeats one. So one outermost
+application may enter a fixed number of applications, however they are reached.
+The standard library's deepest tree enters 33, so the limit of 16384 is far from
+anything real, and a program that reaches it spends a fraction of a second.
+
+A cache on the interface, its arguments, and the lookup package would also bound
+the work, and most checks do repeat one. It would not pay: across the test corpus
+application checking is under 1% of front-end time, and at most about 6% of one
+program, and an answer is not a pure function of that key, since a record still
+resolving its fields or a signature on the stack can change it.
+
 ### A bound grants what met it
 
 A bare bound already granted its declaration the slots that satisfied it, so a

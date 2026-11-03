@@ -378,30 +378,6 @@ lookup_witness :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type
 	return c.witnesses[witness_key(c, interface_symbol, concrete, args)]
 }
 
-// `subject` followed by the non-subject `rest`: a full interface application.
-@(private = "file")
-interface_application :: proc(c: ^Compiler, info: ^Interface_Info, subject: Type_Id, rest: []Generic_Arg) -> []Generic_Arg {
-	full := make([]Generic_Arg, len(info.params), c.semantic_allocator)
-	if len(full) > 0 {
-		full[0] = Generic_Arg{is_type = true, type = subject}
-	}
-	for index in 1 ..< len(full) {
-		full[index] = index - 1 < len(rest) ? rest[index - 1] : Generic_Arg{}
-	}
-	return full
-}
-
-// A scope binding the interface's parameters to one application's arguments.
-interface_scope :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> ^Scope {
-	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
-	for parameter, index in info.params {
-		if index < len(args) {
-			bind_generic_name(k, scope, Generic_Binding{name = parameter.name, span = parameter.span, arg = args[index]})
-		}
-	}
-	return scope
-}
-
 @(private = "file")
 write_arg_keys :: proc(c: ^Compiler, b: ^strings.Builder, args: []Generic_Arg) {
 	for arg in args {
@@ -419,24 +395,11 @@ dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg, 
 
 @(private = "file")
 dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Arg, mutable: bool) -> string {
-	b := strings.builder_make(c.semantic_allocator)
-	strings.write_string(&b, mutable ? "dyn mut " : "dyn ")
+	prefix := mutable ? "dyn mut " : "dyn "
 	if interface_is_callable(c, info) && len(args) == 1 && args[0].is_type {
-		strings.write_string(&b, type_name(c, args[0].type))
-		return strings.to_string(b)
+		return concat(c, prefix, type_name(c, args[0].type))
 	}
-	strings.write_string(&b, identifier_text(c, symbol_of(c, info.symbol).name))
-	if len(args) > 0 {
-		strings.write_string(&b, "(")
-		for arg, index in args {
-			if index > 0 {
-				strings.write_string(&b, ", ")
-			}
-			strings.write_string(&b, generic_argument_text(c, arg))
-		}
-		strings.write_string(&b, ")")
-	}
-	return strings.to_string(b)
+	return concat(c, prefix, interface_application_text(c, info, args))
 }
 
 type_is_dyn :: proc(c: ^Compiler, id: Type_Id) -> bool {
@@ -595,17 +558,6 @@ span_line :: proc(c: ^Compiler, span: Span) -> int {
 	return line
 }
 
-composed_interface_of :: proc(k: ^Checker, requirement: Requirement) -> ^Interface_Info {
-	if requirement.result != nil || len(requirement.bindings) > 0 {
-		return nil
-	}
-	call, is_call := requirement.expr.(^Expr_Call)
-	if !is_call {
-		return nil
-	}
-	return interface_info_for(k, named_callee_symbol(k, call.callee))
-}
-
 // design.md: a slot is non-generic and non-variadic, uses the ordinary calling
 // convention, has no defaults, and mentions the subject exactly once — as the
 // receiver.
@@ -693,49 +645,6 @@ Witness_Slot :: struct {
 	target: Symbol_Id,
 }
 
-// The flattened slots of an interface application, composition included.
-interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, out: ^[dynamic]Interface_Slot) {
-	saved := k.location
-	defer k.location = saved
-	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
-	if info.file_node != nil {
-		k.file, k.file_node = info.file, info.file_node
-	}
-	// A composed application's arguments may name this one's associated constants.
-	k.body = {requiring = info, requiring_args = args}
-
-	for requirement in info.node.requirements {
-		if requirement.kind == .Slot {
-			signature, is_proc := requirement.slot_type.(^Type_Proc)
-			if !is_proc {
-				continue
-			}
-			append(out, Interface_Slot {
-				name  = name_identifier(k.c, requirement.name),
-				span  = requirement.span,
-				type  = signature,
-				owner = info.symbol,
-				args  = args,
-			})
-			continue
-		}
-		composed := composed_interface_of(k, requirement)
-		if composed == nil {
-			continue
-		}
-		// Clone before annotating: one declaration serves many applications.
-		call, is_call := clone_expr(k.c, requirement.expr).(^Expr_Call)
-		if !is_call {
-			continue
-		}
-		composed_args, valid := bound_arguments(k, call, composed)
-		if !valid {
-			continue
-		}
-		interface_slots(k, composed, composed_args, out)
-	}
-}
-
 // Materializes, or reuses, the witness for one key.
 request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, args: []Generic_Arg, span: Span) -> ^Witness {
 	key := witness_key(k.c, info.symbol, concrete, args)
@@ -774,10 +683,10 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 		owner := interface_info_for(k, entry.owner)
 		// The slot's declaring package decides which extensions may supply it.
 		k.pkg, k.lookup_pkg = owner.pkg, owner.pkg
-		params, modes, result_type, _, shape_ok := slot_signature_for(k, owner, entry, concrete)
+		params, modes, result_type, result_inout, shape_ok := slot_signature_for(k, owner, entry, concrete)
 		target := INVALID_SYMBOL
 		if shape_ok {
-			target = find_witness_slot(k, concrete, entry.name, owner.pkg, params, modes, result_type)
+			target = find_witness_slot(k, concrete, entry, owner.pkg, params, modes, result_type, result_inout)
 		}
 		slots[index] = Witness_Slot {
 			name   = entry.name,
@@ -848,18 +757,19 @@ slot_parameter_names :: proc(k: ^Checker, entry: Interface_Slot) -> []Identifier
 find_witness_slot :: proc(
 	k: ^Checker,
 	concrete: Type_Id,
-	name: Identifier_Id,
+	entry: Interface_Slot,
 	owner_pkg: Package_Id,
 	params: []Type_Id,
 	modes: []Param_Mode,
 	result: Type_Id,
+	result_inout: bool,
 ) -> Symbol_Id {
-	for candidate in slot_candidates(k, concrete, name, owner_pkg) {
+	for candidate in slot_candidates(k, concrete, entry.name, owner_pkg) {
 		sym := symbol_of(k.c, candidate)
 		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
 			continue
 		}
-		if slot_matches(k, sym, params, modes, result, nil) {
+		if slot_matches(k, sym, params, modes, result, result_inout, entry.type.convention) {
 			return candidate
 		}
 	}
@@ -923,12 +833,7 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 		)
 		return INVALID_TYPE
 	}
-	bound := make([]Generic_Arg, len(args), k.c.semantic_allocator)
-	ok: bool
-	bound, ok = interface_arguments_for(
-		k, args, info, 1, TYPE_RAWPTR,
-		"L0463", "a `dyn` interface argument", true, bound,
-	)
+	bound, ok := interface_arguments_for(k, args, info, dyn_view = true, report = true)
 	if !ok {
 		return INVALID_TYPE
 	}

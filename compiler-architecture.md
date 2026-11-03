@@ -906,7 +906,7 @@ be file-private. Paths below are relative to `src/`.
 | `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
 | `generic_alias.odin` | Parametric aliases: the rules on their declarations, and what an application denotes and how a pattern written through one matches. |
 | `generic_impl.odin` | Generic `impl` blocks: installing them on each instance, settling members two blocks supply, and checking their bodies once a package is finished. |
-| `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, and slot lookup contexts. |
+| `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, slot lookup contexts, composition walks, `Callable`'s built-in rule, and what a bare bound grants. |
 | `eval.odin`, `eval_memory.odin` | Bounded typed-AST interpreter for compile-time execution, and the storage its memory limit charges. |
 | `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |

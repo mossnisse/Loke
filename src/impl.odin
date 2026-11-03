@@ -632,10 +632,7 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 		if sym == nil || sym.name != name || !member_is_visible(k, sym) {
 			continue
 		}
-		if sym.decl != nil && sym.decl.sig_state == .Unchecked {
-			resolve_symbol_signature_in_place(k, member, subject)
-			sym = symbol_of(k.c, member)
-		}
+		sym = member_with_signature(k, member, subject)
 		sym.looked_up = true
 		if sym.kind == .Proc_Group {
 			for nested in sym.members {
@@ -696,11 +693,7 @@ conversion_hooks :: proc(k: ^Checker, target: Type_Id) -> []Symbol_Id {
 		return out[:]
 	}
 	for member in info.members {
-		sym := symbol_of(k.c, member)
-		if sym != nil && sym.decl != nil && sym.decl.sig_state == .Unchecked {
-			resolve_symbol_signature_in_place(k, member, target)
-			sym = symbol_of(k.c, member)
-		}
+		sym := member_with_signature(k, member, target)
 		if sym != nil && sym.hook == .Convert {
 			append(&out, member)
 		}

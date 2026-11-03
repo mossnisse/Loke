@@ -188,7 +188,7 @@ The table of what a built-in operator accepts is split across [check_expr.odin:2
 
 #### Interface composition walk
 
-[erased.odin:747](src/erased.odin#L747), [interface.odin:1356](src/interface.odin#L1356) and [interface.odin:1396](src/interface.odin#L1396) share the same 12-line loop body: skip slots, find the composed interface, clone the requirement, bind its arguments. They disagree on guards and context, which BUG-interface-1 to -4 report. `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)` saves about 30 lines and gives the guards one place to live.
+[erased.odin:747](src/erased.odin#L747), [interface.odin:1356](src/interface.odin#L1356) and [interface.odin:1396](src/interface.odin#L1396) share the same 12-line loop body: skip slots, find the composed interface, clone the requirement, bind its arguments. `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)` saves about 30 lines.
 
 In the same area, the candidate loop repeats at [erased.odin:893](src/erased.odin#L893) and [interface.odin:1018](src/interface.odin#L1018), and the constant argument conversion at [interface.odin:312](src/interface.odin#L312), [interface.odin:347](src/interface.odin#L347) and [generic.odin:3070](src/generic.odin#L3070) (`convert_generic_value`, file-private). Sharing both saves about 25 more.
 
@@ -304,7 +304,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
-- Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
+- [erased.odin:1075](src/erased.odin#L1075) `check_as_call` belongs in `union.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`.
 - Transfer wording and type reach: the reports moved beside `transfer_facts` in `hooks.odin` belong with them in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
@@ -1205,7 +1205,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 
 - `BUG-erased-1` **high** [erased.odin:671](src/erased.odin#L671) `dyn_slot_is_compatible`: `!split &&` skips the group type of `proc(self, other: Self)`, though line 651 says that type belongs to `other`. Scenario (run): `slot same: proc(self, other: Self) -> bool` with `v.same(v)` compiles and `other.r` prints garbage (917046360800) instead of L0463. Fix: test `parameter.type` whenever `position > 0 || split`. *Confirmed: Reproduced: `slot show: proc(self, other: Self) -> int` compiles and `v.show(v)` prints garbage (783195044624), while `proc(self: Self, other: Self)` reports L0463. design.md "Dyn compatibility" forbids this; no gap is recorded. High severity fits: silent memory misread.*
 - `BUG-erased-3` **medium** [erased.odin:235](src/erased.odin#L235) `install_dyn_forwarding_slots`: `modes[0]` is unguarded (line 208 guards it) and `dyn_slot_is_compatible` accepts a slot with no parameters. Scenario (run): `slot nothing: proc() -> int;` plus `v: dyn I;` panics "Index 0 is out of range" before the queued L0442 prints. Fix: reject an empty parameter list in `dyn_slot_is_compatible`. *Confirmed: Reproduced: `slot nothing: proc() -> int;` plus `v: dyn I;` panics at erased.odin(235:27), Index 0 out of range; without the dyn local L0442 prints. Invalid input only, so the harm is a lost diagnostic: low-to-medium. Not recorded in the gap docs.*
-- `BUG-erased-4` **medium** [erased.odin:662](src/erased.odin#L662) `dyn_slot_is_compatible`: the receiver check asks only whether the type mentions the subject, but design.md "Dyn compatibility" allows only `self`, `self: ^`, or `self: inout Self`. Scenario (run): `slot b: proc(self: ^^Self) -> int` with a parameter `v: dyn J` fails in clang (L0403) instead of L0463. Fix: match the receiver syntax against those forms. *Confirmed: Reproduced: slot proc(self: ^^Self) (also []Self, Option(Self)) with v: dyn J gives L0403 clang IR errors; self: int gives L0463. Unrecorded; design.md allows only three receivers. Severity low: invalid code is still rejected, and a ^^T method fails L0444.*
 - `BUG-erased-5` **low** [erased.odin:511](src/erased.odin#L511) `dyn_compatible`: the in-progress mark leaves `dyn_reason` empty. Scenario (run): `A` composes `B` composes `A` reports "the composed interface `A` is not dyn-compatible: " with nothing after the colon. Fix: set `info.dyn_reason = "it composes itself"` with the mark. *Not verified.*
 
 **Simplification**
@@ -1216,13 +1215,10 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 - [erased.odin:1003](src/erased.odin#L1003) `check_dyn_conversion` and [erased.odin:1133](src/erased.odin#L1133) `check_dyn_slot_call`: repeat `v.type = INVALID_TYPE` before each return. Set it once on entry (after the `found` test in the slot call) and assign the type only at the success exits. (about 16 lines)
 - [erased.odin:112](src/erased.odin#L112) `pass_variadic_element`: both branches do the same two assignments. Write `if !(dyn_views_printing(...) && format_misdeclared(...)) && dyn_view_witness(...) == nil { return e, false }`. (about 4 lines)
 - [erased.odin:352](src/erased.odin#L352) `dyn_proc_source_signature`: three identical guarded `[1:]` blocks become one file-private parapoly `after_first(s)` returning `s[1:]` or nil. (about 6 lines)
-- [erased.odin:395](src/erased.odin#L395) `interface_application`: the loop is `copy(full[1:], rest)` inside the `len(full) > 0` block, since `copy` stops at the shorter slice. (about 3 lines)
 - [erased.odin:906](src/erased.odin#L906) `dyn_slot_index`: named results `(index: int, entry: Interface_Slot, found: bool)` with bare `return` replace three `return 0, Interface_Slot{}, false`.
-- [erased.odin:962](src/erased.odin#L962) `resolve_dyn_type`: `bound, ok := interface_arguments_for(..., make([]Generic_Arg, len(args), k.c.semantic_allocator))` replaces the separate `make` and `ok: bool`. (2 lines)
 
 **Dead code**
 
-- (branch) [erased.odin:753](src/erased.odin#L753): `is_call` cannot be false, because `composed_interface_of` returned non-nil only for an `Expr_Call` and a clone keeps the node kind.
 - (branch) [erased.odin:179](src/erased.odin#L179): `stored != nil` cannot fail for a type `new_type` just returned; the same at 241 and 307, whose `dyn` comes from that call.
 - (branch) [erased.odin:783](src/erased.odin#L783): `found` and `len(members) > 0` always hold, because a callable witness is requested only for a read-only view, whose member was installed with it (`format.odin` requests a non-callable interface).
 - (branch) [erased.odin:511](src/erased.odin#L511): `info.dyn_ok = false` restates the zero value of a field computed once.
@@ -1237,7 +1233,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 **Near copies**
 
 - [erased.odin:747](src/erased.odin#L747) and [interface.odin:1396](src/interface.odin#L1396), [interface.odin:1356](src/interface.odin#L1356): all do `composed_interface_of`, clone, cast, `bound_arguments`. Shared form: `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)`.
-- [erased.odin:725](src/erased.odin#L725) and [interface.odin:1326](src/interface.odin#L1326), [interface.odin:1388](src/interface.odin#L1388), [interface.odin:583](src/interface.odin#L583): same scope, package, and file setup for an application. Shared form: `enter_interface(k, info, args)`.
 - [erased.odin:893](src/erased.odin#L893) and [interface.odin:1018](src/interface.odin#L1018): same loop over `slot_candidates` and `slot_matches`, differing only in `result_inout` and the returned value. One `matching_slot` returning the symbol replaces `find_witness_slot`.
 - [erased.odin:475](src/erased.odin#L475) `dyn_same_application` and [erased.odin:492](src/erased.odin#L492) `view_witness_types`: same argument-list comparison. Shared form: `generic_args_equal(c, a, b: []Generic_Arg)`.
 - [erased.odin:47](src/erased.odin#L47) and [erased.odin:57](src/erased.odin#L57): `variadic_view_satisfied` and `dyn_view_witness` open identically, differing only in `report`. One helper taking `report` serves both.
@@ -1245,7 +1240,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 **Structure and boundaries**
 
 - [erased.odin:1075](src/erased.odin#L1075): `check_as_call` has nothing to do with erased views; it only dispatches to `check_union_as`, so it belongs in `union.odin` beside it.
-- [erased.odin:402](src/erased.odin#L402), [erased.odin:620](src/erased.odin#L620), [erased.odin:722](src/erased.odin#L722): `interface_scope`, `composed_interface_of`, and `interface_slots` are general interface walking that `interface.odin` calls, and it declares `Interface_Slot`. Move them to that file, the owner of "slot lookup contexts".
 - [erased.odin:23](src/erased.odin#L23): `variadic_view_element`, `dyn_view_witness`, `dyn_type`, `dyn_is_callable`, `dyn_key`, `dyn_is_mutable`, `dyn_compatible`, and `dyn_slot_index` have no users outside this file, so "Source-code map" asks for `@(private = "file")`.
 - [erased.odin:550](src/erased.odin#L550) `dyn_compatible`: the composition branch (558-605) is the natural seam; extract `dyn_composition_is_compatible` returning `(reason, ok)`, matching `dyn_slot_is_compatible`.
 - [erased.odin:1158](src/erased.odin#L1158) `check_dyn_slot_call`: argument binding (1158-1211) is a separate job from slot lookup; split it at that line.
@@ -1685,7 +1679,6 @@ A compact file with mostly useful comments, and member-table scans that stay sma
 - [impl.odin:476](src/impl.odin#L476) `member_is_visible`: the `looked_up` write is redundant, because the only callers that can pass a `.Standard_Format` symbol scan `pkg.extensions` next and mark the same extension. Remove it and `standard_format_hidden`'s second result, which ends in `return local != nil && !local.bound_excluded && (local.pkg == observer || local.public)`. (about 10 lines)
 - [impl.odin:468](src/impl.odin#L468) `member_is_visible`: join the early exits into `if sym == nil || sym.bound_excluded` and `if hidden || !capture_field_visible(k, sym)`. (about 6 lines)
 - [impl.odin:616](src/impl.odin#L616) `conversion_hooks`: resolves every member's signature although only hooks can match. `sym.hook` is set at declaration (line 251), so test it first and resolve only matches; `info == nil` can `return nil`. (about 5 lines)
-- [impl.odin:549](src/impl.odin#L549) `expand_visible_members`: the `sig_state` test repeats the guard inside `resolve_symbol_signature_in_place` ([check.odin:852](src/check.odin#L852)), so call it unconditionally. (about 2 lines)
 
 **Dead code**
 
@@ -1759,72 +1752,13 @@ About 12 lines can go across the file, mostly text repeating `compiler-architect
 
 ### src/interface.odin
 
-The satisfaction path is sound for ordinary programs, but the composition walks disagree on scope, grant context and recursion guard; every bug below was reproduced with `lokec.exe` built at this commit. Most of the shortening is in failure construction and three copies of the composed-application loop.
-
-**Bugs**
-
-- `BUG-interface-1` **medium** [interface.odin:646](src/interface.odin#L646) `check_one_requirement`: a composition's `bound_arguments` runs before the `mark` at line 677, so its errors stay, and `report = false` gates only some of them. Scenario: `Outer :: interface($T: type) { Inner(T, T.N); }`, then `static_assert(!Outer(int))` gives L0408, not false; `Callable(C, proc(n: C.Arg) -> int)` gives L0306. Fix: mark and truncate inside `bound_arguments`, always quiet. *Confirmed: Reproduced: Val(T, T.N) with `$N: int` gives L0408, even in `when (Outer(T))`, where plain `T.N -> int` is false; Callable(C, proc(n: C.Arg) -> int) gives L0306. A `$U: type` Inner correctly gives false. design.md says an application may simply produce false.*
-- `BUG-interface-2` **medium** [interface.odin:1308](src/interface.odin#L1308) `interface_names_constant`: looks up composed callee names in the caller's `k.scope`, not the interface's. Scenario: `shape.Outer` composes `Measured(T)` by its local name; `where shape.Outer(T)` in `main` then rejects `T.Unit` with L0306 though the bound holds. Fix: enter `info.scope` for the walk, as `add_slot_owners` does. *Confirmed: Reproduced: where shape.Outer(T) gives L0306 on T.Unit; shape.Measured(T) runs and static_assert(shape.Outer(Rod)) holds. A same-named Measured in main makes it compile, so lookup uses the caller's scope. Violates design.md "Interface bodies". Medium fits.*
-- `BUG-interface-3` **medium** [interface.odin:1369](src/interface.odin#L1369) `application_constant`: recursion on composed applications has no guard; `grant_depth` counts only entries through `required_associated_constant`. Scenario: `A :: interface($T: type) { T.X -> type; A(T); }` with `static_assert(!A(int))` overflows the stack (0xC00000FD). Fix: a depth limit or visited set. *Confirmed: Reproduced: the scenario and an A->B->A cycle exit 0xC00000FD; with no T.X, a found X, or no cycle, the same probe exits 0, so the unguarded line 1369 path is the cause. Severity is low to medium: a crash on an unusual program, no miscompile.*
-- `BUG-interface-4` **medium** [interface.odin:1226](src/interface.odin#L1226) `required_slot_candidates`: a bound not yet evaluated reaches the unguarded `interface_slots`. Scenario: `A :: interface($T: type) { A(T); }` and `f :: proc(x: $T) -> int where T.q == 1, A(T)`, called, overflows the stack. Fix: bound the recursion in `interface_slots` ([erased.odin:722](src/erased.odin#L722)). *Confirmed: Reproduced: the probe with where T.q == 1, A(T) exits 0xC00000FD, while where A(T) or A(T), T.q == 1 gives L0444 "composes itself". interface_slots has no depth guard. Unrecorded; only invalid programs hit it, so medium is a bit high.*
-- `BUG-interface-5` **low** [interface.odin:1215](src/interface.odin#L1215) `required_slot_candidates`: `args[0].type == type` blocks `Callable` composed on another subject, against `composed_callable`'s own subject test and design.md "Interface bodies". Scenario: `Has_Fn(T)` composing `Callable(T.Fn, sig)` gives "`f` is not callable" on a `T.Fn`; a direct `Callable(T.Fn, sig)` bound compiles. Fix: drop that test. *Not verified.*
-- `BUG-interface-6` **low** [interface.odin:1388](src/interface.odin#L1388) `composed_callable`: omits `k.body = {requiring = info, requiring_args = args}`, which `application_constant` and `interface_slots` set. Scenario: `C.Arg -> type; Callable(C, proc(n: C.Arg) -> int);` where `Arg` is private on an unexported type: the bound holds, then `f(7)` in the body fails with L0306. Fix: set it. *Not verified.*
-- `BUG-interface-7` **low** [interface.odin:506](src/interface.odin#L506) `interface_check`: the depth cap bounds depth but not breadth, and non-composition requirements do not stop at the first failure. Scenario: `Bad :: interface($T: type) { Bad(T) || Bad(T); }` with `static_assert(!Bad(int))` runs about 2^32 checks; still running after 25 s. Fix: an in-progress set of (interface, args) that fails on re-entry. *Not verified.*
-- `BUG-interface-8` **low** [interface.odin:1294](src/interface.odin#L1294) `interface_names_constant`: revisits interfaces with only a depth limit, unlike `add_slot_owners`. Scenario: `A` has `T.Missing == 1; B(T); B(T);` and `B` has `A(T); A(T);`: `static_assert(!A(int))` still runs after 25 s (without the `T.Missing` line it returns at once). Fix: a visited set in place of `depth`. *Not verified.*
-- `BUG-interface-9` **low** [interface.odin:1465](src/interface.odin#L1465) `slot_matches`: never compares the slot's written convention, which `slot_signature` drops, though design.md "Interface bodies" says it must match exactly. Scenario: `slot f: proc "c" (self) -> int;` is met by a Loke-convention `f`, so `I(S)` is true. Fix: reject a convention at declaration, or carry it into the match. *Not verified.*
-- `BUG-interface-10` **low** [interface.odin:128](src/interface.odin#L128) `check_interface_declaration`: tests only the name `self`, though design.md "Interface bodies" requires a receiver mode and says a pointer merely named `self` is not one. Scenario: `slot f: proc(self: int) -> int;` in `interface($T: type)` draws no L0442 and is silently false. Fix: also require the absent or subject type. *Not verified.*
-
-**Simplification**
-
-- [interface.odin:610](src/interface.odin#L610) `Requirement_Failure` literals: the 10 `{span, fmt.aprintf(..., allocator = ...)}` blocks at 610, 704, 736, 748, 762, 812, 825, 842, 1030, 1106 become `return requirement_failuref(k, span, "...", args)`; `return {}, true` replaces the rest. (about 45 lines)
-- [interface.odin:232](src/interface.odin#L232) `interface_arguments_for`: nine parameters encode one choice. `first`, `erased_subject`, `code` and `description` all follow from a `dyn_view: bool`; `out` is always a fresh `len(written)` slice, so allocate it here. (about 10 lines)
-- [interface.odin:867](src/interface.odin#L867) `call_method_matches`: `call_effects_match` (952) and `call_escapes_weaken_to` (978) have this one caller and each loop over the same parameters with the same `index + 1` offset; fold both into the loop at 878. (about 15 lines)
-- [interface.odin:1463](src/interface.odin#L1463) `slot_matches`: `Maybe(bool)` exists only for [erased.odin:898](src/erased.odin#L898), whose caller discards the value at [erased.odin:802](src/erased.odin#L802) after satisfaction already compared it. Pass it and take a plain `bool`. (about 3 lines)
-- [interface.odin:1476](src/interface.odin#L1476) `slot_matches`: `proc_parameter_mode(k.c, sym.proc_type, index)` is this expression, as line 874 already uses. (about 1 line)
-- [interface.odin:249](src/interface.odin#L249) `interface_arguments_for`: `interface_scope(k, info, nil)` is the same scope. (about 1 line)
-- [interface.odin:1263](src/interface.odin#L1263) `required_associated_constant`: the empty test before the loop does nothing the loop does not. (about 3 lines)
-- [interface.odin:553](src/interface.odin#L553) `interface_check`: `declared != nil && declared.decl != nil` holds for any `info`, since `interface_info_for` returned one. (about 2 lines)
-
-**Dead code**
-
-- (branch) [interface.odin:501](src/interface.odin#L501): `span` in `interface_check` and `check_one_requirement` (636) is only forwarded to each other, never read; `failed_bound_text` computes one at 447 for nothing.
-- (branch) [interface.odin:634](src/interface.odin#L634): `scope` in `check_one_requirement` always equals `k.scope`, set at 539.
-- (branch) [interface.odin:1362](src/interface.odin#L1362): `is_call` here and at 1402 cannot fail: `composed_interface_of` has already seen an `Expr_Call`, and a clone keeps its kind.
-- (branch) [interface.odin:503](src/interface.odin#L503): the argument-count guards here, at 573 and at 1321 cannot fire: arguments come from `bound_arguments`, `interface_arguments` or `interface_application`, which all fix the length.
-- (branch) [interface.odin:243](src/interface.odin#L243): this guard and the one at 251 cannot fire: all three callers check the length and size `out` first, and the only `first > 0` caller passes `TYPE_RAWPTR`.
-
-**Data structures and algorithms**
-
-- [interface.odin:406](src/interface.odin#L406) `interface_satisfied`: no memo, so every evaluation clones all requirements and appends to `pending_private_reads` (554, once per composed level); both grow with applications, not interfaces. A cache on (interface, args, lookup package) would also serve BUG-interface-7. Not measured.
+What remains is the part shared with `erased.odin` and `generic.odin`.
 
 **Near copies**
 
 - [interface.odin:1352](src/interface.odin#L1352), [interface.odin:1392](src/interface.odin#L1392) and [erased.odin:747](src/erased.odin#L747): the same steps from requirement to `composed`, clone and `bound_arguments`. Share `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)`.
-- [interface.odin:583](src/interface.odin#L583), [interface.odin:1326](src/interface.odin#L1326), [interface.odin:1388](src/interface.odin#L1388) and [erased.odin:725](src/erased.odin#L725): identical entry into an interface's scope, package and file. Share `enter_interface(k, info, args)` after saving `k.location`.
 - [interface.odin:312](src/interface.odin#L312), [interface.odin:347](src/interface.odin#L347) and [generic.odin:3070](src/generic.odin#L3070): the enum, `convert_const` and `nil_converts` test. Find the value and its type once, then call a shared `convert_generic_value`; `report_unrepresentable_argument` goes.
-- [interface.odin:594](src/interface.odin#L594) and [interface.odin:677](src/interface.odin#L677): check, capture the first message, truncate. Share `captured_reason(k, mark, fallback)` using `errors_since`. Also [interface.odin:610](src/interface.odin#L610) and [interface.odin:704](src/interface.odin#L704): the same "evaluates to false" failure.
-- [interface.odin:903](src/interface.odin#L903) and [interface.odin:929](src/interface.odin#L929): the same walk over `call` methods. One `callable_method_results(k, type) -> (result, conflicting)` serves both `ensure_callable_result_member` and the note.
 - [interface.odin:1018](src/interface.odin#L1018) and [erased.odin:893](src/erased.odin#L893): both loop over candidates, filter for a method, and test `slot_matches`. With a plain-`bool` `result_inout`, `check_slot_requirement` can call `find_witness_slot`, moved here.
-- [interface.odin:211](src/interface.odin#L211) and [interface.odin:381](src/interface.odin#L381): the same call apart from reporting the arity. `check_interface_application` can report the arity itself and share one proc.
-- [interface.odin:420](src/interface.odin#L420) and [interface.odin:448](src/interface.odin#L448): the same subject choice and "does not satisfy" headline. `failed_bound_text` can format what `report_interface_failure` passes to `errorf`.
-- [interface.odin:477](src/interface.odin#L477) and [erased.odin:442](src/erased.odin#L442): both write `I(a, b)`, one by `concat`, one by builder. `dyn_display_name` can call `interface_application_text` if that omits empty parentheses.
-- [interface.odin:465](src/interface.odin#L465), [interface.odin:644](src/interface.odin#L644), [interface.odin:1200](src/interface.odin#L1200), [interface.odin:1268](src/interface.odin#L1268) and [erased.odin:620](src/erased.odin#L620): an expression, its call, its interface. Share `interface_call_of(k, expr) -> (^Expr_Call, ^Interface_Info)`.
-- [interface.odin:1151](src/interface.odin#L1151), [interface.odin:1089](src/interface.odin#L1089), [impl.odin:549](src/impl.odin#L549) and [impl.odin:618](src/impl.odin#L618): resolve an unchecked signature and refetch the symbol. Share `member_with_signature(k, member, subject) -> ^Symbol`.
-
-**Structure and boundaries**
-
-- [erased.odin:402](src/erased.odin#L402): `interface_scope`, `interface_application` (390), `composed_interface_of` (620) and `interface_slots` (722) are not about erasure, and this file calls them throughout. They belong here, leaving erased.odin views and witnesses.
-- [interface.odin:232](src/interface.odin#L232) `interface_arguments_for` (135 lines) and [interface.odin:630](src/interface.odin#L630) `check_one_requirement` (143 lines): seams are the constant argument at 308-357, and the bindings at 659 and result checks at 720-771.
-- [interface.odin:774](src/interface.odin#L774): `Callable` (774-986) and the grants (1166-1414) sit under the "satisfaction" banner, and the map in compiler-architecture.md "Source-code map" names neither. Give each a banner and a mention, and move `composed_callable` beside `Callable`.
-
-**Comments**
-
-- [interface.odin:799](src/interface.odin#L799): `// standard-library.md "Standard interface catalogue". A field named `call` is not a method.` Likewise cut 863-866 and 887-890 to the citation plus what the catalogue does not say. (about 6 lines)
-- [interface.odin:1245](src/interface.odin#L1245): `// design.md "Interface bodies": the associated constant `type.name` that the application being checked, or a bare bound of this declaration, requires. Ordinary lookup has already failed.` (about 3 lines)
-- [interface.odin:1041](src/interface.odin#L1041): `// A slot's candidates (design.md "Interface bodies"), shared with witness construction so `dyn` selects what satisfaction promised.` The middle restates the spec. (about 2 lines)
-- [interface.odin:946](src/interface.odin#L946): this block and 974-976 go with the merge into `call_method_matches`, leaving the two citations on the checks. (about 6 lines)
-- [interface.odin:518](src/interface.odin#L518): "Each requirement rolls back its own diagnostics" is untrue of composition until BUG-interface-1 is fixed; line 683 narrates the code, so delete it.
-- [interface.odin:209](src/interface.odin#L209): delete; it restates the signature, as does line 81. (about 2 lines)
 
 ### src/intrinsic.odin
 

@@ -15,15 +15,14 @@ Checker :: struct {
 	// Likewise, the types under `@(escape=...)` (`check_deferred_escape_parts`).
 	deferred_escape_parts: [dynamic]Escape_Part,
 	using location: Checker_Location,
-	// How deep interface requirement checking is, so an interface that composes
-	// itself is a diagnostic rather than a spin.
+	// How deep interface composition is, and how many applications the outermost
+	// one has entered, so one that composes itself is a failure, not a spin
+	// (`step_into_interface`).
 	interface_depth: int,
+	interface_steps: int,
 	// Set by `check_finite_size` when its walk reached a record still resolving
 	// its fields, so the answer is not cached.
 	size_incomplete: bool,
-	// How deep the search for a granted associated constant is, since resolving
-	// an interface's arguments can look one up again.
-	grant_depth: int,
 }
 
 // Where the code being checked sits. An on-demand check saves and restores the
@@ -579,6 +578,12 @@ resolve_symbol_signature_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, sub
 	enter_symbol_location(k, sym, subject)
 	leave_grants(k)
 	resolve_declaration_signature(k, sym.decl)
+}
+
+// `member` with its signature resolved, for a lookup that goes on to read it.
+member_with_signature :: proc(k: ^Checker, member: Symbol_Id, subject := INVALID_TYPE) -> ^Symbol {
+	resolve_symbol_signature_in_place(k, member, subject)
+	return symbol_of(k.c, member)
 }
 
 check_symbol_decl_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, subject := INVALID_TYPE) {

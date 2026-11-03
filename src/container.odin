@@ -698,7 +698,7 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 			k, sym,
 			[]Type_Id{comparator, element, element},
 			[]Param_Mode{.Borrow, .Value, .Value},
-			TYPE_BOOL, false,
+			TYPE_BOOL, false, "",
 		) {
 			match = candidate
 			matches += 1

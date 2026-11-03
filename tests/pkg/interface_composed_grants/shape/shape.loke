@@ -1,0 +1,44 @@
+package shape;
+
+import "base:interfaces";
+import "../widget";
+
+@(public)
+Measured :: interface($T: type) {
+	T.Unit -> type;
+	slot unit_of: proc(self) -> T.Unit;
+}
+
+@(public)
+Outer :: interface($T: type) {
+	Measured(T);
+}
+
+impl widget.Rod {
+	Unit :: f64;
+	unit_of :: proc(self) -> f64 { return self.length; }
+}
+
+// A composed `Callable` grants `call` on its own subject, here `T.Fn`.
+@(public)
+Has_Fn :: interface($T: type) {
+	T.Fn -> type;
+	interfaces.Callable(T.Fn, proc(x: int) -> int);
+}
+
+@(public)
+apply :: proc(x: $T, f: T.Fn) -> int where Has_Fn(T) {
+	return f(3);
+}
+
+// The composed `Callable`'s signature names a constant its interface requires.
+@(public)
+Takes_Arg :: interface($C: type) {
+	C.Arg -> type;
+	interfaces.Callable(C, proc(n: C.Arg) -> int);
+}
+
+@(public)
+call_with :: proc(f: $C, argument: int) -> int where Takes_Arg(C) {
+	return f(argument);
+}
