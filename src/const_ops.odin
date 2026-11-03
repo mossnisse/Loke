@@ -338,8 +338,9 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		if a.kind != .String || b.kind != .String {
 			return false, false
 		}
-		// Byte order.
-		order = strings.compare(a.text, b.text)
+		// Byte order. The empty string may have no storage at all, which
+		// `strings.compare` orders first.
+		order = len(a.text) == 0 && len(b.text) == 0 ? 0 : strings.compare(a.text, b.text)
 	case a.kind == .Float && b.kind == .Float:
 		// NaN compares false against everything, including itself.
 		if a.float != a.float || b.float != b.float {

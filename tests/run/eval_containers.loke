@@ -1,0 +1,173 @@
+// design.md "Compile-time procedure evaluation": a container built while
+// evaluation runs behaves as at run time. Each line prints the folded result
+// beside the same call at run time.
+package main;
+
+import "core:fmt";
+
+// design.md "Variadic parameters": a lone spread forwards its slice, a mixed one
+// walks the pack in written order, and either way `append` copies the elements.
+lone_spread :: proc() -> int {
+	xs := [dynamic]int{};
+	xs.append(..[]int{1, 2});
+	return xs.len() * 100 + xs[0] * 10 + xs[1];
+}
+mixed_spread :: proc() -> int {
+	more := []int{5, 6};
+	xs := [dynamic]int{};
+	xs.append(9, ..more, 7);
+	packed := 0;
+	foreach (x in xs) { packed = packed * 10 + x; }
+	return packed;
+}
+empty_spread :: proc() -> int {
+	none: []int = {};
+	xs := [dynamic]int{};
+	xs.append(..none);
+	return xs.len();
+}
+
+// Growth costs memory in proportion to the size, so these fit the limit that
+// copying the contents at every insertion overran.
+appended :: proc(n: int) -> int {
+	xs := [dynamic]int{};
+	for (i := 0; i < n; i += 1) { xs.append(i); }
+	return xs.len() * 10 + xs[n - 1];
+}
+inserted_keys :: proc(n: int) -> int {
+	m := map[int]int{};
+	for (i := 0; i < n; i += 1) { m[i] = i * 2; }
+	return m.len() * 10 + m[n - 1];
+}
+
+// Reading a table in a loop makes only the element read.
+TABLE :: [800]int{5 = 1, 799 = 2};
+RECORDS :: [3]Reading{{a = 1, b = 2}, {a = 3, b = 4}, {a = 5, b = 6}};
+Reading :: struct { a: int, b: int }
+HOLDER :: Reading{a = 7, b = 8};
+table_sum :: proc() -> int {
+	total := 0;
+	for (i := 0; i < 800; i += 1) { total += TABLE[i]; }
+	for (i := 0; i < 800; i += 1) { total += TABLE[i]; }
+	return total;
+}
+record_sum :: proc() -> int {
+	total := 0;
+	for (i := 0; i < 3; i += 1) { total = total * 10 + RECORDS[i].b + HOLDER.a; }
+	return total;
+}
+
+// A block with room to spare still belongs to one container.
+independent :: proc() -> int {
+	a := [dynamic]int{};
+	for (i := 0; i < 3; i += 1) { a.append(i); }
+	b := a.clone();
+	a.append(7);
+	b.append(8);
+	return a[3] * 10 + b[3];
+}
+held :: struct { xs: [dynamic]int }
+independent_held :: proc() -> int {
+	h := held{};
+	for (i := 0; i < 3; i += 1) { h.xs.append(i); }
+	copied := h.clone();
+	h.xs.append(7);
+	copied.xs.append(8);
+	return h.xs[3] * 10 + copied.xs[3];
+}
+moved :: proc() -> int {
+	a := [dynamic]int{};
+	for (i := 0; i < 3; i += 1) { a.append(i); }
+	b := move(a);
+	a = [dynamic]int{};
+	a.append(9);
+	b.append(8);
+	return a.len() * 100 + a[0] * 10 + b[3];
+}
+
+// Each operation that moves elements keeps the rest in order.
+sequence_ops :: proc() -> int {
+	xs := [dynamic]int{};
+	for (i := 1; i <= 5; i += 1) { xs.append(i); }
+	xs.insert(1, 9);          // 1 9 2 3 4 5
+	removed := xs.remove(2);  // 1 9 3 4 5
+	last := xs.pop() or_else 0;         // 1 9 3 4
+	moved_in := xs.remove_unordered(0); // 4 9 3
+	xs.append(6);             // 4 9 3 6
+	xs.resize(5);             // 4 9 3 6 0
+	xs.resize(2);             // 4 9
+	xs.append(1);             // 4 9 1
+	packed := removed * 100 + last * 10 + moved_in;
+	foreach (x in xs) { packed = packed * 10 + x; }
+	xs.clear();
+	xs.append(2);
+	return packed * 100 + xs.len() * 10 + xs[0];
+}
+
+// A repeated key in a literal keeps its first place and its last value.
+map_ops :: proc() -> int {
+	m := map[int]int{1 = 10, 2 = 20, 1 = 30};
+	total := m.len() * 1000 + m[1];
+	m.remove(1);
+	m[3] = 40;
+	m[1] = 5;
+	return total * 1000 + m.len() * 100 + m[1] + m[2] + m[3];
+}
+
+// A record key is copied once it is stored, so changing its source changes nothing.
+Key :: struct { parts: [2]int }
+record_keys :: proc() -> int {
+	m := map[Key]int{};
+	key := Key{parts = {1, 2}};
+	m[key] = 1;
+	slot := m.find_or_insert(key, 9);
+	found := slot^;
+	key.parts[0] = 5;
+	m.find_or_insert(key, 3);
+	original := Key{parts = {1, 2}};
+	stale := 0;
+	if (original in m) { stale = 1; }
+	return m.len() * 100 + found * 10 + stale;
+}
+
+// A slice made on the spot still views what it was made from.
+through_view :: proc() -> int {
+	cells := [3]int{1, 2, 3};
+	(&mut cells[:])[0] = 10;
+	foreach (&mut cell in view(&mut cells[1:])) { cell += 1; }
+	return cells[0] * 100 + cells[1] * 10 + cells[2];
+}
+view :: proc(cells: []mut int) -> []mut int { return cells; }
+
+LONE_SPREAD      :: lone_spread();
+MIXED_SPREAD     :: mixed_spread();
+EMPTY_SPREAD     :: empty_spread();
+APPENDED         :: appended(5000);
+INSERTED_KEYS    :: inserted_keys(1200);
+TABLE_SUM        :: table_sum();
+RECORD_SUM       :: record_sum();
+INDEPENDENT      :: independent();
+INDEPENDENT_HELD :: independent_held();
+MOVED            :: moved();
+SEQUENCE_OPS     :: sequence_ops();
+MAP_OPS          :: map_ops();
+RECORD_KEYS      :: record_keys();
+THROUGH_VIEW     :: through_view();
+
+main :: proc() {
+	static_assert(LONE_SPREAD == 212);
+	fmt.println(LONE_SPREAD, lone_spread());
+	fmt.println(MIXED_SPREAD, mixed_spread());
+	fmt.println(EMPTY_SPREAD, empty_spread());
+	fmt.println(APPENDED, appended(5000));
+	fmt.println(INSERTED_KEYS, inserted_keys(1200));
+	fmt.println(TABLE_SUM, table_sum());
+	fmt.println(RECORD_SUM, record_sum());
+	fmt.println(INDEPENDENT, independent());
+	fmt.println(INDEPENDENT_HELD, independent_held());
+	fmt.println(MOVED, moved());
+	fmt.println(SEQUENCE_OPS, sequence_ops());
+	fmt.println(MAP_OPS, map_ops());
+	fmt.println(RECORD_KEYS, record_keys());
+	fmt.println(THROUGH_VIEW, through_view());
+}

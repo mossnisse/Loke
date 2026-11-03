@@ -343,7 +343,8 @@ and pointers share targets. `eval_memory.odin` charges each block to the memory
 limit until it is released and reuses released blocks by size class. Returned
 frames, assignment scratch, and integer temporaries are released; a value is
 not, since copies share its digits and elements, so it stays charged until
-evaluation ends.
+evaluation ends. A growing container therefore keeps room to spare in its block
+(`eval_splice`), and a read of a folded constant makes only the part it selects.
 
 `generic.odin` owns inference, specialization, `where` checks, caching, and body
 commitment. Procedures and records are monomorphized with definition-site

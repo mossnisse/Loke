@@ -28,6 +28,10 @@ checklist.
   [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
   It compiled and left the owner dangling. Upgrade by keeping the allocator's region alive as long
   as the destination.
+- Comparing records at compile time when a part has no compile-time comparison, such as a
+  `typeid_of` against a forged `typeid`, is now `L0341`, as comparing those parts alone is
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)). It folded to
+  "different". Another part that differs still answers it. Upgrade by comparing at run time.
 - A map's `iter_mut` is now a mutable borrow of the map, as a dynamic array's is
   ([By-reference iteration](design.md#by-reference-iteration)), so reading the map while an
   entry is still in use, or taking a second iterator, is now `L0511`. It compiled, though the
@@ -1409,6 +1413,18 @@ checklist.
   enum's own width and signedness: an `enum u64` holding all ones prints `18446744073709551615`
   rather than `-1`, and an `enum i128` no longer prints only its low word
   ([Printed forms](standard-library.md#printed-forms)).
+- Compile-time evaluation matches a run in more places
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  `xs.append(..view)` added nothing, so a `static_assert` could pass on the wrong length, and
+  `xs.append(1, ..view)` was `L0341`. A zero `string_view` compared unequal to `""`. A single name
+  over a lent `indexed()` reported a nil pointer at `r.value^`, and `&mut` over a slice expression,
+  as in `(&mut arr[:]).indexed()`, and a write through one, as in `(&mut arr[:])[0] = 1`, were
+  `L0341`. A local type, or `_: int;`, gave only `L0311`. A non-scalar `assert` argument reported
+  `L0341` in place of the assertion, reading a box emptied by `unsafe.take` gave only `L0311`, and
+  the seed of `hash` ran after its receiver's `or_return` had left.
+- Compile-time evaluation stopped at the memory limit after about 1000 appends, 800 map inserts, or
+  800 reads of an 800-element constant table. A growing container no longer copies its contents at
+  each insertion, and a read makes only the element it selects, so the step limit now comes first.
 - A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
   site's window never closed, so a write after its join was a false `L0731`
   ([Globals while tasks run](design.md#globals-while-tasks-run)).

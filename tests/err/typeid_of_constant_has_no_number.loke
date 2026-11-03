@@ -24,3 +24,12 @@ main :: proc() {
 	_ = unsafe.transmute(u64, INT_ID);
 	_ = INT_ID == FORGED;
 }
+
+// Held in a record, the comparison is as unknown as on its own, unless another
+// part already answers it.
+Tagged :: struct { id: typeid, n: int }
+held_same :: proc() -> bool { a := Tagged{INT_ID, 1}; b := Tagged{FORGED, 1}; return a == b; }
+held_differ :: proc() -> bool { a := Tagged{INT_ID, 1}; b := Tagged{FORGED, 2}; return a == b; }
+HELD_SAME :: held_same();
+HELD_DIFFER :: held_differ();
+static_assert(!HELD_DIFFER);

@@ -92,15 +92,13 @@ to work in if split, though that shortens nothing.
 11. **Wrong inferred effects.** Implicit drops, `operator(<)` and `switch` equality escape the effects ([global_effects.odin:1069](src/global_effects.odin#L1069), [global_effects.odin:515](src/global_effects.odin#L515), [global_effects.odin:676](src/global_effects.odin#L676)). BUG-global_effects-1, -2, -3. Merge the op sets into `CONTAINER_OP_EFFECTS`. About 40 lines.
 
 
-13. **Wrong constant values.** A lone spread appends nothing at compile time ([eval.odin:1516](src/eval.odin#L1516)). BUG-eval.part1-1. About 35 lines.
-
 15. **`when` conditions evaluated too early.** [select.odin:176](src/select.odin#L176) tests only names written in the condition, so `N :: size_of(Handle); when (N == 8)` fails when `Handle` comes from an earlier `when`, a natural pattern for platform code. Follow resolved package-scope declarations with a seen set. BUG-select-1. About 30 lines, with fixed-point risk.
 
 16. **Compiler crashes and hangs on simple input.** `if (case 1 = x) y;` stores a nil block ([parser.odin:1623](src/parser.odin#L1623)); mutual aliases go exponential ([generic.odin:1308](src/generic.odin#L1308)). BUG-parser.part1-1, BUG-generic-1. About 10 lines.
 
 18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1, and the exponential guard at [hooks.odin:413](src/hooks.odin#L413). Removes about 250 lines; no behavior change beyond those.
 
-19. **Mechanical removal of failure boilerplate.** Replace the 101 three-line guards in `eval.odin` part 1 with `or_return` ([eval.odin:662](src/eval.odin#L662) onward; about 300 lines), and drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
+19. **Mechanical removal of failure boilerplate.** Drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
 
 ## Findings that span files
 
@@ -319,7 +317,7 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 
 ### Looked at and left alone
 
-- `aggregate_equal` and `aggregate_order` ([const_ops.odin:777](src/const_ops.odin#L777), [const_ops.odin:835](src/const_ops.odin#L835)) against `eval_compare` ([eval.odin:1131](src/eval.odin#L1131)): one loop would need a reader callback over `Const_Value` and `Eval_Value`, no simpler than the copies. Fix BUG-eval.part1-3 in place.
+- `aggregate_equal` and `aggregate_order` ([const_ops.odin:777](src/const_ops.odin#L777), [const_ops.odin:835](src/const_ops.odin#L835)) against `eval_compare` ([eval.odin:1131](src/eval.odin#L1131)): one loop would need a reader callback over `Const_Value` and `Eval_Value`, no simpler than the copies.
 - `eval_hash` ([eval.odin:4112](src/eval.odin#L4112)) against `emit_hash_value` ([emit_llvm_calls.odin:397](src/emit_llvm_calls.odin#L397)): one computes and one emits, so they can only change together.
 - `prints_through_method_walk` ([format.odin:78](src/format.odin#L78)) against `emit_format_body` ([emit_llvm_runtime.odin:698](src/emit_llvm_runtime.odin#L698)): the layering rules out a shared form; the checker cannot call the emitter's walk.
 - `synchronized_field_walk` ([materialize.odin:119](src/materialize.odin#L119)) and `type_requires_results_walk` ([zero.odin:98](src/zero.odin#L98)): inline-only walks with no closures to share them; a visitor would be longer.
@@ -920,7 +918,7 @@ The exact float algorithms hold up on reading. What remains is around the file: 
 
 **Near copies**
 
-- [const_ops.odin:664](src/const_ops.odin#L664), [check_expr.odin:2059](src/check_expr.odin#L2059), [eval.odin:854](src/eval.odin#L854), and [eval.odin:966](src/eval.odin#L966): the unary `+ - ~ !` fold with its overflow check and wrap is written three times, despite this file's promise that both sides "fold identically". Add `fold_unary(c, op, span, value, type, allocator) -> (Const_Value, bool)` here, including the checker's literal-text sign handling. (about 40 lines)
+- [const_ops.odin:664](src/const_ops.odin#L664), [check_expr.odin:2059](src/check_expr.odin#L2059), and [eval.odin:854](src/eval.odin#L854): the unary `+ - ~ !` fold with its overflow check and wrap is written three times, despite this file's promise that both sides "fold identically". Add `fold_unary(c, op, span, value, type, allocator) -> (Const_Value, bool)` here, including the checker's literal-text sign handling. (about 40 lines)
 - [const_ops.odin:391](src/const_ops.odin#L391) and [bigint.odin:354](src/bigint.odin#L354): `dyadic_to_float` and `bi_to_float` both round a big integer to a float, one exactly, one via a sticky bit. `bi_to_float` becomes `dyadic_to_float(c, v, 0, bits)` plus its `is_inf` test; move the helper to `bigint.odin`, where `bi_release` is visible. (about 20 lines)
 - [const_ops.odin:884](src/const_ops.odin#L884) and [reflect.odin:307](src/reflect.odin#L307): 15 sites across `src/` hand-build a `Const_Aggregate`, and `reflect.odin` already has a file-private `aggregate_const`. Promote it to the constructors at line 53, with an allocator parameter. (about 3 lines per site)
 
@@ -1460,135 +1458,13 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 - [erased.odin:1093](src/erased.odin#L1093): shorten to: L0467 for no such slot, L0643 for a mutating slot through `dyn I` (design.md "Borrowed dynamic interface values"); a callable view's member is not a slot. (1 line)
 - [erased.odin:558](src/erased.odin#L558), [erased.odin:654](src/erased.odin#L654), [erased.odin:1052](src/erased.odin#L1052): delete; each restates the check or error message beside it.
 
-### src/eval.odin (part 1 of 2)
+### src/eval.odin
 
-The semantics are careful and the comments mostly explain why, but the code is long-winded: about 100 hand-written failure guards, a 337-line container dispatcher, and whole-array copies that make containers quadratic in memory. Two wrong results were confirmed by running `lokec.exe` on small programs: a lone `..` spread in `append`, and zero-valued unions.
-
-**Bugs**
-
-- `BUG-eval.part1-1` **high** [eval.odin:1516](src/eval.odin#L1516) `eval_container_op`: `.Append` ignores `v.variadic_forwards`, where the checker binds a lone spread to `v.bound[v.variadic_slot]` and leaves both pack lists empty. Scenario: `a := [dynamic]int{}; a.append(..[]int{1,2}); return a.len();` folds to 0 and `static_assert(X == 0)` passes; at run time it is 2. Fix: append copies of the forwarded slice's elements; `a.append(9, ..b)` (L0341 at 1517) can use `variadic_order`. *Confirmed: Reproduced: X :: f() with a.append(..[]int{1,2}) passes static_assert(X == 0) and prints 0 vs runtime 2. A lone spread sets only variadic_forwards (check_calls.odin:1196), so the L0341 guard misses it; a mixed spread gets L0341. Not recorded in the docs.*
-- `BUG-eval.part1-3` **low** [eval.odin:1168](src/eval.odin#L1168) `eval_compare`: `equal = ok && same` (and 1181) turns a pair that cannot be compared into "different", while the same pair at top level reports L0341 (929). Scenario: a part with no compile-time comparison held in a record folds to false, so a `static_assert` fails with no hint of why; `T{} == T{o = .none}` no longer shows it, since a zero union now compares. Fix: return `false, false` when `!ok`. *Not verified.*
-
-**Simplification**
-
-- [eval.odin:662](src/eval.odin#L662) throughout: `x, ok := f(); if !ok { return Eval_Value{}, false }` is 101 three-line guards in part 1. With named results it is `x := f() or_return`, already used at 603-606 and 616; `eval_container_op` (1453) has named results yet writes every guard out. (about 300 lines in part 1)
-- [eval.odin:1453](src/eval.odin#L1453) `eval_container_op`: returns `[]Eval_Value`, but no arm yields more than one value and the only caller reads `results[0]` (2351-2354). Return `(Eval_Value, bool)` and delete `eval_one` (2252), `results` (1478), `none` (1476) and a one-element allocation per operation. (about 25 lines)
-- [eval.odin:1695](src/eval.odin#L1695) `eval_container_op`: `.Map_Lookup_Value`, `.Map_Find` and `.Map_Remove` open with the same key, `map_find`, and `.none` steps; `.Map_Find_Or_Insert` and `.Map_Try_Insert` share key, value, and slot. Use one arm each with an inner branch. (about 30 lines)
-- [eval.odin:1485](src/eval.odin#L1485) `argument`: promote "evaluate, then copy" to a file-level `eval_copied(ev, e)` and use it at 1264-1272, 1274-1281, 1525-1532 and 2270-2277. (about 15 lines)
-- [eval.odin:1250](src/eval.odin#L1250) `eval_container_literal`: `written` always ends equal to `count`, so `elements[:written]` is `elements`. Index by entry and use `eval_copied`; the procedure halves. (about 20 lines)
-- [eval.odin:1304](src/eval.odin#L1304) `map_deduplicate`: the inner loop is `map_find` over a value holding `kept[:]`. (about 10 lines)
-- [eval.odin:261](src/eval.odin#L261) `eval_elements`: the memory message is written out at 194, 247 and 265, and `eval_fail` already swaps it in when `storage.exhausted` is set. Here set `ev.storage.exhausted = true` and `return nil, eval_memory_ok(ev)`. (about 6 lines)
-- [eval.odin:1536](src/eval.odin#L1536) `eval_container_op`: `if !fallible {...}; return eval_one(ev, eval_alloc_ok(...))` repeats at 1617, 1679 and 1688; a nested `finished()` covers them. (about 4 lines)
-- [eval.odin:591](src/eval.odin#L591) `eval_expr`: this hot path computes `expr_base(e)` three times (591, 599, 615); compute it once. Also 892: `const_of(result).boolean` is `result.boolean`; 400-401: `return zero_const(...)`; 1669: check hooks once before the loop, not per element. (about 5 lines)
-
-**Dead code**
-
-- `result_slot` ([eval.odin:55](src/eval.odin#L55)): its value is never read; 2161, 2192, 2211, 3143 and 3144 use only nil-ness and `.type`. Replace it with a `Type_Id` and drop the slot allocated per call at 2607, which is never released.
-- (branch) [eval.odin:942](src/eval.odin#L942): `fold_arithmetic` answers `.Aggregate` only for a SIMD type, and a SIMD `v.type` already left at 925.
-- (branch) [eval.odin:924](src/eval.odin#L924): `|| type_is_simd(ev.k.c, left.type)` adds nothing, since design.md "SIMD vectors" makes every vector operator's result a vector, comparisons included.
-- (branch) [eval.odin:290](src/eval.odin#L290): the `.Union` arm of `element_type_at`; both callers test for a union first, and the fall-through returns the same value.
-
-**Data structures and algorithms**
-
-- [eval.odin:1521](src/eval.odin#L1521) `.Append`, also `.Insert` (1611) and `map_entry_place` (1386): each insertion copies all elements to a new block and the old block stays charged, so memory grows with n². Measured: 800 appends pass and 1100 hit the 64 MiB limit; 500 map inserts pass and 800 fail. Fit: amortized capacity on the value, so appending in place also keeps slice views valid.
-- [eval.odin:649](src/eval.odin#L649) `eval_value_unviewed`: every read of a folded constant rebuilds it whole, so `T[i]` in a loop costs table size times reads, all still charged. Measured: an 800-element table read 800 times hits the limit; 500 passes. Fit: in the `Expr_Index` and `Expr_Selector` arms, convert only the selected element of a constant operand.
-- [eval.odin:1331](src/eval.odin#L1331) `map_find`: the comment credits the step limit, but the memory cost above stops a map first. A linear scan is acceptable once growth is fixed, about 1400 keys under one million steps; say so rather than add a hash index now.
-- [eval.odin:1696](src/eval.odin#L1696) `eval_container_op`: `argument` deep-copies the key for lookups that only compare it (1696, 1714, 1769), and `map_entry_place` copies it again (1382) after 1734 and 1753. An aggregate key is charged each time and never released; use plain `eval_expr` on reads and copy once on insert.
+The one finding left waits for the multi-file group it belongs to.
 
 **Near copies**
 
-- [eval.odin:966](src/eval.odin#L966) and [eval.odin:854](src/eval.odin#L854): `eval_simd_unary`'s lane body is `eval_unary_value` at the element type, plus `~` on bool lanes. The checker already rejects `!` on lanes (L0686). Add the bool case and call it per lane. (about 25 lines)
 - [eval.odin:853](src/eval.odin#L853) and [check_expr.odin:2064](src/check_expr.odin#L2064): the same unary fold and overflow rule. Move it to `const_ops.odin` as `fold_unary`, a sibling of `fold_arithmetic`; the checker keeps only its decimal-spelling fix-up afterwards. (about 20 lines)
-- [eval.odin:601](src/eval.odin#L601), [eval.odin:1925](src/eval.odin#L1925), [eval.odin:701](src/eval.odin#L701) and [eval.odin:2304](src/eval.odin#L2304): all reach a box's payload; the last two report nothing for an empty box, so a moved box gets the generic fallback rather than "this box holds no value". Share `eval_box_payload(ev, operand, span) -> ^Eval_Value`. (about 15 lines)
-- [eval.odin:1521](src/eval.odin#L1521), [eval.odin:1611](src/eval.odin#L1611), [eval.odin:1638](src/eval.odin#L1638), [eval.odin:1781](src/eval.odin#L1781) and [eval.odin:1386](src/eval.odin#L1386): make, append prefix, append suffix. Share `eval_splice(ev, self, at, removed, inserted: ..Eval_Value)`, which is also the one place to add growth. (about 15 lines)
-- [eval.odin:929](src/eval.odin#L929), [eval.odin:1019](src/eval.odin#L1019), [eval.odin:1080](src/eval.odin#L1080) and [eval.odin:2676](src/eval.odin#L2676): the same compare and L0341 report. Wrap them as `eval_compare_at(ev, op, a, b, span)`. (about 12 lines)
-- [eval.odin:686](src/eval.odin#L686) and [eval.odin:1911](src/eval.odin#L1911): the same index evaluation and bounds report. Return `^Eval_Value` from a helper, as `eval_field` does. (about 10 lines)
-- [eval.odin:1793](src/eval.odin#L1793) and [eval.odin:1894](src/eval.odin#L1894): key, `map_find`, and "this key is not in the map". Keep one helper returning the place; the read dereferences it. (about 10 lines)
-- [eval.odin:315](src/eval.odin#L315) and [eval.odin:560](src/eval.odin#L560): `is_union ? union_variant_payload(...) : element_type_at(...)`. Give `element_type_at` a `variant` parameter and let its union arm answer. (about 4 lines)
-
-**Structure and boundaries**
-
-- [eval.odin:1453](src/eval.odin#L1453) `eval_container_op`: 337 lines holding two families. Split out `eval_map_op` at the `.Map_*` arms. Lines 1239-1807 (containers, sort, maps) could also be their own file, at the cost of unprivatizing a few helpers.
-- [eval.odin:143](src/eval.odin#L143), [eval.odin:187](src/eval.odin#L187), [eval.odin:378](src/eval.odin#L378), [eval.odin:588](src/eval.odin#L588), [eval.odin:1453](src/eval.odin#L1453) and [eval.odin:1842](src/eval.odin#L1842): `ensure_proc_typed_for_eval`, `eval_fail`, `freeze`, `eval_expr`, `eval_container_op` and `eval_place` have no callers outside this file; compiler-architecture.md "Source-code map" says such helpers are file-private.
-- [eval.odin:652](src/eval.odin#L652) `eval_value_unviewed`: most arms delegate, but `Expr_Selector`, `Expr_Index`, `Expr_Postfix`, `Expr_Range` and `Expr_Move` are inline, making a 140-line switch. Extracting them (`eval_index`, `eval_postfix` and so on) leaves the switch as a plain dispatch.
-- [eval.odin:1811](src/eval.odin#L1811) `eval_map_membership`: also implements `x in r` for ranges. Name the proc `eval_in` and move the range test (1822-1832) into `eval_range_contains`.
-
-**Comments**
-
-- [eval.odin:274](src/eval.odin#L274): delete; it restates `element_type_at`. Likewise [eval.odin:2038](src/eval.odin#L2038) for `eval_field`.
-- [eval.odin:519](src/eval.odin#L519): shorten to `design.md "Compile-time procedure evaluation": such a record is rejected where it is made. A zero holds one only in a record or fixed array.` (about 3 lines)
-- [eval.odin:745](src/eval.odin#L745): move this to `eval_composite` with its citation; it does not explain a one-line delegation.
-- [eval.odin:1405](src/eval.odin#L1405): shorten to `A stable merge sort; each comparison costs a step.` The rest records what it replaced.
-- [eval.odin:1809](src/eval.odin#L1809): delete; it restates line 894 and is incomplete, since ranges come here too.
-
-### src/eval.odin (part 2 of 2)
-
-Readable and tightly commented, with three valid programs rejected at compile time (all reproduced against `lokec.exe`). Most of the shortening is in repeated operand and failure boilerplate, two pairs of near-identical binders and assignment phases, and frame guards that cannot fire.
-
-**Bugs**
-
-- `BUG-eval.part2-1` **medium** [eval.odin:3750](src/eval.odin#L3750) `bind_foreach_element`: a single name over a lent `indexed()` record gets the element by value, but its `value` field is a pointer (design.md "Element bindings"). Scenario: `foreach (r in arr.indexed()) { t += r.value^; }` in `K :: f()` reports L0343 nil dereference; a run works. Fix: when `s.borrows`, store a pointer to `element` in `pair[ELEMENT_FIRST]`. *Confirmed: Reproduced: K :: f() with foreach (r in arr.indexed()) { t += r.value^; } gives L0343 nil dereference, while f() at run time prints 6. design.md "Element bindings" specifies r.value^; no recorded gap. It fails loudly, so medium at most.*
-- `BUG-eval.part2-2` **medium** [eval.odin:3295](src/eval.odin#L3295) `eval_local_decl`: a body-local type declaration evaluates its type expression, whose base type is invalid, so it fails with no diagnostic. Scenario: `P :: struct { x: int }`, an enum, or `P :: distinct int` in an evaluated body gives only L0311 "must be a compile-time constant"; a run works. Fix: skip a symbol of kind `.Type`. *Confirmed: Reproduced: an evaluated body with a local struct, enum or distinct gives only L0311, even when unused; the same run-time call and a file-scope type work. eval_value_unviewed returns false silently on the INVALID_TYPE node. design.md allows body-local types; no gap recorded.*
-- `BUG-eval.part2-3` **medium** [eval.odin:3599](src/eval.odin#L3599) `eval_foreach`: a `&mut` loop always calls `eval_place`, which has no case for a slice expression. Scenario: `foreach (&mut x, i in (&mut arr[:]).indexed())`, the form L0457's own note recommends, reports L0341 "not compile-time storage"; a run works. Fix: use `eval_expr` for `.Slice`, whose view shares its elements. *Confirmed: Reproduced: N :: total() with foreach (&mut x, i in (&mut arr[:]).indexed()) gives L0341 'not compile-time storage'; the body runs at run time (9) and a named slice evaluates. No spec restriction. Severity is low: a spurious error with a one-line workaround.*
-- `BUG-eval.part2-4` **low** [eval.odin:3104](src/eval.odin#L3104) `eval_message`: `freeze` reports through `eval_fail`, setting `ev.failed` before the assertion's own `eval_fail` runs, so the `<value>` fallback never appears. Scenario: `assert(false, "bad thing", p)` with pointer `p` reports L0341 "a pointer cannot escape" instead of L0343. Fix: test for a pointer, box, or non-empty container before freezing. *Not verified.*
-- `BUG-eval.part2-5` **low** [eval.odin:3307](src/eval.odin#L3307) `eval_local_decl`: `_: int;` has `symbol_id == INVALID_SYMBOL`, so `zero_value(ev, INVALID_TYPE)` fails silently. Scenario: that declaration in an evaluated body gives only the generic L0311; a run accepts it. Fix: `continue` on `INVALID_SYMBOL` when there is no initializer. *Not verified.*
-- `BUG-eval.part2-6` **low** [eval.odin:2447](src/eval.odin#L2447) `eval_standard_customization`: the `hash` seed is evaluated even after the receiver's `or_return` left. Scenario: `(g() or_return).hash(bump())` where `g` returns `.none` runs `bump`, whose `panic` becomes L0343 though a run never calls it. Fix: stop at the first failure. ([eval.odin:3055](src/eval.odin#L3055) has the same shape, but `simd.select` forwards locals.) *Not verified.*
-
-**Simplification**
-
-- [eval.odin:2137](src/eval.odin#L2137) `eval_or_else`: `frame.returning` is `frame.exiting == .Return`. Drop the field; `or_else` sets `frame.exiting = flow`, `or_return` sets `.Return`, and `eval_stmt` keeps one branch ([eval.odin:3168](src/eval.odin#L3168)). (about 10 lines)
-- [eval.odin:2252](src/eval.odin#L2252) `eval_one`: `eval_container_op` returns a slice of 0 or 1 values and its only caller ([eval.odin:2347](src/eval.odin#L2347)) reads `results[0]`. Return `(Eval_Value, bool)` with the void value instead; `eval_one` goes and its call sites shrink. (about 20 lines)
-- [eval.odin:2342](src/eval.odin#L2342) `eval_call`: two `symbol_of(chosen_overload)` tests become one `#partial switch chosen.synth`; likewise the two `symbol_of(target)` at 2363 and 2371. (about 4 lines)
-- [eval.odin:2478](src/eval.odin#L2478) `eval_call_target`: repeats `eval_invoke`'s `ensure_proc_typed_for_eval` check and diagnostic ([eval.odin:2502](src/eval.odin#L2502)), and clone and variant constructors have no body to check. Drop it, and the one at [eval.odin:4115](src/eval.odin#L4115). (about 13 lines)
-- [eval.odin:2540](src/eval.odin#L2540) `eval_invoke`: `defer pop(&ev.frames)` right after the first append replaces the pops at 2588, 2599, 2604, 2609, and 2617. Defers run last-in-first-out, so the memory check at 2498 still sees the popped stack. (about 8 lines)
-- [eval.odin:2299](src/eval.odin#L2299) `eval_call`: use `eval_option` in `Call_Enum_From_Int` and `Call_Union_As` rather than naming `"none"` and `"some"`. (about 4 lines)
-- [eval.odin:2878](src/eval.odin#L2878) `eval_builtin`: the `^Expr_Move` branches of `Unsafe_Forget` and `Unsafe_Write` (2852) redo what `eval_expr` does for `^Expr_Move` ([eval.odin:772](src/eval.odin#L772)). Forget becomes one `eval_expr`; Write becomes `eval_expr` plus the borrowed-place copy. (about 20 lines)
-- [eval.odin:2928](src/eval.odin#L2928) `eval_builtin`: seven math arms open with the same evaluate-and-check of 1 to 3 operands. A helper `eval_operands(ev, v.bound, out[:]) -> bool` that stops at the first failure replaces them. (about 25 lines)
-- [eval.odin:3393](src/eval.odin#L3393) `eval_assign`: the destination and write phases appear twice (3393-3416, 3434-3454). `eval_place` already gives `_` a throwaway slot, so `is_discard` and `slot != nil` are unnecessary and one `eval_write_targets(ev, s.lhs, values)` serves both. (about 20 lines)
-- [eval.odin:3767](src/eval.odin#L3767) `bind_eval_value_pattern`: the value is always a fresh copy, so binding its parts in place is equivalent. Put it in one `eval_slot` and call the place version, which gains a `span` in place of `no_span()` at 3802 and recurses on `bindings[slot:][:1]`. (about 30 lines)
-- [eval.odin:3876](src/eval.odin#L3876) `eval_variant_switch`: the inner search and double break become `if slice.contains(entry.variant_indices, subject.variant) { chosen = index; break }`. (about 5 lines)
-- [eval.odin:2450](src/eval.odin#L2450) `eval_standard_customization`: the seed is a `uint` scalar, so freezing it adds nothing; use `seed.integer`. (about 3 lines)
-- [eval.odin:4028](src/eval.odin#L4028) `eval_case_fields`: `payload` and `record` are recomputed per field; compute both once before the loop. (about 2 lines)
-
-**Dead code**
-
-- (branch) [eval.odin:2510](src/eval.odin#L2510) `eval_invoke`: `symbol == nil` cannot hold, since `ensure_proc_typed_for_eval` returned false for a nil symbol at 2502.
-- (branch) [eval.odin:2457](src/eval.odin#L2457) `eval_standard_customization`: `case:` is unreachable; the only caller ([eval.odin:2343](src/eval.odin#L2343)) admits exactly the three named synths.
-- (branch) [eval.odin:2285](src/eval.odin#L2285) `eval_union_payload`: `binding_type == value.type` never holds. A grouped or default case binds nothing (design.md "Inspecting a union"; `.a(x), .b(x)` is L0426) and no variant holds its own union by value, so the parameter can go.
-- (branch) [eval.odin:3449](src/eval.odin#L3449) `eval_assign`: `index < len(values)` is always true; a count mismatch is a checker error ([check.odin:3587](src/check.odin#L3587)) and `eval_invoke` refuses a failed body.
-- (branch) [eval.odin:3841](src/eval.odin#L3841) `eval_switch`: `.Pattern` is set only for a union (a `dyn` subject is an error) or by union argument expansion, so the test is just `s.kind == .Pattern`.
-- (branch) [eval.odin:3123](src/eval.odin#L3123) statement evaluation: a nil frame is impossible except for an `or_else` exit, since `eval_block` starts from `eval_invoke`. Guard once before 2131; the checks at 3123, 3131, 3233, 3270, 3739, 3898, 4020, and 4078 go. (about 25 lines)
-
-**Data structures and algorithms**
-
-- [eval.odin:2607](src/eval.odin#L2607) `eval_invoke`: every call with a result allocates a slot, yet `frame.result_slot` is only read for `.type` or a nil test (2161, 2192, 2211, 3143). Store `result_type: Type_Id` in the frame: one allocation less per call. (about 8 lines)
-
-**Near copies**
-
-- [eval.odin:2145](src/eval.odin#L2145) and [eval.odin:2166](src/eval.odin#L2166): `or_else` and `or_return` yield success identically (`Unit` when the success is void, else the payload). Share `eval_success_payload(ev, value, shape)`.
-- [eval.odin:2265](src/eval.odin#L2265) and [eval.odin:2371](src/eval.odin#L2371): a union construction and an indirect variant constructor both evaluate `bound[0]` and call `eval_union`; only the copy differs, and every sink copies again. Share one helper taking type and index.
-- [eval.odin:2529](src/eval.odin#L2529) and [eval.odin:3953](src/eval.odin#L3953): `eval_invoke` and `eval_dispatch` build a frame the same way. Share `eval_push_frame(ev, symbol, site)`.
-- [eval.odin:2440](src/eval.odin#L2440) and [eval.odin:3818](src/eval.odin#L3818): the first should call `eval_count_value`. [eval.odin:2455](src/eval.odin#L2455) and [eval.odin:4118](src/eval.odin#L4118) build the same `uint` value, and [eval.odin:2452](src/eval.odin#L2452) and [eval.odin:4123](src/eval.odin#L4123) the same wrap to `u64`.
-- [eval.odin:2303](src/eval.odin#L2303) and [eval.odin:701](src/eval.odin#L701): `Call_Box_Unbox` and a boxed `^` read the single element identically; share a small `eval_unbox`.
-
-**Structure and boundaries**
-
-- [eval.odin:2774](src/eval.odin#L2774) `eval_builtin`: 310 lines with natural seams: `eval_math_builtin` (2893-3006), `eval_unsafe_builtin` (2837-2891, 3008-3041), and the SIMD arms (3045-3073), leaving a short dispatcher.
-- [eval.odin:2494](src/eval.odin#L2494) `eval_invoke`: 134 lines; argument binding (2544-2594) is its own step, `eval_bind_arguments`, and holds all the frame-stack juggling.
-- [eval.odin:2220](src/eval.odin#L2220): `eval_alloc_ok`, `eval_map_slot`, and `eval_one` serve only `eval_container_op` ([eval.odin:1453](src/eval.odin#L1453)), and `eval_hash` ([eval.odin:4112](src/eval.odin#L4112)) follows the statements though only `eval_standard_customization` calls it from outside. Move each next to its user.
-- [eval.odin:3114](src/eval.odin#L3114): the statement interpreter (3114-4106) is a self-contained 1000 lines that could be `eval_stmt.odin`. `eval_block` and `eval_stmt` lack the file-private attribute though nothing outside uses them, and `bind_local` shares its name with the emitter's; prefer `eval_bind_local`.
-
-**Comments**
-
-- [eval.odin:3085](src/eval.odin#L3085): two stacked comments split by the attribute; merge above it as "The constant message of `assert`/`panic` and its arguments; a non-scalar prints as `<value>`."
-- [eval.odin:2281](src/eval.odin#L2281): shorten to "The payload of `value`, if it has one"; the whole-union clause describes the dead branch.
-- [eval.odin:2361](src/eval.odin#L2361): history; "A generated `clone` is the evaluator's own deep copy."
-- [eval.odin:2491](src/eval.odin#L2491): keep only "Hands back the one declared result, or an invalid value when the procedure has none."
-- [eval.odin:2596](src/eval.odin#L2596): misleading, since `or_return` publishes into `frame.result`, not this slot; "Zero until a `return` or `or_return` sets it."
-- [eval.odin:2940](src/eval.odin#L2940): delete; it repeats 2925.
-- [eval.odin:3524](src/eval.odin#L3524): `design.md:` names no heading; write `design.md "Evaluation order"`.
-- [eval.odin:3720](src/eval.odin#L3720): narrates; delete "One step: bind the element, run the body." and keep the `continue` clause.
-- [eval.odin:3971](src/eval.odin#L3971): says "switch subject" though `eval_foreach` calls it too; write "Whether `subject` is a place rooted in this frame's storage, which a binding then names rather than copies."
 
 ### src/expand.odin
 

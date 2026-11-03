@@ -1,0 +1,29 @@
+// design.md "Compile-time procedure evaluation": a body that runs also folds, with
+// the local declarations that hold no value: a type, and `_` without an initializer.
+package main;
+
+import "core:fmt";
+
+local_types :: proc() -> int {
+	Point :: struct { x: int }
+	Shade :: enum { Dark, Light }
+	Meters :: distinct int;
+	p := Point{x = 3};
+	m := Meters(2);
+	return p.x * 100 + int(m) * 10 + int(Shade.Light);
+}
+
+discarded :: proc() -> int {
+	_: int;
+	_: [2]string;
+	_ := local_types();
+	return 7;
+}
+
+LOCAL_TYPES :: local_types();
+DISCARDED :: discarded();
+
+main :: proc() {
+	fmt.println(LOCAL_TYPES, local_types());
+	fmt.println(DISCARDED, discarded());
+}

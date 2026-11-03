@@ -1,0 +1,18 @@
+// design.md "Owned values": what `unsafe.take` leaves behind holds no value, and
+// reading it during compile-time evaluation says so, however it is read.
+package main;
+
+import "core:unsafe";
+
+take :: proc(p: ^mut Box(int)) -> Box(int) { return unsafe.take(p^); }
+lent :: proc(p: ^int) -> int { return p^; }
+
+dereferenced :: proc() -> int { a := box(3); c := take(&mut a); return a^ + c^; }
+unboxed :: proc() -> int { a := box(3); c := take(&mut a); return move(a).unbox() + c^; }
+borrowed :: proc() -> int { a := box(3); c := take(&mut a); return lent(a) + c^; }
+
+A :: dereferenced();
+B :: unboxed();
+C :: borrowed();
+
+main :: proc() {}
