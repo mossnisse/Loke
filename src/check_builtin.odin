@@ -94,27 +94,127 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 // whose policy answers it. Like `panic`, its call is `void` and diverges.
 @(private = "file")
 check_allocation_failed :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
-	v.type = INVALID_TYPE
-	if len(v.args) != 2 {
+	targets := []Type_Id{TYPE_ALLOCATOR_ERROR, TYPE_ALLOCATOR}
+	if check_typed_builtin_args(k, v, ident, "L0322", "an `Allocator_Error` and an `Allocator`", targets) {
+		v.type = TYPE_VOID
+	}
+}
+
+// `allocate_string(text, allocator) -> (string, Allocator_Error)`, the
+// package-private primitive `core:strings` wraps: a copy of already-valid UTF-8
+// from the caller's allocator.
+@(private = "file")
+check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	targets := []Type_Id{TYPE_STRING_VIEW, TYPE_ALLOCATOR}
+	if check_typed_builtin_args(k, v, ident, "L0637", "a `string_view` and an `Allocator`", targets) {
+		v.type = result_type(k, TYPE_STRING, TYPE_ALLOCATOR_ERROR)
+	}
+}
+
+// Whether the call passes one positional value of each type in `targets`,
+// reporting the first thing wrong, and binds them. `wanted` says what it takes.
+@(private = "file")
+check_typed_builtin_args :: proc(
+	k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, code, wanted: string, targets: []Type_Id,
+) -> bool {
+	if len(v.args) != len(targets) {
 		errorf(
-			k.c, v.span, "L0322", "`%s` takes an `Allocator_Error` and an `Allocator`, found %d argument%s",
-			ident.name, len(v.args), len(v.args) == 1 ? "" : "s",
+			k.c, v.span, code, "`%s` takes %s, found %d argument%s",
+			ident.name, wanted, len(v.args), len(v.args) == 1 ? "" : "s",
 		)
-		return
+		return false
 	}
 	if !builtin_arguments_ok(k, v) {
-		return
+		return false
 	}
-	bound := make([]Expr, 2, k.c.semantic_allocator)
-	for target, index in ([]Type_Id{TYPE_ALLOCATOR_ERROR, TYPE_ALLOCATOR}) {
+	bound := make([]Expr, len(targets), k.c.semantic_allocator)
+	for target, index in targets {
 		value, passed := check_argument_value(k, v.args[index].value, target)
 		bound[index] = value
 		if !passed {
-			return
+			return false
 		}
 	}
 	v.bound = bound
-	v.type = TYPE_VOID
+	return true
+}
+
+// design.md "unsafe.raw_data procedure", and the two view constructors whose
+// operands the compiler cannot trace to an owner.
+@(private = "file")
+check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	// Positional value arguments only (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	arity := kind == .Unsafe_String_View ? 2 : 1
+	if len(v.args) != arity {
+		errorf(
+			k.c, v.span, "L0569",
+			"`unsafe.%s` takes %d argument%s, found %d",
+			ident.name, arity, arity == 1 ? "" : "s", len(v.args),
+		)
+		return
+	}
+	bound := make([]Expr, arity, k.c.semantic_allocator)
+	for index in 0 ..< arity {
+		bound[index] = v.args[index].value
+	}
+	v.bound = bound
+	operand := check_single_expr(k, bound[0])
+	if operand == INVALID_TYPE {
+		return
+	}
+	info := underlying_info(k.c, operand)
+	if kind != .Unsafe_Raw_Data && !(info.kind == .C_Pointer && info.element == TYPE_U8) {
+		errorf(
+			k.c, expr_span(bound[0]), "L0569",
+			"`unsafe.%s` takes %s, found `%s`",
+			ident.name, kind == .Unsafe_String_View ? "a `[^]u8` and a length" : "a `[^]u8`", type_name(k.c, operand),
+		)
+		return
+	}
+
+	#partial switch kind {
+	case .Unsafe_Raw_Data:
+		element := INVALID_TYPE
+		#partial switch info.kind {
+		case .Slice, .Dynamic_Array:
+			element = info.element
+		case .Pointer:
+			if pointee := underlying_info(k.c, info.element); pointee != nil && pointee.kind == .Array {
+				element = pointee.element
+			}
+		case .String, .String_View, .CString_View:
+			element = TYPE_U8
+		}
+		if element == INVALID_TYPE {
+			errorf(
+				k.c, expr_span(bound[0]), "L0569",
+				"`unsafe.raw_data` takes a slice, a pointer to a fixed array, or text, found `%s`",
+				type_name(k.c, operand),
+			)
+			return
+		}
+		v.type = c_pointer_to(k.c, element)
+
+	case .Unsafe_String_View:
+		// Borrowed from an owner the compiler cannot see, but still validated: the
+		// result promises UTF-8.
+		length := check_single_expr(k, bound[1], TYPE_INT)
+		if length == INVALID_TYPE || !materialize(k, bound[1], TYPE_INT) {
+			return
+		}
+		if !type_is_integer(k.c, expr_base(bound[1]).type) {
+			errorf(k.c, expr_span(bound[1]), "L0569", "a length must be an integer, found `%s`", type_name(k.c, length))
+			return
+		}
+		v.type = option_type(k, TYPE_STRING_VIEW, v.span)
+
+	case .Unsafe_C_String_View:
+		// Not validated at all: a `cstring_view` promises no encoding.
+		v.type = TYPE_CSTRING_VIEW
+	}
 }
 
 // A built-in has no declaration to name a parameter and no `inout`/`move`/spread

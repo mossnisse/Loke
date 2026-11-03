@@ -181,7 +181,6 @@ Text_Op :: enum {
 	Copy,       // an independent managed byte copy
 	To_C_View,  // a zero-terminated borrow for the complete expression
 	To_Runes,   // `st.to_runes()`, a `[dynamic]rune` by copy
-	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
 }
 
 // The named text constructors, which validate and return Option(T).
@@ -190,6 +189,7 @@ Text_Conversion :: enum {
 	View_From_Bytes,    // `string_view.from_utf8(bytes)` — validate and borrow
 	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy
 	C_View_From_Bytes,  // `cstring_view.from_bytes(bytes)` — check the terminator and borrow
+	String_From_Runes,  // `string.from_runes(runes)` — validate and copy
 }
 
 // The operation the checker selected for a call; nil until checked.

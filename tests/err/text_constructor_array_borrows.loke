@@ -1,0 +1,34 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Implicit type conversions": a fixed or dynamic array read as the
+// slice a borrowing text constructor takes is borrowed like any other view of it.
+
+fixed_view :: proc() -> string_view {
+	bytes := [2]u8{65, 66};
+	return string_view.from_utf8(bytes) or_else "";
+}
+
+fixed_c_view :: proc() -> cstring_view {
+	bytes := [2]u8{65, 0};
+	return cstring_view.from_bytes(bytes) or_else "";
+}
+
+dynamic_view :: proc() -> string_view {
+	bytes := make([dynamic]u8);
+	bytes.append(65);
+	return string_view.from_utf8(bytes) or_else "";
+}
+
+main :: proc() {
+	bytes := make([dynamic]u8);
+	bytes.append(65);
+	view := string_view.from_utf8(bytes) or_else "";
+	bytes.append(66);
+	fmt.println(view);
+
+	byte: u8 = 65;
+	temporary := string_view.from_utf8([2]u8{byte, 66}) or_else "";
+	fmt.println(temporary);
+}

@@ -13,4 +13,12 @@ main :: proc() {
 	h := string.from_utf8(input = bytes[:]);
 	i := string.from_utf8(inout bytes);
 	j := string.from_utf8(bytes[:], bytes[:]);
+	runes := [2]rune{'a', 'b'};
+	view := runes[:];
+	k := string.from_runes();
+	l := string.from_runes(wrong = view);
+	m := string.from_runes(..view);
+	n := string.from_runes(inout view);
+	o := string.from_runes(bytes);
+	p := string.from_utf8(runes);
 }

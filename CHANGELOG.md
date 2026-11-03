@@ -16,6 +16,10 @@ checklist.
 - A member of a generic `impl` that is not a constant, a procedure, or an associated type, such as
   `impl G($T) { x: int = 0; }`, is now `L0406`, as in any other block. It compiled and the member
   was dropped. Upgrade by removing the member, or moving the field to the record.
+- `string.from_runes` now takes one value argument, by position or named `runes`, as `string.from_utf8`
+  takes one by position or named `bytes` ([string type conversions](design.md#string-type-conversions)).
+  Any other name, a spread and `inout` were accepted and ignored, and are now `L0561`. Upgrade by
+  passing the slice by position.
 - A file-scope `when` now waits for a branch that may shadow a predeclared name it reads, directly or
   through a declaration ([when statement](design.md#when-statement)). A condition that read a
   predeclared `string` and took one branch, while another `when` declared `string`, now reads that
@@ -1463,6 +1467,14 @@ checklist.
 
 ### Fixed
 
+- `string.from_utf8`, `string_view.from_utf8`, `cstring_view.from_bytes` and `string.from_runes` take
+  a fixed or dynamic array of their element type, as a read-only `[]T` parameter does
+  ([Implicit type conversions](design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a
+  `[3]u8` was `L0561`.
+- `unsafe.string_view(pointer, length)` with a length wider than 64 bits that does not fit panics
+  ([string type conversions](design.md#string-type-conversions)). It truncated, so an `i128` of `-2^64`
+  gave an empty view.
+- `unsafe.string_view(pointer, 1.5)` reports the length once, where it reported `L0353` and `L0569`.
 - A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
   map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
   ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a

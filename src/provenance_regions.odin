@@ -1278,9 +1278,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	if prov_call_keeps_shared_handle(graph, v, result_type) {
 		return prov_storage_region(graph, bound[0])
 	}
-	// design.md "string type conversions": these copy into the default allocator.
-	if operation, conversion := v.operation.(Call_Text_Conversion); conversion &&
-	   (operation.op == .String_From_Bytes || operation.op == .String_From_C_View) {
+	if operation, conversion := v.operation.(Call_Text_Conversion); conversion && text_conversion_copies(operation.op) {
 		return Region_Set{default = true}
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {

@@ -19,3 +19,6 @@ L0493
 L0493
 @35:14
 `unsafe.free` takes the `[^]T` or `^mut T` of an allocation, found `^int`
+L0353
+@38:32
+a float does not convert implicitly to `int`

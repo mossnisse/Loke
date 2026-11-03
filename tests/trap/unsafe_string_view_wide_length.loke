@@ -1,0 +1,13 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// design.md "string type conversions": a negative length panics at any width,
+// so -2^64 as an `i128` does not truncate to an empty view.
+main :: proc() {
+	bytes := [2]u8{65, 66};
+	pointer := unsafe.raw_data(bytes[:]);
+	fits: i128 = 2;
+	fmt.println(unsafe.string_view(pointer, fits) or_else "invalid");
+	length: i128 = -18446744073709551616;
+	view := unsafe.string_view(pointer, length) or_else "invalid";
+	fmt.println(view.byte_len());
+}

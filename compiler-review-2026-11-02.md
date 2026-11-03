@@ -108,7 +108,7 @@ Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Ele
 
 #### Built-in call opening and operands
 
-`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244), [simd.odin:427](src/simd.odin#L427) and [text.odin:273](src/text.odin#L273). A loop over fixed target types repeats at [check_builtin.odin:176](src/check_builtin.odin#L176), [text.odin:240](src/text.odin#L240) and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
+`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244), [simd.odin:427](src/simd.odin#L427) and `check_unsafe_builtin` in `check_builtin.odin`. A loop over fixed target types repeats at `check_typed_builtin_args` in `check_builtin.odin` and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
 
 They differ in diagnostic code (`L0322`, `L0661`, `L0687`, `L0569`, `L0738`), and atomics reports every bad argument rather than the first.
 
@@ -118,7 +118,7 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 
 #### Failure writes that the default in `check_expr` makes unnecessary
 
-`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [text.odin](src/text.odin) 18. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
+`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
 Shared form: assign only on success. Saves about 100 lines.
 
@@ -693,7 +693,7 @@ What remains here waits on helpers shared across files.
 
 **Near copies**
 
-- [check_builtin.odin:175](src/check_builtin.odin#L175), [text.odin:241](src/text.odin#L241) and [format.odin:258](src/format.odin#L258): the same loop over fixed target types with `check_argument_value`. Shared form: `bind_typed_arguments(k, v, targets) -> bool`, which sets `v.bound`.
+- `check_typed_builtin_args` in `check_builtin.odin` and [format.odin:258](src/format.odin#L258): the same loop over fixed target types with `check_argument_value`. Shared form: `bind_typed_arguments(k, v, targets) -> bool`, which sets `v.bound`.
 - [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164), with a variant at line 570: check against `TYPE_ALLOCATOR` and report "an allocator argument is an `Allocator`". Shared form: `check_allocator_argument(k, e) -> bool`; line 570 keeps its own wording only if tests pin it.
 - [check_builtin.odin:1378](src/check_builtin.odin#L1378), [check_builtin.odin:1246](src/check_builtin.odin#L1246) and [reflect.odin:308](src/reflect.odin#L308): `new(Const_Aggregate)` plus two field writes, in 15 sites across 9 files. Shared form: `aggregate_const(c, type, elements)`; it would also settle why only some sites set `type_value`.
 
@@ -861,7 +861,7 @@ Small and correct. The enum declaration logic lives in `check.odin`.
 
 - [enums.odin:83](src/enums.odin#L83), [simd.odin:291](src/simd.odin#L291), [check_expr.odin:3332](src/check_expr.odin#L3332) and [const_ops.odin:884](src/const_ops.odin#L884) hand-build what the file-private `aggregate_const` at [reflect.odin:307](src/reflect.odin#L307) builds.
   Promote it to `const_ops.odin` (about 3 lines per site). It also sets `type_value`, which these omit; confirm no reader depends on the difference.
-- [enums.odin:51](src/enums.odin#L51), [union.odin:482](src/union.odin#L482), [union.odin:611](src/union.odin#L611), [text.odin:71](src/text.odin#L71) and [check_calls.odin:1028](src/check_calls.odin#L1028) repeat `v.bound = make([]Expr, 1, ...)` then `v.bound[0] = x`.
+- [enums.odin:51](src/enums.odin#L51), [union.odin:482](src/union.odin#L482), [union.odin:611](src/union.odin#L611) and [check_calls.odin:1028](src/check_calls.odin#L1028) repeat `v.bound = make([]Expr, 1, ...)` then `v.bound[0] = x`.
   About 15 checker sites use this or the `bound :=` spelling; a `bind_single(k, v, x)` saves one line at each.
 
 **Structure and boundaries**
@@ -1033,7 +1033,7 @@ Small and readable, with no dead procedures. `ensure_format_member` lets a `wher
 **Near copies**
 
 - [format.odin:184](src/format.odin#L184), [hooks.odin:559](src/hooks.odin#L559) and [global_effects.odin:1658](src/global_effects.odin#L1658): three tests for "this `dyn` is printing's", the first by name and the others by the recorded view. Share one predicate on the interface symbol; the name form also works while `core:fmt` is being checked.
-- [format.odin:241](src/format.odin#L241), [atomics.odin:164](src/atomics.odin#L164), [simd.odin:427](src/simd.odin#L427) and [text.odin:273](src/text.odin#L273): the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
+- [format.odin:241](src/format.odin#L241), [atomics.odin:164](src/atomics.odin#L164), [simd.odin:427](src/simd.odin#L427) and `check_unsafe_builtin` in `check_builtin.odin`: the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
 
 **Structure and boundaries**
 
@@ -1695,57 +1695,6 @@ Small, sound procedures for loading and diagnostics.
 **Near copies**
 
 - [source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3355](src/check.odin#L3355) and `prov_drop_event_diagnostics`: each shrinks and clamps `last_noted_diagnostic`, and `hold_diagnostics` also undoes `error_count` by hand. Add one helper for `resize` plus the clamp. (about 5 lines)
-
-### src/text.odin
-
-Short and readable, with why-comments that mostly earn their place. The main issues are the receiver pre-check in `check_text_operation`, a from_runes/from_utf8 pair that drifted apart, repeated error boilerplate, and non-text `unsafe` built-ins living here. Probes ran against the current `lokec.exe`.
-
-**Bugs**
-
-  Scenario: `N :: f(false); f :: proc(use: bool) -> int { if (use) { return s.byte_len(); } return 3; } s := "hello";` gives L0363 "`string` has no field or member `byte_len`"; `s.len()` compiles.
-  Fix: do not take the shortcut for a variable whose type is still `INVALID_TYPE`.
-  Scenario: `make_s(proc() -> int { y := 4; return y; }).copy()` on a struct method fails in clang: "invalid redefinition of function 'loke.p.lambda.2'". `.other()` also fails (`lambda.1`), so another path, not traced, re-checks too; plain `make_s(lit)` works.
-  Fix: hoist each literal once, and stop re-checking (see Data structures).
-- `BUG-text-3` **low** [text.odin:150](src/text.odin#L150) `check_from_runes`: checks only the argument count, not its name or mode, unlike `check_from_utf8` at line 187. *Not verified.*
-  Scenario: `string.from_runes(wrong = r[:])`, `string.from_runes(..r[:])` and `string.from_runes(inout y)` all compile; the named and `inout` shapes on `from_utf8` report L0561.
-  Fix: apply the shape check at line 187 here (see Near copies).
-- `BUG-text-4` **low** [text.odin:201](src/text.odin#L201) `check_from_utf8`: the argument is never materialized, so the implicit view conversion of design.md "Fixed arrays" does not apply; line 160 in `check_from_runes` has the same gap. *Not verified.*
-  Scenario: with `b := [3]u8{65, 66, 0}`, `string.from_utf8(b)` gives L0561 "found `[3]u8`", though `array_views_as` lets a `[]u8` parameter take `b`; `[dynamic]u8` and `[2]rune` are rejected too.
-  Fix: when `array_views_as` holds for the expected slice, `materialize` before testing the kind.
-- `BUG-text-5` **low** [text.odin:329](src/text.odin#L329) `check_unsafe_builtin`: the result of `materialize` is ignored, so a length it has already rejected gets a second error. *Not verified.*
-  Scenario: `unsafe.string_view(p, 1.5)` reports both L0353 and L0569 for the one argument.
-  Fix: on a false result set `INVALID_TYPE` and return, as `check_enum_from_int` does in [enums.odin](src/enums.odin#L27).
-- `BUG-text-6` **low** [text.odin:330](src/text.odin#L330) `check_unsafe_builtin`: any integer type is accepted as a length, but `widen_to_i64` ([emit_llvm_expr.odin:1079](src/emit_llvm_expr.odin#L1079)) truncates 128-bit values. *Not verified.*
-  Scenario: `neg: i128 = -18446744073709551616; unsafe.string_view(p, neg)` gives an empty view instead of the negative-length panic of design.md "string type conversions". `p[0:big]` wraps the same way.
-  Fix: range-check 128-bit values in the emitter, for both forms, or reject them here.
-
-**Simplification**
-
-- [text.odin:152](src/text.odin#L152) `check_from_runes`, `check_from_utf8`, `check_strings_allocate`, `check_unsafe_builtin`: open each with `v.type = INVALID_TYPE`, as line 73 and `check_allocation_failed` do, and delete the assignment before every error return. (about 17 lines)
-- [text.odin:116](src/text.odin#L116) `fix_string_receiver`: its only caller is line 48; inline the one expression there and move the design.md "string type" citation with it. (about 3 lines)
-- [text.odin:198](src/text.odin#L198) `check_from_utf8`: replace the three-arm `switch` over a `.None` placeholder with `op := from_bytes`, an `if` for the C view case, and an `else if` for the error. (about 3 lines)
-- [text.odin:71](src/text.odin#L71), [168](src/text.odin#L168), [213](src/text.odin#L213): `make([]Expr, 1, ...)` then `[0] =` also appears at about a dozen sites such as [enums.odin:51](src/enums.odin#L51) and [union.odin:482](src/union.odin#L482); a small `single_bound(k, e)` helper takes one line per site. (about 15 lines)
-
-**Data structures and algorithms**
-
-
-**Near copies**
-
-- [text.odin:146](src/text.odin#L146) and [text.odin:174](src/text.odin#L174): `check_from_runes` and `check_from_utf8` share category, arity, shape and expected-slice checks, differing in name, element and result. `text_constructor_source(k, v, name, parameter, element) -> Type_Id` would hold them and fix BUG-text-3. (about 8 lines)
-- [text.odin:223](src/text.odin#L223) and [check_builtin.odin:162](src/check_builtin.odin#L162): `check_strings_allocate` and `check_allocation_failed` are the same shape, arity, typed-loop sequence, differing in error code, wording, targets and result. `check_typed_builtin_args(k, v, ident, code, wanted, targets) -> bool` fits both. (about 12 lines)
-- [text.odin:319](src/text.odin#L319) and [text.odin:340](src/text.odin#L340): the same byte-pointer error twice. One check before the `#partial switch`, guarded by `kind != .Unsafe_Raw_Data` and using `ident.name`, replaces both. (about 7 lines)
-
-**Structure and boundaries**
-
-- [text.odin:262](src/text.odin#L262): `check_unsafe_builtin` mostly is not text, since `raw_data` takes slices, dynamic arrays and array pointers. It belongs in `check_builtin.odin` beside the other `.Unsafe_*` checkers, and `check_strings_allocate` belongs beside `check_allocation_failed`, its near copy. Both section banners then go.
-- [text.odin:148](src/text.odin#L148): `.From_Runes` is a validating constructor filed in `Text_Op` ([ast.odin:179](src/ast.odin#L179)), while `Text_Conversion` claims "the named text constructors". Making it a `Text_Conversion` member removes the early return in `emit_text_operation` and the dual test at [cfg_provenance.odin:9861](src/cfg_provenance.odin#L9861).
-
-**Comments**
-
-- [text.odin:78](src/text.odin#L78): misleading, since `cstring_view` answers to none of these ops (line 81 rejects them all). Write: "A `cstring_view` is terminated, not measured, so it has none of these; `to_c_view` needs a `string`'s terminator."
-- [text.odin:254](src/text.odin#L254): delete the signature table, which copies design.md and adds `string_view`, a form its list omits. Write: `design.md "unsafe.raw_data procedure", and the two view constructors whose operands the compiler cannot trace to an owner.` (about 5 lines)
-- [text.odin:90](src/text.odin#L90): delete; `mutable = false` on the next line says it.
-- [text.odin:143](src/text.odin#L143): this covers `check_from_utf8` too but sits on `check_from_runes` alone; keep one copy above the shared helper once the two are merged.
 
 ### src/universe.odin
 

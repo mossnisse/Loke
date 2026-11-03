@@ -25,3 +25,21 @@ L0561
 L0561
 @15:7
 `string.from_utf8` takes one argument, found 2
+L0561
+@18:7
+`string.from_runes` takes one argument, found 0
+L0561
+@19:25
+`string.from_runes` takes one value argument named `runes`
+L0561
+@20:25
+`string.from_runes` takes one value argument named `runes`
+L0561
+@21:25
+`string.from_runes` takes one value argument named `runes`
+L0561
+@22:25
+`string.from_runes` takes a `[]rune`, found `[2]u8`
+L0561
+@23:24
+`string.from_utf8` takes a `[]u8` or `cstring_view`, found `[2]rune`

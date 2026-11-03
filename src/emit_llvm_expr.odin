@@ -1120,9 +1120,9 @@ emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> s
 	return emit_slice_value(e, as_type, start, count)
 }
 
-// An index or slice bound about to be compared, unsigned, with a length. A
-// value wider than 64 bits that does not fit saturates to all ones, which no
-// length reaches, instead of truncating into range (design.md "Slices").
+// An index, slice bound or length about to be bounds-checked. A value wider than
+// 64 bits that does not fit saturates to all ones, negative as an `i64` and past
+// any length unsigned, instead of truncating into range (design.md "Slices").
 @(private = "file")
 checked_index_to_i64 :: proc(e: ^Emitter, value: string, type: Type_Id) -> string {
 	bits := type_bits(e.c, type)
@@ -2439,12 +2439,6 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		emit_alloc_check(e, ok, provider)
 		out = load(e, CONTAINER_TYPE, slot)
 
-	case .From_Runes:
-		data, count := emit_slice_parts(e, v.bound[0])
-		return emit_text_optional_ok(
-			e, as_type, "loke_rt_v1_string_from_runes",
-			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, emit_default_allocator(e)),
-		)
 	}
 	return out
 }
@@ -2567,6 +2561,13 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 	case .String_From_C_View:
 		data, length := emit_text_parts(e, v.bound[0])
 		return emit_string_from_bytes(e, as_type, data, length)
+
+	case .String_From_Runes:
+		data, count := emit_slice_parts(e, v.bound[0])
+		return emit_text_optional_ok(
+			e, as_type, "loke_rt_v1_string_from_runes",
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, emit_default_allocator(e)),
+		)
 	}
 	backend_fail(e, "an unclassified text conversion reached emission")
 	return "zeroinitializer"
@@ -2678,7 +2679,7 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 		// design.md "string type conversions": a negative length is a bounds
 		// error, as in `pointer[0:length]`, not input to report.
 		data := emit_expr(e, v.bound[0])
-		length := widen_to_i64(e, emit_expr(e, v.bound[1]), expr_base(v.bound[1]).type)
+		length := checked_index_to_i64(e, emit_expr(e, v.bound[1]), expr_base(v.bound[1]).type)
 		negative := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, length)
 		panic_if(e, negative, "slice.bounds", "slice bounds out of range")
