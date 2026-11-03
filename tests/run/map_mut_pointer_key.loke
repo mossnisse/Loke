@@ -1,0 +1,38 @@
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+// A `^mut T` reaches a `map[^T]V` as its key with no conversion in between, so
+// it is the key type and not the `string_view` a `map[string]V` may be queried
+// with (design.md "Maps").
+member :: proc(p: ^mut int, m: map[^int]int) -> bool {
+	return p in m;
+}
+
+read :: proc(p: ^mut int, m: map[^int]int) -> int {
+	return m[p];
+}
+
+assign :: proc(p: ^mut int) -> int {
+	m: map[^int]int = {};
+	m[p] = 5;
+	return m.len();
+}
+
+literal :: proc(p: ^mut int) -> int {
+	m := map[^int]int{ p = 2 };
+	return m.len();
+}
+
+main :: proc() {
+	x, y := 7, 8;
+	address := rawptr(&x);
+	m: map[^int]int = {};
+	m[(^int)(address)] = 3;
+	fmt.println(member((^mut int)(address), m));
+	fmt.println(member(&mut y, m));
+	fmt.println(read((^mut int)(address), m));
+	fmt.println(assign(&mut y));
+	fmt.println(literal(&mut y));
+}

@@ -649,10 +649,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 emit_synth_variant_construct :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	open_function(
-		e, "define %s%s %s(%s%s %%arg0)", llvm_linkage(name), llvm_result_type(e, symbol.result), name,
-		sret_param(e, symbol.result), synth_param_llvm(e, symbol, 0),
-	)
+	open_synth_function(e, symbol, name)
 	index := union_variant_index(e.c, symbol.result, symbol.name)
 	variant := emit_union_value(e, symbol.result, index, synth_receiver_value(e, symbol))
 	emit_ret(e, symbol.result, variant)
@@ -664,12 +661,7 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	result := llvm_type(e, symbol.result)
-	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)
-	for _, index in symbol.params {
-		if index > 0 { fmt.sbprint(&e.b, ", ") }
-		fmt.sbprintf(&e.b, "%s %%arg%d", synth_param_llvm(e, symbol, index), index)
-	}
-	open_function(e, ")")
+	open_synth_function(e, symbol, name)
 
 	#partial switch symbol.synth {
 	case .Standard_Len:

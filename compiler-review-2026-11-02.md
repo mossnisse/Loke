@@ -280,7 +280,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - `loke_rt_v1_map_scan` and cursor store: [emit_llvm_iteration.odin:432](src/emit_llvm_iteration.odin#L432), [emit_llvm_iteration.odin:961](src/emit_llvm_iteration.odin#L961), [emit_llvm_runtime.odin:945](src/emit_llvm_runtime.odin#L945). `emit_map_scan`, about 10.
 - Loop targets save and restore: [emit_llvm_stmt.odin:679](src/emit_llvm_stmt.odin#L679), [emit_llvm_iteration.odin:61](src/emit_llvm_iteration.odin#L61). A `Loop_Targets` field on `Emitter`, about 8.
 - Union storage head: [emit_llvm_abi.odin:410](src/emit_llvm_abi.odin#L410) and [emit_llvm_expr.odin:42](src/emit_llvm_expr.odin#L42) spell the same `i%d`, so the BUG-emit_llvm_abi-1 fix must change both. Share the head spelling.
-- Slice from data and length: [emit_llvm_containers.odin:236](src/emit_llvm_containers.odin#L236) open-codes [emit_llvm_expr.odin:2159](src/emit_llvm_expr.odin#L2159) `emit_ptr_len` twice.
 
 ### Small idioms and misplaced code
 
@@ -939,81 +938,12 @@ What remains here belongs to the groups under "Findings that span files".
 
 ### src/emit_llvm_containers.odin
 
-The lowering is careful about ownership and panics, and its comments are mostly good; one key test is too broad and breaks valid programs.
-Most of the removable bulk is hand-written IR that existing helpers already cover, plus the 397-line `emit_synth_container_op`.
-
-**Bugs**
-
-- `BUG-emit_llvm_containers-1` **medium** [emit_llvm_containers.odin:1396](src/emit_llvm_containers.odin#L1396) `emit_map_key_slot`: any key whose type differs from `K` is treated as a `string_view`, but `^mut T` reaches `map[^T]V` with no conversion node. *Confirmed: Reproduced: with p: ^mut int, m: map[^int]int, the forms p in m, m[p] = 1, m[p] and map[^int]int{ p = 1 } all fail with L0403 (extractvalue %loke.string_view of ptr); the same code with a ^int key compiles. Not recorded in known-gaps or open-questions.*
-  Scenario: `p: ^mut int; m: map[^int]int; p in m` (also `m[p] = 1`, `map[^int]int{ p = 1 }`) ends in L0403, clang rejecting `extractvalue %loke.string_view` of a `ptr`.
-  Fix: test `key == TYPE_STRING && given == TYPE_STRING_VIEW`, the same pair `check_map_key` accepts.
-- `BUG-emit_llvm_containers-2` **low** [emit_llvm_containers.odin:644](src/emit_llvm_containers.odin#L644) `emit_map_literal_into`: every entry hoists its own key, held-value, `old` and `inserted` allocas, so the frame grows with the literal. *Not verified.*
-  Scenario: at `-opt=none`, a 300-entry `map[int]L` with a 5 KB `L` or a 30000-entry `map[string]string` dies with 0xC00000FD; same-size `[dynamic]` literals run.
-  Fix: make those slots once before the loop, as `emit_dynamic_literal_into` does at line 600.
-
-**Simplification**
-
-- [emit_llvm_containers.odin:892](src/emit_llvm_containers.odin#L892) `emit_synth_container_op`: 11 cases end in `}` plus `return`; skip the tail when `status == ""` and write one `}` after it. (about 22 lines)
-- [emit_llvm_containers.odin:978](src/emit_llvm_containers.odin#L978) `emit_synth_container_op`: `.Resize`, `.Reserve`, `.Shrink`, `.Map_Reserve`, `.Map_Shrink` repeat one call; use a local `status_call(e, "dyn_resize", ops)`.
-  `.Clear` and `.Map_Clear` (lines 972, 1171) can share a case the same way. (about 15 lines)
-- [emit_llvm_containers.odin:111](src/emit_llvm_containers.odin#L111) `synth_sequence_storage`: the header branch is `load(e, "ptr", gep_field(...))` and `load(e, "i64", gep_field(...))`; the slice branch is two `extract` calls. (about 10 lines)
-- [emit_llvm_containers.odin:46](src/emit_llvm_containers.odin#L46) `declare_dyn_append_owned`: add the declaration to `emit_container_declarations`, like the other 27. `tests/ll` checks shapes rather than whole-IR goldens, and this stops a thunk map doubling as a flag. (about 8 lines)
-- [emit_llvm_containers.odin:91](src/emit_llvm_containers.odin#L91) `container_ops_global`: `{{` escapes the brace, as `emit_llvm.odin:772` does, so one `fmt.aprintf` replaces the builder and the separate `{` write. (about 4 lines)
-- [emit_llvm_containers.odin:1023](src/emit_llvm_containers.odin#L1023) `.Map_Lookup_Value`: `emit_union_either` writes the payload only on the present branch, so zeroing `out` first does nothing for the answer and is a memset for a large `V`; delete it. (about 5 lines)
-- [emit_llvm_containers.odin:745](src/emit_llvm_containers.odin#L745) `.Open`: temporaries are named `%tN`, so reserving `out` early serves nothing; write `opened := temp(e)` and `out := insert(...)` as `.Open_Fixed` does. (about 3 lines)
-- [emit_llvm_containers.odin:706](src/emit_llvm_containers.odin#L706) `emit_container_policy_failure`: its body is `kept := branch_on_failure(e, status); emit_alloc_failure(e, header); rejoin(e, kept)`. (about 3 lines)
-- [emit_llvm_containers.odin:673](src/emit_llvm_containers.odin#L673) `emit_store_entry`: `prefix` only decorates labels and no test pins them; drop it with its three `tprintf` calls and fix the labels. (about 3 lines)
-- [emit_llvm_containers.odin:894](src/emit_llvm_containers.odin#L894) `.Append`: use `extract` for the pack, and put the `moves` drop inside the `else` arm, where `masked` is already false, so `moves && !masked` becomes `moves`. (about 3 lines)
-- [emit_llvm_containers.odin:1109](src/emit_llvm_containers.odin#L1109) `.Map_Try_Insert`: the allocator is computed for every element, and `moves` and unmanaged both store; `if moves || !managed { store } else { clone }`, with the allocator inside. (about 3 lines)
-- [emit_llvm_containers.odin:1242](src/emit_llvm_containers.odin#L1242) `emit_drop_run`: `at := gep_at(e, llvm_type(e, element), data, index)`. (about 3 lines)
-- [emit_llvm_containers.odin:302](src/emit_llvm_containers.odin#L302) `emit_synth_chunks_next`: `emit_ret` leaves `terminated` false, so `place_label` writes a `br` after the `ret` (LLVM reads it as a dead block). Set the flag in `emit_ret`, `emit_llvm_abi.odin:636`, and lines 1124, 1139 go. (about 2 lines)
-- [emit_llvm_containers.odin:524](src/emit_llvm_containers.odin#L524) `key_policy_member`: return the policy and let the thunks read `.hash` or `.equal`, which removes the `want_equal` flag. (about 1 line)
-- [emit_llvm_containers.odin:835](src/emit_llvm_containers.odin#L835) `emit_synth_container_op`: `emit_lifecycle(e, element)` is called at lines 835, 840, 1032, 1071 and 1114; hold it in one local at the top. (about 1 line)
-
-**Dead code**
-
-- (branch) [emit_llvm_containers.odin:146](src/emit_llvm_containers.odin#L146): `e.terminated = false` here and at lines 188, 224, 260, 284, 739, 855 is dead; `begin_function_emission` already reset it through `e.fn = {}`.
-- (branch) [emit_llvm_containers.odin:783](src/emit_llvm_containers.odin#L783): `e.terminated = true` here and at line 1145 is dead; `finish_function_emission` restores `e.fn` straight after.
-- (branch) [emit_llvm_containers.odin:64](src/emit_llvm_containers.odin#L64): the `INVALID_TYPE` tests here and at lines 439, 459 are redundant; `emit_lifecycle` answers all-false for it, and every caller passes a container.
-
-**Data structures and algorithms**
-
-- [emit_llvm_containers.odin:1085](src/emit_llvm_containers.odin#L1085) `.Map_Find_Or_Insert`: `begin_temporary_drop` registers even an unmanaged element, so `map[int]int.find_or_insert` pays a `frame_push` and `frame_pop` on every call, in the design's counting idiom.
-  `guard_built_element` at lines 936, 1053, 1085, 1129 returns no action, and `emit_unwind_prologue` then omits the frame; `try_insert` gains the same.
-- [emit_llvm_containers.odin:64](src/emit_llvm_containers.odin#L64) `container_ops_global`: an unmanaged element gets byte-identical `.move` and plain tables, as `@.loke.ops.143` shows for `[dynamic]int`; clear `relocating` unless the element is managed too.
-- [emit_llvm_containers.odin:967](src/emit_llvm_containers.odin#L967) `.Remove`: `load_place` here and at lines 1039, 1164 snapshots compiler-owned slots, adding a memcpy for a large element; `load_temporary`, as `.Pop` uses at line 955, names the slot.
+What remains is the allocation failure branch shared with other files.
 
 **Near copies**
 
-- [emit_llvm_containers.odin:652](src/emit_llvm_containers.odin#L652) and [emit_llvm_containers.odin:1350](src/emit_llvm_containers.odin#L1350): map entry, null check, failure, store, key cleanup; only labels differ.
-  The literal can call `emit_map_insert_store(e, {as_type, address, key_slot, key_cleanup}, value, guard)`. (about 8 lines)
-- [emit_llvm_containers.odin:1003](src/emit_llvm_containers.odin#L1003), [emit_llvm_containers.odin:1017](src/emit_llvm_containers.odin#L1017), [emit_llvm_containers.odin:1057](src/emit_llvm_containers.odin#L1057), [emit_llvm_containers.odin:1263](src/emit_llvm_containers.odin#L1263) and [emit_llvm_containers.odin:1374](src/emit_llvm_containers.odin#L1374): the same `map_find` call; shared as `emit_map_find(e, header, ops, key_slot) -> string`. (about 10 lines)
-- [emit_llvm_containers.odin:584](src/emit_llvm_containers.odin#L584) and [emit_llvm_containers.odin:629](src/emit_llvm_containers.odin#L629): store `via`, bind, reserve, check, begin the drop; only helper names differ. Shared as `begin_container_literal(e, v, address, as_type) -> (ops, cleanup)`, choosing by `type_is_map`. (about 8 lines)
-- [emit_llvm_containers.odin:145](src/emit_llvm_containers.odin#L145), [emit_llvm_containers.odin:183](src/emit_llvm_containers.odin#L183), [emit_llvm_containers.odin:219](src/emit_llvm_containers.odin#L219), [emit_llvm_containers.odin:255](src/emit_llvm_containers.odin#L255), [emit_llvm_containers.odin:843](src/emit_llvm_containers.odin#L843) and [emit_llvm_runtime.odin:1476](src/emit_llvm_runtime.odin#L1476): the `define` line.
-  One `open_synth_function(e, symbol, name, extra = "")` writes linkage, result, `sret` and the `%argN` list; `llvm_result_type` already answers `void`. (about 20 lines)
-- [emit_llvm_containers.odin:335](src/emit_llvm_containers.odin#L335) and [emit_llvm_containers.odin:404](src/emit_llvm_containers.odin#L404): memoising, the `synth_bodies` save and the pending-thunk finish.
-  `sort_by_thunk` differs only by needing a `Symbol_Id`; split out `begin_thunk`/`end_thunk` and build `container_thunk` on them. (about 6 lines)
-- [emit_llvm_containers.odin:354](src/emit_llvm_containers.odin#L354), [emit_llvm_containers.odin:382](src/emit_llvm_containers.odin#L382), [emit_llvm_containers.odin:467](src/emit_llvm_containers.odin#L467) and [emit_llvm_containers.odin:514](src/emit_llvm_containers.odin#L514): `zext i1` and `ret i32`; shared as `emit_ret_flag(e, value)`. (about 6 lines)
 - [emit_llvm_containers.odin:699](src/emit_llvm_containers.odin#L699), [emit_llvm_containers.odin:800](src/emit_llvm_containers.odin#L800), [emit_llvm_expr.odin:2275](src/emit_llvm_expr.odin#L2275), [emit_llvm_calls.odin:650](src/emit_llvm_calls.odin#L650), [emit_llvm_cleanup.odin:1652](src/emit_llvm_cleanup.odin#L1652) and [emit_llvm_stmt.odin:176](src/emit_llvm_stmt.odin#L176): the `alloc_failed` call, `unreachable`, `terminated`.
   Shared as `emit_alloc_failed(e, provider)`; `emit_alloc_check` at `emit_llvm_expr.odin:2268` also matches `emit_container_policy_failure` once the provider is loaded.
-- [emit_llvm_containers.odin:138](src/emit_llvm_containers.odin#L138) and [emit_llvm_containers.odin:175](src/emit_llvm_containers.odin#L175): the same "element, through a header or a slice" resolution; a file-private helper returning `(element, through_header)` serves both. (about 4 lines)
-
-**Structure and boundaries**
-
-- [emit_llvm_containers.odin:812](src/emit_llvm_containers.odin#L812): `emit_synth_container_op` is 397 lines. The seams are `.Append`, `.Map_Lookup_Value`, `.Map_Find_Or_Insert` and `.Map_Try_Insert` as their own procedures, with the three nested helpers (lines 865, 872, 882) file-private.
-- [emit_llvm_containers.odin:716](src/emit_llvm_containers.odin#L716): the provider bodies are not containers, and the source-code map's entry for this file omits them, as it does the `[]mut T` bodies at lines 209-307. Move them or name them in the map.
-- [emit_llvm_containers.odin:571](src/emit_llvm_containers.odin#L571): `emit_region_reset` and `emit_allocator_operand` serve `free_all` and allocating built-ins, which the map assigns to `emit_llvm_calls.odin`; its only `emit_region_reset` caller is at `emit_llvm_calls.odin:180`.
-- [emit_llvm_containers.odin:1410](src/emit_llvm_containers.odin#L1410): `emit_borrowed_key_slot` is `@(private)`, but only this file uses it; make it `@(private = "file")`.
-
-**Comments**
-
-- [emit_llvm_containers.odin:569](src/emit_llvm_containers.odin#L569): the bare `(design.md)` breaks the citation rule; write `design.md "Allocator regions and region provenance"`.
-- [emit_llvm_containers.odin:44](src/emit_llvm_containers.odin#L44): records history; delete it along with `declare_dyn_append_owned`.
-- [emit_llvm_containers.odin:91](src/emit_llvm_containers.odin#L91): delete once `{{` is used.
-- [emit_llvm_containers.odin:744](src/emit_llvm_containers.odin#L744): delete; the order it describes does not matter for `%tN` names.
-- [emit_llvm_containers.odin:341](src/emit_llvm_containers.odin#L341): repeats line 416 word for word; keep one, in the shared `begin_thunk`.
-- [emit_llvm_containers.odin:998](src/emit_llvm_containers.odin#L998): delete; design.md "Map container operations" and the call say it.
-- [emit_llvm_containers.odin:864](src/emit_llvm_containers.odin#L864): delete; `value_storage` shows the spill.
 
 ### src/emit_llvm_expr.odin
 
@@ -2664,7 +2594,7 @@ A small, focused file. What remains is the emitter's slice unpacking around it.
 
 **Near copies**
 
-- [emit_llvm_iteration.odin:493](src/emit_llvm_iteration.odin#L493), [emit_llvm_calls.odin:1073](src/emit_llvm_calls.odin#L1073), [emit_llvm_expr.odin:2410](src/emit_llvm_expr.odin#L2410), and [emit_llvm_containers.odin:128](src/emit_llvm_containers.odin#L128), 287, 322, 755, 896, 1413: each extracts data then length, four of them through raw `extractvalue` prints.
+- [emit_llvm_iteration.odin:493](src/emit_llvm_iteration.odin#L493), [emit_llvm_calls.odin:1073](src/emit_llvm_calls.odin#L1073), [emit_llvm_expr.odin:2410](src/emit_llvm_expr.odin#L2410), and [emit_llvm_containers.odin:128](src/emit_llvm_containers.odin#L128), 287, 322, 755, 896, 1413: each extracts data then length.
   Shared form: `ptr_len_parts(e, storage, value) -> (data, length)` beside `emit_ptr_len`, its inverse; `#assert` at emit_llvm_runtime.odin:116 already ties `SLICE_*` to `VIEW_*`. (about 12 lines net)
 
 ### src/source.odin

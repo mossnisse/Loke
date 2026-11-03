@@ -1176,6 +1176,8 @@ checklist.
 
 ### Changed
 
+- `find_or_insert`, `try_find_or_insert` and `try_insert` on a map of unmanaged elements, such as the
+  counting idiom on a `map[int]int`, push no unwind frame.
 - Slicing a `string` or a `string_view` tests only the bytes at its bounds, in constant time, rather
   than validating the whole range, since the text is already valid UTF-8. `rest = rest[1:]` over
   256 KB took 145 s and now takes under 0.2 s. A bound inside a sequence still panics.
@@ -1403,6 +1405,10 @@ checklist.
 - `foreach` over a string, map, dynamic array or fixed array in a packed struct now reads it
   with `align 1`; it claimed natural alignment, which is undefined behavior in the generated code
   ([`@(packed)`](design.md#packed)).
+- A `^mut T` works as a `map[^T]V` key. `p in m`, `m[p]`, `m[p] = v` and `map[^T]V{ p = v }` compiled
+  it as a `string_view` and failed in clang with `L0403`.
+- A map literal keeps one set of slots for all its entries, so a 300-entry `map[int]L` with a 5 KB `L`,
+  or a 30000-entry `map[string]string`, no longer overflows the stack at `-opt=none`.
 - A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
   by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
 - `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`

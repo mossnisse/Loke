@@ -953,7 +953,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_cleanup.odin` | Cleanup registration: scopes, full-expression frames, and held values. |
 | `emit_llvm_unwind.odin` | Panic replay: a procedure's registration state and its generated thunk. |
 | `emit_llvm_lifecycle.odin` | Value clones and drops, and the generated `try_clone` and `clone` members. |
-| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, and typed-comparator sort adapters. |
+| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, typed-comparator sort adapters, the `[]mut T` members, and the contributed `mem.Arena`/`mem.Scratch` bodies. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |

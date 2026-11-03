@@ -133,7 +133,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 }
 
 // The enclosing function's buffer and state, restored when a nested one ends.
-@(private = "file")
+@(private)
 Function_Emission :: struct {
 	parent: strings.Builder,
 	saved:  Function_State,
@@ -215,6 +215,23 @@ open_function :: proc(e: ^Emitter, format: string, args: ..any) {
 @(private)
 open_synth_receiver :: proc(e: ^Emitter, name: string, result: Type_Id) {
 	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, result), name, sret_param(e, result))
+}
+
+// A synthesized member's header: its result, any `%sret`, and each parameter at
+// `%argN`, then the already spelled `extra` parameters.
+@(private)
+open_synth_function :: proc(e: ^Emitter, symbol: ^Symbol, name: string, extra := "") {
+	fmt.sbprintf(
+		&e.b, "define %s%s %s(%s", llvm_linkage(name), llvm_result_type(e, symbol.result, symbol.result_inout),
+		name, sret_param(e, symbol.result, symbol.result_inout),
+	)
+	for _, index in symbol.params {
+		if index > 0 {
+			fmt.sbprint(&e.b, ", ")
+		}
+		fmt.sbprintf(&e.b, "%s %%arg%d", synth_param_llvm(e, symbol, index), index)
+	}
+	open_function(e, "%s)", extra)
 }
 
 @(private)

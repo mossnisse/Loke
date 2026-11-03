@@ -22,6 +22,27 @@ main :: proc() { _ = f(); }
 
 Found on 2026-11-03 (P3).
 
+### A long literal can still overflow the stack at `-opt=none`
+
+A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
+literal that is a call or a place of more than 4096 bytes keeps a slot of its own in the frame, and
+300 elements of a 5 KB `L` overflow the stack. A managed key or value of a map literal also keeps its
+own unwind action, 9 bytes in the frame: a 100000-entry `map[string]string` overflows where a
+`[dynamic]string` of that length runs. An element's slot can be reused only once its temporaries are
+known not to outlive it, and an action only while nothing newer has been reserved, since the thunk
+replays newest reservation first.
+
+```loke
+package main;
+L :: struct { a: [5000]u8 };
+make_l :: proc() -> L { return {}; }
+main :: proc() {
+	xs := [dynamic]L{ make_l(), make_l(), make_l() /* and 297 more */ };
+}
+```
+
+Found on 2026-11-03 (P3).
+
 ### A long chain of reborrows in one body takes cubic time to solve
 
 A generated body of `p1 := p0; keep(p1); p2 := p1; keep(p2); ...` compiled by an optimized `lokec`

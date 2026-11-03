@@ -171,12 +171,12 @@ guard_built_element :: proc(e: ^Emitter, element: Type_Id, place: string) -> Def
 	return begin_temporary_drop(e, element, place)
 }
 
-// A completed owned value borrowed by an operation. Register it before
-// evaluating later arguments.
+// A completed owned value borrowed by an operation, in `storage` when the caller
+// has one to reuse. Register it before evaluating later arguments.
 @(private)
-hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Deferred {
+hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string, storage := "") -> Deferred {
 	if !emit_lifecycle(e, type).managed { return Deferred{} }
-	place := alloca(e, llvm_type(e, type))
+	place := storage != "" ? storage : alloca(e, llvm_type(e, type))
 	store(e, type, value, place)
 	entry := begin_temporary_drop(e, type, place)
 	append(&e.held, entry)

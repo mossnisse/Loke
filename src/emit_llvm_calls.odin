@@ -16,6 +16,24 @@ emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return previous
 }
 
+// The allocator a call was given, or the default when it was omitted.
+@(private)
+emit_allocator_operand :: proc(e: ^Emitter, v: ^Expr_Call, index: int) -> string {
+	if len(v.bound) > index {
+		return emit_expr(e, v.bound[index])
+	}
+	return emit_default_allocator(e)
+}
+
+// `free_all`: one call through the provider's reset callback, which fails at
+// run time for a provider with no region
+// (design.md "Allocator regions and region provenance").
+@(private = "file")
+emit_region_reset :: proc(e: ^Emitter, v: ^Expr_Call) {
+	handle := emit_expr(e, v.bound[0])
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_reset(ptr %s)", handle)
+}
+
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if v.dispatch != nil {
