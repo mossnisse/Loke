@@ -582,6 +582,20 @@ union_const :: proc(c: ^Compiler, union_type: Type_Id, index: int, payload: Cons
 
 // ---------------------------------------------------------------- inspection --
 
+// A union receiver takes `u.as(.name)` (design.md "Inspecting a union"); any
+// other type keeps its own `as` member.
+check_as_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	if sel.name.text != "as" {
+		return false
+	}
+	subject := check_receiver(k, sel)
+	if type_is_union(k.c, subject) {
+		check_union_as(k, v, sel, subject)
+		return true
+	}
+	return false
+}
+
 // design.md "Inspecting a union": `u.as(.name)` copies the payload out as
 // `Option(P)`.
 // ponytail: a temporary operand is copied from too, so a move-only payload is

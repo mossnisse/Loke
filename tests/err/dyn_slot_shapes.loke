@@ -1,0 +1,20 @@
+// design.md "Dyn compatibility": the subject occurs once in a slot's signature,
+// as its receiver, and a slot has one. A cycle of composition says so.
+package main;
+
+Split_Group :: interface($Self: type) {
+	slot same: proc(self, other: Self) -> bool;
+}
+
+No_Parameters :: interface($Self: type) {
+	slot nothing: proc() -> int;
+}
+
+Composes_Back :: interface($T: type) { Composes_Forth(T); }
+Composes_Forth :: interface($T: type) { Composes_Back(T); }
+
+main :: proc() {
+	a: dyn Split_Group;
+	b: dyn No_Parameters;
+	c: dyn Composes_Back;
+}

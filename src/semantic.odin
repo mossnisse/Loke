@@ -245,6 +245,8 @@ Type_Info :: struct {
 	// non-subject arguments of the application.
 	dyn_interface: Symbol_Id,
 	dyn_args:      []Generic_Arg,
+	// On a `dyn mut I`: the `dyn I` whose ABI type both capabilities share.
+	dyn_read_only: Type_Id,
 	// A compiler-owned `Range(T)`, so `..<` and `..=` survive being stored.
 	is_range:      bool,
 	// design.md "Storage roots and borrow carriers": a borrowed view or
@@ -869,7 +871,9 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
 	c.variant_constructors = make(map[Variant_Key]Symbol_Id, c.semantic_allocator)
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
+	c.dyn_slots = make(map[Type_Id][]Interface_Slot, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
+	c.interface_witnesses = make(map[Symbol_Id][dynamic]^Witness, c.semantic_allocator)
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
 	c.dyn_proc_adapters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 	c.materialized = make(map[Materialized_Key]^Materialized, c.semantic_allocator)
@@ -1543,7 +1547,7 @@ carrier_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 		assert(found, "a `[]mut T` was interned without the read-only variant it shares an ABI with")
 		return readonly
 	case .Dyn:
-		return c.dyn_types[dyn_key(c, info.dyn_interface, info.dyn_args, false)]
+		return info.dyn_read_only
 	}
 	return under
 }

@@ -17,6 +17,11 @@ checklist.
   ([Interface bodies](design.md#interface-bodies)). `slot f: proc "c" (self) -> int;` was met by a
   Loke method and not by a `proc "c"` one. Upgrade by removing the convention from the slot, or by
   giving the method the one the slot names.
+- `dyn I` over a slot written `proc(self, other: Self)` is now `L0463`
+  ([Dyn compatibility](design.md#dyn-compatibility)), as `proc(self: Self, other: Self)` already was.
+  It compiled and misread `other` at run time. Upgrade by taking the other value through a `dyn I`
+  view or a concrete type, or by keeping the interface static-only. A slot with no parameters no
+  longer crashes the compiler when viewed: it is `L0442` and `L0463`.
 - The parser now rejects four shapes [grammar.md](grammar.md) never admitted. A capture clause with
   no body, `T :: proc() capture(y);`, is `L0259`: it compiled and dropped the clause, so `y` need not
   have existed; write a procedure type with no clause. `-> !` on a procedure type in result position,

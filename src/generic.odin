@@ -934,6 +934,18 @@ generic_arg_equal :: proc(c: ^Compiler, a, b: Generic_Arg) -> bool {
 	return a.value_type == b.value_type && const_key_text(c, a.value) == const_key_text(c, b.value)
 }
 
+generic_args_equal :: proc(c: ^Compiler, a, b: []Generic_Arg) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for arg, index in a {
+		if !generic_arg_equal(c, arg, b[index]) {
+			return false
+		}
+	}
+	return true
+}
+
 // A readable `Table(string, int)` for diagnostics.
 @(private = "file")
 generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {

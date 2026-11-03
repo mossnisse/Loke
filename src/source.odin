@@ -230,8 +230,11 @@ Compiler :: struct {
 	// Erased views (`src/erased.odin`). A witness is compilation-global, so it is
 	// keyed and emitted once for the whole program.
 	dyn_types:     map[string]Type_Id,
+	// Per `dyn` type: the flattened slots, in witness order.
+	dyn_slots:     map[Type_Id][]Interface_Slot,
 	witnesses:     map[string]^Witness,
 	witness_order: [dynamic]^Witness,
+	interface_witnesses: map[Symbol_Id][dynamic]^Witness,
 	// Per `dyn proc` type: the code word for a procedure the view holds.
 	dyn_proc_adapters: map[Type_Id]Symbol_Id,
 

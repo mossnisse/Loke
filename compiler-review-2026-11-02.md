@@ -77,7 +77,7 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 ## The changes most worth making
 
-4. **Five small independent fixes.** Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
+4. **Five small independent fixes.** Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). 1 to 2 lines each.
 
 6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
@@ -127,7 +127,7 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 
 #### Failure writes that the default in `check_expr` makes unnecessary
 
-`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [lifecycle.odin](src/lifecycle.odin) 22, [text.odin](src/text.odin) 18, [erased.odin](src/erased.odin) 15, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
+`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28, [lifecycle.odin](src/lifecycle.odin) 22, [text.odin](src/text.odin) 18, [reflect.odin](src/reflect.odin) 14, [optional.odin](src/optional.odin) 13. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
 Shared form: assign only on success. Saves about 100 lines.
 
@@ -304,7 +304,6 @@ Each move below names a site with its only callers or its stated owner. Moves sa
 
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `operators.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
-- [erased.odin:1075](src/erased.odin#L1075) `check_as_call` belongs in `union.odin`.
 - Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`. [doc.odin:533](src/doc.odin#L533) `decl_is_public` is called from a checker pass and belongs beside `written_is_public`.
 - Transfer wording and type reach: the reports moved beside `transfer_facts` in `hooks.odin` belong with them in a `transfer_facts.odin` split from `hooks.odin` lines 430-567.
 - Records and subsystems that have outgrown their files: `Compiler`, 380 of 911 lines of `source.odin` from [source.odin:78](src/source.odin#L78). The doc-comment reader at [doc.odin:1151](src/doc.odin#L1151).
@@ -594,7 +593,7 @@ Small and readable, with no dead code and no algorithmic concerns. The untyped-p
 
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68): `box_type_callee`, `simd_callee` and `range_callee` differ only in the name. Shared form: `predeclared_type_callee(k, callee, "Box")`. (about 12 lines)
 - [box.odin:164](src/box.odin#L164) and [check_builtin.odin:586](src/check_builtin.odin#L586): the same optional allocator check with the same L0490 text. Shared form: `check_allocator_argument(k, e) -> bool`. (about 8 lines)
-- [box.odin:226](src/box.odin#L226): the three-line one-element `v.bound` also appears at erased.odin:1014, lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bound_exprs(k, e)`, from `check_builtin.odin`. (about 12 lines)
+- [box.odin:226](src/box.odin#L226): the three-line one-element `v.bound` also appears at lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bound_exprs(k, e)`, from `check_builtin.odin`. (about 12 lines)
 - [box.odin:97](src/box.odin#L97) and [check_calls.odin:561](src/check_calls.odin#L561): the "one positional value" test is repeated at check_calls.odin:947, enums.odin:32 and lifecycle.odin:25, 47. Shared form: `has_one_plain_argument(v)`.
 
 **Structure and boundaries**
@@ -631,7 +630,7 @@ The lowering design is sound and its comments mostly explain why, but the record
 **Dead code**
 
 - (branch) [capture.odin:178](src/capture.odin#L178): `literal.signature != nil` here and at line 196 is always true, because `proc_shape_ok` ([check.odin:2747](src/check.odin#L2747)) returns false for a nil signature first at line 28. Line 219 already relies on it.
-- (branch) [capture.odin:124](src/capture.odin#L124): this is the only write to `capture_records`, and `method` is never nil, so `method != nil` at [erased.odin:336](src/erased.odin#L336), [erased.odin:347](src/erased.odin#L347) and [global_effects.odin:271](src/global_effects.odin#L271) is always true.
+- (branch) [capture.odin:124](src/capture.odin#L124): this is the only write to `capture_records`, and `method` is never nil, so `method != nil` at [global_effects.odin:271](src/global_effects.odin#L271) is always true.
 - (branch) [capture.odin:281](src/capture.odin#L281): `outer` is a key of `capture_placeholders`, created by `new_symbol` at line 84, so `symbol_of` is never nil and the guard can go.
 - (branch) [capture.odin:227](src/capture.odin#L227): `Capture_Rewrite.receiver` is always `intern_identifier(CAPTURE_RECEIVER)`, as is the `receiver_id` parameter of `capture_field_place` from both callers; intern it inside `capture_field_place` and drop the field and parameter.
 
@@ -1160,59 +1159,12 @@ Small and correct. The enum declaration logic lives in `check.odin`.
 
 ### src/erased.odin
 
-The view and witness logic reads well, but `dyn_slot_is_compatible` lets three invalid slot shapes through, and an implicit `dyn proc` conversion breaks when its call is checked twice. Each slot call re-derives what `install_dyn_forwarding_slots` already computed, and interface walking and `check_as_call` belong to other owners.
-
-**Bugs**
-
-- `BUG-erased-1` **high** [erased.odin:671](src/erased.odin#L671) `dyn_slot_is_compatible`: `!split &&` skips the group type of `proc(self, other: Self)`, though line 651 says that type belongs to `other`. Scenario (run): `slot same: proc(self, other: Self) -> bool` with `v.same(v)` compiles and `other.r` prints garbage (917046360800) instead of L0463. Fix: test `parameter.type` whenever `position > 0 || split`. *Confirmed: Reproduced: `slot show: proc(self, other: Self) -> int` compiles and `v.show(v)` prints garbage (783195044624), while `proc(self: Self, other: Self)` reports L0463. design.md "Dyn compatibility" forbids this; no gap is recorded. High severity fits: silent memory misread.*
-- `BUG-erased-3` **medium** [erased.odin:235](src/erased.odin#L235) `install_dyn_forwarding_slots`: `modes[0]` is unguarded (line 208 guards it) and `dyn_slot_is_compatible` accepts a slot with no parameters. Scenario (run): `slot nothing: proc() -> int;` plus `v: dyn I;` panics "Index 0 is out of range" before the queued L0442 prints. Fix: reject an empty parameter list in `dyn_slot_is_compatible`. *Confirmed: Reproduced: `slot nothing: proc() -> int;` plus `v: dyn I;` panics at erased.odin(235:27), Index 0 out of range; without the dyn local L0442 prints. Invalid input only, so the harm is a lost diagnostic: low-to-medium. Not recorded in the gap docs.*
-- `BUG-erased-5` **low** [erased.odin:511](src/erased.odin#L511) `dyn_compatible`: the in-progress mark leaves `dyn_reason` empty. Scenario (run): `A` composes `B` composes `A` reports "the composed interface `A` is not dyn-compatible: " with nothing after the colon. Fix: set `info.dyn_reason = "it composes itself"` with the mark. *Not verified.*
-
-**Simplification**
-
-- [erased.odin:1132](src/erased.odin#L1132) `check_dyn_slot_call`: flattens twice and resolves the signature twice via `report_missing_dyn_slot`, then line 1171 re-derives names. The forwarding member `members[index]` already holds params, `proc_type`, and `param_symbols`: read those, use `parameter_slot_named`, and test `.Inout` directly for L0643. (about 20 lines)
-- [erased.odin:765](src/erased.odin#L765) `request_witness`: the callable branch duplicates the commit tail (789-793, 817-821) and flattens slots it never reads (771-772). Pick `slots` by branch, flatten only in the other branch, then build and commit once. (about 10 lines)
-- [erased.odin:531](src/erased.odin#L531) `dyn_compatible`, `dyn_slot_is_compatible`: ten `fmt.aprintf(..., allocator = k.c.semantic_allocator)` calls take five lines each; a one-line `semantic_printf(c, format, args)` helper also serves some 30 other lines in `src/`. (about 30 lines here)
-- [erased.odin:1003](src/erased.odin#L1003) `check_dyn_conversion` and [erased.odin:1133](src/erased.odin#L1133) `check_dyn_slot_call`: repeat `v.type = INVALID_TYPE` before each return. Set it once on entry (after the `found` test in the slot call) and assign the type only at the success exits. (about 16 lines)
-- [erased.odin:112](src/erased.odin#L112) `pass_variadic_element`: both branches do the same two assignments. Write `if !(dyn_views_printing(...) && format_misdeclared(...)) && dyn_view_witness(...) == nil { return e, false }`. (about 4 lines)
-- [erased.odin:352](src/erased.odin#L352) `dyn_proc_source_signature`: three identical guarded `[1:]` blocks become one file-private parapoly `after_first(s)` returning `s[1:]` or nil. (about 6 lines)
-- [erased.odin:906](src/erased.odin#L906) `dyn_slot_index`: named results `(index: int, entry: Interface_Slot, found: bool)` with bare `return` replace three `return 0, Interface_Slot{}, false`.
-
-**Dead code**
-
-- (branch) [erased.odin:179](src/erased.odin#L179): `stored != nil` cannot fail for a type `new_type` just returned; the same at 241 and 307, whose `dyn` comes from that call.
-- (branch) [erased.odin:783](src/erased.odin#L783): `found` and `len(members) > 0` always hold, because a callable witness is requested only for a read-only view, whose member was installed with it (`format.odin` requests a non-callable interface).
-- (branch) [erased.odin:511](src/erased.odin#L511): `info.dyn_ok = false` restates the zero value of a field computed once.
-
-**Data structures and algorithms**
-
-- [erased.odin:915](src/erased.odin#L915) `dyn_slot_index`: reruns `interface_slots` twice per slot call site, allocating a scope, cloned composition syntax, and bound arguments on the semantic allocator. Cost grows with dyn call sites times interface size, and line 197 computes the same list. Keep it per view type, for example `c.dyn_slots: map[Type_Id][]Interface_Slot`.
-- [erased.odin:469](src/erased.odin#L469) `dyn_abi_type`: builds and retains a string key on every query for a `dyn mut` type, and [emit_llvm_abi.odin:303](src/emit_llvm_abi.odin#L303) `struct_name` asks per use during emission. Store the read-only `Type_Id` on the mutable `Type_Info` at line 169.
-- [erased.odin:847](src/erased.odin#L847) `witness_key`, [erased.odin:425](src/erased.odin#L425) `dyn_key`: every lookup, including each written `dyn I` and each conversion, keeps its key on the semantic allocator. Build in `context.temp_allocator` and clone only on insert.
-- [erased.odin:491](src/erased.odin#L491) `view_witness_types`: scans all witnesses for each view a transfer walk reaches, and witnesses grow with distinct (interface, concrete) pairs; [global_effects.odin:1628](src/global_effects.odin#L1628) scans the same list. An index by `interface_symbol` serves both. Low priority.
+What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
 - [erased.odin:747](src/erased.odin#L747) and [interface.odin:1396](src/interface.odin#L1396), [interface.odin:1356](src/interface.odin#L1356): all do `composed_interface_of`, clone, cast, `bound_arguments`. Shared form: `composed_application(k, requirement) -> (^Interface_Info, []Generic_Arg, bool)`.
 - [erased.odin:893](src/erased.odin#L893) and [interface.odin:1018](src/interface.odin#L1018): same loop over `slot_candidates` and `slot_matches`, differing only in `result_inout` and the returned value. One `matching_slot` returning the symbol replaces `find_witness_slot`.
-- [erased.odin:475](src/erased.odin#L475) `dyn_same_application` and [erased.odin:492](src/erased.odin#L492) `view_witness_types`: same argument-list comparison. Shared form: `generic_args_equal(c, a, b: []Generic_Arg)`.
-- [erased.odin:47](src/erased.odin#L47) and [erased.odin:57](src/erased.odin#L57): `variadic_view_satisfied` and `dyn_view_witness` open identically, differing only in `report`. One helper taking `report` serves both.
-
-**Structure and boundaries**
-
-- [erased.odin:1075](src/erased.odin#L1075): `check_as_call` has nothing to do with erased views; it only dispatches to `check_union_as`, so it belongs in `union.odin` beside it.
-- [erased.odin:23](src/erased.odin#L23): `variadic_view_element`, `dyn_view_witness`, `dyn_type`, `dyn_is_callable`, `dyn_key`, `dyn_is_mutable`, `dyn_compatible`, and `dyn_slot_index` have no users outside this file, so "Source-code map" asks for `@(private = "file")`.
-- [erased.odin:550](src/erased.odin#L550) `dyn_compatible`: the composition branch (558-605) is the natural seam; extract `dyn_composition_is_compatible` returning `(reason, ok)`, matching `dyn_slot_is_compatible`.
-- [erased.odin:1158](src/erased.odin#L1158) `check_dyn_slot_call`: argument binding (1158-1211) is a separate job from slot lookup; split it at that line.
-
-**Comments**
-
-- [erased.odin:505](src/erased.odin#L505): "five rules" is stale (the section lists six) and has no heading; write `// design.md "Dyn compatibility", computed once per declaration.`
-- [erased.odin:631](src/erased.odin#L631): restates the spec with no heading; write `// design.md "Dyn compatibility": the rules on one slot.` (2 lines)
-- [erased.odin:188](src/erased.odin#L188) and [erased.odin:999](src/erased.odin#L999): `design.md:` lacks the required heading; cite `design.md "Borrowed dynamic interface values"`.
-- [erased.odin:54](src/erased.odin#L54): delete "An explicit conversion and a pack element differ in their operands and agree on this."
-- [erased.odin:1093](src/erased.odin#L1093): shorten to: L0467 for no such slot, L0643 for a mutating slot through `dyn I` (design.md "Borrowed dynamic interface values"); a callable view's member is not a slot. (1 line)
-- [erased.odin:558](src/erased.odin#L558), [erased.odin:654](src/erased.odin#L654), [erased.odin:1052](src/erased.odin#L1052): delete; each restates the check or error message beside it.
 
 ### src/eval.odin
 

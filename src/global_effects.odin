@@ -1629,8 +1629,9 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, seen: ^map[string]bool =
 			append(&out, index)
 		}
 	case call.dyn_interface != INVALID_SYMBOL:
-		for witness in c.witness_order {
-			if witness.interface_symbol != call.dyn_interface || call.dyn_index >= len(witness.slots) {
+		same_interface := c.interface_witnesses[call.dyn_interface]
+		for witness in same_interface {
+			if call.dyn_index >= len(witness.slots) {
 				continue
 			}
 			// A callable view's witnesses are per signature.
