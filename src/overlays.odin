@@ -4,14 +4,14 @@ package lokec
 import "core:path/filepath"
 import "core:strings"
 
-// Copy the path and text. Empty text is an overlay, not an absent file. Paths
-// have the same case-insensitive, cleaned identity as packages on Windows.
+// Empty text is an overlay, not an absent file. Paths have the same case-insensitive, cleaned identity as packages on Windows.
 set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool {
-	if !s.initialized || path == "" || !strings.equal_fold(filepath.ext(path), ".loke") { return false }
+	if !s.initialized || !strings.equal_fold(filepath.ext(path), ".loke") { return false }
 	context.allocator = s.allocator
-	key := dir_key(canonical_dir(path))
+	canonical := canonical_dir(path)
+	key := dir_key(canonical)
 	// Copy first: either argument may be borrowed from the old snapshot/overlay.
-	overlay := Source_Overlay{path = strings.clone(canonical_dir(path)), text = strings.clone(text)}
+	overlay := Source_Overlay{path = strings.clone(canonical), text = strings.clone(text)}
 	if previous, found := s.overlays[key]; found {
 		overlay.key = previous.key
 		delete(previous.path)
@@ -25,8 +25,7 @@ set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool
 	return true
 }
 
-// Removing an overlay returns source loading to disk. A missing overlay is a
-// no-op and does not invalidate a checked result.
+// Removing an overlay returns source loading to disk.
 remove_session_overlay :: proc(s: ^Compilation_Session, path: string) -> bool {
 	if !s.initialized { return false }
 	context.allocator = s.allocator
@@ -42,8 +41,7 @@ remove_session_overlay :: proc(s: ^Compilation_Session, path: string) -> bool {
 	return false
 }
 
-// Empty outside a session. A pointer, not a copy of the map, so an overlay edit
-// can never leave the compiler holding a stale map header.
+// Empty outside a session.
 compiler_overlays :: proc(c: ^Compiler) -> map[string]Source_Overlay {
 	return c.source_overlays^ if c.source_overlays != nil else nil
 }

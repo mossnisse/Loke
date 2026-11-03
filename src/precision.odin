@@ -1,11 +1,7 @@
-// Explanatory metadata for bounded provenance analysis. These facts never
-// affect acceptance, type identity, or the generated program.
+// Why a provenance path was merged, for diagnostics. A flagged step also no
+// longer names one place.
 package lokec
 
-// `Places` is the places below one storage, and in all, a pointer is told
-// apart at (`PROV_OFFSET_LIMIT`, `PROV_OFFSET_TOTAL`), the specification's
-// chosen-places minimums; `Storages` is a pointer that may point into several
-// storages taken to point at each of its places in every one.
 Precision_Limit :: enum { Array_Elements, Depth, Width, Map_Width, Map_Keys, Map_Summary, Places, Storages }
 Precision_Loss :: bit_set[Precision_Limit; u8]
 
@@ -21,11 +17,14 @@ merge_precision :: proc(into: ^Precision_Loss, from: Precision_Loss) -> bool {
 }
 
 add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
+	if loss == {} {
+		return
+	}
 	if .Array_Elements in loss {
 		add_notef(c, span, "provenance precision limit: fixed arrays longer than %d elements merge element borrows, as a dynamic array does past that many elements or where telling them apart would pass %d carrier paths; this value may therefore depend on other elements", CARRIER_ARRAY_ELEMENTS, CARRIER_WIDTH)
 	}
 	if .Depth in loss {
-		add_notef(c, span, "provenance precision limit: paths below %d aggregate projection steps are merged", CARRIER_DEPTH)
+		add_notef(c, span, "provenance precision limit: paths below %d aggregate projection steps, or %d through a written alias, are merged", CARRIER_DEPTH, WRITTEN_ALIAS_DEPTH)
 	}
 	if .Width in loss {
 		add_notef(c, span, "provenance precision limit: more than %d carrier paths collapse to one whole-value dependency", CARRIER_WIDTH)
@@ -45,11 +44,11 @@ add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
 	if .Storages in loss {
 		add_notef(c, span, "provenance precision limit: a pointer that may point into more than one storage is taken to point at each of its places in every one")
 	}
+	advice := "pass or return the needed field or element separately to preserve its provenance"
 	if loss == {.Storages} {
-		add_notef(c, span, "this conservative dependency may cause the rejection; choose the pointer among places of one storage to keep them apart")
-	} else if loss != {} && loss <= {.Places, .Storages} {
-		add_notef(c, span, "this conservative dependency may cause the rejection; choose the pointer among fewer places to keep them apart")
-	} else if loss != {} {
-		add_notef(c, span, "this conservative dependency may cause the rejection; pass or return the needed field or element separately to preserve its provenance")
+		advice = "choose the pointer among places of one storage to keep them apart"
+	} else if loss <= {.Places, .Storages} {
+		advice = "choose the pointer among fewer places to keep them apart"
 	}
+	add_notef(c, span, "this conservative dependency may cause the rejection; %s", advice)
 }

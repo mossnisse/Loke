@@ -79,8 +79,9 @@ Compiler :: struct {
 	// Opt-in session package checkpoints; nil for ordinary batch compilations.
 	package_cache: ^Package_Check_Cache,
 	sources:     [dynamic]Source,
-	// The session's overlays; read through `compiler_overlays`. Loaded buffers
-	// are copied so an overlay edit cannot alter a compilation being consumed.
+	// The session's overlays; read through `compiler_overlays`. A pointer, not a
+	// copy of the map, so an overlay edit cannot leave a stale map header. Loaded
+	// buffers are copied so an edit cannot alter a compilation being consumed.
 	source_overlays: ^map[string]Source_Overlay,
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,

@@ -18,20 +18,24 @@ files and wrote [the ranked list](#the-20-changes-most-worth-making) and
 [the cross-file section](#findings-that-span-files).
 
 The review did not cover the `_test.odin` files, `lsp/`, `runtime/`, or the
-bundled packages. It reports what the reviews found; nothing has been fixed.
+bundled packages.
+
+Findings are deleted from this report as they are fixed, so every count below is
+what remains; git history has the original. The rankings and the cross-file
+section are revised when a fix changes them.
 
 ## How far to trust it
 
 | Findings | Count | Checked by |
 | --- | ---: | --- |
 | High and medium severity bugs | 195 (46 high, 149 medium) | An independent attempt to refute each one |
-| Low severity bugs | 191 | Only the reviewer that found them; marked *Not verified* |
-| Simplifications | 781 | Only the reviewer |
-| Dead code | 449 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
-| Data structures and algorithms | 133 | Only the reviewer |
+| Low severity bugs | 190 | Only the reviewer that found them; marked *Not verified* |
+| Simplifications | 773 | Only the reviewer |
+| Dead code | 396 | The reviewer's search, and a word count over `src`, `lsp`, `tests` and `bench` for the 45 that name a symbol |
+| Data structures and algorithms | 132 | Only the reviewer |
 | Near copies | 481 | The reviewer; the groups under [Findings that span files](#findings-that-span-files) were also read at each site |
-| Structure and boundaries | 308 | Only the reviewer |
-| Comments | 569 | Only the reviewer |
+| Structure and boundaries | 305 | Only the reviewer |
+| Comments | 562 | Only the reviewer |
 
 Every one of the 195 refutation attempts came back confirmed, with none
 refuted. That is an unusually clean result, so read it with care. Many of the
@@ -43,7 +47,7 @@ kinds of disagreement remain open:
   without changing the label. Read the note, not only the label.
 - **Roots.** One defect can appear under several ids, because each file was
   reviewed alone. [Roots shared by several bugs](#roots-shared-by-several-bugs)
-  merges the ones found so far, so 386 overstates the number of separate
+  merges the ones found so far, so 385 overstates the number of separate
   defects.
 - **Spec.** A bug here says the compiler disagrees with `design.md` or
   `grammar.md`. If the specification is what should change, that is a decision
@@ -401,61 +405,61 @@ Counts per file, then the findings themselves in the same order.
 
 | File | Lines | Bugs | Simplify | Dead | Data | Copies | Structure | Comments |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [abi.odin](src/abi.odin) | 342 | 3 | 4 | 2 | 1 | 4 | 2 | 1 |
+| [abi.odin](src/abi.odin) | 342 | 3 | 4 | 1 | 1 | 4 | 2 | 1 |
 | [ast.odin](src/ast.odin) | 1488 | 1 | 5 | 2 | 1 | 1 | 1 | 6 |
 | [ast_clone.odin](src/ast_clone.odin) | 798 | 1 | 6 | 3 | 0 | 2 | 3 | 1 |
 | [ast_dump.odin](src/ast_dump.odin) | 901 | 1 | 6 | 2 | 0 | 3 | 1 | 1 |
 | [atomics.odin](src/atomics.odin) | 312 | 1 | 7 | 0 | 1 | 1 | 2 | 4 |
 | [attributes.odin](src/attributes.odin) | 484 | 2 | 3 | 4 | 1 | 3 | 3 | 5 |
 | [bigint.odin](src/bigint.odin) | 529 | 0 | 6 | 3 | 4 | 3 | 2 | 4 |
-| [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 4 | 2 | 0 | 3 | 0 | 6 |
-| [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 23 | 13 | 21 | 16 | 24 |
+| [bootstrap.odin](src/bootstrap.odin) | 152 | 0 | 4 | 1 | 0 | 3 | 0 | 6 |
+| [borrow.odin](src/borrow.odin) | 7130 | 7 | 36 | 21 | 13 | 21 | 16 | 24 |
 | [box.odin](src/box.odin) | 232 | 5 | 4 | 0 | 0 | 5 | 2 | 5 |
 | [build_config.odin](src/build_config.odin) | 132 | 2 | 4 | 0 | 0 | 1 | 2 | 2 |
 | [capture.odin](src/capture.odin) | 285 | 4 | 4 | 4 | 2 | 2 | 3 | 4 |
 | [cfg.odin](src/cfg.odin) | 3031 | 8 | 11 | 9 | 2 | 10 | 7 | 7 |
-| [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 53 | 19 | 15 | 34 | 21 | 31 |
+| [cfg_provenance.odin](src/cfg_provenance.odin) | 10813 | 4 | 53 | 14 | 15 | 34 | 21 | 31 |
 | [check.odin](src/check.odin) | 4915 | 20 | 26 | 7 | 6 | 15 | 13 | 16 |
 | [check_builtin.odin](src/check_builtin.odin) | 1598 | 9 | 13 | 4 | 1 | 6 | 6 | 11 |
 | [check_calls.odin](src/check_calls.odin) | 1336 | 6 | 7 | 5 | 1 | 8 | 5 | 7 |
-| [check_expr.odin](src/check_expr.odin) | 4188 | 19 | 17 | 15 | 5 | 16 | 11 | 16 |
+| [check_expr.odin](src/check_expr.odin) | 4188 | 19 | 17 | 14 | 5 | 16 | 11 | 16 |
 | [const_ops.odin](src/const_ops.odin) | 888 | 3 | 5 | 3 | 1 | 8 | 3 | 6 |
 | [container.odin](src/container.odin) | 831 | 2 | 12 | 6 | 2 | 7 | 5 | 9 |
 | [customization.odin](src/customization.odin) | 118 | 3 | 4 | 2 | 0 | 2 | 0 | 2 |
 | [doc.odin](src/doc.odin) | 1375 | 7 | 9 | 4 | 1 | 6 | 5 | 5 |
 | [emission_contract.odin](src/emission_contract.odin) | 221 | 1 | 3 | 1 | 1 | 3 | 2 | 2 |
-| [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 5 | 0 | 3 | 4 | 3 |
+| [emit_llvm.odin](src/emit_llvm.odin) | 1192 | 4 | 7 | 4 | 0 | 3 | 4 | 3 |
 | [emit_llvm_abi.odin](src/emit_llvm_abi.odin) | 1227 | 2 | 14 | 3 | 3 | 6 | 5 | 7 |
 | [emit_llvm_adapters.odin](src/emit_llvm_adapters.odin) | 121 | 5 | 3 | 1 | 0 | 3 | 0 | 1 |
 | [emit_llvm_atomics.odin](src/emit_llvm_atomics.odin) | 271 | 0 | 6 | 1 | 1 | 1 | 0 | 2 |
 | [emit_llvm_box.odin](src/emit_llvm_box.odin) | 234 | 4 | 3 | 0 | 0 | 2 | 0 | 3 |
 | [emit_llvm_calls.odin](src/emit_llvm_calls.odin) | 1828 | 2 | 11 | 7 | 3 | 8 | 7 | 6 |
 | [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) | 1820 | 1 | 11 | 11 | 3 | 4 | 4 | 7 |
-| [emit_llvm_containers.odin](src/emit_llvm_containers.odin) | 1436 | 2 | 16 | 7 | 3 | 8 | 4 | 7 |
-| [emit_llvm_debug.odin](src/emit_llvm_debug.odin) | 638 | 2 | 4 | 5 | 0 | 2 | 3 | 3 |
+| [emit_llvm_containers.odin](src/emit_llvm_containers.odin) | 1436 | 2 | 16 | 3 | 3 | 8 | 4 | 7 |
+| [emit_llvm_debug.odin](src/emit_llvm_debug.odin) | 638 | 2 | 4 | 4 | 0 | 2 | 3 | 3 |
 | [emit_llvm_dispatch.odin](src/emit_llvm_dispatch.odin) | 180 | 3 | 3 | 2 | 1 | 3 | 0 | 4 |
-| [emit_llvm_expr.odin](src/emit_llvm_expr.odin) | 2549 | 4 | 13 | 9 | 3 | 11 | 4 | 6 |
-| [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) | 1057 | 4 | 7 | 4 | 0 | 5 | 4 | 6 |
-| [emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) | 1737 | 2 | 11 | 13 | 1 | 10 | 4 | 4 |
+| [emit_llvm_expr.odin](src/emit_llvm_expr.odin) | 2549 | 4 | 13 | 8 | 3 | 11 | 4 | 6 |
+| [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) | 1057 | 4 | 7 | 3 | 0 | 5 | 4 | 6 |
+| [emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) | 1737 | 2 | 11 | 9 | 1 | 10 | 4 | 4 |
 | [emit_llvm_simd.odin](src/emit_llvm_simd.odin) | 372 | 0 | 4 | 2 | 0 | 7 | 1 | 6 |
 | [emit_llvm_stmt.odin](src/emit_llvm_stmt.odin) | 1047 | 11 | 7 | 6 | 0 | 7 | 3 | 7 |
 | [emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) | 843 | 8 | 6 | 2 | 1 | 2 | 5 | 5 |
 | [enums.odin](src/enums.odin) | 105 | 1 | 4 | 2 | 0 | 2 | 1 | 3 |
-| [erased.odin](src/erased.odin) | 1216 | 5 | 9 | 9 | 4 | 8 | 5 | 6 |
-| [eval.odin](src/eval.odin) | 4169 | 9 | 22 | 11 | 5 | 13 | 8 | 14 |
+| [erased.odin](src/erased.odin) | 1216 | 5 | 9 | 5 | 4 | 8 | 5 | 6 |
+| [eval.odin](src/eval.odin) | 4169 | 9 | 22 | 10 | 5 | 13 | 8 | 14 |
 | [eval_memory.odin](src/eval_memory.odin) | 249 | 0 | 5 | 4 | 0 | 3 | 2 | 4 |
 | [expand.odin](src/expand.odin) | 694 | 6 | 12 | 3 | 1 | 4 | 4 | 6 |
 | [foreign.odin](src/foreign.odin) | 174 | 9 | 2 | 4 | 0 | 2 | 1 | 6 |
 | [format.odin](src/format.odin) | 298 | 4 | 7 | 2 | 1 | 4 | 3 | 5 |
 | [formatter.odin](src/formatter.odin) | 516 | 6 | 10 | 4 | 0 | 3 | 1 | 4 |
-| [generic.odin](src/generic.odin) | 3992 | 8 | 15 | 9 | 5 | 12 | 7 | 9 |
-| [global_effects.odin](src/global_effects.odin) | 2276 | 3 | 9 | 10 | 3 | 5 | 5 | 7 |
-| [hash.odin](src/hash.odin) | 383 | 5 | 5 | 4 | 0 | 2 | 2 | 7 |
-| [hooks.odin](src/hooks.odin) | 1260 | 2 | 8 | 7 | 2 | 6 | 4 | 8 |
-| [impl.odin](src/impl.odin) | 627 | 7 | 8 | 5 | 0 | 4 | 3 | 5 |
+| [generic.odin](src/generic.odin) | 3992 | 8 | 15 | 7 | 5 | 12 | 7 | 9 |
+| [global_effects.odin](src/global_effects.odin) | 2276 | 3 | 9 | 9 | 3 | 5 | 5 | 7 |
+| [hash.odin](src/hash.odin) | 383 | 5 | 5 | 2 | 0 | 2 | 2 | 7 |
+| [hooks.odin](src/hooks.odin) | 1260 | 2 | 8 | 5 | 2 | 6 | 4 | 8 |
+| [impl.odin](src/impl.odin) | 627 | 7 | 8 | 1 | 0 | 4 | 3 | 5 |
 | [incremental.odin](src/incremental.odin) | 369 | 0 | 6 | 4 | 1 | 2 | 2 | 8 |
-| [install.odin](src/install.odin) | 46 | 1 | 3 | 0 | 0 | 0 | 1 | 0 |
-| [interface.odin](src/interface.odin) | 1484 | 10 | 9 | 8 | 1 | 11 | 3 | 6 |
+| [install.odin](src/install.odin) | 46 | 1 | 2 | 0 | 0 | 0 | 1 | 0 |
+| [interface.odin](src/interface.odin) | 1484 | 10 | 9 | 5 | 1 | 11 | 3 | 6 |
 | [intrinsic.odin](src/intrinsic.odin) | 562 | 4 | 7 | 4 | 0 | 3 | 0 | 2 |
 | [iterate.odin](src/iterate.odin) | 1150 | 9 | 11 | 9 | 0 | 8 | 4 | 6 |
 | [iteration_adapters.odin](src/iteration_adapters.odin) | 291 | 2 | 3 | 4 | 0 | 6 | 3 | 2 |
@@ -463,49 +467,46 @@ Counts per file, then the findings themselves in the same order.
 | [iteration_yield.odin](src/iteration_yield.odin) | 213 | 6 | 3 | 1 | 0 | 2 | 2 | 0 |
 | [layout.odin](src/layout.odin) | 178 | 2 | 7 | 3 | 0 | 1 | 0 | 0 |
 | [lexer.odin](src/lexer.odin) | 769 | 1 | 6 | 0 | 1 | 3 | 1 | 3 |
-| [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 5 | 2 | 5 | 4 | 9 |
+| [lifecycle.odin](src/lifecycle.odin) | 1202 | 4 | 10 | 4 | 2 | 5 | 4 | 9 |
 | [main.odin](src/main.odin) | 463 | 2 | 5 | 2 | 0 | 3 | 1 | 2 |
 | [materialize.odin](src/materialize.odin) | 152 | 4 | 4 | 1 | 0 | 0 | 1 | 0 |
 | [migrate.odin](src/migrate.odin) | 260 | 2 | 5 | 2 | 0 | 1 | 1 | 2 |
 | [operators.odin](src/operators.odin) | 770 | 13 | 10 | 10 | 2 | 5 | 3 | 8 |
 | [optional.odin](src/optional.odin) | 746 | 4 | 8 | 3 | 0 | 7 | 4 | 4 |
-| [overlays.odin](src/overlays.odin) | 61 | 0 | 2 | 1 | 0 | 0 | 1 | 3 |
-| [overload.odin](src/overload.odin) | 1023 | 6 | 8 | 8 | 1 | 4 | 3 | 8 |
-| [packages.odin](src/packages.odin) | 689 | 1 | 8 | 3 | 0 | 2 | 2 | 2 |
+| [overlays.odin](src/overlays.odin) | 61 | 0 | 1 | 0 | 0 | 0 | 1 | 0 |
+| [overload.odin](src/overload.odin) | 1023 | 6 | 8 | 7 | 1 | 4 | 3 | 8 |
+| [packages.odin](src/packages.odin) | 689 | 1 | 8 | 2 | 0 | 2 | 2 | 2 |
 | [parallel.odin](src/parallel.odin) | 744 | 5 | 8 | 2 | 0 | 8 | 2 | 7 |
 | [parser.odin](src/parser.odin) | 4270 | 17 | 24 | 11 | 0 | 10 | 4 | 15 |
-| [precision.odin](src/precision.odin) | 55 | 0 | 2 | 0 | 0 | 0 | 2 | 2 |
+| [precision.odin](src/precision.odin) | 55 | 0 | 1 | 0 | 0 | 0 | 1 | 0 |
 | [private_names.odin](src/private_names.odin) | 1151 | 9 | 8 | 9 | 2 | 5 | 4 | 9 |
 | [proc_contracts.odin](src/proc_contracts.odin) | 321 | 0 | 4 | 2 | 0 | 4 | 5 | 2 |
-| [project.odin](src/project.odin) | 89 | 1 | 1 | 0 | 0 | 0 | 1 | 1 |
 | [provenance_call.odin](src/provenance_call.odin) | 281 | 2 | 6 | 1 | 0 | 1 | 2 | 5 |
 | [provenance_effect.odin](src/provenance_effect.odin) | 369 | 0 | 4 | 3 | 1 | 3 | 1 | 7 |
 | [provenance_event.odin](src/provenance_event.odin) | 371 | 0 | 3 | 2 | 2 | 3 | 2 | 0 |
 | [provenance_form.odin](src/provenance_form.odin) | 145 | 0 | 2 | 0 | 0 | 2 | 1 | 4 |
 | [provenance_input.odin](src/provenance_input.odin) | 368 | 0 | 4 | 5 | 2 | 1 | 2 | 3 |
 | [provenance_read.odin](src/provenance_read.odin) | 64 | 0 | 2 | 1 | 0 | 1 | 3 | 1 |
-| [provenance_transfer.odin](src/provenance_transfer.odin) | 303 | 0 | 4 | 4 | 2 | 2 | 4 | 3 |
-| [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | 143 | 2 | 6 | 1 | 1 | 2 | 0 | 0 |
+| [provenance_transfer.odin](src/provenance_transfer.odin) | 303 | 0 | 4 | 3 | 2 | 2 | 4 | 3 |
+| [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | 143 | 2 | 6 | 0 | 1 | 2 | 0 | 0 |
 | [providers.odin](src/providers.odin) | 264 | 1 | 6 | 2 | 0 | 2 | 1 | 1 |
 | [queries.odin](src/queries.odin) | 671 | 5 | 5 | 7 | 4 | 2 | 3 | 4 |
 | [query_index.odin](src/query_index.odin) | 361 | 3 | 4 | 5 | 1 | 5 | 1 | 2 |
-| [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 3 | 1 | 8 | 3 | 9 |
+| [reflect.odin](src/reflect.odin) | 938 | 5 | 7 | 2 | 1 | 8 | 3 | 9 |
 | [region.odin](src/region.odin) | 251 | 1 | 7 | 2 | 1 | 2 | 0 | 5 |
 | [scratch_arena.odin](src/scratch_arena.odin) | 188 | 0 | 3 | 2 | 0 | 1 | 0 | 3 |
 | [select.odin](src/select.odin) | 504 | 3 | 7 | 3 | 2 | 4 | 0 | 6 |
-| [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 10 | 3 | 5 | 4 | 10 |
+| [semantic.odin](src/semantic.odin) | 2578 | 3 | 14 | 9 | 3 | 5 | 4 | 10 |
 | [session.odin](src/session.odin) | 299 | 1 | 3 | 10 | 0 | 2 | 2 | 7 |
 | [simd.odin](src/simd.odin) | 596 | 7 | 5 | 9 | 0 | 5 | 2 | 8 |
 | [slice.odin](src/slice.odin) | 91 | 1 | 2 | 1 | 0 | 3 | 0 | 5 |
 | [source.odin](src/source.odin) | 911 | 2 | 5 | 0 | 1 | 3 | 3 | 7 |
-| [stack.odin](src/stack.odin) | 32 | 0 | 1 | 1 | 0 | 0 | 1 | 0 |
 | [stdlib.odin](src/stdlib.odin) | 278 | 0 | 2 | 1 | 0 | 2 | 1 | 14 |
-| [subprocess.odin](src/subprocess/subprocess.odin) | 350 | 4 | 2 | 3 | 1 | 1 | 2 | 4 |
+| [subprocess.odin](src/subprocess/subprocess.odin) | 350 | 4 | 2 | 2 | 1 | 1 | 2 | 4 |
 | [test_procedures.odin](src/test_procedures.odin) | 137 | 1 | 3 | 1 | 0 | 1 | 1 | 3 |
-| [test_runner.odin](src/test_runner.odin) | 57 | 0 | 3 | 0 | 1 | 0 | 0 | 1 |
-| [text.odin](src/text.odin) | 350 | 6 | 4 | 1 | 1 | 3 | 2 | 4 |
+| [text.odin](src/text.odin) | 350 | 6 | 4 | 0 | 1 | 3 | 2 | 4 |
 | [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 3 | 2 | 7 |
-| [universe.odin](src/universe.odin) | 132 | 0 | 3 | 1 | 0 | 3 | 0 | 3 |
+| [universe.odin](src/universe.odin) | 132 | 0 | 3 | 0 | 0 | 3 | 0 | 3 |
 | [zero.odin](src/zero.odin) | 130 | 3 | 2 | 1 | 1 | 1 | 1 | 3 |
 
 ### src/abi.odin
@@ -527,7 +528,6 @@ The classification rules are right and match the spec table, and its comments ar
 
 **Dead code**
 
-- (branch) [abi.odin:136](src/abi.odin#L136): `top_level` on `foreign_abi_safe` and on `abi_safety` (line 150) is never passed; all callers, unit tests included, take the default. Only `abi_walk` needs the parameter.
 - (branch) [abi.odin:215](src/abi.odin#L215): the range test and `marked` cannot fail, since `type_of` at line 206 has bounds-checked `under` against `c.types` and the walk creates no types (`hooks.odin` and `layout.odin` intern none). Index unconditionally and drop `marked`.
 
 **Data structures and algorithms**
@@ -824,7 +824,6 @@ Small and sound, with no behavior bugs found. The binding half does each name in
 **Dead code**
 
 - (branch) [bootstrap.odin:22](src/bootstrap.odin#L22): `pkg == nil || pkg.scope == nil || pkg.scope.parent == nil` cannot hold. The one caller, `prepare_package`, returns on nil and sets the scope with `build_universe` as parent (`check.odin:123-129`). Keep `c.bootstrap_ready || pkg.key != STD_RUNTIME`.
-- (branch) [bootstrap.odin:103](src/bootstrap.odin#L103): `result_type`'s `span` parameter is never passed; all 8 callers in `src/` use three arguments, while `option_type` has callers that do pass one. Drop it and pass `Span{}`, or pass real spans where the call has one, as `text.odin:249` could.
 
 **Near copies**
 
@@ -870,9 +869,7 @@ Lines 1-2376 hold the shared vocabulary (roots, paths, carrier shapes, region se
 
 **Dead code**
 
-- `Deref` ([borrow.odin:148](src/borrow.odin#L148)): no `.odin` file constructs or tests it; the only `.Deref` under the repository is the `case` at line 214.
 - (branch) [borrow.odin:216](src/borrow.odin#L216): `case .Wild` in `steps_overlap` is unreachable, since line 206 returns first for either step being `Wild`.
-- (branch) [borrow.odin:638](src/borrow.odin#L638): the `c` parameter of `attribute_escape_level` is never read.
 - (branch) [borrow.odin:643](src/borrow.odin#L643): the `attribute.value == nil` test is covered by the comma-ok assertion at line 646, which is false on a nil `Expr` union and returns the same values.
 - (branch) [borrow.odin:1073](src/borrow.odin#L1073): `params == nil ||` adds nothing to `region_is_empty`, which is already true for a zero set, and every merge target comes from `new_allocator_use`.
 - (branch) [borrow.odin:1467](src/borrow.odin#L1467): `index >= len(into.param_load_paths)` cannot hold; line 1462 checks `param_loads`, and both builders of `Result_Dependencies` give the two the same length.
@@ -1273,7 +1270,6 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 
 **Dead code**
 
-- `Prov_Traversal.view` ([cfg_provenance.odin:2422](src/cfg_provenance.odin#L2422)): written at L2444 and L2449 and never read; `graph.traversals` is read only at L2403, and `prov_publish_traversal` does not use it. Remove the field, the writes, the `ident` test and the doc sentence at L2415.
 - (branch) [cfg_provenance.odin:2282](src/cfg_provenance.odin#L2282): `sym != nil` is always true, because `prov_slot_for_symbol` succeeded just above and only creates slots for real symbols. The two arms reduce to `if copies {...} else {...}`.
 - (branch) [cfg_provenance.odin:2403](src/cfg_provenance.odin#L2403): `entry.symbol != INVALID_SYMBOL` never fails when `traversed`, because the only writer (L2468) returns early on `INVALID_SYMBOL` at L2439.
 - (branch) [cfg_provenance.odin:1787](src/cfg_provenance.odin#L1787): `.Slice` looks unreachable. Every caller's literal type is the backing array (L7047) or follows a `backing` check that returned first (cfg.odin:2614, provenance_transfer.odin:144).
@@ -1346,9 +1342,7 @@ This range holds reborrows, parameter loans and caller slots, read-only views, a
 
 **Dead code**
 
-- (branch) [cfg_provenance.odin:4110](src/cfg_provenance.odin#L4110): the `owners` parameter of `prov_region_for_symbol` is never passed by any caller in `src/` (only `viewed = true` at [:4781](src/cfg_provenance.odin#L4781)), so the `owners` tests at [:4115](src/cfg_provenance.odin#L4115), [:4116](src/cfg_provenance.odin#L4116), [:4128](src/cfg_provenance.odin#L4128) and [:4135](src/cfg_provenance.odin#L4135) are constant. (about 6 lines)
 - (branch) [cfg_provenance.odin:3727](src/cfg_provenance.odin#L3727): `prov_read_only_view` has one caller ([:3710](src/cfg_provenance.odin#L3710)), which always passes `erasing = true` and `erased_from`; drop `erasing` and its two `if` guards, and `type` can be computed inside.
-- (branch) [cfg_provenance.odin:5144](src/cfg_provenance.odin#L5144): no caller passes `allocator_index` to `prov_allocation_region`; it is always 1.
 - (branch) [cfg_provenance.odin:5129](src/cfg_provenance.odin#L5129): the `query` default on `prov_copied_region_at` is unused, since all three callers pass it.
 
 **Data structures and algorithms**
@@ -1424,8 +1418,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 **Dead code**
 
 - (branch) [cfg_provenance.odin:7341](src/cfg_provenance.odin#L7341): `set` is only filled under `type_is_container` at 7320, which is `.Dynamic_Array` or `.Map`, so this else branch and the `.Box` test at 7338 cannot run. Keep only the `prov_define_region_content` call.
-- (branch) [cfg_provenance.odin:6228](src/cfg_provenance.odin#L6228): `prov_forget_place_aliases`'s `writable` is always `true`; its one call is at 6209.
-- (branch) [cfg_provenance.odin:6846](src/cfg_provenance.odin#L6846): `prov_read_ident`'s `kind` is `.Read` at all eight call sites.
 - (branch) [cfg_provenance.odin:6833](src/cfg_provenance.odin#L6833): `v.operand == nil` in `prov_range_step` guards nothing; `prov_slice` has used the operand unguarded at 6968 before calling it.
 - (branch) [cfg_provenance.odin:5585](src/cfg_provenance.odin#L5585): `prov_region_escape`'s defaults are never used by its one caller (7479), which passes every argument; the same holds for `prov_declare_region`'s defaults at 7262-7263.
 
@@ -1950,7 +1942,6 @@ Well commented and mostly sound, but the rules for non-constant unfixed operands
 - (branch) [check_expr.odin:2149](src/check_expr.odin#L2149): the default of `position` is never used; the only caller, line 75, passes it.
 - (branch) [check_expr.odin:3395](src/check_expr.odin#L3395): `const_element_count` returns 1 for `.Dyn`, `.Slice`, `.Dynamic_Array` and `.Map`, so those can never pass the budget test. The whole switch can go, as every non-aggregate counts as 1.
 - (branch) [check_expr.odin:3306](src/check_expr.odin#L3306): `index < len(values)` is always true because both callers size `values` to the count; the comment at line 3296 is stale with it.
-- (branch) [check_expr.odin:3678](src/check_expr.odin#L3678): `report_constant_out_of_range`'s `allocator` is never passed; the only caller is [check_calls.odin:1010](src/check_calls.odin#L1010).
 - (branch) [check_expr.odin:3984](src/check_expr.odin#L3984): `from != to` is always true, because `assignable` has already returned for equal types.
 - (branch) [check_expr.odin:4029](src/check_expr.odin#L4029): the nil checks cannot fail, because both kinds were just read as `.Pointer`.
 
@@ -2290,7 +2281,6 @@ Comments and instruction helpers are in good shape, but the file holds three job
 
 **Dead code**
 
-- `allocator` ([emit_llvm.odin:1171](src/emit_llvm.odin#L1171)): no caller of `llvm_safe` in `src/` or `lsp/` passes this parameter (`git grep`, excluding `tests/tmp` snapshots).
 - (branch) [emit_llvm.odin:317](src/emit_llvm.odin#L317): `pkg == nil` here, at line 520, and at line 1188 cannot hold. `package_order` yields only valid ids, and `visit_for_order` already dereferences `package_of(c, id)` unguarded.
 - (branch) [emit_llvm.odin:577](src/emit_llvm.odin#L577): `literal == nil` cannot hold, because all four callers pass a literal they have checked or iterated.
 - (branch) [emit_llvm.odin:244](src/emit_llvm.odin#L244): `e.result_type = INVALID_TYPE` follows `e.fn = {}`, and `INVALID_TYPE` is `Type_Id(0)` (`semantic.odin:18`).
@@ -2644,13 +2634,9 @@ Most of the removable bulk is hand-written IR that existing helpers already cove
 
 **Dead code**
 
-- `loke_rt_v1_checked_add` ([emit_llvm_containers.odin:29](src/emit_llvm_containers.odin#L29)): the declaration is unused; no emitter writes a call, and only `runtime/container.c` calls it, internally.
-- `loke_rt_v1_checked_bytes` ([emit_llvm_containers.odin:30](src/emit_llvm_containers.odin#L30)): the declaration is unused; no emitter writes a call, and only `runtime/container.c` calls it, internally.
-- `loke_rt_v1_container_fault` ([emit_llvm_containers.odin:31](src/emit_llvm_containers.odin#L31)): the declaration is unused; only `runtime/container.c` and `runtime/arena.c` call it, internally.
 - (branch) [emit_llvm_containers.odin:146](src/emit_llvm_containers.odin#L146): `e.terminated = false` here and at lines 188, 224, 260, 284, 739, 855 is dead; `begin_function_emission` already reset it through `e.fn = {}`.
 - (branch) [emit_llvm_containers.odin:783](src/emit_llvm_containers.odin#L783): `e.terminated = true` here and at line 1145 is dead; `finish_function_emission` restores `e.fn` straight after.
 - (branch) [emit_llvm_containers.odin:64](src/emit_llvm_containers.odin#L64): the `INVALID_TYPE` tests here and at lines 439, 459 are redundant; `emit_lifecycle` answers all-false for it, and every caller passes a container.
-- (branch) [emit_llvm_containers.odin:625](src/emit_llvm_containers.odin#L625): parameter `key` of `emit_map_literal_into` is never read; `element` is derivable from `as_type` here and at line 580.
 
 **Data structures and algorithms**
 
@@ -2712,7 +2698,6 @@ The marker-then-rewrite design is compact and its comments mostly explain why, b
 - (branch) [emit_llvm_debug.odin:132](src/emit_llvm_debug.odin#L132): `symbol == nil` cannot hold, as the only caller `emit_proc_definition` has already dereferenced that symbol. The same test at [line 245](src/emit_llvm_debug.odin#L245) is covered by the `INVALID_SYMBOL` guard at line 56.
 - (branch) [emit_llvm_debug.odin:175](src/emit_llvm_debug.odin#L175): the `else` cannot run: only `name_witnesses` ([emit_llvm.odin:442](src/emit_llvm.odin#L442)) spells `@loke.w.`, every such name is in the map, and a thunk's line starts with `define`.
 - (branch) [emit_llvm_debug.odin:346](src/emit_llvm_debug.odin#L346): `info == nil` needs an id outside `c.types`; `INVALID_TYPE` is index 0, a real `.Invalid` entry that the `case:` at line 439 already handles. Delete these four lines.
-- (branch) [emit_llvm_debug.odin:446](src/emit_llvm_debug.odin#L446): the `tag` parameter of `debug_composite` is `"DW_TAG_structure_type"` at all nine calls; fix it in the format string.
 - (branch) [emit_llvm_debug.odin:624](src/emit_llvm_debug.odin#L624): the quote trimming is unreachable, because only exported names are quoted here and line 311 sends those to `link_name`. A marked non-exported procedure's name comes from `llvm_proc_name`.
 
 **Near copies**
@@ -2799,7 +2784,6 @@ Careful code with mostly useful why-comments, but constants of a large type brea
 
 **Dead code**
 
-- `info` ([emit_llvm_expr.odin:14](src/emit_llvm_expr.odin#L14)): this parameter of `union_constant` is never read; drop it and the argument at line 141.
 - `type_is_erased_view` ([emit_llvm_expr.odin:1956](src/emit_llvm_expr.odin#L1956)): only caller is line 1701, and it can answer true only for the unreachable types in the next bullet; delete it.
 - (branch) [emit_llvm_expr.odin:1781](src/emit_llvm_expr.odin#L1781): the `.Dyn` and `.Slice` arms of `emit_equal`. The checker rejects `== nil` (L0310), `d == g`, `Option([]int)`, a `switch` subject (L0355), map keys and sort, as design.md "Comparison operators" says; line 1787's ternary is also constant. (about 17 lines)
 - (branch) [emit_llvm_expr.odin:124](src/emit_llvm_expr.odin#L124): `bits, signed = 32, true` for a rune; `type_of` already holds exactly that (semantic.odin:1047), and `default_type` at line 97 removed the untyped rune.
@@ -2868,7 +2852,6 @@ Comments are mostly tight and the range arithmetic checks out, but protocol-loop
 
 **Dead code**
 
-- `Slice_Next` ([semantic.odin:614](src/semantic.odin#L614)): never assigned anywhere in `src/`, `lsp/` or `tests/`; only [emit_llvm_runtime.odin:1406](src/emit_llvm_runtime.odin#L1406) and [global_effects.odin:510](src/global_effects.odin#L510) name it.
 - (branch) [emit_llvm_iteration.odin:640](src/emit_llvm_iteration.odin#L640): `|| (foreach_is_place_loop(s) && len(s.bindings) == 2)` makes a counter only `with_index` could read, and that returns early unless `s.indexed`; test `s.indexed` alone.
 - (branch) [emit_llvm_iteration.odin:874](src/emit_llvm_iteration.odin#L874) `emit_synth_indexed_next`, `slice = false`: `.Array_Next` exists only for compile-time-only elements, whose iterator is a descriptor, and [emit_llvm_runtime.odin:1387](src/emit_llvm_runtime.odin#L1387) skips those. Without it `slice` and `by_ref` are always true, and the array paths and clone (lines 924-928) go; about 25 lines.
 - (branch) [emit_llvm_iteration.odin:764](src/emit_llvm_iteration.odin#L764) `emit_synth_iter`: the same skip makes the compile-time-only array `else` unreachable, and line 769's `view_type = source` restates the field's LLVM type, so `view_type` need never change. (about 5 lines)
@@ -2913,7 +2896,7 @@ Correct on the paths exercised, with two low-severity printing divergences. It h
 **Simplification**
 
 - [emit_llvm_runtime.odin:179](src/emit_llvm_runtime.odin#L179) `slice_constant` (also lines 452, 492, 576, 588): these concatenate because of `{`, yet line 79 already escapes it. Use `fmt.aprintf("{{ ptr %s, i64 %d }}", name, count)` and `sbprintfln` with `{{`, and delete the comments at 179 and 451. (about 8 lines)
-- [emit_llvm_runtime.odin:1364](src/emit_llvm_runtime.odin#L1364) `typeid_index`: without the unused `bad`, the `zero` test is redundant because `select` already maps 0 to 0. Typeids are frozen before emission ([emission_contract.odin:42](src/emission_contract.odin#L42)), so take `len(e.c.typeid_order)` as an immediate and drop `TYPE_NAME_COUNT`, `TYPE_INFO_COUNT` and their globals (575, 1157). (about 12 lines)
+- [emit_llvm_runtime.odin:1364](src/emit_llvm_runtime.odin#L1364) `typeid_index`: the `zero` test is redundant because `select` already maps 0 to 0. Typeids are frozen before emission ([emission_contract.odin:42](src/emission_contract.odin#L42)), so take `len(e.c.typeid_order)` as an immediate and drop `TYPE_NAME_COUNT`, `TYPE_INFO_COUNT` and their globals (575, 1157). (about 12 lines)
 - [emit_llvm_runtime.odin:584](src/emit_llvm_runtime.odin#L584) `emit_format_thunks`: the name-table entry repeats `text_constant`, including the zero case for an empty name; call `text_constant(e, Const_Value{kind = .String, text = name}, false)`. (about 7 lines)
 - [emit_llvm_runtime.odin:558](src/emit_llvm_runtime.odin#L558) `emit_format_thunks`: merge the `typeid_order` loops at 558 and 567 into one that sets `names[id]` and emits the thunk when printable. (about 5 lines)
 - [emit_llvm_runtime.odin:1134](src/emit_llvm_runtime.odin#L1134) `emit_type_info_tables`: drop the `entries[0]` assignment and the fill loop at 1142; write `entry == "" ? "zeroinitializer" : entry` in the print loop at 1154. (about 5 lines)
@@ -2928,10 +2911,6 @@ Correct on the paths exercised, with two low-severity printing divergences. It h
 
 - `RT_DEFAULT_ALLOCATOR` ([emit_llvm_runtime.odin:23](src/emit_llvm_runtime.odin#L23)): no emitted IR references this global; `-emit-ll` shows only its declaration from line 36. It exists only for the ABI check at [runtime_test.odin:97](tests/runtime_test.odin#L97), so removal must move that record check.
 - `RT_ALLOCATOR_RECORD` ([emit_llvm_runtime.odin:32](src/emit_llvm_runtime.odin#L32)): used only by that declaration, and the record shape appears nowhere else in `src/`; the same test-only status.
-- `loke_rt_v1_alloc_zeroed` ([emit_llvm_runtime.odin:38](src/emit_llvm_runtime.odin#L38)): declared but never called from any emitter file, `base` or `core`; only `tests/runtime_test.odin` reads the line, when it scans emitter source for signatures.
-- `loke_rt_v1_resize` ([emit_llvm_runtime.odin:39](src/emit_llvm_runtime.odin#L39)): the same evidence as `loke_rt_v1_alloc_zeroed`.
-- (branch) [emit_llvm_runtime.odin:1364](src/emit_llvm_runtime.odin#L1364): `typeid_index`'s `bad` result is discarded by both callers, at 848 and 1357.
-- (branch) [emit_llvm_runtime.odin:410](src/emit_llvm_runtime.odin#L410): `panic_message_text`'s `e` parameter is never read.
 - (branch) [emit_llvm_runtime.odin:1092](src/emit_llvm_runtime.odin#L1092): `emit_format_witness_call`'s `data`, `writer` and `options` are always `%data`, `%w` and `%o` from its one caller at line 606; fold it into `emit_one_format_thunk`.
 - (branch) [emit_llvm_runtime.odin:560](src/emit_llvm_runtime.odin#L560): `id != 0 && int(id) <= count`, here and at 569 and 1137, holds for every `typeid_order` entry by [emission_contract.odin:52](src/emission_contract.odin#L52).
 - (branch) [emit_llvm_runtime.odin:1178](src/emit_llvm_runtime.odin#L1178): the five `shape == nil ?` tests at 1178-1182 and the check at 1227 cannot fire, since the contract requires `type_of` to be non-nil for each requested type.
@@ -3191,7 +3170,7 @@ Small and correct on its ordinary paths (probes of distinct enums, wide values a
 
 ### src/erased.odin
 
-The view and witness logic reads well, but `dyn_slot_is_compatible` lets three invalid slot shapes through, and an implicit `dyn proc` conversion breaks when its call is checked twice. `Witness_Slot` carries dead fields, each slot call re-derives what `install_dyn_forwarding_slots` already computed, and interface walking and `check_as_call` belong to other owners.
+The view and witness logic reads well, but `dyn_slot_is_compatible` lets three invalid slot shapes through, and an implicit `dyn proc` conversion breaks when its call is checked twice. Each slot call re-derives what `install_dyn_forwarding_slots` already computed, and interface walking and `check_as_call` belong to other owners.
 
 **Bugs**
 
@@ -3215,10 +3194,6 @@ The view and witness logic reads well, but `dyn_slot_is_compatible` lets three i
 
 **Dead code**
 
-- `mode` ([erased.odin:716](src/erased.odin#L716)): this `Witness_Slot` field is written at 810 and 838 and never read; every reader in `src/`, `lsp/`, and `tests/` takes `.target` or, here, `.name`.
-- `params` ([erased.odin:717](src/erased.odin#L717)): this `Witness_Slot` field is never read, so `callable_witness_slots` allocates and copies it (832-834) for nothing.
-- `result` ([erased.odin:718](src/erased.odin#L718)): this `Witness_Slot` field is never read.
-- `report` ([erased.odin:132](src/erased.odin#L132)): `dyn_type` is called only in this file, three times with `report = true` and once forwarding it, so both `if report` guards can go.
 - (branch) [erased.odin:753](src/erased.odin#L753): `is_call` cannot be false, because `composed_interface_of` returned non-nil only for an `Expr_Call` and a clone keeps the node kind.
 - (branch) [erased.odin:470](src/erased.odin#L470): `found` is always true, since line 166 creates the read-only variant first; `slice_abi_type` asserts the same fact at [slice.odin:49](src/slice.odin#L49).
 - (branch) [erased.odin:179](src/erased.odin#L179): `stored != nil` cannot fail for a type `new_type` just returned; the same at 241 and 307, whose `dyn` comes from that call.
@@ -3284,7 +3259,6 @@ The semantics are careful and the comments mostly explain why, but the code is l
 
 **Dead code**
 
-- `results` ([eval.odin:1478](src/eval.odin#L1478)): a nested variadic helper with one call (1651), which passes one value and is what `eval_one` does.
 - `result_slot` ([eval.odin:55](src/eval.odin#L55)): its value is never read; 2161, 2192, 2211, 3143 and 3144 use only nil-ness and `.type`. Replace it with a `Type_Id` and drop the slot allocated per call at 2607, which is never released.
 - (branch) [eval.odin:942](src/eval.odin#L942): `fold_arithmetic` answers `.Aggregate` only for a SIMD type, and a SIMD `v.type` already left at 925.
 - (branch) [eval.odin:924](src/eval.odin#L924): `|| type_is_simd(ev.k.c, left.type)` adds nothing, since design.md "SIMD vectors" makes every vector operator's result a vector, comparisons included.
@@ -3692,12 +3666,10 @@ Sound in design and mostly well commented, but large: parametric aliases and gen
 
 **Dead code**
 
-- `impls` ([generic.odin:122](src/generic.odin#L122)): `Instance.impls` is written at lines 2827 and 3598 and read nowhere in `src/`, `lsp/` or `tests/`.
 - `instance_template_of` ([generic.odin:3884](src/generic.odin#L3884)): its only use is the unreachable branch at line 3865, described next.
 - (branch) [generic.odin:3864](src/generic.odin#L3864): "the two become a group" needs a public procedure in the package scope with no group there, but `register_generic_extension_groups` (added by 44b118cc, after this path) always registers one first; line 3845 now installs only non-procedures.
 - (branch) [generic.odin:3853](src/generic.odin#L3853): the already-a-member scan never matches, as the only caller (line 3717) passes a symbol created at line 3693.
 - (branch) [generic.odin:3295](src/generic.odin#L3295): the "earlier discovery round" scan never matches: the only caller, `declare_impl_block`, returns early on `item.declared`, which line 3320 sets. The `blocks` setup above it simplifies too.
-- (branch) [generic.odin:3289](src/generic.odin#L3289): `register_generic_impl` always returns true and impl.odin:21 ignores the result; drop the result.
 - (branch) [generic.odin:894](src/generic.odin#L894): `pattern_shape` visits every arm in source order, so names arrive in written order; the earlier-span update and the insertion sort at lines 898-903 never act (0ae279da added them). Keep first-appearance dedup only.
 - (branch) [generic.odin:2673](src/generic.odin#L2673): `instance == nil` cannot hold, since the only caller passes a cached non-nil entry. `case .None:` at line 2701 is needless in a `#partial switch`.
 - (branch) [generic.odin:3095](src/generic.odin#L3095): `.Procedure` means `decl_proc_literal` was non-nil (line 392) and the clone keeps it, so this branch and `instance.decl == nil` at line 2689 cannot hold.
@@ -3781,7 +3753,6 @@ The solvers are sound in how they iterate and deterministic, and the comments ar
 - `param_sources` ([borrow.odin:1059](src/borrow.odin#L1059)): with `default_source` and `unknown_source`, read only by `thread_summaries_test.odin`. Removing them removes the `via` and `source` plumbing in `substitute_allocator_use`, L1936-1937, and most of `clone_allocator_use`.
 - `use` ([global_effects.odin:1753](src/global_effects.odin#L1753)): `Thread_Exit_Drop.use` is read only by tests, and [borrow.odin:6143](src/borrow.odin#L6143) skips every `hook == INVALID_SYMBOL` entry, so the `owns` branch at L2179-2183 and L2191-2197 serve tests alone. Consume it for the window check or remove it.
 - (branch) [global_effects.odin:1623](src/global_effects.odin#L1623): the `call.callee` case of `effect_targets` is unreachable; `call_parts`, `effect_call_globals` and `indirect_call_targets` all handle a callee first, and `forwarding_effect` and `any_value_call` set none.
-- (branch) [global_effects.odin:1608](src/global_effects.odin#L1608): `effect_targets`' `program` is `&c.effect_program` at all five callers (L871, L899, L1405, L1643, L1853); drop it and the aliases at L1609.
 - (branch) [global_effects.odin:1924](src/global_effects.odin#L1924): `graph == nil` is unreachable: `check_proc_body` always checks a body and returns on a nil symbol, and L1453 has no such check. So are the `sym != nil` guards at L1455 and L1912.
 - (branch) [global_effects.odin:1161](src/global_effects.odin#L1161): `new_flow_graph` is the only creator and returns nil for a nil literal, so `graph.literal` is never nil here or at L565; `graph_body` is `graph.literal.symbol`.
 - (branch) [global_effects.odin:950](src/global_effects.odin#L950): `&& call.callee != INVALID_SYMBOL` here and at L967 and L2080 adds nothing to `found`: every body has a symbol, so `INVALID_SYMBOL` is never in `index_of`.
@@ -3835,7 +3806,7 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 **Simplification**
 
 - [hash.odin:52](src/hash.odin#L52) `type_is_hashable_walk`: the temporary `parts` array exists only to be looped over; check each field or variant in place with `part_is_hashable`. Inline `record_hashes_structurally` (one caller) as one condition too. (about 12 lines)
-- [hash.odin:276](src/hash.odin#L276) `own_equality`: the `under == type` guard only saves rescanning a member list that just failed; `return inherent_operator_named(c, type_underlying(c, type), "==")` covers it. (about 3 lines)
+- [hash.odin:276](src/hash.odin#L276) `own_equality`: the `under == type` guard only saves rescanning a member list that just failed; `return inherent_equality(c, type_underlying(c, type))` covers it. (about 3 lines)
 - [hash.odin:344](src/hash.odin#L344) `hash_scalar_bits`: its one caller is `hash_const` and only `eval_hash` calls that, always with `ev.alloc`; inline it, use `underlying_kind`, make `allocator` required, and drop `value_allocator`. (about 8 lines)
 - [hash.odin:265](src/hash.odin#L265) `type_own_equality_declared`: one caller, [check_expr.odin:2519](src/check_expr.odin#L2519); make `own_equality` file-visible and write `_, declared := own_equality(...)` there. (about 5 lines)
 - [hash.odin:148](src/hash.odin#L148) `first_unhashable_part`: the `bool` result always equals `part_type != INVALID_TYPE`, and `type_underlying` is computed twice; drop the one and name the other. (about 3 lines)
@@ -3844,8 +3815,6 @@ Small and readable, but it holds four jobs, and its distinct-type handling and c
 
 - (branch) [hash.odin:371](src/hash.odin#L371): `hash_const`'s array branch; `eval_hash` handles every `.Aggregate` array first, so `value.aggregate` is never set here, and `zero_value` and `value_from_const` gave no non-aggregate array on any path read. Remove it. (about 11 lines)
 - (branch) [hash.odin:40](src/hash.odin#L40): the `.Untyped_*` arms here and at lines 137, 347 and 362; `map[K]` cannot name an untyped type, parts are typed, [customization.odin:44](src/customization.odin#L44) excludes untyped, and literal receivers arrive converted.
-- (branch) [hash.odin:239](src/hash.odin#L239): `inherent_member_named`'s `name` is `"hash"` at all four calls (lines 98, 122, 126, 196); drop the parameter and rename it `inherent_hash_member`.
-- (branch) [hash.odin:333](src/hash.odin#L333): `inherent_operator_named`'s `symbol_text` is `"=="` at all three calls (lines 197, 272, 279); drop the parameter and rename it to say equality.
 
 **Near copies**
 
@@ -3873,7 +3842,7 @@ The classification logic is careful and its comments mostly explain why, but the
 
 **Bugs**
 
-- `BUG-hooks-1` **medium** [hooks.odin:944](src/hooks.odin#L944) `validate_semantic_hook`: duplicate detection reads `underlying_info`, but a `distinct` subject's conversions live on its own info, as `hook_candidates` reads them. *Confirmed: Reproduced: R and D :: distinct R, each with hook(convert) from bool, give false L0488 on D, though design.md "Conversion hooks" limits per source/target pair. Two bool hooks on distinct int pass with no use, L0391 only at D(true); struct gets L0488. Not recorded.*
+- `BUG-hooks-1` **medium** [hooks.odin:944](src/hooks.odin#L944) `validate_semantic_hook`: duplicate detection reads `underlying_info`, but a `distinct` subject's conversions live on its own info, as `conversion_hooks` reads them. *Confirmed: Reproduced: R and D :: distinct R, each with hook(convert) from bool, give false L0488 on D, though design.md "Conversion hooks" limits per source/target pair. Two bool hooks on distinct int pass with no use, L0391 only at D(true); struct gets L0488. Not recorded.*
   Scenario: `R` and `D :: distinct R` each with `hook(convert) proc(v: bool)` gives a false `L0488` on `D`, and two same-source hooks on `D :: distinct int` go unreported until a use gives `L0391`. Fix: use `type_of(k.c, subject)`; lifecycle roles only reach here on a plain struct.
 - `BUG-hooks-2` **low** [hooks.odin:610](src/hooks.odin#L610) `contribute_distinct_copy_members`: a `distinct` array gets `try_clone` but no `clone`, against design.md "Distinct types". Commit 0ce949cc removed this exclusion from the underlying path only. *Not verified.*
   Scenario: `A :: distinct [2]int; a.clone()` is `L0363`, while `[2]int` has `clone`. Fix: drop the condition.
@@ -3892,8 +3861,6 @@ The classification logic is careful and its comments mostly explain why, but the
 **Dead code**
 
 - `type_clone_is_fallible` ([hooks.odin:783](src/hooks.odin#L783)): its only caller is the assertion at [emit_llvm_test.odin:604](src/emit_llvm_test.odin#L604), which compares `finalize_type_lifecycle`'s rule with a second copy of that rule. It exists only for that test.
-- (branch) [hooks.odin:894](src/hooks.odin#L894): `validate_semantic_hook`'s parameter `d` is never read in the body. Drop it there and at its callers, [impl.odin:395](src/impl.odin#L395) and line 1096.
-- (branch) [hooks.odin:187](src/hooks.odin#L187): parameter `type` of `collect_hooks` and of `has_managed_part` ([hooks.odin:215](src/hooks.odin#L215)) is never read in either body.
 - (branch) [hooks.odin:520](src/hooks.odin#L520): `info.kind == .Dyn` is always true inside `case .Dyn`.
 - (branch) [hooks.odin:745](src/hooks.odin#L745): `type == INVALID_TYPE ||` here and at line 765 is already covered by `!type_is_managed`, which answers false for it at line 237.
 - (branch) [hooks.odin:847](src/hooks.odin#L847): the only caller, in [check.odin](src/check.odin#L949), has already returned on `len(d.symbols) != 1 || d.symbols[0] == INVALID_SYMBOL`.
@@ -3937,13 +3904,13 @@ A compact file with mostly useful comments, and member-table scans that stay sma
 
 **Bugs**
 
-- `BUG-impl-1` **medium** [impl.odin:622](src/impl.odin#L622) `hook_candidates`: ignores `bound_excluded`, unlike `member_is_visible` and every other reader. Scenario: `impl V($T) { from_int :: hook(convert) proc(v: int) -> V(T) where T == int {...} }` with `V(string)(3)` stops with L0405 "internal backend contract violation"; an added unbound `i8` hook makes it L0391 ambiguous, naming the excluded hook. Fix: add `&& !sym.bound_excluded`. *Confirmed: Reproduced: V(string)(3) with a `where T == int` convert hook exits 2 with L0405; adding an unbound i8 hook gives L0391 naming from_int. design.md "where clauses" says lookup cannot find an excluded method; V(int)(3) compiles. No record found; medium is fair.*
+- `BUG-impl-1` **medium** [impl.odin:622](src/impl.odin#L622) `conversion_hooks`: ignores `bound_excluded`, unlike `member_is_visible` and every other reader. Scenario: `impl V($T) { from_int :: hook(convert) proc(v: int) -> V(T) where T == int {...} }` with `V(string)(3)` stops with L0405 "internal backend contract violation"; an added unbound `i8` hook makes it L0391 ambiguous, naming the excluded hook. Fix: add `&& !sym.bound_excluded`. *Confirmed: Reproduced: V(string)(3) with a `where T == int` convert hook exits 2 with L0405; adding an unbound i8 hook gives L0391 naming from_int. design.md "where clauses" says lookup cannot find an excluded method; V(int)(3) compiles. No record found; medium is fair.*
 - `BUG-impl-2` **medium** [impl.odin:93](src/impl.odin#L93) `check_local_impl`: returns silently when the subject does not resolve, since `resolve_type_syntax` reports nothing for these. Scenario: `main :: proc() { x := 1; impl x { f :: proc() { undefined_thing(); } } }` and `impl nope { }` both compile and run, while file scope reports L0406. Fix: the `error_count` guard from lines 53-55, in a helper both paths share. *Confirmed: Reproduced: body-local `impl x {f :: proc() {undefined_thing();}}` and `impl nope {}` exit 0 and run, members unchecked; file scope gives L0406. grammar.md requires a subject declared in this body; no gap or decision is recorded.*
 - `BUG-impl-3` **medium** [impl.odin:456](src/impl.odin#L456) `excluded_member`: scans only `info.members`, so a failed bound on a generic extension is not seen. Scenario: `impl Option($T) { f :: proc(self, x: int) -> int where T == int {...}; g :: proc(self, x: string) -> int {...}; h :: proc{f, g}; }` on `Option(string)` is L0395 at [overload.odin:79](src/overload.odin#L79), and an inherent block compiles; `o.f()` also loses its note. Fix: also scan `pkg.extensions[type]` for `lookup_package(k)`. *Confirmed: Reproduced: extension impl Option($T) group on Option(string) gives L0395, and o.f(1) gives L0363 with no note; the same code on an inherent Box($T) compiles and gets the note. design.md "where clauses" requires both; Option(int) compiles. Medium is fair.*
 - `BUG-impl-4` **medium** [impl.odin:193](src/impl.odin#L193) `declare_impl_member`: reports L0406 for a non-constant member, but its generic copy at [generic.odin:3656](src/generic.odin#L3656) skips one silently. Scenario: `impl G($T) { x: int = 0; }` compiles and `x` is dropped; `impl G { x: int = 0; }` is L0406. Fix: report it for the generic block once, in `check_generic_impl_subject` or registration. *Confirmed: Reproduced: impl G($T) { x: int = 0; } builds and runs (rc 0, prints 7) with G(int) instantiated, and g.x then gives L0363; the non-generic impl G gives L0406. generic.odin:3656 skips non-Const silently; no gap is recorded. Accepts-invalid, so low-medium.*
 - `BUG-impl-5` **low** [impl.odin:231](src/impl.odin#L231) `declare_impl_member`: the built-in member check has no counterpart in the generic copy ([generic.odin:3685](src/generic.odin#L3685)). Scenario: `impl U($T) { as :: proc(self) -> int {...} }` on a generic union is accepted, and `u.as(.a)` reaches the built-in, so the member is unreachable; the non-generic form is L0409. Fix: share the clash check (see Near copies). *Not verified.*
 - `BUG-impl-6` **low** [impl.odin:209](src/impl.odin#L209) `declare_impl_member`: `existing` includes compiler-contributed members, which a body-local `impl` can meet because it declares its other members at its own statement. Scenario: `R :: struct {x: int}; r := R{1}; fmt.println(r); impl R { format :: proc(self, w: ^fmt.Writer, opt: fmt.Options) {...} }` is L0409 "already has a member `format`"; moving the `impl` up compiles. Fix: ignore `sym.synth != .None` in this check. *Not verified.*
-- `BUG-impl-7` **low** [impl.odin:622](src/impl.odin#L622) `hook_candidates`: tests `sym.hook` on table entries, but crossed generic blocks replace a same-named member with a `.Proc_Group` whose `hook` is `.None`. Scenario: `impl G(int, $U) { conv :: hook(convert) proc(x: int) -> G(int, U) {...} }` and `impl G($T, int) { conv :: hook(convert) proc(x: string) -> G(T, int) {...} }`: `G(int, int)(3)` is L0373; naming the second `c2` compiles and prints 3. Fix: expand groups, as `expand_visible_members` does. *Not verified.*
+- `BUG-impl-7` **low** [impl.odin:622](src/impl.odin#L622) `conversion_hooks`: tests `sym.hook` on table entries, but crossed generic blocks replace a same-named member with a `.Proc_Group` whose `hook` is `.None`. Scenario: `impl G(int, $U) { conv :: hook(convert) proc(x: int) -> G(int, U) {...} }` and `impl G($T, int) { conv :: hook(convert) proc(x: string) -> G(T, int) {...} }`: `G(int, int)(3)` is L0373; naming the second `c2` compiles and prints 3. Fix: expand groups, as `expand_visible_members` does. *Not verified.*
 
 **Simplification**
 
@@ -3953,16 +3920,12 @@ A compact file with mostly useful comments, and member-table scans that stay sma
 - [impl.odin:433](src/impl.odin#L433) `member_candidates` and [impl.odin:572](src/impl.odin#L572) `find_member`: a missing map key already gives a nil slice, which both scanners handle, so drop the `found`/`present` test, or read both tables through `impl_member_table`. (about 8 lines)
 - [impl.odin:476](src/impl.odin#L476) `member_is_visible`: the `looked_up` write is redundant, because the only callers that can pass a `.Standard_Format` symbol scan `pkg.extensions` next and mark the same extension. Remove it and `standard_format_hidden`'s second result, which ends in `return local != nil && !local.bound_excluded && (local.pkg == observer || local.public)`. (about 10 lines)
 - [impl.odin:468](src/impl.odin#L468) `member_is_visible`: join the early exits into `if sym == nil || sym.bound_excluded` and `if hidden || !capture_field_visible(k, sym)`. (about 6 lines)
-- [impl.odin:616](src/impl.odin#L616) `hook_candidates`: resolves every member's signature although only hooks can match. `sym.hook` is set at declaration (line 251), so test it first and resolve only matches; `info == nil` can `return nil`. (about 5 lines)
+- [impl.odin:616](src/impl.odin#L616) `conversion_hooks`: resolves every member's signature although only hooks can match. `sym.hook` is set at declaration (line 251), so test it first and resolve only matches; `info == nil` can `return nil`. (about 5 lines)
 - [impl.odin:549](src/impl.odin#L549) `expand_visible_members`: the `sig_state` test repeats the guard inside `resolve_symbol_signature_in_place` ([check.odin:852](src/check.odin#L852)), so call it unconditionally. (about 2 lines)
 
 **Dead code**
 
-- `has_member` ([impl.odin:603](src/impl.odin#L603)): no caller in `src/`, `lsp/` or `tests/`; [emit_llvm_runtime.odin:1127](src/emit_llvm_runtime.odin#L1127) is an unrelated local of that name.
-- (branch) [impl.odin:610](src/impl.odin#L610): `hook_candidates`'s `role` is always `.Convert` (one caller, [check_calls.odin:1041](src/check_calls.odin#L1041)); drop it and name the procedure `conversion_hooks`.
 - (branch) [impl.odin:195](src/impl.odin#L195): assigning an empty `d.symbols` does nothing, since every reader uses `len` or `for` and a repeat declaration is barred by `item.declared`.
-- (branch) [hooks.odin:894](src/hooks.odin#L894): `validate_semantic_hook`'s `d` parameter is never read; `check_associated_member` receives and passes it only for this call.
-- (branch) [generic.odin:3289](src/generic.odin#L3289): `register_generic_impl` returns `true` on every path, and its only caller ([impl.odin:21](src/impl.odin#L21)) ignores the result.
 
 **Near copies**
 
@@ -3974,7 +3937,7 @@ A compact file with mostly useful comments, and member-table scans that stay sma
 **Structure and boundaries**
 
 - [impl.odin:494](src/impl.odin#L494) `standard_format_hidden`: formatting policy, also called by [queries.odin:334](src/queries.odin#L334); move it to `format.odin` beside `written_format_member`, its first dependency.
-- [impl.odin:607](src/impl.odin#L607) `hook_candidates` and its banner: `hooks.odin` owns hook roles and validation, and the only caller is in `check_calls.odin`. Move it to either, and drop "semantic hooks" from the header on line 1.
+- [impl.odin:607](src/impl.odin#L607) `conversion_hooks` and its banner: `hooks.odin` owns hook roles and validation, and the only caller is in `check_calls.odin`. Move it to either, and drop "semantic hooks" from the header on line 1.
 - [impl.odin:146](src/impl.odin#L146) `decl_is_lifecycle_hook`: a pure syntax query also used by [generic.odin:3524](src/generic.odin#L3524); it belongs beside `decl_hook_kind` at [ast.odin:1209](src/ast.odin#L1209).
 
 **Comments**
@@ -4045,7 +4008,6 @@ A small, sound file with accurate comments. Its one real issue is scope: only `i
 
 - [install.odin:12](src/install.odin#L12) `install_component`: allocate the directory and result in `context.temp_allocator` and drop `defer delete(dir)`. Both owning callers clone at once, so `delete(installed)` at
   [packages.odin:110](src/packages.odin#L110) and the `delete` plus its two-line comment at [session.odin:267](src/session.odin#L267) go too; `link` keeps the string only for its own call. (about 6 lines)
-- [install.odin:23](src/install.odin#L23) `runtime_sources`: delete the `dir == ""` guard. `read_all_directory_by_path("")` already fails, because `_open_internal` returns `.Not_Exist` for an empty name, and the error path returns the same `nil`. (3 lines)
 - [install.odin:41](src/install.odin#L41) `resolved_runtime_dir`: inline at its one caller, [emit_llvm_toolchain.odin:507](src/emit_llvm_toolchain.odin#L507), which tests `opts.runtime_dir != ""` again at line 549 as `custom_runtime`:
   `custom := opts.runtime_dir != ""` and `runtime_dir := custom ? opts.runtime_dir : install_component("runtime")`. (about 5 lines)
 
@@ -4085,9 +4047,6 @@ The satisfaction path is sound for ordinary programs, but the composition walks 
 
 **Dead code**
 
-- `Requirement_Failure.subject` ([interface.odin:394](src/interface.odin#L394)): never assigned anywhere, read only at 420 and 448, where the fallback is always `INVALID_TYPE`.
-- `Interface_Info.type` ([interface.odin:32](src/interface.odin#L32)): written at line 63 and read nowhere; all users take `params`, `scope`, `node`, `pkg`, `file` or `symbol`.
-- `interface_argument_text` ([interface.odin:489](src/interface.odin#L489)): a bare forwarder to `generic_argument_text`; its two callers (484, [erased.odin:446](src/erased.odin#L446)) can call that directly.
 - (branch) [interface.odin:501](src/interface.odin#L501): `span` in `interface_check` and `check_one_requirement` (636) is only forwarded to each other, never read; `failed_bound_text` computes one at 447 for nothing.
 - (branch) [interface.odin:634](src/interface.odin#L634): `scope` in `check_one_requirement` always equals `k.scope`, set at 539.
 - (branch) [interface.odin:1362](src/interface.odin#L1362): `is_call` here and at 1402 cannot fail: `composed_interface_of` has already seen an `Expr_Call`, and a clone keeps its kind.
@@ -4458,7 +4417,6 @@ The dataflow core is sound and the file is readable, but `exchange` lets an owne
 
 **Dead code**
 
-- `seen_cleanup` ([lifecycle.odin:1108](src/lifecycle.odin#L1108)): set only at line 1108, immediately before the only assignments of `live_exit`, and read only at line 1190, so `local.live_exit` alone gives the same answer; also remove the field at cfg.odin:153.
 - (branch) [lifecycle.odin:951](src/lifecycle.odin#L951): both `mem.zero_slice(state)` calls (also line 997) are overwritten before any read, since every slot is assigned or `copy` follows. They are the only `mem.` uses, so `import "core:mem"` goes too.
 - (branch) [lifecycle.odin:970](src/lifecycle.odin#L970): `if first { continue }` is unreachable. Only block 0 and successors of a visited block enter the queue, and `link` keeps `preds` and `succs` symmetric, so a dequeued block always has a visited predecessor.
 - (branch) [lifecycle.odin:1131](src/lifecycle.odin#L1131): `event.reset.body == nil` cannot hold. All five `.Reset_Point` emit sites key on `graph.literal`, and `new_flow_graph` returns nil for a nil literal.
@@ -4733,21 +4691,10 @@ A small, correct file with no bugs found: every procedure is used, and copy-befo
 **Simplification**
 
 - [overlays.odin:15](src/overlays.odin#L15) `set_session_overlay`, `remove_session_overlay`: drop `Source_Overlay.key` ([source.odin:48](src/source.odin#L48)); the map holds that string. `delete_key` returns the stored key and value, so removal becomes `stored, previous := delete_key(&s.overlays, key); if stored == "" { return false }`. Setting uses `&s.overlays[key]`, and `for key, overlay in` serves lines 57 and [session.odin:204](src/session.odin#L204). (about 6 lines)
-- [overlays.odin:12](src/overlays.odin#L12) `set_session_overlay`: `canonical_dir(path)` runs on lines 12 and 14, resolving the path twice; bind `canonical := canonical_dir(path)` once and use it in both.
-
-**Dead code**
-
-- (branch) [overlays.odin:10](src/overlays.odin#L10): `path == ""` cannot change the result, because `filepath.ext("")` is `""`, which fails the `.loke` comparison beside it. Delete the operand.
 
 **Structure and boundaries**
 
 - [overlays.odin:9](src/overlays.odin#L9): `Source_Overlay` is declared at [source.odin:47](src/source.odin#L47), yet only this file creates and replaces overlays. Move the struct here, next to the procedures that define its ownership.
-
-**Comments**
-
-- [overlays.odin:7](src/overlays.odin#L7): delete "Copy the path and text."; line 14 and the "Copy first" comment on line 13 already say it. Keep the rest.
-- [overlays.odin:28](src/overlays.odin#L28): cut to "Removing an overlay returns source loading to disk."; the second sentence narrates lines 34 to 42, and `compiler-architecture.md` "Snapshots and queries" states that contract.
-- [overlays.odin:45](src/overlays.odin#L45): cut to "Empty outside a session."; the "A pointer, not a copy" sentence explains the field, not this procedure, which returns a map header. Move it to [source.odin:82](src/source.odin#L82).
 
 ### src/overload.odin
 
@@ -4788,7 +4735,6 @@ Ranking itself is sound and matches the spec's vector and tie-breaker order, but
 - (branch) [overload.odin:949](src/overload.odin#L949): `slots` of a viable candidate are always in range, since `build_candidate` indexed `sym.params` with them.
 - (branch) [overload.odin:921](src/overload.odin#L921): an unfilled slot of a viable non-variadic candidate passed the check at line 537, so `slot < len(sym.param_defaults)` always holds.
 - (branch) [overload.odin:957](src/overload.odin#L957): `arg.waiting = false` and the `is_const`/`const_value` writes at 971-974 are never read; after this point only `expr`, `type`, `name`, `span`, `mode` and `is_receiver` are.
-- (branch) [overload.odin:692](src/overload.odin#L692): `report` on `resolve_overload` and `choose_candidate` (line 715) is never passed by any caller in `check_calls.odin` or `operators.odin`; remove it and its three `if report` guards.
 
 **Data structures and algorithms**
 
@@ -4841,7 +4787,6 @@ A sound file with tight comments and correct graph handling; one spurious follow
 
 - `ensure_runtime_bootstrap` ([packages.odin:102](src/packages.odin#L102)): test-only; its callers are `emit_llvm_test.odin:21` and `front_end_test.odin:53,424`. Move it to a test file; all three pass a fresh `Checker`, so the save and restore on lines 121 and 123 can go too.
 - (branch) [packages.odin:580](src/packages.odin#L580): `edge.target == INVALID_PACKAGE` here and on line 625 cannot hold; both production appends (lines 317, 355) return first on a failed load, and `front_end_test.odin:428` passes a real package.
-- (branch) [packages.odin:346](src/packages.odin#L346): the `file` parameter of `bind_parallel_edge` has no effect, because `STD_THREAD` has a prefix and `resolve_import_path` never reads `file` for one. Pass nil and drop the parameter.
 
 **Near copies**
 
@@ -5071,22 +5016,15 @@ The expression and type grammar is sound and readable, and its comments are most
 
 ### src/precision.odin
 
-Small and well placed, with every procedure and enum member in use. The main defect is a header comment that is false: the flags do affect acceptance. Otherwise there is a little repetition in the closing advice notes, and one note outside this file that belongs with the others.
+Small and well placed, with every procedure and enum member in use. One note outside this file belongs with the others.
 
 **Simplification**
 
-- [precision.odin:48](src/precision.odin#L48) `add_precision_notes`: return early on `loss == {}`, pick only the advice text in the `if`/`else if`, and make one `add_notef("this conservative dependency may cause the rejection; %s", advice)`; this drops the two `loss != {}` tests and the repeated prefix. (about 2 lines)
 - [borrow.odin:1460](src/borrow.odin#L1460) `merge_result_dependencies`: it discards the result of `merge_precision`, whose only added value is that result; write `into.precision |= from.precision`. (no line change)
 
 **Structure and boundaries**
 
-- [precision.odin:28](src/precision.odin#L28) and [cfg_provenance.odin:6154](src/cfg_provenance.odin#L6154): `.Depth` covers two budgets, but the note prints only `CARRIER_DEPTH` (4) while alias paths set it at `WRITTEN_ALIAS_DEPTH` (8). design.md "Minimum provenance precision" says a diagnostic must name the limit. Latent: three probes of deep scalar places gave no diagnostic. Word the note for both, or give aliases their own member.
 - [borrow.odin:6279](src/borrow.odin#L6279): the one precision-limit note outside this file, with 64 written as a literal for the width of `Region_Set.locals`, and without the closing advice. Move it here beside the others as a small procedure, or a parameter of `add_precision_notes`, and name the limit with a constant.
-
-**Comments**
-
-- [precision.odin:1](src/precision.odin#L1): false. `path_is_exact` ([borrow.odin:5142](src/borrow.odin#L5142)), `view_element_in` ([borrow.odin:4421](src/borrow.odin#L4421)) and `exact` ([cfg_provenance.odin:2559](src/cfg_provenance.odin#L2559)) branch on it, and `exact` decides whether a write replaces old borrows. Reword: "Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place." [compiler-architecture.md:919](compiler-architecture.md#L919) makes the same claim.
-- [precision.odin:5](src/precision.odin#L5): delete. The notes at lines 42-47 say the same in full, and `PROV_OFFSET_LIMIT` ([cfg_provenance.odin:899](src/cfg_provenance.odin#L899)) documents the limits and links back to `Precision_Limit.Places`. (about 4 lines)
 
 ### src/private_names.odin
 
@@ -5194,26 +5132,6 @@ Sound and compact: probes of substitution, join, `none`-discharge and region cas
 
 - [proc_contracts.odin:176](src/proc_contracts.odin#L176): misplaced. "Members share the signature, so the first one names the parameter." describes `contract_param_name`, not `receiver_contract`; move it to line 201.
 - [proc_contracts.odin:304](src/proc_contracts.odin#L304): does not say what the procedure returns. Use: "The declaration whose contract a call substitutes; an indirect call takes its callee type's contract."
-
-### src/project.odin
-
-A small, sound file with one low-severity Windows identity slip. Most of the rest is one long procedure, plus a map that duplicates what the two other maps already say.
-
-**Bugs**
-
-- `BUG-project-1` **low** [project.odin:18](src/project.odin#L18) `register_project`: `path_dir` returns `\` on Windows, so a manifest found by walking up keys `visited` differently from a `canonical_dir` target. Scenario: `repo/loke.project` has `require lib lib` and a bad line, `repo/lib/loke.project` has `require root ..`; `lokec repo/app` reads it twice and prints L0398 twice (reproduced). Fix: `dir = canonical_dir(parent)` at line 22. *Not verified.*
-
-**Simplification**
-
-- [project.odin:26](src/project.odin#L26) `register_project`: `given` is redundant, because only line 82 adds to `c.collections` and line 83 records the same name in `required_by`. Drop lines 25-29, test `name in required_by` first, then `case name in c.collections:` for the line 73 branch. (about 5 lines)
-
-**Structure and boundaries**
-
-- [project.odin:15](src/project.odin#L15) `register_project`: one 75-line procedure finds the nearest manifest, walks manifests, parses lines and resolves names. Natural seams: `nearest_project_dir` (lines 16-23), which gives the early return a name, and a line parser returning `name, written, ok` (lines 59-67), leaving the walk and the switch.
-
-**Comments**
-
-- [project.odin:13](src/project.odin#L13): delete lines 13-14 ("One name names one directory... overridden or vendored"). They repeat compiler-guide.md "Projects", already cited at line 3, and the L0399 message states the rule. (about 2 lines)
 
 ### src/provenance_call.odin
 
@@ -5436,7 +5354,6 @@ The logic holds up and its comments are already terse; I found no bug, and probe
 
 **Dead code**
 
-- `Copy` ([provenance_transfer.odin:8](src/provenance_transfer.odin#L8)): `Prov_Transfer_Mode.Copy` is never assigned; it appears only in the comparisons at line 60 and [provenance_transfer_facts.odin:94](src/provenance_transfer_facts.odin#L94). Every other `.Copy` in `src/` belongs to another enum.
 - (branch) [provenance_transfer.odin:269](src/provenance_transfer.odin#L269): `mode` and `type` (line 270) of the returned component are never read: its only consumers, `prov_stored_region_at` and `prov_copy_component_region`, read `source`, `from`, `copy_from`, and `copy.type`. Line 270's `prov_type_at` is wasted work.
 - (branch) [provenance_transfer.odin:249](src/provenance_transfer.odin#L249): `as_type` of `prov_input_stored_copy` always resolves to `value.type`: copying callers pass nothing ([cfg_provenance.odin:4261](src/cfg_provenance.odin#L4261)) or `prov_value(value).type` ([:4272](src/cfg_provenance.odin#L4272), [:5595](src/cfg_provenance.odin#L5595) through `prov_result_region_fields`). Drop the parameter; `type := value.type`.
 - (branch) [provenance_transfer.odin:70](src/provenance_transfer.odin#L70): `index >= 0` cannot fail. Line 212 is the only non-default `index`, reached only by `make`, whose `bound` always has `max_counts + 1 >= 2` slots ([check_builtin.odin:677](src/check_builtin.odin#L677)). Write `v.bound[len(v.bound) - 1]` at 212 and drop the parameter.
@@ -5491,10 +5408,6 @@ Small and focused, with few comments and those few earning their place. The main
 - [provenance_transfer_facts.odin:50](src/provenance_transfer_facts.odin#L50) `prov_value_aliases`: drop `slice.clone`; every return path of this proc and of `prov_read_value_aliases` builds a fresh slice, so clearing `path` in place touches no stored fact. (one allocation per reslice query)
 - [provenance_transfer_facts.odin:93](src/provenance_transfer_facts.odin#L93) `prov_component_region`: inline `source_path` into the non-copy return on line 94; the copy branch discards it and recomputes the same path at line 103. (about 1 line)
 - [provenance_transfer_facts.odin:102](src/provenance_transfer_facts.odin#L102) `prov_copy_component_region`: inline `source` as `as_type = prov_value(graph, component.source).type`, and use `prov_value` for the raw `graph.input.values[int(id)]` reads at lines 19, 38 and 56. (about 1 line)
-
-**Dead code**
-
-- (branch) [provenance_transfer_facts.odin:94](src/provenance_transfer_facts.odin#L94): `component.mode != .Copy` is always true, because no code assigns `Prov_Transfer_Mode.Copy` ([provenance_transfer.odin:8](src/provenance_transfer.odin#L8)) and tests never name it. Remove the member, this test and the matching one at [provenance_transfer.odin:60](src/provenance_transfer.odin#L60).
 
 **Data structures and algorithms**
 
@@ -5665,7 +5578,6 @@ Correct on the main paths; the weak spot is `typeid_sort_key`, whose key is neit
 
 **Dead code**
 
-- `Reflect_Op.None` ([reflect.odin:824](src/reflect.odin#L824)): this placeholder is its only use, and every path overwrites it or returns; no code in `src/` or `lsp/` tests for it. Write `op: Reflect_Op` and drop the member at ast.odin:163.
 - (branch) [reflect.odin:99](src/reflect.odin#L99): `new_type` has just returned this id, so `info` cannot be nil; iteration_mutable.odin:50 assigns `type_of(c, iterator).fields` directly.
 - (branch) [reflect.odin:835](src/reflect.odin#L835): every `meta.Field` constant comes from line 223 with four elements, and hand-written literals are refused (L0453 on `meta.Field{}`, also inside `foreach`), so a nil or short aggregate cannot get past lines 816 and 821.
 
@@ -5849,7 +5761,6 @@ The stores and interning are sound, and the `Symbol` and `Type_Info` definitions
 
 **Dead code**
 
-- `pointer_is_mutable` ([semantic.odin:1671](src/semantic.odin#L1671)): the declaration is the only occurrence in `src/`, `lsp/` and `tests/` (outside `tests/tmp` copies).
 - `Cpu_Feature` ([semantic.odin:309](src/semantic.odin#L309)): only `.FMA in` and `!= {}` read the set, and the LLVM attributes come from per-level strings. `cpu == .X86_64_V3` and `cpu != .X86_64` replace the enum, `Cpu_Features`, both constants, the switch and `features` (about 30 lines).
 - `dispatches` ([semantic.odin:800](src/semantic.odin#L800)): its one read is `symbol.dispatches && symbol.dispatch_cpu > e.c.target.cpu` ([emit_llvm_dispatch.odin:90](src/emit_llvm_dispatch.odin#L90)); the unset `dispatch_cpu` is `.X86_64`, never above any target, so the second test suffices.
 - `Procedure_Group` ([semantic.odin:358](src/semantic.odin#L358)): written once at [check_expr.odin:673](src/check_expr.odin#L673) and never read by name; only the "is not another kind" fact matters.
@@ -6086,22 +5997,6 @@ Small, sound procedures for loading and diagnostics, sharing a file with the 380
 - [source.odin:674](src/source.odin#L674): keep the citation plus "`end_probe` fails if a probe grew the emission registries without a `begin_commit`"; the rest repeats compiler-architecture.md. Likewise cut [source.odin:733](src/source.odin#L733) to two lines. (about 6 lines)
 - [source.odin:483](src/source.odin#L483), line 488 and [source.odin:420](src/source.odin#L420) cite a spec without a heading: use `grammar.md "Source encoding"` and `design.md "Allocators"`; line 488 then repeats line 483 and can go. (1 line)
 
-### src/stack.odin
-
-Small and sound: both declarations are used, the comments explain why, and no bug was found. The only real excess is a Windows guard that protects a host the package cannot build for.
-
-**Simplification**
-
-- [stack.odin:12](src/stack.odin#L12) `COMPILER_STACK`: "its value must equal `COMPILER_STACK`" is enforced by nothing, and a drift inflates `MAX_NEST` past the real stack. Odin cannot format the attribute string, so state it as `#assert(COMPILER_STACK == 67108864)` beside the flag and drop that clause. (no net lines)
-
-**Dead code**
-
-- (branch) [stack.odin:28](src/stack.odin#L28): the `else` and both `when ODIN_OS == .Windows` guards (lines 10, 24) can never go the other way: [emit_llvm_toolchain.odin:16](src/emit_llvm_toolchain.odin#L16) imports `subprocess`, which imports `core:sys/windows` unguarded ([subprocess.odin:8](src/subprocess/subprocess.odin#L8)), and these are the only `ODIN_OS` uses in `src/`. Delete them and the `ponytail`; about 7 lines. `probe` would also trip `-vet-unused` in that branch.
-
-**Structure and boundaries**
-
-- [stack.odin:22](src/stack.odin#L22): the map row in `compiler-architecture.md` "Source-code map" gives this file the "nesting budget", but `MAX_NEST` is file-private at [parser.odin:23](src/parser.odin#L23), and it omits the file's one procedure. Say "64 MiB compiler stack reservation and stack-left query".
-
 ### src/stdlib.odin
 
 A flat, correct table of what the compiler binds into each bundled package; every contributed name is used by its package, and no bug was found. The real debt is comments that have gone stale as the contributions grew, plus a package-by-key lookup that is hand-written across the checker.
@@ -6159,7 +6054,6 @@ Careful, well-reasoned Windows process code with correct handle ownership and qu
 
 **Dead code**
 
-- `NO_DEADLINE` ([subprocess.odin:37](src/subprocess/subprocess.odin#L37)): named only as `run`'s default on line 53, with no caller across `src/`, `lsp/`, `tests/`. Use `deadline: time.Duration = 0` and say in `run`'s comment that zero means no limit.
 - `wait_override` ([subprocess.odin:130](src/subprocess/subprocess.odin#L130)): not dead, but exists only for `subprocess_run_reports_a_failed_wait` in [subprocess_test.odin:132](src/subprocess_test.odin#L132). It puts a test branch in `run` and bypasses the limit logic that the real path uses.
 - (branch) [subprocess.odin:178](src/subprocess/subprocess.odin#L178): the `DuplicateHandle` path runs only for the witness in [subprocess_test.odin:70](src/subprocess_test.odin#L70); no compiler or harness launch sets `stdin`. Give it a real caller (see the `run_greeting` comment at [corpus_test.odin:2885](tests/corpus_test.odin#L2885)), or the test needs another witness and this goes.
 
@@ -6217,24 +6111,6 @@ Small and readable, with one real bug: omitting a test's local procedures does n
 - [test_procedures.odin:112](src/test_procedures.odin#L112): restates the one-line expression below; delete it with the inlining above.
 - [test_procedures.odin:118](src/test_procedures.odin#L118): shorten to `// design.md "Test procedures": whether the backend leaves this out: a test the build omits, or anything written inside one, at any depth.` (about 2 lines)
 
-### src/test_runner.odin
-
-Small, clearly bounded and correct against `design.md` "Test procedures" and `compiler-guide.md` "Running tests"; test names are unique ASCII identifiers (no file-private visibility), so selecting by name is sound. Only minor trims remain.
-
-**Simplification**
-
-- [test_runner.odin:16](src/test_runner.odin#L16) `run_tests`: replace the error-and-fallback lines 16-19 with `path := filepath.abs(exe, context.temp_allocator) or_else exe`, the form [main.odin:448](src/main.odin#L448) and [source.odin:520](src/source.odin#L520) already use. (about 3 lines)
-- [test_runner.odin:20](src/test_runner.odin#L20) `run_tests`: `passed` is redundant, since the early return at line 29 means every test is counted by line 43. Keep `failed` alone, test `len(c.tests) == 0`, print `len(c.tests) - failed`. (about 1 line)
-- [test_runner.odin:55](src/test_runner.odin#L55) `print_indented`: `strings.split_lines_iterator` already strips a line's trailing `\r`, so print `line` directly. The trim at line 53 only drops trailing blank lines, because the iterator yields nothing after a final `\n`. (about 1 line if `rest := text` is also taken)
-
-**Data structures and algorithms**
-
-- [test_runner.odin:24](src/test_runner.odin#L24) `run_tests`: each test's captured output stays in `context.temp_allocator` until exit, so memory grows with the total output of the whole suite, including passing tests whose output is discarded. Only a chatty suite would notice; `runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()` at the top of the loop body bounds it to one test, as [subprocess.odin:166](src/subprocess/subprocess.odin#L166) does.
-
-**Comments**
-
-- [test_runner.odin:11](src/test_runner.odin#L11): lines 13-14 narrate lines 40-41 and the `return`s, and the guide section cited on line 11 states them too. Delete them, keeping lines 11-12 as the citation and the why. (about 2 lines)
-
 ### src/text.odin
 
 Short and readable, with why-comments that mostly earn their place. The main issues are the receiver pre-check in `check_text_operation`, a from_runes/from_utf8 pair that drifted apart, repeated error boilerplate, and non-text `unsafe` built-ins living here. Probes ran against the current `lokec.exe`.
@@ -6266,10 +6142,6 @@ Short and readable, with why-comments that mostly earn their place. The main iss
 - [text.odin:116](src/text.odin#L116) `fix_string_receiver`: its only caller is line 48; inline the one expression there and move the design.md "string type" citation with it. (about 3 lines)
 - [text.odin:198](src/text.odin#L198) `check_from_utf8`: replace the three-arm `switch` over a `.None` placeholder with `op := from_bytes`, an `if` for the C view case, and an `else if` for the error. (about 3 lines)
 - [text.odin:71](src/text.odin#L71), [168](src/text.odin#L168), [213](src/text.odin#L213): `make([]Expr, 1, ...)` then `[0] =` also appears at about a dozen sites such as [enums.odin:51](src/enums.odin#L51) and [union.odin:482](src/union.odin#L482); a small `single_bound(k, e)` helper takes one line per site. (about 15 lines)
-
-**Dead code**
-
-- (branch) [text.odin:199](src/text.odin#L199): `Text_Conversion.None` is only this overwritten initializer, since line 212 is the sole constructor of `Call_Text_Conversion`. So `case .None` at [emit_llvm_expr.odin:2350](src/emit_llvm_expr.odin#L2350) is unreachable, and the member can go once line 198 is simplified.
 
 **Data structures and algorithms**
 
@@ -6351,10 +6223,6 @@ A small, table-driven file whose bindings match design.md "Predeclared names"; n
 - [universe.odin:55](src/universe.odin#L55) `build_universe`: `true`, `false` and `nil` repeat one `Symbol` literal; a `{name, type, value}` table and a loop that sets `reserved = true` matches the two other tables here. (about 10 lines)
 - [universe.odin:48](src/universe.odin#L48) `build_universe`: the guard exists only for the `byte` row, and `info != nil` cannot fire for a predeclared id. Bind `byte` after the loop, then `type_of(c, entry.id).name = intern_identifier(c, entry.name)`. (about 3 lines)
 - [universe.odin:11](src/universe.odin#L11) `build_universe`: delete `init_semantic_stores(c)`; `new_scope` on the next line starts with the same call ([semantic.odin:2479](src/semantic.odin#L2479)). (1 line)
-
-**Dead code**
-
-- (branch) [universe.odin:127](src/universe.odin#L127): the `scope` parameter of `define_universe` is always `c.universe`, at every call here and in [build_config.odin:115](src/build_config.odin#L115); drop it and `predeclare_build_config`'s `universe`, and write `c.universe.names[...]`.
 
 **Near copies**
 

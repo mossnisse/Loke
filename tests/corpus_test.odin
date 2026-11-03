@@ -2268,6 +2268,16 @@ host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
 	return clang, out[:], true
 }
 
+// A manifest found by walking up must have the identity a dependency's path to
+// it gives it, or a dependency that requires it back reads it a second time.
+@(test)
+project_found_above_is_read_once :: proc(t: ^testing.T) {
+	jobs := []Exec{{command = {compiler_path(), "tests/project_walk/app", "-emit-ll"}}}
+	exec_all(jobs)
+	output := fmt.tprintf("%s%s", jobs[0].stdout, jobs[0].stderr)
+	testing.expectf(t, strings.count(output, "L0398") == 1, "the manifest's L0398 should print once:\n%s", output)
+}
+
 @(test)
 package_diagnostics_reported :: proc(t: ^testing.T) {
 	check_diagnostics(t, case_directories(t, "tests/pkg_err"), "-emit-ll", "")

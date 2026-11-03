@@ -1259,6 +1259,11 @@ checklist.
 
 ### Fixed
 
+- A `loke.project` found by walking up from the input is read once. A dependency that required it
+  back read it a second time and repeated its diagnostics.
+- The provenance note for a merged path names both depth limits, 4 aggregate projection steps and
+  8 through a written alias, as
+  [Minimum provenance precision](design.md#minimum-provenance-precision) asks.
 - A swap with a temporary now leaves each carrier in one place in a branch, in a loop, and through
   a view parameter, as [Weakening and reborrows](design.md#weakening-and-reborrows) says.
   `if (flip()) { held := links^[0]; links^[0] = links^[1]; links^[1] = held; }` was `L0641` at

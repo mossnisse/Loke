@@ -867,7 +867,7 @@ be file-private. Paths below are relative to `src/`.
 | `test_runner.odin` | The `-test` driver, which runs a built test executable once per test. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
-| `stack.odin` | 64 MiB compiler stack reservation and nesting budget. |
+| `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
 | `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
 | `source.odin` | `Compiler`, sources, spans, and diagnostics; destruction lives in `semantic.odin`. |
 | `lexer.odin` | Tokens and lexical scanning. |
@@ -916,7 +916,7 @@ be file-private. Paths below are relative to `src/`.
 | `provenance_input.odin`, `provenance_form.odin`, `provenance_transfer.odin`, `provenance_transfer_facts.odin`, `provenance_call.odin`, `provenance_read.odin` | Normalized provenance input: storage, values, places, value forms, transfers, call inputs, and leaf reads ([Normalized provenance input](#normalized-provenance-input)). |
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
-| `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
+| `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
 | `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops, and what a `parallel` block's parent does with them while its tasks run. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |

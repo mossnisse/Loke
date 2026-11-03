@@ -20,9 +20,6 @@ install_component :: proc(name: string) -> string {
 // Every `*.c` file in `dir`, sorted so one directory always gives one command.
 // Listed rather than globbed: a `[` in the path would be read as glob syntax.
 runtime_sources :: proc(dir: string) -> []string {
-	if dir == "" {
-		return nil
-	}
 	entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
 	if err != nil {
 		return nil
