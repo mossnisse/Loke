@@ -1,0 +1,18 @@
+// design.md "`source_location() or source_location(<entity>)`": an entity is a
+// variable or a procedure, which is what a declaration's location describes.
+package main;
+
+import "core:fmt";
+
+Point :: struct { x: int }
+LIMIT :: 5;
+
+a_type :: proc() { _ = source_location(Point); }
+a_built_in_type :: proc() { _ = source_location(int); }
+a_package :: proc() { _ = source_location(fmt); }
+a_constant :: proc() { _ = source_location(LIMIT); }
+a_built_in :: proc() { _ = source_location(size_of); }
+nothing :: proc() { _ = source_location(missing); }
+not_a_name :: proc() { _ = source_location(1 + 1); }
+
+main :: proc() { fmt.println("unreached"); }

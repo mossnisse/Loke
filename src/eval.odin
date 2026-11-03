@@ -419,6 +419,20 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 	return cv, true
 }
 
+// A constant built in evaluator storage has served its purpose: an evaluated
+// value holds its integers and strings, never these tables.
+@(private = "file")
+eval_release_tables :: proc(ev: ^Evaluator, value: Const_Value) {
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return
+	}
+	for element in value.aggregate.elements {
+		eval_release_tables(ev, element)
+	}
+	delete(value.aggregate.elements, ev.alloc)
+	free(value.aggregate, ev.alloc)
+}
+
 @(private = "file")
 const_of :: proc(v: Eval_Value) -> Const_Value {
 	return Const_Value {
@@ -2966,7 +2980,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		source := expr_base(v.bound[0]).type
-		count := bit_count(ev.alloc, const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
+		count := bit_count(const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
 		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
 
 	// design.md "Integer overflow": a `next_power_of_two` that would panic at
@@ -3001,7 +3015,11 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		source := expr_base(v.bound[0]).type
-		result, status := transmute_const(ev.k.c, frozen, source, v.type)
+		result, status := transmute_const(ev.k.c, frozen, source, v.type, ev.alloc)
+		defer {
+			eval_release_tables(ev, frozen)
+			eval_release_tables(ev, result)
+		}
 		switch status {
 		case .Folded:
 			return value_from_const(ev, result, v.type)

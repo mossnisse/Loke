@@ -324,11 +324,11 @@ typeid_const :: proc(type: Type_Id) -> Const_Value {
 // names no type: types are numbered only by `freeze_typeids`, after discovery,
 // so it cannot be matched to one while checking. Zero is the nil `typeid`,
 // `type_const(INVALID_TYPE)`.
-typeid_number_const :: proc(c: ^Compiler, number: u64) -> Const_Value {
+typeid_number_const :: proc(storage: Value_Storage, number: u64) -> Const_Value {
 	if number == 0 {
 		return type_const(INVALID_TYPE)
 	}
-	return Const_Value{kind = .Type, type_value = INVALID_TYPE, integer = bi_from_u64(c, number)}
+	return Const_Value{kind = .Type, type_value = INVALID_TYPE, integer = bi_from_u64(storage, number)}
 }
 
 // The number a `typeid` constant holds when it is already known: the nil one's

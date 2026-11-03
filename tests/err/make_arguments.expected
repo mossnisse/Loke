@@ -1,0 +1,27 @@
+L0353
+@9:50
+a float does not convert implicitly to `int`
+L0310
+@10:48
+`nil` is not a value of `int`
+L0579
+@11:53
+a `make` length or capacity is an `int`, found `Count`
+L0579
+@12:51
+a `make` length or capacity is an `int`, found `u8`
+L0371
+@13:50
+a built-in takes positional arguments only
+L0371
+@14:34
+a built-in takes positional arguments only
+L0490
+@15:66
+an allocator argument is an `Allocator`, found `untyped int`
+L0579
+@16:81
+the allocator is `make`'s last argument
+L0370
+@17:83
+a built-in takes value arguments only

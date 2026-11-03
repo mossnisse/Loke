@@ -151,6 +151,58 @@ bigint_allocator_storage :: proc(t: ^testing.T) {
 }
 
 @(test)
+bigint_patterns :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	two_to_127 := bi_pow2(&c, 127)
+	i128_min := bi_neg(&c, two_to_127)
+	testing.expect(t, bi_pattern(i128_min, 128) == u128(1) << 127, "i128 min's pattern")
+	testing.expect(t, bi_cmp(&c, bi_from_pattern(&c, u128(1) << 127, 128, true), i128_min) == 0, "i128 min from its pattern")
+	testing.expect(t, bi_cmp(&c, bi_from_pattern(&c, u128(1) << 127, 128, false), two_to_127) == 0, "2^127 from its pattern")
+	testing.expect(t, bi_pattern(bi_from_i64(&c, -1), 128) == max(u128), "-1's 128-bit pattern")
+	testing.expect(t, bi_eq_i64(&c, bi_from_pattern(&c, max(u128), 128, true), -1), "-1 from its 128-bit pattern")
+
+	testing.expect(t, bi_pattern(bi_from_i64(&c, -1), 8) == 0xff, "-1's 8-bit pattern")
+	testing.expect(t, bi_pattern(bi_from_i64(&c, -128), 8) == 0x80, "-128's 8-bit pattern")
+	testing.expect(t, bi_pattern(bi_from_i64(&c, 0), 8) == 0, "0's pattern")
+	testing.expect(t, bi_eq_i64(&c, bi_from_pattern(&c, 0x80, 8, true), -128), "-128 from its pattern")
+	testing.expect(t, bi_eq_i64(&c, bi_from_pattern(&c, 0x7f, 8, true), 127), "127 from its pattern")
+	testing.expect(t, bi_eq_i64(&c, bi_from_pattern(&c, 0xff, 8, false), 255), "255 from its pattern")
+
+	// A digit boundary and a wider value: only the low bits survive.
+	above := bi_add(&c, bi_pow2(&c, 60), bi_from_i64(&c, 3))
+	testing.expect(t, bi_pattern(above, 64) == (u128(1) << 60) + 3, "2^60 + 3's pattern")
+	testing.expect(t, bi_pattern(bi_add(&c, bi_pow2(&c, 200), bi_from_i64(&c, 5)), 16) == 5, "a wider value's low bits")
+}
+
+// design.md "Compile-time procedure evaluation": what a bit cast builds during
+// an evaluation counts against that evaluation's limit.
+@(test)
+a_constant_bit_cast_builds_in_the_storage_it_is_given :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	build_universe(&c)
+	bytes := array_of(&c, TYPE_U8, 4)
+	type_size(&c, bytes)
+
+	buffer := make([]byte, 1 << 16)
+	defer delete(buffer)
+	arena: mem.Arena
+	mem.arena_init(&arena, buffer)
+
+	value := integer_const(bi_from_u64(&c, 0x8040_2010))
+	semantic_before := c.semantic_arena.total_used
+	folded, status := transmute_const(&c, value, TYPE_U32, bytes, mem.arena_allocator(&arena))
+	testing.expect(t, status == .Folded, "the bit cast did not fold")
+	testing.expect(t, arena.offset > 0, "nothing was built in the given storage")
+	testing.expect(t, c.semantic_arena.total_used == semantic_before, "the bit cast grew the semantic arena")
+	if status == .Folded {
+		testing.expect(t, bi_eq_i64(&c, folded.aggregate.elements[3].integer, 0x80), "the last byte of the result")
+	}
+}
+
+@(test)
 bigint_to_float_rounds_once :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)

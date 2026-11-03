@@ -1,0 +1,65 @@
+// A bit cast's constant folds through the pattern, in the checker and in the
+// evaluator alike: every width, both signs, and every member of an aggregate.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Colour :: enum u8 { Red, Green = 200 }
+
+Mixed :: struct { low: u16, high: i16 }
+
+// The checker's fold.
+I8_LOW :: unsafe.transmute(i8, u8(0x80));
+I8_BACK :: unsafe.transmute(u8, i8(-128));
+I64_ONES :: unsafe.transmute(i64, ~u64(0));
+U64_NEGATIVE :: unsafe.transmute(u64, i64(-2));
+I128_LOW :: unsafe.transmute(i128, u128(1) << 127);
+I128_ONES :: unsafe.transmute(i128, ~u128(0));
+U128_NEGATIVE :: unsafe.transmute(u128, i128(-2));
+U128_HIGH :: unsafe.transmute(u128, (i128(1) << 126) + 5);
+F32_BITS :: unsafe.transmute(u32, f32(1.5));
+F64_VALUE :: unsafe.transmute(f64, u64(0x3ff8000000000000));
+RUNE_HIGH :: unsafe.transmute(rune, u32(0x8000_0041));
+BOOL_ONE :: unsafe.transmute(bool, u8(1));
+GREEN :: unsafe.transmute(Colour, u8(200));
+GREEN_BITS :: unsafe.transmute(u8, Colour.Green);
+
+// The evaluator's, whose operand is a local.
+evaluated_bytes :: proc() -> [4]u8 {
+	value: u32 = 0x8040_2010;
+	return unsafe.transmute([4]u8, value);
+}
+BYTES :: evaluated_bytes();
+
+evaluated_mixed :: proc() -> Mixed {
+	bytes := [4]u8{0x34, 0x12, 0xfe, 0xff};
+	return unsafe.transmute(Mixed, bytes);
+}
+MIXED :: evaluated_mixed();
+
+evaluated_wide :: proc() -> [2]u64 {
+	value: i128 = -2;
+	return unsafe.transmute([2]u64, value);
+}
+WIDE :: evaluated_wide();
+
+evaluated_back :: proc() -> i128 {
+	parts := [2]u64{~u64(0) - 1, ~u64(0)};
+	return unsafe.transmute(i128, parts);
+}
+BACK :: evaluated_back();
+
+main :: proc() {
+	fmt.println(I8_LOW, I8_BACK, I64_ONES, U64_NEGATIVE);
+	fmt.println(I128_LOW);
+	fmt.println(I128_ONES);
+	fmt.println(U128_NEGATIVE);
+	fmt.println(U128_HIGH);
+	fmt.println(F32_BITS, F64_VALUE, RUNE_HIGH == unsafe.transmute(rune, u32(0x8000_0041)), BOOL_ONE);
+	fmt.println(GREEN, GREEN_BITS);
+	fmt.println(BYTES);
+	fmt.println(MIXED.low, MIXED.high);
+	fmt.println(WIDE);
+	fmt.println(BACK);
+}

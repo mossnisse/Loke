@@ -928,3 +928,178 @@ symbol_via_allocator :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> Expr {
 	sym := symbol_of(c, symbol_id)
 	return sym == nil ? nil : sym.via
 }
+
+// design.md "Dynamic arrays" and "Maps":
+//
+//   make([dynamic]T, len: int = 0, cap: int = len, allocator = default)
+//   make(map[K]V, reservation: int = 0, allocator = default)
+//
+// both returning `(container, Allocator_Error)`. `Allocator` is a distinct type,
+// so the trailing allocator is recognised by its type rather than its position,
+// and it alone has a name to write: `allocator=`.
+check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, fallible: bool) {
+	v.type = INVALID_TYPE
+	if len(v.args) == 0 {
+		errorf(k.c, v.span, "L0579", "`make` names the container type to create")
+		return
+	}
+	for arg, index in v.args {
+		shape := arg
+		if index > 0 && arg.name.text == "allocator" {
+			shape.name = {}
+		}
+		if shape.name.text != "" || shape.mode != .Value {
+			reject_builtin_argument_shape(k, shape)
+			return
+		}
+	}
+	container := operand_type(k, v.args[0].value, "make", false)
+	if container == INVALID_TYPE || !gate_type(k, container, expr_span(v.args[0].value)) {
+		return
+	}
+	if !type_is_container(k.c, container) {
+		errorf(
+			k.c,
+			expr_span(v.args[0].value),
+			"L0579",
+			"`make` creates a `[dynamic]T` or a `map[K]V`, found `%s`",
+			type_name(k.c, container),
+		)
+		return
+	}
+	// A move-only element has no clone, but `make` never copies one.
+	contribute_lifecycle_members(k, container)
+
+	is_map := type_is_map(k.c, container)
+	max_counts := is_map ? 1 : 2
+	// Fixed shape: the counts in written order, then the allocator or nil.
+	bound := make([]Expr, max_counts + 1, k.c.semantic_allocator)
+	counts := 0
+	for index in 1 ..< len(v.args) {
+		argument := v.args[index].value
+		named := v.args[index].name.text != ""
+		last := index == len(v.args) - 1
+		// Only the last argument may be the allocator, so the others expect `int`.
+		hint := named ? TYPE_ALLOCATOR : last ? INVALID_TYPE : TYPE_INT
+		if check_single_expr(k, argument, hint) == INVALID_TYPE {
+			return
+		}
+		is_allocator := type_underlying(k.c, expr_base(argument).type) == TYPE_ALLOCATOR
+		if named || is_allocator {
+			if !last {
+				errorf(k.c, expr_span(argument), "L0579", "the allocator is `make`'s last argument")
+				return
+			}
+			if !is_allocator {
+				errorf(
+					k.c, expr_span(argument), "L0490",
+					"an allocator argument is an `Allocator`, found `%s`", type_name(k.c, expr_base(argument).type),
+				)
+				return
+			}
+			bound[max_counts] = argument
+			continue
+		}
+		if counts == max_counts {
+			shape := is_map ? "a map, an optional reservation, and an optional allocator" :
+				"a dynamic array type, an optional length and capacity, and an optional allocator"
+			errorf(k.c, expr_span(argument), "L0579", "`make` takes %s", shape)
+			return
+		}
+		if !materialize(k, argument, TYPE_INT) {
+			return
+		}
+		if expr_base(argument).type != TYPE_INT {
+			errorf(
+				k.c,
+				expr_span(argument),
+				"L0579",
+				"a `make` %s is an `int`, found `%s`",
+				is_map ? "reservation" : "length or capacity",
+				type_name(k.c, expr_base(argument).type),
+			)
+			return
+		}
+		bound[counts] = argument
+		counts += 1
+	}
+	v.bound = bound
+	v.operation = Call_Allocation{type = container, fallible = fallible}
+	// design.md "Zero values": only a length fills slots with zeroes, and a
+	// constant `0` fills none.
+	if !is_map && counts > 0 && !is_constant_zero(bound[0]) {
+		if !require_type_has_zero(
+			k, container_element(k.c, container), expr_span(bound[0]), "a `make` length",
+		) {
+			return
+		}
+	}
+
+	v.type = fallible ? result_type(k, container, TYPE_ALLOCATOR_ERROR) : container
+}
+
+@(private = "file")
+is_constant_zero :: proc(e: Expr) -> bool {
+	base := expr_base(e)
+	return base.is_const && base.const_value.kind == .Integer && bi_is_zero(base.const_value.integer)
+}
+
+// `core:slice.sort_by_intrinsic(values, &comparator)`. The public wrapper hands
+// it an ordering record whose `call` compares two elements; this records the
+// exact `call` method for lowering and guards against a malformed replacement
+// standard package.
+check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	if !builtin_arity_ok(k, v, ident, "L0322", 2) {
+		return
+	}
+
+	values := check_single_expr(k, v.args[0].value)
+	values_info := underlying_info(k.c, values)
+	if values_info == nil || values_info.kind != .Slice || !values_info.mutable {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0651",
+			"`%s` needs a mutable slice, found `%s`", ident.name, type_name(k.c, values),
+		)
+		return
+	}
+
+	ctx := check_single_expr(k, v.args[1].value)
+	context_info := underlying_info(k.c, ctx)
+	if context_info == nil || context_info.kind != .Pointer {
+		errorf(
+			k.c, expr_span(v.args[1].value), "L0651",
+			"`%s` needs a pointer to its comparator, found `%s`", ident.name, type_name(k.c, ctx),
+		)
+		return
+	}
+
+	element := values_info.element
+	comparator := context_info.element
+	name := intern_identifier(k.c, "call")
+	match := INVALID_SYMBOL
+	matches := 0
+	for candidate in method_candidates(k, comparator, name) {
+		sym := symbol_of(k.c, candidate)
+		if sym != nil && slot_matches(
+			k, sym,
+			[]Type_Id{comparator, element, element},
+			[]Param_Mode{.Borrow, .Value, .Value},
+			TYPE_BOOL, false,
+		) {
+			match = candidate
+			matches += 1
+		}
+	}
+	if matches != 1 {
+		errorf(
+			k.c, v.span, "L0651",
+			"`%s` must provide exactly one `call(self, left: %s, right: %s) -> bool` method for sorting",
+			type_name(k.c, comparator), type_name(k.c, element), type_name(k.c, element),
+		)
+		return
+	}
+
+	v.bound = bound_exprs(k, v.args[0].value, v.args[1].value)
+	v.operation = Call_Sort_By{comparator = match}
+	v.type = TYPE_VOID
+}

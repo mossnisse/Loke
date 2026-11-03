@@ -904,7 +904,7 @@ be file-private. Paths below are relative to `src/`.
 | `eval.odin`, `eval_memory.odin` | Bounded typed-AST interpreter for compile-time execution, and the storage its memory limit charges. |
 | `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |
-| `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
+| `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations, checking the runtime records the compiler writes against their declarations, and contributing compiler-owned standard members without duplicating type identity. |
 | `intrinsic.odin` | Binding each `@(intrinsic)` declaration to the member it describes, checking what it states, and reporting a public contribution nothing describes. |
 
 ### Ownership and memory safety

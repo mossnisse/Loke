@@ -1,0 +1,18 @@
+L0688
+@11:57
+an `unsafe.transmute` source type must be bitwise-copyable: `type` exists only during compilation
+L0688
+@12:57
+an `unsafe.transmute` source type must be bitwise-copyable: `type` exists only during compilation
+L0688
+@13:61
+an `unsafe.transmute` destination type must be bitwise-copyable: `type` exists only during compilation
+L0315
+@14:61
+unknown name `Undefined`
+L0315
+@15:47
+unknown name `Undefined`
+L0688
+@16:59
+`unsafe.transmute` names the destination type first

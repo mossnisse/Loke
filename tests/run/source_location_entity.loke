@@ -1,0 +1,33 @@
+// design.md "`source_location() or source_location(<entity>)`": an entity's
+// location describes its declaration, so `procedure` is that declaration's too,
+// never the procedure doing the asking.
+package main;
+
+import "core:fmt";
+
+greet :: proc() {}
+
+twice :: proc { greet, greet_named }
+greet_named :: proc(name: string) {}
+
+global: int = 1;
+
+report :: proc(parameter: int) {
+	local := parameter;
+	fmt.println(source_location().procedure);
+	fmt.println(source_location(local).procedure);
+	fmt.println(source_location(parameter).procedure);
+	fmt.println(source_location(greet).procedure);
+	fmt.println(source_location(twice).procedure);
+	fmt.println(source_location(global).procedure.len());
+
+	nested :: proc() {}
+	fmt.println(source_location(nested).procedure);
+	fmt.println(source_location(nested).line);
+	fmt.println(source_location(local).line);
+	fmt.println(source_location(global).line);
+}
+
+main :: proc() {
+	report(1);
+}

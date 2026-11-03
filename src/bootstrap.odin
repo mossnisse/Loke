@@ -4,6 +4,7 @@
 // declaration each rather than two that print the same.
 package lokec
 
+import "core:fmt"
 import "core:slice"
 
 
@@ -123,4 +124,130 @@ shared_constructor_payload :: proc(c: ^Compiler, v: ^Expr_Call) -> (payload: Exp
 		}
 	}
 	return nil, false
+}
+
+// ------------------------------------------------- declarations it must match --
+
+// A type declared by `base:runtime`, recorded for the emitter's metadata tables.
+// The runtime is loaded for every program, so a built-in producing one of its
+// types needs no import, as `Option` and `Result` need none (design.md
+// "`caller_location()`"). The compiler writes these records field by field and
+// their enums as numbers, so the declaration is checked against `layout` once:
+// a mismatch is reported and gives INVALID_TYPE, still `resolved`.
+runtime_type_named :: proc(k: ^Checker, name: string, layout: []Runtime_Field) -> (Type_Id, bool) {
+	if recorded, checked := k.c.runtime_types[name]; checked {
+		return recorded, true
+	}
+	runtime := standard_package(k.c, STD_RUNTIME)
+	// An unimported runtime has not been checked yet.
+	type, found := package_type_named(k, runtime, name)
+	if !found {
+		return INVALID_TYPE, false
+	}
+	if !runtime_layout_matches(k, type, layout) {
+		errorf(
+			k.c, symbol_of(k.c, package_symbol_named(k.c, runtime, name)).span, "L0704",
+			"`runtime.%s` does not have the layout the compiler writes: the same fields, in the same order, with the same types, and enum members in design.md's order",
+			name,
+		)
+		// A speculative check's diagnostic is rolled back, so only a real one
+		// may settle the answer.
+		if !committing(k.c) {
+			return INVALID_TYPE, true
+		}
+		type = INVALID_TYPE
+	}
+	k.c.runtime_types[name] = type
+	return type, true
+}
+
+// `base:runtime.Memory_Order`, found by name and cached. INVALID_TYPE when it is
+// missing or its members differ from the compiler's `Memory_Order`.
+memory_order_type :: proc(k: ^Checker) -> Type_Id {
+	if k.c.memory_order_type != INVALID_TYPE {
+		return k.c.memory_order_type
+	}
+	type, found := package_type_named(k, standard_package(k.c, STD_RUNTIME), "Memory_Order")
+	if !found || !runtime_enum_matches(k.c, type, Memory_Order) {
+		return INVALID_TYPE
+	}
+	k.c.memory_order_type = type
+	return type
+}
+
+// The public `Type_Kind` and `Member_Kind`, in the order `base:runtime`
+// declares them. The emitter writes their values as these indices.
+Runtime_Type_Kind :: enum {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
+}
+
+Runtime_Member_Kind :: enum { Field, Enum_Value, Union_Variant, Parameter, Result }
+
+Runtime_Field :: struct {
+	name, type: string,
+}
+
+SOURCE_CODE_LOCATION_LAYOUT := [?]Runtime_Field {
+	{"file", "string_view"}, {"procedure", "string_view"}, {"line", "int"}, {"column", "int"},
+}
+
+TYPE_INFO_LAYOUT := [?]Runtime_Field {
+	{"id", "typeid"}, {"kind", "Type_Kind"}, {"name", "string_view"}, {"size", "int"},
+	{"align", "int"}, {"bits", "int"}, {"signed", "bool"}, {"element", "typeid"},
+	{"key", "typeid"}, {"count", "int"}, {"members", "[]Member_Info"},
+}
+
+MEMBER_INFO_LAYOUT := [?]Runtime_Field {
+	{"kind", "Member_Kind"}, {"name", "string_view"}, {"type", "typeid"},
+	{"offset", "int"}, {"value_low", "u64"}, {"value_high", "u64"},
+}
+
+// Does a `base:runtime` enum declare exactly `E`'s members, by name, in order,
+// with each value its index? The compiler writes these values as numbers.
+@(private = "file")
+runtime_enum_matches :: proc(c: ^Compiler, type: Type_Id, $E: typeid) -> bool {
+	info := type_of(c, type)
+	if info == nil || info.kind != .Enum || len(info.fields) != len(E) {
+		return false
+	}
+	for member, index in info.fields {
+		sym := symbol_of(c, member)
+		value, fits := bi_to_i64(c, sym.const_value.integer)
+		if sym.name != intern_identifier(c, fmt.tprint(E(index))) || !fits || value != i64(index) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+runtime_layout_matches :: proc(k: ^Checker, type: Type_Id, layout: []Runtime_Field) -> bool {
+	c := k.c
+	info := type_of(c, type)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(layout) {
+		return false
+	}
+	for field, index in info.fields {
+		sym := symbol_of(c, field)
+		if identifier_text(c, sym.name) != layout[index].name || type_name(c, sym.type) != layout[index].type {
+			return false
+		}
+		if kind := type_of(c, sym.type); kind != nil && kind.kind == .Enum {
+			resolve_symbol_signature_in_place(k, kind.symbol)
+		}
+		switch layout[index].type {
+		case "Type_Kind":
+			if !runtime_enum_matches(c, sym.type, Runtime_Type_Kind) {
+				return false
+			}
+		case "Member_Kind":
+			if !runtime_enum_matches(c, sym.type, Runtime_Member_Kind) {
+				return false
+			}
+		}
+	}
+	return true
 }

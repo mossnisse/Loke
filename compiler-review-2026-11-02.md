@@ -81,7 +81,7 @@ seams and would be easier to work in if split, though that shortens nothing.
 
 4. **Five small independent fixes.** `.Box` in [container.odin:628](src/container.odin#L628) (BUG-container-2). Probe path that deletes the real output, [emit_llvm_toolchain.odin:209](src/emit_llvm_toolchain.odin#L209) (BUG-emit_llvm_toolchain-1). Split-receiver `dyn` slot, [erased.odin:671](src/erased.odin#L671) (BUG-erased-1). 1 to 2 lines each.
 
-6. **Valid unfixed arithmetic reaches clang, and `nil` operands crash.** `y: u8 = (1 if c() else 2) + 1` hits the "should not arise" arm at [check_expr.odin:3586](src/check_expr.odin#L3586); recurse as the conditional arm does. Route the nil cases ([box.odin:147](src/box.odin#L147), [check_builtin.odin:954](src/check_builtin.odin#L954) and five siblings) through one reporting helper. BUG-check_expr.part2-1, BUG-box-1, BUG-check_builtin-1. About 40 lines.
+6. **Valid unfixed arithmetic reaches clang, and `nil` operands crash.** `y: u8 = (1 if c() else 2) + 1` hits the "should not arise" arm at [check_expr.odin:3586](src/check_expr.odin#L3586); recurse as the conditional arm does. Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-check_expr.part2-1, BUG-box-1. About 40 lines.
 
 7. **Holes in `foreach` safety.** The `indexed()` counter and a per-step projected record are marked lent ([iterate.odin:856](src/iterate.odin#L856), [iterate.odin:990](src/iterate.odin#L990)), so `return &e` compiles; public iterator fields let safe code segfault ([iterate.odin:172](src/iterate.odin#L172)). BUG-iterate-1, -3, -2. About 25 lines.
 
@@ -136,13 +136,13 @@ Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Ele
 
 #### Built-in call opening and operands
 
-The arity report is written by hand at [check_builtin.odin:419](src/check_builtin.odin#L419), [check_builtin.odin:815](src/check_builtin.odin#L815), [check_builtin.odin:862](src/check_builtin.odin#L862), [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244), [simd.odin:427](src/simd.odin#L427) and [text.odin:273](src/text.odin#L273), and the fixed-count `L0322` form sits at [check_builtin.odin:99](src/check_builtin.odin#L99) and its siblings. `builtin_arguments_ok` ([check_builtin.odin:198](src/check_builtin.odin#L198)) is inlined at [atomics.odin:171](src/atomics.odin#L171) and [simd.odin:432](src/simd.odin#L432). A loop over fixed target types repeats at [check_builtin.odin:176](src/check_builtin.odin#L176), [text.odin:240](src/text.odin#L240) and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
+`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244), [simd.odin:427](src/simd.odin#L427) and [text.odin:273](src/text.odin#L273). A loop over fixed target types repeats at [check_builtin.odin:176](src/check_builtin.odin#L176), [text.odin:240](src/text.odin#L240) and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
 
 They differ in diagnostic code (`L0322`, `L0661`, `L0687`, `L0569`, `L0738`), and atomics reports every bad argument rather than the first.
 
-The operand path has the real divergence. `operand_type` ends with a nil-safe default ([check_builtin.odin:524](src/check_builtin.odin#L524)), but [check_builtin.odin:728](src/check_builtin.odin#L728), [check_builtin.odin:778](src/check_builtin.odin#L778), [check_builtin.odin:830](src/check_builtin.odin#L830), [check_builtin.odin:872](src/check_builtin.odin#L872), [check_builtin.odin:954](src/check_builtin.odin#L954), [check_builtin.odin:985](src/check_builtin.odin#L985) and [box.odin:147](src/box.odin#L147) call `default_type` directly, and `materialize` then fails silently on `INVALID_TYPE`.
+The operand path has the real divergence. `check_defaulted_operand` in `check_builtin.odin` reports `nil`, but [box.odin:147](src/box.odin#L147) calls `default_type` directly, and `materialize` then fails silently on `INVALID_TYPE`.
 
-Shared form: `builtin_shape_ok(k, v, ident, code, wanted)`, `bind_typed_arguments(k, v, targets)`, `check_allocator_argument(k, e)`, and one `materialize_default(k, e, name)` that reports nil. Saves about 80 lines and fixes BUG-box-1 and BUG-check_builtin-1.
+Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targets)`, `check_allocator_argument(k, e)`, and `check_defaulted_operand` shared with `box.odin`. Saves about 40 lines and fixes BUG-box-1.
 
 #### Failure writes that a default in `check_expr` would make unnecessary
 
@@ -315,7 +315,7 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - `is_package_selector(k, sel)` replaces [box.odin:206](src/box.odin#L206), [erased.odin:1080](src/erased.odin#L1080), [check.odin:1907](src/check.odin#L1907), [check_expr.odin:695](src/check_expr.odin#L695), [check_expr.odin:755](src/check_expr.odin#L755). About 15 lines.
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68) differ in one string; [box.odin:34](src/box.odin#L34) and [select.odin:293](src/select.odin#L293) in one enum. `predeclared_callee(k, callee, name)` and `callee_is_builtin` save about 25 lines.
 - A parameter's mode with the bounds test is written at 24 sites, for example [check_calls.odin:668](src/check_calls.odin#L668) and [emit_llvm_calls.odin:1423](src/emit_llvm_calls.odin#L1423), beside [semantic.odin:1339](src/semantic.odin#L1339) `proc_parameter_mode`. A `param_mode_at(info, index)` saves no lines but shortens every site.
-- `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `bind_one(k, v, e)`. About 30 lines.
+- `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
 - Copy cost then copy classification: `classify_copy_cost` at [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721) follows the same arguments' `classify_copy`. One wrapper, about 8 lines.
 - Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), [container.odin:723](src/container.odin#L723), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
 - Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373), [attributes.odin:473](src/attributes.odin#L473) and [borrow.odin:639](src/borrow.odin#L639) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
@@ -326,7 +326,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- Constant reinterpretation ([check_builtin.odin:1096](src/check_builtin.odin#L1096) to `const_from_storage`, also called from [eval.odin:3019](src/eval.odin#L3019)) belongs in `const_ops.odin`; runtime type binding ([check_builtin.odin:1489](src/check_builtin.odin#L1489), [check_builtin.odin:1562](src/check_builtin.odin#L1562)) in `bootstrap.odin`, with [atomics.odin:49](src/atomics.odin#L49) `runtime_enum_matches`, whose other callers are [check_builtin.odin:1588](src/check_builtin.odin#L1588) and [check_builtin.odin:1592](src/check_builtin.odin#L1592).
 - Equality helpers are in the hash file: [hash.odin:258](src/hash.odin#L258) to line 339 belongs near `type_is_comparable` in `semantic.odin`.
 - Argument binding is in the overload file: [overload.odin:876](src/overload.odin#L876) to line 1023 belongs in `check_calls.odin`.
 - Interface logic is in the erasure file: [erased.odin:402](src/erased.odin#L402) `interface_scope`, [erased.odin:620](src/erased.odin#L620) `composed_interface_of` and [erased.odin:722](src/erased.odin#L722) `interface_slots` belong in `interface.odin`, and [erased.odin:1075](src/erased.odin#L1075) `check_as_call` in `union.odin`.
@@ -813,7 +812,7 @@ Small and readable, with no dead code and no algorithmic concerns. The untyped-p
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68): `box_type_callee`, `simd_callee` and `range_callee` differ only in the name. Shared form: `predeclared_type_callee(k, callee, "Box")`. (about 12 lines)
 - [box.odin:206](src/box.odin#L206) and [erased.odin:1080](src/erased.odin#L1080): the same five-line "operand is a package alias" guard, before the same `check_single_expr(k, sel.operand)`. Shared form: `selector_on_package(k, sel)`.
 - [box.odin:164](src/box.odin#L164) and [check_builtin.odin:586](src/check_builtin.odin#L586): the same optional allocator check with the same L0490 text. Shared form: `check_allocator_argument(k, e) -> bool`. (about 8 lines)
-- [box.odin:226](src/box.odin#L226) and [check_builtin.odin:748](src/check_builtin.odin#L748): the three-line one-element `v.bound` also appears at check_builtin.odin:790, 962, 1477, erased.odin:1014, lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bind_one(k, v, e)`. (about 12 lines)
+- [box.odin:226](src/box.odin#L226): the three-line one-element `v.bound` also appears at erased.odin:1014, lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bound_exprs(k, e)`, from `check_builtin.odin`. (about 12 lines)
 - [box.odin:97](src/box.odin#L97) and [check_calls.odin:561](src/check_calls.odin#L561): the "one positional value" test is repeated at check_calls.odin:947, enums.odin:32 and lifecycle.odin:25, 47. Shared form: `has_one_plain_argument(v)`.
 
 **Structure and boundaries**
@@ -1303,96 +1302,11 @@ Declaration, procedure and statement checking is sound and its comments are most
 
 ### src/check_builtin.odin
 
-The per-built-in rules are readable, but one prologue and one operand pattern are copied through about fifteen procedures, and a `nil` operand slips through one of those copies and crashes the backend. The file also holds about 280 lines that belong to other owners. Bugs below were reproduced with the `lokec.exe` built from this commit.
-
-**Bugs**
-
-- `BUG-check_builtin-1` **high** [check_builtin.odin:954](src/check_builtin.odin#L954) `check_bit_operand`: `default_type(nil)` is `INVALID_TYPE` and `materialize` then returns false silently, so the call is invalid with no diagnostic. Same at lines 728, 778, 830, 872, 985. *Confirmed: Reproduced: count_ones, reverse_bits, rotate_left, math.wrap and unsafe.transmute on nil each make lokec crash with 'Index 0 is out of range' (emit_llvm_calls/expr), exit 127, no diagnostic. Invalid input only, so medium rather than high.*
-  Scenario: `a := math.count_ones(nil);`, also `rotate_left`, `reverse_bits`, `math.wrap(u8, nil)`, `unsafe.transmute(rawptr, nil)`: lokec dies with "Index 0 is out of range" in emit_llvm_calls.odin or emit_llvm_expr.odin.
-  Fix: report nil in one shared operand helper, as `operand_type` does at line 526.
-- `BUG-check_builtin-2` **medium** [check_builtin.odin:727](src/check_builtin.odin#L727) `check_transmute_builtin`: the source gets no `gate_type` or compile-time-only check, so a type expression passes as a value of `type`, size 0. *Confirmed: Reproduced: `unsafe.transmute(E, int)` with empty `E` builds and runs, and `(u64, int)` reports `type` is 0 bytes, though design.md wants a value as source. Severity is low: it accepts an invalid program, but only for a zero-size target, so nothing is misread.*
-  Scenario: `E :: struct {}` with `unsafe.transmute(E, int)` builds; `unsafe.transmute(u64, int)` says "`type` is 0 bytes".
-  Fix: reject compile-time-only types in `transmute_side_ok`, which already serves both sides.
-- `BUG-check_builtin-3` **medium** [check_builtin.odin:378](src/check_builtin.odin#L378) `check_config`: an enum default has constant kind `.Integer`, so an integer override only has to fit the width, and design.md "Invalid representations" says checked code never makes a non-member. *Confirmed: Reproduced: -define:N=99 with `enum u8 {red, green}` builds, int(C) prints 99, static_asserts C != red and C != green pass, and the switch runs `red`. design.md "Enumerations" says every value names a variant, and Color(99) is L0410. Not recorded in known-gaps.*
-  Scenario: `C :: build_config(N, Color.red)` with `-define:N=99` and `enum u8 {red, green}` builds and `int(C)` prints 99.
-  Fix: refuse an enum default, or require `enum_member_by_value` for the override.
-- `BUG-check_builtin-4` **medium** [check_builtin.odin:618](src/check_builtin.odin#L618) `check_make_builtin`: `builtin_arguments_ok` rejects a named allocator, yet the example at design.md line 4962 writes `try_make([dynamic]u8, allocator=my_allocator)`. *Confirmed: Probe of the design.md "Owners and drop" example `try_make([dynamic]u8, allocator=my_allocator)` gives L0371; the positional form compiles. No spec text, gap or comment makes built-ins positional-only. Severity is low: a positional workaround exists.*
-  Scenario: `make([dynamic]u8, allocator=mem.default_allocator())` gives L0371.
-  Fix: accept `allocator=` in `make`, or settle the example deliberately in the spec; the spec wins until then.
-- `BUG-check_builtin-5` **low** [check_builtin.odin:1375](src/check_builtin.odin#L1375) `source_location_const`: `procedure` is always the enclosing procedure, even when `span` is another entity's declaration, so one location mixes two places. *Not verified.*
-  Scenario: `source_location(greet)` in `main` answers `greet`'s line with `procedure` = `main`.
-  Fix: take the procedure name from the entity when one is named (`greet`, or a local's own procedure).
-- `BUG-check_builtin-6` **low** [check_builtin.odin:1400](src/check_builtin.odin#L1400) `entity_declaration_span`: any symbol is accepted, though design.md "`source_location() or source_location(<entity>)`" names variables and procedures and "`caller_location()`" says line and column are one-based. *Not verified.*
-  Scenario: `source_location(int)` gives file `""`, line 0; `source_location(fmt)` gives the import's line.
-  Fix: accept variables and procedures only, using the existing "takes a declared name" error.
-- `BUG-check_builtin-7` **low** [check_builtin.odin:716](src/check_builtin.odin#L716) `check_transmute_builtin`, and line 772 `check_wrap_builtin`: broken type syntax reports twice, the case `operand_type` guards with `error_count` at line 506. *Not verified.*
-  Scenario: `unsafe.transmute([Undefined]int, x)` gives L0688 "names the destination type first" plus L0315.
-  Fix: report L0688 or L0712 only when `error_count` did not move.
-- `BUG-check_builtin-8` **low** [check_builtin.odin:663](src/check_builtin.odin#L663) `check_make_builtin`: when `materialize` fails it has already reported, and the same `if` reports again. *Not verified.*
-  Scenario: `make([dynamic]int, 1.5)` gives L0353 plus L0579; `make([dynamic]int, nil)` gives L0310 plus L0579.
-  Fix: return on `!materialize`, then test the type in a separate `if`.
-- `BUG-check_builtin-9` **low** [check_builtin.odin:663](src/check_builtin.odin#L663) `check_make_builtin`: `type_underlying(...) != TYPE_INT` lets a distinct integer through, while the message says "is an `int`" and `check_rotate_builtin` (line 997) refuses the same type. *Not verified.*
-  Scenario: `Count :: distinct int; make([dynamic]int, Count(3))` builds.
-  Fix: compare with `TYPE_INT` directly.
-
-**Simplification**
-
-- [check_builtin.odin:98](src/check_builtin.odin#L98) `check_slice_sort_by`: this arity-then-`builtin_arguments_ok` prologue recurs at lines 414, 474, 813, 861, 945, 976. Use `builtin_arity_ok(k, v, ident, code, wanted) -> bool`, which sets `v.type` to invalid and picks the plural. (about 40 lines)
-- [check_builtin.odin:727](src/check_builtin.odin#L727) `check_transmute_builtin`: check, default, re-read the type is written six times (lines 727, 777, 829, 871, 953, 984). Use `check_defaulted_operand(k, e) -> (Type_Id, bool)`, the single place that fixes bug 1. (about 15 lines)
-- [check_builtin.odin:984](src/check_builtin.odin#L984) `check_rotate_builtin`: lines 984-992 repeat `check_bit_operand` lines 953-961, message included. Split out `check_integer_operand(k, e, ident)` for both. (about 8 lines)
-- [check_builtin.odin:809](src/check_builtin.odin#L809) `check_fma_builtin`: its three-operand path is `check_float_instruction_builtin` with `wanted = 3`. Pass `kind`, replacing `ident.name == "mod_instruction"` at line 860, and leave `fma_is_instruction` a two-line arm. (about 25 lines)
-- [check_builtin.odin:1313](src/check_builtin.odin#L1313) `check_location`: it and `check_type_info_of` and `check_allocation_builtin` repeat `v.type = INVALID_TYPE` before each return. Set it once at the top, as the rest of the file does. (about 18 lines)
-- [check_builtin.odin:537](src/check_builtin.odin#L537) `check_allocation_builtin`: drop `kind := written`. Both switch arms end with the same `append` and `v.type = TYPE_VOID`, so move those after the switch and let `v.bound` be a fixed `make([]Expr, len(v.args))`. (about 8 lines)
-- [check_builtin.odin:640](src/check_builtin.odin#L640) `check_make_builtin`: allocate `bound` before the loop and fill it with a running count; the `counts` dynamic array and the copy loop at lines 679-681 then go. (about 5 lines)
-- [check_builtin.odin:1449](src/check_builtin.odin#L1449) `check_type_info_of`: test `!resolved || !members_resolved` first, then `record == INVALID_TYPE || members == INVALID_TYPE`; the compound `resolved && members_resolved && (...)` goes. (about 2 lines)
-- [check_builtin.odin:1489](src/check_builtin.odin#L1489) `runtime_type_named`: read the `runtime_types` cache first. Lines 1495-1503 then look the symbol up once, and `continue` becomes a return, since one package has this key. (about 8 lines)
-- [check_builtin.odin:1569](src/check_builtin.odin#L1569) `runtime_layout_matches`: have callers pass the layout table instead of mapping `name` back to it through a string switch with no default. (about 5 lines)
-- [check_builtin.odin:1395](src/check_builtin.odin#L1395) `entity_declaration_span`: report "takes a declared name" inside it and return `(span, ok)`; the `found`/`refused` pair and two branches at lines 1343-1351 go. (about 8 lines)
-- [check_builtin.odin:1174](src/check_builtin.odin#L1174) `store_integer`: always returns true. Make it void and write `store_integer(...); return true` only where needed. (about 3 lines)
-- [check_builtin.odin:748](src/check_builtin.odin#L748) `check_transmute_builtin`: the three lines `make`, assign, `v.bound =` also appear at 790, 962, 1004, 1477 and in several other files. A variadic `bound_exprs(k, a, b)` replaces them. (about 8 lines here)
-
-**Dead code**
-
-- (branch) [check_builtin.odin:96](src/check_builtin.odin#L96): `v.value_category = .Value` here and at lines 163, 286, 331, 612, 702, 759, 810, 858, 943, 974, 1314, 1435 never changes anything: `check_call` sets it at check_calls.odin:36, before both calls to `check_builtin_call`.
-- (branch) [check_builtin.odin:431](src/check_builtin.odin#L431): `v.bound = nil`, also line 82: neither path ever sets `v.bound`, and nothing does before the dispatch, so it is already nil.
-- (branch) [check_builtin.odin:501](src/check_builtin.odin#L501): `e == nil` is unreachable, since the parser fills every argument with `parse_expr` or `parse_argument_value`. The `base != nil` guards at lines 299, 1059, 1257 are likewise dead for `check_*` operands.
-- (branch) [check_builtin.odin:1566](src/check_builtin.odin#L1566): the second `resolve_symbol_signature_in_place` is redundant: the only caller, `runtime_type_named`, did it at line 1498 for the same symbol.
-
-**Data structures and algorithms**
-
-- [check_builtin.odin:1174](src/check_builtin.odin#L1174) `store_integer` and `const_from_storage` (line 1198) make several `Big_Int`s per byte in the semantic arena, and eval.odin:3019 passes `ev.k.c`, so this bypasses the evaluator's memory limit. It grows with bytes transmuted across a compile-time loop or table. Go through `u64` for scalars up to 8 bytes.
-
 **Near copies**
 
-- [check_builtin.odin:1489](src/check_builtin.odin#L1489), [atomics.odin:19](src/atomics.odin#L19) and [format.odin:12](src/format.odin#L12): each scans `packages` for one key and resolves a type by name; [format.odin:277](src/format.odin#L277) `package_type_named` already does the second half. Add `package_with_key(c, key)` and use it in all three.
 - [check_builtin.odin:175](src/check_builtin.odin#L175), [text.odin:241](src/text.odin#L241) and [format.odin:258](src/format.odin#L258): the same loop over fixed target types with `check_argument_value`. Shared form: `bind_typed_arguments(k, v, targets) -> bool`, which sets `v.bound`.
 - [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164), with a variant at line 570: check against `TYPE_ALLOCATOR` and report "an allocator argument is an `Allocator`". Shared form: `check_allocator_argument(k, e) -> bool`; line 570 keeps its own wording only if tests pin it.
-- [check_builtin.odin:199](src/check_builtin.odin#L199) and [simd.odin:432](src/simd.odin#L432): simd's loop is `builtin_arguments_ok` inlined, so call it.
-- [check_builtin.odin:1146](src/check_builtin.odin#L1146) and [check_builtin.odin:1226](src/check_builtin.odin#L1226): `const_storage` and `const_from_storage` both work out a member's type and byte range and refuse an `initialized_by` field. Shared form: `storage_member(c, type, info, index) -> (member, at, end, ok)`.
 - [check_builtin.odin:1378](src/check_builtin.odin#L1378), [check_builtin.odin:1246](src/check_builtin.odin#L1246) and [reflect.odin:308](src/reflect.odin#L308): `new(Const_Aggregate)` plus two field writes, in 15 sites across 9 files. Shared form: `aggregate_const(c, type, elements)`; it would also settle why only some sites set `type_value`.
-
-**Structure and boundaries**
-
-- [check_builtin.odin:1083](src/check_builtin.odin#L1083): `Const_Pattern`, `transmute_const`, `const_storage`, `store_integer` and `const_from_storage` (about 170 lines) are constant reinterpretation that eval.odin:3019 also calls. They belong in `const_ops.odin`, beside `bit_count` and `rotate_const`.
-- [check_builtin.odin:1489](src/check_builtin.odin#L1489): `runtime_type_named` and the layout tables (about 110 lines) bind `base:runtime` declarations, not built-in calls. Move them to `bootstrap.odin`, with `memory_order_type` and `runtime_enum_matches` from atomics.odin.
-- [check_builtin.odin:1263](src/check_builtin.odin#L1263): `allocation_builtin` is used by box.odin and the emitter, never in this file. It belongs in `box.odin`, or beside `Builtin_Kind` in semantic.odin, whose comment already refers to it.
-- [check_builtin.odin:611](src/check_builtin.odin#L611): `check_make_builtin`, `is_constant_zero` and `check_slice_sort_by` are container rules. `check_box_builtin`, `check_simd_builtin` and `check_atomic_builtin` live with their owners, so these fit `container.odin`.
-- [check_builtin.odin:1313](src/check_builtin.odin#L1313): `check_location`, `check_type_info_of` (line 1434) and `wrap_operands_ok` (line 1016) are used only here, so "Source-code map" says they should be `@(private = "file")`.
-- [check_builtin.odin:1294](src/check_builtin.odin#L1294): helpers sit far from their only callers: `check_message_arg` (for line 212), `check_free_operand` at 1279 (for 536), `is_constant_zero` at 1255 (for 611), `wrap_operands_ok` at 1016 (for 758). Put each after its built-in.
-
-**Comments**
-
-- [check_builtin.odin:1070](src/check_builtin.odin#L1070): wrong: "a non-rune" never happens, because line 1212 says every 32-bit pattern is a `rune`. Write: "A `bool` outside {0, 1}, or an enum with no such member."
-- [check_builtin.odin:1485](src/check_builtin.odin#L1485): "(design.md)" names no heading and the line runs far past the wrap. Cite design.md "`caller_location()`", and likewise give line 309's bare "design.md:" its exact heading.
-- [check_builtin.odin:887](src/check_builtin.odin#L887): restates the checks below. Keep: "The count is an `int` whatever the operand's width, as a length is. A vector is refused: the lane-wise forms are not specified."
-- [check_builtin.odin:906](src/check_builtin.odin#L906): keep only: "A constant `next_power_of_two` that does not fit is design.md "Integer overflow"'s compile-time diagnostic. An `Option` is not a constant, so the checked form folds only by evaluation."
-- [check_builtin.odin:938](src/check_builtin.odin#L938): shorten to "The call stays invalid until the caller sets its result type."
-- [check_builtin.odin:968](src/check_builtin.odin#L968): delete; it restates the checks, and the modulo rule lives with `rotate_const`.
-- [check_builtin.odin:854](src/check_builtin.odin#L854): delete; it restates what the `wanted` line and the error message say.
-- [check_builtin.odin:1496](src/check_builtin.odin#L1496): obscure. Write: "An unimported runtime has not been checked yet."
-- [check_builtin.odin:1564](src/check_builtin.odin#L1564): delete with the redundant call below it.
-- [check_builtin.odin:430](src/check_builtin.odin#L430): delete with the dead `v.bound = nil`.
-- [check_builtin.odin:197](src/check_builtin.odin#L197): delete; the name and the body say it. (about 25 comment lines across the file)
 
 ### src/check_calls.odin
 
@@ -2662,9 +2576,8 @@ Small and readable, with no dead procedures. `ensure_format_member` lets a `wher
 
 **Near copies**
 
-- [format.odin:281](src/format.odin#L281), [atomics.odin:28](src/atomics.odin#L28) and [check_builtin.odin:1495](src/check_builtin.odin#L1495): the same name lookup, kind test and in-place signature resolve. The last two can call `package_type_named` and keep only their own checks.
 - [format.odin:184](src/format.odin#L184), [hooks.odin:559](src/hooks.odin#L559) and [global_effects.odin:1658](src/global_effects.odin#L1658): three tests for "this `dyn` is printing's", the first by name and the others by the recorded view. Share one predicate on the interface symbol; the name form also works while `core:fmt` is being checked.
-- [format.odin:241](src/format.odin#L241), [check_builtin.odin:419](src/check_builtin.odin#L419), [atomics.odin:164](src/atomics.odin#L164), [simd.odin:427](src/simd.odin#L427) and [text.odin:273](src/text.odin#L273): the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
+- [format.odin:241](src/format.odin#L241), [atomics.odin:164](src/atomics.odin#L164), [simd.odin:427](src/simd.odin#L427) and [text.odin:273](src/text.odin#L273): the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
 
 **Structure and boundaries**
 
@@ -4330,7 +4243,6 @@ Readable and well scoped, with no dead symbols, but `check_simd_binary` skips op
 
 **Simplification**
 
-- [simd.odin:432](src/simd.odin#L432) `check_simd_builtin`: the argument-shape loop is `builtin_arguments_ok` ([check_builtin.odin:198](src/check_builtin.odin#L198)); write `if !builtin_arguments_ok(k, v) { return }`. (about 4 lines)
 - [simd.odin:177](src/simd.odin#L177) `check_simd_index`: the `through_pointer` block is `inherit_capability` ([check_expr.odin:991](src/check_expr.odin#L991)) with the same assignments; drop its file-private marking and call it. (about 6 lines)
 - [simd.odin:576](src/simd.odin#L576) `simd_written_fold`: lines 576-593 become `enum_member_by_value` ([check.odin:4497](src/check.odin#L4497)) for the name, then `reflect.enum_from_name(Simd_Fold, name)` for the fold. (about 14 lines)
 - [simd.odin:438](src/simd.odin#L438) `check_simd_builtin`: the `[dynamic]Expr` threaded through three procedures only ever holds `args[0]`, or all three for select; build the slice once after the switch and drop the `bound` parameters. (about 6 lines)

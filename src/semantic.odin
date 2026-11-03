@@ -586,6 +586,21 @@ Builtin_Kind :: enum {
 	Atomic_Fence,
 }
 
+// design.md "Allocation failure": `try_new`, `try_new_clone`, and `try_make`
+// are `new`, `new_clone`, and `make` returning the error instead of following
+// the allocator's policy.
+allocation_builtin :: proc(kind: Builtin_Kind) -> (base: Builtin_Kind, fallible: bool) {
+	#partial switch kind {
+	case .Try_Box:
+		return .Box_New, true
+	case .Unsafe_Try_New:
+		return .Unsafe_New, true
+	case .Try_Make:
+		return .Make, true
+	}
+	return kind, false
+}
+
 // What a non-owning binding views. `.None` is an ordinary owning binding.
 Borrowed_Binding :: enum u8 {
 	None,

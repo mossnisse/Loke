@@ -321,6 +321,31 @@ bi_wrap :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> Big_In
 	return low
 }
 
+// `v`'s two's-complement pattern as a `bits`-wide integer, which no integer type
+// wider than 128 bits has. Builds nothing.
+bi_pattern :: proc(v: Big_Int, bits: int) -> u128 {
+	magnitude: u128
+	for index := v.used - 1; index >= 0; index -= 1 {
+		magnitude = magnitude << big._DIGIT_BITS | u128(v.digit[index])
+	}
+	pattern := v.sign == .Negative ? -magnitude : magnitude
+	return bits >= 128 ? pattern : pattern & (u128(1) << uint(bits) - 1)
+}
+
+// The value a `bits`-wide two's-complement pattern holds.
+bi_from_pattern :: proc(c: Value_Storage, pattern: u128, bits: int, signed: bool) -> Big_Int {
+	context.allocator = arena(c)
+	r: Big_Int
+	if signed {
+		shift := uint(128 - bits)
+		big.int_set_from_integer(&r, i128(pattern << shift) >> shift)
+	} else {
+		big.int_set_from_integer(&r, pattern)
+	}
+	bi_settle(c, &r)
+	return r
+}
+
 // A machine integer, or `ok == false` when out of range.
 bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
 	if !bi_fits(c, v, 64, true) {

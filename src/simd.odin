@@ -429,11 +429,8 @@ check_simd_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind:
 		)
 		return
 	}
-	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			return
-		}
+	if !builtin_arguments_ok(k, v) {
+		return
 	}
 	bound := make([dynamic]Expr, 0, wanted, k.c.semantic_allocator)
 	#partial switch kind {

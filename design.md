@@ -10388,7 +10388,8 @@ what it names. An assertion in an unselected `when` branch is not checked.
 ### `build_config(<identifier>, default)`
 
 Returns the configured value for an identifier, or `default` when none is
-provided. The configured value must have the same type as the default.
+provided. The configured value must have the same type as the default; for an
+enum default, that is an integer naming one of its variants.
 
 ### `source_location() or source_location(<entity>)`
 

@@ -12,25 +12,6 @@ Memory_Order :: enum {
 	Sequentially_Consistent,
 }
 
-// `base:runtime.Memory_Order`, found by name and cached. INVALID_TYPE when it is
-// missing or its members differ from the compiler's copy above.
-memory_order_type :: proc(k: ^Checker) -> Type_Id {
-	if k.c.memory_order_type != INVALID_TYPE {
-		return k.c.memory_order_type
-	}
-	symbol_id := package_symbol_named(k.c, standard_package(k.c, STD_RUNTIME), "Memory_Order")
-	if sym := symbol_of(k.c, symbol_id); sym != nil && sym.kind == .Type {
-		resolve_symbol_signature_in_place(k, symbol_id)
-		type := symbol_of(k.c, symbol_id).type
-		if !runtime_enum_matches(k.c, type, Memory_Order) {
-			return INVALID_TYPE
-		}
-		k.c.memory_order_type = type
-		return type
-	}
-	return INVALID_TYPE
-}
-
 // The width one operation runs at, in bits, or 0 for a type that is not atomic.
 // A `bool` is one byte of storage. No floats: an atomic float would promise
 // arithmetic it lacks.

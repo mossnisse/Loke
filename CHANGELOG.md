@@ -25,6 +25,15 @@ checklist.
   `L0500`, as it is at an exit ([defer statement](design.md#defer-statement)). It compiled, and read
   a moved or unset value during the unwind. Upgrade by giving the local its value before the
   `defer`.
+- `source_location(<entity>)` takes a variable or a procedure, as
+  [its section](design.md#source_location-or-source_locationentity) says; naming a type, a
+  constant, a package, or a built-in is now `L0573`. Upgrade by naming a variable or a procedure.
+- A `make` length, capacity, or reservation is an `int`, so a distinct integer is now `L0579`.
+  Upgrade by converting it: `make([dynamic]int, int(count))`.
+- `unsafe.transmute` of a type written where the value goes is now `L0688`, where an empty target
+  type accepted it as a zero-sized value. Upgrade by passing a value.
+- `-define` of an integer that names no variant of a `build_config`'s enum default is now `L0388`,
+  rather than making a value that is no member of the enum. Upgrade by passing a variant's value.
 - `f16` at a foreign boundary, directly or as a record's field, is now `L0619`: the Win64 C ABI
   does not classify it ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)). Upgrade by
   passing an `f32`, or by passing a `^f16`.
@@ -1312,6 +1321,18 @@ checklist.
 - A default argument can select from a parameter to its left, as `x: int = a.n`, whichever way that
   parameter passes. It used to fail in clang with `L0403`, or read the enclosing call's `a` in a
   recursive procedure.
+- `math.count_ones(nil)`, the other bit counts and values, `math.rotate_left(nil, 1)`,
+  `math.wrap(T, nil)`, and `unsafe.transmute(T, nil)` report `L0310`. They used to crash the compiler
+  with no diagnostic.
+- `try_make([dynamic]u8, allocator=my_allocator)`, as [Owners and drop](design.md#owners-and-drop)
+  writes it, compiles: `make` and `try_make` take their allocator by name, and no other argument.
+- `source_location(greet).procedure` is `greet`, and a variable's is the procedure declaring it,
+  empty for a global. It used to be the procedure asking, beside the line of another declaration.
+- A broken destination type in `unsafe.transmute` or `math.wrap`, and a `make` length that does not
+  convert to `int`, report once rather than twice.
+- A compile-time `unsafe.transmute` counts what it builds against the evaluator's memory limit, and
+  builds one integer per scalar rather than several per byte: a compile-time loop over a 4 KB array
+  peaks at 26 MB rather than 109 MB.
 - A distinct type over a union stores its variants as the union does. Its tag used to overwrite the
   payload, so `D.a(9)` read back as `.a(0)` and a reference payload was corrupted. `==` on such a
   type now compiles rather than failing in clang, and a constant comparison tells two variants with
