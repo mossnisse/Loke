@@ -131,7 +131,6 @@ prov_freeze_input :: proc(graph: ^Flow_Graph) {
 		graph.expansion = graph.input.values[index].expansion
 		_ = prov_value_transfer(graph, Value_Id(index))
 	}
-	graph.input.frozen = true
 }
 
 @(private = "file")

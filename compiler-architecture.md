@@ -171,7 +171,7 @@ checked AST + settled lifecycle annotations
 
 | File | Input it owns |
 | --- | --- |
-| [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
+| [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical places (`Prov_Place`). |
 | [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
 | [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
 | [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: parameter modes, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
@@ -202,7 +202,7 @@ Keep these phase rules:
 - **Replay reads only recorded input.** Freezing describes every value's
   transfer, then fixes the tables. `prov_writable_input` asserts that no fact
   replay or materialization adds a value, storage, call input, copy operation,
-  or transfer; only a finished graph's later query takes a private copy first.
+  or transfer; a finished graph's later query may still add one.
   Fact operations (declarations, stores, borrowed bindings, provider transfers,
   call results and writes, and target invalidation) each record their values,
   paths, block, and defer expansion, and a high-level operation owns the nested

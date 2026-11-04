@@ -169,9 +169,8 @@ prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
 // standard-library.md "Splitting a mutable slice".
-// Keyed by the call node alone, as its capture is (`prov_input_capture`).
 prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input {
-	key := Prov_Input_Key{node = &call.base, expansion = graph.expansion}
+	key := Prov_Call_Key{&call.base, graph.expansion}
 	if input, found := graph.input.calls[key]; found { return input }
 	prov_writable_input(graph)
 	c := graph.k.c

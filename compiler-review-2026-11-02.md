@@ -764,52 +764,13 @@ What remains here waits on a helper shared across files.
 
 - [provenance_form.odin:111](src/provenance_form.odin#L111), [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [:10017](src/cfg_provenance.odin#L10017), [emit_llvm_stmt.odin:264](src/emit_llvm_stmt.odin#L264): each keeps `next_element`/`next_spread` to pick the next pack operand. Shared form in `ast.odin`: `call_pack_next(call, is_spread, &cursor) -> Expr`, about 6 lines off each of the first two.
 
-### src/provenance_input.odin
-
-Compact and well ordered, with no bug found. The weight is in two mechanisms that outlive their need: a deep copy-on-write of the whole input, and a `places` map that repeats what each value already records.
-
-**Simplification**
-
-- [provenance_input.odin:93](src/provenance_input.odin#L93) `prov_writable_input`: production reads `program.input` only during `build_provenance_replay`; only tests read the program it returns, and the `weight == 0` path already lets a finished graph write it directly. Clear `frozen` as the build returns, or reduce this to the assert; drop `seed` and `prov_clone_transfer`. `normalization_parameter_seed` and two test checks need adjusting. (about 60 lines)
-- [provenance_input.odin:120](src/provenance_input.odin#L120) `new_prov_input`: if the copy stays, it can be shallow. Seed and copy share the analysis arena, no recorded path is written in place, and `Prov_Value.form` slices are already shared at L122. Keep the map loops; drop the clones at L123, L125-129, L130, L132 and L134. (about 45 lines)
-- [provenance_input.odin:75](src/provenance_input.odin#L75) `Prov_Input.alloc`: its one reader is `strings.clone(name, graph.input.alloc)` at [cfg_provenance.odin:6808](src/cfg_provenance.odin#L6808), where it equals `graph.alloc`, which already holds `name`; replay asserts first. Store `name` and delete the field and L104. (about 3 lines)
-- [provenance_input.odin:242](src/provenance_input.odin#L242) `prov_input_key`: its only caller is `prov_input_place`; build the key there, or lose both with the `places` change below. (about 6 lines)
-
-**Dead code**
-
-- `Prov_Place.type` ([provenance_input.odin:35](src/provenance_input.odin#L35)): written at L304, L305 and L309; no production code reads it, only the check at [provenance_normalization_test.odin:460](src/provenance_normalization_test.odin#L460). Removing it also frees `prov_place_as` from `key.repr` and makes L305 `return {}`.
-- (branch) [provenance_input.odin:208](src/provenance_input.odin#L208): `graph.prov != nil && base != nil` is redundant. A Lifecycle graph never pushes onto `converting`, and all three push sites pass real nodes. Replace L208-212 with `#reverse for open in graph.converting { if open.node == base { return open.repr } }`.
-- (branch) [provenance_input.odin:358](src/provenance_input.odin#L358): `.String_View, .CString_View` never reach a built-in `Expr_Index`. `check_index` rejects a view with L0563 and a C string with L0362; a user operator already returned at L342. The same labels at [cfg_provenance.odin:6508](src/cfg_provenance.odin#L6508) go too.
-- (branch) [provenance_input.odin:354](src/provenance_input.odin#L354): `info != nil` always holds, since `underlying_kind` just returned `.Pointer`. Use `path := prov_index_path_in(graph, v, underlying_info(c, operand).element)`.
-- (branch) [provenance_input.odin:342](src/provenance_input.odin#L342): `v.operand == nil` cannot hold; the parser ([parser.odin:2564](src/parser.odin#L2564)) and `lowered_index` ([check.odin:3915](src/check.odin#L3915)) always set it, and the sibling case at L334 has no such check.
-
-**Data structures and algorithms**
-
-- [provenance_input.odin:81](src/provenance_input.odin#L81) `places`: repeats `Prov_Value.place` under the same key, and every non-identifier value hashes it once more, even a call that has no place. Let `prov_input_place` return `prov_value(graph, prov_input_value(graph, e)).place` and fold `prov_place_as` into `prov_describe_place`. Caveat: a replay query of a value never interned would now assert. (about 20 lines)
-- [provenance_input.odin:84](src/provenance_input.odin#L84) `calls`: keyed by the 72-byte `Prov_Input_Key`, but [provenance_call.odin:237](src/provenance_call.odin#L237) always leaves `repr` zero and `capture` false, so only node and expansion (24 bytes) vary. A smaller key, with captures in their own map, drops `capture` from L66 and cuts hashing on each call lookup.
-
-**Near copies**
-
-- [provenance_input.odin:358](src/provenance_input.odin#L358) and [cfg_provenance.odin:6508](src/cfg_provenance.odin#L6508): one kind list, where this site prepends a wildcard step for an element behind a view and `prov_place_hops` strips it again. Nothing ties the two together; a shared predicate such as `type_indexes_through_view` would.
-
-**Structure and boundaries**
-
-- [provenance_input.odin:254](src/provenance_input.odin#L254) `prov_intern_value`: `expansion` and `graph.expansion` are two sources for one fact. `prov_describe_form` uses the parameter, but `prov_describe_place` (via `prov_input_value`, L325) and `prov_storage_id` (L143) use the graph, so a mismatch caches a place under one expansion with operands from another. Assert equality and drop the parameter from the form helpers, or thread it through.
-- [provenance_input.odin:348](src/provenance_input.odin#L348): the syntax-to-path helpers this walk needs (`prov_field_step`, `prov_index_path`, `prov_index_path_in`, `prov_map_entry_step`, about [cfg_provenance.odin:6445](src/cfg_provenance.odin#L6445) and [6770](src/cfg_provenance.odin#L6770)) live in `cfg_provenance.odin`, and the latter writes `map_key_entries` directly. They belong here with the table they fill.
-
-**Comments**
-
-- [provenance_input.odin:9](src/provenance_input.odin#L9): L9-10 and L14-15 both explain zero, and L14-15 sits on `Written_Storage` though it is about the IDs. Merge above `Storage_Id`: "Body-local identities in `Prov_Input`; zero is unresolved storage or no value. Keys, not IDs, correspond across rebuilds." (about 2 lines)
-- [provenance_input.odin:99](src/provenance_input.odin#L99): L99-101 repeat L90-92, and "The copy owns its slices" is untrue of `Prov_Value.form`, shared at L122. Replace with: "`seed` is the frozen input `prov_writable_input` copies." (about 2 lines)
-- [provenance_input.odin:86](src/provenance_input.odin#L86): "Preserve the bounded constant-map-key assignment along with cached paths." does not say what the map is. Use: "A constant map key's entry slot, at most `MAP_KEY_SLOTS` of them; cached paths name these."
-
 ### src/provenance_transfer.odin
 
 The logic holds up and its comments are already terse; I found no bug, and probes of the two suspect spots below gave no wrong result. The representation is richer than its consumers: three transfer variants, a mode, a type, and a copy-operation table all carry distinctions that nothing outside a test reads.
 
 **Simplification**
 
-- [provenance_transfer.odin:29](src/provenance_transfer.odin#L29) `Prov_Transfer_Forward`/`Join`/`Aggregate`: all three consumers treat them alike (`prov_transfer_parts` twice, `prov_clone_transfer`), and Forward needs the `single: [1]` workaround in `prov_transfer_parts`.
+- [provenance_transfer.odin:29](src/provenance_transfer.odin#L29) `Prov_Transfer_Forward`/`Join`/`Aggregate`: both uses of `prov_transfer_parts` treat them alike, and Forward needs the `single: [1]` workaround in `prov_transfer_parts`.
   Merge into one `Prov_Transfer_Parts{components, backing}` with a one-component constructor helper; the facts file loses its arm splits and the clone two arms.
   (about 20 lines across files; tests at provenance_normalization_test.odin:358, 374, 712 change)
 - [provenance_transfer.odin:19](src/provenance_transfer.odin#L19) `Prov_Component.type`/`mode`: `type` is read only at line 60 and in `prov_value_aliases`, both for clones, and every clone call passes it, so the `prov_type_at` default at line 57 is computed only to go unread.

@@ -465,7 +465,6 @@ main :: proc() {}`) { return }
 		if !testing.expect(t, ok) { continue }
 		place := prov_input_place(graph, address.operand)
 		testing.expect(t, len(place.path) == 1 && place.path[0].kind == .Field, "a field projection must remain explicit")
-		testing.expect_value(t, place.type, TYPE_INT)
 		if index == 0 {
 			storage, direct := place.base.(Storage_Id)
 			if testing.expect(t, direct, "a lexical place must name storage") {
@@ -483,12 +482,12 @@ main :: proc() {}`) { return }
 				testing.expect(t, another_load && place.path[0].lo == 1, "successive dereferences must preserve the last carrier and selected sibling")
 			}
 		}
-		count := len(graph.input.places)
+		count := len(graph.input.values)
 		again := prov_input_place(graph, address.operand)
-		testing.expect(t, again.base == place.base && len(graph.input.places) == count, "a repeated query reconstructed the place")
+		testing.expect(t, again.base == place.base && len(graph.input.values) == count, "a repeated query reconstructed the place")
 	}
-	// The region-reset builder reuses a stack identifier while querying several
-	// owners of the same type. Its address is not a storage identity.
+	// An identifier's place comes from its symbol; its node's address is not a
+	// storage identity.
 	named := normalization_symbol(t, &p, "named")
 	other := normalization_symbol(t, &p, "other_named")
 	scratch := Expr_Ident{base = Expr_Base{type = symbol_of(&p.c, named).type}, symbol = named}
@@ -751,7 +750,7 @@ main :: proc() {}`
 	testing.expect(t, region_has_param(current, 0), "the replay stopped before the forwarding chain reached the owner")
 	testing.expect(t, current.default, "the replay lost the default allocator of the first iteration")
 	testing.expect(t, !current.unknown, "a local forwarding chain made the region unknown")
-	testing.expect(t, program.input.frozen && program.replays >= 4, "the loop did not saturate one frozen operation program")
+	testing.expect(t, program.replays >= 4, "the loop did not saturate one operation program")
 }
 
 // Rebuilding a body's events after its facts settle allocates only in the
@@ -912,7 +911,6 @@ main :: proc() {}`) { return }
 	k: Checker
 	graph, program := normalization_replay(t, &k, &p, "hooked")
 	if graph == nil { return }
-	values, storage, calls := len(program.input.values), len(program.input.storages), len(program.input.calls)
 	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
 	hook := prov_input_copy_operation(graph, held).hook
 	original := p.c.result_summaries[hook]
@@ -920,6 +918,7 @@ main :: proc() {}`) { return }
 	growing: Result_Provenance
 	p.c.result_summaries[hook] = &growing
 	entry := normalization_parameter_seed(&k, graph, program)
+	values, storage, calls := len(program.input.values), len(program.input.storages), len(program.input.calls)
 	before_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
 	prov_seed_regions(before_graph, &entry.facts)
 	prov_replay_fact_operations(before_graph, program)

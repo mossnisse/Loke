@@ -2,7 +2,6 @@
 // these checked transfers and explicit paths, never payload-depth guesses.
 package lokec
 
-import "core:mem"
 import "core:slice"
 
 Prov_Transfer_Mode :: enum { Read, Clone, Move }
@@ -269,35 +268,4 @@ prov_input_stored_copy :: proc(graph: ^Flow_Graph, id: Value_Id, path, copy_from
 	return Prov_Component{source = source, from = selected, copy_from = copy_from, mode = .Clone,
 	                      type = prov_type_at(graph.k.c, type, selected),
 	                      copy = prov_input_copy_operation(graph, prov_type_at(graph.k.c, type, copy_from))}
-}
-
-prov_clone_transfer :: proc(source: Prov_Transfer, allocator: mem.Allocator) -> Prov_Transfer {
-	clone_component :: proc(source: Prov_Component, allocator: mem.Allocator) -> Prov_Component {
-		out := source
-		out.from, out.to = slice.clone(source.from, allocator), slice.clone(source.to, allocator)
-		out.copy_from = slice.clone(source.copy_from, allocator)
-		return out
-	}
-	switch transfer in source {
-	case Prov_Transfer_Forward:
-		return Prov_Transfer_Forward{clone_component(transfer.component, allocator)}
-	case Prov_Transfer_Join:
-		out := slice.clone(transfer.alternatives, allocator)
-		for &component in out { component = clone_component(component, allocator) }
-		return Prov_Transfer_Join{out}
-	case Prov_Transfer_Aggregate:
-		parts := slice.clone(transfer.components, allocator)
-		for &component in parts { component = clone_component(component, allocator) }
-		backing := slice.clone(transfer.backing, allocator)
-		for &allocation in backing { allocation.path = slice.clone(allocation.path, allocator) }
-		return Prov_Transfer_Aggregate{parts, backing}
-	case Prov_Transfer_Borrow:
-		out := transfer
-		out.path = slice.clone(transfer.path, allocator)
-		return out
-	case Prov_Transfer_Address:
-		return transfer
-	case:
-		return nil
-	}
 }

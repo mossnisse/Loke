@@ -6,7 +6,6 @@ package lokec
 import "core:fmt"
 import "core:mem"
 import "core:slice"
-import "core:strings"
 
 // The state only the provenance modes build.
 Prov_State :: struct {
@@ -2805,7 +2804,7 @@ prov_or_return_escape :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, operand_loan
 		}
 	}
 	contents := prov_load_deep(graph, escaping, v.span)
-	propagated := prov_error_form(graph, v, graph.expansion)
+	propagated := prov_error_form(graph, v)
 	graph.returning = new_clone(Prov_Returning{propagated = propagated, result = proc_symbol.result, span = v.span}, graph.alloc)
 	prov_event(graph, Prov_Event_Escape{sources = escaping, into = contents, returning = graph.returning^})
 	return prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
@@ -4310,44 +4309,6 @@ prov_call_moved_owner :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, lev
 
 // ------------------------------------------------------------- places --
 
-@(private)
-prov_field_step :: proc(graph: ^Flow_Graph, v: ^Expr_Selector) -> Proj_Step {
-	if !type_is_union(graph.k.c, prov_type(graph, v.operand)) {
-		if field := symbol_of(graph.k.c, v.resolution.symbol); field != nil {
-			step := proj_field(int(field.index))
-			step.synchronized = v.synchronized
-			return step
-		}
-	}
-	return proj_wild()
-}
-
-@(private)
-prov_index_path :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []Proj_Step {
-	return prov_index_path_in(graph, v, prov_type(graph, v.operand))
-}
-
-@(private)
-prov_index_path_in :: proc(graph: ^Flow_Graph, v: ^Expr_Index, type: Type_Id) -> []Proj_Step {
-	#partial switch underlying_kind(graph.k.c, type) {
-	case .Array:
-		return prov_extend(graph, nil, prov_index_step(graph, v.indices))
-	case .Dynamic_Array:
-		step := prov_index_step(graph, v.indices)
-		step.shifts = true
-		if step.kind == .Range && step.lo >= CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
-		return prov_extend(graph, nil, step)
-	case .Map:
-		key: Expr
-		if len(v.indices) == 1 {
-			key = v.indices[0]
-		}
-		entry := prov_extend(graph, nil, prov_map_entry_step(graph, type, key))
-		return prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
-	}
-	return prov_extend(graph, nil, proj_wild())
-}
-
 // design.md "Weakening and reborrows": one carrier an access to a place goes
 // through, read off the normalized place. `path` is where below the carrier's
 // pointee the access goes on: to the place itself for the first hop, to the
@@ -4372,8 +4333,7 @@ prov_place_hops :: proc(graph: ^Flow_Graph, place: Expr) -> []Place_Hop {
 		// A view's loans already name the elements it views, so an element is
 		// at no step below them.
 		path := at.path
-		#partial switch underlying_kind(graph.k.c, prov_value(graph, carrier).type) {
-		case .Slice, .C_Pointer, .String_View, .CString_View:
+		if type_indexes_through_view(graph.k.c, prov_value(graph, carrier).type) {
 			path = path[min(1, len(path)):]
 		}
 		append(&hops, Place_Hop{carrier, path})
@@ -4622,53 +4582,13 @@ prov_publish_map_key :: proc(graph: ^Flow_Graph, v: ^Expr_Index, key_sources: []
 	}
 }
 
-@(private = "file")
+@(private)
 prov_const_int :: proc(graph: ^Flow_Graph, e: Expr) -> (i64, bool) {
 	base := expr_base(e)
 	if base == nil || base.const_value.kind != .Integer {
 		return 0, false
 	}
 	return bi_to_i64(graph.k.c, base.const_value.integer)
-}
-
-// A constant key's own entry while slots remain, else the wildcard, which
-// overlaps every keyed entry.
-@(private)
-prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) -> Proj_Step {
-	if key == nil || !map_shape_is_keyed(graph.k.c, map_type) {
-		return proj_wild()
-	}
-	base := expr_base(key)
-	if base == nil || !base_is_const(base) {
-		return proj_wild()
-	}
-	name: string
-	#partial switch base.const_value.kind {
-	case .String:
-		name = fmt.aprintf("s:%s", base.const_value.text, allocator = graph.alloc)
-	case .Integer, .Rune:
-		value, ok := bi_to_i64(graph.k.c, base.const_value.integer)
-		if !ok {
-			return proj_wild()
-		}
-		name = fmt.aprintf("%s:%d", base.const_value.kind == .Integer ? "i" : "r", value, allocator = graph.alloc)
-	case .Boolean:
-		name = fmt.aprintf("b:%v", base.const_value.boolean, allocator = graph.alloc)
-	case:
-		return proj_wild()
-	}
-	if entry, found := graph.input.map_key_entries[name]; found {
-		return proj_range(i64(entry), i64(entry) + 1)
-	}
-	entry := len(graph.input.map_key_entries)
-	if entry >= MAP_KEY_SLOTS {
-		step := proj_wild()
-		step.precision = {.Map_Keys}
-		return step
-	}
-	prov_writable_input(graph)
-	graph.input.map_key_entries[strings.clone(name, graph.input.alloc)] = entry
-	return proj_range(i64(entry), i64(entry) + 1)
 }
 
 // A slice's optional constant bound, `default` when it is not written.
@@ -4678,18 +4598,6 @@ prov_const_bound :: proc(graph: ^Flow_Graph, e: Expr, default: i64) -> (i64, boo
 		return default, true
 	}
 	return prov_const_int(graph, e)
-}
-
-@(private = "file")
-prov_index_step :: proc(graph: ^Flow_Graph, indices: []Expr) -> Proj_Step {
-	if len(indices) != 1 {
-		return proj_wild()
-	}
-	value, ok := prov_const_int(graph, indices[0])
-	if !ok {
-		return proj_wild()
-	}
-	return proj_range(value, value + 1)
 }
 
 @(private = "file")
