@@ -1,0 +1,9 @@
+L0586
+@16:17
+`f64` cannot be a map key
+L0586
+@17:15
+`f32` cannot be a map key
+L0586
+@23:17
+`Bare` cannot be a map key

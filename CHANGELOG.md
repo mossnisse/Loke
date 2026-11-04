@@ -1524,6 +1524,9 @@ checklist.
 
 ### Fixed
 
+- A map named as a generic record's argument is checked where it is named, whether or not a field
+  holds it ([Maps](design.md#maps)). `Shared(map[f64]int)` reported `L0586` inside
+  `base/runtime/shared.loke`, with an `L0308` there as well; now it reports `L0586` at the argument.
 - `L0740` reads what a `where` clause holds as values: a literal's index, as `IDX` in
   `[2]int{IDX = 1}`, and a parameter's default in a procedure type
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).

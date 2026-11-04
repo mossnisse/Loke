@@ -2383,6 +2383,12 @@ bind_record_argument :: proc(
 			}
 			return reject(k, arg, "a generic `type` parameter needs a type argument", report)
 		}
+		// design.md "Maps": settled where the map type is named, before the
+		// instance's own member signatures name it inside the template, and
+		// whether or not a field holds it: `Shared(T)` keeps `T` behind a `rawptr`.
+		if !require_nested_map_key_policies(k, denoted, arg.span) {
+			return false
+		}
 		bound = Generic_Arg{is_type = true, type = denoted}
 	} else {
 		value: Const_Value

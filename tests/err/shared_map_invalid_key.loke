@@ -1,0 +1,25 @@
+package main;
+
+// A map named as a generic record's argument is checked there, whether or not a
+// field holds it, and not at the first of the record's members to mention it.
+Handle :: struct($T: type) {
+	raw: rawptr,
+}
+
+impl Handle($T) {
+	get :: proc(self) -> ^T {
+		return (^T)(self.raw);
+	}
+}
+
+Holder :: struct {
+	strong: Shared(map[f64]int),
+	weak:   Weak(map[f32]int),
+}
+
+Bare :: struct { id: f64 }
+
+main :: proc() {
+	handle: Handle(map[Bare]int) = {};
+	_ = handle;
+}
