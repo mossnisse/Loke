@@ -363,7 +363,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 				fmt.eprintln("error: -copy-cost needs a byte count or `off`")
 				return opts, false
 			}
-			opts.config.copy_cost, opts.config.copy_cost_enabled = value, true
+			opts.config.copy_cost_threshold, opts.config.copy_cost_enabled = value, true
 		case strings.has_prefix(arg, "-"):
 			fmt.eprintfln("error: unknown option `%s`", arg)
 			return opts, false

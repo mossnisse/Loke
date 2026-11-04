@@ -3,12 +3,41 @@ package lokec
 import "core:mem"
 import "core:mem/virtual"
 
+// What a build selects for the whole program, on the command line or through a
+// session's configuration.
+Compilation_Settings :: struct {
+	// An option rather than a rule, because it is target-specific and not part of
+	// the language (design.md "Copy-cost diagnostics"). A copy site reports when it
+	// duplicates at least this many inline bytes, or when its clone may allocate.
+	copy_cost_threshold: u64,
+	copy_cost_enabled:   bool,
+	// design.md "Panic strategy": `-panic=unwind` registers one logical frame per
+	// procedure that can own a cleanup, so a panic replays every active Loke
+	// frame's live actions before terminating; `-panic=abort` registers none.
+	// A whole-program build selection, never a source construct.
+	panic_unwind:        bool,
+	// design.md "Build configuration": the whole-program optimization and build
+	// mode the driver selected. The `LOKE_OPTIMIZATION_MODE` and `LOKE_BUILD_MODE`
+	// predeclared constants take their value from these.
+	opt_mode:            Opt_Mode,
+	build_mode:          Build_Mode,
+	// `-cpu`, which `target` is resolved at.
+	cpu:                 Cpu_Level,
+	// `-g`: emit debug information (`emit_llvm_debug.odin`).
+	debug_info:          bool,
+	// `-debug`, the value `LOKE_DEBUG` is predeclared with.
+	debug:               bool,
+	// `-log-level`, the value `LOKE_LOG_LEVEL` is predeclared with.
+	log_level:           Log_Level,
+}
+
 // Compiler-wide state.
 //
 // Batch source buffers and diagnostics use the process allocator and each File
 // owns its syntax arena. Incremental inputs/syntax/diagnostics join identifiers,
 // types, symbols, scopes, and packages in the checkpointed semantic arena.
 Compiler :: struct {
+	using settings: Compilation_Settings,
 	// Opt-in session package checkpoints; nil for ordinary batch compilations.
 	package_cache: ^Package_Check_Cache,
 	sources:     [dynamic]Source,
@@ -211,32 +240,11 @@ Compiler :: struct {
 	// Set by `finish_program_analysis` once every body is checked and the
 	// whole-program provenance and provider analyses have run.
 	program_analyzed: bool,
-	// An option rather than a rule, because it is target-specific and not part of
-	// the language (design.md "Copy-cost diagnostics"). A copy site reports when it
-	// duplicates at least this many inline bytes, or when its clone may allocate.
-	copy_cost_threshold: u64,
-	copy_cost_enabled:   bool,
 	// Allocating binding and assignment copies of the body being analysed,
 	// reported once last-use transfer has settled which stay copies.
 	held_copy_reports: [dynamic]Held_Copy_Report,
-	// design.md "Panic strategy": `-panic=unwind` registers one logical frame per
-	// procedure that can own a cleanup, so a panic replays every active Loke
-	// frame's live actions before terminating; `-panic=abort` registers none.
-	// A whole-program build selection, never a source construct.
-	panic_unwind:        bool,
-	// design.md "Build configuration": the whole-program optimization and build
-	// mode the driver selected. The `LOKE_OPTIMIZATION_MODE` and `LOKE_BUILD_MODE`
-	// predeclared constants take their value from these.
-	opt_mode:            Opt_Mode,
-	build_mode:          Build_Mode,
-	// `-cpu`, which `target` is resolved at.
-	cpu:                 Cpu_Level,
-	// `-g`: emit debug information (`emit_llvm_debug.odin`).
-	debug_info:          bool,
 	// Under `-g`, the natvis rules emission wrote for the linker to put in the PDB.
 	natvis:              string,
-	// `-debug`, the value `LOKE_DEBUG` is predeclared with.
-	debug:               bool,
 	// The type of `LOKE_LOG_LEVEL`, which `core:log` binds as `Level`.
 	log_level_type:      Type_Id,
 	// design.md "`type` and `typeid`": whether this program asked for runtime
@@ -333,8 +341,6 @@ Compiler :: struct {
 	// resolved to one factory per slot. An unselected slot keeps the runtime's
 	// fallback.
 	providers:                [Provider_Slot]Provider_Selection,
-	// `-log-level`, the value `LOKE_LOG_LEVEL` is predeclared with.
-	log_level:                Log_Level,
 	// `runtime.Memory_Order`, found by name on first use (`src/atomics.odin`).
 	memory_order_type:        Type_Id,
 	// design.md "Shared ownership": the two record templates the universe names

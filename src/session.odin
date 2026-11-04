@@ -7,23 +7,13 @@ import "core:mem/virtual"
 import "core:strings"
 
 Compilation_Config :: struct {
-	defines:           []string,
-	collections:       []string,
-	copy_cost:         u64,
-	copy_cost_enabled: bool,
-	panic_unwind:      bool,
-	opt_mode:          Opt_Mode,
-	build_mode:        Build_Mode,
-	cpu:               Cpu_Level,
-	debug_info:        bool,
-	debug:             bool,
-	log_level:         Log_Level,
+	using settings: Compilation_Settings,
+	defines:        []string,
+	collections:    []string,
 }
 
 DEFAULT_COMPILATION_CONFIG :: Compilation_Config{
-	copy_cost = 512,
-	copy_cost_enabled = true,
-	panic_unwind = true,
+	settings = {copy_cost_threshold = 512, copy_cost_enabled = true, panic_unwind = true},
 }
 
 // Never copy a live session: its allocators point into it (compiler-architecture.md "Reusable batch sessions").
@@ -84,12 +74,7 @@ configure_session :: proc(s: ^Compilation_Session) {
 	context.allocator = s.allocator
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	c, config := &s.compiler, s.config
-	c.copy_cost_threshold, c.copy_cost_enabled = config.copy_cost, config.copy_cost_enabled
-	c.panic_unwind = config.panic_unwind
-	c.opt_mode, c.build_mode = config.opt_mode, config.build_mode
-	c.cpu = config.cpu
-	c.debug_info, c.debug = config.debug_info, config.debug
-	c.log_level = config.log_level
+	c.settings = config.settings
 	init_semantic_stores(c)
 	seed_defines(c, config.defines)
 	register_collections(c, config.collections)
