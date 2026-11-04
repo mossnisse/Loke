@@ -905,11 +905,12 @@ specified result:
 - **Copy elision.** Which implicit copies of a type with a custom clone or
   drop may be elided is unspecified, so none is.
 - **Container fast paths.** An optimized build links the runtime as bitcode
-  ([design review 6.2](design-review-2026-10-31.md#62-container-operations-in-ir-not-through-an-operation-table),
-  step 1), but in `bench/collections.loke` LLVM still calls `dyn_append`,
+  ([compiler review](compiler-optimizations-2026-10-31.md#container-operations-in-ir-not-through-an-operation-table),
+  [adopted bitcode linking](compiler-optimizations-2026-10-31.md#adopted-optimizations)),
+  but in `bench/collections.loke` LLVM still calls `dyn_append`,
   `dyn_reserve`, and `map_find` out of line from the hot loops, and
   `map_find` calls the key's `hash` and `==` through the operation table. The
-  review's second step, fast paths emitted in the module per element type,
+  review's remaining proposal, fast paths emitted in the module per element type,
   remains the way to remove those calls; its cost is a second implementation
   of the probe sequence.
 

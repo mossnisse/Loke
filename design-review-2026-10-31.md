@@ -9,6 +9,10 @@ or merging something, it says what is lost, so that each item can be judged on
 its merits for a general-purpose language and not by how often the repository
 happens to use it.
 
+Compiler-only optimizations and their supporting observations are in the
+[compiler optimization review](compiler-optimizations-2026-10-31.md#compiler-context).
+The performance proposals remaining here require language-contract changes.
+
 The review read design.md, grammar.md, comments.md, open-questions.md,
 known-gaps.md, future-plans.md, and the design rules of standard-library.md in
 full, sampled the LLVM emitter, the runtime ABI header, and the benchmark
@@ -33,7 +37,7 @@ alias-attribute step on 2026-11-01 linked hand-edited IR at `-O2` and found
 that `noalias` is unsound under the default `unwind` strategy, that a callee
 may read a global it holds `^mut` to, and that LLVM already infers the capture
 attributes; [6.1](#61-alias-attributes-from-facts-the-checker-already-proves)
-and step 3 of the [Suggested order](#8-suggested-order) are narrowed
+and step 1 of the [Suggested order](#8-suggested-order) are narrowed
 accordingly.
 
 On 2026-11-01 the review was revised to the language as it then stood. The
@@ -41,7 +45,9 @@ first five steps of its suggested order had landed: the editorial fixes, the
 performance work that needed no language change, `Status` as an alias of
 `Result(Unit, E)`, `variants_of` over enums, and the deletion of `any_view`.
 Their proposals are removed from the text and listed under
-[Adopted proposals](#adopted-proposals), the remaining sections are
+[Adopted proposals](#adopted-proposals) or the compiler review's
+[Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations),
+the remaining sections are
 renumbered, and the inventory and probes are taken again from the compiler at
 `4173b622`.
 
@@ -70,7 +76,7 @@ counts in this review are those of the versions it examined.
 - [3. Orthogonality](#3-orthogonality)
 - [4. Syntax](#4-syntax)
 - [5. Deletion candidates](#5-deletion-candidates)
-- [6. Performance of the generated code](#6-performance-of-the-generated-code)
+- [6. Performance requiring language-design decisions](#6-performance-requiring-language-design-decisions)
 - [7. The specification itself](#7-the-specification-itself)
 - [8. Suggested order](#8-suggested-order)
 - [Adopted proposals](#adopted-proposals)
@@ -90,20 +96,12 @@ clearest pairs that expressed one idea twice, `Status` beside
 one is a duplicate: `via` and construction with an allocator differ in a way
 that matters, and `inout` and `^mut T` may ([2.5](#25-one-capability-axis)).
 
-The remaining recommendations with the best ratio of concepts removed to
-expressiveness lost, in rough priority order:
+The remaining recommendation with the best ratio of concepts removed to
+expressiveness lost is to **delete** `using` and, if wanted, the splat of a
+typed scalar into a `Simd` ([5](#5-deletion-candidates)).
 
-1. **Delete** `using` and, if wanted, the splat of a typed scalar into a
-   `Simd` ([5](#5-deletion-candidates)).
-2. **Generated-code performance.** Prove common index arithmetic
-   overflow-free and indexed views' bounds stable; emit the container fast
-   paths in the module, since linking the runtime as bitcode did not inline
-   them; and emit `noalias` under `-panic=abort` once its soundness
-   prerequisites hold, if a measurement then justifies it
-   ([6](#6-performance-of-the-generated-code)).
-
-Except where a section's **What is lost** says otherwise, none of these changes
-what a Loke program can express.
+Except where a section's **What is lost** says otherwise, none of the deletion
+candidates changes what a Loke program can express.
 
 ## 1. The shape of the language today
 
@@ -507,24 +505,19 @@ patterns; `Simd`; `Box`; `i128`/`u128` and `f16`; the wrapping operators;
 `exchange`. Each is one rule that removes a class of boilerplate or a class
 of bug.
 
-## 6. Performance of the generated code
+## 6. Performance requiring language-design decisions
 
-The emitter produces one textual LLVM module for the whole program and hands
-it to Clang at `-O0` through `-O3`, so cross-package inlining is free. Above
-`-opt=none`, where `lld-link` sits beside Clang, the runtime is linked as
-bitcode with `-flto`, so the optimizer sees it too. Within that design these
-are the remaining opportunities, largest first. None changes a specified
-result of a program the checker rightly accepts;
-[6.1](#61-alias-attributes-from-facts-the-checker-already-proves) also needs
-design.md to state what unchecked code may do during a call, and holds only
-under the `abort` panic strategy.
+These proposals need changes to the language contract. Optimizations that
+preserve the existing contract are in the [compiler optimization review](compiler-optimizations-2026-10-31.md#compiler-context).
+The alias-attribute proposal also needs correctness fixes and holds only under
+the `abort` panic strategy.
 
 ### 6.1 Alias attributes from facts the checker already proves
 
 The emitter writes `nonnull` on pointer parameters and nothing else
 (`param_nonnull` in `src/emit_llvm_abi.odin`); the IR for a `[]int` or
 `[]mut int` parameter is a two-word struct with no attribute at all
-([Probes](#probes)). [Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)
+([compiler review probes](compiler-optimizations-2026-10-31.md#probes)). [Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)
 lists alias attributes as open because "read-only capability alone does not
 promise that memory cannot change".
 
@@ -569,11 +562,11 @@ one fact the checker knows that LLVM cannot infer.
 To attach pointer parameter attributes to slices, expose their data pointer and
 length as separate scalar LLVM parameters in the `loke` convention, which is
 private to the compiler. This is distinct from machine register passing, which
-already handles the example slice ([6.4](#64-union-layout-and-small-values)).
+already handles the example slice ([Small values and the existing ABI](compiler-optimizations-2026-10-31.md#small-values-and-the-existing-abi)).
 The gain is the usual one for `noalias`: loads hoisted out of loops
 across stores, vectorization of loops that write through one slice and read
 another, and fewer reloads around calls. Expect it to be modest: the
-checked-arithmetic branches of [6.3](#63-checked-arithmetic-and-bounds-in-loops)
+checked-arithmetic branches of [Checked arithmetic and bounds in loops](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops)
 block vectorization first, and LLVM's loop vectorizer already versions a loop
 with a runtime overlap check, so on slices `noalias` mostly saves that check.
 Scoped `!alias.scope` and `!noalias` metadata on the body's accesses would
@@ -622,79 +615,12 @@ into undefined behavior that the optimizer exploits, so they come last:
   [Later concurrency extensions](open-questions.md#later-concurrency-extensions),
   would need the same effect.
 - Measure before building. After
-  [6.3](#63-checked-arithmetic-and-bounds-in-loops), add the attributes by hand
+  [Checked arithmetic and bounds in loops](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops), add the attributes by hand
   to the `bench/` kernels' IR, as the probe does, and build the emitter
   support only if the gain under `-panic=abort` justifies a second set of
   optimization semantics.
 
-### 6.2 Container operations in IR, not through an operation table
-
-`x.append(v)` on a `[dynamic]int` lowers to a call of
-`loke_rt_v1_dyn_append` with a table of function pointers for the element's
-clone and drop, and a map lookup calls `loke_rt_v1_map_find` with `key_hash`
-and `key_equal` through pointers on every probe. Rust and Go both specialize
-these; it is the single largest difference between Loke's collections and
-theirs.
-
-Linking the runtime as bitcode in optimized builds
-([Adopted proposals](#adopted-proposals)) made `bench/collections.loke` 9%
-faster, but LLVM still calls `dyn_append`, `dyn_reserve`, and `map_find` out of
-line from its hot loops, and `map_find` still reaches the key's `hash` and `==`
-through the operation table
-([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)).
-
-**Proposal.** Emit the fast paths in the module, specialized per element type
-as every generic procedure already is: `append` as "if `len < cap` store and
-increment, else call grow"; map probing with the key's `hash` and `==` called
-directly, so an `int` key hashes and compares inline. The runtime keeps growth,
-rehashing, and the generic clone/drop loops, and the operation table stays for
-the paths that remain in C.
-
-**What it costs.** The probe sequence then has two implementations, one in the
-emitted IR and one in the runtime's growth and rehash, which must agree
-forever; a disagreement corrupts a map silently rather than crashing. At the
-default `-opt=none` nothing inlines, so emit the specialized fast paths only
-when optimizing, or a debug build pays their IR for every element type and
-gains nothing.
-
-### 6.3 Checked arithmetic and bounds in loops
-
-Checked `+`, `-`, `*` lower to `llvm.*.with.overflow` plus a branch, weighted
-unlikely, to a call of the `cold noreturn` panic entry. The measured cost is
-in [Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic):
-3.5 to 5.7 times on a column-major product, because the branch per element
-blocks vectorization. Three steps keep the semantics and remove most of the
-cost:
-
-- **Find out why LLVM does not already remove the checks.** It folds an
-  overflow intrinsic whose operands it can bound (IndVarSimplify through
-  `eliminateOverflowIntrinsic`, and correlated value propagation). On the
-  measured kernel the likely obstacle is the multiplication by a run-time
-  extent, which no range bounds; confirm that before building an analysis.
-- **Range facts for loop bindings and lengths.** A `foreach (i in 0 ..< n)`
-  binding is in `[0, n)`; a slice or array length is at most
-  `MAX_INT / size_of(T)`; a constant is itself. From these, `i + 1` is
-  provably in range; so is `i * stride` for a constant stride when `n` is a
-  length whose element size is at least the stride, and
-  `row * columns + column` when `row < rows`, `column < columns`, and
-  `rows * columns` was computed, checked, before the loop. The emitter can then
-  write `add nsw` and a plain `getelementptr` instead of the checked forms. The
-  same facts remove the bounds check on `xs[i]` inside a loop over
-  `0 ..< xs.len()` only when the compiler proves the index is in bounds for
-  the view used at that access. A sufficient condition is an unchanged valid
-  header throughout the loop, including across calls and writes through mutable
-  aliases. Slice type alone proves no such invariance: `xs = xs[:0]` can
-  replace its header while the range retains its original bound, and a later
-  `xs[i]` must still panic ([Probes](#probes)). Read-only elements do not make
-  the slice variable constant. Track this fact for both slices and dynamic
-  arrays, invalidating it when a write or call can change it.
-- **Loop versioning** for the remaining affine index expressions: check once
-  before the loop that the maximum index fits, and run an unchecked body when
-  it does, the checked body otherwise. LLVM does this for runtime alias checks
-  but not for overflow intrinsics, so it is the compiler's to do, at the cost
-  of a second copy of the loop.
-
-### 6.4 Union layout and small values
+### 6.2 Union layout
 
 The open item on compiler-chosen union layout
 ([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits))
@@ -702,27 +628,8 @@ is endorsed: `Result(Option(T), E)` and a `Result(Small, Enum)` should fit
 their niches, with `@(repr=...)` for a stable layout where foreign code or
 serialization needs one.
 
-The earlier claim that slices and `Option(^T)` need a new register-passing ABI
-was incorrect. `LARGE_VALUE_BYTES` is 4,096 bytes, and smaller ordinary values
-already travel as LLVM values. An LLVM aggregate does not imply an indirect
-machine argument: the assembly probe receives a slice in `rcx` and `rdx` and
-an `Option(^int)` in `rcx` alone ([Probes](#probes)). The option already uses
-the null niche specified under [Representation](design.md#representation),
-and so do `Result(Unit, ^T)` and `Status(^T)`, since a `Unit` payload counts as
-nothing there. There is no demonstrated small-value ABI change to recommend
-here. Any further change needs a measured case; exposing a slice's pointer for
-attributes under
-[6.1](#61-alias-attributes-from-facts-the-checker-already-proves) is a separate
-reason to change its LLVM signature.
-
-### 6.5 What not to do
-
-Do not add a fast-math mode, relax the no-contraction rule, or make overflow
-checking depend on the optimization level. The reproducibility contract
-(`core:math/repro`, `core:random`, lockstep) is one of Loke's distinctive
-promises, and every item above keeps it. Where a kernel wants a reassociated
-reduction, a separately named operation says so, for example
-`simd.reduce_add_unordered`, as the open question proposes.
+The [small-value ABI observations](compiler-optimizations-2026-10-31.md#small-values-and-the-existing-abi)
+need no language change and are recorded in the compiler review.
 
 ## 7. The specification itself
 
@@ -757,24 +664,20 @@ carry examples stayed with the chapter they explain.
 Each step is independent of the others unless noted, and each is a spec,
 compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
+The independent compiler work has its own [suggested order](compiler-optimizations-2026-10-31.md#suggested-order).
 
-1. Range facts and loop versioning for checked arithmetic
-   ([6.3](#63-checked-arithmetic-and-bounds-in-loops)), with bounds proofs that
-   account for reassigned slices, aliases, and calls. Then measure the dense
-   kernels again.
-2. Container fast paths in IR, emitted only when optimizing
-   ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)).
-   Measure `bench/collections.loke` with `perf.ps1` before and after.
-3. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
+1. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
    in this order. First the prerequisites, which are correctness work in their
    own right: close the borrow-checker gaps 6.1 lists, add a read component to
    the global effects, and state the aliasing rule for unchecked code in
-   design.md. Then, after step 1, measure by adding `noalias` by hand to the
+   design.md. Then, after the compiler review's
+   [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
+   measure by adding `noalias` by hand to the
    `bench/` kernels' IR. Only if that pays, emit `noalias` (and
    `noalias readonly` for `^T`) under `-panic=abort`, starting with `^mut T`,
    `inout`, and `self: ^mut` parameters. No capture attributes: LLVM infers
    them for internal procedures.
-4. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
+2. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
    last: it is the largest surface change, and it needs `lokec -migrate` able to
    rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
@@ -784,7 +687,8 @@ steps that have landed are under [Adopted proposals](#adopted-proposals).
 
 These were proposed by this review and have landed; the specification and
 CHANGELOG.md describe the result. Reviews of the commits recorded their open
-findings in open-questions.md and known-gaps.md.
+findings in open-questions.md and known-gaps.md. Compiler-only changes are
+listed under [Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations).
 
 - **A record's attributes are on its declaration, and `move_only` is one of them**
   (2026-11-02; [Attributes](design.md#attributes), [`@(move_only)`](design.md#move_only),
@@ -823,17 +727,6 @@ findings in open-questions.md and known-gaps.md.
   `typeid`](design.md#type-and-typeid) says what a procedure type's member
   table holds; and [Iteration protocol](design.md#iteration-protocol) spells
   `iter` `self: ^` as the catalogue does.
-- **The program-ending runtime entries are `cold noreturn`**, and the branch
-  to a checked operation's panic carries weights (`9e0c7f4f`). No run-time
-  change beyond noise; it states what LLVM had inferred.
-- **The runtime is linked as bitcode** in optimized builds where `lld-link` is
-  available (`5b6a4da6`): run time 2 to 9% lower at `-opt=speed`, executables
-  5 to 30% smaller, optimized builds 6 to 12% longer. The container fast paths
-  remain ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)).
-- **Unwind bookkeeping publishes only the locals a replay reads**
-  (`c43c7e20`), so a procedure that registers nothing keeps no frame, live
-  flags, or environment: `bench/dense.loke` 14% faster, within 5% of
-  `-panic=abort`.
 - **A `Unit` success behaves as a payloadless one** (`e4d9c207`): it may reach
   the end of a body and use `return;` when the result as written makes it
   `Unit`, it prints as `.ok`, and it leaves the null niche available
@@ -944,7 +837,7 @@ outweighs its gain, and none is recommended.
 - **Give every payloadless union `enum`'s integer mapping and ordering.** A
   union's tag order is representation, not API:
   [Widening by label](design.md#widening-by-label) promises no tag number
-  between two types, and [6.4](#64-union-layout-and-small-values) endorses
+  between two types, and [6.2](#62-union-layout) endorses
   letting the compiler choose union layout. Giving every payloadless union
   `from_int`, ordering, and integer conversion would make its declaration order
   a public contract: reordering or inserting a variant would silently change
@@ -965,47 +858,10 @@ outweighs its gain, and none is recommended.
 
 ## Probes
 
-Programs compiled to confirm claims the review still depends on. The first
-three were run again on 2026-11-01 with the `lokec.exe` in the repository root,
-built from the sources at `4173b622`.
-
-**Emitted IR carries no alias attributes.** For
-
-```loke
-sum :: proc(xs: []int) -> int {
-	total := 0;
-	foreach (x in xs) { total += x; }
-	return total;
-}
-```
-
-`lokec -emit-ll` produced (abridged):
-
-```text
-declare void @loke_rt_v1_panic(ptr) cold noreturn
-...
-define internal i64 @loke.p.sum(%struct.anon.143 %arg0) {
-  ...
-foreach.body.464:
-  %t469 = getelementptr inbounds i64, ptr %t461, i64 %t467
-  %t470 = load i64, ptr %t469
-  %t471 = load i64, ptr %total.458
-  %t472 = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %t471, i64 %t470)
-  %t473 = extractvalue { i64, i1 } %t472, 1
-  br i1 %t473, label %int.overflow.474, label %ok.475, !prof !{!"branch_weights", i32 1, i32 1048575}
-int.overflow.474:
-  call void @loke_rt_v1_panic(ptr @.msg.4)
-  unreachable
-```
-
-The slice parameter is an LLVM aggregate, so no `noalias` or `readonly` can be
-attached to its data pointer in this ABI. The `%uframe`, `%ulive`, and `%uenv`
-allocas and the per-iteration store into `%uenv` that the 2026-10-31 probe
-showed are gone, since `sum` registers no cleanup. The container runtime
-boundary was read from `runtime/loke_rt.h` and
-`src/emit_llvm_containers.odin`: `append`, `insert`, `pop`, `remove`,
-`resize`, `clone`, `drop`, and every map operation are calls into prebuilt C
-taking a `loke_rt_container_ops_v1` table.
+Programs compiled to confirm claims the review still depends on. The
+address-comparison probe was run again on 2026-11-01 with `lokec.exe` built
+from the sources at `4173b622`. The emitted-IR, reassigned-slice, and
+register-passing observations are in the compiler review's [Probes](compiler-optimizations-2026-10-31.md#probes).
 
 **Comparing addresses retains no borrow.** This program prints `true false`:
 
@@ -1026,26 +882,6 @@ main :: proc() {
 
 The comparison observes addresses without retaining borrows, which LLVM counts
 as address capture.
-
-**A reassigned slice keeps the range's bound.** This program is accepted and
-panics with `index out of range` and exit code 3:
-
-```loke
-package main;
-import "core:fmt";
-
-main :: proc() {
-	values := [2]int{10, 20};
-	xs := values[:];
-	foreach (i in 0 ..< xs.len()) {
-		xs = xs[:0];
-		fmt.println(xs[i]);
-	}
-}
-```
-
-The range bound does not shrink when the slice is reassigned. The panic is
-required behavior for a bounds-removal optimization to preserve.
 
 **A box chain's generated copy recurses.** This program builds a
 million-node list whose drop hook unlinks it iteratively, as
@@ -1089,13 +925,6 @@ overflow, in the clone; the buffered output was lost with it. Without the last
 two lines it printed `built 1000000` and exited 0, so the drop hook handled the
 drop and nothing handled the copy. It is now rejected with `L0747` at `List`, and
 written `move_only`, its `clone()` is rejected as a missing member.
-
-**Small arguments travel in registers.** On 2026-10-31, Clang assembly
-generated from emitted IR with `-S -O0` showed that the `sum(xs: []int)`
-procedure above receives the slice's two words in `rcx` and `rdx`. A
-procedure taking `Option(^int)` received its single word in `rcx`. These
-observations check the small-argument ABI claim; they are not performance
-measurements or a claim about every aggregate shape.
 
 **`noalias` under the `unwind` strategy.** On 2026-11-01 the `lokec.exe` in
 the repository root, at `5580637f`, emitted IR for this program with
