@@ -465,7 +465,7 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 		return
 	}
 	if fallback.kind == .Integer && !type_is_untyped(k.c, v.type) {
-		if !bi_fits(k.c, override.integer, type_bits(k.c, v.type), type_signed(k.c, v.type)) {
+		if !bi_fits(override.integer, type_bits(k.c, v.type), type_signed(k.c, v.type)) {
 			errorf(
 				k.c,
 				v.span,

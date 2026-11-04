@@ -195,7 +195,7 @@ emit_enum_from_int :: proc(e: ^Emitter, v: ^Expr_Call, enum_type, as_type: Type_
 	present := "false"
 	for member in underlying_info(e.c, enum_type).fields {
 		sym := symbol_of(e.c, member)
-		if !bi_fits(e.c, sym.const_value.integer, bits, signed) {
+		if !bi_fits(sym.const_value.integer, bits, signed) {
 			continue
 		}
 		matches := temp(e)

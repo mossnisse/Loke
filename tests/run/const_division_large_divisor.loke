@@ -1,0 +1,18 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Integer operators": truncated division of unfixed constants is
+// exact at any size, here past the size where `core:math/big` changes algorithm.
+A :: (1 << 40000) + 12345;
+B :: (1 << 13000) + 7;
+Q :: A / B;
+R :: A % B;
+
+NEGATIVE_Q :: -A / B;
+NEGATIVE_R :: -A % B;
+
+main :: proc() {
+	fmt.println(Q * B + R == A, R >= 0, R < B);
+	fmt.println(NEGATIVE_Q == -Q, NEGATIVE_R == -R);
+}

@@ -4,7 +4,12 @@ package lokec
 import "core:c/libc"
 import "core:math"
 import "core:mem"
+import "core:strings"
 import "core:testing"
+
+bi_eq_i64 :: proc(c: Value_Storage, a: Big_Int, b: i64) -> bool {
+	return bi_cmp(a, bi_from_i64(c, b)) == 0
+}
 
 @(test)
 bigint_truncated_division :: proc(t: ^testing.T) {
@@ -29,7 +34,7 @@ bigint_truncated_division :: proc(t: ^testing.T) {
 	three := bi_from_i64(&c, 3)
 	q, r := bi_quo(&c, a, three), bi_rem(&c, a, three)
 	testing.expectf(t, bi_eq_i64(&c, r, -2), "-(2^130 + 1) %% 3: got %s", bi_text(&c, r))
-	testing.expect(t, bi_cmp(&c, bi_add(&c, bi_mul(&c, q, three), r), a) == 0, "-(2^130 + 1) / 3 does not round-trip")
+	testing.expect(t, bi_cmp(bi_add(&c, bi_mul(&c, q, three), r), a) == 0, "-(2^130 + 1) / 3 does not round-trip")
 }
 
 @(test)
@@ -39,8 +44,8 @@ bigint_width_boundaries :: proc(t: ^testing.T) {
 
 	u128_max, ok := bi_parse_int_literal(&c, "340282366920938463463374607431768211455")
 	testing.expect(t, ok, "u128 max does not parse")
-	testing.expect(t, bi_fits(&c, u128_max, 128, false), "u128 max should fit u128")
-	testing.expect(t, !bi_fits(&c, u128_max, 128, true), "u128 max should not fit i128")
+	testing.expect(t, bi_fits(u128_max, 128, false), "u128 max should fit u128")
+	testing.expect(t, !bi_fits(u128_max, 128, true), "u128 max should not fit i128")
 	testing.expectf(
 		t,
 		bi_text(&c, u128_max) == "340282366920938463463374607431768211455",
@@ -51,15 +56,15 @@ bigint_width_boundaries :: proc(t: ^testing.T) {
 	magnitude, magnitude_ok := bi_parse_int_literal(&c, "170141183460469231731687303715884105728")
 	testing.expect(t, magnitude_ok, "i128 min's magnitude does not parse")
 	i128_min := bi_neg(&c, magnitude)
-	testing.expect(t, bi_fits(&c, i128_min, 128, true), "i128 min should fit i128")
-	testing.expect(t, !bi_fits(&c, magnitude, 128, true), "i128 min's magnitude should not fit i128")
+	testing.expect(t, bi_fits(i128_min, 128, true), "i128 min should fit i128")
+	testing.expect(t, !bi_fits(magnitude, 128, true), "i128 min's magnitude should not fit i128")
 
-	testing.expect(t, bi_fits(&c, bi_from_i64(&c, 127), 8, true), "127 fits i8")
-	testing.expect(t, !bi_fits(&c, bi_from_i64(&c, 128), 8, true), "128 does not fit i8")
-	testing.expect(t, bi_fits(&c, bi_from_i64(&c, -128), 8, true), "-128 fits i8")
-	testing.expect(t, !bi_fits(&c, bi_from_i64(&c, -129), 8, true), "-129 does not fit i8")
-	testing.expect(t, bi_fits(&c, bi_from_i64(&c, 255), 8, false), "255 fits u8")
-	testing.expect(t, !bi_fits(&c, bi_from_i64(&c, -1), 8, false), "-1 does not fit u8")
+	testing.expect(t, bi_fits(bi_from_i64(&c, 127), 8, true), "127 fits i8")
+	testing.expect(t, !bi_fits(bi_from_i64(&c, 128), 8, true), "128 does not fit i8")
+	testing.expect(t, bi_fits(bi_from_i64(&c, -128), 8, true), "-128 fits i8")
+	testing.expect(t, !bi_fits(bi_from_i64(&c, -129), 8, true), "-129 does not fit i8")
+	testing.expect(t, bi_fits(bi_from_i64(&c, 255), 8, false), "255 fits u8")
+	testing.expect(t, !bi_fits(bi_from_i64(&c, -1), 8, false), "-1 does not fit u8")
 }
 
 @(test)
@@ -98,12 +103,12 @@ bigint_wrapping :: proc(t: ^testing.T) {
 	// Matches the backend's guarded runtime division.
 	min64 := bi_neg(&c, bi_pow2(&c, 63))
 	wrapped := bi_wrap(&c, bi_mul(&c, min64, bi_from_i64(&c, -1)), 64, true)
-	testing.expectf(t, bi_cmp(&c, wrapped, min64) == 0, "i64 min * -1 wrapped to %s", bi_text(&c, wrapped))
+	testing.expectf(t, bi_cmp(wrapped, min64) == 0, "i64 min * -1 wrapped to %s", bi_text(&c, wrapped))
 
 	wide := bi_sub(&c, bi_neg(&c, bi_pow2(&c, 100)), bi_from_i64(&c, 1))
 	u64_max := bi_sub(&c, bi_pow2(&c, 64), bi_from_i64(&c, 1))
 	wrapped = bi_wrap(&c, wide, 64, false)
-	testing.expectf(t, bi_cmp(&c, wrapped, u64_max) == 0, "-(2^100) - 1 in u64: %s", bi_text(&c, wrapped))
+	testing.expectf(t, bi_cmp(wrapped, u64_max) == 0, "-(2^100) - 1 in u64: %s", bi_text(&c, wrapped))
 	testing.expect(t, bi_eq_i64(&c, bi_wrap(&c, wide, 64, true), -1), "-(2^100) - 1 wraps to -1 in i64")
 }
 
@@ -123,13 +128,13 @@ bigint_bitwise_and_shifts :: proc(t: ^testing.T) {
 	testing.expect(t, bi_eq_i64(&c, bi_shr(&c, bi_from_i64(&c, -7), 1), -4), "-7 >> 1 floors")
 
 	wide := bi_shl(&c, bi_from_i64(&c, 1), 200)
-	testing.expect(t, bi_magnitude_bits(&c, wide) == 201, "1 << 200 has 201 magnitude bits")
+	testing.expect(t, bi_magnitude_bits(wide) == 201, "1 << 200 has 201 magnitude bits")
 	testing.expect(t, bi_eq_i64(&c, bi_shr(&c, wide, 200), 1), "(1 << 200) >> 200 == 1")
 
 	// A shift under one 60-bit digit must drop the emptied top digit.
 	shifted := bi_shr(&c, bi_pow2(&c, 120), 10)
-	testing.expectf(t, bi_cmp(&c, shifted, bi_pow2(&c, 110)) == 0, "(1 << 120) >> 10 == %s", bi_text(&c, shifted))
-	testing.expect(t, bi_magnitude_bits(&c, shifted) == 111, "(1 << 120) >> 10 has 111 magnitude bits")
+	testing.expectf(t, bi_cmp(shifted, bi_pow2(&c, 110)) == 0, "(1 << 120) >> 10 == %s", bi_text(&c, shifted))
+	testing.expect(t, bi_magnitude_bits(shifted) == 111, "(1 << 120) >> 10 has 111 magnitude bits")
 }
 
 @(test)
@@ -141,7 +146,7 @@ bigint_allocator_storage :: proc(t: ^testing.T) {
 	storage := mem.arena_allocator(&arena)
 
 	value := bi_add(storage, bi_pow2(storage, 100), bi_from_i64(storage, 7))
-	testing.expect(t, bi_cmp(storage, bi_clone(storage, value), value) == 0, "clone differs from its source")
+	testing.expect(t, bi_cmp(bi_clone(storage, value), value) == 0, "clone differs from its source")
 	testing.expectf(
 		t,
 		bi_text(storage, value) == "1267650600228229401496703205383",
@@ -158,8 +163,8 @@ bigint_patterns :: proc(t: ^testing.T) {
 	two_to_127 := bi_pow2(&c, 127)
 	i128_min := bi_neg(&c, two_to_127)
 	testing.expect(t, bi_pattern(i128_min, 128) == u128(1) << 127, "i128 min's pattern")
-	testing.expect(t, bi_cmp(&c, bi_from_pattern(&c, u128(1) << 127, 128, true), i128_min) == 0, "i128 min from its pattern")
-	testing.expect(t, bi_cmp(&c, bi_from_pattern(&c, u128(1) << 127, 128, false), two_to_127) == 0, "2^127 from its pattern")
+	testing.expect(t, bi_cmp(bi_from_pattern(&c, u128(1) << 127, 128, true), i128_min) == 0, "i128 min from its pattern")
+	testing.expect(t, bi_cmp(bi_from_pattern(&c, u128(1) << 127, 128, false), two_to_127) == 0, "2^127 from its pattern")
 	testing.expect(t, bi_pattern(bi_from_i64(&c, -1), 128) == max(u128), "-1's 128-bit pattern")
 	testing.expect(t, bi_eq_i64(&c, bi_from_pattern(&c, max(u128), 128, true), -1), "-1 from its 128-bit pattern")
 
@@ -312,19 +317,172 @@ bigint_from_float_truncation :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
 
-	integer, exact, ok := bi_from_f64_trunc(&c, 1.0)
-	testing.expect(t, ok && exact && bi_eq_i64(&c, integer, 1), "1.0 should be the exact integer 1")
+	integer, exact := bi_from_f64_trunc(&c, 1.0)
+	testing.expect(t, exact && bi_eq_i64(&c, integer, 1), "1.0 should be the exact integer 1")
 
-	integer, exact, ok = bi_from_f64_trunc(&c, -2.75)
-	testing.expect(t, ok && !exact && bi_eq_i64(&c, integer, -2), "-2.75 should truncate towards zero")
+	integer, exact = bi_from_f64_trunc(&c, -2.75)
+	testing.expect(t, !exact && bi_eq_i64(&c, integer, -2), "-2.75 should truncate towards zero")
 
 	// 2^100 must not pass through i64.
-	integer, exact, ok = bi_from_f64_trunc(&c, 0h4630000000000000)
-	testing.expect(t, ok && exact, "2^100 should be an exact integer")
-	testing.expect(t, bi_cmp(&c, integer, bi_pow2(&c, 100)) == 0, "2^100 was truncated through a machine integer")
+	integer, exact = bi_from_f64_trunc(&c, 0h4630000000000000)
+	testing.expect(t, exact, "2^100 should be an exact integer")
+	testing.expect(t, bi_cmp(integer, bi_pow2(&c, 100)) == 0, "2^100 was truncated through a machine integer")
 
-	_, _, ok = bi_from_f64_trunc(&c, 0h7ff0000000000000)
-	testing.expect(t, !ok, "infinity is not an integer constant")
+	cases := []struct{value: f64, want: i64, exact: bool} {
+		{0, 0, true},
+		{0h8000_0000_0000_0000, 0, true},
+		{0h0000_0000_0000_0001, 0, false},
+		{0h3FEF_FFFF_FFFF_FFFF, 0, false},
+		{-0.5, 0, false},
+		{-1, -1, true},
+		{2251799813685248.5, 2251799813685248, false},
+		{9007199254740992, 9007199254740992, true},
+		{-4503599627370497, -4503599627370497, true},
+	}
+	for k in cases {
+		truncated, is_exact := bi_from_f64_trunc(&c, k.value)
+		testing.expectf(t, bi_eq_i64(&c, truncated, k.want) && is_exact == k.exact, "%v truncated to %s, exact %v", k.value, bi_text(&c, truncated), is_exact)
+	}
+}
+
+// A negative value with as many magnitude bits as the width fits only as the
+// lowest value: its top bit alone, whichever digit a further bit would be in.
+@(test)
+bigint_fits_only_the_lowest_at_the_full_width :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	lowest := bi_neg(&c, bi_pow2(&c, 127))
+	testing.expect(t, bi_fits(lowest, 128, true), "i128 min fits i128")
+	for bit in ([]int{0, 62, 63, 64, 119, 125, 126}) {
+		testing.expectf(t, !bi_fits(bi_sub(&c, lowest, bi_pow2(&c, bit)), 128, true), "i128 min - 2^%d fits i128", bit)
+	}
+	testing.expect(t, bi_fits(bi_from_i64(&c, -1), 1, true), "-1 fits i1")
+	testing.expect(t, bi_fits(bi_zero(&c), 1, true), "0 fits i1")
+	testing.expect(t, !bi_fits(bi_from_i64(&c, 1), 1, true), "1 does not fit i1")
+	testing.expect(t, !bi_fits(bi_zero(&c), 0, false), "nothing fits no bits")
+}
+
+@(test)
+bigint_results_keep_no_more_than_they_need :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	value := bi_from_i64(&c, -5)
+	wrapped := bi_wrap(&c, value, 8, true)
+	testing.expect(t, raw_data(wrapped.digit) == raw_data(value.digit), "a value in range wraps to itself")
+
+	clone := bi_clone(&c, value)
+	testing.expect(t, cap(clone.digit) < cap(value.digit), "a clone keeps only the digits it uses")
+	testing.expect(t, bi_eq_i64(&c, clone, -5), "the clone holds the value")
+}
+
+// Above and below the 160-digit divisor where `int_divmod` would go wrong.
+@(test)
+bigint_long_division_round_trips :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	a := bi_neg(&c, bi_add(&c, bi_pow2(&c, 60 * 600), bi_from_i64(&c, 12345)))
+	for b in ([]Big_Int{bi_add(&c, bi_pow2(&c, 60 * 200), bi_from_i64(&c, 7)), bi_from_i64(&c, 1000), bi_pow2(&c, 60 * 700)}) {
+		q, r := bi_quo(&c, a, b), bi_rem(&c, a, b)
+		testing.expect(t, bi_cmp(bi_add(&c, bi_mul(&c, q, b), r), a) == 0, "a / b does not round-trip")
+		testing.expect(t, bi_sign(r) == -1, "the remainder takes the dividend's sign")
+		testing.expect(t, bi_magnitude_bits(r) <= bi_magnitude_bits(b), "the remainder is below the divisor")
+	}
+}
+
+@(test)
+bigint_powers_of_ten :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	for power in ([]int{0, 1, 2, 3, 18, 19, 100, 5000}) {
+		testing.expectf(t, bi_text(&c, bi_pow10(&c, power)) == strings.concatenate({"1", strings.repeat("0", power, context.temp_allocator)}, context.temp_allocator), "10^%d", power)
+	}
+}
+
+// One rounding of the exact value, at the ties that a second rounding or a lost
+// sticky bit gets wrong, and below the normal range.
+@(test)
+decimal_to_float_rounds_once :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	cases := []struct{text: string, bits: u16, want: u64} {
+		// A tie to even, and just past it.
+		{"1.00048828125", 16, 0x3FF0_0000_0000_0000},
+		{"1.000488281250000001", 16, 0x3FF0_0400_0000_0000},
+		{"1.000000059604644775390625", 32, 0x3FF0_0000_0000_0000},
+		{"1.000000059604644775390625000001", 32, 0x3FF0_0000_2000_0000},
+		// Half the smallest subnormal, the tie, and just past it.
+		{"2.98023223876953125e-08", 16, 0},
+		{"2.98023223876953126e-08", 16, 0x3E70_0000_0000_0000},
+		{"7.006492321624085e-46", 32, 0},
+		{"7.0064923216240854e-46", 32, 0x36A0_0000_0000_0000},
+		// An exponent that decides the result before any power is built.
+		{"1e-99999999999", 32, 0},
+		{"-1e-99999999999", 32, 0x8000_0000_0000_0000},
+		{"-0.0", 16, 0x8000_0000_0000_0000},
+		{"-1.5", 32, 0xBFF8_0000_0000_0000},
+		{"125e-3", 32, 0x3FC0_0000_0000_0000},
+		{"12e3", 16, 0x40C7_7000_0000_0000},
+		// A fraction past the width's largest value is an infinity for the caller to see.
+		{"400000000000000000000000000000000000000.5", 32, 0x7FF0_0000_0000_0000},
+	}
+	for k in cases {
+		value, ok := decimal_to_float(&c, k.text, k.bits)
+		testing.expectf(t, ok && transmute(u64)value == k.want, "%s as f%d: %v, ok %v", k.text, k.bits, value, ok)
+	}
+
+	for text in ([]string{"", "-", "1e", "1e+", "1e5x", "0x10", "1_000.0", "1e39", "99e39"}) {
+		_, ok := decimal_to_float(&c, text, 32)
+		testing.expectf(t, !ok, "%q as f32 should fall to the caller", text)
+	}
+	_, ok := decimal_to_float(&c, "1.5", 64)
+	testing.expect(t, !ok, "a 64-bit width is the caller's binary64 value")
+
+	zeros := strings.repeat("0", 20000, context.temp_allocator)
+	long := strings.concatenate({"1", zeros, "e-20000"}, context.temp_allocator)
+	value: f64
+	value, ok = decimal_to_float(&c, long, 32)
+	testing.expect(t, ok && value == 1, "1 spelled with 20,000 zeros and their exponent")
+}
+
+// What these build in evaluator storage goes back to it: only a result the
+// caller holds stays charged (eval_memory.odin).
+@(test)
+bigint_evaluator_storage_keeps_only_results :: proc(t: ^testing.T) {
+	storage: Eval_Storage
+	defer eval_storage_destroy(&storage)
+	alloc := mem.Allocator{eval_allocator_proc, &storage}
+
+	wide := bi_neg(alloc, bi_pow2(alloc, 300))
+	small := bi_from_i64(alloc, 100)
+	before := storage.bytes
+
+	bi_to_float(alloc, wide, 64)
+	bi_to_float(alloc, small, 32)
+	testing.expect(t, storage.bytes == before, "bi_to_float keeps a temporary")
+	bi_cmp_float(alloc, wide, -2.5)
+	testing.expect(t, storage.bytes == before, "bi_cmp_float keeps a temporary")
+	for text in ([]string{"1.000000059604644775390625000001", "123456789e20", "1e39", "1e-60", "-0.0", "1e-40"}) {
+		decimal_to_float(alloc, text, 32)
+		testing.expectf(t, storage.bytes == before, "decimal_to_float keeps a temporary for %s", text)
+	}
+	bi_fits(wide, 300, true)
+	testing.expect(t, bi_wrap(alloc, small, 8, false).used != 0 && storage.bytes == before, "a value in range builds nothing")
+
+	for value in ([]f64{-2.75, 1.5, 0h4630000000000000, 0.25}) {
+		truncated, _ := bi_from_f64_trunc(alloc, value)
+		bi_release(truncated)
+		testing.expectf(t, storage.bytes == before, "bi_from_f64_trunc keeps a temporary for %v", value)
+	}
+	results := []Big_Int{bi_quo(alloc, wide, small), bi_rem(alloc, wide, small), bi_wrap(alloc, wide, 64, true), bi_wrap(alloc, wide, 8, false)}
+	for result in results {
+		bi_release(result)
+	}
+	testing.expect(t, storage.bytes == before, "an integer operation keeps more than its result")
 }
 
 // `exact_fma`, the compile-time value of `core:math`'s FMA instruction, at the

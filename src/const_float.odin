@@ -204,14 +204,12 @@ sqrt_rounded :: proc(x: f64) -> f64 {
 }
 
 // `significand * 2^exponent`, exactly.
-@(private = "file")
 Dyadic :: struct {
 	significand: Big_Int,
 	exponent:    int,
 }
 
 // A finite `f64`, which also holds every narrower float exactly.
-@(private = "file")
 dyadic_of :: proc(storage: Value_Storage, value: f64) -> Dyadic {
 	pattern := transmute(u64)value
 	biased := int(pattern >> 52) & 0x7ff
@@ -243,18 +241,27 @@ dyadic_to_float :: proc(storage: Value_Storage, n: Big_Int, exponent: int, bits:
 	}
 	negative := bi_sign(n) < 0
 	magnitude := negative ? bi_neg(storage, n) : n
-	leading := bi_magnitude_bits(storage, magnitude) - 1 + exponent
+	defer if negative {
+		bi_release(magnitude)
+	}
+	leading := bi_magnitude_bits(magnitude) - 1 + exponent
 	// The exponent of the result's last place: `precision` bits below its
 	// leading one, and never below the smallest subnormal's.
 	unit := max(leading, min_exponent) - (precision - 1)
 	shift := unit - exponent
 	kept: u64
 	if shift <= 0 {
-		kept, _ = bi_to_u64(storage, bi_shl(storage, magnitude, -shift))
+		widened := bi_shl(storage, magnitude, -shift)
+		defer bi_release(widened)
+		kept, _ = bi_to_u64(storage, widened)
 	} else {
 		top := bi_shr(storage, magnitude, shift)
+		restored := bi_shl(storage, top, shift)
+		dropped := bi_sub(storage, magnitude, restored)
+		half := bi_pow2(storage, shift - 1)
+		defer bi_release(top, restored, dropped, half)
 		kept, _ = bi_to_u64(storage, top)
-		order := bi_cmp(storage, bi_sub(storage, magnitude, bi_shl(storage, top, shift)), bi_pow2(storage, shift - 1))
+		order := bi_cmp(dropped, half)
 		if order > 0 || (order == 0 && kept & 1 == 1) {
 			kept += 1
 		}
@@ -263,6 +270,124 @@ dyadic_to_float :: proc(storage: Value_Storage, n: Big_Int, exponent: int, bits:
 	// only an overflow changes it: to the infinity rounding to nearest gives.
 	result := round_float(math.ldexp(f64(kept), unit), bits)
 	return negative ? -result : result
+}
+
+// The nearest float of `bits` width (16, 32, or 64), ties to even, or
+// `ok == false` when it overflows that width. core:math/big's `int_get_float`
+// is not used: it rounds inexactly and returns 0 past the f64 range.
+bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok: bool) {
+	result = dyadic_to_float(c, v, 0, bits)
+	return result, !math.is_inf(result, 0)
+}
+
+// `digits[.digits][e[+-]digits]` as the digits alone, in the temp allocator, and
+// the power of ten they are scaled by; `ok` is false for any other spelling.
+@(private = "file")
+scan_decimal :: proc(text: string) -> (digits: string, exponent: int, negative, ok: bool) {
+	// Far past both bounds in `decimal_to_float`, and small enough that adding the
+	// fraction's digit count cannot overflow.
+	DECIMAL_EXPONENT_LIMIT :: 1 << 40
+	if text == "" {
+		return
+	}
+	negative = text[0] == '-'
+	kept := make([dynamic]u8, 0, len(text), context.temp_allocator)
+	point := false
+	for index := negative ? 1 : 0; index < len(text); index += 1 {
+		ch := text[index]
+		switch {
+		case ch >= '0' && ch <= '9':
+			append(&kept, ch)
+			if point {
+				exponent -= 1
+			}
+		case ch == '.':
+			point = true
+		case ch == 'e' || ch == 'E':
+			// Saturated: any exponent this large already decides the result.
+			written := 0
+			sign := 1
+			rest := text[index + 1:]
+			if rest != "" && (rest[0] == '+' || rest[0] == '-') {
+				sign = rest[0] == '-' ? -1 : 1
+				rest = rest[1:]
+			}
+			if rest == "" {
+				return "", 0, false, false
+			}
+			for digit in transmute([]u8)rest {
+				if digit < '0' || digit > '9' {
+					return "", 0, false, false
+				}
+				written = min(written * 10 + int(digit - '0'), DECIMAL_EXPONENT_LIMIT)
+			}
+			exponent += sign * written
+			index = len(text)
+		case:
+			return "", 0, false, false
+		}
+	}
+	return string(kept[:]), exponent, negative, true
+}
+
+// A decimal literal's spelling, as `scan_decimal` reads it, rounded once to a
+// 16- or 32-bit float. `ok` is false for any other width or spelling, where the
+// caller's binary64 value already is the single rounding.
+decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: f64, ok: bool) {
+	if bits != 16 && bits != 32 {
+		return 0, false
+	}
+	digits, exponent, negative, scanned := scan_decimal(text)
+	if !scanned {
+		return 0, false
+	}
+	significand, parsed := bi_parse_int_literal(c, digits)
+	defer bi_release(significand)
+	if !parsed {
+		return 0, false
+	}
+	zero := negative ? math.copy_sign(f64(0), -1) : 0
+	if bi_is_zero(significand) {
+		return zero, true
+	}
+	// The value lies in [10^(top - 1), 10^top). Past 10^40 every 16- and 32-bit
+	// float overflows, and below 10^-50 every one rounds to zero, so no power
+	// of ten is built for an exponent outside that range.
+	first := 0
+	for digits[first] == '0' {
+		first += 1
+	}
+	top := len(digits) - first + exponent
+	if top > 40 {
+		return 0, false
+	}
+	if top < -50 {
+		return zero, true
+	}
+	power := bi_pow10(c, abs(exponent))
+	defer bi_release(power)
+	magnitude: f64
+	if exponent >= 0 {
+		product := bi_mul(c, significand, power)
+		defer bi_release(product)
+		magnitude, ok = bi_to_float(c, product, bits)
+		if !ok {
+			return 0, false
+		}
+	} else {
+		// `significand / power` with at least 28 quotient bits, more than a 32-bit
+		// float's 24, and a sticky bit below them for the remainder.
+		scale := max(28 + bi_magnitude_bits(power) - bi_magnitude_bits(significand), 0)
+		scaled := bi_shl(c, significand, scale)
+		quotient := bi_quo(c, scaled, power)
+		remainder := bi_rem(c, scaled, power)
+		sticky := bi_from_i64(c, bi_is_zero(remainder) ? 0 : 1)
+		doubled := bi_shl(c, quotient, 1)
+		marked := bi_or(c, doubled, sticky)
+		defer bi_release(scaled, quotient, remainder, sticky, doubled, marked)
+		magnitude = dyadic_to_float(c, marked, -scale - 1, bits)
+	}
+	return negative ? -magnitude : magnitude, true
 }
 
 // The IEEE-754 encoding of a value already rounded to `bits`, and its inverse.

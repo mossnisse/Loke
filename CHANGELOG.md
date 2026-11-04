@@ -1506,6 +1506,11 @@ checklist.
 - A field's name used as a key of a record literal no longer counts as a mention of what that name
   declares. `Vec :: [size_of(Cfg{Vec = 2})]$T` was rejected as defined in terms of itself (L0745), and an
   interface `slot` with such a key named after its subject as not dyn-compatible (L0463).
+- A constant `/` or `%` no longer folds to a wrong value when the divisor passes about 10,000 bits
+  and the dividend is half as long again, as in `((1 << 40000) + 1) / ((1 << 13000) + 7)`.
+- Compile-time evaluation no longer stays charged, against its memory limit, for what a float-to-integer
+  conversion or a float literal's rounding built along the way, or for a second copy of a typed
+  integer result already in range.
 - The language server resolves a name in three more places: an operand of an assignment through
   `operator([]=)`, such as `val` in `box[key] += val`; a member of a group under `operator`, as in
   `operator(<) proc { reversed }`; and an `else when` condition in a procedure. Hover and definition

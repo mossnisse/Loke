@@ -193,7 +193,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
-- A big integer is rounded to a float at [bigint.odin:354](src/bigint.odin#L354), [bigint.odin:463](src/bigint.odin#L463) and [const_ops.odin:391](src/const_ops.odin#L391). `dyadic_to_float` is exact and general; the other two can call it once it releases its temporaries, which CTFE's charged allocator needs. Saves about 30.
 
 #### Interface file and private-name checks
 
@@ -375,64 +374,6 @@ A compact, table-driven validator in good shape overall; the table matches `desi
 
 - [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106) and [hooks.odin:1138](src/hooks.odin#L1138): the same `u64(file) << 32 | u64(lo)` key. Make `generic_hook_key` a shared `span_key(span)`. (about 2 lines)
 
-### src/bigint.odin
-
-No bugs found: the rounding, shift, wrap and range logic held up against `core:math/big`. The main gains are one integer-to-float rounding path in place of three, and an early out in `bi_wrap`, which runs on every typed constant operation.
-
-**Simplification**
-
-- [bigint.odin:495](src/bigint.odin#L495) `bi_from_f64_trunc`: merge the subnormal and below-one branches into `if abs(value) < 1 { return bi_zero(c), value == 0 }`
-  and replace the mask at lines 520-522 with `exact = math.trunc(value) == value`. (about 15 lines, with the dead branches below)
-- [bigint.odin:217](src/bigint.odin#L217) `bi_quo`, `bi_rem`: `bi_quo` becomes `bi_binary(c, a, b, big.int_div)`; `bi_rem` passes `nil` as the quotient to `int_divmod`,
-  which documents both results as optional. Neither allocates a result only to release it. (about 8 lines)
-- [bigint.odin:283](src/bigint.odin#L283) `bi_fits`: the unsigned case is `return bi_sign(v) >= 0 && magnitude <= bits`; the boundary case is
-  `return bi_sign(v) < 0 && big.internal_int_is_power_of_two(&v)`, with no `bi_pow2`, `bi_neg` or release. (about 6 lines)
-- [bigint.odin:156](src/bigint.odin#L156) `bi_cmp`, [bigint.odin:275](src/bigint.odin#L275) `bi_magnitude_bits`: storage only serves big's clear-if-uninitialized, but `internal_cmp` and `internal_count_bits`
-  read an uninitialized value as zero. Drop the parameter, and from `bi_fits` once it stops allocating. (about 6 lines plus the call sites)
-- [bigint.odin:44](src/bigint.odin#L44) `bi_release`: the per-value allocator check already rejects non-evaluator values, so drop the `c` parameter and its guard;
-  `for &value in values` replaces `value := value`. (about 4 lines, and every call site shortens)
-- [bigint.odin:35](src/bigint.odin#L35) `bi_settle`: `internal_int_grow` already applies the same `max` and the `cap >` test, so the body is
-  `if is_eval_storage(c) { big.internal_int_grow(r, r.used, allow_shrink = true) }`. (about 4 lines)
-
-**Dead code**
-
-- (branch) [bigint.odin:525](src/bigint.odin#L525): `!bi_is_zero(magnitude)` is always true here. `unbiased >= 0` means bit 52 is set and the shift is at most 52, so the magnitude is at least 1.
-- (branch) [bigint.odin:501](src/bigint.odin#L501): the `ok` result is false only for NaN or infinity. [check_expr.odin:3763](src/check_expr.odin#L3763) range-checks first and `bi_cmp_float` excludes both;
-  only [bigint_test.odin:274](src/bigint_test.odin#L274) sees it. Remove `ok`, this branch, and the check at [check_expr.odin:3767](src/check_expr.odin#L3767).
-- `bi_eq_i64` ([bigint.odin:163](src/bigint.odin#L163)): its only callers are in `bigint_test.odin` and `emit_llvm_test.odin`, so it exists only for tests. Move it to `bigint_test.odin`, visible to both.
-
-**Data structures and algorithms**
-
-- [bigint.odin:309](src/bigint.odin#L309) `bi_wrap`: builds up to five integers even when `v` is already in range, as it nearly always is. Add `if bi_fits(c, v, bits, signed) { return v }`.
-  Every emitted integer constant ([emit_llvm_expr.odin:127](src/emit_llvm_expr.odin#L127)) and CTFE operation benefits; a CTFE typed operation then keeps one charged value, not two, against the 64 MB limit.
-- [bigint.odin:66](src/bigint.odin#L66) `bi_clone`: `minimize` is on only for evaluator storage, so `freeze` ([eval.odin:378](src/eval.odin#L378)) gives each integer 32 digits (256 bytes) in the semantic arena.
-  Frozen values are immutable, so pass `minimize = true` always; a large CTFE-built table shrinks about tenfold.
-- [bigint.odin:451](src/bigint.odin#L451) `decimal_to_float`: builds `10^|exponent|` one multiply at a time, keeping each product in the arena: quadratic time and bytes in the literal's digits (about 90 MB at 20,000).
-  Only generated literals get that long, but `big.int_pow_int(&power, 10, abs(exponent))` is square-and-multiply and shorter. (about 2 lines)
-- [bigint.odin:515](src/bigint.odin#L515) `bi_from_f64_trunc`, and `decimal_to_float` throughout: temporaries are not passed to `bi_release`, unlike `bi_to_float`, so in evaluator storage they stay charged.
-  Each float-to-int conversion in a CTFE loop keeps one extra block; release them.
-
-**Near copies**
-
-- [bigint.odin:354](src/bigint.odin#L354), [bigint.odin:463](src/bigint.odin#L463) and [const_ops.odin:391](src/const_ops.odin#L391): three ways to round a big integer to a float once. `dyadic_to_float` is the general one, so `bi_to_float` becomes
-  `dyadic_to_float(c, v, 0, bits)` plus an `is_inf` test, and the division branch passes the quotient with a sticky bit appended. It needs `bi_release` added. (about 30 lines; `keep` also goes)
-- [bigint.odin:496](src/bigint.odin#L496) and [const_ops.odin:372](src/const_ops.odin#L372): both split an `f64` into significand and exponent. Make `dyadic_of` package-visible and call `dyadic_of(c, abs(value))` here,
-  then shift left or right by its exponent. (about 5 lines)
-- [bigint.odin:190](src/bigint.odin#L190) and [bigint.odin:200](src/bigint.odin#L200): `bi_neg` and `bi_not` differ only in the `big` call. Add `bi_unary` beside `bi_binary` and make both one-liners. (about 10 lines)
-
-**Structure and boundaries**
-
-- [bigint.odin:384](src/bigint.odin#L384) `decimal_to_float`: 95 lines doing two jobs. Split at line 430 into scanning the spelling into digits and exponent, then rounding.
-- [bigint.odin:351](src/bigint.odin#L351): `bi_to_float` and `decimal_to_float` are float rounding in the integer file, calling `round_float` back in `const_ops.odin`.
-  Move both to `const_float.odin`, next to `dyadic_to_float`, and make `bi_release` package-visible. `decimal_to_float` has one caller, [check_expr.odin:3793](src/check_expr.odin#L3793).
-
-**Comments**
-
-- [bigint.odin:274](src/bigint.odin#L274): delete; the name says it and 0 bits for zero follows.
-- [bigint.odin:282](src/bigint.odin#L282): delete; it restates the name and parameters.
-- [bigint.odin:330](src/bigint.odin#L330): delete; it restates the signature.
-- [bigint.odin:494](src/bigint.odin#L494): end at "fraction was dropped."; the `1.0` and `1.5` examples add nothing.
-
 ### src/borrow.odin (part 1 of 3)
 
 Lines 1-2376 hold the shared vocabulary (roots, paths, carrier shapes, region sets, summaries) and the summary pass. The logic is careful but repeats small patterns, and two walks over types have no bound; three bugs were reproduced with the built `lokec.exe`.
@@ -579,12 +520,11 @@ What remains here belongs to the groups under "Findings that span files".
 
 ### src/const_ops.odin
 
-The exact float algorithms hold up on reading. What remains is around the file: the unary fold, bigint-to-float rounding, and constant equality each exist more than once.
+The exact float algorithms hold up on reading. What remains is around the file: the unary fold and constant equality each exist more than once.
 
 **Near copies**
 
 - [const_ops.odin:664](src/const_ops.odin#L664), [check_expr.odin:2059](src/check_expr.odin#L2059), and [eval.odin:854](src/eval.odin#L854): the unary `+ - ~ !` fold with its overflow check and wrap is written three times, despite this file's promise that both sides "fold identically". Add `fold_unary(c, op, span, value, type, allocator) -> (Const_Value, bool)` here, including the checker's literal-text sign handling. (about 40 lines)
-- [const_ops.odin:391](src/const_ops.odin#L391) and [bigint.odin:354](src/bigint.odin#L354): `dyadic_to_float` and `bi_to_float` both round a big integer to a float, one exactly, one via a sticky bit. `bi_to_float` becomes `dyadic_to_float(c, v, 0, bits)` plus its `is_inf` test; move the helper to `bigint.odin`, where `bi_release` is visible. (about 20 lines)
 - [const_ops.odin:884](src/const_ops.odin#L884) and [reflect.odin:307](src/reflect.odin#L307): 15 sites across `src/` hand-build a `Const_Aggregate`, and `reflect.odin` already has a file-private `aggregate_const`. Promote it to the constructors at line 53, with an allocator parameter. (about 3 lines per site)
 
 ### src/container.odin

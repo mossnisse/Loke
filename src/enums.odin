@@ -29,7 +29,7 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 			if written, ok := enum_member_value(k, field.value, backing); ok {
 				discriminant = written
 			}
-		} else if !bi_fits(k.c, discriminant, type_bits(k.c, backing), type_signed(k.c, backing)) {
+		} else if !bi_fits(discriminant, type_bits(k.c, backing), type_signed(k.c, backing)) {
 			errorf(k.c, field.name.span, "L0352", "enum member representation does not fit `%s`", type_name(k.c, backing))
 		}
 		if field.name.text != "" && field.name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, field.name)) != INVALID_SYMBOL {
@@ -68,7 +68,7 @@ enum_member_value :: proc(k: ^Checker, value: Expr, backing: Type_Id) -> (Big_In
 		errorf(k.c, expr_span(value), "L0380", "an enum member's value must be a constant integer")
 		return {}, false
 	}
-	if !bi_fits(k.c, folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
+	if !bi_fits(folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
 		errorf(
 			k.c, expr_span(value), "L0352", "%s is not representable by `%s`",
 			bi_text(k.c, folded.integer), type_name(k.c, backing),
@@ -104,7 +104,7 @@ enum_member_by_value :: proc(c: ^Compiler, type: Type_Id, value: Const_Value) ->
 		if symbol == nil || symbol.const_value.kind != .Integer {
 			continue
 		}
-		if bi_cmp(c, symbol.const_value.integer, value.integer) == 0 {
+		if bi_cmp(symbol.const_value.integer, value.integer) == 0 {
 			return member
 		}
 	}

@@ -870,7 +870,7 @@ eval_unary_value :: proc(ev: ^Evaluator, op: Token_Kind, site: Span, value: Cons
 		return Eval_Value{}, false
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
-		if op == .Minus && !integer_fits(ev.k.c, folded.integer, type, ev.alloc) {
+		if op == .Minus && !integer_fits(ev.k.c, folded.integer, type) {
 			report_integer_overflow(ev.k.c, site, folded.integer, type, ev.alloc)
 			eval_fold_failed(ev)
 			return Eval_Value{}, false

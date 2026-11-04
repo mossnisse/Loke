@@ -126,7 +126,7 @@ bit_value_const :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, builtin: Bu
 	case .Math_Is_Power_Of_Two:
 		return bool_const(bi_sign(value) > 0 && intrinsics.count_ones(x) == 1), true
 	}
-	if bi_cmp(storage, value, bi_from_i64(storage, 1)) <= 0 {
+	if bi_cmp(value, bi_from_i64(storage, 1)) <= 0 {
 		return integer_const(bi_from_i64(storage, 1)), true
 	}
 	// `value` is above 1 here, so its pattern is its value.
@@ -268,7 +268,7 @@ fold_integer :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int,
 	}
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
-		if !integer_fits(c, result, type, storage) {
+		if !integer_fits(c, result, type) {
 			report_integer_overflow(c, op_span, result, type, storage)
 			return result, false
 		}
@@ -288,7 +288,7 @@ fold_shift :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int, t
 		return {}, false
 	}
 	untyped := type_is_untyped(c, type)
-	limit := u64(bi_magnitude_bits(storage, x))
+	limit := u64(bi_magnitude_bits(x))
 	if op == .Shl {
 		limit = untyped ? 1 << 20 : u64(type_bits(c, type))
 	}
@@ -306,12 +306,12 @@ fold_shift :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int, t
 // design.md "Integer overflow": a result that does not fit its integer type is
 // a compile-time error where a runtime one would panic. An untyped constant is
 // exact, and only `+%`, `-%`, and `*%` wrap.
-integer_fits :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> bool {
+integer_fits :: proc(c: ^Compiler, value: Big_Int, type: Type_Id) -> bool {
 	if type_is_untyped(c, type) {
 		return true
 	}
 	bits := type_bits(c, type)
-	return bits <= 0 || bi_fits(value_allocator(c, allocator), value, bits, type_signed(c, type))
+	return bits <= 0 || bi_fits(value, bits, type_signed(c, type))
 }
 
 report_integer_overflow :: proc(c: ^Compiler, span: Span, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) {
@@ -369,7 +369,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 			order = -order
 		}
 	case const_is_integral(a) && const_is_integral(b):
-		order = bi_cmp(storage, a.integer, b.integer)
+		order = bi_cmp(a.integer, b.integer)
 	case a.kind == .Boolean:
 		if b.kind != .Boolean {
 			return false, false
@@ -725,7 +725,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		bits, signed := type_bits(c, target), type_signed(c, target)
 		#partial switch value.kind {
 		case .Integer, .Rune:
-			if !bi_fits(storage, value.integer, bits, signed) {
+			if !bi_fits(value.integer, bits, signed) {
 				return value, false
 			}
 			return Const_Value{kind = .Integer, integer = value.integer}, true
@@ -741,11 +741,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
 				return value, false
 			}
-			truncated, _, ok := bi_from_f64_trunc(storage, value.float)
-			if !ok {
-				return value, false
-			}
-			if !bi_fits(storage, truncated, bits, signed) {
+			truncated, _ := bi_from_f64_trunc(storage, value.float)
+			if !bi_fits(truncated, bits, signed) {
 				return value, false
 			}
 			return Const_Value{kind = .Integer, integer = truncated}, true
@@ -753,7 +750,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	case .Rune:
 		#partial switch value.kind {
 		case .Integer, .Rune:
-			if !bi_fits(storage, value.integer, 32, true) {
+			if !bi_fits(value.integer, 32, true) {
 				return value, false
 			}
 			return Const_Value{kind = .Rune, integer = value.integer}, true
