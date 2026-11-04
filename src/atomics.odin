@@ -90,12 +90,7 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Atomic_Compare_Exchange: operands, orders = 3, 2
 	}
 	wanted := operands + orders
-	if len(v.args) != wanted {
-		errorf(
-			k.c, v.span, "L0661",
-			"`%s` takes %d argument%s, found %d",
-			ident.name, wanted, wanted == 1 ? "" : "s", len(v.args),
-		)
+	if !builtin_argument_count_ok(k, v, ident.name, "L0661", wanted) {
 		return
 	}
 

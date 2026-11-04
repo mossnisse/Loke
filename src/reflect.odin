@@ -215,8 +215,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	if len(v.args) != 1 {
-		errorf(k.c, v.span, "L0322", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
+	if !builtin_argument_count_ok(k, v, ident.name, "L0322", 1) {
 		return
 	}
 	operand := v.args[0].value

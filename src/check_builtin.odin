@@ -127,13 +127,19 @@ check_typed_builtin_args :: proc(
 	if !builtin_arguments_ok(k, v) {
 		return false
 	}
+	return bind_typed_arguments(k, v, targets)
+}
+
+// Checks one argument against each of `targets`, stopping at the first that
+// fails, and binds them.
+bind_typed_arguments :: proc(k: ^Checker, v: ^Expr_Call, targets: []Type_Id) -> bool {
 	bound := make([]Expr, len(targets), k.c.semantic_allocator)
 	for target, index in targets {
 		value, passed := check_argument_value(k, v.args[index].value, target)
-		bound[index] = value
 		if !passed {
 			return false
 		}
+		bound[index] = value
 	}
 	v.bound = bound
 	return true
@@ -148,12 +154,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		return
 	}
 	arity := kind == .Unsafe_String_View ? 2 : 1
-	if len(v.args) != arity {
-		errorf(
-			k.c, v.span, "L0569",
-			"`unsafe.%s` takes %d argument%s, found %d",
-			ident.name, arity, arity == 1 ? "" : "s", len(v.args),
-		)
+	if !builtin_argument_count_ok(k, v, concat(k.c, "unsafe.", ident.name), "L0569", arity) {
 		return
 	}
 	bound := make([]Expr, arity, k.c.semantic_allocator)
@@ -246,14 +247,32 @@ has_one_plain_argument :: proc(v: ^Expr_Call) -> bool {
 // first thing wrong. The call stays invalid until the caller sets its result type.
 builtin_arity_ok :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, code: string, wanted: int) -> bool {
 	v.type = INVALID_TYPE
-	if len(v.args) != wanted {
-		errorf(
-			k.c, v.span, code, "`%s` takes %d argument%s, found %d",
-			ident.name, wanted, wanted == 1 ? "" : "s", len(v.args),
-		)
+	return builtin_argument_count_ok(k, v, ident.name, code, wanted) && builtin_arguments_ok(k, v)
+}
+
+// Whether the call passes `wanted` arguments of any shape, reporting it if not.
+builtin_argument_count_ok :: proc(k: ^Checker, v: ^Expr_Call, name, code: string, wanted: int) -> bool {
+	if len(v.args) == wanted {
+		return true
+	}
+	errorf(
+		k.c, v.span, code, "`%s` takes %d argument%s, found %d",
+		name, wanted, wanted == 1 ? "" : "s", len(v.args),
+	)
+	return false
+}
+
+// An allocator argument, which the caller binds so the backend never re-derives it.
+check_allocator_argument :: proc(k: ^Checker, e: Expr) -> bool {
+	allocator := check_single_expr(k, e, TYPE_ALLOCATOR)
+	if allocator == INVALID_TYPE {
 		return false
 	}
-	return builtin_arguments_ok(k, v)
+	if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+		errorf(k.c, expr_span(e), "L0490", "an allocator argument is an `Allocator`, found `%s`", type_name(k.c, allocator))
+		return false
+	}
+	return true
 }
 
 // A call's operands, in the order the backend reads them.
@@ -649,20 +668,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 
 	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
 	bound[0] = v.args[0].value
-	// The allocator stays bound, so the backend never re-derives it.
 	if len(v.args) == 2 {
-		allocator := check_single_expr(k, v.args[1].value, TYPE_ALLOCATOR)
-		if allocator == INVALID_TYPE {
-			return
-		}
-		if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
-			errorf(
-				k.c,
-				expr_span(v.args[1].value),
-				"L0490",
-				"an allocator argument is an `Allocator`, found `%s`",
-				type_name(k.c, allocator),
-			)
+		if !check_allocator_argument(k, v.args[1].value) {
 			return
 		}
 		bound[1] = v.args[1].value

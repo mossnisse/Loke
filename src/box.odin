@@ -129,15 +129,7 @@ check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
 	bound[0] = argument
 	if len(v.args) == 2 {
-		allocator := check_single_expr(k, v.args[1].value, TYPE_ALLOCATOR)
-		if allocator == INVALID_TYPE {
-			return
-		}
-		if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
-			errorf(
-				k.c, expr_span(v.args[1].value), "L0490",
-				"an allocator argument is an `Allocator`, found `%s`", type_name(k.c, allocator),
-			)
+		if !check_allocator_argument(k, v.args[1].value) {
 			return
 		}
 		bound[1] = v.args[1].value

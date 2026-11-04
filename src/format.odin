@@ -275,14 +275,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	if !builtin_arity_ok(k, v, ident, "L0322", len(wanted)) {
 		return
 	}
-	bound := make([]Expr, len(wanted), k.c.semantic_allocator)
-	for target, index in wanted {
-		value, passed := check_argument_value(k, v.args[index].value, target)
-		bound[index] = value
-		if !passed {
-			return
-		}
+	if bind_typed_arguments(k, v, wanted) {
+		v.type = result
 	}
-	v.bound = bound
-	v.type = result
 }
