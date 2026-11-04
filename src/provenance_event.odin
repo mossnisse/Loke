@@ -540,10 +540,10 @@ prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
 @(private)
 prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set {
 	c := graph.k.c
-	arguments := prov_call_values(graph, v)
-	count := len(arguments)
+	form := prov_call_form(graph, v)
+	count := len(form.arguments)
 	out: []Region_Set
-	for argument, index in arguments {
+	for argument, index in form.arguments {
 		if argument == 0 || !prov_type_has_region(c, prov_value(graph, argument).type) {
 			continue
 		}
@@ -560,7 +560,6 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 	// elements' regions, and known to be in none when they have none, so a
 	// callee using it does not read as using an unknown region.
 	if call_packs(v, v.variadic_slot) && v.variadic_slot < count {
-		form := prov_value(graph, prov_operand_value(graph, v, graph.expansion)).form.(Prov_Form_Call)
 		pack := Region_Set{}
 		for element in form.pack {
 			if element == 0 || !prov_type_has_region(c, prov_value(graph, element).type) {
@@ -607,7 +606,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	_, conversion := v.operation.(Call_Text_Conversion)
 	text ||= conversion
 	allocators := Region_Set{}
-	for argument, index in prov_call_values(graph, v) {
+	for argument, index in prov_call_form(graph, v).arguments {
 		if argument == 0 {
 			continue
 		}

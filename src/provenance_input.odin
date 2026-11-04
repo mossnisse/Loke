@@ -339,7 +339,7 @@ prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 		return place
 	case ^Expr_Postfix:
 		if v.op != .Caret { return {} }
-		if !type_is_box(c, expr_base(v.operand).type) {
+		if !v.boxed {
 			return Prov_Place{base = prov_input_value(graph, v.operand)}
 		}
 		place := prov_input_place(graph, v.operand)

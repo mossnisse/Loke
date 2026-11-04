@@ -1593,7 +1593,7 @@ prov_reads_plainly_through :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
 	}
 	#partial switch v in e {
 	case ^Expr_Postfix:
-		return v.op == .Caret && !type_is_box(graph.k.c, prov_type(graph, v.operand))
+		return v.op == .Caret && !v.boxed
 	case ^Expr_Selector:
 		return true
 	case ^Expr_Index:
@@ -2689,7 +2689,7 @@ prov_read_carried :: proc(graph: ^Flow_Graph, e: Expr) -> (content: []int, ok: b
 prov_read_deref :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix) -> []int {
 	// design.md "Owned values": reading `b^` reads the box, as reading `xs[i]`
 	// reads a dynamic array.
-	if type_is_box(graph.k.c, prov_type(graph, v.operand)) {
+	if v.boxed {
 		if content, ok := prov_read_rooted(graph, v); ok {
 			return content
 		}

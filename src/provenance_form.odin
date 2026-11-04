@@ -29,7 +29,7 @@ Prov_Form :: union {
 
 // An operand is read at its checked representation, in its parent's expansion;
 // only the parent's own conversions select a value beneath it.
-@(private)
+@(private = "file")
 prov_operand_value :: proc(graph: ^Flow_Graph, e: Expr, expansion: Defer_Expansion) -> Value_Id {
 	if expr_base(e) == nil { return 0 }
 	return prov_intern_value(graph, e, prov_checked_repr(e), expansion)
@@ -131,10 +131,10 @@ prov_receiver_value :: proc(arguments: []Value_Id) -> Value_Id {
 	return len(arguments) > 0 ? arguments[0] : 0
 }
 
-// The argument values of a call an event names, from the call's value in the
-// expansion of the event's site. A query of a value reads its own form instead,
-// which keeps the value's expansion.
+// The form of a call an event names, from the call's value in the expansion of
+// the event's site. A query of a value reads its own form instead, which keeps
+// the value's expansion.
 @(private)
-prov_call_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> []Value_Id {
-	return prov_value(graph, prov_operand_value(graph, call, graph.expansion)).form.(Prov_Form_Call).arguments
+prov_call_form :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Form_Call {
+	return prov_value(graph, prov_operand_value(graph, call, graph.expansion)).form.(Prov_Form_Call)
 }

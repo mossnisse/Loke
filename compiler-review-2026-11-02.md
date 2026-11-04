@@ -839,16 +839,11 @@ Sound and readable: the saturation loop, arena handling, and recording disciplin
 
 ### src/provenance_form.odin
 
-Small, focused and in good shape: every form, field and accessor has a reader, and no bugs turned up. What remains is one accessor that leaves its sibling hand-written and a pack walk copied across the compiler.
-
-**Simplification**
-
-- [provenance_form.odin:143](src/provenance_form.odin#L143) `prov_call_values`: [cfg_provenance.odin:10704](src/cfg_provenance.odin#L10704) spells out the same lookup because it needs `.pack`, in a procedure that already called this at 10683. Return the form as `prov_call_form`; 10683 keeps it, 10704 goes, and `prov_operand_value` can become file-private. (about 1 line)
+What remains here waits on a helper shared across files.
 
 **Near copies**
 
 - [provenance_form.odin:111](src/provenance_form.odin#L111), [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [:10017](src/cfg_provenance.odin#L10017), [emit_llvm_stmt.odin:264](src/emit_llvm_stmt.odin#L264): each keeps `next_element`/`next_spread` to pick the next pack operand. Shared form in `ast.odin`: `call_pack_next(call, is_spread, &cursor) -> Expr`, about 6 lines off each of the first two.
-- [provenance_form.odin:57](src/provenance_form.odin#L57), [provenance_input.odin:334](src/provenance_input.odin#L334), [cfg.odin:2434](src/cfg.odin#L2434), [cfg_provenance.odin:2131](src/cfg_provenance.odin#L2131): all recompute box-ness of a `^` operand, while [cfg.odin:870](src/cfg.odin#L870) and [cfg_provenance.odin:6707](src/cfg_provenance.odin#L6707) read `v.boxed`. Read `v.boxed` everywhere.
 
 ### src/provenance_input.odin
 
