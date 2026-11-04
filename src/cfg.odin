@@ -1321,7 +1321,7 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	for slot in elements {
 		if entry := &graph.prov_slots[slot]; entry.name == "" {
 			span := expr_span(iterable)
-			entry.name = graph.k.c.sources[span.file].text[span.lo:span.hi]
+			entry.name = span_text(graph.k.c, span)
 		}
 	}
 	through: []int

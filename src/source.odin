@@ -26,6 +26,11 @@ Span :: struct {
 NO_FILE :: max(u32)
 NO_SPAN :: Span{file = NO_FILE}
 
+// A map key for a place in the source; spans that start together share it.
+span_key :: proc(span: Span) -> u64 {
+	return u64(span.file) << 32 | u64(span.lo)
+}
+
 Source :: struct {
 	path:        string,
 	text:        string,
@@ -167,15 +172,19 @@ span_source :: proc(c: ^Compiler, span: Span) -> ^Source {
 	return &c.sources[span.file] if int(span.file) < len(c.sources) else nil
 }
 
-// The source text of an expression, or empty for one with no source.
-source_text :: proc(c: ^Compiler, e: Expr) -> string {
-	span := expr_span(e)
+// The source text a span covers, or empty for a span with none.
+span_text :: proc(c: ^Compiler, span: Span) -> string {
 	src := span_source(c, span)
 	if src == nil {
 		return ""
 	}
 	hi := min(int(span.hi), len(src.text))
 	return int(span.lo) < hi ? src.text[span.lo:hi] : ""
+}
+
+// The source text of an expression, or empty for one with no source.
+source_text :: proc(c: ^Compiler, e: Expr) -> string {
+	return span_text(c, expr_span(e))
 }
 
 @(private = "file")

@@ -39,7 +39,7 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 	defer k.scope = outer
 
 	span := Span{file = v.span.file, lo = v.span.lo, hi = capture.clause_span.hi}
-	text := k.c.sources[span.file].text[span.lo:span.hi]
+	text := span_text(k.c, span)
 	name := synth_name(k.c, text, span)
 	record, fields := capture_record_syntax(k, capture, types, span)
 	method := capture_call_method(k, capture, fields)

@@ -749,7 +749,7 @@ prov_place_loan :: proc(
 	slot := prov_temp_slot(graph)
 	append(&graph.place_loans, Prov_Place_Loan {
 		slot = slot, paths = prov_offset_paths(graph, places), mutable = mutable, borrows = borrows, what = what, span = span,
-		place = graph.k.c.sources[span.file].text[span.lo:span.hi], element = element, in_element = in_element,
+		place = span_text(graph.k.c, span), element = element, in_element = in_element,
 	})
 	graph.prov_slots[slot].element_defs = len(in_element.slots) > 0
 	// design.md "Minimum provenance precision": a loan of places merged past

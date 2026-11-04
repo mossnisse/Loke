@@ -436,7 +436,7 @@ main :: proc() {}`)
 	if !testing.expect(t, p.c.error_count == 1 && len(p.c.diagnostics) == 1) { return }
 	diagnostic := p.c.diagnostics[0]
 	testing.expect_value(t, diagnostic.code, "L0526")
-	testing.expect_value(t, p.c.sources[diagnostic.span.file].text[diagnostic.span.lo:diagnostic.span.hi], "local[:]")
+	testing.expect_value(t, span_text(&p.c, diagnostic.span), "local[:]")
 	testing.expect(t, strings.contains(diagnostic.message, "local"), "synthetic analysis names replaced the source owner")
 }
 

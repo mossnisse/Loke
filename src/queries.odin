@@ -569,7 +569,7 @@ build_query_signatures :: proc(s: ^Compilation_Session) {
 		if literal != nil && literal.signature != nil {
 			span := literal.signature.span
 			if valid_query_span(c, span) {
-				text = c.sources[span.file].text[span.lo:span.hi]
+				text = span_text(c, span)
 			}
 		}
 		if text == "" && symbol.proc_type != INVALID_TYPE { text = q.types[symbol.proc_type].name }

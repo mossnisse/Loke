@@ -78,7 +78,7 @@ spawn_callee_name :: proc(c: ^Compiler, call: ^Expr_Call) -> string {
 	if literal, is_literal := call.callee.(^Expr_Proc); is_literal && literal.signature != nil {
 		span = literal.signature.span
 	}
-	return c.sources[span.file].text[span.lo:span.hi]
+	return span_text(c, span)
 }
 
 // The names the synthesized code binds in scopes of its own. None can be

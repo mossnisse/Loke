@@ -212,11 +212,6 @@ text_of :: proc(p: ^Parser, t: Token) -> string {
 	return p.c.sources[p.file].text[t.lo:t.hi]
 }
 
-@(private = "file")
-source_text_of :: proc(p: ^Parser, span: Span) -> string {
-	return p.c.sources[p.file].text[span.lo:span.hi]
-}
-
 // Contextual keywords arrive as identifiers.
 @(private = "file")
 is_contextual :: proc(p: ^Parser, word: string) -> bool {
@@ -3477,7 +3472,7 @@ parse_capture_entry :: proc(p: ^Parser) -> (Capture_Entry, bool) {
 		parse_error(
 			p, expr_span(path), "L0259", "a captured path",
 			"a captured path is named: write `%s = %s`",
-			suggested, source_text_of(p, expr_span(path)),
+			suggested, span_text(p.c, expr_span(path)),
 		)
 		return entry, false
 	}
@@ -3728,7 +3723,7 @@ parse_record :: proc(p: ^Parser) -> ^Type_Record {
 	e.has_error = !opened || !closed || !generics_ok || !members_ok
 	if len(attributes) > 0 {
 		earlier_spelling_of(p, e).groups = groups
-		reject_earlier_spelling(p, groups, source_text_of(p, groups), keyword.kind == .Union ? "union" : "struct")
+		reject_earlier_spelling(p, groups, span_text(p.c, groups), keyword.kind == .Union ? "union" : "struct")
 	}
 	return e
 }

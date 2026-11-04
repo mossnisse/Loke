@@ -37,7 +37,7 @@ valid_query_span :: proc(c: ^Compiler, span: Span) -> bool {
 
 @(private = "file")
 query_span_spells :: proc(c: ^Compiler, span: Span, name: string) -> bool {
-	return valid_query_span(c, span) && c.sources[span.file].text[span.lo:span.hi] == name
+	return valid_query_span(c, span) && span_text(c, span) == name
 }
 
 // Inferred generic bindings and lowering temporaries can carry a use's span.

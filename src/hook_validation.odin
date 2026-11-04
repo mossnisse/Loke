@@ -217,7 +217,7 @@ check_generic_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, template: ^Gener
 				k.c, d.names[0].span, "L0488", "`drop` has a fixed signature for `%s`: `proc(self: inout T)`",
 				identifier_text(k.c, symbol_of(k.c, template.symbol).name),
 			)
-			k.c.reported_generic_hooks[generic_hook_key(d)] = true
+			k.c.reported_generic_hooks[span_key(d.span)] = true
 		}
 	}
 }
@@ -231,7 +231,7 @@ validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 	for member in item.members {
 		d, is_decl := member.(^Decl)
-		if !is_decl || k.c.reported_generic_hooks[generic_hook_key(d)] {
+		if !is_decl || k.c.reported_generic_hooks[span_key(d.span)] {
 			continue
 		}
 		role := decl_hook_kind(d)
@@ -251,15 +251,10 @@ validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
 			errors := k.c.error_count
 			validate_semantic_hook(k, item, sym, symbol_id)
 			if k.c.error_count != errors {
-				k.c.reported_generic_hooks[generic_hook_key(d)] = true
+				k.c.reported_generic_hooks[span_key(d.span)] = true
 			}
 		}
 	}
-}
-
-@(private = "file")
-generic_hook_key :: proc(d: ^Decl) -> u64 {
-	return u64(d.span.file) << 32 | u64(d.span.lo)
 }
 
 // The written shape of `proc(self: inout T)`, for a block with no instance to
@@ -291,7 +286,7 @@ claim_copy_failure :: proc(k: ^Checker, d: ^Decl, failure: Copy_Failure) -> bool
 	if !committing(k.c) {
 		return true
 	}
-	key := u64(d.span.file) << 32 | u64(d.span.lo)
+	key := span_key(d.span)
 	reported := k.c.reported_copy_failures[key]
 	if failure in reported {
 		return false
