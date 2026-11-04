@@ -1975,14 +1975,9 @@ link_landed_stores :: proc(state: ^Prov_Solve) {
 @(private = "file")
 solve_reaching :: proc(state: ^Prov_Solve) {
 	graph := state.graph
-	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
-	queued := make([]bool, len(graph.blocks), graph.alloc)
-	append(&queue, Block_Id(0))
-	queued[0] = true
-	for head := 0; head < len(queue); head += 1 {
-		id := int(queue[head])
+	queue := block_queue_from_entry(graph)
+	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
-		queued[id] = false
 		mem.zero_slice(state.reach)
 		mem.zero_slice(state.precision)
 		mem.zero_slice(state.ended)
@@ -2028,12 +2023,7 @@ solve_reaching :: proc(state: ^Prov_Solve) {
 		copy(block.precision_exit, state.precision)
 		copy(block.ended_exit, state.ended)
 		block.prov_visited = true
-		for successor in block.succs {
-			if !queued[int(successor)] {
-				append(&queue, successor)
-				queued[int(successor)] = true
-			}
-		}
+		block_queue_wake(&queue, block.succs[:])
 	}
 }
 
@@ -2059,14 +2049,9 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 	intern_link_row(state, state.link_row_value)
 	index_links(state)
 	visited := make([]bool, len(graph.blocks), graph.alloc)
-	queued := make([]bool, len(graph.blocks), graph.alloc)
-	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
-	append(&queue, Block_Id(0))
-	queued[0] = true
-	for head := 0; head < len(queue); head += 1 {
-		id := int(queue[head])
+	queue := block_queue_from_entry(graph)
+	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
-		queued[id] = false
 		mem.zero_slice(state.links_held)
 		for predecessor in block.preds {
 			if visited[int(predecessor)] {
@@ -2086,12 +2071,7 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 		}
 		visited[id] = true
 		copy(block.links_exit, state.links_held)
-		for successor in block.succs {
-			if !queued[int(successor)] {
-				append(&queue, successor)
-				queued[int(successor)] = true
-			}
-		}
+		block_queue_wake(&queue, block.succs[:])
 	}
 }
 
@@ -2960,16 +2940,9 @@ publish_replaced_slots :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u
 @(private = "file")
 solve_loan_liveness :: proc(state: ^Prov_Solve) {
 	graph := state.graph
-	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
-	queued := make([]bool, len(graph.blocks), graph.alloc)
-	for index := len(graph.blocks) - 1; index >= 0; index -= 1 {
-		append(&queue, Block_Id(index))
-		queued[index] = true
-	}
-	for head := 0; head < len(queue); head += 1 {
-		id := int(queue[head])
+	queue := block_queue_last_first(graph)
+	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
-		queued[id] = false
 		mem.zero_slice(state.live)
 		slice.fill(state.uses, NO_SPAN)
 		for successor in block.succs {
@@ -2991,12 +2964,7 @@ solve_loan_liveness :: proc(state: ^Prov_Solve) {
 		}
 		copy(block.live_entry, state.live)
 		copy(block.use_entry, state.uses)
-		for predecessor in block.preds {
-			if !queued[int(predecessor)] {
-				append(&queue, predecessor)
-				queued[int(predecessor)] = true
-			}
-		}
+		block_queue_wake(&queue, block.preds[:])
 	}
 }
 

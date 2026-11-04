@@ -350,6 +350,62 @@ link :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 	append(&graph.blocks[from].succs, to)
 }
 
+// The blocks a fixed point has yet to visit, in the order they were woken, each
+// listed once.
+@(private)
+Block_Queue :: struct {
+	queued:  []bool,
+	pending: [dynamic]Block_Id,
+	head:    int,
+}
+
+@(private = "file")
+block_queue_make :: proc(graph: ^Flow_Graph) -> Block_Queue {
+	return Block_Queue {
+		queued = make([]bool, len(graph.blocks), graph.alloc),
+		pending = make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc),
+	}
+}
+
+// A forward problem starts where the procedure does.
+@(private)
+block_queue_from_entry :: proc(graph: ^Flow_Graph) -> Block_Queue {
+	queue := block_queue_make(graph)
+	block_queue_wake(&queue, {Block_Id(0)})
+	return queue
+}
+
+// A backward problem starts from every block, since any may hold a use.
+@(private)
+block_queue_last_first :: proc(graph: ^Flow_Graph) -> Block_Queue {
+	queue := block_queue_make(graph)
+	for index := len(graph.blocks) - 1; index >= 0; index -= 1 {
+		block_queue_wake(&queue, {Block_Id(index)})
+	}
+	return queue
+}
+
+@(private)
+block_queue_pop :: proc(queue: ^Block_Queue) -> (index: int, ok: bool) {
+	if queue.head >= len(queue.pending) {
+		return 0, false
+	}
+	index = int(queue.pending[queue.head])
+	queue.head += 1
+	queue.queued[index] = false
+	return index, true
+}
+
+@(private)
+block_queue_wake :: proc(queue: ^Block_Queue, blocks: []Block_Id) {
+	for block in blocks {
+		if !queue.queued[int(block)] {
+			queue.queued[int(block)] = true
+			append(&queue.pending, block)
+		}
+	}
+}
+
 @(private)
 flow_emit :: proc(graph: ^Flow_Graph, event: Flow_Event) {
 	if graph.current == NO_BLOCK {
@@ -2094,7 +2150,7 @@ reads_before :: proc(events: []Flow_Event, from: int, reads: []u64) {
 }
 
 // The blocks some path from the procedure's entry reaches.
-@(private = "file")
+@(private)
 flow_reachable :: proc(graph: ^Flow_Graph) -> []bool {
 	reached := make([]bool, len(graph.blocks), graph.alloc)
 	pending := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)

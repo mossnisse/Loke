@@ -183,10 +183,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 ### Provenance and borrow analysis
 
-#### Worklists
-
-The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3585](src/borrow.odin#L3585), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941). They differ only in the join each performs. `Block_Queue`, with init, pop and push-if-absent, saves about 20 lines.
-
 #### Paths
 
 [cfg_provenance.odin:3210](src/cfg_provenance.odin#L3210) `prov_extend`, [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218) `prov_concat_path` and [borrow.odin:949](src/borrow.odin#L949) `carrier_steps` differ only in the allocator. `path_extend` and `path_concat` beside `proj_*` save about 15 lines. The depth bound 8 is a literal at both [borrow.odin:1223](src/borrow.odin#L1223) and [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616).
@@ -350,15 +346,6 @@ The solvers and the view-start fixed point are carefully reasoned, but this stre
 **Near copies**
 
 - [borrow.odin:2573](src/borrow.odin#L2573) and [global_effects.odin:343](src/global_effects.odin#L343) `passed_values`/`effect_value`: same move unwrap and ident/selector/literal switch to a symbol. Share `named_value_symbol(e: Expr) -> Symbol_Id` from global_effects.odin; each keeps its own classification. (about 10 lines)
-- [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3583](src/borrow.odin#L3583), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941): the same forward worklist setup and successor push. A small `Block_Queue` with `block_queue_make` and `block_queue_push_succs` serves all four. (about 20 lines)
-
-### src/borrow.odin (part 3 of 3)
-
-The checks are sound in intent and well cited, but overlapping place loans make `check_place_loans` cubic, the per-event liveness snapshots make memory quadratic in a long body, and task diagnostics drop the precision the spec requires them to name. The reporting half repeats its loan-scan and message shapes, and the task code is split across sections.
-
-**Near copies**
-
-- [borrow.odin:4931](src/borrow.odin#L4931): the backward worklist of `solve_loan_liveness` repeats the setup and push that the part 2 forward `Block_Queue` finding covers; give that type a predecessor push too. (about 6 lines)
 
 ### src/box.odin
 

@@ -23,18 +23,7 @@ solve_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 	if !graph.has_window_event {
 		return entry
 	}
-	reached := make([]bool, len(graph.blocks), graph.alloc)
-	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
-	append(&queue, Block_Id(0))
-	reached[0] = true
-	for head := 0; head < len(queue); head += 1 {
-		for successor in graph.blocks[int(queue[head])].succs {
-			if !reached[int(successor)] {
-				reached[int(successor)] = true
-				append(&queue, successor)
-			}
-		}
-	}
+	reached := flow_reachable(graph)
 	width := (len(graph.task_sites) + 7) / 8
 	exit := make([][]u8, len(graph.blocks), graph.alloc)
 	for id in 0 ..< len(graph.blocks) {

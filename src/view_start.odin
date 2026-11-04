@@ -364,15 +364,10 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 		exit[id] = make([]u8, width, graph.alloc)
 	}
 	visited := make([]bool, len(graph.blocks), graph.alloc)
-	queued := make([]bool, len(graph.blocks), graph.alloc)
-	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
-	append(&queue, Block_Id(0))
-	queued[0] = true
+	queue := block_queue_from_entry(graph)
 	row := make([]u8, width, graph.alloc)
-	for head := 0; head < len(queue); head += 1 {
-		id := int(queue[head])
+	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
-		queued[id] = false
 		mem.zero_slice(row)
 		for predecessor in block.preds {
 			if visited[int(predecessor)] {
@@ -395,12 +390,7 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 		}
 		copy(exit[id], row)
 		visited[id] = true
-		for successor in block.succs {
-			if !queued[int(successor)] {
-				append(&queue, successor)
-				queued[int(successor)] = true
-			}
-		}
+		block_queue_wake(&queue, block.succs[:])
 	}
 	for block, id in graph.blocks {
 		if !visited[id] {

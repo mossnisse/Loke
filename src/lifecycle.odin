@@ -339,17 +339,11 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		block.visited = false
 	}
 
-	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
-	in_queue := make([]bool, len(graph.blocks), graph.alloc)
+	queue := block_queue_from_entry(graph)
 	state := make([]Liveness, tracked, graph.alloc)
-	append(&queue, Block_Id(0))
-	in_queue[0] = true
-	for head := 0; head < len(queue); head += 1 {
-		id := queue[head]
-		index := int(id)
-		block := graph.blocks[index]
-		in_queue[index] = false
-		if index == 0 {
+	for id in block_queue_pop(&queue) {
+		block := graph.blocks[id]
+		if id == 0 {
 			// An ordinary parameter is a borrow and a local is dead until its
 			// declaration completes; a `move` parameter arrives owned.
 			for slot in 0 ..< tracked {
@@ -377,13 +371,7 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		}
 		copy(block.exit_state, state)
 		block.visited = true
-		for successor in block.succs {
-			position := int(successor)
-			if !in_queue[position] {
-				append(&queue, successor)
-				in_queue[position] = true
-			}
-		}
+		block_queue_wake(&queue, block.succs[:])
 	}
 
 	// A second walk with the fixed point in hand: this is where the events that
