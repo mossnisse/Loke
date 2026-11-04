@@ -9,21 +9,19 @@
 // with different constructors — an `Arena` may be laid over a caller's fixed
 // buffer, a `Scratch` is always provider-backed.
 //
-// Address stability is the whole point: copying an allocator value preserves
-// identity, and every allocation records it (design.md). Here the identity
-// *is* the control block's address, so moving the owner can't change it, and
-// the region check has one fact to follow rather than a per-copy tag.
+// The region identity is the control block's address (design.md "Allocator regions
+// and region provenance"), so moving or copying a handle keeps it and the region
+// check follows one fact.
 //
 // The value is move-only: two owners of one control block would release it
 // twice, and there is no meaningful clone of a bump region — so `clone` is
 // disabled in `lifecycle_of` rather than generated and then trapped.
 package lokec
 
-// The single field: the control-block pointer, no more user-visible than a
-// container's four words.
+// Index of the one field, the control-block pointer.
 PROVIDER_CONTROL :: 0
 
-Provider_Op :: enum {
+Provider_Op :: enum u8 {
 	None,
 	// `mem.Arena.init(parent, policy)` and `mem.Scratch.init(parent, policy)`.
 	Open,
@@ -36,61 +34,32 @@ Provider_Op :: enum {
 	Handle,
 }
 
-arena_type :: proc(c: ^Compiler) -> Type_Id {
-	if c.arena_type == INVALID_TYPE {
-		c.arena_type = new_provider_type(c, "mem.Arena")
-	}
-	return c.arena_type
-}
-
-scratch_type :: proc(c: ^Compiler) -> Type_Id {
-	if c.scratch_type == INVALID_TYPE {
-		c.scratch_type = new_provider_type(c, "mem.Scratch")
-	}
-	return c.scratch_type
-}
-
-// design.md "Allocation failure": the policy a region's own failures follow. The
-// members' values are the runtime's `LOKE_RT_ON_FAILURE_*`.
-failure_policy_type :: proc(c: ^Compiler) -> Type_Id {
-	if c.failure_policy_type == INVALID_TYPE {
-		c.failure_policy_type = synth_enum(c, "mem.Failure_Policy", {"Panic", "Trap"})
-	}
-	return c.failure_policy_type
-}
-
-// The `.Panic` an omitted `policy` argument means.
-@(private = "file")
-panic_policy_arg :: proc(c: ^Compiler) -> Expr {
-	if c.panic_policy_arg == nil {
-		literal := new(Expr_Literal, c.semantic_allocator)
-		literal.span = no_span()
-		literal.kind = .Int
-		literal.type = failure_policy_type(c)
-		literal.value_category = .Value
-		literal.is_const = true
-		literal.const_value = int_const(c, 0)
-		c.panic_policy_arg = literal
-	}
-	return c.panic_policy_arg
+// design.md "Allocators": what `core:mem` holds that the compiler has to recognise.
+// A package-level fallible constructor is synthesized here too, as package lookup
+// has no type to trigger contribution from.
+contribute_provider_types :: proc(k: ^Checker, pkg: ^Package) {
+	c := k.c
+	arena, scratch := new_provider_type(c, "mem.Arena"), new_provider_type(c, "mem.Scratch")
+	// design.md "Allocation failure": the policy a region's own failures follow. The
+	// members' values are the runtime's `LOKE_RT_ON_FAILURE_*`.
+	policy := synth_enum(c, "mem.Failure_Policy", {"Panic", "Trap"})
+	contribute_type(c, pkg, "Arena", arena)
+	contribute_type(c, pkg, "Scratch", scratch)
+	contribute_type(c, pkg, "Failure_Policy", policy)
+	contribute_symbol(c, pkg, "try_arena", provider_try_proc(k, arena, "try_arena", policy))
+	contribute_symbol(c, pkg, "try_scratch", provider_try_proc(k, scratch, "try_scratch", policy))
+	// The buffer is written into, so it is `[]mut u8`. `mem.Scratch` is always
+	// provider-backed.
+	buffer := slice_of(c, TYPE_U8, mutable = true)
+	add_provider_members(c, arena, policy, provider_constructor(c, arena, "from_buffer", .Open_Fixed, buffer, "buffer", arena, policy))
+	add_provider_members(c, scratch, policy)
 }
 
 @(private = "file")
 new_provider_type :: proc(c: ^Compiler, name: string) -> Type_Id {
-	type := new_type(c, Type_Info{kind = .Struct, name = intern_identifier(c, name), provider = true})
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[PROVIDER_CONTROL] = new_symbol(c, Symbol {
-		name  = intern_identifier(c, "control"),
-		span  = no_span(),
-		kind  = .Field,
-		type  = TYPE_RAWPTR,
-		index = PROVIDER_CONTROL,
-	})
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.backend_label = name
-	}
-	return type
+	fields[PROVIDER_CONTROL] = new_field(c, "control", TYPE_RAWPTR, PROVIDER_CONTROL)
+	return new_type(c, Type_Info{kind = .Struct, name = intern_identifier(c, name), provider = true, fields = fields, backend_label = name})
 }
 
 // Whether this type is one of the two local region providers, through a
@@ -103,8 +72,13 @@ type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // Whether a value of this type holds a provider by value, so ending the value
 // ends that provider's region.
 type_carries_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.provider_carriers[type]; found {
+		return cached
+	}
 	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
-	return provider_reach_walk(c, type, &visited)
+	carries := provider_reach_walk(c, type, &visited)
+	c.provider_carriers[type] = carries
+	return carries
 }
 
 @(private = "file")
@@ -120,81 +94,42 @@ provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]b
 	if info == nil {
 		return false
 	}
-	#partial switch info.kind {
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && provider_reach_walk(c, sym.type, visited) {
-				return true
-			}
+	// design.md "Shared ownership": any strong handle may be the last, whose end
+	// ends the payload. A `Weak` one keeps no payload.
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		return type_info_is_shared(c, info) && provider_reach_walk(c, payload, visited)
+	}
+	for part in type_owned_parts(c, info) {
+		if provider_reach_walk(c, part, visited) {
+			return true
 		}
-	case .Union:
-		for payload in info.variants {
-			if payload != TYPE_VOID && provider_reach_walk(c, payload, visited) {
-				return true
-			}
-		}
-	case .Array, .Dynamic_Array, .Box, .Map:
-		return provider_reach_walk(c, info.element, visited) || provider_reach_walk(c, info.key, visited)
 	}
 	return false
 }
 
-// design.md writes both constructors as calls on the type name: `init` takes a
-// parent allocator and defaults to the program provider, and `from_buffer` lays
-// an `Arena` over a caller's storage.
-//
-// The provider's own info, never the underlying one: `add_members` installs on
-// the type as given, so guarding on anything else would let a `distinct` alias
-// take the members, which design.md "Distinct types" says it does not inherit.
-ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
-	info := type_of(k.c, type)
-	if info == nil || !info.provider || .Provider in info.contributed {
-		return
+// The provider's own info, never the underlying one: `add_members` installs on the
+// type as given, and design.md "Distinct types" says a `distinct` alias does not
+// inherit the members.
+@(private = "file")
+add_provider_members :: proc(c: ^Compiler, type, policy: Type_Id, extra := INVALID_SYMBOL) {
+	members := make([dynamic]Symbol_Id, 0, 3, c.semantic_allocator)
+	if extra != INVALID_SYMBOL {
+		append(&members, extra)
 	}
-	info.contributed += {.Provider}
-
-	// The buffer is written into, so it is `[]mut u8`. `mem.Scratch` is always
-	// provider-backed.
-	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
-	if type == k.c.arena_type {
-		buffer := slice_of(k.c, TYPE_U8, mutable = true)
-		append(&members, provider_constructor(
-			k.c, type, "from_buffer", .Open_Fixed, buffer, "buffer", type,
-		))
-	}
-	open := provider_constructor(k.c, type, "init", .Open, TYPE_ALLOCATOR, "parent", type)
-	if sym := symbol_of(k.c, open); sym != nil {
-		sym.param_defaults[0] = default_allocator_arg(k.c)
-	}
-	append(&members, open)
+	append(&members, provider_constructor(c, type, "init", .Open, TYPE_ALLOCATOR, "parent", type, policy, default_allocator_arg(c)))
 	// The receiver is by value: the handle is derived from the control block's
 	// address, and reading a provider does not modify it.
-	append(&members, provider_member(
-		k.c, type, "allocator", .Handle,
-		[]Type_Id{type}, []Param_Mode{.Value}, TYPE_ALLOCATOR, has_receiver = true,
-	))
-	add_members(k.c, type, members[:])
+	handle := provider_member(c, type, "allocator", .Handle, []Type_Id{type}, TYPE_ALLOCATOR)
+	symbol_of(c, handle).has_receiver = true
+	append(&members, handle)
+	add_members(c, type, members[:])
 }
 
 @(private = "file")
-provider_member :: proc(
-	c: ^Compiler,
-	owner: Type_Id,
-	name: string,
-	op: Provider_Op,
-	params: []Type_Id,
-	modes: []Param_Mode,
-	result: Type_Id,
-	has_receiver: bool,
-) -> Symbol_Id {
+provider_member :: proc(c: ^Compiler, owner: Type_Id, name: string, op: Provider_Op, params: []Type_Id, result: Type_Id) -> Symbol_Id {
+	modes := make([]Param_Mode, len(params), c.semantic_allocator)
 	id := synth_proc(c, name, .Provider_Op, owner, params, modes, result)
-	if sym := symbol_of(c, id); sym != nil {
-		sym.has_receiver = has_receiver
-		if has_receiver {
-			sym.receiver = .Value
-		}
-		sym.provider_op = op
-	}
+	symbol_of(c, id).provider_op = op
 	return id
 }
 
@@ -208,44 +143,29 @@ provider_constructor :: proc(
 	op: Provider_Op,
 	source: Type_Id,
 	source_name: string,
-	result: Type_Id,
+	result, policy: Type_Id,
+	source_default: Expr = nil,
 ) -> Symbol_Id {
-	policy := failure_policy_type(c)
-	id := provider_member(
-		c, owner, name, op, []Type_Id{source, policy}, []Param_Mode{.Value, .Value}, result, has_receiver = false,
-	)
-	if sym := symbol_of(c, id); sym != nil {
-		sym.param_defaults[1] = panic_policy_arg(c)
-		for parameter, index in ([]string{source_name, "policy"}) {
-			sym.param_symbols[index] = new_symbol(c, Symbol {
-				name = intern_identifier(c, parameter), kind = .Parameter,
-				type = sym.params[index], mode = .Value,
-			})
-		}
+	id := provider_member(c, owner, name, op, []Type_Id{source, policy}, result)
+	sym := symbol_of(c, id)
+	sym.param_defaults[0] = source_default
+	// The `.Panic` an omitted `policy` argument means.
+	sym.param_defaults[1] = zero_literal_arg(c, policy)
+	for parameter, index in ([]string{source_name, "policy"}) {
+		sym.param_symbols[index] = new_parameter(c, intern_identifier(c, parameter), sym.params[index], .Value)
 	}
 	return id
 }
 
-// A package-level fallible constructor, synthesized eagerly when `core:mem` is
-// loaded: unlike an associated member, package lookup has no type from which to
-// trigger lazy contribution.
-provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string) -> Symbol_Id {
-	c := k.c
-	id := provider_constructor(
-		c, owner, name, .Try_Open, TYPE_ALLOCATOR, "parent", result_type(k, owner, TYPE_ALLOCATOR_ERROR),
+@(private = "file")
+provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string, policy: Type_Id) -> Symbol_Id {
+	return provider_constructor(
+		k.c, owner, name, .Try_Open, TYPE_ALLOCATOR, "parent", result_type(k, owner, TYPE_ALLOCATOR_ERROR), policy, default_allocator_arg(k.c),
 	)
-	if sym := symbol_of(c, id); sym != nil {
-		sym.param_defaults[0] = default_allocator_arg(c)
-	}
-	return id
 }
 
-// Which provider operation this call resolved to, or `.None`. One lookup, so
-// the checker and the backend agree about what a call is.
+// Which provider operation this call resolved to, or `.None`.
 call_provider_op :: proc(c: ^Compiler, v: ^Expr_Call) -> Provider_Op {
 	sym := symbol_of(c, v.resolution.chosen_overload)
-	if sym == nil || sym.synth != .Provider_Op {
-		return .None
-	}
-	return sym.provider_op
+	return sym != nil ? sym.provider_op : .None
 }

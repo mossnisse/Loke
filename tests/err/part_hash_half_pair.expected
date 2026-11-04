@@ -1,0 +1,45 @@
+L0586
+@63:2
+`Coarse` cannot be a map key: it has an inherent `==` but no inherent `hash`
+L0586
+@64:2
+`In_Coarse` cannot be a map key: it has `d: Coarse`, which is not hashable
+L0586
+@65:2
+`[2]Coarse` cannot be a map key
+L0586
+@66:2
+`Own_Hash` cannot be a map key: it has an inherent `hash` but no inherent `==`
+L0586
+@67:2
+`In_Own_Hash` cannot be a map key: it has `d: Own_Hash`, which is not hashable
+L0586
+@68:2
+`In_Plain_Hash` cannot be a map key: it has `d: Plain_Hash`, which is not hashable
+L0586
+@69:2
+`In_Folded` cannot be a map key: it has `folded: Folded`, which is not hashable
+L0586
+@70:2
+`[2]Folded` cannot be a map key
+L0586
+@71:2
+`(x: Folded)` cannot be a map key: it has `x: Folded`, which is not hashable
+L0586
+@72:2
+`Wrapped_Half` cannot be a map key: it has an inherent `==` but no inherent `hash`
+L0586
+@73:2
+`In_Half` cannot be a map key: it has `d: Wrapped_Half`, which is not hashable
+L0586
+@74:2
+`Wrapped_Odd` cannot be a map key: it has an inherent `hash`, which must be written
+L0586
+@75:2
+`In_Odd` cannot be a map key: it has `d: Wrapped_Odd`, whose `hash` must be written
+L0363
+@76:6
+`Coarse` has no field or member `hash`
+L0363
+@77:6
+`Wrapped_Half` has no field or member `hash`

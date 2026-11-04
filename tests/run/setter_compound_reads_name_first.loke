@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": a scalar variable on the right of a compound
+// assignment through `operator([]=)` is read before `operator([])` runs, as an
+// index naming one is.
+
+n := 1;
+
+Box_Value :: struct { value: int }
+
+impl Box_Value {
+	get :: operator([]) proc(self: Box_Value, i: int) -> int {
+		n = 100;
+		return self.value;
+	}
+	set :: operator([]=) proc(self: inout Box_Value, i: int, value: int) {
+		self.value = value;
+	}
+}
+
+main :: proc() {
+	b := Box_Value{value = 10};
+	b[0] += n;
+	fmt.println(b.value);
+
+	b.value = 10;
+	m := 1;
+	b[0] += m;
+	fmt.println(b.value);
+}

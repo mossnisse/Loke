@@ -1,0 +1,10 @@
+// design.md "`@(intrinsic)`": a declaration is a bare procedure or a type, and
+// states nothing the compiler would not check: no written type, no `where`, no
+// `operator` or hook, a receiver only as `self`, and no attribute on its `impl`.
+package main;
+
+import "core:mem";
+
+main :: proc() {
+	_ = mem.Arena{};
+}

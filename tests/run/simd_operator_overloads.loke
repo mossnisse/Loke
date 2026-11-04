@@ -1,0 +1,38 @@
+// design.md "Operator lookup and overload resolution": an overload is found where
+// no built-in operation exists, and a built-in one cannot be shadowed. The same
+// answer for `v + x` and `v += x`.
+package main;
+
+import "core:fmt";
+
+Scale :: struct { factor: f32 };
+
+impl Scale {
+	left :: operator(*) proc(s: Scale, v: Simd(f32, 4)) -> Simd(f32, 4) { return v * s.factor; }
+	right :: operator(+) proc(v: Simd(f32, 4), s: Scale) -> Simd(f32, 4) { return v + s.factor; }
+}
+
+// Float lanes have no built-in `%`.
+remainder :: operator(%) proc(a, b: Simd(f32, 4)) -> Simd(f32, 4) { return a - b; }
+// Two vector types have no built-in `+`.
+mixed :: operator(+) proc(a: Simd(i32, 4), b: Simd(f32, 4)) -> int { return 7; }
+// A lane of the vector does, so this never runs.
+shadowed :: operator(+) proc(a: Simd(i32, 4), b: i32) -> int { return 8; }
+
+main :: proc() {
+	v: Simd(f32, 4) = 1.0;
+	w: Simd(i32, 4) = 1;
+	s := Scale{2.0};
+
+	a := s * v;
+	b := v + s;
+	c := v % v;
+	fmt.println(a[0], b[0], c[0]);
+	fmt.println(w + v);
+	v += s;
+	fmt.println(v[0]);
+
+	scalar: i32 = 2;
+	d := w + scalar;
+	fmt.println(d[0]);
+}

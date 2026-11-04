@@ -1,0 +1,4 @@
+@(public)
+package thread;
+
+Task_Scope :: struct { n: int }

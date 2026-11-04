@@ -1,0 +1,23 @@
+package main; import "core:fmt";
+
+foreign import system "system:kernel32.lib";
+
+// design.md "@(export)": an `impl` member's symbol is a real definition, so a
+// foreign binding of its name links to it.
+foreign system {
+	bound_count :: proc "c" () -> i32 ---;
+	@(link_name = "renamed_member") bound_renamed :: proc "c" () -> i32 ---;
+}
+
+T :: struct { a: i32 }
+
+impl T {
+	@(export, link_name = "bound_count") count :: proc "c" () -> i32 { return 41; }
+	@(export, link_name = "renamed_member") renamed :: proc "c" () -> i32 { return 42; }
+}
+
+main :: proc() {
+	fmt.println(int(T.count()));
+	fmt.println(int(bound_count()));
+	fmt.println(int(bound_renamed()));
+}

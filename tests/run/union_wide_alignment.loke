@@ -1,0 +1,42 @@
+package main; import "core:fmt";
+
+// A union aligned past the widest integer the target layout aligns: LLVM's own
+// layout has to agree with the checker's, or a copy of an array overruns its
+// storage. A union constant spells each storage member its type has, including
+// the zero-length one that carries a payloadless union's alignment.
+
+@(zero=narrow) Wide :: union { narrow: i32, vector: Simd(f32, 8) }
+@(zero=none) Empty_Wide :: union { none:, nothing: [0]Simd(f32, 8) }
+@(align=8, zero=first) Tag_Only :: union { first:, second: }
+@(align=16, zero=first) Tag_Only_16 :: union { first:, second:, third: }
+
+Hold :: struct { lead: u8, value: Wide, tail: u8 }
+
+static_narrow: Wide = .narrow(7);
+static_vector: Wide = .vector(Simd(f32, 8){1, 2, 3, 4, 5, 6, 7, 8});
+static_empty: Empty_Wide = .nothing({});
+static_tag: Tag_Only = .second;
+static_tag_16: Tag_Only_16 = .third;
+
+show :: proc(value: Wide) {
+	switch (value) {
+	case .narrow(number): fmt.println("narrow", number);
+	case .vector(lanes): fmt.println("vector", lanes[0], lanes[7]);
+	}
+}
+
+main :: proc() {
+	fmt.println(size_of(Wide), align_of(Wide), size_of(Hold), offset_of(Hold, tail));
+
+	holds: [100]Hold = {};
+	holds[1].value = .vector(Simd(f32, 8){9, 8, 7, 6, 5, 4, 3, 2});
+	holds[99].tail = 7;
+	copied := holds;
+	show(copied[0].value);
+	show(copied[1].value);
+	fmt.println(copied[99].tail);
+
+	show(static_narrow);
+	show(static_vector);
+	fmt.println(static_empty, static_tag, static_tag_16);
+}

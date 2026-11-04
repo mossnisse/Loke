@@ -1,0 +1,12 @@
+L0537
+@11:3
+assigning through a pointer or slice would end the region backing `b`
+L0537
+@21:3
+assigning through a pointer or slice would end the region backing `b`
+L0537
+@31:7
+exchanging through a pointer or slice would end the region backing `b`
+L0537
+@42:3
+assigning through a pointer or slice would end the region backing `b`

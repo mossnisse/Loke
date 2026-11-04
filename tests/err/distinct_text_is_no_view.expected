@@ -1,0 +1,6 @@
+L0310
+@9:19
+cannot initialise `string_view` with `Name`
+L0310
+@11:12
+cannot initialise `View` with `string`

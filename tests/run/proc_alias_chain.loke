@@ -1,0 +1,64 @@
+package main; import "core:fmt";
+
+// Each alias names the one before it three times, and every type a walk over a
+// type's components meets again answers at once: a walk that took each mention
+// in turn would not end. `type_is_supported` was the first to be asked.
+P0 :: proc(x: int) -> int;
+P1 :: proc(a: P0, b: P0) -> P0;
+P2 :: proc(a: P1, b: P1) -> P1;
+P3 :: proc(a: P2, b: P2) -> P2;
+P4 :: proc(a: P3, b: P3) -> P3;
+P5 :: proc(a: P4, b: P4) -> P4;
+P6 :: proc(a: P5, b: P5) -> P5;
+P7 :: proc(a: P6, b: P6) -> P6;
+P8 :: proc(a: P7, b: P7) -> P7;
+P9 :: proc(a: P8, b: P8) -> P8;
+P10 :: proc(a: P9, b: P9) -> P9;
+P11 :: proc(a: P10, b: P10) -> P10;
+P12 :: proc(a: P11, b: P11) -> P11;
+P13 :: proc(a: P12, b: P12) -> P12;
+P14 :: proc(a: P13, b: P13) -> P13;
+P15 :: proc(a: P14, b: P14) -> P14;
+P16 :: proc(a: P15, b: P15) -> P15;
+P17 :: proc(a: P16, b: P16) -> P16;
+P18 :: proc(a: P17, b: P17) -> P17;
+P19 :: proc(a: P18, b: P18) -> P18;
+P20 :: proc(a: P19, b: P19) -> P19;
+P21 :: proc(a: P20, b: P20) -> P20;
+P22 :: proc(a: P21, b: P21) -> P21;
+P23 :: proc(a: P22, b: P22) -> P22;
+P24 :: proc(a: P23, b: P23) -> P23;
+P25 :: proc(a: P24, b: P24) -> P24;
+P26 :: proc(a: P25, b: P25) -> P25;
+P27 :: proc(a: P26, b: P26) -> P26;
+P28 :: proc(a: P27, b: P27) -> P27;
+P29 :: proc(a: P28, b: P28) -> P28;
+P30 :: proc(a: P29, b: P29) -> P29;
+P31 :: proc(a: P30, b: P30) -> P30;
+P32 :: proc(a: P31, b: P31) -> P31;
+P33 :: proc(a: P32, b: P32) -> P32;
+P34 :: proc(a: P33, b: P33) -> P33;
+P35 :: proc(a: P34, b: P34) -> P34;
+P36 :: proc(a: P35, b: P35) -> P35;
+P37 :: proc(a: P36, b: P36) -> P36;
+P38 :: proc(a: P37, b: P37) -> P37;
+P39 :: proc(a: P38, b: P38) -> P38;
+P40 :: proc(a: P39, b: P39) -> P39;
+P41 :: proc(a: P40, b: P40) -> P40;
+P42 :: proc(a: P41, b: P41) -> P41;
+P43 :: proc(a: P42, b: P42) -> P42;
+P44 :: proc(a: P43, b: P43) -> P43;
+P45 :: proc(a: P44, b: P44) -> P44;
+P46 :: proc(a: P45, b: P45) -> P45;
+P47 :: proc(a: P46, b: P46) -> P46;
+P48 :: proc(a: P47, b: P47) -> P47;
+
+first :: proc(a: P47, b: P47) -> P47 { return a; }
+
+Holder :: struct { callee: P48 }
+
+main :: proc() {
+	callee: P48 = first;
+	holder := Holder{callee};
+	fmt.println(holder.callee == first);
+}

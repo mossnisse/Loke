@@ -93,7 +93,7 @@ main :: proc() { _ = answer(); _ = prefixed(); }
 `)
 	defer destroy_checked(&p)
 	c := &p.c
-	check_exports(c)
+	check_exports(c, defines_entry = true)
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	c.debug_info = true
 	finalize_semantics(c)
@@ -601,9 +601,13 @@ main :: proc() {
 		type := Type_Id(index)
 		operations, resolved := resolved_lifecycle_operations(c, type)
 		testing.expect(t, resolved && operations.managed == type_is_managed(c, type) &&
-		               operations.clone_fallible == type_clone_is_fallible(c, type) &&
 		               operations.clone_disabled == type_clone_disabled(c, type),
 		               "the snapshot changed lifecycle semantics")
+	}
+	// A generated clone fails when some part's can, and a `[0]T` has no part.
+	for expected in ([]struct { name: string, fallible: bool }{{"Resource", true}, {"Nested", true}, {"Empty", false}, {"Shape", true}}) {
+		operations, _ := resolved_lifecycle_operations(c, named_type(t, &p, expected.name))
+		testing.expectf(t, operations.clone_fallible == expected.fallible, "%s: clone_fallible is %v", expected.name, operations.clone_fallible)
 	}
 	finalize_semantics(c)
 	before, emitted := emit_llvm_module(c)
@@ -877,6 +881,22 @@ rename_directory_waits_for_a_held_file :: proc(t: ^testing.T) {
 	testing.expectf(t, err == nil && os.exists(to), "the rename gave up while the file was held: %v", err)
 }
 
+// The loser of a race to install a set finds the winner's in place, which is a
+// refusal no wait changes.
+@(test)
+rename_directory_does_not_wait_on_an_existing_target :: proc(t: ^testing.T) {
+	root := fmt.tprintf("loke-rename-exists-%d", os.get_pid())
+	defer os.remove_all(root)
+	from, to := fmt.tprintf("%s/staging", root), fmt.tprintf("%s/installed", root)
+	if !testing.expect(t, os.make_directory_all(from) == nil && os.make_directory_all(to) == nil, "cannot create the directories") {
+		return
+	}
+	started := time.tick_now()
+	err := rename_directory(from, to)
+	testing.expectf(t, err != nil, "the rename replaced an installed set")
+	testing.expectf(t, time.tick_since(started) < time.Second, "the rename waited %v for a target that will not go away", time.tick_since(started))
+}
+
 // An optimized build that links the runtime as bitcode compiles every runtime
 // file with `-flto` except the CPU check, which stays machine code in a command
 // of its own; an unoptimized build compiles them all in one command, as before.
@@ -892,12 +912,12 @@ runtime_bitcode_keeps_the_cpu_check_native :: proc(t: ^testing.T) {
 		}
 		return false
 	}
-	plain := runtime_compile_commands("runtime", sources, target, .Speed, false)
+	plain := runtime_compile_commands("runtime", sources, nil, target, .Speed, false)
 	if testing.expectf(t, len(plain) == 1, "an unoptimized set took %d commands", len(plain)) {
 		testing.expect(t, !has(plain[0], "-flto"), "a machine-code set was compiled with -flto")
 		testing.expect(t, has(plain[0], "runtime/cpu.c") && has(plain[0], "runtime/alloc.c"), "a source is missing from the one command")
 	}
-	bitcode := runtime_compile_commands("runtime", sources, target, .Speed, true)
+	bitcode := runtime_compile_commands("runtime", sources, nil, target, .Speed, true)
 	if testing.expectf(t, len(bitcode) == 2, "a bitcode set took %d commands", len(bitcode)) {
 		testing.expect(t, has(bitcode[0], "-flto") && has(bitcode[0], "runtime/alloc.c") && has(bitcode[0], "runtime/panic.c"), "the runtime was not compiled to bitcode")
 		testing.expect(t, !has(bitcode[0], "runtime/cpu.c"), "the CPU check was compiled to bitcode")

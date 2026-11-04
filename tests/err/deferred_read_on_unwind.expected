@@ -1,0 +1,9 @@
+L0500
+@13:23
+a panic in this statement runs the deferred statement
+L0500
+@21:20
+a panic in this statement runs the deferred statement
+L0500
+@28:20
+`x` cannot be used here: it has no value yet

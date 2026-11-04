@@ -71,11 +71,11 @@ Debug_Info :: struct {
 	retained:  [dynamic]int,
 	map_table: int,
 	natvis:    strings.Builder,
-	// Each witness table's global by its LLVM name, and the `witness$<n>`
-	// variables their definitions carry.
-	witnesses: map[string]int,
+	// The `witness$<n>` variables the witness tables' definitions carry.
 	globals:   [dynamic]int,
 	dyns:      [dynamic]Type_Id,
+	// The type names taken.
+	names:     map[string]bool,
 }
 
 // Metadata `!0` to `!3` are fixed: the unit, the two module flags, and the one
@@ -86,7 +86,6 @@ UNIT :: 0
 @(private = "file")
 SUBROUTINE_TYPE :: 3
 
-// The procedure being rewritten, while inside a marked one.
 @(private = "file")
 Debug_Proc :: struct {
 	symbol:     ^Symbol,
@@ -106,22 +105,12 @@ Debug_Proc :: struct {
 @(private)
 attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	c := e.c
-	d := Debug_Info {
-		c         = c,
-		meta      = strings.builder_make(),
-		count     = SUBROUTINE_TYPE + 1,
-		files     = make(map[u32]int),
-		types     = make(map[Type_Id]int),
-		locations = make(map[[3]int]int),
-		natvis    = strings.builder_make(),
-		witnesses = make(map[string]int),
-	}
-	for witness, index in c.witness_order {
-		d.witnesses[e.witness_names[witness]] = index
-	}
+	d := Debug_Info{c = c, count = SUBROUTINE_TYPE + 1}
 	strings.write_string(&d.natvis, NATVIS_HEADER)
-	out := strings.builder_make()
+	out: strings.Builder
 	current: Maybe(Debug_Proc)
+	// `emit_witnesses` writes the tables in `witness_order`.
+	witnesses := 0
 	rest := module
 	for line in strings.split_lines_iterator(&rest) {
 		p, inside := &current.?
@@ -129,9 +118,6 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		case strings.has_prefix(line, PROC_MARKER):
 			id, _ := strconv.parse_uint(line[len(PROC_MARKER):])
 			symbol := symbol_of(c, Symbol_Id(id))
-			if symbol == nil {
-				continue
-			}
 			subprogram := debug_subprogram(&d, symbol, e.names[Symbol_Id(id)])
 			current = Debug_Proc {
 				symbol     = symbol,
@@ -169,12 +155,8 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		case inside && strings.has_prefix(line, "  "):
 			fmt.sbprintfln(&out, "%s, !dbg !%d", line, p.location)
 		case strings.has_prefix(line, "@loke.w."):
-			name := line[:strings.index(line, " = ")]
-			if index, found := d.witnesses[name]; found {
-				fmt.sbprintfln(&out, "%s, !dbg !%d", line, debug_witness(&d, index))
-			} else {
-				fmt.sbprintln(&out, line)
-			}
+			fmt.sbprintfln(&out, "%s, !dbg !%d", line, debug_witness(&d, witnesses))
+			witnesses += 1
 		case:
 			if line == "}" {
 				current = nil
@@ -183,45 +165,51 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		}
 	}
 
-	debug_dyn_natvis(&d)
-	strings.write_string(&d.natvis, "</AutoVisualizer>\n")
-	c.natvis = strings.to_string(d.natvis)
-	retained := ""
-	if len(d.retained) > 0 {
-		nodes := strings.builder_make()
-		for node, index in d.retained {
-			fmt.sbprintf(&nodes, "%s!%d", index > 0 ? ", " : "", node)
-		}
-		retained = fmt.aprintf(", retainedTypes: !%d", debug_node(&d, "!{{%s}", strings.to_string(nodes)))
-	}
-	globals := ""
-	if len(d.globals) > 0 {
-		nodes := strings.builder_make()
-		for node, index in d.globals {
-			fmt.sbprintf(&nodes, "%s!%d", index > 0 ? ", " : "", node)
-		}
-		globals = fmt.aprintf(", globals: !%d", debug_node(&d, "!{{%s}", strings.to_string(nodes)))
-	}
-
-	optimized := c.opt_mode != .None
-	fmt.sbprintln(&out, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
-	fmt.sbprintln(&out, "!llvm.dbg.cu = !{!0}")
-	fmt.sbprintln(&out, "!llvm.module.flags = !{!1, !2}")
-	// Loke has no DWARF language code; C's describes its procedures well enough.
-	fmt.sbprintfln(
-		&out,
-		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug%s%s)`,
-		debug_file(&d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized, retained, globals,
-	)
-	fmt.sbprintln(&out, `!1 = !{i32 2, !"Debug Info Version", i32 3}`)
-	// Windows debuggers read CodeView, in a PDB the linker writes.
-	fmt.sbprintln(&out, `!2 = !{i32 2, !"CodeView", i32 1}`)
-	fmt.sbprintln(&out, "!3 = !DISubroutineType(types: !{})")
-	strings.write_string(&out, strings.to_string(d.meta))
+	debug_module_trailer(&d, &out)
 	return strings.to_string(out)
 }
 
-// The innermost open scope with a block, or the procedure.
+// What follows the module's code: the natvis rules, which the compiler keeps, the
+// compile unit and its flags, and the metadata the code named.
+@(private = "file")
+debug_module_trailer :: proc(d: ^Debug_Info, out: ^strings.Builder) {
+	c := d.c
+	debug_dyn_natvis(d)
+	strings.write_string(&d.natvis, "</AutoVisualizer>\n")
+	c.natvis = strings.to_string(d.natvis)
+	retained := debug_list_field(d, "retainedTypes", d.retained[:])
+	globals := debug_list_field(d, "globals", d.globals[:])
+
+	optimized := c.opt_mode != .None
+	fmt.sbprintln(out, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
+	fmt.sbprintln(out, "!llvm.dbg.cu = !{!0}")
+	fmt.sbprintln(out, "!llvm.module.flags = !{!1, !2}")
+	// Loke has no DWARF language code; C's describes its procedures well enough.
+	fmt.sbprintfln(
+		out,
+		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug%s%s)`,
+		debug_file(d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized, retained, globals,
+	)
+	fmt.sbprintln(out, `!1 = !{i32 2, !"Debug Info Version", i32 3}`)
+	// Windows debuggers read CodeView, in a PDB the linker writes.
+	fmt.sbprintln(out, `!2 = !{i32 2, !"CodeView", i32 1}`)
+	fmt.sbprintln(out, "!3 = !DISubroutineType(types: !{})")
+	strings.write_string(out, strings.to_string(d.meta))
+}
+
+// `, field: !<n>` for a list that has nodes.
+@(private = "file")
+debug_list_field :: proc(d: ^Debug_Info, field: string, list: []int) -> string {
+	if len(list) == 0 {
+		return ""
+	}
+	nodes: strings.Builder
+	for node, index in list {
+		fmt.sbprintf(&nodes, "%s!%d", index > 0 ? ", " : "", node)
+	}
+	return fmt.aprintf(", %s: !%d", field, debug_node(d, "!{{%s}", strings.to_string(nodes)))
+}
+
 @(private = "file")
 debug_scope :: proc(p: ^Debug_Proc) -> int {
 	#reverse for block in p.blocks {
@@ -242,26 +230,30 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 	id, _ := strconv.parse_uint(marker[:space])
 	symbol_id := Symbol_Id(id)
 	symbol := symbol_of(d.c, symbol_id)
-	if symbol == nil || symbol.span.file != p.symbol.span.file {
+	if symbol.span.file != p.symbol.span.file {
 		return
 	}
+	file := debug_file(d, symbol.span.file)
+	line, column := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
 	if len(p.blocks) > 0 && p.blocks[len(p.blocks) - 1] < 0 {
-		line, column := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
 		p.blocks[len(p.blocks) - 1] = debug_node(
 			d, "distinct !DILexicalBlock(scope: !%d, file: !%d, line: %d, column: %d)",
-			debug_scope(p), debug_file(d, symbol.span.file), line, column,
+			debug_scope(p), file, line, column,
 		)
 		p.location = debug_location(d, debug_scope(p), p.span)
 	}
 	scope := debug_scope(p)
+	// A debugger reads a parameter of any other size as a pointer to it, as it would
+	// be on Win64, but Loke's slot holds the value.
 	arg := ""
-	for param, index in p.symbol.param_symbols {
-		if param == symbol_id {
-			arg = fmt.aprintf("arg: %d, ", index + 1)
+	switch type_size(d.c, symbol.type) {
+	case 1, 2, 4, 8:
+		for param, index in p.symbol.param_symbols {
+			if param == symbol_id {
+				arg = fmt.aprintf("arg: %d, ", index + 1)
+			}
 		}
 	}
-	file := debug_file(d, symbol.span.file)
-	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
 	variable := debug_node(
 		d, `!DILocalVariable(name: "%s", %sscope: !%d, file: !%d, line: %d, type: !%d)`,
 		llvm_escape(identifier_text(d.c, symbol.name)), arg, scope, file, line,
@@ -329,6 +321,19 @@ debug_location :: proc(d: ^Debug_Info, scope: int, span: Span) -> int {
 	return id
 }
 
+// The name a type goes by in the debug info. cdb resolves a by-name reference to one
+// definition, so same-named types, from two packages or two bodies, would show each
+// other's layout.
+@(private = "file")
+debug_type_name :: proc(d: ^Debug_Info, type: Type_Id) -> string {
+	name := llvm_escape(type_name(d.c, type))
+	if d.names[name] {
+		return fmt.aprintf("%s$%d", name, u32(type))
+	}
+	d.names[name] = true
+	return name
+}
+
 // A type as a debugger shows it, laid out as the program stores it. A type
 // with no closer description is a named block of its size.
 @(private = "file")
@@ -341,18 +346,14 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 	d.count += 1
 	d.types[type] = id
 	info := type_of(c, type)
-	name := llvm_escape(type_name(c, type))
+	name := debug_type_name(d, type)
 	size := type_size(c, type) * 8
-	if info == nil {
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
-		return id
-	}
 	// CodeView clamps wide enumerators; expose their exact stored bits.
 	if (info.kind == .Int || info.kind == .Enum) && size == 128 {
-		members := strings.builder_make()
+		members: strings.Builder
 		debug_member(d, &members, "low", TYPE_U64, 0)
 		debug_member(d, &members, "high", TYPE_U64, 8)
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+		debug_composite(d, id, name, size, strings.to_string(members))
 		return id
 	}
 	#partial switch info.kind {
@@ -384,77 +385,105 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 			debug_type(d, info.element), size, info.count,
 		)
 	case .Enum:
-		enumerators := strings.builder_make()
-		for field, index in info.fields {
-			member := symbol_of(c, field)
-			fmt.sbprintf(
-				&enumerators, "%s!DIEnumerator(name: \"%s\", value: %s%s)",
-				index > 0 ? ", " : "", llvm_escape(identifier_text(c, member.name)),
-				bi_text(c, member.const_value.integer), type_signed(c, type) ? "" : ", isUnsigned: true",
-			)
-		}
-		debug_node_at(
-			d, id, `!DICompositeType(tag: DW_TAG_enumeration_type, name: "%s", baseType: !%d, size: %d, elements: !{{%s})`,
-			name, debug_type(d, info.element), size, strings.to_string(enumerators),
-		)
+		debug_enum(d, id, type, name)
 	case .Struct, .Dyn:
-		if info.kind == .Dyn {
-			name = fmt.aprintf("dyn$%d", u32(type))
-			append(&d.dyns, type)
-		}
-		members := strings.builder_make()
-		for field, index in info.fields {
-			member := symbol_of(c, field)
-			if field_is_padding(c, field) {
-				continue
-			}
-			// A debugger's expression evaluator reads a positional field as
-			// `__0`, as it does a Rust tuple's; `0` is no member name it parses.
-			member_name := identifier_text(c, member.name)
-			if field_is_positional(c, field) {
-				member_name = fmt.aprintf("__%s", member_name)
-			}
-			debug_member(d, &members, member_name, member.type, type_field_offset(c, type, index))
-		}
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+		debug_record(d, id, type, name)
 	case .String, .String_View, .Slice, .Dynamic_Array:
-		// design.md "string type" and "Slices": data first, then its length; a
-		// dynamic array's header adds its capacity.
-		element := info.kind == .String || info.kind == .String_View ? TYPE_U8 : info.element
-		members := strings.builder_make()
-		debug_pointer_member(d, &members, "data", debug_type(d, element), 0)
-		debug_member(d, &members, "len", TYPE_INT, 8)
-		if info.kind == .Dynamic_Array {
-			debug_member(d, &members, "cap", TYPE_INT, 16)
-		}
-		// WinDbg shows a type named `string` its own way and ignores natvis for it.
-		if type == TYPE_STRING {
-			name = "string$"
-		}
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+		debug_sequence(d, id, type, name)
 	case .Union:
 		debug_union(d, id, type, name)
 	case .Map:
 		debug_map(d, id, type)
 	case:
-		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
+		debug_composite(d, id, name, size, "")
 	}
 	return id
 }
 
 @(private = "file")
-debug_composite :: proc(d: ^Debug_Info, id: int, tag, name: string, size: u64, members: string) {
+debug_enum :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
+	c := d.c
+	info := type_of(c, type)
+	enumerators: strings.Builder
+	for field, index in info.fields {
+		member := symbol_of(c, field)
+		fmt.sbprintf(
+			&enumerators, "%s!DIEnumerator(name: \"%s\", value: %s%s)",
+			index > 0 ? ", " : "", llvm_escape(identifier_text(c, member.name)),
+			bi_text(c, member.const_value.integer), type_signed(c, type) ? "" : ", isUnsigned: true",
+		)
+	}
 	debug_node_at(
-		d, id, `distinct !DICompositeType(tag: %s, name: "%s", size: %d, elements: !{{%s})`,
-		tag, name, size, members,
+		d, id, `!DICompositeType(tag: DW_TAG_enumeration_type, name: "%s", baseType: !%d, size: %d, elements: !{{%s})`,
+		name, debug_type(d, info.element), type_size(c, type) * 8, strings.to_string(enumerators),
+	)
+}
+
+@(private = "file")
+debug_record :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
+	c := d.c
+	info := type_of(c, type)
+	name := name
+	if info.kind == .Dyn {
+		name = fmt.aprintf("dyn$%d", u32(type))
+		append(&d.dyns, type)
+	}
+	members: strings.Builder
+	for field, index in info.fields {
+		member := symbol_of(c, field)
+		if field_is_padding(c, field) {
+			continue
+		}
+		// A debugger's expression evaluator reads a positional field as
+		// `__0`, as it does a Rust tuple's; `0` is no member name it parses.
+		member_name := identifier_text(c, member.name)
+		if field_is_positional(c, field) {
+			member_name = fmt.aprintf("__%s", member_name)
+		}
+		debug_member(d, &members, member_name, member.type, type_field_offset(c, type, index))
+	}
+	debug_composite(d, id, name, type_size(c, type) * 8, strings.to_string(members))
+}
+
+// design.md "string type" and "Slices".
+@(private = "file")
+debug_sequence :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
+	c := d.c
+	info := type_of(c, type)
+	name := name
+	element := info.kind == .String || info.kind == .String_View ? TYPE_U8 : info.element
+	members: strings.Builder
+	debug_pointer_member(d, &members, "data", debug_type(d, element), 0)
+	debug_member(d, &members, "len", TYPE_INT, 8)
+	if info.kind == .Dynamic_Array {
+		debug_member(d, &members, "cap", TYPE_INT, 16)
+	}
+	// WinDbg shows a type named `string` its own way and ignores natvis for it.
+	if type == TYPE_STRING {
+		name = "string$"
+	}
+	debug_composite(d, id, name, type_size(c, type) * 8, strings.to_string(members))
+}
+
+@(private = "file")
+debug_composite :: proc(d: ^Debug_Info, id: int, name: string, size: u64, members: string) {
+	debug_node_at(
+		d, id, `distinct !DICompositeType(tag: DW_TAG_structure_type, name: "%s", size: %d, elements: !{{%s})`,
+		name, size, members,
 	)
 }
 
 @(private = "file")
 debug_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, type: Type_Id, offset: u64) {
+	debug_member_node(d, members, name, debug_type(d, type), type_size(d.c, type) * 8, offset * 8)
+}
+
+// Sizes and offsets are in bits.
+@(private = "file")
+debug_member_node :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, base: int, size, offset: u64) {
 	member := debug_node(
 		d, `!DIDerivedType(tag: DW_TAG_member, name: "%s", baseType: !%d, size: %d, offset: %d)`,
-		llvm_escape(name), debug_type(d, type), type_size(d.c, type) * 8, offset * 8,
+		llvm_escape(name), base, size, offset,
 	)
 	fmt.sbprintf(members, "%s!%d", strings.builder_len(members^) > 0 ? ", " : "", member)
 }
@@ -462,11 +491,7 @@ debug_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, ty
 @(private = "file")
 debug_pointer_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, pointee: int, offset: u64) {
 	pointer := debug_node(d, "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", pointee)
-	member := debug_node(
-		d, `!DIDerivedType(tag: DW_TAG_member, name: "%s", baseType: !%d, size: 64, offset: %d)`,
-		name, pointer, offset * 8,
-	)
-	fmt.sbprintf(members, "%s!%d", strings.builder_len(members^) > 0 ? ", " : "", member)
+	debug_member_node(d, members, name, pointer, 64, offset * 8)
 }
 
 // design.md "Unions": the payload overlaps at offset zero, one member per
@@ -476,7 +501,7 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 	c := d.c
 	info := type_of(c, type)
 	shape := union_layout(c, type)
-	variants := strings.builder_make()
+	variants: strings.Builder
 	for payload, index in info.variants {
 		if payload != TYPE_VOID {
 			debug_member(d, &variants, identifier_text(c, info.variant_names[index]), payload, 0)
@@ -484,21 +509,14 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 	}
 	payload := debug_node(d, "distinct !DICompositeType(tag: DW_TAG_union_type, size: %d, elements: !{{%s})",
 		shape.payload_size * 8, strings.to_string(variants))
-	payload_member := debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !%d, size: %d, offset: 0)`,
-		payload, shape.payload_size * 8)
+	members: strings.Builder
+	debug_member_node(d, &members, "payload", payload, u64(shape.payload_size) * 8, 0)
 	// A niche union's null payload is its other variant; it has no tag member.
-	if shape.niche {
-		debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, fmt.aprintf("!%d", payload_member))
-		return
+	if !shape.niche {
+		tag := debug_node(d, `!DIBasicType(name: "tag", size: %d, encoding: DW_ATE_unsigned)`, shape.tag_bytes * 8)
+		debug_member_node(d, &members, "tag", tag, u64(shape.tag_bytes) * 8, u64(shape.payload_size) * 8)
 	}
-	tag := debug_node(d, `!DIBasicType(name: "tag", size: %d, encoding: DW_ATE_unsigned)`, shape.tag_bytes * 8)
-	members := fmt.aprintf(
-		"!%d, !%d",
-		payload_member,
-		debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !%d, size: %d, offset: %d)`,
-			tag, shape.tag_bytes * 8, shape.tag_offset * 8),
-	)
-	debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, members)
+	debug_composite(d, id, name, shape.size * 8, strings.to_string(members))
 }
 
 // Natvis reads `{expr}` in display text and parses C++ type names in casts,
@@ -550,22 +568,22 @@ debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 	if d.map_table == 0 {
 		d.map_table = d.count
 		d.count += 1
-		header := strings.builder_make()
+		header: strings.Builder
 		for field, index in ([]string{"slot_count", "occupied", "tombstones"}) {
 			debug_member(d, &header, field, TYPE_INT, u64(index) * 8)
 		}
 		for field, index in ([]string{"seed", "controls_offset", "keys_offset", "values_offset", "block_size", "block_align"}) {
 			debug_member(d, &header, field, TYPE_U64, u64(index + 3) * 8)
 		}
-		debug_composite(d, d.map_table, "DW_TAG_structure_type", "loke_rt_map_table_v1", 9 * 64, strings.to_string(header))
+		debug_composite(d, d.map_table, "loke_rt_map_table_v1", 9 * 64, strings.to_string(header))
 	}
 	name := fmt.aprintf("map$%d", u32(type))
-	members := strings.builder_make()
+	members: strings.Builder
 	debug_pointer_member(d, &members, "table", d.map_table, 0)
 	debug_member(d, &members, "len", TYPE_INT, 8)
 	debug_member(d, &members, "cap", TYPE_INT, 16)
 	debug_member(d, &members, "allocator", TYPE_ALLOCATOR, 24)
-	debug_composite(d, id, "DW_TAG_structure_type", name, type_size(c, type) * 8, strings.to_string(members))
+	debug_composite(d, id, name, type_size(c, type) * 8, strings.to_string(members))
 
 	debug_natvis_type(d, fmt.aprintf("%s$key", name), info.key)
 	debug_natvis_type(d, fmt.aprintf("%s$value", name), info.element)
@@ -597,31 +615,27 @@ debug_witness :: proc(d: ^Debug_Info, index: int) -> int {
 debug_dyn_natvis :: proc(d: ^Debug_Info) {
 	for type in d.dyns {
 		info := type_of(d.c, type)
-		shown := strings.builder_make()
-		expanded := strings.builder_make()
+		shown, expanded: strings.Builder
 		for witness, index in d.c.witness_order {
 			if witness.interface_symbol != info.dyn_interface || len(witness.slots) == 0 {
 				continue
 			}
-			name := fmt.aprintf("witness$%d", index)
-			condition := strings.concatenate({`Condition="witness == &amp;`, name, `"`})
-			strings.write_string(&shown, strings.concatenate({"    <DisplayString ", condition, ">{*(", name, "$type*)data}</DisplayString>\n"}))
-			strings.write_string(&expanded, strings.concatenate({"      <ExpandedItem ", condition, ">*(", name, "$type*)data</ExpandedItem>\n"}))
+			fmt.sbprintfln(&shown, `    <DisplayString Condition="witness == &amp;witness$%d">{{*(witness$%d$type*)data}}</DisplayString>`, index, index)
+			fmt.sbprintfln(&expanded, `      <ExpandedItem Condition="witness == &amp;witness$%d">*(witness$%d$type*)data</ExpandedItem>`, index, index)
 		}
-		fmt.sbprintfln(&d.natvis, `  <Type Name="dyn$%d">`, u32(type))
-		strings.write_string(&d.natvis, "    <DisplayString Condition=\"data == 0\">nil</DisplayString>\n")
-		strings.write_string(&d.natvis, strings.to_string(shown))
-		strings.write_string(&d.natvis, "    <DisplayString>{{ data={data} }}</DisplayString>\n    <Expand>\n")
-		strings.write_string(&d.natvis, strings.to_string(expanded))
-		strings.write_string(&d.natvis, "    </Expand>\n  </Type>\n")
+		fmt.sbprintf(
+			&d.natvis,
+			"  <Type Name=\"dyn$%d\">\n    <DisplayString Condition=\"data == 0\">nil</DisplayString>\n%s    <DisplayString>{{{{ data={{data}} }}}}</DisplayString>\n    <Expand>\n%s    </Expand>\n  </Type>\n",
+			u32(type), strings.to_string(shown), strings.to_string(expanded),
+		)
 	}
 }
 
-// The name a debugger shows: `@loke.p.core$3afmt.print` is `core:fmt.print`.
-@(private)
+// The name a debugger shows, with `llvm_safe` undone: `@loke.p.core$3afmt.print`
+// is `core:fmt.print`.
+@(private = "file")
 debug_proc_name :: proc(llvm_name: string) -> string {
 	name := strings.trim_prefix(llvm_name, "@")
-	name = strings.trim_prefix(strings.trim_suffix(name, `"`), `"`)
 	name = strings.trim_prefix(name, "loke.p.")
 	out := make([dynamic]u8, 0, len(name))
 	for i := 0; i < len(name); i += 1 {

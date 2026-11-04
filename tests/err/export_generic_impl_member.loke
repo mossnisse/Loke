@@ -1,0 +1,13 @@
+// design.md "@(export)": generic declarations cannot be exported, and a member of
+// a generic `impl` block is one.
+package main;
+
+G :: struct($T: type) { value: T }
+
+impl G($T) {
+	@(export) f :: proc "c" () {}
+}
+
+main :: proc() {
+	G(int).f();
+}

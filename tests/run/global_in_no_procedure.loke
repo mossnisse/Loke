@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "`source_location() or source_location(<entity>)`": a file-scope
+// constant is in no procedure, whichever
+// procedure's body reaches it first.
+
+BEFORE :: source_location();
+
+main :: proc() {
+	fmt.println(BEFORE.procedure.len(), AFTER.procedure.len());
+}
+
+AFTER :: source_location();

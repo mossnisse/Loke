@@ -1,0 +1,22 @@
+// design.md "where clauses": a member whose bound fails is not part of the
+// instantiation, for a conversion hook as for a method, and an extension's as an
+// inherent block's.
+package main;
+
+V :: struct($T: type) { v: int }
+
+impl V($T) {
+	from_int :: hook(convert) proc(v: int) -> V(T) where T == int { return V(T){v}; }
+}
+
+impl Option($T) {
+	only_int :: proc(self, x: int) -> int where T == int { return x; }
+}
+
+main :: proc() {
+	a := V(string)(3);
+	b: Option(string) = .none;
+	c := b.only_int(1);
+	_ = a;
+	_ = c;
+}

@@ -1,0 +1,11 @@
+// design.md "Methods and implementation blocks": a public procedure of a generic
+// extension is exported under its package, for every instance. A constant is not:
+// each instance gives it its own value, so `ext.K` would mean whichever came first.
+package main;
+
+import "./ext";
+
+main :: proc() {
+	ext.touch();
+	_ = ext.K;
+}

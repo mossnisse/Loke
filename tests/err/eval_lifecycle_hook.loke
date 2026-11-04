@@ -36,5 +36,13 @@ COPIED :: copied();
 PLAIN :: plain();
 EMPTY :: empty();
 UNION_CONSTANT :: union_constant();
+ZERO_CHOICE :: zero_choice();
+FIELD_CHOICE :: field_choice(1);
 
-main :: proc() { _ = EXPLICIT + HELD + DECLARED + COPIED + PLAIN + EMPTY + UNION_CONSTANT; }
+// A union's zero holds its designated variant's payload.
+@(zero=held) Zero_Choice :: union { held: Tracked, count: int }
+zero_choice :: proc() -> int { choice := Zero_Choice{}; return 1; }
+Choice_Field :: struct { choice: Zero_Choice, n: int }
+field_choice :: proc(n: int) -> int { holder := Choice_Field{n = n}; return holder.n; }
+
+main :: proc() { _ = EXPLICIT + HELD + DECLARED + COPIED + PLAIN + EMPTY + UNION_CONSTANT + ZERO_CHOICE + FIELD_CHOICE; }

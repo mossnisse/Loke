@@ -1,0 +1,11 @@
+// A key of a named array is a value, so a generic alias there is rejected as any
+// value would be, not as a cycle: `Vec` needs its arguments.
+package main;
+
+Arr :: [4]int;
+
+Vec :: [size_of(Arr{Vec = 2})]$T;
+
+main :: proc() {
+	_ = size_of(Vec(int));
+}

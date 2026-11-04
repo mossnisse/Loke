@@ -28,4 +28,8 @@ main :: proc() {
 	_ = show(1, .none);
 	_ = only(.none);
 	_ = pinned(Color.Red, .Blue);
+	c := true;
+	_ = lone(1, .none if c else .none);
+	_ = pinned(Color.Red, .Blue if c else .Green);
+	_ = value_or(1, .some("one") if c else .none);
 }

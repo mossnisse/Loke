@@ -1,0 +1,14 @@
+// design.md "Foreign-ABI-safe types": an unresolved type is reported where it is
+// written, with no follow-on about what it would be at the boundary.
+package main;
+
+direct :: proc "c" (a: Missing) {}
+Record :: struct { a: Missing }
+through_a_field :: proc "c" (record: Record) {}
+
+foreign import library "system:Kernel32.lib";
+foreign library {
+	declared :: proc "c" (a: Missing) ---;
+}
+
+main :: proc() {}

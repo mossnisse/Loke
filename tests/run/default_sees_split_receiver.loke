@@ -1,0 +1,27 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Default values": a default may reference `self`, here written in one
+// group with the parameter it is the default of.
+
+T :: struct { n: int }
+
+impl T {
+	written :: proc(self, x: int = self.n) -> int { return x; }
+	inferred :: proc(self, x := self.n) -> int { return x; }
+}
+
+G :: struct($E: type) { n: E }
+
+impl G($E) {
+	written :: proc(self, x: E = self.n) -> E { return x; }
+	inferred :: proc(self, x := self.n) -> E { return x; }
+}
+
+main :: proc() {
+	t := T{n = 3};
+	fmt.println(t.written(), t.inferred(), t.written(4), t.inferred(5));
+	g := G(int){n = 6};
+	fmt.println(g.written(), g.inferred(), g.written(7), g.inferred(8));
+}

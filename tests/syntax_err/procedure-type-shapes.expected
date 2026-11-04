@@ -1,0 +1,22 @@
+L0259
+@7:20
+a procedure with a capture clause needs a body
+L0257
+@9:42
+only a declared procedure can be `-> !`
+L0210
+@11:16
+a procedure group is not one
+L0210
+@14:16
+a procedure type has no body
+L0254
+@19:26
+a record type field has no default value
+L0254
+@20:17
+a record type field has no `inout` mode
+L0240
+@22:19
+expected `$` before a generic parameter name
+!declare a `struct`

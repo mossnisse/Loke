@@ -1,0 +1,25 @@
+// design.md "Fixed arrays": a literal is checked by what it lists, not by the
+// array's length. A key past the folding budget needs only to fit a written length.
+package main;
+
+import "core:fmt";
+
+// Built, never run: an 8 GiB local and a key past the budget used to stop the compiler.
+huge :: proc() {
+	x := [1 << 33]u8{1};
+	y := [1 << 33]u8{5 = 1, 7..=9 = 2};
+	_ = x; _ = y;
+}
+
+far_key :: proc() {
+	a: [2000000]u8 = {1500000 = 1};
+	_ = a;
+}
+
+main :: proc() {
+	x := [4]int{1 = 1, 2..=3 = 2};
+	y := [?]int{2 = 5, 0..<2 = 7};
+	z: [3]string = {2 = "two"};
+	r := [3]int{'b' - 'a' = 3};
+	fmt.println(x, y, z[2], r);
+}

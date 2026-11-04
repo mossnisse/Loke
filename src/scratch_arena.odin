@@ -45,17 +45,13 @@ scratch_arena_init :: proc(arena: ^Scratch_Arena, reserved: uint) -> mem.Allocat
 
 scratch_arena_destroy :: proc(arena: ^Scratch_Arena) {
 	scratch_release_chained(arena)
-	if arena.base != nil {
-		virtual.release(arena.base, arena.reserved)
-	}
-	arena^ = {}
+	virtual.release(arena.base, arena.reserved)
 }
 
 scratch_allocator :: proc(arena: ^Scratch_Arena) -> mem.Allocator {
 	return {procedure = scratch_allocator_proc, data = arena}
 }
 
-// Bytes handed out since the last reset, across every range.
 scratch_arena_used :: proc(arena: ^Scratch_Arena) -> uint {
 	return arena.earlier_used + arena.used
 }
@@ -86,7 +82,7 @@ scratch_alloc :: proc(arena: ^Scratch_Arena, size, alignment: uint) -> (data: []
 		return nil, nil
 	}
 	// Each reservation is page-aligned, so aligning the offset aligns the address.
-	assert(alignment <= uint(mem.PAGE_SIZE) && alignment & (alignment - 1) == 0, "unsupported scratch alignment")
+	assert(alignment <= uint(mem.PAGE_SIZE), "unsupported scratch alignment")
 	start := mem.align_forward_uint(arena.used, alignment)
 	end := start + size
 	if end > arena.committed {
@@ -99,7 +95,6 @@ scratch_alloc :: proc(arena: ^Scratch_Arena, size, alignment: uint) -> (data: []
 	return arena.base[start:][:size], nil
 }
 
-// Chains a range large enough for the allocation and hands it out from there.
 @(private = "file", cold)
 scratch_alloc_chained :: proc(arena: ^Scratch_Arena, size, alignment: uint) -> (data: []byte, err: mem.Allocator_Error) {
 	start := mem.align_forward_uint(size_of(Scratch_Block), alignment)
@@ -145,23 +140,14 @@ scratch_allocator_proc :: proc(
 	switch mode {
 	case .Alloc, .Alloc_Non_Zeroed:
 		return scratch_alloc(arena, uint(size), uint(alignment))
-	case .Free:
+	case .Free, .Query_Features, .Query_Info:
 		return nil, .Mode_Not_Implemented
 	case .Free_All:
 		scratch_arena_reset(arena)
 	case .Resize, .Resize_Non_Zeroed:
-		if old_memory == nil {
-			return scratch_alloc(arena, uint(size), uint(alignment))
-		}
 		old := ([^]byte)(old_memory)
-		if size == old_size {
-			return old[:size], nil
-		}
-		if size == 0 {
-			return nil, .Mode_Not_Implemented
-		}
 		aligned := uintptr(old_memory) & uintptr(alignment - 1) == 0
-		if aligned && size < old_size {
+		if aligned && size <= old_size {
 			return old[:size], nil
 		}
 		// The latest allocation grows in place while its range has room; the
@@ -177,12 +163,6 @@ scratch_allocator_proc :: proc(
 		data = scratch_alloc(arena, uint(size), uint(alignment)) or_return
 		copy(data, old[:old_size])
 		return data, nil
-	case .Query_Features:
-		if set := (^mem.Allocator_Mode_Set)(old_memory); set != nil {
-			set^ = {.Alloc, .Alloc_Non_Zeroed, .Free_All, .Resize, .Resize_Non_Zeroed, .Query_Features}
-		}
-	case .Query_Info:
-		return nil, .Mode_Not_Implemented
 	}
 	return nil, nil
 }

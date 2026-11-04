@@ -1,0 +1,25 @@
+// design.md "Allocator regions and region provenance": past the regions one
+// procedure tells apart, they merge, and the rejection says how to avoid it.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+main :: proc() {
+	a0 := mem.Arena.init(); a1 := mem.Arena.init(); a2 := mem.Arena.init(); a3 := mem.Arena.init(); a4 := mem.Arena.init();
+	a5 := mem.Arena.init(); a6 := mem.Arena.init(); a7 := mem.Arena.init(); a8 := mem.Arena.init(); a9 := mem.Arena.init();
+	a10 := mem.Arena.init(); a11 := mem.Arena.init(); a12 := mem.Arena.init(); a13 := mem.Arena.init(); a14 := mem.Arena.init();
+	a15 := mem.Arena.init(); a16 := mem.Arena.init(); a17 := mem.Arena.init(); a18 := mem.Arena.init(); a19 := mem.Arena.init();
+	a20 := mem.Arena.init(); a21 := mem.Arena.init(); a22 := mem.Arena.init(); a23 := mem.Arena.init(); a24 := mem.Arena.init();
+	a25 := mem.Arena.init(); a26 := mem.Arena.init(); a27 := mem.Arena.init(); a28 := mem.Arena.init(); a29 := mem.Arena.init();
+	a30 := mem.Arena.init(); a31 := mem.Arena.init(); a32 := mem.Arena.init(); a33 := mem.Arena.init(); a34 := mem.Arena.init();
+	a35 := mem.Arena.init(); a36 := mem.Arena.init(); a37 := mem.Arena.init(); a38 := mem.Arena.init(); a39 := mem.Arena.init();
+	a40 := mem.Arena.init(); a41 := mem.Arena.init(); a42 := mem.Arena.init(); a43 := mem.Arena.init(); a44 := mem.Arena.init();
+	a45 := mem.Arena.init(); a46 := mem.Arena.init(); a47 := mem.Arena.init(); a48 := mem.Arena.init(); a49 := mem.Arena.init();
+	a50 := mem.Arena.init(); a51 := mem.Arena.init(); a52 := mem.Arena.init(); a53 := mem.Arena.init(); a54 := mem.Arena.init();
+	a55 := mem.Arena.init(); a56 := mem.Arena.init(); a57 := mem.Arena.init(); a58 := mem.Arena.init(); a59 := mem.Arena.init();
+	a60 := mem.Arena.init(); a61 := mem.Arena.init(); a62 := mem.Arena.init(); a63 := mem.Arena.init(); a64 := mem.Arena.init();
+	source := fmt.to_string(a64.allocator(), 42);
+	free_all(a64.allocator());
+	fmt.println(source);
+}

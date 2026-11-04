@@ -1,0 +1,32 @@
+// design.md "Comparison operators": strings compare by their bytes, so a zero
+// string, which has no storage, equals the literal `""`, in a fold as at run time.
+package main;
+
+import "core:fmt";
+
+Named :: struct { text: string_view, n: int }
+
+equal_held :: proc() -> bool {
+	a := Named{};
+	b := Named{text = ""};
+	return a == b;
+}
+
+equal_alone :: proc(text: string_view) -> bool { return text == ""; }
+
+zero :: proc() -> string_view {
+	text: string_view = {};
+	return text;
+}
+
+HELD :: equal_held();
+ALONE :: equal_alone(zero());
+FOLDED :: string_view{} == "";
+NOT_BEFORE :: string_view{} < "";
+BEFORE :: string_view{} < "a";
+
+main :: proc() {
+	fmt.println(HELD, equal_held());
+	fmt.println(ALONE, equal_alone(zero()));
+	fmt.println(FOLDED, NOT_BEFORE, BEFORE);
+}

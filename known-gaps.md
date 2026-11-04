@@ -7,6 +7,193 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### `L0740` reads a generic type's value argument as a type
+
+[Private names in public declarations](design.md#private-names-in-public-declarations) exempts a
+generic type's value argument, but the walk is by name and cannot tell a value parameter's argument
+from a type parameter's. So `Priv` warns here, where it would not in an array length:
+
+```loke
+package shapes;
+@(private) Priv :: struct { x: int }
+@(public) Vec :: struct($N: int) { x: [N]int }
+@(public) a :: proc(v: Vec(size_of(Priv))) {}
+```
+
+The fix is to read the callee's generic parameters where a call in type syntax has a template.
+
+### `L0740` misses a group's private member when another block declares its name
+
+Two blocks of one generic type share a member table by written subject, so a group in the first
+reads the second's member of that name, and `Box(int).h`'s private `Fill` is not reported:
+
+```loke
+package shapes;
+@(private) Fill :: enum { Solid }
+@(public) Box :: struct($V: type) { v: V }
+impl Box(int) { @(private) h :: proc(f: Fill) {} @(public) g :: proc{h}; }
+impl Box(string) { @(private) h :: proc(s: string) {} @(public) g :: proc{h}; }
+```
+
+A selection such as `Box(int).Inner` resolves this by asking the checker. A group would read the
+members its block declares.
+
+### A local in a deferred block leaks when only a panic reaches the block
+
+[Scope-exit cleanup](design.md#what-the-unwind-runs-and-what-it-does-not) runs for every initialized
+managed owner, but a local declared in a deferred block registers its drop only if the block also
+has a normal exit. With none, `y` is never dropped, and this prints `5` without `drop 5`:
+
+```loke
+package main; import "core:fmt";
+@(move_only) Tracked :: struct { id: int }
+impl Tracked { release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); } }
+main :: proc() {
+	defer { y := Tracked{5}; fmt.println(y.id); }
+	panic("failed");
+}
+```
+
+### `delegate` does not see an operator declared after it
+
+[Delegating operators](design.md#delegating-operators) forwards the underlying type's overloads,
+and a package's declarations are otherwise order-independent, but `delegate` looks the overloads up
+when its own `impl` block is resolved. One whose operator comes later in the package fails with
+`L0420`, "`+` is not defined for `V`":
+
+```loke
+package main;
+W :: distinct V;
+impl W { delegate(+); }
+V :: struct { a: int }
+impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
+main :: proc() {}
+```
+
+Found on 2026-11-03 (P3). Moving the `impl V` block above the `delegate` is the workaround.
+
+### An export can still spell a generated name the compiler fixes
+
+[`@(export)`](design.md#export) reserves only the `loke_rt_` prefix, and the names the naming pass
+hands out step aside for a link name, but the rest are written as they stand: `loke.fmt.*`,
+`loke.f.<n>`, the container and box thunks, and a replay's `loke.u<n>.*`. This fails in clang with `L0403`, "invalid redefinition", rather than compiling:
+
+```loke
+package main;
+@(export, link_name = "loke.fmt.std_write")
+f :: proc "c" () -> i32 { return 1; }
+main :: proc() { _ = f(); }
+```
+
+Found on 2026-11-03 (P3).
+
+### A long literal can still overflow the stack at `-opt=none`
+
+A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
+literal that is a call or a place of more than 4096 bytes keeps a slot of its own in the frame, and
+300 elements of a 5 KB `L` overflow the stack. A managed key or value of a map literal also keeps its
+own unwind action, 9 bytes in the frame: a 100000-entry `map[string]string` overflows where a
+`[dynamic]string` of that length runs. An element's slot can be reused only once its temporaries are
+known not to outlive it, and an action only while nothing newer has been reserved, since the thunk
+replays newest reservation first.
+
+```loke
+package main;
+L :: struct { a: [5000]u8 };
+make_l :: proc() -> L { return {}; }
+main :: proc() {
+	xs := [dynamic]L{ make_l(), make_l(), make_l() /* and 297 more */ };
+}
+```
+
+Found on 2026-11-03 (P3).
+
+### A long chain of reborrows in one body takes cubic time to solve
+
+A generated body of `p1 := p0; keep(p1); p2 := p1; keep(p2); ...` compiled by an optimized `lokec`
+takes 0.6 s at 1000 links, 3.8 s at 2000 and 34 s at 4000. Walking the body is 75 ms of the last;
+the rest is `solve_provenance` in [src/borrow.odin](src/borrow.odin). The cause is not established.
+Found on 2026-11-03 (P3).
+
+### A type's printed name doubles with each alias naming the previous one twice
+
+`type_name` spells a structural type in full and an alias has no name of its own, so the printed
+form of this type is about 2^40 characters. Declaring a value of it never finishes, since checking
+a map value prints the map's name; at depth 16 the name is already 1.1 MB:
+
+```loke
+package main;
+M0 :: map[int]int;
+M1 :: map[^M0]M0;
+// ... each `Mn :: map[^Mn-1]Mn-1`, up to:
+M40 :: map[^M39]M39;
+main :: proc() { m: M40 = {}; _ = m; }
+```
+
+The same holds of a diagnostic naming a deep procedure alias, such as `x: P40 = 1;` over `Pn ::
+proc(a: Pn-1, b: Pn-1) -> Pn-1`, and of whatever else names one, such as `Option(P40)` or `-g`. The
+walks over such a type's components are linear in its depth; only the text is not. A fix has to
+abbreviate a long printed type, or print the alias a type was written through. Found on 2026-11-04
+(P3).
+
+### A store through one field of a record parameter blames the sibling field's target at the call
+
+[Minimum provenance precision](design.md#minimum-provenance-precision) keeps a record's carrier
+leaves apart, and one body does: the same store written in the caller, through `pair.second^` or a
+local `s := pair.second`, lands only in `b`, so this program is accepted. Across a call it is
+rejected with L0537 naming `a`, because `prov_written_aliases_of` in
+[src/provenance_aliases.odin](src/provenance_aliases.odin) answers a parameter's written target
+without the path of the carrier reached, and the summary row's paths are then applied below every
+target of the argument:
+
+```loke
+package main;
+import "core:mem";
+Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
+store_second :: proc(pair: Pair, allocator: mem.Allocator) {
+    pair.second^ = make([dynamic]int, 1, allocator);
+}
+caller :: proc(@(allocator_reset) allocator: mem.Allocator) {
+    buffer := [64]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 0, kept.allocator());
+    b := make([dynamic]int, 0, kept.allocator());
+    store_second(Pair{&mut a, &mut b}, allocator);
+    drop(b);
+    free_all(allocator);
+    _ = a[0];
+}
+main :: proc() {}
+```
+
+Found on 2026-11-03 (P3): the rejection errs on the safe side.
+
+### A switch of thousands of `return` cases is slow, then crashes the compiler
+
+Neither is a checker cost: a `switch` over an enum, with each `case .Mi: return i;`, takes 1 s at
+1000 cases and 130 s at 3000, and at 6000 ends in `solve_reaching` in
+[src/borrow.odin](src/borrow.odin) with `Index 0 is out of range 0..<0`, an empty block list. The
+language sets no such limit, and a C binding's generated switch can reach it. The cause of the empty
+list is not established; a failed allocation is the first thing to rule out. Found on 2026-11-03 (P2).
+
+### Comparing `source_location()`'s `procedure` constant to `""` is false
+
+[`source_location`](design.md#source_location-or-source_locationentity) gives a file-scope
+location an empty `procedure`, but a direct comparison of that constant field disagrees with a
+copy of it. This prints `false 0 true`:
+
+```loke
+package main;
+import "core:fmt";
+HERE :: source_location();
+main :: proc() {
+    v := HERE.procedure;
+    fmt.println(HERE.procedure == "", HERE.procedure.len(), v == "");
+}
+```
+
+A `string_view` field of an ordinary constant record compares correctly. Found on 2026-11-03 (P3).
+
 ### A distinct mutable slice is read as plain when printed
 
 `prov_type_is_plain_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes
@@ -68,6 +255,54 @@ release a value twice. `reject_unhoisted_local_hook` in
 [src/impl.odin](src/impl.odin) reports it. Found on 2026-11-01 while fixing the lost
 hooks of a body-local record.
 
+### A body-local block cannot take a name an earlier use generated
+
+[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) makes a
+body-local block's members other than its hooks visible from its statement on, and does not
+say what happens when a use before that statement already made the compiler generate a member
+of that name:
+
+```loke
+package main;
+import "core:fmt";
+main :: proc() {
+    R :: struct { x: int }
+    r := R{1};
+    fmt.println(r);
+    impl R {
+        format :: proc(self, writer: fmt.Writer, options: fmt.Options) { fmt.concat_to(writer, "R"); }
+    }
+    fmt.println(r);
+}
+```
+
+This is `L0409`, "already has a generated member `format`", and `hash` is the same;
+moving the block up compiles. It stays an error because letting the written member
+in would not reach what the earlier use settled: `Formattable`'s witness is chosen once
+per type, so the second `println` would print the generated form with a written `format`
+in scope, and a map's entries could be hashed two ways. Making this valid needs a
+decision on which member such a program means. Found on 2026-11-04 in the compiler review.
+
+### A file-scope `when` cannot call a member declared in a package still selecting
+
+[when statement](design.md#when-statement) lets a condition read what its names
+declare, but an `impl` block is declared only once its subject's package has no
+pending `when`, as a record's fields may come from one. The condition is itself
+pending, so the valid member call is rejected with `L0408`:
+
+```loke
+package main;
+import "core:fmt";
+S :: struct { x: int }
+impl S { size :: proc() -> int { return 1; } }
+when (S.size() == 1) { A :: 1; } else { A :: 2; }
+main :: proc() { fmt.println(A); }
+```
+
+Calling a free procedure compiles. A fix has to say which blocks a condition may
+reach before they are declared, the same question as the gap below. Found on
+2026-11-03 while making conditions wait on what they reach.
+
 ### A file-scope `when` answers `is_copyable` without a later hook's bound
 
 [where clauses](design.md#where-clauses) leave a `hook(copy)` out of an instance that
@@ -90,34 +325,6 @@ This prints `1 false`. The hook itself is no longer lost, since `lifecycle_of` k
 no answer during selection. The block cannot be declared first, as a `when` may select
 what it needs, so a fix has to say which questions a condition may ask. Found on
 2026-11-01 while fixing the lost hooks of a body-local record.
-
-### Copying a zero-length array counts its element's copy hook
-
-[Global write effects](design.md#global-write-effects) count the hooks a copy may run.
-A `[0]T` has no element, but its copy still counts `T`'s `hook(copy)`:
-
-```loke
-package main;
-values: [dynamic]int = {};
-Tagged :: struct { n: int }
-impl Tagged {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
-        _ = values;
-        return .ok(Tagged{1});
-    }
-}
-main :: proc() {
-    p := &mut values;
-    a: [0]Tagged = {};
-    b := a;
-    p.append(1);
-}
-```
-
-This reports `L0511` at `a`, though the generated `[0]Tagged` `try_clone` calls no
-element clone. `copy_hooks_walk` in [src/hooks.odin](src/hooks.odin) descends into an
-array's element whatever its length, as `drop_hooks_walk` beside it does not. Found
-while fixing the same for equality and hashing on 2026-11-01 (P3, over-rejection).
 
 ### An owned `next` counts a copy of its element that no step makes
 
@@ -177,7 +384,7 @@ main :: proc() {}
 ```
 
 This reports `L0538`, though the reset can only reach `allowed`'s region. Region facts
-in [src/cfg_provenance.odin](src/cfg_provenance.odin) only grow and do not follow
+in [src/provenance_regions.odin](src/provenance_regions.odin) only grow and do not follow
 control flow, so `prov_add_received_allocator` cannot tell this from the same write
 under an `if`, and keeps the incoming region. An `Allocator` parameter reassigned from
 another is treated the same way, for the same reason. Resetting `allowed` itself says
@@ -398,7 +605,7 @@ traversal binding (P3, over-rejection).
 ### A declaration first checked in a probe loses its rejection
 
 A probe rolls back what it reports, but `check_alias_template` in
-[src/generic.odin](src/generic.odin) keeps `template.rejected` and the declaration
+[src/generic_alias.odin](src/generic_alias.odin) keeps `template.rejected` and the declaration
 stays settled, so what was wrong with it is never reported. The
 [parametric alias](design.md#parametric-aliases) rule below compiles, and moving
 `Bad` above `Record` reports `L0744`:
@@ -426,9 +633,26 @@ declaration settled in a probe should keep its report, or stay unsettled for the
 check that commits. Found on 2026-11-01 while fixing the instantiation limit for a
 parameter's type; traced for the alias only.
 
+### A generic union instantiated in a record's own fields misses L0423
+
+`check_union_zero_payload` in [src/union.odin](src/union.odin) judges a generic instance
+when it is instantiated, where a probe can still reject it, so an instance a record names
+in its own fields reads that record before it has any. [Zero values and
+`@(zero=)`](design.md#zero-values-and-zero) requires a designated payload to have a zero,
+and `S` has none, yet this compiles. A use that makes a zero still reports `L0424`, so no
+value goes wrong. A non-generic union is judged after every record has its fields, and does
+report it.
+
+```loke
+package main;
+@(zero=a) G :: union($T: type) { a: T, b: int }
+S :: struct { link: []G(S), @(required) x: int }
+main :: proc() {}
+```
+
 ### An `impl` on a record whose parameter type does not resolve reports L0350
 
-`check_generic_impl_subject` in [src/generic.odin](src/generic.odin) reads an `impl`
+`check_generic_impl_subject` in [src/generic_impl.odin](src/generic_impl.odin) reads an `impl`
 subject's constant argument as a type when its parameter's type does not resolve, and
 reports it as a compiler defect:
 
@@ -444,3 +668,148 @@ it", at the `0`, and nothing about `Unknown`. So does `$V: Record(T, 0)`, where 
 instantiation limit is what stops the parameter's type. The site's comment says the
 template reports its own parameter types, and it does not here. Found on 2026-11-01
 while fixing the instantiation limit for a parameter's type.
+
+### An adapter's clone of its source draws no copy warning
+
+An adapter stored over a mutable view that owns something clones it
+([Iteration adapters](design.md#iteration-adapters)), which may allocate, but `L0507` does
+not report it as it reports other implicit clones. The adapter call is checked before
+`foreach` knows whether it will peel the adapter and make no clone, so warning there would
+also report a loop that copies nothing. This compiles with no warning:
+
+```loke
+package main;
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+Owning :: struct { owned: [dynamic]int }
+impl Owning {
+    Element :: int;
+    Iterator :: Cursor;
+    Mut_Iterator :: Cursor;
+    iter :: proc(self) -> Cursor { return {0}; }
+    iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+main :: proc() {
+    source := Owning{};
+    view := source.indexed();
+    _ = view;
+}
+```
+
+### A reset past the region limit is reported as certain
+
+[Minimum provenance precision](design.md#minimum-provenance-precision) says a
+diagnostic caused by an analysis budget must describe the dependency as possible, not
+certain. Past `REGION_LOCAL_LIMIT` local regions merge, so a procedure that only declares
+65 arenas is rejected, which the budget permits, but `L0537` says "this reset would end the
+region backing `a0`". It names a declaration as the reset, and only the notes that follow
+say the limit may be the cause. [tests/err/crowded_regions.loke](tests/err/crowded_regions.loke)
+pins the current wording. The reproduction, with the lines between written out:
+
+```loke
+package main;
+import "core:mem";
+main :: proc() {
+    a0 := mem.Arena.init();
+    // a1 through a63 alike
+    a64 := mem.Arena.init();
+}
+```
+
+### An owner stored through a pointer a call returned is not held against a reset
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+rejects a reset while what its region backs is live, but `prov_store_region_through` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) records a store only in the targets it can
+name. A pointer from a call, or from a user `operator([])`, which is a call, names none, so `a`
+is not known to hold the new owner. This compiles, and `a[0]` reads the reset region:
+
+```loke
+package main;
+import "core:mem";
+Own :: struct { p: ^mut [dynamic]int }
+impl Own {
+    get :: proc(self) -> ^mut [dynamic]int { return self.p; }
+}
+reset_while_live :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    buffer := [64]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 0, kept.allocator());
+    own := Own{&mut a};
+    target := own.get();
+    target^ = make([dynamic]int, 1, allocator);
+    free_all(allocator);
+    return a[0];
+}
+main :: proc() {}
+```
+
+A copy hook returning a pointer it reads through `self`, such as `self.next^.next`, names no target
+in any clone form either, `.clone()` included, so storing through its result goes unflagged too; that
+form was compiled, not run. The fix is the one the next entry names: a call's result naming what its
+result dependencies say it points at. Found on 2026-11-04 (P2).
+
+### An owner built through a pointer a call returned has no known provider
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+has an owner end with its provider, but `prov_handle_region` in
+[src/provenance_regions.odin](src/provenance_regions.odin) follows a carrier only when it is a
+direct `held.get()`, or a local pointer whose written targets name the provider. A pointer
+stored from a call names no target, so the region is unknown, which a provider's end does
+not check against a returned value. This compiles, and the result is read from freed memory:
+
+```loke
+package main;
+import "core:mem";
+stored :: proc() -> [dynamic]int {
+    held := shared(mem.Arena.init());
+    q := held.get();
+    inner: [dynamic]int via q.allocator() = {};
+    inner.append(1);
+    return inner;
+}
+main :: proc() {
+    r := stored();
+    _ = r[0];
+}
+```
+
+`q := pick(&arena)`, with `pick` returning its `^mem.Arena` parameter, does the same. Treating
+every unknown region as local at a return would reject a provider received as a parameter, so
+the fix is for a call's result to name what the call's result dependencies say it points at.
+Found on 2026-11-03 (P2).
+
+### A generic block does not reject an attribute only a procedure may take
+
+A member takes only the attributes its kind allows, and `impl G` on a plain record reports `L0607`
+for this. A bare name
+in a generic block takes the type's rules instead, so it compiles:
+
+```loke
+package main;
+G :: struct($T: type) { x: T }
+impl G($T) {
+    @(require_results) N :: 3;
+}
+main :: proc() {}
+```
+
+`@(bogus)`, `@(packed)`, `@(test)` and `@(cpu_dispatch)` are rejected there. Found on 2026-11-04 in
+the compiler review (P3).
+
+### A misplaced token reports its cascade
+
+[Grammar](grammar.md) has one error here, but the parser recovers into more. `impl proc() { }` reads
+`{ }` as the body the type cannot have, and reports `L0406` and `L0252` after `L0210`. `return );`
+in a procedure with no result reports `L0326` before the `L0220` that names the token:
+
+```loke
+package main;
+impl proc() { }
+f :: proc() {
+    return );
+}
+main :: proc() {}
+```
+
+Found on 2026-11-04 in the compiler review (P3).

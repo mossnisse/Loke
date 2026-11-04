@@ -1,7 +1,4 @@
 // Driver: CLI, presentation, exit codes. Compilation lives in session.odin.
-//
-// Exit codes: 0 success, 1 a user error (diagnostics or a bad command line),
-// 2 an internal or toolchain failure.
 package lokec
 
 import "core:fmt"
@@ -25,8 +22,8 @@ options:
     -print-toolchain
                   print the clang, MSVC toolset, and flags a link would use
                   here, and whether one could run at all, then stop
-    -o <path>     output executable (default: input name with .exe, or with
-                  .test.exe for a test build)
+    -o <path>     output path (default: input name with .exe, .obj or .test.exe
+                  by build mode)
     -test         build the root package's @(test) procedures into a test
                   executable, run each in its own process, and report them
     -emit-ll      write the LLVM IR next to the output and stop
@@ -85,38 +82,54 @@ options:
                   below it (default: debug)
 `
 
+// What a run does, at most one. `.Build` is the default and has no flag.
+@(private = "file")
+Action :: enum {
+	Build,
+	Help,
+	Version,
+	Print_Toolchain,
+	Parse_Only,
+	Dump_Ast,
+	Dump_Tokens,
+	Check_Layout,
+	Doc,
+	Api,
+	Api_Check,
+	Fmt,
+	Fmt_Check,
+	Migrate,
+	Migrate_Check,
+}
+
+@(private = "file")
+ACTION_FLAGS := [Action]string {
+	.Build           = "",
+	.Help            = "",
+	.Version         = "",
+	.Print_Toolchain = "-print-toolchain",
+	.Parse_Only      = "-parse-only",
+	.Dump_Ast        = "-dump-ast",
+	.Dump_Tokens     = "-dump-tokens",
+	.Check_Layout    = "-check-layout",
+	.Doc             = "-doc",
+	.Api             = "-api",
+	.Api_Check       = "-api-check",
+	.Fmt             = "-fmt",
+	.Fmt_Check       = "-fmt-check",
+	.Migrate         = "-migrate",
+	.Migrate_Check   = "-migrate-check",
+}
+
+@(private = "file")
 Options :: struct {
-	help:       bool,
-	version:    bool,
-	print_toolchain: bool,
-	input:      string,
-	output:     string,
-	emit_ll:    bool,
-	keep_temps: bool,
-	parse_only: bool,
-	dump_ast:   bool,
-	dump_tokens: bool,
-	check_layout: bool,
-	doc:        bool,
-	api:        bool,
-	api_check:  bool,
-	fmt:        bool,
-	fmt_check:  bool,
-	migrate:       bool,
-	migrate_check: bool,
-	run_tests:  bool,
-	defines:    [dynamic]string,
+	action:      Action,
+	input:       string,
+	run_tests:   bool,
+	defines:     [dynamic]string,
 	collections: [dynamic]string,
-	copy_cost:         u64,
-	copy_cost_enabled: bool,
-	runtime_dir: string,
-	panic_unwind: bool,
-	opt_mode:   Opt_Mode,
-	build_mode: Build_Mode,
-	cpu:        Cpu_Level,
-	debug_info: bool,
-	debug:      bool,
-	log_level:  Log_Level,
+	config:      Compilation_Config,
+	emission:    Emission_Options,
 }
 
 // `-define:LOKE_TRACK_MEMORY=true` reports every allocation `run` did not free,
@@ -152,131 +165,147 @@ run :: proc() -> int {
 		delete(opts.defines)
 		delete(opts.collections)
 	}
-	if opts.help {
-		fmt.print(USAGE)
-		return 0
-	}
-	if opts.version {
-		fmt.printfln("lokec %s", LOKE_VERSION_STRING)
-		return 0
-	}
 	if !args_ok {
 		fmt.eprint(USAGE)
 		return 2
 	}
-	if opts.print_toolchain {
-		return print_toolchain(opts.cpu)
+	#partial switch opts.action {
+	case .Help:
+		fmt.print(USAGE)
+		return 0
+	case .Version:
+		fmt.printfln("lokec %s", LOKE_VERSION_STRING)
+		return 0
+	case .Print_Toolchain:
+		return print_toolchain(opts.config.cpu)
 	}
 
 	s: Compilation_Session
 	defer destroy_session(&s)
 	c := &s.compiler
-	if !init_session(&s, Compilation_Config{
-		defines = opts.defines[:], collections = opts.collections[:],
-		copy_cost = opts.copy_cost, copy_cost_enabled = opts.copy_cost_enabled,
-		panic_unwind = opts.panic_unwind, opt_mode = opts.opt_mode,
-		build_mode = opts.build_mode, cpu = opts.cpu, debug_info = opts.debug_info,
-		debug = opts.debug, log_level = opts.log_level,
-	}) {
+	opts.config.defines, opts.config.collections = opts.defines[:], opts.collections[:]
+	if !init_session(&s, opts.config) {
 		report(c)
 		return 1
 	}
-	if opts.fmt || opts.fmt_check {
-		status := format_files(c, opts.input, opts.fmt_check)
-		report(c)
-		return status
-	}
-	if opts.migrate || opts.migrate_check {
-		status := migrate_files(c, opts.input, opts.migrate_check)
-		report(c)
-		return status
-	}
-	if opts.parse_only || opts.dump_ast || opts.dump_tokens {
-		if is_directory(opts.input) {
-			mode := opts.dump_tokens ? "-dump-tokens" : opts.dump_ast ? "-dump-ast" : "-parse-only"
-			fmt.eprintfln("error: %s needs a file input", mode)
-			return 2
-		}
-		file, loaded := load_source(c, opts.input)
-		if !loaded {
-			report(c)
-			return 1
-		}
-		tokens := lex(c, file)
-		defer delete(tokens)
-		if opts.dump_tokens {
-			for token in tokens {
-				fmt.printfln("%d %d %v", token.lo, token.hi, token.kind)
-			}
-			report(c)
-			return c.error_count > 0 ? 1 : 0
-		}
-		ast := parse(c, file, tokens)
-		defer destroy_ast(&ast)
-		if opts.dump_ast {
-			dump := ast_dump(&ast)
-			defer delete(dump)
-			fmt.print(dump)
-		}
-		if c.error_count > 0 {
-			report(c)
-			return 1
-		}
-		return 0
-	}
-
-	if (opts.api || opts.api_check) && !is_directory(opts.input) {
-		fmt.eprintfln("error: %s needs a directory input", opts.api ? "-api" : "-api-check")
-		return 2
-	}
-	if !check_session(&s, opts.input, opts.doc || opts.api || opts.api_check) {
-		report(c)
-		return 1
-	}
-	if opts.api || opts.api_check {
-		status := write_interfaces(c, c.root_package, opts.api_check)
-		report(c) // warnings
-		return status
-	}
-	if opts.doc {
-		page := document_project(c, c.root_package)
-		defer delete(page)
-		fmt.print(page)
-		report(c) // warnings
-		return 0
-	}
-
-	emission := Emission_Options{
-		output = opts.output, emit_ll = opts.emit_ll,
-		keep_temps = opts.keep_temps, runtime_dir = opts.runtime_dir,
-	}
-	if opts.check_layout {
-		code := check_layout_agreement(c, emission)
-		report(c) // the disagreements themselves are diagnostics
-		return code
-	}
-
-	code := emit_session(&s, emission)
-	report(c) // warnings may have been produced with no error
-	if code == 0 && opts.run_tests && !opts.emit_ll {
-		code = run_tests(c, opts.output)
+	code := run_action(&s, &opts)
+	report(c)
+	if code == 0 && opts.action == .Build && opts.run_tests && !opts.emission.emit_ll {
+		code = run_tests(c, opts.emission.output)
 	}
 	return code
 }
 
+// The caller reports what `c` collected, warnings included.
+@(private = "file")
+run_action :: proc(s: ^Compilation_Session, opts: ^Options) -> int {
+	c := &s.compiler
+	#partial switch opts.action {
+	case .Fmt, .Fmt_Check:
+		return format_files(c, opts.input, opts.action == .Fmt_Check)
+	case .Migrate, .Migrate_Check:
+		return migrate_files(c, opts.input, opts.action == .Migrate_Check)
+	case .Parse_Only, .Dump_Ast, .Dump_Tokens:
+		return run_syntax_stage(c, opts)
+	case .Api, .Api_Check:
+		if !os.is_dir(opts.input) {
+			fmt.eprintfln("error: %s needs a directory input", ACTION_FLAGS[opts.action])
+			return 2
+		}
+	}
+
+	if !check_session(s, opts.input, opts.action == .Doc || opts.action == .Api || opts.action == .Api_Check) {
+		return 1
+	}
+	#partial switch opts.action {
+	case .Api, .Api_Check:
+		return write_interfaces(c, c.root_package, opts.action == .Api_Check)
+	case .Doc:
+		page := document_project(c, c.root_package)
+		defer delete(page)
+		fmt.print(page)
+		return 0
+	}
+
+	if opts.emission.output == "" {
+		opts.emission.output = default_output_path(opts.input, opts.config.build_mode)
+		if opts.emission.output == "" {
+			fmt.eprintln("error: a root directory input needs -o")
+			return 2
+		}
+	}
+	if opts.action == .Check_Layout {
+		return check_layout_agreement(c, opts.emission)
+	}
+	return emit_session(s, opts.emission)
+}
+
+@(private = "file")
+run_syntax_stage :: proc(c: ^Compiler, opts: ^Options) -> int {
+	if os.is_dir(opts.input) {
+		fmt.eprintfln("error: %s needs a file input", ACTION_FLAGS[opts.action])
+		return 2
+	}
+	file, loaded := load_source(c, opts.input)
+	if !loaded {
+		return 1
+	}
+	tokens := lex(c, file)
+	defer delete(tokens)
+	if opts.action == .Dump_Tokens {
+		for token in tokens {
+			fmt.printfln("%d %d %v", token.lo, token.hi, token.kind)
+		}
+		return c.error_count > 0 ? 1 : 0
+	}
+	ast := parse(c, file, tokens)
+	defer destroy_ast(&ast)
+	if opts.action == .Dump_Ast {
+		dump := ast_dump(&ast)
+		defer delete(dump)
+		fmt.print(dump)
+	}
+	return c.error_count > 0 ? 1 : 0
+}
+
+// The index of `value` in `names`, or false after saying what `flag` takes.
+@(private = "file")
+choice :: proc(flag, value: string, names: ..string) -> (int, bool) {
+	for name, index in names {
+		if name == value {
+			return index, true
+		}
+	}
+	fmt.eprintf("error: %s needs ", flag)
+	for name, index in names {
+		last := index == len(names) - 1
+		fmt.eprintf("%s`%s`%s", last ? "or " : "", name, last ? "\n" : len(names) == 2 ? " " : ", ")
+	}
+	return 0, false
+}
+
 @(private = "file")
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
-	opts.copy_cost, opts.copy_cost_enabled = DEFAULT_COMPILATION_CONFIG.copy_cost, DEFAULT_COMPILATION_CONFIG.copy_cost_enabled
-	opts.panic_unwind = DEFAULT_COMPILATION_CONFIG.panic_unwind
+	opts.config = DEFAULT_COMPILATION_CONFIG
 	build_mode_written := false
-	for i := 0; i < len(args); i += 1 {
+	next_arg: for i := 0; i < len(args); i += 1 {
 		arg := args[i]
+		for flag, action in ACTION_FLAGS {
+			if flag != "" && flag == arg {
+				if opts.action != .Build && opts.action != action {
+					fmt.eprintfln("error: %s and %s cannot be combined", ACTION_FLAGS[opts.action], flag)
+					return opts, false
+				}
+				opts.action = action
+				continue next_arg
+			}
+		}
 		switch {
 		case arg == "-h", arg == "-help", arg == "--help":
-			opts.help = true
+			opts.action = .Help
 			return opts, true
 		case arg == "-version", arg == "--version":
-			opts.version = true
+			opts.action = .Version
 			return opts, true
 		case arg == "-o":
 			i += 1
@@ -284,41 +313,12 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 				fmt.eprintln("error: -o needs a path")
 				return opts, false
 			}
-			opts.output = args[i]
-		case arg == "-print-toolchain":
-			opts.print_toolchain = true
-		case arg == "-emit-ll":
-			opts.emit_ll = true
-		case arg == "-keep-temps":
-			opts.keep_temps = true
-		case arg == "-parse-only":
-			opts.parse_only = true
-		case arg == "-dump-ast":
-			opts.dump_ast = true
-		case arg == "-dump-tokens":
-			opts.dump_tokens = true
-		case arg == "-test":
-			opts.run_tests = true
-		case arg == "-check-layout":
-			opts.check_layout = true
-		case arg == "-doc":
-			opts.doc = true
-		case arg == "-api":
-			opts.api = true
-		case arg == "-api-check":
-			opts.api_check = true
-		case arg == "-fmt":
-			opts.fmt = true
-		case arg == "-fmt-check":
-			opts.fmt_check = true
-		case arg == "-migrate":
-			opts.migrate = true
-		case arg == "-migrate-check":
-			opts.migrate_check = true
-		case arg == "-g":
-			opts.debug_info = true
-		case arg == "-debug":
-			opts.debug = true
+			opts.emission.output = args[i]
+		case arg == "-emit-ll":     opts.emission.emit_ll = true
+		case arg == "-keep-temps":  opts.emission.keep_temps = true
+		case arg == "-test":        opts.run_tests = true
+		case arg == "-g":           opts.config.debug_info = true
+		case arg == "-debug":       opts.config.debug = true
 		case arg == "-collection":
 			i += 1
 			if i >= len(args) {
@@ -331,66 +331,31 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		case strings.has_prefix(arg, "-define:"):
 			append(&opts.defines, arg[len("-define:"):])
 		case strings.has_prefix(arg, "-panic="):
-			switch arg[len("-panic="):] {
-			case "unwind":
-				opts.panic_unwind = true
-			case "abort":
-				opts.panic_unwind = false
-			case:
-				fmt.eprintln("error: -panic needs `unwind` or `abort`")
-				return opts, false
-			}
+			opts.config.panic_unwind = (choice("-panic", arg[len("-panic="):], "unwind", "abort") or_return) == 0
 		case strings.has_prefix(arg, "-opt="):
-			switch arg[len("-opt="):] {
-			case "none":       opts.opt_mode = .None
-			case "minimal":    opts.opt_mode = .Minimal
-			case "size":       opts.opt_mode = .Size
-			case "speed":      opts.opt_mode = .Speed
-			case "aggressive": opts.opt_mode = .Aggressive
-			case:
-				fmt.eprintln("error: -opt needs `none`, `minimal`, `size`, `speed`, or `aggressive`")
-				return opts, false
-			}
+			opts.config.opt_mode = Opt_Mode(choice("-opt", arg[len("-opt="):], "none", "minimal", "size", "speed", "aggressive") or_return)
 		case strings.has_prefix(arg, "-cpu="):
-			switch arg[len("-cpu="):] {
-			case "x86-64":    opts.cpu = .X86_64
-			case "x86-64-v2": opts.cpu = .X86_64_V2
-			case "x86-64-v3": opts.cpu = .X86_64_V3
-			case:
+			cpu, known := parse_cpu_level(arg[len("-cpu="):])
+			if !known {
 				fmt.eprintln("error: -cpu needs `x86-64`, `x86-64-v2`, or `x86-64-v3`")
 				return opts, false
 			}
+			opts.config.cpu = cpu
 		case strings.has_prefix(arg, "-log-level="):
-			switch arg[len("-log-level="):] {
-			case "debug":   opts.log_level = .Debug
-			case "info":    opts.log_level = .Info
-			case "warning": opts.log_level = .Warning
-			case "error":   opts.log_level = .Error
-			case "off":     opts.log_level = .Off
-			case:
-				fmt.eprintln("error: -log-level needs `debug`, `info`, `warning`, `error`, or `off`")
-				return opts, false
-			}
+			opts.config.log_level = Log_Level(choice("-log-level", arg[len("-log-level="):], "debug", "info", "warning", "error", "off") or_return)
 		case strings.has_prefix(arg, "-build-mode="):
-			switch arg[len("-build-mode="):] {
-			case "exe": opts.build_mode = .Exe
-			case "obj": opts.build_mode = .Obj
-			case "test": opts.build_mode = .Test
-			case:
-				fmt.eprintln("error: -build-mode needs `exe`, `obj`, or `test`")
-				return opts, false
-			}
+			opts.config.build_mode = Build_Mode(choice("-build-mode", arg[len("-build-mode="):], "exe", "obj", "test") or_return)
 			build_mode_written = true
 		case strings.has_prefix(arg, "-runtime="):
-			opts.runtime_dir = arg[len("-runtime="):]
-			if opts.runtime_dir == "" {
+			opts.emission.runtime_dir = arg[len("-runtime="):]
+			if opts.emission.runtime_dir == "" {
 				fmt.eprintln("error: -runtime needs a directory")
 				return opts, false
 			}
 		case strings.has_prefix(arg, "-copy-cost="):
 			text := arg[len("-copy-cost="):]
 			if text == "off" {
-				opts.copy_cost_enabled = false
+				opts.config.copy_cost_enabled = false
 				continue
 			}
 			value, parsed := strconv.parse_u64(text)
@@ -398,7 +363,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 				fmt.eprintln("error: -copy-cost needs a byte count or `off`")
 				return opts, false
 			}
-			opts.copy_cost, opts.copy_cost_enabled = value, true
+			opts.config.copy_cost_threshold, opts.config.copy_cost_enabled = value, true
 		case strings.has_prefix(arg, "-"):
 			fmt.eprintfln("error: unknown option `%s`", arg)
 			return opts, false
@@ -411,48 +376,32 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	}
 
 	if opts.run_tests {
-		if build_mode_written && opts.build_mode != .Test {
+		if build_mode_written && opts.config.build_mode != .Test {
 			fmt.eprintln("error: -test builds a test executable, so it takes no other -build-mode")
 			return opts, false
 		}
-		opts.build_mode = .Test
+		opts.config.build_mode = .Test
 	}
-	if opts.print_toolchain {
-		return opts, true
-	}
-	if opts.input == "" {
-		return opts, false
-	}
-	if opts.output == "" {
-		opts.output = default_output_path(opts.input, opts.build_mode)
-		if opts.output == "" {
-			fmt.eprintln("error: a root directory input needs -o")
-			return opts, false
-		}
-	}
-	return opts, true
+	return opts, opts.action == .Print_Toolchain || opts.input != ""
 }
 
-// Directories keep their final component; files shed their extension.
+// Directories keep their final component; files shed their extension. `.`, `..`
+// and a bare volume name no component until resolved, and a root has none.
 default_output_path :: proc(input: string, mode: Build_Mode) -> string {
-	stem := input
-	if info, err := os.stat(input, context.temp_allocator); err == nil && info.type == .Directory {
-		trimmed := strings.trim_right(input, "/\\")
-		volume := filepath.volume_name(input)
-		if (trimmed == "" && input != "") ||
-		   (trimmed == volume && (len(input) > len(volume) || len(volume) > 2)) {
+	stem := strings.trim_suffix(input, filepath.ext(input))
+	if os.is_dir(input) {
+		stem = strings.trim_right(input, "/\\")
+		base := filepath.base(stem)
+		if stem == "" || base == "." || base == ".." || stem == filepath.volume_name(input) {
+			absolute, err := filepath.abs(input, context.temp_allocator)
+			if err != nil {
+				return ""
+			}
+			stem = strings.trim_right(absolute, "/\\")
+		}
+		if stem == "" || stem == filepath.volume_name(stem) {
 			return ""
 		}
-		if base := filepath.base(trimmed); base == "." || base == ".." {
-			if absolute, abs_err := filepath.abs(trimmed, context.temp_allocator); abs_err == nil {
-				trimmed = filepath.clean(absolute, context.temp_allocator) or_else absolute
-			}
-		}
-		if trimmed != "" {
-			stem = trimmed
-		}
-	} else {
-		stem = strings.trim_suffix(input, filepath.ext(input))
 	}
 	extension := ".exe"
 	#partial switch mode {

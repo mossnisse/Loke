@@ -1,0 +1,51 @@
+package main;
+
+// design.md "Static `foreach` expansion": an `or_else` exit, wherever the
+// expression that holds it stands, is reported once on the written body, with no
+// elements as with several, and a loop or a procedure literal in the body still
+// owns its own.
+
+next :: proc() -> Option(int) { return .none; }
+take :: proc(v: int) -> int { return v; }
+
+empty :: proc() {
+	foreach ($a in [0]int{}) {
+		x := next() or_else break;
+		_ = x;
+	}
+}
+
+each :: proc() -> int {
+	for (i := 0; i < 1; i += 1) {
+		foreach ($a in [2]int{1, 2}) {
+			y := take(next() or_else continue);
+			y = next() or_else break;
+			_ = take(1 + (next() or_else break));
+			if ((next() or_else break) == 1) { }
+			if (v := next() or_else break; v == 1) { }
+			switch (next() or_else continue) { case: }
+			return take(next() or_else break);
+		}
+	}
+	return 0;
+}
+
+allowed :: proc() {
+	foreach ($a in [2]int{1, 2}) {
+		for (i := 0; i < 1; i += 1) {
+			x := next() or_else break;
+			_ = x;
+		}
+		f := proc() {
+			for (i := 0; i < 1; i += 1) {
+				x := next() or_else continue;
+				_ = x;
+			}
+		};
+		f();
+		y := next() or_else return;
+		_ = y;
+	}
+}
+
+main :: proc() { empty(); _ = each(); allowed(); }

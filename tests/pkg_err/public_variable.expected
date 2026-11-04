@@ -8,6 +8,9 @@ L0336
 L0336
 @8:14
 `_commode` is not public in package `lib`
+L0336
+@10:14
+`hidden_abs` is not public in package `lib`
 L0338
 @5:3
 a variable cannot be `@(public)`

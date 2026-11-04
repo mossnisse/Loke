@@ -1,0 +1,32 @@
+// design.md "Allocator regions and region provenance": storing an allocator's
+// handle takes the region's value at that point, so a later store over the same
+// field leaves the local arena's own region alone.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+Holder :: struct { alloc: Allocator }
+
+overwritten_with_parameter :: proc(a: Allocator) -> int {
+	arena := mem.Arena.init();
+	h: Holder = {};
+	h.alloc = arena.allocator();
+	h.alloc = a;
+	free_all(arena.allocator());
+	return 1;
+}
+
+overwritten_with_arena :: proc(a: Allocator) -> int {
+	arena := mem.Arena.init();
+	h: Holder = {};
+	h.alloc = a;
+	h.alloc = arena.allocator();
+	free_all(arena.allocator());
+	return 2;
+}
+
+main :: proc() {
+	fmt.println(overwritten_with_parameter(mem.default_allocator()));
+	fmt.println(overwritten_with_arena(mem.default_allocator()));
+}

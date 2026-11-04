@@ -1,0 +1,38 @@
+// design.md "Dyn compatibility" and "Receiver forms": each receiver a slot may
+// take, with its type left out or spelled, called through a view, and a split
+// receiver's named arguments.
+package main; import "core:fmt";
+
+Forms :: interface($Self: type) {
+	slot plain: proc(self) -> int;
+	slot plain_spelled: proc(self: Self) -> int;
+	slot lent: proc(self: ^) -> int;
+	slot lent_spelled: proc(self: ^Self) -> int;
+	slot bump: proc(self: inout);
+	slot bump_spelled: proc(self: inout Self);
+	slot add: proc(self, by, times: int) -> int;
+}
+
+Counter :: struct { n: int }
+
+impl Counter {
+	plain :: proc(self) -> int { return self.n; }
+	plain_spelled :: proc(self: Counter) -> int { return self.n + 1; }
+	lent :: proc(self: ^) -> int { return self.n + 2; }
+	lent_spelled :: proc(self: ^Counter) -> int { return self.n + 3; }
+	bump :: proc(self: inout) { self.n += 1; }
+	bump_spelled :: proc(self: inout Counter) { self.n += 10; }
+	add :: proc(self, by, times: int) -> int { return self.n + by * times; }
+}
+
+main :: proc() {
+	counter := Counter{n = 1};
+	view := (dyn mut Forms)(&mut counter);
+	view.bump();
+	view.bump_spelled();
+	fmt.println(view.plain(), view.plain_spelled(), view.lent(), view.lent_spelled());
+	fmt.println(view.add(times = 2, by = 3));
+
+	read_only: dyn Forms = view;
+	fmt.println(read_only.plain());
+}

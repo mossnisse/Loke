@@ -1,0 +1,8 @@
+@(public)
+package thread;
+
+Task_Scope :: struct { n: int }
+
+impl Task_Scope {
+	start :: proc(self: inout, run: proc(frame: rawptr), frame: rawptr) {}
+}

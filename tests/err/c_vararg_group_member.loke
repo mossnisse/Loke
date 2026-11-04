@@ -1,0 +1,21 @@
+package main;
+
+// design.md "`@(c_vararg)`": through a group, a trailing argument must still be
+// what a C variadic takes; each refusal says why the member did not apply.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+foreign libc { printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..) -> i32 ---; }
+
+other :: proc(number: f64) {}
+print :: proc{printf, other};
+
+main :: proc() {
+	x: i32 = 4;
+	text := "managed";
+	values := []int{1};
+	print("%d\n", inout x);
+	print("%s\n", text);
+	print("%p\n", nil);
+	print("%d\n", ..values);
+	print();
+}

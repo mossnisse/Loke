@@ -1,0 +1,12 @@
+package main;
+
+// The parser's report of a broken foreign member is the only one: the checker
+// does not go on to describe what it reads as a global.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	inferred := ---;
+}
+
+main :: proc() { }

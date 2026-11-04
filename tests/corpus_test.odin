@@ -433,6 +433,19 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 		testing.expectf(t, strings.contains(string(stderr), "-cpu needs"), "%s was not rejected", cpu)
 	}
 
+	// A run does one thing, and only the one that writes an output needs its name.
+	both_state, _, both_stderr, both_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-fmt-check", "-doc"}},
+		context.allocator,
+	)
+	testing.expect(t, both_err == nil && both_state.exit_code == 2, "-fmt-check with -doc did not exit 2")
+	testing.expect(t, strings.contains(string(both_stderr), "cannot be combined"), "-fmt-check with -doc was not rejected")
+	_, _, root_stderr, root_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), `C:\`, "-fmt-check"}},
+		context.allocator,
+	)
+	testing.expectf(t, root_err == nil && !strings.contains(string(root_stderr), "needs -o"), "-fmt-check asked a root for -o:\n%s", string(root_stderr))
+
 	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
 		state, _, stderr, err := exec(
 			os.Process_Desc {
@@ -485,6 +498,39 @@ seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 		"expected L0551 naming %s, got:\n%s",
 		bare,
 		string(replaced_stderr),
+	)
+}
+
+// A runtime directory that exists but cannot be listed says so, rather than
+// being reported as empty. Skipped where the access rule cannot be set.
+@(test)
+unlistable_runtime_directory_is_reported :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	cwd := os.get_working_directory(context.temp_allocator) or_else ""
+	denied := join_path({cwd, TMP, "denied-runtime"}, context.temp_allocator)
+	os.make_directory(denied)
+	user := os.get_env("USERNAME", context.temp_allocator)
+	refused, _, _, refused_err := exec(
+		os.Process_Desc{command = []string{"icacls", denied, "/deny", fmt.tprintf("%s:(RD)", user)}},
+		context.allocator,
+	)
+	if refused_err != nil || refused.exit_code != 0 {
+		return
+	}
+	defer exec(os.Process_Desc{command = []string{"icacls", denied, "/remove:d", user}}, context.allocator)
+
+	source := join_path({cwd, "examples", "hello.loke"}, context.temp_allocator)
+	exe := join_path({cwd, TMP, "runtime-denied.exe"}, context.temp_allocator)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), source, "-o", exe, fmt.tprintf("-runtime=%s", denied)}},
+		context.allocator,
+	)
+	testing.expectf(t, err == nil && state.exit_code == 2, "expected the link to refuse a runtime it cannot list:\n%s", string(stderr))
+	testing.expectf(
+		t,
+		strings.contains(string(stderr), "L0551") && strings.contains(string(stderr), "cannot be listed"),
+		"expected L0551 saying the directory cannot be listed, got:\n%s",
+		string(stderr),
 	)
 }
 
@@ -702,6 +748,40 @@ a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 	)
 }
 
+// `-Wl,` would split the natvis path at a comma and the linker would get pieces.
+@(test)
+a_comma_in_the_output_reaches_the_linker_whole :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/comma,name.exe", TMP)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-g", "-o", out}},
+		context.allocator,
+	)
+	testing.expectf(t, err == nil && state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr))
+}
+
+// `-emit-ll` writes the module and nothing the link it skips would read.
+@(test)
+emit_ll_writes_no_natvis :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/emit-only.exe", TMP)
+	rules := fmt.tprintf("%s/emit-only.natvis", TMP)
+	os.remove(rules)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/ll/debug_info.loke", "-g", "-emit-ll", "-o", out}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "-g -emit-ll failed:\n%s", string(stderr)) {
+		return
+	}
+	testing.expectf(t, os.is_file(fmt.tprintf("%s/emit-only.ll", TMP)), "-emit-ll left no module beside %s", out)
+	testing.expectf(t, !os.exists(rules), "-g -emit-ll left %s", rules)
+}
+
 // `-g` writes natvis rules for a map's entries and a `dyn` view's value, and
 // the linker stores them in the PDB, where Visual Studio and WinDbg find them.
 // No debugger runs here, so this pins the rules and their delivery only.
@@ -759,7 +839,7 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "the -g build failed:\n%s", string(stderr)) {
 		return
 	}
-	commands := "ld debugger_values; bp debugger_values!stop; g; .frame 1; dv /t; dx ages; dx ids; dx shape; q"
+	commands := "ld debugger_values; bp debugger_values!stop; g; .frame 1; dv /t; dx ages; dx ids; dx shape; g; .frame 1; dx point; dx label; g; g; .frame 1; dx held.inner; q"
 	run, stdout, stderr2, err2 := exec(
 		os.Process_Desc{command = []string{cdb, "-lines", "-y", dir, "-c", commands, exe}},
 		context.allocator,
@@ -776,6 +856,9 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 		`int64 count = 0n2`,
 		`string$ text = "seven"`,
 		`width            : 3`,
+		`height           : 4`,
+		`label            : "loke"`,
+		`alpha            : 11`,
 	}) {
 		testing.expectf(t, strings.contains(string(stdout), shown), "cdb does not show `%s`:\n%s", shown, string(stdout))
 	}
@@ -791,7 +874,6 @@ UNPINNED :: []string {
 	// `parse_declaration`, entered only through `starts_declaration`, which has
 	// already scanned the names and the `:`.
 	"L0207",
-	"L0208",
 	// A constant always parses with a value, and `---` reaches the checker only
 	// as `x: T = ---`.
 	"L0307",
@@ -808,7 +890,7 @@ UNPINNED :: []string {
 	"L0350",
 	// `-migrate` reporting its own rewrite wrong, which no input should reach.
 	"L0751",
-	// `core:fmt` without its own `Writer`/`Options`.
+	// `core:fmt` without its own `Writer`.
 	"L0601",
 	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
 	"L0575",
@@ -1281,6 +1363,63 @@ layout_agrees_with_llvm :: proc(t: ^testing.T) {
 	}
 }
 
+// The probe is not the program: `-o` keeps what it held, and with a bare name,
+// which `CreateProcess` would not look for in the working directory, the probe
+// still runs. `-g` leaves no PDB behind for it.
+@(test)
+the_layout_probe_leaves_the_output_alone :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	dir := fmt.tprintf("%s/layout-output", TMP)
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	out := fmt.tprintf("%s/program.exe", dir)
+	if !testing.expect(t, os.write_entire_file(out, transmute([]byte)string("the real output")) == nil, "cannot write the output") {
+		return
+	}
+	state, _, stderr, err := exec(
+		os.Process_Desc {
+			command     = []string{compiler_path(), launch_path("tests/layout/types.loke"), "-o", "program.exe", "-g", "-check-layout"},
+			working_dir = dir,
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "-check-layout failed:\n%s", string(stderr)) {
+		return
+	}
+	kept, read_err := os.read_entire_file(out, context.temp_allocator)
+	testing.expectf(t, read_err == nil && string(kept) == "the real output", "-check-layout changed %s", out)
+	entries, _ := os.read_all_directory_by_path(dir, context.temp_allocator)
+	testing.expectf(t, len(entries) == 1, "-check-layout left %d files in %s", len(entries), dir)
+}
+
+// Every value kind the checker lays out reaches LLVM, the ones that are not
+// declared records as well.
+@(test)
+the_layout_probe_covers_carrier_kinds :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/layout-carriers.exe", TMP)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/layout/text_and_handles.loke", "-o", exe, "-check-layout", "-keep-temps"}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "-check-layout failed:\n%s", string(stderr)) {
+		return
+	}
+	probe, read_err := os.read_entire_file(fmt.tprintf("%s/layout-carriers.layout.ll", TMP), context.temp_allocator)
+	if !testing.expect(t, read_err == nil, "-keep-temps left no probe module") {
+		return
+	}
+	testing.expectf(t, strings.contains(string(probe), "getelementptr (<4 x float>, ptr null, i64 1)"), "no probe asks for a vector's size:\n%s", string(probe))
+	testing.expectf(t, strings.contains(string(probe), "getelementptr (%loke.string, ptr null, i64 1)"), "no probe asks for a string's size:\n%s", string(probe))
+}
+
 // Multi-file and import behaviour cannot be expressed by the one-file corpora:
 // each case is a directory passed to the compiler as one root, and may hold
 // imported subdirectories of its own.
@@ -1379,7 +1518,8 @@ migrating_moves_a_records_attributes_to_its_declaration :: proc(t: ^testing.T) {
 	cases := []Case {
 		{"S :: struct @(packed) { a: u8 }", "@(packed) S :: struct { a: u8 }"},
 		{"@(public) S :: struct @(packed, align=8) { a: u8 }", "@(public, packed, align=8) S :: struct { a: u8 }"},
-		{"@(public,) S :: struct @(packed,) { a: u8 }", "@(public, packed) S :: struct { a: u8 }"},
+		{"@(public,) S :: struct @(packed,) { a: u8 }", "@(public, packed,) S :: struct { a: u8 }"},
+		{"U :: union@(zero=none)where true { none, some: int }", "@(zero=none) U :: union where true { none, some: int }"},
 		{"S :: move_only struct { a: u8 }", "@(move_only) S :: struct { a: u8 }"},
 		{"S :: move_only struct @(thread_affine) @(wakes_on_drop) { a: u8 }", "@(move_only, thread_affine, wakes_on_drop) S :: struct { a: u8 }"},
 		{"@(public) @(require_results) S :: move_only struct @(thread_affine) { a: u8 }", "@(public) @(require_results, move_only, thread_affine) S :: struct { a: u8 }"},
@@ -1427,6 +1567,8 @@ migrating_refuses_what_it_cannot_move :: proc(t: ^testing.T) {
 		"f :: proc(y: union @(zero=a) { a, b: int }) {}",
 		"S :: struct @(packed) /* between */ @(align=8) { a: u8 }",
 		"S :: struct @(packed // why\n) { a: u8 }",
+		"S :: struct @(packed, /* between */ align=8) { a: u8 }",
+		"S :: struct @(x = proc() { T :: struct @(packed) { a: u8 } }) { b: u8 }",
 	}
 	dir := fmt.tprintf("%s/migrate_refused", TMP)
 	remove_tree(dir)
@@ -2268,6 +2410,16 @@ host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
 	return clang, out[:], true
 }
 
+// A manifest found by walking up must have the identity a dependency's path to
+// it gives it, or a dependency that requires it back reads it a second time.
+@(test)
+project_found_above_is_read_once :: proc(t: ^testing.T) {
+	jobs := []Exec{{command = {compiler_path(), "tests/project_walk/app", "-emit-ll"}}}
+	exec_all(jobs)
+	output := fmt.tprintf("%s%s", jobs[0].stdout, jobs[0].stderr)
+	testing.expectf(t, strings.count(output, "L0398") == 1, "the manifest's L0398 should print once:\n%s", output)
+}
+
 @(test)
 package_diagnostics_reported :: proc(t: ^testing.T) {
 	check_diagnostics(t, case_directories(t, "tests/pkg_err"), "-emit-ll", "")
@@ -2881,10 +3033,6 @@ example_greeting_appends_to_its_file :: proc(t: ^testing.T) {
 	)
 }
 
-// The redirect goes through the shell rather than `Process_Desc.stdin`: core:os
-// hands a supplied handle straight to `CreateProcessW`, and a handle from
-// `os.open` is not marked inheritable, so the child receives an invalid one and
-// the example reports `Not_A_Terminal` instead of reading a name.
 @(private)
 run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	if !testing.expect(
@@ -2894,11 +3042,15 @@ run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	) {
 		return false
 	}
+	stdin, stdin_err := os.open(fmt.tprintf("%s/stdin.txt", dir))
+	if !testing.expectf(t, stdin_err == nil, "cannot open the greeting input file: %v", stdin_err) {
+		return false
+	}
+	defer os.close(stdin)
+	// A child's path is not read against its working directory.
+	exe, _ := filepath.abs(fmt.tprintf("%s/greeting.exe", dir), context.temp_allocator)
 	state, _, stderr, err := exec(
-		os.Process_Desc{
-			command     = []string{"cmd", "/c", ".\\greeting.exe < stdin.txt"},
-			working_dir = dir,
-		},
+		os.Process_Desc{command = []string{exe}, working_dir = dir, stdin = stdin},
 		context.allocator,
 	)
 	if !testing.expect(t, err == nil, "cannot run the greeting example") {

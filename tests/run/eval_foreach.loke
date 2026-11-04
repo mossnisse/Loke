@@ -59,13 +59,21 @@ doubled :: proc() -> int {
 	return packed;
 }
 
-// A by-reference loop over a place. Compile-time evaluation has no mutable
-// slices, so `cells[:].indexed()` is not available here; the loop counts.
+// A by-reference loop over a place: the form L0457 recommends, whose mutable
+// slice views the array.
 squares :: proc() -> int {
 	cells := [4]int{0, 0, 0, 0};
-	index := 0;
-	foreach (&mut cell in cells) { cell = index * index; index += 1; }
+	foreach (&mut cell, index in (&mut cells[:]).indexed()) { cell = index * index; }
 	return cells[0] + cells[1] + cells[2] + cells[3];
+}
+
+// design.md "Element bindings": a single name over a lent `indexed()` record gets
+// a pointer to the element in its `value` field.
+lent_record :: proc() -> int {
+	cells := [3]int{1, 2, 3};
+	total := 0;
+	foreach (r in cells.indexed()) { total += r.value^ * (r.index + 1); }
+	return total;
 }
 
 // A temporary managed container, filled and walked while evaluation runs.
@@ -126,6 +134,7 @@ BACKWARDS :: backwards(1267650600228229401496703205376, 0);
 EARLY     :: early();
 DOUBLED   :: doubled();
 SQUARES   :: squares();
+LENT      :: lent_record();
 WEIGHTED  :: weighted(4);
 HASHED    :: hash_name("mörk");
 FNV1A     :: fnv1a("clicked");
@@ -147,6 +156,7 @@ main :: proc() {
 	fmt.println(EARLY, early());
 	fmt.println(DOUBLED, doubled());
 	fmt.println(SQUARES, squares());
+	fmt.println(LENT, lent_record());
 	fmt.println(WEIGHTED, weighted(4));
 	fmt.println(HASHED, hash_name("mörk"));
 	fmt.println(FNV1A, fnv1a("clicked"));

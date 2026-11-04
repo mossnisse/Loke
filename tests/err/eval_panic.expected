@@ -5,3 +5,7 @@ L0343
 compile-time panic: checked() was given nothing to check
 @16:6
 in `checked`, called here
+L0343
+compile-time assertion failed: bad thing <value> <value> <value> 1
+@30:6
+in `described`, called here

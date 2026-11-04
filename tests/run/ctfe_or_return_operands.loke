@@ -1,6 +1,7 @@
 // design.md "Compile-time procedure evaluation": a failing `or_return` in an
 // operand leaves before the later operands are evaluated, as at run time, for
-// `in` (design.md "Ranges") and for a map method's later arguments.
+// `in` (design.md "Ranges"), for a map method's later arguments, and for the
+// seed of `hash`.
 package main;
 import "core:fmt";
 
@@ -25,9 +26,19 @@ insert :: proc() -> Option(int) {
 	return .some(m.find_or_insert(missing() or_return, unreachable_count())^);
 }
 
+unreachable_seed :: proc() -> uint {
+	assert(false);
+	return 0;
+}
+
+hashed :: proc() -> Option(uint) {
+	return .some((missing() or_return).hash(unreachable_seed()));
+}
+
 static_assert(in_range() == .none);
 static_assert(insert() == .none);
+static_assert(hashed() == .none);
 
 main :: proc() {
-	fmt.println(in_range(), insert());
+	fmt.println(in_range(), insert(), hashed());
 }

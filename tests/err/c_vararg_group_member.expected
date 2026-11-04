@@ -1,0 +1,15 @@
+L0392
+@16:2
+`printf` does not apply: argument 2: a C-variadic argument is passed by value, so it cannot be `inout`
+L0392
+@17:2
+`printf` does not apply: argument 2:
+L0392
+@18:2
+`printf` does not apply: argument 2: a C-variadic argument needs a concrete type
+L0392
+@19:2
+`printf` does not apply: argument 2: a C-variadic call cannot spread
+L0392
+@20:2
+`printf` does not apply: it takes 1 argument, found 0

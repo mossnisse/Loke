@@ -1,0 +1,11 @@
+warning[L0507]: this argument copies 600 bytes from `big`
+@12:16
+warning[L0507]: this argument copies 600 bytes from `big`
+@13:22
+warning[L0507]: this insertion copies 600 bytes from `big`
+@15:27
+warning[L0507]: this insertion copies 600 bytes from `big`
+@17:17
+L0315
+@18:2
+unknown name `not_declared`

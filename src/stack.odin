@@ -7,26 +7,20 @@ package lokec
 // size, the test runner's included, get the same.
 COMPILER_STACK :: 64 * 1024 * 1024
 
-when ODIN_OS == .Windows {
-	// The flag rides on this import, which is linked only because
-	// `stack_remaining` calls into it; its value must equal `COMPILER_STACK`.
-	@(extra_linker_flags = "/STACK:67108864")
-	foreign import kernel32 "system:Kernel32.lib"
-	@(default_calling_convention = "system")
-	foreign kernel32 {
-		GetCurrentThreadStackLimits :: proc(low, high: ^uintptr) ---
-	}
+// The flag rides on this import, which is linked only because `stack_remaining`
+// calls into it. An attribute's string cannot be computed, hence the assert.
+#assert(COMPILER_STACK == 67108864)
+@(extra_linker_flags = "/STACK:67108864")
+foreign import kernel32 "system:Kernel32.lib"
+@(default_calling_convention = "system")
+foreign kernel32 {
+	GetCurrentThreadStackLimits :: proc(low, high: ^uintptr) ---
 }
 
 // Bytes of stack left below the caller's frame on this thread.
 stack_remaining :: proc() -> uintptr {
 	probe: u8
-	when ODIN_OS == .Windows {
-		low, high: uintptr
-		GetCurrentThreadStackLimits(&low, &high)
-		return uintptr(&probe) - low
-	} else {
-		// ponytail: lokec runs on Windows; another host needs its own query.
-		return max(uintptr)
-	}
+	low, high: uintptr
+	GetCurrentThreadStackLimits(&low, &high)
+	return uintptr(&probe) - low
 }

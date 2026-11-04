@@ -1,0 +1,23 @@
+// design.md "Attributes": a member of a generic `impl` has symbols only in its
+// instances, and its attributes are checked as written, instantiated or not.
+package main;
+
+G :: struct($T: type) { value: T }
+
+impl G($T) {
+	@(test) tested :: proc() {}
+	@(bogus) unknown :: proc() {}
+	@(cpu_dispatch = "x86-64-v3") dispatched :: proc() {}
+	@(packed) misplaced :: proc() {}
+	@(cold = "rarely") valued :: proc() {}
+	@(cold, cold) twice :: proc() {}
+	@(link_name = "unexported") named :: proc() {}
+	parameter :: proc(@(bogus_inner) x: T) {}
+
+	// What each form of member allows.
+	@(public, cold, require_results) fine :: proc() -> int { return 1; }
+	@(public) CONSTANT :: 1;
+	@(require_results) Element :: T;
+}
+
+main :: proc() {}

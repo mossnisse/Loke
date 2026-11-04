@@ -1,0 +1,11 @@
+L0730
+@37:33
+this task's call may leave a borrow of `counter` in this argument
+
+L0730
+@38:32
+this task's call may leave a borrow of `counter` in this argument
+
+L0730
+@39:26
+this task's call may leave a borrow of `counter` in this argument

@@ -1,0 +1,29 @@
+// design.md "By-reference iteration": a map's `iter_mut` is a mutable borrow,
+// as a dynamic array's is, so a read of the map conflicts with an entry still in
+// use and a second iterator conflicts with the first.
+package main;
+
+import "core:fmt";
+
+read_during_entry :: proc() {
+	m: map[int]int = {};
+	m[1] = 1;
+	it := m.iter_mut();
+	entry := it.next();
+	x := m[1];
+	fmt.println(x);
+	fmt.println(entry);
+}
+
+second_iterator :: proc() {
+	m: map[int]int = {};
+	first := m.iter_mut();
+	second := m.iter_mut();
+	fmt.println(first.next());
+	_ = second;
+}
+
+main :: proc() {
+	read_during_entry();
+	second_iterator();
+}

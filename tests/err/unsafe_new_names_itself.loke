@@ -1,0 +1,20 @@
+// The diagnostics of `unsafe.new` and `unsafe.try_new` name the call, not a box.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+@(move_only) Ticket :: struct { id: int }
+
+main :: proc() {
+	a := unsafe.new(int);
+	b := unsafe.try_new(int);
+	c := try_box(int);
+	ticket := Ticket{1};
+	d := unsafe.new(ticket);
+	_ = unsafe.try_new(ticket);
+	numbers: [dynamic]int = {};
+	f := unsafe.new(numbers);
+	unsafe.free(f);
+	fmt.println(numbers);
+}

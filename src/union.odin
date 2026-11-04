@@ -9,64 +9,319 @@ import "core:fmt"
 import "core:mem"
 import "core:slice"
 
-// design.md "Unions": a discriminated union of named variants.
+// design.md "Unions"
 resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
-	payloads := make([dynamic]Type_Id, 0, len(value.variants), k.c.semantic_allocator)
-	names := make([dynamic]Identifier_Id, 0, len(value.variants), k.c.semantic_allocator)
-	for variant in value.variants {
-		name := intern_identifier(k.c, variant.name.text)
-		if slice.contains(names[:], name) {
-			errorf(
-				k.c, variant.span, "L0422",
-				"`%s` is already a variant of this union", variant.name.text,
-			)
-			continue
-		}
-		payload, ok := resolve_variant_payload(k, variant, name)
-		if !ok {
-			continue
-		}
-		append(&payloads, payload)
-		append(&names, name)
-	}
+	names, payloads, ok := resolve_variant_list(k, value.variants, "a variant", k.c.semantic_allocator)
 	info := type_of(k.c, type)
 	if info == nil {
 		return
 	}
-	info.variants = payloads[:]
-	info.variant_names = names[:]
+	info.variants = payloads
+	info.variant_names = names
 	info.written_align = record_written_alignment(k, value)
 	info.thread_affine = has_attribute(value.attributes, "thread_affine")
 	info.wakes_on_drop = has_attribute(value.attributes, "wakes_on_drop")
-	resolve_union_zero(k, info, value)
-	resolve_union_failure(k, info, value)
+	// The attributes name written variants, and a rejected one is not in the list.
+	if ok {
+		resolve_union_zero(k, type, info, value)
+		resolve_union_failure(k, info, value)
+	}
 }
 
 // design.md "Anonymous unions": `(name: Type | name:)` follows a named union's
 // variant rules, then interns by its ordered alternatives.
 resolve_anon_union :: proc(k: ^Checker, value: ^Type_Anon_Union) -> Type_Id {
-	specs := make([dynamic]Anon_Union_Variant, 0, len(value.variants), context.temp_allocator)
-	bad := false
-	for variant in value.variants {
-		name := intern_identifier(k.c, variant.name.text)
-		for earlier in specs {
-			if earlier.name == name {
-				errorf(k.c, variant.span, "L0422", "`%s` is already an alternative of this union", variant.name.text)
-				bad = true
-			}
-		}
-		payload, ok := resolve_variant_payload(k, variant, name)
-		if !ok {
-			bad = true
-			continue
-		}
-		append(&specs, Anon_Union_Variant{name = name, payload = payload})
-	}
-	if bad {
+	names, payloads, ok := resolve_variant_list(k, value.variants, "an alternative", context.temp_allocator)
+	if !ok {
 		return INVALID_TYPE
 	}
-	return anon_union_type(k.c, specs[:])
+	specs := make([]Anon_Member, len(names), context.temp_allocator)
+	for name, index in names {
+		specs[index] = Anon_Member{name = name, type = payloads[index]}
+	}
+	return anon_union_type(k.c, specs)
 }
+
+// The variants that resolve, in order. False once any is rejected; `noun` is what
+// the duplicate diagnostic calls one.
+@(private = "file")
+resolve_variant_list :: proc(
+	k: ^Checker, variants: []Variant, noun: string, allocator: mem.Allocator,
+) -> (names: []Identifier_Id, payloads: []Type_Id, ok: bool) {
+	kept_names := make([dynamic]Identifier_Id, 0, len(variants), allocator)
+	kept_payloads := make([dynamic]Type_Id, 0, len(variants), allocator)
+	ok = true
+	for variant in variants {
+		name := intern_identifier(k.c, variant.name.text)
+		if slice.contains(kept_names[:], name) {
+			errorf(k.c, variant.span, "L0422", "`%s` is already %s of this union", variant.name.text, noun)
+			ok = false
+			continue
+		}
+		payload, resolved := resolve_variant_payload(k, variant, name)
+		if !resolved {
+			ok = false
+			continue
+		}
+		append(&kept_payloads, payload)
+		append(&kept_names, name)
+	}
+	return kept_names[:], kept_payloads[:], ok
+}
+
+// One variant's payload: `TYPE_VOID` when it carries nothing, which is the test
+// for "payloadless" everywhere downstream. False once the reason is reported.
+@(private = "file")
+resolve_variant_payload :: proc(k: ^Checker, variant: Variant, name: Identifier_Id) -> (Type_Id, bool) {
+	if variant.type == nil {
+		// design.md "Unions": Odin's `union { int, string }` lists payload types,
+		// which here would quietly be payloadless variants.
+		symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
+		if symbol != nil && symbol.kind == .Type {
+			errorf(
+				k.c, variant.span, "L0422",
+				"`%s` is a type, so it cannot name a payloadless variant; a variant carrying it is written `name: %s`",
+				variant.name.text, variant.name.text,
+			)
+			return INVALID_TYPE, false
+		}
+		return TYPE_VOID, true
+	}
+	payload := resolve_type_syntax(k, variant.type)
+	if payload == INVALID_TYPE {
+		// An anonymous union's `$` that no argument bound names itself.
+		if type_syntax_has_poly(variant.type) {
+			report_unresolved_type(k, variant.type)
+			return INVALID_TYPE, false
+		}
+		errorf(k.c, expr_span(variant.type), "L0422", "this union variant payload is not a type")
+		return INVALID_TYPE, false
+	}
+	if payload == TYPE_VOID || payload == TYPE_UNTYPED_NIL {
+		errorf(k.c, expr_span(variant.type), "L0422", "`%s` cannot be a union variant payload", type_name(k.c, payload))
+		return INVALID_TYPE, false
+	}
+	return payload, true
+}
+
+// The first variant only, so that tag 0 plus a zero payload stays all-zero.
+@(private = "file")
+resolve_union_zero :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info, value: ^Type_Record) {
+	attribute, index, ok := designated_variant(k, info, value, "zero")
+	if !ok {
+		return
+	}
+	if index != 0 {
+		errorf(
+			k.c, attribute.span, "L0423",
+			"`@(zero=%s)` must name the first variant, so the zero value stays all-zero",
+			identifier_text(k.c, info.variant_names[index]),
+		)
+		return
+	}
+	info.zero_designated = true
+	// A probe can still reject an instance over this.
+	if info.instance_of != INVALID_SYMBOL {
+		check_union_zero_payload(k, type, value.attributes)
+	}
+}
+
+// design.md "Zero values": the payload `@(zero=)` designates needs a zero. Asked
+// once every record has its fields, or a cycle through `[]U` would read one that
+// has none yet.
+check_union_zero_payload :: proc(k: ^Checker, type: Type_Id, attributes: []Attribute) {
+	info := type_of(k.c, type)
+	attribute, written := find_attribute(attributes, "zero")
+	if info == nil || !written || !info.zero_designated {
+		return
+	}
+	if payload := info.variants[0]; !type_has_zero(k.c, payload) {
+		errorf(
+			k.c, attribute.span, "L0423",
+			"`@(zero=%s)` needs an all-zero payload, and `%s` has no zero value",
+			identifier_text(k.c, info.variant_names[0]), type_name(k.c, payload),
+		)
+	}
+}
+
+// design.md "The failure protocol and `@(failure=)`": `or_else`/`or_return`
+// recognise the shape, never a privileged type name.
+@(private = "file")
+resolve_union_failure :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
+	attribute, index, ok := designated_variant(k, info, value, "failure")
+	if !ok {
+		return
+	}
+	if len(info.variants) != 2 {
+		errorf(
+			k.c, attribute.span, "L0423",
+			"`@(failure=...)` needs a union of exactly two variants, found %d",
+			len(info.variants),
+		)
+		return
+	}
+	info.failure_designated = true
+	info.failure_variant = index
+}
+
+// The variant `@(what=name)` designates. False when the attribute is not written,
+// or once the reason it names none is reported. The name is read rather than
+// checked: it resolves against the union's own variants, not a scope.
+@(private = "file")
+designated_variant :: proc(
+	k: ^Checker, info: ^Type_Info, value: ^Type_Record, what: string,
+) -> (attribute: Attribute, index: int, ok: bool) {
+	written: bool
+	attribute, written = find_attribute(value.attributes, what)
+	if !written {
+		return
+	}
+	ident, is_ident := attribute.value.(^Expr_Ident)
+	if !is_ident {
+		errorf(k.c, attribute.span, "L0423", "`@(%s=name)` needs a variant name", what)
+		return
+	}
+	index, ok = slice.linear_search(info.variant_names, intern_identifier(k.c, ident.name))
+	if !ok {
+		errorf(k.c, attribute.span, "L0423", "`@(%s=%s)` names no variant of this union", what, ident.name)
+	}
+	return
+}
+
+// design.md "Unions": the payload region, then the tag, then padding. The
+// emitter builds storage matching these facts rather than asking LLVM.
+//
+// A `niche` union stores no tag (design.md "Representation"): its payload's
+// first word is a non-null reference, so the null word is the payloadless
+// variant. `tag_bytes` is then the width of the tag the emitter computes.
+Union_Layout :: struct {
+	payload_size:  u64,
+	align:         u64,
+	tag_bytes:     u64,
+	size:          u64,
+	niche:         bool,
+}
+
+union_layout :: proc(c: ^Compiler, type: Type_Id, span := NO_SPAN) -> Union_Layout {
+	info := underlying_info(c, type)
+	if info == nil || info.kind != .Union {
+		return Union_Layout{align = 1, tag_bytes = 1, size = 1}
+	}
+	out := Union_Layout{align = 1}
+	for variant in info.variants {
+		out.payload_size = max(out.payload_size, type_size(c, variant, span))
+		out.align = max(out.align, type_align(c, variant, span))
+	}
+	out.tag_bytes = union_tag_bytes(len(info.variants))
+	out.align = max(out.align, info.written_align, out.tag_bytes)
+	out.payload_size = align_to(out.payload_size, out.align)
+	out.size = align_to(out.payload_size + out.tag_bytes, out.align)
+	if union_niche_variant(c, type) >= 0 {
+		out.niche = true
+		out.size = out.payload_size
+	}
+	return out
+}
+
+// design.md "Representation": the variant of a two-variant union whose payload
+// is a non-null reference, when the other has no payload or a `Unit` one;
+// -1 otherwise. A `Unit` is zero-sized, so its variant is the null word as a
+// payloadless one is.
+union_niche_variant :: proc(c: ^Compiler, type: Type_Id) -> int {
+	info := underlying_info(c, type)
+	if info == nil || info.kind != .Union || len(info.variants) != 2 {
+		return -1
+	}
+	for payload, index in info.variants {
+		other := info.variants[1 - index]
+		if (other == TYPE_VOID || other == c.unit_type) && type_is_non_null(c, payload) {
+			return index
+		}
+	}
+	return -1
+}
+
+// design.md "Types with no zero value": a non-null type, a reference or an
+// owning handle, whose first word is a non-null address.
+type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Pointer, .Proc, .Dyn, .CString_View, .Box:
+		return true
+	case .Struct:
+		return type_info_is_shared(c, info)
+	}
+	return false
+}
+
+// The narrowest tag representing `0 ..< variant_count`, at least one byte.
+@(private = "file")
+union_tag_bytes :: proc(variants: int) -> u64 {
+	switch {
+	case variants <= 256:
+		return 1
+	case variants <= 65536:
+		return 2
+	}
+	return 4
+}
+
+// -1 when the union has no such variant.
+union_variant_index :: proc(c: ^Compiler, union_type: Type_Id, name: Identifier_Id) -> int {
+	info := underlying_info(c, union_type)
+	if info == nil {
+		return -1
+	}
+	at, _ := slice.linear_search(info.variant_names, name)
+	return at
+}
+
+// INVALID_TYPE for an index out of range.
+union_variant_payload :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> Type_Id {
+	info := underlying_info(c, union_type)
+	if info == nil || index < 0 || index >= len(info.variants) {
+		return INVALID_TYPE
+	}
+	return info.variants[index]
+}
+
+// The type a variant's payload reads as: a payloadless variant reads as `Unit`.
+payload_value_type :: proc(c: ^Compiler, payload: Type_Id) -> Type_Id {
+	return payload == TYPE_VOID ? c.unit_type : payload
+}
+
+// design.md "Iteration protocol": `next` yields `Option(Element)`.
+option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
+	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))
+}
+
+union_variant_name :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> string {
+	info := underlying_info(c, union_type)
+	if info == nil || index < 0 || index >= len(info.variant_names) {
+		return "?"
+	}
+	return identifier_text(c, info.variant_names[index])
+}
+
+type_is_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return underlying_kind(c, type) == .Union
+}
+
+// The index of a variant named in compiler-owned code. The names come from
+// `base:runtime`'s declarations, so no tag is hard-coded.
+union_index_of :: proc(c: ^Compiler, union_type: Type_Id, name: string) -> int {
+	return union_variant_index(c, union_type, intern_identifier(c, name))
+}
+
+variant_count :: proc(c: ^Compiler, union_type: Type_Id) -> int {
+	info := underlying_info(c, union_type)
+	return info == nil ? 0 : len(info.variants)
+}
+
+// --------------------------------------------------------- widening by label --
 
 // design.md "Widening by label": an anonymous union converts to another that
 // has each of its alternatives, the same label with the same payload type, in
@@ -132,271 +387,24 @@ note_union_widening :: proc(k: ^Checker, span: Span, from, to: Type_Id) {
 		return
 	}
 	for name, index in source.variant_names {
-		if widened_variant(k.c, from, to, index) >= 0 {
-			continue
-		}
-		label := identifier_text(k.c, name)
 		at, found := slice.linear_search(dest.variant_names, name)
 		if !found {
-			add_notef(k.c, span, "`%s` has no alternative `%s`", type_name(k.c, to), label)
-		} else {
+			add_notef(k.c, span, "`%s` has no alternative `%s`", type_name(k.c, to), identifier_text(k.c, name))
+			return
+		}
+		if dest.variants[at] != source.variants[index] {
 			add_notef(
 				k.c, span, "`%s` here carries %s, but in `%s` it carries %s",
-				label, payload_text(k.c, source.variants[index]), type_name(k.c, to), payload_text(k.c, dest.variants[at]),
+				identifier_text(k.c, name), payload_text(k.c, source.variants[index]), type_name(k.c, to), payload_text(k.c, dest.variants[at]),
 			)
+			return
 		}
-		return
 	}
 }
 
 @(private = "file")
 payload_text :: proc(c: ^Compiler, payload: Type_Id) -> string {
 	return payload == TYPE_VOID ? "nothing" : fmt.tprintf("`%s`", type_name(c, payload))
-}
-
-// One variant's payload: `TYPE_VOID` when it carries nothing, which is the test
-// for "payloadless" everywhere downstream. False once the reason is reported.
-@(private = "file")
-resolve_variant_payload :: proc(k: ^Checker, variant: Variant, name: Identifier_Id) -> (Type_Id, bool) {
-	if variant.type == nil {
-		// design.md "Unions": Odin's `union { int, string }` lists payload types,
-		// which here would quietly be payloadless variants.
-		symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
-		if symbol != nil && symbol.kind == .Type {
-			errorf(
-				k.c, variant.span, "L0422",
-				"`%s` is a type, so it cannot name a payloadless variant; a variant carrying it is written `name: %s`",
-				variant.name.text, variant.name.text,
-			)
-			return INVALID_TYPE, false
-		}
-		return TYPE_VOID, true
-	}
-	payload := resolve_type_syntax(k, variant.type)
-	if payload == INVALID_TYPE {
-		// An anonymous union's `$` that no argument bound names itself.
-		if type_syntax_has_poly(variant.type) {
-			report_unresolved_type(k, variant.type)
-			return INVALID_TYPE, false
-		}
-		errorf(k.c, expr_span(variant.type), "L0422", "this union variant payload is not a type")
-		return INVALID_TYPE, false
-	}
-	if payload == TYPE_VOID || payload == TYPE_UNTYPED_NIL {
-		errorf(k.c, expr_span(variant.type), "L0422", "`%s` cannot be a union variant payload", type_name(k.c, payload))
-		return INVALID_TYPE, false
-	}
-	return payload, true
-}
-
-// design.md "Zero values": `@(zero=name)` designates the semantic zero. Only
-// the *first* variant may be named, so tag 0 plus a zero payload stays the
-// all-zero representation every container, global, and allocation depends on.
-@(private = "file")
-resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
-	attribute, written := find_attribute(value.attributes, "zero")
-	if !written {
-		return
-	}
-	name, ok := attribute_variant_name(k, attribute, "zero")
-	if !ok {
-		return
-	}
-	index, found := slice.linear_search(info.variant_names, name)
-	if !found {
-		errorf(
-			k.c, attribute.span, "L0423",
-			"`@(zero=%s)` names no variant of this union", identifier_text(k.c, name),
-		)
-		return
-	}
-	if index != 0 {
-		errorf(
-			k.c, attribute.span, "L0423",
-			"`@(zero=%s)` must name the first variant, so the zero value stays all-zero",
-			identifier_text(k.c, name),
-		)
-		return
-	}
-	if payload := info.variants[0]; payload != TYPE_VOID && !type_has_zero(k.c, payload) {
-		errorf(
-			k.c, attribute.span, "L0423",
-			"`@(zero=%s)` needs an all-zero payload, and `%s` has no zero value",
-			identifier_text(k.c, name), type_name(k.c, payload),
-		)
-		return
-	}
-	info.zero_designated = true
-}
-
-// design.md "The failure protocol and `@(failure=)`": `@(failure=name)`
-// designates one of exactly two variants as the failure one.
-// `or_else`/`or_return` recognise the shape, never a privileged type name.
-@(private = "file")
-resolve_union_failure :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
-	attribute, written := find_attribute(value.attributes, "failure")
-	if !written {
-		return
-	}
-	name, ok := attribute_variant_name(k, attribute, "failure")
-	if !ok {
-		return
-	}
-	index, found := slice.linear_search(info.variant_names, name)
-	if !found {
-		errorf(
-			k.c, attribute.span, "L0423",
-			"`@(failure=%s)` names no variant of this union", identifier_text(k.c, name),
-		)
-		return
-	}
-	if len(info.variants) != 2 {
-		errorf(
-			k.c, attribute.span, "L0423",
-			"`@(failure=...)` needs a union of exactly two variants, found %d",
-			len(info.variants),
-		)
-		return
-	}
-	info.failure_designated = true
-	info.failure_variant = index
-}
-
-// A bare variant name, read rather than checked: it resolves against the
-// union's own variants, not a scope.
-@(private = "file")
-attribute_variant_name :: proc(k: ^Checker, attribute: Attribute, what: string) -> (Identifier_Id, bool) {
-	ident, is_ident := attribute.value.(^Expr_Ident)
-	if !is_ident {
-		errorf(k.c, attribute.span, "L0423", "`@(%s=name)` needs a variant name", what)
-		return INVALID_IDENTIFIER, false
-	}
-	return intern_identifier(k.c, ident.name), true
-}
-
-// design.md "Unions": the payload region, then the tag, then padding. The
-// emitter builds storage matching these facts rather than asking LLVM.
-//
-// A `niche` union stores no tag (design.md "Representation"): its payload's
-// first word is a non-null reference, so the null word is the payloadless
-// variant. `tag_bytes` is then the width of the tag the emitter computes.
-Union_Layout :: struct {
-	payload_size:  u64,
-	align:         u64,
-	tag_offset:    u64,
-	tag_bytes:     u64,
-	size:          u64,
-	niche:         bool,
-}
-
-union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) -> Union_Layout {
-	info := type_of(c, type)
-	if info == nil || info.kind != .Union {
-		return Union_Layout{align = 1, tag_bytes = 1, size = 1}
-	}
-	out := Union_Layout{align = 1}
-	for variant in info.variants {
-		out.payload_size = max(out.payload_size, type_size(c, variant, span))
-		out.align = max(out.align, type_align(c, variant, span))
-	}
-	out.tag_bytes = union_tag_bytes(len(info.variants))
-	// A written `@(align=N)` and a tag wider than every payload only raise it.
-	out.align = max(out.align, info.written_align, out.tag_bytes)
-	out.payload_size = align_to(out.payload_size, out.align)
-	out.tag_offset = out.payload_size
-	out.size = align_to(out.tag_offset + out.tag_bytes, out.align)
-	if union_niche_variant(c, type) >= 0 {
-		out.niche = true
-		out.size = out.payload_size
-	}
-	return out
-}
-
-// design.md "Representation": the variant of a two-variant union whose payload
-// is a non-null reference, when the other has no payload or a `Unit` one;
-// -1 otherwise. A `Unit` is zero-sized, so its variant is the null word as a
-// payloadless one is.
-union_niche_variant :: proc(c: ^Compiler, type: Type_Id) -> int {
-	info := underlying_info(c, type)
-	if info == nil || info.kind != .Union || len(info.variants) != 2 {
-		return -1
-	}
-	for payload, index in info.variants {
-		other := info.variants[1 - index]
-		if (other == TYPE_VOID || other == c.unit_type) && type_is_non_null(c, payload) {
-			return index
-		}
-	}
-	return -1
-}
-
-// design.md "Types with no zero value": a non-null type, a reference or an
-// owning handle, whose first word is a non-null address.
-type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	info := underlying_info(c, type)
-	if info == nil {
-		return false
-	}
-	#partial switch info.kind {
-	case .Pointer, .Proc, .Dyn, .CString_View, .Box:
-		return true
-	case .Struct:
-		return info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol
-	}
-	return false
-}
-
-// The narrowest tag representing `0 ..< variant_count`, at least one byte.
-@(private = "file")
-union_tag_bytes :: proc(variants: int) -> u64 {
-	switch {
-	case variants <= 256:
-		return 1
-	case variants <= 65536:
-		return 2
-	}
-	return 4
-}
-
-// A variant's declaration index, which is also its tag. -1 when the union has
-// no variant with that name.
-union_variant_index :: proc(c: ^Compiler, union_type: Type_Id, name: Identifier_Id) -> int {
-	info := type_of(c, type_underlying(c, union_type))
-	if info == nil {
-		return -1
-	}
-	for candidate, index in info.variant_names {
-		if candidate == name {
-			return index
-		}
-	}
-	return -1
-}
-
-// The payload type of variant `index`, or `TYPE_VOID` when it is payloadless.
-union_variant_payload :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> Type_Id {
-	info := type_of(c, type_underlying(c, union_type))
-	if info == nil || index < 0 || index >= len(info.variants) {
-		return INVALID_TYPE
-	}
-	return info.variants[index]
-}
-
-// design.md "Iteration protocol": `next` yields `Option(Element)`.
-option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
-	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))
-}
-
-union_variant_name :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> string {
-	info := type_of(c, type_underlying(c, union_type))
-	if info == nil || index < 0 || index >= len(info.variant_names) {
-		return "?"
-	}
-	return identifier_text(c, info.variant_names[index])
-}
-
-type_is_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_kind(c, type) == .Union
 }
 
 // ------------------------------------------------------ variant construction --
@@ -406,7 +414,7 @@ type_is_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // False when `subject` has no such variant, so the selector keeps its ordinary
 // meaning.
 check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: Type_Id, callee: bool) -> bool {
-	if subject == INVALID_TYPE || !type_is_union(k.c, type_underlying(k.c, subject)) {
+	if subject == INVALID_TYPE || !type_is_union(k.c, subject) {
 		return false
 	}
 	index := union_variant_index(k.c, subject, intern_identifier(k.c, sel.name.text))
@@ -429,7 +437,6 @@ check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: 
 		payload_value, _ = zero_const(k.c, payload)
 	}
 	sel.resolution = Resolution{kind = .Builtin_Operator}
-	sel.is_const = true
 	sel.immutable = .Constant
 	sel.const_value = union_const(k.c, subject, index, payload_value)
 	return true
@@ -444,7 +451,6 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	// Set before any error: flow analysis walks a failed construction too.
 	v.operation = Call_Union_Construct{index = index}
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = INVALID_TYPE
 
 	if len(v.args) != 1 {
 		errorf(
@@ -479,19 +485,16 @@ finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, ind
 	v.value_category = .Value
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.type = subject
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = value
-	classify_copy_cost(k, value, payload, .Variant)
+	v.bound = bound_exprs(k, value)
 	v.operation = Call_Union_Construct{
 		index = index,
-		clone = classify_copy(k, value, payload, .Variant),
+		clone = classify_costed_copy(k, value, payload, .Variant),
 	}
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.
-	if inner := expr_base(value); inner != nil && inner.is_const &&
+	if inner := expr_base(value); inner != nil && base_is_const(inner) &&
 	   variant_payload_is_constant(k.c, payload, inner.const_value) {
-		v.is_const = true
 		v.const_value = union_const(k.c, subject, index, inner.const_value)
 	}
 }
@@ -500,10 +503,10 @@ finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, ind
 // payload storage. Text holds relocatable pointers, so it has none.
 @(private = "file")
 variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const_Value) -> bool {
-	if payload == TYPE_VOID || type_size(c, payload) == 0 || value.kind == .Invalid || value.kind == .Nil {
+	if type_size(c, payload) == 0 || value.kind == .Invalid || value.kind == .Nil {
 		return true
 	}
-	info := type_of(c, type_underlying(c, payload))
+	info := underlying_info(c, payload)
 	if info == nil {
 		return false
 	}
@@ -514,8 +517,7 @@ variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const
 		if value.aggregate == nil {
 			return false
 		}
-		for index in 0 ..< int(info.count) {
-			element := index < len(value.aggregate.elements) ? value.aggregate.elements[index] : Const_Value{}
+		for element in value.aggregate.elements {
 			if !variant_payload_is_constant(c, info.element, element) {
 				return false
 			}
@@ -525,13 +527,9 @@ variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const
 		if value.aggregate == nil {
 			return false
 		}
-		for field, index in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil {
-				return false
-			}
-			element := index < len(value.aggregate.elements) ? value.aggregate.elements[index] : Const_Value{}
-			if !variant_payload_is_constant(c, symbol.type, element) {
+		for element, index in value.aggregate.elements {
+			symbol := symbol_of(c, info.fields[index])
+			if symbol == nil || !variant_payload_is_constant(c, symbol.type, element) {
 				return false
 			}
 		}
@@ -567,31 +565,53 @@ variant_constructor :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> Sy
 reject_incomplete_variant :: proc(k: ^Checker, sel: ^Expr_Selector) {
 	errorf(
 		k.c, sel.span, "L0425",
-		"`%s.%s` carries a payload: write `%s(value)`",
+		"`%s.%s` carries a payload: write `.%s(value)`",
 		type_name(k.c, sel.variant_union), sel.name.text, sel.name.text,
 	)
 }
 
-// design.md "Inspecting a union": `u.as(.name)` borrows `u` and yields
-// `Option(P)`, a copy of the payload when `name` is active and `.none`
-// otherwise. A payloadless variant yields `Option(Unit)`.
+union_const :: proc(c: ^Compiler, union_type: Type_Id, index: int, payload: Const_Value) -> Const_Value {
+	elements := make([]Const_Value, 1, c.semantic_allocator)
+	elements[0] = payload
+	value := aggregate_const(c, union_type, elements)
+	value.aggregate.variant = index
+	return value
+}
+
+// ---------------------------------------------------------------- inspection --
+
+// A union receiver takes `u.as(.name)` (design.md "Inspecting a union"); any
+// other type keeps its own `as` member.
+check_as_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	if sel.name.text != "as" {
+		return false
+	}
+	subject := check_receiver(k, sel)
+	if type_is_union(k.c, subject) {
+		check_union_as(k, v, sel, subject)
+		return true
+	}
+	return false
+}
+
+// design.md "Inspecting a union": `u.as(.name)` copies the payload out as
+// `Option(P)`.
 // ponytail: a temporary operand is copied from too, so a move-only payload is
 // rejected even there; move it out instead if that case matters.
-check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject: Type_Id) -> bool {
+check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject: Type_Id) {
 	v.value_category = .Value
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = INVALID_TYPE
 	variant: ^Expr_Selector
 	if len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value {
 		variant, _ = v.args[0].value.(^Expr_Selector)
 	}
 	if variant == nil || variant.operand != nil {
 		errorf(k.c, v.span, "L0425", "`as` on a union names one variant as `.name`")
-		return true
+		return
 	}
 	if !check_union_variant_selector(k, variant, subject, false) {
 		errorf(k.c, variant.span, "L0425", "`%s` has no variant `%s`", type_name(k.c, subject), variant.name.text)
-		return true
+		return
 	}
 	index := variant.variant_index
 	payload := union_variant_payload(k.c, subject, index)
@@ -604,33 +624,10 @@ check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject:
 			"`%s` is move-only, so `as` cannot copy it out of the union; use a `switch`",
 			type_name(k.c, payload),
 		)
-		return true
+		return
 	}
 	contribute_lifecycle_members(k, payload)
 	v.operation = Call_Union_As{index = index}
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = sel.operand
+	v.bound = bound_exprs(k, sel.operand)
 	v.type = option_type(k, payload, v.span)
-	return true
-}
-
-union_const :: proc(c: ^Compiler, union_type: Type_Id, index: int, payload: Const_Value) -> Const_Value {
-	aggregate := new(Const_Aggregate, c.semantic_allocator)
-	aggregate.type = union_type
-	aggregate.variant = index
-	elements := make([]Const_Value, 1, c.semantic_allocator)
-	elements[0] = payload
-	aggregate.elements = elements
-	return Const_Value{kind = .Aggregate, aggregate = aggregate}
-}
-
-// The index of a variant named in compiler-owned code. The names come from
-// `base:runtime`'s declarations, so no tag is hard-coded.
-union_index_of :: proc(c: ^Compiler, union_type: Type_Id, name: string) -> int {
-	return union_variant_index(c, union_type, intern_identifier(c, name))
-}
-
-variant_count :: proc(c: ^Compiler, union_type: Type_Id) -> int {
-	info := type_of(c, type_underlying(c, union_type))
-	return info == nil ? 0 : len(info.variants)
 }

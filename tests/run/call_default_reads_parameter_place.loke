@@ -1,0 +1,39 @@
+package main;
+
+import "core:fmt";
+
+// A default reads the parameters to its left as this call bound them, by
+// selecting from one as well as by naming it, and whichever way it passes.
+Pair :: struct { n: int, m: int }
+Large :: struct { data: [1024]int, n: int }
+
+field :: proc(a: Pair, x: int = a.n) -> int { return x; }
+whole :: proc(a: Pair, b: Pair = a) -> int { return b.m; }
+large :: proc(a: Large, x: int = a.n) -> int { return x; }
+element :: proc(a: [3]int, x: int = a[1]) -> int { return x; }
+through_inout :: proc(a: inout Pair, x: int = a.n, b: Pair = a) -> int {
+	a.n += 1;
+	return x + b.m;
+}
+through_pointer :: proc(self: ^Pair, x: int = self.n) -> int { return x; }
+
+// The callee's own `a` is not the caller's, so an inner call must not read it.
+nested :: proc(a: Pair, depth: int) -> int {
+	if (depth > 0) {
+		return field(Pair{99, 0});
+	}
+	return nested(Pair{5, 0}, depth + 1);
+}
+
+main :: proc() {
+	pair := Pair{7, 8};
+	fmt.println(field(pair));
+	fmt.println(field(pair, 1));
+	fmt.println(whole(pair));
+	fmt.println(large(Large{n = 11}));
+	fmt.println(element([3]int{1, 2, 3}));
+	fmt.println(through_inout(inout pair));
+	fmt.println(pair.n);
+	fmt.println(through_pointer(&pair));
+	fmt.println(nested(pair, 0));
+}

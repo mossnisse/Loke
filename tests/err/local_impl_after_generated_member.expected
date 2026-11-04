@@ -1,0 +1,8 @@
+L0409
+@16:3
+`R` already has a generated member `format`
+a use ahead of this block generated it, so write the block before that use
+L0409
+@19:3
+`S` already has a generated member `hash`
+a use ahead of this block generated it, so write the block before that use

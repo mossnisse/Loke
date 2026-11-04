@@ -1,0 +1,7 @@
+L0373
+@17:17
+`untyped int` cannot be converted to `V(string)`
+L0363
+@19:7
+`Option(string)` has no field or member `only_int`
+`only_int` is declared with a `where` bound that does not hold for this instantiation

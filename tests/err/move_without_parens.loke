@@ -1,0 +1,12 @@
+package main;
+
+// `move` takes its operand in parentheses. A malformed one is a parse error, not a
+// crash in flow analysis over the missing operand.
+main :: proc() {
+	y := 1;
+	x := move y;
+}
+
+bare :: proc() {
+	x := move;
+}

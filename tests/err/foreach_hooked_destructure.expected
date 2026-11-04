@@ -4,3 +4,6 @@ L0508
 L0508
 @45:15
 `Guarded` has a custom `hook(copy)` or `hook(drop)`
+L0508
+@52:15
+`Guarded` has a custom `hook(copy)` or `hook(drop)`

@@ -1,0 +1,30 @@
+package main;
+
+import "core:fmt";
+
+// A global is an `@name` operand. One larger than the by-value limit still
+// passes as its own address when the parameter takes it by pointer.
+Holder :: struct {
+	data: [1024]int,
+	n:    int,
+}
+
+impl Holder {
+	peek :: proc(self: ^) -> int { return self.n; }
+	bump :: proc(self: inout) { self.n += 1; }
+	take :: proc(self: Holder) -> int { return self.n; }
+}
+
+set :: proc(holder: inout Holder, n: int) {
+	holder.n = n;
+}
+
+held: Holder;
+
+main :: proc() {
+	set(inout held, 7);
+	fmt.println(held.peek());
+	held.bump();
+	fmt.println(held.n);
+	fmt.println(held.take());
+}

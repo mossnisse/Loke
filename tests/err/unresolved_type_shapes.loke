@@ -1,0 +1,22 @@
+// Each says what is wrong with the written type, and only that, rather than
+// reporting a compiler defect.
+package main;
+
+import "core:fmt";
+
+a: (x: [-1]int, y: int);
+b: (x: int, y: (z: Nope, w: int));
+c: [?]int;
+d: ^[?]int;
+e: proc(x: [$N]int);
+f: fmt.Nope(int);
+g: h.i.j(int);
+Simd2 :: 3;
+returns_int :: proc() -> int { return 1; }
+returns_nothing :: proc() { }
+k: returns_int();
+l: returns_nothing();
+
+main :: proc() {
+	fmt.println(1);
+}

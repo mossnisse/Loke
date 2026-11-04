@@ -5,7 +5,6 @@
 // design.md "Union argument expansion".
 package lokec
 
-import "core:fmt"
 import "core:slice"
 
 check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
@@ -13,12 +12,14 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		errorf(k.c, s.span, "L0454", "a `foreach` binds at least one name")
 		return FLOWS
 	}
-	if !check_static_pattern_markers(k, s.bindings) { return FLOWS }
+	if !check_static_bindings(k, s.bindings, new_scope(k.c, k.scope, .Local)) { return FLOWS }
 
 	// Reported once on the written body, not per copy. The copies are still
 	// checked, so nothing else in the body goes unreported.
 	outer_reported := k.branches_reported
-	k.branches_reported = block_has_branch(k, s.body)
+	errors := k.c.error_count
+	report_block_branches(k, s.body)
+	k.branches_reported = k.c.error_count > errors
 	defer k.branches_reported = outer_reported
 
 	elements, element_type, folded := fold_static_iterable(k, s.iterable)
@@ -28,15 +29,10 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 
 	blocks := make([dynamic]^Block, 0, len(elements), k.c.semantic_allocator)
 	flow := FLOWS
-	for index in 0 ..< len(elements) {
-		at := s.adapter == .Reversed ? len(elements) - 1 - index : index
-		copy_block, copy_flow, ok := expand_one_element(k, s, elements[at], element_type, index)
-		if ok {
+	for element, index in elements {
+		if copy_block, copy_flow := expand_one_element(k, s, element, element_type, index); copy_block != nil {
 			append(&blocks, copy_block)
-			flow.returns ||= copy_flow.returns
-			flow.breaks ||= copy_flow.breaks
-			flow.continues ||= copy_flow.continues
-			flow.can_fall_through = flow.can_fall_through && copy_flow.can_fall_through
+			flow_then(&flow, copy_flow)
 		}
 	}
 	s.expansion = blocks[:]
@@ -44,6 +40,8 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return flow
 }
 
+// The copy of the body for one element, and how it flows; a nil block when the
+// element does not fit the bindings.
 @(private = "file")
 expand_one_element :: proc(
 	k: ^Checker,
@@ -51,15 +49,16 @@ expand_one_element :: proc(
 	element: Const_Value,
 	element_type: Type_Id,
 	index: int,
-) -> (^Block, Flow_Info, bool) {
-	copy_block := clone_block(k.c, s.body)
+) -> (^Block, Flow_Info) {
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
+	k.scope.expansion = index + 1
 	defer k.scope = outer
 
-	if !bind_static_element(k, s, element, element_type, index) {
-		return copy_block, FLOWS, false
+	if !bind_static_pattern(k, s.bindings, element, element_type) {
+		return nil, FLOWS
 	}
+	copy_block := clone_block(k.c, s.body)
 
 	before := len(k.c.diagnostics)
 	outer_loop, outer_expanded := k.loop_depth, k.expanded_in_loops
@@ -70,45 +69,30 @@ expand_one_element :: proc(
 		add_notef(
 			k.c,
 			s.span,
-			"in static expansion %d, for %s",
+			"in static expansion %d, for `%s`",
 			index,
 			static_element_text(k.c, element, element_type),
 		)
 	}
-	return copy_block, flow, true
-}
-
-@(private = "file")
-bind_static_element :: proc(
-	k: ^Checker,
-	s: ^Stmt_Foreach,
-	element: Const_Value,
-	element_type: Type_Id,
-	index: int,
-) -> bool {
-	if s.indexed {
-		pair_type := indexed_element_type(k.c, element_type)
-		return bind_static_pattern(k, s.bindings, indexed_pair(k.c, pair_type, element, index), pair_type)
-	}
-	return bind_static_pattern(k, s.bindings, element, element_type)
+	return copy_block, flow
 }
 
 // The `(element, index)` constant of an `.indexed()` iteration.
 @(private = "file")
 indexed_pair :: proc(c: ^Compiler, pair_type: Type_Id, element: Const_Value, index: int) -> Const_Value {
-	pair := new(Const_Aggregate, c.semantic_allocator)
-	pair.type = pair_type
-	pair.elements = make([]Const_Value, 2, c.semantic_allocator)
-	pair.elements[ELEMENT_FIRST] = element
-	pair.elements[ELEMENT_SECOND] = int_const(c, i64(index))
-	return Const_Value{kind = .Aggregate, aggregate = pair}
+	parts := make([]Const_Value, 2, c.semantic_allocator)
+	parts[ELEMENT_FIRST] = element
+	parts[ELEMENT_SECOND] = int_const(c, i64(index))
+	return aggregate_const(c, pair_type, parts)
 }
 
+// Checked once here, not per expanded element, so an empty iterable reports them
+// too; `names` holds the header's names.
 @(private = "file")
-check_static_pattern_markers :: proc(k: ^Checker, bindings: []Foreach_Binding) -> bool {
+check_static_bindings :: proc(k: ^Checker, bindings: []Foreach_Binding, names: ^Scope) -> bool {
 	for binding in bindings {
 		if len(binding.group) > 0 {
-			if !check_static_pattern_markers(k, binding.group) { return false }
+			if !check_static_bindings(k, binding.group, names) { return false }
 			continue
 		}
 		if !binding.is_static {
@@ -123,64 +107,55 @@ check_static_pattern_markers :: proc(k: ^Checker, bindings: []Foreach_Binding) -
 			errorf(k.c, binding.name.span, "L0454", "a static binding is immutable and cannot use `&`")
 			return false
 		}
-		// Checked once here, not per expanded element where `bind_static` runs.
-		if binding.name.text != "_" && reject_reserved_name(k, name_identifier(k.c, binding.name), binding.name.span) {
+		if !static_name_is_free(k, binding.name, names) {
 			return false
+		}
+		if binding.name.text != "_" {
+			names.names[name_identifier(k.c, binding.name)] = INVALID_SYMBOL
 		}
 	}
 	return true
+}
+
+// The checks `declare_all` gives a local (design.md "Variable declarations"), for
+// a static name going into `scope`. False when it cannot be declared.
+@(private = "file")
+static_name_is_free :: proc(k: ^Checker, name: Name, scope: ^Scope) -> bool {
+	return name.text == "_" || name.text == "" || check_new_local(k, name, scope)
 }
 
 @(private = "file")
 bind_static_pattern :: proc(
 	k: ^Checker, bindings: []Foreach_Binding, value: Const_Value, type: Type_Id,
 ) -> bool {
-	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return bind_static_pattern(k, bindings[0].group, value, type)
-	}
-	if len(bindings) == 1 && len(bindings[0].group) == 0 {
-		bind_static(k, bindings[0], value, type)
+	if len(bindings) == 1 {
+		if len(bindings[0].group) > 0 {
+			return bind_static_pattern(k, bindings[0].group, value, type)
+		}
+		bind_static(k, bindings[0].name, value, type)
 		return true
 	}
-	info := underlying_info(k.c, type)
-	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
-		count := info != nil && info.kind == .Struct ? len(info.fields) : 0
-		errorf(
-			k.c, bindings[0].name.span, "L0454",
-			"`%s` has %d fields, so a static `foreach` over it binds 1 or %d names, not %d",
-			type_name(k.c, type), count, count, len(bindings),
-		)
+	fields, eligible := destructure_fields(k, type, len(bindings), bindings[0].name.span, "L0454", "bound by a `foreach`")
+	if !eligible {
 		return false
 	}
-	for binding, slot in bindings {
-		field := symbol_of(k.c, info.fields[slot])
-		if field == nil || !require_visible_field(k, binding.name.span, type, info.fields[slot], "L0454", "bound by a `foreach`") {
-			return false
-		}
-		part: Const_Value
-		if value.aggregate != nil && slot < len(value.aggregate.elements) {
-			part = value.aggregate.elements[slot]
-		}
-		if len(binding.group) > 0 {
-			if !bind_static_pattern(k, binding.group, part, field.type) { return false }
-		} else {
-			bind_static(k, binding, part, field.type)
-		}
+	for slot in 0 ..< len(bindings) {
+		field := symbol_of(k.c, fields[slot])
+		part := value.aggregate.elements[field.index]
+		if !bind_static_pattern(k, bindings[slot:][:1], part, field.type) { return false }
 	}
 	return true
 }
 
-bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, type: Type_Id) {
-	if binding.name.text == "_" || binding.name.text == "" {
+@(private = "file")
+bind_static :: proc(k: ^Checker, name: Name, value: Const_Value, type: Type_Id) {
+	if name.text == "_" || name.text == "" {
 		return
 	}
-	id := binding.name.id
-	if id == INVALID_IDENTIFIER {
-		id = intern_identifier(k.c, binding.name.text)
-	}
+	id := name_identifier(k.c, name)
 	k.scope.names[id] = new_symbol(k.c, Symbol {
 		name        = id,
-		span        = binding.name.span,
+		span        = name.span,
 		kind        = .Const,
 		type        = type,
 		const_value = value,
@@ -188,77 +163,114 @@ bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, t
 	})
 }
 
+// What a note says an element was: an `.indexed()` pair by its element, since the
+// note gives the index, a descriptor by its name, and an enum member by its.
 @(private = "file")
 static_element_text :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> string {
-	// Both descriptors put the name first.
-	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > META_FIELD_NAME {
-		return fmt.aprintf(
-			"`%s`", value.aggregate.elements[META_FIELD_NAME].text,
-			allocator = c.semantic_allocator,
-		)
+	info := underlying_info(c, type)
+	if value.aggregate != nil && info != nil && info.kind == .Struct && len(info.fields) == 2 {
+		element := symbol_of(c, info.fields[ELEMENT_FIRST]).type
+		if type == indexed_element_type(c, element) {
+			return static_element_text(c, value.aggregate.elements[ELEMENT_FIRST], element)
+		}
 	}
-	return fmt.aprintf("`%s`", const_display_text(c, value), allocator = c.semantic_allocator)
+	// Every descriptor puts its name first.
+	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > META_NAME {
+		return value.aggregate.elements[META_NAME].text
+	}
+	if member := symbol_of(c, enum_member_by_value(c, type, value)); member != nil {
+		return identifier_text(c, member.name)
+	}
+	return generic_value_text(c, value)
 }
 
-const_display_text :: proc(c: ^Compiler, value: Const_Value) -> string {
-	#partial switch value.kind {
-	case .Integer, .Rune:
-		return bi_text(c, value.integer)
-	case .Boolean:
-		return value.boolean ? "true" : "false"
-	case .String:
-		return value.text
-	case .Type:
-		return type_name(c, value.type_value)
-	case .Float:
-		return fmt.aprintf("%v", value.float, allocator = c.semantic_allocator)
-	}
-	return "<value>"
-}
-
-// design.md: `break` and `continue` cannot target a static expansion. Loops in
-// the body own their branches, so they are not walked.
+// design.md "Static `foreach` expansion": loops in the body own their branches,
+// so they are not walked, and neither is a procedure literal, which has its own.
 @(private = "file")
-block_has_branch :: proc(k: ^Checker, block: ^Block) -> bool {
-	return block != nil && stmts_have_branch(k, block.stmts)
+report_block_branches :: proc(k: ^Checker, block: ^Block) {
+	if block != nil {
+		report_stmts_branches(k, block.stmts)
+	}
 }
 
 @(private = "file")
-stmts_have_branch :: proc(k: ^Checker, stmts: []Stmt) -> bool {
-	found := false
+report_stmts_branches :: proc(k: ^Checker, stmts: []Stmt) {
 	for stmt in stmts {
-		found = stmt_has_branch(k, stmt) || found
+		report_stmt_branches(k, stmt)
 	}
-	return found
 }
 
 @(private = "file")
-stmt_has_branch :: proc(k: ^Checker, stmt: Stmt) -> bool {
+report_stmt_branches :: proc(k: ^Checker, stmt: Stmt) {
 	#partial switch v in stmt {
 	case ^Stmt_Branch:
-		errorf(
-			k.c, v.span, "L0455", "`%s` cannot target a static expansion; it is not a loop",
-			v.kind == .Break ? "break" : "continue",
-		)
-		return true
+		report_branch(k, v)
 	case ^Block:
-		return block_has_branch(k, v)
-	case ^Stmt_Parallel:
-		return block_has_branch(k, v.body)
-	case ^Stmt_If:
-		found := block_has_branch(k, v.then)
-		return v.otherwise != nil && stmt_has_branch(k, v.otherwise) || found
-	case ^Stmt_When:
-		found := block_has_branch(k, v.then)
-		return v.otherwise != nil && stmt_has_branch(k, v.otherwise) || found
-	case ^Stmt_Switch:
-		found := false
-		for arm in v.cases {
-			found = stmts_have_branch(k, arm.stmts) || found
+		report_block_branches(k, v)
+	case ^Decl:
+		report_expr_branches(k, v.declared_type)
+		report_expr_branches(k, v.via)
+		report_exprs_branches(k, v.values)
+	case ^Stmt_Expr:
+		report_exprs_branches(k, v.exprs)
+	case ^Stmt_Assign:
+		report_exprs_branches(k, v.lhs)
+		report_exprs_branches(k, v.rhs)
+	case ^Stmt_Return:
+		if v.value != nil {
+			report_expr_branches(k, v.value.expr)
 		}
-		return found
+	case ^Stmt_Spawn:
+		report_expr_branches(k, v.call)
+	case ^Stmt_Defer:
+		report_stmt_branches(k, v.stmt)
+	case ^Stmt_Parallel:
+		report_block_branches(k, v.body)
+	case ^Stmt_If:
+		report_stmt_branches(k, v.init)
+		report_expr_branches(k, v.cond)
+		report_block_branches(k, v.then)
+		report_stmt_branches(k, v.otherwise)
+	case ^Stmt_When:
+		report_block_branches(k, v.then)
+		report_stmt_branches(k, v.otherwise)
+	case ^Stmt_Switch:
+		report_stmt_branches(k, v.init)
+		report_expr_branches(k, v.subject)
+		for arm in v.cases {
+			report_exprs_branches(k, arm.values)
+			report_stmts_branches(k, arm.stmts)
+		}
 	}
-	return false
+}
+
+@(private = "file")
+report_branch :: proc(k: ^Checker, branch: ^Stmt_Branch) {
+	errorf(
+		k.c, branch.span, "L0455", "`%s` cannot target a static expansion; it is not a loop",
+		branch.kind == .Break ? "break" : "continue",
+	)
+}
+
+@(private = "file")
+report_exprs_branches :: proc(k: ^Checker, exprs: []Expr) {
+	for e in exprs {
+		report_expr_branches(k, e)
+	}
+}
+
+// The `or_else` exits an expression holds. A `return` exit's value is its child.
+@(private = "file")
+report_expr_branches :: proc(k: ^Checker, e: Expr) {
+	if v, is_or_else := e.(^Expr_Or_Else); is_or_else {
+		if branch, is_branch := v.exit.(^Stmt_Branch); is_branch {
+			report_branch(k, branch)
+		}
+	}
+	expr_children(e, k, proc(data: rawptr, child: Expr) -> bool {
+		report_expr_branches((^Checker)(data), child)
+		return false
+	})
 }
 
 @(private = "file")
@@ -283,52 +295,37 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 		if sym := symbol_of(k.c, call.resolution.chosen_overload); sym != nil && sym.synth == .Adapter_View {
 			elements, _, ok := fold_static_iterable(k, call.bound[0])
 			if !ok { return nil, INVALID_TYPE, false }
-			kind := type_of(k.c, type).adapter_kind
 			element_type := associated_type_of(k, type, "Element")
-			out := make([]Const_Value, len(elements), k.c.semantic_allocator)
-			for element, index in elements {
-				if kind == .Reversed {
-					out[len(elements) - 1 - index] = element
-				} else {
-					out[index] = indexed_pair(k.c, element_type, element, index)
+			#partial switch type_of(k.c, type).adapter_kind {
+			case .Reversed:
+				slice.reverse(elements)
+			case .Indexed:
+				for &element, index in elements {
+					element = indexed_pair(k.c, element_type, element, index)
 				}
 			}
-			return out, element_type, true
+			return elements, element_type, true
 		}
 	}
 	if written, is_range := iterable.(^Expr_Range); is_range {
 		return fold_static_range(k, written, type)
 	}
 	if written, is_slice := iterable.(^Expr_Slice); is_slice {
-		return fold_static_slice(k, written, type)
+		return fold_static_slice(k, written)
 	}
 	info := underlying_info(k.c, type)
-	if info != nil && info.kind == .Dynamic_Array {
-		elements, evaluated := evaluate_static_elements(k, iterable, "a static `foreach` iterable", "L0454")
-		return elements, info.element, evaluated
-	}
-	folded, evaluated := require_const(k, iterable, "a static `foreach` iterable", "L0454")
-	if !evaluated {
-		return nil, INVALID_TYPE, false
-	}
-	if info == nil || info.kind != .Array {
+	if info == nil || (info.kind != .Array && info.kind != .Dynamic_Array && info.kind != .Slice) {
 		errorf(
 			k.c,
 			expr_span(iterable),
 			"L0454",
-			"a static `foreach` needs a compile-time array, subrange, `Enum.values()`, range, or descriptor array, found `%s`",
+			"a static `foreach` needs a compile-time array or slice, subrange, `Enum.values()`, range, or descriptor array, found `%s`",
 			type_name(k.c, type),
 		)
 		return nil, INVALID_TYPE, false
 	}
-	count := int(info.count)
-	elements := make([]Const_Value, count, k.c.semantic_allocator)
-	for index in 0 ..< count {
-		if folded.aggregate != nil && index < len(folded.aggregate.elements) {
-			elements[index] = folded.aggregate.elements[index]
-		}
-	}
-	return elements, info.element, true
+	elements, evaluated := evaluate_static_elements(k, iterable, "a static `foreach` iterable")
+	return elements, info.element, evaluated
 }
 
 @(private = "file")
@@ -339,10 +336,10 @@ fold_static_range :: proc(k: ^Checker, written: ^Expr_Range, type: Type_Id) -> (
 		return nil, INVALID_TYPE, false
 	}
 	element := underlying_info(k.c, type).element
-	distance := bi_sub(k.c, hi.integer, lo.integer)
-	count := distance
+	one := bi_from_i64(k.c, 1)
+	count := bi_sub(k.c, hi.integer, lo.integer)
 	if written.op == .Range_Incl {
-		count = bi_add(k.c, count, bi_from_i64(k.c, 1))
+		count = bi_add(k.c, count, one)
 	}
 	if bi_sign(count) <= 0 {
 		return []Const_Value{}, element, true
@@ -357,14 +354,14 @@ fold_static_range :: proc(k: ^Checker, written: ^Expr_Range, type: Type_Id) -> (
 	kind := type_is_rune(k.c, element) ? Const_Kind.Rune : Const_Kind.Integer
 	for index in 0 ..< int(n) {
 		elements[index] = Const_Value{kind = kind, integer = current}
-		current = bi_add(k.c, current, bi_from_i64(k.c, 1))
+		current = bi_add(k.c, current, one)
 	}
 	return elements, element, true
 }
 
 @(private = "file")
-fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice, type: Type_Id) -> ([]Const_Value, Type_Id, bool) {
-	elements, _, folded := fold_static_iterable(k, written.operand)
+fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice) -> ([]Const_Value, Type_Id, bool) {
+	elements, element, folded := fold_static_iterable(k, written.operand)
 	if !folded {
 		return nil, INVALID_TYPE, false
 	}
@@ -377,12 +374,9 @@ fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice, type: Type_Id) -> (
 		errorf(k.c, written.span, "L0454", "a static `foreach` slice is out of bounds")
 		return nil, INVALID_TYPE, false
 	}
-	out := make([]Const_Value, int(hi-lo), k.c.semantic_allocator)
-	copy(out, elements[int(lo):int(hi)])
-	return out, underlying_info(k.c, type).element, true
+	return elements[int(lo):int(hi)], element, true
 }
 
-// A written subrange endpoint, or `missing` when it is omitted.
 @(private = "file")
 static_slice_endpoint :: proc(k: ^Checker, endpoint: Expr, missing: i64) -> (i64, bool) {
 	if endpoint == nil {
@@ -401,51 +395,18 @@ static_slice_endpoint :: proc(k: ^Checker, endpoint: Expr, missing: i64) -> (i64
 
 // ------------------------------------------------------- expanded cases --
 
-// design.md "Per-variant switch cases": `case $variant(payload):` stands for one
-// case per variant no earlier case names, in declaration order. Each copy is an
-// ordinary case `.name(payload)` whose body is a fresh clone of the written one,
-// checked on its own as a static `foreach` body is, so nothing after the
-// checker sees an expanded case. False after a diagnostic.
+// design.md "Per-variant switch cases": each copy is an ordinary case with its own
+// clone of the body, so nothing after the checker sees an expanded case. False
+// after a diagnostic.
 expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> bool {
-	position := -1
-	for entry, index in s.cases {
-		for value in entry.values {
-			if _, _, is_expanded := expanded_case_pattern(value); !is_expanded {
-				continue
-			}
-			if position >= 0 {
-				errorf(k.c, expr_span(value), "L0367", "a switch has at most one expanded case")
-				return false
-			}
-			if len(entry.values) != 1 {
-				errorf(
-					k.c, expr_span(value), "L0367",
-					"an expanded case covers every remaining variant, so it names nothing else",
-				)
-				return false
-			}
-			position = index
-		}
+	position, valid := find_expanded_case(k, s, subject)
+	if !valid {
+		return false
 	}
 	if position < 0 {
 		return true
 	}
 	written := s.cases[position]
-	if !type_is_union(k.c, subject) {
-		errorf(
-			k.c, expr_span(written.values[0]), "L0426",
-			"an expanded case needs a union subject, and this switch is over `%s`", type_name(k.c, subject),
-		)
-		return false
-	}
-	if position != len(s.cases) - 1 {
-		next := s.cases[position + 1]
-		errorf(
-			k.c, next.span, "L0367", "%s",
-			len(next.values) == 0 ? "`default:` cannot follow an expanded case, which already covers every remaining variant" : "an expanded case covers every remaining variant, so it is the last case",
-		)
-		return false
-	}
 	descriptor, payload, ok := expanded_case_bindings(k, written.values[0])
 	if !ok {
 		return false
@@ -467,16 +428,10 @@ expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> 
 		if slice.contains(covered[:], index) {
 			continue
 		}
-		label := new(Expr_Selector, k.c.semantic_allocator)
-		label.span = span
-		label.name = Name{text = union_variant_name(k.c, subject, index), span = span}
-		values := make([]Expr, 1, k.c.semantic_allocator)
-		values[0] = label
-		body := Block{stmts = written.stmts}
 		append(&cases, Switch_Case {
 			span        = written.span,
-			values      = values,
-			stmts       = clone_block(k.c, &body).stmts,
+			values      = variant_case_values(k.c, union_variant_name(k.c, subject, index), span),
+			stmts       = clone_stmts(k.c, written.stmts),
 			binding     = payload.name,
 			binding_ref = payload.is_ref,
 			expanded    = descriptor,
@@ -485,6 +440,60 @@ expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> 
 	}
 	s.cases = cases[:]
 	return true
+}
+
+// The expanded case of a switch, -1 when it has none; false once one breaks the
+// placement rules.
+@(private = "file")
+find_expanded_case :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> (position: int, valid: bool) {
+	position = -1
+	for entry, index in s.cases {
+		for value in entry.values {
+			if _, _, is_expanded := expanded_case_pattern(value); !is_expanded {
+				continue
+			}
+			if position >= 0 {
+				errorf(k.c, expr_span(value), "L0367", "a switch has at most one expanded case")
+				return
+			}
+			if len(entry.values) != 1 {
+				errorf(
+					k.c, expr_span(value), "L0367",
+					"an expanded case covers every remaining variant, so it names nothing else",
+				)
+				return
+			}
+			position = index
+		}
+	}
+	if position < 0 {
+		return position, true
+	}
+	// design.md "Distinct types": a distinct type over a union is not a subject here.
+	if type_kind(k.c, subject) != .Union {
+		errorf(
+			k.c, expr_span(s.cases[position].values[0]), "L0426",
+			"an expanded case needs a union subject, and this switch is over `%s`", type_name(k.c, subject),
+		)
+		return
+	}
+	if position != len(s.cases) - 1 {
+		next := s.cases[position + 1]
+		errorf(
+			k.c, next.span, "L0367", "%s",
+			len(next.values) == 0 ? "`default:` cannot follow an expanded case, which already covers every remaining variant" : "an expanded case covers every remaining variant, so it is the last case",
+		)
+		return
+	}
+	return position, true
+}
+
+// A per-variant case's one value, the selector `.label`.
+@(private = "file")
+variant_case_values :: proc(c: ^Compiler, label: string, span: Span) -> []Expr {
+	values := make([]Expr, 1, c.semantic_allocator)
+	values[0] = synth_selector(c, nil, label, span)
+	return values
 }
 
 // `$variant` or `$variant(payload)`, as the parser reads either: a `$` name,
@@ -508,7 +517,7 @@ expanded_case_pattern :: proc(value: Expr) -> (^Type_Poly, []Argument, bool) {
 expanded_case_bindings :: proc(k: ^Checker, value: Expr) -> (descriptor: Name, payload: Case_Field, ok: bool) {
 	poly, args, _ := expanded_case_pattern(value)
 	descriptor = poly.name
-	if descriptor.text != "_" && reject_reserved_name(k, name_identifier(k.c, descriptor), descriptor.span) {
+	if !static_name_is_free(k, descriptor, new_scope(k.c, k.scope, .Local)) {
 		return
 	}
 	if len(args) > 1 {
@@ -539,13 +548,14 @@ expanded_case_bindings :: proc(k: ^Checker, value: Expr) -> (descriptor: Name, p
 // scope, and for a payloadless variant the `Unit{}` its payload binding names
 // (design.md "Per-variant switch cases").
 bind_expanded_case :: proc(k: ^Checker, entry: ^Switch_Case, payload: Type_Id) {
-	bind_static(k, Foreach_Binding{name = entry.expanded}, entry.descriptor, meta_variant_type(k.c))
+	k.scope.expansion = entry.variant_indices[0] + 1
+	bind_static(k, entry.expanded, entry.descriptor, meta_variant_type(k.c))
 	if payload != TYPE_VOID || entry.binding.text == "" {
 		return
 	}
-	unit := new(Const_Aggregate, k.c.semantic_allocator)
-	unit.type = k.c.unit_type
-	bind_static(k, Foreach_Binding{name = entry.binding}, Const_Value{kind = .Aggregate, type_value = k.c.unit_type, aggregate = unit}, k.c.unit_type)
+	if static_name_is_free(k, entry.binding, k.scope) {
+		bind_static(k, entry.binding, aggregate_const(k.c, k.c.unit_type, nil), k.c.unit_type)
+	}
 	entry.binding = {}
 	entry.binding_ref = false
 }
@@ -557,7 +567,7 @@ note_expanded_case :: proc(k: ^Checker, entry: Switch_Case, before: int) {
 		add_notef(
 			k.c, entry.values[0].(^Expr_Selector).span, "%s `.%s`",
 			entry.arm != nil ? "in the union argument expansion for" : "in the expanded case for",
-			entry.descriptor.aggregate.elements[META_VARIANT_NAME].text,
+			entry.descriptor.aggregate.elements[META_NAME].text,
 		)
 	}
 }
@@ -576,33 +586,11 @@ DISPATCH_PAYLOAD :: "dispatch$payload"
 // variant's call. The call's value is the arms' common result. False when the
 // call spreads no union, which leaves `..` to the variadic path.
 check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) -> bool {
-	spread := -1
-	for arg, index in v.args {
-		if arg.mode == .Spread {
-			spread = index
-			break
-		}
-	}
-	if spread < 0 {
-		return false
-	}
-	// The operand's type decides, and a union is never a sequence. One that
-	// needs a destination type has none here, so it is left to the variadic
-	// path. Any other operand is checked once, here: a variadic spread reuses
-	// its type rather than checking it again, since a recheck of nested spreads
-	// would double per level. A call that never returns waits for the pack's
-	// type to stand in for.
-	operand := v.args[spread].value
-	if argument_needs_context(operand) {
-		return false
-	}
-	subject := check_expr(k, operand)
-	if subject == INVALID_TYPE || subject == TYPE_VOID || !type_is_union(k.c, subject) {
-		v.args[spread].checked = true
+	spread, subject, is_union := union_spread(k, v)
+	if !is_union {
 		return false
 	}
 	v.value_category = .Value
-	v.type = INVALID_TYPE
 	if len(v.args) != 1 {
 		errorf(k.c, v.args[spread].span, "L0371", "a union argument expansion is the call's only argument")
 		return true
@@ -611,9 +599,47 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 		errorf(k.c, v.args[0].name.span, "L0371", "a union argument expansion names no parameter; each variant's label does")
 		return true
 	}
+	v.dispatch = union_dispatch_switch(k, v, subject, expected)
+	check_variant_cases(k, v.dispatch, subject)
+	v.type = union_dispatch_result(k, v, subject)
+	return true
+}
 
+// The spread argument of a call, when its operand is a union.
+@(private = "file")
+union_spread :: proc(k: ^Checker, v: ^Expr_Call) -> (spread: int, subject: Type_Id, is_union: bool) {
+	spread = -1
+	for arg, index in v.args {
+		if arg.mode == .Spread {
+			spread = index
+			break
+		}
+	}
+	if spread < 0 {
+		return
+	}
+	// A union needing a destination type has none here, so it is left to the
+	// variadic path. Any other operand is checked once: a recheck would double per
+	// level of nested spreads.
+	operand := v.args[spread].value
+	if argument_needs_context(operand) {
+		return
+	}
+	subject = check_expr(k, operand)
+	// design.md "Distinct types": a distinct type over a union is not a subject here.
+	if subject == INVALID_TYPE || subject == TYPE_VOID || type_kind(k.c, subject) != .Union {
+		v.args[spread].checked = true
+		return
+	}
+	return spread, subject, true
+}
+
+// One case per variant, whose `arm` is that variant's call.
+@(private = "file")
+union_dispatch_switch :: proc(k: ^Checker, v: ^Expr_Call, subject, expected: Type_Id) -> ^Stmt_Switch {
 	// design.md "Switch ownership": a place lends its payload, and a temporary
 	// or `move(answer)` gives it up, so its call takes it by `move`.
+	operand := v.args[0].value
 	consumes := !expression_is_borrowed_place(operand)
 	s := new(Stmt_Switch, k.c.semantic_allocator)
 	s.span = v.span
@@ -622,47 +648,37 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 	s.arm_expected = expected
 	s.cases = make([]Switch_Case, variant_count(k.c, subject), k.c.semantic_allocator)
 	span := v.args[0].span
+	binding := synth_name(k.c, DISPATCH_PAYLOAD, span)
 	for &entry, index in s.cases {
 		label := union_variant_name(k.c, subject, index)
-		selector := new(Expr_Selector, k.c.semantic_allocator)
-		selector.span = span
-		selector.name = Name{text = label, span = span}
 		entry.span = v.span
-		entry.values = make([]Expr, 1, k.c.semantic_allocator)
-		entry.values[0] = selector
-		entry.binding = Name{text = DISPATCH_PAYLOAD, span = span, id = intern_identifier(k.c, DISPATCH_PAYLOAD)}
+		entry.values = variant_case_values(k.c, label, span)
+		entry.binding = binding
 		entry.descriptor = variant_descriptor(k.c, subject, index)
 
-		payload := new(Expr_Ident, k.c.semantic_allocator)
-		payload.span = span
-		payload.name = DISPATCH_PAYLOAD
-		payload.name_id = entry.binding.id
-		arm := new(Expr_Call, k.c.semantic_allocator)
-		arm.span = v.span
-		arm.callee = clone_expr(k.c, v.callee)
-		arm.args = make([]Argument, 1, k.c.semantic_allocator)
+		payload := synth_ident(k.c, DISPATCH_PAYLOAD, span)
 		// A payloadless variant passes the `Unit{}` constant, which has no owner.
 		argument: Expr = payload
 		if consumes && union_variant_payload(k.c, subject, index) != TYPE_VOID {
-			moved := new(Expr_Move, k.c.semantic_allocator)
-			moved.span = span
-			moved.value = payload
-			argument = moved
+			argument = synth_move(k.c, payload, span)
 		}
-		arm.args[0] = Argument{span = span, name = Name{text = label, span = span}, value = argument}
+		arm := synth_call(k.c, clone_expr(k.c, v.callee), {argument}, v.span)
+		arm.args[0].span, arm.args[0].name = span, Name{text = label, span = span}
 		entry.arm = arm
 	}
-	v.dispatch = s
-	check_variant_cases(k, s, subject)
+	return s
+}
 
-	// Every expansion has the same result, or none has one; a call that never
-	// returns stands in for either.
+// design.md "Union argument expansion": a call that never returns stands in for
+// either. `INVALID_TYPE` when the arms do not agree, or one failed.
+@(private = "file")
+union_dispatch_result :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id) -> Type_Id {
 	result := TYPE_VOID
 	decided := -1
-	for entry, index in s.cases {
+	for entry, index in v.dispatch.cases {
 		arm := expr_base(entry.arm)
 		if arm.type == INVALID_TYPE {
-			return true
+			return INVALID_TYPE
 		}
 		if arm.value_category == .Place {
 			errorf(
@@ -670,7 +686,7 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 				"a union argument expansion yields a value, and its call for `.%s` returns a place",
 				union_variant_name(k.c, subject, index),
 			)
-			return true
+			return INVALID_TYPE
 		}
 		if arm.type == TYPE_VOID && call_diverges(k.c, entry.arm) {
 			continue
@@ -686,9 +702,8 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 				union_variant_name(k.c, subject, decided), result == TYPE_VOID ? "nothing" : type_name(k.c, result),
 				union_variant_name(k.c, subject, index), arm.type == TYPE_VOID ? "nothing" : type_name(k.c, arm.type),
 			)
-			return true
+			return INVALID_TYPE
 		}
 	}
-	v.type = result
-	return true
+	return result
 }

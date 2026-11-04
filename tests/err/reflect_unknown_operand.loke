@@ -1,0 +1,14 @@
+package main;
+
+// A reflection operand that fails to resolve is reported once, as what it is,
+// rather than again as not being a type.
+main :: proc() {
+	a := typeid_of(Nope);
+	b := fields_of(Nope);
+	c := enum_values_of(Nope);
+	d := variants_of(Nope);
+	e := type_of(Nope);
+	f := typeid_of([]Nope);
+	g := type_of([]Nope);
+	h := fields_of(1);
+}

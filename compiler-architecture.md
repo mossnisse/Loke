@@ -125,8 +125,9 @@ resolved, since its body's names belong to another scope.
 ### Disposable control-flow graphs
 
 `cfg.odin` builds `Flow_Graph` blocks referencing typed AST nodes.
-`cfg_provenance.odin` supplies carrier projections, allocator regions, and call
-effects. Graphs serve analysis; LLVM still walks the AST directly.
+`cfg_provenance.odin` and the `provenance_*` files beside it supply carrier
+projections, allocator regions, and call effects. Graphs serve analysis; LLVM
+still walks the AST directly.
 
 | Mode | Purpose |
 | --- | --- |
@@ -170,11 +171,10 @@ checked AST + settled lifecycle annotations
 
 | File | Input it owns |
 | --- | --- |
-| [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
+| [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical places (`Prov_Place`). |
 | [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
 | [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
-| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a container operation does (`CONTAINER_OP_EFFECTS`), what a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
-| [provenance_read.odin](src/provenance_read.odin) | A leaf alias read, derived from a value and its form. |
+| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: parameter modes, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
 | [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
 | [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
 
@@ -201,8 +201,8 @@ Keep these phase rules:
   result paths and symbols.
 - **Replay reads only recorded input.** Freezing describes every value's
   transfer, then fixes the tables. `prov_writable_input` asserts that no fact
-  replay or materialization adds a value, storage, call input, copy operation,
-  or transfer; only a finished graph's later query takes a private copy first.
+  replay or materialization adds a value, storage, call input, or transfer; a
+  finished graph's later query may still add one.
   Fact operations (declarations, stores, borrowed bindings, provider transfers,
   call results and writes, and target invalidation) each record their values,
   paths, block, and defer expansion, and a high-level operation owns the nested
@@ -212,8 +212,8 @@ Keep these phase rules:
   and carrier targets (`Prov_Facts`, embedded in each graph's state).
   `prov_carry_facts` deep-copies them into the carry arena, `prov_seed_regions`
   starts the next round from them, and `prov_fact_weight` counts them for
-  convergence. A fact graph takes the body's `Prov_Topology` (roots, provider
-  tokens, operator calls, and block count) from the program. Everything else it
+  convergence. A fact graph takes the body's topology (roots, provider tokens,
+  operator calls, and block count) from the construction graph. Everything else it
   holds is built afresh by the round, so a fact added anywhere else would not
   survive to the next round, and one added to `Prov_Facts` must also be copied,
   seeded, and weighed.
@@ -300,8 +300,10 @@ universe instead of synthesizing duplicate types. These include `Unit`,
 
 ### Checking and overload resolution
 
-`check.odin` handles declarations, signatures, statements, and type syntax.
-`check_expr.odin` handles contextual typing, conversions, places, and folding;
+`check.odin` handles declarations, signatures, and type syntax;
+`check_stmt.odin` handles statements, and `switch.odin` the `switch` statement. `check_expr.odin` handles contextual typing, implicit conversion to a
+destination, places, and folding; `check_composite.odin` handles composite
+literals; `conversions.odin` says which types convert to which;
 `check_calls.odin` handles call forms and argument binding. Expected types guide
 untyped constants, implicit enum members, `nil`, and typeless literals.
 
@@ -341,10 +343,12 @@ and pointers share targets. `eval_memory.odin` charges each block to the memory
 limit until it is released and reuses released blocks by size class. Returned
 frames, assignment scratch, and integer temporaries are released; a value is
 not, since copies share its digits and elements, so it stays charged until
-evaluation ends.
+evaluation ends. A growing container therefore keeps room to spare in its block
+(`eval_splice`), and a read of a folded constant makes only the part it selects.
 
 `generic.odin` owns inference, specialization, `where` checks, caching, and body
-commitment. Procedures and records are monomorphized with definition-site
+commitment, with parametric aliases in `generic_alias.odin` and `impl` blocks in
+`generic_impl.odin`. Procedures and records are monomorphized with definition-site
 lookup; caller-local extensions cannot change a specialization. Human-readable
 arguments and bounded diagnostic names are separate from `const_key_text`
 cache encodings.
@@ -391,18 +395,18 @@ behavioral controls for all of it.
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
 | Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
-| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed`, `prov_link_retained` in `cfg_provenance.odin` |
-| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `cfg_provenance.odin` |
-| Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
+| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `cfg_provenance.odin`; `prov_link_retained` in `provenance_retention.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
+| Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
-| Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Prov_State.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
+| Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Flow_Graph.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
 | Written aliases: what a local's carriers may reach | `Written_Alias`, `written_aliases`, `prov_written_targets`, `prov_call_written_aliases`, `WRITTEN_ALIAS_DEPTH` |
 | What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
 | Global write and read effects and the callbacks a call passes | `compute_global_writes`, `Compiler.global_reads`, `prov_copy_effects`, `Expr_Base.copied_as`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |
-| Thread summaries for `parallel` blocks | `compute_thread_summaries`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
+| Thread summaries for `parallel` blocks | `compute_thread_summaries` in `thread_summaries.odin`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
 | Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `PROV_OFFSET_LIMIT`, `PROV_OFFSET_TOTAL`, `L0641`, `L0646`, `L0647`, `L0730` |
 
 Keep these contracts:
@@ -428,7 +432,7 @@ Keep these contracts:
   loan, and a local view's is worked out from where the view starts in the
   range a fresh borrow lends, from the definitions `solve_view_defs` finds
   reaching each access, as for a store (`view_element_in`,
-  `publish_view_of`).
+  `view_start_of`).
 - **Paths are below the pointee, and bounded.** Slot offsets, place-loan
   paths, written-alias paths, and region content paths all start below where
   the carriers point, so a write lands only where it names. Each offset
@@ -469,10 +473,10 @@ Keep these contracts:
   (`solve_view_defs`), so `s = &mut s[1:]` before a loop is known there, but
   not inside it, where the reslice reaches itself and moves the view each
   round, and not in a multiple assignment that also writes `s`
-  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). Where a
+  (`Prov_View_Def`, `prov_local_view_element`, `view_start_of`). Where a
   reslice reaches itself, the starts are the least fixed point over the
   definitions, so `s = &mut s[:2]` in a loop keeps the start. The lengths
-  settle first, in a fixed point of their own (`publish_view_lengths`), as a
+  settle first, in a fixed point of their own (`view_start_lengths`), as a
   length still short would otherwise look like a reslice past its source. The
   definitions need not agree on its length, as an index past a shorter one
   panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
@@ -584,8 +588,8 @@ Keep these contracts:
   a container's elements and backing, a shared handle's control block and
   payload, and a union's variants each have an entry of their own.
   Written-argument summaries keep the owners' part apart from allocator
-  handles (`written_owner_regions`) and keep each part at the path the body
-  wrote (`written_region_content`); a copy within one argument is a copy
+  handles (`Written_Summary.owners`) and keep each part at the path the body
+  wrote (`Written_Summary.content`); a copy within one argument is a copy
   entry the call resolves in its caller. A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
@@ -660,7 +664,9 @@ hook(drop) on Task_Scope                // joins every started thread,
 - **Each spawn site.** Checking a spawn synthesizes a frame record and a run
   procedure, as `capture.odin` does for capture literals, and records them in
   `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
-  argument (copied, owned, or as an address), the result local's address, and,
+  argument (copied, owned, or as an address; a place in a temporary is an owned
+  copy, and a widened place is its widened form, copied, with the payload still
+  lent), the result local's address, and,
   for a call through a procedure value (`Spawn_Task.through_value`), that value,
   which the parent evaluates before the arguments. The run procedure takes the
   owned arguments out of the frame, makes the call, by name or through the
@@ -713,10 +719,9 @@ The checks run on the `Prov_Diagnose` graph:
 - **The task window.** A spawn emits a `Task_Start` event naming its site in
   `task_sites`, with what its arguments hold and the regions its task
   reserves, and the hidden local's drop emits `Task_Join` for its block. The
-  window solver in `borrow.odin` is a may-analysis over blocks with one bit
-  per spawn site, so a branch that has not spawned is outside the window and a
-  spawn in a loop holds it open around the back edge; past 64 sites, the last
-  bit is shared and never cleared. Writes and reaches inside a block are
+  window solver in `borrow_tasks.odin` is a may-analysis over blocks with one
+  bit per spawn site, so a branch that has not spawned is outside the window
+  and a spawn in a loop holds it open around the back edge. Writes and reaches inside a block are
   `Shared_Effect` events in `global_effects.odin`, the parent's allocator use
   `Region_Use` events, and the solver reports both against the tasks that may
   be running. The emission contract validates each recorded spawn.
@@ -737,7 +742,7 @@ The checks run on the `Prov_Diagnose` graph:
   same replay (`check_join_retention`). The values the parent keeps are the
   slots of a symbol live after the join and every borrowed parameter's slots;
   a slot counts when its carrier path reaches an `@(wakes_on_drop)` type
-  (`path_waker`, from the `waker` of `transfer_facts` in `hooks.odin`), so a
+  (`path_waker`, from the `waker` of `transfer_facts` in `transfer_facts.odin`), so a
   wrapper's other fields do not count. Its loans are compared with the
   block's `task_slots` and `task_holds` by root (`loans_may_share_storage`,
   `roots_may_share_storage`); a raw pointer or erased view reaches anything.
@@ -780,8 +785,8 @@ string's reference-counted allocation directly.
 
 Platform declarations use `when (LOKE_OS == .Windows)`; filenames such as
 `_windows.loke` have no selection effect. Windows is currently the only target.
-`Target_Info` (`src/semantic.odin`) describes it: the triple, the layout widths,
-and the [CPU level](compiler-guide.md#cpu-levels) with the features it adds.
+`Target_Info` (`src/build_config.odin`) describes it: the triple, the layout
+widths, and the [CPU level](compiler-guide.md#cpu-levels).
 Every Clang command takes its code-generation flags from
 `append_codegen_flags`, so the module and the runtime cannot disagree on the
 level or on `-ffp-contract=off`. `runtime/cpu.c` is the one runtime file
@@ -794,8 +799,9 @@ adds, both through explicit `"target-features"` lists.
 
 `prebuilt_runtime_objects` caches C objects under
 `runtime/prebuilt/<cpu>-<mode>-<hash>/`. The key covers the clang path, flags
-(including the CPU level's `-march`), MSVC/SDK include roots, clang
-modification time, and runtime source/header names and contents. Installed sets are immutable for concurrent links; changed inputs
+(including the CPU level's `-march`), MSVC/SDK include roots, the value of
+`INCLUDE`, the modification time of the clang the command runs, found on `PATH`
+for a bare name, and runtime source/header names and contents. Installed sets are immutable for concurrent links; changed inputs
 create a new set. On cache build/install failure, the link compiles sources
 directly and records the reason in `runtime/prebuilt/last-failure.txt`.
 
@@ -820,7 +826,7 @@ Under `-panic=unwind` a procedure that registers a cleanup pushes a frame whose
 thunk replays the registered actions. The thunk is emitted before the
 procedure's prologue, and only the locals it names are published: `bind_local`
 stores every local's address through its slot's name, then
-`without_unread_bindings` deletes the stores the thunk does not read, and the
+`unwind_finished_body` deletes the stores the thunk does not read, and the
 prologue names only the slots that remain. A procedure that registers nothing
 keeps no frame, live flags, or env at all.
 
@@ -840,7 +846,10 @@ forms, has a signature written for readers and checked only for its name; its
 section of this specification defines its typing.
 
 The attribute is valid only at file scope or in such an `impl` block, outside
-`when`, in a package the compiler supplies names to (`L0734`). Besides
+`when`, in a package the compiler supplies names to (`L0734`). A declaration has
+no written type, and a procedure no `where` clause and no `operator` or hook
+around it (`L0734`); only a member's receiver omits its type, and only as a bare
+`self` (`L0736`). Besides
 `@(public)` and `@(private)`, on the declaration or a struct field, it takes no
 other attribute there or on a parameter or the struct (`L0734`), since the
 compiler supplies whatever one would say. It must name one of those names, or a
@@ -863,62 +872,81 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration, and provider selection. |
+| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration including `-define`, and provider selection. |
 | `test_runner.odin` | The `-test` driver, which runs a built test executable once per test. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
-| `stack.odin` | 64 MiB compiler stack reservation and nesting budget. |
-| `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
-| `source.odin` | `Compiler`, sources, spans, and diagnostics; destruction lives in `semantic.odin`. |
-| `lexer.odin` | Tokens and lexical scanning. |
-| `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
+| `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
+| `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `-collection` entries and `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
+| `compiler.odin` | The `Compiler` record and the `Compilation_Settings` it shares with a session's configuration; destruction lives in `semantic.odin`. |
+| `source.odin` | Sources, spans, diagnostics, and probes. |
+| `lexer.odin` | Tokens, lexical scanning, and decoding a string or rune literal's spelling. |
+| `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions and their child walk (`expr_children`), error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
 | `migrate.odin` | `-migrate` and `-migrate-check`: rewrites earlier spellings, proving each result parses to the same tree. |
 | `doc.odin` | `-doc` Markdown and `-api` interface files for the checked root and imported project packages, from one model of each package's API. |
-| `semantic.odin`, `universe.odin` | Semantic stores, interning, predeclared names, and compiler-contributed members. |
+| `doc_comments.odin` | The doc-comment reader and the `L0260` check. |
+| `semantic.odin`, `types.odin`, `universe.odin` | Semantic stores and interning, type queries and names, predeclared names, and compiler-contributed members. |
 
 ### Checking and language features
 
 | Files | Responsibility |
 | --- | --- |
-| `check.odin`, `check_expr.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expression dispatch/conversions/folding, call checking/argument binding, and compiler-owned primitive call contracts. |
-| `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
-| `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and the built-in `len`/`cap`/`hash` receiver members. |
+| `check.odin`, `check_stmt.odin`, `switch.odin`, `check_expr.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/signatures/type syntax, statements, value and union switches, expression dispatch/materialization/folding, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
+| `bigint.odin`, `const_ops.odin`, `const_float.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, exact float operations and encodings, zero-value rules and constants, and required-result classification. |
+| `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates and comparability, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
+| `synth.odin` | Builders for the syntax lowerings write and then check: names, calls, selectors, one-name declarations, and scope-local records. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
 | `test_procedures.odin` | `@(test)` declarations, checked in every build and called only by a test build's entry. |
 | `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked; a generic `impl`'s untyped constant is read by its value's type at the declaration or per instance, and one whose value is a type by its target's syntax, as any type alias is. A selection of a generic `impl`'s private member is read in each instance of the generic declaration that writes it, queued in `pending_private_reads` since an instance can appear inside a probe. |
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
-| `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
-| `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, and ownership/borrow modes of yielded bindings. |
+| `box.odin` | Checking of `Box` types, `box`, `try_box`, `unsafe.new`, and unboxing, and a box's view as a `^T`. |
+| `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, and the iteration protocol members of built-ins. |
+| `iteration_foreach.odin`, `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | The runtime `foreach` checker and binder, iterable adapters, mutable lending, ownership/borrow modes of yielded bindings, and the associated types that follow from protocol signatures. |
 
 ### Generics, compile-time features, and bootstrap
 
 | Files | Responsibility |
 | --- | --- |
 | `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
-| `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, and slot lookup contexts. |
+| `generic_alias.odin` | Parametric aliases: the rules on their declarations, and what an application denotes and how a pattern written through one matches. |
+| `generic_impl.odin` | Generic `impl` blocks: installing them on each instance, settling members two blocks supply, and checking their bodies once a package is finished. |
+| `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, slot lookup contexts, composition walks, `Callable`'s built-in rule, and what a bare bound grants. |
 | `eval.odin`, `eval_memory.odin` | Bounded typed-AST interpreter for compile-time execution, and the storage its memory limit charges. |
-| `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
+| `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, and `typeid_of`. |
+| `typeid.odin` | `typeid` constants, type-ID freezing, and the canonical key types sort by. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |
-| `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
+| `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations, checking the runtime records the compiler writes against their declarations, and contributing compiler-owned standard members without duplicating type identity. |
 | `intrinsic.odin` | Binding each `@(intrinsic)` declaration to the member it describes, checking what it states, and reporting a public contribution nothing describes. |
 
 ### Ownership and memory safety
 
 | Files | Responsibility |
 | --- | --- |
-| `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
-| `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, allocator regions, and call effects. |
-| `provenance_input.odin`, `provenance_form.odin`, `provenance_transfer.odin`, `provenance_transfer_facts.odin`, `provenance_call.odin`, `provenance_read.odin` | Normalized provenance input: storage, values, places, value forms, transfers, call inputs, and leaf reads ([Normalized provenance input](#normalized-provenance-input)). |
+| `hooks.odin`, `hook_validation.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks and the checks of their declarations, move/drop checking, liveness, and cleanup slots. |
+| `copy_sites.odin` | Which expressions copy or transfer, and the copy-cost warnings. |
+| `extended_temporaries.odin` | Which temporaries a statement extends to its block's end. |
+| `transfer_facts.odin` | What a value takes to another thread, and what its storage holds or points to. |
+| `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, places, and the statement hooks. |
+| `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
+| `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |
+| `provenance_offsets.odin`, `provenance_aliases.odin` | Where a carrier may point below its storage, merged past the limits, with the definitions reaching a block; written aliases, what a local's carriers and a value with no transfer may reach. |
+| `provider_end.odin` | Where a provider's region ends, which both walks ask at the same `Reset_Key`. |
+| `panic_free.odin` | Which statements cannot panic, so they need no unwind path. |
+| `provenance_input.odin`, `provenance_form.odin`, `provenance_transfer.odin`, `provenance_transfer_facts.odin`, `provenance_call.odin` | Normalized provenance input: storage, values, places, value forms, transfers, and call inputs ([Normalized provenance input](#normalized-provenance-input)). |
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
-| `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
-| `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
-| `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
-| `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops, and what a `parallel` block's parent does with them while its tasks run. |
+| `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |
+| `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
+| `borrow.odin` | The provenance solver: root loans, publication, retention, escape contracts, and their diagnostics. |
+| `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
+| `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
+| `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
+| `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
+| `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; what one call takes in from those and the thread summaries, and what a `parallel` block's parent does with them while its tasks run. |
+| `thread_summaries.odin` | The reach and allocator-use effects and thread-exit drops, settled over the calls the write effects resolved. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain
@@ -926,20 +954,30 @@ be file-private. Paths below are relative to `src/`.
 | File | Responsibility |
 | --- | --- |
 | `emission_contract.odin` | Read-only validation of the checked-program boundary. |
-| `emit_llvm.odin` | Module orchestration, emitter state, symbol names, procedures, globals, and instruction plumbing. |
+| `emit_llvm.odin` | Module orchestration, emitter state, procedures, and instruction plumbing. |
+| `emit_llvm_names.odin` | LLVM symbol names: the naming pass, mangling, escaping, and linkage. |
+| `emit_llvm_entry.odin` | Program entry: `wmain` for an executable and a test build, an object's CPU check, and the provider initializer. |
 | `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's floating-point guard and `-debug`'s check after a foreign call. |
+| `emit_llvm_union.odin` | Union storage, construction, widening, and tag and payload reads. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
-| `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, and text operations. |
-| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
-| `emit_llvm_cleanup.odin` | Lifecycle clone/drop, cleanup registration, and panic replay. |
-| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, and typed-comparator sort adapters. |
+| `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |
+| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and the Loke calling convention. |
+| `emit_llvm_erased.odin` | Erased views: `dyn` values and slot calls, witness tables and their thunks, and the forwarding bodies of `dyn I` and `dyn proc`. |
+| `emit_llvm_math.odin` | The `core:math` bit and floating-point instruction built-ins. |
+| `emit_llvm_cleanup.odin` | Cleanup registration: scopes, full-expression frames, and held values. |
+| `emit_llvm_unwind.odin` | Panic replay: a procedure's registration state and its generated thunk. |
+| `emit_llvm_lifecycle.odin` | Value clones and drops, and the generated `try_clone` and `clone` members. |
+| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, typed-comparator sort adapters, the `[]mut T` members, and the contributed `mem.Arena`/`mem.Scratch` bodies. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
-| `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |
-| `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
+| `emit_llvm_box.odin` | Box allocation layout, construction, unboxing, and recursive drop/clone thunks. |
+| `emit_llvm_runtime.odin` | Runtime declarations, static-storage globals, runtime failures, reflection metadata, and the dispatch of compiler-contributed procedures. |
+| `emit_llvm_format.odin` | Printing: format thunks and bodies, the `core:fmt` sink and entry points, and the reports of formatted panics and failed entries. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
 | `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
-| `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
+| `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, and foreign inputs. |
+| `emit_llvm_runtime_cache.odin` | The prebuilt runtime objects, and whether a link takes them or the sources. |
+| `emit_llvm_layout_probe.odin` | `-check-layout`: the module that asks LLVM for the checker's layout facts. |
 | `subprocess/subprocess.odin` | Child-process execution without busy-waiting; also used by the test harness. |
 
 `emit_llvm_module` consumes checked state and returns text without filesystem or
@@ -1181,7 +1219,8 @@ remain manual checks with `examples/keys.loke`.
 
 `src/session.odin` owns one `Compiler`, copied configuration and overlays,
 session arenas, and optional package checkpoints. CLI presentation stays in
-`main.odin`; filesystem/toolchain policy stays in `emit_llvm_toolchain.odin`.
+`main.odin`; filesystem/toolchain policy stays in `emit_llvm_toolchain.odin` and
+`emit_llvm_runtime_cache.odin`.
 
 | Operation | Contract |
 | --- | --- |
@@ -1224,17 +1263,17 @@ including after destroying and reinitializing a session.
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
 | `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. `bundled` marks a file of the `base:` or `core:` library shipped with the compiler. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member, and `promotes` marks a `using` field. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member, and `promotes` marks a `using` field. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
 | `query_documentation` | A binding's doc comment, as `-doc` reads it; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. `type_value` marks a node that denotes its type rather than a value of it. |
 | `query_selector_operand` | The written operand of the selector whose name holds an offset, described as `query_at` describes a node. Parentheses are not part of an operand's span, and the links the checker adds for a promoted field are skipped, so `(outer).x` and a promoted `outer.x` both give `outer`. So is an implicit dereference: `p.m()` through a pointer gives `p`, whose own members come first. Instances merge as in `query_at`: an unchecked generic template adds nothing, and only instances that disagree hide a part. |
 | `query_visible` | Bindings an unqualified name can reach at an offset, innermost first: locals whose `scope` holds the offset and whose name ends before it, then the file's package scope with its imports, then the predeclared names. Shadowed names are omitted. Caller-owned. |
-| `query_implicit_names` | Member names reached by name where no use spells them: those the compiler looks up itself (`call`, iteration, `format`, `hash`, `len`) and the slot names and selected members of every interface the program uses. |
-| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields, then the fields its `using` fields promote, and methods, through a pointer or box. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
-| `query_type` | Recorded type properties, components, fields, members, and parameter types/modes. Zero IDs mean unavailable. |
+| `query_implicit_names` | Member names reached by name where no use spells them: those the compiler looks up itself (`call`, iteration and its associated types, `format`, `hash`, `len`) and the slot names and selected members of every interface the program uses, wherever a requirement spells them. |
+| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields, then the fields its `using` fields promote, and methods, through a pointer or box. A name two `using` fields promote is marked `ambiguous`: selecting it is an error, yet it is still a name a rename would collide with. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
+| `query_type` | Recorded name, kind, element type, and fields. Zero IDs mean unavailable. |
 | `query_definition` | Snapshot-scoped written location; false for builtins/synthetic bindings without definitions. |
 | `query_references` | Exact-binding named uses, deduplicated across generic/static-loop clones; excludes implicit operations. `include_definition` defaults to false. Caller owns the array and must `delete` it with the query allocator. |
-| `query_signatures` | Procedure/group signatures, parameters/defaults, result and termination properties. Generic templates expose written syntax with `complete = false`. |
+| `query_signatures` | Procedure/group signatures: the written text and parameter names. A generic template's is its written syntax. |
 | `query_diagnostics` | Captured severity, code, message, labels, locations, and notes. Snapshot before emission to capture checking diagnostics; later emission cannot alter that view. |
 
 See [queries.odin](src/queries.odin) for full signatures. Except for reference

@@ -1,0 +1,48 @@
+// design.md "defer statement": a deferred statement runs during unwinding too, so
+// what it reads must be live at every statement that may panic after it.
+package main;
+import "core:fmt";
+
+Err :: enum { Bad }
+@(move_only) Y :: struct { id: int }
+
+risky :: proc() { panic("risky"); }
+
+moved_before_panic :: proc() -> Result(Y, Err) {
+	y := Y{5};
+	errdefer fmt.println(y.id);
+	z := move(y);
+	risky();
+	return .ok(move(z));
+}
+
+dropped_before_panic :: proc() {
+	y := Y{5};
+	defer fmt.println(y.id);
+	drop(y);
+	panic("no normal exit");
+}
+
+not_yet_assigned :: proc() {
+	x: int;
+	defer fmt.println(x);
+	x = next();
+}
+
+next :: proc() -> int { return 1; }
+
+// Cannot panic between the moves and the reads.
+live_where_it_can_panic :: proc() -> Result(Y, Err) {
+	y := Y{5};
+	errdefer fmt.println(y.id);
+	risky();
+	return .ok(move(y));
+}
+
+assigned_without_panic :: proc() {
+	x: int;
+	defer fmt.println(x);
+	x = 1;
+}
+
+main :: proc() {}

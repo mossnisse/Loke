@@ -2,17 +2,14 @@
 // This boundary has no target sets, loans, or allocator-region facts.
 package lokec
 
+import "core:fmt"
 import "core:mem"
-import "core:slice"
-import "core:strings"
 
-// Body-local identities in `Prov_Input`; zero is unresolved storage or no
-// value.
+// Body-local identities in `Prov_Input`; zero is unresolved storage or no value.
+// Keys, not IDs, correspond across rebuilds.
 Storage_Id :: distinct int
 Value_Id :: distinct int
 
-// Zero IDs denote unresolved storage or an absent value. Numeric IDs belong
-// to one concrete body's graph build; keys provide correspondence on rebuild.
 Written_Storage :: struct {
 	symbol: Symbol_Id,
 	temporary: ^Expr_Base,
@@ -32,7 +29,6 @@ Prov_Storage :: struct {
 Prov_Place :: struct {
 	base: union {Storage_Id, Value_Id},
 	path: []Proj_Step,
-	type: Type_Id,
 }
 
 // The representation an expression's value has: its checked one, or the
@@ -57,81 +53,69 @@ Prov_Value :: struct {
 	// A read through it may find targets no write named
 	// (`prov_alias_source_is_unknown`).
 	unknown_alias: bool,
+	// `prov_value_transfer`'s answer; nil when described as no transfer.
+	transfer: Prov_Transfer,
+	described: bool,
 }
 
-Prov_Input_Key :: struct {
+Prov_Synthetic_Call_Key :: struct {
+	callee: Symbol_Id,
+	type: Type_Id,
+	span: Span,
+	expansion: Defer_Expansion,
+	indexes: bool,
+}
+
+Prov_Value_Key :: struct {
 	node: ^Expr_Base,
 	repr: Prov_Repr,
 	expansion: Defer_Expansion,
-	capture: bool,
+}
+
+// A call's inputs and capture do not depend on the representation its result is
+// converted to.
+Prov_Call_Key :: struct {
+	node: ^Expr_Base,
+	expansion: Defer_Expansion,
 }
 
 // The implicit conversions a checked node can carry (design.md "string type
 // conversions", "Variadic parameters", "Widening by label", "Slice literals").
 Prov_Conversion :: enum { View, Erasure, Widening, Backing }
 
+// Writes go through prov_writable_input.
 Prov_Input :: struct {
-	// Owns every table and inserted key; writes go through prov_writable_input.
-	alloc: mem.Allocator,
-	frozen: bool,
 	storages: [dynamic]Prov_Storage,
 	storage_ids: map[Written_Storage]Storage_Id,
 	values: [dynamic]Prov_Value,
-	value_ids: map[Prov_Input_Key]Value_Id,
-	places: map[Prov_Input_Key]Prov_Place,
-	transfers: map[Value_Id]Prov_Transfer,
-	copy_operations: map[Type_Id]Prov_Copy_Operation,
-	calls: map[Prov_Input_Key]Prov_Call_Input,
+	value_ids: map[Prov_Value_Key]Value_Id,
+	calls: map[Prov_Call_Key]Prov_Call_Input,
+	captures: map[Prov_Call_Key]Value_Id,
 	synthetic_calls: map[Prov_Synthetic_Call_Key]^Expr_Call,
-	// Preserve the bounded constant-map-key assignment along with cached paths.
+	// A constant map key's entry slot, at most `MAP_KEY_SLOTS` of them; cached
+	// paths name these.
 	map_key_entries: map[string]int,
 }
 
 // Replay and event materialization have a fixed vocabulary: every input they
 // read was recorded while the construction walk ran. A query of the finished
-// graph may still add one; it gets a private copy on the first such addition.
+// graph may still add one.
 prov_writable_input :: proc(graph: ^Flow_Graph) {
-	if !graph.input.frozen { return }
 	assert(!graph.replaying_facts, "fact replay discovered input absent from normalization")
-	graph.input = new_prov_input(graph.alloc, graph.input)
 }
 
-// Fact replay and materialization share one frozen body input; a finished
-// graph's query copies it before adding to it (`prov_writable_input`). The copy
-// owns its slices, so its additions leave the frozen input as it was.
-new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Prov_Input {
+new_prov_input :: proc(allocator: mem.Allocator) -> ^Prov_Input {
 	input := new(Prov_Input, allocator)
-	input.alloc = allocator
 	input.storages = make([dynamic]Prov_Storage, allocator)
 	input.storage_ids = make(map[Written_Storage]Storage_Id, allocator)
 	input.values = make([dynamic]Prov_Value, allocator)
-	input.value_ids = make(map[Prov_Input_Key]Value_Id, allocator)
-	input.places = make(map[Prov_Input_Key]Prov_Place, allocator)
-	input.transfers = make(map[Value_Id]Prov_Transfer, allocator)
-	input.copy_operations = make(map[Type_Id]Prov_Copy_Operation, allocator)
-	input.calls = make(map[Prov_Input_Key]Prov_Call_Input, allocator)
+	input.value_ids = make(map[Prov_Value_Key]Value_Id, allocator)
+	input.calls = make(map[Prov_Call_Key]Prov_Call_Input, allocator)
+	input.captures = make(map[Prov_Call_Key]Value_Id, allocator)
 	input.synthetic_calls = make(map[Prov_Synthetic_Call_Key]^Expr_Call, allocator)
 	input.map_key_entries = make(map[string]int, allocator)
-	if seed == nil {
-		append(&input.storages, Prov_Storage{})
-		append(&input.values, Prov_Value{})
-		return input
-	}
-	append(&input.storages, ..seed.storages[:])
-	for key, id in seed.storage_ids { input.storage_ids[key] = id }
-	append(&input.values, ..seed.values[:])
-	for &value in input.values { value.place.path = slice.clone(value.place.path, allocator) }
-	for key, id in seed.value_ids { input.value_ids[key] = id }
-	for key, place in seed.places {
-		owned := place
-		owned.path = slice.clone(place.path, allocator)
-		input.places[key] = owned
-	}
-	for id, transfer in seed.transfers { input.transfers[id] = prov_clone_transfer(transfer, allocator) }
-	for type, operation in seed.copy_operations { input.copy_operations[type] = operation }
-	for key, input_call in seed.calls { input.calls[key] = prov_clone_call_input(input_call, allocator) }
-	for key, call in seed.synthetic_calls { input.synthetic_calls[key] = call }
-	for key, entry in seed.map_key_entries { input.map_key_entries[strings.clone(key, allocator)] = entry }
+	append(&input.storages, Prov_Storage{})
+	append(&input.values, Prov_Value{})
 	return input
 }
 
@@ -204,10 +188,10 @@ Prov_Converting :: struct {
 // The representation the walk currently evaluates `e` at. The checked node is
 // never rewritten; an open conversion overrides its representation instead.
 prov_repr :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Repr {
-	base := expr_base(e)
-	if graph.prov != nil && base != nil {
-		for index := len(graph.converting) - 1; index >= 0; index -= 1 {
-			if graph.converting[index].node == base { return graph.converting[index].repr }
+	if graph.prov != nil {
+		base := expr_base(e)
+		#reverse for open in graph.converting {
+			if open.node == base { return open.repr }
 		}
 	}
 	return prov_checked_repr(e)
@@ -238,28 +222,21 @@ prov_type :: proc(graph: ^Flow_Graph, e: Expr) -> Type_Id {
 	return prov_repr(graph, e).type
 }
 
-@(private)
-prov_input_key :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Input_Key {
-	base := expr_base(e)
-	if base == nil { return {} }
-	return Prov_Input_Key{node = base, repr = prov_repr(graph, e), expansion = graph.expansion}
-}
-
 prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
 	if expr_base(e) == nil { return 0 }
-	return prov_intern_value(graph, e, prov_repr(graph, e), graph.expansion)
+	return prov_intern_value(graph, e, prov_repr(graph, e))
 }
 
 @(private)
-prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr, expansion: Defer_Expansion) -> Value_Id {
-	key := Prov_Input_Key{node = expr_base(e), repr = repr, expansion = expansion}
+prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr) -> Value_Id {
+	key := Prov_Value_Key{expr_base(e), repr, graph.expansion}
 	if id, found := graph.input.value_ids[key]; found { return id }
 	prov_writable_input(graph)
 	id := Value_Id(len(graph.input.values))
-	append(&graph.input.values, Prov_Value{origin = e, repr = repr, expansion = expansion})
+	append(&graph.input.values, Prov_Value{origin = e, repr = repr, expansion = graph.expansion})
 	graph.input.value_ids[key] = id
-	place := prov_place_as(graph, e, key)
-	form := prov_describe_form(graph, e, expansion)
+	place := prov_describe_place(graph, e)
+	form := prov_describe_form(graph, e)
 	value := &graph.input.values[int(id)]
 	value.place, value.form, value.temporary = place, form, prov_expr_is_temporary(e)
 	value.unknown_alias = prov_alias_source_is_unknown(graph.k.c, repr.type, e)
@@ -271,53 +248,37 @@ prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr, expansio
 // or a slice literal's hidden array.
 prov_value_beneath :: proc(graph: ^Flow_Graph, id: Value_Id, conversion: Prov_Conversion) -> Value_Id {
 	value := prov_value(graph, id)
-	return prov_intern_value(graph, value.origin, prov_repr_beneath(value.repr, conversion), value.expansion)
+	assert(value.expansion == graph.expansion, "a value's conversion was read outside its expansion")
+	return prov_intern_value(graph, value.origin, prov_repr_beneath(value.repr, conversion))
 }
 
-// A call's capture is keyed by the call node alone: its checked inputs do not
-// depend on the representation its result is converted to.
 prov_input_capture :: proc(graph: ^Flow_Graph, call: ^Expr_Call, source: Expr) -> Value_Id {
-	key := Prov_Input_Key{node = &call.base, expansion = graph.expansion, capture = true}
-	if id, found := graph.input.value_ids[key]; found { return id }
+	key := Prov_Call_Key{&call.base, graph.expansion}
+	if id, found := graph.input.captures[key]; found { return id }
 	prov_writable_input(graph)
 	from := prov_input_value(graph, source)
 	value := graph.input.values[int(from)]
 	id := Value_Id(len(graph.input.values))
 	append(&graph.input.values, value)
-	graph.input.value_ids[key] = id
+	graph.input.captures[key] = id
 	return id
 }
 
 // This is the only syntax walk that classifies direct and indirect places.
 // Evaluation, alias resolution, and cleanup registration stay with consumers.
 prov_input_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
-	key := prov_input_key(graph, e)
-	if key.node == nil { return {} }
-	return prov_place_as(graph, e, key)
-}
-
-@(private = "file")
-prov_place_as :: proc(graph: ^Flow_Graph, e: Expr, key: Prov_Input_Key) -> Prov_Place {
-	// An identifier's place is its symbol's storage, which needs no cache entry.
-	if ident, named := e.(^Expr_Ident); named {
-		id := prov_storage_id(graph, Written_Storage{symbol = ident.symbol})
-		if id != 0 { return Prov_Place{base = id, type = key.repr.type} }
-		return Prov_Place{type = key.repr.type}
-	}
-	if place, found := graph.input.places[key]; found { return place }
-	place := prov_describe_place(graph, e)
-	place.type = key.repr.type
-	if place.base != nil {
-		prov_writable_input(graph)
-		graph.input.places[key] = place
-	}
-	return place
+	// An identifier's place is its symbol's storage, which needs no value.
+	if _, named := e.(^Expr_Ident); named { return prov_describe_place(graph, e) }
+	return prov_value(graph, prov_input_value(graph, e)).place
 }
 
 @(private = "file")
 prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 	c := graph.k.c
 	#partial switch v in e {
+	case ^Expr_Ident:
+		if id := prov_storage_id(graph, Written_Storage{symbol = v.symbol}); id != 0 { return Prov_Place{base = id} }
+		return {}
 	case ^Expr_Selector:
 		if v.resolution.kind != .Field || v.operand == nil { return {} }
 		place: Prov_Place
@@ -331,7 +292,7 @@ prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 		return place
 	case ^Expr_Postfix:
 		if v.op != .Caret { return {} }
-		if !type_is_box(c, expr_base(v.operand).type) {
+		if !v.boxed {
 			return Prov_Place{base = prov_input_value(graph, v.operand)}
 		}
 		place := prov_input_place(graph, v.operand)
@@ -339,8 +300,11 @@ prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 		place.path = prov_extend(graph, place.path, proj_wild())
 		return place
 	case ^Expr_Index:
-		if len(v.bound) > 0 || v.operand == nil || v.resolution.kind == .User_Operator { return {} }
+		if len(v.bound) > 0 || v.resolution.kind == .User_Operator { return {} }
 		operand := expr_base(v.operand).type
+		if type_indexes_through_view(c, operand) {
+			return Prov_Place{base = prov_input_value(graph, v.operand), path = prov_extend(graph, nil, proj_wild())}
+		}
 		#partial switch underlying_kind(c, operand) {
 		case .Array, .Dynamic_Array, .Map, .Simd:
 			place := prov_input_place(graph, v.operand)
@@ -350,13 +314,8 @@ prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 		case .Pointer:
 			// A pointer's loans name its whole pointee: `p[0].a` with
 			// `p: ^[2]Pair` is `[0, a]` below `p`.
-			path: []Proj_Step
-			if info := underlying_info(c, operand); info != nil {
-				path = prov_index_path_in(graph, v, info.element)
-			}
+			path := prov_index_path_in(graph, v, underlying_info(c, operand).element)
 			return Prov_Place{base = prov_input_value(graph, v.operand), path = path}
-		case .Slice, .C_Pointer, .String_View, .CString_View:
-			return Prov_Place{base = prov_input_value(graph, v.operand), path = prov_extend(graph, nil, proj_wild())}
 		}
 	case ^Expr_Call:
 		// `field.get(value)` is `field.pointer(value)^`.
@@ -365,4 +324,103 @@ prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 		}
 	}
 	return {}
+}
+
+// A view's loans already name the elements it views, so an element sits one
+// wildcard step below it in a place and at no step below its loans
+// (`prov_place_hops`).
+@(private)
+type_indexes_through_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	kind := underlying_kind(c, type)
+	return kind == .Slice || kind == .C_Pointer
+}
+
+@(private)
+prov_field_step :: proc(graph: ^Flow_Graph, v: ^Expr_Selector) -> Proj_Step {
+	if !type_is_union(graph.k.c, prov_type(graph, v.operand)) {
+		if field := symbol_of(graph.k.c, v.resolution.symbol); field != nil {
+			step := proj_field(int(field.index))
+			step.synchronized = v.synchronized
+			return step
+		}
+	}
+	return proj_wild()
+}
+
+@(private)
+prov_index_path :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []Proj_Step {
+	return prov_index_path_in(graph, v, prov_type(graph, v.operand))
+}
+
+@(private)
+prov_index_path_in :: proc(graph: ^Flow_Graph, v: ^Expr_Index, type: Type_Id) -> []Proj_Step {
+	#partial switch underlying_kind(graph.k.c, type) {
+	case .Array:
+		return prov_extend(graph, nil, prov_index_step(graph, v.indices))
+	case .Dynamic_Array:
+		step := prov_index_step(graph, v.indices)
+		step.shifts = true
+		if step.kind == .Range && step.lo >= CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
+		return prov_extend(graph, nil, step)
+	case .Map:
+		key: Expr
+		if len(v.indices) == 1 {
+			key = v.indices[0]
+		}
+		entry := prov_extend(graph, nil, prov_map_entry_step(graph, type, key))
+		return prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
+	}
+	return prov_extend(graph, nil, proj_wild())
+}
+
+@(private = "file")
+prov_index_step :: proc(graph: ^Flow_Graph, indices: []Expr) -> Proj_Step {
+	if len(indices) != 1 {
+		return proj_wild()
+	}
+	value, ok := prov_const_int(graph, indices[0])
+	if !ok {
+		return proj_wild()
+	}
+	return proj_range(value, value + 1)
+}
+
+// A constant key's own entry while slots remain, else the wildcard, which
+// overlaps every keyed entry.
+@(private)
+prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) -> Proj_Step {
+	if key == nil || !map_shape_is_keyed(graph.k.c, map_type) {
+		return proj_wild()
+	}
+	base := expr_base(key)
+	if base == nil || !base_is_const(base) {
+		return proj_wild()
+	}
+	name: string
+	#partial switch base.const_value.kind {
+	case .String:
+		name = fmt.aprintf("s:%s", base.const_value.text, allocator = graph.alloc)
+	case .Integer, .Rune:
+		value, ok := bi_to_i64(graph.k.c, base.const_value.integer)
+		if !ok {
+			return proj_wild()
+		}
+		name = fmt.aprintf("%s:%d", base.const_value.kind == .Integer ? "i" : "r", value, allocator = graph.alloc)
+	case .Boolean:
+		name = fmt.aprintf("b:%v", base.const_value.boolean, allocator = graph.alloc)
+	case:
+		return proj_wild()
+	}
+	if entry, found := graph.input.map_key_entries[name]; found {
+		return proj_range(i64(entry), i64(entry) + 1)
+	}
+	entry := len(graph.input.map_key_entries)
+	if entry >= MAP_KEY_SLOTS {
+		step := proj_wild()
+		step.precision = {.Map_Keys}
+		return step
+	}
+	prov_writable_input(graph)
+	graph.input.map_key_entries[name] = entry
+	return proj_range(i64(entry), i64(entry) + 1)
 }

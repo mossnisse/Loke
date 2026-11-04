@@ -1,0 +1,43 @@
+// design.md "Allocators and tasks": what a map operation drops is in the map's
+// region, or the element's when a present key leaves it out, so a task whose map
+// is its own reserves nothing another conflicts with.
+package main;
+
+import "core:fmt";
+
+@(move_only) Res :: struct { items: [dynamic]int }
+impl Res {
+	release :: hook(drop) proc(self: inout Res) {
+		self.items.clear();
+		self.items.shrink();
+	}
+}
+
+replaces :: proc() -> int {
+	m: map[int]Res = {};
+	_ = m.try_insert(1, Res{});
+	_ = m.try_insert(1, Res{});
+	return m.len();
+}
+
+leaves_out :: proc() -> int {
+	m: map[int]Res = {};
+	_ = m.find_or_insert(1, Res{});
+	_ = m.find_or_insert(1, Res{});
+	return m.len();
+}
+
+empties :: proc() -> int {
+	m: map[int]Res = {};
+	_ = m.try_insert(1, Res{});
+	m.clear();
+	return m.len();
+}
+
+main :: proc() {
+	a, b, c, d, e, f: int;
+	parallel { spawn a = replaces(); spawn b = replaces(); }
+	parallel { spawn c = leaves_out(); spawn d = leaves_out(); }
+	parallel { spawn e = empties(); spawn f = empties(); }
+	fmt.println(a + b, c + d, e + f);
+}

@@ -1,0 +1,38 @@
+// design.md "Shared ownership": any strong handle may be the last, whose end ends
+// the provider in its payload. An owner built from one read a dead region.
+package main;
+
+import "core:mem";
+
+Field :: struct { held: Shared(mem.Arena) }
+
+to_outer :: proc() {
+    outer: [dynamic]int;
+    {
+        held := shared(mem.Arena.init());
+        inner: [dynamic]int via held.get().allocator() = {};
+        inner.append(1);
+        outer = move(inner);
+    }
+    _ = outer[0];
+}
+
+returned :: proc() -> [dynamic]int {
+    record := Field{shared(mem.Arena.init())};
+    inner: [dynamic]int via record.held.get().allocator() = {};
+    return inner;
+}
+
+// A local pointer names its provider just as well.
+through_pointer :: proc() -> [dynamic]int {
+    arena := mem.Arena.init();
+    p := &arena;
+    inner: [dynamic]int via p.allocator() = {};
+    return inner;
+}
+
+main :: proc() {
+    to_outer();
+    _ = returned();
+    _ = through_pointer();
+}

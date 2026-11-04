@@ -1,0 +1,10 @@
+package main; import "core:fmt";
+
+// design.md "String views": a high bound inside a sequence panics, like a low one.
+main :: proc() {
+	text: string_view = "aé";
+	high := 3;
+	fmt.println(text[0:high].len());
+	high = 2;
+	fmt.println(text[0:high].len());
+}

@@ -1,0 +1,18 @@
+// design.md "`unsafe.transmute`" reads a value's storage, and a type written
+// where the value goes has none. Broken type syntax reports once, for what is
+// broken, and not again as a missing destination.
+package main;
+
+import "core:math";
+import "core:unsafe";
+
+Empty :: struct {}
+
+type_as_source :: proc() { a := unsafe.transmute(Empty, int); }
+type_sized_wrong :: proc() { a := unsafe.transmute(u64, int); }
+type_as_destination :: proc(x: int) { a := unsafe.transmute(type, x); }
+broken_destination :: proc(x: int) { a := unsafe.transmute([Undefined]int, x); }
+broken_wrap :: proc(x: int) { a := math.wrap([Undefined]int, x); }
+value_destination :: proc(x: int) { a := unsafe.transmute(x, x); }
+
+main :: proc() {}

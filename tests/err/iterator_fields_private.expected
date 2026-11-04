@@ -1,0 +1,27 @@
+L0471
+@11:2
+field `index` of `Array_Iterator([2]int)` is not public
+L0471
+@13:2
+field `index` of `Array_Iterator([]int)` is not public
+L0471
+@15:2
+field `current` of `Range_Iterator(int)` is not public
+L0471
+@19:2
+field `cursor` of `Map_Iterator(map[int]int)` is not public
+L0308
+@20:26
+field `data` of `Array_Iterator([2]int)` is not public
+L0473
+@21:27
+field `index` of `Array_Iterator([2]int)` is not public
+L0474
+@22:27
+field `data` of `Array_Iterator([2]int)` is not public
+L0474
+@22:38
+field `index` of `Array_Iterator([2]int)` is not public
+L0474
+@22:41
+field `reversed` of `Array_Iterator([2]int)` is not public

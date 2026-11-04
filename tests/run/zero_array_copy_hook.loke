@@ -1,0 +1,25 @@
+// design.md "Global write effects": a copy counts the hooks it may run, and a
+// `[0]T` has no element whose `hook(copy)` could run.
+package main;
+
+import "core:fmt";
+
+values: [dynamic]int = {};
+
+Tagged :: struct { n: int }
+
+impl Tagged {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+        _ = values;
+        return .ok(Tagged{1});
+    }
+}
+
+main :: proc() {
+    p := &mut values;
+    a: [0]Tagged = {};
+    b := a;
+    p.append(1);
+    _ = b;
+    fmt.println(values.len());
+}

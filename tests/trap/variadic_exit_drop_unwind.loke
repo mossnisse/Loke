@@ -1,0 +1,25 @@
+// design.md "What the unwind runs, and what it does not": an `or_return` in a
+// later operand drops the elements a variadic call staged. One whose hook panics
+// leaves the others to the unwind.
+package main;
+import "core:fmt";
+
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) {
+		if (self.id == 0) { return; }
+		fmt.println("drop", self.id);
+		if (self.id == 3) { panic("element drop failed"); }
+	}
+}
+show_all :: proc(items: ..Tracked) { fmt.println("shown", items.len()); }
+missing :: proc() -> Option(Tracked) { return .none; }
+
+variadic :: proc() -> Option(int) {
+	show_all(Tracked{1}, Tracked{2}, Tracked{3}, missing() or_return);
+	return .some(1);
+}
+
+main :: proc() {
+	fmt.println(variadic());
+}

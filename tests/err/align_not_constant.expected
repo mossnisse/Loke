@@ -1,0 +1,3 @@
+L0341
+@6:9
+`n` is a mutable variable and cannot be read at compile time

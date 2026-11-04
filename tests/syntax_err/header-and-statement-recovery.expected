@@ -1,0 +1,33 @@
+L0245
+@7:7
+a `for` header cannot be empty
+L0210
+@8:10
+expected a type
+L0210
+@9:9
+expected a type
+L0210
+@10:13
+expected a type
+L0220
+@11:11
+expected an expression
+L0209
+@12:12
+expected `;` after the declaration
+L0245
+@13:6
+only a declaration takes attributes
+L0206
+@14:9
+expected a statement after the attributes
+L0219
+@15:10
+expected `)` to close the parenthesised expression
+L0228
+@16:14
+expected `)` to close `move`
+L0220
+@21:9
+expected an expression

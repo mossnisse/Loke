@@ -1,0 +1,28 @@
+// design.md "Parameter semantics and ABI lowering": an `inout` result hands back
+// the caller's place, which stays live and keeps its value.
+package main;
+
+import "core:fmt";
+
+@(move_only) Res :: struct { id: int, items: [dynamic]int }
+
+impl Res {
+	done :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+
+pass :: proc(x: inout Res) -> inout Res { return inout x; }
+
+global := Res{};
+global_place :: proc() -> inout Res { return inout global; }
+
+main :: proc() {
+	r := Res{1, [dynamic]int{1, 2}};
+	fmt.println(pass(inout r).id);
+	fmt.println(r.id, r.items.len());
+	pass(inout r).id = 2;
+	fmt.println(r.id);
+
+	global.id = 7;
+	fmt.println(global_place().id);
+	fmt.println(global.id);
+}

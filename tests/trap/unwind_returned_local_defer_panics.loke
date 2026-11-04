@@ -1,0 +1,23 @@
+// design.md "What the unwind runs, and what it does not": a local already moved
+// into the result is not dropped again when a deferred statement then panics.
+package main;
+import "core:fmt";
+
+@(move_only) Res :: struct { id: int }
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+
+risky :: proc(n: int) -> int {
+	if (n > 0) { panic("risky"); }
+	return n;
+}
+
+f :: proc() -> Res {
+	z := Res{5};
+	_ = risky(0);
+	defer { _ = risky(1); }
+	return z;
+}
+
+main :: proc() { _ = f(); }

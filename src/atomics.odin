@@ -3,8 +3,6 @@
 // `$` parameters.
 package lokec
 
-import "core:fmt"
-
 // The orderings in the order `base:runtime.Memory_Order` declares them.
 Memory_Order :: enum {
 	Relaxed,
@@ -14,80 +12,11 @@ Memory_Order :: enum {
 	Sequentially_Consistent,
 }
 
-// `base:runtime.Memory_Order`, found by name and cached. INVALID_TYPE when it is
-// missing or its members differ from the compiler's copy above.
-memory_order_type :: proc(k: ^Checker) -> Type_Id {
-	if k.c.memory_order_type != INVALID_TYPE {
-		return k.c.memory_order_type
-	}
-	for index in 1 ..< len(k.c.packages) {
-		pkg := &k.c.packages[index]
-		if pkg.key != STD_RUNTIME || pkg.scope == nil {
-			continue
-		}
-		symbol_id := pkg.scope.names[intern_identifier(k.c, "Memory_Order")] or_else INVALID_SYMBOL
-		if sym := symbol_of(k.c, symbol_id); sym != nil && sym.kind == .Type {
-			resolve_symbol_signature_in_place(k, symbol_id)
-			type := symbol_of(k.c, symbol_id).type
-			if !memory_order_matches(k.c, type) {
-				return INVALID_TYPE
-			}
-			k.c.memory_order_type = type
-			return type
-		}
-	}
-	return INVALID_TYPE
-}
-
-@(private = "file")
-memory_order_matches :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return runtime_enum_matches(c, type, Memory_Order)
-}
-
-// Does a `base:runtime` enum declare exactly `E`'s members, by name, in order,
-// with each value its index? The compiler writes these values as numbers.
-runtime_enum_matches :: proc(c: ^Compiler, type: Type_Id, $E: typeid) -> bool {
-	info := type_of(c, type)
-	if info == nil || info.kind != .Enum || len(info.fields) != len(E) {
-		return false
-	}
-	for member, index in info.fields {
-		sym := symbol_of(c, member)
-		value, fits := bi_to_i64(c, sym.const_value.integer)
-		if sym.name != intern_identifier(c, fmt.tprint(E(index))) || !fits || value != i64(index) {
-			return false
-		}
-	}
-	return true
-}
-
-// `bool`, the integer and rune types, an enum over a supported integer, every
-// pointer, and an `Option` of one. No floats: an atomic float would promise
+// The width one operation runs at, in bits, or 0 for a type that is not atomic.
+// A `bool` is one byte of storage. No floats: an atomic float would promise
 // arithmetic it lacks.
-atomic_type_supported :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	info := underlying_info(c, type)
-	if info == nil {
-		return false
-	}
-	#partial switch info.kind {
-	case .Bool, .Rune, .Pointer, .C_Pointer, .Raw_Pointer:
-		return true
-	case .Union:
-		return atomic_option_of_pointer(c, type)
-	case .Int, .Enum:
-		return atomic_width_bits(c, type) != 0
-	}
-	return false
-}
-
-// The width one operation runs at, in bits, or 0 for a type with none. A `bool`
-// is one byte of storage.
 atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
-	info := underlying_info(c, type)
-	if info == nil {
-		return 0
-	}
-	#partial switch info.kind {
+	#partial switch underlying_kind(c, type) {
 	case .Bool:
 		return 8
 	case .Rune:
@@ -97,7 +26,7 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 	case .Union:
 		return atomic_option_of_pointer(c, type) ? int(c.target.pointer_bits) : 0
 	case .Int, .Enum:
-		bits := type_bits(c, type_underlying(c, type))
+		bits := type_bits(c, type)
 		switch bits {
 		case 8, 16, 32, 64, 128:
 			return bits
@@ -108,23 +37,26 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 
 // design.md "Concurrency and the memory model": a one-word `Option` of a
 // pointer, whose `.none` is the null address.
+@(private = "file")
 atomic_option_of_pointer :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	some := union_niche_variant(c, type)
-	return some >= 0 && underlying_kind(c, union_variant_payload(c, type, some)) == .Pointer
+	return underlying_info(c, type).instance_of == c.option_symbol &&
+	       some >= 0 && underlying_kind(c, union_variant_payload(c, type, some)) == .Pointer
 }
 
 // Read-modify-write arithmetic is integers only; an enum has no arithmetic.
+@(private = "file")
 atomic_operation_supported :: proc(c: ^Compiler, kind: Builtin_Kind, type: Type_Id) -> bool {
 	#partial switch kind {
 	case .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor:
-		info := underlying_info(c, type)
-		return info != nil && info.kind == .Int
+		return underlying_kind(c, type) == .Int
 	}
 	return true
 }
 
 // A load (and a failed compare-exchange, which writes nothing) cannot release; a
 // store cannot acquire; a relaxed fence orders nothing.
+@(private = "file")
 atomic_order_permitted :: proc(kind: Builtin_Kind, order: Memory_Order, failure: bool) -> bool {
 	if failure || kind == .Atomic_Load {
 		return order == .Relaxed || order == .Acquire || order == .Sequentially_Consistent
@@ -140,10 +72,9 @@ atomic_order_permitted :: proc(kind: Builtin_Kind, order: Memory_Order, failure:
 
 // --------------------------------------------------------------- checking --
 
-// Every argument is checked even after one fails, so each reports its own error.
+// Past the arity check, each operand and ordering reports its own error.
 check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
-	v.type = INVALID_TYPE
 	order_type := memory_order_type(k)
 	if order_type == INVALID_TYPE {
 		errorf(k.c, v.span, "L0661", "`base:runtime` does not declare the `Memory_Order` the compiler expects")
@@ -158,50 +89,29 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Atomic_Compare_Exchange: operands, orders = 3, 2
 	}
 	wanted := operands + orders
-	if len(v.args) != wanted {
-		errorf(
-			k.c, v.span, "L0661",
-			"`%s` takes %d argument%s, found %d",
-			ident.name, wanted, wanted == 1 ? "" : "s", len(v.args),
-		)
+	if !builtin_argument_count_ok(k, v, ident.name, "L0661", wanted) {
 		return
 	}
 
-	ok := true
-	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			ok = false
-		}
-	}
-
+	ok := builtin_arguments_ok(k, v)
 	element := INVALID_TYPE
+	bound := make([]Expr, operands, k.c.semantic_allocator)
 	if operands > 0 {
+		bound[0] = v.args[0].value
 		element = check_atomic_place(k, v, ident, kind)
 		ok = ok && element != INVALID_TYPE
 	}
-	bound := make([]Expr, operands, k.c.semantic_allocator)
-	for index in 0 ..< operands {
-		argument := v.args[index].value
-		bound[index] = argument
-		if index == 0 {
-			continue
-		}
-		if element == INVALID_TYPE {
-			check_single_expr(k, argument)
-			continue
-		}
-		value, passed := check_argument_value(k, argument, element)
-		bound[index] = value
-		ok = ok && passed
+	for index in 1 ..< operands {
+		bound[index] = v.args[index].value
+		ok = check_value_expr(k, bound[index], element, "pass") && ok
 	}
 
 	order, order_ok := check_atomic_order(k, v.args[operands].value, order_type, kind, false)
-	operation := Call_Atomic{type = element, order = int(order)}
+	operation := Call_Atomic{type = element, order = order}
 	ok = ok && order_ok
 	if kind == .Atomic_Compare_Exchange {
 		failure, failure_ok := check_atomic_order(k, v.args[operands + 1].value, order_type, kind, true)
-		operation.failure_order = int(failure)
+		operation.failure_order = failure
 		ok = ok && failure_ok
 	}
 	if !ok {
@@ -221,11 +131,9 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	}
 }
 
-// The address operand: a pointer to a supported type. A read-only `^` is
-// enough even to write: design.md "Concurrency and the memory model" makes an
-// atomic write through one legal, since no atomic access conflicts with another,
-// which is what lets `Atomic(T)` work behind a `Shared(T)`. Returns the pointee,
-// or INVALID_TYPE after an error.
+// The address operand. A read-only `^` may write: atomic accesses do not conflict
+// (design.md "Concurrency and the memory model"), which lets `Atomic(T)` work
+// behind a `Shared(T)`.
 @(private = "file")
 check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) -> Type_Id {
 	argument := v.args[0].value
@@ -242,7 +150,7 @@ check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind:
 		)
 		return INVALID_TYPE
 	}
-	if !atomic_type_supported(k.c, info.element) {
+	if atomic_width_bits(k.c, info.element) == 0 {
 		errorf(
 			k.c, expr_span(argument), "L0662",
 			"`%s` is not an atomic type: the set is `bool`, the integer and rune types, an enum over one, any pointer, and an `Option` of a `^T`",
@@ -275,7 +183,7 @@ check_atomic_order :: proc(
 	if !check_value_expr(k, argument, order_type, "pass") {
 		return .Relaxed, false
 	}
-	if !expr_base(argument).is_const {
+	if !is_const_expr(argument) {
 		errorf(
 			k.c, expr_span(argument), "L0666",
 			"an atomic ordering must be a constant; a `$` parameter is what keeps one constant across a wrapper",

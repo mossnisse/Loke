@@ -1,0 +1,27 @@
+L0318
+@10:29
+`%` does not apply to `f64` and `f64`
+
+L0317
+@11:11
+`~` does not apply to `f64`
+
+L0352
+@12:14
+1 is not representable by `bool`
+
+L0352
+@13:15
+1 is not representable by `string`
+
+L0352
+@14:25
+300 is not representable by `u8`
+
+L0353
+@15:11
+a rune does not convert implicitly to `f32`; write `f32(...)` to convert it
+
+L0318
+@16:27
+`+` does not apply to `D` and `D`

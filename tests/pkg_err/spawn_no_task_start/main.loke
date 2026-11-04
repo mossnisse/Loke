@@ -1,0 +1,11 @@
+package main;
+
+// compiler-architecture.md "Lowering parallel blocks": a spawn needs
+// `Task_Scope.start`, so a replaced `core:thread` without it is reported at the
+// spawn rather than left for the backend.
+
+work :: proc() {}
+
+main :: proc() {
+	parallel { spawn work(); }
+}

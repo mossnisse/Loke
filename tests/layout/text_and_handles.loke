@@ -1,0 +1,24 @@
+package main; import "core:fmt";
+
+// The kinds a program holds as carriers rather than as records it declared:
+// `-check-layout` compares each on its own, and as a field that moves the next.
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+Holds :: struct {
+	lead:   u8,
+	text:   string,
+	view:   string_view,
+	c_text: cstring_view,
+	many:   [^]u16,
+	id:     typeid,
+	sized:  dyn Sized,
+	vector: Simd(f32, 4),
+	tail:   u8,
+}
+
+main :: proc() {
+	fmt.println(size_of(Holds), align_of(Holds));
+}

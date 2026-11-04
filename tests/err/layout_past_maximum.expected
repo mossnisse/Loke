@@ -1,0 +1,9 @@
+L0364
+@7:17
+the layout of `[9223372036854775807]i64` exceeds the maximum
+L0364
+@9:19
+the layout of `[9223372036854775807]i128` exceeds the maximum
+L0364
+@11:1
+the layout of `[9223372036854775807]i32` exceeds the maximum

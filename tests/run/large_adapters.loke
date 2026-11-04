@@ -1,0 +1,147 @@
+// design.md "Iteration adapters": an adapter over a value larger than the
+// compiler holds in one register-sized aggregate, which travels by address.
+package main;
+
+import "core:fmt";
+
+// A small source whose iterator is large.
+State_It :: struct { pad: [1000]int, at: int }
+
+impl State_It {
+	next :: proc(self: inout State_It) -> Option(int) {
+		if (self.at >= 3) { return .none; }
+		self.at += 1;
+		return .some(self.pad[self.at - 1] + self.at);
+	}
+}
+
+State :: struct { start: int }
+
+impl State {
+	Element  :: int;
+	Iterator :: State_It;
+
+	iter :: proc(self) -> State_It {
+		out: State_It = {};
+		out.at = self.start;
+		out.pad[1] = 10;
+		return out;
+	}
+	iter_reverse :: proc(self) -> State_It {
+		out: State_It = {};
+		out.at = self.start + 2;
+		return out;
+	}
+}
+
+// An iterator is its own source, and large.
+Self_It :: struct { pad: [1000]int, at: int }
+
+impl Self_It {
+	Element  :: int;
+	Iterator :: Self_It;
+
+	iter :: proc(self) -> Self_It { return self; }
+	next :: proc(self: inout Self_It) -> Option(int) {
+		if (self.at >= 2) { return .none; }
+		self.at += 1;
+		return .some(self.at);
+	}
+}
+
+// A small iterator yielding a large element.
+Block_It :: struct { at: int }
+
+impl Block_It {
+	next :: proc(self: inout Block_It) -> Option([1000]int) {
+		if (self.at >= 2) { return .none; }
+		self.at += 1;
+		block: [1000]int = {};
+		block[999] = self.at * 7;
+		return .some(move(block));
+	}
+}
+
+Blocks :: struct { unused: int }
+
+impl Blocks {
+	Element  :: [1000]int;
+	Iterator :: Block_It;
+
+	iter :: proc(self) -> Block_It { return {0}; }
+}
+
+// A large source taken by value.
+Row_It :: struct { at: int, total: int }
+
+impl Row_It {
+	next :: proc(self: inout Row_It) -> Option(int) {
+		if (self.at >= 2) { return .none; }
+		self.at += 1;
+		return .some(self.total + self.at);
+	}
+}
+
+Row :: struct { cells: [1000]int }
+
+impl Row {
+	Element  :: int;
+	Iterator :: Row_It;
+
+	iter :: proc(self: Row) -> Row_It { return {0, self.cells[999]}; }
+}
+
+// A large mutable view, which an adapter holds by value.
+Panel :: struct { pad: [1000]int, cells: []mut int }
+Panel_Cursor :: struct { cells: []mut int, at: int }
+
+impl Panel {
+	Element :: int;
+	Iterator :: Panel_Cursor;
+	Mut_Iterator :: Panel_Cursor;
+	iter :: proc(self) -> Panel_Cursor { return {self.cells, 0}; }
+	iter_mut :: proc(self) -> Panel_Cursor { return {self.cells, 0}; }
+}
+
+impl Panel_Cursor {
+	next :: proc(self: inout Panel_Cursor) -> Option(^mut int) {
+		if (self.at >= self.cells.len()) { return .none; }
+		value := &mut self.cells[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+main :: proc() {
+	state := State{0};
+	foreach (v in state.copied()) { fmt.println("copied", v); }
+	foreach (v, i in state.indexed()) { fmt.println("indexed", v, i); }
+	foreach (v in state.reversed()) { fmt.println("reversed", v); }
+
+	own: Self_It = {};
+	foreach (v, i in own.indexed()) { fmt.println("own", v, i); }
+
+	blocks := Blocks{0};
+	foreach (b, i in blocks.indexed()) { fmt.println("block", b[999], i); }
+
+	row: Row = {};
+	row.cells[999] = 5;
+	foreach (v, i in row.indexed()) { fmt.println("row", v, i); }
+
+	xs: [dynamic][1000]int = {};
+	block: [1000]int = {};
+	block[0] = 11;
+	xs.append(move(block));
+	foreach (p in xs.indexed().copied()) { fmt.println("pair", p.value[0]); }
+
+	names: [dynamic][300]string = {};
+	labelled: [300]string = {};
+	labelled[299] = "kept";
+	names.append(move(labelled));
+	foreach (p in names.indexed().copied()) { fmt.println("owned", p.value[299]); }
+
+	storage := [2]int{20, 21};
+	panel: Panel = {};
+	panel.cells = &mut storage[:];
+	foreach (v, i in panel.indexed()) { fmt.println("panel", v, i); }
+}

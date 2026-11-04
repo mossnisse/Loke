@@ -1,0 +1,17 @@
+// Why an argument gave a generic procedure nothing to infer from, or had nowhere
+// to go, in the words a procedure that is not generic uses.
+package main;
+
+typed :: proc($v: $I) {}
+defaulted :: proc($v: $I = nil) {}
+pack :: proc(xs: ..$T) {}
+one :: proc(a: $T) {}
+
+main :: proc() {
+	typed(nil);
+	defaulted();
+	pack(xs = 1);
+	one(a = 1, a = 2);
+	one(1, b = 2);
+	one(1, 2);
+}

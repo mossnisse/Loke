@@ -1,0 +1,49 @@
+package main;
+
+import "core:fmt";
+
+// One set of slots serves every entry of a map literal, so an entry's key, held
+// value, and replaced value do not each take frame space. These literals overflow
+// the stack at `-opt=none` when they do.
+Large :: struct { payload: [64000]u8 };
+
+Owned :: struct { name: string, payload: [64000]u8 };
+
+@(move_only) Noisy :: struct { id: int }
+
+impl Noisy {
+	release :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }
+}
+
+plain :: proc() -> map[int]Large {
+	return map[int]Large{
+		0 = Large{}, 1 = Large{}, 2 = Large{}, 3 = Large{}, 4 = Large{},
+		5 = Large{}, 6 = Large{}, 7 = Large{}, 8 = Large{}, 9 = Large{},
+		10 = Large{}, 11 = Large{}, 12 = Large{}, 13 = Large{}, 14 = Large{},
+		15 = Large{}, 16 = Large{}, 17 = Large{}, 18 = Large{}, 19 = Large{},
+	};
+}
+
+owned :: proc() -> map[int]Owned {
+	return map[int]Owned{
+		0 = Owned{}, 1 = Owned{}, 2 = Owned{}, 3 = Owned{}, 4 = Owned{},
+		5 = Owned{}, 6 = Owned{}, 7 = Owned{}, 8 = Owned{}, 9 = Owned{},
+	};
+}
+
+main :: proc() {
+	first := plain();
+	fmt.println(first.len());
+	second := owned();
+	fmt.println(second.len());
+
+	// The slots are reused: each entry keeps its own key and value, and a
+	// repeated key replaces the entry and drops the value it held.
+	key := "a";
+	texts := map[string]string{ key = "one", "b" = "two", key = "three" };
+	fmt.println(texts.len(), texts["a"], texts["b"]);
+
+	same := 1;
+	noisy := map[int]Noisy{ same = Noisy{1}, same = Noisy{2} };
+	fmt.println(noisy.len(), noisy[1].id);
+}

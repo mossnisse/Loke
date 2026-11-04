@@ -6,6 +6,7 @@ package lokec
 import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
+import "core:slice"
 import "core:strings"
 
 Identifier_Id :: distinct u32
@@ -115,6 +116,8 @@ Type_Kind :: enum {
 	Type,
 }
 
+Type_Kinds :: bit_set[Type_Kind]
+
 // A member set the compiler installs on a type rather than the user writing it.
 Contribution :: enum u8 {
 	Mutable_Iteration,
@@ -131,7 +134,14 @@ Contribution :: enum u8 {
 	// `xs.append(1)` an ordinary method call.
 	Container,
 	// The constructors and handle of a local region provider (`src/region.odin`).
-	Provider,
+}
+
+// What tells apart two types that are alike in everything else: where one is
+// written, or for a type made per package, only `pkg`.
+Type_Site :: struct {
+	pkg:   Package_Id,
+	span:  Span,
+	scope: ^Scope,
 }
 
 Type_Info :: struct {
@@ -228,6 +238,9 @@ Type_Info :: struct {
 	// Set once the finite-size check has visited this nominal type, so a cycle
 	// is reported at one place instead of once per reference.
 	size_state: Size_State,
+	// `type_is_supported` said yes, of a type whose records were all finished, so
+	// the answer cannot change.
+	known_supported: bool,
 	// A monomorphized instance: the template it came from and the arguments that
 	// produced it. Structural specialization matches against these.
 	instance_of:   Symbol_Id,
@@ -236,10 +249,16 @@ Type_Info :: struct {
 	// as `Range.int`; the emitter escapes and spells it. An instance is spelled
 	// from `instance_of` and `instance_args` instead.
 	backend_label: string,
+	// An in-place `distinct`, a fresh identity at each place and copy of its text,
+	// or an iteration adapter, made per package because its members are looked up
+	// from one.
+	site:          Type_Site,
 	// A `dyn Interface(args...)` type: the interface it erases behind, and the
 	// non-subject arguments of the application.
 	dyn_interface: Symbol_Id,
 	dyn_args:      []Generic_Arg,
+	// On a `dyn mut I`: the `dyn I` whose ABI type both capabilities share.
+	dyn_read_only: Type_Id,
 	// A compiler-owned `Range(T)`, so `..<` and `..=` survive being stored.
 	is_range:      bool,
 	// design.md "Storage roots and borrow carriers": a borrowed view or
@@ -260,6 +279,9 @@ Type_Info :: struct {
 	// Cached natural layout (`src/layout.odin`). `offsets` has one entry per
 	// struct field, in declaration order.
 	layout_state: Size_State,
+	// The maximum field alignment with no `@(align=N)`: 1 for a packed or empty
+	// record, and for anything else.
+	natural_align: u64,
 	size:         u64,
 	align:        u64,
 	offsets:      []u64,
@@ -273,9 +295,7 @@ Size_State :: enum {
 }
 
 // `mutable` is the borrow capability, part of a carrier's identity: `[]T` and
-// `[]mut T`, `^T` and `^mut T`, are distinct types over one representation. A
-// field of its own, not a spare bit of `count`, so a capability question never
-// has to touch array metadata.
+// `[]mut T`, `^T` and `^mut T`, are distinct types over one representation.
 Type_Key :: struct {
 	kind:    Type_Kind,
 	element: Type_Id,
@@ -284,70 +304,7 @@ Type_Key :: struct {
 	mutable: bool,
 }
 
-// The one target M2 compiles for, at the CPU level the driver selected. Checker
-// and emitter read the same widths, so `int` cannot mean 64 bits in one and 32
-// in the other.
-Target_Info :: struct {
-	triple:       string,
-	pointer_bits: u16,
-	int_bits:     u16,
-	// The widest alignment a scalar takes. On x86-64 a 128-bit integer is
-	// 16-aligned and nothing is wider, which is what LLVM's own data layout for
-	// this triple says.
-	max_align:    u16,
-	// compiler-guide.md "CPU levels": the level the code generator may use,
-	// and the features it adds to the triple's baseline. A level changes no
-	// result: arithmetic is never contracted at any of them (design.md
-	// "Floating-point operators").
-	cpu:          Cpu_Level,
-	features:     Cpu_Features,
-}
-
-// Instruction-set extensions beyond baseline x86-64 (SSE2), as the x86-64
-// microarchitecture levels group them. An AVX feature also needs the operating
-// system to save the AVX registers, which the startup check tests with it.
-Cpu_Feature :: enum {
-	// x86-64-v2
-	CX16,
-	LAHF_SAHF,
-	POPCNT,
-	SSE3,
-	SSE4_1,
-	SSE4_2,
-	SSSE3,
-	// x86-64-v3
-	AVX,
-	AVX2,
-	BMI1,
-	BMI2,
-	F16C,
-	FMA,
-	LZCNT,
-	MOVBE,
-}
-
-Cpu_Features :: bit_set[Cpu_Feature]
-
-X86_64_V2_FEATURES :: Cpu_Features{.CX16, .LAHF_SAHF, .POPCNT, .SSE3, .SSE4_1, .SSE4_2, .SSSE3}
-X86_64_V3_FEATURES :: X86_64_V2_FEATURES + {.AVX, .AVX2, .BMI1, .BMI2, .F16C, .FMA, .LZCNT, .MOVBE}
-
-windows_x64_target :: proc(cpu: Cpu_Level) -> Target_Info {
-	target := Target_Info {
-		triple       = "x86_64-pc-windows-msvc",
-		pointer_bits = 64,
-		int_bits     = 64,
-		max_align    = 16,
-		cpu          = cpu,
-	}
-	switch cpu {
-	case .X86_64:
-	case .X86_64_V2: target.features = X86_64_V2_FEATURES
-	case .X86_64_V3: target.features = X86_64_V3_FEATURES
-	}
-	return target
-}
-
-Resolution_Kind :: enum {
+Resolution_Kind :: enum u8 {
 	Unresolved,
 	Error,
 	Value,
@@ -355,9 +312,7 @@ Resolution_Kind :: enum {
 	Package,
 	Field,
 	Method,
-	Procedure_Group,
 	Call,
-	Generic_Application,
 	Builtin_Operator,
 	User_Operator,
 	// `U.name` / `.name` naming a union variant that still needs its payload:
@@ -365,7 +320,7 @@ Resolution_Kind :: enum {
 	Union_Variant,
 }
 
-Value_Category :: enum {
+Value_Category :: enum u8 {
 	Invalid,
 	Value,
 	Place,
@@ -375,7 +330,7 @@ Value_Category :: enum {
 // Why a readable place cannot be assigned to. A value parameter is addressable
 // but immutable; a composite literal is addressable temporary storage; neither
 // fact follows from the other, so the checker records both plus this reason.
-Immutable_Reason :: enum {
+Immutable_Reason :: enum u8 {
 	None,
 	Constant,
 	Value_Parameter,
@@ -406,12 +361,12 @@ Immutable_Reason :: enum {
 }
 
 Resolution :: struct {
-	kind:            Resolution_Kind,
 	symbol:          Symbol_Id,
 	chosen_overload: Symbol_Id,
+	kind:            Resolution_Kind,
 }
 
-Symbol_Kind :: enum {
+Symbol_Kind :: enum u8 {
 	Invalid,
 	Var,
 	Const,
@@ -425,16 +380,12 @@ Symbol_Kind :: enum {
 	Builtin,
 }
 
-// Which built-in a `Symbol_Kind.Builtin` symbol is. One shared `Builtin` kind
-// with no identity would leave every built-in call indistinguishable at the
-// point that has to lower it.
-Builtin_Kind :: enum {
+// Which built-in a `Symbol_Kind.Builtin` symbol is.
+Builtin_Kind :: enum u8 {
 	None,
 	Assert,
 	Panic,
-	// design.md "Compile-time built-ins": `static_assert` forces the compile-time
-	// phase plain `assert` inherits from its caller, `build_config` reads a
-	// `-define` key, and the location forms fold to a `Source_Code_Location`.
+	// design.md "Compile-time built-ins".
 	Static_Assert,
 	Build_Config,
 	Source_Location,
@@ -442,136 +393,94 @@ Builtin_Kind :: enum {
 	Size_Of,
 	Align_Of,
 	Offset_Of,
-	// design.md "Built-in procedures": whether a copy exists at all. No member can
-	// answer it — a scalar is copyable and has no clone to name.
+	// design.md "Built-in procedures": no member can answer whether a copy exists.
 	Is_Copyable,
-	// design.md "Built-in procedures": whether a type is a union, the subject
-	// per-variant expansion needs, so a `where` bound can ask it at the call.
+	// design.md "Built-in procedures": so a `where` bound can ask at the call.
 	Is_Union,
-	// Compile-time reflection (design.md "`type` and `typeid`", "Compile-time
-	// reflection").
+	// design.md "`type` and `typeid`", "Compile-time reflection".
 	Type_Of,
 	Typeid_Of,
 	Fields_Of,
 	Enum_Values_Of,
 	Variants_Of,
-	// design.md "Allocators" and "Allocation failure": the plain forms follow
-	// the allocator's failure policy and the `try_` forms return the error;
-	// `allocation_builtin` pairs them. `free_all` lowers to the provider's reset
-	// entry once provenance proves no dependant survives it.
+	// design.md "Allocators", "Allocation failure".
 	Free_All,
-	// design.md "Owned values": `box(value)`, which as `Box(T)` also names the
-	// type, and `try_box(value)`.
+	// design.md "Owned values".
 	Box_New,
 	Try_Box,
-	// design.md "Dynamic arrays" and "Maps": its first operand is a *type*, which
-	// no ordinary signature can spell.
+	// design.md "Dynamic arrays", "Maps": its first operand is a *type*.
 	Make,
 	Try_Make,
-	// `mem.default_allocator()`. Compiler-owned and bound by `core:mem`, so a
-	// generated default argument and a written call are one call.
+	// `mem.default_allocator()`: a generated default argument and a written call
+	// are one call.
 	Default_Allocator,
-	// design.md "Storage modifiers": a special form over a storage location, not
-	// a keyword and not an ordinary procedure.
+	// design.md "Storage modifiers": not a keyword and not an ordinary procedure.
 	Drop,
-	// design.md "Exchange": no ordinary signature can express "moves both ways
-	// with nothing observable between".
+	// design.md "Exchange": no signature says "moves both ways with nothing
+	// observable between".
 	Exchange,
-	// The `core:unsafe` surface (design.md "unsafe.raw_data procedure", "string
-	// type conversions"), where losing bounds and borrow capability is visible
-	// at the call site. Each takes an operand ordinary signatures can't spell.
+	// design.md "unsafe.raw_data procedure", "string type conversions": each takes
+	// an operand ordinary signatures can't spell.
 	Unsafe_Raw_Data,
 	Unsafe_String_View,
 	Unsafe_C_String_View,
-	// design.md "Storage modifiers": consumes an owning operand and runs no
-	// cleanup for it or anything it owns.
+	// design.md "Storage modifiers".
 	Unsafe_Forget,
-	// design.md "Uninitialized capacity": the pair a container author needs to
-	// move an element into and out of capacity, which `move` cannot name and
-	// `exchange` cannot reach without a replacement the element may not have.
+	// design.md "Uninitialized capacity".
 	Unsafe_Take,
 	Unsafe_Write,
-	// Releases an allocation whose root the compiler cannot see — one reached
-	// through a `rawptr` field, a parameter, or foreign code.
+	// Releases an allocation whose root the compiler cannot see.
 	Unsafe_Free,
-	// design.md "The `unsafe` package": `unsafe.new(value[, allocator])`, an
-	// allocation the caller releases with `unsafe.free`, and its `try_` form.
+	// design.md "The `unsafe` package".
 	Unsafe_New,
 	Unsafe_Try_New,
-	// design.md "`unsafe.transmute`": its first argument is a *type*, and
-	// reinterpretation is not a universally valid conversion.
+	// design.md "`unsafe.transmute`": its first argument is a *type*.
 	Unsafe_Transmute,
-	// design.md "Type conversion": `math.wrap(T, value)` keeps the low bits of an
-	// integer, the one integer conversion that may change the value.
+	// design.md "Type conversion".
 	Math_Wrap,
-	// compiler-guide.md "CPU levels": whether the target has a fused multiply-add
-	// instruction, a constant `core:math` selects with `when`, and the
-	// instruction itself, which rounds once exactly as `math.fma` promises.
-	// Package-private to `core:math`.
+	// compiler-guide.md "CPU levels". Package-private to `core:math`.
 	Math_Fma_Available,
 	Math_Fma_Instruction,
-	// standard-library "`core:math`": the square root instruction, which IEEE
-	// 754 makes correctly rounded, and the rounding to an integral value, which
-	// is exact, so `math.sqrt`, `floor`, `ceil`, `trunc`, and `round` are each
-	// one and have a compile-time value. Package-private to `core:math`.
+	// standard-library.md "`core:math`": each is one instruction with a compile-time
+	// value. Package-private to `core:math`.
 	Math_Sqrt_Instruction,
 	Math_Floor_Instruction,
 	Math_Ceil_Instruction,
 	Math_Trunc_Instruction,
 	Math_Round_Instruction,
-	// The floating remainder, LLVM's `frem`, which calls the C library's `fmod`;
-	// exact, so `math.mod` has a compile-time value too.
 	Math_Mod_Instruction,
-	// standard-library "`core:math`": the bit counts of an integer's
-	// two's-complement pattern, LLVM's `ctpop`, `ctlz`, and `cttz` with a zero
-	// operand defined as the width, so each is one instruction where the CPU
-	// level has it and has a compile-time value.
 	Math_Count_Ones,
 	Math_Leading_Zeros,
 	Math_Trailing_Zeros,
-	// The rotations, LLVM's funnel shifts with both inputs the operand, whose
-	// count is taken modulo the width, so any `int` count is defined.
 	Math_Rotate_Left,
 	Math_Rotate_Right,
-	// The bit width, `W - ctlz`, a count as the others are; the bit reversal,
-	// LLVM's `bitreverse`; and the power-of-two test and round-up, which read
-	// the operand's value rather than its pattern. `Math_Next_Power_Of_Two`
-	// panics as checked arithmetic does when its result does not fit, and
-	// `Math_Checked_Next_Power_Of_Two` answers `Option(T)` there instead.
 	Math_Bit_Width,
 	Math_Reverse_Bits,
 	Math_Is_Power_Of_Two,
 	Math_Next_Power_Of_Two,
 	Math_Checked_Next_Power_Of_Two,
-	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
-	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
-	// parameter, exactly as an atomic takes its ordering.
+	// design.md "SIMD vectors": what a constant lane index makes unwritable as a
+	// loop.
 	Simd_Cast,
 	Simd_Select,
 	Simd_Reduce,
-	// design.md "`type` and `typeid`": a `typeid` is an ordinary scalar and can be
-	// forged, so the lookup is checked rather than an unchecked index.
+	// design.md "`type` and `typeid`": a `typeid` can be forged, so the lookup is
+	// checked.
 	Type_Info_Of,
 	// standard-library.md "Printed forms": the compiler-owned half of `core:fmt`.
 	Fmt_Stdout_Writer,
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
-	// `core:slice`'s typed comparator bridge to the shared runtime introsort. The
-	// comparator pointer is used synchronously and never retained.
+	// `core:slice`'s typed comparator bridge to the shared runtime introsort.
 	Slice_Sort_By,
-	// Contributed package-privately to `core:strings` (published as
-	// `copy`/`try_copy`) and to `core:fmt`, which can't import `core:strings`
-	// for `to_string` without pulling in the whole package.
+	// Package-private to `core:strings` and to `core:fmt`, which can't import
+	// `core:strings` without pulling in the whole package.
 	Strings_Allocate,
-	// design.md "Allocation failure": `allocation_failed(error, allocator)`, the
-	// allocator's failure policy for an `Allocator_Error` a library wrapper got
-	// from a `try_` form, with the size it carries. It diverges as `panic` does,
-	// but `.Trap` aborts without unwinding. Contributed package-privately to the
-	// standard packages whose implicitly allocating wrappers need it.
+	// design.md "Allocation failure": for an `Allocator_Error` a library wrapper
+	// got from a `try_` form.
 	Allocation_Failed,
-	// design.md "Concurrency and the memory model": the atomic intrinsics
-	// `Atomic(T)` wraps, contributed package-privately to `core:sync`. Each
-	// requires a constant ordering, which no ordinary signature can ask for.
+	// design.md "Concurrency and the memory model": each requires a constant
+	// ordering, which no ordinary signature can ask for.
 	Atomic_Load,
 	Atomic_Store,
 	Atomic_Exchange,
@@ -584,6 +493,21 @@ Builtin_Kind :: enum {
 	Atomic_Fence,
 }
 
+// design.md "Allocation failure": `try_new`, `try_new_clone`, and `try_make`
+// are `new`, `new_clone`, and `make` returning the error instead of following
+// the allocator's policy.
+allocation_builtin :: proc(kind: Builtin_Kind) -> (base: Builtin_Kind, fallible: bool) {
+	#partial switch kind {
+	case .Try_Box:
+		return .Box_New, true
+	case .Unsafe_Try_New:
+		return .Unsafe_New, true
+	case .Try_Make:
+		return .Make, true
+	}
+	return kind, false
+}
+
 // What a non-owning binding views. `.None` is an ordinary owning binding.
 Borrowed_Binding :: enum u8 {
 	None,
@@ -593,7 +517,7 @@ Borrowed_Binding :: enum u8 {
 
 // A procedure the compiler contributes: a real symbol whose body the backend
 // writes by shape.
-Synth_Kind :: enum {
+Synth_Kind :: enum u8 {
 	None,
 	Adapter_View,
 	Adapter_Iter,
@@ -611,7 +535,6 @@ Synth_Kind :: enum {
 	Array_Iter,
 	Array_Iter_Reverse,
 	Array_Next,
-	Slice_Next,
 	Slice_Mut_Next,
 	Slice_Ref_Next,
 	// Builds a slice's `{ data, index }`, so `next` is the slice one.
@@ -642,9 +565,70 @@ Synth_Kind :: enum {
 	Variant_Construct,
 }
 
+// One per local and field in the compilation, so the fields go by size, largest
+// first, and leave no padding between them.
 Symbol :: struct {
+	const_value: Const_Value,
+	params:      []Type_Id,
+	// Flattened one entry per parameter name, so `proc(a, b: int)` has two of
+	// each. Defaults are the declaration's syntax, evaluated at the call site.
+	param_symbols:  []Symbol_Id,
+	param_defaults: []Expr,
+	members:     []Symbol_Id,
+	decl:        ^Decl,
+	// Expression-position procedures have no declaration wrapper; keeping their
+	// syntax here lets the evaluator run the same body the backend emits.
+	proc_literal: ^Expr_Proc,
+	// The declaration's own lexical scope, what definition-site lookup hangs an
+	// instantiation off instead of the caller's.
+	def_scope:     ^Scope,
+	def_file_node: ^File,
+	// The canonical text of `operator(sym)`, or "" for an ordinary procedure.
+	// `[]=` and `[:]` are several tokens, so this is text rather than a token.
+	operator:     string,
+	// The declaring procedure literal, for the capture check.
+	owner_proc:  rawptr,
+	// design.md "@(packed)": a case binding over a place whose storage is a
+	// packed field, by that field's name. It is bound as a copy, and borrowing
+	// it is the misaligned borrow `&value.field` would be.
+	packed_field:     string,
+	cleanup_slot:     int,
+	// design.md "Allocators": the written `via` expression, or nil for the lazy
+	// default. Kept on the *declaration* because it survives drop and move and is
+	// what a later revival selects; a live value carries its own handle.
+	via:              Expr,
+	// design.md "`@(deprecated=<string>)`": the warning message printed at each
+	// use of this procedure, or "" if it is not deprecated.
+	deprecated_message: string,
+	link_name:          string,
+
 	name:        Identifier_Id,
 	span:        Span,
+	type:        Type_Id,
+	result:      Type_Id, // INVALID_TYPE when the procedure has no result
+	proc_type:   Type_Id,
+	pkg:         Package_Id,
+	// The package whose method, operator, and extension tables this body may use
+	// — not always the one being checked: `delegate` freezes it at its
+	// declaration, and instantiations look up at their definition site.
+	lookup_pkg:  Package_Id,
+	// The `impl`/`extend` subject this member belongs to, or INVALID_TYPE.
+	owner_type:  Type_Id,
+	instance_of:   Symbol_Id,
+	def_file:      u32,
+	// A `delegated` overload's underlying type, and the operation it forwards to:
+	// INVALID_SYMBOL when that operation is the built-in.
+	delegate_underlying: Type_Id,
+	delegate_target:     Symbol_Id,
+	iteration_target:    Symbol_Id,
+	// Field or enum-member position in its owning type; parameter position in
+	// its signature.
+	index:       u32,
+	// design.md "Uninitialized capacity": `@(initialized = count)` names the
+	// sibling field holding how many leading elements are live. The generated
+	// copy and drop visit that prefix only.
+	initialized_by: Symbol_Id,
+
 	kind:        Symbol_Kind,
 	builtin:     Builtin_Kind,
 	// design.md "Exported names": package-private by default.
@@ -659,44 +643,17 @@ Symbol :: struct {
 	// A generic argument bound in an instance's scope, so a signature can tell
 	// which of its types change with the instance (design.md "Success returns").
 	generic_binding: bool,
-	type:        Type_Id,
-	const_value: Const_Value,
-	params:      []Type_Id,
-	result:      Type_Id, // INVALID_TYPE when the procedure has no result
 	result_inout: bool,
 	// Declared `-> !`: a call never returns and stands in for any value
 	// (design.md "Diverging procedures"). Not part of `proc_type`.
 	diverges:    bool,
-	proc_type:   Type_Id,
-	// Flattened one entry per parameter name, so `proc(a, b: int)` has two of
-	// each. Defaults are the declaration's syntax, evaluated at the call site.
-	param_symbols:  []Symbol_Id,
-	param_defaults: []Expr,
-	members:     []Symbol_Id,
-	decl:        ^Decl,
-	// Expression-position procedures have no declaration wrapper; keeping their
-	// syntax here lets the evaluator run the same body the backend emits.
-	proc_literal: ^Expr_Proc,
-	pkg:         Package_Id,
-	// The package whose method, operator, and extension tables this body may use
-	// — not always the one being checked: `delegate` freezes it at its
-	// declaration, and instantiations look up at their definition site.
-	lookup_pkg:  Package_Id,
-	// The `impl`/`extend` subject this member belongs to, or INVALID_TYPE.
-	owner_type:  Type_Id,
-	// `generic` marks a template, which has no signature until instantiated.
-	// `def_scope` is the declaration's own lexical scope, what definition-site
-	// lookup hangs an instantiation off instead of the caller's.
+	// A template, which has no signature until instantiated.
 	generic:       bool,
-	instance_of:   Symbol_Id,
-	def_scope:     ^Scope,
-	def_file:      u32,
-	def_file_node: ^File,
 	// A first parameter named `self` whose type is the owner. `^T` is not a
 	// receiver and gets no method-call sugar.
 	has_receiver: bool,
 	receiver:     Param_Mode,
-	// A closed compiler-controlled semantic role; operators use `operator` below.
+	// A closed compiler-controlled semantic role; operators use `operator` above.
 	hook:         Hook_Kind,
 	// `validate_semantic_hook` accepted this lifecycle role.
 	hook_bound:   bool,
@@ -704,16 +661,9 @@ Symbol :: struct {
 	container_op: Container_Op,
 	// Which region-provider operation it is (`src/region.odin`).
 	provider_op:  Provider_Op,
-	// The canonical text of `operator(sym)`, or "" for an ordinary procedure.
-	// `[]=` and `[:]` are several tokens, so this is text rather than a token.
-	operator:     string,
 	// A forwarding overload `delegate(...)` generated. It has no body: the
 	// backend applies the underlying type's operation to the unwrapped operands.
-	// `delegate_target` is INVALID_SYMBOL when that operation is the built-in.
 	delegated:           bool,
-	delegate_underlying: Type_Id,
-	delegate_target:     Symbol_Id,
-	iteration_target:    Symbol_Id,
 	// Signature resolution already reported why this procedure has no usable
 	// type, so the gate must not report a second time for the same mistake.
 	signature_error: bool,
@@ -732,13 +682,6 @@ Symbol :: struct {
 	synth:       Synth_Kind,
 	// In `synth_procs`, so emitted: a use that commits it enrolled it.
 	synth_enrolled: bool,
-	// Field or enum-member position in its owning type; parameter position in
-	// its signature.
-	index:       u32,
-	// design.md "Uninitialized capacity": `@(initialized = count)` names the
-	// sibling field holding how many leading elements are live. The generated
-	// copy and drop visit that prefix only.
-	initialized_by: Symbol_Id,
 	// design.md "Required fields": every literal supplies this field, so its
 	// record has no zero value.
 	required:    bool,
@@ -746,8 +689,6 @@ Symbol :: struct {
 	// package synchronizes every access to it.
 	synchronized: bool,
 	mode:        Param_Mode,
-	// The declaring procedure literal, for the capture check in step 6.
-	owner_proc:  rawptr,
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
@@ -755,10 +696,6 @@ Symbol :: struct {
 	// have no owner here to transfer or release (design.md "Unions",
 	// "By-reference iteration").
 	borrowed_binding: Borrowed_Binding,
-	// design.md "@(packed)": a case binding over a place whose storage is a
-	// packed field, by that field's name. It is bound as a copy, and borrowing
-	// it is the misaligned borrow `&value.field` would be.
-	packed_field:     string,
 	// design.md "`@(allocator_reset)`": a successful call may end this
 	// parameter's region. Verified in the body, carried in the procedure type.
 	allocator_reset: bool,
@@ -774,64 +711,32 @@ Symbol :: struct {
 	// a definite state needs no runtime flag.
 	drop_at_exit:     bool,
 	drop_conditional: bool,
-	cleanup_slot:     int,
-	// design.md "Allocators": the written `via` expression, or nil for the lazy
-	// default. Kept on the *declaration* because it survives drop and move and is
-	// what a later revival selects; a live value carries its own handle.
-	via:              Expr,
+	// Live where a statement may panic, so the unwind may drop it though every
+	// normal exit finds it moved out (design.md "What the unwind runs, and what it
+	// does not").
+	drop_on_unwind:   bool,
 	// design.md "Storage modifiers": `static` or `thread_local` makes a *local*
 	// declaration name storage outside the frame, so the backend gives it a
 	// global rather than an `alloca`.
 	duration:         Duration,
-	// Which `LOKE_*` enum this predeclared constant belongs to, or `.None`.
-	build_config_enum: Build_Config_Enum,
-	// design.md "`@(deprecated=<string>)`": the warning message printed at each
-	// use of this procedure, or "" if it is not deprecated.
-	deprecated_message: string,
 	deprecated:         bool,
 	// design.md "@(require_results)": each call must use or explicitly discard the
 	// results. Applied to a procedure group after overload selection.
 	require_results:    bool,
-	// design.md "Test procedures": `@(test)`, which only a test build calls, so
-	// no code may name it.
-	is_test:            bool,
-	// design.md "@(cpu_dispatch=<string>)": a call runs a copy compiled for
-	// `dispatch_cpu` where the processor has it, when the build's level is lower.
-	dispatches:         bool,
+	// design.md "@(cpu_dispatch=<string>)": a call runs a copy compiled for this
+	// level where the processor has it, when the build's level is lower. The
+	// baseline, never above a build's level, for a procedure that does not ask.
 	dispatch_cpu:       Cpu_Level,
 	// design.md "Foreign system": no body, so the backend emits a
 	// `declare`/`external global` under `link_name`. The source library isn't
 	// recorded — every foreign block links against the one image.
 	is_foreign:         bool,
-	link_name:          string,
 	// design.md "Promoted struct fields": a `using` field, whose own fields its
 	// record's selectors also reach.
 	is_using:           bool,
 	// design.md "@(export)": emit under `link_name` rather than the mangled
 	// `@loke.p...`, so a C consumer can link to it.
 	exported:           bool,
-}
-
-Build_Config_Enum :: enum u8 {
-	None,
-	Arch,
-	Os,
-	Endian,
-	Build_Mode,
-	Optimization_Mode,
-	Vendor,
-	Log_Level,
-}
-
-// standard-library.md "Compiled log level". The member names are `core:log`'s own, and
-// `Off` is last so `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled
-// out entirely.
-Log_Level :: enum u8 {
-	Debug,
-	Info,
-	Warning,
-	Error,
-	Off,
 }
 
 Scope_Kind :: enum {
@@ -851,9 +756,14 @@ Scope :: struct {
 	// Set when a lookup finds a name here. Only a probe reads it: whether a
 	// `$` default resolves any of its procedure's parameters.
 	reached:    bool,
+	// Set when an operator is declared here, so most scopes skip that search.
+	declares_operator: bool,
 	// The generic instance whose bindings this scope holds, or nil. A type
 	// declared in one instance's body is told from another's by it.
 	instance:   ^Instance,
+	// Which copy of a static expansion or expanded case this scope holds, from 1,
+	// or 0. It tells a type declared in one copy from the others', as `instance` does.
+	expansion:  int,
 }
 
 // One resolved `import` edge, with the statement that wrote it: a cycle is
@@ -879,7 +789,7 @@ Package :: struct {
 	// unused import must not make an existing expression ambiguous, so this is
 	// never merged into the type itself.
 	extensions:     map[Type_Id][]Symbol_Id,
-	operators:      map[string]^[dynamic]Symbol_Id,
+	operators:      map[string][dynamic]Symbol_Id,
 	imports:        [dynamic]Package_Import,
 	// How many of `imports` already had their alias bound. The edge list only
 	// grows, so a later discovery round starts here instead of re-reporting an
@@ -899,27 +809,27 @@ Package :: struct {
 	// declarations that describe them (`src/intrinsic.odin`), bound once.
 	contributions:  [dynamic]Identifier_Id,
 	intrinsics:     [dynamic]Intrinsic_Decl,
-	intrinsics_bound: bool,
+	// Its declarations by name, for the private-name reads (`src/private_names.odin`).
+	declared_names: ^Package_Names,
+	// Whether a file-scope `when` here has not settled, and every name its branches
+	// could declare. Rebuilt with the active view, so within a round they still
+	// cover what that round's choices selected but have not declared.
+	has_pending_whens:  bool,
+	pending_when_names: map[Identifier_Id]bool,
 }
 
-// Address space reserved for each arena reset after every body. Pages are
-// committed as they are first used and stay committed across resets, so the
-// next body does not fault them in again.
+// Address space each per-body scratch arena reserves.
 SCRATCH_ARENA_RESERVE :: mem.Gigabyte
 
 // The per-body scratch arenas, empty.
 @(private)
 init_analysis_arenas :: proc(c: ^Compiler) {
-	if err := scratch_arena_init(&c.analysis_arena, SCRATCH_ARENA_RESERVE); err != nil {
-		panic("cannot reserve the compilation's analysis arena")
+	for arena in ([]^Scratch_Arena{&c.analysis_arena, &c.replay_carry_arena, &c.replay_round_arena}) {
+		if err := scratch_arena_init(arena, SCRATCH_ARENA_RESERVE); err != nil {
+			panic("cannot reserve the compilation's analysis arenas")
+		}
 	}
 	c.analysis_allocator = scratch_allocator(&c.analysis_arena)
-	if err := scratch_arena_init(&c.replay_carry_arena, SCRATCH_ARENA_RESERVE); err != nil {
-		panic("cannot reserve the compilation's provenance replay arenas")
-	}
-	if err := scratch_arena_init(&c.replay_round_arena, SCRATCH_ARENA_RESERVE); err != nil {
-		panic("cannot reserve the compilation's provenance replay arenas")
-	}
 }
 
 @(private)
@@ -935,10 +845,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	}
 	c.semantic_initialized = true
 	c.target = windows_x64_target(c.cpu)
-	// A growing virtual arena, not `mem.Dynamic_Arena`: the latter rejects any
-	// allocation over its block size with `.Invalid_Argument`, which
-	// `append`/`make` swallow — the symbol store crossing that threshold kept its
-	// old length while `new_symbol` handed out IDs for elements never stored.
+	// A growing virtual arena: `mem.Dynamic_Arena` rejects allocations over its
+	// block size, and `append`/`make` swallow the error.
 	if err := virtual.arena_init_growing(&c.semantic_arena); err != nil {
 		panic("cannot reserve the compilation's semantic arena")
 	}
@@ -953,7 +861,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.anon_union_types = make(map[u64][]Type_Id, c.semantic_allocator)
 	c.proc_types = make(map[u64][]Type_Id, c.semantic_allocator)
 	c.symbols = make([dynamic]^Symbol, 0, 128, c.semantic_allocator)
-	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
+	c.packages = make([dynamic]^Package, 0, 8, c.semantic_allocator)
 	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
 	c.generic_impls = make(map[Symbol_Id][dynamic]^Generic_Impl, c.semantic_allocator)
 	c.instances = make(map[string]^Instance, c.semantic_allocator)
@@ -962,7 +870,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
 	c.pending_private_reads = make([dynamic]Pending_Private_Read, 0, 4, c.semantic_allocator)
-	c.private_constants_read = make(map[Span]bool, c.semantic_allocator)
+	c.private_reads_settled = make(map[Span]bool, c.semantic_allocator)
 	c.private_names_warned = make(map[Span]bool, c.semantic_allocator)
 	c.generic_impl_types = make(map[Span]bool, c.semantic_allocator)
 	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)
@@ -975,18 +883,24 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.view_types = make(map[View_Key]Type_Id, c.semantic_allocator)
 	c.adapter_members = make(map[Adapter_Key]Symbol_Id, c.semantic_allocator)
-	c.item_states = make(map[Item_Key]Item_State, c.semantic_allocator)
+	c.derived_members = make(map[Derived_Key]struct{}, c.semantic_allocator)
 	c.capture_records = make(map[Type_Id]^Expr_Proc, c.semantic_allocator)
 	c.capture_placeholders = make(map[Symbol_Id]Capture_Placeholder, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
+	c.reaches_destination = make(map[Type_Id]bool, c.semantic_allocator)
+	c.reaches_mutable = make(map[Type_Id]bool, c.semantic_allocator)
+	c.provider_carriers = make(map[Type_Id]bool, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
+	c.region_shapes = make(map[Type_Id][]Prov_Region_Content, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
 	c.variant_constructors = make(map[Variant_Key]Symbol_Id, c.semantic_allocator)
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
+	c.dyn_slots = make(map[Type_Id][]Interface_Slot, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
+	c.interface_witnesses = make(map[Symbol_Id][dynamic]^Witness, c.semantic_allocator)
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
 	c.dyn_proc_adapters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
-	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
+	c.materialized = make(map[Materialized_Key]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 	c.spawn_tasks = make([dynamic]^Spawn_Task, 0, 2, c.semantic_allocator)
 	c.spawn_calls = make(map[^Expr_Call]^Spawn_Task, 2, c.semantic_allocator)
@@ -1004,12 +918,10 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.map_keyed = make(map[Type_Id]bool, c.semantic_allocator)
 	c.checked_bodies = make([dynamic]Checked_Body, 0, 16, c.semantic_allocator)
 	c.checked_body_symbols = make(map[Symbol_Id]bool, c.semantic_allocator)
-	c.result_summaries = make(map[Symbol_Id]^Proc_Summary, c.semantic_allocator)
+	c.result_summaries = make(map[Symbol_Id]^Result_Provenance, c.semantic_allocator)
 	c.receiver_contracts = make(map[Symbol_Id]Symbol_Id, c.semantic_allocator)
 	c.receiver_contract_of = make(map[Symbol_Id]Symbol_Id, c.semantic_allocator)
-	c.written_regions = make(map[Symbol_Id][]Region_Set, c.semantic_allocator)
-	c.written_owner_regions = make(map[Symbol_Id][]Region_Set, c.semantic_allocator)
-	c.written_region_content = make(map[Symbol_Id][][]Prov_Region_Content, c.semantic_allocator)
+	c.written_summaries = make(map[Symbol_Id]Written_Summary, c.semantic_allocator)
 	c.carrier_moves = make(map[Symbol_Id][]Carrier_Move, c.semantic_allocator)
 	c.thread_local_writes = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.callback_thread_local_writes = make(map[Symbol_Id][]Callback_Write, c.semantic_allocator)
@@ -1065,7 +977,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	}
 	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
 	new_symbol(c, Symbol{})
-	append(&c.packages, Package{})
+	append(&c.packages, new(Package, c.semantic_allocator))
 }
 
 intern_identifier :: proc(c: ^Compiler, text: string) -> Identifier_Id {
@@ -1077,8 +989,9 @@ intern_identifier :: proc(c: ^Compiler, text: string) -> Identifier_Id {
 		return id
 	}
 	id := Identifier_Id(len(c.identifier_names))
-	append(&c.identifier_names, text)
-	c.identifier_by_name[text] = id
+	owned := strings.clone(text, c.semantic_allocator)
+	append(&c.identifier_names, owned)
+	c.identifier_by_name[owned] = id
 	return id
 }
 
@@ -1098,12 +1011,11 @@ new_symbol :: proc(c: ^Compiler, value: Symbol) -> Symbol_Id {
 }
 
 // One field of a compiler-owned struct-shaped type — a slice, a container
-// header, a range. Every such type installs its fields the same way,
-// so they share one constructor rather than a private copy apiece.
+// header, a range.
 new_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int, public := false) -> Symbol_Id {
 	return new_symbol(c, Symbol {
 		name   = intern_identifier(c, name),
-		span   = no_span(),
+		span   = NO_SPAN,
 		kind   = .Field,
 		type   = type,
 		index  = u32(index),
@@ -1111,28 +1023,28 @@ new_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int, public 
 	})
 }
 
-// Appends to a type's members.
 add_members :: proc(c: ^Compiler, type: Type_Id, added: []Symbol_Id) {
 	info := type_of(c, type)
 	if info == nil || len(added) == 0 {
 		return
 	}
-	merged := make([]Symbol_Id, len(info.members) + len(added), c.semantic_allocator)
-	copy(merged, info.members)
-	copy(merged[len(info.members):], added)
-	info.members = merged
+	info.members = slice.concatenate([][]Symbol_Id{info.members, added}, c.semantic_allocator)
 }
 
 new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -> Symbol_Id {
 	return new_symbol(c, Symbol {
 		name        = intern_identifier(c, name),
-		span        = no_span(),
+		span        = NO_SPAN,
 		kind        = .Const,
 		type        = TYPE_TYPE,
 		const_value = type_const(value),
 		owner_type  = owner,
 		public      = true,
 	})
+}
+
+new_parameter :: proc(c: ^Compiler, name: Identifier_Id, type: Type_Id, mode: Param_Mode) -> Symbol_Id {
+	return new_symbol(c, Symbol{name = name, kind = .Parameter, type = type, mode = mode})
 }
 
 synth_proc :: proc(
@@ -1145,23 +1057,62 @@ synth_proc :: proc(
 	result: Type_Id,
 	enroll := true,
 ) -> Symbol_Id {
-	param_copy := make([]Type_Id, len(params), c.semantic_allocator)
-	copy(param_copy, params)
+	proc_type := intern_proc_type(c, params, modes, result, false, "")
 	id := new_symbol(c, Symbol {
 		name          = intern_identifier(c, name),
-		span          = no_span(),
+		span          = NO_SPAN,
 		kind          = .Proc,
 		public        = true,
 		owner_type    = owner,
-		params        = param_copy,
+		params        = type_of(c, proc_type).parameters,
 		result        = result,
 		param_symbols = make([]Symbol_Id, len(params), c.semantic_allocator),
 		param_defaults = make([]Expr, len(params), c.semantic_allocator),
-		proc_type     = intern_proc_type(c, param_copy, modes, result, false, ""),
+		proc_type     = proc_type,
 		synth         = kind,
 	})
 	if enroll { enroll_synth(c, id) }
 	return id
+}
+
+// A member whose receiver is its first parameter.
+synth_receiver_proc :: proc(
+	c: ^Compiler,
+	name: string,
+	kind: Synth_Kind,
+	owner: Type_Id,
+	params: []Type_Id,
+	modes: []Param_Mode,
+	result: Type_Id,
+	enroll := true,
+) -> Symbol_Id {
+	id := synth_proc(c, name, kind, owner, params, modes, result, enroll)
+	sym := symbol_of(c, id)
+	sym.has_receiver, sym.receiver = true, modes[0]
+	return id
+}
+
+// A member taking only its receiver, whose result depends on that receiver: an
+// `iter` or `next`, say, with the member it wraps as its `target`.
+synth_self_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner: Type_Id, mode: Param_Mode, result: Type_Id, target := INVALID_SYMBOL) -> Symbol_Id {
+	id := synth_receiver_proc(c, name, kind, owner, []Type_Id{owner}, []Param_Mode{mode}, result)
+	sym := symbol_of(c, id)
+	sym.iteration_target = target
+	// `synth_proc` enrolled the adapter before it had a target.
+	if sym.synth_enrolled { enroll_synth(c, target) }
+	set_synth_result_summary(c, id, 0)
+	return id
+}
+
+// The constant zero of `type`, for a defaulted parameter of a synthesized member.
+zero_literal_arg :: proc(c: ^Compiler, type: Type_Id) -> Expr {
+	literal := new(Expr_Literal, c.semantic_allocator)
+	literal.span = NO_SPAN
+	literal.kind = .Int
+	literal.type = type
+	literal.value_category = .Value
+	literal.const_value = int_const(c, 0)
+	return literal
 }
 
 // A synthesized member stays on its type once created, but only a use that
@@ -1187,6 +1138,21 @@ symbol_of :: proc(c: ^Compiler, id: Symbol_Id) -> ^Symbol {
 	return c.symbols[index]
 }
 
+// Static, thread-local, or file-scope storage: it outlives every procedure body.
+symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
+	return sym.duration != .None || (sym.decl != nil && sym.decl.top_level)
+}
+
+// How a diagnostic names such storage; a top-level declaration has no duration.
+storage_phrase :: proc(duration: Duration) -> string {
+	switch duration {
+	case .Thread_Local: return "`thread_local` storage"
+	case .Static:       return "`static` storage"
+	case .None:
+	}
+	return "file-scope storage"
+}
+
 new_type :: proc(c: ^Compiler, value: Type_Info) -> Type_Id {
 	init_semantic_stores(c)
 	id := Type_Id(len(c.types))
@@ -1209,121 +1175,105 @@ intern_proc_type :: proc(
 	param_cross_thread: []bool = nil,
 ) -> Type_Id {
 	init_semantic_stores(c)
-	hash := u64(0xcbf29ce484222325)
+	hash := HASH_OFFSET_BASIS
 	for parameter in parameters {
-		hash = (hash ~ u64(parameter)) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(parameter))
 	}
 	for mode in param_modes {
-		hash = (hash ~ u64(mode)) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(mode))
 	}
-	hash = (hash ~ u64(result)) * HASH_MULTIPLIER
+	hash = hash_mix(hash, u64(result))
 	// Every field the comparison below reads contributes, normalized the same
 	// way: same-shape procedures with distinct contracts would otherwise share
 	// one bucket and make each insertion scan and copy all of them.
-	hash = (hash ~ u64(proc_contract)) * HASH_MULTIPLIER
-	hash = (hash ~ u64(result_inout) ~ u64(c_vararg) << 1) * HASH_MULTIPLIER
+	hash = hash_mix(hash, u64(proc_contract))
+	hash = hash_mix(hash, u64(result_inout) ~ u64(c_vararg) << 1)
 	for index in 0 ..< len(convention) {
-		hash = (hash ~ u64(convention[index])) * HASH_MULTIPLIER
+		hash = hash_mix(hash, u64(convention[index]))
 	}
 	for value, index in param_resets {
-		if value { hash = (hash ~ u64(index + 1)) * HASH_MULTIPLIER }
+		if value { hash = hash_mix(hash, u64(index + 1)) }
 	}
 	for value, index in param_by_ptr {
-		if value { hash = (hash ~ u64(index + 1) << 16) * HASH_MULTIPLIER }
+		if value { hash = hash_mix(hash, u64(index + 1) << 16) }
 	}
 	for level, index in param_escapes {
 		if level != .Result {
-			hash = (hash ~ u64(index + 1) << 32 ~ u64(level)) * HASH_MULTIPLIER
+			hash = hash_mix(hash, u64(index + 1) << 32 ~ u64(level))
 		}
 	}
 	for value, index in param_cross_thread {
-		if value { hash = (hash ~ u64(index + 1) << 48) * HASH_MULTIPLIER }
+		if value { hash = hash_mix(hash, u64(index + 1) << 48) }
 	}
 	bucket := c.proc_types[hash]
 	for candidate in bucket {
 		info := c.types[candidate]
 		if info.convention == convention &&
-		   equal_type_ids(info.parameters, parameters) &&
-		   equal_param_modes(info.param_modes, param_modes) &&
+		   slice.equal(info.parameters, parameters) &&
+		   slice.equal(info.param_modes, param_modes) &&
 		   info.result == result &&
 		   info.result_inout == result_inout &&
-		   equal_reset_effects(info.param_resets, param_resets) &&
-		   equal_reset_effects(info.param_by_ptr, param_by_ptr) &&
-		   equal_escape_levels(info.param_escapes, param_escapes) &&
-		   equal_reset_effects(info.param_cross_thread, param_cross_thread) &&
+		   equal_padded(info.param_resets, param_resets, false) &&
+		   equal_padded(info.param_by_ptr, param_by_ptr, false) &&
+		   equal_padded(info.param_escapes, param_escapes, Escape_Level.Result) &&
+		   equal_padded(info.param_cross_thread, param_cross_thread, false) &&
 		   info.proc_contract == proc_contract &&
 		   info.c_vararg == c_vararg {
 			return candidate
 		}
 	}
-	parameter_copy := make([]Type_Id, len(parameters), c.semantic_allocator)
-	mode_copy := make([]Param_Mode, len(param_modes), c.semantic_allocator)
-	reset_copy: []bool
-	if has_reset_effect(param_resets) {
-		reset_copy = make([]bool, len(param_resets), c.semantic_allocator)
-		copy(reset_copy, param_resets)
-	}
-	by_ptr_copy: []bool
-	if has_reset_effect(param_by_ptr) {
-		by_ptr_copy = make([]bool, len(param_by_ptr), c.semantic_allocator)
-		copy(by_ptr_copy, param_by_ptr)
-	}
-	cross_copy: []bool
-	if has_reset_effect(param_cross_thread) {
-		cross_copy = make([]bool, len(param_cross_thread), c.semantic_allocator)
-		copy(cross_copy, param_cross_thread)
-	}
-	escape_copy: []Escape_Level
-	if has_escape_level(param_escapes) {
-		escape_copy = make([]Escape_Level, len(param_escapes), c.semantic_allocator)
-		copy(escape_copy, param_escapes)
-	}
-	copy(parameter_copy, parameters)
-	copy(mode_copy, param_modes)
 	id := new_type(c, Type_Info {
 		kind          = .Proc,
 		bits          = c.target.pointer_bits,
-		parameters    = parameter_copy,
-		param_modes   = mode_copy,
-		param_resets  = reset_copy,
-		param_escapes = escape_copy,
-		param_cross_thread = cross_copy,
+		parameters    = slice.clone(parameters, c.semantic_allocator),
+		param_modes   = slice.clone(param_modes, c.semantic_allocator),
+		param_resets  = clone_unless_default(param_resets, false, c.semantic_allocator),
+		param_escapes = clone_unless_default(param_escapes, Escape_Level.Result, c.semantic_allocator),
+		param_cross_thread = clone_unless_default(param_cross_thread, false, c.semantic_allocator),
 		proc_contract = proc_contract,
-		param_by_ptr  = by_ptr_copy,
+		param_by_ptr  = clone_unless_default(param_by_ptr, false, c.semantic_allocator),
 		c_vararg      = c_vararg,
 		result        = result,
 		result_inout  = result_inout,
 		convention    = convention,
 	})
-	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
-	copy(grown, bucket)
-	grown[len(bucket)] = id
-	c.proc_types[hash] = grown
+	bucket_append(c, &c.proc_types, hash, id)
 	return id
 }
 
-// A level vector is only stored when something in it is not the default, so an
-// unannotated signature interns exactly the type it always did.
+// A per-parameter list is stored only when something in it is not the default.
 @(private = "file")
-has_escape_level :: proc(levels: []Escape_Level) -> bool {
-	for level in levels {
-		if level != .Result {
-			return true
+clone_unless_default :: proc(values: []$T, default: T, allocator: mem.Allocator) -> []T {
+	for value in values {
+		if value != default {
+			return slice.clone(values, allocator)
 		}
 	}
-	return false
+	return nil
 }
 
+// Whether two per-parameter lists agree, where one too short, or absent, is at
+// the default for the parameters it lacks.
 @(private = "file")
-equal_escape_levels :: proc(a, b: []Escape_Level) -> bool {
+equal_padded :: proc(a, b: []$T, default: T) -> bool {
 	for index in 0 ..< max(len(a), len(b)) {
-		left := index < len(a) ? a[index] : Escape_Level.Result
-		right := index < len(b) ? b[index] : Escape_Level.Result
+		left := index < len(a) ? a[index] : default
+		right := index < len(b) ? b[index] : default
 		if left != right {
 			return false
 		}
 	}
 	return true
+}
+
+// Adds a newly interned type to the bucket its hash selects.
+@(private = "file")
+bucket_append :: proc(c: ^Compiler, buckets: ^map[u64][]Type_Id, hash: u64, id: Type_Id) {
+	bucket := buckets[hash]
+	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
+	copy(grown, bucket)
+	grown[len(bucket)] = id
+	buckets[hash] = grown
 }
 
 proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escape_Level {
@@ -1336,18 +1286,34 @@ proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escap
 	return info.param_escapes[index]
 }
 
-proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Param_Mode {
-	info := underlying_info(c, proc_type)
+// A parameter's mode, by value when the type records none for it.
+param_mode_at :: proc(info: ^Type_Info, index: int) -> Param_Mode {
 	return info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 }
 
-// design.md `@(escape=<level>)`: a callee may promise more than the type its
-// value is stored in asks, never less. Levels are part of procedure type
-// identity, but assigning a stricter type to a weaker one is safe — every
-// caller of the weaker type already meets the stricter obligation. Everything
-// else must match exactly; levels carry no ABI, so the assignment stays a
+proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Param_Mode {
+	return param_mode_at(underlying_info(c, proc_type), index)
+}
+
+// The procedure type a call goes through: the chosen overload's, or the callee
+// value's for an indirect call, which is where `@(escape=...)` matters most.
+call_proc_type :: proc(c: ^Compiler, v: ^Expr_Call) -> Type_Id {
+	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil {
+		return sym.proc_type
+	}
+	if base := expr_base(v.callee); base != nil {
+		return base.type
+	}
+	return INVALID_TYPE
+}
+
+symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mode {
+	return proc_parameter_mode(c, symbol.proc_type, index)
+}
+
+// design.md `@(escape=<level>)`. Levels carry no ABI, so the assignment is a
 // plain pointer copy.
-proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+proc_type_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	a := type_of(c, from)
 	b := type_of(c, to)
 	if a == nil || b == nil || a.kind != .Proc || b.kind != .Proc {
@@ -1358,18 +1324,16 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	   !parameters_weaken_to(c, a, b) ||
 	   a.result != b.result ||
 	   a.result_inout != b.result_inout ||
-	   !equal_reset_effects(a.param_resets, b.param_resets) ||
-	   !equal_reset_effects(a.param_by_ptr, b.param_by_ptr) {
+	   !equal_padded(a.param_resets, b.param_resets, false) ||
+	   !equal_padded(a.param_by_ptr, b.param_by_ptr, false) {
 		return false
 	}
-	// design.md "@(cross_thread)": calls through the destination may check an
-	// argument the procedure does not need checked, never skip one it does.
 	for index in 0 ..< len(a.parameters) {
+		// design.md "@(cross_thread)": calls through the destination may check an
+		// argument the procedure does not need checked, never skip one it does.
 		if proc_param_crosses_thread(c, from, index) && !proc_param_crosses_thread(c, to, index) {
 			return false
 		}
-	}
-	for index in 0 ..< len(a.parameters) {
 		have, want := proc_param_escape(c, from, index), proc_param_escape(c, to, index)
 		// An inferred contract may meet a written `none`; `check_proc_contracts`
 		// checks it once inference settles.
@@ -1387,45 +1351,19 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 // one taking `^Self`, so a method value stores in a `proc(^T)` variable.
 @(private = "file")
 parameters_weaken_to :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
-	if equal_type_ids(a.parameters, b.parameters) && equal_param_modes(a.param_modes, b.param_modes) {
-		return true
-	}
 	if len(a.parameters) != len(b.parameters) || len(a.param_modes) != len(b.param_modes) {
 		return false
 	}
 	for index in 0 ..< len(a.parameters) {
 		from, to := a.parameters[index], b.parameters[index]
-		from_mode := index < len(a.param_modes) ? a.param_modes[index] : Param_Mode.Value
-		to_mode := index < len(b.param_modes) ? b.param_modes[index] : Param_Mode.Value
+		from_mode := param_mode_at(a, index)
+		to_mode := param_mode_at(b, index)
 		if from == to && from_mode == to_mode {
 			continue
 		}
-		if from_mode != .Borrow || to_mode != .Value || to != pointer_to(c, from, false) {
-			return false
-		}
-	}
-	return true
-}
-
-@(private = "file")
-has_reset_effect :: proc(resets: []bool) -> bool {
-	for value in resets {
-		if value {
-			return true
-		}
-	}
-	return false
-}
-
-// A signature with no reset-marked parameter is the same type whether the list
-// is absent or all false, so an ordinary procedure never interns twice.
-@(private = "file")
-equal_reset_effects :: proc(a, b: []bool) -> bool {
-	limit := max(len(a), len(b))
-	for index in 0 ..< limit {
-		left := index < len(a) && a[index]
-		right := index < len(b) && b[index]
-		if left != right {
+		target := type_of(c, to)
+		if from_mode != .Borrow || to_mode != .Value ||
+		   target.kind != .Pointer || target.mutable || target.element != from {
 			return false
 		}
 	}
@@ -1439,66 +1377,63 @@ proc_param_crosses_thread :: proc(c: ^Compiler, proc_type: Type_Id, index: int) 
 	return info != nil && index < len(info.param_cross_thread) && info.param_cross_thread[index]
 }
 
-// Whether parameter `index` of this procedure type may reset the allocator
-// region it receives.
 proc_param_resets :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> bool {
 	info := underlying_info(c, proc_type)
 	return info != nil && index < len(info.param_resets) && info.param_resets[index]
 }
 
-@(private = "file")
-equal_type_ids :: proc(a, b: []Type_Id) -> bool {
-	if len(a) != len(b) { return false }
-	for value, index in a { if value != b[index] { return false } }
-	return true
-}
-
-@(private = "file")
-equal_param_modes :: proc(a, b: []Param_Mode) -> bool {
-	if len(a) != len(b) { return false }
-	for value, index in a { if value != b[index] { return false } }
-	return true
-}
-
-intern_type :: proc(c: ^Compiler, key: Type_Key, value: Type_Info) -> Type_Id {
-	init_semantic_stores(c)
+// The identity of a type made here is its key: everything else in its
+// `Type_Info` follows from that, so who interns it first cannot show.
+intern_type :: proc(c: ^Compiler, key: Type_Key) -> Type_Id {
 	if id, ok := c.type_by_shape[key]; ok {
 		return id
 	}
-	id := new_type(c, value)
+	id := new_type(c, Type_Info {
+		kind    = key.kind,
+		element = key.element,
+		key     = key.key,
+		count   = key.count,
+		mutable = key.mutable,
+	})
+	if key.kind in (Type_Kinds{.Pointer, .C_Pointer, .Box}) {
+		c.types[id].bits = c.target.pointer_bits
+	}
 	c.type_by_shape[key] = id
 	return id
 }
 
-// design.md "Anonymous records": `(key: string_view, value: int)` has no
-// declaration site, so its identity is the ordered sequence of its
-// `(field name, field type)` pairs. Field order matters and field names are
-// part of the type, which is exactly the vector compared here.
-Anon_Record_Field :: struct {
+// One field or alternative of an anonymous type, whose identity is the ordered
+// sequence of these (design.md "Anonymous records", "Anonymous unions"). A
+// payloadless alternative's type is `TYPE_VOID`, as a named union's is.
+Anon_Member :: struct {
 	name: Identifier_Id,
 	type: Type_Id,
+}
+
+@(private = "file")
+anon_hash :: proc(members: []Anon_Member) -> u64 {
+	hash := HASH_OFFSET_BASIS
+	for member in members {
+		hash = hash_mix(hash, u64(member.name))
+		hash = hash_mix(hash, u64(member.type))
+	}
+	return hash
 }
 
 // Interns one anonymous record. Takes specs rather than field symbols so a
 // cache hit does not leak the orphan `Symbol`s a caller would have had to build
 // speculatively.
-anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
-	init_semantic_stores(c)
-	hash := u64(0xcbf29ce484222325)
-	for field in fields {
-		hash = (hash ~ u64(field.name)) * HASH_MULTIPLIER
-		hash = (hash ~ u64(field.type)) * HASH_MULTIPLIER
-	}
-	bucket := c.anon_record_types[hash]
-	for candidate in bucket {
-		info := type_of(c, candidate)
-		if info == nil || len(info.fields) != len(fields) {
+anon_record_type :: proc(c: ^Compiler, fields: []Anon_Member) -> Type_Id {
+	hash := anon_hash(fields)
+	for candidate in c.anon_record_types[hash] {
+		info := c.types[candidate]
+		if len(info.fields) != len(fields) {
 			continue
 		}
 		same := true
 		for field, index in fields {
 			member := symbol_of(c, info.fields[index])
-			if member == nil || member.name != field.name || member.type != field.type {
+			if member.name != field.name || member.type != field.type {
 				same = false
 				break
 			}
@@ -1508,47 +1443,34 @@ anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
 		}
 	}
 
-	// The counterpart first: interning it may grow this bucket.
 	unlabelled := INVALID_TYPE
 	if len(fields) >= 2 && !name_is_positional(identifier_text(c, fields[0].name)) {
-		positional := make([]Anon_Record_Field, len(fields), context.temp_allocator)
+		positional := make([]Anon_Member, len(fields), context.temp_allocator)
 		for field, index in fields {
 			positional[index] = {name = positional_field_name(c, index), type = field.type}
 		}
 		unlabelled = anon_record_type(c, positional)
-		bucket = c.anon_record_types[hash]
 	}
 
-	id := new_type(c, Type_Info{kind = .Struct, anonymous_record = true})
 	members := make([]Symbol_Id, len(fields), c.semantic_allocator)
 	for field, index in fields {
-		members[index] = new_symbol(c, Symbol {
-			name   = field.name,
-			span   = no_span(),
-			kind   = .Field,
-			type   = field.type,
-			index  = u32(index),
-			public = true,
-		})
+		members[index] = new_field(c, identifier_text(c, field.name), field.type, index, public = true)
 	}
-	display := intern_identifier(c, anon_record_display(c, fields))
-	label := anon_record_label(c, fields)
-	if info := type_of(c, id); info != nil {
-		info.fields = members
-		info.name = display
-		info.backend_label = label
-		info.unlabelled = unlabelled
-	}
-	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
-	copy(grown, bucket)
-	grown[len(bucket)] = id
-	c.anon_record_types[hash] = grown
+	id := new_type(c, Type_Info {
+		kind             = .Struct,
+		anonymous_record = true,
+		fields           = members,
+		name             = intern_identifier(c, anon_record_display(c, fields)),
+		backend_label    = anon_record_label(c, fields),
+		unlabelled       = unlabelled,
+	})
+	bucket_append(c, &c.anon_record_types, hash, id)
 	return id
 }
 
 @(private = "file")
-anon_record_display :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
-	b := strings.builder_make(c.semantic_allocator)
+anon_record_display :: proc(c: ^Compiler, fields: []Anon_Member) -> string {
+	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "(")
 	for field, index in fields {
 		if index > 0 {
@@ -1569,7 +1491,7 @@ anon_record_display :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string
 // display name, so two packages' unrelated `Token` types cannot collide in a
 // generated symbol merely because both print as `Token`.
 @(private = "file")
-anon_record_label :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
+anon_record_label :: proc(c: ^Compiler, fields: []Anon_Member) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	strings.write_string(&b, "anon")
 	for field in fields {
@@ -1578,32 +1500,18 @@ anon_record_label :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
 	return strings.to_string(b)
 }
 
-// design.md "Anonymous unions": `(left: int | right:)` is identified, as an
-// anonymous record is, by its ordered `(label, payload)` vector. A payloadless
-// alternative's payload is `TYPE_VOID`, as a named union's is.
-Anon_Union_Variant :: struct {
-	name:    Identifier_Id,
-	payload: Type_Id,
-}
-
 // Interns one anonymous union. It carries no attributes, so it has no zero and
 // no failure variant, and it is never move-only on its own account.
-anon_union_type :: proc(c: ^Compiler, variants: []Anon_Union_Variant) -> Type_Id {
-	init_semantic_stores(c)
-	hash := u64(0x84222325cbf29ce4)
-	for variant in variants {
-		hash = (hash ~ u64(variant.name)) * HASH_MULTIPLIER
-		hash = (hash ~ u64(variant.payload)) * HASH_MULTIPLIER
-	}
-	bucket := c.anon_union_types[hash]
-	for candidate in bucket {
-		info := type_of(c, candidate)
-		if info == nil || len(info.variants) != len(variants) {
+anon_union_type :: proc(c: ^Compiler, variants: []Anon_Member) -> Type_Id {
+	hash := anon_hash(variants)
+	for candidate in c.anon_union_types[hash] {
+		info := c.types[candidate]
+		if len(info.variants) != len(variants) {
 			continue
 		}
 		same := true
 		for variant, index in variants {
-			if info.variant_names[index] != variant.name || info.variants[index] != variant.payload {
+			if info.variant_names[index] != variant.name || info.variants[index] != variant.type {
 				same = false
 				break
 			}
@@ -1615,43 +1523,40 @@ anon_union_type :: proc(c: ^Compiler, variants: []Anon_Union_Variant) -> Type_Id
 
 	names := make([]Identifier_Id, len(variants), c.semantic_allocator)
 	payloads := make([]Type_Id, len(variants), c.semantic_allocator)
-	display := strings.builder_make(c.semantic_allocator)
+	display := strings.builder_make(context.temp_allocator)
 	label := strings.builder_make(c.semantic_allocator)
 	strings.write_string(&display, "(")
 	strings.write_string(&label, "anon_union")
 	for variant, index in variants {
 		names[index] = variant.name
-		payloads[index] = variant.payload
+		payloads[index] = variant.type
 		if index > 0 {
 			strings.write_string(&display, " | ")
 		}
 		fmt.sbprintf(&display, "%s:", identifier_text(c, variant.name))
-		if variant.payload != TYPE_VOID {
-			fmt.sbprintf(&display, " %s", type_name(c, variant.payload))
+		if variant.type != TYPE_VOID {
+			fmt.sbprintf(&display, " %s", type_name(c, variant.type))
 		}
 		// The structural sort key, not the display name, as for records.
-		payload_key := variant.payload == TYPE_VOID ? "void" : typeid_sort_key(c, variant.payload)
+		payload_key := variant.type == TYPE_VOID ? "void" : typeid_sort_key(c, variant.type)
 		fmt.sbprintf(&label, ".%s.%s", identifier_text(c, variant.name), payload_key)
 	}
 	strings.write_string(&display, ")")
-	id := new_type(c, Type_Info{kind = .Union, anonymous_union = true})
-	if info := type_of(c, id); info != nil {
-		info.variants = payloads
-		info.variant_names = names
-		info.name = intern_identifier(c, strings.to_string(display))
-		info.backend_label = strings.to_string(label)
-	}
-	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
-	copy(grown, bucket)
-	grown[len(bucket)] = id
-	c.anon_union_types[hash] = grown
+	id := new_type(c, Type_Info {
+		kind            = .Union,
+		anonymous_union = true,
+		variants        = payloads,
+		variant_names   = names,
+		name            = intern_identifier(c, strings.to_string(display)),
+		backend_label   = strings.to_string(label),
+	})
+	bucket_append(c, &c.anon_union_types, hash, id)
 	return id
 }
 
 // An interned type by shape, without creating one. The backend uses this where
 // making a type mid-emission would grow the store it is walking.
 lookup_type :: proc(c: ^Compiler, key: Type_Key) -> (Type_Id, bool) {
-	init_semantic_stores(c)
 	id, ok := c.type_by_shape[key]
 	return id, ok
 }
@@ -1661,33 +1566,34 @@ lookup_type :: proc(c: ^Compiler, key: Type_Key) -> (Type_Id, bool) {
 // weakening a `^mut T` to a `^T` emits nothing (design.md "Capabilities and the
 // one rule").
 pointer_to :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
-	return intern_type(
-		c,
-		Type_Key{kind = .Pointer, element = element, mutable = mutable},
-		Type_Info{kind = .Pointer, element = element, mutable = mutable, bits = c.target.pointer_bits},
-	)
-}
-
-pointer_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := underlying_info(c, id)
-	return info != nil && info.kind == .Pointer && info.mutable
+	return intern_type(c, Type_Key{kind = .Pointer, element = element, mutable = mutable})
 }
 
 // The one backend type a struct-shaped carrier's two capabilities share.
 // Mutability is static and leaves the ABI unchanged, so weakening is a no-op at
 // the value level rather than a copy through a second shape.
 carrier_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	if underlying_kind(c, id) == .Dyn {
-		return dyn_abi_type(c, id)
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil || !info.mutable {
+		return under
 	}
-	return slice_abi_type(c, id)
+	#partial switch info.kind {
+	case .Slice:
+		readonly, found := lookup_type(c, Type_Key{kind = .Slice, element = info.element, mutable = false})
+		assert(found, "a `[]mut T` was interned without the read-only variant it shares an ABI with")
+		return readonly
+	case .Dyn:
+		return info.dyn_read_only
+	}
+	return under
 }
 
 // A mutable carrier implicitly weakens to a read-only one of the same shape; a
 // read-only carrier never strengthens. Slices, pointers, and dyn views share
 // this semantic rule and one representation per shape.
 carrier_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
-	// Nominal, like `proc_escape_weakens_to`: reaching through `distinct` would
+	// Nominal, like `proc_type_weakens_to`: reaching through `distinct` would
 	// make two unrelated distinct carriers interchangeable.
 	from_info := type_of(c, from)
 	to_info := type_of(c, to)
@@ -1709,770 +1615,25 @@ carrier_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
 // `[^]T` is a C pointer to T value(s) (design.md "C pointers"), an
 // address with neither a length nor a read-only capability.
 c_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
-	return intern_type(
-		c,
-		Type_Key{kind = .C_Pointer, element = element},
-		Type_Info{kind = .C_Pointer, element = element, bits = c.target.pointer_bits},
-	)
+	return intern_type(c, Type_Key{kind = .C_Pointer, element = element})
 }
 
 // `Box(T)`: an owner of one allocated `T` (design.md "Owned values"). Its
 // identity is its element, as for `[dynamic]T`; the allocator is a run-time
 // property of the allocation, not of the type.
 box_of :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
-	return intern_type(
-		c,
-		Type_Key{kind = .Box, element = element},
-		Type_Info{kind = .Box, element = element, bits = c.target.pointer_bits},
-	)
-}
-
-type_is_box :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return underlying_kind(c, id) == .Box
+	return intern_type(c, Type_Key{kind = .Box, element = element})
 }
 
 array_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
-	return intern_type(
-		c,
-		Type_Key{kind = .Array, element = element, count = count},
-		Type_Info{kind = .Array, element = element, count = count},
-	)
+	return intern_type(c, Type_Key{kind = .Array, element = element, count = count})
 }
 
 // design.md "SIMD vectors": `Simd(T, N)`. The element and lane count are the
 // whole identity, exactly as for an array — the difference is layout, the
 // operator set, and that it is not a sequence.
 simd_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
-	return intern_type(
-		c,
-		Type_Key{kind = .Simd, element = element, count = count},
-		Type_Info{kind = .Simd, element = element, count = count},
-	)
-}
-
-type_of :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
-	index := int(id)
-	if index < 0 || index >= len(c.types) {
-		return nil
-	}
-	return c.types[index]
-}
-
-type_kind :: proc(c: ^Compiler, id: Type_Id) -> Type_Kind {
-	info := type_of(c, id)
-	return info == nil ? .Invalid : info.kind
-}
-
-// The number of value bits in a scalar type. An enum reports its backing width.
-type_bits :: proc(c: ^Compiler, id: Type_Id) -> int {
-	info := underlying_info(c, id)
-	if info == nil {
-		return 0
-	}
-	return info.kind == .Enum ? type_bits(c, info.element) : int(info.bits)
-}
-
-type_signed :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := underlying_info(c, id)
-	if info == nil {
-		return false
-	}
-	return info.kind == .Enum ? type_signed(c, info.element) : info.signed
-}
-
-// A distinct type is a fresh identity but keeps the *shape* of what it wraps,
-// which is what layout, folding, and lowering need.
-type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	current := id
-	// A valid chain cannot visit more types than the compilation owns, which
-	// bounds the walk without an arbitrary nesting limit. An invalid cycle
-	// returns a member of itself; the finite-size pass diagnoses it.
-	for _ in 0 ..< len(c.types) + 1 {
-		info := type_of(c, current)
-		if info == nil || info.kind != .Distinct || info.element == INVALID_TYPE {
-			return current
-		}
-		current = info.element
-	}
-	return current
-}
-
-// A distinct type answers structural questions through what it wraps, so these
-// two are the pairing almost every query wants.
-// grammar.md "Records": a `_` field is padding, a member with no name.
-field_is_padding :: proc(c: ^Compiler, field: Symbol_Id) -> bool {
-	sym := symbol_of(c, field)
-	return sym != nil && sym.kind == .Field && sym.name == INVALID_IDENTIFIER
-}
-
-// design.md "Anonymous records": an unlabelled record's fields are named by
-// their positions, `0`, `1`, ..., which no selector or literal element can
-// spell. The names keep it apart from every labelled record when interned.
-positional_field_name :: proc(c: ^Compiler, position: int) -> Identifier_Id {
-	text := fmt.tprintf("%d", position)
-	if id, ok := c.identifier_by_name[text]; ok {
-		return id
-	}
-	return intern_identifier(c, strings.clone(text, c.semantic_allocator))
-}
-
-field_is_positional :: proc(c: ^Compiler, field: Symbol_Id) -> bool {
-	sym := symbol_of(c, field)
-	return sym != nil && sym.kind == .Field && name_is_positional(identifier_text(c, sym.name))
-}
-
-@(private = "file")
-name_is_positional :: proc(text: string) -> bool {
-	return len(text) > 0 && text[0] >= '0' && text[0] <= '9'
-}
-
-// design.md "Implicit type conversions": a labelled anonymous record converts
-// to the unlabelled one with its field types, dropping the names. Nothing
-// converts the other way, or between two sets of names.
-record_drops_labels_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	info := type_of(c, from)
-	return info != nil && info.anonymous_record && info.unlabelled != INVALID_TYPE && info.unlabelled == to
-}
-
-// The type whose backend representation a record shares: the unlabelled
-// counterpart of a labelled anonymous record, so dropping the labels emits
-// nothing, as weakening a carrier emits nothing.
-record_abi_type :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	info := type_of(c, type)
-	if info != nil && info.anonymous_record && info.unlabelled != INVALID_TYPE {
-		return info.unlabelled
-	}
-	return type
-}
-
-// What reflection and formatting call a field: a positional field has no name.
-field_label :: proc(c: ^Compiler, field: Symbol_Id) -> string {
-	if field_is_positional(c, field) {
-		return ""
-	}
-	sym := symbol_of(c, field)
-	return sym == nil ? "" : identifier_text(c, sym.name)
-}
-
-// A record's fields without its padding: what a literal's positional elements,
-// destructuring, and reflection see.
-named_fields :: proc(c: ^Compiler, info: ^Type_Info) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, len(info.fields), c.semantic_allocator)
-	for field in info.fields {
-		if !field_is_padding(c, field) {
-			append(&out, field)
-		}
-	}
-	return out[:]
-}
-
-// The slot of a record's `position`-th named field, which a padding field
-// before it moves past its position.
-named_field_slot :: proc(c: ^Compiler, info: ^Type_Info, position: int) -> int {
-	seen := 0
-	for field, slot in info.fields {
-		if field_is_padding(c, field) {
-			continue
-		}
-		if seen == position {
-			return slot
-		}
-		seen += 1
-	}
-	return position
-}
-
-underlying_info :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
-	return type_of(c, type_underlying(c, id))
-}
-
-underlying_kind :: proc(c: ^Compiler, id: Type_Id) -> Type_Kind {
-	return type_kind(c, type_underlying(c, id))
-}
-
-type_is_untyped :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, id) {
-	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
-	     .Untyped_String:
-		return true
-	}
-	return false
-}
-
-type_is_integer :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Int, .Untyped_Int:
-		return true
-	}
-	return false
-}
-
-type_is_rune :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Rune, .Untyped_Rune:
-		return true
-	}
-	return false
-}
-
-// Runes compute as the signed `i32` they are stored in.
-integer_computes_signed :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_signed(c, type) || type_is_rune(c, type)
-}
-
-type_is_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Float, .Untyped_Float:
-		return true
-	}
-	return false
-}
-
-type_is_boolean :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Bool, .Untyped_Bool:
-		return true
-	}
-	return false
-}
-
-type_is_enum :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return underlying_kind(c, id) == .Enum
-}
-
-type_is_pointer :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Pointer, .Raw_Pointer, .Proc:
-		return true
-	}
-	return false
-}
-
-// Integer-like for the purposes of arithmetic: an enum is deliberately absent
-// (design.md "Arithmetic operators").
-type_is_numeric :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return type_is_integer(c, id) || type_is_float(c, id) || type_is_rune(c, id)
-}
-
-type_is_aggregate :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Struct, .Array:
-		return true
-	}
-	return false
-}
-
-// design.md "Comparison operators". Aggregates are comparable when every leaf
-// is; that recursion is what the backend then generates.
-type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	seen: Type_Walk
-	defer delete(seen)
-	return type_is_comparable_walk(c, id, &seen)
-}
-
-// The walk is guarded because a record that contains itself by value is
-// diagnosed but still reaches body checking.
-@(private = "file")
-type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
-	// design.md "Comparison operators": a type's own `==` makes it comparable,
-	// whatever its fields are.
-	if type_own_equality(c, id) != INVALID_SYMBOL {
-		return true
-	}
-	under := type_underlying(c, id)
-	info := type_of(c, under)
-	if info == nil {
-		return false
-	}
-	if !type_walk_enter(seen, under, info) {
-		return true
-	}
-	#partial switch info.kind {
-	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .C_Pointer, .Proc, .Enum,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
-	     .Untyped_String:
-		return true
-	// A payloadless union variant carries `void`, and two of them are equal when
-	// their tags are.
-	case .Void:
-		return true
-	// `string` and `string_view` values are comparable and ordered, lexically
-	// byte-wise (design.md). A `cstring_view` is not: it promises no encoding and
-	// carries no length, so comparing two of them would compare addresses.
-	case .String, .String_View:
-		return true
-	// design.md "Allocation failure": an error code compares with its zero, no
-	// failure. An `Allocator` handle is comparable for the same reason a pointer
-	// is.
-	case .Allocator, .Allocator_Error:
-		return true
-	// design.md: two `type` values support `==` and `!=` during compilation, and
-	// `typeid` is an ordinary runtime scalar. Neither has an ordering.
-	case .Type, .Typeid:
-		return true
-	case .Array:
-		return type_is_comparable_walk(c, info.element, seen)
-	case .Struct:
-		// design.md "Capture literals": a callable is called, not compared.
-		if type_is_capture_record(c, under) {
-			return false
-		}
-		for field in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil || !type_is_comparable_walk(c, symbol.type, seen) {
-				return false
-			}
-		}
-		return true
-	case .Union:
-		// Comparable against nil always, and against another value of the same
-		// union when every variant is itself comparable.
-		for variant in info.variants {
-			if !type_is_comparable_walk(c, variant, seen) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,
-	     .Untyped_String, .String, .String_View:
-		return true
-	// Ordering compares the addresses as unsigned `uintptr` values, producing a
-	// total order within one execution (design.md).
-	case .Pointer, .C_Pointer, .Raw_Pointer:
-		return true
-	case .Struct:
-		seen: Type_Walk
-		defer delete(seen)
-		return record_order_blocker_walk(c, id, &seen) == ""
-	}
-	return false
-}
-
-// design.md "Comparison operators": an anonymous record is ordered when every
-// field is, by the built-in operators. Answers what stops it, as a diagnostic
-// note, or "" when nothing does.
-record_order_blocker :: proc(c: ^Compiler, id: Type_Id) -> string {
-	info := underlying_info(c, id)
-	if info == nil || info.kind != .Struct || !info.anonymous_record {
-		return ""
-	}
-	seen: Type_Walk
-	defer delete(seen)
-	return record_order_blocker_walk(c, id, &seen)
-}
-
-// `seen` holds the records being walked, so one met again is a cycle: a record
-// that holds itself by value through a `distinct` type is diagnosed, but still
-// reaches body checking. A record met twice side by side is no cycle.
-@(private = "file")
-record_order_blocker_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> string {
-	under := type_underlying(c, id)
-	info := type_of(c, under)
-	if info == nil || info.kind != .Struct || !info.anonymous_record {
-		return "is not an anonymous record"
-	}
-	if !type_walk_enter(seen, under, info) {
-		return "holds itself by value"
-	}
-	defer delete_key(seen, under)
-	for field, index in info.fields {
-		symbol := symbol_of(c, field)
-		if symbol == nil {
-			return "a field's type did not resolve"
-		}
-		why := ""
-		field_ordered := false
-		if underlying_kind(c, symbol.type) == .Struct {
-			field_ordered = record_order_blocker_walk(c, symbol.type, seen) == ""
-		} else {
-			field_ordered = type_is_ordered(c, symbol.type)
-		}
-		if type_declares_comparison(c, symbol.type) {
-			why = "declares a comparison operator of its own"
-		} else if !field_ordered {
-			why = "is not ordered"
-		} else {
-			continue
-		}
-		which := fmt.tprintf("field `%s`", identifier_text(c, symbol.name))
-		if field_is_positional(c, field) {
-			position := index + 1
-			suffix := "th"
-			if position % 100 < 11 || position % 100 > 13 {
-				switch position % 10 {
-				case 1: suffix = "st"
-				case 2: suffix = "nd"
-				case 3: suffix = "rd"
-				}
-			}
-			which = fmt.tprintf("%d%s field", position, suffix)
-		}
-		return fmt.tprintf("its %s is `%s`, which %s", which, type_name(c, symbol.type), why)
-	}
-	return ""
-}
-
-// Whether the type declares a comparison operator of its own over two of its
-// values. A group declares one when a member does, and a `delegate` does when
-// it forwards, however indirectly, to a user operator rather than the built-in
-// one (design.md "Delegating operators"). A `distinct` type that delegates
-// nothing compares by its underlying built-in operators.
-@(private = "file")
-type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	for text in ([6]string{"==", "!=", "<", "<=", ">", ">="}) {
-		callable, _ := inherent_self_operator(c, id, text)
-		if sym := symbol_of(c, callable); sym != nil && !operator_is_builtin(c, sym) {
-			return true
-		}
-	}
-	return false
-}
-
-// A delegated operator with no target is the built-in one; one with a target
-// forwards to that operator, which may itself delegate.
-@(private = "file")
-operator_is_builtin :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
-	current := sym
-	for _ in 0 ..< len(c.symbols) + 1 {
-		if current == nil || !current.delegated {
-			return false
-		}
-		if current.delegate_target == INVALID_SYMBOL {
-			return true
-		}
-		current = symbol_of(c, current.delegate_target)
-	}
-	return false
-}
-
-// The type an untyped value takes when nothing else selects one
-// (design.md "Unfixed constants").
-default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	#partial switch type_kind(c, id) {
-	case .Untyped_Int:
-		return TYPE_INT
-	case .Untyped_Float:
-		return TYPE_F64
-	case .Untyped_Bool:
-		return TYPE_BOOL
-	case .Untyped_Rune:
-		return TYPE_RUNE
-	case .Untyped_Nil:
-		return INVALID_TYPE // `x := nil` has no type to infer
-	case .Untyped_String:
-		// design.md "string type": an untyped string literal defaults to the
-		// owning `string`, and a `string_view` parameter borrows it from there.
-		return TYPE_STRING
-	}
-	return id
-}
-
-// Whether any component of this type never resolved. Told apart from
-// "unsupported" so a milestone answer is not reported for a component that was
-// already rejected where it was written.
-type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	seen: Type_Walk
-	defer delete(seen)
-	return type_contains_invalid(c, id, &seen)
-}
-
-// The nominal types a walk over a type's components has entered. A recursive
-// type can only refer back to itself through one, so a type met again answers
-// the walk's neutral value: its own declaration is checked once, and a walk
-// stops at its first decisive answer, so a finished visit was neutral too.
-Type_Walk :: map[Type_Id]struct{}
-
-// Whether `id` is new to the walk, recording it when it is nominal.
-type_walk_enter :: proc(seen: ^Type_Walk, id: Type_Id, info: ^Type_Info) -> bool {
-	#partial switch info.kind {
-	case .Struct, .Union, .Distinct:
-		if id in seen {
-			return false
-		}
-		seen[id] = {}
-	}
-	return true
-}
-
-@(private = "file")
-type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
-	if id == INVALID_TYPE {
-		return true
-	}
-	info := type_of(c, id)
-	if info == nil || !type_walk_enter(seen, id, info) {
-		return false
-	}
-	// Exhaustive on purpose: a new composed `Type_Kind` must not quietly answer
-	// "no invalid part" the way a scalar correctly does.
-	switch info.kind {
-	case .Invalid:
-		return true
-	case .Void, .Bool, .Int, .Float, .Rune, .Enum, .Raw_Pointer, .Typeid,
-	     .String, .String_View, .CString_View, .Dyn, .Interface, .Type,
-	     .Allocator, .Allocator_Error,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
-	     .Untyped_String:
-		// No components, so nothing to be invalid below the type itself.
-		return false
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
-		return type_contains_invalid(c, info.element, seen)
-	case .Map:
-		return type_contains_invalid(c, info.key, seen) ||
-		       type_contains_invalid(c, info.element, seen)
-	case .Union:
-		for variant in info.variants {
-			if type_contains_invalid(c, variant, seen) {
-				return true
-			}
-		}
-	case .Struct:
-		for field in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil || type_contains_invalid(c, symbol.type, seen) {
-				return true
-			}
-		}
-	case .Proc:
-		for parameter in info.parameters {
-			if type_contains_invalid(c, parameter, seen) {
-				return true
-			}
-		}
-		// design.md: a procedure with no result carries INVALID_TYPE for one, which
-		// is the absence of a result rather than a type that failed to resolve.
-		return info.result != INVALID_TYPE && type_contains_invalid(c, info.result, seen)
-	}
-	return false
-}
-
-type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	seen: Type_Walk
-	defer delete(seen)
-	return type_is_supported_walk(c, id, &seen)
-}
-
-@(private = "file")
-type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
-	info := type_of(c, id)
-	if info == nil {
-		return false
-	}
-	if !type_walk_enter(seen, id, info) {
-		return true
-	}
-	if info.descriptor {
-		return false // a descriptor exists only during compilation
-	}
-	#partial switch info.kind {
-	case .Invalid:
-		return false
-	case .Void, .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Type,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
-	     .Untyped_String:
-		return true
-	case .Typeid:
-		return true
-	case .Dyn:
-		return true
-	case .Allocator, .Allocator_Error:
-		return true
-	case .String, .String_View, .CString_View:
-		// Runtime carriers; their borrow provenance is checked by
-		// `src/borrow.odin` rather than restricted here.
-		return true
-	case .Slice:
-		return type_is_supported_walk(c, info.element, seen)
-	case .C_Pointer:
-		// design.md "C pointers": a documented trust boundary, not an unsupported
-		// type — no length, no capability, and no lifetime check after conversion.
-		return type_is_supported_walk(c, info.element, seen)
-	case .Interface:
-		return false
-	case .Dynamic_Array, .Box:
-		return type_is_supported_walk(c, info.element, seen)
-	case .Map:
-		return type_is_supported_walk(c, info.key, seen) &&
-		       type_is_supported_walk(c, info.element, seen)
-	case .Union:
-		for variant in info.variants {
-			if !type_is_supported_walk(c, variant, seen) {
-				return false
-			}
-		}
-		return true
-	case .Pointer, .Array, .Simd, .Distinct:
-		return type_is_supported_walk(c, info.element, seen)
-	case .Enum:
-		return true
-	case .Struct:
-		for field in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil || !type_is_supported_walk(c, symbol.type, seen) {
-				return false
-			}
-		}
-		return true
-	case .Proc:
-		for parameter in info.parameters {
-			if !type_is_supported_walk(c, parameter, seen) {
-				return false
-			}
-		}
-		if info.result != INVALID_TYPE && !type_is_supported_walk(c, info.result, seen) {
-			return false
-		}
-		return true
-	}
-	return false
-}
-
-// Indexed by `Type_Id`, so a new predeclared type is added here beside its
-// constant instead of in a third switch that has to be kept in step.
-// `TYPE_ALLOCATOR` and `TYPE_ALLOCATOR_ERROR` are deliberately absent: they
-// print under the nominal name `core:mem` binds to them.
-@(private = "file")
-PREDECLARED_NAMES := [int(FIRST_DYNAMIC_TYPE)]string {
-	INVALID_TYPE         = "<invalid>",
-	TYPE_VOID            = "()",
-	TYPE_BOOL            = "bool",
-	TYPE_I8              = "i8",
-	TYPE_I16             = "i16",
-	TYPE_I32             = "i32",
-	TYPE_I64             = "i64",
-	TYPE_I128            = "i128",
-	TYPE_U8              = "u8",
-	TYPE_U16             = "u16",
-	TYPE_U32             = "u32",
-	TYPE_U64             = "u64",
-	TYPE_U128            = "u128",
-	TYPE_INT             = "int",
-	TYPE_UINT            = "uint",
-	TYPE_UINTPTR         = "uintptr",
-	TYPE_F16             = "f16",
-	TYPE_F32             = "f32",
-	TYPE_F64             = "f64",
-	TYPE_RUNE            = "rune",
-	TYPE_RAWPTR          = "rawptr",
-	TYPE_TYPE            = "type",
-	TYPE_STRING          = "string",
-	TYPE_TYPEID          = "typeid",
-	TYPE_UNTYPED_INT     = "untyped int",
-	TYPE_UNTYPED_FLOAT   = "untyped float",
-	TYPE_UNTYPED_BOOL    = "untyped bool",
-	TYPE_UNTYPED_RUNE    = "untyped rune",
-	TYPE_UNTYPED_NIL     = "untyped nil",
-	TYPE_UNTYPED_STRING  = "untyped string",
-	TYPE_STRING_VIEW     = "string_view",
-	TYPE_CSTRING_VIEW    = "cstring_view",
-}
-
-type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
-	return type_name_alloc(c, id, c.semantic_allocator)
-}
-
-// Queries format names in their own arena without allocating semantic state.
-type_name_alloc :: proc(c: ^Compiler, id: Type_Id, allocator: mem.Allocator) -> string {
-	if int(id) < len(PREDECLARED_NAMES) && PREDECLARED_NAMES[id] != "" {
-		return PREDECLARED_NAMES[id]
-	}
-	info := type_of(c, id)
-	if info == nil {
-		return "<invalid>"
-	}
-	if info.name != INVALID_IDENTIFIER {
-		return identifier_text(c, info.name)
-	}
-	#partial switch info.kind {
-	case .Pointer:
-		return fmt.aprintf("^%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .C_Pointer:
-		return fmt.aprintf("[^]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Array:
-		return fmt.aprintf("[%d]%s", info.count, type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Simd:
-		return fmt.aprintf("Simd(%s, %d)", type_name_alloc(c, info.element, allocator), info.count, allocator = allocator)
-	case .Slice:
-		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Dynamic_Array:
-		return fmt.aprintf("[dynamic]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Box:
-		return fmt.aprintf("Box(%s)", type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Map:
-		return fmt.aprintf("map[%s]%s", type_name_alloc(c, info.key, allocator), type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Distinct:
-		return fmt.aprintf("distinct %s", type_name_alloc(c, info.element, allocator), allocator = allocator)
-	case .Struct:
-		return "struct"
-	case .Enum:
-		return "enum"
-	case .Union:
-		return "union"
-	case .Interface:
-		return "interface"
-	case .Proc:
-		return proc_type_name(c, info, allocator)
-	}
-	return "<type>"
-}
-
-@(private = "file")
-proc_type_name :: proc(c: ^Compiler, info: ^Type_Info, allocator: mem.Allocator) -> string {
-	b := strings.builder_make(allocator)
-	strings.write_string(&b, "proc")
-	// A foreign convention is part of the type, so a `loke` and a `"c"` signature
-	// that otherwise match must not print the same.
-	if info.convention != "" {
-		fmt.sbprintf(&b, " %q", info.convention)
-	}
-	strings.write_string(&b, "(")
-	for parameter, index in info.parameters {
-		if index > 0 {
-			strings.write_string(&b, ", ")
-		}
-		// The reset effect is part of the type, so two otherwise identical
-		// signatures must not print the same.
-		if index < len(info.param_resets) && info.param_resets[index] {
-			strings.write_string(&b, "@(allocator_reset) ")
-		}
-		if index < len(info.param_cross_thread) && info.param_cross_thread[index] {
-			strings.write_string(&b, "@(cross_thread) ")
-		}
-		if index < len(info.param_escapes) && info.param_escapes[index] != .Result {
-			strings.write_string(&b, "@(escape=")
-			strings.write_string(&b, escape_level_name(info.param_escapes[index]))
-			strings.write_string(&b, ") ")
-		}
-		// A parameter mode is part of the type, so two signatures differing only in
-		// one must not print the same — a mismatch report naming the same text twice
-		// explains nothing about why the argument was refused.
-		if index < len(info.param_modes) {
-			#partial switch info.param_modes[index] {
-			case .Inout:  strings.write_string(&b, "inout ")
-			case .Borrow: strings.write_string(&b, "^")
-			case .Move:   strings.write_string(&b, "move ")
-			}
-		}
-		strings.write_string(&b, type_name_alloc(c, parameter, allocator))
-	}
-	strings.write_string(&b, ")")
-	if info.result != INVALID_TYPE {
-		strings.write_string(&b, " -> ")
-		if info.result_inout {
-			strings.write_string(&b, "inout ")
-		}
-		strings.write_string(&b, type_name_alloc(c, info.result, allocator))
-	}
-	if sym := symbol_of(c, info.proc_contract); sym != nil {
-		fmt.sbprintf(&b, " [result contract: %s]", identifier_text(c, sym.name))
-	}
-	return strings.to_string(b)
+	return intern_type(c, Type_Key{kind = .Simd, element = element, count = count})
 }
 
 new_scope :: proc(c: ^Compiler, parent: ^Scope, kind: Scope_Kind) -> ^Scope {
@@ -2486,13 +1647,8 @@ new_scope :: proc(c: ^Compiler, parent: ^Scope, kind: Scope_Kind) -> ^Scope {
 }
 
 lookup_symbol :: proc(scope: ^Scope, name: Identifier_Id) -> Symbol_Id {
-	for current := scope; current != nil; current = current.parent {
-		if symbol, ok := current.names[name]; ok {
-			current.reached = true
-			return symbol
-		}
-	}
-	return INVALID_SYMBOL
+	symbol, _ := lookup_symbol_with_scope(scope, name)
+	return symbol
 }
 
 lookup_symbol_with_scope :: proc(scope: ^Scope, name: Identifier_Id) -> (Symbol_Id, ^Scope) {
@@ -2508,18 +1664,17 @@ lookup_symbol_with_scope :: proc(scope: ^Scope, name: Identifier_Id) -> (Symbol_
 new_package :: proc(c: ^Compiler, name: string, key := "") -> Package_Id {
 	init_semantic_stores(c)
 	id := Package_Id(len(c.packages))
-	pkg := Package {
+	append(&c.packages, new_clone(Package {
 		id             = id,
 		name           = intern_identifier(c, name),
 		key            = key,
 		files          = make([dynamic]^File, 0, 4, c.semantic_allocator),
 		extensions     = make(map[Type_Id][]Symbol_Id, c.semantic_allocator),
-		operators      = make(map[string]^[dynamic]Symbol_Id, c.semantic_allocator),
+		operators      = make(map[string][dynamic]Symbol_Id, c.semantic_allocator),
 		imports        = make([dynamic]Package_Import, 0, 4, c.semantic_allocator),
 		hoisted_procs  = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator),
 		instances      = make([dynamic]Instance_Decl, 0, 4, c.semantic_allocator),
-	}
-	append(&c.packages, pkg)
+	}, c.semantic_allocator))
 	return id
 }
 
@@ -2528,16 +1683,11 @@ package_of :: proc(c: ^Compiler, id: Package_Id) -> ^Package {
 	if index <= 0 || index >= len(c.packages) {
 		return nil
 	}
-	return &c.packages[index]
+	return c.packages[index]
 }
 
-add_package_file :: proc(c: ^Compiler, package_id: Package_Id, file: ^File) -> bool {
-	pkg := package_of(c, package_id)
-	if pkg == nil || file == nil {
-		return false
-	}
-	append(&pkg.files, file)
-	return true
+add_package_file :: proc(c: ^Compiler, package_id: Package_Id, file: ^File) {
+	append(&package_of(c, package_id).files, file)
 }
 
 destroy_compilation :: proc(c: ^Compiler) {

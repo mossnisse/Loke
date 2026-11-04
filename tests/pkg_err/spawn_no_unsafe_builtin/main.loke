@@ -1,0 +1,11 @@
+package main;
+
+// compiler-architecture.md "Lowering parallel blocks": `run` takes, writes and
+// frees through `core:unsafe`, so a replaced `core:thread` that does not load it
+// is reported at the spawn rather than left for the backend.
+
+work :: proc() {}
+
+main :: proc() {
+	parallel { spawn work(); }
+}

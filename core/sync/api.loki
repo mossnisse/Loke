@@ -43,7 +43,7 @@ Atomic :: struct($T: type) {
 		owner nothing borrows, or through `^mut`, `[]mut`, or `inout`, never
 		through a read-only `^`, where an atomic operation may be writing it.
 	*/
-	@(public, synchronized) value: T,
+	@(synchronized) value: T,
 }
 
 impl Atomic($T) {

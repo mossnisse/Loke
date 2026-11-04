@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": a mutable slice through a carrier that a
+// read-only destination weakens suspends nothing, as one of a local does.
+Holder :: struct { items: [4]int }
+
+look :: proc(s: []int) -> int { return s[0]; }
+
+through :: proc(p: ^mut Holder) -> int {
+	v := p^.items[:];
+	n := look(&mut p^.items[:]);
+	return n + v[1];
+}
+
+main :: proc() {
+	h := Holder{{1, 2, 3, 4}};
+	fmt.println(through(&mut h));
+}

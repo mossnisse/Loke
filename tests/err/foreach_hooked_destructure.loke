@@ -49,4 +49,18 @@ main :: proc() {
     foreach (inner, tag in Nesting{}) { fmt.println(inner.first + tag); }
     stored := [1]Guarded{Guarded{4, 5}};
     foreach (first, second in stored) { fmt.println(first + second); }
+    foreach ((first, second), &mut tag in Mixed{}) { tag = first + second; }
+}
+
+// An owned part of a mutable traversal is taken apart just the same.
+Mixed :: struct {}
+Mixed_Cursor :: struct { done: bool, tag: int }
+impl Mixed {
+    Element :: Outer;
+    iter_mut :: proc(self) -> Mixed_Cursor { return {}; }
+}
+impl Mixed_Cursor {
+    next :: proc(self: inout Mixed_Cursor) -> Option((inner: Guarded, tag: ^mut int)) {
+        return .none;
+    }
 }

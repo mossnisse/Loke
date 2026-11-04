@@ -1,0 +1,28 @@
+// design.md "Owners and `drop`" names the allocator: `make`'s declared
+// `allocator := mem.default_allocator()` is a parameter a call can name.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+open :: proc(my_allocator: mem.Allocator) -> Result(int, mem.Allocator_Error) {
+	buffer := try_make([dynamic]u8, allocator=my_allocator) or_return;
+	sized := try_make([dynamic]u8, 2, 8, allocator=my_allocator) or_return;
+	return .ok(buffer.len() + sized.len() * 10 + sized.cap() * 100);
+}
+
+main :: proc() {
+	allocator := mem.default_allocator();
+	fmt.println(open(allocator) or_else 0);
+
+	plain := make([dynamic]int, allocator=allocator);
+	fmt.println(plain.len());
+	sized := make([dynamic]int, 3, allocator=allocator);
+	fmt.println(sized.len());
+	table := make(map[string]int, 4, allocator=allocator);
+	fmt.println(table.len());
+	counted := Count(3);
+	fmt.println(int(counted));
+}
+
+Count :: distinct int;

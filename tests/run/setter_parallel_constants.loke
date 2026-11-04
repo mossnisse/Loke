@@ -1,0 +1,48 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// design.md "Implicit type conversions": a constant in a multiple assignment takes
+// its destination's type, however it is spelled, and a setter's value gives an
+// implicit selector its enum.
+
+Real :: struct { value: f32 }
+
+impl Real {
+	set :: operator([]=) proc(self: inout Real, i: int, value: f32) { self.value = value; }
+}
+
+Tiny :: struct { value: i8 }
+
+impl Tiny {
+	N :: 5;
+	set :: operator([]=) proc(self: inout Tiny, i: int, value: i8) { self.value = value; }
+}
+
+Color :: enum { Red, Blue }
+
+Paint :: struct { color: Color }
+
+impl Paint {
+	set :: operator([]=) proc(self: inout Paint, i: int, value: Color) { self.color = value; }
+}
+
+main :: proc() {
+	x := 0;
+	real: Real = {};
+	real[0], x = math.PI, 2;
+	fmt.println(real.value > 3, x);
+
+	tiny: Tiny = {};
+	tiny[0], x = Tiny.N, 3;
+	fmt.println(tiny.value, x);
+	tiny[0], x = 2 + Tiny.N, 4;
+	fmt.println(tiny.value, x);
+
+	paint: Paint = {};
+	paint[0], x = .Blue, 5;
+	fmt.println(paint.color == .Blue, x);
+	paint[0] = .Red;
+	fmt.println(paint.color == .Red);
+}

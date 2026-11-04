@@ -1,0 +1,98 @@
+// design.md "Iteration adapters": an adapter over a mutable view holds a copy of
+// it, and one that owns something is cloned for that copy, so the source and the
+// view each drop their own. One that cannot be copied stays in its place.
+package main;
+
+import "core:fmt";
+
+Cursor :: struct { cells: []mut int, at: int }
+
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(^mut int) {
+		if (self.at >= self.cells.len()) { return .none; }
+		value := &mut self.cells[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+Owning :: struct { values: []mut int, owned: [dynamic]int }
+
+impl Owning {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {self.values, 0}; }
+	iter_mut :: proc(self) -> Cursor { return {self.values, 0}; }
+}
+
+drops := 0;
+
+@(fieldwise_copy)
+Hooked :: struct { values: []mut int, id: int }
+
+impl Hooked {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {self.values, 0}; }
+	iter_mut :: proc(self) -> Cursor { return {self.values, 0}; }
+	release :: hook(drop) proc(self: inout Hooked) { drops += 1; }
+}
+
+@(move_only)
+Sole :: struct { values: []mut int, id: int }
+
+impl Sole {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {self.values, 0}; }
+	iter_mut :: proc(self) -> Cursor { return {self.values, 0}; }
+	release :: hook(drop) proc(self: inout Sole) { fmt.println("drop sole", self.id); }
+}
+
+owning :: proc() {
+	storage := [2]int{1, 2};
+	source := Owning{&mut storage[:], {}};
+	source.owned.append(5);
+	{
+		view := source.indexed();
+		foreach (&mut v, i in view) { v += i + 10; }
+		second := view;
+		foreach (v, i in second) { fmt.println("owning", v, i); }
+	}
+	foreach (v in source.copied()) { fmt.println("copied", v); }
+	source.owned.append(6);
+	fmt.println(source.owned.len(), storage[1]);
+}
+
+hooked :: proc() {
+	storage := [1]int{3};
+	source := Hooked{&mut storage[:], 1};
+	{
+		view := source.indexed();
+		_ = view;
+	}
+	// The view's copy has been dropped; the source has not.
+	fmt.println("hooked drops", drops);
+}
+
+sole :: proc() {
+	storage := [2]int{1, 2};
+	source := Sole{&mut storage[:], 7};
+	foreach (&mut v, i in source.indexed()) { v += i; }
+	{
+		view := source.indexed();
+		foreach (v, i in view) { fmt.println("sole", v, i); }
+	}
+	foreach (v in source.copied()) { fmt.println("sole copied", v); }
+	fmt.println("sole end");
+}
+
+main :: proc() {
+	owning();
+	hooked();
+	fmt.println("after hooked", drops);
+	sole();
+}

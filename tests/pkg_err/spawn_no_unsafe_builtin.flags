@@ -1,0 +1,2 @@
+-collection
+core=tests/pkg_err/spawn_no_unsafe_builtin/vendor_core

@@ -1,0 +1,67 @@
+// design.md "Yield modes": a record with `Element`'s field names, named or not, is a
+// record mode, and a single binding receives the record `next` handed back. The
+// counter of `indexed()` stays beside a lent record's parts.
+package main;
+
+import "core:fmt";
+
+Pair :: struct { a: int, b: int }
+Pair_Ref :: struct { a: ^int, b: ^mut int }
+
+Walk :: struct { left: ^int, right: ^mut int, done: bool }
+
+impl Walk {
+	next :: proc(self: inout Walk) -> Option(Pair_Ref) {
+		if (self.done) { return .none; }
+		self.done = true;
+		return .some(Pair_Ref{self.left, self.right});
+	}
+}
+
+Source :: struct { x: ^int, y: ^mut int }
+
+impl Source {
+	Element :: Pair;
+	Iterator :: Walk;
+	Mut_Iterator :: Walk;
+	iter :: proc(self) -> Walk { return {self.x, self.y, false}; }
+	iter_mut :: proc(self) -> Walk { return {self.x, self.y, false}; }
+}
+
+// The same traversal lent through an anonymous record.
+Anon_Walk :: struct { left: ^int, right: ^mut int, done: bool }
+
+impl Anon_Walk {
+	next :: proc(self: inout Anon_Walk) -> Option((a: ^int, b: ^mut int)) {
+		if (self.done) { return .none; }
+		self.done = true;
+		return .some({self.left, self.right});
+	}
+}
+
+Anon_Source :: struct { x: ^int, y: ^mut int }
+
+impl Anon_Source {
+	Element :: Pair;
+	Iterator :: Anon_Walk;
+	iter :: proc(self) -> Anon_Walk { return {self.x, self.y, false}; }
+}
+
+main :: proc() {
+	x := 1;
+	y := 2;
+	source := Source{&x, &mut y};
+	foreach (p in source) { fmt.println("whole", p.a^, p.b^); }
+	foreach (a, b in source) { fmt.println("parts", a, b); }
+	foreach (a, &mut b in source) { fmt.println("place", a); b += 10; }
+	foreach (p, i in source.indexed()) { fmt.println("indexed", p.a^, p.b^, i); }
+	foreach ((a, &mut b), i in source.indexed()) { fmt.println("indexed place", a, i); b += 100; }
+	foreach (p in source.copied()) { fmt.println("copied", p.a, p.b); }
+	view := source.indexed();
+	foreach (p, i in view) { fmt.println("view", p.a^, p.b^, i); }
+	foreach (q in view) { fmt.println("record", q.value.a^, q.value.b^, q.index); }
+
+	anon := Anon_Source{&x, &mut y};
+	foreach (p, i in anon.indexed()) { fmt.println("anon", p.a^, p.b^, i); }
+	foreach ((a, b), i in anon.indexed()) { fmt.println("anon parts", a, b, i); }
+}

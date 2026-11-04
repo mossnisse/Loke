@@ -73,12 +73,11 @@ path_key :: proc(path: string, allocator := context.allocator) -> string {
 // no position between them.
 offset_to_position :: proc(text: string, line_starts: []u32, offset: u32, utf8_units: bool) -> Position {
 	offset := min(int(offset), len(text))
-	line := 0
-	for lo, hi := 0, len(line_starts); lo < hi; {
-		mid := (lo + hi) / 2
-		if int(line_starts[mid]) <= offset { line, lo = mid, mid + 1 } else { hi = mid }
+	line, start := 0, 0
+	if len(line_starts) > 0 {
+		line = lokec.line_of_offset(line_starts, u32(offset))
+		start = int(line_starts[line])
 	}
-	start := len(line_starts) > 0 ? min(int(line_starts[line]), offset) : 0
 	if offset > start && offset < len(text) && text[offset] == '\n' && text[offset - 1] == '\r' { offset -= 1 }
 	return Position{line, utf8_units ? offset - start : utf16_length(text[start:offset])}
 }
@@ -126,22 +125,12 @@ percent_decode :: proc(text: string, allocator := context.allocator) -> (string,
 			continue
 		}
 		if i + 2 >= len(text) { return "", false }
-		hi, lo := hex_value(text[i + 1]), hex_value(text[i + 2])
-		if hi < 0 || lo < 0 { return "", false }
+		hi, lo := lokec.digit_value(text[i + 1]), lokec.digit_value(text[i + 2])
+		if hi >= 16 || lo >= 16 { return "", false }
 		strings.write_byte(&b, u8(hi << 4 | lo))
 		i += 2
 	}
 	return strings.to_string(b), true
-}
-
-@(private = "file")
-hex_value :: proc(ch: u8) -> int {
-	switch ch {
-	case '0' ..= '9': return int(ch - '0')
-	case 'a' ..= 'f': return int(ch - 'a' + 10)
-	case 'A' ..= 'F': return int(ch - 'A' + 10)
-	}
-	return -1
 }
 
 @(private = "file")

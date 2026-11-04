@@ -2,6 +2,7 @@
 // no query resolves a name, checks syntax, or exposes a mutable semantic node.
 package lokec
 
+import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
 import "core:strings"
@@ -35,29 +36,20 @@ Query_Symbol :: struct {
 	// Where a local, parameter, or loop binding can be named: the innermost
 	// block, statement, or procedure holding its name. No span otherwise.
 	scope: Query_Location,
-	public, generic: bool,
 	// A `using` field, whose fields design.md "Promoted struct fields" promotes.
 	promotes: bool,
 }
 Query_Type :: struct {
-	handle: Type_Handle,
 	name: string,
 	kind: Type_Kind,
-	element, key, result: Type_Handle,
-	count: u64,
-	bits: u16,
-	signed, mutable, result_inout: bool,
-	fields, members: []Symbol_Handle,
-	parameters: []Type_Handle,
-	param_modes: []Param_Mode,
+	element: Type_Handle,
+	fields: []Symbol_Handle,
 }
-Query_Parameter :: struct { name: string, type: Type_Handle, mode: Param_Mode, has_default: bool }
+// `parameters` holds each parameter's name, empty when it has none.
 Query_Signature :: struct {
 	symbol: Symbol_Handle,
 	text: string,
-	parameters: []Query_Parameter,
-	result: Type_Handle,
-	complete, result_inout, diverges: bool,
+	parameters: []string,
 }
 Query_Note :: struct { location: Query_Location, message: string }
 Query_Diagnostic :: struct {
@@ -70,8 +62,10 @@ Query_Diagnostic :: struct {
 // `Color.Red`, rather than a value of it.
 Query_Position :: struct { location: Query_Location, symbol: Symbol_Handle, type: Type_Handle, type_value: bool }
 // One name that may follow `operand.`. A union variant has no symbol; its type
-// is its payload's, or zero when it has none.
-Query_Member :: struct { name: string, symbol: Symbol_Handle, type: Type_Handle, variant: bool }
+// is its payload's, or zero when it has none. `ambiguous` marks a name two
+// `using` fields promote, so selecting it is an error (design.md "Promoted struct
+// fields"), though it is still a name a rename would collide with.
+Query_Member :: struct { name: string, symbol: Symbol_Handle, type: Type_Handle, variant, ambiguous: bool }
 
 @(private = "file")
 snapshot_counter: u64
@@ -90,10 +84,7 @@ invalidate_session_snapshot :: proc(s: ^Compilation_Session) {
 // Capture views once, on demand, including after failed initialization/checking.
 // Later calls and every query only read, so several threads may share them;
 // keep it that way (compiler-architecture.md "Snapshots and queries").
-// Returned strings/slices are borrowed and must not be modified. They expire at
-// invalidation, an overlay edit, the next check, or destruction. Capture
-// diagnostics before emission to obtain checking diagnostics; later emission
-// cannot change them.
+// Returned strings/slices are borrowed and read-only until invalidation.
 session_snapshot :: proc(s: ^Compilation_Session) -> (Compilation_Snapshot, bool) {
 	if !s.initialized || s.snapshot == 0 { return {}, false }
 	if !s.queries_ready {
@@ -105,7 +96,7 @@ session_snapshot :: proc(s: ^Compilation_Session) -> (Compilation_Snapshot, bool
 
 @(private = "file")
 valid_snapshot :: proc(s: ^Compilation_Session, id: Snapshot_Id) -> bool {
-	return s.initialized && s.queries_ready && id != 0 && id == s.snapshot
+	return s.initialized && s.queries_ready && id == s.snapshot
 }
 
 query_source :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file: u32) -> (Query_Source, bool) {
@@ -120,11 +111,8 @@ query_source :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, fi
 
 query_file :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, path: string) -> (u32, bool) {
 	if !valid_snapshot(s, snapshot.id) { return 0, false }
-	key := dir_key(canonical_dir(path))
-	for source, index in s.compiler.sources {
-		if strings.equal_fold(canonical_dir(source.path), key) { return u32(index), true }
-	}
-	return 0, false
+	file, found := s.queries.files[dir_key(canonical_dir(path))]
+	return file, found
 }
 
 query_diagnostics :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot) -> ([]Query_Diagnostic, bool) {
@@ -156,8 +144,7 @@ query_definition :: proc(s: ^Compilation_Session, handle: Symbol_Handle) -> (Que
 	return location, location.span.file != NO_FILE
 }
 
-// Exact binding identity, not matching spelling. The caller owns the returned
-// array and deletes it. Definitions are optional; locations are deduplicated.
+// Exact binding identity, not matching spelling. The caller owns the array.
 query_references :: proc(s: ^Compilation_Session, handle: Symbol_Handle, include_definition := false) -> ([]Query_Location, bool) {
 	if _, found := query_symbol(s, handle); !found { return nil, false }
 	id := s.queries.canonical[handle.id]
@@ -170,11 +157,13 @@ query_references :: proc(s: ^Compilation_Session, handle: Symbol_Handle, include
 			seen[location.span] = true
 		}
 	}
-	for occurrence in s.queries.occurrences {
-		if occurrence.reference && occurrence.symbol != INVALID_SYMBOL &&
-		   s.queries.canonical[occurrence.symbol] == id && !seen[occurrence.span] {
-			append(&out, Query_Location{s.snapshot, occurrence.span})
-			seen[occurrence.span] = true
+	for occurrences in s.queries.occurrences {
+		for occurrence in occurrences {
+			if occurrence.reference && occurrence.symbol != INVALID_SYMBOL &&
+			   s.queries.canonical[occurrence.symbol] == id && !seen[occurrence.span] {
+				append(&out, Query_Location{s.snapshot, occurrence.span})
+				seen[occurrence.span] = true
+			}
 		}
 	}
 	return out[:], true
@@ -191,7 +180,7 @@ query_documentation :: proc(s: ^Compilation_Session, handle: Symbol_Handle, allo
 }
 
 // A procedure group returns its available members. A generic template supplies
-// written syntax with complete=false; erroneous/unresolved signatures are absent.
+// written syntax; erroneous/unresolved signatures are absent.
 query_signatures :: proc(s: ^Compilation_Session, handle: Symbol_Handle) -> ([]Query_Signature, bool) {
 	if _, found := query_symbol(s, handle); !found { return nil, false }
 	signatures := s.queries.signatures[handle.id]
@@ -202,12 +191,17 @@ query_signatures :: proc(s: ^Compilation_Session, handle: Symbol_Handle) -> ([]Q
 // do not fall back to a parent when that node is unresolved. Instantiations
 // disagreeing at the same source position yield no symbol/type for that part.
 query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32) -> (Query_Position, bool) {
+	return occurrence_at(s, snapshot, s.queries.occurrences, file, offset)
+}
+
+@(private = "file")
+occurrence_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, lists: [][dynamic]Query_Occurrence, file, offset: u32) -> (Query_Position, bool) {
 	if source, found := query_source(s, snapshot, file); !found || int(offset) >= len(source.text) { return {}, false }
-	best := Query_Occurrence{span = no_span()}
+	best := Query_Occurrence{span = NO_SPAN}
 	symbol_conflict, type_conflict := false, false
-	for occurrence in s.queries.occurrences {
+	for occurrence in lists[file] {
 		span := occurrence.span
-		if span.file != file || offset < span.lo || offset >= span.hi { continue }
+		if offset < span.lo || offset >= span.hi { continue }
 		if best.span.file == NO_FILE || span.hi - span.lo < best.span.hi - best.span.lo {
 			best = occurrence
 			symbol_conflict, type_conflict = false, false
@@ -246,31 +240,11 @@ merge_occurrence :: proc(s: ^Compilation_Session, best: ^Query_Occurrence, occur
 // cannot locate it.
 // Instantiations disagreeing about it yield no symbol/type for that part.
 query_selector_operand :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32) -> (Query_Position, bool) {
-	if source, found := query_source(s, snapshot, file); !found || int(offset) >= len(source.text) { return {}, false }
-	best := Query_Occurrence{span = no_span()}
-	symbol_conflict, type_conflict := false, false
-	for occurrence in s.queries.operands {
-		span := occurrence.span
-		if span.file != file || offset < span.lo || offset >= span.hi { continue }
-		if best.span.file == NO_FILE {
-			best = occurrence
-		} else {
-			merge_occurrence(s, &best, occurrence, &symbol_conflict, &type_conflict)
-		}
-	}
-	if best.span.file == NO_FILE || (best.symbol == INVALID_SYMBOL && best.type == INVALID_TYPE) { return {}, false }
-	return Query_Position{
-		Query_Location{s.snapshot, best.span}, Symbol_Handle{s.snapshot, best.symbol}, Type_Handle{s.snapshot, best.type},
-		best.type_value && best.type != INVALID_TYPE,
-	}, true
+	return occurrence_at(s, snapshot, s.queries.operands, file, offset)
 }
 
-// The bindings an unqualified name can reach at a byte offset, innermost
-// first: locals, parameters, and loop bindings written before it in an
-// enclosing block or procedure, then the file's package with its imports, then
-// the predeclared names. A shadowed binding is omitted. A local is reachable
-// from the end of its name, so its own initializer counts. The caller owns the
-// array.
+// Innermost first; a shadowed binding is omitted. A local is reachable from the
+// end of its name, so its own initializer counts. The caller owns the array.
 query_visible :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32, allocator := context.allocator) -> ([]Symbol_Handle, bool) {
 	source, found := query_source(s, snapshot, file)
 	if !found || int(offset) > len(source.text) { return nil, false }
@@ -313,58 +287,24 @@ query_visible :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, f
 	return out[:], true
 }
 
-// What may follow `operand.`, where `operand` is a `query_at` result in `file`.
-// A package alias lists its package's public declarations. A type lists its
-// enum members or union variants and its members. A value lists its fields, promoted
-// fields after them, and methods, and through a pointer or box those of what
-// it points at. Members are
-// the ones the snapshot recorded and the file's package can see; one the
-// checker contributes on demand appears once a lookup created it. Sorted by
-// name; the caller owns the array.
+// What may follow `operand.`, as compiler-architecture.md "Snapshots and queries"
+// lists. One the checker contributes on demand appears once a lookup created it.
+// Sorted by name; the caller owns the array.
 query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u32, allocator := context.allocator) -> ([]Query_Member, bool) {
 	if !valid_snapshot(s, operand.location.snapshot) || int(file) >= len(s.queries.packages) { return nil, false }
-	Members :: struct { s: ^Compilation_Session, observer: Package_Id, out: [dynamic]Query_Member, seen: map[string]bool }
-	m := Members{s = s, observer = s.queries.packages[file], out = make([dynamic]Query_Member, allocator), seen = make(map[string]bool, allocator = allocator)}
+	m := Member_List{
+		s = s, observer = s.queries.packages[file], out = make([dynamic]Query_Member, allocator),
+		seen = make(map[string]bool, allocator = allocator), walked = make(Type_Walk, allocator = allocator),
+	}
 	defer delete(m.seen)
-	add :: proc(m: ^Members, id: Symbol_Id, methods: bool) {
-		c := &m.s.compiler
-		symbol := symbol_of(c, id)
-		if symbol == nil || symbol.bound_excluded || symbol.superseded || (methods && !symbol.has_receiver) { return }
-		if symbol.pkg != m.observer && !symbol.public { return }
-		if hidden, _ := standard_format_hidden(c, symbol, m.observer); hidden { return }
-		name := identifier_text(c, symbol.name)
-		if m.seen[name] || !identifier_spelling(name) { return }
-		m.seen[name] = true
-		type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
-		append(&m.out, Query_Member{name, Symbol_Handle{m.s.snapshot, id}, Type_Handle{m.s.snapshot, type}, false})
-	}
-	// design.md "Promoted struct fields": an outer field wins over a promoted
-	// one, so a `using` field's own fields come after the record's.
-	add_fields :: proc(m: ^Members, type: Type_Id, depth: int) {
-		c := &m.s.compiler
-		info := underlying_info(c, type)
-		if info == nil || info.kind != .Struct || depth > len(c.types) { return }
-		for field in info.fields { add(m, field, false) }
-		for field in info.fields {
-			if symbol := symbol_of(c, field); symbol != nil && symbol.is_using { add_fields(m, symbol.type, depth + 1) }
-		}
-	}
-	add_members :: proc(m: ^Members, type: Type_Id, methods: bool) {
-		c := &m.s.compiler
-		if info := type_of(c, type); info != nil {
-			for member in info.members { add(m, member, methods) }
-		}
-		if pkg := package_of(c, m.observer); pkg != nil {
-			for member in pkg.extensions[type] { add(m, member, methods) }
-		}
-	}
+	defer delete(m.walked)
 	c := &s.compiler
 	alias := symbol_of(c, operand.symbol.id)
 	switch {
-	case operand.symbol.id != INVALID_SYMBOL && alias != nil && alias.kind == .Package_Alias:
+	case alias != nil && alias.kind == .Package_Alias:
 		if target := package_of(c, alias.pkg); target != nil && target.scope != nil {
 			for _, id in target.scope.names {
-				if symbol := symbol_of(c, id); symbol != nil && symbol.public && symbol.kind != .Package_Alias { add(&m, id, false) }
+				if symbol := symbol_of(c, id); symbol != nil && symbol.public && symbol.kind != .Package_Alias { list_member(&m, id, false) }
 			}
 		}
 	case operand.type.id == INVALID_TYPE:
@@ -372,20 +312,13 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 		return nil, false
 	case operand.type_value:
 		subject := operand.type.id
-		info := underlying_info(c, subject)
-		if info != nil && info.kind == .Enum {
-			for member in info.fields { add(&m, member, false) }
-		} else if info != nil && info.kind == .Union {
-			for name, index in info.variant_names {
-				text := identifier_text(c, name)
-				if m.seen[text] || !identifier_spelling(text) { continue }
-				m.seen[text] = true
-				payload := index < len(info.variants) ? info.variants[index] : INVALID_TYPE
-				if payload == TYPE_VOID { payload = INVALID_TYPE }
-				append(&m.out, Query_Member{text, Symbol_Handle{s.snapshot, INVALID_SYMBOL}, Type_Handle{s.snapshot, payload}, true})
+		if info := underlying_info(c, subject); info != nil {
+			#partial switch info.kind {
+			case .Enum: for member in info.fields { list_member(&m, member, false) }
+			case .Union: list_variants(&m, info)
 			}
 		}
-		add_members(&m, subject, false)
+		list_type_members(&m, subject, false)
 	case:
 		subjects := [2]Type_Id{operand.type.id, INVALID_TYPE}
 		if info := underlying_info(c, operand.type.id); info != nil && (info.kind == .Pointer || info.kind == .Box) {
@@ -393,50 +326,120 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 		}
 		for subject in subjects {
 			if subject == INVALID_TYPE { continue }
-			add_fields(&m, subject, 0)
-			add_members(&m, subject, true)
+			first := len(m.out)
+			list_fields(&m, subject)
+			mark_ambiguous_fields(&m, subject, first, allocator)
+			list_type_members(&m, subject, true)
 		}
 	}
 	slice.sort_by(m.out[:], proc(a, b: Query_Member) -> bool { return a.name < b.name })
 	return m.out[:], true
 }
 
+@(private = "file")
+Member_List :: struct { s: ^Compilation_Session, observer: Package_Id, out: [dynamic]Query_Member, seen: map[string]bool, walked: Type_Walk }
+
+// design.md "Compile-time reflection": an enum's members have no visibility of
+// their own.
+@(private = "file")
+list_member :: proc(m: ^Member_List, id: Symbol_Id, methods: bool) {
+	c := &m.s.compiler
+	symbol := symbol_of(c, id)
+	if symbol == nil || symbol.bound_excluded || symbol.superseded || (methods && !symbol.has_receiver) { return }
+	if symbol.kind != .Enum_Member && symbol.pkg != m.observer && !symbol.public { return }
+	if standard_format_hidden(c, symbol, m.observer) { return }
+	name := identifier_text(c, symbol.name)
+	if m.seen[name] || !identifier_spelling(name) { return }
+	m.seen[name] = true
+	type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
+	append(&m.out, Query_Member{name = name, symbol = Symbol_Handle{m.s.snapshot, id}, type = Type_Handle{m.s.snapshot, type}})
+}
+
+@(private = "file")
+list_variants :: proc(m: ^Member_List, info: ^Type_Info) {
+	c := &m.s.compiler
+	for name, index in info.variant_names {
+		text := identifier_text(c, name)
+		if m.seen[text] || !identifier_spelling(text) { continue }
+		m.seen[text] = true
+		payload := info.variants[index]
+		if payload == TYPE_VOID { payload = INVALID_TYPE }
+		append(&m.out, Query_Member{name = text, symbol = Symbol_Handle{m.s.snapshot, INVALID_SYMBOL}, type = Type_Handle{m.s.snapshot, payload}, variant = true})
+	}
+}
+
+// design.md "Promoted struct fields": an outer field wins over a promoted one,
+// so a `using` field's own fields come after the record's. A record reached
+// again adds no new name.
+@(private = "file")
+list_fields :: proc(m: ^Member_List, type: Type_Id) {
+	c := &m.s.compiler
+	info := underlying_info(c, type)
+	if info == nil || info.kind != .Struct || !type_walk_enter(&m.walked, type, info) { return }
+	for field in info.fields { list_member(m, field, false) }
+	for field in info.fields {
+		if symbol := symbol_of(c, field); symbol != nil && symbol.is_using { list_fields(m, symbol.type) }
+	}
+}
+
+// Marks the fields listed from `first` on that the checker's own lookup finds
+// ambiguous in `record`.
+@(private = "file")
+mark_ambiguous_fields :: proc(m: ^Member_List, record: Type_Id, first: int, allocator: mem.Allocator) {
+	c := &m.s.compiler
+	path := make([dynamic]Symbol_Id, allocator)
+	defer delete(path)
+	for &member in m.out[first:] {
+		clear(&path)
+		_, member.ambiguous = promoted_field_path(c, record, symbol_of(c, member.symbol.id).name, &path)
+	}
+}
+
+@(private = "file")
+list_type_members :: proc(m: ^Member_List, type: Type_Id, methods: bool) {
+	c := &m.s.compiler
+	if info := type_of(c, type); info != nil {
+		for member in info.members { list_member(m, member, methods) }
+	}
+	if pkg := package_of(c, m.observer); pkg != nil {
+		for member in pkg.extensions[type] { list_member(m, member, methods) }
+	}
+}
+
 // design.md "Calling a value", "Iteration protocol", "Reverse iteration",
 // "Maps", "Indexing and slicing", and standard-library.md "Printed forms": member names
 // the compiler looks up itself, where no use spells them.
 @(private = "file")
-IMPLICIT_MEMBER_NAMES := [?]string{"call", "iter", "iter_mut", "iter_reverse", "iter_mut_reverse", "next", "format", "hash", "len"}
+IMPLICIT_MEMBER_NAMES := [?]string{
+	"call", "iter", "iter_mut", "iter_reverse", "iter_mut_reverse", "next", "format", "hash", "len",
+	"Element", "Iterator", "Mut_Iterator", "Item",
+}
 
 // Member names a program can reach without writing them at a use: those the
 // compiler looks up itself, and the requirements of every interface the
-// checked program uses, as slot names and as the members their expressions
-// select. A member so named may be used where no reference records it. The
+// checked program uses, as slot names and as the members their expressions and
+// types select. A member so named may be used where no reference records it. The
 // caller owns the array; its strings are borrowed.
 query_implicit_names :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, allocator := context.allocator) -> ([]string, bool) {
 	if !valid_snapshot(s, snapshot.id) { return nil, false }
 	out := make([dynamic]string, allocator)
 	append(&out, ..IMPLICIT_MEMBER_NAMES[:])
-	selected :: proc(out: ^[dynamic]string, expr: Expr) {
-		#partial switch v in expr {
-		case ^Expr_Selector:
-			if v.name.text != "" { append(out, v.name.text) }
-			selected(out, v.operand)
-		case ^Expr_Call:
-			selected(out, v.callee)
-			for argument in v.args { selected(out, argument.value) }
-		case ^Expr_Unary: selected(out, v.operand)
-		case ^Expr_Binary:
-			selected(out, v.lhs)
-			selected(out, v.rhs)
-		case ^Expr_Index:
-			selected(out, v.operand)
-			for index in v.indices { selected(out, index) }
-		}
+	selected :: proc(out: ^[dynamic]string, syntax: Expr) {
+		type_syntax_any_name(syntax, out, proc(data: rawptr, node: Expr) -> bool {
+			if selector, found := node.(^Expr_Selector); found && selector.name.text != "" {
+				append((^[dynamic]string)(data), selector.name.text)
+			}
+			return false
+		})
 	}
 	for _, info in s.compiler.interfaces {
 		if info == nil || info.node == nil { continue }
 		for requirement in info.node.requirements {
-			if requirement.kind == .Slot { append(&out, requirement.name.text) } else { selected(&out, requirement.expr) }
+			if requirement.kind == .Slot { append(&out, requirement.name.text) }
+			for group in requirement.bindings { selected(&out, group.type) }
+			selected(&out, requirement.expr)
+			selected(&out, requirement.result)
+			selected(&out, requirement.slot_type)
 		}
 	}
 	return out[:], true
@@ -450,38 +453,62 @@ Snapshot_Queries :: struct {
 	types: []Query_Type,
 	canonical: []Symbol_Id,
 	documents: [][dynamic]Symbol_Handle,
-	signatures: [][dynamic]Query_Signature,
+	signatures: [][]Query_Signature,
 	diagnostics: []Query_Diagnostic,
-	occurrences: [dynamic]Query_Occurrence,
+	// One list per source file.
+	occurrences: [][dynamic]Query_Occurrence,
+	// Each selector's operand, at the span of the name it selects; one list per
+	// source file.
+	operands: [][dynamic]Query_Occurrence,
 	// Each source file's package, or none for a manifest.
 	packages: []Package_Id,
-	// Syntax that opens a lexical scope, from the index.
-	regions: [dynamic]Span,
-	// Each selector's operand, at the span of the name it selects.
-	operands: [dynamic]Query_Occurrence,
+	// Each source file, by the `dir_key` of its canonical path.
+	files: map[string]u32,
 }
 
+// Builds in the query arena, with what only the build reads in a scratch arena.
 @(private = "file")
 build_snapshot_queries :: proc(s: ^Compilation_Session) {
 	context.allocator = virtual.arena_allocator(&s.query_arena)
-	context.temp_allocator = context.allocator
+	scratch: virtual.Arena
+	defer virtual.arena_destroy(&scratch)
+	context.temp_allocator = virtual.arena_allocator(&scratch)
+	build_query_files(s)
+	build_query_symbols(s)
+	build_query_types(s)
+	build_query_signatures(s)
+	build_query_diagnostics(s)
+	build_query_index(s)
+}
+
+@(private = "file")
+build_query_files :: proc(s: ^Compilation_Session) {
 	c, q := &s.compiler, &s.queries
-	q.symbols = make([]Query_Symbol, len(c.symbols))
-	q.types = make([]Query_Type, len(c.types))
-	q.canonical = make([]Symbol_Id, len(c.symbols))
-	q.documents = make([][dynamic]Symbol_Handle, len(c.sources))
-	q.signatures = make([][dynamic]Query_Signature, len(c.symbols))
-	q.diagnostics = make([]Query_Diagnostic, len(c.diagnostics))
 	q.packages = make([]Package_Id, len(c.sources))
-	for &pkg in c.packages {
+	for pkg in c.packages {
 		for file in pkg.files {
 			if file != nil && int(file.file) < len(q.packages) { q.packages[file.file] = pkg.id }
 		}
 	}
+	q.files = make(map[string]u32, len(c.sources))
+	for source, index in c.sources {
+		key := dir_key(canonical_dir(source.path), context.allocator)
+		if key not_in q.files { q.files[key] = u32(index) }
+	}
+	q.documents = make([][dynamic]Symbol_Handle, len(c.sources))
+	q.occurrences = make([][dynamic]Query_Occurrence, len(c.sources))
+	q.operands = make([][dynamic]Query_Occurrence, len(c.sources))
+}
+
+@(private = "file")
+build_query_symbols :: proc(s: ^Compilation_Session) {
+	c, q := &s.compiler, &s.queries
+	q.symbols = make([]Query_Symbol, len(c.symbols))
+	q.canonical = make([]Symbol_Id, len(c.symbols))
 	// Cloned syntax represents the same written binding, even when its types
 	// differ by specialization. Instance procedures point back to the template.
 	Binding_Key :: struct { span: Span, kind: Symbol_Kind, name: Identifier_Id }
-	bindings := make(map[Binding_Key]Symbol_Id)
+	bindings := make(map[Binding_Key]Symbol_Id, allocator = context.temp_allocator)
 	for symbol, index in c.symbols {
 		if index == 0 { continue }
 		id := Symbol_Id(index)
@@ -496,35 +523,43 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
 		q.symbols[index] = Query_Symbol{
 			handle = Symbol_Handle{s.snapshot, Symbol_Id(index)}, name = identifier_text(c, symbol.name), kind = symbol.kind,
-			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, symbol.span},
-			extent = Query_Location{s.snapshot, no_span()}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
-			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, no_span()},
-			public = symbol.public, generic = symbol.generic, promotes = symbol.kind == .Field && symbol.is_using,
-		}
-		if id == Symbol_Id(index) && written {
-			append(&q.documents[source.span.file], Symbol_Handle{s.snapshot, id})
+			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, written ? symbol.span : NO_SPAN},
+			extent = Query_Location{s.snapshot, NO_SPAN}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
+			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, NO_SPAN},
+			promotes = symbol.kind == .Field && symbol.is_using,
 		}
 		if written {
-			append(&q.occurrences, Query_Occurrence{span = symbol.span, symbol = Symbol_Id(index), type = type})
-		} else { q.symbols[index].definition.span = no_span() }
+			if id == Symbol_Id(index) { append(&q.documents[source.span.file], Symbol_Handle{s.snapshot, id}) }
+			if valid_query_span(c, symbol.span) {
+				append(&q.occurrences[symbol.span.file], Query_Occurrence{span = symbol.span, symbol = Symbol_Id(index), type = type})
+			}
+		}
 	}
 	for id, index in q.canonical {
 		if index > 0 && int(id) != index && q.symbols[id].type.id != q.symbols[index].type.id { q.symbols[id].type.id = INVALID_TYPE }
 	}
+}
+
+@(private = "file")
+build_query_types :: proc(s: ^Compilation_Session) {
+	c, q := &s.compiler, &s.queries
+	q.types = make([]Query_Type, len(c.types))
 	for info, index in c.types {
 		if index == 0 { continue }
-		type := Query_Type{
-			handle = Type_Handle{s.snapshot, Type_Id(index)}, name = type_name_alloc(c, Type_Id(index), context.allocator), kind = info.kind,
-			element = Type_Handle{s.snapshot, info.element}, key = Type_Handle{s.snapshot, info.key}, result = Type_Handle{s.snapshot, info.result},
-			count = info.count, bits = info.bits, signed = info.signed, mutable = info.mutable, result_inout = info.result_inout,
-			fields = make([]Symbol_Handle, len(info.fields)), members = make([]Symbol_Handle, len(info.members)),
-			parameters = make([]Type_Handle, len(info.parameters)), param_modes = slice.clone(info.param_modes),
+		fields := make([]Symbol_Handle, len(info.fields))
+		for field, slot in info.fields { fields[slot] = Symbol_Handle{s.snapshot, field} }
+		q.types[index] = Query_Type{
+			name = type_name_alloc(c, Type_Id(index), context.allocator), kind = info.kind,
+			element = Type_Handle{s.snapshot, info.element}, fields = fields,
 		}
-		for field, slot in info.fields { type.fields[slot] = Symbol_Handle{s.snapshot, field} }
-		for member, slot in info.members { type.members[slot] = Symbol_Handle{s.snapshot, member} }
-		for parameter, slot in info.parameters { type.parameters[slot] = Type_Handle{s.snapshot, parameter} }
-		q.types[index] = type
 	}
+}
+
+// Reads the types' names.
+@(private = "file")
+build_query_signatures :: proc(s: ^Compilation_Session) {
+	c, q := &s.compiler, &s.queries
+	q.signatures = make([][]Query_Signature, len(c.symbols))
 	for symbol, index in c.symbols {
 		if index == 0 || symbol.kind != .Proc || symbol.signature_error { continue }
 		if symbol.proc_type == INVALID_TYPE && !symbol.generic { continue }
@@ -533,34 +568,37 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		if literal == nil && symbol.decl != nil { literal = decl_proc_literal(symbol.decl) }
 		if literal != nil && literal.signature != nil {
 			span := literal.signature.span
-			if span.file != NO_FILE && int(span.file) < len(c.sources) && int(span.hi) <= len(c.sources[span.file].text) {
-				text = c.sources[span.file].text[span.lo:span.hi]
+			if valid_query_span(c, span) {
+				text = span_text(c, span)
 			}
 		}
 		if text == "" && symbol.proc_type != INVALID_TYPE { text = q.types[symbol.proc_type].name }
-		signature := Query_Signature{
-			symbol = Symbol_Handle{s.snapshot, Symbol_Id(index)}, text = text, result = Type_Handle{s.snapshot, symbol.result},
-			complete = !symbol.generic, result_inout = symbol.result_inout, diverges = symbol.diverges,
-			parameters = make([]Query_Parameter, len(symbol.params)),
-		}
-		for parameter, slot in symbol.params {
-			value := Query_Parameter{type = Type_Handle{s.snapshot, parameter}}
+		parameters := make([]string, len(symbol.params))
+		for _, slot in symbol.params {
 			if slot < len(symbol.param_symbols) {
-				if parameter_symbol := symbol_of(c, symbol.param_symbols[slot]); parameter_symbol != nil {
-					value.name, value.mode = identifier_text(c, parameter_symbol.name), parameter_symbol.mode
+				if parameter := symbol_of(c, symbol.param_symbols[slot]); parameter != nil {
+					parameters[slot] = identifier_text(c, parameter.name)
 				}
 			}
-			value.has_default = slot < len(symbol.param_defaults) && symbol.param_defaults[slot] != nil
-			signature.parameters[slot] = value
 		}
-		append(&q.signatures[index], signature)
+		signature := make([]Query_Signature, 1)
+		signature[0] = Query_Signature{Symbol_Handle{s.snapshot, Symbol_Id(index)}, text, parameters}
+		q.signatures[index] = signature
 	}
 	for symbol, index in c.symbols {
-		if index == 0 { continue }
-		if symbol.kind == .Proc_Group {
-			for member in symbol.members { append(&q.signatures[index], ..q.signatures[member][:]) }
-		}
+		if symbol == nil || symbol.kind != .Proc_Group { continue }
+		count := 0
+		for member in symbol.members { count += len(q.signatures[member]) }
+		signatures := make([dynamic]Query_Signature, 0, count)
+		for member in symbol.members { append(&signatures, ..q.signatures[member]) }
+		q.signatures[index] = signatures[:]
 	}
+}
+
+@(private = "file")
+build_query_diagnostics :: proc(s: ^Compilation_Session) {
+	c, q := &s.compiler, &s.queries
+	q.diagnostics = make([]Query_Diagnostic, len(c.diagnostics))
 	for diagnostic, index in c.diagnostics {
 		view := Query_Diagnostic{
 			diagnostic.severity, diagnostic.code, diagnostic.message, diagnostic.label,
@@ -569,28 +607,28 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		for note, slot in diagnostic.notes { view.notes[slot] = Query_Note{Query_Location{s.snapshot, note.span}, note.message} }
 		q.diagnostics[index] = view
 	}
-	index := Query_Index{c = c, q = q, visited = make(map[rawptr]bool)}
-	for file in c.parsed_files { for item in file.items { index_query_item(&index, item) } }
-	for symbol in c.symbols {
-		if symbol == nil { continue }
-		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
-		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
-	}
-	// A written binding the walk gave no declaration, such as a loop binding,
-	// is described by its name alone.
-	for handles in q.documents {
-		for handle in handles {
-			symbol := &q.symbols[handle.id]
-			if symbol.extent.span.file == NO_FILE { symbol.extent = symbol.definition }
-		}
-	}
-	for handles in q.documents { nest_query_bindings(q, handles[:]) }
-	slice.sort_by(q.regions[:], proc(a, b: Span) -> bool {
+}
+
+// Walks the checked syntax, then places each written binding by what it found.
+@(private = "file")
+build_query_index :: proc(s: ^Compilation_Session) {
+	c, q := &s.compiler, &s.queries
+	regions := index_query_syntax(c, q)
+	slice.sort_by(regions, proc(a, b: Span) -> bool {
 		if a.file != b.file { return a.file < b.file }
 		if a.lo != b.lo { return a.lo < b.lo }
 		return a.hi > b.hi
 	})
-	for handles in q.documents { scope_query_locals(q, handles[:]) }
+	for handles, file in q.documents {
+		// A written binding the walk gave no declaration, such as a loop binding,
+		// is described by its name alone.
+		for handle in handles {
+			symbol := &q.symbols[handle.id]
+			if symbol.extent.span.file == NO_FILE { symbol.extent = symbol.definition }
+		}
+		nest_query_bindings(q, handles[:])
+		scope_query_locals(q, handles[:], u32(file), regions)
+	}
 	// Clones share their written binding's declaration, parent, and scope.
 	for &symbol, slot in q.symbols {
 		if slot == 0 || symbol.definition.span.file == NO_FILE { continue }
@@ -604,11 +642,9 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 // field, member, or a record's generic parameter is not a local, nor is a
 // package-level declaration, which no region holds.
 @(private = "file")
-scope_query_locals :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
-	if len(handles) == 0 { return }
-	file := q.symbols[handles[0].id].definition.span.file
+scope_query_locals :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle, file: u32, regions: []Span) {
 	Binding :: struct { lo: u32, id: Symbol_Id }
-	bindings := make([dynamic]Binding)
+	bindings := make([dynamic]Binding, context.temp_allocator)
 	for handle in handles {
 		symbol := q.symbols[handle.id]
 		#partial switch symbol.kind {
@@ -618,14 +654,14 @@ scope_query_locals :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
 		append(&bindings, Binding{symbol.definition.span.lo, handle.id})
 	}
 	slice.sort_by(bindings[:], proc(a, b: Binding) -> bool { return a.lo < b.lo })
-	first, _ := slice.binary_search_by(q.regions[:], file, proc(region: Span, file: u32) -> slice.Ordering {
+	first, _ := slice.binary_search_by(regions, file, proc(region: Span, file: u32) -> slice.Ordering {
 		return region.file < file ? .Less : .Greater
 	})
-	open := make([dynamic]Span)
+	open := make([dynamic]Span, context.temp_allocator)
 	next := first
 	for binding in bindings {
-		for next < len(q.regions) && q.regions[next].file == file && q.regions[next].lo <= binding.lo {
-			region := q.regions[next]
+		for next < len(regions) && regions[next].file == file && regions[next].lo <= binding.lo {
+			region := regions[next]
 			for len(open) > 0 && open[len(open) - 1].hi <= region.lo { pop(&open) }
 			append(&open, region)
 			next += 1
@@ -641,7 +677,7 @@ scope_query_locals :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
 @(private = "file")
 nest_query_bindings :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
 	Nest :: struct { lo, hi: u32, id: Symbol_Id }
-	nests := make([]Nest, len(handles))
+	nests := make([]Nest, len(handles), context.temp_allocator)
 	for handle, index in handles {
 		span := q.symbols[handle.id].extent.span
 		nests[index] = Nest{span.lo, span.hi, handle.id}
@@ -651,21 +687,18 @@ nest_query_bindings :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
 		if a.hi != b.hi { return a.hi > b.hi }
 		return a.id < b.id
 	})
-	open := make([dynamic]Nest)
+	// The outermost entry reaches past every extent and is no binding, so it
+	// stays, and what it holds has no parent.
+	open := make([dynamic]Nest, context.temp_allocator)
+	append(&open, Nest{hi = max(u32)})
 	for nest in nests {
-		for len(open) > 0 && open[len(open) - 1].hi < nest.hi { pop(&open) }
-		parent := INVALID_SYMBOL
-		if len(open) > 0 {
-			enclosing := open[len(open) - 1]
-			if enclosing.lo == nest.lo && enclosing.hi == nest.hi {
-				parent = q.symbols[enclosing.id].parent.id
-			} else {
-				parent = enclosing.id
-				append(&open, nest)
-			}
+		for open[len(open) - 1].hi < nest.hi { pop(&open) }
+		enclosing := open[len(open) - 1]
+		if enclosing.lo == nest.lo && enclosing.hi == nest.hi {
+			q.symbols[nest.id].parent.id = q.symbols[enclosing.id].parent.id
 		} else {
+			q.symbols[nest.id].parent.id = enclosing.id
 			append(&open, nest)
 		}
-		q.symbols[nest.id].parent.id = parent
 	}
 }

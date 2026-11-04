@@ -31,21 +31,15 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	if op == .None && name != "from_utf8" && name != "from_runes" && name != "from_bytes" {
 		return false
 	}
-	// A receiver that is a name already knows its type, so an ordinary method
-	// call's receiver is not checked here and then again as a method.
-	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
-		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-		if sym != nil && sym.kind != .Type && sym.const_value.kind != .Type &&
-		   !type_is_text(k.c, sym.type) && sym.type != TYPE_UNTYPED_STRING {
-			return false
-		}
-	}
-	operand := check_single_expr(k, sel.operand)
+	operand := check_receiver(k, sel)
 	if operand == INVALID_TYPE {
 		return false
 	}
+	// design.md "string type": an unfixed string receiver is a `string_view` of the
+	// literal's static storage, so it takes the view's methods and borrows nothing
+	// that ends.
 	if operand == TYPE_UNTYPED_STRING && op != .None {
-		operand = fix_string_receiver(k, sel.operand)
+		operand = materialize(k, sel.operand, TYPE_STRING_VIEW) ? TYPE_STRING_VIEW : INVALID_TYPE
 	}
 
 	if base := expr_base(sel.operand); base.value_category == .Type {
@@ -65,18 +59,15 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		return false
 	}
 
-	v.value_category = .Value
 	v.operation = Call_Text{op = op}
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = sel.operand
-	v.type = INVALID_TYPE
+	v.bound = bound_exprs(k, sel.operand)
 	if len(v.args) != 0 {
 		errorf(k.c, v.span, "L0561", "`%s` takes no arguments, found %d", name, len(v.args))
 		return true
 	}
-	// A `cstring_view` is terminated, not measured, so it answers only to what a
-	// `string` converts it to; `to_c_view` needs a `string`'s terminator.
+	// A `cstring_view` is terminated, not measured, so it has none of these;
+	// `to_c_view` needs a `string`'s terminator.
 	kind := type_of(k.c, operand).kind
 	if op == .To_C_View ? kind != .String : kind == .CString_View {
 		errorf(k.c, sel.span, "L0561", "`%s` is not available on `%s`", name, type_name(k.c, operand))
@@ -87,7 +78,6 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	case .Byte_Len, .Rune_Count:
 		v.type = TYPE_INT
 	case .Bytes:
-		// Read-only: a `string`'s bytes never become `[]mut u8`.
 		v.type = slice_of(k.c, TYPE_U8, mutable = false)
 	case .Runes:
 		// design.md "String iteration": the rune traversal is the view's own
@@ -108,13 +98,6 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		contribute_lifecycle_members(k, v.type)
 	}
 	return true
-}
-
-// design.md "string type": an unfixed string receiver is a `string_view` of the
-// literal's static storage, so it takes the view's methods and borrows nothing
-// that ends.
-fix_string_receiver :: proc(k: ^Checker, operand: Expr) -> Type_Id {
-	return materialize(k, operand, TYPE_STRING_VIEW) ? TYPE_STRING_VIEW : INVALID_TYPE
 }
 
 @(private = "file")
@@ -141,210 +124,72 @@ text_op_named :: proc(name: string) -> Text_Op {
 }
 
 // design.md "string type conversions" and "Typed fallibility": the validating
-// constructors produce `Option(T)`, `.none` for invalid input.
+// constructors produce `Option(T)`, `.none` for invalid input. The one argument
+// is a value, by position or under `parameter`, and a `[dynamic]T` or `[N]T` reads
+// as the slice expected (design.md "Implicit type conversions"). Its type, or
+// INVALID_TYPE once reported.
+@(private = "file")
+text_constructor_source :: proc(k: ^Checker, v: ^Expr_Call, name, parameter: string, element: Type_Id) -> Type_Id {
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0561", "`%s` takes one argument, found %d", name, len(v.args))
+		return INVALID_TYPE
+	}
+	arg := v.args[0]
+	if arg.mode != .Value || (arg.name.text != "" && arg.name.text != parameter) {
+		errorf(k.c, arg.span, "L0561", "`%s` takes one value argument named `%s`", name, parameter)
+		return INVALID_TYPE
+	}
+	expected := slice_of(k.c, element, mutable = false)
+	source := check_single_expr(k, arg.value, expected)
+	if source != INVALID_TYPE && array_views_as(k.c, source, expected) && !materialize(k, arg.value, expected) {
+		return INVALID_TYPE
+	}
+	return expr_base(arg.value).type
+}
+
+@(private = "file")
+bind_text_constructor :: proc(k: ^Checker, v: ^Expr_Call, op: Text_Conversion, target: Type_Id) {
+	v.resolution = Resolution{kind = .Builtin_Operator}
+	v.operation = Call_Text_Conversion{op = op}
+	v.bound = bound_exprs(k, v.args[0].value)
+	v.type = option_type(k, target, v.span)
+}
+
 @(private = "file")
 check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
-	v.value_category = .Value
-	v.operation = Call_Text{op = .From_Runes}
-	v.resolution = Resolution{kind = .Builtin_Operator}
-	if len(v.args) != 1 {
-		errorf(k.c, v.span, "L0561", "`string.from_runes` takes one `[]rune`, found %d arguments", len(v.args))
-		v.type = INVALID_TYPE
+	source := text_constructor_source(k, v, "string.from_runes", "runes", TYPE_RUNE)
+	if source == INVALID_TYPE {
 		return
 	}
-	operand := check_single_expr(k, v.args[0].value, slice_of(k.c, TYPE_RUNE, mutable = false))
-	if operand == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	if info := type_of(k.c, operand); info.kind != .Slice || info.element != TYPE_RUNE {
+	if info := type_of(k.c, source); info.kind != .Slice || info.element != TYPE_RUNE {
 		errorf(
 			k.c, expr_span(v.args[0].value), "L0561",
-			"`string.from_runes` takes a `[]rune`, found `%s`", type_name(k.c, operand),
+			"`string.from_runes` takes a `[]rune`, found `%s`", type_name(k.c, source),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = v.args[0].value
-	v.type = option_type(k, TYPE_STRING, v.span)
+	bind_text_constructor(k, v, .String_From_Runes, TYPE_STRING)
 }
 
 @(private = "file")
 check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
-	v.value_category = .Value
-	name, from_bytes := "string.from_utf8", Text_Conversion.String_From_Bytes
+	name, op := "string.from_utf8", Text_Conversion.String_From_Bytes
 	switch target {
-	case TYPE_STRING_VIEW:  name, from_bytes = "string_view.from_utf8", .View_From_Bytes
-	case TYPE_CSTRING_VIEW: name, from_bytes = "cstring_view.from_bytes", .C_View_From_Bytes
+	case TYPE_STRING_VIEW:  name, op = "string_view.from_utf8", .View_From_Bytes
+	case TYPE_CSTRING_VIEW: name, op = "cstring_view.from_bytes", .C_View_From_Bytes
 	}
-	if len(v.args) != 1 {
-		errorf(k.c, v.span, "L0561", "`%s` takes one argument, found %d", name, len(v.args))
-		v.type = INVALID_TYPE
-		return
-	}
-	arg := v.args[0]
-	if arg.mode != .Value || (arg.name.text != "" && arg.name.text != "bytes") {
-		errorf(k.c, arg.span, "L0561", "`%s` takes one value argument named `bytes`", name)
-		v.type = INVALID_TYPE
-		return
-	}
-	source := check_single_expr(k, arg.value, slice_of(k.c, TYPE_U8, mutable = false))
+	source := text_constructor_source(k, v, name, "bytes", TYPE_U8)
 	if source == INVALID_TYPE {
-		v.type = INVALID_TYPE
 		return
 	}
 	// Nominal, like the receivers: a `distinct` byte slice needs a written conversion.
 	info := type_of(k.c, source)
-	op := Text_Conversion.None
-	switch {
-	case info.kind == .Slice && info.element == TYPE_U8:
-		op = from_bytes
-	case target == TYPE_STRING && info.kind == .CString_View:
+	if target == TYPE_STRING && info.kind == .CString_View {
 		op = .String_From_C_View
-	case:
+	} else if info.kind != .Slice || info.element != TYPE_U8 {
 		accepted := target == TYPE_STRING ? "a `[]u8` or `cstring_view`" : "a `[]u8`"
-		errorf(k.c, expr_span(arg.value), "L0561", "`%s` takes %s, found `%s`", name, accepted, type_name(k.c, source))
-		v.type = INVALID_TYPE
+		errorf(k.c, expr_span(v.args[0].value), "L0561", "`%s` takes %s, found `%s`", name, accepted, type_name(k.c, source))
 		return
 	}
-	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.operation = Call_Text_Conversion{op = op}
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = arg.value
-	v.type = option_type(k, target, v.span)
-}
-
-// ----------------------------------------------------------- core:strings --
-
-// `allocate_string(text, allocator) -> (string, Allocator_Error)`, the
-// package-private primitive `core:strings` wraps: a copy of already-valid UTF-8
-// from the caller's allocator.
-check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
-	v.value_category = .Value
-	// Positional value arguments only (design.md "Parameters").
-	if !builtin_arguments_ok(k, v) {
-		v.type = INVALID_TYPE
-		return
-	}
-	if len(v.args) != 2 {
-		errorf(
-			k.c, v.span, "L0637",
-			"`%s` takes a `string_view` and an `Allocator`, found %d argument%s",
-			ident.name, len(v.args), len(v.args) == 1 ? "" : "s",
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	bound := make([]Expr, 2, k.c.semantic_allocator)
-	for target, index in ([]Type_Id{TYPE_STRING_VIEW, TYPE_ALLOCATOR}) {
-		value, passed := check_argument_value(k, v.args[index].value, target)
-		bound[index] = value
-		if !passed {
-			v.type = INVALID_TYPE
-			return
-		}
-	}
-	v.bound = bound
-	v.type = result_type(k, TYPE_STRING, TYPE_ALLOCATOR_ERROR)
-}
-
-// ------------------------------------------------------------ core:unsafe --
-
-// design.md "unsafe.raw_data procedure":
-//
-//	unsafe.raw_data([]$E | []mut $E | [dynamic]$E) -> [^]E
-//	unsafe.raw_data(^[$N]$E)                        -> [^]E   one array level
-//	unsafe.raw_data(string | string_view | cstring_view) -> [^]byte
-//
-// and the two view constructors whose operands the compiler cannot trace to an
-// owner.
-check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	v.value_category = .Value
-	// Positional value arguments only (design.md "Parameters").
-	if !builtin_arguments_ok(k, v) {
-		v.type = INVALID_TYPE
-		return
-	}
-	arity := kind == .Unsafe_String_View ? 2 : 1
-	if len(v.args) != arity {
-		errorf(
-			k.c, v.span, "L0569",
-			"`unsafe.%s` takes %d argument%s, found %d",
-			ident.name, arity, arity == 1 ? "" : "s", len(v.args),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	bound := make([]Expr, arity, k.c.semantic_allocator)
-	for index in 0 ..< arity {
-		bound[index] = v.args[index].value
-	}
-	v.bound = bound
-	operand := check_single_expr(k, bound[0])
-	if operand == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	info := underlying_info(k.c, operand)
-	is_byte_pointer := info.kind == .C_Pointer && info.element == TYPE_U8
-
-	#partial switch kind {
-	case .Unsafe_Raw_Data:
-		element := INVALID_TYPE
-		#partial switch info.kind {
-		case .Slice, .Dynamic_Array:
-			element = info.element
-		case .Pointer:
-			if pointee := underlying_info(k.c, info.element); pointee != nil && pointee.kind == .Array {
-				element = pointee.element
-			}
-		case .String, .String_View, .CString_View:
-			element = TYPE_U8
-		}
-		if element == INVALID_TYPE {
-			errorf(
-				k.c, expr_span(bound[0]), "L0569",
-				"`unsafe.raw_data` takes a slice, a pointer to a fixed array, or text, found `%s`",
-				type_name(k.c, operand),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
-		v.type = c_pointer_to(k.c, element)
-
-	case .Unsafe_String_View:
-		// Borrowed from an owner the compiler cannot see, but still validated: the
-		// result promises UTF-8.
-		if !is_byte_pointer {
-			errorf(
-				k.c, expr_span(bound[0]), "L0569",
-				"`unsafe.string_view` takes a `[^]u8` and a length, found `%s`",
-				type_name(k.c, operand),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
-		if length := check_single_expr(k, bound[1], TYPE_INT); length != INVALID_TYPE {
-			materialize(k, bound[1], TYPE_INT)
-			if !type_is_integer(k.c, expr_base(bound[1]).type) {
-				errorf(k.c, expr_span(bound[1]), "L0569", "a length must be an integer, found `%s`", type_name(k.c, length))
-				v.type = INVALID_TYPE
-				return
-			}
-		}
-		v.type = option_type(k, TYPE_STRING_VIEW, v.span)
-
-	case .Unsafe_C_String_View:
-		// Not validated at all: a `cstring_view` promises no encoding.
-		if !is_byte_pointer {
-			errorf(
-				k.c, expr_span(bound[0]), "L0569",
-				"`unsafe.cstring_view` takes a `[^]u8`, found `%s`", type_name(k.c, operand),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
-		v.type = TYPE_CSTRING_VIEW
-	}
+	bind_text_constructor(k, v, op, target)
 }

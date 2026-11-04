@@ -6,4 +6,4 @@ L0501
 this parameter is a `move` parameter, so this argument is written `move(...)`
 L0425
 @25:7
-`App_Error.io` carries a payload: write `io(value)`
+`App_Error.io` carries a payload: write `.io(value)`

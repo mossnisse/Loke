@@ -193,16 +193,12 @@ symbol_at :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lok
 	if at, found := lokec.query_at(session, snapshot, file, u32(offset)); found && at.symbol.id != lokec.INVALID_SYMBOL {
 		return at, true
 	}
-	if offset > 0 && is_name_byte(text[offset - 1]) {
+	if offset > 0 && lokec.is_ident_part(text[offset - 1]) {
 		if at, found := lokec.query_at(session, snapshot, file, u32(offset - 1)); found && at.symbol.id != lokec.INVALID_SYMBOL {
 			return at, true
 		}
 	}
 	return {}, false
-}
-
-is_name_byte :: proc(b: byte) -> bool {
-	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // The binding's declaration as code, then the comments written above it.

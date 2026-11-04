@@ -29,3 +29,16 @@ not_a_union :: proc(c: Colour) {
 	case:
 	}
 }
+
+// A case that named no variant has reported that, so its binding is untyped and
+// its body reports nothing of it.
+Number :: union { a: int, b: string }
+
+rejected_case_bindings :: proc(n: Number) -> int {
+	switch (n) {
+	case .a(x): return x;
+	case .a(y): return y + 1;
+	case .nope(z): return z + 1;
+	case .b: return 0;
+	}
+}

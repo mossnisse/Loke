@@ -1,0 +1,8 @@
+// design.md "By-reference iteration": a map has no mutable view to apply
+// `indexed()` to, so the advice is to count.
+package main;
+
+main :: proc() {
+    m: map[int]int = {};
+    foreach ((k, &mut v), i in m.indexed()) { v = i; _ = k; }
+}

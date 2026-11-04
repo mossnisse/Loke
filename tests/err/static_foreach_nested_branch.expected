@@ -7,5 +7,5 @@ L0455
 @15:24
 
 L0454
-needs a compile-time array, subrange,
+needs a compile-time array or slice, subrange,
 @17:17

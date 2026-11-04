@@ -1,0 +1,29 @@
+package main;
+
+// design.md "`@(c_vararg)`": a C-variadic procedure is a group member like any
+// other. Its trailing arguments rank as built-in conversions, and a member that
+// takes them by a typed parameter is chosen over it.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..) -> i32 ---;
+}
+
+typed :: proc(fmt: cstring_view, count: i32) -> i32 {
+	return printf("typed %d\n", count);
+}
+other :: proc(number: f64) -> i32 {
+	return printf("other %.1f\n", number);
+}
+print :: proc{printf, other};
+preferring :: proc{printf, typed};
+
+main :: proc() {
+	print("just text\n");
+	print("%d and %s\n", 1, cstring_view("two"));
+	print(1.5);
+	count: i32 = 3;
+	preferring("%d\n", count);
+	preferring("%d %d\n", count, count);
+}

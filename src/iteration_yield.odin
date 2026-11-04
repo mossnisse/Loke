@@ -1,11 +1,9 @@
-// Iterator yield modes, derived from `next`, and their projected item types.
+// Iterator yield modes, derived from `next`, and their projected item types; and
+// the associated types that follow from protocol signatures.
 package lokec
 
-// One derived associated type: `Item` from `next`, `Iterator` from `iter`, and
-// `Mut_Iterator` from `iter_mut` (design.md "Iteration protocol").
-Item_Key :: struct { iterator: Type_Id, pkg: Package_Id, member: Derived_Member }
-Derived_Member :: enum u8 { Item, Iterator, Mut_Iterator }
-Item_State :: enum { None, Checking, Complete }
+// One associated type derived in one package: `Item`, `Iterator`, or `Mut_Iterator`.
+Derived_Key :: struct { type: Type_Id, pkg: Package_Id, member: string }
 
 Yield_Kind :: enum {
 	Owned,
@@ -24,7 +22,7 @@ Yield_Desc :: struct {
 // caller's signature check names the `next` it expected.
 iterator_yield :: proc(k: ^Checker, iterator, element: Type_Id, fallback := Yield_Kind.Owned) -> Yield_Desc {
 	next := symbol_of(k.c, iteration_member(k, iterator, "next"))
-	if next != nil && next.result != INVALID_TYPE {
+	if next != nil {
 		if item := option_payload(k.c, next.result); item != INVALID_TYPE {
 			if desc, derived := yield_of(k.c, element, item); derived {
 				return desc
@@ -100,7 +98,7 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 		}
 		return INVALID_TYPE
 	}
-	fields := make([]Anon_Record_Field, len(desc.fields), k.c.semantic_allocator)
+	fields := make([]Anon_Member, len(desc.fields), k.c.semantic_allocator)
 	for field_id, index in info.fields {
 		field := symbol_of(k.c, field_id)
 		if field == nil {
@@ -115,6 +113,27 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 	return anon_record_type(k.c, fields)
 }
 
+// `Item` as a binding receives it: for a record mode, the record `next` hands back,
+// which may be a named one (design.md "Yield modes"). The projection still rules
+// on whether `element` can be taken apart.
+iterator_item_type :: proc(k: ^Checker, iterator, element: Type_Id, desc: Yield_Desc, span: Span, report := true) -> Type_Id {
+	item := yield_item_type(k, element, desc, span, report)
+	if item == INVALID_TYPE || desc.kind != .Record { return item }
+	return option_payload(k.c, symbol_of(k.c, iteration_member(k, iterator, "next")).result)
+}
+
+// A record of two parts, each lent or owned by its own mode.
+yield_pair :: proc(c: ^Compiler, first, second: Yield_Desc) -> Yield_Desc {
+	fields := make([]Yield_Desc, 2, c.semantic_allocator)
+	fields[0], fields[1] = first, second
+	return Yield_Desc{kind = .Record, fields = fields}
+}
+
+// `indexed()` lends what its source lends and owns its counter.
+indexed_yield :: proc(c: ^Compiler, yield: Yield_Desc) -> Yield_Desc {
+	return yield_pair(c, yield, Yield_Desc{kind = .Owned})
+}
+
 yield_is_owned :: proc(desc: Yield_Desc) -> bool {
 	if desc.kind != .Record {
 		return desc.kind == .Owned
@@ -127,87 +146,69 @@ yield_is_owned :: proc(desc: Yield_Desc) -> bool {
 	return true
 }
 
-ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
-	under := type_underlying(k.c, type)
-	info := type_of(k.c, under)
-	if info == nil { return }
-	key := Item_Key{under, lookup_package(k), .Item}
-	switch k.c.item_states[key] {
-	case .Checking, .Complete: return
-	case .None:
+// copied() clones lent leaves and passes owned leaves through.
+yield_borrowed_parts_copyable :: proc(c: ^Compiler, element: Type_Id, desc: Yield_Desc) -> bool {
+	switch desc.kind {
+	case .Owned:
+		return true
+	case .Borrowed, .Mutable:
+		return !type_clone_disabled(c, element)
+	case .Record:
 	}
-	k.c.item_states[key] = .Checking
-	defer k.c.item_states[key] = .Complete
-
-	item_member := iteration_member(k, under, "Item")
-	item := INVALID_TYPE
-	if item_member != INVALID_SYMBOL {
-		item = associated_type_of(k, under, "Item")
-		if item == INVALID_TYPE {
-			sym := symbol_of(k.c, item_member)
-			errorf(k.c, sym.span, "L0694", "the `Item` member of `%s` must name a type", type_name(k.c, under))
-			return
-		}
+	for field_id, index in underlying_info(c, element).fields {
+		if !yield_borrowed_parts_copyable(c, symbol_of(c, field_id).type, desc.fields[index]) { return false }
 	}
-	next := symbol_of(k.c, iteration_member(k, under, "next"))
-	if next == nil || next.result == INVALID_TYPE { return }
-	payload := option_payload(k.c, next.result)
-	if payload == INVALID_TYPE { return }
-	if item != INVALID_TYPE {
-		if item != payload {
-			errorf(
-				k.c, symbol_of(k.c, item_member).span, "L0694",
-				"`%s.Item` is `%s`, but `next` returns `Option(%s)`",
-				type_name(k.c, under), type_name(k.c, item), type_name(k.c, payload),
-			)
-		}
-		return
-	}
-	generated := new_associated_type(k.c, "Item", payload, under)
-	symbol_of(k.c, generated).pkg = key.pkg
-	install_impl_members(k, .Extend, under, []Symbol_Id{generated}, key.pkg)
+	return true
 }
 
-// `Iterator` and `Mut_Iterator` are what `iter` and `iter_mut` return, so a type
-// need not declare them; one that does must agree.
-ensure_iterator_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
-	switch identifier_text(k.c, name) {
-	case "Iterator":
-		derive_iterator_member(k, type, .Iterator, "Iterator", "iter")
-	case "Mut_Iterator":
-		derive_iterator_member(k, type, .Mut_Iterator, "Mut_Iterator", "iter_mut")
-	}
+// `Item`, `Iterator`, and `Mut_Iterator` follow from the signatures of `next`,
+// `iter`, and `iter_mut`, so a type need not declare them; one that does must
+// agree (design.md "Iteration protocol").
+ensure_derived_members :: proc(k: ^Checker, type: Type_Id) {
+	if type_of(k.c, type) == nil { return }
+	derive_member(k, type, "Item", "next")
+	derive_member(k, type, "Iterator", "iter")
+	derive_member(k, type, "Mut_Iterator", "iter_mut")
 }
 
 @(private = "file")
-derive_iterator_member :: proc(k: ^Checker, type: Type_Id, member: Derived_Member, associated, entry: string) {
-	under := type_underlying(k.c, type)
-	if type_of(k.c, under) == nil { return }
-	key := Item_Key{under, lookup_package(k), member}
-	switch k.c.item_states[key] {
-	case .Checking, .Complete: return
-	case .None:
-	}
-	k.c.item_states[key] = .Checking
-	defer k.c.item_states[key] = .Complete
+derive_member :: proc(k: ^Checker, type: Type_Id, associated, entry: string) {
+	key := Derived_Key{type, lookup_package(k), associated}
+	if key in k.c.derived_members { return }
+	k.c.derived_members[key] = {}
 
-	start := symbol_of(k.c, iteration_member(k, under, entry))
-	if start == nil || start.kind != .Proc || start.result == INVALID_TYPE || !start.has_receiver { return }
-	declared := iteration_member(k, under, associated)
-	if declared == INVALID_SYMBOL {
-		generated := new_associated_type(k.c, associated, start.result, under)
-		symbol_of(k.c, generated).pkg = key.pkg
-		install_impl_members(k, .Extend, under, []Symbol_Id{generated}, key.pkg)
+	member := iteration_member(k, type, entry)
+	resolve_symbol_signature_in_place(k, member, type)
+	start := symbol_of(k.c, member)
+	// An overload is chosen by its signature.
+	if start != nil && start.kind == .Proc_Group {
+		for candidate in start.members { resolve_symbol_signature_in_place(k, candidate, type) }
+		start = symbol_of(k.c, iteration_member(k, type, entry))
+	}
+	if start == nil || start.generic { return }
+	// A signature still on the stack below this lookup can answer a later one.
+	if start.kind == .Proc_Group || (start.kind == .Proc && start.result == INVALID_TYPE) {
+		delete_key(&k.c.derived_members, key)
 		return
 	}
-	written := associated_type_of(k, under, associated)
+	if start.kind != .Proc || !start.has_receiver || len(start.params) != 1 { return }
+	derived := associated == "Item" ? option_payload(k.c, start.result) : start.result
+	if derived == INVALID_TYPE { return }
+	declared := iteration_member(k, type, associated)
+	if declared == INVALID_SYMBOL {
+		generated := new_associated_type(k.c, associated, derived, type)
+		symbol_of(k.c, generated).pkg = key.pkg
+		install_impl_members(k, .Extend, type, []Symbol_Id{generated}, key.pkg)
+		return
+	}
+	written := associated_type_of(k, type, associated)
 	if written == INVALID_TYPE {
-		errorf(k.c, symbol_of(k.c, declared).span, "L0694", "`%s.%s` must name a type", type_name(k.c, under), associated)
-	} else if written != start.result {
+		errorf(k.c, symbol_of(k.c, declared).span, "L0694", "`%s.%s` must name a type", type_name(k.c, type), associated)
+	} else if written != derived {
 		errorf(
 			k.c, symbol_of(k.c, declared).span, "L0694",
 			"`%s.%s` is `%s`, but `%s` returns `%s`",
-			type_name(k.c, under), associated, type_name(k.c, written), entry, type_name(k.c, start.result),
+			type_name(k.c, type), associated, type_name(k.c, written), entry, type_name(k.c, start.result),
 		)
 	}
 }

@@ -1,0 +1,9 @@
+// A condition that cannot be `bool` is reported once.
+package main;
+
+main :: proc() {
+	x := 1 if 5 else 2;
+	y := 1;
+	z := 1 if y else 2;
+	_ = x; _ = z;
+}

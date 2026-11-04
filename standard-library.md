@@ -605,7 +605,7 @@ Additional declarations are in the package's `api.loki`.
 
 ## `core:sync`
 
-`core:sync` provides `Atomic(T)` for booleans, integers, enums with
+`core:sync` provides `Atomic(T)` for booleans, integers, runes, enums with
 a supported integer backing type, pointers, and an `Option(^T)`, which is one
 address (see [Representation](design.md#representation)) and starts as `.none`.
 

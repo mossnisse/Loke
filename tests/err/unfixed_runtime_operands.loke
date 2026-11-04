@@ -1,0 +1,18 @@
+// design.md "Conditional expression": the operator must apply to the type the
+// parts take, and each part must convert to it.
+package main;
+
+c :: proc() -> bool { return true; }
+
+D :: distinct int;
+
+main :: proc() {
+	a: f64 = (1 if c() else 2) % 2;
+	b: f64 = ~(1 if c() else 2);
+	d: bool = -(1 if c() else 2);
+	e: string = (1 if c() else 2) + 1;
+	f: u8 = (1 if c() else 300) + 1;
+	g: f32 = 'a' + (1 if c() else 2);
+	h: D = (1 if c() else 2) + 1;
+	_ = a; _ = b; _ = d; _ = e; _ = f; _ = g; _ = h;
+}

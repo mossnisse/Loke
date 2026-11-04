@@ -1,0 +1,40 @@
+// design.md "Minimum provenance precision": past the element budget, a task's reach
+// through a global may only seem to be there, so L0731 says it may be and names
+// the limit, whether the task is given it, its procedure does it, or the parent
+// does it while tasks run.
+package main;
+
+import "core:thread";
+
+shared: []mut int;
+
+work :: proc(s: []int) {}
+
+given :: proc() {
+	values: [9][]int = {};
+	values[8] = shared;
+	parallel { spawn work(values[0]); }
+}
+
+reaching :: proc() {
+	values: [9][]int = {};
+	values[8] = shared;
+	work(values[0]);
+}
+
+spawned :: proc() {
+	parallel { spawn reaching(); }
+}
+
+parent :: proc() {
+	parallel {
+		spawn work({});
+		reaching();
+	}
+}
+
+main :: proc() {
+	given();
+	spawned();
+	parent();
+}

@@ -1,0 +1,6 @@
+/// A package whose name is also a field's.
+@(public)
+package member;
+
+/// A number.
+N :: 1;

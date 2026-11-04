@@ -1,0 +1,13 @@
+// design.md "@(export)": names are program-wide, and an `impl` member exports
+// under its own name.
+package main;
+
+T :: struct { a: i32 }
+
+impl T {
+	@(export) value :: proc "c" () -> i32 { return 1; }
+}
+
+@(export) value :: proc "c" () -> i32 { return 2; }
+
+main :: proc() {}

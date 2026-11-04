@@ -1,0 +1,27 @@
+// design.md "Temporaries and procedure boundaries": `unsafe.raw_data` borrows its
+// operand, so a temporary array is dropped when the full expression ends.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+@(move_only)
+Noisy :: struct { id: int }
+
+impl Noisy {
+	bye :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }
+}
+
+build :: proc() -> [dynamic]Noisy {
+	out: [dynamic]Noisy = {};
+	out.append(Noisy{1});
+	return out;
+}
+
+main :: proc() {
+	address := unsafe.raw_data(build());
+	fmt.println(address != nil);
+	kept := build();
+	fmt.println(unsafe.raw_data(kept) != nil);
+	fmt.println("end");
+}

@@ -1,0 +1,14 @@
+// An override that names a variant by its value is that variant.
+package main;
+
+import "core:fmt";
+
+Colour :: enum u8 { Red, Green = 7 }
+
+CHOSEN :: build_config(CHOSEN, Colour.Red);
+LEFT :: build_config(LEFT, Colour.Green);
+
+main :: proc() {
+	fmt.println(CHOSEN);
+	fmt.println(LEFT);
+}

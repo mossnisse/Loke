@@ -1,0 +1,6 @@
+L0586
+@6:1
+`f64` cannot be a map key: it holds a float, and NaN never equals itself, so no float is hashable; key by an integer image of the value instead
+L0586
+@11:15
+`Key` cannot be a map key: it is move-only, and a key must be copyable

@@ -15,7 +15,7 @@ emit_scoped_block :: proc(e: ^Emitter, b: ^Block) {
 	pop_scope(e)
 }
 
-@(private)
+@(private = "file")
 emit_block_statements :: proc(e: ^Emitter, b: ^Block) {
 	if b == nil {
 		return
@@ -28,26 +28,19 @@ emit_block_statements :: proc(e: ^Emitter, b: ^Block) {
 emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 	for stmt in stmts {
 		if e.terminated {
-			fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
-			e.terminated = false
+			place_label(e, new_label(e, "unreachable"))
 		}
-		// A block statement's full-expression boundary; initial statements and loop
-		// updates declare their own.
+		// A block statement's full-expression boundary, which also holds an initial
+		// statement's temporaries; a loop update declares its own.
 		push_temporaries(e)
-		emit_stmt(e, stmt, lends = true)
+		emit_stmt(e, stmt)
 		pop_temporaries(e)
 	}
 }
 
-// A statement that `lends` is one of its block's own, so a temporary a local's
-// value borrows is dropped with the block (design.md "Temporaries and procedure
-// boundaries"); a `for` update and a deferred statement lend nothing.
 @(private)
-emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
+emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 	debug_mark_location(e, stmt_span(stmt))
-	if lends {
-		mark_extended_temporaries(e.c, stmt, &e.extended)
-	}
 	switch s in stmt {
 	case ^Stmt_Error:
 
@@ -85,35 +78,29 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 		}
 
 	case ^Stmt_Defer:
-		if s.slot < len(e.defer_flags) && len(e.cleanups) > 0 {
-			entry := Deferred{flag = e.defer_flags[s.slot], stmt = s.stmt, on_failure = s.on_failure}
-			unwind_reserve(e, &entry)
-			e.unwind.slot_by_defer[s.slot] = entry.slot
-			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", e.defer_flags[s.slot])
-			unwind_register(e, entry)
-			append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
-		}
+		entry := Deferred{kind = .Written, flag = e.defer_flags[s.slot], stmt = s.stmt, on_failure = s.on_failure}
+		unwind_reserve(e, &entry)
+		e.unwind.slot_by_defer[s.slot] = entry.slot
+		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", e.defer_flags[s.slot])
+		unwind_register(e, entry)
+		append(&e.cleanups[len(e.cleanups) - 1], entry)
 
 	case ^Stmt_Return:
 		emit_return_values(e, s)
 
 	case ^Stmt_Branch:
-		// Temporaries of an enclosing initial statement are owed on this path too.
-		drain_temporaries(e, 0)
-		if s.kind == .Break {
-			run_cleanups(e, e.break_depth)
-			branch(e, e.break_label)
-		} else {
-			run_cleanups(e, e.continue_depth)
-			branch(e, e.continue_label)
-		}
+		// This path owes what it leaves inside the loop. The statement holding the
+		// loop owes the rest, since the loop's exit still falls through to its end.
+		drain_temporaries(e, e.loop.frames, e.loop.held)
+		run_cleanups(e, e.loop.cleanup_depth)
+		branch(e, s.kind == .Break ? e.loop.break_label : e.loop.continue_label)
 
 	case ^Block:
 		emit_scoped_block(e, s)
 
 	case ^Stmt_When:
 		// The chosen branch shares the surrounding block's scope.
-		emit_block_statements(e, when_selected_block(s))
+		emit_block_statements(e, s.selected)
 
 	case ^Stmt_Foreach:
 		if s.kind == .Unresolved {
@@ -148,84 +135,21 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 		backend_fail(e, "an unchecked `spawn` reached emission")
 		return
 	}
-	frame_info := type_of(e.c, task.frame)
-	// A procedure value has no declaration: its call supplies every argument.
-	callee := task.through_value ? nil : symbol_of(e.c, call.resolution.symbol)
 	proc_type := call_proc_type(e.c, call)
 	callee_type := underlying_info(e.c, proc_type)
-	if frame_info == nil || callee_type == nil {
+	if type_of(e.c, task.frame) == nil || callee_type == nil {
 		backend_fail(e, "a `spawn` has no frame")
 		return
 	}
-	frame_type := llvm_type(e, task.frame)
-	field_address :: proc(e: ^Emitter, info: ^Type_Info, frame_type, frame: string, field: int) -> string {
-		return gep_field(e, frame_type, frame, int(symbol_of(e.c, info.fields[field]).index))
-	}
-
-	allocator := emit_default_allocator(e)
-	frame := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
-		frame, allocator, type_size(e.c, task.frame), type_align(e.c, task.frame),
-	)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, frame)
-	fail_label, ok_label := new_label(e, "spawn.no_frame"), new_label(e, "spawn.frame")
-	branch_if(e, failed, fail_label, ok_label)
-	place_label(e, fail_label)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-	fmt.sbprintln(&e.b, "  unreachable")
-	place_label(e, ok_label)
-	e.terminated = false
+	frame := emit_spawn_frame(e, task)
 	unclaimed := begin_frame_release(e, task.frame, frame)
 	if task.through_value {
-		field := field_address(e, frame_info, frame_type, frame, spawn_callee_field(task))
+		field := spawn_field_address(e, task.frame, frame, spawn_callee_field(task))
 		store(e, proc_type, emit_expr(e, call.callee), field)
 	}
-
-	// A default reads the parameters bound to its left, as at a call.
-	outer_params := e.param_values
-	own_params := make(map[Symbol_Id]string)
-	defer {
-		delete(own_params)
-		e.param_values = outer_params
-	}
-	owned := make([dynamic]Deferred)
-	defer delete(owned)
-	for step in 0 ..< len(call.bound) {
-		index := call_slot_at(call, step)
-		argument := call.bound[index]
-		type := callee_type.parameters[index]
-		is_default := callee != nil && index < len(callee.param_defaults) && argument == callee.param_defaults[index]
-		e.param_values = is_default ? own_params : outer_params
-		field := field_address(e, frame_info, frame_type, frame, spawn_argument_field(index))
-		if call_packs(call, index) {
-			pack := symbol_of(e.c, frame_info.fields[spawn_argument_field(index)]).type
-			emit_spawn_pack(e, task, call, type, pack, field, &owned)
-			continue
-		}
-		bound: string
-		switch task.kinds[index] {
-		case .Address:
-			address := emit_address(e, argument)
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, field)
-			mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-			bound = param_mode_is_pointer(mode) ? address : load_place(e, type, address)
-		case .Copy:
-			bound = emit_expr(e, argument)
-			store(e, type, bound, field)
-		case .Owned:
-			bound = emit_expr(e, argument)
-			append(&owned, hold_temporary_value(e, type, bound))
-			store(e, type, bound, field)
-		}
-		if callee != nil && index < len(callee.param_symbols) && callee.param_symbols[index] != INVALID_SYMBOL {
-			own_params[callee.param_symbols[index]] = bound
-		}
-	}
-	e.param_values = outer_params
+	owned := emit_spawn_arguments(e, task, call, callee_type, frame)
 	if task.result != INVALID_SYMBOL {
-		field := field_address(e, frame_info, frame_type, frame, spawn_result_field(task))
+		field := spawn_field_address(e, task.frame, frame, spawn_result_field(task))
 		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", e.names[task.result], field)
 	}
 	fmt.sbprintfln(
@@ -241,11 +165,64 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	// completes before the join, so the result is initialized from here, for
 	// its enclosing scope's cleanup on every exit.
 	if task.result != INVALID_SYMBOL {
-		if flag := drop_flag_of(e, task.result); flag != "" {
-			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
-		}
 		revive_place(e, s.result)
 	}
+}
+
+@(private = "file")
+spawn_field_address :: proc(e: ^Emitter, record: Type_Id, address: string, field: int) -> string {
+	index := int(symbol_of(e.c, type_of(e.c, record).fields[field]).index)
+	return gep_field(e, llvm_type(e, record), address, index)
+}
+
+@(private = "file")
+emit_spawn_frame :: proc(e: ^Emitter, task: ^Spawn_Task) -> string {
+	allocator := emit_default_allocator(e)
+	frame, failed := emit_rt_alloc(e, allocator, type_size(e.c, task.frame), type_align(e.c, task.frame))
+	alloc_failed_if(e, failed, allocator, "spawn.no_frame")
+	return frame
+}
+
+// The callee's arguments, each stored in the frame. Returns what the task owns,
+// held until the frame is handed over.
+@(private = "file")
+emit_spawn_arguments :: proc(
+	e: ^Emitter, task: ^Spawn_Task, call: ^Expr_Call, callee_type: ^Type_Info, frame: string,
+) -> (owned: [dynamic]Deferred) {
+	// A procedure value has no declaration: its call supplies every argument.
+	callee := task.through_value ? nil : symbol_of(e.c, call.resolution.symbol)
+	scope := begin_default_scope(e, callee)
+	defer end_default_scope(e, &scope)
+	for step in 0 ..< len(call.bound) {
+		index := call_slot_at(call, step)
+		argument := call.bound[index]
+		type := callee_type.parameters[index]
+		enter_default_scope(e, &scope, index, argument)
+		field := spawn_field_address(e, task.frame, frame, spawn_argument_field(index))
+		if call_packs(call, index) {
+			pack := symbol_of(e.c, type_of(e.c, task.frame).fields[spawn_argument_field(index)]).type
+			emit_spawn_pack(e, task, call, type, pack, field, &owned)
+			continue
+		}
+		bound: string
+		switch task.kinds[index] {
+		case .Address:
+			address := emit_address(e, argument)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, field)
+			mode := param_mode_at(callee_type, index)
+			bound = param_mode_is_pointer(mode) ? address : load_place(e, type, address)
+		case .Copy:
+			bound = emit_expr(e, argument)
+			store(e, type, bound, field)
+		case .Owned:
+			// A place here is in a temporary the parent drops, so the task gets a copy.
+			bound = emit_copied_expr(e, argument, type, expression_is_borrowed_place(argument))
+			append(&owned, hold_temporary_value(e, type, bound))
+			store(e, type, bound, field)
+		}
+		bind_default_scope(e, &scope, index, bound)
+	}
+	return
 }
 
 // design.md "Spawn statements": a variadic pack's operands, evaluated in their
@@ -256,20 +233,16 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 emit_spawn_pack :: proc(
 	e: ^Emitter, task: ^Spawn_Task, call: ^Expr_Call, slice, pack: Type_Id, record: string, owned: ^[dynamic]Deferred,
 ) {
-	info := type_of(e.c, pack)
-	record_type := llvm_type(e, pack)
 	element := slice_element(e.c, slice)
 	managed := emit_lifecycle(e, element).managed
-	next_element, next_spread := 0, 0
-	for is_spread, position in call.variadic_order {
-		slot := gep_field(e, record_type, record, int(symbol_of(e.c, info.fields[position]).index))
+	cursor: Call_Pack_Cursor
+	for expr, is_spread in call_pack_next(call, &cursor) {
+		position := cursor.taken - 1
+		slot := spawn_field_address(e, pack, record, position)
 		if is_spread {
-			store(e, slice, emit_expr(e, call.variadic_spreads[next_spread]), slot)
-			next_spread += 1
+			store(e, slice, emit_expr(e, expr), slot)
 			continue
 		}
-		expr := call.variadic_elements[next_element]
-		next_element += 1
 		value := emit_copied_expr(e, expr, element, managed && expression_is_borrowed_place(expr))
 		if task.pack[position] == .Owned {
 			append(owned, hold_temporary_value(e, element, value))
@@ -280,7 +253,6 @@ emit_spawn_pack :: proc(
 
 @(private = "file")
 emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
-	// Static storage lives at module level, already initialised.
 	if d.destructure.active && d.duration == .None {
 		emit_destructure_decl(e, d)
 		return
@@ -315,27 +287,6 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 	}
 }
 
-// design.md "Exchange": the replacement is fully evaluated before the
-// destination is touched, and the old value is handed back, not dropped.
-@(private)
-emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
-	address := emit_address(e, v.bound[0])
-	replacement := emit_expr(e, v.bound[1])
-	previous := load_place(e, as_type, address)
-	store(e, as_type, replacement, address)
-	return previous
-}
-
-// `move` transfers the value and leaves a named source dead.
-@(private)
-emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
-	value := emit_expr(e, v.value)
-	if ident, is_ident := v.value.(^Expr_Ident); is_ident {
-		kill_place(e, ident.symbol)
-	}
-	return value
-}
-
 // design.md "Destructuring": the operand is evaluated once. From a place,
 // retained managed fields are cloned (with each destination's allocator); a
 // consumed record's fields transfer. Every owned field is guarded until bound.
@@ -344,30 +295,18 @@ emit_destructure_fields :: proc(
 	e: ^Emitter, plan: ^Destructure, operand: Expr, destinations: []Symbol_Id,
 ) -> (values: []string, guards: []Deferred) {
 	record := emit_expr(e, operand)
-	aggregate := llvm_type(e, plan.record)
 	values = make([]string, len(plan.fields))
-	// An unguarded field holds no registration; a zero slot would name the
-	// frame's first one, which binding the field would then clear.
 	guards = make([]Deferred, len(plan.fields))
-	for &guard in guards {
-		guard.slot = -1
-	}
 	for field_id, index in plan.fields {
 		field := symbol_of(e.c, field_id)
-		if field == nil {
-			continue
-		}
 		// A padding field fills no binding, so the field's own slot is read.
-		value := extract(e, aggregate, record, int(field.index))
-		retained := index < len(plan.retained) && plan.retained[index]
-		if retained && index < len(plan.clones) && plan.clones[index] {
-			value = emit_clone_value(
-				e, field.type, value,
-				emit_destination_allocator(e, index < len(destinations) ? destinations[index] : INVALID_SYMBOL),
-			)
+		value := record_part(e, plan.record, record, int(field.index))
+		clones := plan.retained[index] && index < len(plan.clones) && plan.clones[index]
+		if clones {
+			value = emit_clone_value(e, field.type, value, emit_destination_allocator(e, destinations[index]))
 		}
 		values[index] = value
-		if !plan.from_place || (retained && index < len(plan.clones) && plan.clones[index]) {
+		if !plan.from_place || clones {
 			guards[index] = hold_temporary_value(e, field.type, value)
 		}
 	}
@@ -382,7 +321,7 @@ emit_destructure_discards :: proc(e: ^Emitter, plan: ^Destructure, guards: []Def
 		return
 	}
 	#reverse for _, index in plan.fields {
-		if index >= len(plan.retained) || !plan.retained[index] {
+		if !plan.retained[index] {
 			drop_temporary_value(e, guards[index])
 		}
 	}
@@ -396,12 +335,11 @@ emit_destructure_decl :: proc(e: ^Emitter, d: ^Decl) {
 		if symbol_id == INVALID_SYMBOL {
 			continue
 		}
-		field := symbol_of(e.c, plan.fields[index])
 		slot := declare_local(e, symbol_id)
-		if slot == "" || field == nil {
+		if slot == "" {
 			continue
 		}
-		store(e, field.type, values[index], slot)
+		store(e, symbol_of(e.c, plan.fields[index]).type, values[index], slot)
 		register_implicit_drop(e, symbol_id)
 		finish_temporary_drop(e, guards[index])
 	}
@@ -411,43 +349,23 @@ emit_destructure_decl :: proc(e: ^Emitter, d: ^Decl) {
 @(private = "file")
 emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	plan := &s.destructure
-	destinations := make([]Symbol_Id, len(plan.fields))
+	roots := make([]Symbol_Id, len(plan.fields))
 	for target, index in s.lhs {
-		destinations[index] = place_root_symbol(target)
+		roots[index] = place_root_symbol(target)
 	}
-	values, guards := emit_destructure_fields(e, plan, s.rhs[0], destinations)
-	addresses := make([]string, len(s.lhs))
-	map_destinations := make([]Map_Assignment_Destination, len(s.lhs))
+	values, guards := emit_destructure_fields(e, plan, s.rhs[0], roots)
+	destinations := emit_destinations(e, s.lhs)
 	for target, index in s.lhs {
-		if index >= len(plan.retained) || !plan.retained[index] {
+		if is_discard(target) {
 			continue
 		}
-		if entry := inserting_map_index(target); entry != nil {
-			map_destinations[index] = prepare_map_assignment(e, entry, len(s.lhs) > 1)
-			continue
+		// design.md "Destructuring": a field is cloned or transferred at its own
+		// type, and a narrower union then widens to its destination's.
+		type, value := symbol_of(e.c, plan.fields[index]).type, values[index]
+		if wider := expr_base(target).type; union_widens_to(e.c, type, wider) {
+			type, value = wider, emit_union_widen(e, value, type, wider)
 		}
-		addresses[index] = emit_address(e, target)
-	}
-	for target, index in s.lhs {
-		if index >= len(plan.retained) || !plan.retained[index] {
-			continue
-		}
-		if entry := inserting_map_index(target); entry != nil {
-			emit_map_insert_store(e, map_destinations[index], values[index], guards[index])
-			continue
-		}
-		if addresses[index] == "" {
-			continue
-		}
-		field := symbol_of(e.c, plan.fields[index])
-		if field == nil {
-			continue
-		}
-		displaced := displace_place(e, s, index, addresses[index])
-		store(e, field.type, values[index], addresses[index])
-		revive_place(e, s.lhs[index])
-		finish_temporary_drop(e, guards[index])
-		drop_displaced(e, displaced)
+		emit_destination_write(e, s, destinations, index, type, value, guards[index])
 	}
 	emit_destructure_discards(e, plan, guards)
 }
@@ -490,46 +408,57 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	// while an earlier write drops what it replaced.
 	guards := make([]Deferred, len(s.rhs))
 	for value, index in s.rhs {
-		guards[index] = Deferred{slot = -1}
+		target := s.lhs[index]
+		type := expr_base(target).type
 		clones := index < len(s.rhs_clones) && s.rhs_clones[index]
-		values[index] = emit_copied_expr(
-			e, value, expr_base(s.lhs[index]).type, clones, destination = place_root_symbol(s.lhs[index]),
-		)
-		if index < len(s.lhs) && (inserting_map_index(s.lhs[index]) != nil || (len(s.lhs) > 1 && !is_discard(s.lhs[index]))) {
-			guards[index] = hold_temporary_value(e, expr_base(s.lhs[index]).type, values[index])
+		values[index] = emit_copied_expr(e, value, type, clones, destination = place_root_symbol(target))
+		if inserting_map_index(target) != nil || (len(s.lhs) > 1 && !is_discard(target)) {
+			guards[index] = hold_temporary_value(e, type, values[index])
 		}
 	}
-
-	addresses := make([]string, len(s.lhs))
-	map_destinations := make([]Map_Assignment_Destination, len(s.lhs))
+	destinations := emit_destinations(e, s.lhs)
 	for target, index in s.lhs {
+		if is_discard(target) {
+			emit_discarded_temporary(e, s.rhs[index], values[index])
+			continue
+		}
+		emit_destination_write(e, s, destinations, index, expr_base(target).type, values[index], guards[index])
+	}
+}
+
+// Where each write of an assignment goes: `addresses` for a place, `inserting`
+// for `m[key] = elem`, and neither for a `_`.
+@(private = "file")
+Assign_Destinations :: struct {
+	addresses: []string,
+	inserting: []Map_Assignment_Destination,
+}
+
+@(private = "file")
+emit_destinations :: proc(e: ^Emitter, targets: []Expr) -> Assign_Destinations {
+	out := Assign_Destinations{make([]string, len(targets)), make([]Map_Assignment_Destination, len(targets))}
+	for target, index in targets {
 		if is_discard(target) {
 			continue
 		}
 		if entry := inserting_map_index(target); entry != nil {
-			map_destinations[index] = prepare_map_assignment(e, entry, len(s.lhs) > 1)
+			out.inserting[index] = prepare_map_assignment(e, entry, len(targets) > 1)
 			continue
 		}
-		addresses[index] = emit_address(e, target)
+		out.addresses[index] = emit_address(e, target)
 	}
-	for target, index in s.lhs {
-		// `m[key] = elem` inserts rather than storing through an address.
-		if entry := inserting_map_index(target); entry != nil && index < len(values) {
-			emit_map_insert_store(e, map_destinations[index], values[index], guards[index])
-			continue
-		}
-		if addresses[index] == "" || index >= len(values) {
-			if is_discard(target) && index < len(values) {
-				emit_discarded_temporary(e, s.rhs[index], values[index])
-			}
-			continue
-		}
-		displaced := displace_place(e, s, index, addresses[index])
-		store(e, expr_base(target).type, values[index], addresses[index])
-		revive_place(e, target)
-		finish_temporary_drop(e, guards[index])
-		drop_displaced(e, displaced)
+	return out
+}
+
+@(private = "file")
+emit_destination_write :: proc(
+	e: ^Emitter, s: ^Stmt_Assign, destinations: Assign_Destinations, index: int, type: Type_Id, value: string, guard: Deferred,
+) {
+	if inserting_map_index(s.lhs[index]) != nil {
+		emit_map_insert_store(e, destinations.inserting[index], value, guard)
+		return
 	}
+	emit_replacing_store(e, s, index, type, value, destinations.addresses[index], guard)
 }
 
 // A destination's old value, moved aside by a write; `live` is the `i1` saying
@@ -545,7 +474,18 @@ Displaced :: struct {
 // moved aside, the replacement stored, and only then the old value dropped.
 // The destination's cleanup owns the replacement before the drop hook runs, so
 // a panicking hook unwinds through the replacement once and never replays the
-// old value. Marks a flagged local live again.
+// old value.
+@(private = "file")
+emit_replacing_store :: proc(
+	e: ^Emitter, s: ^Stmt_Assign, index: int, type: Type_Id, value, address: string, guard := Deferred{},
+) {
+	displaced := displace_place(e, s, index, address)
+	store(e, type, value, address)
+	revive_place(e, s.lhs[index])
+	finish_temporary_drop(e, guard)
+	drop_displaced(e, displaced)
+}
+
 @(private = "file")
 displace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string) -> Displaced {
 	target := s.lhs[index]
@@ -553,21 +493,18 @@ displace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string
 	if !emit_lifecycle(e, type).managed {
 		return {}
 	}
-	flag := ""
+	symbol := INVALID_SYMBOL
 	if ident, is_ident := target.(^Expr_Ident); is_ident {
-		flag = drop_flag_of(e, ident.symbol)
+		symbol = ident.symbol
 	}
 	out := Displaced{type = type}
 	state := index < len(s.destination_live) ? s.destination_live[index] : Liveness.Live
 	if state != .Dead {
-		if state != .Live && flag != "" {
-			out.live = load(e, "i1", flag)
+		if state != .Live && drop_flag_of(e, symbol) != "" {
+			out.live = load(e, "i1", unwind_flag_address(e, symbol))
 		}
 		out.aside = alloca(e, llvm_type(e, type))
 		copy_bytes(e, out.aside, address, type_size(e.c, type))
-	}
-	if flag != "" {
-		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 	}
 	return out
 }
@@ -589,7 +526,6 @@ drop_displaced :: proc(e: ^Emitter, displaced: Displaced) {
 	place_label(e, skip)
 }
 
-// The destination is evaluated once, before the right operand.
 @(private = "file")
 emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	target := s.lhs[0]
@@ -601,37 +537,23 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 			emit_operator_call(e, s.operator, operands[:])
 			return
 		}
-		// The binary operator, then a replacing write.
 		address := emit_address(e, target)
 		value := emit_operator_call(e, s.operator, operands[:], left_place = address)
-		displaced: Displaced
-		if !operator_consumes_left(e, s.operator) {
-			displaced = displace_place(e, s, 0, address)
-		}
-		store(e, type, value, address)
-		drop_displaced(e, displaced)
+		emit_replacing_store(e, s, 0, type, value, address)
 		return
 	}
-	// design.md: the destination is read after the right operand.
+	// design.md "Evaluation order": the destination is read after the right operand.
 	address := emit_address(e, target)
 	rhs := emit_expr(e, s.rhs[0])
 	current := load_place(e, type, address)
 	op := compound_operator(s.op)
 	result: string
 	if type_is_simd(e.c, type) {
-		result = emit_simd_binary_values(e, op, type, current, type, rhs, expr_base(s.rhs[0]).type)
+		result = emit_simd_binary_values(e, op, type, current, rhs)
 	} else {
 		result = emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
 	}
 	store(e, type, result, address)
-}
-
-// A `move` left operand already handed the old value to the operator.
-@(private = "file")
-operator_consumes_left :: proc(e: ^Emitter, operator: Symbol_Id) -> bool {
-	symbol := symbol_of(e.c, operator)
-	info := symbol == nil ? nil : type_of(e.c, symbol.proc_type)
-	return info != nil && len(info.param_modes) > 0 && info.param_modes[0] == .Move
 }
 
 // The destination of `m[key] = elem`, which creates its element.
@@ -644,12 +566,19 @@ inserting_map_index :: proc(target: Expr) -> ^Expr_Index {
 	return index
 }
 
+// The scope of an `if`, `for` or `switch` header, holding what its initial
+// statement declares.
+@(private = "file")
+push_init_scope :: proc(e: ^Emitter, init: Stmt) {
+	push_scope(e, nil)
+	if init != nil {
+		emit_stmt(e, init)
+	}
+}
+
 @(private = "file")
 emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
-	push_scope(e, nil)
-	if s.init != nil {
-		emit_stmt(e, s.init, lends = true)
-	}
+	push_init_scope(e, s.init)
 	debug_mark_location(e, expr_span(s.cond))
 	// The condition's temporaries end before either branch runs.
 	push_temporaries(e)
@@ -666,7 +595,11 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 
 	if s.otherwise != nil {
 		place_label(e, else_label)
+		// An `else if` is a statement of its own, so its initial statement's
+		// temporaries end with it, on this path only.
+		push_temporaries(e)
 		emit_stmt(e, s.otherwise)
+		pop_temporaries(e)
 		branch(e, done_label)
 	}
 	place_label(e, done_label)
@@ -674,29 +607,32 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	pop_scope(e)
 }
 
+// A loop begins here, with these `break` and `continue` targets.
+@(private)
+enter_loop :: proc(e: ^Emitter, break_label, continue_label: string) {
+	e.loop = Loop_Targets {
+		break_label = break_label,
+		continue_label = continue_label,
+		cleanup_depth = len(e.cleanups),
+		frames = len(e.temporaries),
+		held = len(e.held),
+	}
+}
+
 @(private = "file")
 emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
-	outer_break, outer_continue := e.break_label, e.continue_label
-	outer_break_depth, outer_continue_depth := e.break_depth, e.continue_depth
-	defer {
-		e.break_label, e.continue_label = outer_break, outer_continue
-		e.break_depth, e.continue_depth = outer_break_depth, outer_continue_depth
-	}
+	outer := e.loop
+	defer e.loop = outer
 
-	// The loop's own scope holds the init declaration; `break` leaves it too.
-	e.break_depth = len(e.cleanups)
-	push_scope(e, nil)
-	if s.init != nil {
-		emit_stmt(e, s.init, lends = true)
-	}
+	push_init_scope(e, s.init)
 
 	head := new_label(e, "for.head")
 	body := new_label(e, "for.body")
 	post := new_label(e, "for.post")
 	done := new_label(e, "for.done")
-	e.break_label = done
-	e.continue_label = post
-	e.continue_depth = len(e.cleanups)
+	// `break` lands in the loop's own scope, whose exit disposes of what the
+	// initial statement declared once.
+	enter_loop(e, done, post)
 
 	place_label(e, head)
 	if s.cond != nil {
@@ -733,16 +669,14 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 // jump table when a measured switch is hot.
 @(private = "file")
 emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
-	push_scope(e, nil)
-	if s.init != nil {
-		emit_stmt(e, s.init, lends = true)
-	}
+	push_init_scope(e, s.init)
 	debug_mark_location(e, expr_span(s.subject))
 	subject_type := expr_base(s.subject).type
-	subject := emit_expr(e, s.subject)
+	// design.md "Temporaries and procedure boundaries": a produced subject lives
+	// until the statement ends.
+	subject := emit_borrowed_operand(e, s.subject)
 	done := new_label(e, "switch.done")
 	bodies, tests, order, fallback := switch_labels(e, s, "case", done)
-	defer delete(order)
 	closed_fallback := fallback == done && s.exhaustive
 	if closed_fallback {
 		fallback = new_label(e, "switch.invalid")
@@ -752,11 +686,21 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	for case_index, position in order {
 		place_label(e, tests[case_index])
 		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
-		matched := ""
-		for value in s.cases[case_index].values {
-			matched = or_match(e, matched, emit_case_test(e, subject, subject_type, value))
+		values := s.cases[case_index].values
+		// design.md "switch statement": testing stops at the first match. Each test
+		// is a complete expression, since the next may not run.
+		for value, value_index in values {
+			push_temporaries(e)
+			matched := emit_case_test(e, subject, subject_type, value)
+			pop_temporaries(e)
+			if value_index == len(values) - 1 {
+				branch_if(e, matched, bodies[case_index], next)
+			} else {
+				more := new_label(e, "case.more")
+				branch_if(e, matched, bodies[case_index], more)
+				place_label(e, more)
+			}
 		}
-		branch_if(e, matched, bodies[case_index], next)
 	}
 
 	if closed_fallback {
@@ -815,10 +759,7 @@ or_match :: proc(e: ^Emitter, matched, test: string) -> string {
 // at `result` (design.md "Union argument expansion").
 @(private)
 emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> string {
-	push_scope(e, nil)
-	if s.init != nil {
-		emit_stmt(e, s.init, lends = true)
-	}
+	push_init_scope(e, s.init)
 	debug_mark_location(e, expr_span(s.subject))
 	union_type := expr_base(s.subject).type
 	// Over an addressable place a case binds the payload, or its fields, in the
@@ -836,7 +777,6 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 	joined := result != TYPE_VOID && result != INVALID_TYPE ? temporary_slot(e, result) : ""
 	done := new_label(e, "typeswitch.done")
 	bodies, tests, order, fallback := switch_labels(e, s, "typecase", done)
-	defer delete(order)
 
 	branch(e, len(order) > 0 ? tests[order[0]] : fallback)
 	for case_index, position in order {
@@ -872,7 +812,10 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 		}
 		emit_statements(e, entry.stmts)
 		if entry.arm != nil {
+			// Its temporaries end with the enclosing full expression, if this arm ran.
+			begin_conditional(e)
 			yielded := emit_expr(e, entry.arm)
+			end_conditional(e)
 			if joined != "" && !e.terminated {
 				store(e, result, yielded, joined)
 			}
@@ -884,10 +827,19 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 	place_label(e, done)
 	debug_mark_end(e, s.span)
 	pop_scope(e)
-	if joined == "" || is_large_value(e, result) {
-		return joined
+	if joined == "" {
+		return ""
 	}
-	return load_place(e, result, joined)
+	return load_temporary(e, result, joined)
+}
+
+// A binding's own storage, for a value it holds rather than a place it names.
+@(private = "file")
+declare_case_binding :: proc(e: ^Emitter, symbol: Symbol_Id, type: Type_Id) -> string {
+	binding := fmt.aprintf("%%bind.%d", next_id(e))
+	alloca_named(e, binding, llvm_type(e, type))
+	bind_local(e, symbol, binding)
+	return binding
 }
 
 @(private = "file")
@@ -895,9 +847,7 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 	if entry.binding_symbol == INVALID_SYMBOL {
 		return
 	}
-	binding := fmt.aprintf("%%bind.%d", next_id(e))
-	alloca_named(e, binding, llvm_type(e, entry.binding_type))
-	bind_local(e, entry.binding_symbol, binding)
+	binding := declare_case_binding(e, entry.binding_symbol, entry.binding_type)
 	if entry.binding_type == union_type {
 		store(e, union_type, value, binding)
 		return
@@ -953,10 +903,8 @@ emit_case_fields :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, p
 			register_scope_place(e, field.type, address)
 			continue
 		}
-		binding := fmt.aprintf("%%bind.%d", next_id(e))
-		alloca_named(e, binding, llvm_type(e, field.type))
+		binding := declare_case_binding(e, field.symbol, field.type)
 		store(e, field.type, load_place(e, field.type, address), binding)
-		bind_local(e, field.symbol, binding)
 		register_implicit_drop(e, field.symbol)
 	}
 }
@@ -964,8 +912,8 @@ emit_case_fields :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, p
 @(private = "file")
 emit_case_test :: proc(e: ^Emitter, subject: string, subject_type: Type_Id, value: Expr) -> string {
 	if range, is_range := value.(^Expr_Range); is_range {
-		lo := emit_expr(e, range.lo)
-		hi := emit_expr(e, range.hi)
+		lo := emit_borrowed_operand(e, range.lo)
+		hi := emit_borrowed_operand(e, range.hi)
 		low_ok := emit_compare(e, .Gt_Eq, subject_type, subject, lo)
 		high_op := range.op == .Range_Excl ? Token_Kind.Lt : Token_Kind.Lt_Eq
 		high_ok := emit_compare(e, high_op, subject_type, subject, hi)
@@ -973,31 +921,31 @@ emit_case_test :: proc(e: ^Emitter, subject: string, subject_type: Type_Id, valu
 		fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, low_ok, high_ok)
 		return out
 	}
-	return emit_equal(e, subject_type, subject, emit_expr(e, value))
+	return emit_equal(e, subject_type, subject, emit_borrowed_operand(e, value))
 }
 
 // ----------------------------------------------------------------- returns --
 
 // The result is stored before any cleanup runs, so a `defer` cannot change it.
-@(private)
+@(private = "file")
 emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
-	if s != nil && s.value != nil && e.result_slot != "" {
+	if s.value != nil && e.result_slot != "" {
 		value := s.value
-		// An `inout` result hands back the place itself, not a copy of it.
-		operand := e.result_inout ? emit_address(e, value.expr) : emit_copied_expr(e, value.expr, e.result_type, value.clone_on_return)
 		if e.result_inout {
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", operand, e.result_slot)
+			// An `inout` result hands back the place itself, not a copy of it, and
+			// the place stays live.
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", emit_address(e, value.expr), e.result_slot)
 		} else {
-			store(e, e.result_type, operand, e.result_slot)
-		}
-		// A returned local transferred out, so cleanup must not drop it. A view
-		// of it transfers nothing, and a borrowed binding names storage its
-		// subject still owns (design.md "Switch ownership").
-		if !value.clone_on_return && emit_lifecycle(e, e.result_type).managed {
-			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
-				if sym := symbol_of(e.c, ident.symbol); sym != nil && sym.borrowed_binding == .None &&
-				   emit_lifecycle(e, sym.type).managed {
-					kill_place(e, ident.symbol)
+			store(e, e.result_type, emit_copied_expr(e, value.expr, e.result_type, value.clone_on_return), e.result_slot)
+			// A returned local transferred out, so cleanup must not drop it. A view
+			// of it transfers nothing, and a borrowed binding names storage its
+			// subject still owns (design.md "Switch ownership").
+			if !value.clone_on_return && emit_lifecycle(e, e.result_type).managed {
+				if ident, is_ident := value.expr.(^Expr_Ident); is_ident && expression_is_borrowed_place(ident) {
+					if sym := symbol_of(e.c, ident.symbol); sym != nil && sym.borrowed_binding == .None &&
+					   emit_lifecycle(e, sym.type).managed {
+						kill_place(e, ident.symbol)
+					}
 				}
 			}
 		}
@@ -1014,7 +962,7 @@ returned_failure :: proc(e: ^Emitter) -> string {
 	}
 	pending := false
 	for scope in e.cleanups {
-		for entry in scope.entries {
+		for entry in scope {
 			pending ||= entry.on_failure
 		}
 	}
@@ -1022,26 +970,24 @@ returned_failure :: proc(e: ^Emitter) -> string {
 		return ""
 	}
 	union_type := type_underlying(e.c, e.result_type)
-	return emit_union_failed(e, union_type, load(e, llvm_type(e, union_type), e.result_slot))
+	return emit_union_failed(e, union_type, load_temporary(e, union_type, e.result_slot))
 }
 
 @(private)
 emit_epilogue :: proc(e: ^Emitter) {
-	drain_temporaries(e, 0)
+	defer e.terminated = true
+	drain_temporaries(e, 0, 0)
 	run_cleanups(e, 0, returned_failure(e))
 	emit_unwind_pop(e)
 	if e.abi_foreign {
 		emit_foreign_return(e)
-		e.terminated = true
 		return
 	}
 	if e.result_type == INVALID_TYPE || returns_sret(e, e.result_type, e.result_inout) {
 		fmt.sbprintln(&e.b, "  ret void")
-		e.terminated = true
 		return
 	}
 	slot_type := e.result_inout ? "ptr" : llvm_type(e, e.result_type)
 	value := load(e, slot_type, e.result_slot)
 	fmt.sbprintfln(&e.b, "  ret %s %s", slot_type, value)
-	e.terminated = true
 }

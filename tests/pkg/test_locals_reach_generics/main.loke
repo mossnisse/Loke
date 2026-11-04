@@ -1,0 +1,48 @@
+// design.md "Test procedures": an ordinary build leaves out a test's local
+// procedures and what only they serve: an instance of a file-scope generic on a
+// type declared in the test, with its `thread_local` storage, a formatter or a
+// witness of that type. What survives must still build, here and in an imported
+// package, and nothing of the test runs when the program's thread ends.
+package main;
+
+import "core:fmt";
+import "core:slice";
+import "lib";
+
+Shows :: interface($Self: type) {
+	slot show: proc(self) -> int;
+}
+
+read_it :: proc(s: dyn Shows) -> int { return s.show(); }
+
+holds :: proc($T: type) {
+	kept: thread_local T;
+	_ = size_of(type_of(kept));
+}
+
+@(test)
+every_way_out_of_a_test :: proc() {
+	limit := 5;
+	values := [3]int{3, 1, 2};
+	slice.sort_by(&mut values[:], proc(left, right: int) -> bool capture(limit) { return left + limit < right + limit; });
+	assert(values[0] == 1);
+
+	Local :: struct { x: int }
+	impl Local {
+		format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "local"); }
+		show :: proc(self) -> int { return self.x; }
+	}
+	fmt.println(Local{x = 1});
+	local := Local{x = 2};
+	assert(read_it((dyn Shows)(&local)) == 2);
+
+	@(move_only) Held :: struct { id: int }
+	impl Held {
+		release :: hook(drop) proc(self: inout Held) { fmt.println("a test's drop ran", self.id); }
+	}
+	holds(Held);
+}
+
+main :: proc() {
+	fmt.println("main", lib.answer());
+}

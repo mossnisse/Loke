@@ -1,0 +1,33 @@
+// design.md "Globals while tasks run": every task carries the drop effects of the
+// `thread_local` owners its thread drops when it exits. Its allocator use is one of
+// them, so a hook's use of a region of unknown provenance is reserved by each task
+// (design.md "Allocators and tasks"), and only one may hold it.
+package main;
+
+chosen: Allocator;
+
+@(move_only) Guard :: struct { id: int }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) {
+		log := make([dynamic]int, 0, 4, chosen);
+		_ = log;
+	}
+}
+
+guard: thread_local Guard;
+
+work :: proc() {}
+
+// One task holds what its thread's exit uses, with nothing else to conflict.
+alone :: proc() {
+	parallel { spawn work(); }
+}
+
+two_tasks :: proc() {
+	parallel {
+		spawn work();
+		spawn work();
+	}
+}
+
+main :: proc() {}

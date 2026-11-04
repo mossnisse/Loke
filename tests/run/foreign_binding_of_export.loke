@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// design.md "@(export)": a foreign binding of an exported name links to that
+// definition. A definition returning a record or a pointer carries a result
+// contract and its binding does not, and they are still one type.
+
+Pair :: struct { a, b: i32 }
+
+foreign import system "system:kernel32.lib";
+
+foreign system {
+	@(link_name="pair_of") bound_pair :: proc "c" (a: i32) -> Pair ---;
+	@(link_name="first_of") bound_first :: proc "c" (p: ^mut Pair) -> ^mut i32 ---;
+}
+
+@(export) pair_of :: proc "c" (a: i32) -> Pair { return Pair{a = a, b = a + 1}; }
+@(export) first_of :: proc "c" (p: ^mut Pair) -> ^mut i32 { return &mut p.a; }
+
+main :: proc() {
+	pair := bound_pair(3);
+	fmt.println(int(pair.a), int(pair.b));
+	first := bound_first(&mut pair);
+	first^ = 9;
+	fmt.println(int(pair.a));
+}

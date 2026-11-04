@@ -1,9 +1,9 @@
 L0459
 @29:11
-`int` has 0 fields
+`int` is not a record
 L0459
 @30:11
-`rune` has 0 fields
+`rune` is not a record
 L0459
 @33:11
 `Point` has 2 fields
@@ -27,7 +27,7 @@ L0363
 has no field or member `runes`
 L0459
 @54:16
-`int` has 0 fields
+`int` is not a record
 L0456
 @57:21
 is a type, so it is not iterable; write `.values()` for its members
@@ -39,7 +39,7 @@ L0363
 has no field or member `values`
 L0454
 @65:12
-has 2 fields, so a static `foreach` over it binds 1 or 2 names, not 3
+has 2 fields, so it fills 2 bindings, not 3
 L0454
 @68:16
 `b` is a runtime binding in a static expansion

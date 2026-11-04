@@ -1,0 +1,10 @@
+package main;
+
+// grammar.md "Expressions": `&mut` slices only when the slice is the last suffix
+// written, so a parenthesized slice is the address of a temporary, as with `&`.
+main :: proc() {
+	a := [3]int{1, 2, 3};
+	sliced := &mut a[1:2];
+	wrapped := &mut (a[1:2]);
+	_, _ = sliced, wrapped;
+}

@@ -1,0 +1,15 @@
+L0526
+@10:9
+this slice cannot be returned: `bytes` ends when this procedure returns
+L0526
+@15:9
+this slice cannot be returned: `bytes` ends when this procedure returns
+L0526
+@21:9
+this slice cannot be returned: `bytes` ends when this procedure returns
+L0512
+@28:2
+`bytes` cannot be modified here: a read-only slice of it is still in use
+L0513
+@33:14
+this slice is used after this temporary has ended

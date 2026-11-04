@@ -1,0 +1,12 @@
+// A body-local `impl` whose subject names no type is rejected, as at file scope.
+package main;
+
+main :: proc() {
+	x := 1;
+	impl x {
+		f :: proc() { undefined_thing(); }
+	}
+	impl nope {
+	}
+	_ = x;
+}

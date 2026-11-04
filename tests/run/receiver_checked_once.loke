@@ -1,0 +1,36 @@
+package main;
+
+import "core:fmt";
+
+// A call's receiver is checked once, whichever compiler-defined form looks at it
+// first, so a procedure literal in it is one function and a `dyn proc` argument
+// one conversion.
+
+S :: struct { n: int }
+
+impl S {
+	other :: proc(self: S) -> int { return self.n; }
+	unbox :: proc(self: S) -> int { return self.n + 1; }
+	copy :: proc(self: S) -> int { return self.n + 2; }
+	as :: proc(self: S) -> int { return self.n + 3; }
+}
+
+take :: proc(g: proc() -> int) -> S { return S{n = g()}; }
+view :: proc(g: dyn proc() -> int) -> S { return S{n = g()}; }
+seven :: proc() -> int { return 7; }
+generic :: proc(a: $T) -> S { return S{n = 1}; }
+
+// A forward variable's type is known when a text operation asks.
+first :: proc() -> int { return later.byte_len() + later.len(); }
+later := "hello";
+
+main :: proc() {
+	fmt.println((proc() -> S { return S{n = 1}; })().unbox());
+	fmt.println(take(proc() -> int { return 2; }).unbox());
+	fmt.println(take(proc() -> int { return 3; }).other());
+	fmt.println(take(proc() -> int { return 4; }).copy());
+	fmt.println(view(seven).other());
+	fmt.println(view(seven).as());
+	fmt.println(generic(proc() -> int { return 4; }).other());
+	fmt.println(first());
+}

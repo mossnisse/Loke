@@ -19,3 +19,12 @@ L0512
 L0512
 @79:2
 `data` cannot be modified by `println` here: a read-only slice of it is still in use
+L0512
+@91:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@95:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@99:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use

@@ -1,0 +1,37 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Destructuring": a record fills destinations, an `operator([]=)` among
+// them, and is evaluated once.
+
+Grid :: struct { value: int }
+
+impl Grid {
+	set :: operator([]=) proc(self: inout Grid, i: int, value: int) { self.value = value; }
+}
+
+Pair :: struct { a: int, b: int }
+
+made := 0;
+
+make_pair :: proc() -> Pair {
+	made += 1;
+	return Pair{1, 2};
+}
+
+main :: proc() {
+	g := Grid{};
+	y := 0;
+	g[0], y = make_pair();
+	fmt.println(g.value, y, made);
+
+	g[1], _ = Pair{3, 4};
+	fmt.println(g.value, y);
+	_, g[0] = Pair{5, 6};
+	fmt.println(g.value, y);
+
+	r := Pair{7, 8};
+	g[0], y = r;
+	fmt.println(g.value, y, r.a);
+}

@@ -1,0 +1,83 @@
+// design.md "Globals while tasks run": each spawn site has a window bit of its own,
+// so however many a body has, a join ends the window of its block's tasks and a
+// write before the next block's first `spawn` is outside it.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+total: int;
+
+work :: proc() {}
+
+main :: proc() {
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel { spawn work(); }
+	parallel {
+		total = 1;
+		spawn work();
+	}
+	fmt.println(total);
+}

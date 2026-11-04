@@ -1,0 +1,14 @@
+package ext;
+
+import "../lib";
+
+impl lib.Holder($T) {
+	@(public) K :: size_of(T);
+}
+
+@(public) touch :: proc() {
+	a := lib.Holder(u8){};
+	b := lib.Holder(i64){};
+	_ = a;
+	_ = b;
+}

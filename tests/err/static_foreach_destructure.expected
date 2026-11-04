@@ -1,0 +1,9 @@
+L0454
+@10:12
+`Padded` has 2 fields, so it fills 2 bindings, not 3
+L0454
+@11:12
+`int` is not a record, so it cannot fill 2 bindings
+L0454
+@12:13
+`int` is not a record, so it cannot fill 2 bindings

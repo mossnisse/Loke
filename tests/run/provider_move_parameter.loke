@@ -1,0 +1,28 @@
+// design.md "Allocator regions and region provenance": a provider received through
+// a `move` parameter backs what this body keeps to itself, and can be returned.
+package main;
+import "core:fmt";
+import "core:mem";
+
+local_use :: proc(a: move mem.Arena, n: int) -> int {
+	b := box(n, a.allocator());
+	return b^ + 1;
+}
+
+passed_on :: proc(a: move mem.Arena) -> mem.Arena { return a; }
+
+dropped_after :: proc(a: move mem.Arena) -> int {
+	b := box(10, a.allocator());
+	n := b^;
+	drop(b);
+	drop(a);
+	return n;
+}
+
+main :: proc() {
+	fmt.println(local_use(mem.Arena.init(), 1), local_use(mem.Arena.init(), 2));
+	arena := passed_on(mem.Arena.init());
+	b := box(5, arena.allocator());
+	fmt.println(b^);
+	fmt.println(dropped_after(mem.Arena.init()));
+}

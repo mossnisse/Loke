@@ -1,0 +1,152 @@
+// design.md "Spawn statements": a task borrows only storage that lasts to the
+// join. A field or element of a temporary is copied into the task, since the
+// temporary is dropped on the parent as its statement ends, whichever way the
+// projection reaches it: a field, an array or dynamic array element, a map
+// value, a box's payload, or a `self: ^` receiver. What a pointer or slice in
+// the temporary leads to is older, so it stays lent. design.md "Widening by
+// label": a widened place is lent as any argument is, its widened form in the
+// task's own frame, so a loop's next spawn does not overwrite it.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+Numbers :: struct { items: [dynamic]int }
+
+numbers :: proc() -> Numbers {
+	w := Numbers{};
+	foreach (i in 0..<2000) { w.items.append(i); }
+	return w;
+}
+
+sum :: proc(xs: [dynamic]int) -> int {
+	total := 0;
+	foreach (x in xs) { total += x; }
+	return total;
+}
+
+text_list :: proc() -> [dynamic]string {
+	xs := make([dynamic]string);
+	xs.append("an element long enough to live on the heap");
+	return xs;
+}
+
+text_array :: proc() -> [2]string {
+	return {"zero element on the heap".copy(), "first element on the heap".copy()};
+}
+
+text_map :: proc() -> map[int]string {
+	m := make(map[int]string);
+	m[7] = "a map value long enough to live on the heap";
+	return m;
+}
+
+boxed_numbers :: proc() -> Box(Numbers) {
+	return box(numbers());
+}
+
+length :: proc(s: string) -> int { return s.len(); }
+
+// Copies add 1000, and drops count, so the copy made for a task is visible.
+drops: sync.Atomic(int) = {};
+
+Counted :: struct { id: int }
+
+impl Counted {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Counted, Allocator_Error) {
+		return .ok(Counted{self.id + 1000});
+	}
+	release :: hook(drop) proc(self: inout) { _ = drops.add(1); }
+	read :: proc(self: ^) -> int { return self.id; }
+}
+
+Holder :: struct { counted: Counted, plain: Plain }
+
+Plain :: struct { n: int }
+
+impl Plain {
+	read :: proc(self: ^) -> int { return self.n; }
+}
+
+holder :: proc() -> Holder { return Holder{Counted{1}, Plain{2}}; }
+
+temporaries :: proc() {
+	a, b, c, d, e, f, g: int;
+	parallel {
+		spawn a = sum(numbers().items);
+		spawn b = length(text_list()[0]);
+		spawn c = length(text_array()[1]);
+		spawn d = length(text_map()[7]);
+		spawn e = sum(boxed_numbers().items);
+		spawn f = holder().counted.read();
+		spawn g = holder().plain.read();
+	}
+	fmt.println(a, b, c, d, e, f, g);
+}
+
+// The task's copy and the temporary it came from are each dropped once.
+drops_paired :: proc() {
+	before := drops.load();
+	result: int;
+	parallel { spawn result = holder().counted.read(); }
+	fmt.println("read", result, "drops", drops.load() - before);
+}
+
+Pointing :: struct { items: []string, target: ^Numbers }
+
+pointing :: proc(items: []string, target: ^Numbers) -> Pointing { return Pointing{items, target}; }
+
+// What the temporary points to outlives it, so nothing is copied.
+through_pointers :: proc() {
+	kept := numbers();
+	texts := text_list();
+	lent: int;
+	element: int;
+	parallel {
+		spawn lent = sum(pointing(texts[:], &kept).target.items);
+		spawn element = length(pointing(texts[:], &kept).items[0]);
+	}
+	fmt.println(lent, element);
+}
+
+Small :: (first: string | none:);
+Big :: (none: | first: string | count: int);
+
+widened_total: sync.Atomic(int) = {};
+
+show :: proc(v: Big) {
+	switch (v) {
+	case .first(s): _ = widened_total.add(s.len());
+	case .none: _ = widened_total.add(1000);
+	case .count(n): _ = widened_total.add(n);
+	}
+}
+
+// Each task reads its own element, not the last the loop reached: lengths 41
+// to 46 total 261, where six of the last would total 276.
+widened_places :: proc() {
+	items := make([dynamic]Small);
+	foreach (text in ([6]string{
+		"12345678901234567890123456789012345678901",
+		"123456789012345678901234567890123456789012",
+		"1234567890123456789012345678901234567890123",
+		"12345678901234567890123456789012345678901234",
+		"123456789012345678901234567890123456789012345",
+		"1234567890123456789012345678901234567890123456",
+	})) {
+		items.append(.first(text.copy()));
+	}
+	parallel {
+		foreach (i in 0..<items.len()) {
+			spawn show(items[i]);
+		}
+	}
+	fmt.println("widened", widened_total.load());
+}
+
+main :: proc() {
+	temporaries();
+	drops_paired();
+	through_pointers();
+	widened_places();
+}

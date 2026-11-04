@@ -1,11 +1,5 @@
 // Semantic lifecycle hooks and the managed-type classification (design.md
-// "Lifecycle hooks and resource types"):
-//
-//   hook(drop): proc(self: inout T)
-//   hook(copy): proc(self, allocator: Allocator) -> Result(T, Allocator_Error)
-//
-// The compiler supplies the copy hook's `mem.default_allocator()` default; a
-// written default is rejected.
+// "Lifecycle hooks and resource types").
 package lokec
 
 // What a type's lifecycle is, cached per underlying type. Resolved lazily because
@@ -19,7 +13,6 @@ Lifecycle :: struct {
 	// `@(move_only)`, a provider, holding a move-only part, or an instance whose
 	// `hook(copy)` its `where` clause excluded: no copy exists.
 	clone_disabled:   bool,
-	copy_excluded:    bool,
 	// Has a hook, is move-only, or has a managed part.
 	managed:          bool,
 	// `string`, containers and providers: the runtime does the clone/drop, so
@@ -38,6 +31,9 @@ Lifecycle :: struct {
 Lifecycle_Operations :: struct {
 	using facts: Lifecycle,
 	clone_fallible: bool,
+	// Whether dropping one can run a user hook, and so panic. A container's
+	// element hooks run inside the runtime, so one with managed parts counts.
+	drop_may_panic: bool,
 }
 
 finalize_lifecycle_operations :: proc(c: ^Compiler) -> bool {
@@ -65,11 +61,24 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	facts := lifecycle_of(c, under)^
 	operations := Lifecycle_Operations{facts = facts}
 	operations.state = .Checking
-	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container || facts.boxed
+	operations.clone_fallible = copy_itself_allocates(facts)
+	if facts.boxed {
+		operations.drop_may_panic = lifecycle_of(c, box_element(c, under)).managed
+	} else if facts.container {
+		operations.drop_may_panic = lifecycle_of(c, container_element(c, under)).managed
+		if type_is_map(c, under) {
+			operations.drop_may_panic ||= lifecycle_of(c, container_key(c, under)).managed
+		}
+	} else if !facts.intrinsic {
+		operations.drop_may_panic = facts.custom_drop != INVALID_SYMBOL
+	}
 	c.lifecycle_operations[under] = operations
 	for part in lifecycle_parts(c, under) {
 		if !finalize_type_lifecycle(c, part) { return false }
 		operations.clone_fallible ||= c.lifecycle_operations[type_underlying(c, part)].clone_fallible
+		if !facts.intrinsic {
+			operations.drop_may_panic ||= c.lifecycle_operations[type_underlying(c, part)].drop_may_panic
+		}
 	}
 	operations.state = .Finite
 	c.lifecycle_operations[under] = operations
@@ -80,16 +89,19 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // element (they all share its operations), or every union payload.
 @(private = "file")
 lifecycle_parts :: proc(c: ^Compiler, type: Type_Id) -> []Type_Id {
+	info := underlying_info(c, type)
 	// A type that contains itself by value is already `L0364`, and walking its
 	// parts would not end.
-	if info := type_of(c, type_underlying(c, type)); info != nil && info.size_state == .Cyclic {
+	if info == nil || info.size_state == .Cyclic {
 		return nil
 	}
-	count := clone_part_count(c, type)
-	if underlying_kind(c, type) == .Array { count = min(count, 1) }
-	parts := make([dynamic]Type_Id, 0, count, context.temp_allocator)
-	for index in 0 ..< count { append(&parts, clone_part(c, type, index)) }
-	if info := underlying_info(c, type); info != nil && info.kind == .Union {
+	parts := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
+	#partial switch info.kind {
+	case .Array:
+		if info.count > 0 { append(&parts, info.element) }
+	case .Struct:
+		for index in 0 ..< len(info.fields) { append(&parts, clone_part(c, type, index)) }
+	case .Union:
 		for variant in info.variants {
 			if variant != TYPE_VOID { append(&parts, variant) }
 		}
@@ -132,19 +144,19 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 
 	info := type_of(c, under)
 	if info != nil {
-		collect_hooks(c, under, info, entry)
+		collect_hooks(c, info, entry)
 		entry.container = info.kind == .Dynamic_Array || info.kind == .Map
 		entry.provider = info.provider
 		entry.boxed = info.kind == .Box
 		entry.intrinsic = info.kind == .String || entry.container || entry.provider
-		entry.clone_disabled = entry.provider || info.move_only || entry.copy_excluded || has_move_only_part(c, under, info)
+		entry.clone_disabled = type_itself_move_only(c, info) || has_move_only_part(c, under, info)
 		entry.managed =
 			entry.intrinsic ||
 			entry.boxed ||
 			entry.custom_drop != INVALID_SYMBOL ||
 			entry.custom_try_clone != INVALID_SYMBOL ||
 			entry.clone_disabled ||
-			has_managed_part(c, under, info)
+			has_managed_part(c, info)
 	}
 	if open {
 		delete_key(&c.lifecycles, under)
@@ -162,29 +174,15 @@ lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Ty
 	if record_resolving(c, info) { return false }
 	open^ ||= info.hooks_resolving
 	visiting[under] = true
-	#partial switch info.kind {
-	case .Array, .Dynamic_Array, .Box:
-		return lifecycle_fields_resolved(c, info.element, visiting, open)
-	case .Map:
-		return lifecycle_fields_resolved(c, info.key, visiting, open) &&
-		       lifecycle_fields_resolved(c, info.element, visiting, open)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && !lifecycle_fields_resolved(c, sym.type, visiting, open) {
-				return false
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if !lifecycle_fields_resolved(c, variant, visiting, open) { return false }
-		}
+	for part in type_owned_parts(c, info) {
+		if !lifecycle_fields_resolved(c, part, visiting, open) { return false }
 	}
 	return true
 }
 
 // Inherent, hand-written members only: extensions never contribute a hook.
 @(private = "file")
-collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lifecycle) {
+collect_hooks :: proc(c: ^Compiler, info: ^Type_Info, entry: ^Lifecycle) {
 	for member in info.members {
 		sym := symbol_of(c, member)
 		if sym == nil || sym.synth != .None {
@@ -198,12 +196,8 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 				entry.custom_drop = member
 			}
 		case .Copy:
-			// design.md "Lifecycle hooks and resource types": an instance that fails
-			// the hook's bound has no copy, rather than a bitwise one its drop hook
-			// would release twice.
-			if sym.bound_excluded {
-				entry.copy_excluded = true
-			} else {
+			// One its bound excluded makes the instance move-only instead.
+			if !sym.bound_excluded {
 				entry.custom_try_clone = member
 			}
 		case .Convert, .None:
@@ -211,23 +205,12 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 	}
 }
 
+// Asked only of what is not managed for itself, as a container or box already is.
 @(private = "file")
-has_managed_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
-	#partial switch info.kind {
-	case .Array:
-		return type_is_managed(c, info.element)
-	case .Struct:
-		for field in info.fields {
-			sym := symbol_of(c, field)
-			if sym != nil && type_is_managed(c, sym.type) {
-				return true
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if type_is_managed(c, variant) {
-				return true
-			}
+has_managed_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	for part in type_owned_parts(c, info) {
+		if type_is_managed(c, part) {
+			return true
 		}
 	}
 	return false
@@ -250,70 +233,29 @@ type_drop_runs_hook :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // The hand-written `hook(drop)`s dropping a value of this type may run: its own
 // and those of everything it owns.
 type_drop_hooks :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
-	// Most dropped values own nothing; they need no walk state.
-	if !type_is_managed(c, type) {
-		return nil
-	}
-	hooks := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
-	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
-	drop_hooks_walk(c, type, &visiting, &hooks)
-	return hooks[:]
-}
-
-@(private = "file")
-drop_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool, hooks: ^[dynamic]Symbol_Id) {
-	if !type_is_managed(c, type) {
-		return
-	}
-	under := type_underlying(c, type)
-	info := type_of(c, under)
-	if info == nil || visiting[under] {
-		return
-	}
-	visiting[under] = true
-	if hook := lifecycle_of(c, type).custom_drop; hook != INVALID_SYMBOL {
-		append(hooks, hook)
-	}
-	#partial switch info.kind {
-	case .Array:
-		// A zero-length array has no element to drop (design.md "Slice literals").
-		if info.count > 0 {
-			drop_hooks_walk(c, info.element, visiting, hooks)
-		}
-	case .Dynamic_Array, .Box:
-		drop_hooks_walk(c, info.element, visiting, hooks)
-	case .Map:
-		drop_hooks_walk(c, info.key, visiting, hooks)
-		drop_hooks_walk(c, info.element, visiting, hooks)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				drop_hooks_walk(c, sym.type, visiting, hooks)
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if variant != TYPE_VOID {
-				drop_hooks_walk(c, variant, visiting, hooks)
-			}
-		}
-	}
+	return type_hooks(c, type, .Drop)
 }
 
 // The hand-written `hook(copy)`s copying a value of this type may run: its own,
 // which then decides how its parts are copied, or those of everything it owns.
 type_copy_hooks :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
+	return type_hooks(c, type, .Copy)
+}
+
+@(private = "file")
+type_hooks :: proc(c: ^Compiler, type: Type_Id, role: Hook_Kind) -> []Symbol_Id {
+	// Most values own nothing; they need no walk state.
 	if !type_is_managed(c, type) {
 		return nil
 	}
 	hooks := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
 	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
-	copy_hooks_walk(c, type, &visiting, &hooks)
+	type_hooks_walk(c, type, role, &visiting, &hooks)
 	return hooks[:]
 }
 
 @(private = "file")
-copy_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool, hooks: ^[dynamic]Symbol_Id) {
+type_hooks_walk :: proc(c: ^Compiler, type: Type_Id, role: Hook_Kind, visiting: ^map[Type_Id]bool, hooks: ^[dynamic]Symbol_Id) {
 	if !type_is_managed(c, type) {
 		return
 	}
@@ -323,28 +265,19 @@ copy_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool
 		return
 	}
 	visiting[under] = true
-	if hook := lifecycle_of(c, type).custom_try_clone; hook != INVALID_SYMBOL {
+	entry := lifecycle_of(c, type)
+	if hook := role == .Drop ? entry.custom_drop : entry.custom_try_clone; hook != INVALID_SYMBOL {
 		append(hooks, hook)
+		if role == .Copy {
+			return
+		}
+	}
+	// A zero-length array has no element to copy or drop (design.md "Slice literals").
+	if info.kind == .Array && info.count == 0 {
 		return
 	}
-	#partial switch info.kind {
-	case .Array, .Dynamic_Array, .Box:
-		copy_hooks_walk(c, info.element, visiting, hooks)
-	case .Map:
-		copy_hooks_walk(c, info.key, visiting, hooks)
-		copy_hooks_walk(c, info.element, visiting, hooks)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				copy_hooks_walk(c, sym.type, visiting, hooks)
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if variant != TYPE_VOID {
-				copy_hooks_walk(c, variant, visiting, hooks)
-			}
-		}
+	for part in type_owned_parts(c, info) {
+		type_hooks_walk(c, part, role, visiting, hooks)
 	}
 }
 
@@ -355,9 +288,8 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return lifecycle_of(c, type).clone_disabled
 }
 
-// Unlike `has_managed_part`, containers count: their clone deep-copies elements.
-// The recursion-stack guard makes the answer exact for the queried type only,
-// so intermediate answers are not cached.
+// Containers count: their clone deep-copies elements. The question is whether a move-only type is reachable, so each type is visited
+// once. What a walk finds holds for the queried type only, so nothing is cached.
 @(private = "file")
 has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
 	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
@@ -367,24 +299,9 @@ has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> boo
 
 @(private = "file")
 has_move_only_part_walk :: proc(c: ^Compiler, info: ^Type_Info, visiting: ^map[Type_Id]bool) -> bool {
-	#partial switch info.kind {
-	case .Array, .Dynamic_Array, .Box:
-		return type_clone_disabled_walk(c, info.element, visiting)
-	case .Map:
-		return type_clone_disabled_walk(c, info.key, visiting) ||
-		       type_clone_disabled_walk(c, info.element, visiting)
-	case .Struct:
-		for field in info.fields {
-			sym := symbol_of(c, field)
-			if sym != nil && type_clone_disabled_walk(c, sym.type, visiting) {
-				return true
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if variant != TYPE_VOID && type_clone_disabled_walk(c, variant, visiting) {
-				return true
-			}
+	for part in type_owned_parts(c, info) {
+		if type_clone_disabled_walk(c, part, visiting) {
+			return true
 		}
 	}
 	return false
@@ -406,16 +323,22 @@ type_clone_disabled_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Typ
 	if info == nil {
 		return false
 	}
-	if info.provider || info.move_only || has_excluded_copy_hook(c, info) {
+	if type_itself_move_only(c, info) {
 		return true
 	}
 	visiting[under] = true
-	defer delete_key(visiting, under)
 	return has_move_only_part_walk(c, info, visiting)
 }
 
-// The uncached part's `copy_excluded`, as `collect_hooks` would find it, so a
-// container's answer does not depend on which was asked about first.
+// What has no copy whatever its parts hold.
+@(private = "file")
+type_itself_move_only :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	return info.provider || info.move_only || has_excluded_copy_hook(c, info)
+}
+
+// design.md "Lifecycle hooks and resource types": an instance that fails its
+// `hook(copy)`'s bound has no copy, rather than a bitwise one its drop hook would
+// release twice.
 @(private = "file")
 has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 	for member in info.members {
@@ -425,145 +348,6 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 		}
 	}
 	return false
-}
-
-// ------------------------------------------------------ transfer facts --
-
-// design.md "@(thread_affine)": what a value would take to another thread
-// that may not go. `affine` is a thread-affine type it holds or reaches, and
-// `erased` a `dyn` it reaches, behind which affinity cannot be
-// seen. Like `@(move_only)`, affinity propagates structurally, but transfer also
-// follows pointees, owned and shared payloads, container elements, and a
-// generic record's type arguments. An unchecked address, a `rawptr` or a C
-// pointer, is not followed: design.md "Concurrency and the memory model" lets
-// one cross without proving anything about what it reaches. `mutable` is a
-// mutable carrier it holds or reaches, `^mut`, `[]mut`, or `dyn mut`, through
-// which a task sharing it could write (design.md "Sharing with tasks").
-// `waker` is an `@(wakes_on_drop)` type it is, holds, or reaches, so keeping
-// the value may keep a waiter asleep (design.md "Releasing before the join").
-//
-// With `through_views`, a `dyn` view is followed into every type the program
-// converts to its interface application instead of counting as erased
-// (design.md "Globals while tasks run", "Sharing with tasks"). A mutable
-// carrier reached through a read-only view is then `viewed` rather than
-// `mutable`, since moving the view gives a task nothing of its own; the `_via`
-// fields name the outermost read-only view and witness each fact came
-// through, if one did.
-Transfer_Facts :: struct {
-	affine:     Type_Id,
-	erased:     Type_Id,
-	mutable:    Type_Id,
-	waker:      Type_Id,
-	viewed:     Type_Id,
-	affine_via: Transfer_Via,
-	erased_via: Transfer_Via,
-	viewed_via: Transfer_Via,
-}
-
-Transfer_Via :: struct {
-	view, witness: Type_Id,
-}
-
-// A type is walked once outside any read-only view and once inside one.
-@(private = "file")
-Transfer_Visit :: struct {
-	type:   Type_Id,
-	viewed: bool,
-}
-
-transfer_facts :: proc(c: ^Compiler, type: Type_Id, through_views := false) -> Transfer_Facts {
-	none := Transfer_Via{INVALID_TYPE, INVALID_TYPE}
-	facts := Transfer_Facts {
-		affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE, viewed = INVALID_TYPE,
-		affine_via = none, erased_via = none, viewed_via = none,
-	}
-	visited := make(map[Transfer_Visit]bool, 8, context.temp_allocator)
-	transfer_facts_walk(c, type, &facts, &visited, through_views, none)
-	return facts
-}
-
-@(private = "file")
-transfer_facts_walk :: proc(
-	c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Transfer_Visit]bool, through_views: bool,
-	via: Transfer_Via,
-) {
-	visit := Transfer_Visit{type, via.view != INVALID_TYPE}
-	if type == INVALID_TYPE || visited[visit] ||
-	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE && facts.mutable != INVALID_TYPE &&
-	    facts.waker != INVALID_TYPE && (facts.viewed != INVALID_TYPE || !through_views)) {
-		return
-	}
-	visited[visit] = true
-	info := type_of(c, type)
-	if info == nil {
-		return
-	}
-	if info.thread_affine && facts.affine == INVALID_TYPE {
-		facts.affine, facts.affine_via = type, via
-	}
-	if info.wakes_on_drop && facts.waker == INVALID_TYPE {
-		facts.waker = type
-	}
-	#partial switch info.kind {
-	case .Pointer, .Slice, .Dyn:
-		if !info.mutable {
-			break
-		}
-		if visit.viewed && facts.viewed == INVALID_TYPE {
-			facts.viewed, facts.viewed_via = type, via
-		} else if !visit.viewed && facts.mutable == INVALID_TYPE {
-			facts.mutable = type
-		}
-	}
-	#partial switch info.kind {
-	case .Dyn:
-		if through_views && info.kind == .Dyn && !view_is_printing(c, info) {
-			for witness in view_witness_types(c, info) {
-				inner := via
-				if inner.view == INVALID_TYPE && !info.mutable {
-					inner = {type, witness}
-				}
-				transfer_facts_walk(c, witness, facts, visited, through_views, inner)
-			}
-		} else if facts.erased == INVALID_TYPE {
-			facts.erased, facts.erased_via = type, via
-		}
-	case .Distinct, .Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
-		transfer_facts_walk(c, info.element, facts, visited, through_views, via)
-	case .Map:
-		transfer_facts_walk(c, info.key, facts, visited, through_views, via)
-		transfer_facts_walk(c, info.element, facts, visited, through_views, via)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				transfer_facts_walk(c, sym.type, facts, visited, through_views, via)
-			}
-		}
-		// A `Shared(T)` holds its payload behind a `rawptr`, as a view may.
-		for arg in info.instance_args {
-			if arg.is_type {
-				transfer_facts_walk(c, arg.type, facts, visited, through_views, via)
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			transfer_facts_walk(c, variant, facts, visited, through_views, via)
-		}
-	}
-}
-
-// standard-library.md "Printed forms": a printed argument is viewed where it is
-// written, but a nested field or a generic instance reaches its formatter in a
-// pass after the effects, so these witnesses are not all known while checked.
-@(private = "file")
-view_is_printing :: proc(c: ^Compiler, view: ^Type_Info) -> bool {
-	format, found := c.runtime_types["Format_View"]
-	return found && underlying_info(c, format).dyn_interface == view.dyn_interface
-}
-
-// design.md "@(wakes_on_drop)": the `waker` of `transfer_facts`.
-type_reaches_waker :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	return transfer_facts(c, type).waker
 }
 
 // ------------------------------------------------- generated copy members --
@@ -591,10 +375,8 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id, requested :=
 	}
 }
 
-// design.md "Distinct types": a `distinct` name inherits no operations besides
-// comparisons, but it is copyable like its underlying type, so it gets its own pair typed in the
-// name. The bodies copy exactly as the underlying type's do, and the lifecycle
-// entry stays the underlying type's.
+// design.md "Distinct types": a copyable `distinct` name has its own pair, typed
+// in the name; the lifecycle entry stays the underlying type's.
 @(private = "file")
 contribute_distinct_copy_members :: proc(k: ^Checker, written, under: Type_Id) {
 	info := type_of(k.c, written)
@@ -605,12 +387,7 @@ contribute_distinct_copy_members :: proc(k: ^Checker, written, under: Type_Id) {
 	}
 	if .Lifecycle not_in info.contributed {
 		info.contributed += {.Lifecycle}
-		members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-		append(&members, generated_hook(k, written, "try_clone", .Try_Clone, true))
-		if under_info.kind != .Array {
-			append(&members, generated_hook(k, written, "clone", .Clone, false))
-		}
-		add_members(k.c, written, members[:])
+		add_copy_members(k, written)
 	}
 	enroll_lifecycle_members(k.c, written)
 }
@@ -665,50 +442,40 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 	created := .Lifecycle in info.contributed
 	info.contributed += {.Lifecycle}
 
-	#partial switch info.kind {
-	case .Dynamic_Array, .Box, .Map, .String:
-		if !entry.clone_disabled && !created {
-			contribute_intrinsic_copy_members(k, type)
-		}
-		// Settled before the parts, so a type reached again through them stops.
-		enroll_lifecycle_members(k.c, type)
-		if info.kind != .String {
-			contribute_lifecycle_members(k, info.element)
-		}
-		if info.kind == .Map {
-			contribute_lifecycle_members(k, info.key)
-		}
-		return
-	}
-
 	// A move-only type has no copy entry point, but its parts still need theirs
 	// for cleanup.
 	if !entry.clone_disabled && !created {
-		members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-		append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
-		append(&members, generated_hook(k, type, "clone", .Clone, false))
-		add_members(k.c, type, members[:])
+		add_copy_members(k, type)
 	}
+	// Settled before the parts, so a type reached again through them stops.
 	enroll_lifecycle_members(k.c, type)
-	for part in lifecycle_parts(k.c, type) {
-		if type_is_managed(k.c, part) {
-			contribute_lifecycle_members(k, part)
+	#partial switch info.kind {
+	case .String:
+	case .Dynamic_Array, .Box:
+		contribute_lifecycle_members(k, info.element)
+	case .Map:
+		contribute_lifecycle_members(k, info.element)
+		contribute_lifecycle_members(k, info.key)
+	case:
+		for part in lifecycle_parts(k.c, type) {
+			if type_is_managed(k.c, part) {
+				contribute_lifecycle_members(k, part)
+			}
 		}
 	}
 }
 
-// The emitter supplies these bodies from `Lifecycle.intrinsic`.
+// The emitter supplies an intrinsic type's bodies, from `Lifecycle.intrinsic`.
 @(private = "file")
-contribute_intrinsic_copy_members :: proc(k: ^Checker, type: Type_Id) {
+add_copy_members :: proc(k: ^Checker, type: Type_Id) {
 	// `add_members` keeps the slice it is handed, so this has to outlive the call.
 	members := make([]Symbol_Id, 2, k.c.semantic_allocator)
-	members[0] = generated_hook(k, type, "try_clone", .Try_Clone, true)
-	members[1] = generated_hook(k, type, "clone", .Clone, false)
+	members[0] = generated_hook(k, type, .Try_Clone)
+	members[1] = generated_hook(k, type, .Clone)
 	add_members(k.c, type, members)
 }
 
-// The parts a generated field-wise clone visits: a record's fields or a fixed
-// array's elements.
+// Emission indexes these; `lifecycle_parts` keeps one array element.
 clone_part_count :: proc(c: ^Compiler, type: Type_Id) -> int {
 	info := underlying_info(c, type)
 	if info == nil {
@@ -738,23 +505,24 @@ clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 	return sym == nil ? INVALID_TYPE : sym.type
 }
 
+// A custom copy hook, a container's clone and a box's can each fail, and each
+// allocates; a generated clone does so only through a part.
+@(private = "file")
+copy_itself_allocates :: proc(entry: Lifecycle) -> bool {
+	return entry.custom_try_clone != INVALID_SYMBOL || entry.container || entry.boxed
+}
+
 // Whether copying a `type` may allocate: a container, or a record whose own or
 // a field's copy is a custom `hook(copy)`. A `string` or `Shared(T)` copy
 // retains its storage instead, and so does a record of them.
 clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if type == INVALID_TYPE || !type_is_managed(c, type) || type_is_shared_handle(c, type) {
-		return false
-	}
-	entry := lifecycle_of(c, type)
-	if entry.custom_try_clone != INVALID_SYMBOL || entry.container || entry.boxed {
-		return true
-	}
-	for part in lifecycle_parts(c, type) {
-		if clone_may_allocate(c, part) {
-			return true
+	question :: proc(c: ^Compiler, type: Type_Id, entry: ^Lifecycle) -> Part_Answer {
+		if type_is_shared_handle(c, type) {
+			return .No
 		}
+		return copy_itself_allocates(entry^) ? .Yes : .Ask_Parts
 	}
-	return false
+	return some_lifecycle_part(c, type, question)
 }
 
 // Whether a `type` holds allocator storage its drop releases: a `string`, a
@@ -762,34 +530,50 @@ clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // holding one. A `@(move_only)` or hooked record of plain parts is managed for
 // its lifecycle but frees nothing itself; what its hook does is the hook's.
 type_owns_allocation :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if type == INVALID_TYPE || !type_is_managed(c, type) {
-		return false
+	question :: proc(c: ^Compiler, type: Type_Id, entry: ^Lifecycle) -> Part_Answer {
+		return entry.intrinsic || entry.boxed || type_is_shared_handle(c, type) ? .Yes : .Ask_Parts
 	}
-	entry := lifecycle_of(c, type)
-	// `intrinsic` covers `string`, containers, and providers.
-	if entry.intrinsic || entry.boxed || type_is_shared_handle(c, type) {
-		return true
-	}
-	for part in lifecycle_parts(c, type) {
-		if type_owns_allocation(c, part) {
-			return true
-		}
-	}
-	return false
+	return some_lifecycle_part(c, type, question)
 }
 
-// Only a custom copy hook or a container's clone can fail; a generated clone
-// fails when some part's can.
-type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if type == INVALID_TYPE {
+@(private = "file")
+Part_Answer :: enum {
+	Ask_Parts,
+	Yes,
+	No,
+}
+
+@(private = "file")
+Part_Question :: #type proc(c: ^Compiler, type: Type_Id, entry: ^Lifecycle) -> Part_Answer
+
+// Whether `question` answers yes of a managed `type` or a part of it, however
+// deep, asking each type once.
+@(private = "file")
+some_lifecycle_part :: proc(c: ^Compiler, type: Type_Id, question: Part_Question) -> bool {
+	// Most values own nothing; they need no walk state.
+	if !type_is_managed(c, type) {
 		return false
 	}
-	entry := lifecycle_of(c, type)
-	if entry.custom_try_clone != INVALID_SYMBOL || entry.container || entry.boxed {
+	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
+	return some_lifecycle_part_walk(c, type, question, &visited)
+}
+
+@(private = "file")
+some_lifecycle_part_walk :: proc(c: ^Compiler, type: Type_Id, question: Part_Question, visited: ^map[Type_Id]bool) -> bool {
+	under := type_underlying(c, type)
+	if !type_is_managed(c, type) || visited[under] {
+		return false
+	}
+	visited[under] = true
+	switch question(c, type, lifecycle_of(c, type)) {
+	case .Yes:
 		return true
+	case .No:
+		return false
+	case .Ask_Parts:
 	}
 	for part in lifecycle_parts(c, type) {
-		if type_clone_is_fallible(c, part) {
+		if some_lifecycle_part_walk(c, part, question, visited) {
 			return true
 		}
 	}
@@ -797,19 +581,16 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 @(private = "file")
-generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kind, fallible: bool) -> Symbol_Id {
+generated_hook :: proc(k: ^Checker, type: Type_Id, kind: Synth_Kind) -> Symbol_Id {
+	fallible := kind == .Try_Clone
 	result := fallible ? result_type(k, type, TYPE_ALLOCATOR_ERROR) : type
 	// `enroll_lifecycle_members` enrolls it and records it in the lifecycle entry.
-	id := synth_proc(
-		k.c, name, kind, type,
+	id := synth_receiver_proc(
+		k.c, fallible ? "try_clone" : "clone", kind, type,
 		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Borrow, .Value}, result,
 		enroll = false,
 	)
-	if sym := symbol_of(k.c, id); sym != nil {
-		sym.has_receiver = true
-		sym.receiver = .Borrow
-		sym.param_defaults[1] = default_allocator_arg(k.c)
-	}
+	symbol_of(k.c, id).param_defaults[1] = default_allocator_arg(k.c)
 	return id
 }
 
@@ -820,441 +601,17 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 		return c.default_allocator_arg
 	}
 	sym := c.default_allocator_symbol
-	callee := new(Expr_Ident, c.semantic_allocator)
-	callee.span = no_span()
-	callee.name = "default_allocator"
-	callee.name_id = intern_identifier(c, "default_allocator")
+	callee := synth_ident(c, "default_allocator", NO_SPAN)
 	callee.symbol = sym
 	callee.type = TYPE_ALLOCATOR
 	callee.resolution = Resolution{kind = .Value, symbol = sym}
 	callee.value_category = .Value
 
-	call := new(Expr_Call, c.semantic_allocator)
-	call.span = no_span()
-	call.callee = callee
+	call := synth_call(c, callee, nil, NO_SPAN)
 	call.type = TYPE_ALLOCATOR
 	call.value_category = .Value
 	call.resolution = Resolution{kind = .Call, symbol = sym, chosen_overload = sym}
 	call.operation = Call_Builtin{}
 	c.default_allocator_arg = call
 	return call
-}
-
-// ------------------------------------------------------------ validation --
-
-// Resolves the procedure nested in `hook(role)`, recording the role on the symbol.
-resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
-	if len(d.symbols) != 1 || d.symbols[0] == INVALID_SYMBOL {
-		return
-	}
-	symbol_id := d.symbols[0]
-	sym := symbol_of(k.c, symbol_id)
-	if sym == nil {
-		return
-	}
-	sym.hook = value.hook
-	literal, ok := value.value.(^Expr_Proc)
-	if !ok {
-		return
-	}
-	sym.kind = .Proc
-	literal.symbol = symbol_id
-	resolve_proc_signature(k, literal, symbol_id)
-	apply_proc_metadata(k, d, symbol_id)
-	// Re-read: resolving may have grown the symbol table.
-	if sym = symbol_of(k.c, symbol_id); sym != nil && k.impl_type == INVALID_TYPE {
-		errorf(k.c, sym.span, "L0488", "`hook(%s)` is a type role and must be declared as an inherent `impl` member", hook_name(value.hook))
-	}
-}
-
-// The conversion a generic template declares, so `hook_candidates` finds it and
-// overload resolution instantiates it, as for a generic method. A generic
-// lifecycle hook is left to `validate_semantic_hook`, which rejects it: its
-// signature is fixed by its subject.
-mark_template_hook :: proc(k: ^Checker, d: ^Decl) {
-	if d.kind != .Const || len(d.values) != 1 {
-		return
-	}
-	value, is_hook := d.values[0].(^Expr_Operator)
-	if !is_hook || value.hook != .Convert {
-		return
-	}
-	sym := symbol_of(k.c, d.symbols[0])
-	if sym == nil {
-		return
-	}
-	if k.impl_type == INVALID_TYPE {
-		errorf(k.c, sym.span, "L0488", "`hook(convert)` is a type role and must be declared as an inherent `impl` member")
-		return
-	}
-	sym.hook = value.hook
-}
-
-// The fixed hook signatures, checked where each inherent declaration is written.
-validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Symbol, symbol_id: Symbol_Id) {
-	name := identifier_text(k.c, sym.name)
-	if sym.hook == .None {
-		if name == "clone" || name == "try_clone" {
-			errorf(k.c, sym.span, "L0487", "`%s` is a compiler-generated copy operation; bind custom behavior with `hook(copy)`", name)
-		}
-		return
-	}
-	subject := item.subject
-	if sym.hook != .Convert {
-		info := type_of(k.c, subject)
-		if info != nil && info.kind == .Distinct && underlying_kind(k.c, subject) == .Struct {
-			errorf(k.c, sym.span, "L0488", "`hook(%s)` cannot be declared on `distinct` `%s`, which shares the lifecycle of `%s`", hook_name(sym.hook), type_name(k.c, subject), type_name(k.c, type_underlying(k.c, subject)))
-			return
-		}
-		if info == nil || info.kind != .Struct {
-			errorf(k.c, sym.span, "L0488", "`hook(%s)` is a record lifecycle role; `%s` is not a record type", hook_name(sym.hook), type_name(k.c, subject))
-			return
-		}
-	}
-	if item.kind == .Extend {
-		// No package declares a structural record, so only a declared one can
-		// carry a hook (design.md "Methods and implementation blocks").
-		if info := type_of(k.c, subject); info != nil && info.anonymous_record {
-			errorf(
-				k.c,
-				sym.span,
-				"L0486",
-				"an anonymous record has no declaring package, so `hook(%s)` cannot be added to `%s`; declare a struct to give it one",
-				hook_name(sym.hook),
-				type_name(k.c, subject),
-			)
-			return
-		}
-		errorf(
-			k.c,
-			sym.span,
-			"L0486",
-			"a semantic hook belongs with the package that declares `%s`; an extension block cannot add `hook(%s)`",
-			type_name(k.c, subject),
-			hook_name(sym.hook),
-		)
-		return
-	}
-	if sym.kind != .Proc {
-		errorf(k.c, sym.span, "L0488", "`hook(%s)` must be a procedure with its fixed signature", hook_name(sym.hook))
-		return
-	}
-	// Lifecycle roles are unique per type; conversions per source type. Only
-	// earlier declarations are compared, so the later one is reported once.
-	if info := underlying_info(k.c, subject); info != nil {
-		for other_id in info.members {
-			if other_id >= symbol_id {
-				continue
-			}
-			other := symbol_of(k.c, other_id)
-			if other == nil || other.synth != .None || other.hook != sym.hook || other.bound_excluded || other.superseded {
-				continue
-			}
-			conflict := sym.hook != .Convert
-			if sym.hook == .Convert && len(sym.params) == 1 && len(other.params) == 1 {
-				conflict = sym.params[0] == other.params[0]
-			}
-			if conflict {
-				errorf(
-					k.c,
-					sym.span,
-					"L0488",
-					"duplicate `hook(%s)` for `%s`%s",
-					hook_name(sym.hook),
-					type_name(k.c, subject),
-					sym.hook == .Convert ? " and this source type" : "",
-				)
-				return
-			}
-		}
-	}
-	switch sym.hook {
-	case .Drop, .Copy:
-		// Includes a record made move-only by one of its fields. A hook its own
-		// bound excluded is what made the instance move-only, so it is not a
-		// second declaration of anything.
-		if sym.hook == .Copy && !sym.bound_excluded && type_clone_disabled(k.c, subject) {
-			errorf(k.c, sym.span, "L0488", "a move-only type cannot also declare `hook(copy)`")
-			// Which arguments make it so is the block's to say, by a bound on the hook.
-			if info := type_of(k.c, subject); info != nil && info.instance_of != INVALID_SYMBOL && !info.move_only {
-				add_notef(k.c, no_span(), "a field makes `%s` move-only; a bound on the hook, such as `where is_copyable(T)`, leaves it out of this instance", type_name(k.c, subject))
-			}
-			return
-		}
-		sym.hook_bound = require_hook_shape(k, sym, subject)
-	case .Convert:
-		if sym.has_receiver || len(sym.params) != 1 || sym.result != subject {
-			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))
-			return
-		}
-		// An instance's arguments may make one source convertible by accident, which
-		// says nothing about the block its author wrote.
-		if info := type_of(k.c, subject); info != nil && info.instance_of == INVALID_SYMBOL && convertible(k.c, sym.params[0], subject) {
-			errorf(k.c, sym.span, "L0411", "`%s` already has a built-in conversion to `%s`; a conversion hook for that pair would be unreachable", type_name(k.c, sym.params[0]), type_name(k.c, subject))
-		}
-	case .None:
-	}
-}
-
-@(private = "file")
-require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) -> bool {
-	ok := sym.has_receiver && len(sym.params) > 0 && sym.params[0] == subject
-	shape: string
-	if sym.hook == .Drop {
-		shape = "proc(self: inout T)"
-		ok = ok && sym.receiver == .Inout && len(sym.params) == 1 && sym.result == INVALID_TYPE
-	} else {
-		shape = "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)"
-		ok = ok && (sym.receiver == .Borrow || sym.receiver == .Value) && len(sym.params) == 2 && sym.params[1] == TYPE_ALLOCATOR &&
-		     sym.result == result_type(k, subject, TYPE_ALLOCATOR_ERROR)
-	}
-	if !ok {
-		errorf(k.c, sym.span, "L0488", "`%s` has a fixed signature for `%s`: `%s`", hook_name(sym.hook), type_name(k.c, subject), shape)
-		return false
-	}
-	if sym.hook == .Copy && len(sym.param_defaults) > 1 {
-		if sym.param_defaults[1] != nil {
-			errorf(
-				k.c,
-				expr_span(sym.param_defaults[1]),
-				"L0489",
-				"a lifecycle hook takes no written default; the compiler supplies `mem.default_allocator()`",
-			)
-			return false
-		}
-		sym.param_defaults[1] = default_allocator_arg(k.c)
-	}
-	return true
-}
-
-// A generic block's hooks are validated per instance, since their types are the
-// instance's, by `validate_instance_hooks`. These two need no instance: a block
-// in another package may have none there, and a record decides its copy from the
-// shape of its drop hook whether or not it is instantiated.
-check_generic_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, template: ^Generic_Template) {
-	if len(template.decl.values) != 1 {
-		return
-	}
-	record, is_record := template.decl.values[0].(^Type_Record)
-	if !is_record {
-		return
-	}
-	for member in item.members {
-		d, is_decl := member.(^Decl)
-		if !is_decl || len(d.names) == 0 {
-			continue
-		}
-		role := decl_hook_kind(d)
-		switch {
-		case role == .None:
-			continue
-		case item.kind == .Extend:
-			errorf(
-				k.c, d.names[0].span, "L0486",
-				"a semantic hook belongs with the package that declares `%s`; an extension block cannot add `hook(%s)`",
-				identifier_text(k.c, symbol_of(k.c, template.symbol).name), hook_name(role),
-			)
-		case role == .Drop && record.kind == .Struct && !drop_hook_shaped(d):
-			errorf(
-				k.c, d.names[0].span, "L0488", "`drop` has a fixed signature for `%s`: `proc(self: inout T)`",
-				identifier_text(k.c, symbol_of(k.c, template.symbol).name),
-			)
-		case:
-			continue
-		}
-		k.c.reported_generic_hooks[generic_hook_key(d)] = true
-	}
-}
-
-// The members of one instance's block, as `check_associated_member` for a
-// non-generic block. One hook is reported once, by the first instance it is wrong
-// for: its bound may hold or its fields be copyable only in some of them.
-validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
-	if item.kind != .Impl {
-		return
-	}
-	for member in item.members {
-		d, is_decl := member.(^Decl)
-		if !is_decl || k.c.reported_generic_hooks[generic_hook_key(d)] {
-			continue
-		}
-		role := decl_hook_kind(d)
-		literal := decl_proc_literal(d)
-		// A generic conversion is instantiated by the calls that find it.
-		if role == .Convert && literal != nil && proc_signature_is_generic(literal) {
-			continue
-		}
-		for symbol_id in d.symbols {
-			sym := symbol_of(k.c, symbol_id)
-			if sym == nil || sym.bound_excluded || sym.superseded {
-				continue
-			}
-			// A lifecycle hook with `$` parameters of its own resolves as a generic
-			// procedure, with no role; a non-generic block records it when declared.
-			sym.hook = role
-			errors := k.c.error_count
-			validate_semantic_hook(k, item, d, sym, symbol_id)
-			if k.c.error_count != errors {
-				k.c.reported_generic_hooks[generic_hook_key(d)] = true
-			}
-		}
-	}
-}
-
-@(private = "file")
-generic_hook_key :: proc(d: ^Decl) -> u64 {
-	return u64(d.span.file) << 32 | u64(d.span.lo)
-}
-
-// The written shape of `proc(self: inout T)`, for a block with no instance to
-// resolve its types in. Whether `T` is the subject is left to the instance.
-@(private = "file")
-drop_hook_shaped :: proc(d: ^Decl) -> bool {
-	literal := decl_proc_literal(d)
-	if literal == nil || literal.signature == nil || literal.signature.result != nil {
-		return false
-	}
-	params := literal.signature.params
-	return len(params) == 1 && len(params[0].names) == 1 && params[0].mode == .Inout && params[0].names[0].name.text == "self"
-}
-
-// What `check_copy_decision` can find wrong with a declaration.
-Copy_Failure :: enum {
-	Undecided,
-	Opted_Move_Only,
-	Opted_Copy_Hook,
-	Opted_No_Drop_Hook,
-	Opted_Move_Only_Field,
-}
-
-// Whether to report this failure of `d`, which instances of a generic procedure
-// share while each checks its own copy. A speculative check discards what it
-// reports, so it does not count.
-@(private = "file")
-claim_copy_failure :: proc(k: ^Checker, d: ^Decl, failure: Copy_Failure) -> bool {
-	if !committing(k.c) {
-		return true
-	}
-	key := u64(d.span.file) << 32 | u64(d.span.lo)
-	reported := k.c.reported_copy_failures[key]
-	if failure in reported {
-		return false
-	}
-	k.c.reported_copy_failures[key] = reported + {failure}
-	return true
-}
-
-// design.md "Lifecycle hooks and resource types": a record with a drop hook says
-// in writing how it is copied. Asked once every `impl` block the record can have
-// is checked, so a hook another diagnostic rejected is not reported again. The
-// answer reads the declaration and its hooks only: what its fields make it does
-// not count, so a generic record has one answer for all of its instances.
-check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
-	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || decl_is_intrinsic(d) {
-		return
-	}
-	record, is_record := d.values[0].(^Type_Record)
-	if !is_record || record.kind != .Struct {
-		return
-	}
-	opt_in, opted := find_attribute(record.attributes, "fieldwise_copy")
-	symbol_id := d.symbols[0]
-	drop_written, drop_bound, copy_written: bool
-	drop_span, copy_span: Span
-	template := generic_template_for(k, symbol_id)
-	if template != nil && template_rejected(k, template) {
-		return
-	}
-	// Read after the template settles: that may grow the symbol table.
-	sym := symbol_of(k.c, symbol_id)
-	if sym == nil {
-		return
-	}
-	name, subject, name_span := identifier_text(k.c, sym.name), sym.type, sym.span
-	if template != nil {
-		// Asked before any instance's hooks are validated, so a hook counts as
-		// bound by its shape, which `check_generic_impl_hooks` reports the rest of.
-		// Copied out: a range over the map entry itself faults when it has no blocks.
-		blocks := k.c.generic_impls[symbol_id]
-		for block in blocks {
-			if block.item.kind != .Impl {
-				continue
-			}
-			for member in block.item.members {
-				hook_decl, is_decl := member.(^Decl)
-				if !is_decl {
-					continue
-				}
-				#partial switch decl_hook_kind(hook_decl) {
-				case .Drop:
-					drop_written = true
-					if drop_hook_shaped(hook_decl) && !drop_bound {
-						drop_bound = true
-						drop_span = hook_decl.names[0].span
-					}
-				case .Copy:
-					copy_written = true
-					copy_span = hook_decl.names[0].span
-				}
-			}
-		}
-	} else {
-		info := type_of(k.c, subject)
-		if sym.kind != .Type || info == nil {
-			return
-		}
-		for member_id in info.members {
-			member := symbol_of(k.c, member_id)
-			if member == nil || member.synth != .None {
-				continue
-			}
-			#partial switch member.hook {
-			case .Drop:
-				drop_written = true
-				if member.hook_bound && !drop_bound {
-					drop_bound = true
-					drop_span = member.span
-				}
-			case .Copy:
-				copy_written = true
-				copy_span = member.span
-			}
-		}
-	}
-
-	if opted {
-		switch {
-		case record.move_only:
-			if claim_copy_failure(k, d, .Opted_Move_Only) {
-				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but a `@(move_only)` record has none")
-			}
-		case copy_written:
-			if claim_copy_failure(k, d, .Opted_Copy_Hook) {
-				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps the generated copy, but `%s` declares `hook(copy)`", name)
-				add_notef(k.c, copy_span, "`hook(copy)` is declared here")
-			}
-		case !drop_written:
-			if claim_copy_failure(k, d, .Opted_No_Drop_Hook) {
-				errorf(k.c, opt_in.span, "L0749", "`@(fieldwise_copy)` is for a record with `hook(drop)`; `%s` declares none, so it already copies field by field", name)
-			}
-		case template == nil && type_clone_disabled(k.c, subject):
-			if claim_copy_failure(k, d, .Opted_Move_Only_Field) {
-				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but `%s` holds a move-only field and has none; write `@(move_only)`", name)
-			}
-		}
-		return
-	}
-	if record.move_only || !drop_bound || copy_written || !claim_copy_failure(k, d, .Undecided) {
-		return
-	}
-	errorf(k.c, name_span, "L0747", "`%s` declares `hook(drop)`, so it must say how it is copied", name)
-	add_notef(k.c, drop_span, "`hook(drop)` is declared here")
-	// A generic record has no answer of its own here: it depends on the instance.
-	if template == nil && type_clone_disabled(k.c, subject) {
-		add_notef(k.c, no_span(), "`%s` is already move-only through a field; write `@(move_only)` on its declaration to say so", name)
-		return
-	}
-	add_notef(k.c, no_span(), "if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration")
-	add_notef(k.c, no_span(), "if a copy must do more than copy each field, declare `hook(copy)`")
-	add_notef(k.c, no_span(), "if copying each field is right, write `@(fieldwise_copy)` on its declaration")
 }

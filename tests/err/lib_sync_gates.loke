@@ -107,3 +107,11 @@ unsupported_option :: proc() {
 	view: sync.Atomic(Option(cstring_view)) = {};
 	view.load();
 }
+
+// One address word with a null `.none` does not make a union an `Option`.
+@(zero=nothing) Maybe :: union { nothing, ptr: ^int }
+
+unsupported_niche_union :: proc() {
+	place: sync.Atomic(Maybe) = {};
+	place.load();
+}

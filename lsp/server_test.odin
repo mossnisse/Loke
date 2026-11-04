@@ -948,12 +948,18 @@ completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
 		labels := strings.split(completion_labels(reply, kinds = true), " ", context.temp_allocator)
 		testing.expectf(t, len(labels) > 6 && labels[0] == "inner/6" && labels[1] == "c/6" && labels[2] == "p/6", "names: %v", labels)
 		testing.expect(t, slice.contains(labels, listed ? "Point/22" : "Point/7") && slice.contains(labels, "lib/9") && slice.contains(labels, "add/3") && slice.contains(labels, "int/7"))
+		// grammar.md "Keywords": `move_only` is a name, and `or_else` is spelled as written.
+		testing.expect(t, completion_item(reply, "or_else") != nil && completion_item(reply, "where") != nil)
+		testing.expect(t, completion_item(reply, "move_only") == nil)
 		testing.expect(t, !slice.contains(labels, "later/6") && !slice.contains(labels, "x/5") && !slice.contains(labels, "twice/3"))
 		keyword, _ := member_int(completion_item(reply, "foreach"), "kind")
 		testing.expect_value(t, keyword, i64(Completion_Kind.Keyword))
 		add_item := completion_item(reply, "add")
 		detail, _ := member_string(add_item, "detail")
 		testing.expect_value(t, detail, "proc(a, b: int) -> int")
+		// A build constant has its type before any code reads it.
+		build_constant, _ := member_string(completion_item(reply, "LOKE_OS"), "detail")
+		testing.expect_value(t, build_constant, "Os")
 		documentation, _ := member_string(add_item, "documentation")
 		if listed { documentation, _ = member_string(member(add_item, "documentation"), "value") }
 		testing.expect_value(t, documentation, "Adds two numbers.")
@@ -965,6 +971,27 @@ completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
 		testing.expect(t, len(member_array(member(reply, "result"), "items")) == 0)
 		finish(&h)
 	}
+}
+
+// A name two `using` fields promote cannot be selected, so it is not offered;
+// a package's enum is a type whose members have no visibility of their own, and
+// a record containing itself gets an answer.
+@(test)
+completion_follows_selector_lookup :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-lookup") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nimport \"lib\";\nA :: struct { x: int, a_only: int }\nB :: struct { x: int }\nBoth :: struct { using a: A, using b: B }\nLoop :: struct { using l: Loop, using r: Loop, v: int }\nTint :: lib.Tint;\nmain :: proc() {\n\tboth := Both{};\n\tloop := Loop{};\n\t_ = both.a_only;\n\t_ = loop.v;\n\t_ = lib.Tint.red;\n\t_ = Tint.blue;\n}\n"
+	write_file(&h, "lib/lib.loke", "package lib;\n@(public) Tint :: enum { red, blue }\n")
+	open(&h, "main.loke", main_text)
+	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "both.a_only", 5))
+	testing.expect_value(t, completion_labels(reply), "a a_only b")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "loop.v", 5))
+	testing.expect_value(t, completion_labels(reply), "l r v")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "lib.Tint.red", 9))
+	testing.expect_value(t, completion_labels(reply), "blue red")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "Tint.blue", 5))
+	testing.expect_value(t, completion_labels(reply), "blue red")
 }
 
 // "label;label @signature/parameter", or "null".
@@ -1033,17 +1060,15 @@ completion_follows_a_pointer_whose_method_is_called :: proc(t: ^testing.T) {
 	text := "package main;\nP :: struct { x: int }\nimpl P {\n\tsize :: proc(self) -> int { return 0; }\n\tgrow :: proc(self: inout) { self.x += 1; }\n}\nkeep :: proc(p: ^P) -> ^P { return p; }\nmain :: proc() {\n\tp := P{1};\n\tr := &p;\n\t_ = r.x;\n\t_ = r.size();\n\t_ = keep(r).size();\n\t_ = r^.size();\n\t_ = p.size();\n\tq := &mut p;\n\tq.grow();\n\tb := box(P{2});\n\t_ = b.size();\n}\n"
 	open(&h, "main.loke", text)
 
-	// A pointer offers what `r.x` does, its own members with its pointee's.
-	through := "clone grow hash size try_clone x"
-	direct := "clone grow size try_clone x"
-	Case :: struct { needle: string, column: int, labels: string }
+	// A pointer offers what `r.x` does: its pointee's members.
+	Case :: struct { needle: string, column: int }
 	for c in ([]Case{
-		{"r.x", 2, through}, {"r.size", 2, through}, {"keep(r).size", 8, through}, {"q.grow", 2, through},
-		{"r^.size", 3, direct}, {"p.size", 2, direct}, {"b.size", 2, direct},
+		{"r.x", 2}, {"r.size", 2}, {"keep(r).size", 8}, {"q.grow", 2},
+		{"r^.size", 3}, {"p.size", 2}, {"b.size", 2},
 	}) {
 		reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, text, c.needle, c.column))
 		labels := completion_labels(reply)
-		testing.expectf(t, labels == c.labels, "at %q: %q", c.needle, labels)
+		testing.expectf(t, labels == "clone grow size try_clone x", "at %q: %q", c.needle, labels)
 	}
 }
 
@@ -1296,6 +1321,12 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		{"self", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "self) -> int", "receiver", "`self` marks a method's receiver"},
 		{"call", "package main;\nPoint :: struct { x: int }\nimpl Point { call :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p(); }\n", "call ::", "invoke", "`call` is a member name the compiler or an interface looks up by name"},
 		{"to-call", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "read ::", "call", "`call` is a member name"},
+		// `foreach` looks an associated type up by name; no lookup finds a field
+		// that way, so a list's `next` renames freely.
+		{"associated-type", "package main;\nCursor :: struct { at: int }\nimpl Cursor { next :: proc(self: inout Cursor) -> Option(int) { return .none; } }\nBag :: struct { n: int }\nimpl Bag { Element :: int; iter :: proc(self) -> Cursor { return {}; } }\nmain :: proc() { foreach (item in Bag{}) { _ = item; } }\n", "Element ::", "Entry", "`Element` is a member name the compiler or an interface looks up by name"},
+		{"to-associated-type", "package main;\nBag :: struct { n: int }\nimpl Bag { Size :: int; }\nmain :: proc() { b := Bag{1}; _ = b.n; x: Bag.Size = 1; _ = x; }\n", "Size ::", "Item", "`Item` is a member name"},
+		{"field-next", "package main;\nNode :: struct { next: int }\nmain :: proc() { n := Node{1}; _ = n.next; }\n", "next: int", "after", "main.loke:2"},
+		{"to-field-next", "package main;\nNode :: struct { after: int }\nmain :: proc() { n := Node{1}; _ = n.after; }\n", "after: int", "next", "main.loke:2"},
 		// grammar.md "Keywords": a member may be renamed to or from a reserved
 		// word, which still marks a keyword wherever no member is named.
 		{"to-keyword", "package main;\nKind :: enum { old, other }\nmain :: proc() { k := Kind.old; switch (k) { case .old: default: } }\n", "old, other", "default", "main.loke:3"},

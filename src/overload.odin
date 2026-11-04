@@ -18,21 +18,36 @@ Arg_Info :: struct {
 	name:        Identifier_Id, // INVALID_IDENTIFIER for a positional argument
 	mode:        Argument_Mode,
 	type:        Type_Id,
-	is_const:    bool,
 	const_value: Const_Value,
 	is_receiver: bool,
-	// design.md "Arguments typed after inference": an argument that needs its
-	// parameter's type and has none before inference. It is left unchecked,
-	// takes no part in choosing a candidate, and is typed against the chosen
-	// one's parameter by `bind_chosen_call`.
+	// design.md "Arguments typed after inference": unchecked until
+	// `bind_chosen_call` types it against the chosen parameter.
 	waiting:     bool,
+}
+
+// Why a candidate is not viable. The common reasons are worded only if the call
+// fails (`rejection_text`), since most rejected members are never reported.
+Rejection :: union {
+	string,
+	Rejected_Arity,
+	Rejected_Argument,
+}
+
+Rejected_Arity :: struct {
+	count, supplied: int,
+}
+
+// An argument, by its index in the candidate's `args`, that ranked `RANK_NONE`.
+Rejected_Argument :: struct {
+	index: int,
+	want:  Type_Id,
+	mode:  Param_Mode,
 }
 
 Candidate :: struct {
 	symbol: Symbol_Id,
-	// Runtime ranks and the full vector including compile-time `$` arguments.
+	// One rank per written argument, compile-time `$` arguments included.
 	ranks:  []int,
-	ordering_ranks: []int,
 	slots:  []int,
 	filled: []bool,
 	// Generic candidates keep only their runtime arguments here.
@@ -42,75 +57,19 @@ Candidate :: struct {
 	variadic:   bool,
 	parametric: bool,
 	// Tie-breaker 1: owned arguments (temporaries and `move(...)`) the candidate
-	// does not consume.
-	unconsumed: int,
+	// consumes.
+	consumed:   int,
 	instance:   ^Instance,
 	// The originating generic, also used to report a rejected bound.
 	template:   ^Generic_Template,
 	bindings:   []Generic_Binding,
 	scope:      ^Scope,
 	viable:     bool,
-	reason:     string,
+	reason:     Rejection,
 	// Inference left a waiting argument's parameter type with an unbound `$`
 	// name; `waiting_arg` is that argument's index.
 	unbound_wait: bool,
 	waiting_arg:  int,
-}
-
-@(private = "file")
-candidate_ranks :: proc(cand: ^Candidate) -> []int {
-	return cand.ordering_ranks != nil ? cand.ordering_ranks : cand.ranks
-}
-
-// -------------------------------------------------------------- groups --
-
-// Members resolve after declaration collection, including later declarations.
-resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Proc_Group) {
-	members := make([dynamic]Symbol_Id, 0, len(value.names), k.c.semantic_allocator)
-	for name in value.names {
-		id := name.id
-		if id == INVALID_IDENTIFIER {
-			id = intern_identifier(k.c, name.text)
-		}
-		member := INVALID_SYMBOL
-		owner := symbol_of(k.c, group_id)
-		if owner != nil && owner.owner_type != INVALID_TYPE {
-			member = find_member(k, owner.owner_type, id)
-			if member == INVALID_SYMBOL && excluded_member(k, owner.owner_type, id) != nil {
-				continue
-			}
-		} else {
-			member = lookup_symbol(k.scope, id)
-		}
-		if member == INVALID_SYMBOL {
-			errorf(k.c, name.span, "L0395", "unknown name `%s` in this procedure group", name.text)
-			continue
-		}
-		if sym := symbol_of(k.c, member); sym != nil && sym.decl != nil && sym.decl.sig_state == .Unchecked {
-			resolve_declaration_signature(k, sym.decl)
-		}
-		sym := symbol_of(k.c, member)
-		if sym == nil || sym.kind != .Proc {
-			errorf(k.c, name.span, "L0393", "`%s` is not a procedure, so it cannot be a group member", name.text)
-			continue
-		}
-		// A group would make the hook an ordinary callable operation.
-		if reject_direct_hook_call(k, name.span, member) {
-			continue
-		}
-		// design.md "Test procedures": nor may a group make a test callable.
-		if reject_test_procedure_use(k, sym, name.text, name.span) {
-			continue
-		}
-		if slice.contains(members[:], member) {
-			errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
-			continue
-		}
-		append(&members, member)
-	}
-	if group := symbol_of(k.c, group_id); group != nil {
-		group.members = members[:]
-	}
 }
 
 // ------------------------------------------------------------------ arguments --
@@ -160,7 +119,6 @@ collect_call_arguments :: proc(
 		if info.type == INVALID_TYPE {
 			ok = false
 		} else if base := expr_base(arg.value); base != nil {
-			info.is_const = base.is_const
 			info.const_value = base.const_value
 		}
 		out[index] = info
@@ -168,9 +126,12 @@ collect_call_arguments :: proc(
 	return out, ok
 }
 
-// Typeless aggregates and implicit selectors need a destination type.
+// Typeless aggregates and implicit selectors need a destination type, and a
+// conditional passes its own to both operands.
 argument_needs_context :: proc(e: Expr) -> bool {
 	#partial switch v in e {
+	case ^Expr_Cond:
+		return argument_needs_context(v.then) || argument_needs_context(v.otherwise)
 	case ^Expr_Composite:
 		return v.type_expr == nil
 	case ^Expr_Selector:
@@ -187,8 +148,12 @@ argument_needs_context :: proc(e: Expr) -> bool {
 // type without a destination wait.
 @(private = "file")
 argument_can_wait :: proc(e: Expr) -> bool {
-	if composite, is_composite := e.(^Expr_Composite); is_composite {
-		return composite.capture == nil
+	#partial switch v in e {
+	case ^Expr_Cond:
+		return (argument_needs_context(v.then) && argument_can_wait(v.then)) ||
+			(argument_needs_context(v.otherwise) && argument_can_wait(v.otherwise))
+	case ^Expr_Composite:
+		return v.capture == nil
 	}
 	return true
 }
@@ -219,40 +184,19 @@ common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identif
 		if sym.generic {
 			template := generic_template_for(k, candidate)
 			if template == nil || template.kind != .Procedure { return INVALID_TYPE }
-			type := generic_parameter_context_type(k, template, name, position)
+			type, has_parameter := generic_parameter_context_type(k, template, name, position)
+			if !has_parameter { continue }
 			if type == INVALID_TYPE || (common != INVALID_TYPE && common != type) { return INVALID_TYPE }
 			common = type
 			continue
 		}
-		slot := position
-		if name != INVALID_IDENTIFIER {
-			slot = -1
-			for binding, index in sym.param_symbols {
-				if param := symbol_of(k.c, binding); param != nil && param.name == name {
-					slot = index
-					break
-				}
-			}
-		}
+		slot := name != INVALID_IDENTIFIER ? parameter_slot_named(k.c, sym, name) : position
 		if slot < 0 { continue }
 		// A written variadic element wants `T`, not the pack's `[]T`.
-		variadic := -1
-		if signature := underlying_info(k.c, sym.proc_type); signature != nil {
-			for mode, index in signature.param_modes {
-				if mode == .Variadic {
-					variadic = index
-					break
-				}
-			}
-		}
-		if variadic >= 0 && slot > variadic { slot = variadic }
+		pack := variadic_parameter_index(underlying_info(k.c, sym.proc_type))
+		if pack >= 0 { slot = min(slot, pack) }
 		if slot >= len(sym.params) { continue }
-		type := sym.params[slot]
-		if slot == variadic {
-			pack := underlying_info(k.c, type)
-			if pack == nil { return INVALID_TYPE }
-			type = pack.element
-		}
+		type := slot == pack ? slice_element(k.c, sym.params[slot]) : sym.params[slot]
 		if common != INVALID_TYPE && common != type { return INVALID_TYPE }
 		common = type
 	}
@@ -270,14 +214,12 @@ arg_from_expr :: proc(e: Expr, mode := Argument_Mode.Value) -> Arg_Info {
 		span        = base.span,
 		mode        = mode,
 		type        = base.type,
-		is_const    = base.is_const,
 		const_value = base.const_value,
 	}
 }
 
 // ------------------------------------------------------------------- ranking --
 
-// Side-effect-free conversion rank; materialization happens after selection.
 @(private = "file")
 constant_conversion_preserves_kind :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	target := underlying_kind(c, to)
@@ -296,6 +238,7 @@ constant_conversion_preserves_kind :: proc(c: ^Compiler, from, to: Type_Id) -> b
 	return false
 }
 
+// Side-effect-free conversion rank; materialization happens after selection.
 @(private = "file")
 argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mode) -> int {
 	// design.md "Arguments typed after inference": a waiting argument takes no
@@ -307,55 +250,47 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	if param == INVALID_TYPE || arg.type == INVALID_TYPE {
 		return RANK_NONE
 	}
-	// Modes decide viability and ties, not conversion rank. Receiver modes are implicit.
-	_, moved := arg.expr.(^Expr_Move)
 	adjusted := false
 	if arg.is_receiver {
+		// A receiver's mode is implicit, so it costs `RANK_ADJUST` instead of
+		// needing a match.
 		if mode == .Move {
 			if !expression_is_owned_argument(arg.expr) {
 				return RANK_NONE
 			}
-		} else if moved {
+		} else if _, moved := arg.expr.(^Expr_Move); moved {
 			return RANK_NONE
 		}
 		// A consuming receiver takes an owned receiver as it is.
 		adjusted = mode != .Value && mode != .Move
-	} else {
-		want_inout := mode == .Inout
-		if want_inout != (arg.mode == .Inout) {
-			return RANK_NONE
-		}
-		owned := expression_is_owned_argument(arg.expr)
-		if mode == .Move && !owned {
-			return RANK_NONE
-		}
+	} else if (mode == .Inout) != (arg.mode == .Inout) || (mode == .Move && !expression_is_owned_argument(arg.expr)) {
+		return RANK_NONE
 	}
 	if arg.type == param {
 		return adjusted ? RANK_ADJUST : RANK_EXACT
+	}
+	// design.md "Parameter semantics and ABI lowering": the callee writes the
+	// caller's variable itself, so no conversion may stand between them.
+	if mode == .Inout && !arg.is_receiver {
+		return RANK_NONE
 	}
 	// design.md "Receiver forms": `Type.method(&value)` names the receiver
 	// `self: ^T` receives.
 	if mode == .Borrow && !arg.is_receiver && pointer_to_element(k.c, arg.type) == param {
 		return RANK_ADJUST
 	}
-	if type_is_untyped(k.c, arg.type) {
-		if assignable(k.c, arg.type, param) {
-			if arg.is_const {
-				if _, fits := convert_const(k.c, arg.const_value, param, false); !fits {
-					return RANK_NONE
-				}
-			}
-			if constant_conversion_preserves_kind(k.c, arg.type, param) {
-				return RANK_CONST_KIND
-			}
-			return RANK_BUILTIN
-		}
+	if !assignable(k.c, arg.type, param) {
 		return RANK_NONE
 	}
-	if assignable(k.c, arg.type, param) {
-		return carrier_weakens_to(k.c, arg.type, param) ? RANK_ADJUST : RANK_BUILTIN
+	if type_is_untyped(k.c, arg.type) {
+		if arg.const_value.kind != .Invalid {
+			if _, fits := convert_const(k.c, arg.const_value, param, false); !fits {
+				return RANK_NONE
+			}
+		}
+		return constant_conversion_preserves_kind(k.c, arg.type, param) ? RANK_CONST_KIND : RANK_BUILTIN
 	}
-	return RANK_NONE
+	return carrier_weakens_to(k.c, arg.type, param) ? RANK_ADJUST : RANK_BUILTIN
 }
 
 // design.md "Variadic parameters": a value a `..dyn I` pack views ranks as a
@@ -368,7 +303,7 @@ variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int 
 	concrete := arg.type
 	if type_is_untyped(k.c, concrete) {
 		concrete = default_type(k.c, concrete)
-		if arg.is_const {
+		if arg.const_value.kind != .Invalid {
 			if _, fits := convert_const(k.c, arg.const_value, concrete, false); !fits {
 				return RANK_NONE
 			}
@@ -379,7 +314,6 @@ variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int 
 
 // ----------------------------------------------------------------- candidates --
 
-@(private = "file")
 arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
 	return fmt.aprintf(
 		"it takes %d argument%s, found %d",
@@ -390,7 +324,90 @@ arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
 	)
 }
 
-// Places, ranks, and records a diagnostic reason for a rejected candidate.
+// design.md "`@(c_vararg)`": why an argument past the fixed parameters cannot be
+// passed, or "" when it can.
+@(private = "file")
+c_vararg_rejection :: proc(k: ^Checker, arg: Arg_Info, position: int) -> string {
+	reason := ""
+	switch {
+	case arg.mode == .Spread:
+		reason = "a C-variadic call cannot spread"
+	case arg.mode == .Inout:
+		reason = "a C-variadic argument is passed by value, so it cannot be `inout`"
+	case arg.waiting:
+		reason = "a C-variadic argument needs a concrete type"
+	case:
+		concrete := type_is_untyped(k.c, arg.type) ? default_type(k.c, arg.type) : arg.type
+		if concrete == INVALID_TYPE {
+			reason = "a C-variadic argument needs a concrete type"
+		} else if safe, why := foreign_abi_safe(k.c, concrete); !safe {
+			reason = why
+		}
+	}
+	if reason == "" {
+		return ""
+	}
+	return fmt.aprintf("argument %d: %s", position + 1, reason, allocator = k.c.semantic_allocator)
+}
+
+@(private = "file")
+argument_mismatch_reason :: proc(c: ^Compiler, index: int, found, want: Type_Id) -> string {
+	return fmt.aprintf(
+		"argument %d is `%s` where `%s` is wanted",
+		index + 1,
+		type_name(c, found),
+		type_name(c, want),
+		allocator = c.semantic_allocator,
+	)
+}
+
+// Why a candidate cannot take `arg`, which ranked `RANK_NONE` against `want`.
+@(private = "file")
+rejection_reason :: proc(k: ^Checker, arg: Arg_Info, index: int, want: Type_Id, mode: Param_Mode) -> string {
+	if !arg.is_receiver && (mode == .Inout) != (arg.mode == .Inout) {
+		format := "it does not take argument %d by `inout`"
+		if mode == .Inout {
+			format = arg.waiting ? "it takes argument %d by `inout`, which needs a place" : "it takes argument %d by `inout`; write `inout` at the call site"
+		}
+		return fmt.aprintf(format, index + 1, allocator = k.c.semantic_allocator)
+	}
+	if _, moved := arg.expr.(^Expr_Move); moved && arg.is_receiver && mode != .Move {
+		return "it borrows its receiver, so `move(...)` gives away more than it takes"
+	}
+	// A wrong type is the reason whatever the mode, since `move(...)` would not
+	// change it.
+	if mode == .Move && !expression_is_owned_argument(arg.expr) && argument_rank(k, arg, want, .Value) != RANK_NONE {
+		// design.md "Union argument expansion": a place lends its payload, and
+		// moving the operand is what gives it up.
+		if payload, expanded := arg.expr.(^Expr_Ident); expanded && payload.name == DISPATCH_PAYLOAD {
+			return "it takes the payload by `move`, and a place lends it; this is written `..move(...)`"
+		}
+		if arg.is_receiver {
+			return "it consumes its receiver, which is written `move(...)`"
+		}
+		return fmt.aprintf(
+			"it takes argument %d by `move`, which is written `move(...)`",
+			index + 1,
+			allocator = k.c.semantic_allocator,
+		)
+	}
+	return argument_mismatch_reason(k.c, index, arg.type, want)
+}
+
+@(private = "file")
+rejection_text :: proc(k: ^Checker, cand: Candidate) -> string {
+	switch why in cand.reason {
+	case string:
+		return why
+	case Rejected_Arity:
+		return arity_reason(k.c, why.count, why.supplied)
+	case Rejected_Argument:
+		return rejection_reason(k, cand.args[why.index], why.index, why.want, why.mode)
+	}
+	return "it is not viable here"
+}
+
+// Places, ranks, and records why a rejected candidate is rejected.
 @(private = "file")
 build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> Candidate {
 	if template := generic_template_for(k, symbol_id); template != nil && template.kind == .Procedure {
@@ -423,9 +440,9 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 	pack := variadic_parameter_index(info)
 	element := INVALID_TYPE
 	if pack >= 0 {
-		cand.variadic = true
 		element = slice_element(k.c, sym.params[pack])
 	}
+	cand.variadic = pack >= 0 || info.c_vararg
 	named := false
 	for arg, index in args {
 		slot := index
@@ -453,13 +470,21 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		} else if pack >= 0 && slot >= pack {
 			slot = pack
+		} else if info.c_vararg && slot >= count {
+			if rejection := c_vararg_rejection(k, arg, index); rejection != "" {
+				cand.reason = rejection
+				return cand
+			}
+			cand.slots[index] = -1
+			cand.ranks[index] = RANK_BUILTIN
+			continue
 		} else if slot >= count {
-			cand.reason = arity_reason(k.c, count, len(args))
+			cand.reason = Rejected_Arity{count, len(args)}
 			return cand
 		}
 		cand.filled[slot] = true
 		cand.slots[index] = slot
-		mode := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
+		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
 		want := sym.params[slot]
 		if slot == pack {
 			if arg.name != INVALID_IDENTIFIER {
@@ -476,66 +501,23 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		if rank == RANK_NONE && slot == pack && arg.mode != .Spread {
 			rank = variadic_view_rank(k, arg, element)
 		}
-		if rank == RANK_NONE && arg.waiting && mode == .Inout {
-			cand.reason = fmt.aprintf(
-				"it takes argument %d by `inout`, which needs a place",
-				index + 1,
-				allocator = k.c.semantic_allocator,
-			)
-			return cand
-		}
 		if rank == RANK_NONE {
-			// design.md "Union argument expansion": a place lends its payload,
-			// and moving the operand is what gives it up. The `Unit{}` of a
-			// payloadless variant is owned, so only its type can fail.
-			payload, expanded := arg.expr.(^Expr_Ident)
-			if expanded && payload.name == DISPATCH_PAYLOAD {
-				if mode == .Move && !expression_is_owned_argument(arg.expr) {
-					cand.reason = "it takes the payload by `move`, and a place lends it; this is written `..move(...)`"
-					return cand
-				}
-			} else if _, moved := arg.expr.(^Expr_Move); moved != (mode == .Move) {
-				if arg.is_receiver {
-					cand.reason = "it borrows its receiver, so `move(...)` gives away more than it takes"
-					if mode == .Move {
-						cand.reason = "it consumes its receiver, which is written `move(...)`"
-					}
-					return cand
-				}
-				if mode == .Move {
-					cand.reason = fmt.aprintf(
-						"it takes argument %d by `move`, which is written `move(...)`",
-						index + 1,
-						allocator = k.c.semantic_allocator,
-					)
-					return cand
-				}
-			}
-			cand.reason = fmt.aprintf(
-				"argument %d is `%s` where `%s` is wanted",
-				index + 1,
-				type_name(k.c, args[index].type),
-				type_name(k.c, want),
-				allocator = k.c.semantic_allocator,
-			)
+			cand.reason = Rejected_Argument{index, want, mode}
 			return cand
 		}
 		cand.ranks[index] = rank
-		// A waiting argument is unchecked, and every form that waits is a temporary.
-		if (arg.waiting || expression_is_owned_argument(arg.expr)) && mode != .Move {
-			cand.unconsumed += 1
+		// `argument_rank` lets only an owned argument reach a `move` parameter.
+		if mode == .Move {
+			cand.consumed += 1
 		}
 	}
 
 	for slot in 0 ..< count {
-		if cand.filled[slot] {
-			continue
-		}
-		if slot == pack {
+		if cand.filled[slot] || slot == pack {
 			continue
 		}
 		if slot >= len(sym.param_defaults) || sym.param_defaults[slot] == nil {
-			cand.reason = arity_reason(k.c, count, len(args))
+			cand.reason = Rejected_Arity{count, len(args)}
 			return cand
 		}
 		cand.omitted += 1
@@ -560,7 +542,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			waiting_arg  = inference.waiting_arg,
 		}
 	}
-	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
+	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, NO_SPAN, report = false)
 	if !made {
 		reason := "its `where` bounds are not satisfied by these arguments"
 		if instance != nil && instance.rejection.message != "" {
@@ -586,13 +568,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				rank := argument_rank(k, arg, inference.compile_targets[index], .Value)
 				if rank == RANK_NONE {
 					cand.viable = false
-					cand.reason = fmt.aprintf(
-						"argument %d is `%s` where `%s` is wanted",
-						index + 1,
-						type_name(k.c, arg.type),
-						type_name(k.c, inference.compile_targets[index]),
-						allocator = k.c.semantic_allocator,
-					)
+					cand.reason = argument_mismatch_reason(k.c, index, arg.type, inference.compile_targets[index])
 					break
 				}
 				ordering[index] = rank
@@ -601,7 +577,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			ordering[index] = cand.ranks[runtime_index]
 			runtime_index += 1
 		}
-		cand.ordering_ranks = ordering
+		cand.ranks = ordering
 	}
 	if cand.viable {
 		cand.template = template
@@ -609,9 +585,6 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	cand.parametric = true
 	cand.omitted += inference.compile_omitted
 	cand.instance = instance
-	if !cand.viable && cand.reason == "" {
-		cand.reason = "it does not apply to these arguments"
-	}
 	return cand
 }
 
@@ -620,9 +593,6 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 // -1: a wins, 1: b wins, 0: equal, 2: crossed and ambiguous.
 @(private = "file")
 compare_vectors :: proc(a, b: []int) -> int {
-	if len(a) != len(b) {
-		return 2
-	}
 	a_better, b_better := false, false
 	for value, index in a {
 		if value < b[index] {
@@ -647,8 +617,8 @@ compare_vectors :: proc(a, b: []int) -> int {
 // members' shapes (design.md tie-breaker 1).
 @(private = "file")
 tie_break :: proc(k: ^Checker, a, b: ^Candidate) -> int {
-	if a.unconsumed != b.unconsumed {
-		return a.unconsumed < b.unconsumed ? -1 : 1
+	if a.consumed != b.consumed {
+		return a.consumed > b.consumed ? -1 : 1
 	}
 	if a.variadic != b.variadic {
 		return a.variadic ? 1 : -1
@@ -659,17 +629,12 @@ tie_break :: proc(k: ^Checker, a, b: ^Candidate) -> int {
 	if a.parametric != b.parametric {
 		return a.parametric ? 1 : -1
 	}
-	if a.parametric && b.parametric {
-		if preference := compare_generic_specificity(k, a.template, b.template); preference != 0 {
-			return preference
-		}
-	}
-	return 0
+	return a.parametric ? compare_generic_specificity(k, a.template, b.template) : 0
 }
 
 @(private = "file")
 candidate_better :: proc(k: ^Checker, a, b: ^Candidate) -> bool {
-	switch compare_vectors(candidate_ranks(a), candidate_ranks(b)) {
+	switch compare_vectors(a.ranks, b.ranks) {
 	case -1:
 		return true
 	case 1, 2:
@@ -689,13 +654,10 @@ resolve_overload :: proc(
 	description: string,
 	members: []Symbol_Id,
 	args: []Arg_Info,
-	report := true,
 ) -> (Candidate, bool) {
-	return choose_candidate(k, span, description, members, form_candidates(k, members, args), args, report)
+	return choose_candidate(k, span, description, members, form_candidates(k, members, args), args)
 }
 
-// Each member built against `args`, in order, for `choose_candidate` and
-// `candidates_viable` to share.
 form_candidates :: proc(k: ^Checker, members: []Symbol_Id, args: []Arg_Info) -> []Candidate {
 	all := make([]Candidate, len(members), context.temp_allocator)
 	for member, index in members {
@@ -712,32 +674,24 @@ choose_candidate :: proc(
 	members: []Symbol_Id,
 	all: []Candidate,
 	args: []Arg_Info,
-	report := true,
 ) -> (Candidate, bool) {
 	if len(members) == 0 {
-		if report {
-			errorf(k.c, span, "L0392", "%s has no overloads", description)
-		}
+		errorf(k.c, span, "L0392", "%s has no overloads", description)
 		return Candidate{}, false
 	}
-	viable := make([dynamic]int, 0, len(members), context.temp_allocator)
-	for cand, index in all {
-		if cand.viable {
-			append(&viable, index)
-		}
-	}
-	if len(viable) == 0 {
-		if report {
-			report_no_match(k, span, description, all[:], args, members)
-		}
+	if !candidates_viable(all) {
+		report_no_match(k, span, description, all, args, members)
 		return Candidate{}, false
 	}
 
-	maximal := make([dynamic]int, 0, len(viable), context.temp_allocator)
-	for index in viable {
+	maximal := make([dynamic]int, 0, len(all), context.temp_allocator)
+	for &cand, index in all {
+		if !cand.viable {
+			continue
+		}
 		dominated := false
-		for other in viable {
-			if other != index && candidate_better(k, &all[other], &all[index]) {
+		for &other, other_index in all {
+			if other.viable && other_index != index && candidate_better(k, &other, &cand) {
 				dominated = true
 				break
 			}
@@ -751,9 +705,7 @@ choose_candidate :: proc(
 		promote_generic_instance(k, chosen.instance, span)
 		return chosen, true
 	}
-	if report {
-		report_ambiguity(k, span, description, all[:], maximal[:])
-	}
+	report_ambiguity(k, span, description, all, maximal[:])
 	return Candidate{}, false
 }
 
@@ -779,12 +731,22 @@ report_no_match :: proc(
 			return
 		}
 	}
-	// design.md "Arguments typed after inference": a sole generic whose waiting
-	// argument is the only one that could bind a `$` name says so at that
-	// argument, which has no type, as it would with no context at all.
-	if len(all) == 1 && all[0].unbound_wait && all[0].waiting_arg < len(args) {
-		errorf(k.c, args[all[0].waiting_arg].span, "L0385", "%s", all[0].reason)
+	// design.md "Arguments typed after inference": a sole generic reports at the
+	// waiting argument that alone could bind a `$` name.
+	if len(all) == 1 && all[0].unbound_wait {
+		errorf(k.c, args[all[0].waiting_arg].span, "L0385", "%s", rejection_text(k, all[0]))
 		return
+	}
+	// design.md "Parameter semantics and ABI lowering": a sole candidate reports
+	// an `inout` argument of another type as a direct call does, at the argument.
+	if len(all) == 1 {
+		if why, rejected := all[0].reason.(Rejected_Argument); rejected {
+			arg := all[0].args[why.index]
+			if arg.mode == .Inout && why.mode == .Inout {
+				check_bound_argument_mode(k, arg.expr, why.want, .Inout, "an `inout` argument")
+				return
+			}
+		}
 	}
 	// A sole rejected generic can report its precise failed bound.
 	if len(all) == 1 && all[0].template != nil {
@@ -802,7 +764,7 @@ report_no_match :: proc(
 			sym.span,
 			"`%s` does not apply: %s",
 			identifier_text(k.c, sym.name),
-			cand.reason == "" ? "it is not viable here" : cand.reason,
+			rejection_text(k, cand),
 		)
 	}
 	note_mutable_slice_arguments(k, args, members)
@@ -834,16 +796,8 @@ report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Ca
 	errorf(k.c, span, "L0391", "%s is ambiguous here: %d candidates are equally good", description, len(maximal))
 	for index in maximal {
 		sym := symbol_of(k.c, all[index].symbol)
-		if sym == nil {
-			continue
-		}
-		// The signature, not the rank vector it was scored with, and the reason
-		// in the programmer's terms rather than a tie-breaker's number
-		// (design.md "Operator lookup and overload resolution").
-		if sym.proc_type == INVALID_TYPE {
-			add_notef(k.c, sym.span, "candidate `%s`", identifier_text(k.c, sym.name))
-			continue
-		}
+		// design.md "Operator lookup and overload resolution": signatures, not
+		// rank vectors.
 		add_notef(
 			k.c,
 			sym.span,
@@ -852,7 +806,7 @@ report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Ca
 			type_name(k.c, sym.proc_type),
 		)
 	}
-	add_notef(k.c, no_span(), "%s", failing_tie_breaker(all, maximal))
+	add_notef(k.c, NO_SPAN, "%s", failing_tie_breaker(all, maximal))
 }
 
 @(private = "file")
@@ -862,162 +816,10 @@ failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
 			if other == index {
 				continue
 			}
-			if compare_vectors(candidate_ranks(&all[index]), candidate_ranks(&all[other])) == 2 {
+			if compare_vectors(all[index].ranks, all[other].ranks) == 2 {
 				return "each of these converts a different argument better than the others, which is ambiguous by design; call the one you want by name, or give the arguments the types it declares"
 			}
 		}
 	}
 	return "no candidate is more specialized than the others; call the one you want by name, or give the arguments the types it declares"
-}
-
-// --------------------------------------------------------------- binding --
-
-// Binds the chosen candidate in parameter order and materializes constants.
-bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
-	sym := symbol_of(k.c, cand.symbol)
-	if sym == nil {
-		return false
-	}
-	if !type_waiting_arguments(k, v, sym, cand) {
-		return false
-	}
-	if info := type_of(k.c, sym.proc_type); variadic_parameter_index(info) >= 0 {
-		receiver: Expr
-		if len(cand.args) > 0 && cand.args[0].is_receiver {
-			receiver = cand.args[0].expr
-		}
-		bound_ok := bind_variadic_arguments(
-			k, v, info, cand.symbol, candidate_arguments(k.c, cand),
-			prechecked = true, receiver = receiver,
-		)
-		require_argument_ownership(k, v, cand.symbol)
-		return bound_ok
-	}
-	count := len(sym.params)
-	bound := make([]Expr, count, k.c.semantic_allocator)
-	// design.md "Evaluation order": written arguments first, then defaults.
-	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
-	in_order := true
-	ok := true
-	for arg, index in cand.args {
-		slot := cand.slots[index]
-		in_order = in_order && slot == len(order)
-		append(&order, slot)
-		value := arg.expr
-		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
-		if mode == .Borrow && !arg.is_receiver && pointer_to_element(k.c, arg.type) == sym.params[slot] {
-			value = dereference_argument(k, value)
-		}
-		if !materialize_argument(k, value, sym.params[slot]) {
-			ok = false
-			continue
-		}
-		if !check_bound_argument_mode(k, value, sym.params[slot], mode, "an `inout` argument") {
-			ok = false
-		}
-		bound[slot] = value
-	}
-	for slot in 0 ..< count {
-		if !cand.filled[slot] && slot < len(sym.param_defaults) {
-			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], v.span)
-			in_order = in_order && slot == len(order)
-			append(&order, slot)
-		}
-	}
-	v.bound = bound
-	if !in_order {
-		v.bound_order = order[:]
-	}
-	require_argument_ownership(k, v, cand.symbol)
-	return ok
-}
-
-// design.md "Arguments typed after inference": each waiting argument is checked
-// against the chosen candidate's parameter, its `$` names now substituted (the
-// element type, for a variadic pack). The arguments are still evaluated in
-// written order; only their checking waited.
-@(private = "file")
-type_waiting_arguments :: proc(k: ^Checker, v: ^Expr_Call, sym: ^Symbol, cand: Candidate) -> bool {
-	info := type_of(k.c, sym.proc_type)
-	pack := variadic_parameter_index(info)
-	ok := true
-	for &arg, index in cand.args {
-		if !arg.waiting {
-			continue
-		}
-		slot := cand.slots[index]
-		if slot < 0 || slot >= len(sym.params) {
-			ok = false
-			continue
-		}
-		target := sym.params[slot]
-		if slot == pack {
-			target = slice_element(k.c, target)
-		}
-		arg.waiting = false
-		arg.type = check_single_expr(k, arg.expr, target)
-		if arg.type == INVALID_TYPE {
-			ok = false
-			// A group chose this member without it, which the error alone hides.
-			if len(v.overload_members) > 1 {
-				add_notef(
-					k.c, sym.span,
-					"the other arguments chose `%s`; an argument that takes its parameter's type does not take part in choosing",
-					identifier_text(k.c, sym.name),
-				)
-			}
-			continue
-		}
-		if base := expr_base(arg.expr); base != nil {
-			arg.is_const = base.is_const
-			arg.const_value = base.const_value
-		}
-	}
-	return ok
-}
-
-@(private = "file")
-candidate_arguments :: proc(c: ^Compiler, cand: Candidate) -> []Argument {
-	count := len(cand.args)
-	if count > 0 && cand.args[0].is_receiver {
-		count -= 1
-	}
-	out := make([]Argument, count, c.semantic_allocator)
-	index := 0
-	for arg in cand.args {
-		if arg.is_receiver {
-			continue
-		}
-		name := Name{}
-		if arg.name != INVALID_IDENTIFIER {
-			name = Name{text = identifier_text(c, arg.name), span = arg.span, id = arg.name}
-		}
-		out[index] = Argument{span = arg.span, name = name, mode = arg.mode, value = arg.expr}
-		index += 1
-	}
-	return out
-}
-
-// The pointee of a `^T` or `^mut T`, or INVALID_TYPE.
-pointer_to_element :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	info := type_of(c, type)
-	return info != nil && info.kind == .Pointer ? info.element : INVALID_TYPE
-}
-
-// `pointer^`, already checked: a borrowing parameter given the address takes
-// the place it names.
-dereference_argument :: proc(k: ^Checker, pointer: Expr) -> Expr {
-	info := type_of(k.c, expr_base(pointer).type)
-	deref := new(Expr_Postfix, k.c.semantic_allocator)
-	deref.span, deref.op_span, deref.op, deref.operand = expr_span(pointer), expr_span(pointer), .Caret, pointer
-	deref.type = info.element
-	deref.value_category = .Place
-	deref.addressable = true
-	deref.assignable = info.mutable
-	deref.immutable = info.mutable ? .None : .Through_Pointer
-	return deref
-}
-
-materialize_argument :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
-	return materialize_value_expr(k, e, target, "pass")
 }

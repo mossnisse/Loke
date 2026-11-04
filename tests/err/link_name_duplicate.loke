@@ -1,0 +1,7 @@
+// design.md "@(link_name=<string>)": a list reports the repeat once, and its
+// missing `@(export)` once, however many times the attribute is written.
+package main;
+
+@(link_name = "first", link_name = "second") named :: proc() {}
+
+main :: proc() { named(); }

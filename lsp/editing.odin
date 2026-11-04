@@ -46,11 +46,11 @@ EMPTY_COMPLETION :: `{"isIncomplete":false,"items":[]}`
 completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> string {
 	offset := u32(position_to_offset(text, position, s.utf8_positions))
 	comments := make([dynamic]lokec.Span, context.temp_allocator)
-	tokens := lex_text(text, &comments)
+	tokens := lokec.lex_text(text, &comments)
 	defer delete(tokens)
 	if inside_comment_or_literal(text, tokens, comments[:], offset) { return EMPTY_COMPLETION }
 	start := offset
-	for start > 0 && is_name_byte(text[start - 1]) { start -= 1 }
+	for start > 0 && lokec.is_ident_part(text[start - 1]) { start -= 1 }
 	before := -1
 	for token, index in tokens {
 		if token.hi > start { break }
@@ -66,6 +66,7 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 		members, listed := lokec.query_members(session, operand, file, context.temp_allocator)
 		if !listed { return EMPTY_COMPLETION }
 		for member in members {
+			if member.ambiguous { continue }
 			item := Completion_Item{label = member.name, kind = .Enum_Member}
 			if member.variant {
 				if type, typed := lokec.query_type(session, member.type); typed { item.detail = type.name }
@@ -82,8 +83,8 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 			if !known { continue }
 			append(&items, Completion_Item{symbol.name, completion_kind(session, symbol, member = false), symbol_detail(session, symbol), handle})
 		}
-		for kind in lokec.Token_Kind.Break ..= lokec.Token_Kind.Where {
-			append(&items, Completion_Item{label = strings.to_lower(fmt.tprint(kind), context.temp_allocator), kind = .Keyword})
+		for keyword in lokec.keyword_table {
+			append(&items, Completion_Item{label = keyword.text, kind = .Keyword})
 		}
 	}
 	b := strings.builder_make(context.temp_allocator)
@@ -163,7 +164,7 @@ symbol_detail :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_S
 // goes. Literals keep their text.
 @(private = "file")
 one_line :: proc(text: string) -> string {
-	tokens := lex_text(text)
+	tokens := lokec.lex_text(text)
 	defer delete(tokens)
 	b := strings.builder_make(context.temp_allocator)
 	for token, index in tokens {
@@ -186,7 +187,7 @@ one_line :: proc(text: string) -> string {
 signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> string {
 	offset := u32(position_to_offset(text, position, s.utf8_positions))
 	comments := make([dynamic]lokec.Span, context.temp_allocator)
-	tokens := lex_text(text, &comments)
+	tokens := lokec.lex_text(text, &comments)
 	defer delete(tokens)
 	if inside_comment_or_literal(text, tokens, comments[:], offset) { return "null" }
 	open := make([dynamic]int, context.temp_allocator)
@@ -239,10 +240,10 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 		if member, member_found := lokec.query_symbol(session, signature.symbol); member_found { name = member.name }
 		label := fmt.tprintf("%s :: %s", name, signature.text)
 		parameter := active
-		if receiver && len(signature.parameters) > 0 && signature.parameters[0].name == "self" { parameter += 1 }
+		if receiver && len(signature.parameters) > 0 && signature.parameters[0] == "self" { parameter += 1 }
 		if named != "" {
 			parameter = -1
-			for candidate, slot in signature.parameters { if candidate.name == named { parameter = slot } }
+			for candidate, slot in signature.parameters { if candidate == named { parameter = slot } }
 		}
 		if chosen < 0 && parameter >= 0 && parameter < len(signature.parameters) { chosen, chosen_parameter = index, parameter }
 		if index > 0 { strings.write_byte(&b, ',') }
@@ -267,15 +268,15 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 // parameter is never taken for that name. Label offsets count UTF-16 units
 // whatever position encoding was negotiated, as the protocol defines them.
 @(private = "file")
-write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, parameters: []lokec.Query_Parameter) {
+write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, parameters: []string) {
 	if !s.label_offsets {
 		for parameter, index in parameters {
 			if index > 0 { strings.write_byte(b, ',') }
-			write_parameter_name(b, parameter.name)
+			write_parameter_name(b, parameter)
 		}
 		return
 	}
-	tokens := lex_text(label)
+	tokens := lokec.lex_text(label)
 	defer delete(tokens)
 	next, depth, names := 0, 0, true
 	for parameter, index in parameters {
@@ -292,13 +293,13 @@ write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, p
 			case .Colon: if depth == 1 { names = false }
 			case .Comma: if depth == 1 { names = true }
 			case .Ident:
-				if depth == 1 && names && label[token.lo:token.hi] == parameter.name { lo, hi = int(token.lo), int(token.hi) }
+				if depth == 1 && names && label[token.lo:token.hi] == parameter { lo, hi = int(token.lo), int(token.hi) }
 			}
 		}
 		if lo >= 0 {
 			fmt.sbprintf(b, `{{"label":[%d,%d]}}`, utf16_length(label[:lo]), utf16_length(label[:hi]))
 		} else {
-			write_parameter_name(b, parameter.name)
+			write_parameter_name(b, parameter)
 		}
 	}
 }
@@ -327,17 +328,6 @@ literal_token :: proc(text: string, token: lokec.Token) -> (literal, open_ended:
 	escapes := 0
 	for i := len(written) - 2; i > 0 && written[i] == '\\' && quote != '`'; i -= 1 { escapes += 1 }
 	return true, escapes % 2 == 1
-}
-
-// The compiler's own tokens for a text: literals are whole, and comments are
-// left out, their spans appended to `comments` when it is given.
-lex_text :: proc(text: string, comments: ^[dynamic]lokec.Span = nil) -> []lokec.Token {
-	scratch: lokec.Compiler
-	defer lokec.destroy_compilation(&scratch)
-	append(&scratch.sources, lokec.Source{text = text})
-	tokens := lokec.lex(&scratch, 0)
-	if comments != nil { append(comments, ..scratch.sources[0].comments[:]) }
-	return tokens
 }
 
 // The tokens of a text as the compiler's parser left them: a contextual

@@ -18,7 +18,7 @@ main :: proc() {
 	// A static binding is immutable and cannot use `&`.
 	foreach ($&mut field in fields_of(Point)) { }
 	// The iterable must be compile-time known.
-	n := 3;
+	n := [1]int{3};
 	foreach ($x in n) { }
 	// Wrong descriptor for the value.
 	foreach ($field in fields_of(Colour)) { }

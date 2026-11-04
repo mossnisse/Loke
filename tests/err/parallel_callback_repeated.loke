@@ -1,0 +1,41 @@
+// design.md "Borrows crossing between tasks": each question asked of a call's
+// callbacks is answered afresh, so what one has left in one of the call's
+// arguments is still seen in the next, whichever comes last, and a procedure
+// value that may be either of two is taken to be each.
+package main;
+
+import "core:thread";
+
+counter: thread_local int;
+
+publish :: proc(out: ^mut ^int) { out^ = &counter; }
+nothing :: proc(out: ^mut ^int) {}
+
+both :: proc(f: proc(out: ^mut ^int), a: ^mut ^int, b: ^mut ^int) { f(a); f(b); }
+
+second_of_two :: proc(out: ^mut ^int) {
+	x := 0;
+	mine: ^int = &x;
+	both(publish, &mut mine, out);
+}
+
+first_of_two :: proc(out: ^mut ^int) {
+	x := 0;
+	mine: ^int = &x;
+	both(publish, out, &mut mine);
+}
+
+choose :: proc(f: proc(out: ^mut ^int), g: proc(out: ^mut ^int), first: bool, out: ^mut ^int) {
+	if (first) { f(out); } else { g(out); }
+}
+
+chosen :: proc(out: ^mut ^int) { choose(nothing, publish, true, out); }
+
+main :: proc() {
+	y := 0;
+	slot: ^int = &y;
+	parallel { spawn second_of_two(&mut slot); }
+	parallel { spawn first_of_two(&mut slot); }
+	parallel { spawn chosen(&mut slot); }
+	_ = slot^;
+}

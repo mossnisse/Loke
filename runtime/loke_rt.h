@@ -534,6 +534,8 @@ void loke_rt_v1_fmt_u128(
 	const loke_rt_writer_v1 *w, uint64_t low, uint64_t high, const loke_rt_options_v1 *o);
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value);
 void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value);
+/* The C ABI has no `f16`, so it arrives as the `float` holding it exactly. */
+void loke_rt_v1_fmt_f16(const loke_rt_writer_v1 *w, float value);
 void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digits);
 /* Float text in the "C" numeric locale, whatever the process locale is, for
  * `core:strconv` and `fmt.try_spell_f64`. Each answers a failure to make that

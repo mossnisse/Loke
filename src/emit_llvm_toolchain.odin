@@ -1,20 +1,19 @@
-// Artifact writing, clang/NASM invocation, host discovery, and layout probes.
+// Artifact writing, clang/NASM invocation, foreign link inputs, and host
+// discovery.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
 import "core:fmt"
-import "core:hash"
 import "core:mem/virtual"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
-import "core:time"
 
 import "subprocess"
 
+@(private = "file")
 CLANG_MISSING :: "cannot run `%s`: install LLVM (`winget install LLVM.LLVM`) or set LOKE_CLANG"
 
 Emission_Options :: struct {
@@ -24,6 +23,8 @@ Emission_Options :: struct {
 	runtime_dir: string,
 }
 
+// -------------------------------------------------------------- artifacts --
+
 emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	module, generated := emit_llvm_module(c)
@@ -31,23 +32,8 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 		return 2
 	}
 	ll_path := replace_ext(opts.output, ".ll")
-	if os.write_entire_file(ll_path, transmute([]u8)module) != nil {
-		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
+	if !write_artifact(c, ll_path, module) {
 		return 2
-	}
-	natvis_path := ""
-	if c.natvis != "" && c.build_mode != .Obj {
-		natvis_path = replace_ext(opts.output, ".natvis")
-		// The linker reads the rules while it writes the executable, and MSVC
-		// 14.51's cannot open one file as both (LNK1104): `-o x.natvis` moves
-		// them aside.
-		if strings.equal_fold(natvis_path, opts.output) {
-			natvis_path = strings.concatenate({opts.output, ".natvis"})
-		}
-		if os.write_entire_file(natvis_path, transmute([]u8)c.natvis) != nil {
-			errorf(c, no_span(), "L0401", "cannot write `%s`", natvis_path)
-			return 2
-		}
 	}
 	if opts.emit_ll {
 		fmt.printfln("wrote %s", ll_path)
@@ -57,14 +43,36 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	defer if !opts.keep_temps && !strings.equal_fold(ll_path, opts.output) {
 		os.remove(ll_path)
 	}
-	defer if !opts.keep_temps && natvis_path != "" {
-		os.remove(natvis_path)
-	}
 
 	if c.build_mode == .Obj {
 		return compile_object(c, ll_path, opts.output)
 	}
+	natvis_path := ""
+	if c.natvis != "" {
+		natvis_path = replace_ext(opts.output, ".natvis")
+		// The linker reads the rules while it writes the executable, and MSVC
+		// 14.51's cannot open one file as both (LNK1104): `-o x.natvis` moves
+		// them aside.
+		if strings.equal_fold(natvis_path, opts.output) {
+			natvis_path = strings.concatenate({opts.output, ".natvis"})
+		}
+		if !write_artifact(c, natvis_path, c.natvis) {
+			return 2
+		}
+	}
+	defer if !opts.keep_temps && natvis_path != "" {
+		os.remove(natvis_path)
+	}
 	return link(c, ll_path, natvis_path, opts.output, opts)
+}
+
+@(private)
+write_artifact :: proc(c: ^Compiler, path, text: string) -> bool {
+	if os.write_entire_file(path, transmute([]u8)text) != nil {
+		errorf(c, NO_SPAN, "L0401", "cannot write `%s`", path)
+		return false
+	}
+	return true
 }
 
 // design.md "Build modes": one relocatable object, with runtime and foreign
@@ -89,434 +97,35 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 	append(&command, "-Wno-override-module")
 	state, _, stderr, err := subprocess.run(os.Process_Desc{command = command[:]}, context.allocator)
 	if err != nil {
-		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
+		errorf(c, NO_SPAN, "L0402", CLANG_MISSING, clang)
 		return 2
 	}
 	if state.exit_code != 0 {
-		errorf(c, no_span(), "L0403", "`%s -c` failed:\n%s", clang, string(stderr))
+		errorf(c, NO_SPAN, "L0403", "`%s -c` failed:\n%s", clang, string(stderr))
 		return 2
 	}
 	return 0
 }
 
-// What every clang command that generates code passes, the module's and the
-// runtime's alike, so the two cannot disagree on the instruction set.
-// `-ffp-contract=off` is not a default: for C, clang's is `on`, which fuses
-// `a*b + c` within an expression, and for IR input the option still sets the
-// backend's fusion mode (design.md "Floating-point operators").
-@(private = "file")
-append_codegen_flags :: proc(command: ^[dynamic]string, target: Target_Info, opt_mode: Opt_Mode) {
-	append(command, opt_clang_flag(opt_mode))
-	append(command, strings.concatenate({"-march=", cpu_level_name(target.cpu)}, context.temp_allocator))
-	append(command, "-ffp-contract=off")
-}
-
-@(private = "file")
-NASM :: "nasm -f win64"
-
-// design.md "Foreign system": the command an assembly import needs, or "" for a
-// library. clang assembles `.s`/`.S` itself during the link.
-@(private = "file")
-assembler_for :: proc(path: string) -> string {
-	switch strings.to_lower(filepath.ext(path)) {
-	case ".asm":
-		return NASM
-	case ".s":
-		return "clang -c"
-	}
-	return ""
-}
-
-// ------------------------------------------------------- layout agreement --
-
-// One number the checker claims and LLVM can be made to compute.
-@(private = "file")
-Layout_Probe :: struct {
-	description: string,
-	llvm:        string, // a constant expression that evaluates to the number
-	expected:    u64,
-}
-
-// `-check-layout`: runs a module printing LLVM's size, alignment, and field
-// offsets for every type and compares them with the checker's layout.
-check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
-	context.allocator = virtual.arena_allocator(&c.emission_arena)
-	e := make_emitter(c)
-	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
-	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
-	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
-	// The seed runtime calls this on thread detach.
-	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() { ret void }")
-	emit_sink_bridge(&e)
-	emit_carrier_types(&e)
-	emit_struct_definitions(&e)
-
-	probes := make([dynamic]Layout_Probe)
-	for index in 0 ..< len(c.types) {
-		type := Type_Id(index)
-		if !layout_probeable(c, type) {
-			continue
-		}
-		llvm := llvm_type(&e, type)
-		name := type_name(c, type)
-		append(&probes, Layout_Probe {
-			description = fmt.aprintf("size_of(%s)", name),
-			llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 1) to i64)", llvm),
-			expected    = type_size(c, type),
-		})
-		// LLVM has no `alignof`; the offset of `T` in `{ i8, T }` is its alignment.
-		append(&probes, Layout_Probe {
-			description = fmt.aprintf("align_of(%s)", name),
-			// `{` is a format directive to core:fmt, so this one is concatenated.
-			llvm        = strings.concatenate(
-				{"ptrtoint (ptr getelementptr ({ i8, ", llvm, " }, ptr null, i64 0, i32 1) to i64)"},
-			),
-			expected    = type_align(c, type),
-		})
-		info := type_of(c, type)
-		if info.kind != .Struct {
-			continue
-		}
-		for field, position in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil {
-				continue
-			}
-			append(&probes, Layout_Probe {
-				description = fmt.aprintf("offset_of(%s, %s)", name, identifier_text(c, symbol.name)),
-				llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 0, i32 %d) to i64)", llvm, position),
-				expected    = type_field_offset(c, type, position),
-			})
-		}
-	}
-
-	fmt.sbprintln(&e.b, "define i32 @main() {")
-	fmt.sbprintln(&e.b, "entry:")
-	for probe in probes {
-		fmt.sbprintfln(&e.b, "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)", probe.llvm)
-	}
-	fmt.sbprintln(&e.b, "  ret i32 0")
-	fmt.sbprintln(&e.b, "}")
-
-	ll_path := replace_ext(opts.output, ".layout.ll")
-	if os.write_entire_file(ll_path, transmute([]u8)strings.to_string(e.b)) != nil {
-		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
-		return 2
-	}
-	defer if !opts.keep_temps {
-		os.remove(ll_path)
-	}
-	if code := link(c, ll_path, "", opts.output, opts); code != 0 {
-		return code
-	}
-	defer if !opts.keep_temps {
-		os.remove(opts.output)
-	}
-
-	state, stdout, _, err := subprocess.run(
-		os.Process_Desc{command = []string{opts.output}},
-		context.allocator,
-	)
-	if err != nil || state.exit_code != 0 {
-		errorf(c, no_span(), "L0405", "cannot run the layout probe")
-		return 2
-	}
-	text, _ := strings.replace_all(string(stdout), "\r\n", "\n")
-	lines := strings.split_lines(strings.trim_space(text))
-	if len(lines) != len(probes) {
-		errorf(c, no_span(), "L0405", "the layout probe produced %d values, expected %d", len(lines), len(probes))
-		return 2
-	}
-	disagreements := 0
-	for probe, index in probes {
-		actual, parsed := strconv.parse_u64(strings.trim_space(lines[index]))
-		if !parsed || actual != probe.expected {
-			errorf(
-				c,
-				no_span(),
-				"L0405",
-				"%s: the checker says %d, LLVM says %s",
-				probe.description,
-				probe.expected,
-				lines[index],
-			)
-			disagreements += 1
-		}
-	}
-	if disagreements > 0 {
-		return 1
-	}
-	fmt.printfln("%d layout facts agree with LLVM", len(probes))
-	return 0
-}
-
-// A type that lowers to a real LLVM type and holds a runtime value.
-@(private = "file")
-layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	info := type_of(c, type)
-	if info == nil || !type_is_supported(c, type) {
-		return false
-	}
-	// A generic record's shell has no emitted definition.
-	if sym := symbol_of(c, info.symbol); sym != nil && sym.generic {
-		return false
-	}
-	#partial switch info.kind {
-	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
-	     .Distinct, .Union, .Slice, .Allocator, .Allocator_Error,
-	     .Dynamic_Array, .Box, .Map:
-		return true
-	}
-	return false
-}
-
-replace_ext :: proc(path: string, ext: string) -> string {
-	// A dot in a parent directory isn't this file's extension.
-	separator := max(strings.last_index_byte(path, '/'), strings.last_index_byte(path, '\\'))
-	if i := strings.last_index_byte(path, '.'); i > separator {
-		return strings.concatenate({path[:i], ext})
-	}
-	return strings.concatenate({path, ext})
-}
-
-// The bundled runtime's objects, compiled once per C build, CPU level, and
-// optimization mode, and reused by later links. A custom `-runtime=<dir>` is never
-// written to. Each set lives in a directory named by a hash of everything that
-// decides it, so a changed input makes a new set instead of replacing one a
-// concurrent link may be reading. A set is compiled in a private staging
-// directory and renamed into place, and an installed set is never modified.
-// A set that cannot be built or installed leaves the link to compile the
-// sources itself, and the reason in `RUNTIME_CACHE_FAILURE`.
-// ponytail: superseded sets are left behind (about 100 KB each); a sweep
-// would need to know no link still reads them.
-@(private = "file")
-prebuilt_runtime_objects :: proc(
-	runtime_dir: string,
-	sources: []string,
-	target: Target_Info,
-	opt_mode: Opt_Mode,
-	custom_runtime: bool,
-	bitcode: bool,
-) -> []string {
-	if custom_runtime {
-		return nil
-	}
-	commands := runtime_compile_commands(runtime_dir, sources, target, opt_mode, bitcode)
-	manifest, identified := runtime_build_manifest(runtime_dir, commands)
-	if !identified {
-		return runtime_cache_failed(runtime_dir, "cannot read the runtime sources in `%s`", runtime_dir)
-	}
-	// The manifest decides; the level and mode in the name are for a reader.
-	name := fmt.tprintf("%s-%v-%16x", cpu_level_name(target.cpu), opt_mode, hash.fnv64a(transmute([]byte)manifest))
-	dir := join_path({runtime_dir, "prebuilt", name})
-	objects := make([]string, len(sources))
-	for source, index in sources {
-		objects[index] = join_path({dir, replace_ext(filepath.base(source), ".o")})
-	}
-	if prebuilt_current(dir, objects, manifest) {
-		return objects
-	}
-	staging := join_path({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os.get_pid())})
-	defer remove_tree(staging)
-	if err := os.make_directory_all(staging); err != nil {
-		return runtime_cache_failed(runtime_dir, "cannot create `%s`: %v", staging, err)
-	}
-	for command in commands {
-		if reason := compile_runtime_sources(command, staging); reason != "" {
-			return runtime_cache_failed(runtime_dir, "%s", reason)
-		}
-	}
-	if os.write_entire_file(join_path({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) != nil {
-		return runtime_cache_failed(runtime_dir, "cannot write `%s` in `%s`", RUNTIME_MANIFEST, staging)
-	}
-	// A concurrent link that installed the same set first wins; either copy
-	// serves.
-	if err := rename_directory(staging, dir); err != nil && !prebuilt_current(dir, objects, manifest) {
-		return runtime_cache_failed(runtime_dir, "cannot rename `%s` to `%s`: %v", staging, dir, err)
-	}
-	return objects
-}
-
-// Windows refuses to move a directory while any process holds a file in it
-// open, and a scanner opens the objects clang just wrote, so a refusal is
-// retried for about two seconds before the link gives up on the cache. A
-// directory the link cannot write fails the same way and costs that wait.
+// clang does llc, the runtime's C sources, and the link in one process. Outside
+// a developer prompt it cannot find the MSVC toolset, so its headers and
+// libraries are located here.
 @(private)
-rename_directory :: proc(from, to: string) -> (err: os.Error) {
-	pause := 5 * time.Millisecond
-	waited: time.Duration
-	for {
-		err = os.rename(from, to)
-		if err != .Permission_Denied || waited >= 2 * time.Second {
-			return
-		}
-		time.sleep(pause)
-		waited += pause
-		pause = min(2 * pause, 200 * time.Millisecond)
-	}
-}
-
-// Beside a prebuilt set: what it was built from.
-RUNTIME_MANIFEST :: "build-inputs.txt"
-
-// In `runtime/prebuilt/`: why the latest link could not use a set. Never read
-// by the compiler; it explains a slow link, and a test failure.
-RUNTIME_CACHE_FAILURE :: "last-failure.txt"
-
-@(private = "file")
-runtime_cache_failed :: proc(runtime_dir: string, format: string, args: ..any) -> []string {
-	reason := fmt.tprintfln(format, ..args)
-	prebuilt := join_path({runtime_dir, "prebuilt"}, context.temp_allocator)
-	if os.make_directory_all(prebuilt) == nil {
-		_ = os.write_entire_file(join_path({prebuilt, RUNTIME_CACHE_FAILURE}, context.temp_allocator), transmute([]byte)reason)
-	}
-	return nil
-}
-
-// Everything that decides the objects: the clang commands, which name the
-// compiler, the flags, and the MSVC and SDK include roots; the clang binary's
-// modification time, which a reinstall changes; and each runtime source and
-// header's name and a hash of its contents, since an edit can keep both the
-// size and the modification time.
-@(private = "file")
-runtime_build_manifest :: proc(runtime_dir: string, commands: [][]string) -> (manifest: string, ok: bool) {
-	b := strings.builder_make()
-	for command, index in commands {
-		if index > 0 {
-			strings.write_byte(&b, '\n')
-		}
-		for word in command {
-			strings.write_string(&b, word)
-			strings.write_byte(&b, '\n')
-		}
-	}
-	stamp, _ := os.modification_time_by_path(commands[0][0])
-	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
-	entries, err := os.read_all_directory_by_path(runtime_dir, context.temp_allocator)
-	if err != nil {
-		return "", false
-	}
-	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool { return a.name < b.name })
-	for entry in entries {
-		if strings.has_suffix(entry.name, ".c") || strings.has_suffix(entry.name, ".h") {
-			contents, read_err := os.read_entire_file(entry.fullpath, context.temp_allocator)
-			if read_err != nil {
-				return "", false
-			}
-			fmt.sbprintfln(&b, "%s %16x", entry.name, hash.fnv64a(contents))
-		}
-	}
-	return strings.to_string(b), true
-}
-
-// Every object present, in a set made from `manifest`.
-@(private = "file")
-prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bool {
-	recorded, read_err := os.read_entire_file(join_path({dir, RUNTIME_MANIFEST}), context.temp_allocator)
-	if read_err != nil || string(recorded) != manifest {
-		return false
-	}
-	for object in objects {
-		if !os.exists(object) {
-			return false
-		}
-	}
-	return true
-}
-
-// One clang process, and with `bitcode` a second; `-c` with several inputs
-// writes each object into the working directory. A bitcode set is the runtime
-// as LLVM bitcode for the link to optimize with the module, except the CPU
-// check, which stays machine code so nothing of a higher level is inlined into
-// it (compiler-guide.md "CPU levels").
-@(private)
-runtime_compile_commands :: proc(
-	runtime_dir: string, sources: []string, target: Target_Info, opt_mode: Opt_Mode, bitcode: bool,
-) -> [][]string {
-	compile :: proc(runtime_dir: string, sources: []string, target: Target_Info, opt_mode: Opt_Mode, lto: bool) -> []string {
-		command := make([dynamic]string, context.temp_allocator)
-		append(&command, find_clang(), "-c")
-		for source in sources {
-			append(&command, source)
-		}
-		append_codegen_flags(&command, target, opt_mode)
-		if lto {
-			append(&command, "-flto")
-		}
-		append_c_includes(&command, runtime_dir)
-		return command[:]
-	}
-	commands := make([dynamic][]string, context.temp_allocator)
-	if !bitcode {
-		append(&commands, compile(runtime_dir, sources, target, opt_mode, false))
-		return commands[:]
-	}
-	optimized := make([dynamic]string, context.temp_allocator)
-	native := make([dynamic]string, context.temp_allocator)
-	for source in sources {
-		append(filepath.base(source) == CPU_CHECK_SOURCE ? &native : &optimized, source)
-	}
-	append(&commands, compile(runtime_dir, optimized[:], target, opt_mode, true))
-	if len(native) > 0 {
-		append(&commands, compile(runtime_dir, native[:], target, opt_mode, false))
-	}
-	return commands[:]
-}
-
-// The runtime file every function of which is baseline code.
-@(private)
-CPU_CHECK_SOURCE :: "cpu.c"
-
-// An optimized build links with lld-link when it sits beside clang, so the
-// runtime, compiled to bitcode, is optimized with the module and its small
-// operations can inline where they are hot. Without one the build links the
-// runtime's machine code as an unoptimized build does.
-@(private)
-links_runtime_bitcode :: proc(clang: string, opt_mode: Opt_Mode) -> bool {
-	if opt_mode == .None {
-		return false
-	}
-	dir := path_dir(clang, context.temp_allocator)
-	return dir != "" && dir != "." && os.is_file(join_path({dir, "lld-link.exe"}, context.temp_allocator))
-}
-
-// Why the sources did not compile, or "" when they did. Not reported: the link
-// then compiles the sources and clang explains.
-@(private = "file")
-compile_runtime_sources :: proc(command: []string, staging: string) -> (reason: string) {
-	state, _, stderr, err := subprocess.run(
-		os.Process_Desc{command = command, working_dir = staging},
-		context.temp_allocator,
-	)
-	if err != nil {
-		return fmt.tprintf("cannot run `%s`: %v", command[0], err)
-	}
-	if state.exit_code != 0 {
-		return fmt.tprintf("`%s` exited with %d:\n%s", command[0], state.exit_code, string(stderr))
-	}
-	return ""
-}
-
-// clang does llc, the runtime's C sources, and the link in one process
-// (decisions A5, A7). Outside a developer prompt it cannot find the MSVC
-// toolset, so its headers and libraries are located here.
-@(private = "file")
 link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emission_Options) -> int {
 	clang := find_clang()
 
-	runtime_dir := resolved_runtime_dir(opts)
-	sources := runtime_sources(runtime_dir)
+	// `-runtime=<dir>` replaces the bundled directory outright.
+	custom_runtime := opts.runtime_dir != ""
+	runtime_dir := custom_runtime ? opts.runtime_dir : install_component("runtime")
+	sources, listing := runtime_sources(runtime_dir)
 	if len(sources) == 0 {
-		errorf(
-			c,
-			no_span(),
-			"L0551",
-			"no seed runtime sources in `%s`: %s",
-			runtime_dir == "" ? "<unknown>" : runtime_dir,
-			is_directory(runtime_dir) \
-				? "the directory holds no `.c` files" \
-				: "the directory does not exist; pass `-runtime=<dir>`",
-		)
+		reason := "the directory holds no `.c` files"
+		if !os.is_dir(runtime_dir) {
+			reason = "the directory does not exist; pass `-runtime=<dir>`"
+		} else if listing != nil {
+			reason = fmt.tprintf("the directory cannot be listed: %s", os.error_string(listing))
+		}
+		errorf(c, NO_SPAN, "L0551", "no seed runtime sources in `%s`: %s", runtime_dir == "" ? "<unknown>" : runtime_dir, reason)
 		return 2
 	}
 
@@ -531,6 +140,13 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		return 2
 	}
 
+	includes, _ := msvc_include_dirs()
+	// A custom runtime directory is never written to.
+	runtime_inputs, bitcode := sources, false
+	if !custom_runtime {
+		runtime_inputs, bitcode = runtime_link_inputs(clang, runtime_dir, sources, includes, c.target, c.opt_mode)
+	}
+
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
 	append_codegen_flags(&command, c.target, c.opt_mode)
@@ -540,42 +156,29 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		append(&command, "-g")
 	}
 	if natvis_path != "" {
-		append(&command, fmt.aprintf("-Wl,/NATVIS:%s", natvis_path))
-	}
-	// Only a prebuilt set is bitcode: sources the link compiles itself are
-	// compiled as an unoptimized build's are, `cpu.c` among them.
-	bitcode := links_runtime_bitcode(clang, c.opt_mode)
-	runtime_inputs := sources
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.target, c.opt_mode, opts.runtime_dir != "", bitcode); prebuilt != nil {
-		runtime_inputs = prebuilt
-	} else {
-		bitcode = false
+		// Not `-Wl,`, which would split the path at a comma.
+		append(&command, "-Xlinker", fmt.aprintf("/NATVIS:%s", natvis_path))
 	}
 	if bitcode {
 		append(&command, "-flto", "-fuse-ld=lld")
 	}
-	for input in runtime_inputs {
-		append(&command, input)
-	}
-	for input in foreign_inputs {
-		append(&command, input)
-	}
+	append(&command, ..runtime_inputs)
+	append(&command, ..foreign_inputs)
 	// The module's triple differs from clang's default only in the MSVC suffix.
 	append(&command, "-Wno-override-module")
 	// `f16` conversions need compiler-rt's helpers, which the MSVC CRT lacks.
 	append(&command, "-rtlib=compiler-rt")
 	// A missing header or library is left for clang to name.
-	if lib, _ := msvc_lib_dir(); lib != "" {
-		append(&command, "-L", lib)
-	}
-	append_c_includes(&command, runtime_dir)
+	lib, _ := msvc_lib_dir()
+	append(&command, "-I", runtime_dir)
+	append_msvc_flags(&command, includes, lib)
 
 	state, _, stderr, err := subprocess.run(
 		os.Process_Desc{command = command[:]},
 		context.allocator,
 	)
 	if err != nil {
-		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
+		errorf(c, NO_SPAN, "L0402", CLANG_MISSING, clang)
 		return 2
 	}
 	if state.exit_code != 0 {
@@ -584,14 +187,14 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		   (strings.contains(string(stderr), "unresolved external symbol") ||
 		    strings.contains(string(stderr), "undefined symbol")) {
 			errorf(
-				c, no_span(), "L0633",
+				c, NO_SPAN, "L0633",
 				"a foreign link name was not found in any imported library:\n%s",
 				string(stderr),
 			)
 			return 2
 		}
 		errorf(
-			c, no_span(), "L0403",
+			c, NO_SPAN, "L0403",
 			"`%s` failed (seed runtime: `%s`):\n%s",
 			clang, runtime_dir, string(stderr),
 		)
@@ -600,26 +203,60 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	return 0
 }
 
-// The C headers the runtime's sources need.
+// Every `*.c` file in `dir`, sorted so one directory always gives one command.
+// Listed rather than globbed: a `[` in the path would be read as glob syntax.
 @(private = "file")
-append_c_includes :: proc(command: ^[dynamic]string, runtime_dir: string) {
-	append(command, "-I", runtime_dir)
-	includes, _ := msvc_include_dirs()
-	for include in includes {
-		append(command, "-isystem", include)
+runtime_sources :: proc(dir: string) -> (sources: []string, err: os.Error) {
+	entries := os.read_all_directory_by_path(dir, context.temp_allocator) or_return
+	found := make([dynamic]string, 0, len(entries))
+	for entry in entries {
+		if strings.has_suffix(entry.name, ".c") {
+			append(&found, join_path({dir, entry.name}))
+		}
 	}
+	slice.sort(found[:])
+	return found[:], nil
 }
 
-// Every active `foreign import`, in package order.
+// What every clang command that generates code passes, the module's and the
+// runtime's alike.
+@(private)
+append_codegen_flags :: proc(command: ^[dynamic]string, target: Target_Info, opt_mode: Opt_Mode) {
+	append(command, OPT_CLANG_FLAGS[opt_mode])
+	append_target_flags(command, target.cpu)
+}
+
+// So the module, the runtime, and a C host compiling the runtime cannot disagree
+// on the instruction set. `-ffp-contract=off` is not a default: for C, clang's
+// is `on`, which fuses `a*b + c` within an expression, and for IR input the
+// option still sets the backend's fusion mode (design.md "Floating-point
+// operators").
+@(private = "file")
+append_target_flags :: proc(command: ^[dynamic]string, cpu: Cpu_Level) {
+	append(command, strings.concatenate({"-march=", cpu_level_name(cpu)}, context.temp_allocator))
+	append(command, "-ffp-contract=off")
+}
+
+// --------------------------------------------------------- foreign inputs --
+
+// design.md "Foreign system": the command an assembly import needs, or "" for a
+// library. clang assembles `.s`/`.S` itself during the link.
+@(private = "file")
+assembler_for :: proc(path: string) -> string {
+	switch strings.to_lower(filepath.ext(path)) {
+	case ".asm":
+		return "nasm -f win64"
+	case ".s":
+		return "clang -c"
+	}
+	return ""
+}
+
 @(private = "file")
 foreign_imports :: proc(c: ^Compiler) -> []^Item_Foreign_Import {
 	out := make([dynamic]^Item_Foreign_Import)
 	for id in package_order(c) {
-		pkg := package_of(c, id)
-		if pkg == nil {
-			continue
-		}
-		for file in pkg.files {
+		for file in package_of(c, id).files {
 			for item in file.active_items {
 				if imp, is_imp := item.(^Item_Foreign_Import); is_imp {
 					append(&out, imp)
@@ -652,8 +289,10 @@ collect_foreign_link_inputs :: proc(
 		}
 		if strings.has_prefix(imp.path, "system:") {
 			name := imp.path[len("system:"):]
-			name = strings.trim_suffix(name, ".lib")
-			name = strings.trim_suffix(name, ".a")
+			extension := filepath.ext(name)
+			if strings.equal_fold(extension, ".lib") || strings.equal_fold(extension, ".a") {
+				name = strings.trim_suffix(name, extension)
+			}
 			if name != "" {
 				flag := fmt.aprintf("-l%s", name)
 				if !seen[flag] {
@@ -676,7 +315,7 @@ collect_foreign_link_inputs :: proc(
 			ok = false
 			continue
 		}
-		if assembler_for(resolved) == NASM {
+		if strings.equal_fold(filepath.ext(resolved), ".asm") {
 			if obj, assembled := assemble_nasm(c, resolved, exe_path, imp.span); assembled {
 				append(&out, obj)
 				append(&objects, obj)
@@ -718,11 +357,10 @@ assembly_object_path :: proc(source, exe_path: string) -> string {
 	return join_path({path_dir(exe_path), name})
 }
 
-// `-print-toolchain`: the clang, MSVC toolset, and extra flags a link would use,
-// one `flag=` line each in command order: the CPU level's and contraction's,
-// which a C host compiling the runtime needs too, then the MSVC discovery's.
-// `ready=no` means a link cannot run here. The test harness reads this instead
-// of repeating the discovery.
+// -------------------------------------------------------------- discovery --
+
+// `-print-toolchain`: one `flag=` line per word, in command order. The test
+// harness reads this instead of repeating the discovery.
 print_toolchain :: proc(cpu: Cpu_Level) -> int {
 	context.allocator = context.temp_allocator
 	clang := find_clang()
@@ -733,20 +371,15 @@ print_toolchain :: proc(cpu: Cpu_Level) -> int {
 	)
 	fmt.printfln("clang=%s", clang)
 	fmt.printfln("msvc=%s", msvc_tools_dir())
-	// Whether an optimized build links the runtime as bitcode.
 	fmt.printfln("lto=%s", links_runtime_bitcode(clang, .Speed) ? "yes" : "no")
 
-	fmt.printfln("flag=-march=%s", cpu_level_name(cpu))
-	fmt.println("flag=-ffp-contract=off")
 	includes, includes_complete := msvc_include_dirs()
-	for include in includes {
-		fmt.println("flag=-isystem")
-		fmt.printfln("flag=%s", include)
-	}
 	lib, lib_complete := msvc_lib_dir()
-	if lib != "" {
-		fmt.println("flag=-L")
-		fmt.printfln("flag=%s", lib)
+	flags := make([dynamic]string)
+	append_target_flags(&flags, cpu)
+	append_msvc_flags(&flags, includes, lib)
+	for flag in flags {
+		fmt.printfln("flag=%s", flag)
 	}
 
 	ready := probe == nil && includes_complete && lib_complete
@@ -754,7 +387,7 @@ print_toolchain :: proc(cpu: Cpu_Level) -> int {
 	return 0
 }
 
-@(private = "file")
+@(private)
 find_clang :: proc() -> string {
 	if configured := os.get_env("LOKE_CLANG", context.allocator); configured != "" {
 		return configured
@@ -769,6 +402,17 @@ find_clang :: proc() -> string {
 		}
 	}
 	return "clang"
+}
+
+// What `msvc_include_dirs` and `msvc_lib_dir` found, as clang flags.
+@(private)
+append_msvc_flags :: proc(command: ^[dynamic]string, includes: []string, lib: string) {
+	for include in includes {
+		append(command, "-isystem", include)
+	}
+	if lib != "" {
+		append(command, "-L", lib)
+	}
 }
 
 // The MSVC toolset's `lib\x64`, or "" when LIB already supplies it (complete)
@@ -799,11 +443,10 @@ msvc_include_dirs :: proc() -> (dirs: []string, complete: bool) {
 		{`C:\Program Files (x86)\Windows Kits\10\Include\*`, `C:\Program Files\Windows Kits\10\Include\*`},
 		"ucrt",
 	)
-	ucrt := sdk != "" ? join_path({sdk, "ucrt"}) : ""
-	if ucrt != "" {
-		append(&out, ucrt)
+	if sdk != "" {
+		append(&out, join_path({sdk, "ucrt"}))
 	}
-	return out[:], root != "" && ucrt != ""
+	return out[:], root != "" && sdk != ""
 }
 
 // `...\VC\Tools\MSVC\<version>`. A toolset needs both headers and libraries:

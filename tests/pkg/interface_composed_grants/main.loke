@@ -1,0 +1,42 @@
+package main;
+
+import "core:fmt";
+import "./shape";
+import "./widget";
+
+// design.md "Interface bodies": what a bare bound grants comes from the
+// applications it composes, however the interface names them and whatever
+// subject they have.
+
+// `shape.Outer` composes `Measured` by a name that means nothing in this package.
+scaled :: proc(x: $T) -> T.Unit where shape.Outer(T) {
+	unit: T.Unit = x.unit_of();
+	return unit*2.0;
+}
+
+// These types belong to `package main`, so their private members meet what
+// `shape` asks, and only a bound reaches them from there.
+Adder :: struct { base: int }
+
+impl Adder {
+	call :: proc(self, x: int) -> int { return self.base + x; }
+}
+
+Rule :: struct { base: int }
+
+impl Rule {
+	Fn :: Adder;
+}
+
+Caller :: struct { offset: int }
+
+impl Caller {
+	Arg :: int;
+	call :: proc(self, n: int) -> int { return self.offset + n; }
+}
+
+main :: proc() {
+	fmt.println(scaled(widget.Rod{length = 1.5}));
+	fmt.println(shape.apply(Rule{}, Adder{base = 4}));
+	fmt.println(shape.call_with(Caller{offset = 10}, 7));
+}

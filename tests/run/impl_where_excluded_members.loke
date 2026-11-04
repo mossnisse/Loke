@@ -1,0 +1,55 @@
+// design.md "where clauses": a member whose bound fails is not part of the
+// instantiation, whichever path finds it: a conversion, a group on a generic
+// extension, or a crossed name from two generic blocks.
+package main;
+
+import "core:fmt";
+
+// An excluded conversion leaves the others to choose from.
+V :: struct($T: type) { v: int }
+
+impl V($T) {
+	from_int :: hook(convert) proc(v: int) -> V(T) where T == int { return V(T){v}; }
+	from_i8 :: hook(convert) proc(v: i8) -> V(T) { return V(T){int(v) + 100}; }
+}
+
+// A group names a member excluded on an extension as on an inherent block.
+impl Option($T) {
+	f :: proc(self, x: int) -> int where T == int { return x; }
+	g :: proc(self, x: string) -> int { return -1; }
+	h :: proc{f, g};
+}
+
+// Crossed blocks' same-named members stand in the table as a group.
+G :: struct($T: type, $U: type) { v: int }
+
+impl G(int, $U) {
+	conv :: hook(convert) proc(x: int) -> G(int, U) { return G(int, U){x}; }
+	m :: proc(self) -> int where U == string { return 1; }
+}
+
+impl G($T, int) {
+	conv :: hook(convert) proc(x: string) -> G(T, int) { return G(T, int){99}; }
+	m :: proc(self) -> int { return 2; }
+}
+
+Has_M :: interface($Self: type) {
+	slot m: proc(self) -> int;
+}
+
+call_m :: proc(x: dyn Has_M) -> int {
+	return x.m();
+}
+
+main :: proc() {
+	three: int = 3;
+	fmt.println(V(int)(three).v, V(string)(3).v);
+
+	a: Option(string) = .none;
+	b: Option(int) = .none;
+	fmt.println(a.h("s"), b.h(5));
+
+	fmt.println(G(int, int)(3).v, G(int, int)("s").v);
+	g := G(int, int){0};
+	fmt.println(g.m(), call_m((dyn Has_M)(&g)));
+}

@@ -1,6 +1,8 @@
-// The predeclared scope. Every predeclared name is a real, shadowable symbol, so
-// `byte` is a second name for `u8`, not a second type.
+// Predeclared names as symbols, so `byte` is a second name for `u8`, not a second
+// type.
 package lokec
+
+import "core:slice"
 
 // One universe per compilation, not per package: `bind_runtime_bootstrap`
 // binds the `base:runtime` bootstrap names into it once for every package.
@@ -8,7 +10,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	if c.universe != nil {
 		return c.universe
 	}
-	init_semantic_stores(c)
 	universe := new_scope(c, nil, .Universe)
 	c.universe = universe
 
@@ -32,7 +33,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"f64", TYPE_F64},
 		{"rune", TYPE_RUNE},
 		{"rawptr", TYPE_RAWPTR},
-		{"byte", TYPE_U8},
 		{"typeid", TYPE_TYPEID},
 		{"string", TYPE_STRING},
 		{"string_view", TYPE_STRING_VIEW},
@@ -43,37 +43,23 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"Allocator_Error", TYPE_ALLOCATOR_ERROR},
 	}
 	for entry in types {
-		define_universe(c, universe, entry.name, Symbol{kind = .Type, type = entry.id})
-		// The first name wins in diagnostics, so `u8` beats `byte`.
-		if info := type_of(c, entry.id); info != nil && info.name == INVALID_IDENTIFIER {
-			info.name = intern_identifier(c, entry.name)
-		}
+		define_universe(c, entry.name, Symbol{kind = .Type, type = entry.id})
+		// The typeid sort key reads this name, and `Allocator` prints by it.
+		type_of(c, entry.id).name = intern_identifier(c, entry.name)
 	}
+	define_universe(c, "byte", Symbol{kind = .Type, type = TYPE_U8})
 
 	// design.md "Predeclared names": literals are `reserved`, so no declaration
 	// can change what `true` means.
-	define_universe(c, universe, "true", Symbol {
-		kind        = .Const,
-		type        = TYPE_UNTYPED_BOOL,
-		const_value = bool_const(true),
-		reserved    = true,
-	})
-	define_universe(c, universe, "false", Symbol {
-		kind        = .Const,
-		type        = TYPE_UNTYPED_BOOL,
-		const_value = bool_const(false),
-		reserved    = true,
-	})
-	define_universe(c, universe, "nil", Symbol {
-		kind        = .Const,
-		type        = TYPE_UNTYPED_NIL,
-		const_value = nil_const(),
-		reserved    = true,
-	})
+	literals := []struct{name: string, type: Type_Id, value: Const_Value} {
+		{"true", TYPE_UNTYPED_BOOL, bool_const(true)},
+		{"false", TYPE_UNTYPED_BOOL, bool_const(false)},
+		{"nil", TYPE_UNTYPED_NIL, nil_const()},
+	}
+	for entry in literals {
+		define_universe(c, entry.name, Symbol{kind = .Const, type = entry.type, const_value = entry.value, reserved = true})
+	}
 
-	// Built-ins share an empty signature: `check_builtin_call` settles arity and
-	// operand types.
-	no_args := intern_proc_type(c, nil, nil, INVALID_TYPE, false, "")
 	builtins := []struct{name: string, kind: Builtin_Kind} {
 		{"assert", .Assert},
 		{"panic", .Panic},
@@ -101,32 +87,41 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"exchange", .Exchange},
 	}
 	for entry in builtins {
-		define_universe(c, universe, entry.name, Symbol {
-			kind      = .Builtin,
-			builtin   = entry.kind,
-			type      = TYPE_VOID,
-			proc_type = no_args,
-		})
+		c.universe.names[intern_identifier(c, entry.name)] = new_builtin_symbol(c, entry.name, entry.kind)
 	}
 
 	// Not predeclared: programs write `mem.default_allocator()`, which
 	// `core:mem` binds to this symbol, as does a hook's generated default argument.
-	c.default_allocator_symbol = new_symbol(c, Symbol {
-		kind      = .Builtin,
-		builtin   = .Default_Allocator,
-		name      = intern_identifier(c, "default_allocator"),
-		span      = no_span(),
-		type      = TYPE_VOID,
-		proc_type = no_args,
-	})
+	c.default_allocator_symbol = new_builtin_symbol(c, "default_allocator", .Default_Allocator)
 
-	predeclare_build_config(c, universe)
+	predeclare_build_config(c)
 	return universe
 }
 
-define_universe :: proc(c: ^Compiler, scope: ^Scope, name: string, template: Symbol) {
+// Built-ins share an empty signature: `check_builtin_call` settles arity and
+// operand types.
+new_builtin_symbol :: proc(c: ^Compiler, name: string, kind: Builtin_Kind, public := false) -> Symbol_Id {
+	return new_symbol(c, Symbol {
+		name      = intern_identifier(c, name),
+		span      = NO_SPAN,
+		kind      = .Builtin,
+		builtin   = kind,
+		type      = TYPE_VOID,
+		proc_type = intern_proc_type(c, nil, nil, INVALID_TYPE, false, ""),
+		public    = public,
+	})
+}
+
+// design.md "Predeclared names": `Simd`, `Range`, and `Box` are recognized by
+// name, with no universe binding, so a program's own declaration shadows them.
+predeclared_callee :: proc(k: ^Checker, callee: Expr, names: ..string) -> bool {
+	ident, is_ident := callee.(^Expr_Ident)
+	return is_ident && slice.contains(names, ident.name) && lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
+}
+
+define_universe :: proc(c: ^Compiler, name: string, template: Symbol) {
 	symbol := template
 	symbol.name = intern_identifier(c, name)
-	symbol.span = no_span()
-	scope.names[symbol.name] = new_symbol(c, symbol)
+	symbol.span = NO_SPAN
+	c.universe.names[symbol.name] = new_symbol(c, symbol)
 }

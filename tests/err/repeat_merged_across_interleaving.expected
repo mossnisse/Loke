@@ -1,0 +1,6 @@
+L0313
+L0315
+@6:20
+while instantiating `f(int)`
+while instantiating `f(f64)`
+while instantiating `f(bool)`

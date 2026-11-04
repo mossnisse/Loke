@@ -7,4 +7,5 @@ main :: proc() {
 	fmt.println(lib.total);
 	fmt.println(lib._commode);
 	fmt.println(lib.LIMIT, lib.count(), lib.total_now(), lib.abs(-2));
+	fmt.println(lib.hidden_abs(-2), lib.shown_abs(-2));
 }

@@ -1,58 +1,63 @@
 // Named constants that need an address share one read-only global per resolved
-// symbol. Generic specializations have distinct symbols and globals.
+// symbol, and an untyped constant one per type it takes at a use. Generic
+// specializations have distinct symbols and globals.
 package lokec
 
 import "core:fmt"
 
-Materialized :: struct {
+// `type` is set only for an untyped constant.
+Materialized_Key :: struct {
 	symbol: Symbol_Id,
+	type:   Type_Id,
+}
+
+Materialized :: struct {
+	key:    Materialized_Key,
 	type:   Type_Id,
 	value:  Const_Value,
 	name:   string,
 }
 
 // The symbol directly named by a constant expression.
+@(private = "file")
 constant_symbol_of :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 	base := expr_base(e)
-	if base == nil || !base.is_const {
+	if base == nil || !base_is_const(base) {
 		return INVALID_SYMBOL
 	}
+	id := INVALID_SYMBOL
 	#partial switch v in e {
 	case ^Expr_Ident:
-		return constant_symbol(c, v.resolution.symbol)
+		id = v.resolution.symbol
 	case ^Expr_Selector:
-		return constant_symbol(c, v.resolution.symbol)
+		id = v.resolution.symbol
 	}
-	return INVALID_SYMBOL
+	sym := symbol_of(c, id)
+	return sym != nil && (sym.kind == .Const || sym.kind == .Enum_Member) ? id : INVALID_SYMBOL
 }
 
 // The named constant at the root of a selector or index chain.
 @(private = "file")
 constant_root_of :: proc(c: ^Compiler, e: Expr) -> (Expr, Symbol_Id) {
-	current := e
-	for current != nil {
-		if symbol := constant_symbol_of(c, current); symbol != INVALID_SYMBOL {
-			return current, symbol
-		}
-		#partial switch v in current {
-		case ^Expr_Selector:
-			current = v.operand
-		case ^Expr_Index:
-			current = v.operand
-		case:
-			return nil, INVALID_SYMBOL
-		}
+	if symbol := constant_symbol_of(c, e); symbol != INVALID_SYMBOL {
+		return e, symbol
+	}
+	#partial switch v in e {
+	case ^Expr_Selector:
+		return constant_root_of(c, v.operand)
+	case ^Expr_Index:
+		return constant_root_of(c, v.operand)
 	}
 	return nil, INVALID_SYMBOL
 }
 
 @(private = "file")
-constant_symbol :: proc(c: ^Compiler, id: Symbol_Id) -> Symbol_Id {
-	sym := symbol_of(c, id)
-	if sym == nil || sym.kind != .Const {
-		return INVALID_SYMBOL
+materialized_key :: proc(c: ^Compiler, symbol: Symbol_Id, e: Expr) -> Materialized_Key {
+	key := Materialized_Key{symbol = symbol}
+	if type_is_untyped(c, symbol_of(c, symbol).type) {
+		key.type = expr_base(e).type
 	}
-	return id
+	return key
 }
 
 // Registers the shared global for a place rooted in a named constant.
@@ -61,30 +66,36 @@ request_materialization :: proc(k: ^Checker, e: Expr) -> bool {
 	if symbol == INVALID_SYMBOL {
 		return false
 	}
+	base := expr_base(root)
+	if base.type == TYPE_UNTYPED_NIL {
+		return false
+	}
 	if !committing(k.c) {
 		return true
 	}
-	if _, found := k.c.materialized[symbol]; found {
+	key := materialized_key(k.c, symbol, root)
+	if key in k.c.materialized {
 		return true
 	}
-	base := expr_base(root)
 	// design.md "Materialization": the storage is read-only, and a synchronized
 	// field changes through a `^`, so one there would fault on its first write.
 	if field := synchronized_field_within(k.c, base.type); field != nil {
 		errorf(
 			k.c, expr_span(e), "L0705",
-			"`%s` holds the synchronized field `%s`, which changes through a `^`, so this constant cannot be borrowed from read-only storage; declare a variable or `static` storage instead",
+			"`%s` holds the synchronized field `%s`, which changes through a `^`, so this constant cannot be borrowed from read-only storage; declare it as a variable",
 			type_name(k.c, base.type), identifier_text(k.c, field.name),
 		)
 		return true
 	}
-	sym := symbol_of(k.c, symbol)
 	entry := new(Materialized, k.c.semantic_allocator)
-	entry.symbol = symbol
+	entry.key = key
 	entry.type = base.type
 	entry.value = base.const_value
-	entry.name = materialized_global_name(k.c, sym, len(k.c.materialized_order))
-	k.c.materialized[symbol] = entry
+	entry.name = fmt.aprintf(
+		"@.const.%s.%d", identifier_text(k.c, symbol_of(k.c, symbol).name), len(k.c.materialized_order),
+		allocator = k.c.semantic_allocator,
+	)
+	k.c.materialized[key] = entry
 	append(&k.c.materialized_order, entry)
 	return true
 }
@@ -94,22 +105,13 @@ materialization_of :: proc(c: ^Compiler, e: Expr) -> ^Materialized {
 	if symbol == INVALID_SYMBOL {
 		return nil
 	}
-	entry, found := c.materialized[symbol]
-	return found ? entry : nil
-}
-
-@(private = "file")
-materialized_global_name :: proc(c: ^Compiler, sym: ^Symbol, index: int) -> string {
-	text := "const"
-	if sym != nil && sym.name != INVALID_IDENTIFIER {
-		text = identifier_text(c, sym.name)
-	}
-	return fmt.aprintf("@.const.%s.%d", text, index, allocator = c.semantic_allocator)
+	return c.materialized[materialized_key(c, symbol, e)]
 }
 
 // A `@(synchronized)` field that a value of `type` holds inline, such as an
 // `Atomic`'s `value`: what synchronizing operations write through a read-only
 // `^`.
+@(private = "file")
 synchronized_field_within :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
 	seen := make(map[Type_Id]bool, context.temp_allocator)
 	return synchronized_field_walk(c, type, &seen)

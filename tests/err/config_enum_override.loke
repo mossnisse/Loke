@@ -1,0 +1,11 @@
+// design.md "Invalid representations": checked code never makes an enum value
+// that names no variant, and `build_config` is checked code. `FIT` fits the
+// backing width, so only the variants can refuse it.
+package main;
+
+Colour :: enum u8 { Red, Green }
+
+FITS :: build_config(FITS, Colour.Red);
+WIDE :: build_config(WIDE, Colour.Red);
+
+main :: proc() {}

@@ -16,4 +16,8 @@ seq_cst, align 1
 call void @loke_rt_v1_atomic128_store(ptr %t
 call void @loke_rt_v1_atomic128_add(ptr %t
 call void @loke_rt_v1_atomic128_load(ptr %t
+= load atomic ptr, ptr %t
+store atomic ptr %t
+= atomicrmw xchg ptr %t*, ptr %t
+= cmpxchg ptr %t*, ptr %t*, ptr %t
 fence acq_rel

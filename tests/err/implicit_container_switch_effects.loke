@@ -1,0 +1,108 @@
+// design.md "Inferred effects": what a map operation drops, the `<` a sort calls,
+// and the `==` a `switch` tests its values with write what a call of each would.
+package main;
+
+import "core:slice";
+
+counter: int = 1;
+
+@(move_only) Res :: struct { id: int }
+impl Res { release :: hook(drop) proc(self: inout Res) { counter += 1; } }
+
+@(fieldwise_copy) Key :: struct { id: int }
+impl Key {
+	release :: hook(drop) proc(self: inout Key) { counter += 1; }
+	same :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+	hash :: proc(self, seed: uint) -> uint { return seed; }
+}
+
+Ranked :: struct { rank: int }
+impl Ranked {
+	@(public) less :: operator(<) proc(a, b: Ranked) -> bool { counter += 1; return a.rank < b.rank; }
+}
+
+Tag :: struct { id: int }
+impl Tag { same :: operator(==) proc(a, b: Tag) -> bool { counter += 1; return a.id == b.id; } }
+
+// A present key leaves the element it was given to be dropped.
+present_key_element :: proc() -> int {
+	m: map[int]Res = {};
+	view := &counter;
+	_ = m.find_or_insert(1, Res{2});
+	return view^;
+}
+
+// A present key's old element is replaced.
+replaced_element :: proc() -> int {
+	m: map[int]Res = {};
+	view := &counter;
+	_ = m.try_insert(1, Res{2});
+	return view^;
+}
+
+// `remove` hands the element back and drops the key it stored.
+removed_key :: proc() -> int {
+	m: map[Key]int = {};
+	key := Key{1};
+	view := &counter;
+	_ = m.remove(key);
+	return view^;
+}
+
+// The element comes back to the caller, whose drop of it is later.
+removed_element_is_kept :: proc() -> int {
+	m: map[int]Res = {};
+	view := &counter;
+	held := m.remove(1);
+	result := view^;
+	_ = held;
+	return result;
+}
+
+sorted :: proc(xs: []mut Ranked) -> int {
+	view := &counter;
+	xs.sort();
+	return view^;
+}
+
+reverse_sorted :: proc(xs: inout [dynamic]Ranked) -> int {
+	view := &counter;
+	xs.reverse_sort();
+	return view^;
+}
+
+// The library's spelling forwards to the member.
+library_sorted :: proc(xs: []mut Ranked) -> int {
+	view := &counter;
+	slice.sort(xs);
+	return view^;
+}
+
+// A built-in `<` runs nothing of the program's.
+plain_sorted :: proc(xs: []mut int) -> int {
+	view := &counter;
+	xs.sort();
+	return view^;
+}
+
+switched :: proc(x: Tag) -> int {
+	view := &counter;
+	switch (x) {
+	case Tag{1}:
+	case Tag{2}, Tag{3}:
+	case:
+	}
+	return view^;
+}
+
+// With no own `==`, a `switch` calls nothing.
+plain_switched :: proc(x: int) -> int {
+	view := &counter;
+	switch (x) {
+	case 1:
+	case:
+	}
+	return view^;
+}
+
+main :: proc() {}

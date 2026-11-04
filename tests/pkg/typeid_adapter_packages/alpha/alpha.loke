@@ -1,0 +1,7 @@
+@(public)
+package alpha;
+
+view_id :: proc() -> typeid {
+	items := [2]int{1, 2};
+	return typeid_of(type_of(items.indexed()));
+}

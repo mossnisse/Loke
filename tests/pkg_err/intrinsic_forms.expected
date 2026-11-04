@@ -1,0 +1,39 @@
+L0737
+@4:9
+the compiler supplies `Arena` in this package
+L0737
+@4:9
+the compiler supplies `Failure_Policy` in this package
+L0737
+@4:9
+the compiler supplies `try_arena` in this package
+L0737
+@4:9
+the compiler supplies `try_scratch` in this package
+L0734
+@16:1
+with no declared type or `where` clause
+L0734
+@19:1
+with no declared type or `where` clause
+L0606
+@21:3
+unknown attribute `@(misspelled)`
+L0734
+@24:2
+is a procedure ending in `---`
+L0734
+@27:2
+is a procedure ending in `---`
+L0736
+@30:20
+an `@(intrinsic)` procedure writes each parameter's type
+L0736
+@41:20
+an `@(intrinsic)` procedure writes each parameter's type
+L0734
+@45:1
+with no declared type or `where` clause
+L0734
+@48:1
+with no declared type or `where` clause

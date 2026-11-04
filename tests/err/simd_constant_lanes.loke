@@ -1,0 +1,28 @@
+// design.md "Lane-wise operators": a constant negative count lane and a constant
+// zero divisor lane are errors, in `v op c` and `v op= c`, and a constant vector's
+// `-C` is a constant like any other.
+package main;
+
+ONE :: Simd(i32, 4){1, 1, 1, 1};
+ZERO :: Simd(i32, 4){};
+HOLE :: Simd(i32, 4){1, 0, 1, 1};
+LOWEST :: Simd(i8, 4){-128, 1, 1, 1};
+OVERFLOWS :: -LOWEST;
+
+main :: proc() {
+	v: Simd(i32, 4) = 8;
+	_ = v << -ONE;
+	v <<= -ONE;
+	_ = v / 0;
+	_ = v % 0;
+	_ = v / ZERO;
+	_ = v / HOLE;
+	_ = ONE / ZERO;
+	v /= 0;
+	v %= HOLE;
+
+	// One report each, the operand's, whichever form wrote it.
+	u: Simd(u32, 4) = 1;
+	_ = u << -1;
+	u <<= -1;
+}

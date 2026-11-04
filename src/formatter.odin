@@ -1,22 +1,22 @@
 // `-fmt`: canonical layout for Loke source.
 //
-// The formatter changes whitespace only. It keeps every token and comment in
-// order, keeps the author's line breaks (collapsing blank-line runs to one),
-// and decides indentation from nesting and the spacing between neighbouring
-// tokens on a line. Spaces beyond the one a rule requires are kept, since
-// `core/` aligns columns with them. A file that does not parse is refused, and
-// a result whose tokens differ from the input's is a bug the formatter reports
-// rather than writes (comments.md "Formatting").
+// Changes whitespace only and refuses a file that does not parse; a result whose
+// tokens differ is reported, not written (comments.md "Formatting").
 package lokec
 
 import "core:fmt"
 import "core:os"
 import "core:strings"
 
-// Formats every `.loke` file of `input`, a file or a directory's direct
-// files, in place; with `check`, only lists the ones that would change. The
-// exit status is 1 when a file does not parse or, with `check`, would change.
+// Formats every `.loke` file of `input`.
 format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
+	return rewrite_files(c, input, check, format_source)
+}
+
+// Rewrites every `.loke` file of `input`, a file or a directory's direct files,
+// in place; with `check`, only lists the ones that would change. The exit status
+// is 1 when a file does not parse or, with `check`, would change.
+rewrite_files :: proc(c: ^Compiler, input: string, check: bool, rewrite: proc(c: ^Compiler, file: u32) -> (string, bool)) -> int {
 	status := 0
 	for path in input_sources(c, input) {
 		file, loaded := load_source(c, path)
@@ -24,35 +24,24 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 			status = 1
 			continue
 		}
-		formatted, ok := format_source(c, file)
+		rewritten, ok := rewrite(c, file)
 		if !ok {
 			status = 1
 			continue
 		}
-		defer delete(formatted)
-		if formatted == c.sources[file].text {
+		defer delete(rewritten)
+		if rewritten == c.sources[file].text {
 			continue
 		}
 		if check {
 			fmt.println(path)
 			status = 1
-		} else if os.write_entire_file(path, transmute([]u8)formatted) != nil {
-			errorf(c, no_span(), "L0401", "cannot write `%s`", path)
+		} else if os.write_entire_file(path, transmute([]u8)rewritten) != nil {
+			errorf(c, NO_SPAN, "L0401", "cannot write `%s`", path)
 			status = 1
 		}
 	}
 	return status
-}
-
-// `input` as a list of files. Listed as a package's sources are, never as a
-// pattern, so a directory name holding `[` or `*` is only a name.
-input_sources :: proc(c: ^Compiler, input: string) -> []string {
-	if is_directory(input) {
-		return package_sources(c, input)
-	}
-	paths := make([]string, 1, context.temp_allocator)
-	paths[0] = input
-	return paths
 }
 
 // An editor's unsaved `text` for `path`, laid out as `-fmt` would write the
@@ -62,7 +51,8 @@ format_text :: proc(c: ^Compiler, path, text: string) -> (formatted: string, ok:
 	return format_source(c, file)
 }
 
-// The source of `file` laid out canonically, or false when it does not parse.
+// The source of `file` laid out canonically. False, with `c`'s diagnostics saying
+// why, where it refuses.
 format_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 	errors := c.error_count
 	tokens := lex(c, file)
@@ -73,15 +63,12 @@ format_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 		return "", false
 	}
 	text := c.sources[file].text
-	formatted := layout(text, tokens[:len(tokens) - 1], c.sources[file].comments[:])
+	formatted := layout(text, tokens, c.sources[file].comments[:])
 
 	// The guarantee, checked rather than assumed: the same tokens, in order.
 	// The parser retagged contextual keywords and keyword member names, so a
 	// token is compared by its text; the same text lexes to the same kind.
-	scratch: Compiler
-	defer destroy_compilation(&scratch)
-	append(&scratch.sources, Source{path = c.sources[file].path, text = formatted, line_starts = {}})
-	again := lex(&scratch, 0)
+	again := lex_text(formatted)
 	defer delete(again)
 	same := len(again) == len(tokens)
 	for index := 0; same && index < len(tokens); index += 1 {
@@ -95,6 +82,15 @@ format_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 	return formatted, true
 }
 
+// The clause a line may be in the middle of: a comma leaves a `where` clause
+// unfinished, and a `case` header ends at its colon.
+@(private = "file")
+Clause :: enum {
+	None,
+	Where,
+	Case,
+}
+
 // An open bracket, and the indentation of what it encloses.
 @(private = "file")
 Open :: struct {
@@ -103,6 +99,8 @@ Open :: struct {
 	line:  int,
 	// `@(...)`, whose arguments keep their written spacing.
 	attribute: bool,
+	// The clause the bracket opened in, which goes on when it closes.
+	clause: Clause,
 }
 
 @(private = "file")
@@ -116,7 +114,7 @@ Layout :: struct {
 	// the first.
 	last:       Token,
 	last_line:  int,
-	// The kind of the token before `last`.
+	// Recognizes the operator spelled `[]=`.
 	before_last: Token_Kind,
 	// The first token of the last line that had one.
 	line_first: Token,
@@ -126,13 +124,15 @@ Layout :: struct {
 	postfix:     bool,
 	last_binary: bool,
 	last_tight:  bool,
-	// Whether the current line continues an unfinished one, and whether the
-	// line `last` is on did.
-	continued:      bool,
-	last_continued: bool,
-	// Where the output's current line starts, after its last newline, which a
-	// comment or raw string can also write.
-	line_start: int,
+	// Whether `last` ends a `case` header or an attribute, so that the next line
+	// starts afresh.
+	last_finishes: bool,
+	// The clause open in the innermost bracket.
+	clause:     Clause,
+	// The tabs the current line started with, and whether it continues an
+	// unfinished one.
+	indent:     int,
+	continued:  bool,
 }
 
 @(private = "file")
@@ -146,65 +146,41 @@ layout :: proc(text: string, tokens: []Token, comments: []Span) -> string {
 	}
 	defer delete(l.opens)
 	previous_hi: u32 = 0
-	started := false
 	next_comment := 0
-	for index := 0; index <= len(tokens); index += 1 {
-		// Comments before this token come first.
-		limit := index < len(tokens) ? tokens[index].lo : u32(len(text))
-		for next_comment < len(comments) && comments[next_comment].lo < limit {
+	for token in tokens {
+		for next_comment < len(comments) && comments[next_comment].lo < token.lo {
 			comment := comments[next_comment]
 			next_comment += 1
 			gap := text[previous_hi:comment.lo]
-			if started && !break_line(&l, gap) {
-				// A trailing comment keeps its alignment, and at least a space.
-				write_out(&l, horizontal(gap) != "" ? horizontal(gap) : " ")
+			if strings.builder_len(l.out) == 0 || break_line(&l, gap) {
+				indent(&l, token, true)
 			} else {
-				indent(&l, index < len(tokens) ? tokens[index] : Token{kind = .EOF}, true)
+				// A trailing comment keeps its alignment, and at least a space
+				// where spacing allows one.
+				tight := l.last.kind == .Lparen || l.last.kind == .Lbracket || l.last_tight
+				strings.write_string(&l.out, gap != "" || tight ? gap : " ")
 			}
-			write_out(&l, strings.trim_right(text[comment.lo:comment.hi], " \t"))
+			strings.write_string(&l.out, strings.trim_right(text[comment.lo:comment.hi], " \t"))
 			previous_hi = comment.hi
-			started = true
 		}
-		if index == len(tokens) {
+		if token.kind == .EOF {
 			break
 		}
-		token := tokens[index]
 		gap := text[previous_hi:token.lo]
-		if started && break_line(&l, gap) {
+		switch {
+		case strings.builder_len(l.out) == 0:
+		case break_line(&l, gap):
 			indent(&l, token, false)
-		} else if started && l.last.kind != .EOF && l.last_line == l.line {
-			space := spacing(&l, token, horizontal(gap))
-			if space == "" && horizontal(gap) != "" && would_merge(text[l.last.hi - 1], text[token.lo]) {
-				space = " " // `& &x` must not become `&&x`
-			}
-			write_out(&l, space)
-		} else if started {
-			write_out(&l, horizontal(gap) != "" ? horizontal(gap) : " ")
+		case previous_hi == l.last.hi:
+			strings.write_string(&l.out, spacing(&l, token, gap))
+		case:
+			strings.write_string(&l.out, gap)
 		}
 		write_token(&l, token)
 		previous_hi = token.hi
-		started = true
 	}
-	write_out(&l, l.newline)
+	strings.write_string(&l.out, l.newline)
 	return strings.to_string(l.out)
-}
-
-// Whether two tokens ending in `a` and starting with `b`, written together,
-// would begin a longer operator instead.
-@(private = "file")
-would_merge :: proc(a, b: u8) -> bool {
-	switch string([]u8{a, b}) {
-	case "&&", "||", "<<", ">>", "==", "!=", "<=", ">=", "::", ":=", "..", "&~", "->",
-	     "+=", "-=", "*=", "/=", "%=", "|=", "~=", "&=", "--", "//", "/*":
-		return true
-	}
-	return false
-}
-
-// The spaces and tabs of a gap on one line.
-@(private = "file")
-horizontal :: proc(gap: string) -> string {
-	return strings.trim(gap, "\r\n")
 }
 
 // Starts a new line when the gap held one, keeping at most one blank line.
@@ -215,16 +191,14 @@ break_line :: proc(l: ^Layout, gap: string) -> bool {
 		return false
 	}
 	for _ in 0 ..< min(breaks, 2) {
-		write_out(l, l.newline)
+		strings.write_string(&l.out, l.newline)
 	}
 	l.line += 1
 	l.continued = false
 	return true
 }
 
-// Tabs for a line that starts with `first`: one per enclosing bracket opened
-// on an earlier line, one fewer for a closing bracket or a `case`, and one
-// more for a line continuing an unfinished one.
+// Tabs for a line that starts with `first` (comments.md "Formatting").
 @(private = "file")
 indent :: proc(l: ^Layout, first: Token, comment: bool) {
 	depth := 0
@@ -238,36 +212,31 @@ indent :: proc(l: ^Layout, first: Token, comment: bool) {
 		depth -= 1
 	case (first.kind == .Case || first.kind == .Default) && top.kind == .Lbrace:
 		depth -= 1
-	case continues(l, top):
+	case first.kind != .Lbrace && continues(l, top):
 		depth += 1
 		l.continued = true
 	}
-	for _ in 0 ..< max(depth, 0) {
+	l.indent = max(depth, 0)
+	for _ in 0 ..< l.indent {
 		strings.write_byte(&l.out, '\t')
 	}
 }
 
 // Whether the last line with a token left its statement unfinished, outside
 // any `(` or `[`, whose own indentation is enough. A comma ends a list item,
-// except on a line that was already a continuation, such as a `where` clause.
+// except in a `where` clause.
 @(private = "file")
 continues :: proc(l: ^Layout, top: Open) -> bool {
+	if l.last_finishes {
+		return false
+	}
 	#partial switch l.last.kind {
 	case .EOF, .Semicolon, .Lbrace, .Rbrace, .Lparen, .Lbracket:
 		return false
-	case .Colon:
-		// `case .a:` ends its line; `TEXT ::` continues onto the next.
-		if l.line_first.kind == .Case || l.line_first.kind == .Default {
-			return false
-		}
 	case .Comma:
-		if !l.last_continued {
+		if l.clause != .Where {
 			return false
 		}
-	}
-	// An attribute line such as `@(public)` belongs to the line below it.
-	if l.line_first.kind == .At {
-		return false
 	}
 	return len(l.opens) == 0 || top.kind == .Lbrace && top.line < l.last_line
 }
@@ -277,12 +246,24 @@ write_token :: proc(l: ^Layout, token: Token) {
 	if l.last_line != l.line || l.last.kind == .EOF {
 		l.line_first = token
 	}
+	finishes := false
 	#partial switch token.kind {
+	case .Where:
+		l.clause = .Where
+	case .Case, .Default:
+		l.clause = .Case
+	case .Colon:
+		if l.clause == .Case {
+			finishes = true
+			l.clause = .None
+		}
+	case .Semicolon:
+		l.clause = .None
 	case .Lparen, .Lbracket, .Lbrace:
 		// Brackets opened together on one line indent their contents once, and
 		// one opened on a continued line, such as a `where` clause's `{`, indents
 		// from the line its statement began on.
-		inner := line_indent(l) + 1
+		inner := l.indent + 1
 		if l.continued && token.kind == .Lbrace {
 			inner -= 1
 		}
@@ -292,19 +273,22 @@ write_token :: proc(l: ^Layout, token: Token) {
 		if token.kind == .Lbrace && len(l.opens) == 0 && flat_when(l, token) {
 			inner = 0
 		}
-		append(&l.opens, Open{kind = token.kind, inner = inner, line = l.line, attribute = l.last.kind == .At})
+		// A `{` ends the `where` clause it follows.
+		outer := token.kind == .Lbrace && l.clause == .Where ? Clause.None : l.clause
+		append(&l.opens, Open{kind = token.kind, inner = inner, line = l.line, attribute = l.last.kind == .At, clause = outer})
+		l.clause = .None
 	case .Rparen, .Rbracket, .Rbrace:
-		if len(l.opens) > 0 {
-			pop(&l.opens)
-		}
+		open := pop(&l.opens)
+		finishes = open.attribute
+		l.clause = open.clause
 	}
 	operand := ends_operand(l)
 	l.postfix = (token.kind == .Caret || token.kind == .Question) && operand
-	l.last_binary = binary_operator(token.kind) && (operand || !maybe_prefix(token.kind))
+	l.last_binary = used_as_binary(token.kind, operand)
 	l.last_tight = l.last_binary && written_tight(l, token)
-	write_out(l, l.text[token.lo:token.hi])
+	strings.write_string(&l.out, l.text[token.lo:token.hi])
 	l.before_last = l.last.kind
-	l.last, l.last_line, l.last_continued = token, l.line, l.continued
+	l.last, l.last_line, l.last_finishes = token, l.line, finishes
 }
 
 // A file-scope `when` body, or its `else`, keeps its contents at column zero
@@ -319,27 +303,7 @@ flat_when :: proc(l: ^Layout, brace: Token) -> bool {
 	for at < len(l.text) && strings.is_space(rune(l.text[at])) {
 		at += 1
 	}
-	return at < len(l.text) && at > int(brace.hi) && l.text[at - 1] == '\n'
-}
-
-// Appends to the output, keeping track of where its current line starts.
-@(private = "file")
-write_out :: proc(l: ^Layout, text: string) {
-	if at := strings.last_index_byte(text, '\n'); at >= 0 {
-		l.line_start = strings.builder_len(l.out) + at + 1
-	}
-	strings.write_string(&l.out, text)
-}
-
-// The tabs the line being written started with.
-@(private = "file")
-line_indent :: proc(l: ^Layout) -> int {
-	written := strings.to_string(l.out)
-	depth := 0
-	for l.line_start + depth < len(written) && written[l.line_start + depth] == '\t' {
-		depth += 1
-	}
-	return depth
+	return at < len(l.text) && l.text[at - 1] == '\n'
 }
 
 // Whether the last token ends an operand, which makes a following `-`, `&`,
@@ -360,15 +324,18 @@ ends_operand :: proc(l: ^Layout) -> bool {
 @(private = "file")
 binary_operator :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
-	case .Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent, .Amp,
-	     .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr, .And_And, .Or_Or, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq,
-	     .Gt, .Gt_Eq, .Assign, .Plus_Eq, .Minus_Eq, .Star_Eq, .Plus_Wrap_Eq, .Minus_Wrap_Eq,
-	     .Star_Wrap_Eq, .Slash_Eq, .Percent_Eq, .Pipe_Eq, .Tilde_Eq, .Amp_Eq,
-	     .Amp_Tilde_Eq, .Shl_Eq, .Shr_Eq, .Range_Incl, .Range_Excl, .Arrow, .In,
-	     .Or_Else, .Via:
+	case .Not:
+		return false
+	case .Range_Incl, .Range_Excl, .Arrow, .In, .Or_Else, .Via:
 		return true
 	}
-	return false
+	return kind >= .Plus && kind <= .Shr_Eq
+}
+
+// Whether an operator is binary here, given whether an operand comes before it.
+@(private = "file")
+used_as_binary :: proc(kind: Token_Kind, operand: bool) -> bool {
+	return binary_operator(kind) && (operand || !maybe_prefix(kind))
 }
 
 // An arithmetic or bitwise operator the author wrote with no space on either
@@ -376,13 +343,7 @@ binary_operator :: proc(kind: Token_Kind) -> bool {
 // a space on either side gets one on both.
 @(private = "file")
 written_tight :: proc(l: ^Layout, token: Token) -> bool {
-	#partial switch token.kind {
-	case .Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent, .Amp,
-	     .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr:
-	case:
-		return false
-	}
-	return token.lo > 0 && token.hi < u32(len(l.text)) &&
+	return token.kind >= .Plus && token.kind <= .Shr &&
 		!strings.is_space(rune(l.text[token.lo - 1])) && !strings.is_space(rune(l.text[token.hi]))
 }
 
@@ -402,7 +363,7 @@ starts_operand :: proc(kind: Token_Kind) -> bool {
 @(private = "file")
 maybe_prefix :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
-	case .Minus, .Plus, .Not, .Tilde, .Amp, .Caret, .Question, .Range, .Dollar, .At:
+	case .Minus, .Plus, .Not, .Tilde, .Amp, .Caret, .Question, .Range, .Dollar:
 		return true
 	}
 	return false
@@ -417,11 +378,6 @@ spaced_keyword :: proc(kind: Token_Kind) -> bool {
 		return true
 	}
 	return false
-}
-
-@(private = "file")
-is_keyword :: proc(kind: Token_Kind) -> bool {
-	return kind >= .Break && kind <= .Where
 }
 
 // The whitespace between the last token and `next` on one line. `written` is
@@ -445,9 +401,7 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 		return last == .Semicolon ? written : "" // `for (; ok; )`, `for (i := 0; ; i += 1)`
 	case .Comma, .Rbracket:
 		return ""
-	case .Rbrace:
-		return written
-	case .Lbrace:
+	case .Rbrace, .Lbrace:
 		return written // `Point{1, 2}`, `proc{a, b}`, and `if (x) {` alike
 	case .Period:
 		// `f() or_return .io`: a `.` after `or_return` begins its operand.
@@ -480,10 +434,10 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 				return written
 			}
 		}
-		if operand || is_keyword(last) && (next.kind == .Lparen || last == .Map) {
+		if operand || any_keyword(last) && (next.kind == .Lparen || last == .Map) {
 			return ""
 		}
-		if is_keyword(last) {
+		if any_keyword(last) {
 			return at_least_one // `impl []int`, `return [2]int{1, 2}`
 		}
 	case .Caret, .Question:
@@ -501,15 +455,18 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 		return in_brackets ? "" : at_least_one
 	}
 	if maybe_prefix(last) && !l.postfix && !l.last_binary && starts_operand(next.kind) {
-		return "" // a prefix operator binds to its operand
+		// A prefix operator binds to its operand, unless a written space keeps the
+		// two from lexing as one token: `& &x` must not become `&&x`.
+		merges := last == .Amp && (next.kind == .Amp || next.kind == .Tilde) || last == .Minus && next.kind == .Minus
+		return merges && written != "" ? " " : ""
 	}
-	if binary_operator(next.kind) && !(maybe_prefix(next.kind) && !operand) {
+	if used_as_binary(next.kind, operand) {
 		return written_tight(l, next) ? "" : at_least_one
 	}
 	if l.last_tight {
 		return ""
 	}
-	if binary_operator(last) || is_keyword(last) {
+	if binary_operator(last) || any_keyword(last) {
 		return at_least_one
 	}
 	return written

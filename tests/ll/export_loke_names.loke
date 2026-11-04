@@ -1,0 +1,31 @@
+// design.md "@(export)": only `loke_rt_` is reserved, so a link name may spell
+// the compiler's own `loke.` names. It stays external, and what the compiler
+// would have called `loke.` itself steps aside.
+package main;
+
+foreign loke_runtime {
+	// Refers to the entry this build writes.
+	@(link_name="wmain")
+	entry_again :: proc "c" (argc: i32, argv: rawptr) -> i32 ---;
+	// A foreign symbol, not this package's `main`.
+	@(link_name="loke.p.main")
+	not_main :: proc "c" () ---;
+}
+
+@(export, link_name = "loke.host_api")
+host_api :: proc "c" () -> i32 { return 1; }
+
+@(export, link_name = "loke.p.helper")
+exported_helper :: proc "c" () -> i32 { return 2; }
+
+helper :: proc() -> i32 { return 3; }
+
+@(export, link_name = "loke.g.counter")
+exported_counter: i32 = 4;
+
+counter: i32 = 5;
+
+main :: proc() {
+	s: static i32 = 6;
+	counter += exported_counter + host_api() + exported_helper() + helper() + s;
+}

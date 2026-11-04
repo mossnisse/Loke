@@ -1,0 +1,9 @@
+L0537
+@12:9
+would end the region backing `outer`
+L0592
+@23:12
+this result is backed by `record`
+L0592
+@31:12
+this result is backed by `arena`

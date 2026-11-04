@@ -1,0 +1,15 @@
+// design.md "@(export)" and "@(public)": a member of a body-local `impl` is a
+// local declaration, so it has no linkage or visibility and is no test.
+package main;
+
+main :: proc() {
+	Local :: struct { a: int }
+	impl Local {
+		@(test) tested :: proc() {}
+		@(public) visible :: proc() {}
+		@(private) hidden :: proc() {}
+		@(export, link_name = "local_symbol") exported :: proc "c" () {}
+		@(cpu_dispatch = "x86-64-v3") dispatched :: proc() {}
+		@(cold) rare :: proc() {}
+	}
+}

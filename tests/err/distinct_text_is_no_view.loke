@@ -1,0 +1,13 @@
+// design.md "Implicit type conversions": `string` -> `string_view` names those
+// two types. A distinct text type converts as written, as a distinct array does.
+package main;
+
+Name :: distinct string;
+View :: distinct string_view;
+
+main :: proc() {
+	s: string_view = Name("abc");
+	t: string = "abc";
+	v: View = t;
+	_, _ = s, v;
+}

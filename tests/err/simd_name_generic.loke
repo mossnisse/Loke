@@ -1,0 +1,8 @@
+// A declared generic `Simd` is not the predeclared constructor, and needs its
+// arguments like any other generic.
+package main;
+
+Simd :: struct($T: type) { x: T }
+x: Simd;
+
+main :: proc() {}

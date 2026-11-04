@@ -1,0 +1,12 @@
+// A silent probe's rejection keeps its first error for the report a later request
+// makes. A warning before it, here a deprecated call in a parameter's type, is not
+// the cause.
+package main;
+
+@(deprecated = "old") N :: proc() -> int { return 2; }
+
+f :: proc($T: type, a: [N()]int, b: Unknown) {}
+
+main :: proc() {
+	f(int, [2]int{1, 2}, 1);
+}

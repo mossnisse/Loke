@@ -1,0 +1,33 @@
+L0310
+@11:11
+`nil` has no type to infer here
+L0310
+@12:15
+`nil` has no type to infer here
+L0310
+@13:18
+`nil` has no type to infer here
+L0310
+@14:22
+`nil` has no type to infer here
+L0310
+@15:21
+`nil` is not a value of `^int`
+L0310
+@16:21
+`nil` is not a value of `Pair`
+L0310
+@17:50
+`nil` is not a value of `^int`
+L0352
+@19:19
+300 is not representable by `u8`
+L0352
+@20:23
+1 is not representable by `string`
+L0353
+@21:20
+a float does not convert implicitly to `int`; an explicit `int(...)` truncates it
+L0310
+@23:24
+cannot initialise `Box(string_view)` with `Box(string)`

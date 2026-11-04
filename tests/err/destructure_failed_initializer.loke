@@ -1,0 +1,8 @@
+// An initializer that failed to check is reported once, with no arity error.
+package main;
+
+main :: proc() {
+	a, b := bad_name;
+	_ = a;
+	_ = b;
+}

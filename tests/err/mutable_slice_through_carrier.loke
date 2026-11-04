@@ -1,0 +1,24 @@
+// design.md "Weakening and reborrows": a mutable slice through a carrier stays a
+// write where its destination is mutable, and uses what the elements hold.
+package main;
+
+Holder :: struct { items: [4]int }
+Cursors :: struct { items: [2]^mut int }
+
+poke :: proc(s: []mut int) { s[0] = 1; }
+look :: proc(s: []int) -> int { return s[0]; }
+
+kept_view :: proc(p: ^mut Holder) -> int {
+	v := p^.items[:];
+	poke(&mut p^.items[:]);
+	return v[0];
+}
+
+held_carrier :: proc(p: ^mut Cursors) -> int {
+	first := p^.items[0];
+	all := &mut p^.items[:];
+	_ = all;
+	return first^;
+}
+
+main :: proc() {}

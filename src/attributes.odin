@@ -1,6 +1,7 @@
 // Attribute discipline: one table of every attribute design.md defines, with the
 // positions it may appear in and the value shape it takes. Behaviour lives with
-// the owning feature; this file only reports misuse.
+// the owning feature; this file reports misuse and records what a declaration
+// says on its symbol or type.
 package lokec
 
 import "core:strings"
@@ -30,6 +31,7 @@ Attr_Scope :: enum {
 	Global,
 	Local,   // inside a body: no linkage or visibility
 	Foreign, // a foreign block member: `@(link_name)` needs no `@(export)`
+	Member,  // a member of a file-scope `impl` block
 }
 
 Attr_Shape :: enum {
@@ -39,9 +41,9 @@ Attr_Shape :: enum {
 }
 
 Attr_Spec :: struct {
-	positions:   bit_set[Attr_Pos],
-	shape:       Attr_Shape,
-	global_only: bool,
+	positions:     bit_set[Attr_Pos],
+	shape:         Attr_Shape,
+	barred_scopes: bit_set[Attr_Scope],
 }
 
 // design.md "Attributes" and "Layout and ABI attributes". A switch rather than a
@@ -49,63 +51,65 @@ Attr_Spec :: struct {
 attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	switch name {
 	case "public":
-		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
+		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Struct_Field, .Foreign_Block}, .None, {.Local}}, true
 	case "private":
-		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
+		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Struct_Field, .Foreign_Block}, .None, {.Local}}, true
 	case "default_allocator", "default_logger":
 		// Also read before import discovery by `collect_source_provider_defaults`.
-		return {{.Package_Clause}, .Value_Required, false}, true
+		return {{.Package_Clause}, .Value_Required, {}}, true
 	case "require_results":
-		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, false}, true
+		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, {}}, true
 	case "deprecated":
-		return {{.Proc_Decl}, .Value_Required, false}, true
+		return {{.Proc_Decl}, .Value_Required, {}}, true
 	case "cold":
-		// That the procedure has a body is `validate_decl_attributes`'.
-		return {{.Proc_Decl}, .None, false}, true
+		// design.md "@(cold)": a foreign declaration has no body to mark.
+		return {{.Proc_Decl}, .None, {.Foreign}}, true
 	case "cpu_dispatch":
 		// Which procedures may carry it is `validate_cpu_dispatch`'.
-		return {{.Proc_Decl}, .Value_Required, true}, true
+		return {{.Proc_Decl}, .Value_Required, {.Local, .Foreign, .Member}}, true
 	case "test":
-		// Its other rules are `check_test_procedures`'.
-		return {{.Proc_Decl}, .None, true}, true
+		// design.md "Test procedures": declared at file scope. Its other rules are
+		// `check_test_procedures`'.
+		return {{.Proc_Decl}, .None, {.Local, .Foreign, .Member}}, true
 	case "export":
-		return {{.Proc_Decl, .Var_Decl}, .None, true}, true
+		// design.md "@(export)": a foreign declaration has no definition to emit.
+		return {{.Proc_Decl, .Var_Decl}, .None, {.Local, .Foreign}}, true
 	case "link_name":
-		return {{.Proc_Decl, .Var_Decl}, .Value_Required, true}, true
+		return {{.Proc_Decl, .Var_Decl}, .Value_Required, {.Local}}, true
 	case "default_calling_convention":
-		return {{.Foreign_Block}, .Value_Required, false}, true
+		return {{.Foreign_Block}, .Value_Required, {}}, true
 	case "allocator_reset", "by_ptr", "c_vararg":
-		return {{.Parameter}, .None, false}, true
+		return {{.Parameter}, .None, {}}, true
 	case "escape":
 		// A bare level identifier, checked by `check_escape_attribute`.
-		return {{.Parameter}, .Deferred, false}, true
+		return {{.Parameter}, .Deferred, {}}, true
 	case "packed":
-		return {{.Struct_Decl}, .None, false}, true
+		return {{.Struct_Decl}, .None, {}}, true
 	case "align":
-		return {{.Struct_Decl, .Union_Decl}, .Deferred, false}, true
+		return {{.Struct_Decl, .Union_Decl}, .Deferred, {}}, true
 	case "initialized":
 		// A sibling field name, checked by `resolve_uninitialized_fields`.
-		return {{.Struct_Field}, .Deferred, false}, true
+		return {{.Struct_Field}, .Deferred, {}}, true
 	case "required":
-		return {{.Struct_Field}, .None, false}, true
+		return {{.Struct_Field}, .None, {}}, true
 	case "synchronized":
 		// Which variables may carry it is `validate_decl_attributes`'.
-		return {{.Struct_Field, .Var_Decl}, .None, false}, true
+		return {{.Struct_Field, .Var_Decl}, .None, {}}, true
 	case "move_only", "thread_affine", "wakes_on_drop":
-		return {{.Struct_Decl, .Union_Decl}, .None, false}, true
+		return {{.Struct_Decl, .Union_Decl}, .None, {}}, true
 	case "fieldwise_copy":
 		// What the record must be is `check_copy_decision`'.
-		return {{.Struct_Decl}, .None, false}, true
+		return {{.Struct_Decl}, .None, {}}, true
 	case "cross_thread":
 		// What the parameter must be is `check_cross_thread_attribute`'.
-		return {{.Parameter}, .None, false}, true
+		return {{.Parameter}, .None, {}}, true
 	case "intrinsic":
 		// Bound by `src/intrinsic.odin`, which validates the declaration's other
 		// attributes; one reaching the ordinary pass is misplaced.
-		return {{.Proc_Decl, .Type_Decl, .Struct_Decl, .Union_Decl, .Const_Decl}, .None, true}, true
+		return {{.Proc_Decl, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, {}}, true
 	case "zero", "failure":
 		// A variant name, checked in `src/union.odin`.
-		return {{.Union_Decl}, .Deferred, false}, true
+		return {{.Union_Decl}, .Deferred, {}}, true
 	}
 	return {}, false
 }
@@ -132,6 +136,17 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	return "here"
 }
 
+@(private = "file")
+attr_scope_name :: proc(scope: Attr_Scope) -> string {
+	switch scope {
+	case .Global:  return "a file-scope declaration"
+	case .Local:   return "a local declaration"
+	case .Foreign: return "a foreign declaration"
+	case .Member:  return "an `impl` member"
+	}
+	return "here"
+}
+
 // Reports each misuse in one attribute list, once per written list: generic
 // instances and static foreach copies share the spans, so they are skipped.
 validate_attribute_list :: proc(
@@ -140,29 +155,28 @@ validate_attribute_list :: proc(
 	pos: Attr_Pos,
 	scope := Attr_Scope.Global,
 	duration := Duration.None,
+	allow_intrinsic := false,
 ) {
 	if len(attributes) == 0 {
 		return
 	}
 	// A speculative check discards its diagnostics, so it must not claim the list.
 	if committing(k.c) {
-		first := attributes[0].span
-		key := u64(first.file) << 32 | u64(first.lo)
+		key := span_key(attributes[0].span)
 		if k.c.validated_attributes[key] {
 			return
 		}
 		k.c.validated_attributes[key] = true
 	}
-	seen := make(map[string]bool, len(attributes), context.temp_allocator)
-	for attribute in attributes {
+	for attribute, index in attributes {
 		if len(attribute.path) == 0 {
 			continue
 		}
 		// No toolchain extension is currently enabled.
 		if len(attribute.path) > 1 {
 			names := make([]string, len(attribute.path), context.temp_allocator)
-			for part, index in attribute.path {
-				names[index] = part.text
+			for part, part_index in attribute.path {
+				names[part_index] = part.text
 			}
 			errorf(
 				k.c, attribute.span, "L0610",
@@ -177,24 +191,20 @@ validate_attribute_list :: proc(
 			errorf(k.c, attribute.span, "L0606", "unknown attribute `@(%s)`", name)
 			continue
 		}
-		if seen[name] {
+		if has_attribute(attributes[:index], name) {
 			errorf(k.c, attribute.span, "L0609", "`@(%s)` is written more than once here", name)
 			continue
 		}
-		seen[name] = true
-		if name == "intrinsic" {
-			errorf(
-				k.c, attribute.span, "L0734",
-				"`@(intrinsic)` describes a name the compiler supplies, so it belongs at file scope, outside `when`, in a bundled package",
-			)
+		if name == "intrinsic" && !allow_intrinsic {
+			report_misplaced_intrinsic(k, attribute.span)
 			continue
 		}
 		if pos not_in spec.positions {
 			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, attr_pos_name(pos))
 			continue
 		}
-		if scope == .Local && spec.global_only {
-			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on a local declaration", name)
+		if scope in spec.barred_scopes {
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, attr_scope_name(scope))
 			continue
 		}
 		switch spec.shape {
@@ -208,6 +218,11 @@ validate_attribute_list :: proc(
 			} else if lit, ok := attribute.value.(^Expr_Literal); !ok ||
 			          (lit.kind != .String && lit.kind != .Raw_String) {
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
+			} else if name == "link_name" {
+				// design.md "`@(link_name=<string>)`".
+				if text, _ := attribute_string_text(k.c, attribute); text == "" {
+					errorf(k.c, attribute.span, "L0608", "`@(link_name)` needs a symbol name, not an empty string")
+				}
 			}
 		case .Deferred:
 		}
@@ -215,15 +230,13 @@ validate_attribute_list :: proc(
 			validate_synchronized_variable(k, attribute, scope, duration)
 		}
 	}
-	// design.md: `@(link_name)` names an exported or foreign symbol.
-	if scope == .Global && (pos == .Proc_Decl || pos == .Var_Decl) && seen["link_name"] && !seen["export"] {
-		for attribute in attributes {
-			if len(attribute.path) == 1 && attribute.path[0].text == "link_name" {
-				errorf(
-					k.c, attribute.span, "L0607",
-					"`@(link_name)` names a linked symbol, so it needs `@(export)` outside a foreign block",
-				)
-			}
+	// design.md "@(link_name=<string>)": it names an exported or foreign symbol.
+	if (scope == .Global || scope == .Member) && (pos == .Proc_Decl || pos == .Var_Decl) && !has_attribute(attributes, "export") {
+		if attribute, named := find_attribute(attributes, "link_name"); named {
+			errorf(
+				k.c, attribute.span, "L0607",
+				"`@(link_name)` names a linked symbol, so it needs `@(export)` outside a foreign block",
+			)
 		}
 	}
 }
@@ -234,31 +247,20 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
 		validate_attribute_list(k, file.attributes, .Package_Clause)
-		for attribute in file.attributes {
-			if _, is_provider := source_provider_slot(attribute); is_provider &&
-			   pkg.id != k.c.root_package {
-				errorf(
-					k.c, attribute.span, "L0613",
-					"`@(%s=...)` is only allowed on the root package clause",
-					attribute.path[0].text,
-				)
-			}
-		}
+		validate_provider_attributes(k, pkg, file)
 		validate_item_attributes(k, file.items)
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
 				validate_decl_attributes(k, v)
 			case ^Item_Impl:
-				validate_impl_attributes(k, v)
+				validate_impl_attributes(k, v, .Member)
 			case ^Item_Static_Assert:
 				validate_attribute_list(k, v.attributes, .Static_Assert)
 			case ^Item_Foreign_Block:
 				validate_attribute_list(k, v.attributes, .Foreign_Block)
-				for member in v.members {
-					if d, ok := member.(^Decl); ok {
-						validate_decl_attributes(k, d, .Foreign)
-					}
+				for d in v.members {
+					validate_decl_attributes(k, d, .Foreign)
 				}
 			}
 		}
@@ -287,34 +289,34 @@ validate_item_attributes :: proc(k: ^Checker, items: []Item) {
 	}
 }
 
-validate_impl_attributes :: proc(k: ^Checker, item: ^Item_Impl) {
+// `scope` is `.Local` for a body-local block, whose members can be no more than
+// any other local.
+validate_impl_attributes :: proc(k: ^Checker, item: ^Item_Impl, scope: Attr_Scope) {
 	validate_attribute_list(k, item.attributes, .Impl)
 	for member in item.members {
 		#partial switch m in member {
 		case ^Decl:
-			validate_decl_attributes(k, m, member = true)
+			validate_decl_attributes(k, m, scope)
 		case ^Item_Delegate:
 			validate_attribute_list(k, m.attributes, .Delegate)
 		}
 	}
 }
 
-validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Global, member := false) {
-	if len(d.symbols) == 0 {
+validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Global) {
+	// Binding an `@(intrinsic)` member already validated it.
+	if len(d.symbols) == 0 && decl_is_intrinsic(d) {
 		return
 	}
 	validate_attribute_list(k, d.attributes, decl_attr_position(k, d), scope, d.duration)
-	if scope != .Local {
-		validate_cpu_dispatch(k, d, scope, member)
+	if scope == .Global {
+		validate_cpu_dispatch(k, d)
 	}
-	// design.md "@(cold)": it describes the procedure's code, which a foreign
-	// declaration does not have.
-	if scope == .Foreign {
-		if attribute, found := find_attribute(d.attributes, "cold"); found && decl_attr_position(k, d) == .Proc_Decl {
-			errorf(
-				k.c, attribute.span, "L0607",
-				"`@(cold)` marks a procedure's body, and a foreign declaration has none",
-			)
+	// design.md "@(require_results)": a property of a value's type, and no value
+	// has an interface's type.
+	if attribute, found := find_attribute(d.attributes, "require_results"); found && len(d.values) == 1 {
+		if _, is_interface := d.values[0].(^Type_Interface); is_interface {
+			errorf(k.c, attribute.span, "L0607", "`@(require_results)` cannot appear on an interface")
 		}
 	}
 	// A generic template never resolves, so its parameters and record are
@@ -329,9 +331,7 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 	}
 }
 
-// design.md "@(synchronized)": a variable every thread shares, which is
-// file-scope or `static` storage. A `thread_local` one is the thread's own, a
-// plain local is the frame's, and foreign storage is no package's to vouch for.
+// design.md "@(synchronized)".
 @(private = "file")
 validate_synchronized_variable :: proc(k: ^Checker, attribute: Attribute, scope: Attr_Scope, duration: Duration) {
 	reason := ""
@@ -365,53 +365,39 @@ validate_record_attributes :: proc(k: ^Checker, record: ^Type_Record) {
 	}
 }
 
-// design.md "@(cpu_dispatch=<string>)": a level above baseline, on a file-scope
-// procedure the compiler can emit twice, which a generic, a foreign-convention
-// procedure, and a foreign declaration are not.
+// design.md "@(cpu_dispatch=<string>)".
 @(private = "file")
-validate_cpu_dispatch :: proc(k: ^Checker, d: ^Decl, scope: Attr_Scope, member: bool) {
-	for attribute in d.attributes {
-		if len(attribute.path) != 1 || attribute.path[0].text != "cpu_dispatch" {
-			continue
-		}
-		literal := decl_proc_literal(d)
-		if literal == nil || decl_attr_position(k, d) != .Proc_Decl {
-			return
-		}
-		reason := ""
-		switch {
-		case scope == .Foreign:
-			reason = "a foreign declaration, which has no body to emit"
-		case member:
-			reason = "a member of an `impl` block; it marks file-scope procedures"
-		case proc_signature_is_generic(literal):
-			reason = "a generic procedure"
-		case literal.signature != nil && convention_is_foreign(literal.signature.convention):
-			reason = "a procedure with a foreign calling convention"
-		}
-		if reason != "" {
-			errorf(k.c, attribute.span, "L0739", "`@(cpu_dispatch)` cannot mark %s", reason)
-			return
-		}
-		if text, ok := attribute_string_value(k.c, d.attributes, "cpu_dispatch"); ok {
-			if _, known := dispatch_cpu_level(text); !known {
-				errorf(
-					k.c, attribute.span, "L0739",
-					"`@(cpu_dispatch)` names a CPU level above baseline, `x86-64-v2` or `x86-64-v3`; found `%s`", text,
-				)
-			}
-		}
+validate_cpu_dispatch :: proc(k: ^Checker, d: ^Decl) {
+	attribute, written := find_attribute(d.attributes, "cpu_dispatch")
+	literal := decl_proc_literal(d)
+	if !written || literal == nil || decl_attr_position(k, d) != .Proc_Decl {
 		return
+	}
+	reason := ""
+	switch {
+	case proc_signature_is_generic(literal):
+		reason = "a generic procedure"
+	case convention_is_foreign(literal.signature.convention):
+		reason = "a procedure with a foreign calling convention"
+	}
+	if reason != "" {
+		errorf(k.c, attribute.span, "L0739", "`@(cpu_dispatch)` cannot mark %s", reason)
+		return
+	}
+	if text, ok := attribute_string_text(k.c, attribute); ok {
+		if _, known := dispatch_cpu_level(text); !known {
+			errorf(
+				k.c, attribute.span, "L0739",
+				"`@(cpu_dispatch)` names a CPU level above baseline, `x86-64-v2` or `x86-64-v3`; found `%s`", text,
+			)
+		}
 	}
 }
 
 // The level a `@(cpu_dispatch)` value names, which is never baseline.
 dispatch_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
-	switch text {
-	case "x86-64-v2": return .X86_64_V2, true
-	case "x86-64-v3": return .X86_64_V3, true
-	}
-	return .X86_64, false
+	cpu, known := parse_cpu_level(text)
+	return cpu, known && cpu != .X86_64
 }
 
 record_attr_position :: proc(record: ^Type_Record) -> Attr_Pos {
@@ -425,25 +411,32 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 			return record_attr_position(record)
 		}
 	}
+	// A generic `impl`'s member has symbols only in its instances. Whether a bare
+	// name there is a type or a constant is unknown, and a type allows more.
+	if len(d.symbols) == 0 {
+		if decl_proc_literal(d) != nil {
+			return .Proc_Decl
+		}
+		if len(d.values) == 1 {
+			_, is_group := d.values[0].(^Expr_Proc_Group)
+			return is_group ? .Proc_Group : .Type_Decl
+		}
+		return .Var_Decl
+	}
 	if sym := symbol_of(k.c, d.symbols[0]); sym != nil {
 		#partial switch sym.kind {
 		case .Proc:       return .Proc_Decl
 		case .Proc_Group: return .Proc_Group
 		case .Type:       return .Type_Decl
-		case .Const:      return .Const_Decl
 		}
 	}
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
 }
 
-// Records `@(deprecated)`, `@(require_results)`, `@(test)`, and
-// `@(cpu_dispatch)` on the symbol
-// while its signature resolves, so a use in another package already sees them.
+// Runs while the signature resolves, so a use in another package already sees
+// these.
 apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	sym := symbol_of(k.c, symbol_id)
-	if sym == nil {
-		return
-	}
 	for attribute in d.attributes {
 		if len(attribute.path) != 1 {
 			continue
@@ -451,34 +444,286 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 		switch attribute.path[0].text {
 		case "deprecated":
 			sym.deprecated = true
-			if lit, ok := attribute.value.(^Expr_Literal); ok && (lit.kind == .String || lit.kind == .Raw_String) {
-				if text, decoded := decode_string_literal(k.c, lit.text, lit.kind == .Raw_String); decoded {
-					sym.deprecated_message = text
-				}
+			if text, ok := attribute_string_text(k.c, attribute); ok {
+				sym.deprecated_message = text
 			}
 		case "require_results":
 			sym.require_results = true
-		case "test":
-			sym.is_test = sym.kind == .Proc
 		case "cpu_dispatch":
-			if text, ok := attribute_string_value(k.c, d.attributes, "cpu_dispatch"); ok && sym.kind == .Proc {
-				sym.dispatch_cpu, sym.dispatches = dispatch_cpu_level(text)
+			if text, ok := attribute_string_text(k.c, attribute); ok && sym.kind == .Proc {
+				sym.dispatch_cpu, _ = dispatch_cpu_level(text)
 			}
 		}
 	}
 }
 
-// The string value of a named attribute in a list, decoded from its literal.
+// design.md "@(require_results)": a type carrying it makes every value aggregate
+// containing it require its results too (`type_requires_results`).
+apply_type_metadata :: proc(k: ^Checker, d: ^Decl, type: Type_Id) {
+	if info := type_of(k.c, type); info != nil && has_attribute(d.attributes, "require_results") {
+		info.requires_results = true
+	}
+}
+
 attribute_string_value :: proc(c: ^Compiler, attributes: []Attribute, name: string) -> (string, bool) {
-	for attribute in attributes {
-		if len(attribute.path) != 1 || attribute.path[0].text != name {
+	attribute, written := find_attribute(attributes, name)
+	if !written {
+		return "", false
+	}
+	return attribute_string_text(c, attribute)
+}
+
+// An attribute's value, when that is a string literal, decoded.
+attribute_string_text :: proc(c: ^Compiler, attribute: Attribute) -> (string, bool) {
+	lit, ok := attribute.value.(^Expr_Literal)
+	if !ok || (lit.kind != .String && lit.kind != .Raw_String) {
+		return "", false
+	}
+	return decode_string_literal(c, lit.text, lit.kind == .Raw_String)
+}
+
+report_misplaced_intrinsic :: proc(k: ^Checker, span: Span) {
+	errorf(
+		k.c, span, "L0734",
+		"`@(intrinsic)` describes a name the compiler supplies, so it belongs at file scope, outside `when`, in a bundled package",
+	)
+}
+
+// design.md "Exported names", "`@(public)`": L0338 unless L0332 already rejected
+// it; a public default leaves a variable package-private silently.
+declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
+	public := attributes_are_public(k, d.attributes, d.span, "declaration")
+	if d.kind != .Var {
+		return public
+	}
+	if attribute, written := find_attribute(d.attributes, "public"); written && !has_attribute(d.attributes, "private") {
+		errorf(
+			k.c,
+			attribute.span,
+			"L0338",
+			"a variable cannot be `@(public)`; export a procedure that reads it or returns a borrow of it",
+		)
+	}
+	return false
+}
+
+// The operators a `delegate` generates are members as a declaration in the
+// same `impl` would be, so an importer finds an inherent one as it finds a
+// hand-written one (design.md "Delegating operators"); an extension's stay in
+// its package's table. A `delegate` takes no visibility attribute (L0607), so
+// the file's default decides.
+delegation_is_public :: proc(k: ^Checker) -> bool {
+	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
+}
+
+// `declaration_is_public`'s rule, for a struct field. design.md "Exported
+// names": nothing imports a `package main`, so its fields are public by
+// default, which is what reflection and printing see. Its declarations keep the
+// package default: a public extension would export a name.
+field_is_public :: proc(k: ^Checker, field: ^Field) -> bool {
+	in_main := k.file_node != nil && k.file_node.package_name == "main"
+	return attributes_are_public(k, field.attributes, field.span, "field", in_main)
+}
+
+attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, what: string, by_default := false) -> bool {
+	own_public := has_attribute(attributes, "public")
+	own_private := has_attribute(attributes, "private")
+	if own_public && own_private {
+		errorf(k.c, span, "L0332", "this %s is both `@(public)` and `@(private)`", what)
+		return false
+	}
+	return written_is_public(attributes, k.file_node.attributes if k.file_node != nil else nil, by_default)
+}
+
+// The same rule without its diagnostic, for syntax no symbol records: a
+// generic record's fields and a generic `impl`'s members are checked per
+// instance, so `-doc` reads the template's attributes.
+written_is_public :: proc(attributes, file_attributes: []Attribute, by_default := false) -> bool {
+	if has_attribute(attributes, "private") {
+		return false
+	}
+	return has_attribute(attributes, "public") || by_default || has_attribute(file_attributes, "public")
+}
+
+// Whether an importer can name a field: a public one, but not padding. A generic
+// record's fields are checked per instance, and an untaken `when` branch's not at
+// all, so those take their visibility from what is written.
+field_is_exported :: proc(c: ^Compiler, file: ^File, field: ^Field) -> bool {
+	for name, index in field.names {
+		if name.text == "_" {
 			continue
 		}
-		if lit, ok := attribute.value.(^Expr_Literal); ok && (lit.kind == .String || lit.kind == .Raw_String) {
-			if text, decoded := decode_string_literal(c, lit.text, lit.kind == .Raw_String); decoded {
-				return text, true
-			}
+		if index >= len(field.symbols) {
+			return written_is_public(field.attributes, file.attributes, file.package_name == "main")
+		}
+		symbol := symbol_of(c, field.symbols[index])
+		return symbol != nil && symbol.public
+	}
+	return false
+}
+
+// Whether an importer can name `d`. A declaration no symbol records, in an
+// untaken `when` branch or a generic `impl`, which is checked per instance,
+// takes its visibility from its written attributes, as the checker would.
+decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute = nil) -> bool {
+	if d.names[0].text == "_" {
+		return false
+	}
+	if len(d.symbols) > 0 {
+		symbol := symbol_of(c, d.symbols[0])
+		return symbol != nil && symbol.public && !symbol_is_test(symbol)
+	}
+	if d.kind == .Var || has_attribute(d.attributes, "test") {
+		return false
+	}
+	return written_is_public(d.attributes, has_attribute(block, "private") ? nil : file.attributes, has_attribute(block, "public"))
+}
+
+// design.md `@(escape=...)`: the written level, which only a parameter carrying
+// a borrow, or taking an owner by `move`, may have.
+check_escape_attribute :: proc(
+	k: ^Checker,
+	attributes: []Attribute,
+	type: Type_Id,
+	span: Span,
+	mode: Param_Mode,
+	generic_instance: bool,
+) -> Escape_Level {
+	level, written, ok := attribute_escape_level(attributes)
+	if !written {
+		return .Result
+	}
+	if !ok {
+		errorf(
+			k.c, span, "L0648",
+			"`@(escape=...)` takes one of `none`, `result`, `stored`, or `static`",
+		)
+		return .Result
+	}
+	if mode == .Borrow || mode == .Inout || mode == .Move || type == INVALID_TYPE {
+		return level
+	}
+	// A generic signature serves bindings with and without borrows, such as
+	// `Small_Array(string_view, N)` and `Small_Array(int, N)`, so it is exempt.
+	// In one without, the level says nothing, and the procedure type has none.
+	if generic_instance {
+		return type_records_finished(k.c, type) && !type_carries_borrow(k.c, type).any ? .Result : level
+	}
+	if cap(k.deferred_escape_parts) == 0 {
+		k.deferred_escape_parts = make([dynamic]Escape_Part, 0, 4, k.c.semantic_allocator)
+	}
+	append(&k.deferred_escape_parts, Escape_Part{type, span})
+	return level
+}
+
+// A value parameter's type under `@(escape=...)`, and where it was written.
+Escape_Part :: struct {
+	type: Type_Id,
+	span: Span,
+}
+
+// A signature may name a record still resolving its fields, so whether the type
+// carries a borrow waits until every record has them.
+check_deferred_escape_parts :: proc(k: ^Checker) {
+	for part in k.deferred_escape_parts {
+		if !type_carries_borrow(k.c, part.type).any {
+			errorf(
+				k.c, part.span, "L0648",
+				"`@(escape=...)` describes what a call may keep of a borrow, and `%s` carries none",
+				type_name(k.c, part.type),
+			)
 		}
 	}
-	return "", false
+	clear(&k.deferred_escape_parts)
+}
+
+// The written `@(escape=<level>)`, a bare identifier. `valid` is false for any
+// other value, which the caller reports.
+@(private = "file")
+attribute_escape_level :: proc(attributes: []Attribute) -> (level: Escape_Level, written: bool, valid: bool) {
+	attribute, found := find_attribute(attributes, "escape")
+	if !found {
+		return .Result, false, true
+	}
+	if ident, is_ident := attribute.value.(^Expr_Ident); is_ident {
+		switch ident.name {
+		case "none":   return .None, true, true
+		case "result": return .Result, true, true
+		case "stored": return .Stored, true, true
+		case "static": return .Static, true, true
+		}
+	}
+	return .Result, true, false
+}
+
+// design.md "@(cross_thread)": an argument that crosses to another thread. A
+// `move` one must be keepable for the whole process, since nothing shorter
+// bounds an unstructured thread, and a procedure value carries no state of its
+// own. Foreign code crosses threads unchecked, so it cannot claim the checks.
+check_cross_thread_attribute :: proc(
+	k: ^Checker,
+	attributes: []Attribute,
+	type: Type_Id,
+	mode: Param_Mode,
+	escape: Escape_Level,
+	in_foreign: bool,
+	span: Span,
+) -> bool {
+	if !has_attribute(attributes, "cross_thread") {
+		return false
+	}
+	problem := ""
+	switch {
+	case in_foreign:
+		problem = "cannot mark a foreign procedure's parameter: what foreign code hands to a thread is not checked"
+	case type == INVALID_TYPE || underlying_kind(k.c, type) == .Proc:
+		return type != INVALID_TYPE
+	case mode == .Move && escape == .Static:
+		return true
+	case mode == .Move:
+		problem = "on a `move` parameter needs `@(escape=static)` too: nothing shorter than the process bounds another thread"
+	case:
+		problem = "marks a `move` parameter or one of procedure type"
+	}
+	errorf(k.c, span, "L0723", "`@(cross_thread)` %s", problem)
+	return false
+}
+
+// design.md "@(align=N)": `@(align=4) Name :: union {...}`, or `struct {...}`.
+// Only a power of two the target supports is accepted; a written
+// alignment under the natural one raises rather than lowers.
+record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
+	attribute, written := find_attribute(value.attributes, "align")
+	if !written {
+		return 0
+	}
+	if attribute.value == nil {
+		errorf(k.c, attribute.span, "L0423", "`@(align=N)` needs a value")
+		return 0
+	}
+	if check_single_expr(k, attribute.value, TYPE_INT) == INVALID_TYPE {
+		return 0
+	}
+	folded, evaluated := require_const(k, attribute.value, "an alignment", "L0423")
+	if !evaluated {
+		return 0
+	}
+	if folded.kind != .Integer {
+		errorf(k.c, attribute.span, "L0423", "`@(align=N)` needs a constant integer")
+		return 0
+	}
+	written_align, fits := bi_to_i64(k.c, folded.integer)
+	if !fits || written_align <= 0 || written_align > i64(k.c.target.max_align) ||
+	   (written_align & (written_align - 1)) != 0 {
+		errorf(
+			k.c,
+			attribute.span,
+			"L0423",
+			"`@(align=%s)` must be a power of two between 1 and %d",
+			bi_text(k.c, folded.integer),
+			k.c.target.max_align,
+		)
+		return 0
+	}
+	return u64(written_align)
 }

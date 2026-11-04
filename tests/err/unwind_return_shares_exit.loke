@@ -1,0 +1,36 @@
+// design.md "Panics and unwinding": a panic in a `return` and the return itself
+// leave through one statement and are checked apart. The panic drops the arena
+// before the older `b`, however the returned value's evaluation is split.
+package main;
+import "core:fmt";
+import "core:mem";
+
+Rec :: struct { arena: mem.Arena, ok: bool }
+
+yes :: proc() -> bool { return true; }
+
+one_block :: proc() -> Rec {
+	b: Box(int);
+	arena := mem.Arena.init();
+	b = box(1, arena.allocator());
+	defer fmt.println("deferred");
+	return Rec{arena = move(arena), ok = yes()};
+}
+
+several_blocks :: proc() -> Rec {
+	b: Box(int);
+	arena := mem.Arena.init();
+	b = box(1, arena.allocator());
+	defer fmt.println("deferred");
+	return Rec{arena = move(arena), ok = yes() && yes()};
+}
+
+// Dropped first, `b` leaves nothing for the panic to find.
+newer_owner :: proc() -> Rec {
+	arena := mem.Arena.init();
+	b := box(1, arena.allocator());
+	defer fmt.println("deferred");
+	return Rec{arena = move(arena), ok = yes() && yes()};
+}
+
+main :: proc() {}

@@ -1,0 +1,14 @@
+// `nil` has no default type, so an operand that takes its operand's type has
+// nothing to take. Each of these reached the backend with nothing bound.
+package main;
+
+import "core:math";
+import "core:unsafe";
+
+count :: proc() { a := math.count_ones(nil); }
+value :: proc() { a := math.reverse_bits(nil); }
+rotate :: proc() { a := math.rotate_left(nil, 1); }
+wrap :: proc() { a := math.wrap(u8, nil); }
+transmute :: proc() { a := unsafe.transmute(rawptr, nil); }
+
+main :: proc() {}

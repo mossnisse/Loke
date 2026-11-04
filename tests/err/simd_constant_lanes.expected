@@ -1,0 +1,36 @@
+L0397
+@10:14
+signed overflow: the result 128 does not fit `i8`
+L0356
+@14:11
+a shift count cannot be negative, found -1 in lane 0
+L0356
+@15:8
+a shift count cannot be negative, found -1 in lane 0
+L0319
+@16:8
+division by zero in lane 0
+L0319
+@17:8
+division by zero in lane 0
+L0319
+@18:8
+division by zero in lane 0
+L0319
+@19:8
+division by zero in lane 1
+L0319
+@20:10
+division by zero in lane 0
+L0319
+@21:4
+division by zero in lane 0
+L0319
+@22:4
+division by zero in lane 1
+L0352
+@26:11
+-1 is not representable by `Simd(u32, 4)`
+L0352
+@27:8
+-1 is not representable by `Simd(u32, 4)`

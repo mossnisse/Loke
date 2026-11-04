@@ -1,0 +1,24 @@
+view 1
+view 2
+view 3
+slice 4
+slice 5
+literal 9
+literal 10
+subrange 2
+subrange 3
+reversed 5
+reversed 4
+indexed 4 0
+indexed 5 1
+reversed array 3
+reversed array 2
+reversed array 1
+array 1
+array 2
+array 3
+padded 6 7
+padded indexed 6 7 0
+nested 1 2 3
+discarded 7
+hooked 8

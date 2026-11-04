@@ -1,0 +1,10 @@
+// design.md "Slices": a mutable slice of a map's element borrows the map.
+package main;
+
+main :: proc() {
+	m := map[int][4]int{};
+	m[1] = [4]int{};
+	view := &mut m[1][0:2];
+	m[2] = [4]int{};
+	view[0] = 1;
+}

@@ -7,3 +7,6 @@ L0355
 L0355
 @18:39
 `[1]Grouped` holds `Grouped`, whose inherent `==` is not `@(public)`
+L0355
+@19:33
+`Grouped` has an inherent `==` that is not `@(public)`

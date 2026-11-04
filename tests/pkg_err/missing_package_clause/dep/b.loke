@@ -1,0 +1,3 @@
+// The name comes from the file that has one: `a.loke`'s missing clause is its own
+// report, with no second one against an empty name.
+package dep;

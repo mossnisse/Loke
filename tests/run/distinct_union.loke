@@ -1,0 +1,89 @@
+// design.md "Distinct types": a distinct type over a union has the union's
+// representation and its variants. design.md "Representation": that includes a
+// niche union, which stores no tag. Comparisons are inherited.
+package main;
+
+import "core:fmt";
+
+Plain :: union { wide: u64, narrow: u32, empty }
+Fresh :: distinct Plain;
+
+Refer :: union { some: ^int, none }
+Fresh_Refer :: distinct Refer;
+
+Named :: union { name: string, count: int, nothing }
+Fresh_Named :: distinct Named;
+
+@(failure=bad) Outcome :: union { good: int, bad: int }
+Fresh_Outcome :: distinct Outcome;
+
+// A constant comparison asks which variant each side holds, as a run-time one does.
+same_variant :: Fresh.wide(1) == Fresh.wide(1);
+other_variant :: Fresh.wide(1) == Fresh.narrow(1);
+
+fresh_global: Fresh = Fresh.narrow(7);
+
+equal :: proc(left, right: Fresh) -> bool { return left == right; }
+
+report :: proc(value: Fresh) {
+	switch (value) {
+	case .wide(wide):     fmt.println("wide", wide);
+	case .narrow(narrow): fmt.println("narrow", narrow);
+	case .empty:          fmt.println("empty");
+	}
+}
+
+attempt :: proc(input: int) -> Fresh_Outcome {
+	errdefer fmt.println("failed", input);
+	if (input > 0) {
+		return Fresh_Outcome.bad(input);
+	}
+	return Fresh_Outcome.good(input);
+}
+
+main :: proc() {
+	wide: u64 = 9;
+	narrow: u32 = 5;
+	fmt.println(size_of(Plain) == size_of(Fresh), size_of(Refer) == size_of(Fresh_Refer));
+
+	// A wider-than-a-byte payload survives the conversion back: the tag lands behind it.
+	stored: Fresh = Fresh.wide(wide);
+	switch (Plain(stored)) {
+	case .wide(value):   fmt.println("wide", value);
+	case .narrow(value): fmt.println("narrow", value);
+	case .empty:         fmt.println("empty");
+	}
+	report(stored);
+	report(Fresh.narrow(narrow));
+	report(Fresh.empty);
+	report(fresh_global);
+
+	// A niche union stores no tag at all, so no tag may overwrite the reference.
+	target := 42;
+	refer: Fresh_Refer = Fresh_Refer.some(&target);
+	switch (Refer(refer)) {
+	case .some(reference): fmt.println(reference^);
+	case .none:            fmt.println("none");
+	}
+	switch (refer) {
+	case .some(reference): fmt.println(reference^);
+	case .none:            fmt.println("none");
+	}
+
+	fmt.println(same_variant, other_variant);
+	fmt.println(equal(Fresh.wide(1), Fresh.wide(1)), equal(Fresh.wide(1), Fresh.narrow(1)), stored != stored);
+	fmt.println(stored.as(.wide), stored.as(.narrow));
+
+	// A managed payload is copied and dropped as the underlying union's is.
+	owned: Fresh_Named = Fresh_Named.name("held");
+	second := owned;
+	switch (second) {
+	case .name(text):  fmt.println(text);
+	case .count(many): fmt.println(many);
+	case .nothing:     fmt.println("nothing");
+	}
+	fmt.println(owned == second);
+
+	attempt(1);
+	attempt(0);
+}

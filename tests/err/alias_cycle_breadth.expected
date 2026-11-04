@@ -1,0 +1,6 @@
+L0745
+@9:1
+the type alias `B` is defined in terms of itself
+L0745
+@10:1
+the type alias `C` is defined in terms of itself

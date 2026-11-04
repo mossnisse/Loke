@@ -1,0 +1,9 @@
+package main;
+
+// design.md "@(export)": a test build writes `wmain` too.
+
+@(export)
+wmain :: proc "c" () -> i32 { return 1; }
+
+@(test)
+passes :: proc() {}

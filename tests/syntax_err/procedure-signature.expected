@@ -7,12 +7,6 @@ expected a parameter name
 L0240
 @7:17
 expected `$` before a generic parameter name
-L0240
-@7:18
-expected `:` and the generic parameter's type
-L0210
-@7:18
-expected a type
 L0244
 @10:14
 expected a procedure name

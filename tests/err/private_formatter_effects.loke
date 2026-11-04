@@ -29,19 +29,19 @@ impl Hidden {
 }
 
 @(public)
-Generic :: struct($T: type) { value: T }
+Generic :: struct($T: type) { @(public) value: T }
 impl Generic($T) {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
 }
 
 @(public)
-Holds_Own :: struct { own: Own }
+Holds_Own :: struct { @(public) shown: Shown }
 impl Holds_Own {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
 }
 
 @(public)
-Holds_View :: struct { view: dyn fmt.Formattable }
+Holds_View :: struct { @(public) view: dyn fmt.Formattable }
 impl Holds_View {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
 }
@@ -56,7 +56,7 @@ a_private_types_format :: proc() {
 }
 a_format_in_a_generated_default :: proc() {
 	data.append(7);
-	panic("stop", data[0], Holds_Own{Own{1}});
+	panic("stop", data[0], Holds_Own{Shown{1}});
 }
 a_generic_part :: proc() {
 	data.append(7);
@@ -78,4 +78,23 @@ any_print :: proc() {
 	view := data[:];
 	fmt.println(1);
 	fmt.println(view[0]);
+}
+
+// A distinct type's own parts still print, and a view with a `format` slot calls it.
+Own_Parts :: distinct [1]Own;
+Sized :: interface($Self: type) { slot size: proc(self) -> int; }
+Slot_Only :: interface($Self: type) { slot format: proc(self: ^, writer: fmt.Writer, options: fmt.Options); }
+Composed :: interface($Self: type) { fmt.Formattable(Self); Sized(Self); }
+
+a_distinct_types_part :: proc() {
+	data.append(7);
+	panic("stop", data[0], Own_Parts{Own{1}});
+}
+a_view_with_the_slot :: proc(view: dyn Slot_Only) {
+	data.append(7);
+	panic("stop", data[0], view);
+}
+a_composing_view :: proc(view: dyn Composed) {
+	data.append(7);
+	panic("stop", data[0], [1]dyn Composed{view});
 }

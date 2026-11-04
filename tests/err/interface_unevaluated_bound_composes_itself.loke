@@ -1,0 +1,15 @@
+package main;
+
+// A member lookup in an earlier bound walks the later bound's slots before that
+// bound is ever evaluated. An interface composing itself, even more than once,
+// must not stop that walk from ending.
+Once :: interface($T: type) { Once(T); }
+Twice :: interface($T: type) { Twice(T); Twice(T); }
+
+f :: proc(x: $T) -> int where T.q == 1, Once(T) { return 1; }
+g :: proc(x: $T) -> int where T.q == 1, Twice(T) { return 1; }
+
+main :: proc() {
+	_ = f(1);
+	_ = g(1);
+}

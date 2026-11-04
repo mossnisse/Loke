@@ -10,10 +10,11 @@
 // nothing describes.
 package lokec
 
+import "core:fmt"
+import "core:slice"
 import "core:strings"
 
-// One `@(intrinsic)` declaration and the symbol it describes. `subject` is the
-// type an `impl` member belongs to.
+// `subject` is the type an `impl` member belongs to.
 Intrinsic_Decl :: struct {
 	decl:    ^Decl,
 	symbol:  Symbol_Id,
@@ -36,51 +37,47 @@ impl_is_intrinsic :: proc(v: ^Item_Impl) -> bool {
 	return false
 }
 
-// Once per package, right after the compiler contributes its names, so each
-// declaration finds what it describes and a missing one is reported once.
+// Once per package, right after the compiler contributes its names and before
+// any declaration is collected, so the package's scope holds only those names,
+// each declaration finds what it describes, and a missing one is reported once.
 bind_intrinsic_declarations :: proc(k: ^Checker, pkg: ^Package) {
-	if pkg.intrinsics_bound {
-		return
-	}
-	pkg.intrinsics_bound = true
 	pkg.intrinsics = make([dynamic]Intrinsic_Decl, 0, len(pkg.contributions), k.c.semantic_allocator)
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
-		bind_intrinsic_items(k, pkg, file, file.items)
+		bind_intrinsic_items(k, pkg, file.items)
 	}
 	report_undescribed_contributions(k, pkg)
 }
 
-// File scope and top-level blocks. One inside a `when` branch is reported once
-// the branch is selected (`check_intrinsic_declarations`).
+// One inside a `when` branch is reported once the branch is selected
+// (`check_intrinsic_declarations`).
 @(private = "file")
-bind_intrinsic_items :: proc(k: ^Checker, pkg: ^Package, file: ^File, items: []Item) {
+bind_intrinsic_items :: proc(k: ^Checker, pkg: ^Package, items: []Item) {
 	for item in items {
 		#partial switch v in item {
 		case ^Decl:
 			if decl_is_intrinsic(v) {
-				bind_intrinsic(k, pkg, file, v, INVALID_TYPE)
+				bind_intrinsic(k, pkg, v, INVALID_TYPE)
 			}
 		case ^Item_Impl:
 			if impl_is_intrinsic(v) {
-				bind_intrinsic_impl(k, pkg, file, v)
+				bind_intrinsic_impl(k, pkg, v)
 			}
 		case ^Item_Block:
-			bind_intrinsic_items(k, pkg, file, v.items)
+			bind_intrinsic_items(k, pkg, v.items)
 		}
 	}
 }
 
 @(private = "file")
-bind_intrinsic_impl :: proc(k: ^Checker, pkg: ^Package, file: ^File, v: ^Item_Impl) {
+bind_intrinsic_impl :: proc(k: ^Checker, pkg: ^Package, v: ^Item_Impl) {
+	validate_attribute_list(k, v.attributes, .Impl)
 	subject := INVALID_TYPE
 	if ident, is_ident := v.type.(^Expr_Ident); is_ident {
-		name := intern_identifier(k.c, ident.name)
-		if sym := symbol_of(k.c, pkg.scope.names[name] or_else INVALID_SYMBOL);
-		   sym != nil && sym.kind == .Type && contributed_here(pkg, name) {
+		if sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, ident.name)]); sym != nil && sym.kind == .Type {
 			subject = sym.type
 		}
 	}
@@ -91,9 +88,6 @@ bind_intrinsic_impl :: proc(k: ^Checker, pkg: ^Package, file: ^File, v: ^Item_Im
 		)
 		return
 	}
-	if type_is_region_provider(k.c, subject) {
-		ensure_provider_members(k, subject)
-	}
 	for member in v.members {
 		d, is_decl := member.(^Decl)
 		if !is_decl || !decl_is_intrinsic(d) {
@@ -103,12 +97,12 @@ bind_intrinsic_impl :: proc(k: ^Checker, pkg: ^Package, file: ^File, v: ^Item_Im
 			)
 			continue
 		}
-		bind_intrinsic(k, pkg, file, d, subject)
+		bind_intrinsic(k, pkg, d, subject)
 	}
 }
 
 @(private = "file")
-bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subject: Type_Id) {
+bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, d: ^Decl, subject: Type_Id) {
 	c := k.c
 	validate_intrinsic_attributes(k, d)
 	if len(pkg.contributions) == 0 {
@@ -118,9 +112,11 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 		)
 		return
 	}
-	literal := decl_proc_literal(d)
-	shape_ok := d.kind == .Const && len(d.names) == 1 && len(d.values) == 1
-	if shape_ok && literal == nil {
+	literal := decl_proc(d)
+	shape_ok := d.kind == .Const && len(d.names) == 1 && len(d.values) == 1 && d.declared_type == nil
+	if shape_ok && literal != nil {
+		shape_ok = len(literal.where_clauses) == 0
+	} else if shape_ok {
 		#partial switch v in d.values[0] {
 		case nil, ^Type_Enum:
 		case ^Type_Record:
@@ -132,7 +128,7 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 	if !shape_ok {
 		errorf(
 			c, d.names[0].span, "L0734",
-			"an `@(intrinsic)` declaration is a procedure ending in `---`, or a type written `---`, as an `enum`, or as a `struct`",
+			"an `@(intrinsic)` declaration is a procedure ending in `---`, or a type written `---`, as an `enum`, or as a `struct`, with no declared type or `where` clause",
 		)
 		return
 	}
@@ -144,12 +140,10 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 	name := intern_identifier(c, d.names[0].text)
 	symbol_id := INVALID_SYMBOL
 	if subject == INVALID_TYPE {
-		if contributed_here(pkg, name) {
-			symbol_id = pkg.scope.names[name] or_else INVALID_SYMBOL
-		}
+		symbol_id = pkg.scope.names[name]
 	} else if info := type_of(c, subject); info != nil {
 		member := member_named(c, info.members, name)
-		if sym := symbol_of(c, member); sym != nil && sym.synth != .None {
+		if sym := symbol_of(c, member); sym != nil && sym.synth == .Provider_Op {
 			symbol_id = member
 		}
 	}
@@ -179,22 +173,19 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 		)
 		return
 	}
-	for entry in pkg.intrinsics {
-		if entry.symbol == symbol_id {
-			errorf(c, d.names[0].span, "L0735", "`%s` is already described by an `@(intrinsic)` declaration", d.names[0].text)
-			add_notef(c, entry.decl.names[0].span, "described here")
-			return
-		}
+	if earlier := description_of(pkg, symbol_id); earlier != nil {
+		errorf(c, d.names[0].span, "L0735", "`%s` is already described by an `@(intrinsic)` declaration", d.names[0].text)
+		add_notef(c, earlier.decl.names[0].span, "described here")
+		return
 	}
 	symbols := make([]Symbol_Id, 1, c.semantic_allocator)
 	symbols[0] = symbol_id
 	d.symbols = symbols
-	d.top_level = true
 	// A contributed symbol has no source position; this is now its declaration.
-	if sym.span == no_span() {
+	if sym.span == NO_SPAN {
 		sym.span = d.names[0].span
 	}
-	append(&pkg.intrinsics, Intrinsic_Decl{decl = d, symbol = symbol_id, subject = subject, file = file})
+	append(&pkg.intrinsics, Intrinsic_Decl{decl = d, symbol = symbol_id, subject = subject, file = k.file_node})
 }
 
 // The attributes the package pass would check, which it never reaches because
@@ -203,41 +194,24 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 // could say, so another one would describe what is not there.
 @(private = "file")
 validate_intrinsic_attributes :: proc(k: ^Checker, d: ^Decl) {
-	rest := make([dynamic]Attribute, 0, len(d.attributes), context.temp_allocator)
-	seen := false
-	for attribute in d.attributes {
-		is_intrinsic := len(attribute.path) == 1 && attribute.path[0].text == "intrinsic"
-		switch {
-		case !is_intrinsic:
-			append(&rest, attribute)
-		case seen:
-			errorf(k.c, attribute.span, "L0609", "`@(intrinsic)` is written more than once here")
-		case attribute.value != nil:
-			errorf(k.c, attribute.span, "L0608", "`@(intrinsic)` takes no value")
-		}
-		seen ||= is_intrinsic
-	}
-	literal := decl_proc_literal(d)
+	literal := decl_proc(d)
+	record, _ := decl_value(d).(^Type_Record)
 	position := literal != nil ? Attr_Pos.Proc_Decl : Attr_Pos.Type_Decl
-	if len(d.values) == 1 {
-		if record, is_record := d.values[0].(^Type_Record); is_record {
-			position = record_attr_position(record)
-		}
+	if record != nil {
+		position = record_attr_position(record)
 	}
-	validate_attribute_list(k, rest[:], position)
-	reject_described_attributes(k, rest[:], true, "an `@(intrinsic)` declaration")
+	validate_attribute_list(k, d.attributes, position, allow_intrinsic = true)
+	reject_described_attributes(k, d.attributes, true, "an `@(intrinsic)` declaration")
 	if literal != nil {
 		validate_param_attributes(k, literal.signature.params)
 		for parameter in literal.signature.params {
 			reject_described_attributes(k, parameter.attributes, false, "a parameter of an `@(intrinsic)` procedure")
 		}
 	}
-	if len(d.values) == 1 {
-		if record, is_record := d.values[0].(^Type_Record); is_record {
-			validate_record_attributes(k, record)
-			for field in record.fields {
-				reject_described_attributes(k, field.attributes, true, "a field of an `@(intrinsic)` struct")
-			}
+	if record != nil {
+		validate_record_attributes(k, record)
+		for field in record.fields {
+			reject_described_attributes(k, field.attributes, true, "a field of an `@(intrinsic)` struct")
 		}
 	}
 }
@@ -266,23 +240,13 @@ reject_described_attributes :: proc(k: ^Checker, attributes: []Attribute, visibi
 }
 
 @(private = "file")
-contributed_here :: proc(pkg: ^Package, name: Identifier_Id) -> bool {
-	for contributed in pkg.contributions {
-		if contributed == name {
-			return true
-		}
-	}
-	return false
-}
-
-@(private = "file")
-described :: proc(pkg: ^Package, symbol_id: Symbol_Id) -> bool {
-	for entry in pkg.intrinsics {
+description_of :: proc(pkg: ^Package, symbol_id: Symbol_Id) -> ^Intrinsic_Decl {
+	for &entry in pkg.intrinsics {
 		if entry.symbol == symbol_id {
-			return true
+			return &entry
 		}
 	}
-	return false
+	return nil
 }
 
 // Every public name the compiler contributes, and every member it contributes
@@ -290,14 +254,14 @@ described :: proc(pkg: ^Package, symbol_id: Symbol_Id) -> bool {
 @(private = "file")
 report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 	c := k.c
-	where_reported := len(pkg.files) > 0 ? pkg.files[0].package_span : no_span()
+	where_reported := len(pkg.files) > 0 ? pkg.files[0].package_span : NO_SPAN
 	for name in pkg.contributions {
-		symbol_id := pkg.scope.names[name] or_else INVALID_SYMBOL
+		symbol_id := pkg.scope.names[name]
 		sym := symbol_of(c, symbol_id)
 		if sym == nil || !sym.public {
 			continue
 		}
-		if !described(pkg, symbol_id) {
+		if description_of(pkg, symbol_id) == nil {
 			errorf(
 				c, where_reported, "L0737",
 				"the compiler supplies `%s` in this package, and no `@(intrinsic)` declaration describes it",
@@ -308,10 +272,9 @@ report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 		if sym.kind != .Type || !type_is_region_provider(c, sym.type) {
 			continue
 		}
-		ensure_provider_members(k, sym.type)
 		info := type_of(c, sym.type)
 		for member in info.members {
-			if found := symbol_of(c, member); found != nil && found.synth == .Provider_Op && !described(pkg, member) {
+			if found := symbol_of(c, member); found != nil && found.synth == .Provider_Op && description_of(pkg, member) == nil {
 				errorf(
 					c, sym.span, "L0737",
 					"the compiler supplies `%s.%s`, and no `@(intrinsic)` declaration in an `impl %s` block describes it",
@@ -325,8 +288,8 @@ report_undescribed_contributions :: proc(k: ^Checker, pkg: ^Package) {
 // Once signatures resolve: what each declaration states is checked against
 // what it describes, and one inside a selected `when` branch is reported.
 check_intrinsic_declarations :: proc(k: ^Checker, pkg: ^Package) {
-	saved := save_checker_location(k)
-	defer restore_checker_location(k, saved)
+	saved := k.location
+	defer k.location = saved
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 	for entry in pkg.intrinsics {
 		k.file, k.file_node = entry.file.file, entry.file
@@ -339,27 +302,25 @@ check_intrinsic_declarations :: proc(k: ^Checker, pkg: ^Package) {
 }
 
 @(private = "file")
+INTRINSIC_IN_WHEN :: "an `@(intrinsic)` declaration is not inside `when`: the compiler supplies the name whichever branch is taken"
+
+@(private = "file")
 report_intrinsics_in_when :: proc(k: ^Checker, items: []Item, selected: bool) {
 	for item in items {
 		#partial switch v in item {
 		case ^Decl:
-			if selected && decl_is_intrinsic(v) && len(v.names) > 0 {
-				errorf(k.c, v.names[0].span, "L0734", "an `@(intrinsic)` declaration is not inside `when`: the compiler supplies the name whichever branch is taken")
+			if selected && decl_is_intrinsic(v) {
+				errorf(k.c, v.names[0].span, "L0734", INTRINSIC_IN_WHEN)
 			}
 		case ^Item_Impl:
 			if selected && impl_is_intrinsic(v) {
-				errorf(k.c, expr_span(v.type), "L0734", "an `@(intrinsic)` declaration is not inside `when`: the compiler supplies the name whichever branch is taken")
+				errorf(k.c, expr_span(v.type), "L0734", INTRINSIC_IN_WHEN)
 			}
 		case ^Item_Block:
 			report_intrinsics_in_when(k, v.items, selected)
 		case ^Item_When:
-			if !v.resolved {
-				continue
-			}
-			if v.taken {
-				report_intrinsics_in_when(k, v.then.items, true)
-			} else if v.otherwise != nil {
-				report_intrinsics_in_when(k, []Item{v.otherwise}, true)
+			if branch := item_when_selected(v); branch != nil {
+				report_intrinsics_in_when(k, []Item{branch}, true)
 			}
 		}
 	}
@@ -370,7 +331,7 @@ check_intrinsic :: proc(k: ^Checker, entry: Intrinsic_Decl) {
 	c := k.c
 	sym := symbol_of(c, entry.symbol)
 	d := entry.decl
-	if literal := decl_proc_literal(d); literal != nil {
+	if literal := decl_proc(d); literal != nil {
 		// Every supplied procedure has the convention it was made with, and a
 		// built-in operation the Loke one.
 		supplied := ""
@@ -404,7 +365,7 @@ check_intrinsic_signature :: proc(k: ^Checker, d: ^Decl, signature: ^Type_Proc, 
 	c := k.c
 	name := d.names[0].text
 	for parameter, position in signature.params {
-		if parameter.type == nil && !(subject != INVALID_TYPE && position == 0) {
+		if parameter.type == nil && !(subject != INVALID_TYPE && parameter_is_bare_self(parameter, position)) {
 			errorf(c, parameter.span, "L0736", "an `@(intrinsic)` procedure writes each parameter's type")
 			return
 		}
@@ -414,15 +375,8 @@ check_intrinsic_signature :: proc(k: ^Checker, d: ^Decl, signature: ^Type_Proc, 
 		return
 	}
 	info := type_of(c, sym.proc_type)
-	differs := info == nil || len(params) != len(sym.params) || result != sym.result || result_inout != sym.result_inout
-	for index in 0 ..< len(params) {
-		if differs || index >= len(info.param_modes) {
-			differs = true
-			break
-		}
-		differs = params[index] != sym.params[index] || modes[index] != info.param_modes[index]
-	}
-	if differs {
+	same := slice.equal(params, sym.params) && slice.equal(modes, info.param_modes) && result == sym.result && result_inout == sym.result_inout
+	if !same {
 		errorf(
 			c, d.names[0].span, "L0736", "the compiler supplies `%s` as `%s`",
 			name, type_name(c, sym.proc_type),
@@ -437,23 +391,16 @@ check_intrinsic_signature :: proc(k: ^Checker, d: ^Decl, signature: ^Type_Proc, 
 		for index in 0 ..< count {
 			written := index < len(parameter.names) ? parameter.names[index].name.text : ""
 			receiver := sym.has_receiver && flat == 0
-			if flat < len(sym.param_defaults) && (sym.param_defaults[flat] != nil) != (parameter.default != nil) {
+			if (sym.param_defaults[flat] != nil) != (parameter.default != nil) {
 				errorf(
 					c, parameter.span, "L0736", "the compiler supplies `%s`'s parameter `%s` %s a default",
 					name, written, sym.param_defaults[flat] != nil ? "with" : "without",
 				)
 			}
-			if !receiver && written != "" && flat < len(sym.param_symbols) {
-				written_id := intern_identifier(c, written)
-				if existing := symbol_of(c, sym.param_symbols[flat]); existing == nil {
-					sym.param_symbols[flat] = new_symbol(c, Symbol {
-						name = written_id, kind = .Parameter, type = sym.params[flat], mode = modes[flat],
-					})
-				} else if existing.name != written_id {
-					errorf(
-						c, parameter.span, "L0736", "the compiler supplies this parameter of `%s` as `%s`",
-						name, identifier_text(c, existing.name),
-					)
+			if !receiver && written != "" {
+				supplied := identifier_text(c, symbol_of(c, sym.param_symbols[flat]).name)
+				if supplied != written {
+					errorf(c, parameter.span, "L0736", "the compiler supplies this parameter of `%s` as `%s`", name, supplied)
 				}
 			}
 			flat += 1
@@ -479,12 +426,12 @@ check_intrinsic_enum :: proc(k: ^Checker, d: ^Decl, written: ^Type_Enum, type: T
 		}
 		member := index < len(info.fields) ? symbol_of(c, info.fields[index]) : nil
 		if member == nil || identifier_text(c, member.name) != field.name.text {
-			errorf(c, field.span, "L0736", "the compiler supplies `%s` with the members %s", d.names[0].text, member_list(c, info.fields))
+			errorf(c, field.span, "L0736", "the compiler supplies `%s` with the members %s", d.names[0].text, symbol_list(c, info.fields, false))
 			return
 		}
 	}
 	if len(written.fields) != len(info.fields) {
-		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s` with the members %s", d.names[0].text, member_list(c, info.fields))
+		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s` with the members %s", d.names[0].text, symbol_list(c, info.fields, false))
 	}
 }
 
@@ -500,10 +447,10 @@ check_intrinsic_struct :: proc(k: ^Checker, d: ^Decl, written: ^Type_Record, typ
 		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s` with no generic parameters", d.names[0].text)
 		return
 	}
-	public := make([dynamic]^Symbol, 0, len(info.fields), context.temp_allocator)
+	public := make([dynamic]Symbol_Id, 0, len(info.fields), context.temp_allocator)
 	for field in info.fields {
 		if sym := symbol_of(c, field); sym != nil && sym.public {
-			append(&public, sym)
+			append(&public, field)
 		}
 	}
 	index := 0
@@ -517,46 +464,33 @@ check_intrinsic_struct :: proc(k: ^Checker, d: ^Decl, written: ^Type_Record, typ
 		}
 		field_type := resolve_type_syntax(k, field.type)
 		for field_name in field.names {
-			expected := index < len(public) ? public[index] : nil
+			expected := index < len(public) ? symbol_of(c, public[index]) : nil
 			if expected == nil || identifier_text(c, expected.name) != field_name.text ||
 			   (field_type != INVALID_TYPE && field_type != expected.type) {
-				errorf(c, field_name.span, "L0736", "the compiler supplies `%s` with the public fields %s", d.names[0].text, field_list(c, public[:]))
+				errorf(c, field_name.span, "L0736", "the compiler supplies `%s` with the public fields %s", d.names[0].text, symbol_list(c, public[:], true))
 				return
 			}
 			index += 1
 		}
 	}
 	if index != len(public) {
-		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s` with the public fields %s", d.names[0].text, field_list(c, public[:]))
+		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s` with the public fields %s", d.names[0].text, symbol_list(c, public[:], true))
 	}
 }
 
 @(private = "file")
-member_list :: proc(c: ^Compiler, members: []Symbol_Id) -> string {
+symbol_list :: proc(c: ^Compiler, symbols: []Symbol_Id, typed: bool) -> string {
 	b := strings.builder_make(c.semantic_allocator)
-	for member, index in members {
+	for id, index in symbols {
 		if index > 0 {
 			strings.write_string(&b, ", ")
 		}
-		strings.write_string(&b, "`")
-		strings.write_string(&b, identifier_text(c, symbol_of(c, member).name))
-		strings.write_string(&b, "`")
-	}
-	return strings.to_string(b)
-}
-
-@(private = "file")
-field_list :: proc(c: ^Compiler, fields: []^Symbol) -> string {
-	b := strings.builder_make(c.semantic_allocator)
-	for field, index in fields {
-		if index > 0 {
-			strings.write_string(&b, ", ")
+		sym := symbol_of(c, id)
+		if typed {
+			fmt.sbprintf(&b, "`%s: %s`", identifier_text(c, sym.name), type_name(c, sym.type))
+		} else {
+			fmt.sbprintf(&b, "`%s`", identifier_text(c, sym.name))
 		}
-		strings.write_string(&b, "`")
-		strings.write_string(&b, identifier_text(c, field.name))
-		strings.write_string(&b, ": ")
-		strings.write_string(&b, type_name(c, field.type))
-		strings.write_string(&b, "`")
 	}
 	return strings.to_string(b)
 }

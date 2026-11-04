@@ -1,9 +1,8 @@
-// Runtime `foreach` and the iteration protocol.
+// Ranges and the iteration protocol's built-in side.
 //
-// A `foreach` over a built-in lowers directly to a loop, while the compiler also
-// contributes `Element`, `Iterator`, `iter` and `next`, so the same value
-// satisfies `Iterable` in generic code. `Range(T)` is an ordinary compiler-owned
-// struct, so a range survives being stored or passed.
+// The compiler contributes `Element`, `Iterator`, `iter` and `next` to a built-in,
+// so the same value satisfies `Iterable` in generic code. `Range(T)` is an
+// ordinary compiler-owned struct, so a range survives being stored or passed.
 package lokec
 
 import "core:fmt"
@@ -50,27 +49,17 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	if existing, found := c.range_types[element]; found {
 		return existing
 	}
-	name := intern_identifier(c, fmt.aprintf("Range(%s)", type_name(c, element), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_range = true})
 	fields := make([]Symbol_Id, 3, c.semantic_allocator)
 	fields[RANGE_LOW] = new_field(c, "low", element, RANGE_LOW, public = true)
 	fields[RANGE_HIGH] = new_field(c, "high", element, RANGE_HIGH, public = true)
 	fields[RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, RANGE_CLOSED, public = true)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.backend_label = fmt.aprintf("Range.%s", type_name(c, element), allocator = c.semantic_allocator)
-	}
+	type := new_type(c, Type_Info{
+		kind = .Struct, element = element, is_range = true, fields = fields,
+		name = intern_identifier(c, fmt.tprintf("Range(%s)", type_name(c, element))),
+		backend_label = fmt.aprintf("Range.%s", type_name(c, element), allocator = c.semantic_allocator),
+	})
 	c.range_types[element] = type
 	return type
-}
-
-// `Range` is predeclared, like `Simd`, and a program's own `Range` shadows it.
-range_callee :: proc(k: ^Checker, callee: Expr) -> bool {
-	ident, is_ident := callee.(^Expr_Ident)
-	if !is_ident || ident.name != "Range" {
-		return false
-	}
-	return lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
 }
 
 // `Range(T)` in type position.
@@ -78,7 +67,7 @@ resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {
 		return v.denoted_type
 	}
-	if len(v.args) != 1 || v.args[0].name.text != "" {
+	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0689", "`Range` takes one endpoint type, as in `Range(int)`")
 		return INVALID_TYPE
 	}
@@ -87,12 +76,7 @@ resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 		report_unresolved_type(k, v.args[0].value)
 		return INVALID_TYPE
 	}
-	if !type_is_integer(k.c, element) && !type_is_rune(k.c, element) {
-		errorf(
-			k.c, expr_span(v.args[0].value), "L0458",
-			"a range needs integer or rune endpoints, found `%s`",
-			type_name(k.c, element),
-		)
+	if !require_range_endpoint(k, element, expr_span(v.args[0].value)) {
 		return INVALID_TYPE
 	}
 	v.denoted_type = range_type(k.c, element)
@@ -100,6 +84,62 @@ resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	v.resolution.kind = .Type
 	v.value_category = .Type
 	return v.denoted_type
+}
+
+@(private = "file")
+require_range_endpoint :: proc(k: ^Checker, element: Type_Id, span: Span) -> bool {
+	if type_is_integer(k.c, element) || type_is_rune(k.c, element) {
+		return true
+	}
+	errorf(k.c, span, "L0458", "a range needs integer or rune endpoints, found `%s`", type_name(k.c, element))
+	return false
+}
+
+// `a ..< b` and `a ..= b` as a value. An expected `Range(T)` gives two
+// unfixed endpoints their type.
+check_range :: proc(k: ^Checker, v: ^Expr_Range, expected := INVALID_TYPE) {
+	v.value_category = .Value
+	low := check_single_expr(k, v.lo)
+	high := check_single_expr(k, v.hi)
+	if low == INVALID_TYPE || high == INVALID_TYPE {
+		return
+	}
+	hint := INVALID_TYPE
+	if info := type_of(k.c, expected); expected != INVALID_TYPE && info != nil && info.is_range {
+		hint = info.element
+	}
+	element, unified := unify_range_endpoints(k, v, low, high, hint)
+	if !unified || !require_range_endpoint(k, element, v.op_span) {
+		return
+	}
+	v.type = range_type(k.c, element)
+	ensure_iteration_members(k, v.type)
+}
+
+@(private = "file")
+unify_range_endpoints :: proc(k: ^Checker, v: ^Expr_Range, low, high, hint: Type_Id) -> (Type_Id, bool) {
+	if low == high && !type_is_untyped(k.c, low) {
+		return low, true
+	}
+	// Untyped endpoints are materialized, so an out-of-range constant is reported.
+	switch {
+	case type_is_untyped(k.c, low) && type_is_untyped(k.c, high):
+		merged := hint != INVALID_TYPE ? hint : default_type(k.c, low)
+		return merged, materialize(k, v.lo, merged) && materialize(k, v.hi, merged)
+	case type_is_untyped(k.c, low):
+		return high, materialize(k, v.lo, high)
+	case type_is_untyped(k.c, high):
+		return low, materialize(k, v.hi, low)
+	}
+	errorf(
+		k.c,
+		v.op_span,
+		"L0458",
+		"a range's endpoints must have the same type, found `%s` and `%s`",
+		type_name(k.c, low),
+		type_name(k.c, high),
+	)
+	return INVALID_TYPE, false
 }
 
 // ------------------------------------------------------- element records --
@@ -112,7 +152,7 @@ ELEMENT_SECOND :: 1
 // A map's `Element`: `(key: K, value: V)` (design.md "Iteration adapters").
 map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	info := type_of(c, subject)
-	return anon_record_type(c, []Anon_Record_Field{
+	return anon_record_type(c, []Anon_Member{
 		{name = intern_identifier(c, "key"), type = info.key},
 		{name = intern_identifier(c, "value"), type = info.element},
 	})
@@ -120,15 +160,16 @@ map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 
 // `indexed()`'s `Element`: `(value: E, index: int)`.
 indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
-	return anon_record_type(c, []Anon_Record_Field{
+	return anon_record_type(c, []Anon_Member{
 		{name = intern_identifier(c, "value"), type = element},
 		{name = intern_identifier(c, "index"), type = TYPE_INT},
 	})
 }
 
 // `rune_offsets()`'s `Element`: `(value: rune, offset: int)`, a byte offset.
+@(private = "file")
 rune_offset_type :: proc(c: ^Compiler) -> Type_Id {
-	return anon_record_type(c, []Anon_Record_Field{
+	return anon_record_type(c, []Anon_Member{
 		{name = intern_identifier(c, "value"), type = TYPE_RUNE},
 		{name = intern_identifier(c, "offset"), type = TYPE_INT},
 	})
@@ -142,17 +183,16 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 		return existing
 	}
 	element := type_of(c, range).element
-	name := intern_identifier(c, fmt.aprintf("Range_Iterator(%s)", type_name(c, element), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 4, c.semantic_allocator)
-	fields[ITER_RANGE_CURRENT] = new_field(c, "current", element, ITER_RANGE_CURRENT, public = true)
-	fields[ITER_RANGE_HIGH] = new_field(c, "high", element, ITER_RANGE_HIGH, public = true)
-	fields[ITER_RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED, public = true)
-	fields[ITER_RANGE_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_RANGE_REVERSED, public = true)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.backend_label = fmt.aprintf("Range_Iterator.%s", type_name(c, element), allocator = c.semantic_allocator)
-	}
+	fields[ITER_RANGE_CURRENT] = new_field(c, "current", element, ITER_RANGE_CURRENT)
+	fields[ITER_RANGE_HIGH] = new_field(c, "high", element, ITER_RANGE_HIGH)
+	fields[ITER_RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED)
+	fields[ITER_RANGE_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_RANGE_REVERSED)
+	type := new_type(c, Type_Info{
+		kind = .Struct, element = element, fields = fields,
+		name = intern_identifier(c, fmt.tprintf("Range_Iterator(%s)", type_name(c, element))),
+		backend_label = fmt.aprintf("Range_Iterator.%s", type_name(c, element), allocator = c.semantic_allocator),
+	})
 	c.iterator_types[range] = type
 	return type
 }
@@ -160,23 +200,21 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 // `holds` is what the iterator stores: a slice for runtime arrays, otherwise
 // the iterable itself. The cache key stays the iterable.
 @(private = "file")
-array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE) -> Type_Id {
+array_iterator_type :: proc(c: ^Compiler, array, holds: Type_Id) -> Type_Id {
 	if existing, found := c.iterator_types[array]; found {
 		return existing
 	}
-	stored := holds == INVALID_TYPE ? array : holds
 	element := type_of(c, array).element
-	name := intern_identifier(c, fmt.aprintf("Array_Iterator(%s)", type_name(c, array), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 3, c.semantic_allocator)
-	fields[ITER_ARRAY_DATA] = new_field(c, "data", stored, ITER_ARRAY_DATA, public = true)
-	fields[ITER_ARRAY_INDEX] = new_field(c, "index", TYPE_INT, ITER_ARRAY_INDEX, public = true)
-	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED, public = true)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.backend_label = fmt.aprintf("Array_Iterator.%s", type_name(c, array), allocator = c.semantic_allocator)
-		info.descriptor = type_is_compile_time_only(c, element)
-	}
+	fields[ITER_ARRAY_DATA] = new_field(c, "data", holds, ITER_ARRAY_DATA)
+	fields[ITER_ARRAY_INDEX] = new_field(c, "index", TYPE_INT, ITER_ARRAY_INDEX)
+	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED)
+	type := new_type(c, Type_Info{
+		kind = .Struct, element = element, fields = fields,
+		name = intern_identifier(c, fmt.tprintf("Array_Iterator(%s)", type_name(c, array))),
+		backend_label = fmt.aprintf("Array_Iterator.%s", type_name(c, array), allocator = c.semantic_allocator),
+		descriptor = type_is_compile_time_only(c, element),
+	})
 	c.iterator_types[array] = type
 	return type
 }
@@ -188,19 +226,22 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	if existing, found := c.iterator_types[subject]; found {
 		return existing
 	}
-	element := map_entry_type(c, subject)
-	name := intern_identifier(c, fmt.aprintf("Map_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_view = true})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE, public = true)
-	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR, public = true)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.key = subject // `next` needs the map's operation table
-		info.backend_label = fmt.aprintf("Map_Iterator.%s", type_name(c, subject), allocator = c.semantic_allocator)
-	}
+	type := new_map_cursor_type(c, subject, map_entry_type(c, subject), "Map_Iterator")
 	c.iterator_types[subject] = type
 	return type
+}
+
+// `{ table, cursor }` over `subject`, named `label`. `key` is there because `next`
+// needs the map's operation table.
+new_map_cursor_type :: proc(c: ^Compiler, subject, element: Type_Id, label: string) -> Type_Id {
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
+	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
+	return new_type(c, Type_Info{
+		kind = .Struct, element = element, key = subject, is_view = true, fields = fields,
+		name = intern_identifier(c, fmt.tprintf("%s(%s)", label, type_name(c, subject))),
+		backend_label = fmt.aprintf("%s.%s", label, type_name(c, subject), allocator = c.semantic_allocator),
+	})
 }
 
 // --------------------------------------------------------- container views --
@@ -213,9 +254,7 @@ container_view_type :: proc(c: ^Compiler, source: Type_Id, kind: View_Kind) -> T
 		return existing
 	}
 	label, held, element := "", INVALID_TYPE, INVALID_TYPE
-	switch kind {
-	case .None:
-		return INVALID_TYPE
+	#partial switch kind {
 	case .Entries:
 		label, held, element = "Map_Entries", TYPE_RAWPTR, map_entry_type(c, source)
 	case .Keys:
@@ -226,20 +265,16 @@ container_view_type :: proc(c: ^Compiler, source: Type_Id, kind: View_Kind) -> T
 		label, held, element = "Rune_Offsets", TYPE_STRING_VIEW, rune_offset_type(c)
 	}
 	// One rune-offset view serves every text type; a map view names its map.
-	spelling := kind == .Rune_Offsets ? label :
-	            fmt.aprintf("%s(%s)", label, type_name(c, source), allocator = c.semantic_allocator)
-	name := intern_identifier(c, spelling)
-	type := new_type(c, Type_Info{
-		kind = .Struct, name = name, element = element, is_view = true, view_kind = kind,
-	})
+	text := kind == .Rune_Offsets
+	spelling := text ? label : fmt.tprintf("%s(%s)", label, type_name(c, source))
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
 	fields[VIEW_SOURCE] = new_field(c, "source", held, VIEW_SOURCE)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.key = kind == .Rune_Offsets ? INVALID_TYPE : source
-		info.backend_label = kind == .Rune_Offsets ? label :
-		               fmt.aprintf("%s.%s", label, type_name(c, source), allocator = c.semantic_allocator)
-	}
+	type := new_type(c, Type_Info{
+		kind = .Struct, element = element, is_view = true, view_kind = kind, fields = fields,
+		name = intern_identifier(c, spelling),
+		key = text ? INVALID_TYPE : source,
+		backend_label = text ? label : fmt.aprintf("%s.%s", label, type_name(c, source), allocator = c.semantic_allocator),
+	})
 	c.view_types[key] = type
 	return type
 }
@@ -251,17 +286,7 @@ map_view_iterator_type :: proc(c: ^Compiler, view: Type_Id, label: string) -> Ty
 		return existing
 	}
 	info := type_of(c, view)
-	subject := info.key
-	name := intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, subject), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = info.element, is_view = true})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
-	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
-	if made := type_of(c, type); made != nil {
-		made.fields = fields
-		made.key = subject
-		made.backend_label = fmt.aprintf("%s.%s", label, type_name(c, subject), allocator = c.semantic_allocator)
-	}
+	type := new_map_cursor_type(c, info.key, info.element, label)
 	c.iterator_types[view] = type
 	return type
 }
@@ -273,15 +298,13 @@ text_iterator_type :: proc(c: ^Compiler, cache_key: Type_Id, element: Type_Id, l
 	if existing, found := c.iterator_types[cache_key]; found {
 		return existing
 	}
-	name := intern_identifier(c, label)
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_view = true})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
 	fields[ITER_TEXT_VIEW] = new_field(c, "view", TYPE_STRING_VIEW, ITER_TEXT_VIEW)
 	fields[ITER_TEXT_OFFSET] = new_field(c, "offset", TYPE_INT, ITER_TEXT_OFFSET)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.backend_label = label
-	}
+	type := new_type(c, Type_Info{
+		kind = .Struct, element = element, is_view = true, fields = fields,
+		name = intern_identifier(c, label), backend_label = label,
+	})
 	c.iterator_types[cache_key] = type
 	return type
 }
@@ -297,75 +320,16 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		return
 	}
 	info.contributed += {.Iteration}
-	iterator := INVALID_TYPE
-	element := INVALID_TYPE
-	iter_kind := Synth_Kind.None
-	reverse_kind := Synth_Kind.None
-	next_kind := Synth_Kind.None
-	lends_halves := false
-	switch {
-	case info.is_range:
-		element = info.element
-		iterator = range_iterator_type(k.c, under)
-		iter_kind, reverse_kind, next_kind = .Range_Iter, .Range_Iter_Reverse, .Range_Next
-	case info.kind == .Array:
-		element = info.element
-		held := under
-		// A compile-time-only element has no storage to lend.
-		next_kind = .Array_Next
-		if !type_is_compile_time_only(k.c, element) {
-			held = slice_of(k.c, element, mutable = false)
-			next_kind = .Slice_Ref_Next
-		}
-		iterator = array_iterator_type(k.c, under, held)
-		iter_kind, reverse_kind = .Array_Iter, .Array_Iter_Reverse
-	case info.kind == .Slice:
-		// Same `iter` as an array; only `next`'s bound differs.
-		element = info.element
-		iterator = array_iterator_type(k.c, under)
-		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Slice_Ref_Next
-	case info.kind == .Dynamic_Array:
-		// Iterates exactly like a slice of its current contents.
-		element = info.element
-		iterator = array_iterator_type(k.c, under, slice_of(k.c, info.element, mutable = false))
-		iter_kind, reverse_kind, next_kind = .Dynamic_Iter, .Dynamic_Iter_Reverse, .Slice_Ref_Next
-	case info.kind == .Map:
-		// The `Element` is the `{key, value}` entry.
-		element = map_entry_type(k.c, under)
-		iterator = map_iterator_type(k.c, under)
-		iter_kind, next_kind = .Map_Iter, .Map_Next
-	case info.kind == .String || info.kind == .String_View:
-		element = TYPE_RUNE
-		iterator = text_iterator_type(k.c, TYPE_STRING_VIEW, TYPE_RUNE, "Text_Iterator")
-		iter_kind, next_kind = .Text_Iter, .Text_Next
-	case info.view_kind != .None:
-		element = info.element
-		switch info.view_kind {
-		case .Rune_Offsets:
-			iterator = text_iterator_type(k.c, under, element, "Rune_Offset_Iterator")
-			iter_kind, next_kind = .Text_Iter, .Rune_Offsets_Next
-		case .Entries:
-			// Yields the map's own `Element`, so it reuses the map's iterator.
-			iterator = map_iterator_type(k.c, info.key)
-			iter_kind, next_kind = .Map_View_Iter, .Map_Next
-		case .Keys:
-			iterator = map_view_iterator_type(k.c, under, "Map_Keys_Iterator")
-			iter_kind, next_kind = .Map_View_Iter, .Map_Keys_Next
-			lends_halves = true
-		case .Values:
-			iterator = map_view_iterator_type(k.c, under, "Map_Values_Iterator")
-			iter_kind, next_kind = .Map_View_Iter, .Map_Values_Next
-			lends_halves = true
-		case .None:
-			return
-		}
-	case:
+	traversal, iterable := builtin_traversal(k.c, under, info)
+	if !iterable {
 		return
 	}
+	element, iterator, next_kind := traversal.element, traversal.iterator, traversal.next
 
 	// design.md "Borrowing iteration": stored elements are lent. An owned managed
 	// `Element` needs its copy and drop before the iterator's body asks.
-	lends := next_kind == .Slice_Ref_Next || lends_halves || next_kind == .Map_Next
+	lends := next_kind == .Slice_Ref_Next || next_kind == .Map_Next ||
+	         next_kind == .Map_Keys_Next || next_kind == .Map_Values_Next
 	if !lends && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
@@ -373,9 +337,9 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	members := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	append(&members, new_associated_type(k.c, "Element", element, under))
 	append(&members, new_associated_type(k.c, "Iterator", iterator, under))
-	append(&members, iter_member(k.c, "iter", iter_kind, under, iterator))
-	if reverse_kind != .None {
-		append(&members, iter_member(k.c, "iter_reverse", reverse_kind, under, iterator))
+	append(&members, synth_self_member(k.c, "iter", traversal.iter, under, .Borrow, iterator))
+	if traversal.iter_reverse != .None {
+		append(&members, synth_self_member(k.c, "iter_reverse", traversal.iter_reverse, under, .Borrow, iterator))
 	}
 	add_members(k.c, under, members[:])
 
@@ -391,33 +355,75 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// A map lends a record of two pointers, since the table never holds a record.
 	item := lends ? pointer_to(k.c, element, false) : element
 	if next_kind == .Map_Next {
-		lent := []Yield_Desc{{kind = .Borrowed}, {kind = .Borrowed}}
-		item = yield_item_type(k, element, Yield_Desc{kind = .Record, fields = lent}, no_span())
+		lent := yield_pair(k.c, Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed})
+		item = yield_item_type(k, element, lent, NO_SPAN)
 		if item == INVALID_TYPE { return }
 	}
-	next := synth_proc(
+	next := synth_receiver_proc(
 		k.c, "next", next_kind, iterator,
 		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, item),
 	)
-	if sym := symbol_of(k.c, next); sym != nil {
-		sym.has_receiver = true
-		sym.receiver = .Inout
-	}
 	add_members(k.c, iterator, []Symbol_Id{next})
 }
 
-// `source.iter()` or `iter_reverse()`: a borrowing receiver whose result borrows
-// from it. A synthesised member has no body for provenance to walk, so that
-// dependency is written here.
+// What a built-in iterable contributes, before any member is made of it.
 @(private = "file")
-iter_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner, iterator: Type_Id) -> Symbol_Id {
-	id := synth_proc(c, name, kind, owner, []Type_Id{owner}, []Param_Mode{.Borrow}, iterator)
-	if sym := symbol_of(c, id); sym != nil {
-		sym.has_receiver = true
-		sym.receiver = .Borrow
+Builtin_Traversal :: struct {
+	element, iterator:        Type_Id,
+	iter, iter_reverse, next: Synth_Kind,
+}
+
+// False for a type that is not a built-in iterable.
+@(private = "file")
+builtin_traversal :: proc(c: ^Compiler, under: Type_Id, info: ^Type_Info) -> (t: Builtin_Traversal, ok: bool) {
+	t.element = info.element
+	switch {
+	case info.is_range:
+		t.iterator = range_iterator_type(c, under)
+		t.iter, t.iter_reverse, t.next = .Range_Iter, .Range_Iter_Reverse, .Range_Next
+	case info.kind == .Array:
+		t.iter, t.iter_reverse = .Array_Iter, .Array_Iter_Reverse
+		// A compile-time-only element has no storage to lend.
+		if type_is_compile_time_only(c, t.element) {
+			t.iterator = array_iterator_type(c, under, under)
+			t.next = .Array_Next
+		} else {
+			t.iterator = array_iterator_type(c, under, slice_of(c, t.element, mutable = false))
+			t.next = .Slice_Ref_Next
+		}
+	case info.kind == .Slice:
+		// An array's `iter`, holding the slice itself.
+		t.iterator = array_iterator_type(c, under, under)
+		t.iter, t.iter_reverse, t.next = .Array_Iter, .Array_Iter_Reverse, .Slice_Ref_Next
+	case info.kind == .Dynamic_Array:
+		// Iterates exactly like a slice of its current contents.
+		t.iterator = array_iterator_type(c, under, slice_of(c, t.element, mutable = false))
+		t.iter, t.iter_reverse, t.next = .Dynamic_Iter, .Dynamic_Iter_Reverse, .Slice_Ref_Next
+	case info.kind == .Map:
+		t.element = map_entry_type(c, under)
+		t.iterator = map_iterator_type(c, under)
+		t.iter, t.next = .Map_Iter, .Map_Next
+	case info.kind == .String || info.kind == .String_View:
+		t.element = TYPE_RUNE
+		t.iterator = text_iterator_type(c, TYPE_STRING_VIEW, TYPE_RUNE, "Text_Iterator")
+		t.iter, t.next = .Text_Iter, .Text_Next
+	case info.view_kind == .Rune_Offsets:
+		t.iterator = text_iterator_type(c, under, t.element, "Rune_Offset_Iterator")
+		t.iter, t.next = .Text_Iter, .Rune_Offsets_Next
+	case info.view_kind == .Entries:
+		// Yields the map's own `Element`, so it reuses the map's iterator.
+		t.iterator = map_iterator_type(c, info.key)
+		t.iter, t.next = .Map_View_Iter, .Map_Next
+	case info.view_kind == .Keys:
+		t.iterator = map_view_iterator_type(c, under, "Map_Keys_Iterator")
+		t.iter, t.next = .Map_View_Iter, .Map_Keys_Next
+	case info.view_kind == .Values:
+		t.iterator = map_view_iterator_type(c, under, "Map_Values_Iterator")
+		t.iter, t.next = .Map_View_Iter, .Map_Values_Next
+	case:
+		return t, false
 	}
-	set_synth_result_summary(c, id, 0)
-	return id
+	return t, true
 }
 
 iteration_proc_matches :: proc(
@@ -470,681 +476,8 @@ iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id 
 // The associated type a member names, or INVALID_TYPE.
 associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id {
 	member := iteration_member(k, type, name)
-	sym := symbol_of(k.c, member)
-	if sym == nil {
-		return INVALID_TYPE
-	}
-	if sym.kind == .Type {
+	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Type {
 		return sym.type
 	}
-	if sym.kind == .Const {
-		if sym.decl != nil && sym.decl.check_state == .Unchecked {
-			check_symbol_decl_in_place(k, member, type)
-			sym = symbol_of(k.c, member)
-		}
-		if const_names_type(k.c, sym.const_value, sym.type) {
-			return sym.const_value.type_value
-		}
-	}
-	return INVALID_TYPE
-}
-
-// -------------------------------------------------------- runtime foreach --
-
-check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
-	if len(s.bindings) == 0 {
-		errorf(k.c, s.span, "L0456", "a `foreach` binds at least one name")
-		return FLOWS
-	}
-	outer := k.scope
-	k.scope = new_scope(k.c, outer, .Local)
-	defer k.scope = outer
-
-	// Resolve calls first, so a user member named `indexed` keeps its meaning.
-	if _, is_call := s.iterable.(^Expr_Call); is_call {
-		if check_single_expr(k, s.iterable) == INVALID_TYPE { return FLOWS }
-	}
-	adapter_name := peel_resolved_adapter(k, s)
-
-	// A written range lowers without building a `Range(T)`.
-	if written, is_range := s.iterable.(^Expr_Range); is_range {
-		return check_range_foreach(k, s, written, adapter_name)
-	}
-
-	// A type is never iterable; an enum name probably meant `.values()`.
-	if named := resolve_type_syntax(k, s.iterable); named != INVALID_TYPE {
-		errorf(
-			k.c, expr_span(s.iterable), "L0456",
-			"`%s` is a type, so it is not iterable%s",
-			type_name(k.c, named),
-			type_is_enum(k.c, named) ? "; write `.values()` for its members" : "",
-		)
-		return FLOWS
-	}
-
-	subject := expr_base(s.iterable).type
-	if subject == INVALID_TYPE { subject = check_single_expr(k, s.iterable) }
-	if subject == INVALID_TYPE {
-		return FLOWS
-	}
-	// Nominal, like indexing and slicing: a `distinct` carrier falls to
-	// `check_protocol_foreach`, which asks for the iterator its own type
-	// declares (design.md "Distinct types").
-	info := type_of(k.c, subject)
-	if info == nil {
-		return FLOWS
-	}
-
-	switch {
-	case info.kind == .Array:
-		s.kind = .Array
-		s.count = info.count
-	case info.kind == .Slice:
-		s.kind = .Slice
-	case info.kind == .Dynamic_Array:
-		s.kind = .Dynamic
-	case info.kind == .Map:
-		s.kind = .Map
-	case info.kind == .String || info.kind == .String_View:
-		s.kind = .Text
-	case info.is_range:
-		s.kind = .Stored_Range
-	case:
-		return check_protocol_foreach(k, s, subject)
-	}
-
-	if !check_adapter_applies(k, s, subject, adapter_name) {
-		return FLOWS
-	}
-	// The indexed lowering needs an array constant's address.
-	if s.kind == .Array {
-		request_materialization(k, s.iterable)
-	}
-	if foreach_is_place_loop(s) {
-		return check_place_foreach(k, s, subject, info)
-	}
-	s.element_type = foreach_element_type(k, s, subject, info)
-	return check_foreach_body(k, s)
-}
-
-// design.md "By-reference iteration": a `&mut` anywhere in the header makes this
-// a place loop over the container's own storage.
-foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
-	return first_ref_binding(s.bindings) != nil
-}
-
-// The first `&mut` leaf in a pattern, or nil.
-@(private = "file")
-first_ref_binding :: proc(bindings: []Foreach_Binding) -> ^Foreach_Binding {
-	for &binding in bindings {
-		if binding.is_ref {
-			return &binding
-		}
-		if found := first_ref_binding(binding.group); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-// Where a by-reference loop that cannot be one is reported: at its `&`.
-ref_span :: proc(s: ^Stmt_Foreach) -> Span {
-	if ref := first_ref_binding(s.bindings); ref != nil {
-		return ref.name.span
-	}
-	return s.bindings[0].name.span
-}
-
-// design.md "Borrowing iteration": a container lends its stored elements. Text
-// and ranges generate theirs, so they hand over owned values.
-foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
-	if foreach_is_place_loop(s) {
-		return false
-	}
-	#partial switch s.kind {
-	case .Array, .Slice, .Dynamic, .Map:
-		return true
-	}
-	return false
-}
-
-// Which parts of a built record this traversal lends: `indexed()` over a map is
-// `{value: {key: borrowed, value: borrowed}, index: owned}`.
-@(private = "file")
-foreach_record_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
-	base := Yield_Desc{kind = .Borrowed}
-	if s.kind == .Map {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed}
-		base = Yield_Desc{kind = .Record, fields = fields}
-	}
-	if s.indexed {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = base, Yield_Desc{kind = .Owned}
-		return Yield_Desc{kind = .Record, fields = fields}
-	}
-	return base
-}
-
-// design.md "Element bindings": whether the traversal builds a record of lent
-// parts, which a single name then receives as those parts' pointers.
-@(private = "file")
-foreach_builds_lent_record :: proc(s: ^Stmt_Foreach) -> bool {
-	return s.borrows && (s.indexed || s.kind == .Map)
-}
-
-// The `Element` this loop yields, after the header's adapter.
-@(private = "file")
-foreach_element_type :: proc(k: ^Checker, s: ^Stmt_Foreach, under: Type_Id, info: ^Type_Info) -> Type_Id {
-	traversed := s.kind == .Text ? TYPE_RUNE : info.element
-	if s.kind == .Map {
-		traversed = map_entry_type(k.c, under)
-	}
-	return s.indexed ? indexed_element_type(k.c, traversed) : traversed
-}
-
-// A map has no order, and the runtime cannot decode UTF-8 backwards.
-@(private = "file")
-check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, name: Name) -> bool {
-	if s.adapter == .None {
-		return true
-	}
-	ok := s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic ||
-	      s.kind == .Range || s.kind == .Stored_Range
-	if !ok {
-		errorf(
-			k.c, name.span, "L0460",
-			"`%s()` is not a traversal of `%s`",
-			name.text, type_name(k.c, subject),
-		)
-	}
-	return ok
-}
-
-@(private = "file")
-check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, info: ^Type_Info) -> Flow_Info {
-	switch s.kind {
-	case .Map:
-		// Keys stay immutable; `place_loop_yield` lends only the value mutably.
-		if s.indexed {
-			errorf(k.c, ref_span(s), "L0457", "`indexed()` over a map entry is not a mutable traversal; count with a variable")
-			return FLOWS
-		}
-		if !expr_base(s.iterable).assignable {
-			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
-			return FLOWS
-		}
-		s.element_type = map_entry_type(k.c, subject)
-		if !gate_type(k, s.element_type, expr_span(s.iterable)) { return FLOWS }
-		if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s), foreach_packed_source(k, s)) { return FLOWS }
-		return check_foreach_block(k, s)
-	case .Slice:
-		// design.md "Slices": the slice's own `mut`, not its variable's.
-		if !info.mutable {
-			errorf(
-				k.c,
-				ref_span(s),
-				"L0480",
-				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or drop the `&mut` to read them",
-				type_name(k.c, subject),
-				type_name(k.c, info.element),
-			)
-			return FLOWS
-		}
-	case .Range, .Stored_Range:
-		errorf(k.c, ref_span(s), "L0457", "a range produces values, so it cannot be iterated by reference")
-		return FLOWS
-	case .Text:
-		errorf(
-			k.c, ref_span(s), "L0564",
-			"a string yields decoded code points, so it cannot be iterated by reference",
-		)
-		return FLOWS
-	case .Array, .Dynamic:
-		if !expr_base(s.iterable).assignable {
-			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
-			return FLOWS
-		}
-	case .Unresolved, .Static, .Protocol:
-		return FLOWS
-	}
-	s.element_type = info.element
-	if !gate_type(k, s.element_type, expr_span(s.iterable)) {
-		return FLOWS
-	}
-	s.element_type = s.indexed ? indexed_element_type(k.c, s.element_type) : s.element_type
-	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s), foreach_packed_source(k, s)) { return FLOWS }
-	return check_foreach_block(k, s)
-}
-
-@(private = "file")
-check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range, adapter_name: Name) -> Flow_Info {
-	element := check_single_expr(k, written)
-	if element == INVALID_TYPE {
-		return FLOWS
-	}
-	s.kind = .Range
-	if !check_adapter_applies(k, s, element, adapter_name) {
-		return FLOWS
-	}
-	if foreach_is_place_loop(s) {
-		errorf(k.c, ref_span(s), "L0457", "a range produces values, so it cannot be iterated by reference")
-		return FLOWS
-	}
-	endpoint := underlying_info(k.c, element).element
-	s.element_type = s.indexed ? indexed_element_type(k.c, endpoint) : endpoint
-	return check_foreach_body(k, s)
-}
-
-// design.md "Iteration protocol": associated `Element` and `Iterator`,
-// `value.iter()`, and `next(self: inout Iterator) -> Option(Element)`.
-@(private = "file")
-check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
-	if foreach_is_place_loop(s) { return check_mutable_protocol_foreach(k, s, subject) }
-	element := associated_type_of(k, subject, "Element")
-	iterator := associated_type_of(k, subject, "Iterator")
-	iter := iteration_member(k, subject, "iter")
-	iter_sym := symbol_of(k.c, iter)
-	if element == INVALID_TYPE || iterator == INVALID_TYPE ||
-	   !iteration_proc_matches(k, iter_sym, subject, .Borrow, iterator) {
-		errorf(
-			k.c,
-			expr_span(s.iterable),
-			"L0456",
-			"`%s` is not iterable: it needs associated `Element` and `Iterator` members and an `iter` procedure",
-			type_name(k.c, subject),
-		)
-		return FLOWS
-	}
-	// Only `reversed()` selects `iter_reverse`.
-	if s.adapter == .Reversed {
-		reverse := iteration_member(k, subject, "iter_reverse")
-		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Borrow, iterator) {
-			errorf(
-				k.c,
-				expr_span(s.iterable),
-				"L0460",
-				"`%s` cannot be reversed: it needs `iter_reverse :: proc(self) -> %s`",
-				type_name(k.c, subject),
-				type_name(k.c, iterator),
-			)
-			return FLOWS
-		}
-		iter = reverse
-	}
-	// `next`'s `Item` says how the element is handed over.
-	yield := iterator_yield(k, iterator, element)
-	item := yield_item_type(k, element, yield, expr_span(s.iterable))
-	if item == INVALID_TYPE {
-		return FLOWS
-	}
-	next := iteration_member(k, iterator, "next")
-	next_sym := symbol_of(k.c, next)
-	if !iteration_proc_matches(k, next_sym, iterator, .Inout, option_type(k, item)) {
-		errorf(
-			k.c,
-			expr_span(s.iterable),
-			"L0456",
-			"`%s` needs `next :: proc(self: inout %s) -> Option(%s)`",
-			type_name(k.c, iterator),
-			type_name(k.c, iterator),
-			type_name(k.c, item),
-		)
-		// `next` may exist but be excluded by a failed `where`.
-		note_excluded_member(k, iterator, "next")
-		return FLOWS
-	}
-
-	effective_yield := yield
-	effective_element := element
-	effective_item := item
-	if s.indexed {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = yield, Yield_Desc{kind = .Owned}
-		effective_yield = Yield_Desc{kind = .Record, fields = fields}
-		effective_element = indexed_element_type(k.c, element)
-		effective_item = yield_item_type(k, effective_element, effective_yield, expr_span(s.iterable))
-		if effective_item == INVALID_TYPE { return FLOWS }
-	}
-	if !yield_is_owned(effective_yield) {
-		s.borrows = true
-		s.item_type = effective_item
-	}
-
-	s.kind = .Protocol
-	s.element_type = effective_element
-	s.iterator_type = iterator
-	s.iter_symbol = iter
-	s.next_symbol = next
-	enroll_synth(k.c, iter)
-	enroll_synth(k.c, next)
-	return check_foreach_body(k, s, effective_yield)
-}
-
-// design.md "Element bindings": the one binder for every value loop. One name
-// binds the whole `Element`; more destructure a record positionally. `yield`
-// is how a protocol `next` hands the element over; a built-in traversal lends
-// it, or copies it field by field.
-@(private = "file")
-check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, yield := Yield_Desc{kind = .Borrowed}) -> Flow_Info {
-	element := s.element_type
-	if !gate_type(k, element, expr_span(s.iterable)) {
-		return FLOWS
-	}
-	// The protocol path already read its iterator's yield mode.
-	if s.kind != .Protocol {
-		s.borrows = foreach_lends_elements(s)
-	}
-	if s.item_type == INVALID_TYPE && foreach_builds_lent_record(s) {
-		s.item_type = yield_item_type(k, element, foreach_record_yield(k, s), expr_span(s.iterable))
-		if s.item_type == INVALID_TYPE {
-			return FLOWS
-		}
-	}
-	// A copying built-in traversal cannot copy a move-only element; a protocol
-	// `next` already hands one over.
-	owns := !s.borrows && s.kind != .Protocol
-	if owns && !require_copyable_element(k, s, element) {
-		return FLOWS
-	}
-	// An owned element is dropped each step. Asked here too because `indexed()`
-	// wraps it in a record of its own.
-	if !s.borrows && type_is_managed(k.c, element) {
-		contribute_lifecycle_members(k, element)
-	}
-	// A value loop has no `&mut` leaf to check.
-	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, yield, foreach_packed_source(k, s)) { return FLOWS }
-	return check_foreach_block(k, s)
-}
-
-// Binds one recursive pattern, for value and place loops alike (only a place
-// loop has `&` leaves). `item` is the projected form, where a record of lent
-// pointers binds whole; a direct place loop passes INVALID_TYPE. `desc` says
-// how each part is handed over, and an `&mut` leaf must land on a mutable one
-// (design.md "Element bindings").
-check_foreach_pattern :: proc(
-	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id, desc: Yield_Desc,
-	packed := "",
-) -> bool {
-	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return check_foreach_pattern(k, s, bindings[0].group, logical, item, desc, packed)
-	}
-	if len(bindings) == 1 {
-		if bindings[0].is_ref && desc.kind != .Mutable {
-			report_immutable_ref_leaf(k, s, bindings[0], desc)
-			return false
-		}
-		return bind_pattern_leaf(k, s, &bindings[0], logical, item, desc, packed)
-	}
-	info := underlying_info(k.c, logical)
-	// A padding field fills no binding (design.md "Destructuring").
-	if info == nil || info.kind != .Struct || len(named_fields(k.c, info)) != len(bindings) {
-		report_pattern_arity(k, bindings, logical, info, raw_data(bindings) == raw_data(s.bindings))
-		return false
-	}
-	fields, eligible := destructure_fields(
-		k, logical, len(bindings), bindings[0].name.span, "L0459", "bound by a `foreach`",
-	)
-	if !eligible { return false }
-	// design.md "Destructuring": an owned record that `next` hands over is taken
-	// apart, which a custom hook forbids. A lent or copied one is projected.
-	if desc.kind == .Owned && s.kind == .Protocol && !foreach_is_place_loop(s) &&
-	   reject_hooked_destructure(k, logical, bindings[0].name.span) {
-		return false
-	}
-	item_info := underlying_info(k.c, item)
-	for &binding, index in bindings {
-		field := symbol_of(k.c, fields[index])
-		if field == nil { return false }
-		projected := INVALID_TYPE
-		slot := int(field.index)
-		if item_info != nil && item_info.kind == .Struct && slot < len(item_info.fields) {
-			if projected_field := symbol_of(k.c, item_info.fields[slot]); projected_field != nil {
-				projected = projected_field.type
-			}
-		}
-		// A record descriptor names each part; any other applies to all of them.
-		part := desc
-		if desc.kind == .Record && index < len(desc.fields) {
-			part = desc.fields[index]
-		}
-		// design.md "@(packed)": a field of a packed record, and everything
-		// stored inside it, may be misaligned.
-		origin := packed
-		if origin == "" && info.packed {
-			origin = identifier_text(k.c, field.name)
-		}
-		if len(binding.group) > 0 {
-			if !check_foreach_pattern(k, s, binding.group, field.type, projected, part, origin) { return false }
-			continue
-		}
-		if binding.is_ref && part.kind != .Mutable {
-			report_immutable_ref_leaf(k, s, binding, part)
-			return false
-		}
-		if !bind_pattern_leaf(k, s, &binding, field.type, projected, part, origin) { return false }
-	}
-	return true
-}
-
-// An `&mut` leaf over a part the traversal does not lend mutably.
-@(private = "file")
-report_immutable_ref_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: Foreach_Binding, desc: Yield_Desc) {
-	#partial switch desc.kind {
-	case .Owned:
-		errorf(
-			k.c, binding.name.span, "L0457",
-			"`%s` is made by the traversal, like the `indexed()` counter, so it cannot be taken by reference",
-			binding.name.text,
-		)
-	case .Borrowed:
-		errorf(
-			k.c, binding.name.span, "L0457",
-			"`%s` is lent read-only, so it cannot be taken by reference",
-			binding.name.text,
-		)
-	case:
-		errorf(
-			k.c, binding.name.span, "L0457",
-			"`%s` is a record of parts lent separately; bind its fields, and take the mutable ones by reference",
-			binding.name.text,
-		)
-	}
-}
-
-// How a direct place loop hands over its element: the stored element as a
-// mutable place, a map's key read-only, and `indexed()`'s counter owned.
-place_loop_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
-	element := Yield_Desc{kind = .Mutable}
-	if s.kind == .Map {
-		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-		fields[0], fields[1] = Yield_Desc{kind = .Borrowed}, element
-		element = Yield_Desc{kind = .Record, fields = fields}
-	}
-	if !s.indexed {
-		return element
-	}
-	fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
-	fields[0], fields[1] = element, Yield_Desc{kind = .Owned}
-	return Yield_Desc{kind = .Record, fields = fields}
-}
-
-// A leaf binds its logical type, or the projected record of pointers when both
-// are records. A place loop's leaves, like a lending loop's, name storage the
-// source still owns, except a part `next` hands over owned (design.md "Element
-// bindings"): that leaf owns its value, even beside lent siblings.
-@(private = "file")
-bind_pattern_leaf :: proc(
-	k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Binding, logical, item: Type_Id, part: Yield_Desc,
-	packed := "",
-) -> bool {
-	bound := logical
-	if item != INVALID_TYPE && item != logical {
-		item_info := underlying_info(k.c, item)
-		logical_info := underlying_info(k.c, logical)
-		if item_info != nil && logical_info != nil && item_info.kind == .Struct && logical_info.kind == .Struct {
-			bound = item
-		}
-	}
-	if !gate_type(k, bound, expr_span(s.iterable)) { return false }
-	owned := !foreach_is_place_loop(s) && (!s.borrows || part.kind == .Owned)
-	// design.md "@(packed)": a writable leaf needs the address of a field
-	// that may be misaligned; a read-only one is bound as a copy.
-	if packed != "" && !owned && binding.is_ref {
-		errorf(
-			k.c, binding.name.span, "L0614",
-			"cannot bind `%s` with `&mut`: it is reached through a packed struct", packed,
-		)
-		return false
-	}
-	binding.symbol = bind_loop_name(k, binding^, bound, binding.is_ref, !owned)
-	// It is bound as a copy, which cannot be borrowed (design.md "@(packed)").
-	if sym := symbol_of(k.c, binding.symbol); sym != nil && packed != "" && !owned {
-		sym.packed_field = packed
-	}
-	return true
-}
-
-// design.md "@(packed)": the elements of a fixed array stored in a packed
-// struct are as misaligned as the array. Every other container's elements are
-// storage of their own.
-foreach_packed_source :: proc(k: ^Checker, s: ^Stmt_Foreach) -> string {
-	if s.kind != .Array {
-		return ""
-	}
-	field, _ := packed_field_reached(k, s.iterable)
-	return field
-}
-
-@(private = "file")
-report_pattern_arity :: proc(k: ^Checker, bindings: []Foreach_Binding, element: Type_Id, info: ^Type_Info, header: bool) {
-	span := len(bindings) > 0 ? bindings[0].name.span : no_span()
-	count := info != nil && info.kind == .Struct ? len(named_fields(k.c, info)) : 0
-	errorf(
-		k.c, span, "L0459", "`%s` has %d fields, so this `foreach` pattern needs 1 or %d parts, not %d",
-		type_name(k.c, element), count, count, len(bindings),
-	)
-	// design.md "Element bindings": a loop never invents an index.
-	if header && count == 0 && len(bindings) == 2 {
-		add_notef(k.c, span, "a loop never invents an index; iterate `source.indexed()` to receive one")
-	}
-}
-
-@(private = "file")
-require_copyable_element :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> bool {
-	if !type_clone_disabled(k.c, element) {
-		return true
-	}
-	errorf(
-		k.c, expr_span(s.iterable), "L0491",
-		"`%s` is move-only, so a by-value `foreach` cannot copy it out of the container; bind the parts the traversal lends, or remove the elements",
-		type_name(k.c, element),
-	)
-	return false
-}
-
-check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
-	outer_header, outer_broken := k.loop_header, k.loop_broken
-	k.loop_header, k.loop_broken = false, false
-	k.loop_depth += 1
-	body := check_scoped_block(k, s.body)
-	k.loop_depth -= 1
-	k.loop_header, k.loop_broken = outer_header, outer_broken
-	return Flow_Info{can_fall_through = true, returns = body.returns}
-}
-
-bind_loop_name :: proc(
-	k: ^Checker, binding: Foreach_Binding, type: Type_Id, mutable: bool, borrows := false,
-) -> Symbol_Id {
-	if binding.name.text == "_" || binding.name.text == "" {
-		return INVALID_SYMBOL
-	}
-	id := name_identifier(k.c, binding.name)
-	// The checks `declare_all` gives a local (design.md "Variable declarations").
-	if _, ok := k.scope.names[id]; ok {
-		errorf(k.c, binding.name.span, "L0304", "`%s` is already declared in this scope", binding.name.text)
-		return INVALID_SYMBOL
-	}
-	if reject_reserved_name(k, id, binding.name.span) {
-		return INVALID_SYMBOL
-	}
-	outer, owner := lookup_symbol_with_scope(k.scope.parent, id)
-	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
-		errorf(k.c, binding.name.span, "L0305", "`%s` shadows an outer declaration", binding.name.text)
-		note_shadowed_capture(k, outer)
-	}
-	symbol := new_symbol(k.c, Symbol {
-		name      = id,
-		span      = binding.name.span,
-		kind      = .Var,
-		type      = type,
-		pkg       = k.pkg,
-		immutable = !mutable,
-		// Names storage the source still owns.
-		borrowed_binding = binding.is_ref || borrows ? .Loop_Element : .None,
-	})
-	k.scope.names[id] = symbol
-	return symbol
-}
-
-// ------------------------------------------------------- range expressions --
-
-// `a ..< b` and `a ..= b` as a value. An expected `Range(T)` gives two
-// unfixed endpoints their type.
-check_range :: proc(k: ^Checker, v: ^Expr_Range, expected := INVALID_TYPE) {
-	v.value_category = .Value
-	low := check_single_expr(k, v.lo)
-	high := check_single_expr(k, v.hi)
-	if low == INVALID_TYPE || high == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	hint := INVALID_TYPE
-	if info := type_of(k.c, expected); expected != INVALID_TYPE && info != nil && info.is_range {
-		hint = info.element
-	}
-	element, unified := unify_range_endpoints(k, v, low, high, hint)
-	if !unified {
-		v.type = INVALID_TYPE
-		return
-	}
-	if !type_is_integer(k.c, element) && !type_is_rune(k.c, element) {
-		errorf(
-			k.c,
-			v.op_span,
-			"L0458",
-			"a range needs integer or rune endpoints, found `%s`",
-			type_name(k.c, element),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	v.type = range_type(k.c, element)
-	ensure_iteration_members(k, v.type)
-}
-
-@(private = "file")
-unify_range_endpoints :: proc(k: ^Checker, v: ^Expr_Range, low, high, hint: Type_Id) -> (Type_Id, bool) {
-	if low == high && !type_is_untyped(k.c, low) {
-		return low, true
-	}
-	// Untyped endpoints are materialized, so an out-of-range constant is reported.
-	switch {
-	case type_is_untyped(k.c, low) && type_is_untyped(k.c, high):
-		merged := hint != INVALID_TYPE ? hint : default_type(k.c, low)
-		return merged, materialize(k, v.lo, merged) && materialize(k, v.hi, merged)
-	case type_is_untyped(k.c, low):
-		return high, materialize(k, v.lo, high)
-	case type_is_untyped(k.c, high):
-		return low, materialize(k, v.hi, low)
-	}
-	errorf(
-		k.c,
-		v.op_span,
-		"L0458",
-		"a range's endpoints must have the same type, found `%s` and `%s`",
-		type_name(k.c, low),
-		type_name(k.c, high),
-	)
-	return INVALID_TYPE, false
+	return const_type_value(k, member, type)
 }

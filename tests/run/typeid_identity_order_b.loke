@@ -1,0 +1,35 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// `typeid_identity_order_a` with the declarations of `T1` and `T2` and every
+// request swapped, which must leave the same numbers.
+T2 :: struct { value: int }
+T1 :: struct { value: int }
+Rec :: struct { id: typeid, count: int }
+Foo :: struct($v: Rec) { value: int }
+
+raw :: proc(id: typeid) -> i64 {
+	p := &id;
+	return (^i64)(rawptr(p))^;
+}
+
+local_in_f :: proc($T: type) -> typeid {
+	Box :: struct($U: type) { value: U };
+	return typeid_of(Box(int));
+}
+
+local_in_g :: proc($T: type) -> typeid {
+	Box :: struct($U: type) { value: U };
+	return typeid_of(Box(int));
+}
+
+main :: proc() {
+	g_box := local_in_g(int);
+	f_box := local_in_f(int);
+	second := typeid_of(Foo(Rec{typeid_of(T2), 1}));
+	first := typeid_of(Foo(Rec{typeid_of(T1), 1}));
+	plain := typeid_of(proc(p: ^int));
+	escaping := typeid_of(proc(@(escape=stored) p: ^int));
+	fmt.println(raw(f_box), raw(g_box));
+	fmt.println(raw(escaping), raw(plain));
+	fmt.println(raw(first), raw(second));
+}

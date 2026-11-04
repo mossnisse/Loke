@@ -1,0 +1,14 @@
+L0731
+@16:13
+this task may be given what `shared` stores, which every task and the parent share
+provenance precision limit: fixed arrays longer than 8 elements merge element borrows
+
+L0731
+@26:13
+`reaching` may reach through `shared`, which every task and the parent share
+provenance precision limit: fixed arrays longer than 8 elements merge element borrows
+
+L0731
+@32:3
+`reaching` may reach through `shared` while this `parallel` block's tasks may be running
+provenance precision limit: fixed arrays longer than 8 elements merge element borrows

@@ -4,6 +4,7 @@
 package lokec
 
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
 
@@ -29,18 +30,14 @@ Eval_Flow :: enum {
 // A value being computed. Aggregates keep mutable elements; a pointer is
 // `target` and a procedure value `proc_value`.
 Eval_Value :: struct {
-	kind:       Const_Kind,
+	// Its `aggregate` stays nil: `elements` are the parts.
+	using constant: Const_Value,
 	type:       Type_Id,
 	// A union's variant; `elements[0]` is its payload, `Invalid` when none.
 	variant:    int,
-	integer:    Big_Int,
-	float:      f64,
-	float_bits: u16,
-	float_raw:  u64,
-	boolean:    bool,
-	text:       string,
-	type_value: Type_Id,
 	elements:   []Eval_Value,
+	// What `elements`' block holds, when a container grew it (`eval_splice`).
+	capacity:   int,
 	target:     ^Eval_Value,
 	proc_value: Symbol_Id,
 }
@@ -50,14 +47,13 @@ Eval_Frame :: struct {
 	site:         Span,
 	locals:       map[Symbol_Id]^Eval_Value,
 	defers:       [dynamic]^Stmt_Defer,
-	// A nil slot means no result.
-	result:      Eval_Value,
-	result_slot: ^Eval_Value,
+	result:       Eval_Value,
+	// `INVALID_TYPE` means no result.
+	result_type:  Type_Id,
 	// The storage a `return inout` named (design.md "`inout` results").
 	result_place: ^Eval_Value,
-	// Set by a failing `or_return`; the enclosing statement turns it into `.Return`.
-	returning:    bool,
-	// Set by an `or_else` exit; the enclosing statement turns it into this flow.
+	// Set by a failing `or_return` or an `or_else` exit; the enclosing statement
+	// turns it into this flow.
 	exiting:      Eval_Flow,
 }
 
@@ -67,8 +63,6 @@ Evaluator :: struct {
 	alloc:  mem.Allocator,
 	frames: [dynamic]^Eval_Frame,
 	steps:  int,
-	bytes:  int,
-	memory_error: mem.Allocator_Error,
 	failed: bool,
 	// The context that required this evaluation, where the diagnostic points.
 	origin: Span,
@@ -79,45 +73,36 @@ Evaluator :: struct {
 
 // Every compile-time-required context comes through here. `code` names the
 // context in the fallback diagnostic for a failure nothing else reported.
-require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (Const_Value, bool) {
+require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (out: Const_Value, success: bool) {
 	base := expr_base(e)
 	if base == nil || base.type == INVALID_TYPE {
 		return Const_Value{}, false
 	}
-	if base.is_const && base.const_value.kind != .Invalid {
+	if base_is_const(base) {
 		return base.const_value, true
 	}
 	ev := Evaluator{k = k, origin = expr_span(e), what = what}
 	defer eval_storage_destroy(&ev.storage)
-	value, ok := eval_root(&ev, e, code, "%s must be a compile-time constant")
-	if !ok {
-		return Const_Value{}, false
-	}
-	frozen, froze := freeze_result(&ev, value)
-	if !froze {
-		return Const_Value{}, false
-	}
-	base.is_const = true
+	value := eval_root(&ev, e, code, "%s must be a compile-time constant") or_return
+	frozen := freeze_result(&ev, value) or_return
 	base.const_value = frozen
 	return frozen, true
 }
 
 // Static `foreach`: each element freezes on its own, so the container never
-// escapes evaluation.
-evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0454") -> ([]Const_Value, bool) {
+// escapes evaluation. The result is the caller's to reorder. A constant is
+// already frozen, and reading its parts runs nothing.
+evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string) -> (out: []Const_Value, success: bool) {
+	if base := expr_base(e); base.const_value.aggregate != nil {
+		out = slice.clone(base.const_value.aggregate.elements, k.c.semantic_allocator)
+		return out, true
+	}
 	ev := Evaluator{k = k, origin = expr_span(e), what = what}
 	defer eval_storage_destroy(&ev.storage)
-	value, ok := eval_root(&ev, e, code, "%s must be compile-time evaluable")
-	if !ok {
-		return nil, false
-	}
-	out := make([]Const_Value, len(value.elements), k.c.semantic_allocator)
+	value := eval_root(&ev, e, "L0454", "%s must be compile-time evaluable") or_return
+	out = make([]Const_Value, len(value.elements), k.c.semantic_allocator)
 	for element, index in value.elements {
-		frozen, froze := freeze_result(&ev, element)
-		if !froze {
-			return nil, false
-		}
-		out[index] = frozen
+		out[index] = freeze_result(&ev, element) or_return
 	}
 	return out, true
 }
@@ -126,9 +111,7 @@ evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0
 // nothing else reported.
 @(private = "file")
 eval_root :: proc(ev: ^Evaluator, e: Expr, code, format: string) -> (Eval_Value, bool) {
-	if !init_evaluator(ev) {
-		return Eval_Value{}, false
-	}
+	init_evaluator(ev)
 	value, ok := eval_expr(ev, e)
 	if !eval_memory_ok(ev) || !ok {
 		if !ev.failed {
@@ -140,6 +123,7 @@ eval_root :: proc(ev: ^Evaluator, e: Expr, code, format: string) -> (Eval_Value,
 }
 
 // Checks a procedure on demand, so a constant may call one not reached yet.
+@(private = "file")
 ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	// Executing a declaration is a real use, even from a `where` predicate.
 	saved_speculation := begin_commit(k.c)
@@ -151,7 +135,7 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 		end_commit(k.c, saved_speculation)
 	}
 	if instance, found := k.c.procedure_instances[symbol_id]; found {
-		promote_generic_instance(k, instance, no_span())
+		promote_generic_instance(k, instance, NO_SPAN)
 	}
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || symbol.kind != .Proc {
@@ -168,11 +152,11 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 		return false // the caller reports the dependency path
 	}
 
-	outer_location := save_checker_location(k)
-	defer restore_checker_location(k, outer_location)
+	outer_location := k.location
+	defer k.location = outer_location
 	// A member of an instantiated generic block is checked inside it, where its
 	// `where` clause has the block's parameters in scope.
-	if !enter_pending_impl_member(k, d) {
+	if !enter_instance_impl_member(k, symbol) {
 		enter_symbol_location(k, symbol)
 	}
 	k.body = {}
@@ -184,13 +168,14 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 
 // The primary diagnostic names the required context; notes name the failing
 // operation and every frame in between.
+@(private = "file")
 eval_fail :: proc(ev: ^Evaluator, span: Span, code: string, format: string, args: ..any) -> bool {
 	if ev.failed {
 		return false
 	}
 	ev.failed = true
 	c := ev.k.c
-	if ev.memory_error != nil {
+	if ev.storage.exhausted {
 		errorf(c, ev.origin, "L0342", "compile-time evaluation exceeded %d bytes of scratch memory", EVAL_MAX_MEMORY)
 	} else {
 		errorf(c, ev.origin, code, format, ..args)
@@ -231,20 +216,17 @@ eval_step :: proc(ev: ^Evaluator, span: Span) -> bool {
 }
 
 @(private = "file")
-init_evaluator :: proc(ev: ^Evaluator) -> bool {
-	if err := eval_storage_init(&ev.storage); err != nil {
-		return eval_fail(ev, ev.origin, "L0342", "cannot reserve compile-time scratch memory")
-	}
-	ev.alloc = mem.Allocator{eval_allocator_proc, ev}
+init_evaluator :: proc(ev: ^Evaluator) {
+	ev.alloc = mem.Allocator{eval_allocator_proc, &ev.storage}
 	ev.frames = make([dynamic]^Eval_Frame, 0, 8, ev.alloc)
-	return true
 }
 
-// Reported outside the allocator, since reporting allocates too.
+// Reported outside the allocator, since reporting allocates too. `eval_fail`
+// words an exhausted memory itself.
 @(private = "file")
 eval_memory_ok :: proc(ev: ^Evaluator) -> bool {
-	if ev.memory_error == nil { return true }
-	return eval_fail(ev, ev.origin, "L0342", "compile-time evaluation exceeded %d bytes of scratch memory", EVAL_MAX_MEMORY)
+	if !ev.storage.exhausted { return true }
+	return eval_fail(ev, ev.origin, "L0342", "")
 }
 
 @(private = "file")
@@ -257,23 +239,16 @@ eval_slot :: proc(ev: ^Evaluator, value: Eval_Value) -> (^Eval_Value, bool) {
 
 @(private = "file")
 eval_elements :: proc(ev: ^Evaluator, count: int) -> ([]Eval_Value, bool) {
-	if count < 0 || count > (EVAL_MAX_MEMORY - ev.bytes) / size_of(Eval_Value) {
-		eval_fail(
-			ev,
-			ev.origin,
-			"L0342",
-			"compile-time evaluation exceeded %d bytes of scratch memory",
-			EVAL_MAX_MEMORY,
-		)
-		return nil, false
+	if count < 0 || count > (EVAL_MAX_MEMORY - ev.storage.bytes) / size_of(Eval_Value) {
+		ev.storage.exhausted = true
+		return nil, eval_memory_ok(ev)
 	}
 	elements, err := make([]Eval_Value, count, ev.alloc)
 	return elements, err == nil
 }
 
-// The declared type of one element of an aggregate type.
 @(private = "file")
-element_type_at :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
+element_type_at :: proc(c: ^Compiler, type: Type_Id, index, variant: int) -> Type_Id {
 	info := underlying_info(c, type)
 	if info == nil {
 		return INVALID_TYPE
@@ -281,21 +256,20 @@ element_type_at :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 	#partial switch info.kind {
 	case .Array, .Simd, .Slice:
 		return info.element
+	case .Union:
+		return union_variant_payload(c, type, variant)
 	case .Struct:
 		if index < len(info.fields) {
 			if symbol := symbol_of(c, info.fields[index]); symbol != nil {
 				return symbol.type
 			}
 		}
-	case .Union:
-		// A union constant holds one element, its active variant's payload.
-		return INVALID_TYPE
 	}
 	return INVALID_TYPE
 }
 
 @(private = "file")
-value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eval_Value, bool) {
+value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (out: Eval_Value, success: bool) {
 	value := scalar(cv, type)
 	// A container's all-zero header reads back as the empty container.
 	if type_is_container(ev.k.c, type) {
@@ -305,19 +279,10 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 		holder := type != INVALID_TYPE ? type : cv.aggregate.type
 		value.type = holder
 		value.variant = cv.aggregate.variant
-		is_union := type_is_union(ev.k.c, type_underlying(ev.k.c, holder))
-		elements, allocated := eval_elements(ev, len(cv.aggregate.elements))
-		if !allocated {
-			return Eval_Value{}, false
-		}
-		value.elements = elements
+		value.elements = eval_elements(ev, len(cv.aggregate.elements)) or_return
 		for element, index in cv.aggregate.elements {
-			member := is_union ? union_variant_payload(ev.k.c, holder, cv.aggregate.variant) : element_type_at(ev.k.c, holder, index)
-			converted, ok := value_from_const(ev, element, member)
-			if !ok {
-				return Eval_Value{}, false
-			}
-			value.elements[index] = converted
+			member := element_type_at(ev.k.c, holder, index, cv.aggregate.variant)
+			value.elements[index] = value_from_const(ev, element, member) or_return
 		}
 	}
 	return value, true
@@ -326,24 +291,24 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 // A deep copy, so an assigned aggregate never aliases its source. A slice is
 // a view, and a copy of it views the same elements.
 @(private = "file")
-copy_value :: proc(ev: ^Evaluator, v: Eval_Value) -> (Eval_Value, bool) {
+copy_value :: proc(ev: ^Evaluator, v: Eval_Value) -> (out: Eval_Value, success: bool) {
 	if v.elements == nil || underlying_kind(ev.k.c, v.type) == .Slice {
 		return v, true
 	}
-	out := v
-	elements, allocated := eval_elements(ev, len(v.elements))
-	if !allocated {
-		return Eval_Value{}, false
-	}
-	out.elements = elements
+	out = v
+	out.capacity = 0
+	out.elements = eval_elements(ev, len(v.elements)) or_return
 	for element, index in v.elements {
-		copied, ok := copy_value(ev, element)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		out.elements[index] = copied
+		out.elements[index] = copy_value(ev, element) or_return
 	}
 	return out, true
+}
+
+// Evaluates `e`, then copies the value before anything later can change its source.
+@(private = "file")
+eval_copied :: proc(ev: ^Evaluator, e: Expr) -> (out: Eval_Value, success: bool) {
+	value := eval_expr(ev, e) or_return
+	return copy_value(ev, value)
 }
 
 // What evaluation hands the program. design.md "Compile-time procedure
@@ -375,7 +340,8 @@ eval_holds_capture :: proc(c: ^Compiler, v: Eval_Value) -> bool {
 }
 
 // Into immutable compilation storage; a pointer cannot make the trip.
-freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
+@(private = "file")
+freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> (out: Const_Value, success: bool) {
 	storage := value_allocator(ev.k.c, allocator)
 	if v.target != nil || v.proc_value != INVALID_SYMBOL {
 		eval_fail(ev, ev.origin, "L0341", "a pointer cannot escape compile-time evaluation")
@@ -397,8 +363,7 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 			)
 			return Const_Value{}, false
 		}
-		zero, ok := zero_const(ev.k.c, v.type)
-		return zero, ok
+		return zero_const(ev.k.c, v.type)
 	}
 	cv := const_of(v)
 	// A bit-cast `typeid` keeps its number there too (`typeid_number_const`).
@@ -411,10 +376,7 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		elements, err := make([]Const_Value, len(v.elements), storage)
 		if err != nil { return Const_Value{}, false }
 		for element, index in v.elements {
-			frozen, ok := freeze(ev, element, storage)
-			if !ok {
-				return Const_Value{}, false
-			}
+			frozen := freeze(ev, element, storage) or_return
 			elements[index] = frozen
 		}
 		aggregate := new(Const_Aggregate, storage)
@@ -427,37 +389,34 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 	return cv, true
 }
 
+// A constant built in evaluator storage has served its purpose: an evaluated
+// value holds its integers and strings, never these tables.
+@(private = "file")
+eval_release_tables :: proc(ev: ^Evaluator, value: Const_Value) {
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return
+	}
+	for element in value.aggregate.elements {
+		eval_release_tables(ev, element)
+	}
+	delete(value.aggregate.elements, ev.alloc)
+	free(value.aggregate, ev.alloc)
+}
+
 @(private = "file")
 const_of :: proc(v: Eval_Value) -> Const_Value {
-	return Const_Value {
-		kind       = v.kind,
-		integer    = v.integer,
-		float      = v.float,
-		float_bits = v.float_bits,
-		float_raw  = v.float_raw,
-		boolean    = v.boolean,
-		text       = v.text,
-		type_value = v.type_value,
-	}
+	return v.constant
 }
 
 @(private = "file")
 scalar :: proc(cv: Const_Value, type: Type_Id) -> Eval_Value {
-	return Eval_Value {
-		kind       = cv.kind,
-		type       = type,
-		integer    = cv.integer,
-		float      = cv.float,
-		float_bits = cv.float_bits,
-		float_raw  = cv.float_raw,
-		boolean    = cv.boolean,
-		text       = cv.text,
-		type_value = cv.type_value,
-	}
+	value := Eval_Value{constant = cv, type = type}
+	value.aggregate = nil
+	return value
 }
 
 @(private = "file")
-zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
+zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (out: Eval_Value, success: bool) {
 	if type_is_pointer(ev.k.c, type) {
 		return Eval_Value{kind = .Nil, type = type}, true
 	}
@@ -478,8 +437,7 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	if type_is_slice(ev.k.c, type) {
 		return Eval_Value{kind = .Nil, type = type}, true
 	}
-	under := type_underlying(ev.k.c, type)
-	info := type_of(ev.k.c, under)
+	info := underlying_info(ev.k.c, type)
 	if info == nil { return Eval_Value{}, false }
 	#partial switch info.kind {
 	case .Int, .Enum, .Rune:
@@ -487,8 +445,7 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	case .Array, .Struct, .Dyn:
 		count := info.kind == .Array ? int(info.count) : len(info.fields)
 		kind, element, fields := info.kind, info.element, info.fields
-		elements, allocated := eval_elements(ev, count)
-		if !allocated { return Eval_Value{}, false }
+		elements := eval_elements(ev, count) or_return
 		for index in 0 ..< count {
 			element_type := element
 			field: ^Symbol
@@ -498,13 +455,11 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 				element_type = field.type
 			}
 			if field != nil && field.initialized_by != INVALID_SYMBOL {
-				value, ok := value_from_const(ev, capacity_const(ev.k.c, field.type), field.type)
-				if !ok { return Eval_Value{}, false }
+				value := value_from_const(ev, capacity_const(ev.k.c, field.type), field.type) or_return
 				elements[index] = value
 				continue
 			}
-			value, ok := zero_value(ev, element_type)
-			if !ok { return Eval_Value{}, false }
+			value := zero_value(ev, element_type) or_return
 			elements[index] = value
 		}
 		return Eval_Value{kind = .Aggregate, type = type, elements = elements}, true
@@ -516,12 +471,9 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	return value_from_const(ev, zero, type)
 }
 
-// design.md "Compile-time procedure evaluation": an evaluated path makes no
-// value whose drop or copy runs a hand-written hook, so such a record is
-// rejected where it is made. Only a record declares a hook, and only a record
-// or a fixed array holds one by value in a zero; a container, union, or box
-// starts out holding none, and gets one only from a value made, and checked,
-// on its own.
+// design.md "Compile-time procedure evaluation": a record with a hook is rejected
+// where it is made. A zero holds one only in a record, a fixed array, or a union's
+// zero variant.
 @(private = "file")
 eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool {
 	info := underlying_info(ev.k.c, type)
@@ -531,6 +483,8 @@ eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool 
 	#partial switch info.kind {
 	case .Array:
 		return eval_hooks_supported(ev, info.element, site)
+	case .Union:
+		return !info.zero_designated || eval_hooks_supported(ev, info.variants[0], site)
 	case .Struct:
 		if !eval_record_hooks_supported(ev, type, site) {
 			return false
@@ -555,9 +509,8 @@ eval_constant_hooks_supported :: proc(ev: ^Evaluator, cv: Const_Value, type: Typ
 	if cv.kind != .Aggregate || cv.aggregate == nil || type_is_container(c, type) {
 		return true
 	}
-	is_union := type_is_union(c, type_underlying(c, type))
 	for element, index in cv.aggregate.elements {
-		member := is_union ? union_variant_payload(c, type, cv.aggregate.variant) : element_type_at(c, type, index)
+		member := element_type_at(c, type, index, cv.aggregate.variant)
 		if !eval_constant_hooks_supported(ev, element, member, site) {
 			return false
 		}
@@ -585,10 +538,15 @@ current_frame :: proc(ev: ^Evaluator) -> ^Eval_Frame {
 	return ev.frames[len(ev.frames) - 1]
 }
 
-eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool) {
+@(private = "file")
+eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (out: Eval_Value, success: bool) {
+	base := expr_base(e)
+	if base == nil {
+		return Eval_Value{}, false
+	}
 	// design.md "Borrowed callable views" and "Variadic parameters": a view is
 	// built at run time.
-	if base := expr_base(e); base != nil && base.erased_from != INVALID_TYPE && type_is_dyn(ev.k.c, base.type) {
+	if base.erased_from != INVALID_TYPE && type_is_dyn(ev.k.c, base.type) {
 		eval_fail(
 			ev, expr_span(e), "L0341", "a `%s` view has no compile-time value",
 			dyn_proc_signature(ev.k.c, base.type) != INVALID_TYPE ? "dyn proc" : "dyn",
@@ -596,23 +554,13 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		return Eval_Value{}, false
 	}
 	// design.md "Owned values": a box lent as the `^T` of its payload.
-	if base := expr_base(e); base != nil && base.view_from != INVALID_TYPE &&
-	   underlying_kind(ev.k.c, base.view_from) == .Box && underlying_kind(ev.k.c, base.type) == .Pointer {
-		holder: ^Eval_Value
-		if base.addressable {
-			holder = eval_place(ev, e) or_return
-		} else {
-			value := eval_value_unviewed(ev, e) or_return
-			holder = eval_slot(ev, value) or_return
-		}
-		if len(holder.elements) != 1 {
-			eval_fail(ev, expr_span(e), "L0341", "this box holds no value")
-			return Eval_Value{}, false
-		}
-		return Eval_Value{kind = .Nil, type = base.type, target = &holder.elements[0]}, true
+	if base.view_from != INVALID_TYPE && underlying_kind(ev.k.c, base.view_from) == .Box &&
+	   underlying_kind(ev.k.c, base.type) == .Pointer {
+		payload := eval_box_payload(ev, e, expr_span(e)) or_return
+		return Eval_Value{kind = .Nil, type = base.type, target = payload}, true
 	}
 	// design.md "Widening by label": the same payload under the wider tag.
-	if base := expr_base(e); base != nil && base.widened_from != INVALID_TYPE {
+	if base.widened_from != INVALID_TYPE {
 		value := eval_value_unviewed(ev, e) or_return
 		return widen_eval_value(ev.k.c, value, base.widened_from, base.type), true
 	}
@@ -629,22 +577,20 @@ widen_eval_value :: proc(c: ^Compiler, value: Eval_Value, from, to: Type_Id) -> 
 
 // `eval_expr` before an implicit loan recorded on the node itself.
 @(private = "file")
-eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool) {
+eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (out: Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	if e == nil {
 		return Eval_Value{}, false
 	}
-	if !eval_step(ev, expr_span(e)) {
-		return Eval_Value{}, false
-	}
+	eval_step(ev, expr_span(e)) or_return
 	base := expr_base(e)
 	if base == nil || base.type == INVALID_TYPE {
 		return Eval_Value{}, false
 	}
-	if base.is_const && base.const_value.kind != .Invalid {
+	if base_is_const(base) {
 		// A folded record literal is made here as well.
-		if base.const_value.kind == .Aggregate && !eval_constant_hooks_supported(ev, base.const_value, base.type, expr_span(e)) {
-			return Eval_Value{}, false
+		if base.const_value.kind == .Aggregate {
+			eval_constant_hooks_supported(ev, base.const_value, base.type, expr_span(e)) or_return
 		}
 		return value_from_const(ev, base.const_value, base.type)
 	}
@@ -654,66 +600,13 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_ident(ev, v)
 
 	case ^Expr_Selector:
-		// `Type.method` or `U.name` naming a procedure, as a value.
-		if sym := symbol_of(ev.k.c, v.resolution.symbol); v.resolution.kind == .Value && sym != nil && sym.kind == .Proc {
-			return Eval_Value{kind = .Nil, type = v.type, proc_value = v.resolution.symbol}, true
-		}
-		// A value, not a place: `f().field` selects out of a temporary.
-		operand, ok := eval_aggregate_value(ev, v.operand)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		field, found := eval_field(ev, v, operand.elements)
-		if !found {
-			return Eval_Value{}, false
-		}
-		return field^, true
+		return eval_selector(ev, v)
 
 	case ^Expr_Index:
-		// design.md "Indexing and slicing": a user `operator([])` is called with
-		// the arguments the checker bound, receiver first.
-		if v.resolution.kind == .User_Operator {
-			return eval_operator_call(ev, v.resolution.symbol, v.bound, v.span)
-		}
-		operand, ok := eval_aggregate_value(ev, v.operand)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		// design.md "Maps": a read never inserts.
-		if type_is_map(ev.k.c, operand.type) {
-			return eval_map_read(ev, v, &operand)
-		}
-		index_value, index_ok := eval_expr(ev, v.indices[0])
-		if !index_ok {
-			return Eval_Value{}, false
-		}
-		index, fits := bi_to_i64(ev.alloc, index_value.integer)
-		if !fits || index < 0 || int(index) >= len(operand.elements) {
-			eval_fail(ev, expr_span(v.indices[0]), "L0361", "index %s is out of range", bi_text(ev.alloc, index_value.integer))
-			return Eval_Value{}, false
-		}
-		return operand.elements[index], true
+		return eval_index(ev, v)
 
 	case ^Expr_Postfix:
-		if v.op == .Or_Return {
-			return eval_or_return(ev, v)
-		}
-		if v.boxed {
-			boxed, ok := eval_expr(ev, v.operand)
-			if !ok || len(boxed.elements) != 1 {
-				return Eval_Value{}, false
-			}
-			return boxed.elements[0], true
-		}
-		pointer, ok := eval_expr(ev, v.operand)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		target, live := eval_deref(ev, pointer, v.op_span)
-		if !live {
-			return Eval_Value{}, false
-		}
-		return target^, true
+		return eval_postfix(ev, v)
 
 	case ^Expr_Propagated_Error:
 		if error, ok := ev.propagated[v.owner]; ok {
@@ -729,10 +622,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_binary(ev, v)
 
 	case ^Expr_Cond:
-		cond, ok := eval_expr(ev, v.cond)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		cond := eval_expr(ev, v.cond) or_return
 		return eval_expr(ev, cond.boolean ? v.then : v.otherwise)
 
 	case ^Expr_Call:
@@ -742,23 +632,10 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_call(ev, v)
 
 	case ^Expr_Composite:
-		// design.md "Capture literals": a capture literal is its record's
-		// literal, whose elements are the captures as their modes take them.
 		return eval_composite(ev, v)
 
 	case ^Expr_Range:
-		low, low_ok := eval_expr(ev, v.lo)
-		if !low_ok { return Eval_Value{}, false }
-		high, high_ok := eval_expr(ev, v.hi)
-		if !high_ok { return Eval_Value{}, false }
-		elements, allocated := eval_elements(ev, 3)
-		if !allocated { return Eval_Value{}, false }
-		elements[RANGE_LOW] = low
-		elements[RANGE_HIGH] = high
-		elements[RANGE_CLOSED] = Eval_Value{
-			kind = .Boolean, type = TYPE_BOOL, boolean = v.op == .Range_Incl,
-		}
-		return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+		return eval_range(ev, v)
 
 	case ^Expr_Proc:
 		return Eval_Value{kind = .Nil, type = v.type, proc_value = v.symbol}, true
@@ -770,18 +647,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_slice(ev, v)
 
 	case ^Expr_Move:
-		// The value leaves its place, which is left inert as at run time.
-		place, ok := eval_place(ev, v.value)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		value := place^
-		if zeroed, made := zero_value(ev, place.type); made {
-			place^ = zeroed
-		} else {
-			place^ = Eval_Value{kind = .Invalid, type = value.type}
-		}
-		return value, true
+		return eval_move(ev, v)
 
 	case ^Expr_Error, ^Expr_Literal,
 	     ^Expr_Proc_Group, ^Expr_Operator,
@@ -791,6 +657,142 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 	}
 	eval_fail(ev, expr_span(e), "L0341", "this expression has no compile-time meaning")
 	return Eval_Value{}, false
+}
+
+@(private = "file")
+eval_selector :: proc(ev: ^Evaluator, v: ^Expr_Selector) -> (out: Eval_Value, success: bool) {
+	// `Type.method` or `U.name` naming a procedure, as a value.
+	if sym := symbol_of(ev.k.c, v.resolution.symbol); v.resolution.kind == .Value && sym != nil && sym.kind == .Proc {
+		return Eval_Value{kind = .Nil, type = v.type, proc_value = v.resolution.symbol}, true
+	}
+	if table := eval_folded_table(ev, v.operand); table != nil {
+		at := eval_field_index(ev, v, len(table.elements)) or_return
+		return eval_folded_element(ev, v.operand, table, at)
+	}
+	// A value, not a place: `f().field` selects out of a temporary.
+	operand := eval_aggregate_value(ev, v.operand) or_return
+	field := eval_field(ev, v, operand.elements) or_return
+	return field^, true
+}
+
+@(private = "file")
+eval_index :: proc(ev: ^Evaluator, v: ^Expr_Index) -> (out: Eval_Value, success: bool) {
+	// design.md "Indexing and slicing": a user `operator([])` is called with
+	// the arguments the checker bound, receiver first.
+	if v.resolution.kind == .User_Operator {
+		return eval_operator_call(ev, v.resolution.symbol, v.bound, v.span)
+	}
+	if table := eval_folded_table(ev, v.operand); table != nil {
+		at := eval_index_value(ev, v.indices[0], len(table.elements)) or_return
+		return eval_folded_element(ev, v.operand, table, at)
+	}
+	operand := eval_aggregate_value(ev, v.operand) or_return
+	// design.md "Maps": a read never inserts.
+	if type_is_map(ev.k.c, operand.type) {
+		key := eval_expr(ev, v.indices[0]) or_return
+		entry := eval_map_entry(ev, &operand, key, v.span) or_return
+		return entry^, true
+	}
+	at := eval_index_value(ev, v.indices[0], len(operand.elements)) or_return
+	return operand.elements[at], true
+}
+
+// A constant the checker folded, of which a read makes only the part it selects,
+// so a loop over a table does not rebuild the table per read.
+@(private = "file")
+eval_folded_table :: proc(ev: ^Evaluator, operand: Expr) -> ^Const_Aggregate {
+	base := expr_base(operand)
+	if base == nil || base.const_value.kind != .Aggregate || type_is_container(ev.k.c, base.type) {
+		return nil
+	}
+	return base.const_value.aggregate
+}
+
+@(private = "file")
+eval_folded_element :: proc(ev: ^Evaluator, operand: Expr, table: ^Const_Aggregate, at: int) -> (out: Eval_Value, success: bool) {
+	member := element_type_at(ev.k.c, expr_base(operand).type, at, table.variant)
+	eval_constant_hooks_supported(ev, table.elements[at], member, expr_span(operand)) or_return
+	return value_from_const(ev, table.elements[at], member)
+}
+
+// An index expression's value, within `count` elements.
+@(private = "file")
+eval_index_value :: proc(ev: ^Evaluator, index: Expr, count: int) -> (out: int, success: bool) {
+	value := eval_expr(ev, index) or_return
+	at, fits := bi_to_i64(ev.alloc, value.integer)
+	if !fits || at < 0 || int(at) >= count {
+		eval_fail(ev, expr_span(index), "L0361", "index %s is out of range", bi_text(ev.alloc, value.integer))
+		return 0, false
+	}
+	return int(at), true
+}
+
+@(private = "file")
+eval_postfix :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (out: Eval_Value, success: bool) {
+	if v.op == .Or_Return {
+		return eval_or_return(ev, v)
+	}
+	if v.boxed {
+		return eval_unbox(ev, v.operand, v.span)
+	}
+	pointer := eval_expr(ev, v.operand) or_return
+	target := eval_deref(ev, pointer, v.op_span) or_return
+	return target^, true
+}
+
+// design.md "Owned values": the payload is the box's one element.
+@(private = "file")
+eval_box_element :: proc(ev: ^Evaluator, holder: ^Eval_Value, span: Span) -> (^Eval_Value, bool) {
+	if len(holder.elements) != 1 {
+		return nil, eval_fail(ev, span, "L0341", "this box holds no value")
+	}
+	return &holder.elements[0], true
+}
+
+// The payload's storage, of the box `operand` denotes or of a temporary one.
+@(private = "file")
+eval_box_payload :: proc(ev: ^Evaluator, operand: Expr, span: Span) -> (out: ^Eval_Value, success: bool) {
+	holder: ^Eval_Value
+	if expr_base(operand).addressable {
+		holder = eval_place(ev, operand) or_return
+	} else {
+		value := eval_value_unviewed(ev, operand) or_return
+		holder = eval_slot(ev, value) or_return
+	}
+	return eval_box_element(ev, holder, span)
+}
+
+@(private = "file")
+eval_unbox :: proc(ev: ^Evaluator, operand: Expr, span: Span) -> (out: Eval_Value, success: bool) {
+	boxed := eval_expr(ev, operand) or_return
+	payload := eval_box_element(ev, &boxed, span) or_return
+	return payload^, true
+}
+
+@(private = "file")
+eval_range :: proc(ev: ^Evaluator, v: ^Expr_Range) -> (out: Eval_Value, success: bool) {
+	low := eval_expr(ev, v.lo) or_return
+	high := eval_expr(ev, v.hi) or_return
+	elements := eval_elements(ev, 3) or_return
+	elements[RANGE_LOW] = low
+	elements[RANGE_HIGH] = high
+	elements[RANGE_CLOSED] = Eval_Value{
+		kind = .Boolean, type = TYPE_BOOL, boolean = v.op == .Range_Incl,
+	}
+	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+}
+
+// The value leaves its place, which is left inert as at run time.
+@(private = "file")
+eval_move :: proc(ev: ^Evaluator, v: ^Expr_Move) -> (out: Eval_Value, success: bool) {
+	place := eval_place(ev, v.value) or_return
+	value := place^
+	if zeroed, made := zero_value(ev, place.type); made {
+		place^ = zeroed
+	} else {
+		place^ = Eval_Value{kind = .Invalid, type = value.type}
+	}
+	return value, true
 }
 
 @(private = "file")
@@ -822,26 +824,20 @@ eval_ident :: proc(ev: ^Evaluator, v: ^Expr_Ident) -> (Eval_Value, bool) {
 }
 
 @(private = "file")
-eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
+eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (out: Eval_Value, success: bool) {
 	// design.md "Operator declarations": a user operator is an ordinary call.
 	if v.resolution.kind == .User_Operator {
 		operands := [1]Expr{v.operand}
 		return eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span)
 	}
 	if v.op == .Amp {
-		slot, ok := eval_place(ev, v.operand)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		slot := eval_place(ev, v.operand) or_return
 		return Eval_Value{kind = .Nil, type = v.type, target = slot}, true
 	}
-	operand, ok := eval_expr(ev, v.operand)
-	if !ok {
-		return Eval_Value{}, false
-	}
+	operand := eval_expr(ev, v.operand) or_return
 	// design.md "SIMD vectors": lane-wise.
 	if type_is_simd(ev.k.c, v.type) {
-		return eval_simd_unary(ev, v, operand)
+		return eval_simd_unary(ev, v.op, v.op_span, v.type, operand)
 	}
 	return eval_unary_value(ev, v.op, v.op_span, const_of(operand), v.type)
 }
@@ -850,87 +846,54 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 // applies it to the unwrapped value too.
 @(private = "file")
 eval_unary_value :: proc(ev: ^Evaluator, op: Token_Kind, site: Span, value: Const_Value, type: Type_Id) -> (Eval_Value, bool) {
-	folded: Const_Value
 	#partial switch op {
-	case .Plus:
-		folded = value
-	case .Minus:
-		if value.kind == .Float {
-			folded = float_const(-value.float, value.float_bits)
-		} else {
-			folded = Const_Value{kind = value.kind, integer = bi_neg(ev.alloc, value.integer)}
-		}
-	case .Tilde:
-		folded = Const_Value{kind = value.kind, integer = bi_not(ev.alloc, value.integer)}
-	case .Not:
-		folded = bool_const(!value.boolean)
+	case .Plus, .Minus, .Tilde, .Not:
 	case:
 		eval_fail(ev, site, "L0341", "`%s` has no compile-time meaning", operator_text(op))
 		return Eval_Value{}, false
 	}
-	if folded.kind == .Integer || folded.kind == .Rune {
-		if op == .Minus && !integer_fits(ev.k.c, folded.integer, type, ev.alloc) {
-			report_integer_overflow(ev.k.c, site, folded.integer, type, ev.alloc)
-			eval_fold_failed(ev)
-			return Eval_Value{}, false
-		}
-		folded.integer = wrap_to_type(ev.k.c, folded.integer, type, ev.alloc)
+	folded, ok := fold_unary(ev.k.c, op, site, value, type, ev.alloc)
+	if !ok {
+		eval_fold_failed(ev)
+		return Eval_Value{}, false
 	}
 	return scalar(folded, type), true
 }
 
 @(private = "file")
-eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
+eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (out: Eval_Value, success: bool) {
 	// design.md "Operator declarations": a user operator is an ordinary call,
 	// and `!=` without its own overload negates the user `==`.
 	if v.resolution.kind == .User_Operator {
 		operands := [2]Expr{v.lhs, v.rhs}
-		result, ok := eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span)
-		if !ok || !v.negated {
-			return result, ok
+		result := eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span) or_return
+		if !v.negated {
+			return result, true
 		}
-		return scalar(bool_const(!const_of(result).boolean), v.type), true
-	}
-	// design.md "Maps": `key in m`.
-	if v.op == .In {
-		return eval_map_membership(ev, v)
+		return scalar(bool_const(!result.boolean), v.type), true
 	}
 	#partial switch v.op {
+	case .In:
+		return eval_in(ev, v)
 	case .And_And, .Or_Or:
-		left, ok := eval_expr(ev, v.lhs)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		left := eval_expr(ev, v.lhs) or_return
 		if (v.op == .And_And) != left.boolean {
 			return scalar(bool_const(v.op == .Or_Or), v.type), true
 		}
-		right, right_ok := eval_expr(ev, v.rhs)
-		if !right_ok {
-			return Eval_Value{}, false
-		}
+		right := eval_expr(ev, v.rhs) or_return
 		return scalar(bool_const(right.boolean), v.type), true
 	}
 
-	left, left_ok := eval_expr(ev, v.lhs)
-	if !left_ok {
-		return Eval_Value{}, false
-	}
-	right, right_ok := eval_expr(ev, v.rhs)
-	if !right_ok {
-		return Eval_Value{}, false
-	}
+	left := eval_expr(ev, v.lhs) or_return
+	right := eval_expr(ev, v.rhs) or_return
 
 	// design.md "SIMD vectors": lane-wise, since `const_of` carries no lanes.
-	if type_is_simd(ev.k.c, v.type) || type_is_simd(ev.k.c, left.type) {
+	if type_is_simd(ev.k.c, v.type) {
 		return eval_simd_binary_values(ev, v.op, v.op_span, v.type, left, right)
 	}
 	#partial switch v.op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		result, ok := eval_compare(ev, v.op, left, right)
-		if !ok {
-			eval_fail(ev, v.op_span, "L0341", "this comparison has no compile-time meaning")
-			return Eval_Value{}, false
-		}
+		result := eval_compare_at(ev, v.op, left, right, v.op_span) or_return
 		return scalar(bool_const(result), v.type), true
 	}
 
@@ -939,65 +902,34 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 		eval_fold_failed(ev)
 		return Eval_Value{}, false
 	}
-	// A lane-wise fold answers with an aggregate.
-	if folded.kind == .Aggregate {
-		return value_from_const(ev, folded, v.type)
-	}
 	return scalar(folded, v.type), true
 }
 
 // `-v` and `~v`, one lane at a time. `+v` is the operand.
 @(private = "file")
-eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> (Eval_Value, bool) {
-	if v.op == .Plus {
+eval_simd_unary :: proc(
+	ev: ^Evaluator, op: Token_Kind, op_span: Span, type: Type_Id, operand: Eval_Value,
+) -> (out: Eval_Value, success: bool) {
+	if op == .Plus {
 		return operand, true
 	}
-	info := underlying_info(ev.k.c, v.type)
+	info := underlying_info(ev.k.c, type)
 	if info == nil {
 		return Eval_Value{}, false
 	}
-	elements, allocated := eval_elements(ev, int(info.count))
-	if !allocated {
-		return Eval_Value{}, false
-	}
+	elements := eval_elements(ev, int(info.count)) or_return
 	for index in 0 ..< int(info.count) {
 		lane := const_of(eval_simd_lane(operand, index))
-		folded: Const_Value
-		#partial switch v.op {
-		case .Minus:
-			if lane.kind == .Float {
-				folded = float_const(-lane.float, lane.float_bits)
-			} else {
-				folded = Const_Value{kind = lane.kind, integer = bi_neg(ev.alloc, lane.integer)}
-			}
-		case .Tilde:
-			if lane.kind == .Boolean {
-				folded = bool_const(!lane.boolean)
-			} else {
-				folded = Const_Value{kind = lane.kind, integer = bi_not(ev.alloc, lane.integer)}
-			}
-		case:
-			eval_fail(ev, v.op_span, "L0341", "this operator has no compile-time meaning")
-			return Eval_Value{}, false
-		}
-		if folded.kind == .Integer || folded.kind == .Rune {
-			if v.op == .Minus && !integer_fits(ev.k.c, folded.integer, info.element, ev.alloc) {
-				report_integer_overflow(ev.k.c, v.op_span, folded.integer, info.element, ev.alloc)
-				eval_fold_failed(ev)
-				return Eval_Value{}, false
-			}
-			folded.integer = wrap_to_type(ev.k.c, folded.integer, info.element, ev.alloc)
-		}
-		elements[index] = scalar(folded, info.element)
+		elements[index] = eval_unary_value(ev, op, op_span, lane, info.element) or_return
 	}
-	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+	return Eval_Value{kind = .Aggregate, type = type, elements = elements}, true
 }
 
 // One lane at a time; either operand may be a splatted scalar.
 @(private = "file")
 eval_simd_binary_values :: proc(
 	ev: ^Evaluator, op: Token_Kind, op_span: Span, type: Type_Id, left, right: Eval_Value,
-) -> (Eval_Value, bool) {
+) -> (out: Eval_Value, success: bool) {
 	info := underlying_info(ev.k.c, type)
 	if info == nil {
 		return Eval_Value{}, false
@@ -1009,18 +941,11 @@ eval_simd_binary_values :: proc(
 	}
 	// A comparison's lanes are `bool`, unlike its operands'.
 	source := underlying_info(ev.k.c, type_is_simd(ev.k.c, left.type) ? left.type : right.type)
-	elements, allocated := eval_elements(ev, int(info.count))
-	if !allocated {
-		return Eval_Value{}, false
-	}
+	elements := eval_elements(ev, int(info.count)) or_return
 	for index in 0 ..< int(info.count) {
 		a, b := eval_simd_lane(left, index), eval_simd_lane(right, index)
 		if comparison {
-			result, ok := eval_compare(ev, op, a, b)
-			if !ok {
-				eval_fail(ev, op_span, "L0341", "this comparison has no compile-time meaning")
-				return Eval_Value{}, false
-			}
+			result := eval_compare_at(ev, op, a, b, op_span) or_return
 			elements[index] = scalar(bool_const(result), info.element)
 			continue
 		}
@@ -1049,11 +974,8 @@ eval_simd_lane :: proc(value: Eval_Value, index: int) -> Eval_Value {
 // here, because the seed combined with lane 0 is lane 0. `reduce_min` and
 // `reduce_max` skip NaN lanes, so only an all-NaN vector answers NaN.
 @(private = "file")
-eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
-	vector, ok := eval_expr(ev, v.bound[0])
-	if !ok {
-		return Eval_Value{}, false
-	}
+eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, success: bool) {
+	vector := eval_expr(ev, v.bound[0]) or_return
 	info := underlying_info(ev.k.c, expr_base(v.bound[0]).type)
 	fold := v.operation.(Call_Simd_Reduce).fold
 	result := eval_simd_lane(vector, 0)
@@ -1077,11 +999,7 @@ eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 			if lane.kind == .Float && lane.float != lane.float {
 				continue
 			}
-			better, compared := eval_compare(ev, fold == .Min ? .Lt : .Gt, lane, result)
-			if !compared {
-				eval_fail(ev, v.span, "L0341", "this comparison has no compile-time meaning")
-				return Eval_Value{}, false
-			}
+			better := eval_compare_at(ev, fold == .Min ? .Lt : .Gt, lane, result, v.span) or_return
 			if better || (result.kind == .Float && result.float != result.float) {
 				result = lane
 			}
@@ -1101,7 +1019,7 @@ eval_fold_failed :: proc(ev: ^Evaluator) {
 
 // Pointer and procedure identity are the evaluator's own.
 @(private = "file")
-eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool, bool) {
+eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (out: bool, success: bool) {
 	if a.target != nil || b.target != nil || a.proc_value != INVALID_SYMBOL || b.proc_value != INVALID_SYMBOL ||
 	   (a.kind == .Nil && b.kind == .Nil) {
 		if op != .Eq_Eq && op != .Not_Eq {
@@ -1133,10 +1051,7 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 			}
 			for element, index in a.elements {
 				other := b.elements[index]
-				equal, ok := eval_compare(ev, .Eq_Eq, element, other)
-				if !ok {
-					return false, false
-				}
+				equal := eval_compare(ev, .Eq_Eq, element, other) or_return
 				if equal {
 					continue
 				}
@@ -1148,60 +1063,79 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 			return op == .Lt_Eq || op == .Gt_Eq, true
 		}
 		// As `aggregate_equal`: counts match, and a union's variants too.
-		equal := len(a.elements) == len(b.elements)
+		if len(a.elements) != len(b.elements) {
+			return op == .Not_Eq, true
+		}
 		if type_is_union(ev.k.c, a.type) {
 			if a.variant != b.variant {
-				equal = false
-			} else if union_variant_payload(ev.k.c, a.type, a.variant) == TYPE_VOID {
+				return op == .Not_Eq, true
+			}
+			if union_variant_payload(ev.k.c, a.type, a.variant) == TYPE_VOID {
 				return op == .Eq_Eq, true
 			}
 		}
+		known := true
 		info := underlying_info(ev.k.c, a.type)
 		for element, index in a.elements {
-			if !equal {
-				break
-			}
+			other := b.elements[index]
 			field := info != nil && info.kind == .Struct ? symbol_of(ev.k.c, info.fields[index]) : nil
 			counter := field != nil ? symbol_of(ev.k.c, field.initialized_by) : nil
 			if counter == nil {
-				same, ok := eval_compare(ev, .Eq_Eq, element, b.elements[index])
-				equal = ok && same
+				if !eval_part_equal(ev, element, other, &known) {
+					return op == .Not_Eq, !ev.failed
+				}
 				continue
 			}
-			left_count, left_ok := bi_to_i64(ev.alloc, a.elements[counter.index].integer)
-			right_count, right_ok := bi_to_i64(ev.alloc, b.elements[counter.index].integer)
-			count := min(left_count, right_count)
-			if !left_ok || !right_ok || count < 0 || count > i64(len(element.elements)) ||
-			   count > i64(len(b.elements[index].elements)) {
+			count, in_range := common_live_count(
+				ev.alloc, a.elements[counter.index].integer, b.elements[counter.index].integer,
+				len(element.elements), len(other.elements),
+			)
+			if !in_range {
 				eval_fail(ev, ev.origin, "L0343", "an initialized prefix count is out of range")
 				return false, false
 			}
-			for at in 0 ..< int(count) {
-				same, ok := eval_compare(ev, .Eq_Eq, element.elements[at], b.elements[index].elements[at])
-				if !ok || !same {
-					equal = false
-					break
+			for at in 0 ..< count {
+				if !eval_part_equal(ev, element.elements[at], other.elements[at], &known) {
+					return op == .Not_Eq, !ev.failed
 				}
 			}
 		}
-		return equal == (op == .Eq_Eq), true
+		return op == .Eq_Eq, known
 	}
 	return fold_comparison(ev.k.c, op, const_of(a), const_of(b), ev.alloc)
 }
 
+// Whether two parts can still be equal. As in `aggregate_equal`, a part with no
+// compile-time comparison makes the answer unknown unless another part differs.
 @(private = "file")
-eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool) {
+eval_part_equal :: proc(ev: ^Evaluator, a, b: Eval_Value, known: ^bool) -> bool {
+	same, ok := eval_compare(ev, .Eq_Eq, a, b)
+	if !ok {
+		known^ = false
+		return !ev.failed
+	}
+	return same
+}
+
+@(private = "file")
+eval_compare_at :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value, span: Span) -> (out: bool, success: bool) {
+	out, success = eval_compare(ev, op, a, b)
+	if !success {
+		eval_fail(ev, span, "L0341", "this comparison has no compile-time meaning")
+	}
+	return
+}
+
+// design.md "Capture literals": a capture literal is its record's literal, whose
+// elements are the captures as their modes take them.
+@(private = "file")
+eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (out: Eval_Value, success: bool) {
 	// design.md "Slice literals": a slice's constant is its elements in order.
 	if type_is_container(ev.k.c, v.type) || type_is_slice(ev.k.c, v.type) {
 		return eval_container_literal(ev, v)
 	}
-	if !eval_hooks_supported(ev, v.type, v.span) {
-		return Eval_Value{}, false
-	}
-	value, zeroed := zero_value(ev, v.type)
-	if !zeroed {
-		return Eval_Value{}, false
-	}
+	eval_hooks_supported(ev, v.type, v.span) or_return
+	value := zero_value(ev, v.type) or_return
 	if value.kind != .Aggregate {
 		eval_fail(ev, v.span, "L0341", "this literal has no compile-time value")
 		return Eval_Value{}, false
@@ -1220,16 +1154,10 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 			eval_fail(ev, v.span, "L0405", "a literal element has no checked field")
 			return Eval_Value{}, false
 		}
-		computed, ok := eval_expr(ev, element.value)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		computed := eval_expr(ev, element.value) or_return
 		// A designated index range fills each of its slots with a copy.
 		for target in slot ..< end {
-			copied, copied_ok := copy_value(ev, computed)
-			if !copied_ok {
-				return Eval_Value{}, false
-			}
+			copied := copy_value(ev, computed) or_return
 			value.elements[target] = copied
 		}
 	}
@@ -1247,95 +1175,52 @@ MAP_ENTRY_KEY :: 0
 MAP_ENTRY_VALUE :: 1
 
 @(private = "file")
-eval_container_literal :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool) {
-	out := Eval_Value{kind = .Aggregate, type = v.type}
+eval_container_literal :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (out: Eval_Value, success: bool) {
 	is_map := type_is_map(ev.k.c, v.type)
-	count := len(v.elements) * (is_map ? 2 : 1)
-	elements, allocated := eval_elements(ev, count)
-	if !allocated {
-		return Eval_Value{}, false
-	}
-	written := 0
+	elements := eval_elements(ev, len(v.elements) * (is_map ? 2 : 1)) or_return
 	// A map entry's key is evaluated before its value (design.md "Evaluation
 	// order"), and each is copied before later elements can change its source.
-	for element in v.elements {
-		key_copy: Eval_Value
-		if is_map {
-			key, key_ok := eval_expr(ev, element.key)
-			if !key_ok {
-				return Eval_Value{}, false
-			}
-			key_copied: bool
-			key_copy, key_copied = copy_value(ev, key)
-			if !key_copied {
-				return Eval_Value{}, false
-			}
-		}
-		value, ok := eval_expr(ev, element.value)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		copied, copied_ok := copy_value(ev, value)
-		if !copied_ok {
-			return Eval_Value{}, false
-		}
+	for element, index in v.elements {
 		if !is_map {
-			elements[written] = copied
-			written += 1
+			elements[index] = eval_copied(ev, element.value) or_return
 			continue
 		}
-		elements[written + MAP_ENTRY_KEY] = key_copy
-		elements[written + MAP_ENTRY_VALUE] = copied
-		written += 2
+		elements[2 * index + MAP_ENTRY_KEY] = eval_copied(ev, element.key) or_return
+		elements[2 * index + MAP_ENTRY_VALUE] = eval_copied(ev, element.value) or_return
 	}
-	out.elements = elements[:written]
+	literal := Eval_Value{kind = .Aggregate, type = v.type, elements = elements}
 	if is_map {
-		// A repeated key keeps the last value, as at run time.
-		deduped, ok := map_deduplicate(ev, out)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		out = deduped
+		return map_deduplicate(ev, literal)
 	}
-	return out, true
+	return literal, true
 }
 
+// A repeated key keeps the last value, as at run time. Entries move down within
+// the literal's own block.
 @(private = "file")
-map_deduplicate :: proc(ev: ^Evaluator, m: Eval_Value) -> (Eval_Value, bool) {
-	out := m
-	kept, err := make([dynamic]Eval_Value, 0, len(m.elements), ev.alloc)
-	if err != nil { return Eval_Value{}, false }
+map_deduplicate :: proc(ev: ^Evaluator, m: Eval_Value) -> (out: Eval_Value, success: bool) {
+	out = m
+	out.elements = m.elements[:0]
 	for index := 0; index < len(m.elements); index += 2 {
-		found := -1
-		for other := 0; other < len(kept); other += 2 {
-			same, ok := eval_map_key_equal(ev, m.type, kept[other], m.elements[index])
-			if !ok {
-				return Eval_Value{}, false
-			}
-			if same {
-				found = other
-				break
-			}
-		}
-		if found >= 0 {
-			kept[found + MAP_ENTRY_VALUE] = m.elements[index + MAP_ENTRY_VALUE]
+		at := map_find(ev, &out, m.elements[index]) or_return
+		if at >= 0 {
+			out.elements[at + MAP_ENTRY_VALUE] = m.elements[index + MAP_ENTRY_VALUE]
 			continue
 		}
-		append(&kept, m.elements[index], m.elements[index + MAP_ENTRY_VALUE])
+		kept := len(out.elements)
+		m.elements[kept + MAP_ENTRY_KEY] = m.elements[index + MAP_ENTRY_KEY]
+		m.elements[kept + MAP_ENTRY_VALUE] = m.elements[index + MAP_ENTRY_VALUE]
+		out.elements = m.elements[:kept + 2]
 	}
-	out.elements = kept[:]
 	return out, true
 }
 
-// The entry index of `key`, or -1.
-// ponytail: linear search; the step limit bounds a compile-time map.
+// The entry index of `key`, or -1. A linear scan: each comparison costs a step, so
+// the step limit stops a map at about 1400 keys, too few to want a hash index.
 @(private = "file")
-map_find :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (int, bool) {
+map_find :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (out: int, success: bool) {
 	for index := 0; index < len(m.elements); index += 2 {
-		same, ok := eval_map_key_equal(ev, m.type, m.elements[index], key)
-		if !ok {
-			return -1, false
-		}
+		same := eval_map_key_equal(ev, m.type, m.elements[index], key) or_return
 		if same {
 			return index, true
 		}
@@ -1345,10 +1230,10 @@ map_find :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (int, bool)
 
 // The runtime's key policy; structural equality only for the built-in one.
 @(private = "file")
-eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) -> (bool, bool) {
-	if !eval_step(ev, ev.origin) { return false, false }
+eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) -> (out: bool, success: bool) {
+	eval_step(ev, ev.origin) or_return
 	policy := ev.k.c.map_key_policies[container_key(ev.k.c, map_type)]
-	if policy.kind == .Unresolved {
+	if !key_policy_settled(policy) {
 		return false, eval_fail(ev, ev.origin, "L0405", "a map key operation was not resolved during checking")
 	}
 	if policy.kind == .Builtin {
@@ -1357,38 +1242,55 @@ eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) 
 	if policy.equal == INVALID_SYMBOL || !ensure_proc_typed_for_eval(ev.k, policy.equal) {
 		return false, eval_fail(ev, ev.origin, "L0341", "the map key's equality cannot be evaluated")
 	}
-	result, ok := eval_invoke(ev, policy.equal, nil, ev.origin, []Eval_Value{a, b})
-	if !ok { return false, false }
+	result := eval_invoke(ev, policy.equal, nil, ev.origin, []Eval_Value{a, b}) or_return
 	if result.kind != .Boolean {
 		return false, eval_fail(ev, ev.origin, "L0341", "the map key's equality must return a boolean")
 	}
 	return result.boolean, true
 }
 
-// The value slot for `key`, adding a placeholder entry when it is missing.
+// The value slot of `key`, which must be there.
 @(private = "file")
-map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Eval_Value, bool) {
-	at, ok := map_find(ev, m, key)
-	if !ok {
+eval_map_entry :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value, span: Span) -> (out: ^Eval_Value, success: bool) {
+	at := map_find(ev, m, key) or_return
+	if at < 0 {
+		// What panics at run time is a compile-time error.
+		eval_fail(ev, span, "L0343", "this key is not in the map")
 		return nil, false
 	}
+	return &m.elements[at + MAP_ENTRY_VALUE], true
+}
+
+// The value slot for `key`, adding a placeholder entry when it is missing. A new
+// entry keeps `key` as it is, so the caller has copied it.
+@(private = "file")
+map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (out: ^Eval_Value, success: bool) {
+	at := map_find(ev, m, key) or_return
 	if at >= 0 {
 		return &m.elements[at + MAP_ENTRY_VALUE], true
 	}
-	zero, zeroed := zero_value(ev, container_element(ev.k.c, m.type))
-	if !zeroed {
-		return nil, false
-	}
-	key_copy, copied := copy_value(ev, key)
-	if !copied {
-		return nil, false
-	}
-	grown, err := make([dynamic]Eval_Value, 0, len(m.elements) + 2, ev.alloc)
-	if err != nil { return nil, false }
-	append(&grown, ..m.elements)
-	append(&grown, key_copy, zero)
-	m.elements = grown[:]
+	zero := zero_value(ev, container_element(ev.k.c, m.type)) or_return
+	eval_splice(ev, m, len(m.elements), 0, key, zero) or_return
 	return &m.elements[len(m.elements) - 1], true
+}
+
+// Replaces `removed` elements at `at` with `inserted`, in the block `self` has when
+// they fit. A new block has room to spare, so a container that grows one element
+// at a time costs memory in proportion to its size.
+@(private = "file")
+eval_splice :: proc(ev: ^Evaluator, self: ^Eval_Value, at, removed: int, inserted: ..Eval_Value) -> bool {
+	count := len(self.elements) - removed + len(inserted)
+	room := max(self.capacity, len(self.elements))
+	block := raw_data(self.elements)[:room]
+	if count > room {
+		block = eval_elements(ev, max(count, 2 * room, 8)) or_return
+		self.capacity = len(block)
+		copy(block, self.elements[:at])
+	}
+	copy(block[at + len(inserted):], self.elements[at + removed:])
+	copy(block[at:], inserted)
+	self.elements = block[:count]
+	return true
 }
 
 // The element's ordering: its own `<` when it has one (standard-library.md "Sorting
@@ -1402,8 +1304,7 @@ eval_less :: proc(ev: ^Evaluator, span: Span, less: Symbol_Id, a, b: Eval_Value)
 	return result.boolean, ok
 }
 
-// A stable merge sort, each comparison charged as a step, so a large
-// constant array costs its budget rather than an uncharged quadratic loop.
+// A stable merge sort; each comparison costs a step.
 @(private = "file")
 eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending: bool, less: Symbol_Id) -> bool {
 	if len(elements) < 2 {
@@ -1450,91 +1351,31 @@ eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending
 }
 
 // A mutating operation needs a place; a read can take any value.
-eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: []Eval_Value, success: bool) {
+@(private = "file")
+eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	if len(v.bound) == 0 || v.bound[0] == nil {
-		return nil, false
+		return Eval_Value{}, false
 	}
-	self: ^Eval_Value
+	receiver: Eval_Value
+	self := &receiver
 	if symbol.receiver == .Inout {
-		place, ok := eval_place(ev, v.bound[0])
-		if !ok { return nil, false }
-		self = place
+		self = eval_place(ev, v.bound[0]) or_return
 	} else {
-		value, ok := eval_expr(ev, v.bound[0])
-		if !ok { return nil, false }
-		place, allocated := eval_slot(ev, value)
-		if !allocated { return nil, false }
-		self = place
+		receiver = eval_expr(ev, v.bound[0]) or_return
 	}
-	// A slice's element too, so a slice sort sees its ordering as the checker's
-	// `require_sort_order_policy` does.
-	element := container_element(ev.k.c, self.type)
-	if element == INVALID_TYPE {
-		element = slice_element(ev.k.c, self.type)
-	}
-	none: []Eval_Value
+	element := sequence_element(ev.k.c, self.type)
 
-	results :: proc(ev: ^Evaluator, values: ..Eval_Value) -> []Eval_Value {
-		out, err := make([]Eval_Value, len(values), ev.alloc)
-		if err != nil { return nil }
-		copy(out, values)
-		return out
-	}
-
-	argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (Eval_Value, bool) {
-		if index >= len(v.bound) || v.bound[index] == nil {
-			return Eval_Value{}, false
-		}
-		value, ok := eval_expr(ev, v.bound[index])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		return copy_value(ev, value)
-	}
-
-	// An `int` argument, with the negative-count fault the runtime raises.
-	count_argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (int, bool) {
-		value, ok := eval_expr(ev, v.bound[index])
-		if !ok {
-			return 0, false
-		}
-		number, fits := bi_to_i64(ev.alloc, value.integer)
-		if !fits || number < 0 {
-			eval_fail(ev, expr_span(v.bound[index]), "L0343", "a container count cannot be negative")
-			return 0, false
-		}
-		return int(number), true
-	}
-
-	fallible := symbol.result == ev.k.c.alloc_result_type
 	switch symbol.container_op {
 	case .None:
 		eval_fail(ev, v.span, "L0405", "a container call has no operation")
-		return nil, false
+		return Eval_Value{}, false
 
 	case .Append:
-		if len(v.variadic_spreads) > 0 {
-			eval_fail(ev, v.span, "L0341", "a `..` spread has no compile-time meaning")
-			return nil, false
-		}
-		grown, err := make([dynamic]Eval_Value, 0, len(self.elements) + len(v.variadic_elements), ev.alloc)
-		if err != nil { return nil, false }
-		append(&grown, ..self.elements)
-		for written in v.variadic_elements {
-			value, value_ok := eval_expr(ev, written)
-			if !value_ok {
-				return nil, false
-			}
-			copied, copied_ok := copy_value(ev, value)
-			if !copied_ok {
-				return nil, false
-			}
-			append(&grown, copied)
-		}
-		self.elements = grown[:]
-		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
+		added := eval_appended(ev, v) or_return
+		defer delete(added, ev.alloc)
+		eval_splice(ev, self, len(self.elements), 0, ..added) or_return
+		return eval_alloc_ok(ev, symbol)
 
 	case .Sort, .Reverse_Sort:
 		// A dynamic array is sorted as its place. A slice's receiver is a copy of
@@ -1543,309 +1384,266 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		// "Sorting slices").
 		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
 			eval_fail(ev, v.span, "L0341", "this value cannot be sorted at compile time")
-			return nil, false
+			return Eval_Value{}, false
 		}
 		less := INVALID_SYMBOL
 		if policy := resolved_element_order_policy(ev.k.c, element); policy.kind == .Inherent {
 			less = policy.less
 		}
-		if !eval_sort(ev, v.span, self.elements, symbol.container_op == .Reverse_Sort, less) {
-			return nil, false
-		}
-		return none, true
+		eval_sort(ev, v.span, self.elements, symbol.container_op == .Reverse_Sort, less) or_return
+		return eval_void(), true
 
 	case .Swap:
 		// As for `sort`: a slice swaps the elements it views (standard-library.md
 		// "Swapping elements").
 		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
 			eval_fail(ev, v.span, "L0341", "this value cannot be rearranged at compile time")
-			return nil, false
+			return Eval_Value{}, false
 		}
-		left, left_ok := count_argument(ev, v, 1)
-		right, right_ok := count_argument(ev, v, 2)
-		if !left_ok || !right_ok {
-			return nil, false
-		}
+		left := eval_count_argument(ev, v, 1) or_return
+		right := eval_count_argument(ev, v, 2) or_return
 		for at in ([2]int{left, right}) {
 			if at >= len(self.elements) {
 				eval_fail(ev, v.span, "L0361", "index %d is out of range", at)
-				return nil, false
+				return Eval_Value{}, false
 			}
 		}
 		self.elements[left], self.elements[right] = self.elements[right], self.elements[left]
-		return none, true
+		return eval_void(), true
 
 	case .Chunks_Mut:
 		// Its chunks are handed out by a protocol iterator, which compile-time
 		// evaluation does not run.
 		eval_fail(ev, v.span, "L0341", "`chunks_mut` has no compile-time meaning yet")
-		return nil, false
+		return Eval_Value{}, false
 
 	case .Split_At_Mut:
 		// Both halves view the receiver's elements (standard-library.md "Splitting a
 		// mutable slice").
-		mid, mid_ok := count_argument(ev, v, 1)
-		if !mid_ok {
-			return nil, false
-		}
+		mid := eval_count_argument(ev, v, 1) or_return
 		if mid > len(self.elements) {
 			eval_fail(ev, v.span, "L0361", "split index %d is out of range for length %d", mid, len(self.elements))
-			return nil, false
+			return Eval_Value{}, false
 		}
-		halves, err := make([]Eval_Value, 2, ev.alloc)
-		if err != nil { return nil, false }
+		halves := eval_elements(ev, 2) or_return
 		halves[0] = Eval_Value{kind = .Aggregate, type = self.type, elements = self.elements[:mid]}
 		halves[1] = Eval_Value{kind = .Aggregate, type = self.type, elements = self.elements[mid:]}
-		return eval_one(ev, Eval_Value{kind = .Aggregate, type = symbol.result, elements = halves})
+		return Eval_Value{kind = .Aggregate, type = symbol.result, elements = halves}, true
 
 	case .Insert:
-		at, at_ok := count_argument(ev, v, 1)
-		value, value_ok := argument(ev, v, 2)
-		if !at_ok || !value_ok {
-			return nil, false
-		}
+		at := eval_count_argument(ev, v, 1) or_return
+		value := eval_copied(ev, v.bound[2]) or_return
 		if at > len(self.elements) {
 			eval_fail(ev, v.span, "L0361", "index %d is out of range", at)
-			return nil, false
+			return Eval_Value{}, false
 		}
-		grown, err := make([dynamic]Eval_Value, 0, len(self.elements) + 1, ev.alloc)
-		if err != nil { return nil, false }
-		append(&grown, ..self.elements[:at])
-		append(&grown, value)
-		append(&grown, ..self.elements[at:])
-		self.elements = grown[:]
-		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
+		eval_splice(ev, self, at, 0, value) or_return
+		return eval_alloc_ok(ev, symbol)
 
 	case .Pop:
 		if len(self.elements) == 0 {
-			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
+			return eval_option(ev, symbol.result, Eval_Value{}, false)
 		}
 		last := self.elements[len(self.elements) - 1]
 		self.elements = self.elements[:len(self.elements) - 1]
-		return eval_one(ev, eval_option(ev, symbol.result, last, true))
+		return eval_option(ev, symbol.result, last, true)
 
 	case .Remove, .Remove_Unordered:
-		at, at_ok := count_argument(ev, v, 1)
-		if !at_ok {
-			return nil, false
-		}
+		at := eval_count_argument(ev, v, 1) or_return
 		if at >= len(self.elements) {
 			eval_fail(ev, v.span, "L0361", "index %d is out of range", at)
-			return nil, false
+			return Eval_Value{}, false
 		}
 		taken := self.elements[at]
-		kept, err := make([dynamic]Eval_Value, 0, len(self.elements) - 1, ev.alloc)
-		if err != nil { return nil, false }
-		if symbol.container_op == .Remove_Unordered {
-			// The last element moves into the hole.
-			append(&kept, ..self.elements[:len(self.elements) - 1])
-			if at < len(kept) {
-				kept[at] = self.elements[len(self.elements) - 1]
-			}
+		if symbol.container_op == .Remove {
+			eval_splice(ev, self, at, 1) or_return
 		} else {
-			append(&kept, ..self.elements[:at])
-			append(&kept, ..self.elements[at + 1:])
+			// The last element moves into the hole.
+			self.elements[at] = self.elements[len(self.elements) - 1]
+			self.elements = self.elements[:len(self.elements) - 1]
 		}
-		self.elements = kept[:]
-		return results(ev, taken), true
+		return taken, true
 
 	case .Clear, .Map_Clear:
-		self.elements = nil
-		return none, true
+		self.elements = self.elements[:0]
+		return eval_void(), true
 
 	case .Resize:
-		size, size_ok := count_argument(ev, v, 1)
-		if !size_ok {
-			return nil, false
+		size := eval_count_argument(ev, v, 1) or_return
+		if size <= len(self.elements) {
+			self.elements = self.elements[:size]
+			return eval_alloc_ok(ev, symbol)
 		}
-		next, err := make([dynamic]Eval_Value, 0, size, ev.alloc)
-		if err != nil { return nil, false }
-		for index in 0 ..< size {
-			if index < len(self.elements) {
-				append(&next, self.elements[index])
-				continue
-			}
-			if !eval_hooks_supported(ev, element, v.span) {
-				return nil, false
-			}
-			zero, zeroed := zero_value(ev, element)
-			if !zeroed {
-				return nil, false
-			}
-			append(&next, zero)
+		eval_hooks_supported(ev, element, v.span) or_return
+		for len(self.elements) < size {
+			zero := zero_value(ev, element) or_return
+			eval_splice(ev, self, len(self.elements), 0, zero) or_return
 		}
-		self.elements = next[:]
-		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
+		return eval_alloc_ok(ev, symbol)
 
 	case .Reserve, .Shrink, .Map_Reserve,
 	     .Map_Shrink:
 		// No allocation here, so these do nothing observable.
-		if _, ok := count_argument(ev, v, 1); !ok {
-			return nil, false
-		}
-		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
+		eval_count_argument(ev, v, 1) or_return
+		return eval_alloc_ok(ev, symbol)
 
-	case .Map_Entries, .Map_Keys, .Map_Values:
-		eval_fail(ev, v.span, "L0341", "a map view has no compile-time meaning; iterate the map itself")
-		return nil, false
-
-	case .Map_Lookup_Value:
-		key, key_ok := argument(ev, v, 1)
-		if !key_ok {
-			return nil, false
-		}
-		at, found_ok := map_find(ev, self, key)
-		if !found_ok {
-			return nil, false
-		}
-		if at < 0 {
-			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
-		}
-		copied, copied_ok := copy_value(ev, self.elements[at + MAP_ENTRY_VALUE])
-		if !copied_ok {
-			return nil, false
-		}
-		return eval_one(ev, eval_option(ev, symbol.result, copied, true))
-
-	case .Map_Find:
-		key, key_ok := argument(ev, v, 1)
-		if !key_ok {
-			return nil, false
-		}
-		at, found_ok := map_find(ev, self, key)
-		if !found_ok {
-			return nil, false
-		}
-		if at < 0 {
-			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
-		}
-		pointer := Eval_Value {
-			kind   = .Nil,
-			type   = union_variant_payload(ev.k.c, symbol.result, union_index_of(ev.k.c, symbol.result, "some")),
-			target = &self.elements[at + MAP_ENTRY_VALUE],
-		}
-		return eval_one(ev, eval_option(ev, symbol.result, pointer, true))
-
-	// design.md "Map container operations": `elem` is stored only for a new key.
-	case .Map_Find_Or_Insert:
-		key, key_ok := argument(ev, v, 1)
-		if !key_ok {
-			return nil, false
-		}
-		value, value_ok := argument(ev, v, 2)
-		if !value_ok {
-			return nil, false
-		}
-		before := len(self.elements)
-		slot, slot_ok := map_entry_place(ev, self, key)
-		if !slot_ok {
-			return nil, false
-		}
-		if len(self.elements) > before {
-			slot^ = value
-		}
-		return eval_one(ev, eval_map_slot(ev, symbol.result, slot))
-
-	case .Map_Try_Insert:
-		key, key_ok := argument(ev, v, 1)
-		if !key_ok {
-			return nil, false
-		}
-		value, value_ok := argument(ev, v, 2)
-		if !value_ok {
-			return nil, false
-		}
-		slot, slot_ok := map_entry_place(ev, self, key)
-		if !slot_ok {
-			return nil, false
-		}
-		slot^ = value
-		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
-
-	case .Map_Remove:
-		key, key_ok := argument(ev, v, 1)
-		if !key_ok {
-			return nil, false
-		}
-		at, found_ok := map_find(ev, self, key)
-		if !found_ok {
-			return nil, false
-		}
-		if at < 0 {
-			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
-		}
-		taken := self.elements[at + MAP_ENTRY_VALUE]
-		kept, err := make([dynamic]Eval_Value, 0, len(self.elements) - 2, ev.alloc)
-		if err != nil { return nil, false }
-		append(&kept, ..self.elements[:at])
-		append(&kept, ..self.elements[at + 2:])
-		self.elements = kept[:]
-		return eval_one(ev, eval_option(ev, symbol.result, taken, true))
+	case .Map_Entries, .Map_Keys, .Map_Values,
+	     .Map_Lookup_Value, .Map_Find, .Map_Remove,
+	     .Map_Find_Or_Insert, .Map_Try_Insert:
+		return eval_map_op(ev, v, symbol, self)
 	}
-	return nil, false
-}
-
-@(private = "file")
-eval_map_read :: proc(ev: ^Evaluator, v: ^Expr_Index, m: ^Eval_Value) -> (Eval_Value, bool) {
-	key, key_ok := eval_expr(ev, v.indices[0])
-	if !key_ok {
-		return Eval_Value{}, false
-	}
-	at, found := map_find(ev, m, key)
-	if !found {
-		return Eval_Value{}, false
-	}
-	if at >= 0 {
-		return m.elements[at + MAP_ENTRY_VALUE], true
-	}
-	// What panics at run time is a compile-time error.
-	eval_fail(ev, v.span, "L0343", "this key is not in the map")
 	return Eval_Value{}, false
 }
 
-// `key in m`.
 @(private = "file")
-eval_map_membership :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
+eval_map_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol, self: ^Eval_Value) -> (out: Eval_Value, success: bool) {
+	#partial switch symbol.container_op {
+	case .Map_Entries, .Map_Keys, .Map_Values:
+		eval_fail(ev, v.span, "L0341", "a map view has no compile-time meaning; iterate the map itself")
+		return Eval_Value{}, false
+
+	case .Map_Lookup_Value, .Map_Find, .Map_Remove:
+		key := eval_expr(ev, v.bound[1]) or_return
+		at := map_find(ev, self, key) or_return
+		if at < 0 {
+			return eval_option(ev, symbol.result, Eval_Value{}, false)
+		}
+		entry := &self.elements[at + MAP_ENTRY_VALUE]
+		#partial switch symbol.container_op {
+		case .Map_Find:
+			pointer := Eval_Value {
+				kind   = .Nil,
+				type   = union_variant_payload(ev.k.c, symbol.result, union_index_of(ev.k.c, symbol.result, "some")),
+				target = entry,
+			}
+			return eval_option(ev, symbol.result, pointer, true)
+		case .Map_Remove:
+			taken := entry^
+			eval_splice(ev, self, at, 2) or_return
+			return eval_option(ev, symbol.result, taken, true)
+		}
+		copied := copy_value(ev, entry^) or_return
+		return eval_option(ev, symbol.result, copied, true)
+
+	case .Map_Find_Or_Insert, .Map_Try_Insert:
+		key := eval_copied(ev, v.bound[1]) or_return
+		value := eval_copied(ev, v.bound[2]) or_return
+		before := len(self.elements)
+		slot := map_entry_place(ev, self, key) or_return
+		if symbol.container_op == .Map_Try_Insert {
+			slot^ = value
+			return eval_alloc_ok(ev, symbol)
+		}
+		// design.md "Map container operations": `elem` is stored only for a new key.
+		if len(self.elements) > before {
+			slot^ = value
+		}
+		return eval_map_slot(ev, symbol, slot)
+	}
+	return Eval_Value{}, false
+}
+
+// An `int` argument, with the negative-count fault the runtime raises.
+@(private = "file")
+eval_count_argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (out: int, success: bool) {
+	value := eval_expr(ev, v.bound[index]) or_return
+	number, fits := bi_to_i64(ev.alloc, value.integer)
+	if !fits || number < 0 {
+		eval_fail(ev, expr_span(v.bound[index]), "L0343", "a container count cannot be negative")
+		return 0, false
+	}
+	return int(number), true
+}
+
+// What `append` adds, in written order; a spread adds a copy of each element it
+// views (design.md "Variadic parameters").
+@(private = "file")
+eval_appended :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: []Eval_Value, success: bool) {
+	added := make([dynamic]Eval_Value, 0, len(v.variadic_elements), ev.alloc)
+	if v.variadic_forwards {
+		eval_append_spread(ev, &added, v.bound[v.variadic_slot]) or_return
+		return added[:], true
+	}
+	cursor: Call_Pack_Cursor
+	for operand, is_spread in call_pack_next(v, &cursor) {
+		if is_spread {
+			eval_append_spread(ev, &added, operand) or_return
+			continue
+		}
+		copied := eval_copied(ev, operand) or_return
+		append(&added, copied)
+	}
+	return added[:], true
+}
+
+@(private = "file")
+eval_append_spread :: proc(ev: ^Evaluator, added: ^[dynamic]Eval_Value, spread: Expr) -> bool {
+	viewed := eval_expr(ev, spread) or_return
+	for element in viewed.elements {
+		copied := copy_value(ev, element) or_return
+		append(added, copied)
+	}
+	return true
+}
+
+@(private = "file")
+eval_void :: proc() -> Eval_Value {
+	return Eval_Value{kind = .Invalid, type = TYPE_VOID}
+}
+
+// What an operation that might allocate answers when it had nothing to allocate:
+// nothing, or `.ok` carrying `Unit` for the `try_` spelling.
+@(private = "file")
+eval_alloc_ok :: proc(ev: ^Evaluator, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
+	if !container_member_is_try(ev.k.c, symbol) {
+		return eval_void(), true
+	}
+	unit := zero_value(ev, ev.k.c.unit_type) or_return
+	return eval_named_union(ev, symbol.result, "ok", unit)
+}
+
+// `find_or_insert`'s `^mut V`, wrapped in `.ok` for the `try_` spelling.
+@(private = "file")
+eval_map_slot :: proc(ev: ^Evaluator, symbol: ^Symbol, slot: ^Eval_Value) -> (Eval_Value, bool) {
+	if container_member_is_try(ev.k.c, symbol) {
+		payload := union_variant_payload(ev.k.c, symbol.result, union_index_of(ev.k.c, symbol.result, "ok"))
+		return eval_named_union(ev, symbol.result, "ok", Eval_Value{kind = .Nil, type = payload, target = slot})
+	}
+	return Eval_Value{kind = .Nil, type = symbol.result, target = slot}, true
+}
+
+// `key in m`, or `x in r` (design.md "Ranges").
+@(private = "file")
+eval_in :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (out: Eval_Value, success: bool) {
 	// A failing `or_return` in the key leaves before the subject is evaluated.
-	key, key_ok := eval_expr(ev, v.lhs)
-	if !key_ok {
-		return Eval_Value{}, false
-	}
-	subject, subject_ok := eval_expr(ev, v.rhs)
-	if !subject_ok {
-		return Eval_Value{}, false
-	}
-	// design.md "Ranges": `x in r`.
+	key := eval_expr(ev, v.lhs) or_return
+	subject := eval_expr(ev, v.rhs) or_return
+	present: bool
 	if info := type_of(ev.k.c, subject.type); info != nil && info.is_range &&
 	   subject.kind == .Aggregate && len(subject.elements) == 3 {
-		above, above_ok := eval_compare(ev, .Lt_Eq, subject.elements[RANGE_LOW], key)
-		below, below_ok := eval_compare(ev, .Lt, key, subject.elements[RANGE_HIGH])
-		at, at_ok := eval_compare(ev, .Eq_Eq, key, subject.elements[RANGE_HIGH])
-		if !above_ok || !below_ok || !at_ok {
-			return Eval_Value{}, false
-		}
-		within := above && (below || (subject.elements[RANGE_CLOSED].boolean && at))
-		return Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = within}, true
+		present = eval_range_contains(ev, subject, key) or_return
+	} else {
+		at := map_find(ev, &subject, key) or_return
+		present = at >= 0
 	}
-	at, found := map_find(ev, &subject, key)
-	if !found {
-		return Eval_Value{}, false
-	}
-	present := at >= 0
 	return Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = present}, true
 }
 
+@(private = "file")
+eval_range_contains :: proc(ev: ^Evaluator, range, key: Eval_Value) -> (out: bool, success: bool) {
+	above := eval_compare(ev, .Lt_Eq, range.elements[RANGE_LOW], key) or_return
+	below := eval_compare(ev, .Lt, key, range.elements[RANGE_HIGH]) or_return
+	at := eval_compare(ev, .Eq_Eq, key, range.elements[RANGE_HIGH]) or_return
+	return above && (below || (range.elements[RANGE_CLOSED].boolean && at)), true
+}
+
 // The storage an expression denotes, for assignment, `&`, and `inout`.
-eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
+@(private = "file")
+eval_place :: proc(ev: ^Evaluator, e: Expr) -> (out: ^Eval_Value, success: bool) {
 	if e == nil {
 		return nil, false
 	}
-	if !eval_step(ev, expr_span(e)) {
-		return nil, false
-	}
+	eval_step(ev, expr_span(e)) or_return
 	#partial switch v in e {
 	case ^Expr_Ident:
 		if v.name == "_" {
@@ -1865,97 +1663,42 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		return nil, false
 
 	case ^Expr_Selector:
-		base, ok := eval_aggregate_place(ev, v.operand)
-		if !ok {
-			return nil, false
-		}
+		base := eval_aggregate_place(ev, v.operand) or_return
 		return eval_field(ev, v, base.elements)
 
 	case ^Expr_Call:
 		if _, reflected := v.operation.(Call_Reflect); reflected {
 			return eval_reflected_field(ev, v)
 		}
-		target, ok := eval_call_target(ev, v)
-		if !ok {
-			return nil, false
-		}
+		target := eval_call_target(ev, v) or_return
 		return eval_call_place(ev, target, v.bound, v.span, v.bound_order)
 
 	case ^Expr_Index:
 		if v.resolution.kind == .User_Operator {
 			return eval_call_place(ev, v.resolution.symbol, v.bound, v.span)
 		}
-		base, ok := eval_aggregate_place(ev, v.operand)
-		if !ok {
-			return nil, false
-		}
+		base := eval_aggregate_place(ev, v.operand) or_return
 		// design.md: only `m[key] = elem` inserts (`map_inserts`).
 		if type_is_map(ev.k.c, base.type) {
-			key, key_ok := eval_expr(ev, v.indices[0])
-			if !key_ok {
-				return nil, false
-			}
+			key := eval_expr(ev, v.indices[0]) or_return
 			if !v.map_inserts {
-				at, found := map_find(ev, base, key)
-				if !found {
-					return nil, false
-				}
-				if at < 0 {
-					eval_fail(ev, v.span, "L0343", "this key is not in the map")
-					return nil, false
-				}
-				return &base.elements[at + MAP_ENTRY_VALUE], true
+				return eval_map_entry(ev, base, key, v.span)
 			}
+			key = copy_value(ev, key) or_return
 			return map_entry_place(ev, base, key)
 		}
-		index_value, index_ok := eval_expr(ev, v.indices[0])
-		if !index_ok {
-			return nil, false
-		}
-		index, fits := bi_to_i64(ev.alloc, index_value.integer)
-		if !fits || index < 0 || int(index) >= len(base.elements) {
-			eval_fail(ev, expr_span(v.indices[0]), "L0361", "index %s is out of range", bi_text(ev.alloc, index_value.integer))
-			return nil, false
-		}
-		return &base.elements[index], true
+		at := eval_index_value(ev, v.indices[0], len(base.elements)) or_return
+		return &base.elements[at], true
 
 	case ^Expr_Postfix:
-		// design.md "Owned values": the payload is the box's one element.
 		if v.boxed {
-			holder: ^Eval_Value
-			if expr_base(v.operand).addressable {
-				place, ok := eval_place(ev, v.operand)
-				if !ok {
-					return nil, false
-				}
-				holder = place
-			} else {
-				value, ok := eval_expr(ev, v.operand)
-				if !ok {
-					return nil, false
-				}
-				holder, ok = eval_slot(ev, value)
-				if !ok {
-					return nil, false
-				}
-			}
-			if len(holder.elements) != 1 {
-				eval_fail(ev, v.span, "L0341", "this box holds no value")
-				return nil, false
-			}
-			return &holder.elements[0], true
+			return eval_box_payload(ev, v.operand, v.span)
 		}
-		pointer, ok := eval_expr(ev, v.operand)
-		if !ok {
-			return nil, false
-		}
+		pointer := eval_expr(ev, v.operand) or_return
 		return eval_deref(ev, pointer, v.op_span)
 
 	case ^Expr_Composite:
-		value, ok := eval_composite(ev, v)
-		if !ok {
-			return nil, false
-		}
+		value := eval_composite(ev, v) or_return
 		return eval_slot(ev, value)
 	}
 	eval_fail(ev, expr_span(e), "L0341", "this expression is not compile-time storage")
@@ -1965,7 +1708,7 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 // design.md "Slices": a slice views the elements of what it slices, so a write
 // through a `[]mut T` reaches the original, and text slices by byte offsets.
 @(private = "file")
-eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (Eval_Value, bool) {
+eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (out: Eval_Value, success: bool) {
 	// A user `operator([:])` is called with the arguments the checker bound.
 	if v.resolution.kind == .User_Operator {
 		return eval_operator_call(ev, v.resolution.symbol, v.bound, v.span)
@@ -1975,19 +1718,13 @@ eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (Eval_Value, bool) {
 	#partial switch underlying_kind(ev.k.c, base.type) {
 	case .Array, .Dynamic_Array:
 		if base.addressable {
-			place, ok := eval_place(ev, v.operand)
-			if !ok {
-				return Eval_Value{}, false
-			}
+			place := eval_place(ev, v.operand) or_return
 			operand = place^
 			break
 		}
 		fallthrough
 	case .Slice, .String, .String_View:
-		value, ok := eval_expr(ev, v.operand)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		value := eval_expr(ev, v.operand) or_return
 		operand = value
 	case:
 		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
@@ -1999,10 +1736,7 @@ eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (Eval_Value, bool) {
 		if endpoint == nil {
 			continue
 		}
-		value, ok := eval_expr(ev, endpoint)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		value := eval_expr(ev, endpoint) or_return
 		fits: bool
 		if bounds[index], fits = bi_to_i64(ev.alloc, value.integer); !fits {
 			bounds[index] = -1
@@ -2035,29 +1769,27 @@ eval_deref :: proc(ev: ^Evaluator, pointer: Eval_Value, span: Span) -> (^Eval_Va
 	return pointer.target, true
 }
 
-// The selected field among an aggregate's elements.
 @(private = "file")
-eval_field :: proc(ev: ^Evaluator, v: ^Expr_Selector, elements: []Eval_Value) -> (^Eval_Value, bool) {
+eval_field_index :: proc(ev: ^Evaluator, v: ^Expr_Selector, count: int) -> (int, bool) {
 	field := symbol_of(ev.k.c, v.resolution.symbol)
-	if field == nil || int(field.index) >= len(elements) {
-		eval_fail(ev, v.span, "L0341", "`%s` has no compile-time value here", v.name.text)
-		return nil, false
+	if field == nil || int(field.index) >= count {
+		return 0, eval_fail(ev, v.span, "L0341", "`%s` has no compile-time value here", v.name.text)
 	}
-	return &elements[field.index], true
+	return int(field.index), true
+}
+
+@(private = "file")
+eval_field :: proc(ev: ^Evaluator, v: ^Expr_Selector, elements: []Eval_Value) -> (out: ^Eval_Value, success: bool) {
+	at := eval_field_index(ev, v, len(elements)) or_return
+	return &elements[at], true
 }
 
 // design.md "Compile-time reflection": `field.get(value)` is the reflected field
 // of the record `value` points to, and `field.pointer(value)` its address.
 @(private = "file")
-eval_reflected_field :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (^Eval_Value, bool) {
-	subject, ok := eval_expr(ev, v.bound[0])
-	if !ok {
-		return nil, false
-	}
-	record, live := eval_deref(ev, subject, expr_span(v.bound[0]))
-	if !live {
-		return nil, false
-	}
+eval_reflected_field :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: ^Eval_Value, success: bool) {
+	subject := eval_expr(ev, v.bound[0]) or_return
+	record := eval_deref(ev, subject, expr_span(v.bound[0])) or_return
 	field := symbol_of(ev.k.c, v.operation.(Call_Reflect).field)
 	if field == nil || int(field.index) >= len(record.elements) {
 		eval_fail(ev, v.span, "L0341", "this field has no compile-time value here")
@@ -2068,41 +1800,35 @@ eval_reflected_field :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (^Eval_Value, boo
 
 // The aggregate a selection reads, where `p.f` means `p^.f`.
 @(private = "file")
-eval_aggregate_value :: proc(ev: ^Evaluator, operand: Expr) -> (Eval_Value, bool) {
-	value, ok := eval_expr(ev, operand)
-	if !ok {
-		return Eval_Value{}, false
-	}
+eval_aggregate_value :: proc(ev: ^Evaluator, operand: Expr) -> (out: Eval_Value, success: bool) {
+	value := eval_expr(ev, operand) or_return
 	if type_is_pointer(ev.k.c, expr_base(operand).type) {
-		target, live := eval_deref(ev, value, expr_span(operand))
-		if !live {
-			return Eval_Value{}, false
-		}
+		target := eval_deref(ev, value, expr_span(operand)) or_return
 		return target^, true
 	}
 	return value, true
 }
 
-// The storage a selection writes through, where `p.f` means `p^.f`.
+// The storage a selection writes through, where `p.f` means `p^.f`. A slice made on
+// the spot still views the storage it was made from.
 @(private = "file")
-eval_aggregate_place :: proc(ev: ^Evaluator, operand: Expr) -> (^Eval_Value, bool) {
-	if type_is_pointer(ev.k.c, expr_base(operand).type) {
-		pointer, ok := eval_expr(ev, operand)
-		if !ok {
-			return nil, false
-		}
+eval_aggregate_place :: proc(ev: ^Evaluator, operand: Expr) -> (out: ^Eval_Value, success: bool) {
+	base := expr_base(operand)
+	if type_is_pointer(ev.k.c, base.type) {
+		pointer := eval_expr(ev, operand) or_return
 		return eval_deref(ev, pointer, expr_span(operand))
+	}
+	if type_is_slice(ev.k.c, base.type) && !base.addressable {
+		view := eval_expr(ev, operand) or_return
+		return eval_slot(ev, view)
 	}
 	return eval_place(ev, operand)
 }
 
 // A payloadless variant keeps an `Invalid` payload, so every arm has one element.
 @(private = "file")
-eval_union :: proc(ev: ^Evaluator, type: Type_Id, variant: int, payload: Eval_Value) -> (Eval_Value, bool) {
-	elements, allocated := eval_elements(ev, 1)
-	if !allocated {
-		return Eval_Value{}, false
-	}
+eval_union :: proc(ev: ^Evaluator, type: Type_Id, variant: int, payload: Eval_Value) -> (out: Eval_Value, success: bool) {
+	elements := eval_elements(ev, 1) or_return
 	elements[0] = payload
 	return Eval_Value{kind = .Aggregate, type = type, variant = variant, elements = elements}, true
 }
@@ -2114,128 +1840,93 @@ eval_named_union :: proc(ev: ^Evaluator, type: Type_Id, name: string, payload: E
 
 // The fallback is evaluated only on failure, as at run time.
 @(private = "file")
-eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (Eval_Value, bool) {
-	value, ok := eval_expr(ev, v.value)
-	if !ok {
-		return Eval_Value{}, false
-	}
-	shape, fallible := fallible_of(ev.k, expr_base(v.value).type)
+eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (out: Eval_Value, success: bool) {
+	value := eval_expr(ev, v.value) or_return
+	shape, fallible := fallible_of(ev.k.c, expr_base(v.value).type)
 	if !fallible {
 		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
 		return Eval_Value{}, false
 	}
-	if value.variant == shape.failure {
-		// design.md "or_else expression": run the exit, then unwind to the
-		// enclosing statement as a failing `or_return` does.
-		if v.exit != nil {
-			flow := eval_stmt(ev, v.exit)
-			frame := current_frame(ev)
-			if flow == .Fail || frame == nil {
-				return Eval_Value{}, false
-			}
-			if flow == .Return {
-				frame.returning = true
-			} else {
-				frame.exiting = flow
-			}
-			return Eval_Value{}, false
-		}
+	if value.variant != shape.failure {
+		return eval_success_payload(ev, value, shape)
+	}
+	if v.exit == nil {
 		return eval_expr(ev, v.fallback)
 	}
-	if shape.info.variants[shape.success] == TYPE_VOID {
-		return zero_value(ev, ev.k.c.unit_type)
+	// Every statement evaluated runs in a frame, and only this exit can reach one
+	// from a constant initialiser.
+	frame := current_frame(ev)
+	if frame == nil {
+		eval_fail(ev, v.span, "L0341", "this `or_else` has no compile-time target")
+		return Eval_Value{}, false
 	}
-	return eval_union_payload(value, INVALID_TYPE), true
+	// design.md "or_else expression": run the exit, then unwind to the
+	// enclosing statement as a failing `or_return` does.
+	if flow := eval_stmt(ev, v.exit); flow != .Fail {
+		frame.exiting = flow
+	}
+	return Eval_Value{}, false
 }
 
 // On failure this returns false without setting `ev.failed`; the statement
 // turns that into `.Return`.
 @(private = "file")
-eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
-	value, ok := eval_expr(ev, v.operand)
-	if !ok {
-		return Eval_Value{}, false
-	}
-	shape, fallible := fallible_of(ev.k, expr_base(v.operand).type)
+eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (out: Eval_Value, success: bool) {
+	value := eval_expr(ev, v.operand) or_return
+	shape, fallible := fallible_of(ev.k.c, expr_base(v.operand).type)
 	frame := current_frame(ev)
-	if !fallible || frame == nil || frame.result_slot == nil {
+	if !fallible || frame == nil || frame.result_type == INVALID_TYPE {
 		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
 		return Eval_Value{}, false
 	}
 	if value.variant != shape.failure {
-		if shape.info.variants[shape.success] == TYPE_VOID {
-			return zero_value(ev, ev.k.c.unit_type)
-		}
-		return eval_union_payload(value, INVALID_TYPE), true
+		return eval_success_payload(ev, value, shape)
 	}
 	// design.md "or_return operator": the failure operand runs only here, as an
 	// `or_else` exit does.
 	if v.failure_exit != nil {
 		if v.failure_maps {
-			error, copied := copy_value(ev, eval_union_payload(value, INVALID_TYPE))
-			if !copied {
-				return Eval_Value{}, false
-			}
+			error := copy_value(ev, eval_union_payload(value)) or_return
 			if ev.propagated == nil {
 				ev.propagated = make(map[^Expr_Postfix]Eval_Value, 4, ev.alloc)
 			}
 			ev.propagated[v] = error
 		}
-		flow := eval_stmt(ev, v.failure_exit)
-		if flow == .Fail {
-			return Eval_Value{}, false
+		if eval_stmt(ev, v.failure_exit) != .Fail {
+			frame.exiting = .Return
 		}
-		frame.returning = true
 		return Eval_Value{}, false
 	}
 
-	target, target_ok := fallible_of(ev.k, frame.result_slot.type)
+	target, target_ok := fallible_of(ev.k.c, frame.result_type)
 	if !target_ok {
 		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
 		return Eval_Value{}, false
 	}
-	payload := eval_union_payload(value, INVALID_TYPE)
-	into := target.info.variants[target.failure]
+	payload := eval_union_payload(value)
+	into := target.failure_type
 	if into != TYPE_VOID {
-		payload, ok = copy_value(ev, payload)
-		if !ok {
-			return Eval_Value{}, false
-		}
-		if from := shape.info.variants[shape.failure]; union_widens_to(ev.k.c, from, into) {
+		payload = copy_value(ev, payload) or_return
+		if from := shape.failure_type; union_widens_to(ev.k.c, from, into) {
 			payload = widen_eval_value(ev.k.c, payload, from, into)
 		}
 		payload.type = into
 	} else {
 		payload = Eval_Value{kind = .Invalid, type = TYPE_VOID}
 	}
-	wrapped, wrapped_ok := eval_union(ev, frame.result_slot.type, target.failure, payload)
-	if !wrapped_ok {
-		return Eval_Value{}, false
-	}
-	frame.result = wrapped
-	frame.returning = true
+	frame.result = eval_union(ev, frame.result_type, target.failure, payload) or_return
+	frame.exiting = .Return
 	return Eval_Value{}, false
 }
 
-// `.ok`: an allocating container operation that had nothing to allocate. Its
-// success carries `Unit`.
+// What a fallible value yields on success: `Unit` when its success is void,
+// otherwise the payload.
 @(private = "file")
-eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
-	unit, made := zero_value(ev, ev.k.c.unit_type)
-	if !made {
-		return Eval_Value{}, false
+eval_success_payload :: proc(ev: ^Evaluator, value: Eval_Value, shape: Fallible) -> (Eval_Value, bool) {
+	if shape.success_type == TYPE_VOID {
+		return zero_value(ev, ev.k.c.unit_type)
 	}
-	return eval_named_union(ev, type, "ok", unit)
-}
-
-// `find_or_insert`'s `^mut V`, wrapped in `.ok` for the `try_` spelling.
-@(private = "file")
-eval_map_slot :: proc(ev: ^Evaluator, result: Type_Id, slot: ^Eval_Value) -> (Eval_Value, bool) {
-	if type_is_union(ev.k.c, result) {
-		payload := union_variant_payload(ev.k.c, result, union_index_of(ev.k.c, result, "ok"))
-		return eval_named_union(ev, result, "ok", Eval_Value{kind = .Nil, type = payload, target = slot})
-	}
-	return Eval_Value{kind = .Nil, type = result, target = slot}, true
+	return eval_union_payload(value), true
 }
 
 // `.some(payload)` or `.none`, for a container read that may find nothing.
@@ -2247,86 +1938,56 @@ eval_option :: proc(ev: ^Evaluator, type: Type_Id, payload: Eval_Value, present:
 	return eval_named_union(ev, type, "some", payload)
 }
 
-// One result, in the evaluator's arena so it outlives this frame.
+// `argument`, copied, as variant `variant` of `type`.
 @(private = "file")
-eval_one :: proc(ev: ^Evaluator, value: Eval_Value, built := true) -> ([]Eval_Value, bool) {
-	if !built {
-		return nil, false
-	}
-	out, err := make([]Eval_Value, 1, ev.alloc)
-	if err != nil {
-		return nil, false
-	}
-	out[0] = value
-	return out, true
+eval_union_of :: proc(ev: ^Evaluator, type: Type_Id, variant: int, argument: Expr) -> (out: Eval_Value, success: bool) {
+	payload := eval_copied(ev, argument) or_return
+	return eval_union(ev, type, variant, payload)
 }
 
+// The payload of `value`, if it has one.
 @(private = "file")
-eval_union_construct :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
-	if len(v.bound) != 1 || v.bound[0] == nil {
-		eval_fail(ev, v.span, "L0341", "a union construction needs its payload")
-		return Eval_Value{}, false
-	}
-	payload, ok := eval_expr(ev, v.bound[0])
-	if !ok {
-		return Eval_Value{}, false
-	}
-	copied, copied_ok := copy_value(ev, payload)
-	if !copied_ok {
-		return Eval_Value{}, false
-	}
-	return eval_union(ev, v.type, v.operation.(Call_Union_Construct).index, copied)
-}
-
-// The payload of `value`, or the whole union when the case binds the union
-// type itself (a grouped or default case).
-@(private = "file")
-eval_union_payload :: proc(value: Eval_Value, binding_type: Type_Id) -> Eval_Value {
-	if binding_type == value.type || len(value.elements) == 0 {
+eval_union_payload :: proc(value: Eval_Value) -> Eval_Value {
+	if len(value.elements) == 0 {
 		return value
 	}
 	return value.elements[0]
 }
 
 @(private = "file")
-eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
+eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, success: bool) {
 	#partial switch operation in v.operation {
 	case Call_Enum_From_Int:
-		value, ok := eval_expr(ev, v.bound[0])
-		if !ok { return Eval_Value{}, false }
+		value := eval_expr(ev, v.bound[0]) or_return
 		candidate := Const_Value{kind = .Integer, integer = value.integer}
-		if enum_member_by_value(ev.k.c, operation.type, candidate) == INVALID_SYMBOL {
-			return eval_named_union(ev, v.type, "none", Eval_Value{})
-		}
 		value.type = operation.type
-		return eval_named_union(ev, v.type, "some", value)
+		return eval_option(ev, v.type, value, enum_member_by_value(ev.k.c, operation.type, candidate) != INVALID_SYMBOL)
 	case Call_Box_Unbox:
-		boxed, ok := eval_expr(ev, v.bound[0])
-		if !ok || len(boxed.elements) != 1 { return Eval_Value{}, false }
-		return boxed.elements[0], true
+		return eval_unbox(ev, v.bound[0], v.span)
 	case Call_Union_As:
-		value, ok := eval_expr(ev, v.bound[0])
-		if !ok { return Eval_Value{}, false }
+		value := eval_expr(ev, v.bound[0]) or_return
 		if value.variant != operation.index {
-			return eval_named_union(ev, v.type, "none", Eval_Value{})
+			return eval_option(ev, v.type, Eval_Value{}, false)
 		}
 		payload: Eval_Value
 		if union_variant_payload(ev.k.c, expr_base(v.bound[0]).type, operation.index) == TYPE_VOID {
-			payload, ok = zero_value(ev, ev.k.c.unit_type)
+			payload = zero_value(ev, ev.k.c.unit_type) or_return
 		} else {
-			payload, ok = copy_value(ev, value.elements[0])
+			payload = copy_value(ev, value.elements[0]) or_return
 		}
-		if !ok { return Eval_Value{}, false }
-		return eval_named_union(ev, v.type, "some", payload)
+		return eval_option(ev, v.type, payload, true)
 	case Call_Conversion, Call_Dyn_Conversion:
 		return eval_conversion(ev, v)
 	case Call_Union_Construct:
-		return eval_union_construct(ev, v)
+		if len(v.bound) != 1 || v.bound[0] == nil {
+			eval_fail(ev, v.span, "L0341", "a union construction needs its payload")
+			return Eval_Value{}, false
+		}
+		return eval_union_of(ev, v.type, operation.index, v.bound[0])
 	case Call_Text:
 		return eval_text_op(ev, v)
 	case Call_Reflect:
-		field, ok := eval_reflected_field(ev, v)
-		if !ok { return Eval_Value{}, false }
+		field := eval_reflected_field(ev, v) or_return
 		if operation.op == .Field_Pointer {
 			return Eval_Value{kind = .Nil, type = v.type, target = field}, true
 		}
@@ -2339,64 +2000,46 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return Eval_Value{}, false
 	}
 	// Compiler-written members run directly.
-	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil &&
-	   (chosen.synth == .Standard_Len || chosen.synth == .Standard_Cap || chosen.synth == .Standard_Hash) {
-		return eval_standard_customization(ev, v, chosen)
-	}
-	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil && chosen.synth == .Container_Op {
-		results, ok := eval_container_op(ev, v, chosen)
-		if !ok {
-			return Eval_Value{}, false
+	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil {
+		#partial switch chosen.synth {
+		case .Standard_Len, .Standard_Cap, .Standard_Hash:
+			return eval_standard_customization(ev, v, chosen)
+		case .Container_Op:
+			return eval_container_op(ev, v, chosen)
 		}
-		if len(results) == 0 {
-			return Eval_Value{kind = .Invalid, type = TYPE_VOID}, true
-		}
-		return results[0], true
 	}
 
-	target, target_ok := eval_call_target(ev, v)
-	if !target_ok {
-		return Eval_Value{}, false
-	}
-	// A generated `clone` is the evaluator's own deep copy, which is what an
-	// implicit copy was before copies that may allocate had to be written.
-	if sym := symbol_of(ev.k.c, target); sym != nil && sym.synth == .Clone && len(v.bound) >= 1 {
-		subject, subject_ok := eval_expr(ev, v.bound[0])
-		if !subject_ok {
-			return Eval_Value{}, false
+	target := eval_call_target(ev, v) or_return
+	if sym := symbol_of(ev.k.c, target); sym != nil {
+		#partial switch sym.synth {
+		// A generated `clone` is the evaluator's own deep copy.
+		case .Clone:
+			if len(v.bound) >= 1 {
+				return eval_copied(ev, v.bound[0])
+			}
+		// A variant constructor has no body: its payload becomes the variant.
+		case .Variant_Construct:
+			if len(v.bound) == 1 {
+				return eval_union_of(ev, sym.result, union_variant_index(ev.k.c, sym.result, sym.name), v.bound[0])
+			}
 		}
-		return copy_value(ev, subject)
-	}
-	// A variant constructor has no body: its payload becomes the variant.
-	if sym := symbol_of(ev.k.c, target); sym != nil && sym.synth == .Variant_Construct && len(v.bound) == 1 {
-		payload, payload_ok := eval_expr(ev, v.bound[0])
-		if !payload_ok {
-			return Eval_Value{}, false
-		}
-		return eval_union(ev, sym.result, union_variant_index(ev.k.c, sym.result, sym.name), payload)
 	}
 
-	result, ok := eval_invoke(ev, target, v.bound, v.span, order = v.bound_order)
-	if !ok {
-		return Eval_Value{}, false
-	}
+	result := eval_invoke(ev, target, v.bound, v.span, order = v.bound_order) or_return
 	if result.type == INVALID_TYPE {
-		return Eval_Value{kind = .Invalid, type = TYPE_VOID}, true
+		return eval_void(), true
 	}
 	return result, true
 }
 
 // design.md "String iteration": the views copy nothing.
 @(private = "file")
-eval_text_op :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
+eval_text_op :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, success: bool) {
 	if len(v.bound) == 0 || v.bound[0] == nil {
 		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
 		return Eval_Value{}, false
 	}
-	subject, ok := eval_expr(ev, v.bound[0])
-	if !ok {
-		return Eval_Value{}, false
-	}
+	subject := eval_expr(ev, v.bound[0]) or_return
 	#partial switch v.operation.(Call_Text).op {
 	case .Byte_Len:
 		return eval_count_value(ev, len(subject.text)), true
@@ -2405,10 +2048,7 @@ eval_text_op :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return eval_count_value(ev, utf8.rune_count_in_string(subject.text)), true
 
 	case .Bytes:
-		elements, allocated := eval_elements(ev, len(subject.text))
-		if !allocated {
-			return Eval_Value{}, false
-		}
+		elements := eval_elements(ev, len(subject.text)) or_return
 		for byte_value, index in transmute([]u8)subject.text {
 			elements[index] = Eval_Value{
 				kind    = .Integer,
@@ -2426,70 +2066,119 @@ eval_text_op :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 }
 
 @(private = "file")
-eval_standard_customization :: proc(ev: ^Evaluator, v: ^Expr_Call, chosen: ^Symbol) -> (Eval_Value, bool) {
+eval_standard_customization :: proc(ev: ^Evaluator, v: ^Expr_Call, chosen: ^Symbol) -> (out: Eval_Value, success: bool) {
 	#partial switch chosen.synth {
 	case .Standard_Len:
-		subject, ok := eval_expr(ev, v.bound[0])
-		if !ok { return Eval_Value{}, false }
+		subject := eval_expr(ev, v.bound[0]) or_return
 		count := len(subject.elements)
 		if subject.kind == .String {
 			count = len(subject.text)
 		} else if type_is_map(ev.k.c, subject.type) {
 			count /= 2
 		}
-		return Eval_Value{kind = .Integer, type = TYPE_INT, integer = bi_from_i64(ev.alloc, i64(count))}, true
-
-	case .Standard_Cap:
-		eval_fail(ev, v.span, "L0595", "`cap` has no compile-time meaning: a capacity is a property of an allocation, and there is none here")
-		return Eval_Value{}, false
+		return eval_count_value(ev, count), true
 
 	case .Standard_Hash:
-		value, value_ok := eval_expr(ev, v.bound[0])
-		seed, seed_ok := eval_expr(ev, v.bound[1])
-		if !value_ok || !seed_ok { return Eval_Value{}, false }
-		frozen_seed, froze_seed := freeze(ev, seed, ev.alloc)
-		if !froze_seed { return Eval_Value{}, false }
-		start, _ := bi_to_u64(ev.alloc, bi_wrap(ev.alloc, frozen_seed.integer, 64, false))
-		mixed, mixed_ok := eval_hash(ev, value, expr_base(v.bound[0]).type, start, v.span)
-		if !mixed_ok { return Eval_Value{}, false }
-		return Eval_Value{kind = .Integer, type = TYPE_UINT, integer = bi_from_u64(ev.alloc, mixed)}, true
-
-	case:
-		eval_fail(ev, v.span, "L0341", "`%s` has no compile-time meaning", identifier_text(ev.k.c, chosen.name))
-		return Eval_Value{}, false
+		operands: [2]Eval_Value
+		eval_operands(ev, v.bound, operands[:]) or_return
+		start := eval_wrap_u64(ev, operands[1].integer)
+		mixed := eval_hash(ev, operands[0], expr_base(v.bound[0]).type, start, v.span) or_return
+		return eval_uint_value(ev, mixed), true
 	}
+	eval_fail(ev, v.span, "L0595", "`cap` has no compile-time meaning: a capacity is a property of an allocation, and there is none here")
+	return Eval_Value{}, false
+}
+
+// Operands in order, stopping at the first that fails.
+@(private = "file")
+eval_operands :: proc(ev: ^Evaluator, bound: []Expr, operands: []Eval_Value) -> bool {
+	for &operand, index in operands {
+		operand = eval_expr(ev, bound[index]) or_return
+	}
+	return true
+}
+
+@(private = "file")
+eval_uint_value :: proc(ev: ^Evaluator, value: u64) -> Eval_Value {
+	return Eval_Value{kind = .Integer, type = TYPE_UINT, integer = bi_from_u64(ev.alloc, value)}
+}
+
+@(private = "file")
+eval_wrap_u64 :: proc(ev: ^Evaluator, integer: Big_Int) -> u64 {
+	wrapped, _ := bi_to_u64(ev.alloc, bi_wrap(ev.alloc, integer, 64, false))
+	return wrapped
+}
+
+// The same mix the backend's `emit_hash_value` makes: a part with its own `==`
+// by its own `hash`, a record's fields and an array's elements in order, a
+// union's tag and then its payload, and a scalar as `hash_const` does.
+@(private = "file")
+eval_hash :: proc(ev: ^Evaluator, value: Eval_Value, type: Type_Id, seed: u64, span: Span) -> (out: u64, success: bool) {
+	c := ev.k.c
+	if own := part_own_hash(c, type); own != INVALID_SYMBOL {
+		result := eval_invoke(ev, own, nil, span, []Eval_Value{value, eval_uint_value(ev, seed)}) or_return
+		if result.kind != .Integer {
+			return 0, false
+		}
+		return eval_wrap_u64(ev, result.integer), true
+	}
+	info := underlying_info(c, type)
+	if info != nil && value.kind == .Aggregate {
+		#partial switch info.kind {
+		case .Struct:
+			current := seed
+			for field, index in info.fields {
+				sym := symbol_of(c, field)
+				if sym == nil || index >= len(value.elements) {
+					return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
+				}
+				current = eval_hash(ev, value.elements[index], sym.type, current, span) or_return
+			}
+			return current, true
+		case .Array:
+			current := seed
+			for element in value.elements {
+				current = eval_hash(ev, element, info.element, current, span) or_return
+			}
+			return current, true
+		case .Union:
+			tagged := hash_mix(seed, u64(value.variant))
+			if value.variant < 0 || value.variant >= len(info.variants) {
+				return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
+			}
+			payload := info.variants[value.variant]
+			if payload == TYPE_VOID || len(value.elements) == 0 {
+				return tagged, true
+			}
+			return eval_hash(ev, value.elements[0], payload, tagged, span)
+		}
+	}
+	frozen := freeze(ev, value, ev.alloc) or_return
+	// design.md "`type` and `typeid`": a `typeid_of(T)` has no number yet.
+	if underlying_kind(c, type) == .Typeid {
+		if _, known := typeid_const_number(c, frozen); !known {
+			return 0, eval_fail(ev, span, "L0341", "`typeid_of` has no number at compile time, so it cannot be hashed there")
+		}
+	}
+	return hash_const(c, frozen, type, seed, ev.alloc), true
 }
 
 // Direct and indirect calls alike.
 @(private = "file")
-eval_call_target :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Symbol_Id, bool) {
-	target := v.resolution.symbol
-	if target == INVALID_SYMBOL {
-		value, ok := eval_expr(ev, v.callee)
-		if !ok {
-			return INVALID_SYMBOL, false
-		}
-		if value.proc_value == INVALID_SYMBOL {
-			eval_fail(ev, expr_span(v.callee), "L0343", "this calls a nil procedure value")
-			return INVALID_SYMBOL, false
-		}
-		target = value.proc_value
+eval_call_target :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Symbol_Id, success: bool) {
+	if v.resolution.symbol != INVALID_SYMBOL {
+		return v.resolution.symbol, true
 	}
-	if !ensure_proc_typed_for_eval(ev.k, target) {
-		eval_fail(
-			ev,
-			v.span,
-			"L0344",
-			"`%s` cannot be called at compile time: its body is still being checked",
-			eval_proc_name(ev.k.c, target),
-		)
+	value := eval_expr(ev, v.callee) or_return
+	if value.proc_value == INVALID_SYMBOL {
+		eval_fail(ev, expr_span(v.callee), "L0343", "this calls a nil procedure value")
 		return INVALID_SYMBOL, false
 	}
-	return target, true
+	return value.proc_value, true
 }
 
-// Binds arguments, runs the body, unwinds `defer`, and hands back the one
-// declared result, or an invalid value when the procedure has none.
+// Hands back the one declared result, or an invalid value when the procedure has
+// none.
 @(private = "file")
 eval_invoke :: proc(
 	ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil, order: []int = nil,
@@ -2507,9 +2196,6 @@ eval_invoke :: proc(
 		return Eval_Value{}, false
 	}
 	symbol := symbol_of(ev.k.c, symbol_id)
-	if symbol == nil {
-		return Eval_Value{}, false
-	}
 	literal := eval_proc_literal(symbol)
 	if literal == nil || literal.body == nil {
 		eval_fail(ev, site, "L0341", "`%s` has no body to evaluate", eval_proc_name(ev.k.c, symbol_id))
@@ -2526,95 +2212,18 @@ eval_invoke :: proc(
 		return Eval_Value{}, false
 	}
 
-	frame := new(Eval_Frame, ev.alloc)
-	if frame == nil { return Eval_Value{}, false }
-	frame.symbol = symbol_id
-	frame.site = site
-	frame.locals = make(map[Symbol_Id]^Eval_Value, 8, ev.alloc)
-	frame.defers = make([dynamic]^Stmt_Defer, 0, 4, ev.alloc)
-	if !eval_memory_ok(ev) { return Eval_Value{}, false }
+	frame := eval_push_frame(ev, symbol_id, site) or_return
+	defer pop(&ev.frames)
+	eval_bind_arguments(ev, frame, symbol, args, values, order) or_return
 
-	info := type_of(ev.k.c, symbol.proc_type)
-	// A default runs in the callee's frame, since it may name an earlier
-	// parameter; a written argument runs in the caller's.
-	append(&ev.frames, frame)
-	if !eval_memory_ok(ev) { return Eval_Value{}, false }
-	// design.md "Evaluation order": `order` is the schedule when named
-	// arguments reorder it.
-	for step in 0 ..< max(len(args), len(values)) {
-		index := step
-		if step < len(order) {
-			index = order[step]
-		}
-		argument := index < len(args) ? args[index] : Expr(nil)
-		if index >= len(symbol.param_symbols) {
-			continue
-		}
-		binding := symbol.param_symbols[index]
-		mode := info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		is_default := argument != nil && symbol.param_defaults != nil && index < len(symbol.param_defaults) &&
-			argument == symbol.param_defaults[index]
-
-		if !is_default {
-			pop(&ev.frames)
-		}
-		slot: ^Eval_Value
-		ok := true
-		if values != nil {
-			copied: Eval_Value
-			copied, ok = copy_value(ev, values[index])
-			if ok { slot, ok = eval_slot(ev, copied) }
-		} else if mode == .Inout || (mode == .Borrow && argument != nil && expr_base(argument).addressable) {
-			slot, ok = eval_place(ev, argument)
-		} else {
-			value: Eval_Value
-			value, ok = eval_expr(ev, argument)
-			if ok {
-				copied: Eval_Value
-				copied, ok = copy_value(ev, value)
-				if ok {
-					slot, ok = eval_slot(ev, copied)
-				}
-			}
-		}
-		// `self: ^Self` binds a pointer to the receiver.
-		if bound := symbol_of(ev.k.c, binding); ok && mode == .Borrow && bound != nil && bound.type != symbol.params[index] {
-			slot, ok = eval_slot(ev, Eval_Value{kind = .Nil, type = bound.type, target = slot})
-		}
-		if !is_default {
-			append(&ev.frames, frame)
-		}
-		if !ok {
-			pop(&ev.frames)
-			return Eval_Value{}, false
-		}
-		if binding != INVALID_SYMBOL {
-			frame.locals[binding] = slot
-		}
-	}
-
-	// Zeroed, so `or_return` can publish into it.
+	// Zero until a `return` or `or_return` sets it.
 	if symbol.result != INVALID_TYPE {
-		if !eval_hooks_supported(ev, symbol.result, site) {
-			pop(&ev.frames)
-			return Eval_Value{}, false
-		}
-		value, zeroed := zero_value(ev, symbol.result)
-		if !zeroed {
-			pop(&ev.frames)
-			return Eval_Value{}, false
-		}
-		slot, allocated := eval_slot(ev, value)
-		if !allocated {
-			pop(&ev.frames)
-			return Eval_Value{}, false
-		}
-		frame.result_slot = slot
-		frame.result = value
+		eval_hooks_supported(ev, symbol.result, site) or_return
+		frame.result = zero_value(ev, symbol.result) or_return
+		frame.result_type = symbol.result
 	}
 
 	flow := eval_block(ev, literal.body)
-	pop(&ev.frames)
 	result, place := frame.result, frame.result_place
 	eval_release_frame(ev, frame)
 	if flow == .Fail {
@@ -2624,6 +2233,74 @@ eval_invoke :: proc(
 		result_place^ = place
 	}
 	return result, true
+}
+
+@(private = "file")
+eval_push_frame :: proc(ev: ^Evaluator, symbol: Symbol_Id, site: Span) -> (^Eval_Frame, bool) {
+	frame := new(Eval_Frame, ev.alloc)
+	if frame == nil { return nil, false }
+	frame.symbol = symbol
+	frame.site = site
+	frame.locals = make(map[Symbol_Id]^Eval_Value, 8, ev.alloc)
+	frame.defers = make([dynamic]^Stmt_Defer, 0, 4, ev.alloc)
+	if !eval_memory_ok(ev) { return nil, false }
+	append(&ev.frames, frame)
+	return frame, eval_memory_ok(ev)
+}
+
+// A default runs in the callee's frame, since it may name an earlier parameter; a
+// written argument runs in the caller's. design.md "Evaluation order": `order` is
+// the schedule when named arguments reorder it.
+@(private = "file")
+eval_bind_arguments :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol: ^Symbol, args: []Expr, values: []Eval_Value, order: []int) -> bool {
+	for step in 0 ..< max(len(args), len(values)) {
+		index := step
+		if step < len(order) {
+			index = order[step]
+		}
+		if index >= len(symbol.param_symbols) {
+			continue
+		}
+		argument := index < len(args) ? args[index] : Expr(nil)
+		is_default := argument != nil && symbol.param_defaults != nil && index < len(symbol.param_defaults) &&
+			argument == symbol.param_defaults[index]
+
+		if !is_default {
+			pop(&ev.frames)
+		}
+		slot, ok := eval_argument_slot(ev, symbol, index, argument, values)
+		if !is_default {
+			append(&ev.frames, frame)
+		}
+		if !ok {
+			return false
+		}
+		if binding := symbol.param_symbols[index]; binding != INVALID_SYMBOL {
+			frame.locals[binding] = slot
+		}
+	}
+	return true
+}
+
+@(private = "file")
+eval_argument_slot :: proc(ev: ^Evaluator, symbol: ^Symbol, index: int, argument: Expr, values: []Eval_Value) -> (out: ^Eval_Value, success: bool) {
+	info := type_of(ev.k.c, symbol.proc_type)
+	mode := param_mode_at(info, index)
+	slot: ^Eval_Value
+	if values != nil {
+		copied := copy_value(ev, values[index]) or_return
+		slot = eval_slot(ev, copied) or_return
+	} else if mode == .Inout || (mode == .Borrow && argument != nil && expr_base(argument).addressable) {
+		slot = eval_place(ev, argument) or_return
+	} else {
+		copied := eval_copied(ev, argument) or_return
+		slot = eval_slot(ev, copied) or_return
+	}
+	// `self: ^Self` binds a pointer to the receiver.
+	if bound := symbol_of(ev.k.c, symbol.param_symbols[index]); mode == .Borrow && bound != nil && bound.type != symbol.params[index] {
+		return eval_slot(ev, Eval_Value{kind = .Nil, type = bound.type, target = slot})
+	}
+	return slot, true
 }
 
 // A returned frame's table, `defer` list, and record are the evaluator's own,
@@ -2642,7 +2319,7 @@ eval_release_frame :: proc(ev: ^Evaluator, frame: ^Eval_Frame) {
 @(private = "file")
 eval_operator_call :: proc(
 	ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil,
-) -> (Eval_Value, bool) {
+) -> (out: Eval_Value, success: bool) {
 	symbol := symbol_of(ev.k.c, symbol_id)
 	if symbol == nil || !symbol.delegated {
 		return eval_invoke(ev, symbol_id, args, site, values)
@@ -2657,27 +2334,23 @@ eval_operator_call :: proc(
 			operands[index] = values[index]
 			continue
 		}
-		operand, ok := eval_expr(ev, args[index])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		operand := eval_expr(ev, args[index]) or_return
 		operands[index] = operand
 	}
 	op := operator_token(symbol.operator)
-	if count == 1 {
-		applied, ok := eval_unary_value(ev, op, site, const_of(operands[0]), symbol.delegate_underlying)
-		if !ok {
-			return Eval_Value{}, false
+	if type_is_simd(ev.k.c, symbol.delegate_underlying) {
+		if count == 1 {
+			return eval_simd_unary(ev, op, site, symbol.result, operands[0])
 		}
+		return eval_simd_binary_values(ev, op, site, symbol.result, operands[0], operands[1])
+	}
+	if count == 1 {
+		applied := eval_unary_value(ev, op, site, const_of(operands[0]), symbol.delegate_underlying) or_return
 		return scalar(const_of(applied), symbol.result), true
 	}
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		result, ok := eval_compare(ev, op, operands[0], operands[1])
-		if !ok {
-			eval_fail(ev, site, "L0341", "this comparison has no compile-time meaning")
-			return Eval_Value{}, false
-		}
+		result := eval_compare_at(ev, op, operands[0], operands[1], site) or_return
 		return scalar(bool_const(result), symbol.result), true
 	}
 	folded, ok := fold_arithmetic(
@@ -2693,15 +2366,13 @@ eval_operator_call :: proc(
 // design.md "`inout` results": a call returning `inout T` is a place, the
 // storage its `return inout` named.
 @(private = "file")
-eval_call_place :: proc(ev: ^Evaluator, target: Symbol_Id, args: []Expr, site: Span, order: []int = nil) -> (^Eval_Value, bool) {
+eval_call_place :: proc(ev: ^Evaluator, target: Symbol_Id, args: []Expr, site: Span, order: []int = nil) -> (out: ^Eval_Value, success: bool) {
 	if symbol := symbol_of(ev.k.c, target); symbol == nil || !symbol.result_inout {
 		eval_fail(ev, site, "L0341", "this expression is not compile-time storage")
 		return nil, false
 	}
 	place: ^Eval_Value
-	if _, ok := eval_invoke(ev, target, args, site, order = order, result_place = &place); !ok {
-		return nil, false
-	}
+	eval_invoke(ev, target, args, site, order = order, result_place = &place) or_return
 	if place == nil {
 		eval_fail(ev, site, "L0341", "this call returned no storage")
 		return nil, false
@@ -2718,11 +2389,8 @@ eval_proc_literal :: proc(symbol: ^Symbol) -> ^Expr_Proc {
 }
 
 @(private = "file")
-eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
-	source, ok := eval_expr(ev, v.bound[0])
-	if !ok {
-		return Eval_Value{}, false
-	}
+eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, success: bool) {
+	source := eval_expr(ev, v.bound[0]) or_return
 	c := ev.k.c
 	// A distinct type and what it wraps share a representation.
 	if type_underlying(c, expr_base(v.bound[0]).type) == type_underlying(c, v.type) {
@@ -2745,10 +2413,7 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	// An aggregate is frozen so the shared conversion sees its lanes.
 	operand := const_of(source)
 	if source.kind == .Aggregate {
-		frozen, froze := freeze(ev, source, ev.alloc)
-		if !froze {
-			return Eval_Value{}, false
-		}
+		frozen := freeze(ev, source, ev.alloc) or_return
 		operand = frozen
 	}
 	converted, fits := convert_const(c, operand, v.type, true, ev.alloc)
@@ -2771,16 +2436,12 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 }
 
 @(private = "file")
-eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Value, bool) {
-	void := Eval_Value{kind = .Invalid, type = TYPE_VOID}
+eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
 	#partial switch symbol.builtin {
 	case .Assert:
-		condition, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		condition := eval_expr(ev, v.bound[0]) or_return
 		if condition.boolean {
-			return void, true
+			return eval_void(), true
 		}
 		eval_fail(ev, v.span, "L0343", "compile-time assertion failed%s", eval_message(ev, v, 1))
 		return Eval_Value{}, false
@@ -2791,41 +2452,23 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 
 	case .Drop:
 		// Nothing to release here; only the zero write applies.
-		slot, ok := eval_place(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		zeroed, made := zero_value(ev, slot.type)
-		if !made {
-			return Eval_Value{}, false
-		}
-		slot^ = zeroed
-		return void, true
+		slot := eval_place(ev, v.bound[0]) or_return
+		slot^ = zero_value(ev, slot.type) or_return
+		return eval_void(), true
 
 	case .Box_New, .Try_Box:
 		// design.md "Owned values": a box is one value held apart, so the
 		// evaluator keeps it as a one-element aggregate with value semantics.
-		payload, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		payload := eval_expr(ev, v.bound[0]) or_return
 		if expression_is_borrowed_place(v.bound[0]) {
-			payload, ok = copy_value(ev, payload)
-			if !ok {
-				return Eval_Value{}, false
-			}
+			payload = copy_value(ev, payload) or_return
 		}
 		// The allocator argument runs for its effects; the evaluator's box holds
 		// no storage of its own to take from it.
 		if len(v.bound) > 1 && v.bound[1] != nil {
-			if _, evaluated := eval_expr(ev, v.bound[1]); !evaluated {
-				return Eval_Value{}, false
-			}
+			eval_expr(ev, v.bound[1]) or_return
 		}
-		elements, allocated := eval_elements(ev, 1)
-		if !allocated {
-			return Eval_Value{}, false
-		}
+		elements := eval_elements(ev, 1) or_return
 		elements[0] = payload
 		checked := v.operation.(Call_Allocation)
 		boxed := Eval_Value{kind = .Aggregate, type = box_of(ev.k.c, checked.type), elements = elements}
@@ -2834,73 +2477,89 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		return boxed, true
 
+	case .Unsafe_Take, .Unsafe_Write, .Unsafe_Forget, .Unsafe_Transmute:
+		return eval_unsafe_builtin(ev, v, symbol)
+
+	case .Math_Wrap, .Math_Fma_Available, .Math_Fma_Instruction, .Math_Sqrt_Instruction,
+	     .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction,
+	     .Math_Mod_Instruction, .Math_Rotate_Left, .Math_Rotate_Right,
+	     .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width,
+	     .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+		return eval_math_builtin(ev, v, symbol)
+
+	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
+		return eval_simd_builtin(ev, v, symbol)
+	}
+	eval_fail(ev, v.span, "L0341", "`%s` has no compile-time meaning", identifier_text(ev.k.c, symbol.name))
+	return Eval_Value{}, false
+}
+
+@(private = "file")
+eval_unsafe_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
+	#partial switch symbol.builtin {
 	case .Unsafe_Take:
-		place, ok := eval_place(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		place := eval_place(ev, v.bound[0]) or_return
 		value := place^
 		place^ = Eval_Value{kind = .Invalid, type = value.type}
 		return value, true
 
 	case .Unsafe_Write:
-		place, ok := eval_place(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		value: Eval_Value
-		if moved, is_move := v.bound[1].(^Expr_Move); is_move {
-			source, source_ok := eval_place(ev, moved.value)
-			if !source_ok {
-				return Eval_Value{}, false
-			}
-			value = source^
-			source^ = Eval_Value{kind = .Invalid, type = value.type}
-		} else {
-			computed, computed_ok := eval_expr(ev, v.bound[1])
-			if !computed_ok {
-				return Eval_Value{}, false
-			}
-			value = computed
-			if expression_is_borrowed_place(v.bound[1]) {
-				value, computed_ok = copy_value(ev, computed)
-				if !computed_ok {
-					return Eval_Value{}, false
-				}
-			}
+		place := eval_place(ev, v.bound[0]) or_return
+		value := eval_expr(ev, v.bound[1]) or_return
+		if expression_is_borrowed_place(v.bound[1]) {
+			value = copy_value(ev, value) or_return
 		}
 		value.type = place.type
 		place^ = value
-		return void, true
+		return eval_void(), true
 
 	case .Unsafe_Forget:
-		// No hook runs; the slot is left inert.
-		if moved, is_move := v.bound[0].(^Expr_Move); is_move {
-			slot, ok := eval_place(ev, moved.value)
-			if !ok {
-				return Eval_Value{}, false
-			}
-			if zeroed, made := zero_value(ev, slot.type); made {
-				slot^ = zeroed
-			}
-			return void, true
-		}
-		if _, ok := eval_expr(ev, v.bound[0]); !ok {
-			return Eval_Value{}, false
-		}
-		return void, true
+		// No hook runs; a moved slot is left inert.
+		eval_expr(ev, v.bound[0]) or_return
+		return eval_void(), true
+	}
 
+	// `.Unsafe_Transmute`: the checker's fold, for an operand that is a local.
+	operand := eval_expr(ev, v.bound[0]) or_return
+	frozen := freeze(ev, operand, ev.alloc) or_return
+	source := expr_base(v.bound[0]).type
+	result, status := transmute_const(ev.k.c, frozen, source, v.type, ev.alloc)
+	defer {
+		eval_release_tables(ev, frozen)
+		eval_release_tables(ev, result)
+	}
+	switch status {
+	case .Folded:
+		return value_from_const(ev, result, v.type)
+	case .Invalid:
+		eval_fail(
+			ev, v.span, "L0688",
+			"this bit pattern is not a valid `%s`", type_name(ev.k.c, v.type),
+		)
+	case .Padding:
+		eval_fail(
+			ev, v.span, "L0688",
+			"`unsafe.transmute` reads the padding of `%s` into `%s`, and padding has no compile-time value",
+			type_name(ev.k.c, source), type_name(ev.k.c, v.type),
+		)
+	case .Unfoldable:
+		eval_fail(
+			ev, v.span, "L0688",
+			"`unsafe.transmute` has no compile-time meaning from `%s` to `%s`",
+			type_name(ev.k.c, source), type_name(ev.k.c, v.type),
+		)
+	}
+	return Eval_Value{}, false
+}
+
+@(private = "file")
+eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
+	#partial switch symbol.builtin {
 	case .Math_Wrap:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		operand := eval_expr(ev, v.bound[0]) or_return
 		// design.md "Type conversion": a vector wraps lane by lane.
 		if info := underlying_info(ev.k.c, v.type); info != nil && info.kind == .Simd {
-			elements, allocated := eval_elements(ev, int(info.count))
-			if !allocated {
-				return Eval_Value{}, false
-			}
+			elements := eval_elements(ev, int(info.count)) or_return
 			for index in 0 ..< int(info.count) {
 				lane := const_of(eval_simd_lane(operand, index))
 				lane.integer = wrap_to_type(ev.k.c, lane.integer, info.element, ev.alloc)
@@ -2920,179 +2579,94 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 	// A compile-time value is the build's: no copy of a procedure for another
 	// level is evaluated (design.md "@(cpu_dispatch=<string>)").
 	case .Math_Fma_Available:
-		return scalar(bool_const(.FMA in ev.k.c.target.features), TYPE_BOOL), true
+		return scalar(bool_const(cpu_has_fma(ev.k.c.target.cpu)), TYPE_BOOL), true
 
 	// Rounded once from the exact value, as the instruction does, rather than
 	// by the host's arithmetic or its C library.
 	case .Math_Fma_Instruction:
 		operands: [3]Eval_Value
-		for &operand, index in operands {
-			value, ok := eval_expr(ev, v.bound[index])
-			if !ok {
-				return Eval_Value{}, false
-			}
-			operand = value
-		}
+		eval_operands(ev, v.bound, operands[:]) or_return
 		bits := operands[0].float_bits
 		fused := exact_fma(ev.alloc, operands[0].float, operands[1].float, operands[2].float, bits)
 		return scalar(float_const(fused, bits), v.type), true
 
-	// Rounded exactly, as the instruction is, rather than by the host.
 	case .Math_Sqrt_Instruction:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		operand := eval_expr(ev, v.bound[0]) or_return
 		return scalar(exact_sqrt(const_of(operand)), v.type), true
 
 	case .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		operand := eval_expr(ev, v.bound[0]) or_return
 		return scalar(exact_integral(const_of(operand), symbol.builtin), v.type), true
 
 	case .Math_Mod_Instruction:
-		x, x_ok := eval_expr(ev, v.bound[0])
-		if !x_ok {
-			return Eval_Value{}, false
-		}
-		y, y_ok := eval_expr(ev, v.bound[1])
-		if !y_ok {
-			return Eval_Value{}, false
-		}
-		return scalar(exact_mod(const_of(x), const_of(y)), v.type), true
+		operands: [2]Eval_Value
+		eval_operands(ev, v.bound, operands[:]) or_return
+		return scalar(exact_mod(const_of(operands[0]), const_of(operands[1])), v.type), true
 
 	case .Math_Rotate_Left, .Math_Rotate_Right:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		by, by_ok := eval_expr(ev, v.bound[1])
-		if !by_ok {
-			return Eval_Value{}, false
-		}
-		rotated := rotate_const(ev.k.c, ev.alloc, const_of(operand).integer, const_of(by).integer, v.type, symbol.builtin)
+		operands: [2]Eval_Value
+		eval_operands(ev, v.bound, operands[:]) or_return
+		rotated := rotate_const(ev.k.c, operands[0].integer, operands[1].integer, v.type, symbol.builtin, ev.alloc)
 		return scalar(integer_const(rotated), v.type), true
 
 	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		operand := eval_expr(ev, v.bound[0]) or_return
 		source := expr_base(v.bound[0]).type
-		count := bit_count(ev.alloc, const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
+		count := bit_count(operand.integer, type_bits(ev.k.c, source), symbol.builtin)
 		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
+	}
 
 	// design.md "Integer overflow": a `next_power_of_two` that would panic at
 	// run time is a compile-time diagnostic, as a checked `+` is, and the
 	// checked form's `.none`.
-	case .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		source := expr_base(v.bound[0]).type
-		if symbol.builtin == .Math_Checked_Next_Power_Of_Two {
-			power, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, .Math_Next_Power_Of_Two)
-			return eval_option(ev, v.type, scalar(power, source), fits)
-		}
-		result, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, symbol.builtin)
-		if !fits {
-			report_integer_overflow(ev.k.c, v.span, result.integer, source, ev.alloc)
-			eval_fold_failed(ev)
-			return Eval_Value{}, false
-		}
-		return scalar(result, v.type), true
-
-	case .Unsafe_Transmute:
-		// The checker's fold, for an operand that is a local.
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		frozen, froze := freeze(ev, operand, ev.alloc)
-		if !froze {
-			return Eval_Value{}, false
-		}
-		source := expr_base(v.bound[0]).type
-		result, status := transmute_const(ev.k.c, frozen, source, v.type)
-		switch status {
-		case .Folded:
-			return value_from_const(ev, result, v.type)
-		case .Invalid:
-			eval_fail(
-				ev, v.span, "L0688",
-				"this bit pattern is not a valid `%s`", type_name(ev.k.c, v.type),
-			)
-		case .Padding:
-			eval_fail(
-				ev, v.span, "L0688",
-				"`unsafe.transmute` reads the padding of `%s` into `%s`, and padding has no compile-time value",
-				type_name(ev.k.c, source), type_name(ev.k.c, v.type),
-			)
-		case .Unfoldable:
-			eval_fail(
-				ev, v.span, "L0688",
-				"`unsafe.transmute` has no compile-time meaning from `%s` to `%s`",
-				type_name(ev.k.c, source), type_name(ev.k.c, v.type),
-			)
-		}
+	operand := eval_expr(ev, v.bound[0]) or_return
+	source := expr_base(v.bound[0]).type
+	if symbol.builtin == .Math_Checked_Next_Power_Of_Two {
+		power, fits := bit_value_const(ev.k.c, operand.integer, source, .Math_Next_Power_Of_Two, ev.alloc)
+		return eval_option(ev, v.type, scalar(power, source), fits)
+	}
+	result, fits := bit_value_const(ev.k.c, operand.integer, source, symbol.builtin, ev.alloc)
+	if !fits {
+		report_integer_overflow(ev.k.c, v.span, result.integer, source, ev.alloc)
+		eval_fold_failed(ev)
 		return Eval_Value{}, false
+	}
+	return scalar(result, v.type), true
+}
 
+@(private = "file")
+eval_simd_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
+	#partial switch symbol.builtin {
 	// standard-library.md "`core:simd`": a vector and its array have the same lanes in the
 	// same order, so the conversion only retypes them.
 	case .Simd_Cast:
-		operand, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		out, copied := copy_value(ev, operand)
+		out = eval_copied(ev, v.bound[0]) or_return
 		out.type = v.type
-		return out, copied
+		return out, true
 
 	case .Simd_Select:
-		mask, mask_ok := eval_expr(ev, v.bound[0])
-		left, left_ok := eval_expr(ev, v.bound[1])
-		right, right_ok := eval_expr(ev, v.bound[2])
-		if !mask_ok || !left_ok || !right_ok {
-			return Eval_Value{}, false
-		}
+		operands: [3]Eval_Value
+		eval_operands(ev, v.bound, operands[:]) or_return
 		count := int(underlying_info(ev.k.c, v.type).count)
-		elements, allocated := eval_elements(ev, count)
-		if !allocated {
-			return Eval_Value{}, false
-		}
+		elements := eval_elements(ev, count) or_return
 		for index in 0 ..< count {
-			chosen := left if eval_simd_lane(mask, index).boolean else right
+			chosen := operands[1] if eval_simd_lane(operands[0], index).boolean else operands[2]
 			elements[index] = eval_simd_lane(chosen, index)
 		}
 		return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
-
-	case .Simd_Reduce:
-		return eval_simd_reduce(ev, v)
 	}
-	eval_fail(
-		ev,
-		v.span,
-		"L0341",
-		"`%s` has no compile-time meaning",
-		identifier_text(ev.k.c, symbol.name),
-	)
-	return Eval_Value{}, false
+	return eval_simd_reduce(ev, v)
 }
 
-// The optional constant message of `assert`/`panic`.
+// The constant message of `assert`/`panic` and its arguments; a non-scalar prints
+// as `<value>`.
 @(private = "file")
-// The message, then each argument after it, as the runtime report spells them.
-// ponytail: a scalar prints as its value and anything else as `<value>`; give
-// aggregates a spelling here if a compile-time failure ever needs one.
 eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	if index >= len(v.bound) || v.bound[index] == nil {
 		return ""
 	}
 	base := expr_base(v.bound[index])
-	if base == nil || !base.is_const || base.const_value.kind != .String {
+	if base == nil || base.const_value.kind != .String {
 		return ""
 	}
 	b := strings.builder_make(ev.k.c.semantic_allocator)
@@ -3101,9 +2675,7 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	for arg in v.bound[index + 1:] {
 		text := "<value>"
 		if value, ok := eval_expr(ev, arg); ok {
-			if frozen, froze := freeze(ev, value, ev.alloc); froze {
-				text = const_display_text(ev.k.c, frozen)
-			}
+			text = const_display_text(ev.k.c, const_of(value))
 		}
 		strings.write_byte(&b, ' ')
 		strings.write_string(&b, text)
@@ -3111,6 +2683,7 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	return strings.to_string(b)
 }
 
+@(private = "file")
 eval_block :: proc(ev: ^Evaluator, b: ^Block) -> Eval_Flow {
 	return b == nil ? .Normal : eval_stmts(ev, b.stmts, true)
 }
@@ -3120,7 +2693,7 @@ eval_block :: proc(ev: ^Evaluator, b: ^Block) -> Eval_Flow {
 @(private = "file")
 eval_stmts :: proc(ev: ^Evaluator, stmts: []Stmt, scope: bool) -> Eval_Flow {
 	frame := current_frame(ev)
-	mark := frame == nil ? 0 : len(frame.defers)
+	mark := len(frame.defers)
 	flow := Eval_Flow.Normal
 	for stmt in stmts {
 		flow = eval_stmt(ev, stmt)
@@ -3128,7 +2701,7 @@ eval_stmts :: proc(ev: ^Evaluator, stmts: []Stmt, scope: bool) -> Eval_Flow {
 			break
 		}
 	}
-	if scope && frame != nil {
+	if scope {
 		flow = run_defers(ev, frame, mark, flow)
 	}
 	return flow
@@ -3140,8 +2713,8 @@ eval_stmts :: proc(ev: ^Evaluator, stmts: []Stmt, scope: bool) -> Eval_Flow {
 run_defers :: proc(ev: ^Evaluator, frame: ^Eval_Frame, mark: int, flow: Eval_Flow) -> Eval_Flow {
 	result := flow
 	failing := false
-	if flow == .Return && frame.result_slot != nil {
-		if shape, fallible := fallible_of(ev.k, frame.result_slot.type); fallible {
+	if flow == .Return && frame.result_type != INVALID_TYPE {
+		if shape, fallible := fallible_of(ev.k.c, frame.result_type); fallible {
 			failing = frame.result.variant == shape.failure
 		}
 	}
@@ -3158,23 +2731,18 @@ run_defers :: proc(ev: ^Evaluator, frame: ^Eval_Frame, mark: int, flow: Eval_Flo
 	return result
 }
 
+@(private = "file")
 eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 	result := eval_stmt_inner(ev, stmt)
 	if !eval_memory_ok(ev) {
 		return .Fail
 	}
-	if result == .Fail {
-		// An `or_return`'s signal is spent here, so a later failure is not a return.
-		if frame := current_frame(ev); frame != nil && frame.returning && !ev.failed {
-			frame.returning = false
-			return .Return
-		}
-		// So is an `or_else` exit's (design.md "or_else expression").
-		if frame := current_frame(ev); frame != nil && frame.exiting != .Normal && !ev.failed {
-			flow := frame.exiting
-			frame.exiting = .Normal
-			return flow
-		}
+	// The signal of an `or_return` or an `or_else` exit is spent here, so a later
+	// failure is not one (design.md "or_else expression").
+	if frame := current_frame(ev); result == .Fail && frame.exiting != .Normal && !ev.failed {
+		flow := frame.exiting
+		frame.exiting = .Normal
+		return flow
 	}
 	return result
 }
@@ -3230,9 +2798,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		return eval_switch(ev, s)
 
 	case ^Stmt_Defer:
-		if frame := current_frame(ev); frame != nil {
-			append(&frame.defers, s)
-		}
+		append(&current_frame(ev).defers, s)
 		return .Normal
 
 	case ^Stmt_Return:
@@ -3246,8 +2812,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 
 	case ^Stmt_When:
 		// Not a scope: its `defer`s belong to the surrounding one.
-		selected := when_selected_block(s)
-		return selected == nil ? .Normal : eval_stmts(ev, selected.stmts, false)
+		return s.selected == nil ? .Normal : eval_stmts(ev, s.selected.stmts, false)
 
 	case ^Stmt_Foreach:
 		return eval_foreach(ev, s)
@@ -3267,10 +2832,6 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 @(private = "file")
 eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 	frame := current_frame(ev)
-	if frame == nil {
-		eval_fail(ev, d.span, "L0341", "a declaration needs a compile-time frame")
-		return .Fail
-	}
 	// design.md "Storage modifiers": the storage persists between calls, so it
 	// is runtime state that evaluation can neither read nor modify.
 	if d.duration != .None {
@@ -3286,35 +2847,33 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 			return .Fail
 		}
 		for symbol_id, index in d.symbols {
-			if !bind_local(ev, frame, symbol_id, values[index]) {
+			if !eval_bind_local(ev, frame, symbol_id, values[index]) {
 				return .Fail
 			}
 		}
 		return .Normal
 	}
 	for symbol_id, index in d.symbols {
+		symbol := symbol_of(ev.k.c, symbol_id)
+		// A body-local type holds no value.
+		if symbol != nil && symbol.kind == .Type {
+			continue
+		}
 		// Only a declaration without an initializer needs its type's zero; an
-		// unfixed constant such as `N :: 3` has none.
+		// unfixed constant such as `N :: 3` has none, and `_: T` binds nothing.
 		value: Eval_Value
 		ok: bool
 		if index < len(d.values) && d.values[index] != nil {
-			computed: Eval_Value
-			computed, ok = eval_expr(ev, d.values[index])
-			if ok {
-				value, ok = copy_value(ev, computed)
-			}
+			value, ok = eval_copied(ev, d.values[index])
+		} else if symbol == nil {
+			continue
 		} else {
-			symbol := symbol_of(ev.k.c, symbol_id)
-			type := symbol == nil ? INVALID_TYPE : symbol.type
-			ok = eval_hooks_supported(ev, type, d.span)
+			ok = eval_hooks_supported(ev, symbol.type, d.span)
 			if ok {
-				value, ok = zero_value(ev, type)
+				value, ok = zero_value(ev, symbol.type)
 			}
 		}
-		if !ok {
-			return .Fail
-		}
-		if !bind_local(ev, frame, symbol_id, value) {
+		if !ok || !eval_bind_local(ev, frame, symbol_id, value) {
 			return .Fail
 		}
 	}
@@ -3322,7 +2881,7 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 }
 
 @(private = "file")
-bind_local :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol_id: Symbol_Id, value: Eval_Value) -> bool {
+eval_bind_local :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol_id: Symbol_Id, value: Eval_Value) -> bool {
 	if symbol_id == INVALID_SYMBOL {
 		return true
 	}
@@ -3337,11 +2896,8 @@ bind_local :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol_id: Symbol_Id, val
 
 // design.md "Destructuring": one evaluation; fields of a place are copied.
 @(private = "file")
-eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> ([]Eval_Value, bool) {
-	record, ok := eval_expr(ev, operand)
-	if !ok {
-		return nil, false
-	}
+eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> (out: []Eval_Value, success: bool) {
+	record := eval_expr(ev, operand) or_return
 	if record.kind != .Aggregate || len(record.elements) < len(plan.fields) {
 		eval_fail(ev, expr_span(operand), "L0341", "this value has no compile-time fields to destructure")
 		return nil, false
@@ -3360,10 +2916,7 @@ eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> (
 			values[index] = record.elements[slot]
 			continue
 		}
-		copied, copied_ok := copy_value(ev, record.elements[slot])
-		if !copied_ok {
-			return nil, false
-		}
+		copied := copy_value(ev, record.elements[slot]) or_return
 		values[index] = copied
 	}
 	return values, true
@@ -3389,52 +2942,36 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 			return .Fail
 		}
 		defer delete(values, ev.alloc)
-		// design.md "Assignment statements": values, then destinations, then writes.
-		destinations, destination_err := make([]Eval_Destination, len(s.lhs), ev.alloc)
-		if destination_err != nil {
-			return .Fail
-		}
-		defer delete(destinations, ev.alloc)
+		// design.md "Destructuring": a narrower union widens to its destination's.
 		for target, index in s.lhs {
-			if is_discard(target) {
-				continue
-			}
-			destination, place_ok := eval_destination(ev, target)
-			if !place_ok {
-				return .Fail
-			}
-			destinations[index] = destination
-		}
-		for destination, index in destinations {
-			slot, slot_ok := destination_slot(ev, destination)
-			if !slot_ok {
-				return .Fail
-			}
-			if slot != nil {
-				slot^ = values[index]
+			from, to := symbol_of(ev.k.c, s.destructure.fields[index]).type, expr_base(target).type
+			if !is_discard(target) && union_widens_to(ev.k.c, from, to) {
+				values[index] = widen_eval_value(ev.k.c, values[index], from, to)
 			}
 		}
-		return .Normal
+		return eval_write_targets(ev, s.lhs, values)
 	}
-	// The arrays are scratch: each write copies a value out.
+	// The array is scratch: each write copies a value out.
 	values, value_err := make([]Eval_Value, len(s.rhs), ev.alloc)
 	if value_err != nil { return .Fail }
 	defer delete(values, ev.alloc)
 	for value, index in s.rhs {
-		computed, ok := eval_expr(ev, value)
+		copied, ok := eval_copied(ev, value)
 		if !ok {
-			return .Fail
-		}
-		copied, copied_ok := copy_value(ev, computed)
-		if !copied_ok {
 			return .Fail
 		}
 		values[index] = copied
 	}
-	destinations, destination_err := make([]Eval_Destination, len(s.lhs), ev.alloc)
-	if destination_err != nil { return .Fail }
+	return eval_write_targets(ev, s.lhs, values)
+}
+
+// design.md "Assignment statements": values, then destinations, then writes.
+@(private = "file")
+eval_write_targets :: proc(ev: ^Evaluator, targets: []Expr, values: []Eval_Value) -> Eval_Flow {
+	destinations, err := make([]Eval_Destination, len(targets), ev.alloc)
+	if err != nil { return .Fail }
 	defer delete(destinations, ev.alloc)
-	for target, index in s.lhs {
+	for target, index in targets {
 		destination, ok := eval_destination(ev, target)
 		if !ok {
 			return .Fail
@@ -3442,15 +2979,13 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		destinations[index] = destination
 	}
 	for destination, index in destinations {
-		slot, slot_ok := destination_slot(ev, destination)
-		if !slot_ok {
+		slot, ok := destination_slot(ev, destination)
+		if !ok {
 			return .Fail
 		}
-		if index < len(values) {
-			retyped := values[index]
-			retyped.type = slot.type != INVALID_TYPE ? slot.type : retyped.type
-			slot^ = retyped
-		}
+		retyped := values[index]
+		retyped.type = slot.type != INVALID_TYPE ? slot.type : retyped.type
+		slot^ = retyped
 	}
 	return .Normal
 }
@@ -3466,23 +3001,16 @@ Eval_Destination :: struct {
 }
 
 @(private = "file")
-eval_destination :: proc(ev: ^Evaluator, target: Expr) -> (Eval_Destination, bool) {
+eval_destination :: proc(ev: ^Evaluator, target: Expr) -> (out: Eval_Destination, success: bool) {
 	if index, is_index := target.(^Expr_Index); is_index && index.map_inserts {
-		base, ok := eval_aggregate_place(ev, index.operand)
-		if !ok {
-			return {}, false
-		}
+		base := eval_aggregate_place(ev, index.operand) or_return
 		if type_is_map(ev.k.c, base.type) {
-			key, key_ok := eval_expr(ev, index.indices[0])
-			if !key_ok {
-				return {}, false
-			}
-			copied, copied_ok := copy_value(ev, key)
-			return Eval_Destination{map_of = base, key = copied}, copied_ok
+			key := eval_copied(ev, index.indices[0]) or_return
+			return Eval_Destination{map_of = base, key = key}, true
 		}
 	}
-	slot, ok := eval_place(ev, target)
-	return Eval_Destination{slot = slot}, ok
+	slot := eval_place(ev, target) or_return
+	return Eval_Destination{slot = slot}, true
 }
 
 @(private = "file")
@@ -3521,8 +3049,8 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	}
 	op := compound_operator(s.op)
 	type := slot.type
-	// design.md: the destination is read after the right operand. SIMD folds
-	// lane-wise, since `const_of` carries no lanes.
+	// design.md "Evaluation order": the destination is read after the right operand.
+	// SIMD folds lane-wise, since `const_of` carries no lanes.
 	if type_is_simd(ev.k.c, type) {
 		result, lanes_ok := eval_simd_binary_values(ev, op, s.op_span, type, slot^, operand)
 		if !lanes_ok {
@@ -3595,8 +3123,9 @@ eval_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 
 	case .Array, .Slice, .Dynamic:
 		// A `&mut` loop needs the container's own storage, and so does a
-		// borrowed binding over a place (design.md "Borrowing iteration").
-		if foreach_is_place_loop(s) || s.borrows && eval_frame_place(ev, s.iterable) {
+		// borrowed binding over a place (design.md "Borrowing iteration"). A
+		// slice is a view of that storage, whichever expression made it.
+		if s.kind != .Slice && (foreach_is_place_loop(s) || s.borrows && eval_frame_place(ev, s.iterable)) {
 			container, ok := eval_place(ev, s.iterable)
 			if !ok {
 				return .Fail
@@ -3669,7 +3198,7 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	}
 	for index in 0 ..< int(min(count, i64(max(int)))) {
 		offset := bi_from_i64(ev.alloc, i64(index))
-		if s.adapter == .Reversed {
+		if s.reversed {
 			offset = bi_sub(ev.alloc, last, offset)
 		}
 		value := lo
@@ -3708,7 +3237,7 @@ eval_text_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 @(private = "file")
 eval_sequence_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, elements: []Eval_Value) -> Eval_Flow {
 	for index in 0 ..< len(elements) {
-		at := s.adapter == .Reversed ? len(elements) - 1 - index : index
+		at := s.reversed ? len(elements) - 1 - index : index
 		flow := eval_foreach_step(ev, s, &elements[at], index)
 		if flow != .Normal {
 			return flow == .Break ? .Normal : flow
@@ -3717,7 +3246,7 @@ eval_sequence_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, elements: []Eval
 	return .Normal
 }
 
-// One step: bind the element, run the body. `continue` ends only the step.
+// `continue` ends only the step.
 @(private = "file")
 eval_foreach_step :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> Eval_Flow {
 	if !eval_step(ev, s.span) {
@@ -3732,83 +3261,53 @@ eval_foreach_step :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value
 
 // design.md "Element bindings": an owned binding copies; a borrowed or `&mut`
 // binding is the container's storage. A single name over a lent `indexed()`
-// record still receives a fresh record.
+// record receives a fresh record whose `value` points at the element.
 @(private = "file")
 bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> bool {
 	frame := current_frame(ev)
-	if frame == nil {
-		eval_fail(ev, s.span, "L0341", "a `foreach` needs a compile-time frame")
-		return false
-	}
 	if foreach_is_place_loop(s) || s.borrows && (!s.indexed || len(s.bindings) == 2) {
 		if s.indexed && len(s.bindings) == 2 {
-			if !bind_eval_place_pattern(ev, frame, []Foreach_Binding{s.bindings[0]}, element) { return false }
-			return bind_local(ev, frame, s.bindings[1].symbol, eval_count_value(ev, index))
+			bind_eval_pattern(ev, frame, s.bindings[:1], element, s.span) or_return
+			return eval_bind_local(ev, frame, s.bindings[1].symbol, eval_count_value(ev, index))
 		}
-		return bind_eval_place_pattern(ev, frame, s.bindings, element)
+		return bind_eval_pattern(ev, frame, s.bindings, element, s.span)
 	}
-	value, copied := copy_value(ev, element^)
-	if !copied {
-		return false
+	value: Eval_Value
+	if s.borrows {
+		pointer := element_type_at(ev.k.c, s.element_type, ELEMENT_FIRST, 0)
+		value = Eval_Value{kind = .Nil, type = pointer, target = element}
+	} else {
+		value = copy_value(ev, element^) or_return
 	}
 	if s.indexed {
-		pair, allocated := eval_elements(ev, 2)
-		if !allocated {
-			return false
-		}
+		pair := eval_elements(ev, 2) or_return
 		pair[ELEMENT_FIRST] = value
 		pair[ELEMENT_SECOND] = eval_count_value(ev, index)
 		value = Eval_Value{kind = .Aggregate, type = s.element_type, elements = pair}
 	}
-	return bind_eval_value_pattern(ev, frame, s.bindings, value, s.span)
+	slot := eval_slot(ev, value) or_return
+	return bind_eval_pattern(ev, frame, s.bindings, slot, s.span)
 }
 
+// Each name is the part of `value` it destructures.
 @(private = "file")
-bind_eval_value_pattern :: proc(
-	ev: ^Evaluator, frame: ^Eval_Frame, bindings: []Foreach_Binding, value: Eval_Value, span: Span,
+bind_eval_pattern :: proc(
+	ev: ^Evaluator, frame: ^Eval_Frame, bindings: []Foreach_Binding, value: ^Eval_Value, span: Span,
 ) -> bool {
-	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return bind_eval_value_pattern(ev, frame, bindings[0].group, value, span)
-	}
-	if len(bindings) == 1 && len(bindings[0].group) == 0 {
-		return bind_local(ev, frame, bindings[0].symbol, value)
-	}
-	if value.kind != .Aggregate || len(value.elements) != len(bindings) {
-		eval_fail(ev, span, "L0341", "this element has no compile-time fields to destructure")
-		return false
-	}
-	for binding, slot in bindings {
-		if len(binding.group) > 0 {
-			if !bind_eval_value_pattern(ev, frame, binding.group, value.elements[slot], span) { return false }
-		} else if !bind_local(ev, frame, binding.symbol, value.elements[slot]) {
-			return false
+	if len(bindings) == 1 {
+		if len(bindings[0].group) > 0 {
+			return bind_eval_pattern(ev, frame, bindings[0].group, value, span)
 		}
-	}
-	return true
-}
-
-@(private = "file")
-bind_eval_place_pattern :: proc(
-	ev: ^Evaluator, frame: ^Eval_Frame, bindings: []Foreach_Binding, value: ^Eval_Value,
-) -> bool {
-	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return bind_eval_place_pattern(ev, frame, bindings[0].group, value)
-	}
-	if len(bindings) == 1 && len(bindings[0].group) == 0 {
-		if bindings[0].symbol != INVALID_SYMBOL { frame.locals[bindings[0].symbol] = value }
+		if bindings[0].symbol != INVALID_SYMBOL {
+			frame.locals[bindings[0].symbol] = value
+		}
 		return true
 	}
 	if value.kind != .Aggregate || len(value.elements) != len(bindings) {
-		eval_fail(ev, no_span(), "L0341", "this element has no compile-time fields to destructure")
-		return false
+		return eval_fail(ev, span, "L0341", "this element has no compile-time fields to destructure")
 	}
-	for binding, slot in bindings {
-		part := &value.elements[slot]
-		if len(binding.group) > 0 {
-			if !bind_eval_place_pattern(ev, frame, binding.group, part) { return false }
-		} else if binding.symbol != INVALID_SYMBOL {
-			frame.locals[binding.symbol] = part
-		}
+	for slot in 0 ..< len(bindings) {
+		bind_eval_pattern(ev, frame, bindings[slot:][:1], &value.elements[slot], span) or_return
 	}
 	return true
 }
@@ -3827,7 +3326,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 	}
 	// A `.name(&mut binding)` case binds the payload in the subject's own storage,
 	// and so does any binding over a place (design.md "Switch ownership").
-	if switch_binds_place(s) || s.kind != .Value && eval_frame_place(ev, s.subject) {
+	if switch_binds_place(s) || s.kind == .Pattern && eval_frame_place(ev, s.subject) {
 		place, ok := eval_place(ev, s.subject)
 		if !ok {
 			return .Fail
@@ -3838,7 +3337,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 	if !ok {
 		return .Fail
 	}
-	if s.kind != .Value && type_is_union(ev.k.c, type_underlying(ev.k.c, expr_base(s.subject).type)) {
+	if s.kind == .Pattern {
 		return eval_variant_switch(ev, s, subject)
 	}
 	default_index := -1
@@ -3873,13 +3372,8 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 			fallback = index
 			continue
 		}
-		for variant in entry.variant_indices {
-			if variant == subject.variant {
-				chosen = index
-				break
-			}
-		}
-		if chosen >= 0 {
+		if slice.contains(entry.variant_indices, subject.variant) {
+			chosen = index
 			break
 		}
 	}
@@ -3893,15 +3387,8 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 	if len(entry.fields) > 0 {
 		return eval_case_fields(ev, s, entry, subject, place)
 	}
-	if entry.binding_symbol != INVALID_SYMBOL {
-		frame := current_frame(ev)
-		if frame == nil {
-			eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
-			return .Fail
-		}
-		if !eval_bind_case_payload(ev, frame, entry, subject, place) {
-			return .Fail
-		}
+	if entry.binding_symbol != INVALID_SYMBOL && !eval_bind_case_payload(ev, current_frame(ev), entry, subject, place) {
+		return .Fail
 	}
 	return eval_stmts(ev, entry.stmts, true)
 }
@@ -3916,27 +3403,21 @@ eval_bind_case_payload :: proc(
 		frame.locals[entry.binding_symbol] = &place.elements[0]
 		return true
 	}
-	bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
-	return copied && bind_local(ev, frame, entry.binding_symbol, bound)
+	bound, copied := copy_value(ev, eval_union_payload(subject))
+	return copied && eval_bind_local(ev, frame, entry.binding_symbol, bound)
 }
 
 // design.md "Union argument expansion": the arm for the subject's variant, with
 // the payload bound as the switch it stands for binds it.
 @(private = "file")
-eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (Eval_Value, bool) {
+eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (out: Eval_Value, success: bool) {
 	subject: Eval_Value
 	place: ^Eval_Value
 	if eval_frame_place(ev, s.subject) {
-		found, ok := eval_place(ev, s.subject)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		found := eval_place(ev, s.subject) or_return
 		subject, place = found^, found
 	} else {
-		value, ok := eval_expr(ev, s.subject)
-		if !ok {
-			return Eval_Value{}, false
-		}
+		value := eval_expr(ev, s.subject) or_return
 		subject = value
 	}
 	for entry in s.cases {
@@ -3950,26 +3431,18 @@ eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (Eval_Value, bool) {
 		frame := current_frame(ev)
 		own_frame := frame == nil
 		if own_frame {
-			frame = new(Eval_Frame, ev.alloc)
-			if frame == nil { return Eval_Value{}, false }
-			frame.site = s.span
-			frame.locals = make(map[Symbol_Id]^Eval_Value, 1, ev.alloc)
-			frame.defers = make([dynamic]^Stmt_Defer, 0, 0, ev.alloc)
-			if !eval_memory_ok(ev) { return Eval_Value{}, false }
-			append(&ev.frames, frame)
+			frame = eval_push_frame(ev, INVALID_SYMBOL, s.span) or_return
 		}
 		defer if own_frame { pop(&ev.frames) }
-		if !eval_bind_case_payload(ev, frame, entry, subject, place) {
-			return Eval_Value{}, false
-		}
+		eval_bind_case_payload(ev, frame, entry, subject, place) or_return
 		return eval_expr(ev, entry.arm)
 	}
 	eval_fail(ev, s.span, "L0341", "this union value has no variant to dispatch")
 	return Eval_Value{}, false
 }
 
-// Whether a switch subject is a place rooted in this frame's storage, which a
-// case binding then names rather than copies.
+// Whether `subject` is a place rooted in this frame's storage, which a binding then
+// names rather than copies.
 @(private = "file")
 eval_frame_place :: proc(ev: ^Evaluator, subject: Expr) -> bool {
 	if !expression_is_borrowed_place(subject) {
@@ -4017,16 +3490,12 @@ eval_frame_place :: proc(ev: ^Evaluator, subject: Expr) -> bool {
 @(private = "file")
 eval_case_fields :: proc(ev: ^Evaluator, s: ^Stmt_Switch, entry: Switch_Case, subject: Eval_Value, place: ^Eval_Value) -> Eval_Flow {
 	frame := current_frame(ev)
-	if frame == nil {
-		eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
-		return .Fail
-	}
+	payload := place != nil && len(place.elements) > 0 ? &place.elements[0] : nil
+	record := payload^ if payload != nil else eval_union_payload(subject)
 	for field in entry.fields {
 		if field.symbol == INVALID_SYMBOL {
 			continue
 		}
-		payload := place != nil ? &place.elements[0] : nil
-		record := payload^ if payload != nil else eval_union_payload(subject, entry.binding_type)
 		if record.kind != .Aggregate || field.slot >= len(record.elements) {
 			eval_fail(ev, s.span, "L0341", "this payload has no compile-time fields to bind")
 			return .Fail
@@ -4036,7 +3505,7 @@ eval_case_fields :: proc(ev: ^Evaluator, s: ^Stmt_Switch, entry: Switch_Case, su
 			continue
 		}
 		bound, copied := copy_value(ev, record.elements[field.slot])
-		if !copied || !bind_local(ev, frame, field.symbol, bound) {
+		if !copied || !eval_bind_local(ev, frame, field.symbol, bound) {
 			return .Fail
 		}
 	}
@@ -4044,16 +3513,10 @@ eval_case_fields :: proc(ev: ^Evaluator, s: ^Stmt_Switch, entry: Switch_Case, su
 }
 
 @(private = "file")
-eval_case_matches :: proc(ev: ^Evaluator, subject: Eval_Value, value: Expr) -> (bool, bool) {
+eval_case_matches :: proc(ev: ^Evaluator, subject: Eval_Value, value: Expr) -> (out: bool, success: bool) {
 	if range, is_range := value.(^Expr_Range); is_range {
-		lo, lo_ok := eval_expr(ev, range.lo)
-		if !lo_ok {
-			return false, false
-		}
-		hi, hi_ok := eval_expr(ev, range.hi)
-		if !hi_ok {
-			return false, false
-		}
+		lo := eval_expr(ev, range.lo) or_return
+		hi := eval_expr(ev, range.hi) or_return
 		above, above_ok := eval_compare(ev, .Gt_Eq, subject, lo)
 		below, below_ok := eval_compare(ev, range.op == .Range_Excl ? .Lt : .Lt_Eq, subject, hi)
 		if !above_ok || !below_ok {
@@ -4061,10 +3524,7 @@ eval_case_matches :: proc(ev: ^Evaluator, subject: Eval_Value, value: Expr) -> (
 		}
 		return above && below, true
 	}
-	other, ok := eval_expr(ev, value)
-	if !ok {
-		return false, false
-	}
+	other := eval_expr(ev, value) or_return
 	matched, compare_ok := eval_compare(ev, .Eq_Eq, subject, other)
 	if !compare_ok {
 		return false, eval_fail(ev, expr_span(value), "L0341", "this case has no compile-time meaning")
@@ -4075,10 +3535,6 @@ eval_case_matches :: proc(ev: ^Evaluator, subject: Eval_Value, value: Expr) -> (
 @(private = "file")
 eval_return :: proc(ev: ^Evaluator, s: ^Stmt_Return) -> Eval_Flow {
 	frame := current_frame(ev)
-	if frame == nil {
-		eval_fail(ev, s.span, "L0341", "`return` needs a compile-time frame")
-		return .Fail
-	}
 	if s.value == nil {
 		return .Return
 	}
@@ -4103,67 +3559,4 @@ eval_return :: proc(ev: ^Evaluator, s: ^Stmt_Return) -> Eval_Flow {
 	}
 	frame.result = copied
 	return .Return
-}
-
-// The same mix the backend's `emit_hash_value` makes: a part with its own `==`
-// by its own `hash`, a record's fields and an array's elements in order, a
-// union's tag and then its payload, and a scalar as `hash_const` does.
-@(private = "file")
-eval_hash :: proc(ev: ^Evaluator, value: Eval_Value, type: Type_Id, seed: u64, span: Span) -> (u64, bool) {
-	c := ev.k.c
-	if own := part_own_hash(c, type); own != INVALID_SYMBOL {
-		if !ensure_proc_typed_for_eval(ev.k, own) {
-			return 0, eval_fail(ev, span, "L0341", "this `hash` cannot be evaluated")
-		}
-		seed_value := Eval_Value{kind = .Integer, type = TYPE_UINT, integer = bi_from_u64(ev.alloc, seed)}
-		result, ok := eval_invoke(ev, own, nil, span, []Eval_Value{value, seed_value})
-		if !ok || result.kind != .Integer {
-			return 0, false
-		}
-		mixed, _ := bi_to_u64(ev.alloc, bi_wrap(ev.alloc, result.integer, 64, false))
-		return mixed, true
-	}
-	under := type_underlying(c, type)
-	info := type_of(c, under)
-	if info != nil && value.kind == .Aggregate {
-		#partial switch info.kind {
-		case .Struct:
-			current := seed
-			for field, index in info.fields {
-				sym := symbol_of(c, field)
-				if sym == nil || index >= len(value.elements) {
-					return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
-				}
-				ok: bool
-				if current, ok = eval_hash(ev, value.elements[index], sym.type, current, span); !ok {
-					return 0, false
-				}
-			}
-			return current, true
-		case .Array:
-			current := seed
-			for element in value.elements {
-				ok: bool
-				if current, ok = eval_hash(ev, element, info.element, current, span); !ok {
-					return 0, false
-				}
-			}
-			return current, true
-		case .Union:
-			tagged := (seed ~ u64(value.variant)) * HASH_MULTIPLIER
-			if value.variant < 0 || value.variant >= len(info.variants) {
-				return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
-			}
-			payload := info.variants[value.variant]
-			if payload == TYPE_VOID || len(value.elements) == 0 {
-				return tagged, true
-			}
-			return eval_hash(ev, value.elements[0], payload, tagged, span)
-		}
-	}
-	frozen, froze := freeze(ev, value, ev.alloc)
-	if !froze {
-		return 0, false
-	}
-	return hash_const(c, frozen, type, seed, ev.alloc), true
 }

@@ -1,0 +1,21 @@
+L0694
+@12:2
+`Unused_Iterator.Iterator` is `string`, but `iter` returns `Walker`
+L0694
+@19:2
+`Unused_Mut.Mut_Iterator` must name a type
+L0694
+@27:2
+`Early.Item` is `string`, but `next` returns `Option(int)`
+L0694
+@34:2
+`Item_Not_A_Type.Item` must name a type
+L0694
+@44:2
+`Coll.Iterator` is `string`, but `iter` returns `Walker`
+L0306
+@54:33
+unknown type `Page.Item`
+L0306
+@66:28
+unknown type `Renamed.Iterator`

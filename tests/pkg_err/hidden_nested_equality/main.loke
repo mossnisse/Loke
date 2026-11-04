@@ -16,5 +16,6 @@ main :: proc() {
 more :: proc() {
 	shown := [1]keys.Shown{{id = 1, annotation = 2}} == [1]keys.Shown{{id = 1, annotation = 3}};
 	grouped := [1]keys.Grouped{{id = 1}} == [1]keys.Grouped{{id = 1}};
-	_ = shown; _ = grouped;
+	direct := keys.Grouped{id = 1} == keys.Grouped{id = 1};
+	_ = shown; _ = grouped; _ = direct;
 }

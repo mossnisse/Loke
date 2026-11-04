@@ -1,0 +1,54 @@
+package lib;
+
+import "core:fmt";
+
+// design.md "Built-in procedures" and "Global write effects": a report counts only
+// the `format` methods its printed form calls (standard-library.md "Printed forms").
+// `Own.format` clears `data`, and each report holds a view of it, so counting that
+// call would report L0512. What does reach it is in
+// tests/err/private_formatter_effects.loke.
+
+data: [dynamic]int = {};
+
+Own :: struct { @(public) n: int }
+
+impl Own {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { data = {}; }
+	size :: proc(self) -> int { return self.n; }
+}
+
+// A struct prints its public fields only.
+@(public)
+Holds_Private :: struct { own: Own, @(public) n: int }
+
+// A distinct type prints as the shape it wraps, not by the wrapped type's `format`.
+Renamed :: distinct Own;
+
+// Any `dyn` view but one with a `format` slot prints its type's name.
+Sized :: interface($Self: type) { slot size: proc(self) -> int; }
+Renamed_View :: distinct dyn fmt.Formattable;
+
+@(public)
+reports :: proc() {
+	data.append(7);
+	own := Own{1};
+	sized := (dyn Sized)(&own);
+	renamed := Renamed_View(&own);
+	assert(data[0] == 7, "private field", data[0], Holds_Private{own, 2});
+	assert(data[0] == 7, "distinct", data[0], Renamed{1});
+	assert(data[0] == 7, "other view", data[0], sized, [1]dyn Sized{sized});
+	assert(data[0] == 7, "distinct view", data[0], renamed);
+	first := data[0];
+	fmt.println(first);
+}
+
+@(public)
+prints :: proc() {
+	own := Own{1};
+	sized := (dyn Sized)(&own);
+	renamed := Renamed_View(&own);
+	fmt.println(Holds_Private{own, 2}, Renamed{1});
+	fmt.println(sized, [1]dyn Sized{sized}, renamed);
+	first := data[0];
+	fmt.println(first);
+}

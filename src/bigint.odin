@@ -1,6 +1,7 @@
 // Arbitrary-precision integer constants over core:math/big. Untyped folding is
 // exact; `bi_fits` and `bi_wrap` are where a value meets a width. Every
-// operation builds a new value in the given storage.
+// operation builds a new value in the given storage, except that `bi_wrap`
+// returns a value already in range.
 package lokec
 
 import "core:math"
@@ -29,25 +30,16 @@ arena :: proc(c: Value_Storage) -> mem.Allocator {
 // built there keeps only the digits it uses; the rest goes back for reuse.
 @(private = "file")
 bi_settle :: proc(c: Value_Storage, r: ^Big_Int) {
-	if !is_eval_storage(c) {
-		return
-	}
-	needed := max(r.used, big._MIN_DIGIT_COUNT)
-	if cap(r.digit) > needed {
-		big.internal_int_grow(r, needed, allow_shrink = true)
+	if is_eval_storage(c) {
+		big.internal_int_grow(r, r.used, allow_shrink = true)
 	}
 }
 
-// Releases integers this file built in evaluator storage and no value holds;
-// anywhere else they stay until their storage goes.
-@(private = "file")
-bi_release :: proc(c: Value_Storage, values: ..Big_Int) {
-	if !is_eval_storage(c) {
-		return
-	}
-	for value in values {
-		value := value
-		if value.digit.allocator.procedure == eval_allocator_proc {
+// Releases integers built in evaluator storage that no value holds; anywhere
+// else they stay until their storage goes.
+bi_release :: proc(values: ..Big_Int) {
+	for &value in values {
+		if is_eval_storage(value.digit.allocator) {
 			context.allocator = value.digit.allocator
 			big.internal_int_destroy(&value)
 		}
@@ -58,12 +50,12 @@ bi_zero :: proc(c: Value_Storage) -> Big_Int {
 	return bi_from_i64(c, 0)
 }
 
-// Copies a value out of evaluator scratch.
+// Copies a value out of evaluator scratch, keeping only the digits it uses.
 bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
 	context.allocator = arena(storage)
 	value := value
 	result: Big_Int
-	big.int_copy(&result, &value, minimize = is_eval_storage(storage))
+	big.int_copy(&result, &value, minimize = true)
 	return result
 }
 
@@ -91,6 +83,14 @@ bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 	return r
 }
 
+bi_pow10 :: proc(c: Value_Storage, power: int) -> Big_Int {
+	context.allocator = arena(c)
+	r: Big_Int
+	big.int_pow_int(&r, 10, power)
+	bi_settle(c, &r)
+	return r
+}
+
 // An integer literal as the lexer spells it: decimal or a lower-case `0b`/`0o`/
 // `0x` prefix, `_` separators after the first character. `-define` also passes
 // a leading `-`, and reads `ok == false` as "this value is a string".
@@ -114,14 +114,8 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 	if digits == "" {
 		return bi_zero(c), false
 	}
-	for ch in digits {
-		digit := 99
-		switch ch {
-		case '0' ..= '9': digit = int(ch - '0')
-		case 'a' ..= 'f': digit = int(ch - 'a') + 10
-		case 'A' ..= 'F': digit = int(ch - 'A') + 10
-		}
-		if digit >= radix {
+	for i in 0 ..< len(digits) {
+		if digit_value(digits[i]) >= radix {
 			return bi_zero(c), false
 		}
 	}
@@ -153,17 +147,9 @@ bi_is_zero :: proc(v: Big_Int) -> bool {
 	return v.used == 0
 }
 
-bi_cmp :: proc(c: Value_Storage, a, b: Big_Int) -> int {
-	context.allocator = arena(c)
+bi_cmp :: proc(a, b: Big_Int) -> int {
 	a, b := a, b
-	result, _ := big.int_compare(&a, &b)
-	return result
-}
-
-bi_eq_i64 :: proc(c: Value_Storage, a: Big_Int, b: i64) -> bool {
-	other := bi_from_i64(c, b)
-	defer bi_release(c, other)
-	return bi_cmp(c, a, other) == 0
+	return big.internal_cmp(&a, &b)
 }
 
 @(private = "file")
@@ -187,51 +173,56 @@ bi_and :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c,
 bi_or :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_or) }
 bi_xor :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_xor) }
 
-bi_neg :: proc(c: Value_Storage, a: Big_Int) -> Big_Int {
+@(private = "file")
+bi_unary :: proc(
+	c: Value_Storage,
+	a: Big_Int,
+	op: proc(dest, src: ^Big_Int, allocator := context.allocator) -> big.Error,
+) -> Big_Int {
 	context.allocator = arena(c)
 	a := a
 	r: Big_Int
-	big.int_neg(&r, &a)
+	op(&r, &a)
 	bi_settle(c, &r)
 	return r
 }
 
+bi_neg :: proc(c: Value_Storage, a: Big_Int) -> Big_Int { return bi_unary(c, a, big.int_neg) }
+
 // `~x`, which on a two's-complement integer of any width is `-x - 1`.
-bi_not :: proc(c: Value_Storage, a: Big_Int) -> Big_Int {
-	context.allocator = arena(c)
-	a := a
-	r: Big_Int
-	big.int_bit_complement(&r, &a)
-	bi_settle(c, &r)
-	return r
-}
+bi_not :: proc(c: Value_Storage, a: Big_Int) -> Big_Int { return bi_unary(c, a, big.int_bit_complement) }
 
 bi_and_not :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	inverse := bi_not(c, b)
-	defer bi_release(c, inverse)
+	defer bi_release(inverse)
 	return bi_and(c, a, inverse)
 }
 
 // Truncated quotient and remainder (design.md "Integer operators"). The caller
 // has already rejected a zero divisor.
-bi_quo :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
-	context.allocator = arena(c)
-	a, b := a, b
-	q, r: Big_Int
-	big.int_divmod(&q, &r, &a, &b)
-	bi_release(c, r)
-	bi_settle(c, &q)
-	return q
+//
+// core:math/big's `int_divmod` turns to a recursive division past 160 divisor
+// digits, and `_private_div_recursion` leaves out a term (it never subtracts
+// `Q1 * B0 * beta^k`), so these use its schoolbook division at any size.
+bi_quo :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, bi_school_quo) }
+bi_rem :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, bi_school_rem) }
+
+@(private = "file")
+bi_school_quo :: proc(dest, a, b: ^Big_Int, allocator := context.allocator) -> big.Error {
+	context.allocator = allocator
+	if big.internal_lt_abs(a, b) {
+		return big.internal_zero(dest)
+	}
+	return big._private_int_div_school(dest, nil, a, b)
 }
 
-bi_rem :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
-	context.allocator = arena(c)
-	a, b := a, b
-	q, r: Big_Int
-	big.int_divmod(&q, &r, &a, &b)
-	bi_release(c, q)
-	bi_settle(c, &r)
-	return r
+@(private = "file")
+bi_school_rem :: proc(dest, a, b: ^Big_Int, allocator := context.allocator) -> big.Error {
+	context.allocator = allocator
+	if big.internal_lt_abs(a, b) {
+		return big.internal_copy(dest, a)
+	}
+	return big._private_int_div_school(nil, dest, a, b)
 }
 
 bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
@@ -252,7 +243,7 @@ bi_shr :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	if bi_sign(a) < 0 {
 		inverse := bi_not(c, a)
 		shifted := bi_shr_logical(c, inverse, count)
-		defer bi_release(c, inverse, shifted)
+		defer bi_release(inverse, shifted)
 		return bi_not(c, shifted)
 	}
 	return bi_shr_logical(c, a, count)
@@ -271,37 +262,27 @@ bi_shr_logical :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	return r
 }
 
-// Number of bits in the magnitude; 0 for zero.
-bi_magnitude_bits :: proc(c: Value_Storage, v: Big_Int) -> int {
-	context.allocator = arena(c)
+bi_magnitude_bits :: proc(v: Big_Int) -> int {
 	v := v
-	count, _ := big.count_bits(&v)
-	return count
+	return big.internal_count_bits(&v)
 }
 
-// Does the value fit a two's-complement integer of this width?
-bi_fits :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> bool {
+bi_fits :: proc(v: Big_Int, bits: int, signed: bool) -> bool {
 	if bits <= 0 {
 		return false
 	}
+	magnitude := bi_magnitude_bits(v)
 	if !signed {
-		if bi_sign(v) < 0 {
-			return false
-		}
-		return bi_magnitude_bits(c, v) <= bits
+		return bi_sign(v) >= 0 && magnitude <= bits
 	}
-	magnitude := bi_magnitude_bits(c, v)
-	if magnitude < bits {
-		return true
+	if magnitude != bits {
+		return magnitude < bits
 	}
-	if magnitude > bits {
-		return false
-	}
-	// Exactly `bits` magnitude bits fits only as the most negative value.
-	power := bi_pow2(c, bits - 1)
-	lowest := bi_neg(c, power)
-	defer bi_release(c, power, lowest)
-	return bi_cmp(c, v, lowest) == 0
+	// Exactly `bits` magnitude bits fits only as the most negative value, whose
+	// one bit is the top one.
+	v := v
+	trailing, _ := big.internal_int_count_lsb(&v)
+	return bi_sign(v) < 0 && trailing == bits - 1
 }
 
 // The modulo-2^n projection every typed integer operation ends with
@@ -310,26 +291,53 @@ bi_wrap :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> Big_In
 	if bits <= 0 {
 		return bi_zero(c)
 	}
+	if bi_fits(v, bits, signed) {
+		return v
+	}
 	modulus := bi_pow2(c, bits)
 	one := bi_from_i64(c, 1)
 	mask := bi_sub(c, modulus, one)
 	low := bi_and(c, v, mask)
-	bi_release(c, one, mask)
-	defer bi_release(c, modulus)
+	bi_release(one, mask)
+	defer bi_release(modulus)
 	if signed {
 		half := bi_pow2(c, bits - 1)
-		defer bi_release(c, half)
-		if bi_cmp(c, low, half) >= 0 {
-			defer bi_release(c, low)
+		defer bi_release(half)
+		if bi_cmp(low, half) >= 0 {
+			defer bi_release(low)
 			return bi_sub(c, low, modulus)
 		}
 	}
 	return low
 }
 
-// A machine integer, or `ok == false` when out of range.
+// `v`'s two's-complement pattern as a `bits`-wide integer, which no integer type
+// wider than 128 bits has. Builds nothing.
+bi_pattern :: proc(v: Big_Int, bits: int) -> u128 {
+	magnitude: u128
+	for index := v.used - 1; index >= 0; index -= 1 {
+		magnitude = magnitude << big._DIGIT_BITS | u128(v.digit[index])
+	}
+	pattern := v.sign == .Negative ? -magnitude : magnitude
+	return bits >= 128 ? pattern : pattern & (u128(1) << uint(bits) - 1)
+}
+
+// The value a `bits`-wide two's-complement pattern holds.
+bi_from_pattern :: proc(c: Value_Storage, pattern: u128, bits: int, signed: bool) -> Big_Int {
+	context.allocator = arena(c)
+	r: Big_Int
+	if signed {
+		shift := uint(128 - bits)
+		big.int_set_from_integer(&r, i128(pattern << shift) >> shift)
+	} else {
+		big.int_set_from_integer(&r, pattern)
+	}
+	bi_settle(c, &r)
+	return r
+}
+
 bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
-	if !bi_fits(c, v, 64, true) {
+	if !bi_fits(v, 64, true) {
 		return 0, false
 	}
 	context.allocator = arena(c)
@@ -339,7 +347,7 @@ bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
 }
 
 bi_to_u64 :: proc(c: Value_Storage, v: Big_Int) -> (value: u64, ok: bool) {
-	if !bi_fits(c, v, 64, false) {
+	if !bi_fits(v, 64, false) {
 		return 0, false
 	}
 	context.allocator = arena(c)
@@ -348,182 +356,61 @@ bi_to_u64 :: proc(c: Value_Storage, v: Big_Int) -> (value: u64, ok: bool) {
 	return result, err == nil
 }
 
-// The nearest float of `bits` width (16, 32, or 64), ties to even, or
-// `ok == false` when it overflows that width. core:math/big's `int_get_float`
-// is not used: it rounds inexactly and returns 0 past the f64 range.
-bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok: bool) {
-	// Enough leading bits for one correct rounding, plus a sticky bit below them.
-	keep := 64
-	switch bits {
-	case 16: keep = 11 + 2
-	case 32: keep = 24 + 2
-	}
-	negative := bi_sign(v) < 0
-	magnitude := negative ? bi_neg(c, v) : v
-	shift := max(bi_magnitude_bits(c, magnitude) - keep, 0)
-	top := bi_shr(c, magnitude, shift)
-	high, _ := bi_to_u64(c, top)
-	restored := bi_shl(c, top, shift)
-	if bi_cmp(c, restored, magnitude) != 0 {
-		high |= 1
-	}
-	bi_release(c, top, restored)
-	if negative {
-		bi_release(c, magnitude)
-	}
-	result = round_float(math.ldexp(f64(high), shift), bits)
-	if negative {
-		result = -result
-	}
-	return result, !math.is_inf(result, 0)
-}
-
-// A decimal literal's spelling, `digits[.digits][e[+-]digits]`, rounded once to
-// a 16- or 32-bit float. `ok` is false for any other width or spelling, where
-// the caller's binary64 value already is the single rounding.
-decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: f64, ok: bool) {
-	// Far past both bounds below, and small enough that adding the fraction's
-	// digit count cannot overflow.
-	DECIMAL_EXPONENT_LIMIT :: 1 << 40
-	if (bits != 16 && bits != 32) || text == "" {
-		return 0, false
-	}
-	negative := text[0] == '-'
-	digits := make([dynamic]u8, 0, len(text), arena(c))
-	exponent := 0
-	index := negative ? 1 : 0
-	point := false
-	for ; index < len(text); index += 1 {
-		ch := text[index]
-		switch {
-		case ch >= '0' && ch <= '9':
-			append(&digits, ch)
-			if point {
-				exponent -= 1
-			}
-		case ch == '.':
-			point = true
-		case ch == 'e' || ch == 'E':
-			// Saturated: any exponent this large already decides the result below.
-			written := 0
-			sign := 1
-			rest := text[index + 1:]
-			if rest != "" && (rest[0] == '+' || rest[0] == '-') {
-				sign = rest[0] == '-' ? -1 : 1
-				rest = rest[1:]
-			}
-			if rest == "" {
-				return 0, false
-			}
-			for digit in transmute([]u8)rest {
-				if digit < '0' || digit > '9' {
-					return 0, false
-				}
-				written = min(written * 10 + int(digit - '0'), DECIMAL_EXPONENT_LIMIT)
-			}
-			exponent += sign * written
-			index = len(text)
-		case:
-			return 0, false
-		}
-	}
-	significand, parsed := bi_parse_int_literal(c, string(digits[:]))
-	if !parsed {
-		return 0, false
-	}
-	if bi_is_zero(significand) {
-		return negative ? math.copy_sign(f64(0), -1) : 0, true
-	}
-	// The value lies in [10^(top - 1), 10^top). Past 10^40 every 16- and 32-bit
-	// float overflows, and below 10^-50 every one rounds to zero, so no power
-	// of ten is built for an exponent outside that range.
-	first := 0
-	for digits[first] == '0' {
-		first += 1
-	}
-	top := len(digits) - first + exponent
-	if top > 40 {
-		return 0, false
-	}
-	if top < -50 {
-		return negative ? math.copy_sign(f64(0), -1) : 0, true
-	}
-	ten := bi_from_i64(c, 10)
-	power := bi_from_i64(c, 1)
-	for _ in 0 ..< abs(exponent) {
-		power = bi_mul(c, power, ten)
-	}
-	magnitude: f64
-	if exponent >= 0 {
-		magnitude, ok = bi_to_float(c, bi_mul(c, significand, power), bits)
-		if !ok {
-			return 0, false
-		}
-	} else {
-		// `significand / power`, scaled so the quotient keeps one correct rounding
-		// and a sticky bit for the remainder, as `bi_to_float` keeps for its own.
-		keep := bits == 16 ? 11 + 2 : 24 + 2
-		scale := max(keep + 2 + bi_magnitude_bits(c, power) - bi_magnitude_bits(c, significand), 0)
-		scaled := bi_shl(c, significand, scale)
-		quotient := bi_quo(c, scaled, power)
-		shift := max(bi_magnitude_bits(c, quotient) - keep, 0)
-		top := bi_shr(c, quotient, shift)
-		high, _ := bi_to_u64(c, top)
-		if !bi_is_zero(bi_rem(c, scaled, power)) || bi_cmp(c, bi_shl(c, top, shift), quotient) != 0 {
-			high |= 1
-		}
-		magnitude = round_float(math.ldexp(f64(high), shift - scale), bits)
-	}
-	return negative ? -magnitude : magnitude, true
-}
-
 // Orders an integer against a float that is not NaN, exactly.
 bi_cmp_float :: proc(c: Value_Storage, a: Big_Int, y: f64) -> int {
 	if math.is_inf(y, 0) {
 		return y > 0 ? -1 : 1
 	}
-	truncated, exact, _ := bi_from_f64_trunc(c, y)
-	defer bi_release(c, truncated)
-	if order := bi_cmp(c, a, truncated); order != 0 || exact {
+	truncated, exact := bi_from_f64_trunc(c, y)
+	defer bi_release(truncated)
+	if order := bi_cmp(a, truncated); order != 0 || exact {
 		return order
 	}
 	return y > 0 ? -1 : 1
 }
 
 // Truncates a finite binary64 value towards zero. `exact` is false when a
-// fraction was dropped: `1.0` is exactly an integer, `1.5` is not.
-bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exact, ok: bool) {
-	pattern := transmute(u64)value
-	exponent_bits := int((pattern >> 52) & 0x7ff)
-	fraction := pattern & 0x000f_ffff_ffff_ffff
-	negative := (pattern >> 63) != 0
+// fraction was dropped.
+bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exact: bool) {
+	if abs(value) < 1 {
+		return bi_zero(c), value == 0
+	}
+	exact = math.trunc(value) == value
+	split := dyadic_of(c, abs(value))
+	defer bi_release(split.significand)
+	magnitude := split.exponent >= 0 ? bi_shl(c, split.significand, split.exponent) : bi_shr(c, split.significand, -split.exponent)
+	if value < 0 {
+		defer bi_release(magnitude)
+		return bi_neg(c, magnitude), exact
+	}
+	return magnitude, exact
+}
 
-	if exponent_bits == 0x7ff {
-		return bi_zero(c), false, false // infinity or NaN
-	}
-	if exponent_bits == 0 {
-		// Zero is exact; every binary64 subnormal has magnitude below one.
-		return bi_zero(c), fraction == 0, true
-	}
+// A set of integers for code that can see thousands. Only the few past `i64` are
+// compared one by one.
+Integer_Set :: struct {
+	small: map[i64]bool,
+	large: [dynamic]Big_Int,
+}
 
-	unbiased := exponent_bits - 1023
-	if unbiased < 0 {
-		return bi_zero(c), false, true
-	}
+new_integer_set :: proc(capacity: int, allocator: mem.Allocator) -> Integer_Set {
+	return Integer_Set{small = make(map[i64]bool, capacity, allocator), large = make([dynamic]Big_Int, allocator)}
+}
 
-	significand := fraction | (u64(1) << 52)
-	magnitude := bi_from_u64(c, significand)
-	exact = true
-	if unbiased >= 52 {
-		magnitude = bi_shl(c, magnitude, unbiased - 52)
-	} else {
-		shift := 52 - unbiased
-		mask := (u64(1) << u64(shift)) - 1
-		exact = (significand & mask) == 0
-		magnitude = bi_shr(c, magnitude, shift)
+// Whether `value` is new to the set, adding it if so.
+integer_set_add :: proc(c: Value_Storage, set: ^Integer_Set, value: Big_Int) -> bool {
+	if small, fits := bi_to_i64(c, value); fits {
+		if small in set.small {
+			return false
+		}
+		set.small[small] = true
+		return true
 	}
-	if negative && !bi_is_zero(magnitude) {
-		magnitude = bi_neg(c, magnitude)
+	for other in set.large {
+		if bi_cmp(other, value) == 0 {
+			return false
+		}
 	}
-	return magnitude, exact, true
+	append(&set.large, value)
+	return true
 }

@@ -22,7 +22,3 @@ parentheses around a comma list describe a record type; a record value is writte
 L0306
 @17:11
 unknown type `b`
-
-L0354
-@18:21
-mismatched operand types `(n: int, ok: bool)` and `(int, bool)`

@@ -1,0 +1,31 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "What the unwind runs, and what it does not": a refused box clone
+// undoes its staged payload, and when that payload's hook panics the parts not
+// yet dropped still drop.
+
+Inner :: struct { id: int }
+impl Inner {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Inner, Allocator_Error) {
+		return .ok(Inner{id = self.id + 1});
+	}
+	release :: hook(drop) proc(self: inout) { fmt.println("drop inner", self.id); }
+}
+Outer :: struct { inner: Inner, bytes: [512]u8 }
+impl Outer {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Outer, Allocator_Error) {
+		return .ok(Outer{inner = Inner{id = self.inner.id + 1}});
+	}
+	release :: hook(drop) proc(self: inout) {
+		fmt.println("drop outer", self.inner.id);
+		if (self.inner.id == 2) { panic("boom"); }
+	}
+}
+
+main :: proc() {
+	a := box(Outer{inner = Inner{id = 1}});
+	room: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+	_ = a.try_clone(arena.allocator());
+	fmt.println("unreachable");
+}

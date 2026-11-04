@@ -28,6 +28,8 @@ validate :: proc(n: i8) -> int {
 forward :: proc($E: type, n: u8) -> Option(E) { return E.from_int(n); }
 absent :: proc(n: u8) -> bool { return forward(No_Zero, n) == .none; }
 absurd :: proc(value: Empty) -> int { switch (value) {} }
+No_Variants :: union {}
+absurd_union :: proc(value: No_Variants) -> int { switch (value) {} }
 Payloadless :: union { first:, second: }
 same_variant :: proc(value: Payloadless) -> bool { return value == .first; }
 

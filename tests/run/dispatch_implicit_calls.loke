@@ -1,0 +1,63 @@
+// design.md "@(cpu_dispatch=<string>)": a copy's implicit calls reach copies too,
+// so each reports the same level as the copy that made it. On a processor without
+// the level, and under `LOKE_DISPATCH_CPU`, all of them run as written and agree.
+package main;
+
+import "core:fmt";
+import "core:math";
+
+saw_drop := false;
+saw_equal := false;
+
+Count_It :: struct { at: int }
+impl Count_It {
+	next :: proc(self: inout Count_It) -> Option(bool) {
+		if (self.at == 1) { return .none; }
+		self.at = 1;
+		return .some(math.fma_is_instruction());
+	}
+}
+
+Count :: struct { unused: int }
+impl Count {
+	Element :: bool;
+	iter :: proc(self) -> Count_It { saw_iter = math.fma_is_instruction(); return {0}; }
+}
+
+saw_iter := false;
+
+@(fieldwise_copy)
+Held :: struct { n: int }
+impl Held {
+	release :: hook(drop) proc(self: inout Held) { saw_drop = math.fma_is_instruction(); }
+}
+
+Loose :: distinct int;
+impl Loose {
+	same :: operator(==) proc(a, b: Loose) -> bool {
+		saw_equal = math.fma_is_instruction();
+		return int(a) == int(b);
+	}
+}
+
+Pair :: struct { part: Loose }
+
+@(cpu_dispatch="x86-64-v3")
+kernel :: proc() -> bool {
+	from_next := false;
+	foreach (level in Count{}) { from_next = level; }
+	{
+		held := Held{1};
+		_ = held;
+	}
+	left, right := Pair{Loose(1)}, Pair{Loose(1)};
+	_ = left == right;
+	level := math.fma_is_instruction();
+	fmt.println(from_next == level, saw_iter == level, saw_equal == level);
+	return level;
+}
+
+main :: proc() {
+	level := kernel();
+	fmt.println(saw_drop == level);
+}

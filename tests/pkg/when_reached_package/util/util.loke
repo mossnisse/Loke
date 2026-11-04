@@ -1,0 +1,10 @@
+package util;
+
+when (READY) { Word :: i64; }
+READY :: LATE == 1;
+when (true) { LATE :: 1; }
+@(public) WORD_SIZE :: size_of(Word);
+
+// Shadows a predeclared name, which `when` in another package must also wait for.
+when (READY) { byte :: i64; }
+@(public) BYTE_SIZE :: size_of(byte);

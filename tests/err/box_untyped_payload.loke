@@ -1,0 +1,24 @@
+// design.md "Owned values": `nil` has no default type to take, so an allocating
+// call needs an expected payload that holds it. Each of these crashed the
+// emitter or named the wrong type.
+package main;
+
+import "core:unsafe";
+
+Pair :: struct { a, b: int }
+
+main :: proc() {
+	a := box(nil);
+	b := try_box(nil);
+	c := unsafe.new(nil);
+	d := unsafe.try_new(nil);
+	e: Box(^int) = box(nil);
+	f: Box(Pair) = box(nil);
+	g: Result(Box(^int), Allocator_Error) = try_box(nil);
+	_ = g;
+	h: Box(u8) = box(300);
+	i: Box(string) = box(1);
+	j: Box(int) = box(1.5);
+	text: string = "a";
+	k: Box(string_view) = box(text);
+}

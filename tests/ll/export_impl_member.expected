@@ -1,0 +1,5 @@
+define i32 @member_value(
+define i32 @renamed_member()
+define internal i32 @loke.p.T.unexported()
+not @loke.p.T.member_value
+not @loke.p.T.member_count

@@ -10,6 +10,203 @@ checklist.
 
 ### Breaking changes
 
+- `or_else break` and `or_else continue` in a static `foreach` body are `L0455`, as any `break` or
+  `continue` that would target the expansion is
+  ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over a value with no elements the
+  body compiled; with elements the exit was `L0368`, even in a runtime loop. Upgrade by testing the
+  value and handling the failure in the body, or by moving the loop into it.
+- A foreign block's rules are checked where they were let through
+  ([Foreign system](design.md#foreign-system)). A global written `x: T = ---;` is `L0625`, as the
+  grammar says a foreign variable has no initializer; `a, b: i32 = ---, 1;` compiled and dropped the
+  `1`. `@(link_name="")` is `L0608`; it compiled and emitted a symbol with no name.
+  `@(c_vararg) a, b: ..` is `L0627`; it compiled with `b` unbound. A
+  `@(default_calling_convention)` that is not `c` or `stdcall`, including `""`, is `L0618` at the
+  attribute, where before it passed on a block with no procedure to report it on. Upgrade by
+  removing the `= ---`, the empty attribute or the extra name, and by writing a convention the
+  compiler accepts.
+- Attributes on `impl` members and foreign declarations are checked as the
+  [attribute categories](design.md#attribute-categories) say, with `L0607`. On a member of a
+  body-local `impl`, `@(public)`, `@(private)`, `@(export)` and `@(link_name)` are rejected as on any
+  local; they compiled and did nothing. `@(export)` on a foreign declaration is rejected; it compiled
+  and emitted nothing. A member of a generic `impl` now has its attributes checked as any other
+  member's, so an unknown or misplaced one, or `@(test)` or `@(cpu_dispatch)`, no longer passes
+  silently. `@(cpu_dispatch)` on an `impl` member or a foreign declaration is `L0607` rather than
+  `L0739`. Upgrade by removing the attribute.
+- A body-local `impl` whose subject names no type, such as `impl x` on a variable or `impl nope`,
+  is now `L0406`, as at file scope. It compiled, and its members were never checked. Upgrade by
+  removing the block or naming the type.
+- A member of a generic `impl` that is not a constant, a procedure, or an associated type, such as
+  `impl G($T) { x: int = 0; }`, is now `L0406`, as in any other block. It compiled and the member
+  was dropped. Upgrade by removing the member, or moving the field to the record.
+- `string.from_runes` now takes one value argument, by position or named `runes`, as `string.from_utf8`
+  takes one by position or named `bytes` ([string type conversions](design.md#string-type-conversions)).
+  Any other name, a spread and `inout` were accepted and ignored, and are now `L0561`. Upgrade by
+  passing the slice by position.
+- A static `foreach` binding and the names of an expanded case now take the checks of any local
+  ([Variable declarations](design.md#variable-declarations)). `x := 7; foreach ($x in 0..<2)` and
+  `variant := 7; ... case $variant(p):` are `L0305`, also over an empty iterable; `foreach ($a, $a
+  in R)` and `case $s(s):` over a payloadless variant are `L0304`. They compiled, and the last name
+  bound won. Upgrade by renaming the binding.
+- A static `foreach` over a record binds as the runtime form does
+  ([Destructuring](design.md#destructuring)). Over another package's nominal record, `$a, $b` is now
+  `L0708`; it compiled and relied on a field order that package may change. A padding field no
+  longer counts, so over `struct { a: int, _: [4]u8, b: int }`, `$a, $b` now compiles, and each name
+  takes the field it names. Upgrade by binding the whole value and selecting its fields by name.
+- `break` or `continue` in a `defer` inside a static `foreach` body is `L0455` however many elements
+  the iterable has ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over an empty
+  iterable it compiled, and otherwise it was `L0368`, "only valid inside a loop", even inside one.
+  Upgrade by deleting it, since a deferred statement cannot leave its construct.
+
+- A file-scope `when` now waits for a branch that may shadow a predeclared name it reads, directly or
+  through a declaration ([when statement](design.md#when-statement)). A condition that read a
+  predeclared `string` and took one branch, while another `when` declared `string`, now reads that
+  declaration and may take the other. One whose own branch declares the name is now `L0389`, where it
+  compiled and read the predeclared name. Upgrade by renaming the declaration in the branch.
+- A `distinct` type that declares one half of `==` and `hash` is now `L0586` as a part of a map key,
+  as it already was as the key itself ([Maps](design.md#maps)). With `D :: distinct S` declaring a
+  coarser `==`, `map[Holder]int` over `struct { d: D }` paired it with `S.hash`, and two keys that
+  compared equal could both be stored; a lone `hash` on `D` was silently ignored. Upgrade by declaring
+  both on `D`, or neither.
+- `typeid_of(T).hash(seed)`, alone or within a record or array, is now `L0341` in compile-time
+  evaluation ([`type` and `typeid`](design.md#type-and-typeid)). It folded to the nil `typeid`'s hash,
+  which no run of the program computes. Upgrade by hashing at run time.
+- A move-only field or element of a temporary, as a `spawn` argument or receiver, is now `L0728`
+  ([Spawn statements](design.md#spawn-statements)). It compiled, and the task read storage the
+  parent had already dropped. Upgrade by binding the temporary to a local declared before the
+  block, and lending that.
+- A managed place as the replacement of `exchange` is now `L0501`
+  ([Exchange](design.md#exchange)). `exchange(inout a, b)` on a `[dynamic]int` stored `b`'s bits
+  unmoved, so both owned one allocation and the program corrupted its heap. Upgrade by writing
+  `move(b)`, or `b.clone()` to keep it, as a part such as `h.items` must.
+- A map's `find_or_insert`, `try_insert` and `remove`, a `sort` or `reverse_sort`, and a `switch` on
+  a value now count the code of the program they run
+  ([Inferred effects](design.md#inferred-effects)). With `p := &mut counter` still in use, a
+  `hook(drop)` of the map's element or key, an `operator(<)` of the sorted element, or an
+  `operator(==)` of the switched type that writes `counter` is now `L0512`; each compiled, and a hook
+  clearing a global left a live view dangling. Upgrade by ending the borrow before the operation.
+- Every task of a `parallel` block now reserves what a `thread_local` owner's `hook(drop)` uses when
+  its thread exits ([Globals while tasks run](design.md#globals-while-tasks-run)). A hook that
+  allocates through an `Allocator` read from a global makes a block of two tasks `L0732`, where it
+  compiled and both could use that region at once. Upgrade by having the hook use its owner's
+  allocator, or by giving each task what it needs rather than a `thread_local` owner.
+- An instance of a generic operator is held to the operator's shape
+  ([Operator declarations](design.md#operator-declarations)), so `operator(==) proc(a, b: V($T)) -> int`
+  is now `L0416` where an instance is made. It compiled, and `a == b` was an `int`. Upgrade by giving
+  the operator the result its symbol takes.
+- `delegate` of a symbol is now `L0420` when a block of the distinct type declares an overload of it
+  with the type in any operand position, not only the first
+  ([Delegating operators](design.md#delegating-operators)).
+  `impl W { delegate(*); r :: operator(*) proc(s: f64, w: W) -> W { ... } }` compiled. Upgrade by
+  writing every overload of that symbol by hand.
+- A `slot` whose written `self` type is not the interface's subject is `L0442`
+  ([Interface bodies](design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
+  `interface($T: type)` compiled and was never met. Upgrade by writing the subject, or no type.
+- A slot written with a calling convention is met only by a method with that convention
+  ([Interface bodies](design.md#interface-bodies)). `slot f: proc "c" (self) -> int;` was met by a
+  Loke method and not by a `proc "c"` one. Upgrade by removing the convention from the slot, or by
+  giving the method the one the slot names.
+- `dyn I` over a slot written `proc(self, other: Self)` is now `L0463`
+  ([Dyn compatibility](design.md#dyn-compatibility)), as `proc(self: Self, other: Self)` already was.
+  It compiled and misread `other` at run time. Upgrade by taking the other value through a `dyn I`
+  view or a concrete type, or by keeping the interface static-only. A slot with no parameters no
+  longer crashes the compiler when viewed: it is `L0442` and `L0463`.
+- The parser now rejects four shapes [grammar.md](grammar.md) never admitted. A capture clause with
+  no body, `T :: proc() capture(y);`, is `L0259`: it compiled and dropped the clause, so `y` need not
+  have existed; write a procedure type with no clause. `-> !` on a procedure type in result position,
+  `f :: proc() -> proc() -> ! { ... }`, is `L0257`, as it is elsewhere: calls through it never
+  diverged, so remove the `!`. A parenthesized slice, `&mut (a[1:2])`, is `L0357`, as `&(a[1:2])` is:
+  drop the parentheses for mutable slicing. Attributes on an empty statement, `@(x) ;` in a body, are
+  `L0206`, as at file scope: they applied to nothing, so remove them.
+- An extension `operator([]=)` no longer takes a store that built-in indexing answers
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
+  with `impl [3]int { set :: operator([]=) ... }`, `a[0] = 1` now writes the element, as a read
+  already ignored an extension `operator([])`. Upgrade by calling the procedure by name.
+- `@(export)` on a member of a generic `impl` block is now `L0438`
+  ([`@(export)`](design.md#export)). It compiled and exported nothing. Upgrade by removing it, or by
+  exporting an ordinary procedure that calls the member.
+- A slice or field of a user unary, `operator([])` or `operator([:])` result is now `L0513` when
+  used after its statement, as one of a binary operator's already was
+  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  `first((-m)[:])` compiled and read the temporary after it was dropped. Upgrade by binding the
+  result to a local first.
+- A carrier bound by destructuring, as `out, n := holder`, now reaches what the field's carrier
+  points at, so an owner stored through it counts against a later reset or a local region, as
+  through `out := holder.output` (`L0536`, `L0537`,
+  [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  It compiled and left the owner dangling. Upgrade by keeping the allocator's region alive as long
+  as the destination.
+- Comparing records at compile time when a part has no compile-time comparison, such as a
+  `typeid_of` against a forged `typeid`, is now `L0341`, as comparing those parts alone is
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)). It folded to
+  "different". Another part that differs still answers it. Upgrade by comparing at run time.
+- A map's `iter_mut` is now a mutable borrow of the map, as a dynamic array's is
+  ([By-reference iteration](design.md#by-reference-iteration)), so reading the map while an
+  entry is still in use, or taking a second iterator, is now `L0511`. It compiled, though the
+  loan was meant to be exclusive. Upgrade by finishing with the entry before using the map
+  again.
+- A task whose call passes one callback to several arguments, as in
+  `both :: proc(f: proc(out: ^mut ^int), a, b: ^mut ^int) { f(a); f(b); }`, is now `L0730` when
+  the callback leaves a borrow of `thread_local` storage in either
+  ([Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)). Only the first
+  argument used to be checked, and a procedure value that may be either of two only as the
+  first. Upgrade by not returning that borrow across the task.
+- An unfixed integer too large for a float no longer meets an unfixed float
+  ([Number literals](design.md#number-literals)): `(1 << 2000) + 1.5` is now `L0352`. It compiled,
+  reading the integer as `0`. A comparison, as in `(1 << 2000) > 1.5`, still orders the exact values.
+  Upgrade by writing a value a float can hold.
+- A distinct type converts only as written in more places
+  ([Distinct types](design.md#distinct-types)): `r: rawptr = P(&n)` with `P :: distinct ^int` is now
+  `L0310`, and `S("a") + view` and `S("a") == T("b")` with distinct strings are `L0354`. `a && b` on
+  a `distinct bool` is `L0318`, as `!a` was `L0317`. `d: D = 1 << n` with `D :: distinct int` is
+  `L0310`, as `D(1) << n` was `L0318`. Upgrade by writing the conversion.
+- A constant zero divisor lane of an integer vector is now `L0319`
+  ([Lane-wise operators](design.md#lane-wise-operators)), in `v / 0`, `v % Z` and `v /= 0`, as a
+  scalar's is. They compiled and panicked at run time. Upgrade by removing the division.
+- `-C` and `~C` on a constant vector are now constants ([Lane-wise
+  operators](design.md#lane-wise-operators)), so `v << -C` with a positive `C` is `L0356` and
+  `-C` overflowing a lane is `L0397`. They compiled and panicked at run time. Upgrade by removing
+  the negative count.
+- `Simd(inout f32, 4)` and `Range(inout int)` in value position, as in `size_of`, are now `L0681` and
+  `L0689`. They compiled and ignored the mode. Upgrade by removing it.
+- Only a scalar of the lane type splats, constant or not
+  ([SIMD vectors](design.md#simd-vectors)): `v: Simd(f32, 4) = N` with `N : i64 : 3`, and
+  `f32_vector + i32(1)`, are now `L0310`. They compiled, converting the constant. Upgrade by writing
+  the lane type, `f32(N)`.
+- An array literal's key must have an integer or rune type, as an index does
+  ([Fixed arrays](design.md#fixed-arrays)): `[2]int{C.B = 1}` with an enum `C` is now `L0362`.
+  Upgrade by writing `int(C.B)`.
+- A constant zero divisor of a rune is `L0319` ([Integer operators](design.md#integer-operators)):
+  `r % 0` and `r /= 0` compiled and panicked at run time.
+- A map named only inside a `Box`, as in `p: Box(map[f64]int)`, now has its key checked: a key
+  that cannot be hashed is `L0586` where the map type is named ([Maps](design.md#maps)). It
+  compiled. Upgrade by keying the map by a hashable type.
+- A destructuring assignment to a destination that would view or splat its field, such as
+  `v, n = record` with a `string` field and a `string_view` `v`, is now `L0310`
+  ([Destructuring](design.md#destructuring)). It compiled, and wrote the field's bytes past the
+  destination. Upgrade by assigning that field by name.
+- A provider received through a `move` parameter is now a region of the procedure, as a local one
+  is: returning what it backs is `L0592`, and ending it while something it backs is live is `L0537`
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  Replacing a provider through a `&mut` loop element or case binding also ends its region, as through
+  a pointer, and `return` is `L0537` when a panic in it would end a region under an older owner,
+  however its value is evaluated. These compiled, and read freed memory. Upgrade by ending the owner
+  first.
+- A `defer` or `errdefer` reading a local that is dead where a later statement may panic is now
+  `L0500`, as it is at an exit ([defer statement](design.md#defer-statement)). It compiled, and read
+  a moved or unset value during the unwind. Upgrade by giving the local its value before the
+  `defer`.
+- `source_location(<entity>)` takes a variable or a procedure, as
+  [its section](design.md#source_location-or-source_locationentity) says; naming a type, a
+  constant, a package, or a built-in is now `L0573`. Upgrade by naming a variable or a procedure.
+- A `make` length, capacity, or reservation is an `int`, so a distinct integer is now `L0579`.
+  Upgrade by converting it: `make([dynamic]int, int(count))`.
+- `unsafe.transmute` of a type written where the value goes is now `L0688`, where an empty target
+  type accepted it as a zero-sized value. Upgrade by passing a value.
+- `-define` of an integer that names no variant of a `build_config`'s enum default is now `L0388`,
+  rather than making a value that is no member of the enum. Upgrade by passing a variant's value.
+- `f16` at a foreign boundary, directly or as a record's field, is now `L0619`: the Win64 C ABI
+  does not classify it ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)). Upgrade by
+  passing an `f32`, or by passing a `^f16`.
 - A struct's or union's attributes are now written on its declaration, and `move_only` is
   the attribute `@(move_only)`, no longer a reserved word
   ([Attributes](design.md#attributes)). Attributes in the type, and `move_only struct`, are
@@ -25,6 +222,32 @@ checklist.
   Generic :: struct($N: int) @(align=N) { ... }
   @(align=N) Generic :: struct($N: int) { ... }
   ```
+
+- An owner built from a provider inside a `Shared` payload may not outlive any strong handle holding
+  it, which is now `L0537`, and one built from it or through a local pointer to a provider may not be
+  returned, which is now `L0592`; `some_map.try_insert` on a map holding providers ends their regions, also
+  `L0537` while an owner backed by one is live; and `clone()` of a type holding a `hook(copy)` taking
+  `self: ^` borrows its receiver, so its result may not outlive it (`L0526`, `L0512`). Upgrade by
+  ending the owner first, or by giving the hook a value `self`.
+- A declared `Iterator` or `Mut_Iterator` that disagrees with `iter` or `iter_mut`, or a declared
+  `Item` that disagrees with `next`, is now `L0694` whether or not anything looks it up, and in
+  whatever order the members are declared ([Iteration protocol](design.md#iteration-protocol)).
+  Upgrade by correcting the declaration or removing it.
+- A generic procedure ending with `---` is now `L0630`, as a plain one is. It compiled while uncalled.
+  Upgrade by giving it a body or removing it.
+- `box(d, pick(&mut d))`, whose allocator operand writes the managed place being boxed, is now
+  `L0511`, as the same two operands of a call are ([Evaluation order](design.md#evaluation-order)).
+  It compiled, and cloned freed memory. Upgrade by evaluating the allocator first.
+- `sync.Atomic(T)` of a union that only has `Option`'s shape is now `L0662`
+  ([`core:sync`](standard-library.md#coresync)). Upgrade by using `Option(^T)`.
+- `@(required)` with `@(initialized)` on one field is now `L0691`, and `@(require_results)` on an
+  interface is `L0607`. Neither had any effect. Upgrade by deleting the attribute.
+- `lokec` takes at most one of the options that select what a run does, such as `-fmt`, `-doc` and
+  `-dump-ast`, and a second is a usage error. Before, the first in an internal order won silently.
+- `string` -> `string_view` no longer applies to a distinct type on either side, as the
+  [conversion list](design.md#implicit-type-conversions) says and as `distinct [3]int` -> `[]int`
+  already did not. `s: string_view = Name("abc")` with `Name :: distinct string` is now `L0310`.
+  Upgrade by writing the conversion: `string_view(string(name))`.
 
 - A `union` or `enum` is now written only as the value of a constant declaration, as a
   `struct` already was ([Unions](design.md#unions),
@@ -752,6 +975,41 @@ checklist.
   old procedure. The distributions that call these functions on every value
   are slower, `beta` by Jöhnk's method most, from 13 to 205 ns; `normal` and
   `exponential` are not.
+- A member `as` in an `impl` of a generic union is now `L0409`, as in an `impl` of any other union
+  ([Inspecting a union](design.md#inspecting-a-union)). It compiled and no use could reach it, since
+  `u.as(.a)` selects the built-in. Upgrade by renaming it.
+- A public constant in a generic extension is no longer exported under its package
+  ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)): `ext.K` is now
+  `L0335`. With `impl lib.Holder($T) { @(public) K :: size_of(T); }` it took its value from whichever
+  instance came first. Upgrade by exporting an ordinary constant, or a procedure of the block.
+- The fields of a built-in array, slice, dynamic array, range or map iterator are private
+  ([Iteration protocol](design.md#iteration-protocol)): `it.index` is now `L0471`. Writing
+  `x.iter().index` let safe code read outside the array and segfault. Upgrade by calling `next`.
+- What a `foreach` step owns no longer outlives the step
+  ([Element bindings](design.md#element-bindings)): a pointer to the `indexed()` counter, or to the
+  record one name receives over a map or an `indexed()` loop, is `L0526` when returned and `L0513`
+  when kept past the step. `foreach (e in xs.indexed()) { return &e; }` compiled and left a dangling
+  pointer. Upgrade by copying what the step binds, or by keeping `e.value`, which the source owns.
+- `foreach ((p, q), &mut c in t)` that takes apart an owned part with a custom `hook(copy)` or
+  `hook(drop)` is `L0508`, as in a loop with no `&mut` leaf
+  ([Destructuring](design.md#destructuring)). It compiled and the hook never ran. Upgrade by binding
+  the part whole.
+- A group member no longer wins for taking an argument as a `$` parameter
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)).
+  With `plain(x: int)` and `gen($x: int)`, `pick(1)` called `gen`, because the ownership tie-breaker
+  counted the literal against `plain`; it now calls `plain`. Upgrade by calling `gen` by name where
+  it was the one meant.
+- A capture is a binding, so `capture(true = 1)` and `capture(nil = 7)` are now `L0700`, as
+  `true := 1` is ([Predeclared names](design.md#predeclared-names)), and `capture(_ = 41)` is
+  `L0716`, since `_` binds nothing ([Capture literals](design.md#capture-literals)). They compiled,
+  and in the body the name read the capture. Upgrade by renaming the capture.
+- A replacement for a bundled package given with `-collection` can no longer write an
+  [`@(intrinsic)`](design.md#intrinsic) declaration that states what nothing checks. A written type,
+  as in `Arena: int : ---;`, a `where` clause, and `operator(...)` or `hook(...)` around the procedure
+  are `L0734`. A receiver with no type but not named `self`, as in `proc(this)` or `proc(self, other)`,
+  is `L0736`. An unknown or misplaced attribute on the block's `impl` is reported like any other. All
+  compiled, unchecked, and `-doc` showed them. Upgrade by writing the declaration as the bundled
+  package's source does.
 
 ### Added
 
@@ -1043,6 +1301,13 @@ checklist.
 
 ### Changed
 
+- `find_or_insert`, `try_find_or_insert` and `try_insert` on a map of unmanaged elements, such as the
+  counting idiom on a `map[int]int`, push no unwind frame.
+- Slicing a `string` or a `string_view` tests only the bytes at its bounds, in constant time, rather
+  than validating the whole range, since the text is already valid UTF-8. `rest = rest[1:]` over
+  256 KB took 145 s and now takes under 0.2 s. A bound inside a sequence still panics.
+- Comparing a fixed array of more than 8 elements or 64 bytes generates a loop rather than a few
+  instructions per element, so `[4096]u8 == [4096]u8` is about 40 lines of IR, down from about 16,400.
 - [design.md](design.md) is shorter and no longer specifies the library, with no
   change to what a program means.
   [standard-library.md](standard-library.md) now specifies printing, `core:slice`,
@@ -1259,6 +1524,557 @@ checklist.
 
 ### Fixed
 
+- A chain of procedure or map aliases that each name the previous one more than once compiles in time
+  linear in its depth; every question about what a type holds took time exponential in it, at 5 to 6
+  s for 20 aliases and without end for 48. The printed name of such a type is still exponential in
+  its depth ([known-gaps.md](known-gaps.md#a-types-printed-name-doubles-with-each-alias-naming-the-previous-one-twice)).
+- A map named as a generic record's argument is checked where it is named, whether or not a field
+  holds it ([Maps](design.md#maps)). `Shared(map[f64]int)` reported `L0586` inside
+  `base/runtime/shared.loke`, with an `L0308` there as well; now it reports `L0586` at the argument.
+- `L0740` reads what a `where` clause holds as values: a literal's index, as `IDX` in
+  `[2]int{IDX = 1}`, and a parameter's default in a procedure type
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `-api` and `-doc` show a private type a generic procedure's result names when a plain parameter has
+  the same name, as in `proc(T: int, v: $U) -> T`. A plain parameter's name is in no type's scope, but
+  the listing took it for that parameter and left the declaration out.
+- A `switch` case binding that spells a literal, as in `case .a(true):`, no longer binds the name after
+  its `L0700` ([Predeclared names](design.md#predeclared-names)). `true` in the case body stays the
+  literal, where it read the payload and reported a false mismatch.
+- A pointer from a user `operator([])` is treated as the call's result it is, and no longer as pointing
+  wherever the receiver's carriers do. A store through one, where the operator returned another
+  argument, was blamed on the receiver's target, so a reset with that target live was rejected (L0537).
+- A bad `-define` no longer hides a bad `-collection`: both are reported in one run.
+- A field's name used as a key of a record literal no longer counts as a mention of what that name
+  declares. `Vec :: [size_of(Cfg{Vec = 2})]$T` was rejected as defined in terms of itself (L0745), and an
+  interface `slot` with such a key named after its subject as not dyn-compatible (L0463).
+- A constant `/` or `%` no longer folds to a wrong value when the divisor passes about 10,000 bits
+  and the dividend is half as long again, as in `((1 << 40000) + 1) / ((1 << 13000) + 7)`.
+- Compile-time evaluation no longer stays charged, against its memory limit, for what a float-to-integer
+  conversion or a float literal's rounding built along the way, or for a second copy of a typed
+  integer result already in range.
+- A foreign global whose type does not resolve, such as `foreign lib { x: Nope; }` or a generic
+  `x: G;`, reports it as `L0306` or `L0431` at the type. It stopped the build with an internal `L0405`
+  naming `<invalid>` and no location.
+- A foreign binding of an exported procedure that returns a record or a pointer no longer gets a false
+  `L0600`: `@(link_name="z") f :: proc(a: i32) -> P ---;` and `@(export, link_name="z") g :: proc "c"
+  (a: i32) -> P {...}` are one type ([`@(export)`](design.md#export)).
+- A bad `@(default_calling_convention)` is reported once, at the attribute, not at each procedure that
+  inherits it.
+- A foreign member that is neither a `---` procedure nor a variable, such as `X :: 1;` or a record, has
+  an `L0625` that says what a foreign block declares, not that a global has no initializer. A broken
+  `x := ---;` reports only the parser's `L0235`.
+- The language server resolves a name in three more places: an operand of an assignment through
+  `operator([]=)`, such as `val` in `box[key] += val`; a member of a group under `operator`, as in
+  `operator(<) proc { reversed }`; and an `else when` condition in a procedure. Hover and definition
+  found nothing there, references left the use out, and rename refused.
+- `box(nil)`, `try_box(nil)`, `unsafe.new(nil)` and `unsafe.try_new(nil)` are `L0310`, as `x := nil` is,
+  and `b: Box(^int) = box(nil)` says `nil` is not a value of `^int`. Each crashed the compiler with no
+  diagnostic.
+- An untyped payload takes the payload type the context expects, as an initialization does
+  ([Owned values](design.md#owned-values)): `b: Box(u8) = box(1)`, `Box(f32) = box(1.5)` and
+  `Box(string_view) = box("abc")` compile. They were `L0310`.
+- `try_box`, `unsafe.new` and `unsafe.try_new` take an expected payload type from an expected
+  `Result(Box(T), Allocator_Error)`, `[^]T` or `Result([^]T, Allocator_Error)`, as `box` does from
+  `Box(T)`. `r: Result(Box(N), Allocator_Error) = try_box({1, 2})` was `L0376`.
+- A diagnostic on `unsafe.new` or `unsafe.try_new` names the call rather than a box: `` `new` takes a
+  runtime value `` and "this unsafe allocation cannot copy it".
+- [`@(export)`](design.md#export) on a procedure in a file-scope `impl` block now emits the symbol
+  under its own name or `@(link_name)`. It was emitted internally, so a C host failed at link.
+- `string.from_utf8`, `string_view.from_utf8`, `cstring_view.from_bytes` and `string.from_runes` take
+  a fixed or dynamic array of their element type, as a read-only `[]T` parameter does
+  ([Implicit type conversions](design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a
+  `[3]u8` was `L0561`.
+- `unsafe.string_view(pointer, length)` with a length wider than 64 bits that does not fit panics
+  ([string type conversions](design.md#string-type-conversions)). It truncated, so an `i128` of `-2^64`
+  gave an empty view.
+- `unsafe.string_view(pointer, 1.5)` reports the length once, where it reported `L0353` and `L0569`.
+- An operator overload taking a vector is now found where no built-in lane-wise operation exists
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
+  `m * v`, `v + m`, `a + b` on two vector types, and `%` on float lanes were `L0686` with a matching
+  overload, though `v += m` found it.
+- `y: Simd(f32, $M)` where `$M` is not bound is now `L0437` naming `$M`, and an invalid `Simd(...)`
+  inside `Box(...)` or a composite literal no longer also says ``unknown type `Simd` ``.
+- `v <<= -1` on an unsigned vector reports `L0352` once, as `v << -1` does, and not `L0356` as well.
+- A negative `Simd` lane count now says that it is negative, and a zero one that a lane count is a
+  power of two from 1.
+- A static `foreach` takes any compile-time slice, as
+  [Static `foreach` expansion](design.md#static-foreach-expansion) says: `K :: ARR[:]`,
+  `K :: []int{1, 2}` and a `[]int{1, 2}` literal were `L0454` unless written `ARR[:]` in the header.
+- A note in a static expansion shows every element
+  ([Static `foreach` expansion](design.md#static-foreach-expansion)). `fields_of(T).indexed()` and a
+  record said `<value>`, an enum member its number, and a rune its code point; they now say `name`,
+  `Point{1, "p"}`, `Red` and `'a'`. A string is quoted, and a rune in a generic instance's name
+  prints as one.
+- `open(..a).handle(..b)` compiles ([Union argument expansion](design.md#union-argument-expansion)):
+  a spread in the callee's receiver reported `L0305` for `dispatch$payload`, a name the program
+  never wrote.
+- A diagnostic in binding an expanded case's copy names its variant, as one in its body does
+  ([Per-variant switch cases](design.md#per-variant-switch-cases)).
+- A generic type's `format` whose `where` bound fails leaves that instance the generated form
+  ([Printed forms](standard-library.md#printed-forms)). `fmt.println(G(int){1})` was `L0444` when
+  `format` required `T == string`.
+- A report (`assert`, `panic`) counts only a `format` its printed form calls
+  ([Global write effects](design.md#global-write-effects)). A `distinct` type's wrapped `format`, a
+  private field's, and a `dyn` view with no `format` slot were a false `L0512` when that `format`
+  wrote what the report held.
+- A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
+  map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
+  ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a
+  record holding a `D` keyed a map by that pair.
+- The same error reported several times from one position, as each instance of a generic procedure
+  does, now prints once with each instance as a note, also when another error at that position fell
+  between the repeats. Errors at one position now print narrowest first.
+- A diagnostic's caret line counts characters, so a mark after or across non-ASCII text in a string
+  or comment stands under what it marks.
+- A member whose `where` bound fails is out of the instantiation on more paths
+  ([where clauses](design.md#where-clauses)). A conversion hook no longer stops the compiler with
+  `L0405` or joins an `L0391` ambiguity; a procedure group on a generic extension can name one where
+  it was `L0395`; `x.f()` on an extension's explains why with the note an inherent block's has; and
+  a method or interface slot supplied by two crossed generic blocks no longer counts it.
+- A conversion hook of a name two crossed generic blocks both supply is found
+  ([Conversion hooks](design.md#conversion-hooks)). `G(int, int)(3)` was `L0373`.
+- A body-local `format` or `hash` after a use that generated one now says so: `L0409` reads "already
+  has a generated member", with a note to write the block before that use.
+- `L0740` reads more of what a public declaration writes
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)). It now
+  warns about a private name that a block's `$` name had hidden from every later declaration; a
+  procedure constant's written type; the application of a parametric alias in a generic `impl`; a
+  field written after `_`, as in `_, a: Fill`; a private type nested deeper than eight levels in a
+  constant's type; and a private group member in a block whose package declares the same name
+  publicly. It reports `impl ^Name`'s members under `Name` and no longer warns about them when
+  `Name` is a private type, and names any other subject as written, as `[]Point.spread`.
+- `L0740` no longer warns about a type named in an array length, as `[size_of(Hidden)]int`, or `_`
+  padding as a field, and a selection such as `Box(int).Inner` now reads `impl Box(int)`'s member
+  when `impl Box(string)` declares one of the same name.
+- `-api` now shows a struct field written after `_`, as in `_, a: int`.
+- A `typeid` no longer depends on the order types were declared or requested in when two types differ
+  only in a procedure type's `@(escape=...)` or `@(cross_thread)`, in the package a `Range(T)` or
+  iterator's `T` comes from, in which procedure or expansion declares a local generic or a local type,
+  in where an in-place `distinct` is written, in a `typeid_of` inside a value argument, or in which
+  package an iteration adapter was made for.
+- `typeid_of(Nope)`, `fields_of(Nope)`, `enum_values_of(Nope)` and `variants_of(Nope)` report an
+  unknown name once, not again as `L0451` "needs a type", and `type_of([]Nope)` reports it once.
+- A file-scope `when` condition now waits for what it reaches, not only for the names it writes
+  ([when statement](design.md#when-statement)). `N :: size_of(Handle); when (N == 8)` with `Handle`
+  from another `when` compiles, where it was `L0315`, and a record's field type, a procedure's
+  signature or body, and a procedure literal in the condition behave the same.
+- `-api` and `-doc` show an `impl` block written through a private alias of a public type, whose
+  members importers can call, with the alias marked private
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `-api` no longer fails with `L0405`, and `-doc` no longer prints a cut head, for a struct whose
+  `where` clause holds a brace.
+- An interface file writes the import that only an attribute's value qualifies a name with, and no
+  import for a member spelled like one, as `Wrapper{}.sub.n`. It shows a private constant that an
+  array literal's key names, and a field's attributes without `public` or `private` wherever they
+  are written ([Interface files](compiler-guide.md#interface-files)).
+- `L0260` no longer warns about a doc comment on a field or variant of a type written under a
+  pointer, array, slice, map, procedure signature or type application
+  ([Doc comments](design.md#doc-comments)).
+- The editor's documentation command shows a package's interface for a file of that directory the
+  check did not load, rather than the root package's.
+- `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
+  `<name>.layout.exe`. A bare output name, which every build without `-o` has, no longer fails it
+  with `L0405`, and `-g` no longer writes a PDB for the probe.
+- `-check-layout` also compares `string`, `string_view`, `cstring_view`, `[^]T`, `typeid`, `Simd` and
+  `dyn` values with LLVM's layout, as it says it does for every type.
+- `lokec x.loke -g -emit-ll` no longer leaves `x.natvis` behind, and `-g` links an output whose path
+  holds a comma, which failed with `L0403`.
+- `foreign import k "system:kernel32.LIB"` links `kernel32`: the `.lib` and `.a` suffixes are
+  recognized in any case, and `-lkernel32.LIB` failed the link.
+- The cached runtime objects now follow the value of `INCLUDE` and the upgrade of a clang found on
+  `PATH`, either of which reused the old objects. A link that loses the race to install a set no
+  longer waits two seconds, and neither does one that finds a damaged set in place.
+- `spawn read(make().items);`, `spawn show(make_list()[0]);` and `spawn make().part.read();` no
+  longer give the task storage the parent drops as the statement ends: the task gets its own copy
+  of the field or element ([Spawn statements](design.md#spawn-statements)). It could read freed
+  memory, an empty string, or a value after its `hook(drop)` ran.
+- A widened place as a `spawn` argument, as in `foreach (i in 0..<n) { spawn show(items[i]); }` with
+  a smaller union's elements, now reaches its own task. Every task read the one temporary the
+  widening shared, so all saw the loop's last element.
+- A warning from a `parallel` block's executor expression no longer gets the note about the
+  executor's type.
+- A `spawn` under a replaced `core:thread` with no `Task_Scope.start`, or that does not load
+  `core:unsafe`, is now `L0727` where it was an internal backend error `L0405`.
+- A map's `clear`, and a sequence's `clear` and `resize`, no longer count as using an unknown
+  allocator region for a `hook(drop)` of what they discard. Two tasks each clearing a map of their
+  own were `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).
+- A union aligned past 16 bytes, such as one holding a `Simd(f32, 8)`, now has the layout the
+  checker reports. LLVM aligned its storage to 16, so `size_of` and `align_of` disagreed with the
+  code, and copying an array of records holding one overran its storage and crashed.
+- A constant of an all-payloadless union with a written alignment above its tag's, such as
+  `@(align=8) U :: union { a:, b: }`, now compiles; clang rejected the initializer.
+- A foreign binding of any name the runtime or the generated module declares or defines, such as
+  `loke_rt_v1_frame_pop`, now refers to that one; only a few such names did, and the others
+  failed with `L0403`, clang's "invalid redefinition of function".
+- An owned `foreach` leaf can be moved beside lent and `&mut` ones, as
+  [Element bindings](design.md#element-bindings) says: `move(i)` of an `indexed()` counter and
+  `foreach (&mut a, s in t) { take(move(s)); }` with `s` owned by `next` were `L0690`.
+- `reversed()` over a map or text runs the `iter_reverse` the program supplies
+  ([Iteration adapters](design.md#iteration-adapters)); it was `L0460`.
+- An `&mut` leaf after a `_` padding field of a record `Item` takes that field's mode, not the
+  padding's; it was `L0457` ([Destructuring](design.md#destructuring)).
+- `foreach (a, b in ints)` reports that `int` is not a record, not that it has 0 fields and needs
+  "1 or 0 parts" (`L0459`).
+- `delegate` now covers what [Delegating operators](design.md#delegating-operators) says it does:
+  `+` on a distinct `string` or `string_view`, which failed in clang with `L0403`; `<<` and `>>`, which
+  were `L0420`; the operators of a distinct `Simd`, also `L0420`; an overload with the underlying type
+  in any operand position, such as `f64 * V` or `operator(in)`; a generic overload; the built-in
+  operation beside a user overload that mentions the type; and an overload's parameter defaults.
+- A generic `operator([])`, `operator([]=)` or `operator([:])` declared outside an `impl` block is
+  found ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)),
+  where `a[0]` was `L0362`.
+- A user unary `-` or `~` no longer shadows the built-in one on a `Simd` type
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)), as a
+  binary overload already did not.
+- A `caller_location()` default on an operator reports the expression that used it, not the
+  declaration ([`caller_location()`](design.md#caller_location)).
+- `@(deprecated)` and `@(require_results)` take effect on an operator declaration, and a deprecated
+  operator warns where an expression uses it as well as where it is called by name.
+- An operator taking `self: ^` accepts a pointer operand, as its named call does; `p + v` was `L0310`.
+- Comparing a type whose inherent `==` is in a group that is not `@(public)` gets the same message as
+  one with a single overload (`L0355`).
+- An operator with a `$` parameter is `L0416` where it is declared
+  ([Operator declarations](design.md#operator-declarations)). Using one crashed the compiler.
+- `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
+  statement ends, as `make_source().iter()` already did; it was never dropped
+  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+- `foreach` over a string, map, dynamic array or fixed array in a packed struct now reads it
+  with `align 1`; it claimed natural alignment, which is undefined behavior in the generated code
+  ([`@(packed)`](design.md#packed)).
+- A `^mut T` works as a `map[^T]V` key. `p in m`, `m[p]`, `m[p] = v` and `map[^T]V{ p = v }` compiled
+  it as a `string_view` and failed in clang with `L0403`.
+- A map literal keeps one set of slots for all its entries, so a 300-entry `map[int]L` with a 5 KB `L`,
+  or a 30000-entry `map[string]string`, no longer overflows the stack at `-opt=none`.
+- A deferred assignment on a panic's unwind now drops the value it replaces where that value is
+  live, reads whether it is, and leaves the new value to be dropped
+  ([Assignment statements](design.md#assignment-statements)). The old value could leak, a hook
+  could run on a value already dropped, and the replacement could leak.
+- `-copy-cost` no longer warns of a copy of a move-only type, beside the error that it cannot be
+  copied, or by size of a `string` or `Shared(T)`, whose copy only retains
+  ([Copy-cost diagnostics](design.md#copy-cost-diagnostics)).
+- A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
+  by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
+- `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`
+  first; it was 0 when the type was first written out.
+- An application whose composition has arguments that do not resolve is false, as
+  [Interface bodies](design.md#interface-bodies) says: `Inner(T, T.N)` in `Outer(T)` made
+  `static_assert(!Outer(int))` an `L0408`, and `Callable(C, proc(n: C.Arg) -> int)` an `L0306`.
+- An interface that composes itself is false however it does so. Looking up an associated constant
+  or a slot through one overflowed the compiler's stack, and `Bad(T) || Bad(T)`, or a composition
+  repeated at each level, ran for hours.
+- A bare bound grants what its composition requires when the interface names what it composes by a
+  name only it can see, when a composed `Callable` has another subject, as in
+  `Callable(T.Fn, sig)`, and when that `Callable`'s signature names an associated constant.
+- An export whose link name starts with `loke.` stays external, and a procedure or global the
+  compiler would give that same name takes another, so `@(export, link_name = "loke.host_api")`
+  links and `"loke.p.helper"` beside `helper :: proc()` compiles
+  ([`@(export)`](design.md#export)).
+- Exporting `wmain` from an executable or a test build is now `L0635` rather than clang's
+  redefinition error, and a foreign binding of `wmain` there refers to the entry
+  ([`@(export)`](design.md#export)).
+- A debugger shows an instance's argument as written, `wrap.[]int` rather than `wrap.$5b$5dint`.
+- `if (case 1 = x) y;` and its `for` form report the missing `{` (`L0213`) rather than ending the
+  compiler with no diagnostic.
+- A variable declaration in a control-flow header takes attributes, as
+  [grammar.md](grammar.md#statements) has it: `if (@(tag) y := 1; y > 0) { }` was a cascade of errors.
+- One malformed construct is one diagnostic in `for ()`, `return );`, `S :: struct(1) { }`,
+  `x := (1 2);`, `move(1 2)` and `if (x := 1) { }`. A header's declaration that fails stops at the
+  header's `)`, so `for (x: ) { a(); } b();` keeps its body and what follows it, and deeply nested
+  blocks report the depth limit alone rather than hundreds of stray `}`.
+- A foreign import's path is decoded as an import's is, so `"sys\x74em:kernel32.lib"` names a system
+  library rather than a file with a backslash in its name.
+- An array length holding composite-literal arguments, `[g([g([1]int{})]int{})]int{}`, parses once
+  per level; each level used to double the time, so 22 of them in 250 bytes took 18 seconds.
+- A procedure literal inside a result type's array length or generic arguments has its body:
+  `f :: proc() -> [g(proc() -> int { return 2; })]int { ... }` was `L0253`.
+- A procedure body or group where only a type is grammatical, as in `x: proc { a };` and
+  `struct { a: proc() { } }`, is `L0210`, not `L0350` calling it a compiler defect.
+- A record type field's `=`, `inout`, `move` and `..` errors no longer advise declaring a `struct`,
+  whose fields have none of them either.
+- A store's receiver is a place, so `m["a"][1] = 5` and `o[0][1] = 5` with an `inout` `operator([])`
+  compile when the element has an `operator([]=)`, as their `+=` forms did
+  ([Indexing and slicing](design.md#indexing-and-slicing)).
+- A receiver is checked once per check of its call. A procedure literal or a `dyn proc` argument in
+  a receiver no longer fails in clang, in `h[f(proc() -> int {...})][0] = 5` and its `+=` and multiple
+  assignment forms, and in `f(proc() -> int {...}).unbox()`, `.copy()` and `mk(g).foo()`. A chain of
+  calls to methods named like a text operation no longer doubles its checking time per link.
+- `s.byte_len()` finds a file-scope `s` declared after the procedure that calls it, as `s.len()` did.
+- A default sees a `self` written in its own group: `proc(self, x: int = self.n)` and
+  `proc(self, x := self.n)` ([Default values](design.md#default-values)).
+- `b[0] += n` through `operator([]=)` reads a scalar variable `n` before `operator([])` runs
+  ([Evaluation order](design.md#evaluation-order)).
+- A constant keeps its destination's type in a multiple assignment with a setter however it is
+  spelled, so `small[0], x = math.PI, 2` and `Small.N` compile. A setter's value and indices take
+  their parameter's type as context, so `paint[0] = .Blue` compiles.
+- `g[0], y = record` works when `g` has only an `operator([]=)`
+  ([Destructuring](design.md#destructuring)).
+- A file-scope `source_location()` reports no procedure, whichever body reaches it first.
+- `@(escape=...)` on a procedure type's parameter in a generic record is exempt in a binding with no
+  borrow, as it is on a method's: `Foo(int)` for `cb: proc(@(escape=none) x: T)` no longer reports
+  `L0648`.
+- `defer r := must();` reports a required result it never reads (`L0698`).
+- A repeated constant `case` of a struct type is `L0367`.
+- These report what is wrong rather than `L0350` "compiler defect" or a backend error: a type
+  containing itself declared in a body (`L0364`), `[?]T` outside a composite literal (`L0384`), an
+  unbound `[$N]T` (`L0437`), and `x: fmt.Nope(int)` (`L0306`). A failed component of an anonymous
+  record reports once.
+- One mistake reports once: `@(align=n)` with a variable `n` is `L0341` alone, and `a, b := bad_name`
+  is `L0315` alone. A compound assignment whose operator does not apply is `L0318` whatever the right
+  side is, where a mismatched one was `L0310`.
+- A declared `Simd`, unsuitable as a type, is `L0306` rather than a request for the predeclared
+  constructor's arguments, and `$n := 5` says that a `$` parameter writes its type.
+- `&mut p^.items[:]` passed where a `[]T` is wanted now suspends nothing through the carrier, as
+  on a local and as `&mut p^.items` does; it was a false `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A conflict on such a slice is
+  also reported once, naming the carrier.
+- An `f16` prints its own shortest spelling, as `f32` and `f64` do: `f16(0.1)` prints `0.1`
+  rather than `0.099975586` ([Printed forms](standard-library.md#printed-forms)).
+- An enum value no member names, reached through `unsafe.transmute`, prints as its number at the
+  enum's own width and signedness: an `enum u64` holding all ones prints `18446744073709551615`
+  rather than `-1`, and an `enum i128` no longer prints only its low word
+  ([Printed forms](standard-library.md#printed-forms)).
+- Compile-time evaluation matches a run in more places
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  `xs.append(..view)` added nothing, so a `static_assert` could pass on the wrong length, and
+  `xs.append(1, ..view)` was `L0341`. A zero `string_view` compared unequal to `""`. A single name
+  over a lent `indexed()` reported a nil pointer at `r.value^`, and `&mut` over a slice expression,
+  as in `(&mut arr[:]).indexed()`, and a write through one, as in `(&mut arr[:])[0] = 1`, were
+  `L0341`. A local type, or `_: int;`, gave only `L0311`. A non-scalar `assert` argument reported
+  `L0341` in place of the assertion, reading a box emptied by `unsafe.take` gave only `L0311`, and
+  the seed of `hash` ran after its receiver's `or_return` had left.
+- Compile-time evaluation stopped at the memory limit after about 1000 appends, 800 map inserts, or
+  800 reads of an 800-element constant table. A growing container no longer copies its contents at
+  each insertion, and a read makes only the element it selects, so the step limit now comes first.
+- A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
+  site's window never closed, so a write after its join was a false `L0731`
+  ([Globals while tasks run](design.md#globals-while-tasks-run)).
+- `@(escape=...)` on a parameter whose record names itself now asks whether the record carries
+  a borrow once its fields are known, so a record whose carrier field comes after the procedure
+  field is no longer a false `L0648` ([`@(escape=<level>)`](design.md#escapelevel)).
+- Storing an allocator handle in a field and then storing another over it no longer changes the
+  first handle's own region, which was a false `L0538` when the second came from a parameter
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+- `L0731` and `L0641` say "may" and name the limit when an array's merged elements caused them,
+  and an allocator parameter past the 64th now names that limit on its `L0538`
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+- Borrow checking no longer takes minutes on a recursive union with many alternatives, or a
+  body with a thousand loans of one place, and a body's memory no longer grows with the square of
+  its locals.
+- A panic while a record's `hook(drop)` empties an `@(initialized)` field drops what the count still
+  names ([Uninitialized capacity](design.md#uninitialized-capacity)). The unwind used the count from
+  before the hook, so it dropped the elements the hook had already taken a second time.
+- A panic from one element's drop, when an `or_return` leaves a variadic call's operands, leaves the
+  other staged elements to the unwind. They used to leak.
+- The generated copy of a fixed array of owning elements is one loop. It emitted each element's code
+  separately, so copying a `[20000]Value` of owning fields wrote a `.ll` of about 60 MB.
+- A union's zero value is its designated variant with a zero payload at compile time too
+  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). `R{} == R{m = .none}` folded to
+  `false`, `Option(int){} == .none` failed with `L0341` in compile-time code, `case .a(p)` on a zero
+  `U` bound a `p` with no value, a compile-time `.hash` of one differed from the run-time hash, and a
+  zero union whose payload has a `hook(drop)` or `hook(copy)` escaped the `L0341` every other such
+  value gets.
+- A constant `==` or `!=` on records with an `@(initialized)` count outside `0 ..= N` is `L0343`, as
+  [Uninitialized capacity](design.md#uninitialized-capacity) has equality panic, whichever operand
+  holds that count. It folded to unequal, and an evaluated comparison looked only at the smaller count.
+- A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
+  used to fail with internal `L0405`, "a map key operation was not resolved during checking".
+- `pointer[0:length]` on a C pointer panics for a negative `length`, as
+  [string type conversions](design.md#string-type-conversions) says. The slice used to come out with
+  that length, so its later bounds checks passed and an index read out of bounds.
+- `unsafe.raw_data` of a temporary `[dynamic]T` drops the array when the full expression ends, as the
+  same call on a `string` does, rather than leaking it and never running its elements' `hook(drop)`.
+- A global larger than 4096 bytes passed by pointer, as `g.peek()` with `self: ^` or `set(inout g)`,
+  compiles. It used to fail in clang with `L0403`.
+- A variadic pack with a spread among other operands, as `sum(1, ..big[:])`, panics with
+  "variadic argument pack is too large" past 256 KiB
+  ([Variadic parameters](design.md#variadic-parameters)). It used to overflow the stack and lose
+  buffered output.
+- A default argument can select from a parameter to its left, as `x: int = a.n`, whichever way that
+  parameter passes. It used to fail in clang with `L0403`, or read the enclosing call's `a` in a
+  recursive procedure.
+- `math.count_ones(nil)`, the other bit counts and values, `math.rotate_left(nil, 1)`,
+  `math.wrap(T, nil)`, and `unsafe.transmute(T, nil)` report `L0310`. They used to crash the compiler
+  with no diagnostic.
+- `try_make([dynamic]u8, allocator=my_allocator)`, as [Owners and drop](design.md#owners-and-drop)
+  writes it, compiles: `make` and `try_make` take their allocator by name, and no other argument.
+- `source_location(greet).procedure` is `greet`, and a variable's is the procedure declaring it,
+  empty for a global. It used to be the procedure asking, beside the line of another declaration.
+- A broken destination type in `unsafe.transmute` or `math.wrap`, and a `make` length that does not
+  convert to `int`, report once rather than twice.
+- A compile-time `unsafe.transmute` counts what it builds against the evaluator's memory limit, and
+  builds one integer per scalar rather than several per byte: a compile-time loop over a 4 KB array
+  peaks at 26 MB rather than 109 MB.
+- Arithmetic over a runtime choice of constants takes the type its context gives
+  ([Conditional expression](design.md#conditional-expression)):
+  `y: u8 = (1 if c() else 2) + 1`, with `*`, unary `-` and `~`, or at a `u8` argument, reached clang
+  and failed `L0403`. `("a" if c() else "b") + "c"` is a `string`, and comparing such a string works;
+  both failed in clang too. A left shift gives its unfixed operand the type expected, even with a
+  runtime choice, or a rune: `r: rune = 1 << n` was `L0310`. A runtime choice as a shift count is an
+  `int`, where `a << (1 if c() else 2)` was `L0356`.
+- A comparison accepts operands either of which is assignable to the other, as
+  [Comparison operators](design.md#comparison-operators) says: `p == r` with a `^int` and a `rawptr`,
+  and a labelled record against the unlabelled one with its field types, were `L0354`.
+- `pp[i]`, with `pp` a pointer to a C pointer, indexes through the C pointer. It reached clang and
+  failed `L0403` ([C pointers](design.md#c-pointers)).
+- `&mut a[lo:hi]` slices any mutable array place ([Slices](design.md#slices)): an element of a C
+  pointer, a map element, or an `inout` `operator([])` result was `L0359` or `L0477`.
+- A field a box's payload promotes beats the box's own member, as a declared one does:
+  `box(Outer{...}).clone` with a `using` field holding `clone` was `L0408`
+  ([Owned values](design.md#owned-values)). `b(args)` finds `call` through a box and then a pointer,
+  as `b.call(args)` does, where `Box(^T)` was `L0320`
+  ([Calling a value](design.md#calling-a-value)).
+- An array literal is checked by what it lists, not its length
+  ([Fixed arrays](design.md#fixed-arrays)): `x := [1 << 33]u8{1}` crashed the compiler, and
+  `a: [2000000]u8 = {1500000 = 1}` was `L0361`, though only a `[?]T` has its length set by its keys.
+- `D([dynamic]int{})` and `M(map[int]int{})` convert an empty container literal to a distinct type,
+  which was `L0373` ([Distinct types](design.md#distinct-types)).
+- A condition that cannot be `bool`, as in `1 if 5 else 2`, is reported once rather than twice.
+- A distinct type over a union stores its variants as the union does. Its tag used to overwrite the
+  payload, so `D.a(9)` read back as `.a(0)` and a reference payload was corrupted. `==` on such a
+  type now compiles rather than failing in clang, and a constant comparison tells two variants with
+  equal payloads apart. A `switch` over one takes variant cases and must cover them
+  ([Distinct types](design.md#distinct-types)).
+- A union variant that is itself rejected no longer adds an `L0423` about the union's `@(zero=)` or
+  `@(failure=)`, which were judged against the variants left over.
+- The `L0425` for a bare payload variant advises `.name(value)`, with its dot, and the one for a
+  call to a payloadless variant no longer offers a bare name.
+- `([dynamic]T).sort(inout values)` and a sort taken as a procedure value, `f := ([dynamic]T).sort`,
+  now sort. Both compiled to an empty body and left the values alone, and neither got `L0651` for
+  an element with no `<`.
+- `T(v)` of an implicit view or splat is now that conversion written out. `string_view(s)`,
+  `([]int)(list)`, `([]int)(array)`, and `Simd(f32, 4)(x)` failed in clang with `L0403`, and
+  `(^T)(owner)` of a box read freed memory; they now borrow as the implicit forms do, including a
+  temporary a local borrows ([Type conversion](design.md#type-conversion)).
+- `([4]int).len(a)` is now constant, as `a.len()` is.
+- A `value: T` parameter of a container operation is now a copy site: `m.find(big)` and a map key in
+  `m.try_insert(big, 1)` warn `L0507` as `f(big)` does.
+- An argument that already failed no longer also reports `L0501` for a `move` parameter.
+- A `@(c_vararg)` procedure in a procedure group now takes its variadic arguments, where a call
+  through the group said the procedure took too many
+  ([`@(c_vararg)`](design.md#c_vararg)).
+- A `switch` case stops testing its values at the first match, as the compile-time evaluator did
+  ([switch statement](design.md#switch-statement)): `case f(1), f(2):` no longer calls `f(2)` when
+  `f(1)` matched.
+- `break` and `continue` no longer drop a temporary or a loop's initial declaration twice.
+- `return inout x` no longer zeroes the place it hands back.
+- A destructuring assignment widens a field to a wider union destination, instead of storing it with
+  the wrong tag.
+- A temporary in an `else if` initial statement, a `switch` case value or a union argument expansion
+  arm is no longer dropped on the paths that did not make it.
+- A `switch` drops a subject or case value it produced, such as a call's result.
+- Values above 4096 bytes: destructuring one, `errdefer` over a `Result` holding one, comparing or
+  switching on a constant one, a large constant holding a pointer, and an iterator record holding
+  one no longer segfault or fail in clang (`L0403`).
+- A panic now drops a local that every normal exit moves out, under the `unwind` strategy
+  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not)).
+  It was skipped unless some exit left it live.
+- A last-use copy stays a clone when a deferred statement that only a panic runs reads the source
+  ([Last-use transfer](design.md#last-use-transfer)). It read the emptied source.
+- `L0698` no longer reports a required result in code nothing reaches, as after an `if` whose
+  branches both return.
+- Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
+  a wrong pointer to it, and same-named types, from two packages or two procedures, each show their
+  own layout. A later such type is named `Name$<n>` in the debugger.
+- An unresolved type in a foreign signature no longer adds an `L0619` about `<invalid>`, or about a
+  zero-sized record, to its `L0306`.
+- Checking a record that holds a foreign procedure type taking that record no longer nearly doubles in
+  time with each level of records it shares: 24 levels took 7.5 seconds, and now take under a tenth of one.
+- The compiler no longer waits a timer tick of about 15 ms on each child it launches.
+- An owner built from a provider inside a `Shared` payload is now checked: one built from
+  `held.get().allocator()` that outlives `held` is now `L0537`, and returning it is `L0592`. Both
+  compiled and read a dead region ([Shared ownership](design.md#shared-ownership)). The same goes for
+  an owner built through a local pointer to a provider (`p := &arena; ... via p.allocator()`).
+- A generated `clone` of a type holding a `hook(copy)` that takes `self: ^` now borrows what it clones,
+  as that hook's own type does. Its result could keep a dangling pointer to the original.
+- `some_map.try_insert(key, elem)` now ends the regions of a provider it may replace, as `m[key] = elem`
+  does. An owner backed by the replaced provider read freed memory.
+- `indexed()` over a map, iterated by reference, now says to count with a variable rather than suggesting
+  a mutable view a map does not have.
+- A package file with no `package` clause no longer draws `L0328` against an empty name beside the
+  `L0202` it already reports.
+- `spawn total = work();` where `total` is a capture of the enclosing capture literal now reports
+  `L0728`. It crashed the compiler.
+- In a `@(cpu_dispatch)` copy, a `foreach`'s `iter` and `next`, a `hook(drop)` at a scope's end, and a
+  part's own `==` now reach copies for the level too. They ran as written, which gave the same
+  results more slowly ([@(cpu_dispatch)](design.md#cpu_dispatchstring)).
+- A program may bind `loke_rt_v1_cpu_dispatch`, or export a name spelling `loke.cpu_dispatch.v3.state`,
+  beside a dispatched procedure. Either was a redefinition that clang rejected.
+- Editor completion no longer offers `move_only` as a keyword.
+- Editor completion lists the members of another package's enum or union named as `other.Color.`,
+  and of an alias of its enum, which came back empty. It no longer offers a name two `using` fields
+  promote, since selecting it is `L0703`.
+- A record containing itself through two `using` fields no longer hangs selector checking or
+  editor completion. The program still fails with `L0364`.
+- Rename now refuses an associated type the compiler looks up by name (`Element`, `Iterator`,
+  `Mut_Iterator`, `Item`), and a member named by an interface requirement under any expression form
+  or in a result, binding, or slot type. Renaming one broke `foreach` or the interface with no warning.
+- An adapter stored over a mutable view that owns something now holds a clone of it, and one over a
+  mutable view that cannot be copied borrows it read-only. The source and the view each dropped the
+  same value, which freed it twice ([Iteration adapters](design.md#iteration-adapters)).
+- A static `foreach` over `copied()` now yields the elements. It yielded zeros.
+- `foreach (p, i in source.indexed())` over a `next` lending a record now binds the counter. It read
+  the record's parts as the pair's, and then garbage.
+- A `next` may lend through a named record, as [Yield modes](design.md#yield-modes) allows. It was `L0456`.
+- `Iterator`, `Mut_Iterator`, and `Item` now derive in whatever order a type's members are declared,
+  and on a `distinct` name from its own members. A member that is not a receiver of the protocol's
+  shape no longer derives one, and `Item :: 5` on a type with no `next` is no longer `L0694`.
+- `x := move y;` now reports `L0228`. It crashed the compiler.
+- A call of a generic procedure ending with `---` is now `L0630` rather than an internal `L0405`.
+- `indexed()`, `copied()`, and `reversed()` over a value, iterator, or element larger than 4096
+  bytes now compile, and so does `foreach` over one taken by value. Each failed with `L0403`.
+- A `-runtime` directory that exists but cannot be listed now says so in `L0551`, rather than
+  calling the directory empty.
+- Editor completion now shows the type of `LOKE_OS` and the other `LOKE_*` enum constants before
+  any code reads them.
+- The note that more than 64 local allocator regions merged now ends, as the other precision
+  notes do, with how to avoid the limit.
+- An enum's own `==` and `<` are now the ones used, as a struct's are ([Operator lookup and
+  overload resolution](design.md#operator-lookup-and-overload-resolution)): `x == y` ignored its
+  own `==` at the top level while `[2]E` used it. A generated `hash` no longer stands beside an
+  enum's own `==` or `hash`, so `Hashable(E)` agrees with `map[E]int`. Editor completion no longer lists the generated `hash`
+  on a built-in type, as it never did on a record; `x.hash(seed)` still compiles.
+- `E.A.hash(0)`, or `E.A.m()` with `self: ^`, no longer fails with `L0405`: an enum member is a
+  constant, and is materialized as one.
+- A layout measured in a discarded overload probe is measured again: `size_of(S)` printed 0 and
+  `L0364` was lost when a `where` bound measured `S`. `L0364` also reaches a record field or a
+  procedure's parameter type past the maximum, with a location and before the backend.
+- `@(zero=)` on unions that reach each other no longer depends on which is declared first: the
+  payload is judged once every record has its fields ([Zero values and
+  `@(zero=)`](design.md#zero-values-and-zero)).
+- `lokec <root directory> -fmt`, and any other run that writes no executable, no longer asks for
+  `-o`. `lokec .` at a drive root, and `lokec D:`, ask for `-o` or use the resolved name, instead
+  of writing `C:\.exe` or `D:.exe`.
+- A `@(test)` may use a local type or capture literal with a file-scope generic, a formatter or
+  a `dyn` view, and an ordinary build of the package, or of an importer of it, still compiles. It
+  failed with `L0405`. An ordinary build also leaves out those instances and their `static` and
+  `thread_local` locals ([Test procedures](design.md#test-procedures)).
+- `-migrate` refuses a record written inside another's attributes with `L0752` instead of crashing,
+  and no longer joins neighbouring words, as in `union@(zero=a) where`, when it takes attributes out.
+  An attribute list's trailing comma stays, and a comment between two attributes is refused.
+- Selecting a logging provider without `core:log` reports `L0660` at the selection, once, without a
+  second `L0659`.
+- `-dump-ast` labels a `for` statement's post statement `(post ...)`, so `for (f();;)` and
+  `for (;;f())` no longer print alike.
+- An untyped constant whose address is taken gets storage for each type it is used at, as
+  [Materialization](design.md#materialization) says. With `X :: 300`, the same `double` global
+  served every use, so a method on a `distinct int` read its bits as an integer. `&X` is now a `^T`
+  of the pointee the context asks for or the constant's default type, not `^untyped int`, so
+  `p: ^int = &X` compiles.
+- A slice of a constant array reached through a run-time index, `MIX[i][:]`, uses the constant's
+  read-only storage, where it was `L0477`. `&nil` is now `L0357` where it reached the backend.
+- `E.values()` and `E.from_int(...)` inside `E`'s own member values, directly or through another
+  constant, are `L0324`. They saw no members, so `B = E.values().len()` silently gave 0.
+- A box or a box clone refused for memory reports the size asked for even when dropping the payload
+  allocates, and a panic while undoing a refused box clone still drops what was staged.
+- `core:log`'s `Level` is called `log.Level` in diagnostics, where `Log_Level` named nothing a
+  program could write.
+- An atomic operation on a pointer now stays a pointer in the generated code, where it went
+  through an integer that hid it from LLVM's alias analysis.
+- A `loke.project` found by walking up from the input is read once. A dependency that required it
+  back read it a second time and repeated its diagnostics.
+- The provenance note for a merged path names both depth limits, 4 aggregate projection steps and
+  8 through a written alias, as
+  [Minimum provenance precision](design.md#minimum-provenance-precision) asks.
 - A swap with a temporary now leaves each carrier in one place in a branch, in a loop, and through
   a view parameter, as [Weakening and reborrows](design.md#weakening-and-reborrows) says.
   `if (flip()) { held := links^[0]; links^[0] = links^[1]; links^[1] = held; }` was `L0641` at
@@ -1789,6 +2605,68 @@ checklist.
   `node := p^^.head`, with `p: ^mut ^mut List`, compile, and so does copying
   another field, as `other := cur^.other`, beside a binding of
   `case .some(next):` over `cur^.next`. Both were rejected with `L0641`.
+
+- A parametric alias whose body refers more than once to another alias no longer takes exponential
+  time to check ([Parametric aliases](design.md#parametric-aliases)):
+  `B :: Pair(C($T), C($T)); C :: Pair(B($T), B($T));` hung instead of reporting `L0745`, and a valid
+  chain of 24 such aliases took seconds. A cycle longer than 64 aliases now reports `L0745` too.
+- A `$` parameter's default can name an earlier parameter in its type across calls
+  ([Default values](design.md#default-values)): with `$N: int, $A: [N]int = [N]int{}`, `f(2); f(3);`
+  rejected the second call, as the type was read once.
+- A `$` name in a type application's constant argument that is unbound, or bound to a type, is now
+  `L0437`: `v: Vec($N);` stopped with an internal `L0405` and no span.
+- A rejected generic signature now reports its first error, not a deprecation warning that came
+  before it.
+- `f(nil)` for `f :: proc($v: $I)` now says `nil` has no type to infer `$I` from, and a named argument
+  no parameter of a generic procedure takes now says `no parameter named` or `is given twice` rather
+  than a count of arguments.
+
+- A `distinct` type may declare `hook(convert)` from a source its underlying type also converts
+  from: `R` and `D :: distinct R`, each with one from `bool`, was a false `L0488`
+  ([Conversion hooks](design.md#conversion-hooks)). Two hooks from one source on `distinct int` are
+  now `L0488` where they are written, instead of `L0391` at the first use.
+- A `distinct` fixed array has `clone` as well as `try_clone`
+  ([Distinct types](design.md#distinct-types)): `a.clone()` was `L0363`.
+- Copying a `[0]T` no longer counts `T`'s `hook(copy)`, so what that hook reads no longer gives a
+  false `L0511` ([Global write effects](design.md#global-write-effects)).
+- Asking whether a deeply nested record is copyable, and copying one, no longer takes time
+  exponential in its nesting.
+- A conditional expression whose operands need a destination type, such as `.A if c else .B`, now
+  takes one through a procedure group, a generic and a method, as it did in a plain call, and waits
+  for inference as they do
+  ([Arguments typed after inference](design.md#arguments-typed-after-inference)); each was `L0385`.
+- A group member with no parameter for an argument no longer hides another member's parameter type
+  because it is generic. `g(1, .A)` was `L0385` with `f(x: int, m: Mode)` and `h(x: $T)` in `g`.
+- An `inout` argument no longer makes a member viable through a conversion an `inout` parameter
+  refuses, so `g(inout y, 1)` with `y: []mut int` selects the member that takes `[]mut int`; it was
+  an `L0391` ambiguity with one that takes `[]int`.
+- A rejected group member now names a missing or extra `inout`, where it said "argument 1 is `int`
+  where `int` is wanted". It advises `move(...)` only for a place of the right type, where a
+  temporary or a wrong type was told to write it too.
+- A failed overload's reasons are now worded only when they are reported. A call through a group of
+  128 members checks in about half the time.
+- `r or_return .Bad` on a place no longer warns that it clones `r` when only the success is copied:
+  an `or_return` replacement leaves the error where it is
+  ([Operator ownership](design.md#operator-ownership)). `L0507` now names the success's cost.
+- `find() or_return undefined_name` on a failure that carries nothing now reports the unknown name.
+  The operand is checked as the replacement it must be, and "carries no error to map" is a note on
+  a value that does not fit ([The failure operand](design.md#the-failure-operand)).
+- A procedure literal assignable to the failure payload type is an `or_return` replacement, as any
+  other such value is: with `F :: proc() -> int`, `res() or_return proc() -> int { return 1; }` was
+  `L0322` ([The failure operand](design.md#the-failure-operand)).
+- A `case` of a union `switch` that repeats a variant or names none no longer reports its body again:
+  `case .nope(z): return z + 1;` added `L0352` for `z`, bound at the union type.
+- `lokec -fmt` no longer indents these one level too deep: the list items after a wrapped item, the first line after a wrapped
+  `case` header or `@(...)` attribute, and a `{` that starts its own line, which now lines up with its `}`. Every later line of
+  a wrapped `where` clause now sits at the same level, and a bracket after a multi-line raw string or block comment indents from
+  where its line began. `f(/* name */ x)` stays as written instead of becoming `f( /* name */x)`.
+- A capture literal written with the same text as one enclosing it, such as `proc() capture(x)` in
+  the body of `proc() capture(x)`, compiles; it was `L0305`, naming the literal's header
+  ([Capture literals](design.md#capture-literals)).
+- `capture(n = nil)` is `L0310`, as `n := nil` is; it was `L0306`, "unknown type `n`".
+- A `switch` with no cases over a `union {}` is exhaustive, as one over an `enum {}` is, so no return
+  need follow it ([Exhaustive switch](design.md#exhaustive-switch)). It was `L0365` in a procedure
+  with a result.
 
 ## [0.9.0] - 2026-10-27
 

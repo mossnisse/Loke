@@ -1,0 +1,9 @@
+L0612
+the result of `minus` must be used or discarded with `_ = ...`
+@17:2
+
+warning[L0611]: `plus` is deprecated: old plus
+@14:7
+
+warning[L0611]: `plus` is deprecated: old plus
+@15:9

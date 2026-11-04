@@ -1,0 +1,6 @@
+package main; import "core:log";
+
+main :: proc() {
+	x: log.Level = 3;
+	_ = x;
+}

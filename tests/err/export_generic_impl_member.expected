@@ -1,0 +1,3 @@
+L0438
+@8:2
+a member of a generic `impl` has no ABI until it is instantiated, so it cannot be `@(export)`

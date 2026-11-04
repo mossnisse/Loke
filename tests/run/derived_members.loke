@@ -1,0 +1,110 @@
+// design.md "Iteration protocol": `Iterator`, `Mut_Iterator`, and `Item` follow
+// from the signatures whatever order they are declared in, on a `distinct` name
+// from its own members, and only from a signature of the protocol's shape.
+package main;
+
+import "core:fmt";
+
+// A signature naming a member of the type comes before `next`.
+Early :: struct { at: int }
+
+impl Early {
+	Foo :: int;
+	first :: proc(self) -> Early.Foo { return 1; }
+	next :: proc(self: inout Early) -> Option(int) { return .none; }
+}
+
+// `next` itself names a member of the type.
+Named :: struct { at: int }
+
+impl Named {
+	Foo :: int;
+	next :: proc(self: inout Named) -> Option(Named.Foo) { return .none; }
+}
+
+early_item :: proc() -> Early.Item { return 3; }
+named_item :: proc() -> Named.Item { return 4; }
+
+// A use of `Later.Iterator` comes before `iter`.
+Later_Walker :: struct { at: int }
+
+impl Later_Walker {
+	next :: proc(self: inout Later_Walker) -> Option(int) { return .none; }
+}
+
+Later :: struct { n: int }
+
+later_walker :: proc() -> Later.Iterator { return {5}; }
+
+impl Later {
+	Element :: int;
+	iter :: proc(self) -> Later_Walker { return {self.n}; }
+}
+
+// A `distinct` name's members are its own.
+Base :: struct { n: int }
+
+Walker :: struct { at: int }
+
+impl Walker {
+	next :: proc(self: inout Walker) -> Option(int) {
+		if (self.at > 1) { return .none; }
+		self.at += 1;
+		return .some(self.at);
+	}
+}
+
+Coll :: distinct Base;
+
+impl Coll {
+	Element :: int;
+	iter :: proc(self) -> Walker { return {0}; }
+}
+
+Distinct_Walker :: distinct Base;
+
+impl Distinct_Walker {
+	next :: proc(self: inout Distinct_Walker) -> Option(int) { return .none; }
+}
+
+distinct_item :: proc() -> Distinct_Walker.Item { return 6; }
+
+// `Item` is only reserved on a type with a `next`, and `Iterator` on one with an
+// `iter`. Neither is claimed by a member of another shape.
+Shop :: struct { n: int }
+
+impl Shop {
+	Item :: 5;
+	Iterator :: 6;
+	size :: proc(self) -> int { return self.n; }
+}
+
+Menu :: struct { n: int }
+
+impl Menu {
+	Item :: proc(self) -> int { return self.n; }
+}
+
+Stepped :: struct { at: int }
+
+impl Stepped {
+	Item :: string;
+	next :: proc(self: inout Stepped, step: int) -> Option(int) { return .some(step); }
+}
+
+Sized :: struct { n: int }
+
+impl Sized {
+	Iterator :: string;
+	iter :: proc(self, n: int) -> Stepped { return {n}; }
+}
+
+main :: proc() {
+	fmt.println(early_item(), named_item(), later_walker().at);
+	foreach (v in Coll{0}) { fmt.println(v); }
+	fmt.println(distinct_item());
+	fmt.println(Shop{1}.size(), Menu{2}.Item());
+	stepped := Stepped{0};
+	_ = stepped.next(1);
+	fmt.println(Sized{0}.iter(7).at);
+}

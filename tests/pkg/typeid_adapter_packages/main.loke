@@ -1,0 +1,17 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// An iteration adapter is made per package, and alike in everything but that. Its
+// number follows the package key, not which package asked first: `zeta` does here.
+import "zeta";
+import "alpha";
+
+raw :: proc(id: typeid) -> i64 {
+	p := &id;
+	return (^i64)(rawptr(p))^;
+}
+
+main :: proc() {
+	first := zeta.view_id();
+	second := alpha.view_id();
+	fmt.println(first != second, raw(second) < raw(first));
+}

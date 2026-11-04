@@ -238,6 +238,15 @@ until any later point, so a write to a global there is only a likely race. A
 task runs between its spawn and the join, which the compiler sees, so the same
 write while a task may be running is an error.
 
+**A copy from a temporary, a lend of a widened place.** A task cannot be lent a
+field of a temporary, which ends with its statement, and the whole temporary
+cannot go into the frame either: an element's index is evaluated on the parent
+and the task would have to project it again on the worker. So the task gets a
+copy of the part, as `x := make().part` would. A widened place is still lent as
+any argument is ([Widening by label](#widening-by-label)), since its payload
+lasts: only the widened form is new, and it goes in the task's frame rather than
+one temporary shared by every spawn of a loop.
+
 **An erased view by its conversions.** A `dyn` view stored in a global hides
 what it views, yet a registry of handlers is a common reason to store one.
 [Globals while tasks run](design.md#globals-while-tasks-run) takes every type
@@ -486,6 +495,13 @@ call. When one lower-case name was both, `box(x)` was a type or an allocation
 depending on whether `x` named a type, and the compiler needed a rule for each
 handle to decide which.
 
+`b: Box(u8) = box(1)` holds a `u8` because the declaration states the payload,
+and a literal the declaration has already typed should not need repeating as
+`box(u8(1))`. `Box` is one allocation around what `x: u8 = 1` writes. The
+expectation applies to untyped constants and untyped literals only: a typed
+value keeps its type, so `Box(string_view) = box(s)` over a `string` stays an
+error rather than a hidden borrow.
+
 ### Zeros that are values
 
 `{}` means a usable zero: an empty view, invalid type id, default allocator,
@@ -575,6 +591,14 @@ declaration. A `stack` modifier would then exist only to undo that policy.
 Programs needing a large heap allocation can use an owning value. Oversized
 stack frames can still overflow.
 
+A variadic pack mixing a spread with other operands stays on the stack for the
+same reason. Its length is a runtime value, though, so no frame size warns of it,
+and one large slice would overflow where nothing in the source suggests a large
+frame, losing buffered output with the fault. It panics past a fixed limit instead
+([Variadic parameters](design.md#variadic-parameters)). The limit is well inside
+the one-megabyte stack Windows gives a thread by default, and a lone spread, which
+passes its own slice, has none.
+
 ### A drop hook states its copy
 
 Every record receives a generated field-wise copy, which is right until a drop
@@ -638,6 +662,11 @@ meaning. A duplicate that intentionally differs belongs in a named operation,
 not a copy hook. Analysis order and generated moves are documented under
 [Ownership, lifecycle, and provenance](compiler-architecture.md#ownership-lifecycle-and-provenance).
 
+A destructuring assignment admits a union widening but no view of a field, since
+it clones or transfers each field: a consumed record's `string` would have no
+owner left for a `string_view` destination to borrow. Writing the field by name
+keeps the borrow on a place the rules can see.
+
 ### Panics run lexical cleanup
 
 Managed resources need a defined answer when execution fails. Under `unwind`,
@@ -681,6 +710,29 @@ User lifecycle hooks are excluded from evaluated paths. Running them correctly
 would require reproducing runtime copies, moves, cleanup, and their order;
 getting that wrong could make compile-time and runtime results disagree. See
 [Compile-time phases](design.md#compile-time-phases).
+
+### A `when` condition waits on what it reaches
+
+File-scope selection is a fixed point, and the [when
+statement](design.md#when-statement) promises selected contents behave as if
+written in place, so an answer must not depend on the round that gave it. A
+condition therefore waits on its reach, not only on its own text. A declaration
+holds the name it reads, and evaluating a condition reads a called procedure's
+body, so the walk follows both.
+
+A predeclared name always resolves, so a condition could read one that a branch
+is about to shadow. Waiting on every predeclared name while anything is pending
+deadlocks, as nearly every condition reads a build constant. Answering first and
+reporting a later shadow would reject a program a better order answers. What a
+branch may declare is syntax, so a condition waits only on the names a pending
+branch actually writes. A program that shadows nothing it reads never waits, and
+one that can never be answered is an error rather than an arbitrary choice.
+
+Past the condition's own text, a name resolving nowhere does not wait unless a
+branch may declare it. A typo there keeps its diagnostic at its declaration, not
+as an unanswerable condition. It also means that binding forms the walk fails to
+recognize cost only a wait on a branch declaring that very name, never a false
+error on a name no branch mentions.
 
 ### Build-selected services and explicit runtime state
 
@@ -1436,6 +1488,22 @@ Additional reflection can be introduced when an actual tool needs it.
 form, `T.Element -> type;`, whose result is necessarily compile-time known.
 A separate associated-constant declaration grammar adds little to that model.
 
+### What stops an interface composing itself
+
+An interface can name itself, and such an application is false, so something has
+to end the check. A depth limit alone does not: `Bad(T) || Bad(T)` under a limit
+of 32 asks 2^32 questions. Nor does failing on re-entry to an application already
+in progress, since `Bad([]T) || Bad([^]T)` never repeats one. So one outermost
+application may enter a fixed number of applications, however they are reached.
+The standard library's deepest tree enters 33, so the limit of 16384 is far from
+anything real, and a program that reaches it spends a fraction of a second.
+
+A cache on the interface, its arguments, and the lookup package would also bound
+the work, and most checks do repeat one. It would not pay: across the test corpus
+application checking is under 1% of front-end time, and at most about 6% of one
+program, and an answer is not a pure function of that key, since a record still
+resolving its fields or a signature on the stack can change it.
+
 ### A bound grants what met it
 
 A bare bound already granted its declaration the slots that satisfied it, so a
@@ -2002,6 +2070,14 @@ generated member is inherent, and a structural hash is coherent with structural
 equality by construction. A part with its own `==` must bring its own `hash`,
 which the generated one calls, so the pair stays coherent at every depth.
 
+A `distinct` type that declares neither half keeps its underlying type's pair,
+whether written or generated. A distinct value already compares by that `==`, so
+the same `hash` is coherent with it by construction, and rejecting only the
+written pair would stop a wrapped type keying a map exactly when its type had
+chosen a policy. Declaring one half breaks the pairing, so it requires the other at every depth;
+the alternative, taking the missing half from the underlying type, is how a coarser
+`==` came to sit beside a `hash` that told equal values apart.
+
 ### `in` is a comparison, not an additive operator
 
 `in` produces a Boolean, so it shares comparison precedence. Giving it additive
@@ -2407,10 +2483,13 @@ with it, so a call to it is as unlikely through the dispatch as without one.
   formatter's code, and a renamed identifier would re-flow its neighbours in a
   diff.
 - **Tabs, one per enclosing bracket** opened on an earlier line, however many
-  opened together. A `case` sits at its `switch`'s level, and a line that
-  continues an unfinished statement outside any `(` or `[` goes one deeper. A
-  file-scope `when` body stays at column zero when written there, as `core/`'s
-  long platform blocks are.
+  opened together. A closing bracket sits at its opener's level and a `case` at
+  its `switch`'s. A line that continues an unfinished statement outside any `(`
+  or `[` goes one deeper; a `{` that starts a line does not continue the one
+  above, and only in a `where` clause does a comma leave a line unfinished, since
+  the tokens do not say which `{` holds a list and which a block. A file-scope
+  `when` body stays at column zero when written there, as `core/`'s long platform
+  blocks are.
 - **Spacing between tokens** is one space after a comma, around `::`, `:=`,
   assignment, comparison, logical, range, and arrow operators, and none inside
   brackets, before `,`, `;`, `)`, and `]`, or after a prefix operator. An
@@ -2418,7 +2497,9 @@ with it, so a call to it is as unlikely through the dispatch as without one.
   tight, because `core/` writes `a*b + c*d` by precedence; one written with a
   space on either side gets one on both.
 - **Extra spaces inside a line are kept.** `core/` aligns field types and
-  trailing comments with them. Only the leading indentation is recomputed.
+  trailing comments with them. Only the leading indentation is recomputed. The
+  gap after an inline comment is left as written, and a comment gets a space
+  before it unless it follows `(`, `[`, or a tight operator.
 
 It works on the real lexer's tokens rather than printing the syntax tree:
 keeping the author's breaks leaves nothing for a tree printer to decide, and a
@@ -2440,6 +2521,19 @@ same tree in both places, the result must hold nothing left to rewrite, and its
 writing.
 
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
+
+### An operator over a runtime choice of constants runs at the destination's type
+
+`y: u8 = (1 if c else 2) + 1` could have been given the default type, `int`, and
+been rejected, or computed at `int` and converted. Passing the type down to the
+constants keeps the rule a conditional already follows: a constant has no type
+until context gives it one, so `(1 if c else 2) + 1` should not be less welcome
+than `1 + 1`. The price is that `(1 if c else 3) / 2` in an `f64` is `0.5` or
+`1.5`, where the constant `3 / 2` folds as integers to `1`. That difference is what
+"runs at that type" says: the constant is exact arithmetic finished before any
+type exists, and the runtime one has to happen at some type. An integer-only
+operator at a float destination is an error rather than a silent `int` computation,
+so the two can never disagree in the other direction.
 
 ## Standard-library API choices
 
@@ -3745,14 +3839,28 @@ other gap first blamed on the lattice, a swap of owners not being seen, was fixe
 today's facts. Reconsider if a real program meets that over-rejection, or if a
 soundness gap turns up that does need facts by program point.
 
+### What a panic may drop is decided apart from what an exit drops
+
+A local that every normal exit moves out still has to drop if a statement before
+those moves panics, so a statement that may panic marks what is live there
+(`Flow_Event_Kind.Panic_Point`), which sets `Symbol.drop_on_unwind`. It could have
+voted as a cleanup point instead, as an early return leaving the local live does.
+That would give the local a runtime flag and a test at each normal exit that always
+finds it dead, and `prov_scope_drop_effects`, which reads `drop_at_exit`, would
+report a hook's writes at a scope exit that never runs it. A panic's effects are
+modeled where a `defer` can observe them, by the unwind path.
+
+It is a mark rather than a path because a path per statement multiplies the blocks
+of every body holding a managed local, to learn one bit about each. It covers every
+managed owner, not only those with a `drop` hook, since a drop can also reach a
+user's allocator.
+
 ### Unwind thunks scan their replay's text for reads
 
-`without_unread_bindings` and `emit_unwind_thunk` find which bindings a cleanup
-replay reads by scanning the LLVM text it emitted, which ties them to the
-compiler's own spelling of an instruction. Recording each publication's span and
-marking uses through a shared accessor would remove about 50 lines, but it was not
-taken. The scan cannot miss a read: whatever the replay's text names is loaded,
-whichever emitter path wrote it. Tracking would have about eight sites that read
-`e.names` mark each use, where a site that forgets leaves an undefined name in a
-thunk only a panic path exercises, and its spans would have to survive
-`without_unpushed_pops`. Worth revisiting if the emitter stops producing text.
+`emit_unwind_thunk` finds which bindings a cleanup replay reads by scanning the
+LLVM text it emitted, which ties it to the compiler's own spelling of an
+instruction. Marking uses through a shared accessor was not taken. The scan cannot
+miss a read: whatever the replay's text names is loaded, whichever emitter path
+wrote it. Tracking would have about eight sites that read `e.names` mark each use,
+where a site that forgets leaves an undefined name in a thunk only a panic path
+exercises. Worth revisiting if the emitter stops producing text.

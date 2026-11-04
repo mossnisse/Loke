@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// design.md "Union argument expansion": the callee's receiver may itself spread a
+// union, so one expansion is checked inside another's case.
+
+Source :: union { a: int, b: int }
+Event :: union { key: int, quit }
+
+Target :: struct { id: int }
+impl Target {
+	on_key :: proc(self, key: int) { fmt.println("key", self.id, key); }
+	on_quit :: proc(self, quit: Unit) { fmt.println("quit", self.id); }
+	handle :: proc { on_key, on_quit }
+}
+
+from_a :: proc(a: int) -> Target { return Target{id = a}; }
+from_b :: proc(b: int) -> Target { return Target{id = b + 10}; }
+make_target :: proc { from_a, from_b }
+
+main :: proc() {
+	source := Source.b(1);
+	key := Event.key(2);
+	quit := Event.quit;
+	make_target(..source).handle(..key);
+	make_target(..source).handle(..quit);
+}

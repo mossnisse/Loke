@@ -1,0 +1,99 @@
+package main;
+import "core:fmt";
+
+// design.md "Element bindings": an owned leaf is a local of its step, whatever
+// the rest of the header lends, so it can be moved. That includes the `indexed()`
+// counter and a part `next` hands over beside an `&mut` leaf.
+
+@(move_only) Owned :: struct { id: int }
+impl Owned {
+	release :: hook(drop) proc(self: inout Owned) { fmt.println("drop", self.id); }
+}
+
+take :: proc(value: move Owned) { fmt.println("take", value.id); }
+take_int :: proc(value: move int) -> int { return value; }
+
+Row :: struct { lent: int, owned: Owned }
+Rows :: struct { count: int }
+Rows_Cursor :: struct { count: ^mut int, done: bool }
+impl Rows {
+	Element :: Row;
+	iter_mut :: proc(self: inout Rows) -> Rows_Cursor { return {&mut self.count, false}; }
+}
+impl Rows_Cursor {
+	next :: proc(self: inout Rows_Cursor) -> Option((lent: ^mut int, owned: Owned)) {
+		if (self.done) { return .none; }
+		self.done = true;
+		id := self.count^;
+		return .some({lent = self.count, owned = Owned{id}});
+	}
+}
+
+// design.md "Destructuring": a padding field fills no binding, so the mode of
+// the field after it is that field's own.
+Padded :: struct { a: int, _: int, b: int }
+Padded_Item :: struct { a: int, _: int, b: ^mut int }
+Padded_Source :: struct { b: int }
+Padded_Cursor :: struct { b: ^mut int, done: bool }
+impl Padded_Source {
+	Element :: Padded;
+	iter_mut :: proc(self: inout Padded_Source) -> Padded_Cursor { return {&mut self.b, false}; }
+}
+impl Padded_Cursor {
+	next :: proc(self: inout Padded_Cursor) -> Option(Padded_Item) {
+		if (self.done) { return .none; }
+		self.done = true;
+		return .some(Padded_Item{a = 10, b = self.b});
+	}
+}
+
+// design.md "Iteration adapters": `reversed()` over a map or text asks for the
+// `iter_reverse` the program supplies.
+Table :: map[string]int;
+Text :: string;
+impl Table {
+	iter_reverse :: proc(self: ^) -> Table.Iterator { return self^.iter(); }
+}
+impl Text {
+	iter_reverse :: proc(self: ^) -> Text.Iterator { return self^.iter(); }
+}
+
+main :: proc() {
+	values := [2]int{5, 6};
+	foreach (x, i in values.indexed()) { fmt.println(x, take_int(move(i))); }
+	foreach (&mut x, i in (&mut values[:]).indexed()) { x += take_int(move(i)); }
+	fmt.println(values[0], values[1]);
+
+	rows := Rows{1};
+	foreach (&mut lent, owned in rows) {
+		lent += 1;
+		take(move(owned));
+	}
+	fmt.println("kept");
+	foreach (&mut lent, owned in rows) {
+		lent += 1;
+		fmt.println(owned.id);
+	}
+	fmt.println(rows.count);
+
+	// One name receives the record, which keeps the source's provenance.
+	first: Option(^int) = .none;
+	foreach (e in values.indexed()) {
+		saved := e;
+		if (e.index == 1) { first = .some(saved.value); }
+	}
+	switch (first) { case .some(p): fmt.println(p^); case .none: }
+
+	padded := Padded_Source{1};
+	foreach (a, &mut b in padded) { b += a; }
+	fmt.println(padded.b);
+
+	table: Table = {"a" = 1};
+	defer drop(table);
+	foreach (entry in table.reversed()) { fmt.println(entry.key^, entry.value^); }
+	foreach (key, value in table.reversed()) { fmt.println(key, value); }
+	foreach (entry, i in table.reversed().indexed()) { fmt.println(entry.key^, i); }
+	text: Text = "ab";
+	foreach (r in text.reversed()) { fmt.println(r); }
+	foreach (r, i in text.reversed().indexed()) { fmt.println(r, i); }
+}

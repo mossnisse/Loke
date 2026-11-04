@@ -1,0 +1,35 @@
+L0384
+@7:9
+an array length must be a non-negative constant
+
+L0306
+@8:20
+unknown type `Nope`
+
+L0384
+@9:4
+`[?]T` takes its length from a composite literal, so it is not a type on its own
+
+L0384
+@10:5
+`[?]T` takes its length from a composite literal, so it is not a type on its own
+
+L0437
+@11:13
+`$N` is not bound here
+
+L0306
+@12:4
+unknown type `fmt.Nope`
+
+L0306
+@13:4
+unknown type `h.i.j`
+
+L0306
+@17:4
+this call does not compute a type: it returns `int`
+
+L0306
+@18:4
+this call does not compute a type: it returns nothing

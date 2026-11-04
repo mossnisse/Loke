@@ -1,0 +1,92 @@
+// design.md "Private names in public declarations": what a declaration writes is
+// read whatever form it takes, and only what it names is reported.
+package shapes;
+
+@(private) Fill :: enum { Solid }
+@(private) Corner :: struct { x: int }
+@(public) Point :: struct { x: int }
+
+// A block's `$` names end with the block: `T` here is the private type.
+@(public) Holder :: struct($V: type) { v: V }
+@(private) T :: struct { x: int }
+impl Holder($T) {
+	@(public) get :: proc(self) -> T { return self.v; }
+}
+@(public) after :: proc() -> T { return {}; }
+
+// Two blocks of one generic type may declare one name; each selection means its own.
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+@(public) Box :: struct($V: type) { v: V }
+impl Box(int) { @(public) Inner :: Point; }
+impl Box(string) { @(private) Inner :: Point; }
+@(public) Open :: Twin(Box(int).Inner, int);
+@(public) Closed :: Twin(Box(string).Inner, int);
+@(public) Crate :: struct($V: type) { v: V }
+impl Crate(string) { @(private) Inner :: Point; }
+impl Crate(int) { @(public) Inner :: Point; }
+@(public) Open_Crate :: Twin(Crate(int).Inner, int);
+@(public) Closed_Crate :: Twin(Crate(string).Inner, int);
+// Which one a `$` name selects, each instance says.
+@(public) Picks :: struct($V: type) { v: V }
+impl Picks($V) { @(public) Chosen :: Twin(Box(V).Inner, int); }
+
+// A group in a block lists that block's members, whatever the package declares.
+@(public) helper :: proc() {}
+@(private) area :: proc(c: Corner) {}
+@(public) Rec :: struct { x: int }
+impl Rec {
+	@(private) helper :: proc(f: Fill) {}
+	@(private) area :: proc(n: int) {}
+	@(public) group :: proc{helper, area};
+}
+
+// A constant's written type, whatever its value is.
+@(private) Sig :: distinct proc(x: int);
+@(private) Meta :: type;
+@(public) callback: Sig : proc(x: int) {};
+@(public) Typed: Meta : struct { x: int };
+
+// The application of a parametric alias is a type, as a generic record's is.
+@(public) Two :: Twin($A, $B);
+@(public) Lone :: struct($V: type) { v: V }
+impl Lone($V) {
+	@(public) Direct :: Twin(V, Corner);
+	@(public) Aliased :: Two(V, Corner);
+}
+
+// Each of a field's names, but never padding.
+@(public) Padded :: struct {
+	@(public) _, after_padding: Fill,
+	@(public) before_padding, _: Fill,
+}
+@(public) Generic_Padded :: struct($V: type) {
+	@(public) _, generic_field: Fill,
+}
+
+// An array length is a value, in a type; in a `where` clause, anything counts.
+@(public) sized :: proc(a: [size_of(Corner)]int) {}
+@(public) limited :: proc($N: int) -> [N]int where N == size_of(Corner) { return {}; }
+
+// A value's type is read to any depth.
+@(public) DEEP :: [1][1][1][1][1][1][1][1][1][1][1][1]Fill{};
+
+// A pointer subject is its pointee's: a private type's members are exempt.
+@(private) Hid :: struct { x: int }
+impl ^Hid { @(public) exempt :: proc(self) -> Corner { return {}; } }
+// A private alias of a public type is on the public type, through a pointer too.
+@(private) Short :: Box(int);
+impl ^Short { @(public) through :: proc(self) -> Corner { return {}; } }
+// Any other subject is named as written.
+impl []Point { @(public) spread :: proc(self) -> Corner { return {}; } }
+
+@(public) use :: proc() {
+	_ = size_of(Picks(int).Chosen);
+	_ = size_of(Picks(string).Chosen);
+}
+
+// A literal's key and a parameter's default are values, and a `where` clause reads
+// those too.
+@(private) KEY :: 1;
+@(private) DEFAULTED :: 2;
+@(public) keyed :: proc($T: type) where ([2]int{KEY = 1})[1] == 1 {}
+@(public) defaulted :: proc($T: type) where size_of(proc(x := DEFAULTED)) == 8 {}

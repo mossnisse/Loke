@@ -69,3 +69,14 @@ impl Inner {
 
 // A parameter is not the private type it is spelled like.
 clear_into :: proc(Scratch: int) {}
+
+// A field after padding is shown, as one before it is.
+Padded_First :: struct {
+	_, shown: int,
+}
+Padded_Last :: struct {
+	shown, _: int,
+}
+All_Padding :: struct {
+	_, _: int,
+}

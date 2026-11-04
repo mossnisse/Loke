@@ -1,0 +1,51 @@
+// design.md "Destructuring" and "defer statement" over values above the size the
+// backend keeps first-class: a large record and a large result are addresses.
+package main;
+
+import "core:fmt";
+
+Big :: struct { a: int, pad: [5000]u8, b: [dynamic]int, c: string, tail: [5000]u8 }
+Result_Big :: struct { a: int, pad: [5000]u8 }
+Err :: enum { Bad }
+
+make_big :: proc() -> Big {
+	out := Big{a = 3, b = [dynamic]int{1, 2}, c = "x"};
+	out.pad[0] = 7;
+	out.tail[0] = 8;
+	return out;
+}
+
+temporary :: proc() {
+	a, pad, b, c, tail := make_big();
+	fmt.println(a, pad[0], b.len(), c, tail[0]);
+	_, _, b, _, tail = make_big();
+	fmt.println(b.len(), tail[0]);
+}
+
+// A place keeps its fields, and a destination that overlaps the source reads the
+// values as they were before any write.
+place :: proc() {
+	p := make_big();
+	a, _, b, _, _ := p;
+	fmt.println(a, b.len());
+	p.b.append(3);
+	fmt.println(b.len(), p.b.len());
+	p.tail[1] = 9;
+	_, p.tail, _, _, p.pad = p;
+	fmt.println(p.pad[1], p.tail[0], p.pad[0]);
+}
+
+fallible :: proc(n: int) -> Result(Result_Big, Err) {
+	errdefer fmt.println("errdefer", n);
+	if (n < 0) { return .err(.Bad); }
+	return .ok(Result_Big{a = n});
+}
+
+main :: proc() {
+	temporary();
+	place();
+	ok := fallible(1);
+	switch (ok) { case .ok(v): fmt.println(v.a); case .err(x): fmt.println("err"); }
+	bad := fallible(-1);
+	switch (bad) { case .ok(v): fmt.println(v.a); case .err(x): fmt.println("err"); }
+}

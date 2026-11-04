@@ -1,0 +1,12 @@
+// design.md "when statement": what a condition reaches includes another package's
+// declarations, read in that package, where its own selection may still be running.
+package main;
+import "core:fmt";
+
+when (true) { import "util"; }
+when (util.WORD_SIZE == 8) { WORD :: 1; } else { WORD :: 2; }
+when (util.BYTE_SIZE == 8) { BYTE :: 1; } else { BYTE :: 2; }
+
+main :: proc() {
+	fmt.println(WORD, BYTE, util.WORD_SIZE, util.BYTE_SIZE);
+}

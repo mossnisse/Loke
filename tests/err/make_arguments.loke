@@ -1,0 +1,19 @@
+// `make`'s lengths are `int`, and a rejected one reports once. Its allocator is
+// the one argument with a name (design.md "Allocators").
+package main;
+
+import "core:mem";
+
+Count :: distinct int;
+
+float_length :: proc() { a := make([dynamic]int, 1.5); }
+nil_length :: proc() { a := make([dynamic]int, nil); }
+distinct_length :: proc() { a := make([dynamic]int, Count(3)); }
+narrow_length :: proc() { a := make([dynamic]int, u8(3)); }
+named_length :: proc() { a := make([dynamic]int, len = 3); }
+named_type :: proc() { a := make(allocator = [dynamic]int); }
+not_an_allocator :: proc() { a := make([dynamic]int, allocator = 3); }
+allocator_first :: proc(m: mem.Allocator) { a := make([dynamic]int, allocator = m, 3); }
+inout_allocator :: proc() { m := mem.default_allocator(); a := make([dynamic]int, allocator = inout m); }
+
+main :: proc() {}

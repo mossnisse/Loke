@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// A map of unmanaged elements holds nothing a panic must release, so its
+// inserting members push no unwind frame, and a table that relocates its element
+// would be byte for byte the plain one (design.md "Container insertion").
+main :: proc() {
+	counts: map[int]int = {};
+	counts.find_or_insert(1, 0)^ += 1;
+	_ = counts.try_insert(2, 3);
+	moved := 4;
+	numbers := [dynamic]int{ moved, 5 };
+	fmt.println(counts.len(), numbers.len());
+}

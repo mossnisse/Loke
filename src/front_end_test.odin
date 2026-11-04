@@ -10,6 +10,19 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
+// A name's text may be temporary: a name outlives whatever buffer spelled it.
+@(test)
+interned_identifier_keeps_its_own_text :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	buffer := [?]u8{'a', 'b'}
+	id := intern_identifier(&c, string(buffer[:]))
+	buffer[0] = 'x'
+	testing.expect(t, identifier_text(&c, id) == "ab", "the name's text changed with the caller's buffer")
+	testing.expect(t, intern_identifier(&c, "ab") == id, "the name was not found under its own text")
+	testing.expect(t, intern_identifier(&c, "xb") != id, "the name was found under the buffer's new text")
+}
+
 // Recursive errors keep recognizable instance names within a bounded width.
 @(test)
 recursive_generic_diagnostics_bound_instance_names :: proc(t: ^testing.T) {
@@ -46,6 +59,27 @@ main_body :: proc(f: ^File) -> ^Block {
 
 // The bootstrap instantiates `Result(Unit, Allocator_Error)`.
 BOOTSTRAP_INSTANCES :: 1
+
+// Bootstraps direct checker entry points that bypass `compile_program`.
+ensure_runtime_bootstrap :: proc(k: ^Checker) {
+	if k.c.bootstrap_ready {
+		return
+	}
+	init_semantic_stores(k.c)
+	if _, seeded := k.c.collections["base"]; !seeded {
+		// Test binaries need the working-directory fallback.
+		root := install_component("base")
+		if root == "" || !os.is_dir(strings.concatenate({root, "/runtime"}, context.temp_allocator)) {
+			root = "base"
+		}
+		k.c.collections["base"] = strings.clone(root, k.c.semantic_allocator)
+	}
+	id, loaded := load_runtime_bootstrap(k.c)
+	if !loaded {
+		return
+	}
+	prepare_package(k, id)
+}
 
 // The single-package half of `compile_program`, without `when` discovery.
 check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
@@ -254,6 +288,95 @@ applied_typeids_do_not_key_on_display_names :: proc(t: ^testing.T) {
 		typeid_sort_key(&c, applied(&c, dyn_name, interface_symbol, second, true)),
 		"two dyn views collided on their shared display name",
 	)
+	testing.expect(
+		t,
+		typeid_sort_key(&c, range_type(&c, first)) != typeid_sort_key(&c, range_type(&c, second)),
+		"two compiler-made types collided on their shared display name",
+	)
+}
+
+// Types that differ only in something the display leaves out, each pair requested
+// by one source. Equal keys would number them by request order.
+@(test)
+requested_types_have_their_own_typeid_keys :: proc(t: ^testing.T) {
+	sources := [?]string {
+		`package main;
+main :: proc() {
+	a := typeid_of(proc(@(escape=stored) p: ^int));
+	b := typeid_of(proc(p: ^int));
+	c := typeid_of(proc(@(cross_thread) f: proc()));
+	d := typeid_of(proc(f: proc()));
+}`,
+		`package main;
+main :: proc() {
+	a := typeid_of(distinct int);
+	b := typeid_of(distinct int);
+}`,
+		`package main;
+each :: proc($T: type) -> typeid { return typeid_of(distinct int); }
+main :: proc() {
+	a := each(int);
+	b := each(f64);
+}`,
+		`package main;
+f :: proc() -> typeid { Box :: struct($T: type) { value: T }; return typeid_of(Box(int)); }
+g :: proc() -> typeid { Box :: struct($T: type) { value: T }; return typeid_of(Box(int)); }
+main :: proc() {
+	a := f();
+	b := g();
+}`,
+		`package main;
+each :: proc($T: type) -> typeid { Box :: struct($U: type) { value: U }; return typeid_of(Box(int)); }
+main :: proc() {
+	a := each(int);
+	b := each(f64);
+}`,
+		`package main;
+R :: struct { x: int, y: f64 }
+main :: proc() {
+	foreach ($field in fields_of(R)) {
+		Local :: struct { value: int };
+		a := typeid_of(Local);
+		foreach ($inner in fields_of(R)) {
+			Nested :: struct { value: int };
+			b := typeid_of(Nested);
+		}
+	}
+}`,
+		`package main;
+Shape :: union { a: int, b: f64 }
+main :: proc() {
+	s: Shape = .a(1);
+	switch (s) {
+	case $variant(payload):
+		Local :: struct { value: int };
+		a := typeid_of(Local);
+	}
+}`,
+		// Each string holds what would end the other's first argument.
+		`package main;
+Pair :: struct($a: string_view, $b: string_view) {}
+main :: proc() {
+	a := typeid_of(Pair("x}:v{y", "z"));
+	b := typeid_of(Pair("x", "y}:v{z"));
+}`,
+	}
+	for source in sources {
+		p: Checked
+		check_source(&p, source)
+		defer destroy_checked(&p)
+		c := &p.c
+		if !testing.expectf(t, c.error_count == 0, "the probe source did not check: %s", source) {
+			continue
+		}
+		testing.expectf(t, len(c.typeid_order) >= 2, "too few types were requested: %s", source)
+		seen := make(map[string]bool, context.temp_allocator)
+		for type in c.typeid_order {
+			key := typeid_sort_key(c, type)
+			testing.expectf(t, !seen[key], "two types share the key %q: %s", key, source)
+			seen[key] = true
+		}
+	}
 }
 
 // A structural key wraps each nested type's own key in braces, so types that
@@ -432,7 +555,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 	check_one_package(&p.c, p.pkg)
 	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
 	scope := package_of(&p.c, p.pkg).scope
-	k = Checker{c = &p.c, pkg = p.pkg, lookup_pkg = p.pkg, scope = scope, file_node = &p.f}
+	k = Checker{c = &p.c, location = {pkg = p.pkg, lookup_pkg = p.pkg, scope = scope, file_node = &p.f}}
 	record := symbol_of(&p.c, scope.names[intern_identifier(&p.c, "Record")]).type
 	table := scope.names[intern_identifier(&p.c, "TABLE")]
 	args := []Generic_Arg{{is_type = true, type = record}}
@@ -446,7 +569,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 	for name in ([]string{"Probe", "Nested", "Rejected", "Probe"}) {
 		info := interface_info_for(&k, scope.names[intern_identifier(&p.c, name)])
 		if !testing.expectf(t, info != nil, "missing interface %s", name) { return }
-		held := interface_satisfied(&k, info, args, no_span(), report = false)
+		held := interface_satisfied(&k, info, args, NO_SPAN, report = false)
 		testing.expectf(t, held == (name != "Rejected"), "%s returned the wrong probe result", name)
 		after := emission_registries(&p.c)
 		testing.expectf(t, after == before, "%s changed emission state: before %v, after %v", name, before, after)
@@ -481,7 +604,7 @@ use_dependencies :: proc(value: ^Record, writer: Writer, options: Options) {
 	               p.c.witness_order[before.witness_order].concrete == record,
 	               "a real conversion lost the probed witness")
 	testing.expect(t, after.materialized == before.materialized + 1 && after.materialized_order == before.materialized_order + 1 &&
-	               p.c.materialized[table] != nil, "a real address lost the probed constant's storage")
+	               p.c.materialized[Materialized_Key{symbol = table}] != nil, "a real address lost the probed constant's storage")
 	testing.expect(t, after.instances == before.instances + 1 && after.checked_bodies == before.checked_bodies + 2,
 	               "a real call did not commit the probed generic body and its caller")
 	testing.expect(t, after.format_requested && after.type_info_requested,
@@ -526,21 +649,24 @@ foreign_abi_shared_records_finish_within_budget :: proc(t: ^testing.T) {
 		"27 shared types should not expand into millions of checks: %v", elapsed)
 }
 
+// Each level holds the next twice and a foreign procedure type taking itself. The
+// walk once followed that signature, which stopped it remembering any answer.
 @(test)
-foreign_abi_cached_array_field_cannot_be_a_parameter :: proc(t: ^testing.T) {
-	c: Compiler
-	defer destroy_compilation(&c)
-	init_semantic_stores(&c)
-	element := new_type(&c, Type_Info{kind = .Int, bits = 32, signed = true})
-	array := array_of(&c, element, 2)
-	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[0] = new_symbol(&c, Symbol{kind = .Var, type = array})
-	holder := new_type(&c, Type_Info{kind = .Struct, fields = fields})
-	params := make([]Type_Id, 2, c.semantic_allocator)
-	params[0], params[1] = holder, array
-	callback := new_type(&c, Type_Info{kind = .Proc, convention = "c", parameters = params, result = INVALID_TYPE})
-	safe, reason := foreign_abi_safe(&c, callback)
-	testing.expect(t, !safe && strings.contains(reason, "fixed array"), reason)
+foreign_abi_cyclic_signatures_finish_within_budget :: proc(t: ^testing.T) {
+	LEVELS :: 28
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, "package main;\n")
+	for level in 0 ..< LEVELS {
+		fmt.sbprintf(&source, "A%d :: struct {{ cb: proc \"c\" (a: A%d), l: A%d, r: A%d }}\n", level, level, level + 1, level + 1)
+	}
+	fmt.sbprintf(&source, "A%d :: struct {{ x: i32 }}\nmain :: proc() {{}}\n", LEVELS)
+	started := time.now()
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, strings.to_string(source))
+	elapsed := time.since(started)
+	testing.expect(t, p.c.error_count == 0, "a valid chain of records was rejected")
+	testing.expectf(t, elapsed < 5 * time.Second, "%d shared levels should not double per level: %v", LEVELS, elapsed)
 }
 
 @(test)
@@ -637,7 +763,7 @@ package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
 	init_semantic_stores(&c)
-	id, loaded := load_package_dir(&c, root, root, no_span())
+	id, loaded := load_package_dir(&c, root, root, NO_SPAN)
 	if !testing.expect(t, loaded, "a literal directory path containing glob syntax did not load") {
 		report(&c)
 		return
@@ -661,13 +787,13 @@ failed_package_loads_are_not_cached :: proc(t: ^testing.T) {
 	defer destroy_compilation(&c)
 	init_semantic_stores(&c)
 	before := len(c.packages)
-	id, loaded := load_package_dir(&c, root, root, no_span())
+	id, loaded := load_package_dir(&c, root, root, NO_SPAN)
 	testing.expect(t, !loaded && id == INVALID_PACKAGE && len(c.packages) == before, "a failed load created a package")
 
 	if !testing.expect(t, os.write_entire_file(path, transmute([]u8)string("package retry;")) == nil) {
 		return
 	}
-	id, loaded = load_package_dir(&c, root, root, no_span())
+	id, loaded = load_package_dir(&c, root, root, NO_SPAN)
 	testing.expect(t, loaded && id != INVALID_PACKAGE && len(package_of(&c, id).files) == 1, "a corrected package could not be retried")
 }
 
@@ -840,6 +966,20 @@ static self slot using delegate thread_local manual
 	}
 }
 
+// `reserved_keyword` and `any_keyword` read the enum's ranges, and the lexer stops
+// at the table's first contextual row.
+@(test)
+keyword_table_lists_every_keyword_in_enum_order :: proc(t: ^testing.T) {
+	kind := Token_Kind.Break
+	for keyword in keyword_table {
+		testing.expect_value(t, keyword.kind, kind)
+		testing.expect_value(t, keyword.text, strings.to_lower(fmt.tprint(keyword.kind), context.temp_allocator))
+		kind = Token_Kind(int(kind) + 1)
+	}
+	testing.expect_value(t, kind, Token_Kind.Move_Only)
+	testing.expect(t, !any_keyword(.Move_Only) && !reserved_keyword(.Move_Only), "`move_only` is a name")
+}
+
 // `operator` takes the first match in `operator_table`, so longer operators
 // must come first to honour grammar.md's longest match.
 @(test)
@@ -942,9 +1082,74 @@ main :: proc() {
   w := f() or_return +1;
   v := f() or_return .io;
   u := f() or_return ^;
+  switch (x) {
+    case .a,
+    .b:
+    y = 1;
+    y = 2;
+    case .c: y = 3;
+  }
+  f(/* name */ x);
+  f( /* name */ x);
+  f(/* name */x);
+  xs[/* n */ 1];
+  f(x /* name */);
+  t := x*/* c */y;
+  if (x)
+  {
+  y;
+  }
+  r := `+"`raw\n`"+` + f(
+  x,
+  );
 }
 
 rt :: proc "c"(code: i32) -> ! ---;
+
+T :: enum {
+  A = 1 +
+  2,
+  B,
+  C,
+}
+
+xs := []int{
+  1 +
+  2,
+  3,
+};
+
+W :: proc($T: type)
+where size_of(T) > 0,
+size_of(T) < 9
+{
+}
+
+V :: proc($T: type) where size_of(T) > 0,
+size_of(T) < 9 {
+  list := []int{
+    1 +
+    2,
+    3,
+  };
+}
+
+U :: struct($T: type) where f(T, 1),
+g(T) {
+  a: int,
+  b: int,
+}
+
+Q :: proc($T: type)
+where size_of(T) > 0,
+size_of(T) < 9 ---;
+
+@(a,
+  b)
+g :: proc() {}
+
+@(a) c :: 1 +
+2;
 `
 	want := `package main;
 
@@ -974,9 +1179,74 @@ main :: proc() {
 	w := f() or_return + 1;
 	v := f() or_return .io;
 	u := f() or_return^;
+	switch (x) {
+	case .a,
+		.b:
+		y = 1;
+		y = 2;
+	case .c: y = 3;
+	}
+	f(/* name */ x);
+	f( /* name */ x);
+	f(/* name */x);
+	xs[/* n */ 1];
+	f(x /* name */);
+	t := x*/* c */y;
+	if (x)
+	{
+		y;
+	}
+	r := `+"`raw\n`"+` + f(
+		x,
+	);
 }
 
 rt :: proc "c" (code: i32) -> ! ---;
+
+T :: enum {
+	A = 1 +
+		2,
+	B,
+	C,
+}
+
+xs := []int{
+	1 +
+		2,
+	3,
+};
+
+W :: proc($T: type)
+	where size_of(T) > 0,
+	size_of(T) < 9
+{
+}
+
+V :: proc($T: type) where size_of(T) > 0,
+	size_of(T) < 9 {
+	list := []int{
+		1 +
+			2,
+		3,
+	};
+}
+
+U :: struct($T: type) where f(T, 1),
+	g(T) {
+	a: int,
+	b: int,
+}
+
+Q :: proc($T: type)
+	where size_of(T) > 0,
+	size_of(T) < 9 ---;
+
+@(a,
+	b)
+g :: proc() {}
+
+@(a) c :: 1 +
+	2;
 `
 	for text, pass in ([]string{input, want}) {
 		c := test_compiler(text)
@@ -1093,6 +1363,43 @@ malformed_escape_stays_in_bounds :: proc(t: ^testing.T) {
 	}
 }
 
+// A composite literal's type, probed as an argument, is reused rather than parsed
+// again, so this nesting takes linear time; parsed twice, it never finishes.
+@(test)
+nested_composite_arguments_parse_once :: proc(t: ^testing.T) {
+	levels := 60
+	source := strings.concatenate(
+		{
+			"package main;\n\nx := ",
+			strings.repeat("[g(", levels, context.temp_allocator),
+			"[1]int{}",
+			strings.repeat(")]int{}", levels, context.temp_allocator),
+			";\n",
+		},
+		context.temp_allocator,
+	)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, source)
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+}
+
+// A library path decodes as an import path does, so an escape cannot hide
+// `system:` from the linker's test.
+@(test)
+foreign_import_path_is_decoded :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, `package main;
+foreign import k "sys\x74em:kernel32.lib";`)
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+	if !testing.expect(t, len(p.f.items) == 1, "the foreign import was not retained") {
+		return
+	}
+	item, ok := p.f.items[0].(^Item_Foreign_Import)
+	testing.expectf(t, ok && item.path == "system:kernel32.lib", "the path was not decoded: %q", item.path)
+}
+
 @(test)
 parser_recovery_retains_nodes :: proc(t: ^testing.T) {
 	text := `package main;
@@ -1113,7 +1420,6 @@ main :: proc() {
 	_, first_is_import := f.items[0].(^Item_Import)
 	_, second_is_decl := f.items[1].(^Decl)
 	testing.expect(t, first_is_import, "the malformed import was not retained")
-	testing.expect(t, item_base(f.items[0]).has_error, "the malformed import was not marked")
 	if !testing.expect(t, second_is_decl, "recovery did not reach the following main declaration") {
 		return
 	}
@@ -1147,7 +1453,7 @@ main :: proc() {
 		return
 	}
 	deferred, ok := body.stmts[0].(^Stmt_Defer)
-	testing.expect(t, ok && deferred.has_error && deferred.stmt != nil, "empty defer was retained as a clean nil statement")
+	testing.expect(t, ok && deferred.stmt != nil, "empty defer was retained as a clean nil statement")
 }
 
 @(test)
@@ -1291,10 +1597,30 @@ parenthesized_segments :: proc(step: string, segments, count: int) -> string {
 }
 
 // Deep parentheses, operator chains, prefix runs, a type name's selector
-// chain, and chains built on parenthesized ones each give one L0222.
+// chain, bare blocks, and chains built on parenthesized ones or on a literal's
+// reused type each give one L0222.
 @(test)
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
+		strings.concatenate(
+			{
+				"package main;\n\nmain :: proc() {\n",
+				strings.repeat("{", 10_000, context.temp_allocator),
+				strings.repeat("}", 10_000, context.temp_allocator),
+				"\n}\n",
+			},
+			context.temp_allocator,
+		),
+		strings.concatenate(
+			{
+				"package main;\n\nmain :: proc() {\n\tf(",
+				strings.repeat("[1]", 1_500, context.temp_allocator),
+				"int{}",
+				strings.repeat(".a", 1_500, context.temp_allocator),
+				");\n}\n",
+			},
+			context.temp_allocator,
+		),
 		strings.concatenate(
 			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("(", 10_000, context.temp_allocator), "1;\n}\n"},
 			context.temp_allocator,
@@ -1788,11 +2114,11 @@ main :: proc() {}
 truncating_diagnostics_restores_the_error_count :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
-	errorf(&c, no_span(), "L9999", "kept")
+	errorf(&c, NO_SPAN, "L9999", "kept")
 	mark := len(c.diagnostics)
-	errorf(&c, no_span(), "L9998", "speculative")
-	warnf(&c, no_span(), "L9997", "speculative warning")
-	add_notef(&c, no_span(), "speculative note")
+	errorf(&c, NO_SPAN, "L9998", "speculative")
+	warnf(&c, NO_SPAN, "L9997", "speculative warning")
+	add_notef(&c, NO_SPAN, "speculative note")
 
 	truncate_diagnostics(&c, mark)
 	testing.expectf(t, len(c.diagnostics) == 1, "expected one diagnostic, got %d", len(c.diagnostics))
@@ -1800,7 +2126,7 @@ truncating_diagnostics_restores_the_error_count :: proc(t: ^testing.T) {
 
 	// A warning never raised the count, so dropping it must not lower it.
 	mark = len(c.diagnostics)
-	warnf(&c, no_span(), "L9997", "only a warning")
+	warnf(&c, NO_SPAN, "L9997", "only a warning")
 	truncate_diagnostics(&c, mark)
 	testing.expectf(t, c.error_count == 1, "dropping a warning changed the error count to %d", c.error_count)
 }

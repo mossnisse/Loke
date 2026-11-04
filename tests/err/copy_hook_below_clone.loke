@@ -1,0 +1,24 @@
+// design.md "Standard customization procedures": a `hook(copy)` taking `self: ^` may
+// hand a loan of its receiver out, so a clone that runs one, however deep, borrows
+// what it clones.
+package main;
+
+Hooked :: struct { v: int, p: ^int }
+impl Hooked {
+    dup :: hook(copy) proc(self: ^, allocator: Allocator) -> Result(Hooked, Allocator_Error) {
+        return .ok(Hooked{self.v, &self.v});
+    }
+    release :: hook(drop) proc(self: inout Hooked) {}
+}
+Outer :: struct { inner: Hooked }
+
+keep :: proc(value: Outer) -> Outer { return value.clone(); }
+
+main :: proc() {
+    x := 99;
+    xs: [dynamic]Outer = {};
+    xs.append(Outer{Hooked{2, &x}});
+    c := xs.clone();
+    xs.clear();
+    _ = c[0].inner.p^;
+}

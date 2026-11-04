@@ -33,4 +33,7 @@ main :: proc() {
 	unsafe.free(held, mem.default_allocator());
 	reader: ^int = &values[0];
 	unsafe.free(reader);
+
+	// A length that cannot convert is reported once.
+	_ = unsafe.string_view(bytes, 1.5);
 }

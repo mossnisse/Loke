@@ -1,0 +1,11 @@
+L0619
+@7:14
+`f16` is not classified by the Win64 C ABI
+
+L0619
+@8:11
+member `value` of `Half` is not classified
+
+L0619
+@9:13
+`f16` is not classified by the Win64 C ABI

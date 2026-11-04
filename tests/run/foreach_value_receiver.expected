@@ -1,0 +1,36 @@
+1
+0
+drop value 2
+after temporary
+1
+0
+drop pointer 2
+after pointer receiver
+0
+drop large 1
+after large
+2
+drop value 3
+after break
+1 0
+0 1
+drop value 2
+after indexed
+1
+0
+drop value 1
+after reversed
+drop value 4
+3
+after return
+0
+drop value 1
+after move
+0
+after place
+0
+after packed field
+0
+after constant
+drop value 1
+drop value 1

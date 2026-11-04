@@ -1,0 +1,21 @@
+package main; import "core:fmt";
+
+// design.md "Maps": a key's policy is settled where the map type is named, and a
+// map named only inside a `Box` is named there too. Its generated drop and its
+// operations need the policy, whether or not a map is ever built.
+Node :: struct {
+	counts: Box(map[u16]int),
+	next:   Option(Box(Node)),
+}
+
+main :: proc() {
+	absent: Option(Box(map[u32]int)) = .none;
+	if (case .none = absent) {
+		fmt.println("absent");
+	}
+
+	node := Node{counts = box(make(map[u16]int)), next = .none};
+	node.counts^[7] = 70;
+	fmt.println(node.counts^[7]);
+	fmt.println(7 in node.counts^);
+}

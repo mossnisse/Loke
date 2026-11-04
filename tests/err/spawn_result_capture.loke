@@ -1,0 +1,13 @@
+// design.md "Spawn statements": a task's result goes to a local variable, and a
+// capture is the receiver's field. A body's rewrite of the name used to meet a
+// result that must stay a name, which crashed the compiler.
+package main;
+
+work :: proc() -> int { return 1; }
+
+main :: proc() {
+    total := 0;
+    by_borrow := proc() capture(&mut total) { parallel { spawn total = work(); } };
+    by_copy := proc() capture(total) { parallel { spawn total = work(); } };
+    _, _ = by_borrow, by_copy;
+}

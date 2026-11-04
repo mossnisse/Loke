@@ -1,0 +1,45 @@
+// A record literal's key is a field's name, not a reference to what that name
+// declares: neither this alias nor this interface mentions itself. A named array's
+// key is a value, which syntax cannot tell from a field's name, so each instance
+// reads its own `N`.
+package main;
+
+import "core:fmt";
+
+Cfg :: struct { Vec: int, T: int };
+
+Vec :: [size_of(Cfg{Vec = 2})]$T;
+
+Sized :: interface($T: type) {
+	slot get: proc(self, x: [size_of(Cfg{T = 1})]int) -> int;
+}
+
+Box :: struct { v: int };
+
+impl Box {
+	get :: proc(self, x: [size_of(Cfg)]int) -> int { return self.v + x[1]; }
+}
+
+Arr :: [4]int;
+
+sized_by_key :: proc($N: int) -> int {
+	return size_of([Arr{N = 7}[1] + 1]int);
+}
+
+param_by_key :: proc($N: int, x: [Arr{N = 7}[1] + 1]int) -> int {
+	return size_of(x);
+}
+
+main :: proc() {
+	v: Vec(i8) = {};
+	fmt.println(size_of(v));
+
+	b := Box{v = 3};
+	d := (dyn Sized)(&b);
+	fmt.println(d.get([size_of(Cfg)]int{1 = 5}));
+
+	fmt.println(sized_by_key(1));
+	fmt.println(sized_by_key(2));
+	fmt.println(param_by_key(1, [8]int{}));
+	fmt.println(param_by_key(2, [1]int{}));
+}

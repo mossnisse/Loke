@@ -1,0 +1,2 @@
+L0727
+`core:thread` declares no `Task_Scope.start`, which a `spawn` needs

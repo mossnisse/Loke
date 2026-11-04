@@ -1,0 +1,18 @@
+// design.md "Operator declarations": an operator is an ordinary named procedure,
+// so `@(deprecated)` and `@(require_results)` hold of it, at each use.
+package main;
+
+Value :: struct { x: int }
+
+impl Value {
+	@(deprecated="old plus") plus :: operator(+) proc(a, b: Value) -> int { return 1; }
+	@(require_results) minus :: operator(-) proc(a, b: Value) -> int { return 3; }
+}
+
+main :: proc() {
+	v := Value{1};
+	x := Value.plus(v, v);
+	y := v + v;
+	_ = x; _ = y;
+	Value.minus(v, v);
+}

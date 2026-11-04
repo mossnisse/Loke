@@ -9,7 +9,6 @@ Provider_Slot :: enum {
 }
 
 Provider_Selection :: struct {
-	written:     string,
 	path:        string,
 	name:        string,
 	selected:    bool,
@@ -20,6 +19,7 @@ Provider_Selection :: struct {
 	destination: Symbol_Id,
 }
 
+@(private = "file")
 provider_slot_name :: proc(slot: Provider_Slot) -> string {
 	switch slot {
 	case .Allocator: return "allocator"
@@ -39,13 +39,7 @@ any_provider_selected :: proc(c: ^Compiler) -> bool {
 
 // Reads provider attributes from the root package before import discovery.
 collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
-	pkg := package_of(c, root)
-	if pkg == nil {
-		return
-	}
-	seen: [Provider_Slot]bool
-	first_span: [Provider_Slot]Span
-	for file in pkg.files {
+	for file in package_of(c, root).files {
 		seen_in_file: [Provider_Slot]bool
 		for attribute in file.attributes {
 			slot, is_provider := source_provider_slot(attribute)
@@ -56,20 +50,19 @@ collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
 				continue // `validate_attribute_list` owns this diagnostic.
 			}
 			seen_in_file[slot] = true
-			target, valid := source_provider_target(c, attribute)
+			target, valid := attribute_string_text(c, attribute)
 			if !valid {
 				continue // Attribute shape validation owns malformed values.
 			}
-			if seen[slot] {
+			if c.providers[slot].selected {
 				errorf(
 					c, attribute.span, "L0657",
 					"the source default for the %s provider is selected more than once",
 					provider_slot_name(slot),
 				)
-				add_notef(c, first_span[slot], "the first source default is here")
+				add_notef(c, c.providers[slot].span, "the first source default is here")
 				continue
 			}
-			seen[slot], first_span[slot] = true, attribute.span
 			install_provider_selection(c, slot, target, attribute.span, file)
 		}
 	}
@@ -86,13 +79,20 @@ source_provider_slot :: proc(attribute: Attribute) -> (Provider_Slot, bool) {
 	return .Allocator, false
 }
 
-@(private = "file")
-source_provider_target :: proc(c: ^Compiler, attribute: Attribute) -> (string, bool) {
-	lit, ok := attribute.value.(^Expr_Literal)
-	if !ok || (lit.kind != .String && lit.kind != .Raw_String) {
-		return "", false
+// design.md "Selecting a provider": only the root package picks one.
+validate_provider_attributes :: proc(k: ^Checker, pkg: ^Package, file: ^File) {
+	if pkg.id == k.c.root_package {
+		return
 	}
-	return decode_string_literal(c, lit.text, lit.kind == .Raw_String)
+	for attribute in file.attributes {
+		if _, is_provider := source_provider_slot(attribute); is_provider {
+			errorf(
+				k.c, attribute.span, "L0613",
+				"`@(%s=...)` is only allowed on the root package clause",
+				attribute.path[0].text,
+			)
+		}
+	}
 }
 
 @(private = "file")
@@ -114,19 +114,15 @@ install_provider_selection :: proc(
 		return
 	}
 	c.providers[slot] = Provider_Selection {
-		written     = target,
-		path        = target[:split],
-		name        = target[split + 1:],
-		selected    = true,
-		from_file   = from_file,
-		span        = span,
-		pkg         = INVALID_PACKAGE,
-		factory     = INVALID_SYMBOL,
-		destination = INVALID_SYMBOL,
+		path      = target[:split],
+		name      = target[split + 1:],
+		selected  = true,
+		from_file = from_file,
+		span      = span,
 	}
 }
 
-// Selected provider packages are build dependencies even without imports.
+// design.md "Selecting a provider".
 load_provider_packages :: proc(c: ^Compiler) {
 	for slot in Provider_Slot {
 		selection := &c.providers[slot]
@@ -152,11 +148,7 @@ load_provider_packages :: proc(c: ^Compiler) {
 			continue
 		case .Ok:
 		}
-		id, loaded := load_package_dir(c, dir, selection.path, selection.span)
-		if !loaded {
-			continue
-		}
-		selection.pkg = id
+		selection.pkg, _ = load_package_dir(c, dir, selection.path, selection.span)
 	}
 }
 
@@ -168,12 +160,11 @@ resolve_provider_factories :: proc(k: ^Checker) {
 		if !selection.selected || selection.pkg == INVALID_PACKAGE {
 			continue
 		}
-		wanted := provider_handle_type(k, slot)
-		pkg := package_of(c, selection.pkg)
-		symbol_id := INVALID_SYMBOL
-		if pkg != nil && pkg.scope != nil {
-			symbol_id = pkg.scope.names[intern_identifier(c, selection.name)] or_else INVALID_SYMBOL
+		wanted := provider_handle_type(k, slot, selection.span)
+		if wanted == INVALID_TYPE {
+			continue
 		}
+		symbol_id := package_symbol_named(c, package_of(c, selection.pkg), selection.name)
 		sym := symbol_of(c, symbol_id)
 		if sym == nil || !sym.public {
 			errorf(
@@ -188,9 +179,8 @@ resolve_provider_factories :: proc(k: ^Checker) {
 		if !provider_factory_shape(c, sym, wanted) {
 			errorf(
 				c, selection.span, "L0659",
-				"the %s provider `%s` is not a factory: it must be `proc() -> %s`",
-				provider_slot_name(slot), selection.written,
-				wanted == INVALID_TYPE ? "the slot's handle" : type_name(c, wanted),
+				"the %s provider `%s:%s` is not a factory: it must be `proc() -> %s`",
+				provider_slot_name(slot), selection.path, selection.name, type_name(c, wanted),
 			)
 			continue
 		}
@@ -203,36 +193,25 @@ resolve_provider_factories :: proc(k: ^Checker) {
 
 @(private = "file")
 provider_factory_shape :: proc(c: ^Compiler, sym: ^Symbol, wanted: Type_Id) -> bool {
-	if sym.kind != .Proc || sym.generic || sym.has_receiver || sym.is_foreign {
+	if sym.kind != .Proc || sym.generic || sym.has_receiver || sym.is_foreign ||
+	   len(sym.params) != 0 || sym.result_inout || sym.result != wanted {
 		return false
 	}
 	info := type_of(c, sym.proc_type)
-	if info == nil || info.convention != "" {
-		return false
-	}
-	if len(sym.params) != 0 || sym.result_inout {
-		return false
-	}
-	return wanted != INVALID_TYPE && sym.result == wanted
+	return info != nil && info.convention == ""
 }
 
 // Logger remains an ordinary library type rather than a compiler-owned type.
 @(private = "file")
-provider_handle_type :: proc(k: ^Checker, slot: Provider_Slot) -> Type_Id {
+provider_handle_type :: proc(k: ^Checker, slot: Provider_Slot, span: Span) -> Type_Id {
 	if slot == .Allocator {
 		return TYPE_ALLOCATOR
 	}
-	for index in 1 ..< len(k.c.packages) {
-		pkg := &k.c.packages[index]
-		if pkg.key != STD_LOG || pkg.scope == nil {
-			continue
-		}
-		if logger, found := package_type_named(k, pkg, "Logger"); found {
-			return logger
-		}
+	if logger, found := package_type_named(k, standard_package(k.c, STD_LOG), "Logger"); found {
+		return logger
 	}
 	errorf(
-		k.c, no_span(), "L0660",
+		k.c, span, "L0660",
 		"selecting a logging provider needs `%s` in the build, which declares `Logger`",
 		STD_LOG,
 	)
@@ -241,19 +220,12 @@ provider_handle_type :: proc(k: ^Checker, slot: Provider_Slot) -> Type_Id {
 
 @(private = "file")
 provider_logger_destination :: proc(k: ^Checker, wanted: Type_Id, span: Span) -> Symbol_Id {
-	for index in 1 ..< len(k.c.packages) {
-		pkg := &k.c.packages[index]
-		if pkg.key != STD_LOG || pkg.scope == nil {
-			continue
-		}
-		symbol_id := pkg.scope.names[intern_identifier(k.c, "selected")] or_else INVALID_SYMBOL
-		resolve_symbol_signature_in_place(k, symbol_id)
-		sym := symbol_of(k.c, symbol_id)
-		// An `Option(Logger)`: a logger has no null state to mean "unselected".
-		if sym != nil && sym.kind == .Var && !sym.immutable && option_payload(k.c, sym.type) == wanted {
-			return symbol_id
-		}
-		break
+	symbol_id := package_symbol_named(k.c, standard_package(k.c, STD_LOG), "selected")
+	resolve_symbol_signature_in_place(k, symbol_id)
+	sym := symbol_of(k.c, symbol_id)
+	// An `Option(Logger)`: a logger has no null state to mean "unselected".
+	if sym != nil && sym.kind == .Var && !sym.immutable && option_payload(k.c, sym.type) == wanted {
+		return symbol_id
 	}
 	errorf(
 		k.c, span, "L0660",

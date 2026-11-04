@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+// A `[^]T` written in a type has the width any other route to it has, whichever
+// of them interned it first (design.md "C pointers").
+main :: proc() {
+    fmt.println(type_info_of(typeid_of([^]u8)).bits);
+    values := [3]u16{1, 2, 3};
+    pointer := unsafe.raw_data(&values);
+    _ = pointer;
+    fmt.println(type_info_of(typeid_of([^]u16)).bits);
+}

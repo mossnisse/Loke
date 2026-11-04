@@ -1,0 +1,12 @@
+L0442
+@10:2
+first parameter is the receiver
+L0463
+@17:5
+slot `same` mentions the subject outside its receiver
+L0463
+@18:5
+slot `nothing` has no receiver
+L0463
+@19:5
+the composed interface `Composes_Back` is not dyn-compatible: it composes itself

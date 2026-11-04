@@ -1,0 +1,4 @@
+drop outer 2
+drop inner 2
+drop outer 1
+drop inner 1

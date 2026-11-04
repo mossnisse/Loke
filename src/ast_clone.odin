@@ -1,13 +1,13 @@
-// Deep syntax cloning. Type annotations live on the AST nodes (decision A1), so
-// checking the same syntax twice — a generic instance, a static `foreach` copy —
-// needs a fresh copy. A clone keeps spans and written syntax and drops what the
+// Deep syntax cloning. Type annotations live on the AST nodes
+// (compiler-architecture.md "One annotated AST"), so checking the same syntax
+// twice — a generic instance, a static `foreach` copy — needs a fresh copy. A clone keeps spans and written syntax and drops what the
 // checker fills in, except `Item_Impl.kind`, which a generic record's instance
 // reads from its template. Clones live in the semantic arena.
 package lokec
 
 // ------------------------------------------------------------------ helpers --
 
-// An empty list clones to nil, like the source that wrote nothing.
+// Zeroed, for the caller to fill; empty stays nil.
 @(private = "file")
 clone_slice :: proc(c: ^Compiler, list: []$T) -> []T {
 	if len(list) == 0 {
@@ -17,37 +17,31 @@ clone_slice :: proc(c: ^Compiler, list: []$T) -> []T {
 }
 
 @(private = "file")
-clone_base :: proc(dst: ^Expr_Base, src: ^Expr_Base) {
-	dst.span = src.span
-	dst.has_error = src.has_error
-}
-
-@(private = "file")
-clone_node_base :: proc(c: ^Compiler, dst: ^Node_Base, src: ^Node_Base) {
-	dst.span = src.span
-	dst.has_error = src.has_error
-	dst.attributes = clone_attributes(c, src.attributes)
-}
-
-@(private = "file")
-new_clone :: proc(c: ^Compiler, $T: typeid, src: ^Expr_Base) -> ^T {
+new_clone :: proc(c: ^Compiler, src: ^$T) -> ^T {
 	node := new(T, c.semantic_allocator)
-	clone_base(&node.base, src)
+	node.span = src.span
+	node.has_error = src.has_error
 	return node
 }
 
+@(private = "file")
+new_node_clone :: proc(c: ^Compiler, src: ^$T) -> ^T {
+	node := new_clone(c, src)
+	node.attributes = clone_attributes(c, src.attributes)
+	return node
+}
+
+@(private = "file")
 clone_attributes :: proc(c: ^Compiler, list: []Attribute) -> []Attribute {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Attribute {
-			span  = entry.span,
-			path  = entry.path,
-			value = clone_expr(c, entry.value),
-		}
+		out[index] = entry
+		out[index].value = clone_expr(c, entry.value)
 	}
 	return out
 }
 
+@(private = "file")
 clone_exprs :: proc(c: ^Compiler, list: []Expr) -> []Expr {
 	out := clone_slice(c, list)
 	for entry, index in list {
@@ -56,7 +50,6 @@ clone_exprs :: proc(c: ^Compiler, list: []Expr) -> []Expr {
 	return out
 }
 
-@(private = "file")
 clone_stmts :: proc(c: ^Compiler, list: []Stmt) -> []Stmt {
 	out := clone_slice(c, list)
 	for entry, index in list {
@@ -83,91 +76,28 @@ clone_arguments :: proc(c: ^Compiler, list: []Argument) -> []Argument {
 clone_elements :: proc(c: ^Compiler, list: []Element) -> []Element {
 	out := clone_slice(c, list)
 	for entry, index in list {
+		out[index] = entry
 		// A bare name before `=` is a field, never a capture.
-		key: Expr
+		saved := c.capture_rewrite
 		if _, is_name := entry.key.(^Expr_Ident); is_name {
-			saved := c.capture_rewrite
 			c.capture_rewrite = nil
-			key = clone_expr(c, entry.key)
-			c.capture_rewrite = saved
-		} else {
-			key = clone_expr(c, entry.key)
 		}
-		out[index] = Element {
-			span  = entry.span,
-			key   = key,
-			value = clone_expr(c, entry.value),
-		}
+		out[index].key = clone_expr(c, entry.key)
+		c.capture_rewrite = saved
+		out[index].value = clone_expr(c, entry.value)
 	}
 	return out
-}
-
-// design.md "Capture literals": in the body a captured name is the place it
-// captured, the receiver's field for a copy or a move and what the field
-// points at for a borrow.
-Capture_Rewrite :: struct {
-	receiver: Identifier_Id,
-	captures: map[Identifier_Id]Capture_Field,
-}
-
-// A capture's field, whose name the source cannot spell, and its mode.
-Capture_Field :: struct {
-	mode:  Capture_Mode,
-	field: Name,
-}
-
-@(private = "file")
-rewrite_capture :: proc(c: ^Compiler, v: ^Expr_Ident) -> Expr {
-	id := v.name_id != INVALID_IDENTIFIER ? v.name_id : intern_identifier(c, v.name)
-	field, captured := c.capture_rewrite.captures[id]
-	if !captured {
-		return nil
-	}
-	return capture_field_place(c, c.capture_rewrite.receiver, field, v.span)
-}
-
-// `self.field`, or `self.field^` for a borrow, spelled at `span`.
-capture_field_place :: proc(c: ^Compiler, receiver_id: Identifier_Id, field: Capture_Field, span: Span) -> Expr {
-	receiver := new(Expr_Ident, c.semantic_allocator)
-	receiver.span = span
-	receiver.name, receiver.name_id = "self", receiver_id
-	selected := new(Expr_Selector, c.semantic_allocator)
-	selected.span = span
-	selected.operand = receiver
-	selected.name = Name{text = field.field.text, span = span, id = field.field.id}
-	if field.mode == .Copy || field.mode == .Move {
-		return selected
-	}
-	place := new(Expr_Postfix, c.semantic_allocator)
-	place.span = span
-	place.op, place.op_span = .Caret, span
-	place.operand = selected
-	return place
-}
-
-// A nested literal's body is its own: it captures nothing from this one
-// unless its clause names it, and that clause is rewritten here.
-@(private = "file")
-clone_nested_procedure :: proc(c: ^Compiler, v: ^Expr_Proc) -> ^Expr_Proc {
-	saved := c.capture_rewrite
-	c.capture_rewrite = nil
-	defer c.capture_rewrite = saved
-	return clone_expr(c, v).(^Expr_Proc)
 }
 
 @(private = "file")
 clone_capture :: proc(c: ^Compiler, v: ^Capture_Literal) -> ^Capture_Literal {
 	n := new(Capture_Literal, c.semantic_allocator)
-	n.procedure = clone_nested_procedure(c, v.procedure)
+	n.procedure = clone_expr(c, v.procedure).(^Expr_Proc)
 	n.clause_span = v.clause_span
 	n.entries = clone_slice(c, v.entries)
 	for entry, index in v.entries {
-		n.entries[index] = Capture_Entry {
-			span  = entry.span,
-			mode  = entry.mode,
-			name  = entry.name,
-			value = clone_expr(c, entry.value),
-		}
+		n.entries[index] = entry
+		n.entries[index].value = clone_expr(c, entry.value)
 	}
 	return n
 }
@@ -194,12 +124,8 @@ clone_result :: proc(c: ^Compiler, result: ^Result) -> ^Result {
 		return nil
 	}
 	out := new(Result, c.semantic_allocator)
-	out^ = Result {
-		span     = result.span,
-		is_inout = result.is_inout,
-		type     = clone_expr(c, result.type),
-		diverges = result.diverges,
-	}
+	out^ = result^
+	out.type = clone_expr(c, result.type)
 	return out
 }
 
@@ -222,7 +148,8 @@ clone_fields :: proc(c: ^Compiler, list: []Field) -> []Field {
 clone_variants :: proc(c: ^Compiler, list: []Variant) -> []Variant {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Variant{span = entry.span, name = entry.name, type = clone_expr(c, entry.type)}
+		out[index] = entry
+		out[index].type = clone_expr(c, entry.type)
 	}
 	return out
 }
@@ -267,19 +194,20 @@ clone_bindings :: proc(c: ^Compiler, list: []Binding_Group) -> []Binding_Group {
 	return out
 }
 
+clone_requirement :: proc(c: ^Compiler, requirement: Requirement) -> Requirement {
+	out := requirement
+	out.bindings = clone_bindings(c, requirement.bindings)
+	out.expr = clone_expr(c, requirement.expr)
+	out.result = clone_expr(c, requirement.result)
+	out.slot_type = clone_expr(c, requirement.slot_type)
+	return out
+}
+
+@(private = "file")
 clone_requirements :: proc(c: ^Compiler, list: []Requirement) -> []Requirement {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Requirement {
-			span         = entry.span,
-			kind         = entry.kind,
-			bindings     = clone_bindings(c, entry.bindings),
-			expr         = clone_expr(c, entry.expr),
-			result_inout = entry.result_inout,
-			result       = clone_expr(c, entry.result),
-			name         = entry.name,
-			slot_type    = clone_expr(c, entry.slot_type),
-		}
+		out[index] = clone_requirement(c, entry)
 	}
 	return out
 }
@@ -287,15 +215,12 @@ clone_requirements :: proc(c: ^Compiler, list: []Requirement) -> []Requirement {
 // ------------------------------------------------------------ expressions --
 
 clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
-	if e == nil {
-		return nil
-	}
 	switch v in e {
 	case ^Expr_Error:
-		return new_clone(c, Expr_Error, &v.base)
+		return new_clone(c, v)
 
 	case ^Expr_Literal:
-		n := new_clone(c, Expr_Literal, &v.base)
+		n := new_clone(c, v)
 		n.kind, n.text = v.kind, v.text
 		return n
 
@@ -305,24 +230,24 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 				return rewritten
 			}
 		}
-		n := new_clone(c, Expr_Ident, &v.base)
+		n := new_clone(c, v)
 		n.name, n.name_id = v.name, v.name_id
 		return n
 
 	case ^Expr_Selector:
-		n := new_clone(c, Expr_Selector, &v.base)
+		n := new_clone(c, v)
 		n.operand = clone_expr(c, v.operand)
 		n.name = v.name
 		return n
 
 	case ^Expr_Index:
-		n := new_clone(c, Expr_Index, &v.base)
+		n := new_clone(c, v)
 		n.operand = clone_expr(c, v.operand)
 		n.indices = clone_exprs(c, v.indices)
 		return n
 
 	case ^Expr_Slice:
-		n := new_clone(c, Expr_Slice, &v.base)
+		n := new_clone(c, v)
 		n.mutable = v.mutable
 		n.operand = clone_expr(c, v.operand)
 		n.lo = clone_expr(c, v.lo)
@@ -335,13 +260,13 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 				return view
 			}
 		}
-		n := new_clone(c, Expr_Call, &v.base)
+		n := new_clone(c, v)
 		n.callee = clone_expr(c, v.callee)
 		n.args = clone_arguments(c, v.args)
 		return n
 
 	case ^Expr_Postfix:
-		n := new_clone(c, Expr_Postfix, &v.base)
+		n := new_clone(c, v)
 		n.op, n.op_span = v.op, v.op_span
 		n.operand = clone_expr(c, v.operand)
 		n.failure = clone_expr(c, v.failure)
@@ -352,47 +277,47 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		unreachable()
 
 	case ^Expr_Unary:
-		n := new_clone(c, Expr_Unary, &v.base)
+		n := new_clone(c, v)
 		n.op, n.op_span = v.op, v.op_span
 		n.mutable = v.mutable
 		n.operand = clone_expr(c, v.operand)
 		return n
 
 	case ^Expr_Binary:
-		n := new_clone(c, Expr_Binary, &v.base)
+		n := new_clone(c, v)
 		n.op, n.op_span = v.op, v.op_span
 		n.lhs = clone_expr(c, v.lhs)
 		n.rhs = clone_expr(c, v.rhs)
 		return n
 
 	case ^Expr_Range:
-		n := new_clone(c, Expr_Range, &v.base)
+		n := new_clone(c, v)
 		n.op, n.op_span = v.op, v.op_span
 		n.lo = clone_expr(c, v.lo)
 		n.hi = clone_expr(c, v.hi)
 		return n
 
 	case ^Expr_Or_Else:
-		n := new_clone(c, Expr_Or_Else, &v.base)
+		n := new_clone(c, v)
 		n.value = clone_expr(c, v.value)
 		n.fallback = clone_expr(c, v.fallback)
 		n.exit = clone_stmt(c, v.exit)
 		return n
 
 	case ^Expr_Cond:
-		n := new_clone(c, Expr_Cond, &v.base)
+		n := new_clone(c, v)
 		n.then = clone_expr(c, v.then)
 		n.cond = clone_expr(c, v.cond)
 		n.otherwise = clone_expr(c, v.otherwise)
 		return n
 
 	case ^Expr_Move:
-		n := new_clone(c, Expr_Move, &v.base)
+		n := new_clone(c, v)
 		n.value = clone_expr(c, v.value)
 		return n
 
 	case ^Expr_Composite:
-		n := new_clone(c, Expr_Composite, &v.base)
+		n := new_clone(c, v)
 		if v.capture != nil {
 			// Its type and elements are what checking lowered it to.
 			n.capture = clone_capture(c, v.capture)
@@ -403,77 +328,76 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		return n
 
 	case ^Expr_Proc:
-		if c.capture_rewrite != nil {
-			return clone_nested_procedure(c, v)
-		}
-		n := new_clone(c, Expr_Proc, &v.base)
-		if v.signature != nil {
-			n.signature = clone_expr(c, v.signature).(^Type_Proc)
-		}
+		// A nested literal's body is its own: it captures nothing from this one
+		// unless its clause names it, and that clause is rewritten by the caller.
+		saved := c.capture_rewrite
+		c.capture_rewrite = nil
+		defer c.capture_rewrite = saved
+		n := new_clone(c, v)
+		n.signature = clone_expr(c, v.signature).(^Type_Proc)
 		n.where_clauses = clone_exprs(c, v.where_clauses)
 		n.body = clone_block(c, v.body)
 		n.bodiless = v.bodiless
 		return n
 
 	case ^Expr_Proc_Group:
-		n := new_clone(c, Expr_Proc_Group, &v.base)
+		n := new_clone(c, v)
 		n.names = v.names
 		return n
 
 	case ^Expr_Operator:
-		n := new_clone(c, Expr_Operator, &v.base)
+		n := new_clone(c, v)
 		n.symbol, n.symbol_span, n.hook = v.symbol, v.symbol_span, v.hook
 		n.value = clone_expr(c, v.value)
 		return n
 
 	case ^Type_Pointer:
-		n := new_clone(c, Type_Pointer, &v.base)
+		n := new_clone(c, v)
 		n.mutable = v.mutable
 		n.elem = clone_expr(c, v.elem)
 		return n
 
 	case ^Type_C_Pointer:
-		n := new_clone(c, Type_C_Pointer, &v.base)
+		n := new_clone(c, v)
 		n.elem = clone_expr(c, v.elem)
 		return n
 
 	case ^Type_Slice:
-		n := new_clone(c, Type_Slice, &v.base)
+		n := new_clone(c, v)
 		n.mutable = v.mutable
 		n.elem = clone_expr(c, v.elem)
 		return n
 
 	case ^Type_Dynamic_Array:
-		n := new_clone(c, Type_Dynamic_Array, &v.base)
+		n := new_clone(c, v)
 		n.elem = clone_expr(c, v.elem)
 		return n
 
 	case ^Type_Array:
-		n := new_clone(c, Type_Array, &v.base)
+		n := new_clone(c, v)
 		n.length = clone_expr(c, v.length)
-		n.inferred = v.inferred
 		n.elem = clone_expr(c, v.elem)
 		return n
 
 	case ^Type_Map:
-		n := new_clone(c, Type_Map, &v.base)
+		n := new_clone(c, v)
 		n.key = clone_expr(c, v.key)
 		n.value = clone_expr(c, v.value)
 		return n
 
 	case ^Type_Distinct:
-		n := new_clone(c, Type_Distinct, &v.base)
+		n := new_clone(c, v)
 		n.elem = clone_expr(c, v.elem)
 		return n
 
 	case ^Type_Dyn:
-		n := new_clone(c, Type_Dyn, &v.base)
+		n := new_clone(c, v)
 		n.mutable = v.mutable
 		n.interface_expr = clone_expr(c, v.interface_expr)
 		return n
 
 	case ^Type_Type:
-		return new_clone(c, Type_Type, &v.base)
+		return new_clone(c, v)
 
 	case ^Type_Poly:
 		if c.poly_substitution != nil {
@@ -484,46 +408,47 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 				return clone_expr(c, written)
 			}
 		}
-		n := new_clone(c, Type_Poly, &v.base)
+		n := new_clone(c, v)
 		n.name = v.name
 		return n
 
 	case ^Type_Proc:
-		n := new_clone(c, Type_Proc, &v.base)
+		n := new_clone(c, v)
 		n.convention = v.convention
 		n.params = clone_params(c, v.params)
 		n.result = clone_result(c, v.result)
 		return n
 
 	case ^Type_Record:
-		n := new_clone(c, Type_Record, &v.base)
+		n := new_clone(c, v)
 		n.kind = v.kind
 		n.move_only = v.move_only
 		n.generic_params = clone_generic_params(c, v.generic_params)
 		n.attributes = clone_attributes(c, v.attributes)
 		n.where_clauses = clone_exprs(c, v.where_clauses)
+		n.body_lo = v.body_lo
 		n.fields = clone_fields(c, v.fields)
 		n.variants = clone_variants(c, v.variants)
 		return n
 
 	case ^Type_Anon_Record:
-		n := new_clone(c, Type_Anon_Record, &v.base)
+		n := new_clone(c, v)
 		n.fields = clone_fields(c, v.fields)
 		return n
 
 	case ^Type_Anon_Union:
-		n := new_clone(c, Type_Anon_Union, &v.base)
+		n := new_clone(c, v)
 		n.variants = clone_variants(c, v.variants)
 		return n
 
 	case ^Type_Enum:
-		n := new_clone(c, Type_Enum, &v.base)
+		n := new_clone(c, v)
 		n.backing = clone_expr(c, v.backing)
 		n.fields = clone_enum_fields(c, v.fields)
 		return n
 
 	case ^Type_Interface:
-		n := new_clone(c, Type_Interface, &v.base)
+		n := new_clone(c, v)
 		n.generic_params = clone_generic_params(c, v.generic_params)
 		n.where_clauses = clone_exprs(c, v.where_clauses)
 		n.requirements = clone_requirements(c, v.requirements)
@@ -538,16 +463,13 @@ clone_block :: proc(c: ^Compiler, b: ^Block) -> ^Block {
 	if b == nil {
 		return nil
 	}
-	n := new(Block, c.semantic_allocator)
-	clone_node_base(c, &n.base, &b.base)
+	n := new_node_clone(c, b)
 	n.stmts = clone_stmts(c, b.stmts)
 	return n
 }
 
+@(private = "file")
 clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
-	if s == nil {
-		return nil
-	}
 	switch v in s {
 	case ^Decl:
 		return clone_decl(c, v)
@@ -556,28 +478,24 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		return clone_item(c, v).(^Item_Impl)
 
 	case ^Stmt_Error:
-		n := new(Stmt_Error, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.partial = clone_stmt(c, v.partial)
 		return n
 
 	case ^Stmt_Expr:
-		n := new(Stmt_Expr, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.exprs = clone_exprs(c, v.exprs)
 		return n
 
 	case ^Stmt_Assign:
-		n := new(Stmt_Assign, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.op, n.op_span = v.op, v.op_span
 		n.lhs = clone_exprs(c, v.lhs)
 		n.rhs = clone_exprs(c, v.rhs)
 		return n
 
 	case ^Stmt_If:
-		n := new(Stmt_If, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.init = clone_stmt(c, v.init)
 		n.cond = clone_expr(c, v.cond)
 		n.then = clone_block(c, v.then)
@@ -585,8 +503,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		return n
 
 	case ^Stmt_For:
-		n := new(Stmt_For, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.init = clone_stmt(c, v.init)
 		n.cond = clone_expr(c, v.cond)
 		n.post = clone_stmt(c, v.post)
@@ -595,25 +512,21 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		return n
 
 	case ^Stmt_Foreach:
-		n := new(Stmt_Foreach, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.bindings = clone_foreach_bindings(c, v.bindings)
 		n.iterable = clone_expr(c, v.iterable)
 		n.body = clone_block(c, v.body)
 		return n
 
 	case ^Stmt_When:
-		n := new(Stmt_When, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.cond = clone_expr(c, v.cond)
 		n.then = clone_block(c, v.then)
 		n.otherwise = clone_stmt(c, v.otherwise)
 		return n
 
 	case ^Stmt_Switch:
-		n := new(Stmt_Switch, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.kind = v.kind
+		n := new_node_clone(c, v)
 		n.init = clone_stmt(c, v.init)
 		n.subject = clone_expr(c, v.subject)
 		written := v.written != nil ? v.written : v.cases
@@ -631,15 +544,13 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		return n
 
 	case ^Stmt_Defer:
-		n := new(Stmt_Defer, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.stmt = clone_stmt(c, v.stmt)
 		n.on_failure = v.on_failure
 		return n
 
 	case ^Stmt_Return:
-		n := new(Stmt_Return, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		if v.value != nil {
 			n.value = new(Return_Value, c.semantic_allocator)
 			n.value^ = Return_Value {
@@ -651,25 +562,27 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		return n
 
 	case ^Stmt_Branch:
-		n := new(Stmt_Branch, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.kind = v.kind
 		return n
 
 	case ^Stmt_Parallel:
-		n := new(Stmt_Parallel, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.keyword = v.keyword
 		n.executor = clone_expr(c, v.executor)
 		n.body = clone_block(c, v.body)
 		return n
 
 	case ^Stmt_Spawn:
-		n := new(Stmt_Spawn, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.keyword = v.keyword
 		if v.result != nil {
+			// Not rewritten: a capture is no place for a task's result, and
+			// `check_spawn` says so of the name as written.
+			saved := c.capture_rewrite
+			c.capture_rewrite = nil
 			n.result = clone_expr(c, v.result).(^Expr_Ident)
+			c.capture_rewrite = saved
 		}
 		n.call = clone_expr(c, v.call)
 		return n
@@ -681,11 +594,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 }
 
 clone_decl :: proc(c: ^Compiler, d: ^Decl) -> ^Decl {
-	if d == nil {
-		return nil
-	}
-	n := new(Decl, c.semantic_allocator)
-	clone_node_base(c, &n.base, &d.base)
+	n := new_node_clone(c, d)
 	n.kind = d.kind
 	n.names = d.names
 	n.duration = d.duration
@@ -696,74 +605,35 @@ clone_decl :: proc(c: ^Compiler, d: ^Decl) -> ^Decl {
 	return n
 }
 
+// Entered only with an impl, whose members are declarations, delegates and error
+// items (grammar.md "Source files").
 clone_item :: proc(c: ^Compiler, item: Item) -> Item {
 	switch v in item {
 	case ^Decl:
 		return clone_decl(c, v)
 
 	case ^Item_Error:
-		n := new(Item_Error, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		return n
-
-	case ^Item_Import:
-		n := new(Item_Import, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.alias, n.path = v.alias, v.path
-		return n
-
-	case ^Item_Foreign_Import:
-		n := new(Item_Foreign_Import, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.name, n.path = v.name, v.path
-		return n
-
-	case ^Item_Foreign_Block:
-		n := new(Item_Foreign_Block, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.library = v.library
-		n.members = clone_items(c, v.members)
-		return n
+		return new_node_clone(c, v)
 
 	case ^Item_Impl:
-		n := new(Item_Impl, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.kind = v.kind
 		n.type = clone_expr(c, v.type)
 		n.members = clone_items(c, v.members)
 		return n
 
 	case ^Item_Delegate:
-		n := new(Item_Delegate, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
+		n := new_node_clone(c, v)
 		n.symbols = v.symbols
 		return n
 
-	case ^Item_When:
-		n := new(Item_When, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.cond = clone_expr(c, v.cond)
-		if v.then != nil {
-			n.then = clone_item(c, v.then).(^Item_Block)
-		}
-		n.otherwise = clone_item(c, v.otherwise)
-		return n
-
-	case ^Item_Block:
-		n := new(Item_Block, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.items = clone_items(c, v.items)
-		return n
-
-	case ^Item_Static_Assert:
-		n := new(Item_Static_Assert, c.semantic_allocator)
-		clone_node_base(c, &n.base, &v.base)
-		n.call = clone_expr(c, v.call)
-		return n
+	case ^Item_Import, ^Item_Foreign_Import, ^Item_Foreign_Block, ^Item_When, ^Item_Block, ^Item_Static_Assert:
+		unreachable()
 	}
 	return nil
 }
 
+@(private = "file")
 clone_items :: proc(c: ^Compiler, list: []Item) -> []Item {
 	out := clone_slice(c, list)
 	for entry, index in list {

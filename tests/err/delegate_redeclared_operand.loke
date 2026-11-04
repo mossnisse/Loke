@@ -1,0 +1,24 @@
+// design.md "Delegating operators": delegating a symbol already declared for the
+// type is a redeclaration, wherever in the overload the type appears. A vector's
+// `==` produces a mask, so a delegated one gives no `!=` to fall back on.
+package main;
+
+Meters :: distinct f64;
+
+impl Meters {
+	delegate(*);
+	by :: operator(*) proc(scale: f64, m: Meters) -> Meters { return m; }
+}
+
+Float4 :: Simd(f32, 4);
+Wide :: distinct Float4;
+
+impl Wide {
+	delegate(==);
+}
+
+main :: proc() {
+	wide := Wide(Float4{1, 2, 3, 4});
+	mask := wide != wide;
+	_ = mask;
+}

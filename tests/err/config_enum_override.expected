@@ -1,0 +1,6 @@
+L0388
+@8:9
+`-define:FITS=99` names no variant of `Colour`
+L0388
+@9:9
+`-define:WIDE=999` is not representable by `Colour`

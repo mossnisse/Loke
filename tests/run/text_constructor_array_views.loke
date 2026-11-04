@@ -1,0 +1,35 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Implicit type conversions": a fixed or dynamic array reads as the
+// read-only slice a validating text constructor takes, as at a `[]T` parameter.
+
+BYTES :: [2]u8{67, 68};
+
+main :: proc() {
+	bytes := [2]u8{65, 66};
+	terminated := [2]u8{70, 0};
+	growing := make([dynamic]u8);
+	growing.append(69);
+	runes := [2]rune{'x', 'y'};
+	growing_runes := make([dynamic]rune);
+	growing_runes.append('z');
+
+	fmt.println(string.from_utf8(bytes) or_else "invalid");
+	fmt.println(string.from_utf8(BYTES) or_else "invalid");
+	fmt.println(string.from_utf8(growing) or_else "invalid");
+	fmt.println(string_view.from_utf8(bytes) or_else "invalid");
+	fmt.println(string_view.from_utf8(BYTES) or_else "invalid");
+	fmt.println(string_view.from_utf8(growing) or_else "invalid");
+	fmt.println(string.from_runes(runes) or_else "invalid");
+	fmt.println(string.from_runes(growing_runes) or_else "invalid");
+
+	fmt.println(cstring_view.from_bytes(terminated) or_else "invalid");
+	fmt.println(cstring_view.from_bytes(bytes) or_else "unterminated");
+
+	fmt.println(string.from_utf8(bytes = BYTES) or_else "invalid");
+	fmt.println(string.from_runes(runes = [1]rune{'n'}) or_else "invalid");
+	fmt.println(string.from_utf8([2]u8{0xff, 0xff}) or_else "invalid");
+	fmt.println(string.from_runes([1]rune{rune(0xD800)}) or_else "invalid");
+}

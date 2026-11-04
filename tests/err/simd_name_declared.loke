@@ -1,0 +1,7 @@
+// A declared `Simd` is not the predeclared constructor.
+package main;
+
+Simd :: 3;
+x: Simd;
+
+main :: proc() {}

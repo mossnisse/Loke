@@ -1,0 +1,20 @@
+L0392
+@11:2
+`nil` has no type to infer `$I` from
+!<invalid>
+L0392
+@12:2
+`nil` has no type to infer `$I` from
+!<invalid>
+L0392
+@13:2
+no parameter named `xs`
+L0392
+@14:2
+`a` is given twice
+L0392
+@15:2
+no parameter named `b`
+L0392
+@16:2
+it takes 1 argument, found 2

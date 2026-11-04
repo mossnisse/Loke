@@ -1,0 +1,18 @@
+L0713
+@10:18
+`new` takes a runtime value, found `type`
+L0713
+@11:22
+`try_new` takes a runtime value, found `type`
+L0713
+@12:15
+`try_box` takes a runtime value, found `type`
+L0503
+@14:18
+`Ticket` is move-only, so this unsafe allocation cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@15:21
+`Ticket` is move-only, so this unsafe allocation cannot copy it; write `move(...)` to transfer ownership instead
+warning[L0507]
+@17:18
+this unsafe allocation clones `numbers`, which may allocate

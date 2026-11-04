@@ -1,0 +1,19 @@
+// A layout past the maximum is reported where it is written, whether or not a
+// probe measured it first, and with no value of the type in the program.
+package main;
+
+import "core:fmt";
+
+Big :: struct { a: [0x7fffffffffffffff]i64 }
+
+Quiet :: struct { a: [0x7fffffffffffffff]i128 }
+
+takes :: proc(a: [0x7fffffffffffffff]i32) {}
+
+gen :: proc(x: $T) -> int where size_of(Big) > 100 { return 1; }
+plain :: proc(x: int) -> int { return 4; }
+pick :: proc{gen, plain};
+
+main :: proc() {
+	fmt.println(pick(1));
+}

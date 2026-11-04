@@ -1,0 +1,21 @@
+// design.md "Destructuring": a destination takes a whole field, so it cannot view
+// that field or splat it.
+package main;
+
+Record :: (name: string, n: int, ids: [dynamic]int, x: f32);
+
+make_record :: proc() -> Record { return {"", 1, [dynamic]int{}, 0.0}; }
+
+main :: proc() {
+	view: string_view;
+	items: []int;
+	lanes: Simd(f32, 4);
+	name: string;
+	n: int;
+	ids: [dynamic]int;
+	x: f32;
+	view, n, ids, x = make_record();
+	name, n, items, x = make_record();
+	name, n, ids, lanes = make_record();
+	_, _, _, _ = view, items, lanes, name;
+}

@@ -1,49 +1,54 @@
 // Session-owned unsaved .loke files, consumed by ordinary source/package loading.
 package lokec
 
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-// Copy the path and text. Empty text is an overlay, not an absent file. Paths
-// have the same case-insensitive, cleaned identity as packages on Windows.
+// One unsaved file, under a case-insensitive key that the map owns.
+Source_Overlay :: struct {
+	path: string, // absolute, cleaned path
+	text: string,
+}
+
+@(private)
+delete_overlay :: proc(key: string, overlay: Source_Overlay) {
+	delete(key)
+	delete(overlay.path)
+	delete(overlay.text)
+}
+
+// Empty text is an overlay, not an absent file. Paths have the same case-insensitive, cleaned identity as packages on Windows.
 set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool {
-	if !s.initialized || path == "" || !strings.equal_fold(filepath.ext(path), ".loke") { return false }
+	if !s.initialized || !strings.equal_fold(filepath.ext(path), ".loke") { return false }
 	context.allocator = s.allocator
-	key := dir_key(canonical_dir(path))
+	canonical := canonical_dir(path)
+	key := dir_key(canonical)
 	// Copy first: either argument may be borrowed from the old snapshot/overlay.
-	overlay := Source_Overlay{path = strings.clone(canonical_dir(path)), text = strings.clone(text)}
-	if previous, found := s.overlays[key]; found {
-		overlay.key = previous.key
-		delete(previous.path)
-		delete(previous.text)
-		s.overlays[key] = overlay
+	overlay := Source_Overlay{path = strings.clone(canonical), text = strings.clone(text)}
+	if stored, found := &s.overlays[key]; found {
+		delete(stored.path)
+		delete(stored.text)
+		stored^ = overlay
 	} else {
-		overlay.key = strings.clone(key)
-		s.overlays[overlay.key] = overlay
+		s.overlays[strings.clone(key)] = overlay
 	}
 	invalidate_session_snapshot(s)
 	return true
 }
 
-// Removing an overlay returns source loading to disk. A missing overlay is a
-// no-op and does not invalidate a checked result.
+// Removing an overlay returns source loading to disk.
 remove_session_overlay :: proc(s: ^Compilation_Session, path: string) -> bool {
 	if !s.initialized { return false }
 	context.allocator = s.allocator
-	key := dir_key(canonical_dir(path))
-	if previous, found := s.overlays[key]; found {
-		delete_key(&s.overlays, key)
-		delete(previous.key)
-		delete(previous.path)
-		delete(previous.text)
-		invalidate_session_snapshot(s)
-		return true
-	}
-	return false
+	key, overlay := delete_key(&s.overlays, dir_key(canonical_dir(path)))
+	if key == "" { return false }
+	delete_overlay(key, overlay)
+	invalidate_session_snapshot(s)
+	return true
 }
 
-// Empty outside a session. A pointer, not a copy of the map, so an overlay edit
-// can never leave the compiler holding a stale map header.
+// Empty outside a session.
 compiler_overlays :: proc(c: ^Compiler) -> map[string]Source_Overlay {
 	return c.source_overlays^ if c.source_overlays != nil else nil
 }
@@ -52,10 +57,10 @@ compiler_overlays :: proc(c: ^Compiler) -> map[string]Source_Overlay {
 // disk, including its parent directories. Package discovery still loads only
 // direct children.
 is_source_directory :: proc(c: ^Compiler, path: string) -> bool {
-	if is_directory(path) { return true }
-	key := strings.concatenate({strings.trim_right(dir_key(canonical_dir(path)), "/"), "/"}, context.temp_allocator)
-	for _, overlay in compiler_overlays(c) {
-		if strings.has_prefix(overlay.key, key) { return true }
+	if os.is_dir(path) { return true }
+	prefix := strings.concatenate({strings.trim_right(dir_key(canonical_dir(path)), "/"), "/"}, context.temp_allocator)
+	for key in compiler_overlays(c) {
+		if strings.has_prefix(key, prefix) { return true }
 	}
 	return false
 }

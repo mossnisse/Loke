@@ -1,0 +1,48 @@
+// design.md "Conditional expression": a runtime choice between unfixed constants
+// is unfixed but not constant, and so is arithmetic over one. The parts take the
+// type context gives, and the operator runs at it.
+package main;
+
+import "core:fmt";
+
+c :: proc() -> bool { return true; }
+narrow :: proc(x: u8) -> u8 { return x; }
+result :: proc() -> u16 { return (1 if c() else 2) + 1; }
+count :: proc() -> int { return 2; }
+
+main :: proc() {
+	byte: u8 = (1 if c() else 2) + 1;
+	wide: f64 = (1 if c() else 2) * 2;
+	half: f32 = ((1 if c() else 2) + 1) + 1.5;
+	negated: i32 = -(1 if c() else 2);
+	inverted: u16 = ~(1 if c() else 2) & 255;
+	defaulted := (1 if c() else 2) + 1.5;
+	nested: u8 = ((1 if c() else 2) + 1) * ((3 if c() else 4) - 1);
+	fmt.println(byte, wide, half, negated, inverted, defaulted, nested);
+	fmt.println(narrow((1 if c() else 2) + 1), result());
+
+	// Comparison and logic, with no destination to give a type.
+	fmt.println((1 if c() else 2) == 1, (1.5 if c() else 2) < 3, !(true if c() else false));
+	both: bool = (true if c() else false) && (false if c() else true);
+	fmt.println(both);
+
+	// Vectors and compound assignment take the parts' type the same way.
+	lanes: Simd(f32, 4) = (1 if c() else 2) + 1;
+	total: i32 = 0;
+	total += (1 if c() else 2) + 1;
+	fmt.println(lanes, total);
+
+	// BUG: concatenation kept `untyped string` and reached clang.
+	joined := ("a" if c() else "b") + "c";
+	written: string = "x" + ("a" if c() else "b");
+	longer := (("a" if c() else "b") + "c") + "d";
+	fmt.println(joined, written, longer, ("a" if c() else "b") == "a", ("a" if c() else "b") < "b");
+
+	// Shifts: the expected type reaches an unfixed left operand of either kind, and
+	// a runtime unfixed count is an ordinary `int`.
+	shifted: u8 = (1 if c() else 2) << 1;
+	by_runtime: u8 = 1 << count();
+	as_rune: rune = 1 << count();
+	base := 1;
+	fmt.println(shifted, by_runtime, i32(as_rune), base << (1 if c() else 2));
+}

@@ -1,0 +1,32 @@
+// design.md "switch statement": a repeated constant is reported whatever its type.
+package main;
+
+P :: struct { a: int }
+
+X :: P{a = 1};
+Y :: P{a = 1};
+
+E :: enum u64 { A = 18446744073709551615, B = 1 }
+
+main :: proc() {
+	p := P{a = 1};
+	switch (p) {
+	case X:
+	case Y:
+	case:
+	}
+	e := E.A;
+	switch (e) {
+	case .A:
+	case .B:
+	case .A:
+	}
+	n := 1;
+	switch (n) {
+	case 1:
+	case 1:
+	case 'a':
+	case 97:
+	case:
+	}
+}

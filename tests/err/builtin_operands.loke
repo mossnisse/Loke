@@ -11,8 +11,8 @@ make_value :: proc() { xs: [dynamic]int = {}; ys := try_make(xs) or_else {}; }
 free_all_unknown :: proc() { free_all(nope); }
 named_argument :: proc() { static_assert(condition = true); }
 
-// design.md "Parameters": no built-in has a parameter to name or an `inout`
-// operand, the location and reflection ones included.
+// design.md "Parameters": only `make`'s allocator has a name to write, and no
+// built-in has an `inout` operand, the location and reflection ones included.
 named_location :: proc() { x := 1; _ = source_location(bogus = inout x); }
 named_type_info :: proc() { id := typeid_of(int); _ = type_info_of(bogus = inout id); }
 inout_reflection :: proc() { x := 1; _ = typeid_of(inout x); }

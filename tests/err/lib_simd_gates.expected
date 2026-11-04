@@ -21,7 +21,7 @@ L0683
 a SIMD lane count is a power of two from 1 through 64, found 3
 L0683
 @31:19
-a SIMD lane count must be a positive constant
+a SIMD lane count is a power of two from 1 through 64, found 0
 L0683
 @32:17
 a SIMD lane count is a power of two from 1 through 64, found 128

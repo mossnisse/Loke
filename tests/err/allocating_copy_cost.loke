@@ -36,3 +36,28 @@ main :: proc() {
 
 	missing: int = "not an int";
 }
+
+// An `or_return` replacement leaves the error in its place, so it reports only
+// what the success copies; a mapper and a bare `or_return` copy the error too.
+Bad :: enum { Bad }
+to_bad :: proc(error: [dynamic]int) -> Bad { return .Bad; }
+
+replaced :: proc(r: Result(int, [dynamic]int)) -> Result(int, Bad) {
+	x := r or_return .Bad;
+	return .ok(x);
+}
+
+replaced_success :: proc(r: Result([dynamic]int, [dynamic]int)) -> Result(int, Bad) {
+	x := r or_return .Bad;
+	return .ok(x.len());
+}
+
+mapped :: proc(r: Result(int, [dynamic]int)) -> Result(int, Bad) {
+	x := r or_return to_bad;
+	return .ok(x);
+}
+
+propagated :: proc(r: Result(int, [dynamic]int)) -> Result(int, [dynamic]int) {
+	x := r or_return;
+	return .ok(x);
+}

@@ -191,3 +191,15 @@ impl Inner {
 }
 
 clear_into :: proc(Scratch: int) ---;
+
+Padded_First :: struct {
+	_, shown: int,
+}
+
+Padded_Last :: struct {
+	shown, _: int,
+}
+
+All_Padding :: struct {
+	// and fields private to the package
+}

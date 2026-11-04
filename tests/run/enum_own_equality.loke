@@ -1,0 +1,26 @@
+// design.md "Comparison operators": an enum's own `==` is the same equality at
+// the top level and as a part. An enum member is a named constant, so a borrowing
+// receiver gets it from storage as any constant's does.
+package main;
+
+import "core:fmt";
+
+E :: enum { A, B }
+impl E {
+	same :: operator(==) proc(a, b: E) -> bool { return true; }
+	hash :: proc(self, seed: uint) -> uint { return 5; }
+	number :: proc(self: ^) -> int { return int(self^); }
+	less :: operator(<) proc(a, b: E) -> bool { return true; }
+}
+
+Plain :: enum { A, B }
+F : Plain : .B;
+
+main :: proc() {
+	x := E.A;
+	y := E.B;
+	fmt.println(x == y, [2]E{.A, .B} == [2]E{.B, .A}, E.B < E.A);
+	fmt.println(Plain.A == Plain.A, Plain.A == Plain.B, Plain.A != Plain.B);
+	fmt.println(E.B.number(), E.A.hash(0));
+	fmt.println(Plain.A.hash(0) == F.hash(0), F.hash(0) == Plain.B.hash(0));
+}

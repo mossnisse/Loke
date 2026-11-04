@@ -1,0 +1,44 @@
+package main; import "core:fmt";
+
+// design.md "Static `foreach` expansion": compile-time arrays and slices qualify,
+// written or named, with `indexed()` and `reversed()`. design.md "Destructuring":
+// a padding field fills no binding, and a binding reads the field it names.
+
+ARR :: [3]int{1, 2, 3};
+VIEW :: ARR[:];
+SLICE :: []int{4, 5};
+EMPTY :: []int{};
+
+Padded :: struct { a: int, _: [4]u8, b: int }
+PADDED :: [1]Padded{{a = 6, b = 7}};
+Nested :: struct { c: int, _: u8, inner: Padded }
+
+Held :: struct { id: int }
+impl Held {
+	release :: hook(drop) proc(self: inout Held) { }
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Held, Allocator_Error) {
+		return .ok(Held{id = self.id});
+	}
+}
+HELD :: [1]Held{{id = 8}};
+
+main :: proc() {
+	foreach ($a in VIEW) { fmt.println("view", a); }
+	foreach ($a in SLICE) { fmt.println("slice", a); }
+	foreach ($a in []int{9, 10}) { fmt.println("literal", a); }
+	foreach ($a in VIEW[1:]) { fmt.println("subrange", a); }
+	foreach ($a in SLICE.reversed()) { fmt.println("reversed", a); }
+	foreach ($a, $i in SLICE.indexed()) { fmt.println("indexed", a, i); }
+	foreach ($a in EMPTY) { fmt.println("empty", a); }
+
+	// A constant's elements stay as they were after an adapter over it.
+	foreach ($a in ARR.reversed()) { fmt.println("reversed array", a); }
+	foreach ($a in ARR) { fmt.println("array", a); }
+
+	foreach ($a, $b in PADDED) { fmt.println("padded", a, b); }
+	foreach (($a, $b), $i in PADDED.indexed()) { fmt.println("padded indexed", a, b, i); }
+	foreach ($c, ($a, $b) in [1]Nested{{c = 1, inner = {a = 2, b = 3}}}) { fmt.println("nested", c, a, b); }
+	foreach ($_, $b in PADDED) { fmt.println("discarded", b); }
+
+	foreach ($held in HELD) { fmt.println("hooked", held.id); }
+}

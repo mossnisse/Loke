@@ -1,0 +1,40 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Operator lookup and overload resolution": built-in operations cannot
+// be shadowed, so an extension `operator([]=)` is not called for a store that
+// built-in indexing answers, in any assignment form. A second index is not built
+// in, so the extension supplies that.
+
+impl [3]int {
+	set :: operator([]=) proc(self: inout [3]int, i: int, value: int) {
+		fmt.println("setter called");
+	}
+	set_two :: operator([]=) proc(self: inout [3]int, i, j: int, value: int) {
+		self[i + j] = value;
+	}
+}
+
+impl [dynamic]int {
+	set :: operator([]=) proc(self: inout [dynamic]int, i: int, value: int) {
+		fmt.println("setter called");
+	}
+}
+
+main :: proc() {
+	a := [3]int{0, 0, 0};
+	a[0] = 1;
+	a[1] += 2;
+	x := 0;
+	a[2], x = 3, 4;
+	fmt.println(a[0], a[1], a[2], x);
+
+	d: [dynamic]int = {};
+	d.resize(1);
+	d[0] = 9;
+	fmt.println(d[0]);
+
+	a[0, 1] = 7;
+	fmt.println(a[1]);
+}

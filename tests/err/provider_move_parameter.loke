@@ -1,0 +1,56 @@
+// design.md "Allocator regions and region provenance": a provider received
+// through a `move` parameter is this body's, so it is a region created here.
+package main;
+import "core:fmt";
+import "core:mem";
+
+result_outlives :: proc(a: move mem.Arena, n: int) -> Box(int) {
+	return box(n, a.allocator());
+}
+
+dropped_first :: proc(a: move mem.Arena) {
+	b := box(1, a.allocator());
+	drop(a);
+	fmt.println(b^);
+}
+
+moved_on :: proc(a: move mem.Arena) {
+	b := box(1, a.allocator());
+	sink(move(a));
+	fmt.println(b^);
+}
+
+sink :: proc(a: move mem.Arena) {}
+
+assigned_over :: proc(a: move mem.Arena) {
+	b := box(1, a.allocator());
+	a = mem.Arena.init();
+	fmt.println(b^);
+}
+
+stored_for_the_caller :: proc(a: move mem.Arena, out: inout Box(int)) {
+	out = box(1, a.allocator());
+}
+
+Holder :: struct { arena: mem.Arena }
+
+inside_a_record :: proc(h: move Holder) -> Box(int) {
+	return box(1, h.arena.allocator());
+}
+
+// The region of what a moved-in provider was built from is still the argument's.
+passed_on :: proc(a: move mem.Arena) -> mem.Arena { return a; }
+
+parent_outlives_passed_on :: proc() {
+	parent := mem.Arena.init();
+	child := passed_on(mem.Arena.init(parent.allocator()));
+	drop(parent);
+	drop(child);
+}
+
+// An ordinary parameter's provider stays the caller's.
+borrowed_is_the_callers :: proc(a: ^mem.Arena) -> Box(int) {
+	return box(1, a.allocator());
+}
+
+main :: proc() {}

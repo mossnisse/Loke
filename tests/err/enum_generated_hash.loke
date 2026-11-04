@@ -1,0 +1,25 @@
+// design.md "Maps": a generated `hash` is the partner of the generated `==`, for
+// an enum as for a record, and never stands beside either half of its own.
+package main;
+
+import "base:interfaces";
+
+Equal :: enum { A, B }
+impl Equal {
+	same :: operator(==) proc(a, b: Equal) -> bool { return true; }
+}
+
+Odd :: enum { A, B }
+impl Odd {
+	hash :: proc(self) -> string { return "x"; }
+}
+
+static_assert(!interfaces.Hashable(Equal));
+static_assert(!interfaces.Hashable([2]Equal));
+
+keyed :: proc(m: map[Equal]int) {}
+
+main :: proc() {
+	_ = Equal.A.hash(0);
+	_ = Odd.A.hash(0);
+}

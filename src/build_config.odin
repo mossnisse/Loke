@@ -1,15 +1,16 @@
-// design.md "Build configuration": the predeclared `LOKE_*` constants and their
+// design.md "Build constants": the predeclared `LOKE_*` constants and their
 // synthesized enum types.
 package lokec
 
 import "core:reflect"
+import "core:strings"
 
 Opt_Mode :: enum {
-	None,       // -O0
-	Minimal,    // -O1
-	Size,       // -Os
-	Speed,      // -O2
-	Aggressive, // -O3
+	None,
+	Minimal,
+	Size,
+	Speed,
+	Aggressive,
 }
 
 Build_Mode :: enum {
@@ -22,7 +23,7 @@ Build_Mode :: enum {
 
 // compiler-guide.md "CPU levels": the instruction set a build may use. Each
 // level adds to the one before it.
-Cpu_Level :: enum {
+Cpu_Level :: enum u8 {
 	X86_64,
 	X86_64_V2,
 	X86_64_V3,
@@ -38,95 +39,132 @@ cpu_level_name :: proc(cpu: Cpu_Level) -> string {
 	return "x86-64"
 }
 
-// `-Ofast` is deliberately absent: it changes floating-point semantics.
-opt_clang_flag :: proc(mode: Opt_Mode) -> string {
-	switch mode {
-	case .None:       return "-O0"
-	case .Minimal:    return "-O1"
-	case .Size:       return "-Os"
-	case .Speed:      return "-O2"
-	case .Aggressive: return "-O3"
+parse_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
+	for cpu in Cpu_Level {
+		if text == cpu_level_name(cpu) {
+			return cpu, true
+		}
 	}
-	return "-O0"
+	return .X86_64, false
+}
+
+// compiler-guide.md "CPU levels": whether the level has a fused multiply-add
+// instruction.
+cpu_has_fma :: proc(cpu: Cpu_Level) -> bool {
+	return cpu == .X86_64_V3
+}
+
+// The one target, at the CPU level the driver selected. Checker and emitter
+// read the same widths, so `int` cannot mean 64 bits in one and 32 in the other.
+Target_Info :: struct {
+	triple:       string,
+	pointer_bits: u16,
+	int_bits:     u16,
+	// The widest alignment a scalar takes. On x86-64 a 128-bit integer is
+	// 16-aligned and nothing is wider, which is what LLVM's own data layout for
+	// this triple says.
+	max_align:    u16,
+	// compiler-guide.md "CPU levels": the level the code generator may use. A
+	// level changes no result: arithmetic is never contracted at any of them
+	// (design.md "Floating-point operators").
+	cpu:          Cpu_Level,
+}
+
+windows_x64_target :: proc(cpu: Cpu_Level) -> Target_Info {
+	return Target_Info {
+		triple       = "x86_64-pc-windows-msvc",
+		pointer_bits = 64,
+		int_bits     = 64,
+		max_align    = 16,
+		cpu          = cpu,
+	}
+}
+
+// `-Ofast` is deliberately absent: it changes floating-point semantics.
+OPT_CLANG_FLAGS := [Opt_Mode]string {
+	.None       = "-O0",
+	.Minimal    = "-O1",
+	.Size       = "-Os",
+	.Speed      = "-O2",
+	.Aggressive = "-O3",
 }
 
 LOKE_VERSION_STRING :: "0.9.0"
 
-// One cached enum type per constant; `.None` stays `INVALID_TYPE`.
-Build_Config :: struct {
-	types: [Build_Config_Enum]Type_Id,
+// standard-library.md "Compiled log level". The member names are `core:log`'s own, and
+// `Off` is last so `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled
+// out entirely.
+Log_Level :: enum u8 {
+	Debug,
+	Info,
+	Warning,
+	Error,
+	Off,
 }
 
-synth_enum :: proc(c: ^Compiler, name: string, members: []string) -> Type_Id {
-	type := new_type(c, Type_Info {
-		kind    = .Enum,
-		name    = intern_identifier(c, name),
-		element = TYPE_INT,
-		bits    = u16(type_bits(c, TYPE_INT)),
-		signed  = true,
-	})
-	fields := make([]Symbol_Id, len(members), c.semantic_allocator)
-	for member, index in members {
-		fields[index] = new_symbol(c, Symbol {
-			name        = intern_identifier(c, member),
-			span        = no_span(),
-			kind        = .Enum_Member,
-			type        = type,
-			index       = u32(index),
-			const_value = Const_Value{kind = .Integer, integer = bi_from_i64(c, i64(index))},
-		})
-	}
-	type_of(c, type).fields = fields
-	return type
-}
-
-// The type stays INVALID until first use (see `build_config_enum_type`).
 @(private = "file")
-enum_const :: proc(c: ^Compiler, which: Build_Config_Enum, index: int) -> Symbol {
+enum_const :: proc(c: ^Compiler, type: Type_Id, index: int) -> Symbol {
 	return Symbol {
-		kind              = .Const,
-		type              = INVALID_TYPE,
-		build_config_enum = which,
-		const_value       = Const_Value{kind = .Integer, integer = bi_from_i64(c, i64(index))},
+		kind        = .Const,
+		type        = type,
+		const_value = Const_Value{kind = .Integer, integer = bi_from_i64(c, i64(index))},
 	}
-}
-
-// Created together on first use, so a program that never reads build config
-// keeps its type numbering. Creation order fixes that numbering: append only.
-// The driver-backed enums take their member names from the driver's own enums,
-// so the two lists cannot drift apart.
-build_config_enum_type :: proc(c: ^Compiler, which: Build_Config_Enum) -> Type_Id {
-	bc := &c.build_config
-	if bc.types[.Arch] == INVALID_TYPE {
-		bc.types[.Arch] = synth_enum(c, "Arch", {"Amd64", "Arm64"})
-		bc.types[.Os] = synth_enum(c, "Os", {"Windows", "Linux", "Darwin"})
-		bc.types[.Endian] = synth_enum(c, "Endian", {"Little", "Big"})
-		bc.types[.Build_Mode] = synth_enum(c, "Build_Mode", reflect.enum_field_names(Build_Mode))
-		bc.types[.Optimization_Mode] = synth_enum(c, "Optimization_Mode", reflect.enum_field_names(Opt_Mode))
-		bc.types[.Vendor] = synth_enum(c, "Vendor", {"Loke"})
-		bc.types[.Log_Level] = synth_enum(c, "Log_Level", reflect.enum_field_names(Log_Level))
-	}
-	return bc.types[which]
 }
 
 // Windows x64 is the only target, so architecture, OS, endianness, and vendor
-// are fixed at their first member.
-predeclare_build_config :: proc(c: ^Compiler, universe: ^Scope) {
-	define_universe(c, universe, "LOKE_ARCH", enum_const(c, .Arch, 0))
-	define_universe(c, universe, "LOKE_OS", enum_const(c, .Os, 0))
-	define_universe(c, universe, "LOKE_ENDIAN", enum_const(c, .Endian, 0))
-	define_universe(c, universe, "LOKE_BUILD_MODE", enum_const(c, .Build_Mode, int(c.build_mode)))
-	define_universe(c, universe, "LOKE_OPTIMIZATION_MODE", enum_const(c, .Optimization_Mode, int(c.opt_mode)))
-	define_universe(c, universe, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
-	define_universe(c, universe, "LOKE_VENDOR", enum_const(c, .Vendor, 0))
-	define_universe(c, universe, "LOKE_DEBUG", Symbol {
+// are fixed at their first member. The driver-backed enums take their member
+// names from the driver's own enums, so the two lists cannot drift apart.
+predeclare_build_config :: proc(c: ^Compiler) {
+	define_universe(c, "LOKE_ARCH", enum_const(c, synth_enum(c, "Arch", {"Amd64", "Arm64"}), 0))
+	define_universe(c, "LOKE_OS", enum_const(c, synth_enum(c, "Os", {"Windows", "Linux", "Darwin"}), 0))
+	define_universe(c, "LOKE_ENDIAN", enum_const(c, synth_enum(c, "Endian", {"Little", "Big"}), 0))
+	define_universe(c, "LOKE_BUILD_MODE", enum_const(c, synth_enum(c, "Build_Mode", reflect.enum_field_names(Build_Mode)), int(c.build_mode)))
+	define_universe(c, "LOKE_OPTIMIZATION_MODE", enum_const(c, synth_enum(c, "Optimization_Mode", reflect.enum_field_names(Opt_Mode)), int(c.opt_mode)))
+	c.log_level_type = synth_enum(c, "log.Level", reflect.enum_field_names(Log_Level))
+	define_universe(c, "LOKE_LOG_LEVEL", enum_const(c, c.log_level_type, int(c.log_level)))
+	define_universe(c, "LOKE_VENDOR", enum_const(c, synth_enum(c, "Vendor", {"Loke"}), 0))
+	define_universe(c, "LOKE_DEBUG", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
 		const_value = bool_const(c.debug),
 	})
-	define_universe(c, universe, "LOKE_VERSION", Symbol {
+	define_universe(c, "LOKE_VERSION", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_STRING,
 		const_value = Const_Value{kind = .String, text = LOKE_VERSION_STRING},
 	})
+}
+
+@(private)
+seed_defines :: proc(c: ^Compiler, defines: []string) {
+	c.defines = make(map[string]Const_Value, len(defines), c.semantic_allocator)
+	for entry in defines {
+		split := strings.index_byte(entry, '=')
+		if split <= 0 {
+			errorf(c, NO_SPAN, "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
+			continue
+		}
+		name := entry[:split]
+		text := entry[split + 1:]
+		if !identifier_spelling(name) {
+			errorf(c, NO_SPAN, "L0388", "`%s` is not a valid configuration name", name)
+			continue
+		}
+		if _, duplicate := c.defines[name]; duplicate {
+			errorf(c, NO_SPAN, "L0388", "`%s` is defined more than once", name)
+			continue
+		}
+		switch text {
+		case "true":
+			c.defines[name] = bool_const(true)
+		case "false":
+			c.defines[name] = bool_const(false)
+		case:
+			if value, ok := bi_parse_int_literal(c, text); ok {
+				c.defines[name] = integer_const(value)
+			} else {
+				c.defines[name] = Const_Value{kind = .String, text = text}
+			}
+		}
+	}
 }

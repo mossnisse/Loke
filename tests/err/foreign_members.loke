@@ -1,0 +1,52 @@
+package main;
+
+// grammar.md "Source files": a foreign member is a `---` procedure or a variable
+// with no initializer, and the block's attributes and each member's are checked
+// once, where they are written.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+G :: struct($T: type) { v: T }
+helper :: proc() { }
+
+foreign libc {
+	// `---` is an initializer too, and takes the rest of the list with it.
+	marked: i32 = ---;
+	pair_a, pair_b: i32 = ---, 1;
+
+	// A type that does not resolve says so, rather than reaching the backend.
+	unknown: Nope;
+	unargued: G;
+
+	// A member that is neither form is named as such.
+	CONSTANT :: 1;
+	Record :: struct { a: i32 }
+	alias :: helper;
+	group :: proc{ helper };
+
+	// A C variadic parameter is one parameter.
+	two_named :: proc "c" (@(c_vararg) a, b: ..) ---;
+
+	// A symbol has a name.
+	@(link_name="") nameless_one :: proc "c" () ---;
+	@(link_name="") nameless_two :: proc "c" (a: i32) ---;
+}
+
+@(export, link_name="") exported_nameless :: proc "c" () { }
+
+// A bad default is one mistake, at the attribute, whatever inherits it.
+@(default_calling_convention="bogus")
+foreign libc {
+	only_a_global: i32;
+	first :: proc() ---;
+	second :: proc() ---;
+	third :: proc() ---;
+	own :: proc "stdcall" () ---;
+}
+
+@(default_calling_convention="")
+foreign libc {
+	blank :: proc() ---;
+}
+
+main :: proc() { }

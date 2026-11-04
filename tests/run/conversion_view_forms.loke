@@ -1,0 +1,57 @@
+package main;
+import "core:fmt";
+
+// design.md "Implicit type conversions": `T(v)` of a view or a splat is the
+// implicit conversion written out. These used to emit the source's representation
+// as the target's: LLVM rejected most, and a box's `^T` read freed memory.
+
+made :: proc() -> string { return "made" + " here"; }
+
+NUMBERS :: [3]int{7, 8, 9};
+TEXT: string : "constant";
+FOLDED :: string_view(TEXT);
+
+folded_length :: proc() -> int {
+	owned := "four";
+	viewed := string_view(owned);
+	list := [dynamic]int{1, 2, 3};
+	numbers := ([]int)(list);
+	return viewed.len() + numbers.len();
+}
+LENGTH :: folded_length();
+static_assert(LENGTH == 7);
+
+main :: proc() {
+	text := "hello";
+	view := string_view(text);
+	fmt.println(view, view.len());
+
+	list := [dynamic]int{1, 2, 3};
+	from_list := ([]int)(list);
+	fmt.println(from_list.len(), from_list[1]);
+
+	array := [3]int{4, 5, 6};
+	from_array := ([]int)(array);
+	fmt.println(from_array.len(), from_array[2]);
+
+	from_constant := ([]int)(NUMBERS);
+	fmt.println(from_constant.len(), from_constant[2]);
+	fmt.println(FOLDED);
+
+	owner := box(7);
+	pointer := (^int)(owner);
+	fmt.println(pointer^);
+
+	// A temporary a local borrows along the path lives with the local.
+	borrowed := string_view(made());
+	fmt.println(borrowed);
+	temporary := ([]int)([dynamic]int{5, 6});
+	fmt.println(temporary[1]);
+
+	lane: f32 = 2;
+	vector := Simd(f32, 4)(lane);
+	fmt.println(vector[0], vector[3]);
+	FIXED: f32 : 3;
+	constant_vector := Simd(f32, 4)(FIXED);
+	fmt.println(constant_vector[0], constant_vector[3]);
+}

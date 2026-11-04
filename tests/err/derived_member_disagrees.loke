@@ -1,0 +1,68 @@
+package main;
+
+// design.md "Iteration protocol": a declared `Iterator`, `Mut_Iterator`, or `Item`
+// that disagrees with the signature it follows from is an error, whether or not
+// anything looks it up. `Item` is known only from a receiver's `next`.
+
+Walker :: struct { at: int }
+
+Unused_Iterator :: struct { n: int }
+
+impl Unused_Iterator {
+	Iterator :: string;
+	iter :: proc(self) -> Walker { return {0}; }
+}
+
+Unused_Mut :: struct { n: int }
+
+impl Unused_Mut {
+	Mut_Iterator :: 7;
+	iter_mut :: proc(self: inout Unused_Mut) -> Walker { return {0}; }
+}
+
+Early :: struct { at: int }
+
+impl Early {
+	Foo :: int;
+	Item :: string;
+	next :: proc(self: inout Early) -> Option(Early.Foo) { return .none; }
+}
+
+Item_Not_A_Type :: struct { at: int }
+
+impl Item_Not_A_Type {
+	Item :: 5;
+	next :: proc(self: inout Item_Not_A_Type) -> Option(int) { return .none; }
+}
+
+Base :: struct { n: int }
+
+Coll :: distinct Base;
+
+impl Coll {
+	Element :: int;
+	Iterator :: string;
+	iter :: proc(self) -> Walker { return {0}; }
+}
+
+Page :: struct { n: int }
+
+impl Page {
+	next :: proc(a, b: int) -> Option(string) { return .none; }
+}
+
+from_a_static_next :: proc() -> Page.Item { return "x"; }
+
+// A `distinct` name inherits no `iter`.
+Plain :: struct { n: int }
+
+impl Plain {
+	Element :: int;
+	iter :: proc(self) -> Walker { return {0}; }
+}
+
+Renamed :: distinct Plain;
+
+from_its_base :: proc() -> Renamed.Iterator { return {0}; }
+
+main :: proc() {}

@@ -1,0 +1,15 @@
+// design.md "Minimum provenance precision": past the element budget, two elements
+// of an array of views look like one place, so L0641 says the reborrow may cover
+// the place used, and names the limit.
+package main;
+
+import "core:fmt";
+
+main :: proc() {
+	storage: [4]int = {};
+	a: [9][]mut int = {};
+	a[8] = &mut storage[:];
+	r := &mut a[8][:];
+	fmt.println(a[0][0]);
+	fmt.println(r[0]);
+}
