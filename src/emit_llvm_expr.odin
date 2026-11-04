@@ -2459,13 +2459,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 emit_alloc_check :: proc(e: ^Emitter, status, provider: string) {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
-	fail, done := new_label(e, "text.failed"), new_label(e, "ok")
-	branch_if(e, failed, fail, done)
-	place_label(e, fail)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-	place_label(e, done)
+	alloc_failed_if(e, failed, provider, "text.failed")
 }
 
 // A runtime call that fills a `string` out-parameter and answers 1 on success.

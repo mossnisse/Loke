@@ -636,10 +636,7 @@ emit_store_entry :: proc(
 // The header's provider applies its own failure policy; it does not return.
 @(private = "file")
 emit_alloc_failure :: proc(e: ^Emitter, header: string) {
-	provider := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
+	emit_alloc_failed(e, load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC)))
 }
 
 // A zero `status` from an operation that has no result to report through.
@@ -720,13 +717,7 @@ emit_provider_policy :: proc(e: ^Emitter, control: string) {
 emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, control)
-	fail, done := new_label(e, "arena.failed"), new_label(e, "ok")
-	branch_if(e, failed, fail, done)
-	place_label(e, fail)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-	place_label(e, done)
+	alloc_failed_if(e, failed, allocator, "arena.failed")
 }
 
 // ------------------------------------------------------ container bodies --

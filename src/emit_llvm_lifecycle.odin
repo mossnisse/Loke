@@ -78,9 +78,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		fail_label, done_label := new_label(e, "cclone.fail"), new_label(e, "cclone.done")
 		branch_if(e, ok, done_label, fail_label)
 		place_label(e, fail_label)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
+		emit_alloc_failed(e, provider)
 		place_label(e, done_label)
 		return load(e, shape, destination)
 	}
@@ -519,9 +517,7 @@ emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: 
 	branch_if(e, failed, fail, ok)
 	place_label(e, fail)
 	emit_restore_refusal(e, allocator, error)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
+	emit_alloc_failed(e, allocator)
 	place_label(e, ok)
 	return cloned
 }

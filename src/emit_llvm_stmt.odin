@@ -184,13 +184,7 @@ spawn_field_address :: proc(e: ^Emitter, record: Type_Id, address: string, field
 emit_spawn_frame :: proc(e: ^Emitter, task: ^Spawn_Task) -> string {
 	allocator := emit_default_allocator(e)
 	frame, failed := emit_rt_alloc(e, allocator, type_size(e.c, task.frame), type_align(e.c, task.frame))
-	fail_label, ok_label := new_label(e, "spawn.no_frame"), new_label(e, "spawn.frame")
-	branch_if(e, failed, fail_label, ok_label)
-	place_label(e, fail_label)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-	place_label(e, ok_label)
+	alloc_failed_if(e, failed, allocator, "spawn.no_frame")
 	return frame
 }
 

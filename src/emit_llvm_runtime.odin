@@ -371,6 +371,15 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 	e.terminated = true
 }
 
+// design.md "Allocation failure": the provider applies its own policy, which does
+// not return.
+@(private)
+emit_alloc_failed :: proc(e: ^Emitter, provider: string) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+}
+
 // A synthesized body copying a move-only value is dead (L0491), so it aborts
 // instead of failing the build. Anywhere else it is a compiler bug.
 @(private)
@@ -391,6 +400,16 @@ panic_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
 	branch_if_unlikely(e, cond, fail, ok)
 	place_label(e, fail)
 	emit_panic(e, message)
+	place_label(e, ok)
+}
+
+@(private)
+alloc_failed_if :: proc(e: ^Emitter, cond: string, provider: string, prefix: string) {
+	fail := new_label(e, prefix)
+	ok := new_label(e, "ok")
+	branch_if(e, cond, fail, ok)
+	place_label(e, fail)
+	emit_alloc_failed(e, provider)
 	place_label(e, ok)
 }
 

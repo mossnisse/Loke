@@ -294,13 +294,7 @@ emit_alloc_outcome :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, failed,
 	if v.operation.(Call_Allocation).fallible {
 		return emit_alloc_result(e, as_type, failed, value)
 	}
-	fail, ok := new_label(e, "alloc.failed"), new_label(e, "alloc.ok")
-	branch_if(e, failed, fail, ok)
-	place_label(e, fail)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-	place_label(e, ok)
+	alloc_failed_if(e, failed, allocator, "alloc.failed")
 	return value
 }
 
@@ -390,9 +384,7 @@ emit_diverging_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		error := emit_expr(e, v.bound[0])
 		allocator := emit_expr(e, v.bound[1])
 		emit_restore_refusal(e, allocator, error)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
+		emit_alloc_failed(e, allocator)
 	} else {
 		emit_direct_call(e, v)
 		fmt.sbprintln(&e.b, "  unreachable")
