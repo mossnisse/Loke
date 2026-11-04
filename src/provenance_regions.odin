@@ -70,7 +70,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 	case Prov_Form_Selector:
 		if form.field && form.operand != 0 &&
 		   underlying_kind(graph.k.c, prov_value(graph, form.operand).type) == .Struct {
-			return prov_result_region_at(graph, form.operand, prov_concat_path(graph, {form.step}, path), query)
+			return prov_result_region_at(graph, form.operand, prov_concat_path(graph, prov_extend(graph, nil, form.step), path), query)
 		}
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
@@ -148,7 +148,7 @@ prov_error_region_at :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, path: [
 		if !possible { return Region_Set{} }
 		path = mapped
 	}
-	path = prov_concat_path(graph, {proj_field(shape.failure)}, path)
+	path = prov_concat_path(graph, prov_extend(graph, nil, proj_field(shape.failure)), path)
 	operand := error.operand
 	if error.borrows && type_is_managed(graph.k.c, from) {
 		return prov_copied_region_at(graph, Prov_Region_Copy{value = operand, allocator = Region_Set{default = true}}, shape.union_type, path, query)
@@ -1439,7 +1439,7 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook
 	if len(path) > 0 || query != .All {
 		projected_path := path
 		if shape, ok := fallible_of(graph.k.c, summary.content_type); ok {
-			projected_path = prov_concat_path(graph, {proj_field(shape.success)}, path)
+			projected_path = prov_concat_path(graph, prov_extend(graph, nil, proj_field(shape.success)), path)
 		}
 		projected: Region_Set
 		if prov_merge_matching_content(&projected, summary.region_content, projected_path, query) { set = projected }
