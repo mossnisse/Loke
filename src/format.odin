@@ -256,7 +256,6 @@ formatter_signature_ok :: proc(c: ^Compiler, sym: ^Symbol, subject, writer, opti
 //   write_bytes(w: Writer, text: string_view)
 check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
-	v.type = INVALID_TYPE
 	writer, has_writer := package_type_named(k, package_of(k.c, k.pkg), "Writer")
 	if !has_writer {
 		errorf(k.c, v.span, "L0601", "`%s` needs `core:fmt`'s own `Writer`", ident.name)

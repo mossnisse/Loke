@@ -53,7 +53,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	callee_type := check_expr(k, v.callee, callee_expected, .Callee)
 	callee_base := expr_base(v.callee)
 	if callee_base == nil {
-		v.type = INVALID_TYPE
 		return
 	}
 	if callee_base.resolution.kind == .Method {
@@ -65,7 +64,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 	if callee_type == INVALID_TYPE {
-		v.type = INVALID_TYPE
 		return
 	}
 	if callee_base.value_category == .Type {
@@ -186,7 +184,6 @@ check_compile_time_callee :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id)
 
 @(private = "file")
 report_not_callable :: proc(k: ^Checker, v: ^Expr_Call, callee_type: Type_Id) {
-	v.type = INVALID_TYPE
 	sel, is_sel := v.callee.(^Expr_Selector)
 	if is_sel && sel.variant_union != INVALID_TYPE &&
 	   union_variant_payload(k.c, sel.variant_union, sel.variant_index) == TYPE_VOID {
@@ -214,12 +211,10 @@ check_procedure_call :: proc(k: ^Checker, v: ^Expr_Call, callee_base: ^Expr_Base
 		}
 	}
 	if reject_direct_hook_call(k, v.span, declaration) {
-		v.type = INVALID_TYPE
 		return
 	}
 	record_called_procedure(k, v, declaration)
 	if !bind_arguments(k, v, info, declaration) {
-		v.type = INVALID_TYPE
 		return
 	}
 	settle_call(k, v, info.result, info.result_inout, symbol_of(k.c, declaration))
@@ -237,7 +232,6 @@ record_called_procedure :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 @(private = "file")
 finish_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) {
 	if !bind_chosen_call(k, v, cand) {
-		v.type = INVALID_TYPE
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
@@ -289,7 +283,6 @@ result_written_but_unresolved :: proc(sym: ^Symbol) -> bool {
 @(private = "file")
 set_type_call :: proc(v: ^Expr_Call, denoted: Type_Id) {
 	if denoted == INVALID_TYPE {
-		v.type = INVALID_TYPE
 		return
 	}
 	v.operation = Call_Compile_Time{}
@@ -412,7 +405,6 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	candidates := method_candidates(k, receiver_base.type, method_name)
 	written, args_ok := collect_call_arguments(k, v.args, candidates, 1)
 	if !args_ok {
-		v.type = INVALID_TYPE
 		return
 	}
 	// A place receiver that every candidate consumes needs `move`; say so directly
@@ -423,7 +415,6 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 			"`%s` consumes its receiver, so the call is written `move(...).%s(...)`",
 			sel.name.text, sel.name.text,
 		)
-		v.type = INVALID_TYPE
 		return
 	}
 	args := make([]Arg_Info, len(written) + 1, k.c.semantic_allocator)
@@ -434,7 +425,6 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	description := concat(k.c, "method `", sel.name.text, "`")
 	cand, resolved := resolve_overload(k, v.span, description, candidates, args)
 	if !resolved {
-		v.type = INVALID_TYPE
 		return
 	}
 	if len(candidates) > 1 {
@@ -446,13 +436,11 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	}
 	chosen := symbol_of(k.c, cand.symbol)
 	if reject_direct_hook_call(k, v.span, cand.symbol) {
-		v.type = INVALID_TYPE
 		return
 	}
 	// A mutating receiver is passed by address, so it must be an assignable place
 	// and not a packed field, whose address may be misaligned.
 	if chosen.receiver == .Inout && !check_inout_place(k, receiver, sel.name.span, "the receiver of a mutating method") {
-		v.type = INVALID_TYPE
 		return
 	}
 	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
@@ -484,7 +472,6 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	description := concat(k.c, "`", identifier_text(k.c, sym.name), "`")
 	args, args_ok := collect_call_arguments(k, v.args, members, live_group = group)
 	if !args_ok {
-		v.type = INVALID_TYPE
 		return
 	}
 	// Checking an argument may instantiate a generic subject and add members.
@@ -493,7 +480,6 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	}
 	cand, resolved := resolve_overload(k, v.span, description, members, args)
 	if !resolved {
-		v.type = INVALID_TYPE
 		return
 	}
 	if len(members) > 1 {
@@ -993,12 +979,10 @@ materialize_argument :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 @(private = "file")
 check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	if !gate_type(k, target, v.span) {
-		v.type = INVALID_TYPE
 		return
 	}
 	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0410", "a conversion to `%s` takes exactly one plain value argument", type_name(k.c, target))
-		v.type = INVALID_TYPE
 		return
 	}
 	// Checked without the target as context: the conversion node owns it.
@@ -1010,20 +994,17 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	source := check_single_expr(k, v.args[0].value)
 	k.raw_address_place = saved_raw_place
 	if source == INVALID_TYPE {
-		v.type = INVALID_TYPE
 		return
 	}
 	if type_is_enum(k.c, target) && (type_is_numeric(k.c, source) || type_is_enum(k.c, source)) &&
 	   type_underlying(k.c, source) != type_underlying(k.c, target) {
 		errorf(k.c, v.span, "L0410", "an enum is closed; use `%s.from_int(value)` to validate a backing integer", type_name(k.c, target))
-		v.type = INVALID_TYPE
 		return
 	}
 	// Invalid UTF-8 is reported as such, not as a missing conversion.
 	if operand := expr_base(v.args[0].value); base_is_const(operand) &&
 	   constant_is_invalid_text(k.c, operand.const_value, target) {
 		report_invalid_utf8(k, operand.span, target)
-		v.type = INVALID_TYPE
 		return
 	}
 	if builtin_conversion(k, v, target, source) {
@@ -1049,7 +1030,6 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	}
 	if typed && unchecked_pointer_conversion(k.c, source, target) &&
 	   !require_unsafe_import(k, v.span, concat(k.c, "converting to `", type_name(k.c, target), "`")) {
-		v.type = INVALID_TYPE
 		return true
 	}
 	// A named constant array is viewed in its read-only storage, not folded.
@@ -1060,7 +1040,6 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		converted, fits = convert_const(k.c, base.const_value, target, true)
 		fits &&= nil_converts(k.c, source, target)
 		if !fits && report_constant_out_of_range(k.c, v.span, base.const_value, target) {
-			v.type = INVALID_TYPE
 			return true
 		}
 		if !fits {
@@ -1074,7 +1053,6 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		// conversion written out, so the operand takes the target's representation
 		// as it would at a typed destination, and a place is borrowed, not cloned.
 		if !materialize(k, operand, target) {
-			v.type = INVALID_TYPE
 			return true
 		}
 	} else {
@@ -1141,19 +1119,16 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) 
 		   (slice_element(k.c, attempted) == TYPE_U8 || (target == TYPE_STRING && underlying_kind(k.c, attempted) == .CString_View)) {
 			add_notef(k.c, v.span, "use `%s.from_utf8(bytes)`, which returns `Option(%s)`", type_name(k.c, target), type_name(k.c, target))
 		}
-		v.type = INVALID_TYPE
 		return
 	}
 	description := concat(k.c, "conversion to `", type_name(k.c, target), "`")
 	args := []Arg_Info{arg_from_expr(v.args[0].value)}
 	cand, resolved := resolve_overload(k, v.span, description, usable, args)
 	if !resolved {
-		v.type = INVALID_TYPE
 		return
 	}
 	annotate_chosen_callee(k, v, cand.symbol)
 	if !bind_chosen_call(k, v, cand) {
-		v.type = INVALID_TYPE
 		return
 	}
 	v.type = target

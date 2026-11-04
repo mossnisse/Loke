@@ -591,7 +591,6 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 		return false
 	}
 	v.value_category = .Value
-	v.type = INVALID_TYPE
 	if len(v.args) != 1 {
 		errorf(k.c, v.args[spread].span, "L0371", "a union argument expansion is the call's only argument")
 		return true

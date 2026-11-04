@@ -111,7 +111,6 @@ check_range :: proc(k: ^Checker, v: ^Expr_Range, expected := INVALID_TYPE) {
 	low := check_single_expr(k, v.lo)
 	high := check_single_expr(k, v.hi)
 	if low == INVALID_TYPE || high == INVALID_TYPE {
-		v.type = INVALID_TYPE
 		return
 	}
 	hint := INVALID_TYPE
@@ -120,7 +119,6 @@ check_range :: proc(k: ^Checker, v: ^Expr_Range, expected := INVALID_TYPE) {
 	}
 	element, unified := unify_range_endpoints(k, v, low, high, hint)
 	if !unified || !require_range_endpoint(k, element, v.op_span) {
-		v.type = INVALID_TYPE
 		return
 	}
 	v.type = range_type(k.c, element)

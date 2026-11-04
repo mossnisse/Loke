@@ -153,7 +153,6 @@ check_enum_builtin :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> b
 	}
 	v.value_category = .Value
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = INVALID_TYPE
 	// The members are still being resolved, so they cannot be counted or searched.
 	if sym := symbol_of(k.c, underlying_info(k.c, subject).symbol); sym != nil && sym.decl != nil && sym.decl.sig_state == .Checking {
 		errorf(k.c, v.span, "L0324", "constant initialisation cycle involving `%s`", type_name(k.c, subject))

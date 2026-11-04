@@ -451,7 +451,6 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	// Set before any error: flow analysis walks a failed construction too.
 	v.operation = Call_Union_Construct{index = index}
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = INVALID_TYPE
 
 	if len(v.args) != 1 {
 		errorf(
@@ -604,7 +603,6 @@ check_as_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject: Type_Id) {
 	v.value_category = .Value
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = INVALID_TYPE
 	variant: ^Expr_Selector
 	if len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value {
 		variant, _ = v.args[0].value.(^Expr_Selector)

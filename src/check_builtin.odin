@@ -80,13 +80,11 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Default_Allocator:
 		if len(v.args) != 0 {
 			errorf(k.c, v.span, "L0490", "`default_allocator` takes no arguments")
-			v.type = INVALID_TYPE
 			return
 		}
 		v.type = TYPE_ALLOCATOR
 	case .None:
 		unsupported_construct(k, v.span)
-		v.type = INVALID_TYPE
 	}
 }
 
@@ -246,7 +244,6 @@ has_one_plain_argument :: proc(v: ^Expr_Call) -> bool {
 // Whether the call passes exactly `wanted` positional values, reporting the
 // first thing wrong. The call stays invalid until the caller sets its result type.
 builtin_arity_ok :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, code: string, wanted: int) -> bool {
-	v.type = INVALID_TYPE
 	return builtin_argument_count_ok(k, v, ident.name, code, wanted) && builtin_arguments_ok(k, v)
 }
 
@@ -305,7 +302,6 @@ check_defaulted_operand :: proc(k: ^Checker, e: Expr, expected := INVALID_TYPE) 
 // lowers the rest. Each argument after the message prints as its type does.
 @(private = "file")
 check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	v.type = INVALID_TYPE
 	first := kind == .Assert ? 1 : 0
 	if len(v.args) < first {
 		errorf(
@@ -393,7 +389,6 @@ check_printed_argument :: proc(k: ^Checker, e: Expr) {
 // `static_assert(condition[, message])` answers here, whatever phase surrounds it.
 @(private = "file")
 check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
-	v.type = INVALID_TYPE
 	if len(v.args) < 1 || len(v.args) > 2 {
 		errorf(k.c, v.span, "L0387", "`static_assert` takes a condition and an optional message")
 		return
@@ -401,7 +396,6 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	v.type = TYPE_VOID
 	check_condition(k, v.args[0].value)
 	message := ""
 	if len(v.args) == 2 {
@@ -412,9 +406,9 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	folded, evaluated := require_const(k, v.args[0].value, "a `static_assert` condition", "L0387")
 	if !evaluated {
-		v.type = INVALID_TYPE
 		return
 	}
+	v.type = TYPE_VOID
 	if folded.kind == .Boolean && !folded.boolean {
 		// design.md "Interface bodies": a failed interface application names the
 		// requirement, not a bare "static assertion failed".
@@ -438,7 +432,6 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 // result's type and what an override may say.
 @(private = "file")
 check_config :: proc(k: ^Checker, v: ^Expr_Call) {
-	v.type = INVALID_TYPE
 	if len(v.args) != 2 {
 		errorf(k.c, v.span, "L0388", "`build_config` takes a name and a default value")
 		return
@@ -629,7 +622,6 @@ operand_type :: proc(k: ^Checker, e: Expr, builtin: string, accepts_value: bool)
 // an omitted allocator is the default.
 @(private = "file")
 check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	v.type = INVALID_TYPE
 	arity_high := kind == .Free_All ? 1 : 2
 	if len(v.args) < 1 || len(v.args) > arity_high {
 		errorf(
@@ -711,7 +703,6 @@ check_destination_type :: proc(k: ^Checker, e: Expr, code, builtin: string) -> T
 // size and trivial lifecycles are checked; the meaning is the caller's.
 @(private = "file")
 check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
-	v.type = INVALID_TYPE
 	if len(v.args) != 2 {
 		errorf(
 			k.c, v.span, "L0688",
@@ -809,7 +800,6 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 // types, or between integer vectors of one lane count, keeping the low bits.
 @(private = "file")
 check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
-	v.type = INVALID_TYPE
 	if len(v.args) != 2 {
 		errorf(
 			k.c, v.span, "L0712",
@@ -1003,7 +993,6 @@ check_rotate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 // again at every call that omits it, by `substitute_caller_location`.
 @(private = "file")
 check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	v.type = INVALID_TYPE
 	// Positional value arguments only (design.md "Parameters").
 	if !builtin_arguments_ok(k, v) {
 		return

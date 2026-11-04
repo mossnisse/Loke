@@ -98,7 +98,6 @@ resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 // the unchecked `[^]T` of an allocation with no header, which the caller
 // releases with `unsafe.free` (design.md "The `unsafe` package").
 check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind, expected: Type_Id) {
-	v.type = INVALID_TYPE
 	if kind == .Box_New && report_handle_type_spelling(k, v, type_position = false) {
 		return
 	}
@@ -180,7 +179,6 @@ check_box_unbox :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool
 		return false
 	}
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = INVALID_TYPE
 	if len(v.args) != 0 {
 		errorf(k.c, v.span, "L0715", "`unbox` takes no arguments")
 		return true

@@ -215,7 +215,6 @@ add_slot_owners :: proc(
 // unsatisfied interface is just `false`.
 check_interface_application :: proc(k: ^Checker, v: ^Expr_Call, info: ^Interface_Info) {
 	v.value_category = .Value
-	v.type = TYPE_BOOL
 	if len(v.args) != len(info.params) {
 		errorf(
 			k.c,
@@ -227,14 +226,13 @@ check_interface_application :: proc(k: ^Checker, v: ^Expr_Call, info: ^Interface
 			len(info.params) == 1 ? "" : "s",
 			len(v.args),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
 	args, ok := interface_arguments_for(k, v.args, info, dyn_view = false, report = true)
 	if !ok {
-		v.type = INVALID_TYPE
 		return
 	}
+	v.type = TYPE_BOOL
 	v.resolution = Resolution{kind = .Call, symbol = info.symbol}
 	v.const_value = bool_const(interface_satisfied(k, info, args, v.span, report = false))
 }

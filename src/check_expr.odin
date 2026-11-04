@@ -487,13 +487,12 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 			return
 		}
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
-		v.type = sym.proc_type
 		// A member a probe synthesized is emitted once a value use commits it.
 		enroll_synth(k.c, symbol_id)
 		if reject_test_procedure_use(k, sym, name, v.span) {
-			v.type = INVALID_TYPE
 			return
 		}
+		v.type = sym.proc_type
 		warn_deprecated_use(k, sym, name, v.span)
 
 	case .Builtin:
@@ -2557,12 +2556,11 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 		return
 	}
 	symbol.proc_literal = v
-	v.type = symbol.proc_type
 	// design.md "`type` and `typeid`": a literal is always a runtime value.
 	if !runtime_signature_ok(k, symbol, v.span) {
-		v.type = INVALID_TYPE
 		return
 	}
+	v.type = symbol.proc_type
 	// Not while speculatively checking an interface requirement.
 	if pkg := package_of(k.c, k.pkg); pkg != nil && committing(k.c) {
 		append(&pkg.hoisted_procs, v)

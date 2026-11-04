@@ -562,7 +562,6 @@ symbol_via_allocator :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> Expr {
 // so the trailing allocator is recognised by its type rather than its position,
 // and it alone has a name to write: `allocator=`.
 check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, fallible: bool) {
-	v.type = INVALID_TYPE
 	if len(v.args) == 0 {
 		errorf(k.c, v.span, "L0579", "`make` names the container type to create")
 		return

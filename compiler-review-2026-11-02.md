@@ -73,11 +73,7 @@ often closes several ids at once.
 Near copies are real but smaller than the raw count of 388 suggests: the
 cross-file groups come to about 2,000 lines, and their main value is the roughly
 50 bugs they explain. The largest cheap reductions are mechanical: the failure
-boilerplate in `eval.odin` and the checker, and comments that narrate the code.
-
-## The changes most worth making
-
-19. **Mechanical removal of failure boilerplate.** Drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
+boilerplate in `eval.odin`, and comments that narrate the code.
 
 ## Findings that span files
 
@@ -88,14 +84,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 #### One root behind separately reported bugs
 
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
-
-### Checker and front end
-
-#### Failure writes that the default in `check_expr` makes unnecessary
-
-`check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
-
-Shared form: assign only on success. Saves about 100 lines.
 
 ### Small idioms and misplaced code
 

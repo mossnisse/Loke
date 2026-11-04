@@ -106,7 +106,6 @@ check_simd_index :: proc(
 	k: ^Checker, v: ^Expr_Index, info: ^Type_Info, vector: Type_Id,
 	operand: ^Expr_Base, through_pointer: bool, pointer_mutable: bool,
 ) {
-	v.type = INVALID_TYPE
 	if check_single_expr(k, v.indices[0], TYPE_INT) == INVALID_TYPE {
 		return
 	}
@@ -147,7 +146,6 @@ check_simd_index :: proc(
 // of the scalar table rather than by widening `type_is_numeric` and friends, so
 // that "is this arithmetic?" keeps its meaning everywhere else in the checker.
 check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
-	v.type = INVALID_TYPE
 	v.resolution.kind = .Builtin_Operator
 	vector := simd_operand(k.c, lhs) ? lhs : rhs
 	other := vector == lhs ? rhs : lhs
@@ -305,7 +303,6 @@ simd_unary_applies :: proc(c: ^Compiler, op: Token_Kind, element: Type_Id) -> bo
 }
 
 check_simd_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) {
-	v.type = INVALID_TYPE
 	info := type_of(k.c, operand)
 	element := info.element
 	if !simd_unary_applies(k.c, v.op, element) {
@@ -345,7 +342,6 @@ reject_simd_logical :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> 
 		"`%s` short-circuits, so it does not apply lane-wise; use `%s` on the masks",
 		operator_text(v.op), v.op == .And_And ? "&" : "|",
 	)
-	v.type = INVALID_TYPE
 	return true
 }
 
@@ -366,7 +362,6 @@ Simd_Fold :: enum {
 // Only `core:simd` reaches these, and its signatures settle the operands' shapes.
 check_simd_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	v.value_category = .Value
-	v.type = INVALID_TYPE
 	#partial switch kind {
 	case .Simd_Cast:
 		check_simd_cast(k, v)

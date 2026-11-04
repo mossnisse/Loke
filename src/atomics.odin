@@ -75,7 +75,6 @@ atomic_order_permitted :: proc(kind: Builtin_Kind, order: Memory_Order, failure:
 // Past the arity check, each operand and ordering reports its own error.
 check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
-	v.type = INVALID_TYPE
 	order_type := memory_order_type(k)
 	if order_type == INVALID_TYPE {
 		errorf(k.c, v.span, "L0661", "`base:runtime` does not declare the `Memory_Order` the compiler expects")
