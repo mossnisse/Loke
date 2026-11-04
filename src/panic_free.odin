@@ -129,7 +129,7 @@ expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 	if base == nil || base.has_error {
 		return false
 	}
-	if base.is_const {
+	if base_is_const(base) {
 		return true
 	}
 	if !type_is_panic_free_scalar(c, base.type) {
@@ -165,7 +165,7 @@ expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 			// the checker rejects a constant one.
 			count := expr_base(v.rhs)
 			return !type_signed(c, count.type) ||
-				(count.is_const && count.const_value.kind == .Integer && bi_sign(count.const_value.integer) >= 0)
+				(count.const_value.kind == .Integer && bi_sign(count.const_value.integer) >= 0)
 		case .Plus, .Minus, .Star:
 			// design.md "Integer overflow": floating-point arithmetic never panics;
 			// integer arithmetic does when the result does not fit.
@@ -177,7 +177,7 @@ expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 				return true
 			}
 			divisor := expr_base(v.rhs)
-			return !type_signed(c, base.type) && divisor.is_const && divisor.const_value.kind == .Integer &&
+			return !type_signed(c, base.type) && divisor.const_value.kind == .Integer &&
 				!bi_is_zero(divisor.const_value.integer)
 		}
 	case ^Expr_Cond:

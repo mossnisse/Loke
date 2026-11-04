@@ -10,7 +10,7 @@ import "core:mem"
 import "core:strings"
 import "core:unicode/utf8"
 
-Const_Kind :: enum {
+Const_Kind :: enum u8 {
 	Invalid,
 	Integer,
 	Boolean,
@@ -36,19 +36,19 @@ Const_Aggregate :: struct {
 // after publication (see `src/bigint.odin`).
 Const_Value :: struct {
 	kind:       Const_Kind,
+	boolean:    bool,
+	float_bits: u16,     // the semantic width a Float was last rounded to
+	type_value: Type_Id,
 	integer:    Big_Int, // Integer and Rune
 	float:      f64,
-	float_bits: u16,     // the semantic width a Float was last rounded to
 	// The exact encoding at `float_bits`. `float` alone cannot carry it: an f32
 	// signalling NaN round-tripped through the f64 field comes back quiet, so
 	// `unsafe.transmute(u32, x)` would not answer the bits it was handed.
 	float_raw:  u64,
-	boolean:    bool,
 	// A String's text, or an unfixed Float literal's decimal spelling, kept so
 	// a narrower destination rounds the exact value once (design.md "Number
 	// literals").
 	text:       string,
-	type_value: Type_Id,
 	aggregate:  ^Const_Aggregate,
 }
 

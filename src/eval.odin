@@ -78,14 +78,13 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (o
 	if base == nil || base.type == INVALID_TYPE {
 		return Const_Value{}, false
 	}
-	if base.is_const && base.const_value.kind != .Invalid {
+	if base_is_const(base) {
 		return base.const_value, true
 	}
 	ev := Evaluator{k = k, origin = expr_span(e), what = what}
 	defer eval_storage_destroy(&ev.storage)
 	value := eval_root(&ev, e, code, "%s must be a compile-time constant") or_return
 	frozen := freeze_result(&ev, value) or_return
-	base.is_const = true
 	base.const_value = frozen
 	return frozen, true
 }
@@ -94,7 +93,7 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (o
 // escapes evaluation. The result is the caller's to reorder. A constant is
 // already frozen, and reading its parts runs nothing.
 evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string) -> (out: []Const_Value, success: bool) {
-	if base := expr_base(e); base.is_const && base.const_value.aggregate != nil {
+	if base := expr_base(e); base.const_value.aggregate != nil {
 		out = slice.clone(base.const_value.aggregate.elements, k.c.semantic_allocator)
 		return out, true
 	}
@@ -589,7 +588,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (out: Eval_Value, succes
 	if base == nil || base.type == INVALID_TYPE {
 		return Eval_Value{}, false
 	}
-	if base.is_const && base.const_value.kind != .Invalid {
+	if base_is_const(base) {
 		// A folded record literal is made here as well.
 		if base.const_value.kind == .Aggregate {
 			eval_constant_hooks_supported(ev, base.const_value, base.type, expr_span(e)) or_return
@@ -704,7 +703,7 @@ eval_index :: proc(ev: ^Evaluator, v: ^Expr_Index) -> (out: Eval_Value, success:
 @(private = "file")
 eval_folded_table :: proc(ev: ^Evaluator, operand: Expr) -> ^Const_Aggregate {
 	base := expr_base(operand)
-	if base == nil || !base.is_const || base.const_value.kind != .Aggregate || type_is_container(ev.k.c, base.type) {
+	if base == nil || base.const_value.kind != .Aggregate || type_is_container(ev.k.c, base.type) {
 		return nil
 	}
 	return base.const_value.aggregate
@@ -2689,7 +2688,7 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 		return ""
 	}
 	base := expr_base(v.bound[index])
-	if base == nil || !base.is_const || base.const_value.kind != .String {
+	if base == nil || base.const_value.kind != .String {
 		return ""
 	}
 	b := strings.builder_make(ev.k.c.semantic_allocator)
@@ -3221,7 +3220,7 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	}
 	for index in 0 ..< int(min(count, i64(max(int)))) {
 		offset := bi_from_i64(ev.alloc, i64(index))
-		if s.adapter == .Reversed {
+		if s.reversed {
 			offset = bi_sub(ev.alloc, last, offset)
 		}
 		value := lo
@@ -3260,7 +3259,7 @@ eval_text_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 @(private = "file")
 eval_sequence_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, elements: []Eval_Value) -> Eval_Flow {
 	for index in 0 ..< len(elements) {
-		at := s.adapter == .Reversed ? len(elements) - 1 - index : index
+		at := s.reversed ? len(elements) - 1 - index : index
 		flow := eval_foreach_step(ev, s, &elements[at], index)
 		if flow != .Normal {
 			return flow == .Break ? .Normal : flow

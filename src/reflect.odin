@@ -240,7 +240,6 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			return
 		}
 		v.type = TYPE_TYPE
-		v.is_const = true
 		v.const_value = type_const(default_type(k.c, type))
 		v.denoted_type = v.const_value.type_value
 		v.value_category = .Type
@@ -280,7 +279,6 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		}
 		request_typeid(k.c, subject)
 		v.type = TYPE_TYPEID
-		v.is_const = true
 		v.const_value = type_const(subject)
 		return
 	}
@@ -305,7 +303,6 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 	}
 	v.type = type
-	v.is_const = true
 	v.const_value = value
 }
 
@@ -326,7 +323,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	}
 	check_receiver(k, sel)
 	base := expr_base(sel.operand)
-	if base == nil || !base.is_const || base.const_value.kind != .Aggregate {
+	if base == nil || base.const_value.kind != .Aggregate {
 		return false
 	}
 	// `meta_field_type` stays INVALID_TYPE until something names `meta.Field`, and

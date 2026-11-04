@@ -439,7 +439,7 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	begin_step(e, loop)
 	at := current
-	if s.adapter == .Reversed {
+	if s.reversed {
 		// The cursor still counts up; the value is mirrored as
 		// `low + last - current`, where `last` is the final forward value.
 		open_high, last, sum, mirrored := temp(e), temp(e), temp(e), temp(e)
@@ -509,7 +509,7 @@ emit_sequence_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	// `reversed()` flips only the element reached, so `indexed()` still counts
 	// from zero (design.md "Reverse iteration").
 	at := current
-	if s.adapter == .Reversed {
+	if s.reversed {
 		last, flipped := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", last, limit)
 		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", flipped, last, current)
@@ -600,7 +600,7 @@ spill_foreach_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> 
 	value := emit_expr_at(e, expr, as_type)
 	slot := alloca(e, llvm_type(e, as_type))
 	store(e, as_type, value, slot)
-	if !base.is_const {
+	if !base_is_const(base) {
 		register_scope_place(e, as_type, slot)
 	}
 	return slot

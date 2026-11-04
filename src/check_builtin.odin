@@ -330,7 +330,7 @@ check_message_arg :: proc(k: ^Checker, e: Expr, formatted: bool) {
 		return
 	}
 	base := expr_base(e)
-	if !base.is_const || base.const_value.kind != .String {
+	if base.const_value.kind != .String {
 		errorf(k.c, expr_span(e), "L0345", "this message must be a compile-time string")
 		if formatted {
 			add_notef(k.c, expr_span(e), "print a runtime value after a constant message: `panic(\"failed:\", value)`")
@@ -447,7 +447,6 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 
 	v.type = expr_base(v.args[1].value).type
-	v.is_const = true
 	v.const_value = fallback
 	override, defined := k.c.defines[name.name]
 	if !defined {
@@ -548,7 +547,6 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		result = type_field_offset(k.c, operand, int(symbol_of(k.c, field).index), name.span)
 	}
 	v.type = TYPE_INT
-	v.is_const = true
 	v.const_value = int_const(k.c, i64(result))
 }
 
@@ -570,7 +568,6 @@ check_type_predicate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Id
 		return
 	}
 	v.type = TYPE_BOOL
-	v.is_const = true
 	// design.md "Distinct types": a distinct type over a union is not one here.
 	holds := builtin == .Is_Union ? type_kind(k.c, operand) == .Union : !type_clone_disabled(k.c, operand)
 	v.const_value = bool_const(holds)
@@ -778,7 +775,7 @@ transmute_side_ok :: proc(k: ^Checker, type: Type_Id, span: Span, side: string) 
 @(private = "file")
 fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 	base := expr_base(v.args[1].value)
-	if !base.is_const {
+	if !base_is_const(base) {
 		return
 	}
 	#partial switch underlying_kind(k.c, target) {
@@ -796,7 +793,6 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 		)
 		v.type = INVALID_TYPE
 	case .Folded:
-		v.is_const = true
 		v.const_value = folded
 		v.bound = nil
 	}
@@ -836,8 +832,7 @@ check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	v.bound = bound_exprs(k, v.args[1].value)
 	v.type = target
-	if base := expr_base(v.args[1].value); base.is_const && (base.const_value.kind == .Integer || base.const_value.kind == .Rune) {
-		v.is_const = true
+	if base := expr_base(v.args[1].value); base.const_value.kind == .Integer || base.const_value.kind == .Rune {
 		v.const_value = base.const_value
 		v.const_value.kind = type_is_rune(k.c, target) ? .Rune : .Integer
 		v.const_value.integer = wrap_to_type(k.c, base.const_value.integer, target)
@@ -901,9 +896,8 @@ check_bit_count_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 		return
 	}
 	v.type = TYPE_INT
-	if base := expr_base(arg); base.is_const && base.const_value.kind == .Integer {
+	if base := expr_base(arg); base.const_value.kind == .Integer {
 		count := bit_count(base.const_value.integer, type_bits(k.c, type), kind)
-		v.is_const = true
 		v.const_value = int_const(k.c, i64(count))
 	}
 }
@@ -923,7 +917,7 @@ check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 	}
 	v.type = kind == .Math_Is_Power_Of_Two ? TYPE_BOOL : type
 	base := expr_base(arg)
-	if !base.is_const || base.const_value.kind != .Integer {
+	if base.const_value.kind != .Integer {
 		return
 	}
 	result, fits := bit_value_const(k.c, base.const_value.integer, type, kind)
@@ -932,7 +926,6 @@ check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 		v.type = INVALID_TYPE
 		return
 	}
-	v.is_const = true
 	v.const_value = result
 }
 
@@ -990,8 +983,7 @@ check_rotate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	v.bound = bound_exprs(k, value, count)
 	v.type = type
 	base, by := expr_base(value), expr_base(count)
-	if base.is_const && base.const_value.kind == .Integer && by.is_const && by.const_value.kind == .Integer {
-		v.is_const = true
+	if base.const_value.kind == .Integer && by.const_value.kind == .Integer {
 		v.const_value = integer_const(rotate_const(k.c, base.const_value.integer, by.const_value.integer, type, kind))
 	}
 }
@@ -1038,7 +1030,6 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Bui
 		return
 	}
 	v.type = type
-	v.is_const = true
 	v.const_value = source_location_const(k, type, span, procedure)
 }
 

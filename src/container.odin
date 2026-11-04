@@ -652,7 +652,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, fallible: bool) {
 @(private = "file")
 is_constant_zero :: proc(e: Expr) -> bool {
 	base := expr_base(e)
-	return base.is_const && base.const_value.kind == .Integer && bi_is_zero(base.const_value.integer)
+	return base.const_value.kind == .Integer && bi_is_zero(base.const_value.integer)
 }
 
 // `core:slice.sort_by_intrinsic(values, &comparator)`. The public wrapper hands

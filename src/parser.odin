@@ -3206,7 +3206,6 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 		_, closed := expect(p, .Rbracket, "L0231", "`]` after `[?`")
 		elem := parse_type(p)
 		n := new_expr(p, Type_Array, lo)
-		n.inferred = true
 		n.elem = elem
 		n.has_error = !closed || expr_has_error(elem)
 		return n

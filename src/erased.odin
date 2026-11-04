@@ -585,7 +585,7 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 			return false
 		}
 		return true // a declared body, conservatively
-	})
+	}, skip_field_keys = true)
 }
 
 // Evidence that one concrete type satisfies one interface application.

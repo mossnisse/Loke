@@ -1,6 +1,6 @@
-// Deep syntax cloning. Type annotations live on the AST nodes (decision A1), so
-// checking the same syntax twice — a generic instance, a static `foreach` copy —
-// needs a fresh copy. A clone keeps spans and written syntax and drops what the
+// Deep syntax cloning. Type annotations live on the AST nodes
+// (compiler-architecture.md "One annotated AST"), so checking the same syntax
+// twice — a generic instance, a static `foreach` copy — needs a fresh copy. A clone keeps spans and written syntax and drops what the
 // checker fills in, except `Item_Impl.kind`, which a generic record's instance
 // reads from its template. Clones live in the semantic arena.
 package lokec
@@ -376,7 +376,6 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Type_Array:
 		n := new_clone(c, v)
 		n.length = clone_expr(c, v.length)
-		n.inferred = v.inferred
 		n.elem = clone_expr(c, v.elem)
 		return n
 

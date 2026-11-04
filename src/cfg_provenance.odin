@@ -3450,7 +3450,7 @@ prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Spa
 	}
 	// A temporary ends with its statement unless a local's value extends it
 	// (design.md "Temporaries and procedure boundaries"), and the view with it.
-	if !expr_base(e).is_const {
+	if !is_const_expr(e) {
 		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, "view")), true
 	}
 	return loans, false
@@ -3564,7 +3564,7 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	span := expr_span(e)
 	if root, path, ok := prov_place_of(graph, e); ok {
 		loans := walk_flow_expr(graph, e)
-		if base.is_const {
+		if base_is_const(base) {
 			return loans
 		}
 		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, noun))
@@ -3574,7 +3574,7 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return carriers
 	}
 	loans := walk_flow_expr(graph, e)
-	if base.is_const || !prov_expr_is_temporary(e) {
+	if base_is_const(base) || !prov_expr_is_temporary(e) {
 		return loans
 	}
 	return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, noun))
@@ -4589,7 +4589,7 @@ prov_publish_map_key :: proc(graph: ^Flow_Graph, v: ^Expr_Index, key_sources: []
 @(private = "file")
 prov_const_int :: proc(graph: ^Flow_Graph, e: Expr) -> (i64, bool) {
 	base := expr_base(e)
-	if base == nil || !base.is_const || base.const_value.kind != .Integer {
+	if base == nil || base.const_value.kind != .Integer {
 		return 0, false
 	}
 	return bi_to_i64(graph.k.c, base.const_value.integer)
@@ -4603,7 +4603,7 @@ prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) ->
 		return proj_wild()
 	}
 	base := expr_base(key)
-	if base == nil || !base.is_const {
+	if base == nil || !base_is_const(base) {
 		return proj_wild()
 	}
 	name: string
@@ -5579,10 +5579,10 @@ prov_names_same_place :: proc(c: ^Compiler, a, b: Expr) -> bool {
 	if x == nil || y == nil || x.type != y.type {
 		return false
 	}
-	if x.is_const != y.is_const {
+	if base_is_const(x) != base_is_const(y) {
 		return false
 	}
-	if x.is_const {
+	if base_is_const(x) {
 		equal, comparable := fold_comparison(c, .Eq_Eq, x.const_value, y.const_value)
 		return comparable && equal
 	}

@@ -76,7 +76,7 @@ prov_value_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfer {
 	value := prov_value(graph, id)
 	// The zero allocator denotes the default provider; its literal fields do
 	// not describe an aggregate with no region dependencies.
-	if expr_base(value.origin).is_const && type_underlying(graph.k.c, value.type) == TYPE_ALLOCATOR { return nil }
+	if is_const_expr(value.origin) && type_underlying(graph.k.c, value.type) == TYPE_ALLOCATOR { return nil }
 	// A plain identifier names its storage; no transfer describes it.
 	if _, named := value.form.(Prov_Form_Symbol); named && value.view_from == INVALID_TYPE && value.widened_from == INVALID_TYPE { return nil }
 	// A nil entry records that the value is no transfer, so it is described once.

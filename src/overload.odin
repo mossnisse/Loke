@@ -18,7 +18,6 @@ Arg_Info :: struct {
 	name:        Identifier_Id, // INVALID_IDENTIFIER for a positional argument
 	mode:        Argument_Mode,
 	type:        Type_Id,
-	is_const:    bool,
 	const_value: Const_Value,
 	is_receiver: bool,
 	// design.md "Arguments typed after inference": unchecked until
@@ -120,7 +119,6 @@ collect_call_arguments :: proc(
 		if info.type == INVALID_TYPE {
 			ok = false
 		} else if base := expr_base(arg.value); base != nil {
-			info.is_const = base.is_const
 			info.const_value = base.const_value
 		}
 		out[index] = info
@@ -216,7 +214,6 @@ arg_from_expr :: proc(e: Expr, mode := Argument_Mode.Value) -> Arg_Info {
 		span        = base.span,
 		mode        = mode,
 		type        = base.type,
-		is_const    = base.is_const,
 		const_value = base.const_value,
 	}
 }
@@ -286,7 +283,7 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		return RANK_NONE
 	}
 	if type_is_untyped(k.c, arg.type) {
-		if arg.is_const {
+		if arg.const_value.kind != .Invalid {
 			if _, fits := convert_const(k.c, arg.const_value, param, false); !fits {
 				return RANK_NONE
 			}
@@ -306,7 +303,7 @@ variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int 
 	concrete := arg.type
 	if type_is_untyped(k.c, concrete) {
 		concrete = default_type(k.c, concrete)
-		if arg.is_const {
+		if arg.const_value.kind != .Invalid {
 			if _, fits := convert_const(k.c, arg.const_value, concrete, false); !fits {
 				return RANK_NONE
 			}

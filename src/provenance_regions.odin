@@ -906,7 +906,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		return Region_Set{}
 	}
 	// design.md "Allocators": the zero `Allocator` is the default provider.
-	if base := expr_base(e); base.is_const && base.const_value.kind == .Nil && type_underlying(c, value.type) == TYPE_ALLOCATOR {
+	if base := expr_base(e); base.const_value.kind == .Nil && type_underlying(c, value.type) == TYPE_ALLOCATOR {
 		return Region_Set{default = true}
 	}
 	if transfer := prov_value_transfer(graph, id); transfer != nil {

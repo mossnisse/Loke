@@ -437,7 +437,6 @@ check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: 
 		payload_value, _ = zero_const(k.c, payload)
 	}
 	sel.resolution = Resolution{kind = .Builtin_Operator}
-	sel.is_const = true
 	sel.immutable = .Constant
 	sel.const_value = union_const(k.c, subject, index, payload_value)
 	return true
@@ -497,9 +496,8 @@ finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, ind
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.
-	if inner := expr_base(value); inner != nil && inner.is_const &&
+	if inner := expr_base(value); inner != nil && base_is_const(inner) &&
 	   variant_payload_is_constant(k.c, payload, inner.const_value) {
-		v.is_const = true
 		v.const_value = union_const(k.c, subject, index, inner.const_value)
 	}
 }

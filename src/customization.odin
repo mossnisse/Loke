@@ -30,7 +30,6 @@ fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Sy
 	if info == nil || (info.kind != .Array && info.kind != .Simd) {
 		return
 	}
-	v.is_const = true
 	v.const_value = int_const(k.c, i64(info.count))
 }
 

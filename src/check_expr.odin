@@ -131,7 +131,6 @@ check_expr :: proc(
 			base.denoted_type = denoted
 			base.value_category = .Type
 			base.type = TYPE_TYPE
-			base.is_const = true
 			base.const_value = type_const(denoted)
 		} else {
 			report_unresolved_type(k, e)
@@ -139,7 +138,7 @@ check_expr :: proc(
 	}
 	// design.md "`type` and `typeid`": a call to a compile-time-only procedure
 	// runs in the compiler where it is checked, so its result is a constant.
-	if call, is_call := e.(^Expr_Call); is_call && base.type != INVALID_TYPE && !base.is_const {
+	if call, is_call := e.(^Expr_Call); is_call && base.type != INVALID_TYPE && !base_is_const(base) {
 		callee := symbol_of(k.c, call.resolution.symbol)
 		if callee != nil && callee.kind == .Proc && compile_time_only_procedure(k.c, callee) {
 			folded, ok := require_const(k, e, "a call to a compile-time-only procedure", "L0453")
@@ -155,7 +154,7 @@ check_expr :: proc(
 	// design.md "Compile-time reflection": a descriptor or `type` value is only
 	// ever folded, so one computed at run time, such as `fields_of(T)[i]` with a
 	// runtime `i`, has no representation.
-	if base.type != INVALID_TYPE && !base.is_const && type_is_reflection_value(k.c, base.type) {
+	if base.type != INVALID_TYPE && !base_is_const(base) && type_is_reflection_value(k.c, base.type) {
 		errorf(
 			k.c, base.span, "L0453",
 			"`%s` exists only during compilation, so this expression must be a constant",
@@ -301,7 +300,6 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 			return
 		}
 		v.type = TYPE_UNTYPED_INT
-		v.is_const = true
 		v.const_value = integer_const(value)
 
 	case .Float:
@@ -314,7 +312,6 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 		// design.md "Number literals": unfixed until a destination or a concrete
 		// operand converts it, which rounds the exact decimal value once.
 		v.type = TYPE_UNTYPED_FLOAT
-		v.is_const = true
 		v.const_value = float_const(value, 64)
 		v.const_value.text = text
 
@@ -325,7 +322,6 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 			return
 		}
 		v.type = TYPE_UNTYPED_RUNE
-		v.is_const = true
 		v.const_value = rune_const(bi_from_i64(k.c, i64(value)))
 
 	case .String, .Raw_String:
@@ -335,7 +331,6 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 			return
 		}
 		v.type = TYPE_UNTYPED_STRING
-		v.is_const = true
 		v.const_value = string_const(text)
 	}
 }
@@ -471,7 +466,6 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		resolve_symbol_signature_in_place(k, symbol_id)
 		mark_denotes_type(v, sym.type, symbol_id)
 		v.type = TYPE_TYPE
-		v.is_const = true
 		v.const_value = type_const(sym.type)
 
 	case .Proc:
@@ -509,7 +503,6 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 	case .Const, .Enum_Member:
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.type = sym.type
-		v.is_const = true
 		v.const_value = sym.const_value
 		v.immutable = .Constant
 		// design.md "Type alias": a constant whose value is a type denotes it.
@@ -635,7 +628,6 @@ check_implicit_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_I
 select_enum_member :: proc(k: ^Checker, v: ^Expr_Selector, member: Symbol_Id, type: Type_Id) {
 	v.resolution = Resolution{kind = .Field, symbol = member}
 	v.type = type
-	v.is_const = true
 	v.const_value = symbol_of(k.c, member).const_value
 	v.immutable = .Constant
 }
@@ -815,10 +807,9 @@ select_field :: proc(
 		check_synchronized_access(k, v, sym)
 	}
 	// Selecting from a constant aggregate is itself constant.
-	if operand_base.is_const && operand_base.const_value.kind == .Aggregate {
+	if operand_base.const_value.kind == .Aggregate {
 		aggregate := operand_base.const_value.aggregate
 		if aggregate != nil && int(sym.index) < len(aggregate.elements) {
-			v.is_const = true
 			v.const_value = aggregate.elements[sym.index]
 			v.immutable = .Constant
 			// design.md "Compile-time reflection": an `Enum_Value`'s `value` has its
@@ -1291,12 +1282,12 @@ check_array_index :: proc(
 	index := expr_base(v.indices[0])
 	// A constant indexed at runtime needs read-only storage (design.md
 	// "Materialization"); a constant index folds below instead.
-	if operand.is_const && !index.is_const && request_materialization(k, v.operand) {
+	if base_is_const(operand) && !base_is_const(index) && request_materialization(k, v.operand) {
 		v.addressable = false
 		v.assignable = false
 		v.immutable = .Read_Only
 	}
-	if !index.is_const || (index.const_value.kind != .Integer && index.const_value.kind != .Rune) {
+	if index.const_value.kind != .Integer && index.const_value.kind != .Rune {
 		return
 	}
 	value, ok := bi_to_i64(k.c, index.const_value.integer)
@@ -1314,8 +1305,7 @@ check_array_index :: proc(
 // A constant array's or vector's element, at an index already in range, is a
 // constant.
 fold_constant_element :: proc(v: ^Expr_Index, operand: ^Expr_Base, index: i64) {
-	if operand.is_const && operand.const_value.kind == .Aggregate {
-		v.is_const = true
+	if operand.const_value.kind == .Aggregate {
 		v.const_value = operand.const_value.aggregate.elements[index]
 		v.immutable = .Constant
 	}
@@ -1821,7 +1811,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		operand_base := expr_base(v.operand)
 		// design.md "Materialization" yields a `^T`, so an untyped constant takes
 		// the pointee asked for, or else its default type.
-		if !operand_base.addressable && operand_base.is_const && type_is_untyped(k.c, operand) {
+		if !operand_base.addressable && base_is_const(operand_base) && type_is_untyped(k.c, operand) {
 			target := pointee_of(k.c, expected)
 			if target == INVALID_TYPE {
 				target = default_type(k.c, operand)
@@ -1878,14 +1868,13 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	}
 
 	v.type = operand
-	if !operand_base.is_const {
+	if !base_is_const(operand_base) {
 		return
 	}
 	folded, ok := fold_unary_const(k, v.op, v.op_span, operand_base.const_value, operand)
 	if !ok {
 		return
 	}
-	v.is_const = true
 	v.const_value = folded
 }
 
@@ -2142,7 +2131,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
-	if !left.is_const || !right.is_const {
+	if !base_is_const(left) || !base_is_const(right) {
 		return
 	}
 	folded, ok := fold_arithmetic(k.c, v.op, v.op_span, left.const_value, right.const_value, operand_type)
@@ -2150,7 +2139,6 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	v.is_const = true
 	v.const_value = folded
 }
 
@@ -2158,7 +2146,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 // the dividend is only known at run time.
 constant_zero_divisor :: proc(k: ^Checker, op: Token_Kind, op_span: Span, divisor: Expr) -> bool {
 	value := expr_base(divisor)
-	if (op != .Slash && op != .Percent) || !value.is_const {
+	if (op != .Slash && op != .Percent) || !base_is_const(value) {
 		return false
 	}
 	is_zero :: proc(value: Const_Value) -> bool {
@@ -2207,17 +2195,15 @@ check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 		materialize(k, v.rhs, TYPE_BOOL)
 	}
 	v.type = both_untyped ? TYPE_UNTYPED_BOOL : TYPE_BOOL
-	if !left.is_const {
+	if !base_is_const(left) {
 		return
 	}
 	short_circuit := v.op == .And_And ? !left.const_value.boolean : left.const_value.boolean
 	if short_circuit {
-		v.is_const = true
 		v.const_value = bool_const(v.op == .Or_Or)
 		return
 	}
-	if right.is_const {
-		v.is_const = true
+	if base_is_const(right) {
 		v.const_value = bool_const(right.const_value.boolean)
 	}
 }
@@ -2242,7 +2228,7 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 	left := expr_base(v.lhs)
 	v.type = lhs
 
-	if !left.is_const || !right.is_const {
+	if !base_is_const(left) || !base_is_const(right) {
 		// A runtime shift needs a concrete left operand to shift.
 		if type_is_untyped(k.c, lhs) {
 			target := shiftable_type(k.c, expected) && !type_is_untyped(k.c, expected) ? expected : default_type(k.c, lhs)
@@ -2262,7 +2248,6 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 		v.type = INVALID_TYPE
 		return
 	}
-	v.is_const = true
 	v.const_value = folded
 }
 
@@ -2286,12 +2271,12 @@ check_shift_count :: proc(k: ^Checker, e: Expr) -> bool {
 validate_shift_count :: proc(k: ^Checker, e: Expr, checked: Type_Id) -> bool {
 	base := expr_base(e)
 	// An unfixed count with a runtime part is an ordinary value of its default type.
-	if type_is_untyped(k.c, checked) && !base.is_const && !materialize(k, e, default_type(k.c, checked)) {
+	if type_is_untyped(k.c, checked) && !base_is_const(base) && !materialize(k, e, default_type(k.c, checked)) {
 		return false
 	}
 	type := base.type
 	if type_is_untyped(k.c, type) {
-		if base.is_const && (base.const_value.kind == .Integer || base.const_value.kind == .Rune) {
+		if base.const_value.kind == .Integer || base.const_value.kind == .Rune {
 			if bi_sign(base.const_value.integer) < 0 {
 				errorf(k.c, expr_span(e), "L0356", "a shift count cannot be negative")
 				return false
@@ -2301,7 +2286,7 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, checked: Type_Id) -> bool {
 	} else if type_is_integer(k.c, type) {
 		// design.md "Arithmetic operators": a constant negative count is an
 		// error whatever the left operand is, so it never reaches run time.
-		if base.is_const && base.const_value.kind == .Integer && bi_sign(base.const_value.integer) < 0 {
+		if base.const_value.kind == .Integer && bi_sign(base.const_value.integer) < 0 {
 			errorf(
 				k.c, expr_span(e), "L0356", "a shift count cannot be negative, found %s",
 				bi_text(k.c, base.const_value.integer),
@@ -2372,18 +2357,17 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
 	// Unfixed operands with a runtime part compare as ordinary values.
-	if type_is_untyped(k.c, operand_type) && (!left.is_const || !right.is_const) {
+	if type_is_untyped(k.c, operand_type) && (!base_is_const(left) || !base_is_const(right)) {
 		target := unfixed_receiver_type(k.c, operand_type)
 		if !materialize(k, v.lhs, target) || !materialize(k, v.rhs, target) {
 			return
 		}
 	}
 	// A user `==` runs when the program does, not while it is checked.
-	if left.is_const && right.is_const && len(owned) == 0 {
+	if base_is_const(left) && base_is_const(right) && len(owned) == 0 {
 		result, ok := fold_comparison(k.c, v.op, left.const_value, right.const_value)
 		if ok {
 			v.type = TYPE_UNTYPED_BOOL
-			v.is_const = true
 			v.const_value = bool_const(result)
 			return
 		}
@@ -2466,7 +2450,7 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := 
 
 @(private = "file")
 integer_exceeds_float :: proc(k: ^Checker, base: ^Expr_Base) -> bool {
-	if !base.is_const || base.const_value.kind != .Integer {
+	if base.const_value.kind != .Integer {
 		return false
 	}
 	_, fits := bi_to_float(k.c, base.const_value.integer, 64)
@@ -2600,12 +2584,11 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 
 	// Both branches are checked, but only the selected one is folded.
 	condition := expr_base(v.cond)
-	if !condition.is_const {
+	if !base_is_const(condition) {
 		return
 	}
 	selected := condition.const_value.boolean ? expr_base(v.then) : expr_base(v.otherwise)
-	if selected.is_const {
-		v.is_const = true
+	if base_is_const(selected) {
 		v.const_value = selected.const_value
 	}
 }
@@ -2675,7 +2658,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// valid UTF-8.
 	if type_views_as(k.c, base.type, target) {
 		// A named constant array is viewed in its read-only storage.
-		if base.is_const && underlying_kind(k.c, base.type) == .Array {
+		if base_is_const(base) && underlying_kind(k.c, base.type) == .Array {
 			request_materialization(k, e)
 		}
 		base.view_from = base.type
@@ -2685,13 +2668,13 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// design.md "SIMD vectors": a scalar of the lane type splats, at run time or
 	// folded here, as a typed constant such as `T(0)` in a generic body does; an
 	// unfixed constant folds below.
-	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && (!base.is_const || !type_is_untyped(k.c, base.type)) {
+	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && (!base_is_const(base) || !type_is_untyped(k.c, base.type)) {
 		element := type_of(k.c, type_underlying(k.c, target)).element
 		// The scalar must be a valid lane before it becomes the vector.
 		if base.type != element && !materialize_value_expr(k, e, element, "splat") {
 			return false
 		}
-		if !base.is_const {
+		if !base_is_const(base) {
 			base.splat_from = base.type
 			base.type = target
 			return true
@@ -2721,7 +2704,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// into the larger storage, so the backend and the evaluator need the source.
 	// A constant is remapped here.
 	if union_widens_to(k.c, base.type, target) {
-		if base.is_const && base.const_value.kind == .Aggregate {
+		if base.const_value.kind == .Aggregate {
 			base.const_value = widen_const(k.c, base.const_value, base.type, target)
 		} else if base.widened_from == INVALID_TYPE {
 			base.widened_from = base.type
@@ -2733,7 +2716,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		record_proc_contract_check(k.c, base.type, target, base.span)
 		return true
 	}
-	if !base.is_const {
+	if !base_is_const(base) {
 		return materialize_unfixed_parts(k, e, target)
 	}
 	if type_is_untyped(k.c, target) {
@@ -2977,7 +2960,7 @@ enum_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_
 
 is_const_expr :: proc(e: Expr) -> bool {
 	base := expr_base(e)
-	return base != nil && base.is_const
+	return base != nil && base_is_const(base)
 }
 
 operator_text :: proc(op: Token_Kind) -> string {

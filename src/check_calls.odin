@@ -296,7 +296,6 @@ set_type_call :: proc(v: ^Expr_Call, denoted: Type_Id) {
 	v.operation = Call_Compile_Time{}
 	v.type = TYPE_TYPE
 	v.value_category = .Type
-	v.is_const = true
 	v.const_value = type_const(denoted)
 }
 
@@ -515,14 +514,14 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 // `Type.method(CONSTANT)` and calls resolved through a procedure group.
 @(private = "file")
 materialize_call_receiver :: proc(k: ^Checker, v: ^Expr_Call) {
-	if v.type == INVALID_TYPE || v.is_const || len(v.bound) == 0 || v.bound[0] == nil {
+	if v.type == INVALID_TYPE || base_is_const(v) || len(v.bound) == 0 || v.bound[0] == nil {
 		return
 	}
 	if type_is_compile_time_only(k.c, expr_base(v.bound[0]).type) {
 		return
 	}
 	chosen := symbol_of(k.c, v.resolution.chosen_overload)
-	if chosen != nil && chosen.has_receiver && chosen.receiver == .Borrow && expr_base(v.bound[0]).is_const {
+	if chosen != nil && chosen.has_receiver && chosen.receiver == .Borrow && is_const_expr(v.bound[0]) {
 		request_materialization(k, v.bound[0])
 	}
 }
@@ -1033,7 +1032,7 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		return
 	}
 	// Invalid UTF-8 is reported as such, not as a missing conversion.
-	if operand := expr_base(v.args[0].value); operand.is_const &&
+	if operand := expr_base(v.args[0].value); base_is_const(operand) &&
 	   constant_is_invalid_text(k.c, operand.const_value, target) {
 		report_invalid_utf8(k, operand.span, target)
 		v.type = INVALID_TYPE
@@ -1056,7 +1055,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	}
 	// A typed constant meets the same rules as a runtime value; only an untyped
 	// one converts by what its value fits.
-	typed := !base.is_const || !type_is_untyped(k.c, source)
+	typed := !base_is_const(base) || !type_is_untyped(k.c, source)
 	if typed && !convertible(k.c, source, target) {
 		return false
 	}
@@ -1066,7 +1065,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		return true
 	}
 	// A named constant array is viewed in its read-only storage, not folded.
-	folds := base.is_const && !array_views_as(k.c, source, target)
+	folds := base_is_const(base) && !array_views_as(k.c, source, target)
 	converted: Const_Value
 	if folds {
 		fits: bool
@@ -1106,7 +1105,6 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	v.bound[0] = operand
 	v.type = target
 	if folds {
-		v.is_const = true
 		v.const_value = converted
 	}
 	return true

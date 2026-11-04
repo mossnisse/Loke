@@ -1856,7 +1856,6 @@ bind_default_compile_time_argument :: proc(
 		span        = expr_span(per_call),
 		name        = INVALID_IDENTIFIER,
 		type        = type,
-		is_const    = evaluated,
 		const_value = folded,
 	}
 	return bind_compile_time_argument(k, name, arg, wanted, scope, out)
@@ -1895,7 +1894,7 @@ bind_compile_time_argument :: proc(
 		}
 		return ""
 	}
-	if !arg.is_const {
+	if arg.const_value.kind == .Invalid {
 		return "a `$` parameter needs a compile-time constant argument"
 	}
 	value := arg.const_value

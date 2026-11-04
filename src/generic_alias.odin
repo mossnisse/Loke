@@ -434,11 +434,11 @@ alias_refers_to :: proc(k: ^Checker, body: Expr, scope: ^Scope, target: Symbol_I
 			return false
 		}
 		inner := Refers{k = data.k, scope = other.scope, target = data.target, visited = data.visited}
-		return type_syntax_any_name(other.decl.values[0], &inner, reaches_target)
+		return type_syntax_any_name(other.decl.values[0], &inner, reaches_target, skip_field_keys = true)
 	}
 	visited := make(map[Symbol_Id]bool, context.temp_allocator)
 	refers := Refers{k = k, scope = scope, target = target, visited = &visited}
-	return type_syntax_any_name(body, &refers, reaches_target)
+	return type_syntax_any_name(body, &refers, reaches_target, skip_field_keys = true)
 }
 
 // design.md "Parametric aliases": `Status(int)` is the type its body denotes

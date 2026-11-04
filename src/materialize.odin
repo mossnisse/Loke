@@ -22,7 +22,7 @@ Materialized :: struct {
 @(private = "file")
 constant_symbol_of :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 	base := expr_base(e)
-	if base == nil || !base.is_const {
+	if base == nil || !base_is_const(base) {
 		return INVALID_SYMBOL
 	}
 	id := INVALID_SYMBOL

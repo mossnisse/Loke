@@ -957,7 +957,7 @@ hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: 
 emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 	value := emit_expr(e, expr)
 	base := expr_base(expr)
-	if base.is_const || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(expr) {
+	if base_is_const(base) || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(expr) {
 		return value
 	}
 	hold_in_temporary(e, expr, base.type, value)
@@ -1206,7 +1206,7 @@ spill_viewed_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	value := emit_expr_at(e, expr, as_type)
 	slot := alloca(e, llvm_type(e, as_type))
 	store(e, as_type, value, slot)
-	if !base.is_const {
+	if !base_is_const(base) {
 		hold_addressed_temporary(e, expr, as_type, slot)
 	}
 	return slot
@@ -1309,7 +1309,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return converted
 	}
 	base := expr_base(expr)
-	if base.is_const && base.const_value.kind != .Invalid && !projects_managed_literal(e, expr) {
+	if base_is_const(base) && !projects_managed_literal(e, expr) {
 		emit_const_len_receiver(e, expr)
 		return const_operand(e, base.const_value, as_type)
 	}

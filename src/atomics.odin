@@ -189,7 +189,7 @@ check_atomic_order :: proc(
 	if !check_value_expr(k, argument, order_type, "pass") {
 		return .Relaxed, false
 	}
-	if !expr_base(argument).is_const {
+	if !is_const_expr(argument) {
 		errorf(
 			k.c, expr_span(argument), "L0666",
 			"an atomic ordering must be a constant; a `$` parameter is what keeps one constant across a wrapper",

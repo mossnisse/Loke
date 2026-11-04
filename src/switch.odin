@@ -132,7 +132,7 @@ check_case_value :: proc(k: ^Checker, value: Expr, subject: Type_Id, cases: ^Cas
 		return
 	}
 	base := expr_base(value)
-	if !base.is_const {
+	if !base_is_const(base) {
 		return // an ordered dynamic case, compared in source order
 	}
 	if case_value_repeats(k.c, cases, base.const_value) {

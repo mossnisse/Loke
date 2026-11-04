@@ -740,22 +740,6 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 	}
 }
 
-// Whether a literal's `key` is the name of a field. An array's index or a map's
-// key is an expression, which the checker resolves; where it did not look, the
-// literal's written type says.
-@(private = "file")
-key_names_field :: proc(v: ^Expr_Composite, key: Expr) -> bool {
-	ident, is_ident := key.(^Expr_Ident)
-	if !is_ident || ident.resolution.symbol != INVALID_SYMBOL || ident.symbol != INVALID_SYMBOL {
-		return false
-	}
-	#partial switch _ in v.type_expr {
-	case ^Type_Array, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Map:
-		return false
-	}
-	return true
-}
-
 // The values of `attributes` that are expressions, as `N` in `@(align=N)`.
 // design.md "Attribute categories": the others' values are strings, or names
 // of variants, fields, and escape levels, which are not references.

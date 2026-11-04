@@ -116,7 +116,7 @@ check_simd_index :: proc(
 		errorf(k.c, expr_span(v.indices[0]), "L0684", "a lane index must be an integer, found `%s`", type_name(k.c, index.type))
 		return
 	}
-	if !index.is_const || index.const_value.kind != .Integer {
+	if index.const_value.kind != .Integer {
 		errorf(
 			k.c, expr_span(v.indices[0]), "L0684",
 			"a lane index must be a constant; `%s` has %d lanes, and a runtime lane index has no efficient lowering",
@@ -196,7 +196,7 @@ simd_operand_is_builtin :: proc(c: ^Compiler, vector, other: Type_Id) -> bool {
 // design.md "Lane-wise operators": also serves `v <<= c`.
 reject_negative_count_lanes :: proc(k: ^Checker, op: Token_Kind, count: Expr) -> bool {
 	base := expr_base(count)
-	if (op != .Shl && op != .Shr) || !base.is_const {
+	if (op != .Shl && op != .Shr) || !base_is_const(base) {
 		return false
 	}
 	for lane, index in base.const_value.aggregate.elements {
@@ -214,7 +214,7 @@ reject_negative_count_lanes :: proc(k: ^Checker, op: Token_Kind, count: Expr) ->
 @(private = "file")
 fold_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary) {
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
-	if !left.is_const || !right.is_const {
+	if !base_is_const(left) || !base_is_const(right) {
 		return
 	}
 	info := underlying_info(k.c, v.type)
@@ -245,7 +245,6 @@ set_simd_const :: proc(k: ^Checker, base: ^Expr_Base, elements: []Const_Value) {
 	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
 	aggregate.type = base.type
 	aggregate.elements = elements
-	base.is_const = true
 	base.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
 }
 
@@ -260,7 +259,7 @@ simd_splat_operands :: proc(k: ^Checker, v: ^Expr_Binary, vector, element: Type_
 		if base.type == vector {
 			continue
 		}
-		if !base.is_const && !assignable(k.c, base.type, element) {
+		if !base_is_const(base) && !assignable(k.c, base.type, element) {
 			errorf(
 				k.c, v.op_span, "L0686",
 				"`%s` is neither `%s` nor one of its lanes",
@@ -325,7 +324,7 @@ check_simd_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) {
 	}
 	v.type = operand
 	operand_base := expr_base(v.operand)
-	if !operand_base.is_const {
+	if !base_is_const(operand_base) {
 		return
 	}
 	elements := make([]Const_Value, info.count, k.c.semantic_allocator)

@@ -1503,6 +1503,9 @@ checklist.
 
 ### Fixed
 
+- A field's name used as a key of a record literal no longer counts as a mention of what that name
+  declares. `Vec :: [size_of(Cfg{Vec = 2})]$T` was rejected as defined in terms of itself (L0745), and an
+  interface `slot` with such a key named after its subject as not dyn-compatible (L0463).
 - The language server resolves a name in three more places: an operand of an assignment through
   `operator([]=)`, such as `val` in `box[key] += val`; a member of a group under `operator`, as in
   `operator(<) proc { reversed }`; and an `else when` condition in a procedure. Hover and definition

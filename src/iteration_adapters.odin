@@ -35,8 +35,7 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) {
 		}
 		source = call.bound[0]
 	}
-	s.iterable, s.indexed = source, indexed
-	if reversed { s.adapter = .Reversed }
+	s.iterable, s.indexed, s.reversed = source, indexed, reversed
 }
 
 @(private = "file")

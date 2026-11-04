@@ -82,7 +82,7 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 
 
-18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Ends the drift behind BUG-ast-1. Removes about 250 lines; no behavior change beyond those.
+18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Removes about 250 lines; no behavior change.
 
 19. **Mechanical removal of failure boilerplate.** Drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
 
@@ -125,12 +125,12 @@ Shared form: assign only on success. Saves about 100 lines.
 
 | Child | ast | doc | private_names | select |
 | --- | --- | --- | --- | --- |
-| composite field-name key | walked | skipped unless resolved or keys are values | skipped | skipped unless keys are values |
+| composite field-name key | walked, or skipped for a caller looking for a type | skipped unless resolved or keys are values | skipped | skipped unless keys are values |
 | `or_else` exit value | walked | no | no | walked |
 | composite `via` | walked | walked | no | no |
 | parameter default | walked | walked | no | no |
 
-The key difference is BUG-ast-1. The other rows are unexplained, and `private_names` and `select` simply do not look there. Shared form: `expr_children(e, data, visit) -> bool` in `ast.odin`, exhaustive over the kinds, with `data: rawptr` as `type_syntax_any_name` already takes. Each caller handles its own cases in a `#partial switch` and falls through to the children. Saves about 150 to 200 lines. `index_query_expr` ([query_index.odin:228](src/query_index.odin#L228)) reads checked fields and stays out.
+The `or_else`, `via` and default rows are unexplained, and `private_names` and `select` simply do not look there. Shared form: `expr_children(e, data, visit) -> bool` in `ast.odin`, exhaustive over the kinds, with `data: rawptr` as `type_syntax_any_name` already takes. Each caller handles its own cases in a `#partial switch` and falls through to the children. Saves about 150 to 200 lines. `index_query_expr` ([query_index.odin:228](src/query_index.odin#L228)) reads checked fields and stays out.
 
 #### Type-component walkers
 
@@ -361,45 +361,11 @@ Counts per file, then the findings themselves in the same order.
 
 ### src/ast.odin
 
-Mostly plain node definitions, in good shape: a scan of every struct field found each one still read, so there are no dead fields, and most comments earn their place. The main cost is the 122 lines of accessor switches and a syntax walker that three other files repeat by hand.
-
-**Bugs**
-
-- `BUG-ast-1` **low** [ast.odin:1458](src/ast.odin#L1458) `type_syntax_any_name`: a composite literal's field-name key is walked as if it named something. Scenario: `Cfg :: struct { Vec: int }; Vec :: [size_of(Cfg{Vec = 2})]$T;` fails with L0745 "defined in terms of itself", and renaming the field compiles (run with the built `lokec.exe`). Fix: skip a bare `^Expr_Ident` key as [doc.odin:640](src/doc.odin#L640) does, keeping it when `type_expr` is array syntax, where `[2]int{N = x}` does name `N`. *Not verified.*
-
-**Simplification**
-
-- [ast.odin:694](src/ast.odin#L694), [ast.odin:1074](src/ast.odin#L1074), [ast.odin:1312](src/ast.odin#L1312) `expr_base`, `stmt_base`, `item_base`: put each of the 61 arms on one line, `case ^Expr_Error: return &v.base`, as `hook_name` already does. Layout only, and the exhaustive switch stays. (about 61 lines)
-- [ast.odin:1182](src/ast.odin#L1182) `decl_proc`, `decl_proc_literal`, `decl_hook_kind`: each repeats the `.Const`, one-value guard. Add `decl_value(d) -> Expr` for it and use the two-value assertion: `literal, _ := decl_value(d).(^Expr_Proc); return literal`. `decl_proc_literal` then unwraps one `^Expr_Operator` before the same assertion. (about 14 lines)
-- [ast.odin:14](src/ast.odin#L14) `Expr_Base.is_const`: looks redundant with `const_value.kind != .Invalid`. All 51 `is_const = true` writes set `const_value` beside them and the one reset ([check_expr.odin:2861](src/check_expr.odin#L2861)) clears both. Not proven: [check_builtin.odin:1425](src/check_builtin.odin#L1425) writes `const_value` alone on a copied call. If it holds, use a small `expr_is_const` helper. (about 50 lines across the checker)
-- [ast.odin:905](src/ast.odin#L905) `Foreach_Adapter`: a two-member enum beside the `indexed` bool, written in one place from a local `reversed` bool ([iteration_adapters.odin:40](src/iteration_adapters.odin#L40)). Replace it with `reversed: bool`. (about 6 lines)
-- [ast.odin:461](src/ast.odin#L461) `Type_Array.inferred`: true exactly when `length` is nil ([parser.odin:3270](src/parser.odin#L3270) is its one writer), and [check.odin:1956](src/check.odin#L1956) tests both. Use `length == nil`. (about 3 lines)
-
-**Dead code**
-
-- (branch) [ast.odin:1210](src/ast.odin#L1210): the `d == nil` test in `decl_hook_kind`. Every caller has passed an `is_decl` test or dereferences `d` around the call, and the sibling helpers have no such test.
-- (branch) [ast.odin:376](src/ast.odin#L376): `index < len(v.field_indices)` in `composite_element_slots`. `slot_ends` is only allocated beside `field_indices` at the same length ([check_expr.odin:3160](src/check_expr.odin#L3160)), so the `slot_ends` test decides alone.
-
-**Data structures and algorithms**
-
-- [ast.odin:9](src/ast.odin#L9) `Expr_Base`: about 220 bytes per node by my reading of the field types (not measured), about 128 of them an embedded `Const_Value` that most nodes never use. It scales with source size times generic instances, as type syntax and clones carry it too. `enum u8` on `Value_Category`, `Immutable_Reason`, and `Resolution_Kind` is cheap; a union payload for `Const_Value` is the larger win. Measure with `perf.ps1` first.
+Mostly plain node definitions, in good shape: a scan of every struct field found each one still read, so there are no dead fields, and most comments earn their place. The main cost is a syntax walker that three other files repeat by hand.
 
 **Near copies**
 
-- [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515), and [select.odin:313](src/select.odin#L313): the same child traversal four times, and they have drifted: only this walker and `select` visit an `or_else` exit, and only `doc` and `private_names` skip field keys, which is BUG-ast-1. Shared form: an `expr_children(e, data, visit) -> bool` here, each walker keeping only its special cases. (about 150 lines)
-
-**Structure and boundaries**
-
-- [ast.odin:375](src/ast.odin#L375), [ast.odin:570](src/ast.odin#L570), [ast.odin:1030](src/ast.odin#L1030): `composite_element_slots` sits above the type it reads, and `hook_name` and `or_else_exit_value` split type definitions. Move them beside the accessors at `expr_base` so the file reads as types, then helpers.
-
-**Comments**
-
-- [ast.odin:382](src/ast.odin#L382): wrong field. `type` is the checker's base field; say "when `type_expr` is nil".
-- [ast.odin:257](src/ast.odin#L257): "or -1" is stale. The only writers store a real slot ([check_calls.odin:1201](src/check_calls.odin#L1201), [check_calls.odin:1268](src/check_calls.odin#L1268)) and the default is 0. Say "`variadic_slot`, when `is_variadic`, is the packed parameter."
-- [ast.odin:2](src/ast.odin#L2): "decision A1" points nowhere; the only A1 in `comments.md` is about compile-time element budgets. Cite `compiler-architecture.md "One annotated AST"`, here and in `ast_clone.odin:1`.
-- [ast.odin:69](src/ast.odin#L69): cut to "Named types are `Expr_Ident` / `Expr_Selector`; a generic application is an `Expr_Call`." The header already gives the reason.
-- [ast.odin:652](src/ast.odin#L652): "`fields` for a struct, `variants` for a union. A generic instance clones the record alone, so `attributes` repeats the declaration's list to keep `@(align=N)` reachable."
-- [ast.odin:495](src/ast.odin#L495): "`Borrow` is a `self: ^` receiver or a synthesized read-only one, passed by address. It is last because a mode number reaches the type identity key (`typeid_sort_key_walk`)."
+- [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515), and [select.odin:313](src/select.odin#L313): the same child traversal four times, and they have drifted: only this walker and `select` visit an `or_else` exit. Shared form: an `expr_children(e, data, visit) -> bool` here, each walker keeping only its special cases. (about 150 lines)
 
 ### src/attributes.odin
 

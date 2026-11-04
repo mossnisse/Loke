@@ -193,10 +193,9 @@ check_enum_from_int :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id) {
 	if v.type == INVALID_TYPE {
 		return
 	}
-	if base := expr_base(arg); base.is_const {
+	if base := expr_base(arg); base_is_const(base) {
 		present := enum_member_by_value(k.c, subject, base.const_value) != INVALID_SYMBOL
 		index := union_index_of(k.c, v.type, present ? "some" : "none")
-		v.is_const = true
 		v.const_value = union_const(k.c, v.type, index, present ? base.const_value : Const_Value{})
 	}
 }
@@ -217,7 +216,6 @@ check_enum_values :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id) {
 	aggregate.type = array_of(k.c, subject, u64(len(members)))
 	aggregate.elements = members
 	v.type = aggregate.type
-	v.is_const = true
 	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
 	v.immutable = .Constant
 }

@@ -74,7 +74,7 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	}
 	// design.md "Iteration adapters": `reversed()` resolved over a map or text
 	// only through the program's own `iter_reverse`, which is a protocol walk.
-	if s.adapter == .Reversed && (s.kind == .Map || s.kind == .Text) {
+	if s.reversed && (s.kind == .Map || s.kind == .Text) {
 		return check_protocol_foreach(k, s, subject)
 	}
 	s.element_type = foreach_element_type(k, s, subject, info)
@@ -195,7 +195,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		return FLOWS
 	}
 	// Only `reversed()` selects `iter_reverse`.
-	if s.adapter == .Reversed {
+	if s.reversed {
 		reverse := iteration_member(k, subject, "iter_reverse")
 		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Borrow, iterator) {
 			errorf(

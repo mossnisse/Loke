@@ -304,7 +304,7 @@ Type_Key :: struct {
 	mutable: bool,
 }
 
-Resolution_Kind :: enum {
+Resolution_Kind :: enum u8 {
 	Unresolved,
 	Error,
 	Value,
@@ -320,7 +320,7 @@ Resolution_Kind :: enum {
 	Union_Variant,
 }
 
-Value_Category :: enum {
+Value_Category :: enum u8 {
 	Invalid,
 	Value,
 	Place,
@@ -330,7 +330,7 @@ Value_Category :: enum {
 // Why a readable place cannot be assigned to. A value parameter is addressable
 // but immutable; a composite literal is addressable temporary storage; neither
 // fact follows from the other, so the checker records both plus this reason.
-Immutable_Reason :: enum {
+Immutable_Reason :: enum u8 {
 	None,
 	Constant,
 	Value_Parameter,
@@ -361,9 +361,9 @@ Immutable_Reason :: enum {
 }
 
 Resolution :: struct {
-	kind:            Resolution_Kind,
 	symbol:          Symbol_Id,
 	chosen_overload: Symbol_Id,
+	kind:            Resolution_Kind,
 }
 
 Symbol_Kind :: enum u8 {
@@ -1111,7 +1111,6 @@ zero_literal_arg :: proc(c: ^Compiler, type: Type_Id) -> Expr {
 	literal.kind = .Int
 	literal.type = type
 	literal.value_category = .Value
-	literal.is_const = true
 	literal.const_value = int_const(c, 0)
 	return literal
 }

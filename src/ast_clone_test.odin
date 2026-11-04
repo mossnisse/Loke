@@ -18,7 +18,7 @@ Clone_Split :: struct {
 ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 	split := []Clone_Split {
 		// A node's `base` is classified once, here.
-		{Expr_Base, "span has_error", "type denoted_type const_value is_const resolution value_category addressable assignable immutable erased_from view_from splat_from widened_from copied_as extended"},
+		{Expr_Base, "span has_error", "type denoted_type const_value resolution value_category addressable assignable immutable erased_from view_from splat_from widened_from copied_as extended"},
 		{Node_Base, "span has_error attributes", ""},
 
 		{Expr_Error, "", ""},
@@ -44,7 +44,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Type_C_Pointer, "elem", ""},
 		{Type_Slice, "mutable elem", ""},
 		{Type_Dynamic_Array, "elem", ""},
-		{Type_Array, "length inferred elem", ""},
+		{Type_Array, "length elem", ""},
 		{Type_Map, "key value", ""},
 		{Type_Distinct, "elem", ""},
 		{Type_Dyn, "mutable interface_expr", ""},
@@ -64,7 +64,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Stmt_Assign, "op op_span lhs rhs", "rhs_clones destination_live destructure operator operator_direct place_setter setter_bound lowered"},
 		{Stmt_If, "init cond then otherwise", ""},
 		{Stmt_For, "init cond post body condition_only", ""},
-		{Stmt_Foreach, "bindings iterable body", "kind adapter indexed element_type item_type borrows count iterator_type iter_symbol next_symbol expansion"},
+		{Stmt_Foreach, "bindings iterable body", "kind reversed indexed element_type item_type borrows count iterator_type iter_symbol next_symbol expansion"},
 		{Stmt_When, "cond then otherwise", "resolved selected"},
 		{Stmt_Switch, "init subject cases written", "kind exhaustive arm_expected"},
 		{Stmt_Defer, "stmt on_failure", "slot"},

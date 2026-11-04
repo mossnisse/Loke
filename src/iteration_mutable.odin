@@ -71,7 +71,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		return FLOWS
 	}
 	element, iterator, iter := protocol.element, protocol.iterator, protocol.iter
-	if s.adapter == .Reversed {
+	if s.reversed {
 		iter = iteration_member(k, subject, "iter_mut_reverse")
 		if _, reversible := mutable_iteration_receiver(k, iter, subject, iterator); !reversible {
 			errorf(k.c, expr_span(s.iterable), "L0460", "`%s` cannot be reversed mutably: it needs `iter_mut_reverse`", type_name(k.c, subject))

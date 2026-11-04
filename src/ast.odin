@@ -1,7 +1,8 @@
 // AST. Every node carries a Span, and the checker annotates the nodes in place
-// (decision A1). Types and expressions share one node domain, since the grammar
-// cannot tell `Matrix(f32, 4)` from `f(a, b)`; `parse_type` restricts type
-// positions, and the checker decides what syntax cannot.
+// (compiler-architecture.md "One annotated AST"). Types and expressions share one
+// node domain, since the grammar cannot tell `Matrix(f32, 4)` from `f(a, b)`;
+// `parse_type` restricts type positions, and the checker decides what syntax
+// cannot.
 package lokec
 
 import "core:mem/virtual"
@@ -10,8 +11,8 @@ Expr_Base :: struct {
 	span:          Span,
 	type:          Type_Id,
 	denoted_type:  Type_Id, // non-zero when this expression denotes a type
+	// `.Invalid` when the expression is not constant, or its constant failed.
 	const_value:   Const_Value,
-	is_const:      bool,
 	resolution:    Resolution,
 	value_category: Value_Category,
 	// Independent place facts: a value parameter is addressable, not assignable.
@@ -69,8 +70,8 @@ Expr :: union {
 	^Expr_Proc_Group,
 	^Expr_Operator,
 
-	// Type forms. Named types are `Expr_Ident` / `Expr_Selector`, and a generic
-	// application is an `Expr_Call` — that is the whole point of one domain.
+	// Type forms. Named types are `Expr_Ident` / `Expr_Selector`; a generic
+	// application is an `Expr_Call`.
 	^Type_Pointer,
 	^Type_C_Pointer,
 	^Type_Slice,
@@ -258,9 +259,10 @@ Expr_Call :: struct {
 	// The procedure group the call selected through, whose attributes, such as
 	// `@(require_results)`, still apply once the callee names the member.
 	group: Symbol_Id,
-	// `variadic_slot` is the packed parameter, or -1. `variadic_forwards` passes
-	// one spread slice through; otherwise elements and spreads are concatenated
-	// in `variadic_order` (true = next spread, false = next element).
+	// `variadic_slot`, when `is_variadic`, is the packed parameter.
+	// `variadic_forwards` passes one spread slice through; otherwise elements and
+	// spreads are concatenated in `variadic_order` (true = next spread, false =
+	// next element).
 	is_variadic:       bool,
 	variadic_slot:     int,
 	variadic_forwards: bool,
@@ -374,16 +376,7 @@ Element :: struct {
 	value: Expr,
 }
 
-// The array slots one literal element fills: its position, or the index or
-// index range its key designates.
-composite_element_slots :: proc(v: ^Expr_Composite, index: int) -> (lo, hi: int) {
-	if index < len(v.slot_ends) && index < len(v.field_indices) {
-		return v.field_indices[index], v.slot_ends[index]
-	}
-	return index, index + 1
-}
-
-// `T{...}`, or `{...}` taking its type from context when `type` is nil.
+// `T{...}`, or `{...}` taking its type from context when `type_expr` is nil.
 Expr_Composite :: struct {
 	using base: Expr_Base,
 	type_expr:  Expr,
@@ -458,11 +451,10 @@ Type_Dynamic_Array :: struct {
 	elem:       Expr,
 }
 
-// `[N]T`, and `[?]T` where `inferred` is set and `length` is nil.
+// `[N]T`, and `[?]T` where `length` is nil.
 Type_Array :: struct {
 	using base: Expr_Base,
 	length:     Expr,
-	inferred:   bool,
 	elem:       Expr,
 }
 
@@ -496,9 +488,9 @@ Type_Poly :: struct {
 	name:       Name,
 }
 
-// `Borrow` is a `self: ^` receiver, or a synthesized member's read-only receiver:
-// passed by address, which method syntax takes implicitly. It is last because a mode number
-// reaches the type identity key (`typeid_sort_key_walk`).
+// `Borrow` is a `self: ^` receiver or a synthesized read-only one, passed by
+// address. It is last because a mode number reaches the type identity key
+// (`typeid_sort_key_walk`).
 Param_Mode :: enum u8 {
 	Value,
 	Inout,
@@ -574,16 +566,6 @@ Hook_Kind :: enum u8 {
 	Drop,
 }
 
-hook_name :: proc(kind: Hook_Kind) -> string {
-	switch kind {
-	case .Convert: return "convert"
-	case .Copy:    return "copy"
-	case .Drop:    return "drop"
-	case .None:    return ""
-	}
-	return ""
-}
-
 // `operator(+) proc ...` or `hook(convert) proc ...`.
 Expr_Operator :: struct {
 	using base:  Expr_Base,
@@ -656,10 +638,9 @@ Variant :: struct {
 	type: Expr, // nil for a payloadless variant
 }
 
-// `fields` for a struct, `variants` for a union. `attributes` is the list of the
-// declaration whose value it is, which a walk of the declaration has already
-// seen. A generic instance clones the record alone, so an `@(align=N)` has to be
-// reachable from it.
+// `fields` for a struct, `variants` for a union. A generic instance clones the
+// record alone, so `attributes` repeats the declaration's list to keep
+// `@(align=N)` reachable.
 Type_Record :: struct {
 	using base:     Expr_Base,
 	kind:           Record_Kind,
@@ -699,7 +680,52 @@ Type_Interface :: struct {
 	requirements:   []Requirement,
 }
 
-// Exhaustive, so a new node kind is a compile error here.
+// The array slots one literal element fills: its position, or the index or
+// index range its key designates.
+composite_element_slots :: proc(v: ^Expr_Composite, index: int) -> (lo, hi: int) {
+	if index < len(v.slot_ends) {
+		return v.field_indices[index], v.slot_ends[index]
+	}
+	return index, index + 1
+}
+
+hook_name :: proc(kind: Hook_Kind) -> string {
+	switch kind {
+	case .Convert: return "convert"
+	case .Copy:    return "copy"
+	case .Drop:    return "drop"
+	case .None:    return ""
+	}
+	return ""
+}
+
+// The value a `return` exit of an `or_else` carries, or nil.
+or_else_exit_value :: proc(v: ^Expr_Or_Else) -> Expr {
+	if ret, is_return := v.exit.(^Stmt_Return); is_return && ret.value != nil {
+		return ret.value.expr
+	}
+	return nil
+}
+
+// Whether a literal's `key` is the name of a field. An array's index or a map's
+// key is an expression, which the checker resolves; where it did not look, the
+// literal's written type says.
+key_names_field :: proc(v: ^Expr_Composite, key: Expr) -> bool {
+	ident, is_ident := key.(^Expr_Ident)
+	if !is_ident || ident.resolution.symbol != INVALID_SYMBOL || ident.symbol != INVALID_SYMBOL {
+		return false
+	}
+	#partial switch _ in v.type_expr {
+	case ^Type_Array, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Map:
+		return false
+	}
+	return true
+}
+
+base_is_const :: proc(base: ^Expr_Base) -> bool {
+	return base.const_value.kind != .Invalid
+}
+
 conversion_source :: proc(base: ^Expr_Base) -> Type_Id {
 	for from in ([]Type_Id{base.widened_from, base.splat_from, base.erased_from, base.view_from}) {
 		if from != INVALID_TYPE { return from }
@@ -712,78 +738,44 @@ expression_converts_storage :: proc(value: Expr) -> bool {
 	return base != nil && conversion_source(base) != INVALID_TYPE
 }
 
+// Exhaustive, so a new node kind is a compile error here.
 expr_base :: proc(e: Expr) -> ^Expr_Base {
 	switch v in e {
-	case ^Expr_Error:
-		return &v.base
-	case ^Expr_Literal:
-		return &v.base
-	case ^Expr_Ident:
-		return &v.base
-	case ^Expr_Selector:
-		return &v.base
-	case ^Expr_Index:
-		return &v.base
-	case ^Expr_Slice:
-		return &v.base
-	case ^Expr_Call:
-		return &v.base
-	case ^Expr_Postfix:
-		return &v.base
-	case ^Expr_Propagated_Error:
-		return &v.base
-	case ^Expr_Unary:
-		return &v.base
-	case ^Expr_Binary:
-		return &v.base
-	case ^Expr_Range:
-		return &v.base
-	case ^Expr_Or_Else:
-		return &v.base
-	case ^Expr_Cond:
-		return &v.base
-	case ^Expr_Move:
-		return &v.base
-	case ^Expr_Composite:
-		return &v.base
-	case ^Expr_Proc:
-		return &v.base
-	case ^Expr_Proc_Group:
-		return &v.base
-	case ^Expr_Operator:
-		return &v.base
-	case ^Type_Pointer:
-		return &v.base
-	case ^Type_C_Pointer:
-		return &v.base
-	case ^Type_Slice:
-		return &v.base
-	case ^Type_Dynamic_Array:
-		return &v.base
-	case ^Type_Array:
-		return &v.base
-	case ^Type_Map:
-		return &v.base
-	case ^Type_Distinct:
-		return &v.base
-	case ^Type_Dyn:
-		return &v.base
-	case ^Type_Type:
-		return &v.base
-	case ^Type_Poly:
-		return &v.base
-	case ^Type_Proc:
-		return &v.base
-	case ^Type_Record:
-		return &v.base
-	case ^Type_Anon_Record:
-		return &v.base
-	case ^Type_Anon_Union:
-		return &v.base
-	case ^Type_Enum:
-		return &v.base
-	case ^Type_Interface:
-		return &v.base
+	case ^Expr_Error: return &v.base
+	case ^Expr_Literal: return &v.base
+	case ^Expr_Ident: return &v.base
+	case ^Expr_Selector: return &v.base
+	case ^Expr_Index: return &v.base
+	case ^Expr_Slice: return &v.base
+	case ^Expr_Call: return &v.base
+	case ^Expr_Postfix: return &v.base
+	case ^Expr_Propagated_Error: return &v.base
+	case ^Expr_Unary: return &v.base
+	case ^Expr_Binary: return &v.base
+	case ^Expr_Range: return &v.base
+	case ^Expr_Or_Else: return &v.base
+	case ^Expr_Cond: return &v.base
+	case ^Expr_Move: return &v.base
+	case ^Expr_Composite: return &v.base
+	case ^Expr_Proc: return &v.base
+	case ^Expr_Proc_Group: return &v.base
+	case ^Expr_Operator: return &v.base
+	case ^Type_Pointer: return &v.base
+	case ^Type_C_Pointer: return &v.base
+	case ^Type_Slice: return &v.base
+	case ^Type_Dynamic_Array: return &v.base
+	case ^Type_Array: return &v.base
+	case ^Type_Map: return &v.base
+	case ^Type_Distinct: return &v.base
+	case ^Type_Dyn: return &v.base
+	case ^Type_Type: return &v.base
+	case ^Type_Poly: return &v.base
+	case ^Type_Proc: return &v.base
+	case ^Type_Record: return &v.base
+	case ^Type_Anon_Record: return &v.base
+	case ^Type_Anon_Union: return &v.base
+	case ^Type_Enum: return &v.base
+	case ^Type_Interface: return &v.base
 	}
 	return nil
 }
@@ -936,12 +928,6 @@ Foreach_Kind :: enum {
 	Protocol,
 }
 
-// A header adapter traversing the same iterable differently.
-Foreach_Adapter :: enum {
-	None,
-	Reversed,
-}
-
 Stmt_Foreach :: struct {
 	using base: Node_Base,
 	bindings:   []Foreach_Binding,
@@ -949,8 +935,9 @@ Stmt_Foreach :: struct {
 	body:       ^Block,
 	// Written by the checker, read by the backend.
 	kind:          Foreach_Kind,
-	adapter:       Foreach_Adapter,
-	// `indexed()`, always the outermost adapter.
+	// The header adapters, which traverse the same iterable differently:
+	// `reversed()`, and `indexed()`, always the outermost.
+	reversed:      bool,
 	indexed:       bool,
 	// What one binding names: the yielded value, or a map entry or indexed pair.
 	element_type:  Type_Id,
@@ -1061,14 +1048,6 @@ Return_Value :: struct {
 	clone_on_return: bool,
 }
 
-// The value a `return` exit of an `or_else` carries, or nil.
-or_else_exit_value :: proc(v: ^Expr_Or_Else) -> Expr {
-	if ret, is_return := v.exit.(^Stmt_Return); is_return && ret.value != nil {
-		return ret.value.expr
-	}
-	return nil
-}
-
 Stmt_Return :: struct {
 	using base: Node_Base,
 	value:      ^Return_Value, // nil for `return;`
@@ -1107,38 +1086,22 @@ Stmt_Spawn :: struct {
 
 stmt_base :: proc(s: Stmt) -> ^Node_Base {
 	switch v in s {
-	case ^Decl:
-		return &v.base
-	case ^Item_Impl:
-		return &v.base
-	case ^Stmt_Error:
-		return &v.base
-	case ^Stmt_Expr:
-		return &v.base
-	case ^Stmt_Assign:
-		return &v.base
-	case ^Stmt_If:
-		return &v.base
-	case ^Stmt_For:
-		return &v.base
-	case ^Stmt_Foreach:
-		return &v.base
-	case ^Stmt_When:
-		return &v.base
-	case ^Stmt_Switch:
-		return &v.base
-	case ^Stmt_Defer:
-		return &v.base
-	case ^Stmt_Return:
-		return &v.base
-	case ^Stmt_Branch:
-		return &v.base
-	case ^Stmt_Parallel:
-		return &v.base
-	case ^Stmt_Spawn:
-		return &v.base
-	case ^Block:
-		return &v.base
+	case ^Decl: return &v.base
+	case ^Item_Impl: return &v.base
+	case ^Stmt_Error: return &v.base
+	case ^Stmt_Expr: return &v.base
+	case ^Stmt_Assign: return &v.base
+	case ^Stmt_If: return &v.base
+	case ^Stmt_For: return &v.base
+	case ^Stmt_Foreach: return &v.base
+	case ^Stmt_When: return &v.base
+	case ^Stmt_Switch: return &v.base
+	case ^Stmt_Defer: return &v.base
+	case ^Stmt_Return: return &v.base
+	case ^Stmt_Branch: return &v.base
+	case ^Stmt_Parallel: return &v.base
+	case ^Stmt_Spawn: return &v.base
+	case ^Block: return &v.base
 	}
 	return nil
 }
@@ -1212,32 +1175,28 @@ Decl :: struct {
 	check_failed:  bool,
 }
 
-// The literal of `name :: proc() { ... }`, or nil.
-decl_proc :: proc(d: ^Decl) -> ^Expr_Proc {
+// The one value of a constant declaration, or nil.
+decl_value :: proc(d: ^Decl) -> Expr {
 	if d.kind != .Const || len(d.values) != 1 {
 		return nil
 	}
-	literal, ok := d.values[0].(^Expr_Proc)
-	if !ok {
-		return nil
-	}
+	return d.values[0]
+}
+
+// The literal of `name :: proc() { ... }`, or nil.
+decl_proc :: proc(d: ^Decl) -> ^Expr_Proc {
+	literal, _ := decl_value(d).(^Expr_Proc)
 	return literal
 }
 
 // As `decl_proc`, but also looking through `operator(sym)` and hooks.
 decl_proc_literal :: proc(d: ^Decl) -> ^Expr_Proc {
-	if literal := decl_proc(d); literal != nil {
-		return literal
+	value := decl_value(d)
+	if operator, is_operator := value.(^Expr_Operator); is_operator {
+		value = operator.value
 	}
-	if d.kind != .Const || len(d.values) != 1 {
-		return nil
-	}
-	if operator, is_operator := d.values[0].(^Expr_Operator); is_operator {
-		if literal, is_proc := operator.value.(^Expr_Proc); is_proc {
-			return literal
-		}
-	}
-	return nil
+	literal, _ := value.(^Expr_Proc)
+	return literal
 }
 
 decl_is_lifecycle_hook :: proc(d: ^Decl) -> bool {
@@ -1246,13 +1205,8 @@ decl_is_lifecycle_hook :: proc(d: ^Decl) -> bool {
 }
 
 decl_hook_kind :: proc(d: ^Decl) -> Hook_Kind {
-	if d == nil || d.kind != .Const || len(d.values) != 1 {
-		return .None
-	}
-	if wrapper, ok := d.values[0].(^Expr_Operator); ok {
-		return wrapper.hook
-	}
-	return .None
+	wrapper, is_wrapper := decl_value(d).(^Expr_Operator)
+	return wrapper.hook if is_wrapper else .None
 }
 
 // Top-level syntax has its own union so `Decl` never becomes a catch-all.
@@ -1355,26 +1309,16 @@ Item_Static_Assert :: struct {
 
 item_base :: proc(item: Item) -> ^Node_Base {
 	switch v in item {
-	case ^Decl:
-		return &v.base
-	case ^Item_Error:
-		return &v.base
-	case ^Item_Import:
-		return &v.base
-	case ^Item_Foreign_Import:
-		return &v.base
-	case ^Item_Foreign_Block:
-		return &v.base
-	case ^Item_Impl:
-		return &v.base
-	case ^Item_Delegate:
-		return &v.base
-	case ^Item_When:
-		return &v.base
-	case ^Item_Block:
-		return &v.base
-	case ^Item_Static_Assert:
-		return &v.base
+	case ^Decl: return &v.base
+	case ^Item_Error: return &v.base
+	case ^Item_Import: return &v.base
+	case ^Item_Foreign_Import: return &v.base
+	case ^Item_Foreign_Block: return &v.base
+	case ^Item_Impl: return &v.base
+	case ^Item_Delegate: return &v.base
+	case ^Item_When: return &v.base
+	case ^Item_Block: return &v.base
+	case ^Item_Static_Assert: return &v.base
 	}
 	return nil
 }
@@ -1431,101 +1375,120 @@ destroy_ast :: proc(f: ^File) {
 Name_Match :: proc(data: rawptr, node: Expr) -> bool
 
 // Whether type syntax holds a node `matches` accepts, through the expressions a
-// type may contain, such as an array length.
-type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match) -> bool {
+// type may contain, such as an array length. A bare name keying a literal of a
+// named type is an index if that type is an array, which syntax cannot tell, so
+// it is asked about too; `skip_field_keys` is for a caller looking for what no
+// index can be, such as a type.
+type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match, skip_field_keys := false) -> bool {
+	walk := Name_Walk{data, matches, skip_field_keys}
+	return walk_names(&walk, e)
+}
+
+@(private = "file")
+Name_Walk :: struct {
+	data:            rawptr,
+	matches:         Name_Match,
+	skip_field_keys: bool,
+}
+
+@(private = "file")
+walk_names :: proc(w: ^Name_Walk, e: Expr) -> bool {
 	if e == nil {
 		return false
 	}
 	switch v in e {
 	case ^Expr_Ident, ^Type_Poly, ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
-		return matches(data, e)
+		return w.matches(w.data, e)
 	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Expr_Proc_Group, ^Expr_Propagated_Error:
 		return false
 	case ^Type_Pointer:
-		return type_syntax_any_name(v.elem, data, matches)
+		return walk_names(w, v.elem)
 	case ^Type_C_Pointer:
-		return type_syntax_any_name(v.elem, data, matches)
+		return walk_names(w, v.elem)
 	case ^Type_Slice:
-		return type_syntax_any_name(v.elem, data, matches)
+		return walk_names(w, v.elem)
 	case ^Type_Dynamic_Array:
-		return type_syntax_any_name(v.elem, data, matches)
+		return walk_names(w, v.elem)
 	case ^Type_Distinct:
-		return matches(data, e) || type_syntax_any_name(v.elem, data, matches)
+		return w.matches(w.data, e) || walk_names(w, v.elem)
 	case ^Type_Dyn:
-		return type_syntax_any_name(v.interface_expr, data, matches)
+		return walk_names(w, v.interface_expr)
 	case ^Type_Array:
-		return type_syntax_any_name(v.length, data, matches) || type_syntax_any_name(v.elem, data, matches)
+		return walk_names(w, v.length) || walk_names(w, v.elem)
 	case ^Type_Map:
-		return type_syntax_any_name(v.key, data, matches) || type_syntax_any_name(v.value, data, matches)
+		return walk_names(w, v.key) || walk_names(w, v.value)
 	case ^Expr_Selector:
-		return matches(data, e) || type_syntax_any_name(v.operand, data, matches)
+		return w.matches(w.data, e) || walk_names(w, v.operand)
 	case ^Expr_Index:
-		if type_syntax_any_name(v.operand, data, matches) {
+		if walk_names(w, v.operand) {
 			return true
 		}
 		for index in v.indices {
-			if type_syntax_any_name(index, data, matches) {
+			if walk_names(w, index) {
 				return true
 			}
 		}
 		return false
 	case ^Expr_Slice:
-		return type_syntax_any_name(v.operand, data, matches) ||
-		       type_syntax_any_name(v.lo, data, matches) ||
-		       type_syntax_any_name(v.hi, data, matches)
+		return walk_names(w, v.operand) ||
+		       walk_names(w, v.lo) ||
+		       walk_names(w, v.hi)
 	case ^Expr_Call:
 		for arg in v.args {
-			if type_syntax_any_name(arg.value, data, matches) {
+			if walk_names(w, arg.value) {
 				return true
 			}
 		}
-		return type_syntax_any_name(v.callee, data, matches)
+		return walk_names(w, v.callee)
 	case ^Expr_Postfix:
-		return type_syntax_any_name(v.operand, data, matches) || type_syntax_any_name(v.failure, data, matches)
+		return walk_names(w, v.operand) || walk_names(w, v.failure)
 	case ^Expr_Unary:
-		return type_syntax_any_name(v.operand, data, matches)
+		return walk_names(w, v.operand)
 	case ^Expr_Binary:
-		return type_syntax_any_name(v.lhs, data, matches) || type_syntax_any_name(v.rhs, data, matches)
+		return walk_names(w, v.lhs) || walk_names(w, v.rhs)
 	case ^Expr_Range:
-		return type_syntax_any_name(v.lo, data, matches) || type_syntax_any_name(v.hi, data, matches)
+		return walk_names(w, v.lo) || walk_names(w, v.hi)
 	case ^Expr_Or_Else:
-		return type_syntax_any_name(v.value, data, matches) || type_syntax_any_name(v.fallback, data, matches) ||
-		       type_syntax_any_name(or_else_exit_value(v), data, matches)
+		return walk_names(w, v.value) || walk_names(w, v.fallback) ||
+		       walk_names(w, or_else_exit_value(v))
 	case ^Expr_Cond:
-		return type_syntax_any_name(v.then, data, matches) ||
-		       type_syntax_any_name(v.cond, data, matches) ||
-		       type_syntax_any_name(v.otherwise, data, matches)
+		return walk_names(w, v.then) ||
+		       walk_names(w, v.cond) ||
+		       walk_names(w, v.otherwise)
 	case ^Expr_Move:
-		return type_syntax_any_name(v.value, data, matches)
+		return walk_names(w, v.value)
 	case ^Expr_Composite:
-		if type_syntax_any_name(v.type_expr, data, matches) || type_syntax_any_name(v.via, data, matches) {
+		if walk_names(w, v.type_expr) || walk_names(w, v.via) {
 			return true
 		}
 		for element in v.elements {
-			if type_syntax_any_name(element.key, data, matches) || type_syntax_any_name(element.value, data, matches) {
+			if !(w.skip_field_keys && key_names_field(v, element.key)) && walk_names(w, element.key) {
+				return true
+			}
+			if walk_names(w, element.value) {
 				return true
 			}
 		}
 		return false
 	case ^Expr_Operator:
-		return type_syntax_any_name(v.value, data, matches)
+		return walk_names(w, v.value)
 	case ^Type_Proc:
 		for parameter in v.params {
-			if type_syntax_any_name(parameter.type, data, matches) || type_syntax_any_name(parameter.default, data, matches) {
+			if walk_names(w, parameter.type) || walk_names(w, parameter.default) {
 				return true
 			}
 		}
-		return v.result != nil && type_syntax_any_name(v.result.type, data, matches)
+		return v.result != nil && walk_names(w, v.result.type)
 	case ^Type_Anon_Record:
 		for field in v.fields {
-			if type_syntax_any_name(field.type, data, matches) {
+			if walk_names(w, field.type) {
 				return true
 			}
 		}
 		return false
 	case ^Type_Anon_Union:
 		for variant in v.variants {
-			if type_syntax_any_name(variant.type, data, matches) {
+			if walk_names(w, variant.type) {
 				return true
 			}
 		}

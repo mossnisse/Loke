@@ -598,7 +598,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 
 	case ^Type_Array:
 		fmt.sbprint(b, "(array")
-		if node.inferred {
+		if node.length == nil {
 			fmt.sbprint(b, " ?")
 		} else {
 			dump_child(b, node.length, depth)

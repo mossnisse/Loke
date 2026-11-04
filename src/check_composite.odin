@@ -14,7 +14,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		if target == INVALID_TYPE {
 			return
 		}
-	} else if array, is_array := v.type_expr.(^Type_Array); is_array && array.inferred {
+	} else if array, is_array := v.type_expr.(^Type_Array); is_array && array.length == nil {
 		// `[?]T` takes its length from the literal it types.
 		element := resolve_type_syntax(k, array.elem)
 		if element == INVALID_TYPE {
@@ -70,7 +70,6 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	// unless a written type asks for a literal (design.md "Zero values").
 	if len(v.elements) == 0 &&
 	   (info.kind == .Dynamic_Array || info.kind == .Map || (info.kind == .Slice && v.type_expr == nil)) {
-		v.is_const = true
 		v.const_value, _ = zero_const(k.c, target)
 		return
 	}
@@ -100,7 +99,6 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 				return
 			}
 			if zero, ok := zero_const(k.c, target); ok {
-				v.is_const = true
 				v.const_value = zero
 				return
 			}
@@ -425,7 +423,7 @@ array_key_slots :: proc(k: ^Checker, key: Expr, limit: i64) -> (lo, hi: int, ok:
 			return 0, false
 		}
 		base := expr_base(e)
-		if !base.is_const || (base.const_value.kind != .Integer && base.const_value.kind != .Rune) {
+		if base.const_value.kind != .Integer && base.const_value.kind != .Rune {
 			errorf(k.c, expr_span(e), "L0372", "an array element index must be a constant integer")
 			return 0, false
 		}
@@ -552,6 +550,5 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields:
 	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
 	aggregate.type = target
 	aggregate.elements = elements
-	v.is_const = true
 	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
 }

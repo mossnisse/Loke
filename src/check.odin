@@ -1723,7 +1723,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 @(private = "file")
 resolve_array_type :: proc(k: ^Checker, value: ^Type_Array) -> Type_Id {
 	element := resolve_type_syntax(k, value.elem)
-	if element == INVALID_TYPE || value.inferred || value.length == nil {
+	if element == INVALID_TYPE || value.length == nil {
 		return INVALID_TYPE
 	}
 	if value.denoted_type != INVALID_TYPE {
