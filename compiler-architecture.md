@@ -201,8 +201,8 @@ Keep these phase rules:
   result paths and symbols.
 - **Replay reads only recorded input.** Freezing describes every value's
   transfer, then fixes the tables. `prov_writable_input` asserts that no fact
-  replay or materialization adds a value, storage, call input, copy operation,
-  or transfer; a finished graph's later query may still add one.
+  replay or materialization adds a value, storage, call input, or transfer; a
+  finished graph's later query may still add one.
   Fact operations (declarations, stores, borrowed bindings, provider transfers,
   call results and writes, and target invalidation) each record their values,
   paths, block, and defer expansion, and a high-level operation owns the nested

@@ -29,7 +29,7 @@ Prov_Form :: union {
 
 // An operand is read at its checked representation, in its parent's expansion;
 // only the parent's own conversions select a value beneath it.
-@(private = "file")
+@(private)
 prov_operand_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
 	if expr_base(e) == nil { return 0 }
 	return prov_intern_value(graph, e, prov_checked_repr(e))

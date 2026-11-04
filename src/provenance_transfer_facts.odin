@@ -1,4 +1,4 @@
-// Interprets normalized transfer modes and paths against current facts.
+// Interprets normalized transfers and their paths against current facts.
 package lokec
 
 import "core:slice"
@@ -12,21 +12,6 @@ prov_alias_projection :: proc(graph: ^Flow_Graph, type: Type_Id, path: []Proj_St
 		type = prov_type_at(graph.k.c, type, {step})
 	}
 	return out
-}
-
-// The parts a Forward, Join, or Aggregate flattens to; `single` backs a lone one.
-@(private = "file")
-prov_transfer_parts :: proc(transfer: Prov_Transfer, single: ^[1]Prov_Component) -> []Prov_Component {
-	#partial switch operation in transfer {
-	case Prov_Transfer_Forward:
-		single[0] = operation.component
-		return single[:]
-	case Prov_Transfer_Join:
-		return operation.alternatives
-	case Prov_Transfer_Aggregate:
-		return operation.components
-	}
-	return nil
 }
 
 prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias {
@@ -57,11 +42,12 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 		return out
 	}
 	value := prov_value(graph, id)
-	single: [1]Prov_Component
 	out := make([dynamic]Written_Alias, graph.alloc)
-	for part in prov_transfer_parts(transfer, &single) {
+	for part in transfer.(Prov_Transfer_Parts).components {
 		aliases := prov_value_aliases(graph, part.source)
-		uncertain := part.uncertain_copy && prov_type_reaches_mutable(graph.k.c, part.type)
+		// The bounded target analysis cannot prove a copied payload has only its
+		// source's targets. This is a transfer policy, not an alias set.
+		uncertain := part.copy_type != INVALID_TYPE && prov_type_reaches_mutable(graph.k.c, part.copy_type)
 		if len(aliases) == 0 && !uncertain { continue }
 		from := prov_alias_projection(graph, prov_value(graph, part.source).type, part.from)
 		to := prov_alias_projection(graph, value.type, part.to)
@@ -101,7 +87,7 @@ prov_allocator_region :: proc(graph: ^Flow_Graph, allocator: Value_Id) -> Region
 
 @(private = "file")
 prov_component_region :: proc(graph: ^Flow_Graph, component: Prov_Component, path: []Proj_Step, query: Region_Query) -> Region_Set {
-	if component.mode != .Clone {
+	if component.copy_type == INVALID_TYPE {
 		return prov_result_region_at(graph, component.source, prov_concat_path(graph, component.from, path), query)
 	}
 	return prov_copy_component_region(graph, component, path, query, prov_allocator_region(graph, component.allocator))
@@ -111,36 +97,35 @@ prov_copy_component_region :: proc(graph: ^Flow_Graph, component: Prov_Component
                                    query: Region_Query, allocator: Region_Set) -> Region_Set {
 	selected := prov_concat_path(graph, component.from, path)
 	return prov_copied_region_at(graph, Prov_Region_Copy{value = component.source, prefix = component.copy_from,
-	                             as_type = prov_value(graph, component.source).type, allocator = allocator}, component.copy.type,
+	                             as_type = prov_value(graph, component.source).type, allocator = allocator}, component.copy_type,
 	                             selected[len(component.copy_from):], query)
 }
 
 prov_transfer_region :: proc(graph: ^Flow_Graph, transfer: Prov_Transfer, path: []Proj_Step, query: Region_Query) -> Region_Set {
 	out := Region_Set{}
-	#partial switch operation in transfer {
+	switch operation in transfer {
 	case Prov_Transfer_Borrow:
 		if len(path) == 0 && query == .All { return prov_result_region_at(graph, operation.owner, nil, .All) }
-		// `operation.path` is the storage's, and the owner already stands at that
-		// place; only a box's step lies below it.
-		below := operation.path[min(len(prov_value(graph, operation.owner).place.path), len(operation.path)):]
+		// `operation.path` is the storage's. A named owner stands at that place,
+		// so only a box's step lies below it; hidden storage holds the owner whole.
+		below := operation.path
+		if !operation.materialized { below = below[len(prov_value(graph, operation.owner).place.path):] }
 		return prov_result_region_at(graph, operation.owner, prov_concat_path(graph, below, path), query)
 	case Prov_Transfer_Address:
 		// The descriptor is a borrow, not an owner of the addressed allocation.
 		// Reads through it query its backing storage via the ordinary place path.
-		return out
-	case Prov_Transfer_Aggregate:
+	case Prov_Transfer_Parts:
 		for allocation in operation.backing {
 			if !paths_overlap(allocation.path, path) || len(path) > len(allocation.path) { continue }
 			if query == .Own && !prov_same_path(path, allocation.path) { continue }
 			region_merge(&out, prov_allocator_region(graph, allocation.allocator))
 		}
-	}
-	single: [1]Prov_Component
-	for component in prov_transfer_parts(transfer, &single) {
-		if !paths_overlap(component.to, path) { continue }
-		if len(path) < len(component.to) && query == .Own { continue }
-		selected := path[min(len(path), len(component.to)):]
-		region_merge(&out, prov_component_region(graph, component, selected, query))
+		for component in operation.components {
+			if !paths_overlap(component.to, path) { continue }
+			if len(path) < len(component.to) && query == .Own { continue }
+			selected := path[min(len(path), len(component.to)):]
+			region_merge(&out, prov_component_region(graph, component, selected, query))
+		}
 	}
 	return out
 }

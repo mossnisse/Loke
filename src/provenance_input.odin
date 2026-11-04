@@ -53,6 +53,9 @@ Prov_Value :: struct {
 	// A read through it may find targets no write named
 	// (`prov_alias_source_is_unknown`).
 	unknown_alias: bool,
+	// `prov_value_transfer`'s answer; nil when described as no transfer.
+	transfer: Prov_Transfer,
+	described: bool,
 }
 
 Prov_Synthetic_Call_Key :: struct {
@@ -86,8 +89,6 @@ Prov_Input :: struct {
 	storage_ids: map[Written_Storage]Storage_Id,
 	values: [dynamic]Prov_Value,
 	value_ids: map[Prov_Value_Key]Value_Id,
-	transfers: map[Value_Id]Prov_Transfer,
-	copy_operations: map[Type_Id]Prov_Copy_Operation,
 	calls: map[Prov_Call_Key]Prov_Call_Input,
 	captures: map[Prov_Call_Key]Value_Id,
 	synthetic_calls: map[Prov_Synthetic_Call_Key]^Expr_Call,
@@ -109,8 +110,6 @@ new_prov_input :: proc(allocator: mem.Allocator) -> ^Prov_Input {
 	input.storage_ids = make(map[Written_Storage]Storage_Id, allocator)
 	input.values = make([dynamic]Prov_Value, allocator)
 	input.value_ids = make(map[Prov_Value_Key]Value_Id, allocator)
-	input.transfers = make(map[Value_Id]Prov_Transfer, allocator)
-	input.copy_operations = make(map[Type_Id]Prov_Copy_Operation, allocator)
 	input.calls = make(map[Prov_Call_Key]Prov_Call_Input, allocator)
 	input.captures = make(map[Prov_Call_Key]Value_Id, allocator)
 	input.synthetic_calls = make(map[Prov_Synthetic_Call_Key]^Expr_Call, allocator)

@@ -125,10 +125,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 // operands it reaches are in the values' forms and transfers, interned with them.
 @(private = "file")
 prov_freeze_input :: proc(graph: ^Flow_Graph) {
-	expansion := graph.expansion
-	defer graph.expansion = expansion
 	for index := 1; index < len(graph.input.values); index += 1 {
-		graph.expansion = graph.input.values[index].expansion
 		_ = prov_value_transfer(graph, Value_Id(index))
 	}
 }
@@ -189,11 +186,6 @@ prov_effect_end :: proc(graph: ^Flow_Graph, recorded: bool) {
 	site := &graph.effect_program.operations[len(graph.effect_program.operations) - 1]
 	assert(site.block == graph.current, "a fact operation changed blocks")
 	site.count = prov_next_event(graph) - site.first
-}
-
-prov_effect_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Value_Id {
-	_ = prov_value_transfer(graph, id)
-	return id
 }
 
 prov_effect_path :: proc(graph: ^Flow_Graph, path: []Proj_Step) -> []Proj_Step {

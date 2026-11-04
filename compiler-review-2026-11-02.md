@@ -764,58 +764,6 @@ What remains here waits on a helper shared across files.
 
 - [provenance_form.odin:111](src/provenance_form.odin#L111), [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [:10017](src/cfg_provenance.odin#L10017), [emit_llvm_stmt.odin:264](src/emit_llvm_stmt.odin#L264): each keeps `next_element`/`next_spread` to pick the next pack operand. Shared form in `ast.odin`: `call_pack_next(call, is_spread, &cursor) -> Expr`, about 6 lines off each of the first two.
 
-### src/provenance_transfer.odin
-
-The logic holds up and its comments are already terse; I found no bug, and probes of the two suspect spots below gave no wrong result. The representation is richer than its consumers: three transfer variants, a mode, a type, and a copy-operation table all carry distinctions that nothing outside a test reads.
-
-**Simplification**
-
-- [provenance_transfer.odin:29](src/provenance_transfer.odin#L29) `Prov_Transfer_Forward`/`Join`/`Aggregate`: both uses of `prov_transfer_parts` treat them alike, and Forward needs the `single: [1]` workaround in `prov_transfer_parts`.
-  Merge into one `Prov_Transfer_Parts{components, backing}` with a one-component constructor helper; the facts file loses its arm splits and the clone two arms.
-  (about 20 lines across files; tests at provenance_normalization_test.odin:358, 374, 712 change)
-- [provenance_transfer.odin:19](src/provenance_transfer.odin#L19) `Prov_Component.type`/`mode`: `type` is read only at line 60 and in `prov_value_aliases`, both for clones, and every clone call passes it, so the `prov_type_at` default at line 57 is computed only to go unread.
-  `mode` is only tested for clone-or-not, so `copy_type: Type_Id`, set only for a clone, replaces both and the `mode :=` locals (160, 193, 207, 219).
-  `.Move` is then pinned only by the test at provenance_normalization_test.odin:377. (about 12 lines)
-- [provenance_transfer.odin:64](src/provenance_transfer.odin#L64) `prov_component`: the `_ = prov_value_transfer` here and at 104, 147, and [provenance_effect.odin:245](src/provenance_effect.odin#L245) may be redundant now that `prov_value_aliases` describes what it reads. They also describe a value before the input freezes, where replay asserts, so remove them only with a replay run to check.
-  Have the facts file call `prov_value_transfer` (lines 20, 75, 87) and delete those calls; the freeze loop describes the rest. (about 6 lines, and no site can forget it)
-- [provenance_transfer.odin:134](src/provenance_transfer.odin#L134) `prov_describe_transfer`: `fallible_of` then `prov_extend(graph, nil, proj_field(shape.success))` repeats at 134, 201-202, and 234-235.
-  A file-private `prov_success_path(graph, type) -> []Proj_Step`, nil when not fallible, turns the two five-line `prefix` blocks into one line each. (about 8 lines)
-
-**Dead code**
-
-- (branch) [provenance_transfer.odin:269](src/provenance_transfer.odin#L269): `mode` and `type` (line 270) of the returned component are never read: its only consumers, `prov_stored_region_at` and `prov_copy_component_region`, read `source`, `from`, `copy_from`, and `copy.type`. Line 270's `prov_type_at` is wasted work.
-- (branch) [provenance_transfer.odin:249](src/provenance_transfer.odin#L249): `as_type` of `prov_input_stored_copy` always resolves to `value.type`: copying callers pass nothing ([cfg_provenance.odin:4261](src/cfg_provenance.odin#L4261)) or `prov_value(value).type` ([:4272](src/cfg_provenance.odin#L4272), [:5595](src/cfg_provenance.odin#L5595) through `prov_result_region_fields`). Drop the parameter; `type := value.type`.
-- (branch) [provenance_transfer.odin:70](src/provenance_transfer.odin#L70): `index >= 0` cannot fail. Line 212 is the only non-default `index`, reached only by `make`, whose `bound` always has `max_counts + 1 >= 2` slots ([check_builtin.odin:677](src/check_builtin.odin#L677)). Write `v.bound[len(v.bound) - 1]` at 212 and drop the parameter.
-
-**Data structures and algorithms**
-
-- [provenance_transfer.odin:44](src/provenance_transfer.odin#L44) `prov_input_copy_operation`: a per-body map caches `lifecycle_of(c, type).custom_try_clone`, itself a map lookup on settled annotations; its two query callers read only `.hook` ([cfg_provenance.odin:5135](src/cfg_provenance.odin#L5135), [:5215](src/cfg_provenance.odin#L5215)).
-  A direct lookup removes the struct, the table, its seed loop, and a replay assert a query could trip on an unrecorded type; compiler-architecture.md:204 loses an item. (about 14 lines across files)
-- [provenance_transfer.odin:83](src/provenance_transfer.odin#L83) `prov_value_transfer`: `transfers` is a `map[Value_Id]Prov_Transfer` over dense IDs, growing with a body's expressions and read on every alias and region query, each read hashing and copying a union of about 100 bytes.
-  A `Prov_Value` field with a `described` bit, or a slice parallel to `values`, fits. Smaller than the interning cost open-questions.md records, but a local change.
-
-**Near copies**
-
-- [provenance_transfer.odin:257](src/provenance_transfer.odin#L257) and [cfg_provenance.odin:1461](src/cfg_provenance.odin#L1461): both map a widened path's first field step back to the source variant. Make `prov_widened_region_path` package-visible and use it with `source = prov_value_beneath(graph, id, .Widening)`.
-  This drops the `.(Prov_Transfer_Aggregate)` assertion at 253 and the search through components; a void variant then yields an empty query rather than `{}`, with the same result. (about 10 lines)
-- [provenance_transfer.odin:110](src/provenance_transfer.odin#L110) and [provenance_transfer.odin:218](src/provenance_transfer.odin#L218): the same per-variant widening loop, differing in mode, allocator, and the `copy` override. `prov_widening_transfer(graph, source, from, to, clones := false, allocator: Expr = nil)` serves both, and line 108's `to` goes. (about 7 lines)
-
-**Structure and boundaries**
-
-- [provenance_transfer.odin:93](src/provenance_transfer.odin#L93) `prov_describe_transfer`: 150 lines, the call arm 73 of them. Seams: `prov_call_transfer` for 167-239 and `prov_composite_transfer` for 144-165, leaving a short dispatch over the node.
-- [provenance_transfer.odin:119](src/provenance_transfer.odin#L119): operands go through `prov_input_value`, which reads the walk's open conversions and `graph.expansion`, while forms use `prov_operand_value`. `prov_storage_id` at 101 also keys on `graph.expansion`, a precondition only the freeze loop ([provenance_effect.odin:171](src/provenance_effect.odin#L171)) arranges.
-  Have `prov_value_transfer` set the value's expansion around the describe and use `prov_operand_value`. I found no failing input.
-- [provenance_transfer.odin:101](src/provenance_transfer.odin#L101): `materialized = !direct` also covers a named owner reached through a pointer, whose `place.path` is relative to the carrier's pointee yet is used at the hidden temporary.
-  A probe viewing `pointer.items` as `[]Elem` was still rejected (L0526 naming `bag`), so no wrong result is shown; `direct ? place.path : nil` states the intent.
-- [provenance_transfer.odin:25](src/provenance_transfer.odin#L25): `uncertain_copy` is set for four clones (191, 197, 211, 238) but not for composite elements (162) or widening conversions (224), though the comment's reason applies to all.
-  Probes with a field-swapping hook were all rejected (L0536), so no wrong result is shown; say why they differ, or set it.
-
-**Comments**
-
-- [provenance_transfer.odin:62](src/provenance_transfer.odin#L62): "Queries read `transfers` directly, so describe the source first." The hidden-array sentence does not explain the call. Delete if the map reads above are replaced.
-- [provenance_transfer.odin:90](src/provenance_transfer.odin#L90): says operands are read at their checked representation, but `prov_input_value` honors open conversions. Keep it only with the `prov_operand_value` change above; otherwise "at the representation the walk currently evaluates them".
-- [provenance_transfer.odin:32](src/provenance_transfer.odin#L32): "A named owner's storage holds its carriers; any other owner's, including one reached through a pointer, move into the hidden storage the view borrows."
-
 ### src/reflect.odin
 
 **Near copies**

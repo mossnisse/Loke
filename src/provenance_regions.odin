@@ -108,13 +108,13 @@ prov_root_is_parameter :: proc(graph: ^Flow_Graph, root: Root_Id) -> bool {
 	return sym != nil && sym.kind == .Parameter
 }
 
-@(private = "file")
+@(private)
 prov_widened_region_path :: proc(graph: ^Flow_Graph, from, to: Type_Id, path: []Proj_Step) -> ([]Proj_Step, bool) {
 	if len(path) == 0 { return path, true }
 	if path[0].kind != .Field { return path, true }
 	for _, index in type_of(graph.k.c, from).variants {
 		if widened_variant(graph.k.c, from, to, index) == int(path[0].lo) {
-			return prov_concat_path(graph, {proj_field(index)}, path[1:]), true
+			return prov_concat_path(graph, prov_extend(graph, nil, proj_field(index)), path[1:]), true
 		}
 	}
 	return nil, false // this alternative cannot be produced by the source
@@ -270,7 +270,7 @@ prov_merge_parent :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
 @(private)
 prov_merge_value_region :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage, provider: bool) {
 	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Merge_Value{symbol, prov_effect_value(graph, value), prov_effect_path(graph, source), storage, provider}) }
+	if recorded { prov_effect_begin(graph, Prov_Effect_Merge_Value{symbol, value, prov_effect_path(graph, source), storage, provider}) }
 	defer prov_effect_end(graph, recorded)
 	region := storage ? prov_storage_region(graph, value) : prov_result_region_at(graph, value, source)
 	if provider {
@@ -505,7 +505,7 @@ prov_define_value_regions :: proc(
 	copies := false, allocated_by := INVALID_SYMBOL,
 ) {
 	recorded := prov_effect_active(graph) && value != 0 && prov_type_has_region(graph.k.c, prov_value(graph, value).type)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_path(graph, path), prov_effect_value(graph, value), prov_effect_path(graph, source), copies, allocated_by}) }
+	if recorded { prov_effect_begin(graph, Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_path(graph, path), value, prov_effect_path(graph, source), copies, allocated_by}) }
 	defer prov_effect_end(graph, recorded)
 	allocator := prov_destination_allocator(graph, allocated_by)
 	type := prov_value(graph, value).type
@@ -573,7 +573,7 @@ prov_take_self_sources :: proc(graph: ^Flow_Graph, reads: ^Prov_Self_Reads, regi
 @(private = "file")
 prov_stored_region_at :: proc(graph: ^Flow_Graph, value: Value_Id, path: []Proj_Step, query: Region_Query, copies: bool, allocator: Region_Set, as_type := INVALID_TYPE, copy_from: []Proj_Step = nil) -> Region_Set {
 	if !copies { return prov_result_region_at(graph, value, path, query, as_type) }
-	component := prov_input_stored_copy(graph, value, path, copy_from, as_type)
+	component := prov_input_stored_copy(graph, value, path, copy_from)
 	if component.source == 0 { return Region_Set{} }
 	return prov_copy_component_region(graph, component, nil, query, allocator)
 }
@@ -816,7 +816,7 @@ prov_moved_bits :: proc(graph: ^Flow_Graph, id: Value_Id) -> u64 {
 @(private)
 prov_merge_moved_bits :: proc(graph: ^Flow_Graph, root: Symbol_Id, value: Value_Id) {
 	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Move_Provider{root, prov_effect_value(graph, value)}) }
+	if recorded { prov_effect_begin(graph, Prov_Effect_Move_Provider{root, value}) }
 	defer prov_effect_end(graph, recorded)
 	bits := prov_moved_bits(graph, value)
 	if bits == 0 {
@@ -1082,7 +1082,7 @@ prov_read_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 @(private)
 prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Value_Id, element: []Proj_Step = nil, traversed := false) {
 	recorded := prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Element{id, prov_effect_value(graph, iterable), prov_effect_path(graph, element), traversed}) }
+	if recorded { prov_effect_begin(graph, Prov_Effect_Element{id, iterable, prov_effect_path(graph, element), traversed}) }
 	defer prov_effect_end(graph, recorded)
 	sym := symbol_of(graph.k.c, id)
 	if sym != nil && traversed && prov_type_has_region(graph.k.c, sym.type) {
@@ -1383,8 +1383,8 @@ prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type
 		if type_is_shared_handle(graph.k.c, type) {
 			return prov_copy_source_region_at(graph, source, path, query)
 		}
-		if operation := prov_input_copy_operation(graph, type); operation.hook != INVALID_SYMBOL {
-			return prov_copy_hook_region(graph, source, operation, path[:index], path[index:], query)
+		if hook := lifecycle_of(graph.k.c, type).custom_try_clone; hook != INVALID_SYMBOL {
+			return prov_copy_hook_region(graph, source, hook, path[:index], path[index:], query)
 		}
 		type = prov_type_at(graph.k.c, type, {step})
 	}
@@ -1425,10 +1425,10 @@ prov_merge_matching_content :: proc(out: ^Region_Set, contents: []Prov_Region_Co
 }
 
 @(private = "file")
-prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, operation: Prov_Copy_Operation, prefix, path: []Proj_Step, query: Region_Query) -> Region_Set {
+prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook: Symbol_Id, prefix, path: []Proj_Step, query: Region_Query) -> Region_Set {
 	c := graph.k.c
-	prov_note_summary_dependency(graph, operation.hook)
-	summary, found := result_summary(c, operation.hook)
+	prov_note_summary_dependency(graph, hook)
+	summary, found := result_summary(c, hook)
 	out := Region_Set{}
 	if !found {
 		region_merge(&out, prov_copy_source_region_at(graph, source, prefix))
@@ -1464,8 +1464,8 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 	if type_underlying(c, type) == TYPE_STRING || type_underlying(c, type) == TYPE_ALLOCATOR || type_is_shared_handle(c, type) || type_is_carrier(c, type) {
 		return prov_copy_source_region_at(graph, source, path, query)
 	}
-	if operation := prov_input_copy_operation(graph, type); operation.hook != INVALID_SYMBOL {
-		return prov_copy_hook_region(graph, source, operation, path, nil, query)
+	if hook := lifecycle_of(c, type).custom_try_clone; hook != INVALID_SYMBOL {
+		return prov_copy_hook_region(graph, source, hook, path, nil, query)
 	}
 	info := underlying_info(c, type)
 	if info == nil { return out }

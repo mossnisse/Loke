@@ -363,12 +363,12 @@ main :: proc() {}`) { return }
 			extraction, checked := call.operation.(Call_Union_As)
 			shape, ok := fallible_of(&p.c, expr_base(call.bound[0]).type)
 			testing.expect(t, checked && ok && extraction.index == shape.success, "the selected variant must remain checked metadata")
-			transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, call)).(Prov_Transfer_Forward)
-			if testing.expect(t, transfers) {
-				part := transfer.component
+			transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, call)).(Prov_Transfer_Parts)
+			if testing.expect(t, transfers && len(transfer.components) == 1) {
+				part := transfer.components[0]
 				result, _ := fallible_of(&p.c, call.type)
-				testing.expect(t, part.mode == .Clone && part.copy.type == union_variant_payload(&p.c, expr_base(call.bound[0]).type, extraction.index),
-				               "checked extraction must select the payload's copy operation")
+				testing.expect(t, part.copy_type == union_variant_payload(&p.c, expr_base(call.bound[0]).type, extraction.index),
+				               "checked extraction must copy the payload's type")
 				testing.expect(t, len(part.from) == 1 && part.from[0] == proj_field(extraction.index) &&
 				                  len(part.to) == 1 && part.to[0] == proj_field(result.success), "extraction must remap the selected payload into success")
 			}
@@ -379,10 +379,10 @@ main :: proc() {}`) { return }
 		_, unboxes := unbox.operation.(Call_Box_Unbox)
 		_, consumes := unbox.bound[0].(^Expr_Move)
 		testing.expect(t, unboxes && consumes, "unboxing must consume the box rather than copy its payload")
-		transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, unbox)).(Prov_Transfer_Forward)
-		if testing.expect(t, transfers) {
-			part := transfer.component
-			testing.expect(t, part.mode == .Move && len(part.from) == 1 && part.from[0].kind == .Wild && len(part.to) == 0,
+		transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, unbox)).(Prov_Transfer_Parts)
+		if testing.expect(t, transfers && len(transfer.components) == 1) {
+			part := transfer.components[0]
+			testing.expect(t, part.copy_type == INVALID_TYPE && len(part.from) == 1 && part.from[0].kind == .Wild && len(part.to) == 0,
 			               "unbox must move out of the box payload without retaining its backing allocation")
 		}
 	}
@@ -675,8 +675,102 @@ main :: proc() {}`) { return }
 	testing.expect(t, is_symbol && identifier_text(&p.c, symbol_of(&p.c, left.symbol).name) == "a", "a user operator's first operand is not its left side")
 }
 
-// design.md "Allocator regions and region provenance": a checked copy operation
-// retains hook identity, while each replay substitutes the hook's current facts.
+// design.md "Temporaries and procedure boundaries": hidden storage holds the
+// owner whole, so a pointer's path to the owner is not a path within it.
+@(test)
+normalization_hidden_owner_path_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Bag :: struct { spare: int, items: [dynamic]int }
+Boxed :: struct { spare: int, item: Box(int) }
+views :: proc(bag: ^mut Bag, boxed: ^mut Boxed) {
+    through: []int = bag.items;
+    pointee: ^int = boxed.item;
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "views")
+	if graph == nil { return }
+	through := normalization_decl(t, &p, graph.literal, "through")
+	pointee := normalization_decl(t, &p, graph.literal, "pointee")
+	if through == nil || pointee == nil { return }
+	borrow, borrows := prov_value_transfer(graph, prov_input_value(graph, through.values[0])).(Prov_Transfer_Borrow)
+	if testing.expect(t, borrows, "a view through a pointer must normalize as a borrow") {
+		testing.expect(t, borrow.materialized && len(borrow.path) == 0, "the hidden storage's path repeated the owner's place below the pointer")
+	}
+	boxed, boxes := prov_value_transfer(graph, prov_input_value(graph, pointee.values[0])).(Prov_Transfer_Borrow)
+	if testing.expect(t, boxes, "a box's view through a pointer must normalize as a borrow") {
+		testing.expect(t, boxed.materialized && len(boxed.path) == 1 && boxed.path[0].kind == .Wild, "only the box's step lies below hidden storage")
+	}
+}
+
+// design.md "Allocator regions and region provenance": an allocation with no
+// allocator operand uses the default.
+@(test)
+normalization_allocation_allocator_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+allocations :: proc(allocator: Allocator) {
+    implicit := box(1);
+    explicit := box(2, allocator);
+    made := make([dynamic]int, 1, allocator);
+    plain := make([dynamic]int, 1);
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "allocations")
+	if graph == nil { return }
+	allocator := proc(t: ^testing.T, p: ^Checked, graph: ^Flow_Graph, name: string) -> Value_Id {
+		decl := normalization_decl(t, p, graph.literal, name)
+		if decl == nil { return -1 }
+		transfer, parts := prov_value_transfer(graph, prov_input_value(graph, decl.values[0])).(Prov_Transfer_Parts)
+		if !testing.expect(t, parts && len(transfer.backing) == 1, "an allocation must describe its backing") { return -1 }
+		return transfer.backing[0].allocator
+	}
+	testing.expect(t, allocator(t, &p, graph, "implicit") == 0, "a one-argument allocation took its operand for its allocator")
+	testing.expect(t, allocator(t, &p, graph, "explicit") > 0, "an allocation lost its allocator operand")
+	testing.expect(t, allocator(t, &p, graph, "made") > 0, "make lost its allocator, the final slot")
+	testing.expect(t, allocator(t, &p, graph, "plain") == 0, "make took a count for its allocator")
+}
+
+// design.md "Carrier tracking": however a place is copied, a copy holding a
+// mutable carrier keeps an unresolved target beside its source's.
+@(test)
+normalization_every_copy_keeps_uncertainty_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Held :: struct { values: [dynamic]int, target: ^mut int }
+Wrap :: struct { held: Held }
+Small :: (held: Held | none:);
+Wide :: (none: | held: Held | other: int);
+keep :: proc(held: Held, small: Small) {}
+copies :: proc(small: Small) {
+    number := 1;
+    source := Held{make([dynamic]int), &mut number};
+    explicit := source.clone();
+    variant: Small = .held(source);
+    element := Wrap{held = source};
+    converted := Wide(small);
+    keep(source, small);
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "copies")
+	if graph == nil { return }
+	for name in ([]string{"explicit", "variant", "element", "converted"}) {
+		decl := normalization_decl(t, &p, graph.literal, name)
+		if decl == nil { continue }
+		unknown := false
+		for alias in prov_value_aliases(graph, prov_input_value(graph, decl.values[0])) { unknown ||= alias.target == 0 }
+		testing.expectf(t, unknown, "the copy %s claimed to know every target it holds", name)
+	}
+}
+
+// design.md "Allocator regions and region provenance": a copy keeps its type,
+// and each replay substitutes the current facts of that type's hook.
 @(test)
 normalization_copy_summary_replay_contract :: proc(t: ^testing.T) {
 	p: Checked
@@ -701,21 +795,21 @@ main :: proc() {}`) { return }
 	if !testing.expect(t, returns && ret.value != nil) { return }
 	transfer := prov_value_transfer(graph, prov_input_value(graph, ret.value.expr))
 	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
-	operation := prov_input_copy_operation(graph, held)
-	if !testing.expect(t, operation.hook != INVALID_SYMBOL && prov_has_direct_body(&p.c, operation.hook)) { return }
-	original := p.c.result_summaries[operation.hook]
-	defer p.c.result_summaries[operation.hook] = original
+	hook := lifecycle_of(&p.c, held).custom_try_clone
+	if !testing.expect(t, hook != INVALID_SYMBOL && prov_has_direct_body(&p.c, hook)) { return }
+	original := p.c.result_summaries[hook]
+	defer p.c.result_summaries[hook] = original
 	growing: Result_Provenance
-	p.c.result_summaries[operation.hook] = &growing
+	p.c.result_summaries[hook] = &growing
 	before := prov_transfer_region(graph, transfer, nil, .All)
 	growing.region = Region_Set{params = 0b11}
 	after := prov_transfer_region(graph, transfer, nil, .All)
 	testing.expect(t, !before.default && !region_has_param(before, 0), "an empty hook summary supplied settled dependencies")
 	testing.expect(t, after.default && region_has_param(after, 0), "replay did not observe the grown source and allocator dependencies")
-	testing.expect(t, slice.contains(graph.summary_callees[:], operation.hook), "replay omitted the nested hook dependency")
-	count := len(graph.input.transfers)
+	testing.expect(t, slice.contains(graph.summary_callees[:], hook), "replay omitted the nested hook dependency")
+	count := len(graph.input.values)
 	again := prov_value_transfer(graph, prov_input_value(graph, ret.value.expr))
-	testing.expect(t, len(graph.input.transfers) == count && again.(Prov_Transfer_Forward).component.source == transfer.(Prov_Transfer_Forward).component.source,
+	testing.expect(t, len(graph.input.values) == count && again.(Prov_Transfer_Parts).components[0].source == transfer.(Prov_Transfer_Parts).components[0].source,
 	               "summary growth changed the normalized transfer or its source identity")
 }
 
@@ -912,7 +1006,7 @@ main :: proc() {}`) { return }
 	graph, program := normalization_replay(t, &k, &p, "hooked")
 	if graph == nil { return }
 	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
-	hook := prov_input_copy_operation(graph, held).hook
+	hook := lifecycle_of(&p.c, held).custom_try_clone
 	original := p.c.result_summaries[hook]
 	defer p.c.result_summaries[hook] = original
 	growing: Result_Provenance
