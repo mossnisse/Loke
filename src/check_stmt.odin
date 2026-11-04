@@ -541,8 +541,8 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	value := clone_expr(k.c, s.rhs[0])
 	// A constant right operand keeps its unfixed type for the operator to settle.
 	if !lowered_constant(k, s.rhs[0]) && needs_temporary(k, s.rhs[0]) {
-		append(&stmts, lowered_temporary(k, "compound$value", value, span))
-		value = lowered_name(k, "compound$value", span)
+		append(&stmts, synth_decl(k.c, .Var, "compound$value", value, span))
+		value = synth_ident(k.c, "compound$value", span)
 	}
 
 	read := lowered_index(k, target, index_names, receiver, span)
@@ -577,13 +577,13 @@ bind_index_place :: proc(
 ) -> (receiver: string, index_names: []string) {
 	if !is_effect_free_place(target.operand) {
 		receiver = concat(k.c, prefix, "receiver")
-		append(stmts, lowered_temporary(k, receiver, lowered_address(k, target.operand, span), span))
+		append(stmts, synth_decl(k.c, .Var, receiver, lowered_address(k, target.operand, span), span))
 	}
 	index_names = make([]string, len(target.indices), k.c.semantic_allocator)
 	for index, position in target.indices {
 		if needs_temporary(k, index) {
 			index_names[position] = lowered_position_name(k, concat(k.c, prefix, "index"), position, "")
-			append(stmts, lowered_temporary(k, index_names[position], clone_expr(k.c, index), span))
+			append(stmts, synth_decl(k.c, .Var, index_names[position], clone_expr(k.c, index), span))
 		}
 	}
 	return
@@ -635,8 +635,8 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 			continue
 		}
 		name := lowered_position_name(k, "assign$value", position, "")
-		append(&stmts, lowered_temporary(k, name, clone_expr(k.c, value), span))
-		values[position] = lowered_name(k, name, span)
+		append(&stmts, synth_decl(k.c, .Var, name, clone_expr(k.c, value), span))
+		values[position] = synth_ident(k.c, name, span)
 	}
 	destinations := make([]Expr, len(s.lhs), k.c.semantic_allocator)
 	for target, position in s.lhs {
@@ -651,8 +651,8 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 			destinations[position] = clone_expr(k.c, target)
 		} else {
 			name := concat(k.c, prefix, "place")
-			append(&stmts, lowered_temporary(k, name, lowered_address(k, target, span), span))
-			destinations[position] = lowered_deref(k, name, span)
+			append(&stmts, synth_decl(k.c, .Var, name, lowered_address(k, target, span), span))
+			destinations[position] = synth_deref(k.c, synth_ident(k.c, name, span), span)
 		}
 	}
 	for destination, position in destinations {
@@ -707,9 +707,9 @@ lower_destructuring_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool 
 		}
 		reject_destructured_setter_target(k, target, fields[position])
 		name := lowered_position_name(k, "assign$field", position, "")
-		take.names[position] = Name{text = name, span = span, id = intern_identifier(k.c, name)}
+		take.names[position] = synth_name(k.c, name, span)
 		append(&destinations, clone_expr(k.c, target))
-		append(&values, lowered_name(k, name, span))
+		append(&values, synth_ident(k.c, name, span))
 	}
 	store.lhs, store.rhs = destinations[:], values[:]
 	stmts := make([]Stmt, 2, k.c.semantic_allocator)
@@ -767,24 +767,7 @@ lowered_position_name :: proc(k: ^Checker, prefix: string, position: int, suffix
 // `&mut place`.
 @(private = "file")
 lowered_address :: proc(k: ^Checker, place: Expr, span: Span) -> Expr {
-	address := new(Expr_Unary, k.c.semantic_allocator)
-	address.span = span
-	address.op = .Amp
-	address.op_span = span
-	address.mutable = true
-	address.operand = clone_expr(k.c, place)
-	return address
-}
-
-// `name^`.
-@(private = "file")
-lowered_deref :: proc(k: ^Checker, name: string, span: Span) -> Expr {
-	deref := new(Expr_Postfix, k.c.semantic_allocator)
-	deref.span = span
-	deref.op = .Caret
-	deref.op_span = span
-	deref.operand = lowered_name(k, name, span)
-	return deref
+	return synth_address(k.c, clone_expr(k.c, place), true, span)
 }
 
 @(private = "file")
@@ -809,27 +792,6 @@ lowered_pure :: proc(e: Expr) -> bool {
 	return is_implicit_selector(e)
 }
 
-@(private = "file")
-lowered_name :: proc(k: ^Checker, name: string, span: Span) -> Expr {
-	ident := new(Expr_Ident, k.c.semantic_allocator)
-	ident.span = span
-	ident.name = name
-	ident.name_id = intern_identifier(k.c, name)
-	return ident
-}
-
-@(private = "file")
-lowered_temporary :: proc(k: ^Checker, name: string, value: Expr, span: Span) -> Stmt {
-	d := new(Decl, k.c.semantic_allocator)
-	d.span = span
-	d.kind = .Var
-	d.names = make([]Name, 1, k.c.semantic_allocator)
-	d.names[0] = Name{text = name, span = span, id = intern_identifier(k.c, name)}
-	d.values = make([]Expr, 1, k.c.semantic_allocator)
-	d.values[0] = value
-	return d
-}
-
 // `r^[i0]`, or the written receiver and indices where they were not bound; a
 // receiver bound to an address is named by `receiver`.
 @(private = "file")
@@ -837,7 +799,7 @@ lowered_index :: proc(k: ^Checker, target: ^Expr_Index, index_names: []string, r
 	out := new(Expr_Index, k.c.semantic_allocator)
 	out.span = target.span
 	if receiver != "" {
-		out.operand = lowered_deref(k, receiver, span)
+		out.operand = synth_deref(k.c, synth_ident(k.c, receiver, span), span)
 	} else {
 		out.operand = clone_expr(k.c, target.operand)
 	}
@@ -846,7 +808,7 @@ lowered_index :: proc(k: ^Checker, target: ^Expr_Index, index_names: []string, r
 		if index_names[position] == "" {
 			out.indices[position] = clone_expr(k.c, index)
 		} else {
-			out.indices[position] = lowered_name(k, index_names[position], span)
+			out.indices[position] = synth_ident(k.c, index_names[position], span)
 		}
 	}
 	return out

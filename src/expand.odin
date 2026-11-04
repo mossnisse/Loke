@@ -507,11 +507,8 @@ find_expanded_case :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> (p
 // A per-variant case's one value, the selector `.label`.
 @(private = "file")
 variant_case_values :: proc(c: ^Compiler, label: string, span: Span) -> []Expr {
-	selector := new(Expr_Selector, c.semantic_allocator)
-	selector.span = span
-	selector.name = Name{text = label, span = span, id = intern_identifier(c, label)}
 	values := make([]Expr, 1, c.semantic_allocator)
-	values[0] = selector
+	values[0] = synth_selector(c, nil, label, span)
 	return values
 }
 
@@ -668,7 +665,7 @@ union_dispatch_switch :: proc(k: ^Checker, v: ^Expr_Call, subject, expected: Typ
 	s.arm_expected = expected
 	s.cases = make([]Switch_Case, variant_count(k.c, subject), k.c.semantic_allocator)
 	span := v.args[0].span
-	binding := Name{text = DISPATCH_PAYLOAD, span = span, id = intern_identifier(k.c, DISPATCH_PAYLOAD)}
+	binding := synth_name(k.c, DISPATCH_PAYLOAD, span)
 	for &entry, index in s.cases {
 		label := union_variant_name(k.c, subject, index)
 		entry.span = v.span
@@ -676,20 +673,14 @@ union_dispatch_switch :: proc(k: ^Checker, v: ^Expr_Call, subject, expected: Typ
 		entry.binding = binding
 		entry.descriptor = variant_descriptor(k.c, subject, index)
 
-		payload := new(Expr_Ident, k.c.semantic_allocator)
-		payload.span = span
-		payload.name = DISPATCH_PAYLOAD
-		payload.name_id = binding.id
-		arm := new(Expr_Call, k.c.semantic_allocator)
-		arm.span = v.span
-		arm.callee = clone_expr(k.c, v.callee)
-		arm.args = make([]Argument, 1, k.c.semantic_allocator)
+		payload := synth_ident(k.c, DISPATCH_PAYLOAD, span)
 		// A payloadless variant passes the `Unit{}` constant, which has no owner.
 		argument: Expr = payload
 		if consumes && union_variant_payload(k.c, subject, index) != TYPE_VOID {
 			argument = synth_move(k.c, payload, span)
 		}
-		arm.args[0] = Argument{span = span, name = Name{text = label, span = span}, value = argument}
+		arm := synth_call(k.c, clone_expr(k.c, v.callee), {argument}, v.span)
+		arm.args[0].span, arm.args[0].name = span, Name{text = label, span = span}
 		entry.arm = arm
 	}
 	return s

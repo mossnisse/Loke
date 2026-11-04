@@ -898,6 +898,7 @@ be file-private. Paths below are relative to `src/`.
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
+| `synth.odin` | Builders for the syntax lowerings write and then check: names, calls, selectors, one-name declarations, and scope-local records. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
 | `test_procedures.odin` | `@(test)` declarations, checked in every build and called only by a test build's entry. |
 | `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked; a generic `impl`'s untyped constant is read by its value's type at the declaration or per instance, and one whose value is a type by its target's syntax, as any type alias is. A selection of a generic `impl`'s private member is read in each instance of the generic declaration that writes it, queued in `pending_private_reads` since an instance can appear inside a probe. |

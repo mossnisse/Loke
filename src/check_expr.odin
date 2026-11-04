@@ -713,10 +713,8 @@ check_value_selector :: proc(k: ^Checker, v: ^Expr_Selector, checked: Type_Id, c
 		current_type, current_base := operand, expr_base(v.operand)
 		for link in path[:len(path) - 1] {
 			link_name := symbol_of(k.c, link).name
-			inner := new(Expr_Selector, k.c.semantic_allocator)
-			inner.span = v.span
-			inner.operand = v.operand
-			inner.name = Name{text = identifier_text(k.c, link_name), span = v.name.span, id = link_name}
+			inner := synth_selector(k.c, v.operand, identifier_text(k.c, link_name), v.span)
+			inner.name.span = v.name.span
 			if !select_field(k, inner, current_type, current_base, through_pointer, pointer_mutable, link) {
 				return
 			}
@@ -959,7 +957,6 @@ promoted_field_walk :: proc(
 
 // An implicit `operand^`, written into the typed AST so later passes see the
 // real place and its capability.
-@(private = "file")
 implicit_pointer_deref :: proc(
 	k: ^Checker,
 	operand: Expr,
@@ -967,14 +964,10 @@ implicit_pointer_deref :: proc(
 	mutable: bool,
 ) -> Expr {
 	base := expr_base(operand)
-	n := new(Expr_Postfix, k.c.semantic_allocator)
-	n.span = base.span
+	n := synth_deref(k.c, operand, base.span)
 	n.type = pointee
 	n.value_category = .Place
 	inherit_capability(&n.base, base, true, mutable)
-	n.op = .Caret
-	n.op_span = base.span
-	n.operand = operand
 	return n
 }
 
@@ -993,11 +986,7 @@ owned_element_place :: proc(v: ^Expr_Base, element: Type_Id, owner: ^Expr_Base) 
 @(private = "file")
 implicit_box_deref :: proc(k: ^Checker, operand: Expr, payload: Type_Id) -> Expr {
 	base := expr_base(operand)
-	n := new(Expr_Postfix, k.c.semantic_allocator)
-	n.span = base.span
-	n.op = .Caret
-	n.op_span = base.span
-	n.operand = operand
+	n := synth_deref(k.c, operand, base.span)
 	n.boxed = true
 	owned_element_place(&n.base, payload, base)
 	return n
@@ -1530,14 +1519,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 			)
 			return
 		}
-		callee := new(Expr_Selector, k.c.semantic_allocator)
-		callee.span = v.span
-		callee.operand = clone_expr(k.c, v.operand)
-		callee.name = Name{text = "len", span = v.span, id = intern_identifier(k.c, "len")}
-		length := new(Expr_Call, k.c.semantic_allocator)
-		length.span = v.span
-		length.callee = callee
-		v.hi = length
+		v.hi = synth_call(k.c, synth_selector(k.c, clone_expr(k.c, v.operand), "len", v.span), nil, v.span)
 		length_omitted = true
 	}
 	endpoints := make([]Expr, 2, k.c.semantic_allocator)

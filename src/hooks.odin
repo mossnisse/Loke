@@ -659,18 +659,13 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 		return c.default_allocator_arg
 	}
 	sym := c.default_allocator_symbol
-	callee := new(Expr_Ident, c.semantic_allocator)
-	callee.span = NO_SPAN
-	callee.name = "default_allocator"
-	callee.name_id = intern_identifier(c, "default_allocator")
+	callee := synth_ident(c, "default_allocator", NO_SPAN)
 	callee.symbol = sym
 	callee.type = TYPE_ALLOCATOR
 	callee.resolution = Resolution{kind = .Value, symbol = sym}
 	callee.value_category = .Value
 
-	call := new(Expr_Call, c.semantic_allocator)
-	call.span = NO_SPAN
-	call.callee = callee
+	call := synth_call(c, callee, nil, NO_SPAN)
 	call.type = TYPE_ALLOCATOR
 	call.value_category = .Value
 	call.resolution = Resolution{kind = .Call, symbol = sym, chosen_overload = sym}

@@ -203,12 +203,7 @@ check_or_return_failure :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) 
 		error := new(Expr_Propagated_Error, k.c.semantic_allocator)
 		error.span = span
 		error.owner = v
-		call := new(Expr_Call, k.c.semantic_allocator)
-		call.span = span
-		call.callee = v.failure
-		call.args = make([]Argument, 1, k.c.semantic_allocator)
-		call.args[0] = Argument{span = span, value = error}
-		value = call
+		value = synth_call(k.c, v.failure, {error}, span)
 	}
 	v.failure_exit = failure_return(k, target, value, span)
 	errors := k.c.error_count
@@ -236,11 +231,7 @@ check_or_return_failure :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) 
 // `return .failure(value);`, for the caller to check as the `return` it is.
 @(private = "file")
 failure_return :: proc(k: ^Checker, target: Fallible, value: Expr, span: Span) -> ^Stmt_Return {
-	wrap := new(Expr_Call, k.c.semantic_allocator)
-	wrap.span = span
-	wrap.callee = variant_selector(k, target.union_type, target.failure, span)
-	wrap.args = make([]Argument, 1, k.c.semantic_allocator)
-	wrap.args[0] = Argument{span = span, value = value}
+	wrap := synth_call(k.c, variant_selector(k, target.union_type, target.failure, span), {value}, span)
 	exit := new(Stmt_Return, k.c.semantic_allocator)
 	exit.span = span
 	exit.value = new(Return_Value, k.c.semantic_allocator)
@@ -366,11 +357,7 @@ bare_success_value :: proc(k: ^Checker, result: Type_Id, at: Span) -> ^Return_Va
 // statement spells it. An empty `at` keeps it out of every query.
 @(private = "file")
 variant_selector :: proc(k: ^Checker, result: Type_Id, index: int, at: Span) -> ^Expr_Selector {
-	name := union_variant_name(k.c, result, index)
-	selector := new(Expr_Selector, k.c.semantic_allocator)
-	selector.span = at
-	selector.name = Name{text = name, span = at, id = intern_identifier(k.c, name)}
-	return selector
+	return synth_selector(k.c, nil, union_variant_name(k.c, result, index), at)
 }
 
 // design.md "One result": whether a body may return its success by reaching
@@ -685,12 +672,9 @@ wrap_returned_success :: proc(k: ^Checker, e: Expr, shape: Fallible) -> Expr {
 	result := k.result_type
 	at := expr_span(e)
 	at.hi = at.lo
-	call := new(Expr_Call, k.c.semantic_allocator)
-	call.span = at
 	callee := variant_selector(k, result, shape.success, at)
-	call.callee = callee
-	call.args = make([]Argument, 1, k.c.semantic_allocator)
-	call.args[0] = Argument{span = expr_span(e), value = e}
+	call := synth_call(k.c, callee, {e}, at)
+	call.args[0].span = expr_span(e)
 	check_union_variant_selector(k, callee, result, callee = true)
 	finish_union_construct(k, call, result, shape.success, e)
 	return call

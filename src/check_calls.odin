@@ -259,10 +259,7 @@ settle_call :: proc(k: ^Checker, v: ^Expr_Call, result: Type_Id, result_inout: b
 @(private = "file")
 check_callable_value_call :: proc(k: ^Checker, v: ^Expr_Call, callee_type: Type_Id) -> bool {
 	span := expr_span(v.callee)
-	sel := new(Expr_Selector, k.c.semantic_allocator)
-	sel.span = span
-	sel.operand = v.callee
-	sel.name = Name{text = "call", span = span, id = intern_identifier(k.c, "call")}
+	sel := synth_selector(k.c, v.callee, "call", span)
 	if !select_call_method(k, sel, callee_type) {
 		return false
 	}
@@ -366,10 +363,7 @@ required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string,
 @(private = "file")
 qualify_builtin_callee :: proc(k: ^Checker, v: ^Expr_Call) -> ^Expr_Ident {
 	selector := v.callee.(^Expr_Selector)
-	ident := new(Expr_Ident, k.c.semantic_allocator)
-	ident.span = selector.span
-	ident.name = selector.name.text
-	ident.name_id = name_identifier(k.c, selector.name)
+	ident := synth_ident(k.c, selector.name.text, selector.span)
 	v.callee = ident
 	return ident
 }
@@ -655,7 +649,7 @@ bind_checked_argument :: proc(
 ) -> (Expr, bool) {
 	value := argument
 	if mode == .Borrow && !is_receiver && pointer_to_element(k.c, expr_base(value).type) == target {
-		value = dereference_argument(k, value)
+		value = implicit_pointer_deref(k, value, target, type_of(k.c, expr_base(value).type).mutable)
 	}
 	if !materialize_argument(k, value, target) {
 		return value, false
@@ -980,20 +974,6 @@ written_arguments :: proc(c: ^Compiler, args: []Arg_Info) -> []Argument {
 		out[index] = Argument{span = arg.span, name = name, mode = arg.mode, value = arg.expr}
 	}
 	return out
-}
-
-// `pointer^`, already checked: a borrowing parameter given the address takes
-// the place it names.
-dereference_argument :: proc(k: ^Checker, pointer: Expr) -> Expr {
-	info := type_of(k.c, expr_base(pointer).type)
-	deref := new(Expr_Postfix, k.c.semantic_allocator)
-	deref.span, deref.op_span, deref.op, deref.operand = expr_span(pointer), expr_span(pointer), .Caret, pointer
-	deref.type = info.element
-	deref.value_category = .Place
-	deref.addressable = true
-	deref.assignable = info.mutable
-	deref.immutable = info.mutable ? .None : .Through_Pointer
-	return deref
 }
 
 materialize_argument :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {

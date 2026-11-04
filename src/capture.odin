@@ -9,7 +9,6 @@
 // spell, and it lives in a scope of its own.
 package lokec
 
-import "core:fmt"
 import "core:strings"
 
 // The receiver every lowered `call` takes. It is spelled `self`, so it is a
@@ -41,7 +40,7 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 
 	span := Span{file = v.span.file, lo = v.span.lo, hi = capture.clause_span.hi}
 	text := k.c.sources[span.file].text[span.lo:span.hi]
-	name := Name{text = text, span = span, id = intern_identifier(k.c, text)}
+	name := synth_name(k.c, text, span)
 	record, fields := capture_record_syntax(k, capture, types, span)
 	method := capture_call_method(k, capture, fields)
 	reserve_captured_names(k, capture, fields, method)
@@ -75,12 +74,7 @@ check_capture_values :: proc(k: ^Checker, v: ^Expr_Composite) -> (types: []Type_
 		switch entry.mode {
 		case .Copy:
 		case .Borrow, .Borrow_Mut:
-			address := new(Expr_Unary, k.c.semantic_allocator)
-			address.span = entry.span
-			address.op, address.op_span = .Amp, entry.span
-			address.mutable = entry.mode == .Borrow_Mut
-			address.operand = entry.value
-			value = address
+			value = synth_address(k.c, entry.value, entry.mode == .Borrow_Mut, entry.span)
 		case .Move:
 			value = synth_move(k.c, entry.value, entry.span)
 		}
@@ -119,17 +113,9 @@ capture_record_syntax :: proc(
 	fields = make([]Capture_Field, len(capture.entries), k.c.semantic_allocator)
 	for entry, index in capture.entries {
 		text := strings.concatenate({CAPTURE_FIELD_PREFIX, entry.name.text}, k.c.semantic_allocator)
-		field := Name{text = text, span = entry.name.span, id = intern_identifier(k.c, text)}
+		field := synth_name(k.c, text, entry.name.span)
 		fields[index] = Capture_Field{mode = entry.mode, field = field}
-		alias := intern_identifier(k.c, fmt.tprintf("capture$type$%d", index))
-		k.scope.names[alias] = new_associated_type(k.c, "capture$type", types[index], INVALID_TYPE)
-		names := make([]Name, 1, k.c.semantic_allocator)
-		names[0] = field
-		record.fields[index] = Field {
-			span  = entry.span,
-			names = names,
-			type  = synth_ident(k.c, entry.name.text, alias, entry.span),
-		}
+		record.fields[index] = synth_record_field(k, "capture$type", index, field, types[index], entry.span)
 	}
 	return record, fields
 }
@@ -150,13 +136,7 @@ reserve_captured_names :: proc(k: ^Checker, capture: ^Capture_Literal, fields: [
 // The record's type, or INVALID_TYPE once reported.
 @(private = "file")
 declare_capture_record :: proc(k: ^Checker, name: Name, record: ^Type_Record, method: ^Expr_Proc) -> Type_Id {
-	declaration := new(Decl, k.c.semantic_allocator)
-	declaration.span = name.span
-	declaration.kind = .Const
-	declaration.names = make([]Name, 1, k.c.semantic_allocator)
-	declaration.names[0] = name
-	declaration.values = make([]Expr, 1, k.c.semantic_allocator)
-	declaration.values[0] = record
+	declaration := synth_decl(k.c, .Const, name.text, record, name.span)
 	check_local_declaration(k, declaration)
 	record_symbol := symbol_of(k.c, declaration.symbols[0])
 	if record_symbol == nil || record_symbol.type == INVALID_TYPE {
@@ -175,17 +155,11 @@ declare_capture_record :: proc(k: ^Checker, name: Name, record: ^Type_Record, me
 
 @(private = "file")
 declare_capture_call :: proc(k: ^Checker, record_name: Name, method: ^Expr_Proc) {
-	member := new(Decl, k.c.semantic_allocator)
-	member.span = method.span
-	member.kind = .Const
-	member.names = make([]Name, 1, k.c.semantic_allocator)
-	member.names[0] = Name{text = "call", span = method.span, id = intern_identifier(k.c, "call")}
-	member.values = make([]Expr, 1, k.c.semantic_allocator)
-	member.values[0] = method
+	member := synth_decl(k.c, .Const, "call", method, method.span)
 	block := new(Item_Impl, k.c.semantic_allocator)
 	block.span = record_name.span
 	block.kind = .Impl
-	block.type = synth_ident(k.c, record_name.text, record_name.id, record_name.span)
+	block.type = synth_ident(k.c, record_name.text, record_name.span)
 	block.members = make([]Item, 1, k.c.semantic_allocator)
 	block.members[0] = member
 	check_local_impl(k, block)
@@ -270,9 +244,12 @@ rewrite_capture :: proc(c: ^Compiler, v: ^Expr_Ident) -> Expr {
 
 // `self.field`, or `self.field^` for a borrow, spelled at `span`.
 capture_field_place :: proc(c: ^Compiler, field: Capture_Field, span: Span) -> Expr {
-	receiver := synth_ident(c, "self", intern_identifier(c, CAPTURE_RECEIVER), span)
+	receiver := synth_ident_as(c, "self", intern_identifier(c, CAPTURE_RECEIVER), span)
 	selected := synth_selector(c, receiver, field.field.text, span)
-	return field.mode == .Copy || field.mode == .Move ? selected : synth_deref(c, selected, span)
+	if field.mode == .Copy || field.mode == .Move {
+		return selected
+	}
+	return synth_deref(c, selected, span)
 }
 
 // `call :: proc(self, <the literal's parameters>) -> <its result> { <body> }`,
