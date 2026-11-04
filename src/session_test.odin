@@ -1019,3 +1019,70 @@ session_selector_operands_merge_instances :: proc(t: ^testing.T) {
 		testing.expectf(t, typed && got == c.type, "%s: operand %v %q", c.name, typed, got)
 	}
 }
+
+// Syntax only checking's results reach: the clones in a setter assignment's
+// lowered block, a group under `operator`, and an `else when` condition. A use
+// there is a reference to its binding.
+@(test)
+session_queries_reach_lowered_grouped_and_chained_names :: proc(t: ^testing.T) {
+	root := session_fixture(t, "reach")
+	if root == "" { return }
+	defer remove_tree(root)
+	setter :: `package main;
+Vec :: struct { n: int }
+Pair :: struct { a, b: Vec }
+impl Vec { add :: operator(+) proc(a, b: Vec) -> Vec { return Vec{a.n + b.n}; } }
+Grid :: struct { cells: [4]Vec }
+impl Grid {
+	get :: operator([]) proc(self: Grid, key: string) -> Vec { return self.cells[0]; }
+	set :: operator([]=) proc(self: inout Grid, key: string, value: Vec) { self.cells[0] = value; }
+}
+`
+	compound :: setter + "main :: proc() {\n\tgrid := Grid{};\n\tkey := \"a\";\n\tval := Vec{1};\n\tgrid[key] += val;\n}\n"
+	Case :: struct { name, text, definition, use: string }
+	cases := []Case {
+		{"compound_value", compound, "val :=", "val;"},
+		{"compound_index", compound, "key :=", "key] +="},
+		{"compound_receiver", compound, "grid :=", "grid[key] +="},
+		{"parallel", setter + "main :: proc() {\n\tgrid := Grid{};\n\tkey := \"a\";\n\tother := Vec{1};\n\tgrid[key], other = other, other;\n}\n", "key :=", "key], other"},
+		{"destructure", setter + "main :: proc() {\n\tgrid := Grid{};\n\tkey := \"a\";\n\tother := Vec{1};\n\tgrid[key], other = Pair{other, other};\n}\n", "key :=", "key], other"},
+		{"lowered_closure", setter + "main :: proc() {\n\tgrid := Grid{};\n\tgrid[\"a\"] += (proc() -> Vec { inner := Vec{1}; return inner; })();\n}\n", "inner :=", "inner; }"},
+		{"operator_group", "package main;\nReverse :: distinct int;\nimpl Reverse {\n\treversed :: proc(a, b: Reverse) -> bool { return int(b) < int(a); }\n\tless :: operator(<) proc { reversed };\n}\nmain :: proc() {}\n", "reversed ::", "reversed }"},
+		{"else_when", "package main;\nA :: false;\nB :: true;\nmain :: proc() {\n\twhen (A) { _ = 1; } else when (B) { _ = 2; }\n}\n", "B ::", "B) {"},
+		{"else_when_later", "package main;\nA :: false;\nB :: false;\nC :: true;\nmain :: proc() {\n\twhen (A) { } else when (B) { } else when (C) { _ = 3; }\n}\n", "C ::", "C) {"},
+		{"else_when_selected", "package main;\nA :: false;\nB :: true;\nmain :: proc() {\n\twhen (A) { } else when (B) { kept := 1; _ = kept; }\n}\n", "kept :=", "kept; }"},
+	}
+	for c in cases {
+		path := join_path({root, fmt.tprintf("%s.loke", c.name)}, context.temp_allocator)
+		if !write_session_source(t, path, c.text) { continue }
+		s: Compilation_Session
+		if !testing.expect(t, init_session(&s, session_test_config())) { continue }
+		defer destroy_session(&s)
+		if !testing.expectf(t, check_session(&s, path), "%s does not check", c.name) { report(&s.compiler); continue }
+		snapshot, captured := session_snapshot(&s)
+		file, found := query_file(&s, snapshot, path)
+		if !testing.expect(t, captured && found) { continue }
+		binding := snapshot_test_position(t, &s, snapshot, file, c.text, c.definition)
+		use := snapshot_test_position(t, &s, snapshot, file, c.text, c.use)
+		testing.expectf(t, use.symbol.id != INVALID_SYMBOL && s.queries.canonical[use.symbol.id] == s.queries.canonical[binding.symbol.id], "%s: the use resolves to its binding", c.name)
+		references, listed := query_references(&s, binding.symbol)
+		defer delete(references)
+		listed_use := false
+		for reference in references {
+			listed_use ||= reference.span.lo == u32(strings.index(c.text, c.use))
+		}
+		testing.expectf(t, listed && listed_use, "%s: references list the use", c.name)
+	}
+	// The lowered block's generated nodes carry the statement's span, which is
+	// no syntax of theirs to describe.
+	path := join_path({root, "operator_token.loke"}, context.temp_allocator)
+	if !write_session_source(t, path, compound) { return }
+	s: Compilation_Session
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+	defer destroy_session(&s)
+	if !testing.expect(t, check_session(&s, path)) { return }
+	snapshot, _ := session_snapshot(&s)
+	file, _ := query_file(&s, snapshot, path)
+	token, _ := query_at(&s, snapshot, file, u32(strings.index(compound, "+= val")))
+	testing.expect(t, token.location.span.lo != u32(strings.index(compound, "grid[key] +=")), "the operator token is not a generated node")
+}

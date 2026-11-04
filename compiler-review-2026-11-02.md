@@ -1298,7 +1298,7 @@ A sound snapshot layer whose comments mostly earn their place. The real problems
 - [queries.odin:208](src/queries.odin#L208) `query_at`: scans every occurrence of the whole program, bundled library included, to answer for one file, and rename calls it per matching token (lsp/rename.odin:232). Bucket `occurrences` and `operands` by file so the cost follows the file, not the program; sort for binary search only if that is still slow.
 - [queries.odin:124](src/queries.odin#L124) `query_file`: re-canonicalizes every loaded source path (a `filepath.abs` call and temp allocations each) per request. A `map[string]u32` of `dir_key(canonical_dir(path))` built once in `build_snapshot_queries` is a shorter lookup.
 - [queries.odin:473](src/queries.odin#L473) `build_snapshot_queries`: `[][dynamic]Query_Signature` costs 40 bytes per symbol, and the first `append` reserves 8 signatures per procedure in an arena that cannot shrink. `[][]Query_Signature` fits: one element for a procedure, a counted `make` for a group.
-- [queries.odin:572](src/queries.odin#L572) `build_snapshot_queries`: `visited`, `bindings` (line 484), and the sort and sweep arrays are scratch, but live in `query_arena` until invalidation, with every abandoned map table. `visited` holds one entry per AST node of the program; a scratch arena destroyed on return avoids keeping it.
+- [queries.odin:484](src/queries.odin#L484) `build_snapshot_queries`: `bindings` and the sort and sweep arrays are scratch, but live in `query_arena` until invalidation, with every abandoned map table.
 
 **Near copies**
 
@@ -1316,49 +1316,6 @@ A sound snapshot layer whose comments mostly earn their place. The real problems
 - [queries.odin:159](src/queries.odin#L159): `Exact binding identity, not matching spelling. The caller owns the array.`; the rest restates the parameter.
 - [queries.odin:268](src/queries.odin#L268): `Innermost first; a shadowed binding is omitted. A local is reachable from the end of its name, so its own initializer counts. The caller owns the array.`; the list is in compiler-architecture.md.
 - [queries.odin:316](src/queries.odin#L316): badly wrapped and repeats the table. `What may follow operand., as compiler-architecture.md "Snapshots and queries" lists. One the checker contributes on demand appears once a lookup created it. Sorted by name; the caller owns the array.`
-
-### src/query_index.odin
-
-A compact, readable AST walk with useful comments and no dead procedures. Its weak spot is coverage: three kinds of checked syntax are never reached, so editor queries lose those names. The rest is small guards and repeated expressions.
-
-**Bugs**
-
-- `BUG-query_index-1` **medium** [query_index.odin:131](src/query_index.odin#L131) `index_query_stmt`: `Stmt_Assign.lowered` is not walked, yet `lower_compound_setter` checks only clones there. Scenario: `box[i] += v` through `operator([]=)`; `v` gets no temporary, so it has no symbol: no hover or definition, missing from `query_references`, and rename refuses. Fix: also walk `v.lowered`. *Confirmed: LSP on `box[idx] += val` via operator([]=): hover, definition, references null at `val`; references from its declaration omit it; rename refuses (no recorded binding). Control `box[idx] = ctl` works. The clone sits only in unwalked s.lowered. Not recorded in the docs.*
-- `BUG-query_index-2` **medium** [query_index.odin:80](src/query_index.odin#L80) `index_query_decl`: only a bare `Expr_Proc_Group` value has its names indexed, though grammar.md allows `operator(<) proc { reversed }` and `resolve_operator_declaration` resolves it. Scenario: `reversed` there has no reference, so references omit it and rename refuses. Fix: look through `Expr_Operator`. *Confirmed: Reproduced with loke-lsp: for `less :: operator(<) proc { reversed }` (compiles clean), definition and hover return null, references omit the use, rename refuses; bare `proc { reversed }` works in all four. Unrecorded. Rename fails safe, so closer to low than medium.*
-- `BUG-query_index-3` **medium** [query_index.odin:151](src/query_index.odin#L151) `index_query_stmt`: only the first `Stmt_When`'s `cond` is walked, but `check_when_stmt` checks each `else when` condition; `Item_When` at line 110 does recurse. Scenario: `when A {} else when B {}` with `A` false: `B` has no symbol, no references, and rename refuses. Fix: also walk `v.otherwise` when it is a `^Stmt_When`. *Confirmed: loke-lsp probe: for a procedure-scope `when (A) {} else when (B) {...}`, hover and definition on B are null, references omit that use, rename refuses; file-scope form and first condition work. Silent missed reference; rename refusal is safe, so low-to-medium.*
-
-**Simplification**
-
-- [query_index.odin:95](src/query_index.odin#L95) `index_query_item`, and lines 118 and 220: delete the `== nil` guards. `item_base`, `stmt_base` and `expr_base` return nil for a nil union and `query_index_enter` rejects nil, a check that typed nil pointers need anyway. (about 3 lines)
-- [query_index.odin:229](src/query_index.odin#L229) `index_query_expr`: merge the empty `^Expr_Propagated_Error` (line 270) and `^Expr_Proc_Group` (line 307) cases into this one. (about 2 lines)
-- [query_index.odin:299](src/query_index.odin#L299) `index_query_expr`: `if v.capture != nil { index_query_expr(index, v.capture.method) }`, since a nil `method` is already rejected on entry. (about 2 lines)
-- [query_index.odin:52](src/query_index.odin#L52) `index_query_binding`: `lo` and `hi` are each read once; use `written.lo` and `written.hi` directly. (about 1 line)
-
-**Dead code**
-
-- (branch) [query_index.odin:48](src/query_index.odin#L48): `int(id) >= len(index.q.symbols)` cannot hold: `q.symbols` has `len(c.symbols)` entries, `c.symbols` only grows, and this walk adds none. `index_query_name` has no such check.
-- (branch) [query_index.odin:55](src/query_index.odin#L55): `int(extent.hi) > len(text)` cannot hold: `hi` is the larger of two spans the same file's source produced, and the `definition` span was validated by `written_query_binding`.
-- (branch) [query_index.odin:73](src/query_index.odin#L73): `len(decl.names) > 0` adds nothing, since `decl.symbols` holds one entry per name; an empty `names` means the loop does not run.
-- (branch) [query_index.odin:154](src/query_index.odin#L154): `v.selected != nil &&` repeats the nil check inside `query_index_enter`.
-
-**Data structures and algorithms**
-
-- [query_index.odin:33](src/query_index.odin#L33) `query_index_enter`: `visited` is built in the query arena ([queries.odin:572](src/queries.odin#L572)), so it and its outgrown tables stay for the snapshot's life, in proportion to the AST, though only the build reads it. Allocate it on the heap and delete it after the walk.
-
-**Near copies**
-
-- [query_index.odin:202](src/query_index.odin#L202) and [query_index.odin:223](src/query_index.odin#L223): the same two lines choose a node's reported type, `INVALID_TYPE` for a package. Shared form: `query_node_type(base: ^Expr_Base) -> Type_Id`. (about 2 lines)
-- [query_index.odin:18](src/query_index.odin#L18), [query_index.odin:40](src/query_index.odin#L40) and [query_index.odin:192](src/query_index.odin#L192): each validates a span and compares its text with a name. Shared form: `query_span_spells(c, span, name) -> bool`, which also shortens the two longest guards.
-- [query_index.odin:82](src/query_index.odin#L82) and [query_index.odin:259](src/query_index.odin#L259): both find a symbol by name among candidates and record the written name; only the type differs. Shared form: `index_query_bound_name(index, name, candidates)`, typing a `.Proc` by `proc_type`, which removes the deepest nesting. (about 4 lines)
-
-**Structure and boundaries**
-
-- [query_index.odin:6](src/query_index.odin#L6): the walk's driver is at [queries.odin:572](src/queries.odin#L572), so `index_query_item`, `_decl` and `_expr` are package-wide and visible to `lsp`, as are `valid_query_span` and `written_query_binding`. Move the driver here as one `@(private)` entry point and make the rest file-private, except `written_query_binding`, which is `@(private)`.
-
-**Comments**
-
-- [query_index.odin:182](src/query_index.odin#L182): shorten to: `design.md "Promoted struct fields": a promoted selector's added links carry the name's span, so the written operand is below them, and below any implicit `p^`, since the pointer's own members come first (design.md "Methods and implementation blocks").` (about 2 lines)
-- [query_index.odin:59](src/query_index.odin#L59): delete; [queries.odin:458](src/queries.odin#L458) already says what `regions` holds and this proc is one line.
 
 ### src/reflect.odin
 

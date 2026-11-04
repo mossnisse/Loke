@@ -1491,6 +1491,10 @@ checklist.
 
 ### Fixed
 
+- The language server resolves a name in three more places: an operand of an assignment through
+  `operator([]=)`, such as `val` in `box[key] += val`; a member of a group under `operator`, as in
+  `operator(<) proc { reversed }`; and an `else when` condition in a procedure. Hover and definition
+  found nothing there, references left the use out, and rename refused.
 - `string.from_utf8`, `string_view.from_utf8`, `cstring_view.from_bytes` and `string.from_runes` take
   a fixed or dynamic array of their element type, as a read-only `[]T` parameter does
   ([Implicit type conversions](design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a

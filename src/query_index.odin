@@ -2,22 +2,51 @@
 // No lookup, checking, or compiler registry mutation happens here.
 package lokec
 
-@(private)
-Query_Index :: struct { c: ^Compiler, q: ^Snapshot_Queries, visited: map[rawptr]bool }
+import "base:runtime"
 
+@(private = "file")
+Query_Index :: struct {
+	c:         ^Compiler,
+	q:         ^Snapshot_Queries,
+	visited:   map[rawptr]bool,
+	// The span of the statement a lowered block stands for, which the nodes
+	// lowering made up carry.
+	generated: Span,
+}
+
+// Written syntax first, then the clones and generated declarations only symbols
+// reach.
+@(private)
+index_query_syntax :: proc(c: ^Compiler, q: ^Snapshot_Queries) {
+	index := Query_Index{c = c, q = q, visited = make(map[rawptr]bool, allocator = runtime.heap_allocator())}
+	defer delete(index.visited)
+	for file in c.parsed_files { for item in file.items { index_query_item(&index, item) } }
+	for symbol in c.symbols {
+		if symbol == nil { continue }
+		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
+		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
+	}
+}
+
+@(private)
 valid_query_span :: proc(c: ^Compiler, span: Span) -> bool {
 	source := span_source(c, span)
 	return source != nil && span.lo < span.hi && int(span.hi) <= len(source.text)
+}
+
+@(private = "file")
+query_span_spells :: proc(c: ^Compiler, span: Span, name: string) -> bool {
+	return valid_query_span(c, span) && c.sources[span.file].text[span.lo:span.hi] == name
 }
 
 // Inferred generic bindings and lowering temporaries can carry a use's span.
 // They are semantic symbols, but that span is not a written definition. A
 // generated declaration named after the syntax it stands for, such as a capture
 // literal's record, is not one either: a written name is an identifier.
+@(private)
 written_query_binding :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
-	if !valid_query_span(c, symbol.span) { return false }
-	text := c.sources[symbol.span.file].text[symbol.span.lo:symbol.span.hi]
-	return text == identifier_text(c, symbol.name) && identifier_spelling(text)
+	name := identifier_text(c, symbol.name)
+	return query_span_spells(c, symbol.span, name) && identifier_spelling(name)
 }
 
 @(private = "file")
@@ -29,25 +58,31 @@ query_index_enter :: proc(index: ^Query_Index, node: rawptr) -> bool {
 
 @(private = "file")
 index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: Symbol_Id, type: Type_Id) {
-	if !valid_query_span(index.c, span) || index.c.sources[span.file].text[span.lo:span.hi] != name || !identifier_spelling(name) { return }
+	if !query_span_spells(index.c, span, name) || !identifier_spelling(name) { return }
 	append(&index.q.occurrences, Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL, false})
+}
+
+// A written name, bound to the candidates spelled the same.
+@(private = "file")
+index_query_bound_name :: proc(index: ^Query_Index, name: Name, candidates: []Symbol_Id) {
+	for candidate in candidates {
+		if bound := symbol_of(index.c, candidate); bound != nil && identifier_text(index.c, bound.name) == name.text {
+			index_query_name(index, name.span, name.text, candidate, bound.kind == .Proc ? bound.proc_type : bound.type)
+		}
+	}
 }
 
 // Records a written binding's declaration extent once, on the binding clones
 // share; the first walk is over written syntax.
 @(private = "file")
 index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span) {
-	if id == INVALID_SYMBOL || int(id) >= len(index.q.symbols) { return }
+	if id == INVALID_SYMBOL { return }
 	symbol := &index.q.symbols[index.q.canonical[id]]
 	span := symbol.definition.span
 	if span.file == NO_FILE || span.file != written.file || symbol.extent.span.file != NO_FILE { return }
-	text := index.c.sources[span.file].text
-	extent := Span{file = span.file, lo = min(written.lo, span.lo), hi = max(written.hi, span.hi)}
-	if int(extent.hi) > len(text) { return }
-	symbol.extent.span = extent
+	symbol.extent.span = Span{file = span.file, lo = min(written.lo, span.lo), hi = max(written.hi, span.hi)}
 }
 
-// Syntax a local declared inside it cannot be reached outside of.
 @(private = "file")
 index_query_region :: proc(index: ^Query_Index, span: Span) {
 	if valid_query_span(index.c, span) { append(&index.q.regions, span) }
@@ -58,32 +93,27 @@ index_query_attributes :: proc(index: ^Query_Index, attributes: []Attribute) {
 	for attribute in attributes { index_query_expr(index, attribute.value) }
 }
 
+@(private = "file")
 index_query_decl :: proc(index: ^Query_Index, decl: ^Decl) {
 	if !query_index_enter(index, decl) { return }
 	index_query_attributes(index, decl.attributes)
-	if len(decl.names) > 0 {
-		for symbol in decl.symbols { index_query_binding(index, symbol, decl.span) }
-	}
+	for symbol in decl.symbols { index_query_binding(index, symbol, decl.span) }
 	index_query_expr(index, decl.declared_type)
 	index_query_expr(index, decl.via)
 	for value in decl.values {
 		index_query_expr(index, value)
-		if group, found := value.(^Expr_Proc_Group); found && len(decl.symbols) == 1 {
+		grouped := value
+		if operator, is_operator := value.(^Expr_Operator); is_operator { grouped = operator.value }
+		if group, found := grouped.(^Expr_Proc_Group); found && len(decl.symbols) == 1 {
 			if symbol := symbol_of(index.c, decl.symbols[0]); symbol != nil && symbol.kind == .Proc_Group {
-				for name in group.names {
-					for member in symbol.members {
-						if bound := symbol_of(index.c, member); bound != nil && identifier_text(index.c, bound.name) == name.text {
-							index_query_name(index, name.span, name.text, member, bound.proc_type)
-						}
-					}
-				}
+				for name in group.names { index_query_bound_name(index, name, symbol.members) }
 			}
 		}
 	}
 }
 
+@(private = "file")
 index_query_item :: proc(index: ^Query_Index, item: Item) {
-	if item == nil { return }
 	if decl, found := item.(^Decl); found { index_query_decl(index, decl); return }
 	base := item_base(item)
 	if !query_index_enter(index, base) { return }
@@ -104,7 +134,6 @@ index_query_item :: proc(index: ^Query_Index, item: Item) {
 
 @(private = "file")
 index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
-	if stmt == nil { return }
 	if decl, found := stmt.(^Decl); found { index_query_decl(index, decl); return }
 	if impl, found := stmt.(^Item_Impl); found { index_query_item(index, impl); return }
 	base := stmt_base(stmt)
@@ -120,6 +149,13 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 	case ^Stmt_Assign:
 		for expr in v.lhs { index_query_expr(index, expr) }
 		for expr in v.rhs { index_query_expr(index, expr) }
+		// Its operands were checked as clones in the block checking ran instead.
+		if v.lowered != nil {
+			enclosing := index.generated
+			index.generated = v.span
+			for inner in v.lowered.stmts { index_query_stmt(index, inner) }
+			index.generated = enclosing
+		}
 	case ^Stmt_If:
 		index_query_region(index, v.span)
 		index_query_stmt(index, v.init)
@@ -140,9 +176,10 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 		index_query_expr(index, v.cond)
 		// design.md "when statement": the selected branch's braces open no
 		// scope, so its statements belong to the enclosing one.
-		if v.selected != nil && query_index_enter(index, v.selected) {
+		if query_index_enter(index, v.selected) {
 			for inner in v.selected.stmts { index_query_stmt(index, inner) }
 		}
+		if chained, found := v.otherwise.(^Stmt_When); found { index_query_stmt(index, chained) }
 	case ^Stmt_Switch:
 		index_query_region(index, v.span)
 		index_query_stmt(index, v.init)
@@ -168,17 +205,14 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 	}
 }
 
-// The operand a written selector selects from. design.md "Promoted struct
-// fields": the checker turns `e.x` into `e.position.x`, and each link it adds
-// carries the written name's span, so the written operand is the one below them.
-// Below those, an implicit `p^` through a pointer or box spans its operand,
-// where a written one ends at its `^`; the receiver is the pointer or box, whose
-// own members a selector reaches first (design.md "Methods and implementation
+// design.md "Promoted struct fields": a promoted selector's added links carry the
+// name's span, so the written operand is below them, and below any implicit `p^`,
+// since the pointer's own members come first (design.md "Methods and implementation
 // blocks").
 @(private = "file")
 index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 	span := selector.name.span
-	if !valid_query_span(index.c, span) || index.c.sources[span.file].text[span.lo:span.hi] != selector.name.text { return }
+	if !query_span_spells(index.c, span, selector.name.text) { return }
 	operand := selector.operand
 	for {
 		link, added := operand.(^Expr_Selector)
@@ -188,11 +222,16 @@ index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 	if is_implicit_deref(operand) { operand = operand.(^Expr_Postfix).operand }
 	base := expr_base(operand)
 	if base == nil { return }
-	type := base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
-	if base.resolution.kind == .Package { type = INVALID_TYPE }
 	symbol := base.resolution.symbol
 	if ident, named := operand.(^Expr_Ident); named && symbol == INVALID_SYMBOL { symbol = ident.symbol }
-	append(&index.q.operands, Query_Occurrence{span, symbol, type, false, base.denoted_type != INVALID_TYPE})
+	append(&index.q.operands, Query_Occurrence{span, symbol, query_node_type(base), false, base.denoted_type != INVALID_TYPE})
+}
+
+// The type a node denotes, or its value's. A package has neither.
+@(private = "file")
+query_node_type :: proc(base: ^Expr_Base) -> Type_Id {
+	if base.resolution.kind == .Package { return INVALID_TYPE }
+	return base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
 }
 
 // An implicit `p^` spans what the source wrote and types what it does not. Recorded
@@ -205,17 +244,16 @@ is_implicit_deref :: proc(expr: Expr) -> bool {
 	return inner != nil && deref.op_span == inner.span
 }
 
+@(private = "file")
 index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
-	if expr == nil { return }
 	base := expr_base(expr)
 	if !query_index_enter(index, base) { return }
-	type := base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
-	if base.resolution.kind == .Package { type = INVALID_TYPE }
-	if valid_query_span(index.c, base.span) && !is_implicit_deref(expr) {
+	type := query_node_type(base)
+	if valid_query_span(index.c, base.span) && base.span != index.generated && !is_implicit_deref(expr) {
 		append(&index.q.occurrences, Query_Occurrence{span = base.span, type = type, type_value = base.denoted_type != INVALID_TYPE})
 	}
 	switch v in expr {
-	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly:
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Propagated_Error, ^Expr_Proc_Group, ^Type_Type, ^Type_Poly:
 	case ^Expr_Ident:
 		symbol := v.resolution.symbol != INVALID_SYMBOL ? v.resolution.symbol : v.symbol
 		index_query_name(index, v.span, v.name, symbol, type)
@@ -244,19 +282,12 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		// A named argument names a parameter of the procedure the call chose.
 		callee := symbol_of(index.c, expr_base(v.callee).resolution.symbol)
 		for argument in v.args {
-			if argument.name.text != "" && callee != nil {
-				for parameter in callee.param_symbols {
-					if bound := symbol_of(index.c, parameter); bound != nil && identifier_text(index.c, bound.name) == argument.name.text {
-						index_query_name(index, argument.name.span, argument.name.text, parameter, bound.type)
-					}
-				}
-			}
+			if argument.name.text != "" && callee != nil { index_query_bound_name(index, argument.name, callee.param_symbols) }
 			index_query_expr(index, argument.value)
 		}
 	case ^Expr_Postfix:
 		index_query_expr(index, v.operand)
 		index_query_expr(index, v.failure)
-	case ^Expr_Propagated_Error:
 	case ^Expr_Unary: index_query_expr(index, v.operand)
 	case ^Expr_Binary:
 		index_query_expr(index, v.lhs)
@@ -285,15 +316,12 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			index_query_expr(index, element.value)
 		}
 		// A capture literal's body is checked as its record's `call`.
-		if v.capture != nil && v.capture.method != nil {
-			index_query_expr(index, v.capture.method)
-		}
+		if v.capture != nil { index_query_expr(index, v.capture.method) }
 	case ^Expr_Proc:
 		index_query_region(index, v.span)
 		index_query_expr(index, v.signature)
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		index_query_stmt(index, v.body)
-	case ^Expr_Proc_Group:
 	case ^Expr_Operator: index_query_expr(index, v.value)
 	case ^Type_Pointer: index_query_expr(index, v.elem)
 	case ^Type_C_Pointer: index_query_expr(index, v.elem)

@@ -569,13 +569,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		for note, slot in diagnostic.notes { view.notes[slot] = Query_Note{Query_Location{s.snapshot, note.span}, note.message} }
 		q.diagnostics[index] = view
 	}
-	index := Query_Index{c = c, q = q, visited = make(map[rawptr]bool)}
-	for file in c.parsed_files { for item in file.items { index_query_item(&index, item) } }
-	for symbol in c.symbols {
-		if symbol == nil { continue }
-		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
-		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
-	}
+	index_query_syntax(c, q)
 	// A written binding the walk gave no declaration, such as a loop binding,
 	// is described by its name alone.
 	for handles in q.documents {
