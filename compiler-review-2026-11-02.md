@@ -105,12 +105,6 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 
 Shared form: assign only on success. Saves about 100 lines.
 
-#### Operator binding and the built-in operator table
-
-[operators.odin:451](src/operators.odin#L451) `bind_operator_operands` repeats the slot loop of `bind_chosen_call` in `check_calls.odin`. Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 10 lines.
-
-The table of what a built-in operator accepts is split across [check_expr.odin:2658](src/check_expr.odin#L2658), [check.odin:4197](src/check.odin#L4197), [operators.odin:336](src/operators.odin#L336) and [operators.odin:363](src/operators.odin#L363). Shared form: one `builtin_operator_applies` with shift and SIMD cases and `compound_applies` as that minus concatenation. Saves about 30 lines.
-
 #### Constant values
 
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
@@ -356,18 +350,6 @@ The dataflow core is sound and the file is readable, but `exchange` lets an owne
 
 - [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721): `classify_copy_cost` then `classify_copy` with the same arguments. A `classify_costed_copy` returning the bool serves these; box and insertion differ and keep the two calls.
 - [lifecycle.odin:38](src/lifecycle.odin#L38), [lifecycle.odin:81](src/lifecycle.odin#L81), [lifecycle.odin:199](src/lifecycle.odin#L199), and [check_builtin.odin:748](src/check_builtin.odin#L748): `make` a `[]Expr` then assign each slot. A variadic `bind_arguments(k, v, ..values)` makes each one line.
-
-### src/operators.odin
-
-What is left restates the group "Operator binding and the built-in operator table" under "Findings that span files".
-
-**Near copies**
-
-- [operators.odin:451](src/operators.odin#L451) and [overload.odin:902](src/overload.odin#L902): both bind arguments to slots and fill defaults. Shared form: one `bind_candidate_slots(k, cand, span, subject) -> ([]Expr, bool)`; the call path adds its order tracking around it.
-
-**Structure and boundaries**
-
-- [operators.odin:325](src/operators.odin#L325): the built-in operator table is split between this section, `builtin_operator_applies` (check_expr.odin:2658) and `compound_applies` (check.odin:4197), which is how shifts and SIMD fell out of some paths and not others. Move all of them under this file's "the built-in priority" section.
 
 ### src/reflect.odin
 

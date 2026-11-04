@@ -2502,32 +2502,6 @@ merge_untyped_types :: proc(a, b: Type_Id) -> (Type_Id, bool) {
 	return ra > rb ? a : b, true
 }
 
-// The built-in operator table, asked as a predicate so the unshadowable
-// built-in rule can be decided before any user lookup.
-builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
-	if type_kind(c, type) == .Distinct {
-		return false
-	}
-	#partial switch op {
-	case .Plus:
-		// design.md "Arithmetic operators": two `string`/`string_view` operands in
-		// either order produce an owning `string`.
-		#partial switch underlying_kind(c, type) {
-		case .String, .String_View:
-			return true
-		}
-		return type_is_numeric(c, type) || type_kind(c, type) == .Untyped_String
-	case .Minus, .Star, .Slash:
-		return type_is_numeric(c, type)
-	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
-		// design.md "Integer overflow": the wrapping operators are for integers.
-		return type_is_integer(c, type)
-	case .Percent, .Amp, .Pipe, .Tilde, .Amp_Tilde:
-		return type_is_integer(c, type) || type_is_rune(c, type)
-	}
-	return false
-}
-
 // ------------------------------------------------------------ conditional --
 
 @(private = "file")

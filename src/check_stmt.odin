@@ -1067,25 +1067,6 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 	}
 }
 
-@(private = "file")
-compound_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
-	if type_kind(c, type) == .Distinct {
-		return false
-	}
-	if info := underlying_info(c, type); info != nil && info.kind == .Simd {
-		return simd_operator_applies(c, op, info.element)
-	}
-	#partial switch op {
-	case .Plus, .Minus, .Star, .Slash:
-		return type_is_numeric(c, type)
-	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
-		return type_is_integer(c, type)
-	case .Percent, .Pipe, .Tilde, .Amp, .Amp_Tilde, .Shl, .Shr:
-		return type_is_integer(c, type) || type_is_rune(c, type)
-	}
-	return false
-}
-
 // The scope of a statement's header, which spans the rest of the statement, and
 // its init statement checked. design.md "@(require_results)": a header binding's
 // scope ends with the statement.

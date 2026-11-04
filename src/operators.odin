@@ -449,7 +449,7 @@ builtin_binary_defined :: proc(k: ^Checker, op: Token_Kind, lhs, rhs: Type_Id) -
 		return simd_operand_is_builtin(k.c, vector, other) && simd_operator_applies(k.c, op, type_of(k.c, vector).element)
 	}
 	if op == .Shl || op == .Shr {
-		if !type_is_integer(k.c, lhs) && !type_is_rune(k.c, lhs) {
+		if !builtin_operator_applies(k.c, op, lhs) {
 			return false
 		}
 		if type_is_untyped(k.c, rhs) {
@@ -489,6 +489,45 @@ builtin_unary_defined :: proc(k: ^Checker, op: Token_Kind, operand: Type_Id) -> 
 	return false
 }
 
+// The built-in operator table, asked as a predicate so the unshadowable
+// built-in rule can be decided before any user lookup.
+builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
+	if type_kind(c, type) == .Distinct {
+		return false
+	}
+	if simd_operand(c, type) {
+		return simd_operator_applies(c, op, type_of(c, type).element)
+	}
+	#partial switch op {
+	case .Plus:
+		return type_is_numeric(c, type) || operator_concatenates(c, type)
+	case .Minus, .Star, .Slash:
+		return type_is_numeric(c, type)
+	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
+		// design.md "Integer overflow": the wrapping operators are for integers.
+		return type_is_integer(c, type)
+	case .Percent, .Amp, .Pipe, .Tilde, .Amp_Tilde, .Shl, .Shr:
+		return type_is_integer(c, type) || type_is_rune(c, type)
+	}
+	return false
+}
+
+// `a op= b`: the same table without concatenation.
+compound_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
+	return !operator_concatenates(c, type) && builtin_operator_applies(c, op, type)
+}
+
+// design.md "Arithmetic operators": two `string`/`string_view` operands in either
+// order produce an owning `string`.
+@(private = "file")
+operator_concatenates :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .String, .String_View:
+		return true
+	}
+	return type_kind(c, type) == .Untyped_String
+}
+
 // ------------------------------------------------------------- resolution --
 
 // One operator's visible candidates, formed once against one argument list,
@@ -514,11 +553,11 @@ resolve_operator_set :: proc(k: ^Checker, span: Span, set: Operator_Set, args: [
 	if !resolved {
 		return INVALID_SYMBOL, nil
 	}
-	bound, ok := bind_operator_operands(k, cand, span)
+	sym := symbol_of(k.c, cand.symbol)
+	bound, ok := bind_candidate_slots(k, cand, sym, span)
 	if !ok {
 		return INVALID_SYMBOL, nil
 	}
-	sym := symbol_of(k.c, cand.symbol)
 	warn_deprecated_use(k, sym, identifier_text(k.c, sym.name), span)
 	promote_operator_instance(k, cand.symbol, span)
 	return cand.symbol, bound
@@ -551,26 +590,6 @@ operator_exists :: proc(k: ^Checker, members: []Symbol_Id, operands: []Type_Id) 
 		}
 	}
 	return false
-}
-
-@(private = "file")
-bind_operator_operands :: proc(k: ^Checker, cand: Candidate, span: Span) -> ([]Expr, bool) {
-	sym := symbol_of(k.c, cand.symbol)
-	bound := make([]Expr, len(sym.params), k.c.semantic_allocator)
-	ok := true
-	for arg, index in cand.args {
-		slot := cand.slots[index]
-		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
-		value, passed := bind_checked_argument(k, arg.expr, sym.params[slot], mode, arg.is_receiver)
-		bound[slot] = value
-		ok = ok && passed
-	}
-	for slot in 0 ..< len(bound) {
-		if !cand.filled[slot] {
-			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], span)
-		}
-	}
-	return bound, ok
 }
 
 // Does this overload hand back a place? `operator([])` returning `inout T` is

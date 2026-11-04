@@ -3,6 +3,8 @@
 // ranking, and feature checkers retain their specialized call contracts.
 package lokec
 
+import "core:slice"
+
 // ------------------------------------------------------- calls and casts --
 
 // design.md "Evaluation order": the parameter slot a call evaluates at `step`.
@@ -898,36 +900,42 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 		}
 		return bound_ok
 	}
-	count := len(sym.params)
-	bound := make([]Expr, count, k.c.semantic_allocator)
+	bound, ok := bind_candidate_slots(k, cand, sym, v.span)
 	// design.md "Evaluation order": written arguments first, then defaults.
-	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
-	in_order := true
-	ok := true
-	for arg, index in cand.args {
-		slot := cand.slots[index]
-		in_order = in_order && slot == len(order)
-		append(&order, slot)
-		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
-		value, passed := bind_checked_argument(k, arg.expr, sym.params[slot], mode, arg.is_receiver)
-		bound[slot] = value
-		ok = ok && passed
-	}
-	for slot in 0 ..< count {
+	order := make([dynamic]int, 0, len(bound), k.c.semantic_allocator)
+	append(&order, ..cand.slots)
+	for slot in 0 ..< len(bound) {
 		if !cand.filled[slot] {
-			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], v.span)
-			in_order = in_order && slot == len(order)
 			append(&order, slot)
 		}
 	}
 	v.bound = bound
-	if !in_order {
+	if !slice.is_sorted(order[:]) {
 		v.bound_order = order[:]
 	}
 	if ok {
 		require_argument_ownership(k, v, cand.symbol)
 	}
 	return ok
+}
+
+// The chosen candidate's arguments in parameter order, defaults filled in.
+bind_candidate_slots :: proc(k: ^Checker, cand: Candidate, sym: ^Symbol, span: Span) -> ([]Expr, bool) {
+	bound := make([]Expr, len(sym.params), k.c.semantic_allocator)
+	ok := true
+	for arg, index in cand.args {
+		slot := cand.slots[index]
+		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
+		value, passed := bind_checked_argument(k, arg.expr, sym.params[slot], mode, arg.is_receiver)
+		bound[slot] = value
+		ok = ok && passed
+	}
+	for slot in 0 ..< len(bound) {
+		if !cand.filled[slot] {
+			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], span)
+		}
+	}
+	return bound, ok
 }
 
 // design.md "Arguments typed after inference": each waiting argument is checked

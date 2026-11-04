@@ -94,8 +94,8 @@ type_is_simd :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // Nominal, where `type_is_simd` reaches through: a `distinct` type inherits
 // none of the underlying type's operations, so `distinct Simd(f32, 4)` reaches
 // the operators and the intrinsics through an overload, as `distinct f64` does.
-// `compound_applies` rejects `.Distinct` the same way, and the two must answer
-// alike or `v += x` and `v = v + x` would disagree.
+// `builtin_operator_applies` rejects `.Distinct` the same way, and the two must
+// answer alike or `v += x` and `v = v + x` would disagree.
 simd_operand :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_kind(c, id) == .Simd
 }
@@ -275,8 +275,8 @@ simd_splat_operands :: proc(k: ^Checker, v: ^Expr_Binary, vector, element: Type_
 	return ok
 }
 
-// design.md's operator table, read by lane type. `compound_applies` reads it
-// too, so `v += 1` and `v = v + 1` answer alike.
+// design.md's operator table, read by lane type. `builtin_operator_applies`
+// reads it too, so `v += 1` and `v = v + 1` answer alike.
 simd_operator_applies :: proc(c: ^Compiler, op: Token_Kind, element: Type_Id) -> bool {
 	integer := type_is_integer(c, element)
 	float := type_is_float(c, element)
