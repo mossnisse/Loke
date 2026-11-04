@@ -201,20 +201,13 @@ impl Crc($T, $P) {
 	/// The checksum of everything so far.
 	sum :: proc(self) -> T {
 		register := self.state ~ Crc(T, P).register_start();
-		when (P.reflect_in) {
-			when (P.reflect_out) {
-				return register ~ P.final_xor;
-			} else {
-				return reversed(register, P.width) ~ P.final_xor;
-			}
-		} else {
-			aligned := register >> uint(8*size_of(T) - P.width);
-			when (P.reflect_out) {
-				return reversed(aligned, P.width) ~ P.final_xor;
-			} else {
-				return aligned ~ P.final_xor;
-			}
+		when (!P.reflect_in) {
+			register = register >> uint(8*size_of(T) - P.width);
 		}
+		when (P.reflect_in != P.reflect_out) {
+			register = reversed(register, P.width);
+		}
+		return register ~ P.final_xor;
 	}
 
 	/// The `io.Writer` slot. It never fails.
@@ -229,7 +222,7 @@ impl Crc($T, $P) {
 			index := int((register ~ T(byte_value)) & T(0xFF));
 			return Crc(T, P).TABLES[0][index] ~ shift_right_8(register);
 		} else {
-			top_byte := int(shift_right_top(register)) ~ int(byte_value);
+			top_byte := int(register >> uint(8*size_of(T) - 8)) ~ int(byte_value);
 			return Crc(T, P).TABLES[0][top_byte] ~ shift_left_8(register);
 		}
 	}
@@ -250,15 +243,6 @@ impl Crc($T, $P) {
 			result = result ~ Crc(T, P).TABLES[7 - j][index];
 		}
 		return result;
-	}
-}
-
-@(private)
-shift_right_top :: proc(value: $T) -> T {
-	when (size_of(T) == 1) {
-		return value;
-	} else {
-		return value >> uint(8*size_of(T) - 8);
 	}
 }
 

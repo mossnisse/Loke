@@ -331,13 +331,13 @@ impl Writer($W) {
 		self.check_room(size_of(T)) or_return;
 		field: [size_of(T)]u8 = {};
 		endian.store(&mut field[:], value, self.byte_order);
-		return self.send(field[:]);
+		return io.write_all(inout self, field[:]);
 	}
 
 	/// Every byte, looping over a sink's short writes. Empty bytes never reach the sink.
 	put_bytes :: proc(self: inout, bytes: []u8) -> Status(io.Error) {
 		self.check_room(bytes.len()) or_return;
-		return self.send(bytes);
+		return io.write_all(inout self, bytes);
 	}
 
 	/**
@@ -370,13 +370,16 @@ impl Writer($W) {
 		for (; rest > 0;) {
 			count := rest;
 			if (count > chunk.len()) { count = chunk.len(); }
-			self.send(chunk[:count]) or_return;
+			io.write_all(inout self, chunk[:count]) or_return;
 			rest -= count;
 		}
 		return .ok;
 	}
 
 	/// The `io.Writer` slot, so a `Writer` is itself a sink. An empty write never reaches this one's.
+	// `io.write_all` over this is how the other operations write: this counts each
+	// partial write as it happens, so `offset` says where a stream stopped, inside
+	// a field included, though `write_all` loses its own count on a failure.
 	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) where io.Writer(W) {
 		self.check_room(source.len()) or_return;
 		if (source.len() == 0) { return 0; }
@@ -392,21 +395,6 @@ impl Writer($W) {
 	check_room :: proc(self, count: int) -> Status(io.Error) {
 		if (u64(count) > ~u64(0) - self.position) {
 			return .err(io.make_error(.Limit_Exceeded, .Write));
-		}
-		return .ok;
-	}
-
-	// Not `io.write_all`, whose count a failure loses: `offset` has to say where
-	// a stream stopped, inside a field included.
-	@(private)
-	send :: proc(self: inout, bytes: []u8) -> Status(io.Error) where io.Writer(W) {
-		rest := bytes;
-		for (; rest.len() > 0;) {
-			count := self.sink^.write(rest) or_return;
-			// As in `io.write_all`: a sink breaking the protocol must not spin here.
-			if (count == 0) { return .err(io.make_error(.Broken_Pipe, .Write)); }
-			self.position += u64(count);
-			rest = rest[count:];
 		}
 		return .ok;
 	}

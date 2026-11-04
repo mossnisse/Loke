@@ -11,6 +11,7 @@ import "core:endian";
 import "core:fmt";
 import "core:fs";
 import "core:io";
+import "core:mem";
 import "core:os";
 import "core:path";
 import "core:strings";
@@ -133,13 +134,28 @@ damage :: proc(bytes: []u8) {
 	fmt.println("damaged copies refused:", refused, "accepted:", accepted);
 }
 
-// A file under the system's temporary directory, so that a run leaves the working
-// directory alone.
-temporary :: proc(name: string_view) -> Result(string, io.Error) {
+// A new, empty file under the system's temporary directory, under a name only this
+// run holds. `Create_New` never opens a file that is already there, so nothing of
+// anyone else's can be overwritten here or removed by the caller's cleanup. The
+// handle closes on the way out, so the caller can remove the file whatever it does
+// with it next.
+reserve_temporary :: proc(prefix: string_view) -> Result(string, io.Error) {
+	directory := "";
 	switch (os.get_environment("TEMP") or_return) {
-	case .some(base): return .ok(path.join([]string_view{base, name}));
-	case .none:       return .ok(strings.copy(name));
+	case .some(base): directory = base;
+	case .none:
 	}
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := path.join([]string_view{directory, strings.join([]string_view{prefix, "-", digits, ".tmp"})});
+		switch (fs.open(name, fs.Open_Options{access = .Write, disposition = .Create_New})) {
+		case .ok(_):
+			return .ok(name);
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { return .err(error); }
+		}
+	}
+	return .err(io.make_error(.Already_Exists, .Open));
 }
 
 report :: proc(error: Load_Error) {
@@ -168,7 +184,7 @@ run :: proc() -> Result(int, Load_Error) {
 	}
 
 	// Through a file, one read for the header and one for the record.
-	name := temporary("loke_binary_records.tmp") or_return .io;
+	name := reserve_temporary("loke_binary_records") or_return .io;
 	defer _ = fs.remove(name);
 	fs.write_bytes(name, out.bytes()) or_return .io;
 	file := fs.open(name, fs.Open_Options{access = .Read, disposition = .Open_Existing}) or_return .io;

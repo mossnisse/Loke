@@ -1,10 +1,15 @@
 /**
 	The elementary functions and the constants.
 
-	Every float-specific procedure has exactly two concrete spellings: the
+	Every float-specific procedure but two has exactly two concrete spellings: the
 	unsuffixed name takes and returns `f64`, and the `_f32` name takes and
 	returns `f32`. They are not a procedure group, so `math.sqrt(2.0)` is not
 	ambiguous. `f16` gets nothing.
+
+	The two are the bit conversions, `to_bits` and `from_bits`. They compute nothing,
+	so each is a procedure group over `f16`, `f32`, and `f64` and their unsigned
+	integers of the same width, and an untyped literal needs a type:
+	`math.to_bits(f32(1.0))`.
 
 	The CRT-backed procedures promise the classifications, signs, poles, and
 	domain results documented on each one. They do not promise correctly rounded
@@ -37,7 +42,9 @@
 // so `math.sqrt(2.0)` would not compile if they were one. Both widths ship
 // together because Loke has no implicit `f32` -> `f64` widening: an `f32`
 // caller without a twin would write `f32(math.sqrt(f64(x)))`, which rounds
-// twice. The C library has no `f16` variants.
+// twice. The C library has no `f16` variants. `to_bits` and `from_bits` are the
+// exception because neither applies: the width is the whole question, and they
+// need no C library.
 @(public)
 package math;
 
@@ -244,14 +251,6 @@ to :: proc($To: type, value: $From) -> Option(To)
 	return converted;
 }
 
-// --------------------------------------------- integer arithmetic policies --
-//
-// `+`, `-`, and `*` panic on overflow (design.md "Integer overflow"). The
-// `wrapping_` forms keep the low bits instead, as `+%`, `-%`, and `*%` do, and
-// the `checked_` forms answer `.none` where the operator would panic. They are
-// for generic code and procedure values. `floor_div` and `floor_mod` are the
-// floored counterparts of the truncating `/` and `%`.
-//
 /**
 	The IEEE-754 encoding of `value`, and the float with that encoding. Each width
 	has its own overload and none goes through another, so nothing is
@@ -274,6 +273,14 @@ from_bits_u16 :: proc(bits: u16) -> f16 { return unsafe.transmute(f16, bits); }
 from_bits_u32 :: proc(bits: u32) -> f32 { return unsafe.transmute(f32, bits); }
 from_bits_u64 :: proc(bits: u64) -> f64 { return unsafe.transmute(f64, bits); }
 
+// --------------------------------------------- integer arithmetic policies --
+//
+// `+`, `-`, and `*` panic on overflow (design.md "Integer overflow"). The
+// `wrapping_` forms keep the low bits instead, as `+%`, `-%`, and `*%` do, and
+// the `checked_` forms answer `.none` where the operator would panic. They are
+// for generic code and procedure values. `floor_div` and `floor_mod` are the
+// floored counterparts of the truncating `/` and `%`.
+//
 // `interfaces.Integral` does not require the wrapping operators, so a distinct
 // integer that satisfies it may have none. The low bits of a sum, difference,
 // or product depend only on the low bits of its operands, so the wrapping forms

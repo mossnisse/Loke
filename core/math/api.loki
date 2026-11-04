@@ -11,10 +11,15 @@
 
 	The elementary functions and the constants.
 
-	Every float-specific procedure has exactly two concrete spellings: the
+	Every float-specific procedure but two has exactly two concrete spellings: the
 	unsuffixed name takes and returns `f64`, and the `_f32` name takes and
 	returns `f32`. They are not a procedure group, so `math.sqrt(2.0)` is not
 	ambiguous. `f16` gets nothing.
+
+	The two are the bit conversions, `to_bits` and `from_bits`. They compute nothing,
+	so each is a procedure group over `f16`, `f32`, and `f64` and their unsigned
+	integers of the same width, and an untyped literal needs a type:
+	`math.to_bits(f32(1.0))`.
 
 	The CRT-backed procedures promise the classifications, signs, poles, and
 	domain results documented on each one. They do not promise correctly rounded

@@ -3516,7 +3516,9 @@ The rest of the package is:
 
 Floating-point functions use an unsuffixed name for `f64` and `_f32` for
 `f32`, avoiding ambiguous overloads for untyped literals. There is no implicit
-widening and no `f16` variant.
+widening and no `f16` variant. The exceptions are the bit conversions `to_bits` and
+`from_bits`, procedure groups over `f16`, `f32`, and `f64`, whose width is the whole
+question; an untyped literal needs a type there.
 
 The procedures backed by the C library promise the classifications, signs,
 poles, and domain results documented on each one. They do not promise correctly
