@@ -985,6 +985,10 @@ checklist.
   With `plain(x: int)` and `gen($x: int)`, `pick(1)` called `gen`, because the ownership tie-breaker
   counted the literal against `plain`; it now calls `plain`. Upgrade by calling `gen` by name where
   it was the one meant.
+- A capture is a binding, so `capture(true = 1)` and `capture(nil = 7)` are now `L0700`, as
+  `true := 1` is ([Predeclared names](design.md#predeclared-names)), and `capture(_ = 41)` is
+  `L0716`, since `_` binds nothing ([Capture literals](design.md#capture-literals)). They compiled,
+  and in the body the name read the capture. Upgrade by renaming the capture.
 
 ### Added
 
@@ -2596,6 +2600,10 @@ checklist.
   `case` header or `@(...)` attribute, and a `{` that starts its own line, which now lines up with its `}`. Every later line of
   a wrapped `where` clause now sits at the same level, and a bracket after a multi-line raw string or block comment indents from
   where its line began. `f(/* name */ x)` stays as written instead of becoming `f( /* name */x)`.
+- A capture literal written with the same text as one enclosing it, such as `proc() capture(x)` in
+  the body of `proc() capture(x)`, compiles; it was `L0305`, naming the literal's header
+  ([Capture literals](design.md#capture-literals)).
+- `capture(n = nil)` is `L0310`, as `n := nil` is; it was `L0306`, "unknown type `n`".
 
 ## [0.9.0] - 2026-10-27
 

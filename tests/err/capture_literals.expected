@@ -59,3 +59,18 @@ a capture literal is a runtime value: it may be made and called during compile-t
 L0341
 @106:13
 a capture literal is a runtime value
+L0700
+@112:29
+`true` spells a literal, so it cannot be declared
+L0700
+@114:35
+`nil` spells a literal, so it cannot be declared
+L0716
+@116:30
+`_` binds nothing, so it cannot name a capture
+L0716
+@118:36
+`_` binds nothing, so it cannot name a capture
+L0310
+@120:32
+`nil` has no type to infer here

@@ -145,7 +145,7 @@ Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false
 
 #### Synthesized syntax nodes
 
-`Expr_Ident`: [capture.odin:102](src/capture.odin#L102), [capture.odin:137](src/capture.odin#L137), [check.odin:3889](src/check.odin#L3889), [check_calls.odin:329](src/check_calls.odin#L329), [expand.odin:636](src/expand.odin#L636), [hooks.odin:823](src/hooks.odin#L823), [parallel.odin:652](src/parallel.odin#L652).
+`Expr_Ident`: [check.odin:3889](src/check.odin#L3889), [check_calls.odin:329](src/check_calls.odin#L329), [expand.odin:636](src/expand.odin#L636), [hooks.odin:823](src/hooks.odin#L823), [parallel.odin:652](src/parallel.odin#L652).
 One-name `Decl`: [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140), [check.odin:3898](src/check.odin#L3898), [parallel.odin:182](src/parallel.odin#L182), [parallel.odin:724](src/parallel.odin#L724), [parallel.odin:736](src/parallel.odin#L736).
 Dereference: [check.odin:3857](src/check.odin#L3857), [parallel.odin:669](src/parallel.odin#L669), and with the place fields set, [check_expr.odin:1119](src/check_expr.odin#L1119) and `dereference_argument` in `check_calls.odin`.
 Selector: [check.odin:2878](src/check.odin#L2878), [check_calls.odin:204](src/check_calls.odin#L204), [expand.odin:627](src/expand.odin#L627), [parallel.odin:660](src/parallel.odin#L660).
@@ -161,9 +161,9 @@ Shared form: `member_name_clash(k, subject, name, name_id, existing) -> bool` an
 
 #### Checks on a new local name
 
-[check.odin:560](src/check.odin#L560), [iterate.odin:1064](src/iterate.odin#L1064) and [optional.odin:607](src/optional.odin#L607) repeat `L0304`, the reserved-name test, `L0305` and `note_shadowed_capture`. They differ in which scope they search from and in whether a reserved name stops the declaration; [check.odin:573](src/check.odin#L573) also exempts `$` names. `static_name_is_free` in [expand.odin:173](src/expand.odin#L173) is another copy, and [capture.odin:85](src/capture.odin#L85) inserts directly (BUG-capture-2).
+[check.odin:560](src/check.odin#L560), [iterate.odin:1064](src/iterate.odin#L1064) and [optional.odin:607](src/optional.odin#L607) repeat `L0304`, the reserved-name test, `L0305` and `note_shadowed_capture`. They differ in which scope they search from and in whether a reserved name stops the declaration; [check.odin:573](src/check.odin#L573) also exempts synthesized names. `static_name_is_free` in [expand.odin:173](src/expand.odin#L173) is another copy.
 
-Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves about 20 lines and fixes BUG-capture-2.
+Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves about 20 lines.
 
 #### Operator binding and the built-in operator table
 
@@ -503,48 +503,12 @@ What remains is the near copies shared with sibling files.
 
 ### src/capture.odin
 
-The lowering design is sound and its comments mostly explain why, but the record's source-text name and the direct scope insert of placeholders each skip a check that ordinary declarations get. `lower_capture_literal` is also one 140-line procedure with clear seams. All four bugs were reproduced with the `lokec.exe` built from this commit.
-
-**Bugs**
-
-- `BUG-capture-1` **medium** [capture.odin:94](src/capture.odin#L94) `lower_capture_literal`: the record is named by its header text, and `declare_all` shadow-checks it against the enclosing lowering scope. Scenario: `proc() capture(x) { g := proc() capture(x) {...}; }` reports L0305 "`proc() capture(x)` shadows an outer declaration" on a valid program. Fix: exempt the record from the shadow check, as `$` names are at [check.odin:572](src/check.odin#L572). *Confirmed: Reproduced: nested `proc() capture(x)` inside the same header gives L0305 naming the header text. Adding one space to the inner header (or writing `capture(y = x)`) compiles and prints 1, so the program is valid. Spacing should not matter; medium is fair.*
-- `BUG-capture-2` **medium** [capture.odin:85](src/capture.odin#L85) `lower_capture_literal`: the placeholder goes straight into `k.scope.names`, skipping `reject_reserved_name`, against design.md "Predeclared names". Scenario: `capture(true = 1) { fmt.println(true); }` compiles and prints 1; `capture(nil = 7)` too; `true := 1` and `proc(true: int)` give L0700. Fix: call `reject_reserved_name` in `capture_literal_shape_ok`. *Confirmed: Reproduced: capture(true = 1) prints 1, capture(nil = 7) prints 7, capture(false = 9) prints 9, and `x: bool = true` in the body gives L0310; true := 1 and proc(true: int) give L0700. Not recorded in known-gaps, open-questions or comments.*
-- `BUG-capture-3` **low** [capture.odin:85](src/capture.odin#L85) `lower_capture_literal`: a capture named `_` becomes a real binding, against design.md "Identifiers" (`_` creates none). Scenario: `capture(_ = 41) { fmt.println(_ + 1); }` prints 42 instead of L0314, and `_ = 3;` in that body gets L0358 instead of discarding. Fix: reject `_` as a capture name in `capture_literal_shape_ok`. *Not verified.*
-- `BUG-capture-4` **low** [capture.odin:62](src/capture.odin#L62) `lower_capture_literal`: `default_type` of untyped nil is INVALID_TYPE, which goes unnoticed into the alias. Scenario: `capture(n = nil)` reports L0306 "unknown type `n`", where `x := nil` reports L0310 "`nil` has no type to infer here". Fix: report L0310 when `default_type` is INVALID_TYPE and set `checked = false`. *Not verified.*
-
-**Simplification**
-
-- [capture.odin:76](src/capture.odin#L76) `lower_capture_literal`: `capture_call_method` only clones syntax and needs just `fields`, so call it once they are built; one loop then creates each placeholder and registers it with `method`, and the `placeholders` slice and the loop at 125-127 go. (about 4 lines)
-- [capture.odin:99](src/capture.odin#L99) `lower_capture_literal`: the field parts of the loops at 77 and 99 walk the same entries in the same scope; allocate `record` first and fill `fields`, the alias and `record.fields` in one loop. (about 3 lines)
-- [capture.odin:93](src/capture.odin#L93) `lower_capture_literal`: drop `strings.clone`; `Name.text` from the parser is already a slice of the same source text ([parser.odin:200](src/parser.odin#L200)). (under 1 line)
-- [capture.odin:232](src/capture.odin#L232) `capture_call_method`: the save and restore is unneeded, since checking never runs inside a clone and `capture_rewrite` is nil here; assign `&rewrite`, clone, assign nil. The map at 228 only lives for that clone, so it can use `context.temp_allocator`. (about 1 line)
-
-**Dead code**
-
-- (branch) [capture.odin:178](src/capture.odin#L178): `literal.signature != nil` here and at line 196 is always true, because `proc_shape_ok` ([check.odin:2747](src/check.odin#L2747)) returns false for a nil signature first at line 28. Line 219 already relies on it.
-- (branch) [capture.odin:281](src/capture.odin#L281): `outer` is a key of `capture_placeholders`, created by `new_symbol` at line 84, so `symbol_of` is never nil and the guard can go.
-- (branch) [capture.odin:227](src/capture.odin#L227): `Capture_Rewrite.receiver` is always `intern_identifier(CAPTURE_RECEIVER)`, as is the `receiver_id` parameter of `capture_field_place` from both callers; intern it inside `capture_field_place` and drop the field and parameter.
-
-**Data structures and algorithms**
-
-- [capture.odin:186](src/capture.odin#L186) `capture_literal_shape_ok`: `seen` stores a span that nothing reads; `map[Identifier_Id]bool` with `id in seen` at lines 189 and 199 states the set it is.
-- [capture.odin:270](src/capture.odin#L270) `capture_field_visible`: it probes `capture_records` before the cheap `sym.kind` test, for each member visibility check; test the kind first at no extra length. [check_expr.odin:506](src/check_expr.odin#L506) likewise probes `capture_placeholders` once per checked identifier; a flag on `Symbol` would avoid that, though one hash per name is unmeasured and likely small.
+The lowering design is sound and its comments mostly explain why.
 
 **Near copies**
 
 - [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140) and [parallel.odin:736](src/parallel.odin#L736) `synth_const`, with `.Var` variants at [parallel.odin:724](src/parallel.odin#L724), [parallel.odin:182](src/parallel.odin#L182) and [check.odin:3897](src/check.odin#L3897): each allocates a one-name, one-value `Decl`. A shared `single_declaration(c, kind, name, value, span)` makes each call one line. (about 10 lines here)
 - [check.odin:572](src/check.odin#L572), [iterate.odin:1071](src/iterate.odin#L1071) and [optional.odin:611](src/optional.odin#L611): the same lookup, L0305 report and `note_shadowed_capture` call. A `report_local_shadow(k, scope, id, span, text)` replaces all three and absorbs `note_shadowed_capture` at line 279; only check.odin adds its `$` test before the call.
-
-**Structure and boundaries**
-
-- [capture.odin:21](src/capture.odin#L21) `lower_capture_literal`: four jobs in 140 lines. Natural seams: the entry values and their types (36-66), the fields and placeholders (75-87), declaring the record (92-134), and declaring `call` (137-153). The procedure then reads as those four calls.
-
-**Comments**
-
-- [capture.odin:122](src/capture.odin#L122): delete; `capture_field_visible`'s comment at line 267 says it.
-- [capture.odin:136](src/capture.odin#L136): delete; it repeats the comment on `capture_call_method` at line 213.
-- [capture.odin:244](src/capture.odin#L244): shorter and more specific: "What a reserved capture name reads where the rewrite left it alone, a map literal's bare key; nil for any other name."
-- [capture.odin:255](src/capture.odin#L255): delete; it restates the type's name and the comment on `capture_placeholders` at [source.odin:219](src/source.odin#L219).
 
 ### src/cfg.odin
 
@@ -1005,7 +969,7 @@ What remains here belongs to the groups under "Findings that span files".
 
 **Near copies**
 
-- [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [capture.odin:137](src/capture.odin#L137), [check_calls.odin:204](src/check_calls.odin#L204) hand-build these nodes too. Share one set of `synth_*`, of which the ident, selector and deref builders are already package-visible.
+- [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [check_calls.odin:204](src/check_calls.odin#L204) hand-builds these nodes too. Share one set of `synth_*`, of which the ident, selector and deref builders are already package-visible.
 - [parallel.odin:181](src/parallel.odin#L181), [parallel.odin:723](src/parallel.odin#L723), [parallel.odin:735](src/parallel.odin#L735) and [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140): one-name `Decl` builders differing only in `kind` and type. Use one `synth_decl(c, kind, name, type, value, span)` built on `synth_name`, which interns, so callers drop their `id`. (about 20 lines here)
 - [parallel.odin:700](src/parallel.odin#L700) and [capture.odin:95](src/capture.odin#L95): a local struct whose field types are aliases only its scope binds. They differ in field names and spans; `synth_record` taking `[]Name`, with each field's span from its `Name`, serves both, moving capture fields from `entry.span` to `entry.name.span`. (about 15 lines)
 

@@ -107,6 +107,20 @@ escaped :: proc() -> int {
 	return ESCAPED() + WRAPPED.value();
 }
 
+// A capture is a binding: not a reserved name, not `_`, and `nil` gives it no type.
+unbound_names :: proc() {
+	reserved := proc() capture(true = 1) { };
+	reserved();
+	reserved_short := proc() capture(nil) { };
+	reserved_short();
+	discarded := proc() capture(_ = 41) { };
+	discarded();
+	discarded_short := proc() capture(_) { };
+	discarded_short();
+	no_type := proc() capture(n = nil) { };
+	no_type();
+}
+
 main :: proc() {
 	h := Holder{1};
 	_ = h.uncaptured_self();
@@ -120,4 +134,5 @@ main :: proc() {
 	_ = generic();
 	_ = escaped();
 	_ = global();
+	unbound_names();
 }

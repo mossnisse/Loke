@@ -502,8 +502,9 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		}
 		outer, owner := lookup_symbol_with_scope(k.scope.parent, name_id)
 		// A synthesized name, such as a nested `parallel` block's hidden scope
-		// local, is never looked up, so hiding an outer one is harmless.
-		synthesized := strings.index_byte(name.text, '$') >= 0
+		// local or a capture record's, which is its literal's text, is out of a
+		// source name's reach, so hiding an outer one is harmless.
+		synthesized := strings.index_any(name.text, "$(") >= 0
 		if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) && !synthesized {
 			errorf(k.c, name.span, "L0305", "`%s` shadows an outer declaration", name.text)
 			note_shadowed_capture(k, outer)

@@ -161,4 +161,11 @@ main :: proc() {
 		return counts["k"];
 	};
 	fmt.println(counted());
+
+	// A literal in a body of one written the same way has a record of its own.
+	nested := proc() -> int capture(seven) {
+		inner := proc() -> int capture(seven) { return seven + 1; };
+		return inner() * seven;
+	};
+	fmt.println(nested());
 }

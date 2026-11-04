@@ -193,7 +193,7 @@ literals may contain any Unicode.
 ## Predeclared names
 
 `true`, `false`, and `nil` are **reserved**: they cannot name a declaration,
-parameter, loop binding, or pattern binding reached by name lookup.
+parameter, capture, loop binding, or pattern binding reached by name lookup.
 
 Names reached through selectors are exempt. Reserved names and
 [keywords](grammar.md#keywords) may name fields, enum members, union variants,
@@ -6387,7 +6387,8 @@ the local of the same name:
 - The values are evaluated once, left to right, where the literal is evaluated,
   so `a[i]` uses `i` as it was then.
 - A name is captured once, and no capture shares a name with a parameter. In the
-  body the name is the capture, so no local declared there may take it.
+  body the name is the capture, so no local declared there may take it. `_`
+  binds nothing, so it names no capture.
 - In the body, a borrowed capture is read as the place, with no `^`, and `&name`
   is that place's address.
 - The body may read every capture and write through a `&mut` one. It may not
