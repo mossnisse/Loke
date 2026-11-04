@@ -2438,15 +2438,12 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	}
 	// Static storage cannot run the allocator expression.
 	if d.top_level || d.duration != .None {
-		storage_kind :=
-			d.duration == .Thread_Local ? "`thread_local` storage" :
-			d.duration == .Static ? "`static` storage" : "file-scope storage"
 		errorf(
 			k.c,
 			expr_span(d.via),
 			"L0576",
 			"`via` selects a provider by running an expression, which %s cannot do; it starts allocator-unbound and binds on first use",
-			storage_kind,
+			storage_phrase(d.duration),
 		)
 		return false
 	}

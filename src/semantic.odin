@@ -1143,6 +1143,16 @@ symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
 	return sym.duration != .None || (sym.decl != nil && sym.decl.top_level)
 }
 
+// How a diagnostic names such storage; a top-level declaration has no duration.
+storage_phrase :: proc(duration: Duration) -> string {
+	switch duration {
+	case .Thread_Local: return "`thread_local` storage"
+	case .Static:       return "`static` storage"
+	case .None:
+	}
+	return "file-scope storage"
+}
+
 new_type :: proc(c: ^Compiler, value: Type_Info) -> Type_Id {
 	init_semantic_stores(c)
 	id := Type_Id(len(c.types))

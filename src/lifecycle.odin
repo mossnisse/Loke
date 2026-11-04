@@ -83,8 +83,7 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 			"L0498",
 			"`%s` cannot be applied to %s, which is always live",
 			form,
-			sym.duration == .Thread_Local ? "`thread_local` storage" :
-				sym.duration == .Static ? "`static` storage" : "file-scope storage",
+			storage_phrase(sym.duration),
 		)
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false

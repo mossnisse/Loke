@@ -3801,10 +3801,8 @@ prov_region_escape_into :: proc(graph: ^Flow_Graph, span: Span, id: Symbol_Id, r
 	storage := ""
 	param := sym.kind == .Parameter
 	switch {
-	case sym.duration == .Thread_Local: storage = "`thread_local` storage"
-	case sym.duration == .Static:       storage = "`static` storage"
-	case sym.decl != nil && sym.decl.top_level: storage = "file-scope storage"
-	case param:                         storage = "storage the caller owns"
+	case symbol_outlives_bodies(sym): storage = storage_phrase(sym.duration)
+	case param:                       storage = "storage the caller owns"
 	}
 	if storage == "" {
 		return false
@@ -5120,12 +5118,11 @@ prov_declare_provider :: proc(graph: ^Flow_Graph, id: Symbol_Id, initialized: bo
 @(private = "file")
 prov_check_lasting_storage :: proc(graph: ^Flow_Graph, sym: ^Symbol, owned: Region_Set) {
 	if region_is_parameter_backed(owned) || region_has_local(owned) {
-		storage := sym.duration == .Thread_Local ? "`thread_local` storage" : "`static` storage"
 		prov_emit(graph, Prov_Event {
 			kind   = .Region_Escape,
 			span   = sym.span,
 			verb   = fmt.aprintf("`%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc),
-			name   = storage,
+			name   = storage_phrase(sym.duration),
 			region = owned,
 		})
 	}
