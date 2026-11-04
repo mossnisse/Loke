@@ -847,7 +847,10 @@ forms, has a signature written for readers and checked only for its name; its
 section of this specification defines its typing.
 
 The attribute is valid only at file scope or in such an `impl` block, outside
-`when`, in a package the compiler supplies names to (`L0734`). Besides
+`when`, in a package the compiler supplies names to (`L0734`). A declaration has
+no written type, and a procedure no `where` clause and no `operator` or hook
+around it (`L0734`); only a member's receiver omits its type, and only as a bare
+`self` (`L0736`). Besides
 `@(public)` and `@(private)`, on the declaration or a struct field, it takes no
 other attribute there or on a parameter or the struct (`L0734`), since the
 compiler supplies whatever one would say. It must name one of those names, or a

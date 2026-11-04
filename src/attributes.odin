@@ -106,7 +106,7 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "intrinsic":
 		// Bound by `src/intrinsic.odin`, which validates the declaration's other
 		// attributes; one reaching the ordinary pass is misplaced.
-		return {}, true
+		return {{.Proc_Decl, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, {}}, true
 	case "zero", "failure":
 		// A variant name, checked in `src/union.odin`.
 		return {{.Union_Decl}, .Deferred, {}}, true
@@ -155,6 +155,7 @@ validate_attribute_list :: proc(
 	pos: Attr_Pos,
 	scope := Attr_Scope.Global,
 	duration := Duration.None,
+	allow_intrinsic := false,
 ) {
 	if len(attributes) == 0 {
 		return
@@ -195,7 +196,7 @@ validate_attribute_list :: proc(
 			errorf(k.c, attribute.span, "L0609", "`@(%s)` is written more than once here", name)
 			continue
 		}
-		if name == "intrinsic" {
+		if name == "intrinsic" && !allow_intrinsic {
 			report_misplaced_intrinsic(k, attribute.span)
 			continue
 		}

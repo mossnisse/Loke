@@ -694,47 +694,6 @@ What remains is the part shared with `erased.odin` and `generic.odin`.
 - [interface.odin:312](src/interface.odin#L312), [interface.odin:347](src/interface.odin#L347) and [generic.odin:3070](src/generic.odin#L3070): the enum, `convert_const` and `nil_converts` test. Find the value and its type once, then call a shared `convert_generic_value`; `report_unrepresentable_argument` goes.
 - [interface.odin:1018](src/interface.odin#L1018) and [erased.odin:893](src/erased.odin#L893): both loop over candidates, filter for a method, and test `slot_matches`. With a plain-`bool` `result_inout`, `check_slot_requirement` can call `find_witness_slot`, moved here.
 
-### src/intrinsic.odin
-
-Well-commented and cleanly owned; its linear scans run over a per-package, compiler-fixed list, so they are fine. It accepts several written forms it should reject (each reproduced against `lokec.exe` with a vendored `core:mem`), and about 55 lines can go, mainly filtering that `validate_attribute_list` could do and defensive checks the contribution order makes unnecessary.
-
-**Bugs**
-
-- `BUG-intrinsic-1` **medium** [intrinsic.odin:407](src/intrinsic.odin#L407) `check_intrinsic_signature`: any untyped first parameter of a member passes, not only `self`; `slot_signature` then yields `INVALID_TYPE` and line 413 returns with no report. *Confirmed: Reproduced: in a -collection core:mem, `allocator :: proc(this)` and `proc(self, other)` build with exit 0 and -doc prints them; `proc(this: int)` gets L0736, ordinary members L0408. Severity is low, not medium: only core-package authors reach it.*
-  Scenario: `allocator :: proc(this) -> Allocator ---;` or `proc(self, other)` in `impl Arena` compiles, unchecked, and `-doc` shows it. Fix: test `parameter_is_bare_self(parameter, position)` in place of `position == 0`.
-- `BUG-intrinsic-2` **low** [intrinsic.odin:78](src/intrinsic.odin#L78) `bind_intrinsic_impl`: the impl's own attributes are never validated, since `flatten_item` drops the impl and `validate_impl_attributes` reads only `active_items`. *Not verified.*
-  Scenario: `@(bogus) impl Arena { @(intrinsic) ... }` gives no L0606. Fix: call `validate_attribute_list(k, v.attributes, .Impl)` first.
-- `BUG-intrinsic-3` **low** [intrinsic.odin:122](src/intrinsic.odin#L122) `bind_intrinsic`: the shape check ignores `d.declared_type` and `literal.where_clauses`, though a struct's `where` is rejected at line 499. *Not verified.*
-  Scenario: `Arena: int : ---;`, `Failure_Policy: int : enum { Panic, Trap }` and `try_arena :: proc(...) -> ... where 1 == 2 ---;` all compile. Fix: require both empty in `shape_ok`.
-- `BUG-intrinsic-4` **low** [intrinsic.odin:121](src/intrinsic.odin#L121) `bind_intrinsic`: `decl_proc_literal` looks through `operator(...)` and `hook(...)`, so a wrapper passes as a procedure and states a role nothing checks. *Not verified.*
-  Scenario: `init :: hook(drop) proc(...) -> Arena ---;` and `init :: operator(+) proc(...) -> Arena ---;` compile. Fix: use `decl_proc` at lines 121, 220 and 373; line 129 then reports L0734.
-
-**Simplification**
-
-- [intrinsic.odin:206](src/intrinsic.odin#L206) `validate_intrinsic_attributes`: lines 206-219 filter `intrinsic` out only because `validate_attribute_list` rejects it, then re-implement its L0608 and L0609 with the same text. Add `allow_intrinsic := false` to it and pass `d.attributes` directly. (about 12 lines)
-- [intrinsic.odin:269](src/intrinsic.odin#L269) `contributed_here`: at bind time `pkg.scope.names` holds only contributions, since line 133 of `check.odin` runs before any declaration is collected. Drop it and its tests at lines 83 and 147. (about 12 lines)
-- [intrinsic.odin:417](src/intrinsic.odin#L417) `check_intrinsic_signature`: replace the flag loop at lines 417-424 with `same := slice.equal(params, sym.params) && slice.equal(modes, info.param_modes) && result == sym.result && result_inout == sym.result_inout`. `info` is never nil for a `.Proc` here. (about 7 lines)
-- [intrinsic.odin:222](src/intrinsic.odin#L222) `validate_intrinsic_attributes`: the record is looked up twice (lines 222-226 and 235-242). Bind `record` once at the top, with `literal`. (about 4 lines)
-- [intrinsic.odin:60](src/intrinsic.odin#L60) `bind_intrinsic_items`: the `file` parameter here and on `bind_intrinsic_impl` and `bind_intrinsic` is always `k.file_node` (set at line 51). Drop it and read `k.file_node` at line 197. (3 signatures, no lines)
-
-**Dead code**
-
-- (branch) [intrinsic.odin:448](src/intrinsic.odin#L448): `existing == nil` cannot happen. `.Proc` contributions come only from `provider_constructor`, which names every parameter, and `allocator`, whose only parameter is the skipped receiver. Lines 448-451 can go, and the check no longer mutates a contributed symbol.
-- (branch) [intrinsic.odin:440](src/intrinsic.odin#L440): `flat < len(sym.param_defaults)` here and `flat < len(sym.param_symbols)` at line 446 are always true: `synth_proc` sizes both to `len(params)`, and lines 417-424 proved the lengths equal.
-- (branch) [intrinsic.odin:192](src/intrinsic.odin#L192): `d.top_level = true` is never read. Readers reach a `Decl` through `active_items`, a statement or `sym.decl`; an intrinsic declaration is in none of these, and `doc.odin` reads `d.symbols`, not `top_level`.
-- (branch) [intrinsic.odin:346](src/intrinsic.odin#L346): `len(v.names) > 0` is always true: `parse_declaration` returns a `Decl` only with at least one name, there is no file-scope destructuring, and lines 116 and 134 already assume it.
-
-**Near copies**
-
-- [intrinsic.odin:535](src/intrinsic.odin#L535) and [intrinsic.odin:549](src/intrinsic.odin#L549): `member_list` and `field_list` differ only in appending `: type`. Keep `public` as `[]Symbol_Id` and write one `symbol_list(c, symbols, typed: bool)` using `fmt.sbprintf`. (about 12 lines)
-- [intrinsic.odin:182](src/intrinsic.odin#L182) and [intrinsic.odin:279](src/intrinsic.odin#L279): the duplicate check and `described` scan `pkg.intrinsics` for the same symbol. One `description_of(pkg, symbol_id) -> ^Intrinsic_Decl`, nil when absent, serves both. (about 3 lines)
-- [intrinsic.odin:347](src/intrinsic.odin#L347) and [intrinsic.odin:351](src/intrinsic.odin#L351): one L0734 message, spelled out twice. Give it a constant here.
-
-**Comments**
-
-- [intrinsic.odin:15](src/intrinsic.odin#L15): the first sentence restates the struct. Keep only "`subject` is the type an `impl` member belongs to."
-- [intrinsic.odin:57](src/intrinsic.odin#L57): delete "File scope and top-level blocks."; the switch shows it. Keep the sentence about `when`.
-
 ### src/iterate.odin
 
 What remains are near copies that need helpers shared across files.

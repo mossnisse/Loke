@@ -1,0 +1,48 @@
+// A `core:mem` whose `@(intrinsic)` declarations each take a form that states
+// something the compiler would not check.
+@(public)
+package mem;
+
+@(intrinsic)
+Allocator :: ---;
+
+@(intrinsic)
+Allocator_Error :: ---;
+
+@(intrinsic)
+default_allocator :: proc() -> Allocator ---;
+
+@(intrinsic)
+Failure_Policy: int : enum { Panic, Trap }
+
+@(intrinsic)
+Arena: int : ---;
+
+@(misspelled)
+impl Arena {
+	@(intrinsic)
+	from_buffer :: hook(drop) proc(buffer: []mut u8, policy: Failure_Policy = .Panic) -> Arena ---;
+
+	@(intrinsic)
+	init :: operator(+) proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+
+	@(intrinsic)
+	allocator :: proc(this) -> Allocator ---;
+}
+
+@(intrinsic)
+Scratch :: ---;
+
+impl Scratch {
+	@(intrinsic)
+	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Scratch ---;
+
+	@(intrinsic)
+	allocator :: proc(self, other) -> Allocator ---;
+}
+
+@(intrinsic)
+try_arena :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Arena, Allocator_Error) where 1 == 2 ---;
+
+@(intrinsic)
+try_scratch: int : proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Scratch, Allocator_Error) ---;

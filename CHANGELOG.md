@@ -998,6 +998,13 @@ checklist.
   `true := 1` is ([Predeclared names](design.md#predeclared-names)), and `capture(_ = 41)` is
   `L0716`, since `_` binds nothing ([Capture literals](design.md#capture-literals)). They compiled,
   and in the body the name read the capture. Upgrade by renaming the capture.
+- A replacement for a bundled package given with `-collection` can no longer write an
+  [`@(intrinsic)`](design.md#intrinsic) declaration that states what nothing checks. A written type,
+  as in `Arena: int : ---;`, a `where` clause, and `operator(...)` or `hook(...)` around the procedure
+  are `L0734`. A receiver with no type but not named `self`, as in `proc(this)` or `proc(self, other)`,
+  is `L0736`. An unknown or misplaced attribute on the block's `impl` is reported like any other. All
+  compiled, unchecked, and `-doc` showed them. Upgrade by writing the declaration as the bundled
+  package's source does.
 
 ### Added
 
