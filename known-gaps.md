@@ -744,8 +744,10 @@ reset_while_live :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 main :: proc() {}
 ```
 
-The fix is the one the next entry names: a call's result naming what its result dependencies say
-it points at. Found on 2026-11-04 (P2).
+A copy hook returning a pointer it reads through `self`, such as `self.next^.next`, names no target
+in any clone form either, `.clone()` included, so storing through its result goes unflagged too; that
+form was compiled, not run. The fix is the one the next entry names: a call's result naming what its
+result dependencies say it points at. Found on 2026-11-04 (P2).
 
 ### An owner built through a pointer a call returned has no known provider
 
@@ -776,3 +778,38 @@ main :: proc() {
 every unknown region as local at a return would reject a provider received as a parameter, so
 the fix is for a call's result to name what the call's result dependencies say it points at.
 Found on 2026-11-03 (P2).
+
+### A generic block does not reject an attribute only a procedure may take
+
+A member takes only the attributes its kind allows, and `impl G` on a plain record reports `L0607`
+for this. A bare name
+in a generic block takes the type's rules instead, so it compiles:
+
+```loke
+package main;
+G :: struct($T: type) { x: T }
+impl G($T) {
+    @(require_results) N :: 3;
+}
+main :: proc() {}
+```
+
+`@(bogus)`, `@(packed)`, `@(test)` and `@(cpu_dispatch)` are rejected there. Found on 2026-11-04 in
+the compiler review (P3).
+
+### A misplaced token reports its cascade
+
+[Grammar](grammar.md) has one error here, but the parser recovers into more. `impl proc() { }` reads
+`{ }` as the body the type cannot have, and reports `L0406` and `L0252` after `L0210`. `return );`
+in a procedure with no result reports `L0326` before the `L0220` that names the token:
+
+```loke
+package main;
+impl proc() { }
+f :: proc() {
+    return );
+}
+main :: proc() {}
+```
+
+Found on 2026-11-04 in the compiler review (P3).

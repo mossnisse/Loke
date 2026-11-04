@@ -1253,6 +1253,28 @@ The compiler keeps this, and a report counts that `format`'s effects
 (tests/err/private_formatter_effects.loke). The table should either name these views or the
 compiler should print their names. Found on 2026-11-04 in the compiler review.
 
+## Comparing an unfixed integer with an unfixed float
+
+[Integer overflow](design.md#integer-overflow) says an unfixed constant is exact, and nothing
+says what happens when the two kinds meet. An integer past the float limit compares exactly, while
+one within it rounds to the float's type first, so `A` here is true and `C` needs exactness:
+
+```loke
+BIG :: 1 << 2000;
+A :: (1 << 53) + 1 == 9007199254740992.0; // true: rounds before comparing
+C :: BIG > 1.0e300;                       // true: compared exactly (tests/run/constant_int_float)
+```
+
+Comparing exactly always is the simpler rule, and it makes `A` false. Either way the spec should say.
+Found on 2026-11-04 in the compiler review.
+
+## A `distinct` clone that ties on typeid order
+
+The order of two `distinct` types declared in place breaks ties by their site and scope. A clone
+re-checked at the same site and scope, as compound-assignment lowering makes, could still tie and
+fall back to the order of requests, so typeids would depend on it. This comes from reading the
+code; no program has shown it. Found on 2026-11-04 in the compiler review.
+
 ## The diverging arrow's spelling
 
 [`-> !`](design.md#diverging-procedures) means the procedure never returns
