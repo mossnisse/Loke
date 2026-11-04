@@ -748,7 +748,7 @@ What remains is two near copies that belong to the cross-file groups.
 
 ### src/enums.odin
 
-Small and correct. The enum declaration logic lives in `check.odin`.
+Small and correct.
 
 **Near copies**
 
@@ -756,10 +756,6 @@ Small and correct. The enum declaration logic lives in `check.odin`.
   Promote it to `const_ops.odin` (about 3 lines per site). It also sets `type_value`, which these omit; confirm no reader depends on the difference.
 - [enums.odin:51](src/enums.odin#L51), [union.odin:482](src/union.odin#L482), [union.odin:611](src/union.odin#L611) and [check_calls.odin:1028](src/check_calls.odin#L1028) repeat `v.bound = make([]Expr, 1, ...)` then `v.bound[0] = x`.
   About 15 checker sites use this or the `bound :=` spelling; a `bind_single(k, v, x)` saves one line at each.
-
-**Structure and boundaries**
-
-- [check.odin:4497](src/check.odin#L4497) `enum_member_by_value` and [check.odin:1250](src/check.odin#L1250) `resolve_enum_members` belong here: "Source-code map" gives this file "Enums", yet it holds only the two built-in calls. Moving them gives enums one owner and shortens `check.odin` by about 100 lines.
 
 ### src/erased.odin
 
