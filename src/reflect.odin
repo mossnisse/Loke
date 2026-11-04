@@ -390,9 +390,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		return true
 	}
 
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	v.bound = bound
+	v.bound = bound_exprs(k, v.args[0].value)
 	v.operation = Call_Reflect{op = op, field = field}
 	v.resolution = Resolution{kind = .Field, symbol = field}
 	// design.md "Compile-time reflection". `get` is a place, so nothing drops it as

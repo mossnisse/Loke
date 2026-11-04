@@ -485,8 +485,7 @@ finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, ind
 	v.value_category = .Value
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.type = subject
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = value
+	v.bound = bound_exprs(k, value)
 	classify_copy_cost(k, value, payload, .Variant)
 	v.operation = Call_Union_Construct{
 		index = index,
@@ -630,7 +629,6 @@ check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject:
 	}
 	contribute_lifecycle_members(k, payload)
 	v.operation = Call_Union_As{index = index}
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = sel.operand
+	v.bound = bound_exprs(k, sel.operand)
 	v.type = option_type(k, payload, v.span)
 }

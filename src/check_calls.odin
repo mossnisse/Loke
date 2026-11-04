@@ -1065,8 +1065,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	v.operation = Call_Conversion{clones = clones}
 	v.resolution = {}
 	record_proc_contract_check(k.c, source, target, v.span)
-	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = operand
+	v.bound = bound_exprs(k, operand)
 	v.type = target
 	if folds {
 		v.const_value = converted

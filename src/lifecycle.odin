@@ -21,9 +21,7 @@ check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	if check_single_expr(k, v.args[0].value) == INVALID_TYPE || !require_lexical_owner(k, v.args[0].value, "drop") {
 		return
 	}
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	v.bound = bound
+	v.bound = bound_exprs(k, v.args[0].value)
 	v.type = TYPE_VOID
 }
 
@@ -59,9 +57,7 @@ check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 		)
 		return
 	}
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = operand
-	v.bound = bound
+	v.bound = bound_exprs(k, operand)
 	v.type = TYPE_VOID
 }
 
@@ -170,10 +166,7 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 		return
 	}
 
-	bound := make([]Expr, 2, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	bound[1] = replacement
-	v.bound = bound
+	v.bound = bound_exprs(k, v.args[0].value, replacement)
 	v.type = destination
 	contribute_lifecycle_members(k, destination)
 }
