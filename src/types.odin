@@ -223,18 +223,20 @@ type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_contains_invalid(c, id, &seen)
 }
 
-// The nominal types a walk over a type's components has entered. A recursive
-// type can only refer back to itself through one, so a type met again answers
-// the walk's neutral value: its own declaration is checked once, and a walk
-// stops at its first decisive answer, so a finished visit was neutral too. A
-// record diagnosed as containing itself by value still reaches body checking,
-// so every walk needs this guard.
+// The types a walk over a type's components has entered: the nominal ones, since
+// a recursive type can only refer back to itself through one, and the structural
+// ones with several components, since a chain of aliases naming the previous one
+// twice would otherwise take a walk exponential time. A type met again answers
+// the walk's neutral value: its own declaration is checked once, and a walk stops
+// at its first decisive answer, so a finished visit was neutral too. A record
+// diagnosed as containing itself by value still reaches body checking, so every
+// walk needs this guard.
 Type_Walk :: map[Type_Id]struct{}
 
-// Whether `id` is new to the walk, recording it when it is nominal.
+// Whether `id` is new to the walk, recording it when the walk has to.
 type_walk_enter :: proc(seen: ^Type_Walk, id: Type_Id, info: ^Type_Info) -> bool {
 	#partial switch info.kind {
-	case .Struct, .Union, .Distinct:
+	case .Struct, .Union, .Distinct, .Map, .Proc:
 		if id in seen {
 			return false
 		}

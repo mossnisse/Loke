@@ -115,6 +115,27 @@ takes 0.6 s at 1000 links, 3.8 s at 2000 and 34 s at 4000. Walking the body is 7
 the rest is `solve_provenance` in [src/borrow.odin](src/borrow.odin). The cause is not established.
 Found on 2026-11-03 (P3).
 
+### A type's printed name doubles with each alias naming the previous one twice
+
+`type_name` spells a structural type in full and an alias has no name of its own, so the printed
+form of this type is about 2^40 characters. Declaring a value of it never finishes, since checking
+a map value prints the map's name; at depth 16 the name is already 1.1 MB:
+
+```loke
+package main;
+M0 :: map[int]int;
+M1 :: map[^M0]M0;
+// ... each `Mn :: map[^Mn-1]Mn-1`, up to:
+M40 :: map[^M39]M39;
+main :: proc() { m: M40 = {}; _ = m; }
+```
+
+The same holds of a diagnostic naming a deep procedure alias, such as `x: P40 = 1;` over `Pn ::
+proc(a: Pn-1, b: Pn-1) -> Pn-1`, and of whatever else names one, such as `Option(P40)` or `-g`. The
+walks over such a type's components are linear in its depth; only the text is not. A fix has to
+abbreviate a long printed type, or print the alias a type was written through. Found on 2026-11-04
+(P3).
+
 ### A store through one field of a record parameter blames the sibling field's target at the call
 
 [Minimum provenance precision](design.md#minimum-provenance-precision) keeps a record's carrier
