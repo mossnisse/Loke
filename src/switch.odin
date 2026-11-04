@@ -3,6 +3,7 @@
 package lokec
 
 import "core:slice"
+import "core:strings"
 
 // --------------------------------------------------------- value switches --
 
@@ -68,15 +69,9 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if type_is_enum(k.c, subject) {
 		cases.members = enum_members_by_value(k.c, subject)
 	}
-	has_default := false
+	has_default := check_default_cases(k, s)
 	flow := Flow_Info{}
 	for &entry in s.cases {
-		if len(entry.values) == 0 {
-			if has_default {
-				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
-			}
-			has_default = true
-		}
 		for value in entry.values {
 			check_case_value(k, value, subject, &cases)
 		}
@@ -84,15 +79,34 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		k.scope = new_scope(k.c, case_scope, .Local)
 		case_flow := check_stmts(k, entry.stmts)
 		k.scope = case_scope
-		flow.returns ||= case_flow.returns
-		flow.breaks ||= case_flow.breaks
-		flow.continues ||= case_flow.continues
-		flow.can_fall_through ||= case_flow.can_fall_through
+		flow_either(&flow, case_flow)
 	}
 
 	s.exhaustive = has_default || check_exhaustive(k, s, subject, cases.covered)
 	flow.can_fall_through ||= !s.exhaustive
 	return flow
+}
+
+// Whether a switch has a default case, of which it may have one.
+@(private = "file")
+check_default_cases :: proc(k: ^Checker, s: ^Stmt_Switch) -> (has_default: bool) {
+	for entry in s.cases {
+		if len(entry.values) == 0 {
+			if has_default {
+				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
+			}
+			has_default = true
+		}
+	}
+	return
+}
+
+// Names the first three of what a switch leaves out, as one diagnostic.
+@(private = "file")
+report_uncovered :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, code: string, missing: []string) {
+	listed := strings.join(missing[:min(len(missing), 3)], ", ", k.c.semantic_allocator)
+	more := len(missing) > 3 ? ", ..." : ""
+	errorf(k.c, s.span, code, "this switch over `%s` does not cover %s%s", type_name(k.c, subject), listed, more)
 }
 
 // What a value switch's cases have named. A generated switch can have thousands,
@@ -174,29 +188,16 @@ check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered
 		errorf(k.c, s.span, "L0366", "a switch over `%s` needs a default case", type_name(k.c, subject))
 		return false
 	}
-	info := underlying_info(k.c, subject)
-	missing := ""
-	count := 0
-	for member in info.fields {
-		if covered[member] {
-			continue
-		}
-		count += 1
-		symbol := symbol_of(k.c, member)
-		if count <= 3 {
-			if missing != "" {
-				missing = concat(k.c, missing, ", ")
-			}
-			missing = concat(k.c, missing, identifier_text(k.c, symbol.name))
+	missing := make([dynamic]string, context.temp_allocator)
+	for member in underlying_info(k.c, subject).fields {
+		if !covered[member] {
+			append(&missing, identifier_text(k.c, symbol_of(k.c, member).name))
 		}
 	}
-	if count == 0 {
+	if len(missing) == 0 {
 		return true
 	}
-	if count > 3 {
-		missing = concat(k.c, missing, ", ...")
-	}
-	errorf(k.c, s.span, "L0366", "this switch over `%s` does not cover %s", type_name(k.c, subject), missing)
+	report_uncovered(k, s, subject, "L0366", missing[:])
 	return false
 }
 
@@ -305,15 +306,9 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	}
 
 	seen_variants := make([dynamic]int, 0, 8, context.temp_allocator)
-	has_default := false
+	has_default := check_default_cases(k, s)
 	flow := Flow_Info{}
 	for &entry in s.cases {
-		if len(entry.values) == 0 {
-			if has_default {
-				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
-			}
-			has_default = true
-		}
 		entry.variant_indices = case_variants(k, subject, entry.values, &seen_variants)
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
@@ -325,18 +320,14 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		}
 		note_expanded_case(k, entry, before)
 		k.scope = case_scope
-
-		flow.returns ||= case_flow.returns
-		flow.breaks ||= case_flow.breaks
-		flow.continues ||= case_flow.continues
-		flow.can_fall_through ||= case_flow.can_fall_through
+		flow_either(&flow, case_flow)
 	}
 
 	s.exhaustive = has_default || variant_count(k.c, subject) == len(seen_variants)
 	if !s.exhaustive {
 		report_uncovered_variants(k, s, subject, seen_variants[:])
 	}
-	flow.can_fall_through ||= !s.exhaustive || len(s.cases) == 0
+	flow.can_fall_through ||= !s.exhaustive
 	return flow
 }
 
@@ -504,30 +495,11 @@ case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
 
 @(private = "file")
 report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: []int) {
-	info := type_of(k.c, type_underlying(k.c, subject))
-	missing := ""
-	count := 0
-	for _, index in info.variants {
-		if slice.contains(covered, index) {
-			continue
-		}
-		count += 1
-		if count <= 3 {
-			if missing != "" {
-				missing = concat(k.c, missing, ", ")
-			}
-			missing = concat(k.c, missing, ".", union_variant_name(k.c, subject, index))
+	missing := make([dynamic]string, context.temp_allocator)
+	for _, index in type_of(k.c, type_underlying(k.c, subject)).variants {
+		if !slice.contains(covered, index) {
+			append(&missing, concat(k.c, ".", union_variant_name(k.c, subject, index)))
 		}
 	}
-	if count > 3 {
-		missing = concat(k.c, missing, ", ...")
-	}
-	errorf(
-		k.c,
-		s.span,
-		"L0427",
-		"this switch over `%s` does not cover %s",
-		type_name(k.c, subject),
-		missing,
-	)
+	report_uncovered(k, s, subject, "L0427", missing[:])
 }

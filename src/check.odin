@@ -131,6 +131,14 @@ flow_then :: proc(flow: ^Flow_Info, next: Flow_Info) {
 	flow.can_fall_through = flow.can_fall_through && next.can_fall_through
 }
 
+// `other` may run instead of what `flow` summarizes.
+flow_either :: proc(flow: ^Flow_Info, other: Flow_Info) {
+	flow.returns ||= other.returns
+	flow.breaks ||= other.breaks
+	flow.continues ||= other.continues
+	flow.can_fall_through ||= other.can_fall_through
+}
+
 // Scope, declarations, nominal shells, and import aliases, for whatever is
 // active so far. Every step guards against repeating itself, so a later
 // discovery round only does what a newly selected branch added.

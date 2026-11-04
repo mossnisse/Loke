@@ -1118,13 +1118,8 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 		then_flow.can_fall_through = true
 		return then_flow
 	}
-	else_flow := check_stmt(k, s.otherwise)
-	return Flow_Info {
-		can_fall_through = then_flow.can_fall_through || else_flow.can_fall_through,
-		returns          = then_flow.returns || else_flow.returns,
-		breaks           = then_flow.breaks || else_flow.breaks,
-		continues        = then_flow.continues || else_flow.continues,
-	}
+	flow_either(&then_flow, check_stmt(k, s.otherwise))
+	return then_flow
 }
 
 check_condition :: proc(k: ^Checker, cond: Expr) {

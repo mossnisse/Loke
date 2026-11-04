@@ -2657,6 +2657,9 @@ checklist.
   the body of `proc() capture(x)`, compiles; it was `L0305`, naming the literal's header
   ([Capture literals](design.md#capture-literals)).
 - `capture(n = nil)` is `L0310`, as `n := nil` is; it was `L0306`, "unknown type `n`".
+- A `switch` with no cases over a `union {}` is exhaustive, as one over an `enum {}` is, so no return
+  need follow it ([Exhaustive switch](design.md#exhaustive-switch)). It was `L0365` in a procedure
+  with a result.
 
 ## [0.9.0] - 2026-10-27
 
