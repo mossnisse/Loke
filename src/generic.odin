@@ -2430,17 +2430,26 @@ bind_record_argument :: proc(
 // A constant generic argument converted to its parameter's type, or why not.
 @(private = "file")
 convert_generic_value :: proc(k: ^Checker, value: Const_Value, value_type, wanted: Type_Id) -> (Const_Value, string) {
+	converted, fits := convert_constant_argument(k.c, value, value_type, wanted)
+	if fits {
+		return converted, ""
+	}
 	if type_is_enum(k.c, wanted) && !assignable(k.c, value_type, wanted) {
 		return {}, "an enum generic argument must be a variant of the parameter's enum type"
 	}
-	converted, fits := convert_const(k.c, value, wanted, false)
-	if !fits || !nil_converts(k.c, value_type, wanted) {
-		return {}, fmt.aprintf(
-			"`%s` is not representable by the generic parameter's type `%s`",
-			generic_value_text(k.c, value), type_name(k.c, wanted), allocator = k.c.semantic_allocator,
-		)
-	}
-	return converted, ""
+	return {}, fmt.aprintf(
+		"`%s` is not representable by the generic parameter's type `%s`",
+		generic_value_text(k.c, value), type_name(k.c, wanted), allocator = k.c.semantic_allocator,
+	)
+}
+
+// A constant converted for a `$` parameter of type `wanted`. An enum parameter
+// takes only its own variants, and `nil` only what it converts to.
+convert_constant_argument :: proc(c: ^Compiler, value: Const_Value, value_type, wanted: Type_Id) -> (Const_Value, bool) {
+	converted, fits := convert_const(c, value, wanted, false)
+	fits &&= !type_is_enum(c, wanted) || assignable(c, value_type, wanted)
+	fits &&= nil_converts(c, value_type, wanted)
+	return converted, fits
 }
 
 // ---------------------------------------------------- procedure instances --

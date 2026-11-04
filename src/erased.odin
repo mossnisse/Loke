@@ -646,7 +646,10 @@ interface_witness_slots :: proc(k: ^Checker, info: ^Interface_Info, concrete: Ty
 		params, modes, result_type, result_inout, shape_ok := slot_signature_for(k, owner, entry, concrete)
 		target := INVALID_SYMBOL
 		if shape_ok {
-			target = find_witness_slot(k, concrete, entry, owner.pkg, params, modes, result_type, result_inout)
+			target = matching_slot(
+				k, concrete, entry.name, owner.pkg,
+				params, modes, result_type, result_inout, entry.type.convention,
+			)
 		}
 		slots[index] = Witness_Slot {
 			name   = entry.name,
@@ -709,29 +712,6 @@ slot_parameter_names :: proc(k: ^Checker, entry: Interface_Slot) -> []Identifier
 		}
 	}
 	return names[:]
-}
-
-@(private = "file")
-find_witness_slot :: proc(
-	k: ^Checker,
-	concrete: Type_Id,
-	entry: Interface_Slot,
-	owner_pkg: Package_Id,
-	params: []Type_Id,
-	modes: []Param_Mode,
-	result: Type_Id,
-	result_inout: bool,
-) -> Symbol_Id {
-	for candidate in slot_candidates(k, concrete, entry.name, owner_pkg) {
-		sym := symbol_of(k.c, candidate)
-		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
-			continue
-		}
-		if slot_matches(k, sym, params, modes, result, result_inout, entry.type.convention) {
-			return candidate
-		}
-	}
-	return INVALID_SYMBOL
 }
 
 // The slot a `dyn` value's method call selects, and its index in the witness.

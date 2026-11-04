@@ -334,62 +334,51 @@ constant_interface_argument :: proc(
 	code, description: string,
 	report: bool,
 ) -> (Generic_Arg, bool) {
+	named: ^Symbol
 	if poly, is_poly := arg.value.(^Type_Poly); is_poly {
-		name := name_identifier(k.c, poly.name)
-		if symbol := symbol_of(k.c, lookup_symbol(k.scope, name)); symbol != nil && symbol.kind == .Const {
-			converted, fits := convert_const(k.c, symbol.const_value, wanted, false)
-			fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, symbol.type, wanted)
-			fits &&= nil_converts(k.c, symbol.type, wanted)
-			if !fits {
-				if report {
-					report_unrepresentable_argument(k, arg.span, code, symbol.const_value, wanted)
-				}
-				return {}, false
-			}
-			return Generic_Arg{value = converted, value_type = wanted}, true
+		named = symbol_of(k.c, lookup_symbol(k.scope, name_identifier(k.c, poly.name)))
+	}
+	value: Const_Value
+	value_type: Type_Id
+	if named != nil && named.kind == .Const {
+		value, value_type = named.const_value, named.type
+	} else {
+		if check_single_expr(k, arg.value, wanted) == INVALID_TYPE {
+			return {}, false
 		}
+		if base := expr_base(arg.value); base != nil && base.denoted_type != INVALID_TYPE {
+			if report {
+				errorf(
+					k.c,
+					arg.span,
+					code,
+					"%s for `$%s: %s` must be a compile-time value, found a type",
+					description,
+					identifier_text(k.c, parameter.name),
+					type_name(k.c, wanted),
+				)
+			}
+			return {}, false
+		}
+		folded, evaluated := require_const(k, arg.value, description, code)
+		if !evaluated {
+			return {}, false
+		}
+		value, value_type = folded, expr_base(arg.value).type
 	}
-	if check_single_expr(k, arg.value, wanted) == INVALID_TYPE {
-		return {}, false
-	}
-	if base := expr_base(arg.value); base != nil && base.denoted_type != INVALID_TYPE {
+	converted, fits := convert_constant_argument(k.c, value, value_type, wanted)
+	if !fits {
 		if report {
 			errorf(
-				k.c,
-				arg.span,
-				code,
-				"%s for `$%s: %s` must be a compile-time value, found a type",
-				description,
-				identifier_text(k.c, parameter.name),
+				k.c, arg.span, code,
+				"`%s` is not representable by the interface parameter's type `%s`",
+				const_key_text(k.c, value),
 				type_name(k.c, wanted),
 			)
 		}
 		return {}, false
 	}
-	folded, evaluated := require_const(k, arg.value, description, code)
-	if !evaluated {
-		return {}, false
-	}
-	converted, fits := convert_const(k.c, folded, wanted, false)
-	fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, expr_base(arg.value).type, wanted)
-	fits &&= nil_converts(k.c, expr_base(arg.value).type, wanted)
-	if !fits {
-		if report {
-			report_unrepresentable_argument(k, arg.span, code, folded, wanted)
-		}
-		return {}, false
-	}
 	return Generic_Arg{value = converted, value_type = wanted}, true
-}
-
-@(private = "file")
-report_unrepresentable_argument :: proc(k: ^Checker, span: Span, code: string, value: Const_Value, wanted: Type_Id) {
-	errorf(
-		k.c, span, code,
-		"`%s` is not representable by the interface parameter's type `%s`",
-		const_key_text(k.c, value),
-		type_name(k.c, wanted),
-	)
 }
 
 // The arguments of an application written as `I(...)`: a composition, a `where`
@@ -805,14 +794,11 @@ check_slot_requirement :: proc(
 		return requirement_failuref(k, requirement.span, "its slot signature does not resolve")
 	}
 
-	for candidate in slot_candidates(k, subject, name, info.pkg) {
-		sym := symbol_of(k.c, candidate)
-		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
-			continue
-		}
-		if slot_matches(k, sym, wanted_params, wanted_modes, wanted_results, wanted_inout, signature.convention) {
-			return {}, true
-		}
+	if matching_slot(
+		k, subject, name, info.pkg,
+		wanted_params, wanted_modes, wanted_results, wanted_inout, signature.convention,
+	) != INVALID_SYMBOL {
+		return {}, true
 	}
 	if private_slot_member(k, subject, name) != nil {
 		return private_slot_failure(k, requirement.span, subject, name)
@@ -1004,6 +990,30 @@ slot_matches :: proc(
 	return true
 }
 
+// The method that meets a slot's signature, or INVALID_SYMBOL.
+matching_slot :: proc(
+	k: ^Checker,
+	subject: Type_Id,
+	name: Identifier_Id,
+	owner_pkg: Package_Id,
+	params: []Type_Id,
+	modes: []Param_Mode,
+	result: Type_Id,
+	result_inout: bool,
+	convention: string,
+) -> Symbol_Id {
+	for candidate in slot_candidates(k, subject, name, owner_pkg) {
+		sym := symbol_of(k.c, candidate)
+		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
+			continue
+		}
+		if slot_matches(k, sym, params, modes, result, result_inout, convention) {
+			return candidate
+		}
+	}
+	return INVALID_SYMBOL
+}
+
 // ------------------------------------------------------------- composition --
 
 composed_interface_of :: proc(k: ^Checker, requirement: Requirement) -> ^Interface_Info {
@@ -1012,6 +1022,19 @@ composed_interface_of :: proc(k: ^Checker, requirement: Requirement) -> ^Interfa
 	}
 	_, info := interface_call_of(k, requirement.expr)
 	return info
+}
+
+// The application a requirement composes, with its arguments resolved. A slot
+// composes nothing.
+@(private = "file")
+composed_application :: proc(k: ^Checker, requirement: Requirement) -> (^Interface_Info, []Generic_Arg, bool) {
+	composed := composed_interface_of(k, requirement)
+	if composed == nil {
+		return nil, nil, false
+	}
+	// Clone before annotating: one declaration serves many applications.
+	args, valid := bound_arguments(k, clone_expr(k.c, requirement.expr).(^Expr_Call), composed)
+	return composed, args, valid
 }
 
 // The flattened slots of an interface application, composition included.
@@ -1039,17 +1062,9 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 			})
 			continue
 		}
-		composed := composed_interface_of(k, requirement)
-		if composed == nil {
-			continue
+		if composed, composed_args, valid := composed_application(k, requirement); valid {
+			interface_slots(k, composed, composed_args, out)
 		}
-		// Clone before annotating: one declaration serves many applications.
-		call := clone_expr(k.c, requirement.expr).(^Expr_Call)
-		composed_args, valid := bound_arguments(k, call, composed)
-		if !valid {
-			continue
-		}
-		interface_slots(k, composed, composed_args, out)
 	}
 }
 
@@ -1230,21 +1245,10 @@ composed_callable :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Ar
 	defer k.location = saved
 	enter_interface(k, info, args)
 	for requirement in info.node.requirements {
-		if requirement.kind == .Slot {
-			continue
-		}
-		composed := composed_interface_of(k, requirement)
-		if composed == nil {
-			continue
-		}
-		// Clone before annotating: one declaration serves many applications.
-		call := clone_expr(k.c, requirement.expr).(^Expr_Call)
-		composed_args, valid := bound_arguments(k, call, composed)
-		if !valid {
-			continue
-		}
-		if found := composed_callable(k, composed, composed_args, type); found != nil {
-			return found
+		if composed, composed_args, valid := composed_application(k, requirement); valid {
+			if found := composed_callable(k, composed, composed_args, type); found != nil {
+				return found
+			}
 		}
 	}
 	return nil
@@ -1421,21 +1425,10 @@ application_constant :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic
 		}
 	}
 	for requirement in info.node.requirements {
-		if requirement.kind == .Slot {
-			continue
-		}
-		composed := composed_interface_of(k, requirement)
-		if composed == nil {
-			continue
-		}
-		// Clone before annotating: one declaration serves many applications.
-		call := clone_expr(k.c, requirement.expr).(^Expr_Call)
-		composed_args, valid := bound_arguments(k, call, composed)
-		if !valid {
-			continue
-		}
-		if found := application_constant(k, composed, composed_args, type, name); found != INVALID_SYMBOL {
-			return found
+		if composed, composed_args, valid := composed_application(k, requirement); valid {
+			if found := application_constant(k, composed, composed_args, type, name); found != INVALID_SYMBOL {
+				return found
+			}
 		}
 	}
 	return INVALID_SYMBOL
