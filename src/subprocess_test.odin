@@ -70,7 +70,7 @@ subprocess_run_ends_the_tree_at_its_deadline :: proc(t: ^testing.T) {
 		stdin   = witness_w,
 	}
 	started := time.tick_now()
-	state, stdout, _, err := subprocess.run(child, context.temp_allocator, 500 * time.Millisecond)
+	state, stdout, err := run_until_it_writes(child, "begun")
 	os.close(witness_w)
 	testing.expectf(t, err == os.General_Error.Timeout, "a stalled child was reported as %v (exit %d)", err, state.exit_code)
 	testing.expectf(t, strings.has_prefix(string(stdout), "begun"), "the output before the deadline was %q", string(stdout))
@@ -105,6 +105,21 @@ subprocess_run_passes_a_child_only_its_stdio :: proc(t: ^testing.T) {
 	thread.destroy(checker)
 	testing.expectf(t, err == nil, "cannot run the child: %v", err)
 	testing.expect(t, check.ended, "the child inherited a handle it was not given")
+}
+
+// Runs `child` to a deadline, longer each time until it has written `first`: a
+// short one keeps these tests quick, but the deadline counts the child's start,
+// which on a loaded machine can take cmd.exe longer than that.
+@(private = "file")
+run_until_it_writes :: proc(child: os.Process_Desc, first: string) -> (state: os.Process_State, stdout: []byte, err: os.Error) {
+	deadlines := [?]time.Duration{500 * time.Millisecond, 2 * time.Second, 8 * time.Second}
+	for deadline in deadlines {
+		state, stdout, _, err = subprocess.run(child, context.temp_allocator, deadline)
+		if strings.has_prefix(string(stdout), first) {
+			break
+		}
+	}
+	return
 }
 
 // Whether `pipe`'s writers are all gone within `limit`: ending a process
@@ -146,7 +161,7 @@ subprocess_run_keeps_its_deadline_while_the_child_writes :: proc(t: ^testing.T) 
 	sync.mutex_guard(&launching)
 	child := os.Process_Desc{command = {"cmd.exe", "/c", "for /l %i in (0,0,1) do @echo output"}}
 	started := time.tick_now()
-	state, stdout, _, err := subprocess.run(child, context.temp_allocator, 500 * time.Millisecond)
+	state, stdout, err := run_until_it_writes(child, "output")
 	testing.expectf(t, err == os.General_Error.Timeout, "a writing child was reported as %v (exit %d)", err, state.exit_code)
 	testing.expect(t, strings.has_prefix(string(stdout), "output"), "the output before the deadline was lost")
 	testing.expectf(t, time.tick_since(started) < 30 * time.Second, "the deadline was enforced only after %v", time.tick_since(started))
