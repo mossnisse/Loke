@@ -50,7 +50,7 @@ collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
 				continue // `validate_attribute_list` owns this diagnostic.
 			}
 			seen_in_file[slot] = true
-			target, valid := source_provider_target(c, attribute)
+			target, valid := attribute_string_text(c, attribute)
 			if !valid {
 				continue // Attribute shape validation owns malformed values.
 			}
@@ -79,13 +79,20 @@ source_provider_slot :: proc(attribute: Attribute) -> (Provider_Slot, bool) {
 	return .Allocator, false
 }
 
-@(private = "file")
-source_provider_target :: proc(c: ^Compiler, attribute: Attribute) -> (string, bool) {
-	lit, ok := attribute.value.(^Expr_Literal)
-	if !ok || (lit.kind != .String && lit.kind != .Raw_String) {
-		return "", false
+// design.md "Selecting a provider": only the root package picks one.
+validate_provider_attributes :: proc(k: ^Checker, pkg: ^Package, file: ^File) {
+	if pkg.id == k.c.root_package {
+		return
 	}
-	return decode_string_literal(c, lit.text, lit.kind == .Raw_String)
+	for attribute in file.attributes {
+		if _, is_provider := source_provider_slot(attribute); is_provider {
+			errorf(
+				k.c, attribute.span, "L0613",
+				"`@(%s=...)` is only allowed on the root package clause",
+				attribute.path[0].text,
+			)
+		}
+	}
 }
 
 @(private = "file")

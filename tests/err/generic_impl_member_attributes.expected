@@ -1,0 +1,24 @@
+L0607
+@8:4
+`@(test)` cannot appear on an `impl` member
+L0606
+@9:4
+`@(bogus)`
+L0607
+@10:4
+`@(cpu_dispatch)` cannot appear on an `impl` member
+L0607
+@11:4
+`@(packed)` cannot appear on a procedure declaration
+L0608
+@12:4
+takes no value
+L0609
+@13:10
+more than once
+L0607
+@14:4
+needs `@(export)`
+L0606
+@15:22
+`@(bogus_inner)`

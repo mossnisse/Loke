@@ -1,0 +1,15 @@
+// design.md "@(export)": a declaration in a foreign block has no definition to
+// emit, so it cannot be exported.
+package main;
+
+foreign import system "system:kernel32.lib";
+
+foreign system {
+	@(export) GetTickCount :: proc "stdcall" () -> u32 ---;
+	@(export) foreign_counter: i32;
+}
+
+main :: proc() {
+	_ = GetTickCount();
+	_ = foreign_counter;
+}

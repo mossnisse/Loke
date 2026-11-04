@@ -4,7 +4,7 @@ package lokec
 
 // A test procedure is a file-scope, non-generic `loke` procedure with the
 // signature `main` may have, less the `i32` status. Its attribute's position
-// and shape are `validate_decl_attributes`'s.
+// and shape are `validate_attribute_list`'s.
 check_test_procedures :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		for item in file.active_items {

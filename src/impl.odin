@@ -125,7 +125,7 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 		}
 	}
 	resolve_impl_signatures(k, item)
-	validate_impl_attributes(k, item)
+	validate_impl_attributes(k, item, .Local)
 	for member in item.members {
 		if d, is_decl := member.(^Decl); is_decl {
 			hoist_body_local_proc(k, d)

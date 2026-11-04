@@ -266,7 +266,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
 - Copy cost then copy classification: `classify_copy_cost` at [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721) follows the same arguments' `classify_copy`. One wrapper, about 8 lines.
 - Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
-- Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373) and [attributes.odin:473](src/attributes.odin#L473) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
 - An on-demand constant that names a type: [check.odin:1888](src/check.odin#L1888), [check.odin:2230](src/check.odin#L2230), [iterate.odin:480](src/iterate.odin#L480). About 12 lines.
 - Source text by span: [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [check.odin:2394](src/check.odin#L2394), [capture.odin:93](src/capture.odin#L93). Span key: [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138). `span_text` and `span_key` in `source.odin`.
 
@@ -404,47 +403,11 @@ Mostly plain node definitions, in good shape: a scan of every struct field found
 
 ### src/attributes.odin
 
-A compact, table-driven validator in good shape overall; the table matches `design.md` apart from which scope an attribute may sit in. That scope rule is spread over four mechanisms, and two silently accepted misuses slip through the gaps.
-
-**Bugs**
-
-- `BUG-attributes-1` **medium** [attributes.odin:295](src/attributes.odin#L295) `validate_impl_attributes`: it validates members with the default `.Global` scope even when called for a local `impl` ([impl.odin:118](src/impl.odin#L118)), so `global_only` never fires and `check_test_procedures` never walks them. Scenario: `main :: proc() { L :: struct {a: int} impl L { @(test) t :: proc() {} } }` compiles and `-test` says "no tests", though design.md "Test procedures" excludes `impl` blocks; `@(public)` and `@(export)` pass the same way. Fix: pass the scope through from `check_local_impl`. *Confirmed: Reproduced: in a local impl, @(test) compiles and -test says 'no tests' (exit 0); @(public) passes; @(export, link_name) passes yet emits no symbol. File-scope impl members and plain locals get L0607. Not in the gaps docs; severity is closer to low.*
-- `BUG-attributes-2` **medium** [attributes.odin:72](src/attributes.odin#L72) `attribute_spec`: `@(export)` is accepted on an `impl` member and on a foreign block member, and emits no symbol ([check.odin:503](src/check.odin#L503) skips foreign ones on purpose). Scenario: `impl T { @(export) m :: proc "c" (self: T) -> int {...} }` compiles to `define internal @loke.p.T.m`, while a file-scope `@(export)` gives `define @top_level`, so a C host fails at link. Fix: reject both like `@(test)` and `@(cold)`, or emit the `impl` symbol. *Confirmed: Reproduced with -emit-ll: impl member gives 'define internal @loke.p.T.m', top-level gives 'define @top_level'; a foreign member is accepted silently. design.md "@(export)" promises a symbol. An impl m also clashes falsely with a top-level m (L0634). Medium fits.*
-
-**Simplification**
-
-- [attributes.odin:219](src/attributes.odin#L219) `validate_attribute_list`: replace the rescan at lines 220-227 with `find_attribute(attributes, "link_name")`. This also stops a duplicated `@(link_name)` getting a second L0607 beside its L0609. (about 3 lines)
-- [attributes.odin:373](src/attributes.odin#L373) `validate_cpu_dispatch`: the `for`, `continue` and trailing `return`s only find one attribute; open with `attribute, written := find_attribute(d.attributes, "cpu_dispatch")`. Line 396 then decodes that attribute rather than rescanning the list. (about 5 lines)
-- [attributes.odin:473](src/attributes.odin#L473) `attribute_string_value`: its loop is `find_attribute` by hand ([check.odin:759](src/check.odin#L759)); call that and decode the result. (about 4 lines)
-
-**Dead code**
-
-- (branch) [attributes.odin:105](src/attributes.odin#L105): the `intrinsic` entry's positions and `global_only` are never read: line 185 reports and continues before lines 192 and 196, and [intrinsic.odin:254](src/intrinsic.odin#L254) only asks whether the name is known. Return `{}, true`.
-- (branch) [attributes.odin:445](src/attributes.odin#L445): `sym == nil` cannot happen: all three callers have already resolved the id, and [check.odin:944](src/check.odin#L944) and [hooks.odin:855](src/hooks.odin#L855) write through the symbol first.
-- (branch) [attributes.odin:389](src/attributes.odin#L389): `literal.signature != nil` never fails: the parser ([parser.odin:3440](src/parser.odin#L3440)) always sets it, and line 323 on the same literal dereferences it unguarded.
-- (branch) [attributes.odin:433](src/attributes.odin#L433): `case .Const` repeats the fallback at line 436, since [check.odin:593](src/check.odin#L593) gives a declaration's symbol `.Const` only when `d.kind == .Const`.
-
-**Data structures and algorithms**
-
-- [attributes.odin:156](src/attributes.odin#L156) `validate_attribute_list`: a temp-allocated map per list, for lists that hold one to three attributes. Use `has_attribute(attributes[:index], name)` for L0609 and `has_attribute(attributes, "export")` at line 219; it needs no allocation and drops the `seen` bookkeeping. (about 2 lines)
+A compact, table-driven validator in good shape overall; the table matches `design.md`.
 
 **Near copies**
 
-- [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91): all three check for a string literal and decode it. Share one `attribute_string_text(c, attribute) -> (string, bool)` that replaces `source_provider_target` and serves lines 396 and 464. (about 8 lines)
 - [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106) and [hooks.odin:1138](src/hooks.odin#L1138): the same `u64(file) << 32 | u64(lo)` key. Make `generic_hook_key` a shared `span_key(span)`. (about 2 lines)
-
-**Structure and boundaries**
-
-- [attributes.odin:44](src/attributes.odin#L44): scope rules live in `global_only`, the `@(cold)` block (line 312), the first two reasons in `validate_cpu_dispatch` (lines 383-386) and `reject_test_attribute` ([test_procedures.odin:62](src/test_procedures.odin#L62)). Make `global_only` a `bit_set[Attr_Scope]` with a new `.Member`, dropping the `member` parameter. This closes both bugs but moves those L0739 cases to L0607, so expected files change. (about 25 lines)
-- [attributes.odin:237](src/attributes.odin#L237) `validate_attributes`: the L0613 root-only rule belongs in `providers.odin`, which already owns the other rules over these attributes (L0657) and `source_provider_slot`; a one-line call remains here.
-
-**Comments**
-
-- [attributes.odin:218](src/attributes.odin#L218): cite the heading, as the project requires: `// design.md "@(link_name=<string>)": it names an exported or foreign symbol.`
-- [attributes.odin:332](src/attributes.odin#L332): the last two lines restate the reason strings below; keep `// design.md "@(synchronized)".` (about 2 lines)
-- [attributes.odin:368](src/attributes.odin#L368): same pattern; keep `// design.md "@(cpu_dispatch=<string>)".` (about 2 lines)
-- [attributes.odin:439](src/attributes.odin#L439): the attribute list repeats the switch below and is badly wrapped; use `// Runs while the signature resolves, so a use in another package already sees these.` (about 2 lines)
-- [attributes.odin:471](src/attributes.odin#L471): delete; it restates the signature.
 
 ### src/bigint.odin
 
@@ -846,7 +809,6 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 - `BUG-foreign-5` **low** [foreign.odin:110](src/foreign.odin#L110) `check_foreign_links`: an empty link name skips the agreement check, and nothing rejects `@(link_name="")`. Scenario: two members with `@(link_name="")` and different signatures compile and emit one `declare void @""()`. Fix: reject the empty name in attribute validation. *Not verified.*
 - `BUG-foreign-6` **low** [foreign.odin:6](src/foreign.odin#L6) `foreign_default_convention`: the block's value is only validated through each member's `check_signature_convention`. Scenario: `@(default_calling_convention="bogus") foreign lib { x: i32; }` compiles; with three procedures it reports L0618 three times, at the members. Fix: validate once here at the attribute and fall back to `"c"`. *Not verified.*
 - `BUG-foreign-7` **low** [foreign.odin:136](src/foreign.odin#L136) `resolve_foreign_global`: every non-procedure member with a value is treated as a global. Scenario: `foreign lib { X :: 1; }` or a member struct reports "a foreign global is declared without an initializer", which names neither the construct nor the rule. Fix: for `d.kind != .Var`, say a foreign block declares only `---` procedures and `x: T;` variables. *Not verified.*
-- `BUG-foreign-8` **low** [foreign.odin:76](src/foreign.odin#L76) `check_foreign_block`: `@(export)` on a member passes validation and `check_exports` never visits it, so it silently does nothing. Scenario: `foreign lib { @(export) f :: proc() ---; }` compiles and emits only a `declare`, though design.md "`@(export)`" says it emits a symbol. Fix: L0607 under the `.Foreign` scope in `validate_decl_attributes`. *Not verified.*
 
 **Simplification**
 

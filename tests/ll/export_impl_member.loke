@@ -1,0 +1,18 @@
+// design.md "@(export)": a procedure in an `impl` block is exported as a
+// file-scope one is, under its own name or its `@(link_name)`.
+package main;
+
+T :: struct { a: i32 }
+
+impl T {
+	@(export) member_value :: proc "c" (self: T) -> i32 { return self.a; }
+	@(export, link_name = "renamed_member") member_count :: proc "c" () -> i32 { return 2; }
+	unexported :: proc "c" () -> i32 { return 3; }
+}
+
+main :: proc() {
+	t := T{a = 1};
+	_ = t.member_value();
+	_ = T.member_count();
+	_ = T.unexported();
+}

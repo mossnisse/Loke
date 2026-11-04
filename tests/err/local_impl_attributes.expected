@@ -1,0 +1,18 @@
+L0607
+@8:5
+`@(test)` cannot appear on a local declaration
+L0607
+@9:5
+`@(public)` cannot appear on a local declaration
+L0607
+@10:5
+`@(private)` cannot appear on a local declaration
+L0607
+@11:5
+`@(export)` cannot appear on a local declaration
+L0607
+@11:13
+`@(link_name)` cannot appear on a local declaration
+L0607
+@12:5
+`@(cpu_dispatch)` cannot appear on a local declaration

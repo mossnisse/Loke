@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- Attributes on `impl` members and foreign declarations are checked as the
+  [attribute categories](design.md#attribute-categories) say, with `L0607`. On a member of a
+  body-local `impl`, `@(public)`, `@(private)`, `@(export)` and `@(link_name)` are rejected as on any
+  local; they compiled and did nothing. `@(export)` on a foreign declaration is rejected; it compiled
+  and emitted nothing. A member of a generic `impl` now has its attributes checked as any other
+  member's, so an unknown or misplaced one, or `@(test)` or `@(cpu_dispatch)`, no longer passes
+  silently. `@(cpu_dispatch)` on an `impl` member or a foreign declaration is `L0607` rather than
+  `L0739`. Upgrade by removing the attribute.
 - A body-local `impl` whose subject names no type, such as `impl x` on a variable or `impl nope`,
   is now `L0406`, as at file scope. It compiled, and its members were never checked. Upgrade by
   removing the block or naming the type.
@@ -1506,6 +1514,8 @@ checklist.
   `Box(T)`. `r: Result(Box(N), Allocator_Error) = try_box({1, 2})` was `L0376`.
 - A diagnostic on `unsafe.new` or `unsafe.try_new` names the call rather than a box: `` `new` takes a
   runtime value `` and "this unsafe allocation cannot copy it".
+- [`@(export)`](design.md#export) on a procedure in a file-scope `impl` block now emits the symbol
+  under its own name or `@(link_name)`. It was emitted internally, so a C host failed at link.
 - `string.from_utf8`, `string_view.from_utf8`, `cstring_view.from_bytes` and `string.from_runes` take
   a fixed or dynamic array of their element type, as a read-only `[]T` parameter does
   ([Implicit type conversions](design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a

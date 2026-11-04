@@ -10542,7 +10542,7 @@ written to its right.
 | --- | --- | --- |
 | `@(public)` | declarations other than imports and variables, struct fields, foreign blocks, and the package clause (where it makes the whole file public by default) | [exports from the package](#public) |
 | `@(private)` | declarations other than imports and the package clause, struct fields, and foreign blocks | [package visibility, the default](#private) |
-| `@(export)` | procedure and variable declarations | [emits a symbol for external linking](#export) |
+| `@(export)` | file-scope procedure and variable declarations, and procedures in a file-scope `impl` block | [emits a symbol for external linking](#export) |
 | `@(link_name=<string>)` | procedure and variable declarations, including foreign ones | [sets the symbol name](#link_namestring) |
 | `@(deprecated=<string>)` | procedure declarations | [reports the message at each use](#deprecatedstring) |
 | `@(cold)` | procedure declarations with a body | [rarely called, and never inlined](#cold) |
@@ -10674,6 +10674,11 @@ packages; a declaration may need both.
 `@(export)` takes no argument. There is no enclosing export default. A foreign
 block or package clause can have `@(public)`, but it cannot have `@(export)`. To
 export conditionally, put the declaration in a `when` statement.
+
+A procedure in a file-scope `impl` block is exported as a file-scope one is,
+under its own name. A declaration in a foreign block has no definition to emit,
+and a local declaration, which includes a member of a body-local `impl` block,
+has no linkage, so neither can have `@(export)`.
 
 Exported procedures must declare a [foreign calling
 convention](#calling-conventions) and a

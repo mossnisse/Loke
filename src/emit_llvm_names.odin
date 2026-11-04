@@ -59,7 +59,9 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 					if sym == nil {
 						continue
 					}
-					e.names[d.symbols[0]] = claim_name(e, llvm_proc_name(pkg, qualified_member_name(e, sym)))
+					e.names[d.symbols[0]] = sym.exported \
+						? llvm_external_name(sym.link_name) \
+						: claim_name(e, llvm_proc_name(pkg, qualified_member_name(e, sym)))
 				}
 			case ^Item_Foreign_Block:
 				// design.md "Foreign system": foreign members keep their link names.
