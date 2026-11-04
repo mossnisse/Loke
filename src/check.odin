@@ -621,6 +621,20 @@ check_symbol_decl_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, subject :=
 	check_decl(k, sym.decl)
 }
 
+// The type a constant names, as an alias does, or INVALID_TYPE. Nothing may have
+// checked the constant yet, so this does.
+const_type_value :: proc(k: ^Checker, id: Symbol_Id, subject := INVALID_TYPE) -> Type_Id {
+	symbol := symbol_of(k.c, id)
+	if symbol == nil || symbol.kind != .Const {
+		return INVALID_TYPE
+	}
+	if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
+		check_symbol_decl_in_place(k, id, subject)
+		symbol = symbol_of(k.c, id)
+	}
+	return const_names_type(k.c, symbol.const_value, symbol.type) ? symbol.const_value.type_value : INVALID_TYPE
+}
+
 // design.md "Interface bodies": another declaration checked on demand has its
 // own bounds, not those of the code that reached it. A body's grant is already
 // confined to that body's scopes (`granting_bounds`).
@@ -1628,15 +1642,9 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			return mark_denotes_type(&value.base, symbol_of(k.c, symbol_id).type, symbol_id)
 		}
 		// A type alias is a constant whose value is a type: `Alias :: u32`.
-		if symbol := symbol_of(k.c, symbol_id); symbol != nil && symbol.kind == .Const {
-			if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
-				check_symbol_decl_in_place(k, symbol_id)
-				symbol = symbol_of(k.c, symbol_id)
-			}
-			if const_names_type(k.c, symbol.const_value, symbol.type) {
-				value.symbol = symbol_id
-				return mark_denotes_type(&value.base, symbol.const_value.type_value, symbol_id)
-			}
+		if named := const_type_value(k, symbol_id); named != INVALID_TYPE {
+			value.symbol = symbol_id
+			return mark_denotes_type(&value.base, named, symbol_id)
 		}
 
 	case ^Expr_Selector:
@@ -1941,17 +1949,7 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 	if sym == nil {
 		return INVALID_TYPE
 	}
-	if sym.kind == .Const && sym.decl != nil && sym.decl.check_state == .Unchecked {
-		check_symbol_decl_in_place(k, member, subject)
-		sym = symbol_of(k.c, member)
-	}
-	denoted := INVALID_TYPE
-	switch {
-	case sym.kind == .Type:
-		denoted = sym.type
-	case sym.kind == .Const && const_names_type(k.c, sym.const_value, sym.type):
-		denoted = sym.const_value.type_value
-	}
+	denoted := sym.kind == .Type ? sym.type : const_type_value(k, member, subject)
 	if denoted == INVALID_TYPE {
 		return INVALID_TYPE
 	}

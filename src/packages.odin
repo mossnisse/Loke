@@ -188,16 +188,8 @@ package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id
 		symbol = symbol_of(k.c, symbol_id)
 		return symbol.type, symbol.type != INVALID_TYPE
 	}
-	if symbol != nil && symbol.kind == .Const {
-		if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
-			check_symbol_decl_in_place(k, symbol_id)
-			symbol = symbol_of(k.c, symbol_id)
-		}
-		if const_names_type(k.c, symbol.const_value, symbol.type) {
-			return symbol.const_value.type_value, true
-		}
-	}
-	return INVALID_TYPE, false
+	named := const_type_value(k, symbol_id)
+	return named, named != INVALID_TYPE
 }
 
 load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -> (Package_Id, bool) {

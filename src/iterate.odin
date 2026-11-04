@@ -476,21 +476,8 @@ iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id 
 // The associated type a member names, or INVALID_TYPE.
 associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id {
 	member := iteration_member(k, type, name)
-	sym := symbol_of(k.c, member)
-	if sym == nil {
-		return INVALID_TYPE
-	}
-	if sym.kind == .Type {
+	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Type {
 		return sym.type
 	}
-	if sym.kind == .Const {
-		if sym.decl != nil && sym.decl.check_state == .Unchecked {
-			check_symbol_decl_in_place(k, member, type)
-			sym = symbol_of(k.c, member)
-		}
-		if const_names_type(k.c, sym.const_value, sym.type) {
-			return sym.const_value.type_value
-		}
-	}
-	return INVALID_TYPE
+	return const_type_value(k, member, type)
 }
