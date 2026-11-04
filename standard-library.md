@@ -4674,8 +4674,8 @@ accept it.
 
 There is no async I/O, networking, global keyboard input, GUI or full-screen
 terminal UI, locale-sensitive text, Unicode normalization or grapheme
-segmentation, globbing, regex, memory-mapped files, file locking, automatic
-serialization, or general `core:util` package.
+segmentation, globbing, regex, memory-mapped files, automatic serialization, or
+general `core:util` package.
 
 Planned additions and smaller gaps are listed in
 [Standard-library maturity](future-plans.md#standard-library-maturity).
