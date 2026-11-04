@@ -413,20 +413,10 @@ bind_case :: proc(k: ^Checker, entry: ^Switch_Case, subject: Type_Id, borrows: b
 // ownership").
 @(private = "file")
 bind_case_name :: proc(k: ^Checker, binding: Name, type: Type_Id, is_ref, borrows: bool) -> Symbol_Id {
-	if binding.text == "" || binding.text == "_" {
+	if !check_new_local(k, binding, k.scope) {
 		return INVALID_SYMBOL
 	}
-	name := intern_identifier(k.c, binding.text)
-	if _, declared := k.scope.names[name]; declared {
-		errorf(k.c, binding.span, "L0304", "`%s` is already declared in this scope", binding.text)
-		return INVALID_SYMBOL
-	}
-	outer, owner := lookup_symbol_with_scope(k.scope.parent, name)
-	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) && binding.text != DISPATCH_PAYLOAD {
-		errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
-		note_shadowed_capture(k, outer)
-	}
-	reject_reserved_name(k, name, binding.span)
+	name := name_identifier(k.c, binding)
 	symbol := new_symbol(k.c, Symbol {
 		name       = name,
 		span       = binding.span,

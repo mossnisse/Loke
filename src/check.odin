@@ -477,6 +477,33 @@ entry_failure_type :: proc(c: ^Compiler, result: Type_Id) -> (Type_Id, bool) {
 
 // Creates the symbols for one declaration, rejecting a shadowed local. Also
 // used for a foreign block's members.
+// The checks every name gets on its way into `scope` (design.md "Variable
+// declarations"), reported. False when it binds nothing: the discard `_`, or a name
+// that cannot be declared.
+check_new_local :: proc(k: ^Checker, name: Name, scope: ^Scope) -> bool {
+	if name.text == "_" || name.text == "" {
+		return false
+	}
+	id := name_identifier(k.c, name)
+	if _, declared := scope.names[id]; declared {
+		errorf(k.c, name.span, "L0304", "`%s` is already declared in this scope", name.text)
+		return false
+	}
+	if reject_reserved_name(k, id, name.span) {
+		return false
+	}
+	outer, owner := lookup_symbol_with_scope(scope.parent, id)
+	// A synthesized name, such as a nested `parallel` block's hidden scope
+	// local or a capture record's, which is its literal's text, is out of a
+	// source name's reach, so hiding an outer one is harmless.
+	synthesized := strings.index_any(name.text, "$(") >= 0
+	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) && !synthesized {
+		errorf(k.c, name.span, "L0305", "`%s` shadows an outer declaration", name.text)
+		note_shadowed_capture(k, outer)
+	}
+	return true
+}
+
 declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 	if len(d.symbols) > 0 {
 		return // already collected in an earlier phase
@@ -485,31 +512,12 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 	public := top_level && declaration_is_public(k, d)
 	symbols := make([dynamic]Symbol_Id, 0, len(d.names), k.c.semantic_allocator)
 	for name in d.names {
-		if name.text == "_" {
-			append(&symbols, INVALID_SYMBOL) // the discard identifier binds nothing
+		if !check_new_local(k, name, k.scope) {
+			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
 
 		name_id := name_identifier(k.c, name)
-		if _, ok := k.scope.names[name_id]; ok {
-			errorf(k.c, name.span, "L0304", "`%s` is already declared in this scope", name.text)
-			append(&symbols, INVALID_SYMBOL)
-			continue
-		}
-		if reject_reserved_name(k, name_id, name.span) {
-			append(&symbols, INVALID_SYMBOL)
-			continue
-		}
-		outer, owner := lookup_symbol_with_scope(k.scope.parent, name_id)
-		// A synthesized name, such as a nested `parallel` block's hidden scope
-		// local or a capture record's, which is its literal's text, is out of a
-		// source name's reach, so hiding an outer one is harmless.
-		synthesized := strings.index_any(name.text, "$(") >= 0
-		if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) && !synthesized {
-			errorf(k.c, name.span, "L0305", "`%s` shadows an outer declaration", name.text)
-			note_shadowed_capture(k, outer)
-		}
-
 		sym := Symbol {
 			name   = name_id,
 			span   = name.span,

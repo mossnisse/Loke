@@ -121,23 +121,7 @@ check_static_bindings :: proc(k: ^Checker, bindings: []Foreach_Binding, names: ^
 // a static name going into `scope`. False when it cannot be declared.
 @(private = "file")
 static_name_is_free :: proc(k: ^Checker, name: Name, scope: ^Scope) -> bool {
-	if name.text == "_" || name.text == "" {
-		return true
-	}
-	id := name_identifier(k.c, name)
-	if _, declared := scope.names[id]; declared {
-		errorf(k.c, name.span, "L0304", "`%s` is already declared in this scope", name.text)
-		return false
-	}
-	if reject_reserved_name(k, id, name.span) {
-		return false
-	}
-	outer, owner := lookup_symbol_with_scope(scope.parent, id)
-	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) && name.text != DISPATCH_PAYLOAD {
-		errorf(k.c, name.span, "L0305", "`%s` shadows an outer declaration", name.text)
-		note_shadowed_capture(k, outer)
-	}
-	return true
+	return name.text == "_" || name.text == "" || check_new_local(k, name, scope)
 }
 
 @(private = "file")

@@ -124,12 +124,6 @@ All parts are walked at [semantic.odin:2204](src/semantic.odin#L2204), [semantic
 
 Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false)`, returning element, key and element, field types or non-void variants, so each walker becomes its own test plus one loop; and one `type_any_part(c, id, seen, test)` for the second family. Saves about 60 lines in the first family and 70 in the second. A single kind list stops the next bug of this kind.
 
-#### Checks on a new local name
-
-[check.odin:560](src/check.odin#L560), [iterate.odin:1064](src/iterate.odin#L1064) and [optional.odin:607](src/optional.odin#L607) repeat `L0304`, the reserved-name test, `L0305` and `note_shadowed_capture`. They differ in which scope they search from and in whether a reserved name stops the declaration; [check.odin:573](src/check.odin#L573) also exempts synthesized names. `static_name_is_free` in [expand.odin:173](src/expand.odin#L173) is another copy.
-
-Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves about 20 lines.
-
 #### Operator binding and the built-in operator table
 
 [operators.odin:451](src/operators.odin#L451) `bind_operator_operands` repeats the slot loop of `bind_chosen_call` in `check_calls.odin`. Sharing `bind_candidate_slots(k, cand, sym, span, what)` saves about 10 lines.
@@ -305,14 +299,6 @@ What remains is the near copies shared with sibling files.
 
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68): `box_type_callee`, `simd_callee` and `range_callee` differ only in the name. Shared form: `predeclared_type_callee(k, callee, "Box")`. (about 12 lines)
 - [box.odin:164](src/box.odin#L164) and [check_builtin.odin:586](src/check_builtin.odin#L586): the same optional allocator check with the same L0490 text. Shared form: `check_allocator_argument(k, e) -> bool`. (about 8 lines)
-
-### src/capture.odin
-
-The lowering design is sound and its comments mostly explain why.
-
-**Near copies**
-
-- [check.odin:572](src/check.odin#L572), [iterate.odin:1071](src/iterate.odin#L1071) and [optional.odin:611](src/optional.odin#L611): the same lookup, L0305 report and `note_shadowed_capture` call. A `report_local_shadow(k, scope, id, span, text)` replaces all three and absorbs `note_shadowed_capture` at line 279; only check.odin adds its `$` test before the call.
 
 ### src/cfg.odin
 
@@ -502,15 +488,6 @@ The one finding left waits for the multi-file group it belongs to.
 
 - [eval.odin:853](src/eval.odin#L853) and [check_expr.odin:2064](src/check_expr.odin#L2064): the same unary fold and overflow rule. Move it to `const_ops.odin` as `fold_unary`, a sibling of `fold_arithmetic`; the checker keeps only its decimal-spelling fix-up afterwards. (about 20 lines)
 
-### src/expand.odin
-
-Readable and well commented. Its name checks are one more copy of those every other local gets.
-
-**Near copies**
-
-- [expand.odin:173](src/expand.odin#L173), [iterate.odin:1056](src/iterate.odin#L1056) and [optional.odin:600](src/optional.odin#L600): `bind_static`, `bind_loop_name` and `bind_case_name` share the skip of `_`, the name lookup and the L0304/L0305/reserved checks.
-  The last two are almost line for line; a shared `check_binding_name(k, name, outer) -> Identifier_Id` serves all three.
-
 ### src/hooks.odin
 
 The classification logic is careful and its comments mostly explain why. What remains is two near copies shared with other files.
@@ -538,7 +515,6 @@ What remains are near copies that need helpers shared across files.
 
 - [iterate.odin:49](src/iterate.odin#L49) and [iteration_mutable.odin:41](src/iteration_mutable.odin#L41), [container.odin:313](src/container.odin#L313): name, `new_type`, fields, label. Share `new_compiler_struct(c, proto, name, label, ..fields)`; about 30 lines here on top of the literal change.
 - [iterate.odin:68](src/iterate.odin#L68), [simd.odin:15](src/simd.odin#L15) and [box.odin:45](src/box.odin#L45): identical apart from the name. Share `predeclared_callee(k, callee, "Range")`.
-- [iterate.odin:1064](src/iterate.odin#L1064), [optional.odin:607](src/optional.odin#L607) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share one proc taking the identifier, span and shadow-lookup scope.
 
 ### src/lifecycle.odin
 
@@ -568,7 +544,6 @@ What remains here waits on helpers shared across files.
 **Near copies**
 
 - [optional.odin:713](src/optional.odin#L713) and [check.odin:4464](src/check.odin#L4464): the same "first three, then `, ...`" list and "does not cover" message, differing in the name source and the code. Each collects names into a temp slice and calls one `report_uncovered(k, s, subject, code, names)`. (about 12 lines)
-- [optional.odin:603](src/optional.odin#L603), [iterate.odin:1062](src/iterate.odin#L1062) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share `check_local_name(k, name, id, span) -> bool`; they differ in `check.odin`'s synthesized-name exemption and in whether a reserved name still binds. (about 14 lines)
 - [optional.odin:574](src/optional.odin#L574) and [check.odin:4390](src/check.odin#L4390): the same `||=` merge of `Flow_Info` fields. Share `merge_flow(&flow, other)` beside `Flow_Info`. (about 6 lines)
 
 ### src/reflect.odin

@@ -448,23 +448,10 @@ check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 
 @(private = "file")
 bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, borrows: bool) -> Symbol_Id {
-	if binding.name.text == "_" || binding.name.text == "" {
+	if !check_new_local(k, binding.name, k.scope) {
 		return INVALID_SYMBOL
 	}
 	id := name_identifier(k.c, binding.name)
-	// The checks `declare_all` gives a local (design.md "Variable declarations").
-	if _, ok := k.scope.names[id]; ok {
-		errorf(k.c, binding.name.span, "L0304", "`%s` is already declared in this scope", binding.name.text)
-		return INVALID_SYMBOL
-	}
-	if reject_reserved_name(k, id, binding.name.span) {
-		return INVALID_SYMBOL
-	}
-	outer, owner := lookup_symbol_with_scope(k.scope.parent, id)
-	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
-		errorf(k.c, binding.name.span, "L0305", "`%s` shadows an outer declaration", binding.name.text)
-		note_shadowed_capture(k, outer)
-	}
 	symbol := new_symbol(k.c, Symbol {
 		name      = id,
 		span      = binding.name.span,

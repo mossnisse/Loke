@@ -22,7 +22,7 @@ binds_a_literal_name :: proc(values: []int, c: Choice) -> int {
 	}
 	foreach ($true in [1]int{2}) { fmt.println(true); }
 	switch (c) {
-	case .a(true): return 1;
+	case .a(true): flag: bool = true; if (flag) { return 1; } return 0;
 	case .b(x):    return x;
 	}
 }
