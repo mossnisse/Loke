@@ -486,10 +486,9 @@ finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, ind
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.type = subject
 	v.bound = bound_exprs(k, value)
-	classify_copy_cost(k, value, payload, .Variant)
 	v.operation = Call_Union_Construct{
 		index = index,
-		clone = classify_copy(k, value, payload, .Variant),
+		clone = classify_costed_copy(k, value, payload, .Variant),
 	}
 
 	// design.md "Zero values": explicit constant variant construction is

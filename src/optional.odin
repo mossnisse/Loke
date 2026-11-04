@@ -92,8 +92,7 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 		if !check_value_expr(k, v.fallback, payload, "supply") {
 			return
 		}
-		classify_copy_cost(k, v.fallback, payload, .Or_Else_Fallback)
-		v.fallback_clone = classify_copy(k, v.fallback, payload, .Or_Else_Fallback)
+		v.fallback_clone = classify_costed_copy(k, v.fallback, payload, .Or_Else_Fallback)
 		if type_clone_disabled(k.c, payload) && expression_is_borrowed_place(v.fallback) {
 			return
 		}

@@ -116,6 +116,12 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	record_copy(k, site, expr_span(value), value, copied_type(value, type))
 }
 
+// A copy site that reports what the copy costs and asks whether it clones.
+classify_costed_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
+	classify_copy_cost(k, value, type, site)
+	return classify_copy(k, value, type, site)
+}
+
 // Sets `clones[index]`, allocating the `count` of them on the first.
 @(private = "file")
 mark_clone :: proc(k: ^Checker, clones: ^[]bool, count, index: int) {
@@ -126,8 +132,7 @@ mark_clone :: proc(k: ^Checker, clones: ^[]bool, count, index: int) {
 }
 
 classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) {
-	classify_copy_cost(k, v.elements[index].value, type, .Literal)
-	if classify_copy(k, v.elements[index].value, type, .Literal) {
+	if classify_costed_copy(k, v.elements[index].value, type, .Literal) {
 		mark_clone(k, &v.element_clones, len(v.elements), index)
 	}
 }

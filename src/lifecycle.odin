@@ -213,8 +213,7 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 		if !check_value_expr(k, v.args[1].value, place, "write into") {
 			return
 		}
-		classify_copy_cost(k, v.args[1].value, place, .Write)
-		classify_copy(k, v.args[1].value, place, .Write)
+		classify_costed_copy(k, v.args[1].value, place, .Write)
 		bound[1] = v.args[1].value
 	}
 	v.bound = bound
