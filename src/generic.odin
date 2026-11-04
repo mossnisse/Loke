@@ -1209,7 +1209,7 @@ match_type_pattern :: proc(
 
 	case ^Expr_Call:
 		// design.md "Owned values": `Box($T)` matches a box and binds its element.
-		if box_type_callee(k, v.callee) {
+		if predeclared_callee(k, v.callee, "Box") {
 			if info.kind != .Box || len(v.args) != 1 {
 				return false
 			}
@@ -1218,7 +1218,7 @@ match_type_pattern :: proc(
 		// design.md "SIMD vectors": `Simd($T, $N)` is written like a generic
 		// application but is a predeclared type constructor, so its parts come
 		// from the type itself rather than from a template's bound arguments.
-		if simd_callee(k, v.callee) {
+		if predeclared_callee(k, v.callee, "Simd") {
 			if info.kind != .Simd || len(v.args) != 2 {
 				return false
 			}
@@ -1226,7 +1226,7 @@ match_type_pattern :: proc(
 			       match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
 		// `Range($T)` is the same shape: one part, taken from the type itself.
-		if range_callee(k, v.callee) {
+		if predeclared_callee(k, v.callee, "Range") {
 			if !info.is_range || len(v.args) != 1 {
 				return false
 			}

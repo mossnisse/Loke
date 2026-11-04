@@ -383,7 +383,7 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 		if missing := unresolved_name(w, v.callee); missing != "" {
 			// `Simd`, `Range`, and `Box` are predeclared type constructors recognized
 			// by name, with no universe binding to find (design.md "Predeclared names").
-			predeclared := simd_callee(k, v.callee) || range_callee(k, v.callee) || box_type_callee(k, v.callee)
+			predeclared := predeclared_callee(k, v.callee, "Simd", "Range", "Box")
 			if !predeclared || when_branch_may_declare(k, intern_identifier(k.c, missing)) {
 				return missing
 			}

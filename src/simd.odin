@@ -9,15 +9,6 @@ import "core:reflect"
 SIMD_MAX_LANES :: 64
 SIMD_MAX_BYTES :: 64
 
-// The predeclared `Simd`, not a user declaration that shares the name.
-simd_callee :: proc(k: ^Checker, callee: Expr) -> bool {
-	ident, is_ident := callee.(^Expr_Ident)
-	if !is_ident || ident.name != "Simd" {
-		return false
-	}
-	return lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
-}
-
 // `Simd(T, N)` in type position. Reports rather than staying silent: once the
 // name is the predeclared one there is no other reading to fall back to.
 resolve_simd_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {

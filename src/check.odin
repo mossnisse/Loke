@@ -1885,13 +1885,13 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 resolve_call_type :: proc(k: ^Checker, value: ^Expr_Call) -> Type_Id {
 	// Predeclared type constructors: design.md "SIMD vectors", "Ranges", and
 	// "Owned values".
-	if simd_callee(k, value.callee) {
+	if predeclared_callee(k, value.callee, "Simd") {
 		return resolve_simd_application(k, value)
 	}
-	if range_callee(k, value.callee) {
+	if predeclared_callee(k, value.callee, "Range") {
 		return resolve_range_application(k, value)
 	}
-	if box_type_callee(k, value.callee) {
+	if predeclared_callee(k, value.callee, "Box") {
 		return resolve_box_application(k, value)
 	}
 	// `Index_Type(1000)`: a call to a procedure that computes a type (design.md
@@ -2064,11 +2064,11 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 
 @(private = "file")
 report_unresolved_name :: proc(k: ^Checker, ident: ^Expr_Ident) {
-	if simd_callee(k, ident) {
+	if predeclared_callee(k, ident, "Simd") {
 		errorf(k.c, ident.span, "L0681", "`Simd` needs its element type and lane count, as in `Simd(f32, 4)`")
 		return
 	}
-	if box_type_callee(k, ident) {
+	if predeclared_callee(k, ident, "Box") {
 		errorf(k.c, ident.span, "L0713", "`Box` needs its element type, as in `Box(Node)`")
 		return
 	}
@@ -2106,7 +2106,7 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 		return
 	}
 	// `resolve_simd_application` reports all but an unbound `Simd(f32, $M)`.
-	if simd_callee(k, call.callee) {
+	if predeclared_callee(k, call.callee, "Simd") {
 		if len(call.args) == 2 {
 			if poly, is_poly := call.args[1].value.(^Type_Poly); is_poly {
 				report_unresolved_type(k, poly)

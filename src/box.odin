@@ -10,16 +10,6 @@ box_element :: proc(c: ^Compiler, box_type: Type_Id) -> Type_Id {
 	return info.element
 }
 
-// The predeclared type constructor `Box`, not a user declaration that shares
-// the name.
-box_type_callee :: proc(k: ^Checker, callee: Expr) -> bool {
-	ident, is_ident := callee.(^Expr_Ident)
-	if !is_ident || ident.name != "Box" {
-		return false
-	}
-	return lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
-}
-
 // design.md "Owned values", "Shared ownership": reports `box(T)`, `shared(T)`, or
 // `weak(T)` written for the handle type, in type position or with a type
 // argument. `weak` names nothing.

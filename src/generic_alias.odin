@@ -85,7 +85,7 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 		value_use(k, v.length, TYPE_INT, out)
 		alias_binding_uses(k, v.elem, out)
 	case ^Expr_Call:
-		if simd_callee(k, v.callee) && len(v.args) == 2 {
+		if predeclared_callee(k, v.callee, "Simd") && len(v.args) == 2 {
 			alias_binding_uses(k, v.args[0].value, out)
 			value_use(k, v.args[1].value, TYPE_INT, out)
 			return
@@ -109,7 +109,7 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 alias_constructor_callee :: proc(k: ^Checker, callee: Expr) -> bool {
 	return generic_template_of_callee(k, callee, .Record) != nil ||
 	       generic_template_of_callee(k, callee, .Alias) != nil ||
-	       simd_callee(k, callee) || box_type_callee(k, callee) || range_callee(k, callee)
+	       predeclared_callee(k, callee, "Simd", "Box", "Range")
 }
 
 // The parameters an application's arguments bind, with the scope their types

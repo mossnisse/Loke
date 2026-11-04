@@ -153,15 +153,15 @@ check_compile_time_callee :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id)
 	}
 	// `Simd(f32, 4)`, `Range(int)`, `Box(int)`, and generic record applications
 	// denote types.
-	if range_callee(k, v.callee) {
+	if predeclared_callee(k, v.callee, "Range") {
 		set_type_call(v, resolve_range_application(k, v))
 		return true
 	}
-	if box_type_callee(k, v.callee) {
+	if predeclared_callee(k, v.callee, "Box") {
 		set_type_call(v, resolve_box_application(k, v))
 		return true
 	}
-	if simd_callee(k, v.callee) {
+	if predeclared_callee(k, v.callee, "Simd") {
 		set_type_call(v, resolve_simd_application(k, v))
 		return true
 	}

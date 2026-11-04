@@ -62,15 +62,6 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return type
 }
 
-// `Range` is predeclared, like `Simd`, and a program's own `Range` shadows it.
-range_callee :: proc(k: ^Checker, callee: Expr) -> bool {
-	ident, is_ident := callee.(^Expr_Ident)
-	if !is_ident || ident.name != "Range" {
-		return false
-	}
-	return lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
-}
-
 // `Range(T)` in type position.
 resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {

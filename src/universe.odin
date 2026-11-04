@@ -2,6 +2,8 @@
 // type.
 package lokec
 
+import "core:slice"
+
 // One universe per compilation, not per package: `bind_runtime_bootstrap`
 // binds the `base:runtime` bootstrap names into it once for every package.
 build_universe :: proc(c: ^Compiler) -> ^Scope {
@@ -108,6 +110,13 @@ new_builtin_symbol :: proc(c: ^Compiler, name: string, kind: Builtin_Kind, publi
 		proc_type = intern_proc_type(c, nil, nil, INVALID_TYPE, false, ""),
 		public    = public,
 	})
+}
+
+// design.md "Predeclared names": `Simd`, `Range`, and `Box` are recognized by
+// name, with no universe binding, so a program's own declaration shadows them.
+predeclared_callee :: proc(k: ^Checker, callee: Expr, names: ..string) -> bool {
+	ident, is_ident := callee.(^Expr_Ident)
+	return is_ident && slice.contains(names, ident.name) && lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
 }
 
 define_universe :: proc(c: ^Compiler, name: string, template: Symbol) {
