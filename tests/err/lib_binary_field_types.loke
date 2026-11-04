@@ -1,0 +1,19 @@
+package main;
+
+import "core:encoding/binary";
+import "core:io";
+
+// standard-library "Reading fields" and "Writing fields": a field's width is
+// visible at the call, so a type a format cannot name does not compile.
+
+main :: proc() {
+	bytes := [8]u8{};
+	r := binary.Reader.init(bytes[:], .Big);
+	_ = r.get(int);
+	_ = r.get(bool);
+
+	sink: io.Buffer_Writer = {};
+	w := binary.writer(&mut sink, .Big);
+	_ = w.put(7);
+	_ = w.put(true);
+}

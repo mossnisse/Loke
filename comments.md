@@ -2540,6 +2540,26 @@ so the two can never disagree in the other direction.
 Public contracts live in [standard-library.md](standard-library.md). The package
 boundaries and API shapes follow a few common choices:
 
+- **Binary byte order lives in the cursor.** A format's order is one fact about
+  the format, and repeating `.Big` on every field invites the one line that says
+  `.Little`. A run-time value is required anyway, since TIFF and ELF announce their
+  order in the file. A mixed format calls `set_order`, or gives a subrecord its own,
+  as an embedded TIFF does in a JPEG.
+- **`get` and `put`, with a type, rather than `get_u32_be`.** Thirteen types in two
+  orders in two directions would be 52 members, for no gain over one checked generic.
+  The names `read` and `write` are the `io` protocol's slots and are taken: taking
+  them is what makes a `Reader` and a `Writer` streams.
+- **Binary writer errors are `io.Error`, without an offset.** A read fails because of
+  the data, and the offset is the diagnosis. A write fails because of the sink or a
+  length or offset limit, and `w.offset()` answers the question whenever a caller has
+  one. Wrapping would make every save routine convert errors at each file operation.
+- **A binary writer over `io.Writer`, not over a slice.** A slice-only writer cannot
+  grow, which is what a serializer of unknown size needs, and a second growing type
+  would double the surface. A sink parameter gets memory, files, and checksums from
+  one type, and a future buffered stream works with no change.
+- **`core:encoding/binary`, not `core:bytes`.** This is an encoding, beside
+  `encoding/json` and `encoding/utf16`. `core:bytes` stays available for what the name
+  suggests: searching and comparing byte slices, as `core:strings` does for text.
 - **Files and process state are separate.** `core:fs` owns files; `core:os` owns
   process state. There is one spelling for opening a file.
 - **I/O errors own scalar data.** An operation enum and native code avoid

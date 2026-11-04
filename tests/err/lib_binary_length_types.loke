@@ -1,0 +1,46 @@
+package main;
+
+import "core:encoding/binary";
+import "core:io";
+
+// standard-library "Reading fields" and "Writing fields": an encoded length or
+// count is a fixed-width integer, so these are refused in each of the three
+// operations that read or write one.
+
+Color :: enum u8 { Red }
+
+main :: proc() {
+	bytes := [8]u8{};
+	r := binary.Reader.init(bytes[:], .Big);
+	_ = r.get_length(f16, 8);
+	_ = r.get_length(f32, 8);
+	_ = r.get_length(f64, 8);
+	_ = r.get_length(int, 8);
+	_ = r.get_length(uint, 8);
+	_ = r.get_length(uintptr, 8);
+	_ = r.get_length(bool, 8);
+	_ = r.get_length(rune, 8);
+	_ = r.get_length(Color, 8);
+
+	_ = r.get_count(f16, 1, 8);
+	_ = r.get_count(f32, 1, 8);
+	_ = r.get_count(f64, 1, 8);
+	_ = r.get_count(int, 1, 8);
+	_ = r.get_count(uint, 1, 8);
+	_ = r.get_count(uintptr, 1, 8);
+	_ = r.get_count(bool, 1, 8);
+	_ = r.get_count(rune, 1, 8);
+	_ = r.get_count(Color, 1, 8);
+
+	sink: io.Buffer_Writer = {};
+	w := binary.writer(&mut sink, .Big);
+	_ = w.put_length(f16, 8);
+	_ = w.put_length(f32, 8);
+	_ = w.put_length(f64, 8);
+	_ = w.put_length(int, 8);
+	_ = w.put_length(uint, 8);
+	_ = w.put_length(uintptr, 8);
+	_ = w.put_length(bool, 8);
+	_ = w.put_length(rune, 8);
+	_ = w.put_length(Color, 8);
+}

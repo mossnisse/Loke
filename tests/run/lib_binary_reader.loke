@@ -1,0 +1,460 @@
+package main;
+
+import "core:encoding/binary";
+import "core:fmt";
+import "core:io";
+import "core:math";
+import "core:mem";
+
+// `binary.Reader` (standard-library "Reading fields"). Vectors are written out by
+// hand, and every expected failure goes through `refused`, which also checks the
+// rule that a failed operation changes nothing.
+
+failures := 0;
+
+fail :: proc(args: ..dyn fmt.Formattable) {
+	failures += 1;
+	fmt.println("FAILED", args);
+}
+
+U64_MAX :: ~u64(0);
+
+// Run after a failure: the error is the expected one, and it names where the
+// reader still stands.
+refused :: proc(name: string_view, error: binary.Error, r: binary.Reader,
+	before: binary.Reader, code: binary.Code, length: u64) {
+		if (error.code != code) { fail(name, "code", error.code, code); }
+		if (error.length != length) { fail(name, "length", error.length, length); }
+		if (error.offset != r.offset()) { fail(name, "offset", error.offset, r.offset()); }
+		if (r.offset() != before.offset() || r.remaining() != before.remaining()) {
+			fail(name, "moved", r.offset(), before.offset());
+		}
+	}
+
+expect_failure :: proc(name: string_view, outcome: Result($T, binary.Error), r: binary.Reader,
+	before: binary.Reader, code: binary.Code, length: u64) {
+		switch (outcome) {
+		case .ok(_): fail(name, "was accepted");
+		case .err(error): refused(name, error, r, before, code, length);
+		}
+	}
+
+expect_status_failure :: proc(name: string_view, outcome: Status(binary.Error), r: binary.Reader,
+	before: binary.Reader, code: binary.Code, length: u64) {
+		switch (outcome) {
+		case .ok: fail(name, "was accepted");
+		case .err(error): refused(name, error, r, before, code, length);
+		}
+	}
+
+// ---- fields
+
+field :: proc(name: string_view, value: $T, big: []u8) {
+	width := size_of(T);
+	assert(big.len() == width);
+	little: [16]u8 = {};
+	foreach (i in 0 ..< width) { little[i] = big[width - 1 - i]; }
+
+	r := binary.Reader.init(big, .Big);
+	switch (r.get(T)) {
+	case .ok(got): if (!same(got, value)) { fail(name, "big"); }
+	case .err(_): fail(name, "big failed");
+	}
+	if (r.remaining() != 0) { fail(name, "big left bytes"); }
+
+	l := binary.Reader.init(little[:width], .Little);
+	switch (l.get(T)) {
+	case .ok(got): if (!same(got, value)) { fail(name, "little"); }
+	case .err(_): fail(name, "little failed");
+	}
+
+	// One byte short is refused, and moves nothing.
+	if (width > 1) {
+		short := binary.Reader.init(big[:width - 1], .Big, 5);
+		before := short;
+		expect_failure(name, short.get(T), short, before, .Unexpected_End, u64(width));
+	}
+}
+
+same :: proc(a: $T, b: T) -> bool {
+	when (T == f16 || T == f32 || T == f64) {
+		return math.to_bits(a) == math.to_bits(b);
+	} else {
+		return a == b;
+	}
+}
+
+fields :: proc() {
+	field("u8", u8(0xA5), []u8{0xA5});
+	field("i8", i8(-91), []u8{0xA5});
+	field("u16", u16(0x0102), []u8{1, 2});
+	field("i16", i16(-2), []u8{0xFF, 0xFE});
+	field("u32", u32(0x01020304), []u8{1, 2, 3, 4});
+	field("i32", i32(-2), []u8{0xFF, 0xFF, 0xFF, 0xFE});
+	field("u64", u64(0x0102030405060708), []u8{1, 2, 3, 4, 5, 6, 7, 8});
+	field("i64", i64(-2), []u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE});
+	field("u128", (u128(0x0102030405060708) << 64) | u128(0x090A0B0C0D0E0F10),
+		[]u8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+	field("i128", i128(-2),
+		[]u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE});
+	field("f16", f16(1.0), []u8{0x3C, 0x00});
+	field("f32", f32(1.0), []u8{0x3F, 0x80, 0, 0});
+	field("f64", f64(-2.5), []u8{0xC0, 0x04, 0, 0, 0, 0, 0, 0});
+	field("f16 snan", math.from_bits(u16(0x7D01)), []u8{0x7D, 0x01});
+	field("f32 snan", math.from_bits(u32(0x7FA00001)), []u8{0x7F, 0xA0, 0, 0x01});
+	field("f64 snan", math.from_bits(u64(0x7FF4000000000001)), []u8{0x7F, 0xF4, 0, 0, 0, 0, 0, 0x01});
+}
+
+// ---- lengths passed to take, skip, and sub
+
+// All three agree on what a length means.
+hostile :: proc(name: string_view, length: $N, code: binary.Code, reported: u64) {
+	bytes := [8]u8{1, 2, 3, 4, 5, 6, 7, 8};
+	r := binary.Reader.init(bytes[:], .Big, 100);
+	_ = r.skip(2);
+	before := r;
+	expect_failure(name, r.take(length), r, before, code, reported);
+	expect_status_failure(name, r.skip(length), r, before, code, reported);
+	expect_failure(name, r.sub(length), r, before, code, reported);
+}
+
+accepted :: proc(name: string_view, length: $N, count: int) {
+	bytes := [8]u8{1, 2, 3, 4, 5, 6, 7, 8};
+	r := binary.Reader.init(bytes[:], .Big);
+	_ = r.skip(2);
+	switch (r.take(length)) {
+	case .ok(part):
+		if (part.len() != count) { fail(name, "take length", part.len()); }
+		if (r.remaining() != 6 - count) { fail(name, "take moved", r.remaining()); }
+	case .err(_): fail(name, "take refused");
+	}
+	s := binary.Reader.init(bytes[:], .Big);
+	_ = s.skip(2);
+	switch (s.skip(length)) {
+	case .ok: if (s.remaining() != 6 - count) { fail(name, "skip moved", s.remaining()); }
+	case .err(_): fail(name, "skip refused");
+	}
+	c := binary.Reader.init(bytes[:], .Big, 100);
+	_ = c.skip(2);
+	switch (c.sub(length)) {
+	case .ok(child):
+		if (child.remaining() != count) { fail(name, "sub length", child.remaining()); }
+		if (child.offset() != 102) { fail(name, "sub offset", child.offset()); }
+		if (c.remaining() != 6 - count) { fail(name, "sub moved", c.remaining()); }
+	case .err(_): fail(name, "sub refused");
+	}
+}
+
+lengths :: proc() {
+	accepted("zero", 0, 0);
+	accepted("zero u8", u8(0), 0);
+	accepted("zero u128", u128(0), 0);
+	accepted("below", 5, 5);
+	accepted("at", 6, 6);
+	accepted("at i8", i8(6), 6);
+	accepted("at u64", u64(6), 6);
+	accepted("at i128", i128(6), 6);
+	accepted("at u128", u128(6), 6);
+
+	hostile("above", 7, .Unexpected_End, 7);
+	hostile("above u8", u8(255), .Unexpected_End, 255);
+	hostile("i64 max", i64(0x7FFFFFFFFFFFFFFF), .Unexpected_End, 0x7FFFFFFFFFFFFFFF);
+	hostile("u64 max", U64_MAX, .Unexpected_End, U64_MAX);
+	hostile("above int", u64(1) << 63, .Unexpected_End, u64(1) << 63);
+
+	hostile("-1", -1, .Invalid_Length, U64_MAX);
+	hostile("-1 i8", i8(-1), .Invalid_Length, U64_MAX);
+	hostile("-2 i32", i32(-2), .Invalid_Length, U64_MAX - 1);
+	hostile("i64 min", i64(-0x7FFFFFFFFFFFFFFF - 1), .Invalid_Length, u64(1) << 63);
+
+	// Wide values saturate rather than wrap: `2^64` must not report zero.
+	two_64 := u128(1) << 64;
+	hostile("u128 2^64-1", two_64 - 1, .Unexpected_End, U64_MAX);
+	hostile("u128 2^64", two_64, .Unexpected_End, U64_MAX);
+	hostile("u128 max", ~u128(0), .Unexpected_End, U64_MAX);
+	hostile("i128 2^64-1", i128(two_64 - 1), .Unexpected_End, U64_MAX);
+	hostile("i128 2^64", i128(two_64), .Unexpected_End, U64_MAX);
+	hostile("i128 max", i128(~u128(0) >> 1), .Unexpected_End, U64_MAX);
+
+	// And a negative one keeps its low 64 bits, in `i128` too.
+	hostile("i128 -1", i128(-1), .Invalid_Length, U64_MAX);
+	hostile("i128 min", i128(-1) << 127, .Invalid_Length, 0);
+}
+
+// ---- length and count fields
+
+// `value` encoded in big-endian order into a `T`, then read in both orders.
+length_field :: proc(name: string_view, $T: type, value: T, limit: int) -> Result(int, binary.Error) {
+	bytes: [32]u8 = {};
+	width := size_of(T);
+	foreach (i in 0 ..< width) {
+		bytes[i] = math.wrap(u8, value >> uint(8*(width - 1 - i)));
+	}
+	big := binary.Reader.init(bytes[:], .Big);
+	outcome := big.get_length(T, limit);
+
+	reversed: [32]u8 = {};
+	foreach (i in 0 ..< width) { reversed[i] = bytes[width - 1 - i]; }
+	little := binary.Reader.init(reversed[:], .Little);
+	switch (little.get_length(T, limit)) {
+	case .ok(got):
+		switch (outcome) {
+		case .ok(first): if (first != got) { fail(name, "orders disagree", first, got); }
+		case .err(_): fail(name, "little accepted what big refused");
+		}
+		if (little.offset() != u64(width)) { fail(name, "moved", little.offset()); }
+	case .err(error):
+		if (error.offset != 0 || little.offset() != 0) { fail(name, "refused and moved"); }
+		switch (outcome) {
+		case .ok(_): fail(name, "big accepted what little refused");
+		case .err(_):
+		}
+	}
+	return outcome;
+}
+
+expect_length :: proc(name: string_view, outcome: Result(int, binary.Error), want: int) {
+	switch (outcome) {
+	case .ok(got): if (got != want) { fail(name, "got", got); }
+	case .err(error): fail(name, "refused", error.code);
+	}
+}
+
+expect_refused :: proc(name: string_view, outcome: Result(int, binary.Error), code: binary.Code, length: u64) {
+	switch (outcome) {
+	case .ok(got): fail(name, "accepted", got);
+	case .err(error):
+		if (error.code != code || error.length != length) { fail(name, error.code, error.length); }
+	}
+}
+
+length_type :: proc(name: string_view, $T: type, limit: int) {
+	expect_length(name, length_field(name, T, T(0), limit), 0);
+	expect_length(name, length_field(name, T, T(limit - 1), limit), limit - 1);
+	expect_length(name, length_field(name, T, T(limit), limit), limit);
+	expect_refused(name, length_field(name, T, T(limit + 1), limit), .Limit_Exceeded, u64(limit + 1));
+}
+
+length_types :: proc() {
+	length_type("u8", u8, 100);
+	length_type("i8", i8, 100);
+	length_type("u16", u16, 1000);
+	length_type("i16", i16, 1000);
+	length_type("u32", u32, 100000);
+	length_type("i32", i32, 100000);
+	length_type("u64", u64, 100000);
+	length_type("i64", i64, 100000);
+	length_type("u128", u128, 100000);
+	length_type("i128", i128, 100000);
+
+	// A negative value read, in each signed type, keeps its low 64 bits.
+	expect_refused("i8 -1", length_field("i8 -1", i8, -1, 10), .Invalid_Length, U64_MAX);
+	expect_refused("i16 -1", length_field("i16 -1", i16, -1, 10), .Invalid_Length, U64_MAX);
+	expect_refused("i32 -2", length_field("i32 -2", i32, -2, 10), .Invalid_Length, U64_MAX - 1);
+	expect_refused("i64 min", length_field("i64 min", i64, -0x7FFFFFFFFFFFFFFF - 1, 10), .Invalid_Length, u64(1) << 63);
+	expect_refused("i128 -1", length_field("i128 -1", i128, -1, 10), .Invalid_Length, U64_MAX);
+	expect_refused("i128 min", length_field("i128 min", i128, i128(-1) << 127, 10), .Invalid_Length, 0);
+
+	// Values too big for `int` are above any limit.
+	expect_refused("u64 max", length_field("u64 max", u64, U64_MAX, 10), .Limit_Exceeded, U64_MAX);
+	two_64 := u128(1) << 64;
+	expect_refused("u128 2^64-1", length_field("u128 2^64-1", u128, two_64 - 1, 10), .Limit_Exceeded, U64_MAX);
+	expect_refused("u128 2^64", length_field("u128 2^64", u128, two_64, 10), .Limit_Exceeded, U64_MAX);
+	expect_refused("u128 max", length_field("u128 max", u128, ~u128(0), 10), .Limit_Exceeded, U64_MAX);
+	expect_refused("i128 2^64", length_field("i128 2^64", i128, i128(two_64), 10), .Limit_Exceeded, U64_MAX);
+	expect_refused("i128 max", length_field("i128 max", i128, i128(~u128(0) >> 1), 10), .Limit_Exceeded, U64_MAX);
+
+	// Too few bytes for the field itself.
+	short := [2]u8{0, 1};
+	r := binary.Reader.init(short[:], .Big, 7);
+	before := r;
+	expect_failure("short field", r.get_length(u32, 100), r, before, .Unexpected_End, 4);
+	expect_failure("short count", r.get_count(u32, 1, 100), r, before, .Unexpected_End, 4);
+}
+
+// A u16 count of `count` followed by `body` zero bytes, as get_count sees it.
+count_of :: proc(count: u16, body: int, item_size: int, limit: int) -> Result(int, binary.Error) {
+	bytes: [64]u8 = {};
+	bytes[0] = u8(count >> 8);
+	bytes[1] = u8(count & 0xFF);
+	r := binary.Reader.init(bytes[:2 + body], .Big, 1000);
+	before := r;
+	outcome := r.get_count(u16, item_size, limit);
+	switch (outcome) {
+	case .ok(_):
+		if (r.offset() != 1002) { fail("count moved", r.offset()); }
+	case .err(error):
+		refused("count", error, r, before, error.code, error.length);
+	}
+	return outcome;
+}
+
+counts :: proc() {
+	expect_length("none", count_of(0, 0, 4, 10), 0);
+	expect_length("fits", count_of(3, 12, 4, 10), 3);
+	expect_length("spare", count_of(3, 13, 4, 10), 3);
+	expect_length("at limit", count_of(10, 40, 4, 10), 10);
+	expect_refused("past remaining", count_of(3, 11, 4, 10), .Unexpected_End, 3);
+	expect_refused("past limit", count_of(11, 44, 4, 10), .Limit_Exceeded, 11);
+
+	// Above both, the limit is the answer: it is checked first.
+	expect_refused("above both", count_of(60000, 4, 4, 10), .Limit_Exceeded, 60000);
+	// Passes the limit and not the bytes.
+	expect_refused("only bytes", count_of(60000, 4, 4, 100000), .Unexpected_End, 60000);
+
+	// A count whose product would overflow is still just too many.
+	bytes := [10]u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0, 0};
+	r := binary.Reader.init(bytes[:], .Little);
+	before := r;
+	expect_failure("overflowing product", r.get_count(u64, 0x4000000000000000, 0x7FFFFFFFFFFFFFFF), r, before,
+		.Unexpected_End, 0x7FFFFFFFFFFFFFFF);
+
+	// A hostile count fails before an arena too small to serve it is asked.
+	storage: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut storage[:]);
+	hostile_bytes := [6]u8{0xFF, 0xFF, 1, 2, 3, 4};
+	h := binary.Reader.init(hostile_bytes[:], .Big);
+	switch (h.get_count(u16, 4, 100000)) {
+	case .ok(count):
+		fail("hostile count accepted", count);
+		_ = make([dynamic]u32, 0, count, arena.allocator());
+	case .err(error):
+		fmt.println("hostile", error);
+	}
+	// The same arena still serves a real one.
+	honest_bytes := [6]u8{0, 1, 1, 2, 3, 4};
+	o := binary.Reader.init(honest_bytes[:], .Big);
+	switch (o.get_count(u16, 4, 100000)) {
+	case .ok(count):
+		items := make([dynamic]u32, 0, count, arena.allocator());
+		items.append(o.get(u32) or_else 0);
+		fmt.println("honest", items.len(), items[0]);
+	case .err(error):
+		fail("honest count refused", error.code);
+	}
+}
+
+// ---- moving around
+
+structure :: proc() -> Status(binary.Error) {
+	bytes := [12]u8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+	r := binary.Reader.init(bytes[:], .Big, 0x1000);
+	fmt.println(r.offset(), r.remaining(), r.order());
+
+	// Subrecords are bounded, keep absolute offsets, and leave the parent past them.
+	outer := r.sub(8) or_return;
+	fmt.println(outer.offset(), outer.remaining(), r.offset(), r.remaining());
+	_ = outer.get(u8) or_return;
+	inner := outer.sub(2) or_return;
+	_ = inner.get(u16) or_return;
+	before := inner;
+	expect_failure("past a subrecord", inner.get(u8), inner, before, .Unexpected_End, 1);
+	expect_status_failure("seek before a subrecord", inner.seek(0x1000), inner, before, .Invalid_Offset, 0x1000);
+	expect_status_failure("seek after a subrecord", inner.seek(0x1004), inner, before, .Invalid_Offset, 0x1004);
+	inner.finish() or_return;
+
+	// The parent reads on while its children are live; they outlive nothing wrong.
+	a := r.take(2) or_return;
+	b := r.take(2) or_return;
+	fmt.println(a, b, r.remaining());
+
+	// A subrecord inherits the order, and can change its own.
+	o := binary.Reader.init(bytes[:], .Little);
+	child := o.sub(4) or_return;
+	child.set_order(.Big);
+	fmt.println((child.get(u16) or_return) == 0x0102, (o.get(u16) or_return) == 0x0605, o.order(), child.order());
+
+	// Seek is absolute, either way, up to and including the end.
+	s := binary.Reader.init(bytes[:], .Big, 0x1000);
+	s.seek(0x100B) or_return;
+	fmt.println(s.get(u8) or_return);
+	s.seek(0x100C) or_return;
+	fmt.println(s.remaining());
+	s.seek(0x1000) or_return;
+	fmt.println(s.get(u8) or_return);
+	before = s;
+	expect_status_failure("seek past the end", s.seek(0x100D), s, before, .Invalid_Offset, 0x100D);
+	expect_status_failure("seek before the base", s.seek(0xFFF), s, before, .Invalid_Offset, 0xFFF);
+	expect_status_failure("seek far", s.seek(U64_MAX), s, before, .Invalid_Offset, U64_MAX);
+
+	// Expect.
+	m := binary.Reader.init(bytes[:], .Big, 50);
+	m.expect([]u8{1, 2}) or_return;
+	m.expect({}) or_return;
+	fmt.println(m.offset());
+	before = m;
+	expect_status_failure("wrong magic", m.expect([]u8{3, 9}), m, before, .Mismatch, 2);
+	expect_status_failure("long magic", m.expect(bytes[:]), m, before, .Unexpected_End, 12);
+
+	// Finish.
+	before = m;
+	expect_status_failure("trailing", m.finish(), m, before, .Trailing_Data, 10);
+	m.skip(10) or_return;
+	m.finish() or_return;
+
+	// A copy is a checkpoint.
+	c := binary.Reader.init(bytes[:], .Big);
+	saved := c;
+	_ = c.get(u32) or_return;
+	fmt.println(c.offset(), saved.offset());
+	c = saved;
+	fmt.println(c.get(u8) or_return);
+
+	// The zero value is a usable reader of no bytes.
+	zero: binary.Reader = {};
+	fmt.println(zero.remaining(), zero.offset());
+	zero.finish() or_return;
+	before = zero;
+	expect_failure("zero value", zero.get(u8), zero, before, .Unexpected_End, 1);
+
+	// An error prints as a sentence.
+	switch (zero.get(u32)) {
+	case .ok(_):
+	case .err(error): fmt.println("error:", error);
+	}
+
+	// The largest base that still fits is accepted, with its offsets intact.
+	last := binary.Reader.init(bytes[:2], .Big, U64_MAX - 2);
+	fmt.println((last.get(u16) or_return) == 0x0102, last.offset() == U64_MAX);
+	last.finish() or_return;
+	return .ok;
+}
+
+// ---- the stream protocol
+
+stream :: proc() -> Status(io.Error) {
+	text := "first\nsecond\n".bytes();
+	r := binary.Reader.init(text, .Big);
+	fmt.println(io.read_line(inout r) or_return);
+
+	// A short read, then the end.
+	small: [64]u8 = {};
+	fmt.println(r.read(&mut small[:]) or_return);
+	switch (r.read(&mut small[:])) {
+	case .ok(_): fail("read past the end");
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+	fmt.println(r.read({}) or_return);
+
+	// `io.copy` over bytes in memory.
+	source := binary.Reader.init(text, .Big);
+	sink: io.Buffer_Writer = {};
+	fmt.println(io.copy(inout sink, inout source) or_return);
+	return .ok;
+}
+
+main :: proc() {
+	fields();
+	lengths();
+	length_types();
+	counts();
+	switch (structure()) {
+	case .ok:
+	case .err(error): fail("structure", error);
+	}
+	switch (stream()) {
+	case .ok:
+	case .err(error): fail("stream", error);
+	}
+	fmt.println("failures", failures);
+}

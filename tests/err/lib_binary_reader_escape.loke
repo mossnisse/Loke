@@ -1,0 +1,15 @@
+package main;
+
+import "core:encoding/binary";
+
+// standard-library "Reading fields": a reader borrows its source, so it cannot
+// outlive it.
+
+escapes :: proc() -> binary.Reader {
+	local: [8]u8 = {};
+	return binary.Reader.init(local[:], .Big);
+}
+
+main :: proc() {
+	_ = escapes();
+}

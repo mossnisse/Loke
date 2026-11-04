@@ -1,0 +1,413 @@
+/**
+	Typed fields over bytes: a bounded `Reader` over a borrowed slice, and a
+	`Writer` into any `io.Writer`.
+
+	A format names each field's width, and the byte order lives in the cursor. A
+	failed read changes nothing and reports where it happened, in the coordinates
+	of whatever the bytes came from. Lengths read from the input are checked before
+	they are used, so nothing here panics on malformed input, and nothing here
+	allocates.
+
+	    r := binary.Reader.init(bytes, .Big);
+	    version := r.get(u16) or_return;
+	    count := r.get_count(u32, ENTRY_SIZE, MAX_ENTRIES) or_return;
+
+	    w := binary.writer(&mut buffer, .Big);
+	    w.put(u16(1)) or_return;
+	    w.put_length(u32, entries.len()) or_return;
+*/
+// standard-library "`core:encoding/binary`".
+@(public)
+package binary;
+
+import "base:interfaces";
+import "core:endian";
+import "core:fmt";
+import "core:io";
+import "core:math";
+
+// Why a read failed.
+Code :: enum {
+	/// Fewer bytes remain than the operation needs.
+	Unexpected_End,
+	/// A negative length, passed or read.
+	Invalid_Length,
+	/// A length or count read from the input is above the caller's limit.
+	Limit_Exceeded,
+	/// A `seek` outside the reader.
+	Invalid_Offset,
+	/// The bytes are not the ones `expect` was given.
+	Mismatch,
+	/// `finish` found bytes left over.
+	Trailing_Data,
+}
+
+/**
+	A read failure. After one, `error.offset == reader.offset()`, since a failed
+	operation does not move the reader.
+
+	`length` depends on the code: for `Unexpected_End` the bytes wanted, or the
+	items claimed from `get_count`; for `Invalid_Length` the negative value's low
+	64 bits; for `Limit_Exceeded` the value read; for `Invalid_Offset` the target;
+	for `Mismatch` the bytes expected; for `Trailing_Data` the bytes left. A
+	non-negative value too big for a `u64` reports `u64` maximum, which is then a
+	lower bound.
+*/
+Error :: struct {
+	code:   Code,
+	offset: u64,
+	length: u64,
+}
+
+impl Error {
+	/// Prints the code and where it happened, as `fmt.eprintln("error:", error)` wants.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		// One call per piece: `format_to` separates its own arguments with a space.
+		fmt.format_to(writer, self.code, "at offset", self.offset);
+		fmt.format_to(writer, " (length ");
+		fmt.format_to(writer, self.length);
+		fmt.format_to(writer, ")");
+	}
+}
+
+// The value a length reports. Validation has already used the original integer;
+// this conversion only describes it, so it neither wraps nor panics: `u128(1) <<
+// 64` must not report zero.
+@(private)
+reported_length :: proc(value: $N) -> u64
+	where interfaces.Integral(N), interfaces.Ordered(N) {
+	if (value < N(0)) { return math.wrap(u64, value); }
+	switch (math.to(u64, value)) {
+	case .some(fits): return fits;
+	case .none:       return ~u64(0);
+	}
+}
+
+/**
+	A cursor over a borrowed byte slice. A `Reader` is a small value: a copy is a
+	checkpoint, so `probe := r` peeks and `r = saved` backtracks.
+
+	Slices from `take` and readers from `sub` borrow the source, not the reader, so
+	the reader stays usable while they are live, and they may outlive it.
+
+	**The zero value is a usable reader of no bytes.**
+*/
+// standard-library "Reading fields".
+Reader :: struct {
+	@(private) bytes:      []u8,
+	@(private) position:   int,
+	@(private) base:       u64,
+	@(private) byte_order: endian.Order,
+}
+
+impl Reader {
+	/**
+		A reader at the start of `bytes`. `base` is the offset those bytes have in
+		whatever they came from, so that every offset here, in errors and in
+		subrecords, names a place in the source. A `base` that would overflow `u64`
+		at the end of `bytes` panics.
+	*/
+	init :: proc(bytes: []u8, order: endian.Order, base: u64 = 0) -> Reader {
+		if (u64(bytes.len()) > ~u64(0) - base) {
+			panic("binary.Reader.init: base overflows u64 at the end of the bytes");
+		}
+		return {bytes, 0, base, order};
+	}
+
+	/// Where the next read happens: `base` plus the position.
+	offset :: proc(self) -> u64 { return self.base + u64(self.position); }
+
+	remaining :: proc(self) -> int { return self.bytes.len() - self.position; }
+
+	order :: proc(self) -> endian.Order { return self.byte_order; }
+
+	/// For a format that announces its order in the file, or mixes two.
+	set_order :: proc(self: inout, order: endian.Order) { self.byte_order = order; }
+
+	/// The next field.
+	get :: proc(self: inout, $T: type) -> Result(T, Error) where endian.is_fixed_width(T) {
+		size := size_of(T);
+		if (self.remaining() < size) {
+			return .err(Error{.Unexpected_End, self.offset(), u64(size)});
+		}
+		value := endian.load(T, self.bytes[self.position:], self.byte_order);
+		self.position += size;
+		return .ok(value);
+	}
+
+	/**
+		The next `length` bytes, borrowed from the source. `length` may be any
+		integer type, because it usually comes straight from the input: a negative
+		one is `Invalid_Length`, and one too big for `int` is `Unexpected_End`.
+	*/
+	take :: proc(self: inout, length: $N) -> Result([]u8, Error)
+		where interfaces.Integral(N), interfaces.Ordered(N) {
+		count := self.available(length) or_return;
+		part := self.bytes[self.position:self.position + count];
+		self.position += count;
+		return part;
+	}
+
+	/// Moves past `length` bytes, with `take`'s checks.
+	skip :: proc(self: inout, length: $N) -> Status(Error)
+		where interfaces.Integral(N), interfaces.Ordered(N) {
+		count := self.available(length) or_return;
+		self.position += count;
+		return .ok;
+	}
+
+	/**
+		A subrecord: a reader of exactly the next `length` bytes, which cannot read
+		past them whatever this one still holds. This reader moves past them at
+		once, so a malformed child cannot desynchronize it. The child inherits the
+		order and keeps absolute offsets.
+	*/
+	sub :: proc(self: inout, length: $N) -> Result(Reader, Error)
+		where interfaces.Integral(N), interfaces.Ordered(N) {
+		start := self.offset();
+		part := self.take(length) or_return;
+		return Reader{part, 0, start, self.byte_order};
+	}
+
+	/**
+		Moves to an absolute `offset`, in the coordinates of `offset()`. A child's
+		`seek` stays inside the child. A format with back-pointers can loop, so a
+		parser following them must count its visits.
+	*/
+	seek :: proc(self: inout, offset: u64) -> Status(Error) {
+		if (offset < self.base || offset - self.base > u64(self.bytes.len())) {
+			return .err(Error{.Invalid_Offset, self.offset(), offset});
+		}
+		self.position = int(offset - self.base);
+		return .ok;
+	}
+
+	/// Moves past `bytes` if they are what comes next, such as a magic number.
+	expect :: proc(self: inout, bytes: []u8) -> Status(Error) {
+		if (self.remaining() < bytes.len()) {
+			return .err(Error{.Unexpected_End, self.offset(), u64(bytes.len())});
+		}
+		foreach (i in 0 ..< bytes.len()) {
+			if (self.bytes[self.position + i] != bytes[i]) {
+				return .err(Error{.Mismatch, self.offset(), u64(bytes.len())});
+			}
+		}
+		self.position += bytes.len();
+		return .ok;
+	}
+
+	/**
+		A length field, refused above `limit`, for a body not yet in memory. A
+		negative value is `Invalid_Length`. A negative `limit` panics.
+	*/
+	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T) {
+		length := self.length_field(T, limit) or_return;
+		self.position += size_of(T);
+		return length;
+	}
+
+	/**
+		A count field, refused above `limit` and when that many items cannot fit in
+		what remains, given each item's minimum encoded size. The result is safe to
+		pass to `make`. `limit` is required: the bytes remaining bound the wire size,
+		and only the caller knows what an element costs in memory. A negative `limit`
+		or an `item_size` below one panics.
+	*/
+	get_count :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T) {
+		if (item_size < 1) { panic("binary.Reader.get_count: item_size below one"); }
+		count := self.length_field(T, limit) or_return;
+		// Division, so that a large count cannot overflow the comparison.
+		if (count > (self.remaining() - size_of(T)) / item_size) {
+			return .err(Error{.Unexpected_End, self.offset(), u64(count)});
+		}
+		self.position += size_of(T);
+		return count;
+	}
+
+	/**
+		`Trailing_Data` unless everything was consumed. A format that allows an
+		unread tail for forward compatibility does not call it.
+	*/
+	finish :: proc(self) -> Status(Error) {
+		if (self.remaining() != 0) {
+			return .err(Error{.Trailing_Data, self.offset(), u64(self.remaining())});
+		}
+		return .ok;
+	}
+
+	/// The `io.Reader` slot, so `io.copy` and `io.read_line` work over bytes in memory.
+	read :: proc(self: inout, destination: []mut u8) -> Result(int, io.Error) {
+		if (destination.len() == 0) { return 0; }
+		if (self.remaining() == 0) { return .err(io.make_error(.End_Of_Input, .Read)); }
+		count := destination.len();
+		if (count > self.remaining()) { count = self.remaining(); }
+		foreach (i in 0 ..< count) {
+			destination[i] = self.bytes[self.position + i];
+		}
+		self.position += count;
+		return count;
+	}
+
+	// `length` as an `int` no larger than what remains.
+	@(private)
+	available :: proc(self, length: $N) -> Result(int, Error)
+		where interfaces.Integral(N), interfaces.Ordered(N) {
+		if (length < N(0)) {
+			return .err(Error{.Invalid_Length, self.offset(), reported_length(length)});
+		}
+		switch (math.to(int, length)) {
+		case .some(count):
+			if (count <= self.remaining()) { return count; }
+		case .none:
+		}
+		// Compared against what remains: nothing is added to the position first.
+		return .err(Error{.Unexpected_End, self.offset(), reported_length(length)});
+	}
+
+	// The length field at the position, without moving past it, which is what keeps
+	// a refused count on its own field.
+	@(private)
+	length_field :: proc(self, $T: type, limit: int) -> Result(int, Error) {
+		if (limit < 0) { panic("binary.Reader: negative limit"); }
+		if (self.remaining() < size_of(T)) {
+			return .err(Error{.Unexpected_End, self.offset(), u64(size_of(T))});
+		}
+		value := endian.load(T, self.bytes[self.position:], self.byte_order);
+		if (value < T(0)) {
+			return .err(Error{.Invalid_Length, self.offset(), reported_length(value)});
+		}
+		switch (math.to(int, value)) {
+		case .some(length):
+			if (length <= limit) { return length; }
+		case .none:
+		}
+		return .err(Error{.Limit_Exceeded, self.offset(), reported_length(value)});
+	}
+}
+
+/**
+	Typed fields into any `io.Writer`: `io.Buffer_Writer`, `io.Slice_Writer`,
+	`fs.File`, a checksum, another `Writer`, or a `dyn mut io.Writer`. It borrows
+	the sink, so back-patching waits for its last use.
+
+	`offset` counts what the sink accepted, plus `base`. A failed `put` into a sink
+	that takes all of a write or none of it leaves `offset` unchanged; a stream may
+	accept part of a field before failing, and then `offset` is where it stopped.
+
+	Failures are `io.Error`, so a save routine composes these with file operations
+	under a bare `or_return`. Sink errors pass through unchanged, and an invalid
+	length or an exhausted offset is `Limit_Exceeded` with operation `Write`.
+*/
+// standard-library "Writing fields".
+Writer :: struct($W: type) where io.Writer(W) {
+	@(private) sink:       ^mut W,
+	@(private) position:   u64,
+	@(private) byte_order: endian.Order,
+}
+
+/// A writer into `sink`, in `order`, whose offsets start at `base`.
+writer :: proc(sink: ^mut $W, order: endian.Order, base: u64 = 0) -> Writer(W)
+	where io.Writer(W) {
+	return Writer(W){sink, base, order};
+}
+
+impl Writer($W) {
+	offset :: proc(self) -> u64 { return self.position; }
+
+	order :: proc(self) -> endian.Order { return self.byte_order; }
+
+	/// For a format that mixes two orders.
+	set_order :: proc(self: inout, order: endian.Order) { self.byte_order = order; }
+
+	/**
+		One field. The width is visible at the call: `is_fixed_width` rejects an
+		`int`, so `w.put(count)` and `w.put(7)` do not compile. `w.put(u32(count))`
+		panics if the count does not fit, as `u32(count)` always does; `put_length`
+		is the form for a value that comes from data.
+	*/
+	put :: proc(self: inout, value: $T) -> Status(io.Error) where endian.is_fixed_width(T) {
+		self.check_room(size_of(T)) or_return;
+		field: [size_of(T)]u8 = {};
+		endian.store(&mut field[:], value, self.byte_order);
+		return self.send(field[:]);
+	}
+
+	/// Every byte, looping over a sink's short writes. Empty bytes never reach the sink.
+	put_bytes :: proc(self: inout, bytes: []u8) -> Status(io.Error) {
+		self.check_room(bytes.len()) or_return;
+		return self.send(bytes);
+	}
+
+	/**
+		A length in a `T`. One that is negative or does not fit is `Limit_Exceeded`,
+		and nothing is written.
+	*/
+	put_length :: proc(self: inout, $T: type, length: int) -> Status(io.Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T) {
+		if (length < 0) { return .err(io.make_error(.Limit_Exceeded, .Write)); }
+		switch (math.to(T, length)) {
+		case .some(field): return self.put(field);
+		case .none:        return .err(io.make_error(.Limit_Exceeded, .Write));
+		}
+	}
+
+	/**
+		`length` copies of `value`, as padding. A negative length is `Limit_Exceeded`
+		and changes nothing. It may use several writes, so a later sink failure leaves
+		the accepted chunks counted in `offset`, even with a memory sink.
+	*/
+	fill :: proc(self: inout, length: int, value: u8 = 0) -> Status(io.Error) {
+		if (length < 0) { return .err(io.make_error(.Limit_Exceeded, .Write)); }
+		self.check_room(length) or_return;
+		if (length == 0) { return .ok; }
+		chunk: [256]u8 = {};
+		if (value != 0) {
+			foreach (i in 0 ..< chunk.len()) { chunk[i] = value; }
+		}
+		rest := length;
+		for (; rest > 0;) {
+			count := rest;
+			if (count > chunk.len()) { count = chunk.len(); }
+			self.send(chunk[:count]) or_return;
+			rest -= count;
+		}
+		return .ok;
+	}
+
+	/// The `io.Writer` slot, so a `Writer` is itself a sink. An empty write never reaches this one's.
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) where io.Writer(W) {
+		self.check_room(source.len()) or_return;
+		if (source.len() == 0) { return 0; }
+		count := self.sink^.write(source) or_return;
+		self.position += u64(count);
+		return count;
+	}
+
+	// Whether `count` more bytes keep the offset in range. The whole request is
+	// compared before anything is written, so a refused one makes no sink call,
+	// even to a sink that would have accepted a prefix.
+	@(private)
+	check_room :: proc(self, count: int) -> Status(io.Error) {
+		if (u64(count) > ~u64(0) - self.position) {
+			return .err(io.make_error(.Limit_Exceeded, .Write));
+		}
+		return .ok;
+	}
+
+	// Not `io.write_all`, whose count a failure loses: `offset` has to say where
+	// a stream stopped, inside a field included.
+	@(private)
+	send :: proc(self: inout, bytes: []u8) -> Status(io.Error) where io.Writer(W) {
+		rest := bytes;
+		for (; rest.len() > 0;) {
+			count := self.sink^.write(rest) or_return;
+			// As in `io.write_all`: a sink breaking the protocol must not spin here.
+			if (count == 0) { return .err(io.make_error(.Broken_Pipe, .Write)); }
+			self.position += u64(count);
+			rest = rest[count:];
+		}
+		return .ok;
+	}
+}

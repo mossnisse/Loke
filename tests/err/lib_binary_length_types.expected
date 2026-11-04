@@ -1,0 +1,81 @@
+L0444
+@15:6
+`f16` does not satisfy `Integral(f16)`
+L0444
+@16:6
+`f32` does not satisfy `Integral(f32)`
+L0444
+@17:6
+`f64` does not satisfy `Integral(f64)`
+L0434
+@18:6
+`Reader.get_length(int)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@19:6
+`Reader.get_length(uint)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@20:6
+`Reader.get_length(uintptr)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@21:6
+`Reader.get_length(bool)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@22:6
+`Reader.get_length(rune)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@23:6
+`Reader.get_length(Color)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0444
+@25:6
+`f16` does not satisfy `Integral(f16)`
+L0444
+@26:6
+`f32` does not satisfy `Integral(f32)`
+L0444
+@27:6
+`f64` does not satisfy `Integral(f64)`
+L0434
+@28:6
+`Reader.get_count(int)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@29:6
+`Reader.get_count(uint)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@30:6
+`Reader.get_count(uintptr)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@31:6
+`Reader.get_count(bool)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@32:6
+`Reader.get_count(rune)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@33:6
+`Reader.get_count(Color)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0444
+@37:6
+`f16` does not satisfy `Integral(f16)`
+L0444
+@38:6
+`f32` does not satisfy `Integral(f32)`
+L0444
+@39:6
+`f64` does not satisfy `Integral(f64)`
+L0434
+@40:6
+`Writer(Buffer_Writer).put_length(int)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@41:6
+`Writer(Buffer_Writer).put_length(uint)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@42:6
+`Writer(Buffer_Writer).put_length(uintptr)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@43:6
+`Writer(Buffer_Writer).put_length(bool)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@44:6
+`Writer(Buffer_Writer).put_length(rune)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@45:6
+`Writer(Buffer_Writer).put_length(Color)` does not satisfy the bound `endian.is_fixed_width(T)`

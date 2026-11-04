@@ -18,6 +18,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Search and build UTF-8 text | [`core:strings`](#corestrings) |
 | Parse scalar values | [`core:strconv`](#corestrconv) |
 | Read or write JSON | [`core:encoding/json`](#coreencodingjson) |
+| Read or write a binary format | [`core:encoding/binary`](#coreencodingbinary) |
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order, or read a field of validated bytes | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
@@ -182,6 +183,7 @@ core:strings          UTF-8 algorithms and String_Builder
 core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
 core:encoding/json    JSON documents, values, and a streaming writer
+core:encoding/binary  typed fields over bytes, bounded readers, sink-generic writers
 core:endian           fixed byte-order wrappers and byte-slice fields
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
@@ -2032,6 +2034,186 @@ save_generation :: proc(path: string_view, generation: u64, allocator: Allocator
 	out.finish() or_return .json;
 	fs.replace_atomic(path, bytes.bytes()) or_return .file;
 }
+```
+
+## `core:encoding/binary`
+
+Typed fields over bytes: a bounded `Reader` over a borrowed slice, and a `Writer`
+into any `io.Writer`. A format names each field's width, and the byte order lives
+in the cursor, set once, because it is one fact about the format. It is a run-time
+value because TIFF and ELF announce theirs in the file. Nothing here panics on
+malformed input, and nothing here allocates.
+
+### Reading fields
+
+```loke
+Reader :: struct { /* private */ }
+
+impl Reader {
+	init       :: proc(bytes: []u8, order: endian.Order, base: u64 = 0) -> Reader;
+
+	offset     :: proc(self) -> u64;
+	remaining  :: proc(self) -> int;
+	order      :: proc(self) -> endian.Order;
+	set_order  :: proc(self: inout, order: endian.Order);
+
+	get        :: proc(self: inout, $T: type) -> Result(T, Error) where endian.is_fixed_width(T);
+	take       :: proc(self: inout, length: $N) -> Result([]u8, Error);
+	skip       :: proc(self: inout, length: $N) -> Status(Error);
+	sub        :: proc(self: inout, length: $N) -> Result(Reader, Error);
+	seek       :: proc(self: inout, offset: u64) -> Status(Error);
+	expect     :: proc(self: inout, bytes: []u8) -> Status(Error);
+
+	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T);
+	get_count  :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T);
+
+	finish     :: proc(self) -> Status(Error);
+	read       :: proc(self: inout, destination: []mut u8) -> Result(int, io.Error);
+}
+```
+
+- **A failed operation changes nothing.** Every operation validates the whole field
+  before moving, so after a failure `error.offset == r.offset()`, and the caller can
+  retry, report, or try another reading. `get_length` and `get_count` stay on the
+  count field when the count is refused.
+- **Offsets are in the source's coordinates.** `offset()` is `base` plus the
+  position. Pass a record's file offset as `base` and every error names a file
+  offset, from subrecords too. A `base` that would overflow `u64` at the end of
+  `bytes` panics, as a programmer error.
+- **Lengths passed to `take`, `skip`, and `sub` may be any integer type**, because
+  they usually come straight from the input. A negative `length` is
+  `Invalid_Length`, and a positive one too big for `int` is `Unexpected_End`. Neither
+  traps in a conversion or wraps in an addition: the bound is compared against what
+  remains, and nothing is added first.
+- **Encoded lengths and counts are fixed-width integers.** `get_length` and
+  `get_count` accept only `u8` through `u128` and `i8` through `i128`; floats,
+  native-width integers, `bool`, `rune`, and enums do not compile. A negative value
+  read is `Invalid_Length`, and a non-negative value above `limit` is
+  `Limit_Exceeded`, checked before the remaining-byte bound in `get_count`.
+- **`sub` bounds a subrecord.** The child sees exactly `length` bytes and cannot read
+  past them, whatever the parent still holds. The parent moves past the subrecord at
+  once, so a malformed child cannot desynchronize it, and the child inherits the
+  order and keeps absolute offsets. A child's `seek` stays inside the child.
+- **Validate before allocating.** `get_length` reads a length and refuses one above
+  `limit`, for a body not yet in memory. `get_count` also refuses a count whose items
+  cannot fit in what remains, given each item's minimum encoded size, so the count
+  is safe to pass to `make`. It divides rather than multiplies, so it cannot
+  overflow. `limit` is required: the bytes remaining bound the wire size, and only the
+  caller knows what an element costs in memory. A negative `limit` or an `item_size`
+  below one panics.
+- **Bytes outlive the cursor.** `take` and `sub` borrow the source slice, not the
+  reader, so the reader stays usable while they are live and they may outlive it.
+  The compiler rejects them outliving the *source*.
+- **A copy is a checkpoint.** A `Reader` is a small value. `probe := r` peeks without
+  a `peek` operation, and `r = saved` backtracks. Its zero value is a usable reader
+  of no bytes.
+- **`seek` is absolute**, in the same coordinates as `offset()`. A format with
+  back-pointers can loop, so a parser following them must count its visits.
+- **`finish`** is `Trailing_Data` unless everything was consumed. A format that
+  allows an unread tail for forward compatibility does not call it.
+- **`read`** is the [`io.Reader`](#shared-io-contract) slot, with that protocol's
+  contract and error type, so `io.copy` and `io.read_line` work over bytes in memory.
+
+```loke
+Code :: enum {
+	Unexpected_End, Invalid_Length, Limit_Exceeded,
+	Invalid_Offset, Mismatch, Trailing_Data,
+}
+
+Error :: struct {
+	code:   Code,
+	offset: u64,
+	length: u64,
+}
+```
+
+| Code | Raised by | `offset` | `length` |
+| --- | --- | --- | --- |
+| `Unexpected_End` | `get`, `take`, `skip`, `sub`, `expect`, `get_length`, `get_count` | Start of the operation | Bytes wanted, or for `get_count` the items claimed; saturated to `u64` maximum |
+| `Invalid_Length` | A negative length, passed or read | Start of the operation | Its low 64 bits |
+| `Limit_Exceeded` | `get_length`, `get_count` above `limit` | The count field | The value read, saturated to `u64` maximum |
+| `Invalid_Offset` | `seek` | Current position | The target |
+| `Mismatch` | `expect` | Start of the expected bytes | Bytes expected |
+| `Trailing_Data` | `finish` | Current position | Bytes left |
+
+For a non-negative length, `length` is the exact value when it fits `u64`, and `u64`
+maximum otherwise, which then reports a lower bound. Validation uses the original
+integer before this conversion, so `u128(1) << 64` neither wraps to zero nor panics.
+
+`Error` owns scalars and has public fields and a `format` member. A loader that also
+does I/O names it and `io.Error` in a union of its own, using
+[`or_return` with a variant](design.md#changing-error-domains). A caller's own check
+on a field it just read has a field offset to report: capture `r.offset()` before
+the `get`.
+
+### Writing fields
+
+```loke
+Writer :: struct($W: type) where io.Writer(W) { /* private */ }
+
+writer :: proc(sink: ^mut $W, order: endian.Order, base: u64 = 0) -> Writer(W);
+
+impl Writer($W) {
+	offset     :: proc(self) -> u64;
+	order      :: proc(self) -> endian.Order;
+	set_order  :: proc(self: inout, order: endian.Order);
+
+	put        :: proc(self: inout, value: $T) -> Status(io.Error) where endian.is_fixed_width(T);
+	put_bytes  :: proc(self: inout, bytes: []u8) -> Status(io.Error);
+	put_length :: proc(self: inout, $T: type, length: int) -> Status(io.Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T);
+	fill       :: proc(self: inout, length: int, value: u8 = 0) -> Status(io.Error);
+
+	write      :: proc(self: inout, source: []u8) -> Result(int, io.Error);
+}
+```
+
+- **`W` is any `io.Writer`**: `io.Buffer_Writer`, `io.Slice_Writer`, `fs.File`,
+  another `binary.Writer`, or `dyn mut io.Writer` where the sink is chosen at run
+  time. Dispatch is monomorphic unless a `dyn` is asked for.
+- **The width is visible at the call.** `put` takes its type from the value, and
+  `is_fixed_width` rejects an `int`, so `w.put(count)` and `w.put(7)` do not compile.
+  `w.put(u32(count))` panics if the count does not fit, as `u32(count)` always does.
+  Use `put_length` when the value comes from data: a length that is negative or does
+  not fit `T` is `Limit_Exceeded` with operation `Write`, and nothing is written. Its
+  `T` has the same fixed-width integer restriction as `get_length` and `get_count`.
+- **`offset()` counts what the sink accepted**, plus `base`. A failed `put` into a
+  `Buffer_Writer` or `Slice_Writer`, which take all of a write or none of it, leaves
+  it unchanged. A stream may accept part of a field before failing, and then
+  `offset()` is inside the field, which is exactly where the stream stopped.
+- **Offset exhaustion is checked before writing.** Every output operation compares
+  its entire requested byte count with `u64` maximum minus `offset()`. A request above
+  that space returns `Limit_Exceeded` with operation `Write`, without calling the
+  sink or changing the offset, even if the sink would accept only a prefix. Reaching
+  exactly `u64` maximum is allowed. Empty `put_bytes`, `fill(0)`, and empty `write`
+  succeed without calling the sink, including at that offset.
+- **`fill` validates its length before writing.** A negative length returns
+  `Limit_Exceeded` with operation `Write` and changes nothing. After validation,
+  filling may use several writes; a later sink failure leaves accepted chunks counted
+  in `offset()`, even with a `Buffer_Writer` or `Slice_Writer`.
+- **Failures are `io.Error`.** Sink errors propagate unchanged; invalid lengths and
+  offset exhaustion use `Limit_Exceeded` with operation `Write`. A save routine
+  composes `w.put`, `file.lock`, and `fs.replace_atomic` with a bare `or_return` and
+  no error conversion.
+- **A writer holds its sink's mutable borrow**, so a sink is read only after the
+  writer's last use. Back-patching is [`endian.store`](#fields-of-a-byte-slice) over
+  [`Buffer_Writer.bytes_mut`](#byte-buffer) or the caller's slice, once that use has
+  passed.
+
+```loke
+buffer: io.Buffer_Writer = {};
+w := binary.writer(&mut buffer, .Big);
+w.put_bytes(MAGIC) or_return;
+length_at := int(w.offset());
+w.put(u32(0)) or_return;                     // patched below
+w.put(u16(1)) or_return;
+w.put_length(u16, entries.len()) or_return;
+
+whole := buffer.bytes_mut();
+body_length := whole.len() - length_at - 4;
+endian.store(&mut whole[length_at:], u32(body_length), .Big);
 ```
 
 ## `core:slice`

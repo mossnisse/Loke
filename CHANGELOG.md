@@ -1013,6 +1013,10 @@ checklist.
 
 ### Added
 
+- [`core:encoding/binary`](standard-library.md#coreencodingbinary) reads and writes binary
+  formats: a bounded `Reader` over a borrowed slice, whose failed operations change nothing and
+  report an offset, with subrecords and lengths checked before they are used, and a `Writer(W)`
+  of typed fields into any `io.Writer`.
 - `core:io` has `Slice_Writer`, a [bounded byte sink](standard-library.md#bounded-byte-sink) over a
   caller's slice, and `Buffer_Writer.bytes_mut`, to patch a finished buffer in place.
 - `core:endian` has `load` and `store`, a field of a byte slice in a named order, for every

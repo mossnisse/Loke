@@ -1,0 +1,6 @@
+L0511
+@12:2
+this write of `bytes` is not compatible with the read-only slice of it that is still in use
+L0512
+@20:2
+`bytes` cannot be dropped here: a read-only slice of it is still in use
