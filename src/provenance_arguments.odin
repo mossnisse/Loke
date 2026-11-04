@@ -115,17 +115,9 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		// pack's element, a spread as the slice it views. A mutable carrier passed
 		// by name is reborrowed, so `fill(out, out)` uses `out` while it is lent.
 		element := slice_element(c, param_type)
-		next_element, next_spread := 0, 0
-		for is_spread in v.variadic_order {
-			operand: Expr
-			type := element
-			if is_spread {
-				operand, type = v.variadic_spreads[next_spread], param_type
-				next_spread += 1
-			} else {
-				operand = v.variadic_elements[next_element]
-				next_element += 1
-			}
+		cursor: Call_Pack_Cursor
+		for operand, is_spread in call_pack_next(v, &cursor) {
+			type := is_spread ? param_type : element
 			lent := walk_flow_expr(graph, operand)
 			prov_reborrow(graph, lent, type)
 			if type_carries_borrow(c, type).mutable {

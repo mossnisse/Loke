@@ -93,17 +93,9 @@ prov_argument_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> []Value_Id
 @(private = "file")
 prov_pack_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> []Value_Id {
 	values := make([]Value_Id, len(call.variadic_order), graph.alloc)
-	next_element, next_spread := 0, 0
-	for is_spread, index in call.variadic_order {
-		operand: Expr
-		if is_spread {
-			operand = call.variadic_spreads[next_spread]
-			next_spread += 1
-		} else {
-			operand = call.variadic_elements[next_element]
-			next_element += 1
-		}
-		values[index] = prov_operand_value(graph, operand)
+	cursor: Call_Pack_Cursor
+	for operand in call_pack_next(call, &cursor) {
+		values[cursor.taken - 1] = prov_operand_value(graph, operand)
 	}
 	return values
 }

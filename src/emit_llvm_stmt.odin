@@ -246,16 +246,14 @@ emit_spawn_pack :: proc(
 ) {
 	element := slice_element(e.c, slice)
 	managed := emit_lifecycle(e, element).managed
-	next_element, next_spread := 0, 0
-	for is_spread, position in call.variadic_order {
+	cursor: Call_Pack_Cursor
+	for expr, is_spread in call_pack_next(call, &cursor) {
+		position := cursor.taken - 1
 		slot := spawn_field_address(e, pack, record, position)
 		if is_spread {
-			store(e, slice, emit_expr(e, call.variadic_spreads[next_spread]), slot)
-			next_spread += 1
+			store(e, slice, emit_expr(e, expr), slot)
 			continue
 		}
-		expr := call.variadic_elements[next_element]
-		next_element += 1
 		value := emit_copied_expr(e, expr, element, managed && expression_is_borrowed_place(expr))
 		if task.pack[position] == .Owned {
 			append(owned, hold_temporary_value(e, element, value))

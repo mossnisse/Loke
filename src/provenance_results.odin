@@ -88,17 +88,14 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 		// One copied from a place the parent keeps is shared, as a copy of
 		// what that place reaches, and so is a spread, as the slice it views.
 		if call_packs(call, index) {
-			next_element, next_spread := 0, 0
-			for is_spread in call.variadic_order {
+			cursor: Call_Pack_Cursor
+			for operand, is_spread in call_pack_next(call, &cursor) {
 				if is_spread {
-					prov_transfer_argument(c, call.variadic_spreads[next_spread], true)
-					next_spread += 1
+					prov_transfer_argument(c, operand, true)
 					continue
 				}
-				element := call.variadic_elements[next_element]
-				next_element += 1
-				_, moved := element.(^Expr_Move)
-				prov_transfer_argument(c, element, !moved && expression_is_borrowed_place(element))
+				_, moved := operand.(^Expr_Move)
+				prov_transfer_argument(c, operand, !moved && expression_is_borrowed_place(operand))
 			}
 			continue
 		}

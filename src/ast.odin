@@ -790,6 +790,30 @@ expr_has_error :: proc(e: Expr) -> bool {
 	return base != nil && base.has_error
 }
 
+// How far a walk of a built pack's operands has come: how many it has taken, in
+// all and of each kind.
+Call_Pack_Cursor :: struct {
+	taken, elements, spreads: int,
+}
+
+// A call's next variadic pack operand in written order (`variadic_order`), and
+// whether it is a spread.
+call_pack_next :: proc(call: ^Expr_Call, cursor: ^Call_Pack_Cursor) -> (operand: Expr, spread: bool, more: bool) {
+	if cursor.taken >= len(call.variadic_order) {
+		return nil, false, false
+	}
+	spread = call.variadic_order[cursor.taken]
+	cursor.taken += 1
+	if spread {
+		operand = call.variadic_spreads[cursor.spreads]
+		cursor.spreads += 1
+	} else {
+		operand = call.variadic_elements[cursor.elements]
+		cursor.elements += 1
+	}
+	return operand, spread, true
+}
+
 // `_` as a destination; its value is dropped.
 is_discard :: proc(target: Expr) -> bool {
 	ident, ok := target.(^Expr_Ident)

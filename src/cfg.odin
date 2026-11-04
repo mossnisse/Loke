@@ -1901,16 +1901,8 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // An unforwarded variadic pack's operands in written order.
 @(private = "file")
 walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call, stores: bool) {
-	next_element, next_spread := 0, 0
-	for is_spread in v.variadic_order {
-		operand: Expr
-		if is_spread {
-			operand = v.variadic_spreads[next_spread]
-			next_spread += 1
-		} else {
-			operand = v.variadic_elements[next_element]
-			next_element += 1
-		}
+	cursor: Call_Pack_Cursor
+	for operand in call_pack_next(v, &cursor) {
 		if stores {
 			walk_flow_stored(graph, operand)
 		} else {

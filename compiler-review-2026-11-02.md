@@ -183,10 +183,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 ### Provenance and borrow analysis
 
-#### Variadic pack walk
-
-The two-cursor walk over `variadic_order` is at [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017), [provenance_form.odin:112](src/provenance_form.odin#L112), [emit_llvm_stmt.odin:264](src/emit_llvm_stmt.odin#L264) and [emit_llvm_calls.odin:1068](src/emit_llvm_calls.odin#L1068), each with its own type or action per operand. `call_pack_next(call, &cursor) -> (operand: Expr, spread: bool, more: bool)` in `ast.odin` saves about 4 lines per site, 25 in all.
-
 #### Worklists
 
 The forward block queue is written out at [borrow.odin:3470](src/borrow.odin#L3470), [borrow.odin:3585](src/borrow.odin#L3585), [borrow.odin:4789](src/borrow.odin#L4789) and [lifecycle.odin:941](src/lifecycle.odin#L941). They differ only in the join each performs. `Block_Queue`, with init, pop and push-if-absent, saves about 20 lines.
@@ -390,7 +386,6 @@ What remains are near copies whose helper would span other files.
 
 - [cfg.odin:1092](src/cfg.odin#L1092), [1116](src/cfg.odin#L1116), [1253](src/cfg.odin#L1253), [1370](src/cfg.odin#L1370), [2881](src/cfg.odin#L2881) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356): build a `Reset_Key`, register in lifecycle, look up and assert in provenance. `reset_point(graph, node, id, span) -> (live, ok)` saves about 15 lines.
 - [cfg.odin:2863](src/cfg.odin#L2863) and [cfg_provenance.odin:9899](src/cfg_provenance.odin#L9899): the same loop over `proc_param_resets`, one as a test and one acting. They must agree, or the assert in `prov_reset` fires; an index-yielding helper would tie them together.
-- [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017): the same two-cursor merge of `variadic_order`. `call_pack_operands(v, allocator) -> []Expr` in written order saves about 4 lines per site.
 - [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [parallel.odin:81](src/parallel.odin#L81): slicing a span out of `sources`; a span form in `source.odin` replaces them.
 
 ### src/cfg_provenance.odin (part 1 of 4)
@@ -416,14 +411,6 @@ Region stores, written aliases, place walking, and the statement and call hooks:
 **Near copies**
 
 - [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin) and [lifecycle.odin:109](src/lifecycle.odin#L109): each names the storage of a duration by hand. One `storage_phrase(duration)` covers them.
-
-### src/cfg_provenance.odin (part 4 of 4)
-
-The logic holds up and every declaration here has a caller in `src/`, with none existing only for tests; I found no bug I could demonstrate. The cost is near copies in call-result and retention code, a few never-varying parameters, and about 2,600 lines with no section header covering nine separate concerns.
-
-**Near copies**
-
-- [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [cfg_provenance.odin:10017](src/cfg_provenance.odin#L10017), [cfg.odin:2843](src/cfg.odin#L2843), [provenance_form.odin:112](src/provenance_form.odin#L112): the same two-cursor walk of `variadic_order`. A `call_next_variadic(call, is_spread, &next_element, &next_spread)` beside `call_packs` covers these. (about 12 lines)
 
 ### src/check.odin (part 1 of 2)
 
@@ -695,14 +682,6 @@ What remains here belongs to the groups under "Findings that span files".
 - [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [check_calls.odin:204](src/check_calls.odin#L204) hand-builds these nodes too. Share one set of `synth_*`, of which the ident, selector and deref builders are already package-visible.
 - [parallel.odin:181](src/parallel.odin#L181), [parallel.odin:723](src/parallel.odin#L723), [parallel.odin:735](src/parallel.odin#L735) and [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140): one-name `Decl` builders differing only in `kind` and type. Use one `synth_decl(c, kind, name, type, value, span)` built on `synth_name`, which interns, so callers drop their `id`. (about 20 lines here)
 - [parallel.odin:700](src/parallel.odin#L700) and [capture.odin:95](src/capture.odin#L95): a local struct whose field types are aliases only its scope binds. They differ in field names and spans; `synth_record` taking `[]Name`, with each field's span from its `Name`, serves both, moving capture fields from `entry.span` to `entry.name.span`. (about 15 lines)
-
-### src/provenance_form.odin
-
-What remains here waits on a helper shared across files.
-
-**Near copies**
-
-- [provenance_form.odin:111](src/provenance_form.odin#L111), [cfg.odin:2843](src/cfg.odin#L2843), [cfg_provenance.odin:8528](src/cfg_provenance.odin#L8528), [:10017](src/cfg_provenance.odin#L10017), [emit_llvm_stmt.odin:264](src/emit_llvm_stmt.odin#L264): each keeps `next_element`/`next_spread` to pick the next pack operand. Shared form in `ast.odin`: `call_pack_next(call, is_spread, &cursor) -> Expr`, about 6 lines off each of the first two.
 
 ### src/reflect.odin
 

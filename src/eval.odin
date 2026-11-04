@@ -1584,16 +1584,14 @@ eval_appended :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: []Eval_Value, succ
 		eval_append_spread(ev, &added, v.bound[v.variadic_slot]) or_return
 		return added[:], true
 	}
-	next_element, next_spread := 0, 0
-	for is_spread in v.variadic_order {
+	cursor: Call_Pack_Cursor
+	for operand, is_spread in call_pack_next(v, &cursor) {
 		if is_spread {
-			eval_append_spread(ev, &added, v.variadic_spreads[next_spread]) or_return
-			next_spread += 1
+			eval_append_spread(ev, &added, operand) or_return
 			continue
 		}
-		copied := eval_copied(ev, v.variadic_elements[next_element]) or_return
+		copied := eval_copied(ev, operand) or_return
 		append(&added, copied)
-		next_element += 1
 	}
 	return added[:], true
 }

@@ -166,13 +166,9 @@ prov_argument_span :: proc(call: ^Expr_Call, index: int) -> (Span, bool) {
 		argument := call.bound[index]
 		return argument == nil ? Span{} : expr_span(argument), argument != nil
 	}
-	if len(call.variadic_order) == 0 {
-		return Span{}, false
-	}
-	if call.variadic_order[0] {
-		return expr_span(call.variadic_spreads[0]), true
-	}
-	return expr_span(call.variadic_elements[0]), true
+	cursor: Call_Pack_Cursor
+	first, _, written := call_pack_next(call, &cursor)
+	return written ? expr_span(first) : Span{}, written
 }
 
 // design.md "Borrows crossing between tasks": a callee that may leave a borrow
