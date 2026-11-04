@@ -245,20 +245,70 @@ type_walk_enter :: proc(seen: ^Type_Walk, id: Type_Id, info: ^Type_Info) -> bool
 	return true
 }
 
-// Every type `info` is built from, in the temp allocator; some may be INVALID_TYPE.
-type_components :: proc(c: ^Compiler, info: ^Type_Info) -> []Type_Id {
-	components := make([dynamic]Type_Id, 0, 3 + len(info.parameters) + len(info.variants) + len(info.fields), context.temp_allocator)
-	append(&components, info.element, info.key, info.result)
-	append(&components, ..info.parameters)
-	append(&components, ..info.variants)
-	if info.kind == .Struct {
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				append(&components, sym.type)
+// The types `info` is built from: in the temp allocator, or sharing its storage.
+// INVALID_TYPE among them is a part that never resolved; what a kind does not have
+// is left out. Exhaustive on purpose: a new composed `Type_Kind` must not quietly
+// answer "no parts" the way a scalar correctly does.
+type_parts :: proc(c: ^Compiler, info: ^Type_Info) -> []Type_Id {
+	switch info.kind {
+	case .Invalid, .Void, .Bool, .Int, .Float, .Rune, .Enum, .Raw_Pointer, .Typeid,
+	     .String, .String_View, .CString_View, .Dyn, .Interface, .Type,
+	     .Allocator, .Allocator_Error,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
+		return nil
+	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
+		return ([^]Type_Id)(&info.element)[:1]
+	case .Map:
+		parts := make([]Type_Id, 2, context.temp_allocator)
+		parts[0], parts[1] = info.key, info.element
+		return parts
+	case .Union:
+		return info.variants
+	case .Struct:
+		parts := make([]Type_Id, len(info.fields), context.temp_allocator)
+		for field, index in info.fields {
+			if symbol := symbol_of(c, field); symbol != nil {
+				parts[index] = symbol.type
 			}
 		}
+		return parts
+	case .Proc:
+		// design.md: a procedure with no result carries INVALID_TYPE for one, which
+		// is the absence of a result rather than a type that failed to resolve.
+		if info.result == INVALID_TYPE {
+			return info.parameters
+		}
+		parts := make([]Type_Id, len(info.parameters) + 1, context.temp_allocator)
+		copy(parts, info.parameters)
+		parts[len(info.parameters)] = info.result
+		return parts
 	}
-	return components[:]
+	return nil
+}
+
+// The parts a value owns, which are copied and dropped with it, as what a pointer
+// or a procedure refers to is not.
+type_owned_parts :: proc(c: ^Compiler, info: ^Type_Info) -> []Type_Id {
+	#partial switch info.kind {
+	case .Array, .Dynamic_Array, .Box, .Map, .Struct, .Union:
+		return type_parts(c, info)
+	}
+	return nil
+}
+
+// Every type `info` records: its parts, and what a compiler-made record or an enum
+// keeps beside them, an iterator's element and subject or the enum's backing type.
+// Some may be INVALID_TYPE, for one it does not have.
+type_components :: proc(c: ^Compiler, info: ^Type_Info) -> []Type_Id {
+	parts := type_parts(c, info)
+	if info.kind != .Struct && info.kind != .Enum {
+		return parts
+	}
+	components := make([]Type_Id, 2 + len(parts), context.temp_allocator)
+	components[0], components[1] = info.element, info.key
+	copy(components[2:], parts)
+	return components
 }
 
 @(private = "file")
@@ -267,44 +317,13 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 	if info == nil || !type_walk_enter(seen, id, info) {
 		return false
 	}
-	// Exhaustive on purpose: a new composed `Type_Kind` must not quietly answer
-	// "no invalid part" the way a scalar correctly does.
-	switch info.kind {
-	case .Invalid:
+	if info.kind == .Invalid {
 		return true
-	case .Void, .Bool, .Int, .Float, .Rune, .Enum, .Raw_Pointer, .Typeid,
-	     .String, .String_View, .CString_View, .Dyn, .Interface, .Type,
-	     .Allocator, .Allocator_Error,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
-	     .Untyped_String:
-		return false
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
-		return type_contains_invalid(c, info.element, seen)
-	case .Map:
-		return type_contains_invalid(c, info.key, seen) ||
-		       type_contains_invalid(c, info.element, seen)
-	case .Union:
-		for variant in info.variants {
-			if type_contains_invalid(c, variant, seen) {
-				return true
-			}
+	}
+	for part in type_parts(c, info) {
+		if type_contains_invalid(c, part, seen) {
+			return true
 		}
-	case .Struct:
-		for field in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil || type_contains_invalid(c, symbol.type, seen) {
-				return true
-			}
-		}
-	case .Proc:
-		for parameter in info.parameters {
-			if type_contains_invalid(c, parameter, seen) {
-				return true
-			}
-		}
-		// design.md: a procedure with no result carries INVALID_TYPE for one, which
-		// is the absence of a result rather than a type that failed to resolve.
-		return info.result != INVALID_TYPE && type_contains_invalid(c, info.result, seen)
 	}
 	return false
 }
@@ -348,53 +367,22 @@ type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, walk: ^Support_Walk) -
 	if info.known_supported || !type_walk_enter(&walk.seen, id, info) {
 		return true
 	}
-	if info.descriptor {
-		return false // a descriptor exists only during compilation
+	// A descriptor exists only during compilation. A string form is a runtime
+	// carrier, whose borrow provenance `src/borrow.odin` checks, and a C pointer is
+	// a documented trust boundary (design.md "C pointers"): no length, no capability,
+	// and no lifetime check after conversion. Neither is unsupported.
+	if info.descriptor || info.kind == .Invalid || info.kind == .Interface {
+		return false
 	}
-	#partial switch info.kind {
-	// A string form is a runtime carrier: its borrow provenance is checked by
-	// `src/borrow.odin` rather than restricted here.
-	case .Void, .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Type, .Typeid, .Dyn, .Enum,
-	     .Allocator, .Allocator_Error, .String, .String_View, .CString_View,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
-	     .Untyped_String:
-		return true
-	// design.md "C pointers": a documented trust boundary, not an unsupported
-	// type — no length, no capability, and no lifetime check after conversion.
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
-		return type_is_supported_walk(c, info.element, walk)
-	case .Map:
-		return type_is_supported_walk(c, info.key, walk) &&
-		       type_is_supported_walk(c, info.element, walk)
-	case .Union:
+	if info.kind == .Struct || info.kind == .Union {
 		walk.finished &&= record_finished(c, info)
-		for variant in info.variants {
-			if !type_is_supported_walk(c, variant, walk) {
-				return false
-			}
-		}
-		return true
-	case .Struct:
-		walk.finished &&= record_finished(c, info)
-		for field in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil || !type_is_supported_walk(c, symbol.type, walk) {
-				return false
-			}
-		}
-		return true
-	case .Proc:
-		for parameter in info.parameters {
-			if !type_is_supported_walk(c, parameter, walk) {
-				return false
-			}
-		}
-		if info.result != INVALID_TYPE && !type_is_supported_walk(c, info.result, walk) {
+	}
+	for part in type_parts(c, info) {
+		if !type_is_supported_walk(c, part, walk) {
 			return false
 		}
-		return true
 	}
-	return false
+	return true
 }
 
 // Whether a record's declaration has given it its fields. A compiler-made or

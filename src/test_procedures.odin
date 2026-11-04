@@ -136,37 +136,18 @@ type_names_omitted_test :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 	if symbol_omitted_with_test(c, info.symbol, seen) {
 		return true
 	}
-	#partial switch info.kind {
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && type_names_omitted_test(c, sym.type, seen) {
-				return true
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if type_names_omitted_test(c, variant, seen) {
-				return true
-			}
-		}
-	case .Proc:
-		for parameter in info.parameters {
-			if type_names_omitted_test(c, parameter, seen) {
-				return true
-			}
-		}
-		return type_names_omitted_test(c, info.result, seen)
-	case .Dyn:
+	if info.kind == .Dyn {
 		for arg in info.dyn_args {
 			if generic_arg_names_omitted_test(c, arg, seen) {
 				return true
 			}
 		}
 		return symbol_omitted_with_test(c, info.dyn_interface, seen)
-	case .Map:
-		return type_names_omitted_test(c, info.key, seen) || type_names_omitted_test(c, info.element, seen)
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
-		return type_names_omitted_test(c, info.element, seen)
+	}
+	for part in type_parts(c, info) {
+		if type_names_omitted_test(c, part, seen) {
+			return true
+		}
 	}
 	return false
 }

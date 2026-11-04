@@ -218,22 +218,8 @@ carrier_leaves :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, walk
 		carrier_leaves(c, payload, out, walking)
 		return
 	}
-	#partial switch info.kind {
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				carrier_leaves(c, sym.type, out, walking)
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			carrier_leaves(c, variant, out, walking)
-		}
-	case .Array, .Dynamic_Array, .Box:
-		carrier_leaves(c, info.element, out, walking)
-	case .Map:
-		carrier_leaves(c, info.key, out, walking)
-		carrier_leaves(c, info.element, out, walking)
+	for part in type_owned_parts(c, info) {
+		carrier_leaves(c, part, out, walking)
 	}
 }
 
@@ -260,22 +246,8 @@ carrier_reach_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]b
 	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
 		return carrier_reach_walk(c, payload, visiting)
 	}
-	#partial switch info.kind {
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				carrier_reach_join(&out, carrier_reach_walk(c, sym.type, visiting))
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			carrier_reach_join(&out, carrier_reach_walk(c, variant, visiting))
-		}
-	case .Array, .Dynamic_Array, .Box:
-		carrier_reach_join(&out, carrier_reach_walk(c, info.element, visiting))
-	case .Map:
-		carrier_reach_join(&out, carrier_reach_walk(c, info.key, visiting))
-		carrier_reach_join(&out, carrier_reach_walk(c, info.element, visiting))
+	for part in type_owned_parts(c, info) {
+		carrier_reach_join(&out, carrier_reach_walk(c, part, visiting))
 	}
 	return out
 }

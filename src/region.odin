@@ -99,21 +99,10 @@ provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]b
 	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
 		return type_info_is_shared(c, info) && provider_reach_walk(c, payload, visited)
 	}
-	#partial switch info.kind {
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && provider_reach_walk(c, sym.type, visited) {
-				return true
-			}
+	for part in type_owned_parts(c, info) {
+		if provider_reach_walk(c, part, visited) {
+			return true
 		}
-	case .Union:
-		for payload in info.variants {
-			if payload != TYPE_VOID && provider_reach_walk(c, payload, visited) {
-				return true
-			}
-		}
-	case .Array, .Dynamic_Array, .Box, .Map:
-		return provider_reach_walk(c, info.element, visited) || provider_reach_walk(c, info.key, visited)
 	}
 	return false
 }

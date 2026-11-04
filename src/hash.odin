@@ -288,27 +288,13 @@ require_nested_map_key_policies_walk :: proc(k: ^Checker, type: Type_Id, span: S
 	if type == INVALID_TYPE { return true }
 	info := type_of(k.c, type)
 	if info == nil || !type_walk_enter(seen, type, info) { return true }
-	#partial switch info.kind {
-	case .Map:
-		return require_map_key_policy(k, type, span) &&
-		       require_nested_map_key_policies_walk(k, info.key, span, seen) &&
-		       require_nested_map_key_policies_walk(k, info.element, span, seen)
-	case .Array, .Dynamic_Array, .Slice, .Pointer, .C_Pointer, .Box, .Distinct:
-		return require_nested_map_key_policies_walk(k, info.element, span, seen)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(k.c, field); sym != nil &&
-			   !require_nested_map_key_policies_walk(k, sym.type, span, seen) { return false }
+	if info.kind == .Map && !require_map_key_policy(k, type, span) {
+		return false
+	}
+	for part in type_parts(k.c, info) {
+		if !require_nested_map_key_policies_walk(k, part, span, seen) {
+			return false
 		}
-	case .Union:
-		for variant in info.variants {
-			if !require_nested_map_key_policies_walk(k, variant, span, seen) { return false }
-		}
-	case .Proc:
-		for parameter in info.parameters {
-			if !require_nested_map_key_policies_walk(k, parameter, span, seen) { return false }
-		}
-		return require_nested_map_key_policies_walk(k, info.result, span, seen)
 	}
 	return true
 }

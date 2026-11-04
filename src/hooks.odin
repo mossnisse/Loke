@@ -174,22 +174,8 @@ lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Ty
 	if record_resolving(c, info) { return false }
 	open^ ||= info.hooks_resolving
 	visiting[under] = true
-	#partial switch info.kind {
-	case .Array, .Dynamic_Array, .Box:
-		return lifecycle_fields_resolved(c, info.element, visiting, open)
-	case .Map:
-		return lifecycle_fields_resolved(c, info.key, visiting, open) &&
-		       lifecycle_fields_resolved(c, info.element, visiting, open)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && !lifecycle_fields_resolved(c, sym.type, visiting, open) {
-				return false
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if !lifecycle_fields_resolved(c, variant, visiting, open) { return false }
-		}
+	for part in type_owned_parts(c, info) {
+		if !lifecycle_fields_resolved(c, part, visiting, open) { return false }
 	}
 	return true
 }
@@ -219,23 +205,12 @@ collect_hooks :: proc(c: ^Compiler, info: ^Type_Info, entry: ^Lifecycle) {
 	}
 }
 
+// Asked only of what is not managed for itself, as a container or box already is.
 @(private = "file")
 has_managed_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
-	#partial switch info.kind {
-	case .Array:
-		return type_is_managed(c, info.element)
-	case .Struct:
-		for field in info.fields {
-			sym := symbol_of(c, field)
-			if sym != nil && type_is_managed(c, sym.type) {
-				return true
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if type_is_managed(c, variant) {
-				return true
-			}
+	for part in type_owned_parts(c, info) {
+		if type_is_managed(c, part) {
+			return true
 		}
 	}
 	return false
@@ -297,29 +272,12 @@ type_hooks_walk :: proc(c: ^Compiler, type: Type_Id, role: Hook_Kind, visiting: 
 			return
 		}
 	}
-	#partial switch info.kind {
-	case .Array:
-		// A zero-length array has no element to copy or drop (design.md "Slice literals").
-		if info.count > 0 {
-			type_hooks_walk(c, info.element, role, visiting, hooks)
-		}
-	case .Dynamic_Array, .Box:
-		type_hooks_walk(c, info.element, role, visiting, hooks)
-	case .Map:
-		type_hooks_walk(c, info.key, role, visiting, hooks)
-		type_hooks_walk(c, info.element, role, visiting, hooks)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				type_hooks_walk(c, sym.type, role, visiting, hooks)
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if variant != TYPE_VOID {
-				type_hooks_walk(c, variant, role, visiting, hooks)
-			}
-		}
+	// A zero-length array has no element to copy or drop (design.md "Slice literals").
+	if info.kind == .Array && info.count == 0 {
+		return
+	}
+	for part in type_owned_parts(c, info) {
+		type_hooks_walk(c, part, role, visiting, hooks)
 	}
 }
 
@@ -330,8 +288,7 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return lifecycle_of(c, type).clone_disabled
 }
 
-// Unlike `has_managed_part`, containers count: their clone deep-copies elements.
-// The question is whether a move-only type is reachable, so each type is visited
+// Containers count: their clone deep-copies elements. The question is whether a move-only type is reachable, so each type is visited
 // once. What a walk finds holds for the queried type only, so nothing is cached.
 @(private = "file")
 has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
@@ -342,24 +299,9 @@ has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> boo
 
 @(private = "file")
 has_move_only_part_walk :: proc(c: ^Compiler, info: ^Type_Info, visiting: ^map[Type_Id]bool) -> bool {
-	#partial switch info.kind {
-	case .Array, .Dynamic_Array, .Box:
-		return type_clone_disabled_walk(c, info.element, visiting)
-	case .Map:
-		return type_clone_disabled_walk(c, info.key, visiting) ||
-		       type_clone_disabled_walk(c, info.element, visiting)
-	case .Struct:
-		for field in info.fields {
-			sym := symbol_of(c, field)
-			if sym != nil && type_clone_disabled_walk(c, sym.type, visiting) {
-				return true
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if variant != TYPE_VOID && type_clone_disabled_walk(c, variant, visiting) {
-				return true
-			}
+	for part in type_owned_parts(c, info) {
+		if type_clone_disabled_walk(c, part, visiting) {
+			return true
 		}
 	}
 	return false
