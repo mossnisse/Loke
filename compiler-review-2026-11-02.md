@@ -803,23 +803,6 @@ Compact and well ordered, with no bug found. The weight is in two mechanisms tha
 - [provenance_input.odin:99](src/provenance_input.odin#L99): L99-101 repeat L90-92, and "The copy owns its slices" is untrue of `Prov_Value.form`, shared at L122. Replace with: "`seed` is the frozen input `prov_writable_input` copies." (about 2 lines)
 - [provenance_input.odin:86](src/provenance_input.odin#L86): "Preserve the bounded constant-map-key assignment along with cached paths." does not say what the map is. Use: "A constant map key's entry slot, at most `MAP_KEY_SLOTS` of them; cached paths name these."
 
-### src/provenance_read.odin
-
-Small and readable, with no confirmed bugs. Its main costs are a two-field struct that mostly repeats `Prov_Value`, and a dispatch that nearly duplicates `prov_written_aliases_at`.
-
-**Simplification**
-
-- [provenance_read.odin:5](src/provenance_read.odin#L5) `Prov_Read_Input`, `prov_input_read`: `unknown_alias` only copies `value.unknown_alias`, and every caller has the value or reads one field. Replace both with `prov_read_fallback(form: Prov_Form) -> Value_Id`. (about 9 lines)
-
-**Near copies**
-
-- [provenance_read.odin:47](src/provenance_read.odin#L47) and [cfg_provenance.odin:6046](src/cfg_provenance.odin#L6046): both dispatch on direct place, carrier load, then operand fallback. They differ in whether a read that finds nothing is unresolved. Shared form: one place-dispatch proc with an `unresolved: bool`, after checking the storage-to-root round trip at 6052 is not needed. (about 10 lines)
-
-**Structure and boundaries**
-
-- [provenance_read.odin:37](src/provenance_read.odin#L37): the read logic crosses three files: `prov_value_aliases` here, this file, then `prov_written_aliases_of` and back. Move `Written_Alias`, `prov_written_aliases_at` and `prov_written_aliases_of` ([cfg_provenance.odin:5996](src/cfg_provenance.odin#L5996), [6046](src/cfg_provenance.odin#L6046), [6066](src/cfg_provenance.odin#L6066)) here.
-- [provenance_read.odin:16](src/provenance_read.odin#L16): a user `operator([])` value forwards its receiver's targets, while `prov_region_of` follows the operator call ([cfg_provenance.odin:4700](src/cfg_provenance.odin#L4700)) and a plain call is unresolved. Probes with known receiver targets rejected the same as a plain call, so align them or say why they differ.
-
 ### src/provenance_transfer.odin
 
 The logic holds up and its comments are already terse; I found no bug, and probes of the two suspect spots below gave no wrong result. The representation is richer than its consumers: three transfer variants, a mode, a type, and a copy-operation table all carry distinctions that nothing outside a test reads.

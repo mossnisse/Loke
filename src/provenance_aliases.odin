@@ -38,7 +38,7 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place
 		}
 	}
 	out := make([dynamic]Written_Alias, 0, 2, graph.alloc)
-	for alias in prov_written_aliases_at(graph, carrier) {
+	for alias in prov_place_aliases(graph, carrier, unresolved = false) {
 		known := false
 		for seen in out {
 			known ||= seen.target == alias.target && prov_same_path(seen.at, alias.at)
@@ -50,28 +50,63 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place
 	return out[:]
 }
 
-// What the carriers in the storage `e` names or reads through may reach, each
+// What the carriers in the storage `id` names or reads through may reach, each
 // with its path below that storage (design.md "Minimum provenance precision").
 // A read through a carrier first selects its storage, then loads the carriers
-// held there; it does not conflate successive levels of indirection.
+// held there; it does not conflate successive levels of indirection. With
+// `unresolved`, as for a read rather than a write's targets, a value that finds
+// nothing at all is also unresolved when it may find storage no write named.
 @(private)
-prov_written_aliases_at :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias {
+prov_place_aliases :: proc(graph: ^Flow_Graph, id: Value_Id, unresolved: bool) -> []Written_Alias {
 	if id == 0 { return nil }
+	if prov_value_transfer(graph, id) != nil { return prov_value_aliases(graph, id) }
 	value := prov_value(graph, id)
-	if transfer := prov_value_transfer(graph, id); transfer != nil {
-		return prov_value_aliases(graph, id)
+	aliases: []Written_Alias
+	switch base in value.place.base {
+	case Storage_Id:
+		aliases = prov_written_aliases_of(graph, base, value.place.path)
+	case Value_Id:
+		aliases = prov_load_aliases(graph, prov_place_aliases(graph, base, unresolved), value.place.path, value.unknown_alias)
+	case:
+		aliases = prov_place_aliases(graph, prov_read_fallback(value.form), unresolved)
 	}
-	if root, path, ok := prov_value_place_of(graph, id); ok {
-		return prov_written_aliases_of(graph, prov_storage_for_root(graph, root), path)
+	if unresolved && value.unknown_alias && len(aliases) == 0 {
+		return make([]Written_Alias, 1, graph.alloc)
 	}
-	if carrier := prov_place_carrier(graph, id); carrier != 0 {
-		return prov_load_aliases(graph, prov_written_aliases_at(graph, carrier), prov_path_below_carrier(graph, id),
-		                         prov_input_read(graph, id).unknown_alias)
+	return aliases
+}
+
+// What a value that is no place reads from: the operand a projection of a
+// temporary forwards, or the call a user operator is (design.md "Operator
+// declarations").
+@(private = "file")
+prov_read_fallback :: proc(value_form: Prov_Form) -> Value_Id {
+	#partial switch form in value_form {
+	case Prov_Form_Selector: return form.operand
+	case Prov_Form_Index:    return form.operator != 0 ? form.operator : form.operand
+	case Prov_Form_Postfix:  return form.operand
 	}
-	if symbol, named := value.form.(Prov_Form_Symbol); named {
-		return prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = symbol.symbol}), nil)
+	return 0
+}
+
+// design.md "Minimum provenance precision": what a load through a carrier
+// reaches, from each of the carrier's `targets`, at `path` below it. Each
+// possible source contributes known targets or, when `unknown` says the read
+// may find storage no write named, an unresolved alternative, even beside
+// another source's known targets.
+@(private = "file")
+prov_load_aliases :: proc(graph: ^Flow_Graph, targets: []Written_Alias, path: []Proj_Step, unknown: bool) -> []Written_Alias {
+	out := make([dynamic]Written_Alias, graph.alloc)
+	for target in targets {
+		if target.target == 0 {
+			append(&out, target)
+			continue
+		}
+		loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, path))
+		if len(loaded) == 0 && unknown { append(&out, Written_Alias{})
+		} else { append(&out, ..loaded) }
 	}
-	return prov_written_aliases_at(graph, prov_input_read(graph, id).fallback)
+	return out[:]
 }
 
 @(private)

@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Operator declarations": a user operator is a call to the procedure
+// it names, so its result has no target taken from the receiver. The store goes
+// to `b`, which is gone by the reset; `a` is still live and was never written.
+Pick :: struct { held: ^mut [dynamic]int }
+impl Pick {
+	other :: operator([]) proc(self, other: ^mut [dynamic]int) -> ^mut [dynamic]int { return other; }
+}
+
+store_in_other :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	pick := Pick{&mut a};
+	target := pick[&mut b];
+	target^ = make([dynamic]int, 2, allocator);
+	count := b.len();
+	drop(b);
+	free_all(allocator);
+	return count + a.len();
+}
+
+main :: proc() {
+	buffer := [256]u8{};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	fmt.println(store_in_other(arena.allocator()));
+}

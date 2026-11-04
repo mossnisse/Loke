@@ -32,7 +32,7 @@ prov_transfer_parts :: proc(transfer: Prov_Transfer, single: ^[1]Prov_Component)
 prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias {
 	transfer := prov_value_transfer(graph, id)
 	if transfer == nil {
-		return prov_read_value_aliases(graph, id)
+		return prov_place_aliases(graph, id, unresolved = true)
 	}
 	#partial switch operation in transfer {
 	case Prov_Transfer_Borrow:

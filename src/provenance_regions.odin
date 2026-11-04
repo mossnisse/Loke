@@ -1044,7 +1044,7 @@ prov_read_storage_regions :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj
 	out := Region_Set{}
 	carrier := prov_place_carrier(graph, id)
 	if carrier == 0 { return out, false }
-	aliases := prov_written_aliases_at(graph, carrier)
+	aliases := prov_place_aliases(graph, carrier, unresolved = false)
 	known := len(aliases) > 0
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, id), path)
 	for alias in aliases {

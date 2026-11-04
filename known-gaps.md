@@ -716,6 +716,37 @@ main :: proc() {
 }
 ```
 
+### An owner stored through a pointer a call returned is not held against a reset
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+rejects a reset while what its region backs is live, but `prov_store_region_through` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) records a store only in the targets it can
+name. A pointer from a call, or from a user `operator([])`, which is a call, names none, so `a`
+is not known to hold the new owner. This compiles, and `a[0]` reads the reset region:
+
+```loke
+package main;
+import "core:mem";
+Own :: struct { p: ^mut [dynamic]int }
+impl Own {
+    get :: proc(self) -> ^mut [dynamic]int { return self.p; }
+}
+reset_while_live :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    buffer := [64]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 0, kept.allocator());
+    own := Own{&mut a};
+    target := own.get();
+    target^ = make([dynamic]int, 1, allocator);
+    free_all(allocator);
+    return a[0];
+}
+main :: proc() {}
+```
+
+The fix is the one the next entry names: a call's result naming what its result dependencies say
+it points at. Found on 2026-11-04 (P2).
+
 ### An owner built through a pointer a call returned has no known provider
 
 [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
