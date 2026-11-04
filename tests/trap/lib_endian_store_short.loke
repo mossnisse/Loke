@@ -1,0 +1,14 @@
+package main;
+
+import "core:endian";
+import "core:fmt";
+
+// standard-library "Fields of a byte slice": a slice shorter than the field is a
+// programmer's error, and `store` panics before writing any of it.
+bytes := [2]u8{0xAA, 0xAA};
+
+main :: proc() {
+	fmt.println("before");
+	endian.store(&mut bytes[:], u32(1), .Big);
+	fmt.println("not reached");
+}

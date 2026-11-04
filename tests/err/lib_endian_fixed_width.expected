@@ -1,0 +1,15 @@
+L0434
+@12:6
+`load(int)` does not satisfy the bound `is_fixed_width(T)`
+L0434
+@13:6
+`load(bool)` does not satisfy the bound `is_fixed_width(T)`
+L0434
+@14:6
+`load(Color)` does not satisfy the bound `is_fixed_width(T)`
+L0434
+@15:2
+`store(int)` does not satisfy the bound `is_fixed_width(T)`
+L0434
+@16:2
+`store(rune)` does not satisfy the bound `is_fixed_width(T)`

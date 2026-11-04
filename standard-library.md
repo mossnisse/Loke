@@ -19,7 +19,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Parse scalar values | [`core:strconv`](#corestrconv) |
 | Read or write JSON | [`core:encoding/json`](#coreencodingjson) |
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
-| Store integers in a fixed byte order | [`core:endian`](#coreendian) |
+| Store integers in a fixed byte order, or read a field of validated bytes | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath), [`core:simd`](#coresimd) |
@@ -182,7 +182,7 @@ core:strings          UTF-8 algorithms and String_Builder
 core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
 core:encoding/json    JSON documents, values, and a streaming writer
-core:endian           fixed byte-order storage wrappers
+core:endian           fixed byte-order wrappers and byte-slice fields
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
@@ -2313,6 +2313,29 @@ would let a host value land in a stored field unswapped. Equality compares the
 stored bytes, which is equality of the values. Formatting prints the loaded
 value, with the caller's options. Where the host order already matches, `store`
 and `load` compile to nothing.
+
+### Fields of a byte slice
+
+```loke
+is_fixed_width :: proc($T: type) -> bool;
+load  :: proc($T: type, bytes: []u8, order: Order) -> T where is_fixed_width(T);
+store :: proc(bytes: []mut u8, value: $T, order: Order) where is_fixed_width(T);
+```
+
+`is_fixed_width` accepts `u8` through `u128`, `i8` through `i128`, `f16`, `f32`,
+and `f64`. It rejects `int`, `uint`, `uintptr`, `bool`, `rune`, and enums: a format
+has to name a width and a representation, and these leave one of them to the
+target or the compiler.
+
+`load` and `store` use the first `size_of(T)` bytes. A shorter slice panics, and
+`store` then writes nothing, because the caller has already validated the offset.
+They are for back-patching and random access to validated data; untrusted input
+goes through `core:encoding/binary`. A float keeps its exact encoding, as
+[`math.to_bits`](#coremath) describes.
+
+The wrappers stay integral. Their stored form is held in a `T`, and a byte-swapped
+float is not a float: a struct that needs one stores `Big_Endian(u32)` and calls
+`math.from_bits`.
 
 ## `core:strconv`
 

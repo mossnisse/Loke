@@ -1013,6 +1013,9 @@ checklist.
 
 ### Added
 
+- `core:endian` has `load` and `store`, a field of a byte slice in a named order, for every
+  type `is_fixed_width` accepts, floats included
+  ([Fields of a byte slice](standard-library.md#fields-of-a-byte-slice)).
 - `core:math` has `to_bits` and `from_bits`, a float's exact IEEE-754 encoding in each width
   without `core:unsafe` ([`core:math`](standard-library.md#coremath)), and
   [Floating-point operators](design.md#floating-point-operators) now promises that moving a

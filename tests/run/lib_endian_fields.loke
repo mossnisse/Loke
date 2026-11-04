@@ -1,0 +1,94 @@
+package main;
+
+import "core:endian";
+import "core:fmt";
+import "core:math";
+
+// `endian.load`, `endian.store`, and `endian.is_fixed_width` (standard-library
+// "Fields of a byte slice"). The vectors are written out by hand, so a load and
+// a store sharing a mistake cannot agree with each other.
+
+failures := 0;
+
+// Both directions of one type against the bytes it has in big-endian order;
+// the little-endian bytes are the same ones reversed.
+vector :: proc(name: string_view, value: $T, big: []u8) {
+	width := size_of(T);
+	assert(big.len() == width);
+
+	little: [16]u8 = {};
+	foreach (i in 0 ..< width) { little[i] = big[width - 1 - i]; }
+
+	if (!same(endian.load(T, big, .Big), value)) { report(name, "load big"); }
+	if (!same(endian.load(T, little[:width], .Little), value)) { report(name, "load little"); }
+
+	out: [16]u8 = {};
+	endian.store(&mut out[:], value, .Big);
+	foreach (i in 0 ..< width) { if (out[i] != big[i]) { report(name, "store big"); } }
+	foreach (i in width ..< out.len()) { if (out[i] != 0) { report(name, "store big past the field"); } }
+
+	out = {};
+	endian.store(&mut out[:], value, .Little);
+	foreach (i in 0 ..< width) { if (out[i] != little[i]) { report(name, "store little"); } }
+	foreach (i in width ..< out.len()) { if (out[i] != 0) { report(name, "store little past the field"); } }
+}
+
+same :: proc(a: $T, b: T) -> bool {
+	when (T == f16 || T == f32 || T == f64) {
+		return math.to_bits(a) == math.to_bits(b);
+	} else {
+		return a == b;
+	}
+}
+
+report :: proc(name, what: string_view) {
+	failures += 1;
+	fmt.println("FAILED", name, what);
+}
+
+Color :: enum u8 { Red }
+
+main :: proc() {
+	vector("u8", u8(0xA5), []u8{0xA5});
+	vector("i8", i8(-91), []u8{0xA5});
+	vector("u16", u16(0x0102), []u8{0x01, 0x02});
+	vector("i16", i16(-2), []u8{0xFF, 0xFE});
+	vector("u32", u32(0x01020304), []u8{0x01, 0x02, 0x03, 0x04});
+	vector("i32", i32(-16909061), []u8{0xFE, 0xFD, 0xFC, 0xFB});
+	vector("u64", u64(0x0102030405060708), []u8{1, 2, 3, 4, 5, 6, 7, 8});
+	vector("i64", i64(-2), []u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE});
+	vector("u128", (u128(0x0102030405060708) << 64) | u128(0x090A0B0C0D0E0F10),
+		[]u8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+	vector("i128", i128(-3),
+		[]u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD});
+
+	// High bits at both ends: a sign extension or a shift of the wrong width
+	// would show here.
+	vector("u32 high", u32(0x80000001), []u8{0x80, 0x00, 0x00, 0x01});
+	vector("i32 min", i32(-2147483648), []u8{0x80, 0x00, 0x00, 0x00});
+	vector("u64 high", u64(0x8000000000000001), []u8{0x80, 0, 0, 0, 0, 0, 0, 0x01});
+
+	vector("f16", f16(1.0), []u8{0x3C, 0x00});
+	vector("f32", f32(1.0), []u8{0x3F, 0x80, 0x00, 0x00});
+	vector("f64", f64(-2.5), []u8{0xC0, 0x04, 0, 0, 0, 0, 0, 0});
+
+	// Signalling NaNs keep their encoding through each width.
+	vector("f16 snan", math.from_bits(u16(0x7D01)), []u8{0x7D, 0x01});
+	vector("f32 snan", math.from_bits(u32(0x7FA00001)), []u8{0x7F, 0xA0, 0x00, 0x01});
+	vector("f64 snan", math.from_bits(u64(0x7FF4000000000001)), []u8{0x7F, 0xF4, 0, 0, 0, 0, 0, 0x01});
+
+	// A longer slice is fine, and only the first bytes count.
+	long := [6]u8{0x01, 0x02, 0xEE, 0xEE, 0xEE, 0xEE};
+	fmt.println(endian.load(u16, long[:], .Big) == u16(0x0102));
+
+	// Patching in place leaves its neighbours alone.
+	patched := [6]u8{0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA};
+	endian.store(&mut patched[1:], u32(0x01020304), .Little);
+	fmt.println(patched);
+
+	fmt.println(endian.is_fixed_width(u8), endian.is_fixed_width(i128), endian.is_fixed_width(f16));
+	fmt.println(endian.is_fixed_width(int), endian.is_fixed_width(uint), endian.is_fixed_width(uintptr));
+	fmt.println(endian.is_fixed_width(bool), endian.is_fixed_width(rune), endian.is_fixed_width(Color));
+
+	fmt.println("failures", failures);
+}
