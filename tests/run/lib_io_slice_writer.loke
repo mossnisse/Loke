@@ -1,0 +1,75 @@
+package main;
+
+import "core:fmt";
+import "core:io";
+
+// `io.Slice_Writer` and `Buffer_Writer.bytes_mut` (standard-library "Bounded
+// byte sink", "Byte buffer").
+
+show :: proc(status: Status(io.Error)) {
+	switch (status) {
+	case .ok: fmt.println("ok");
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+show_write :: proc(result: Result(int, io.Error)) {
+	switch (result) {
+	case .ok(count): fmt.println("wrote", count);
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+main :: proc() {
+	storage := [6]u8{9, 9, 9, 9, 9, 9};
+	sink := io.Slice_Writer.init(&mut storage[:]);
+	fmt.println(sink.len(), sink.space(), sink.bytes());
+
+	// Below capacity.
+	show_write(sink.write([]u8{1, 2}));
+	fmt.println(sink.len(), sink.space(), sink.bytes());
+
+	// Past capacity: nothing is written, and what fits is not taken either.
+	show_write(sink.write([]u8{3, 4, 5, 6, 7}));
+	fmt.println(sink.len(), sink.space(), sink.bytes());
+
+	// Exactly at capacity.
+	show_write(sink.write([]u8{3, 4, 5, 6}));
+	fmt.println(sink.len(), sink.space(), sink.bytes());
+
+	// Full: an empty write succeeds, and one byte does not.
+	show_write(sink.write({}));
+	show_write(sink.write([]u8{7}));
+	fmt.println(sink.bytes());
+
+	// `write_all` and `write_string` meet it through the protocol.
+	short: [3]u8 = {};
+	other := io.Slice_Writer.init(&mut short[:]);
+	show(io.write_all(inout other, []u8{1, 2}));
+	show(io.write_string(inout other, "xy"));
+	fmt.println(other.len(), other.bytes());
+
+	// Formatting reaches it through the same protocol.
+	room: [4]u8 = {};
+	limited := io.Slice_Writer.init(&mut room[:]);
+	show(io.write_formatted(inout limited, 12));
+	fmt.println(limited.len());
+
+	// The zero value has no room, and is a sink all the same.
+	zero: io.Slice_Writer = {};
+	fmt.println(zero.len(), zero.space());
+	show_write(zero.write({}));
+	show_write(zero.write([]u8{1}));
+
+	// The borrowed slice holds the bytes once the writer is gone.
+	fmt.println(storage);
+
+	// `bytes_mut` patches a finished buffer in place.
+	buffer: io.Buffer_Writer = {};
+	show(io.write_all(inout buffer, []u8{1, 2, 3}));
+	view := buffer.bytes_mut();
+	view[1] = 7;
+	fmt.println(buffer.bytes());
+	zero_buffer: io.Buffer_Writer = {};
+	fmt.println(zero_buffer.bytes_mut().len());
+}

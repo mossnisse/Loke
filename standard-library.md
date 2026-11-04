@@ -369,6 +369,7 @@ Buffer_Writer :: struct { /* private */ }
 Buffer_Writer.init(allocator: Allocator = mem.default_allocator()) -> Buffer_Writer
 Buffer_Writer.write(self: inout, source: []u8) -> Result(int, Error)
 Buffer_Writer.bytes(self: ^) -> []u8
+Buffer_Writer.bytes_mut(self: inout) -> []mut u8
 Buffer_Writer.len(self) -> int
 Buffer_Writer.clear(self: inout)
 Buffer_Writer.into_bytes(self: move) -> [dynamic]u8
@@ -378,11 +379,29 @@ Buffer_Writer.into_bytes(self: move) -> [dynamic]u8
 output assembled in memory before it is published, such as a document passed
 to `fs.replace_atomic`. A write appends all of its bytes or none: an allocation
 failure is `Out_Of_Memory` with operation `Write`, and the buffer is unchanged.
-`bytes` borrows the contents, so a write while that view is in use is rejected.
+`bytes` borrows the contents, so a write while that view is in use is rejected,
+and `bytes_mut` does the same for patching a finished record in place.
 `clear` keeps the capacity for reuse, and `into_bytes` transfers the storage
 without a copy. **The zero value is usable**: empty and allocator-unbound, its
 first growth binding the default allocator; `init` selects another without
 allocating.
+
+### Bounded byte sink
+
+```loke
+Slice_Writer :: struct { /* private */ }
+Slice_Writer.init(target: []mut u8) -> Slice_Writer
+Slice_Writer.write(self: inout, source: []u8) -> Result(int, Error)
+Slice_Writer.bytes(self: ^) -> []u8
+Slice_Writer.len(self) -> int
+Slice_Writer.space(self) -> int
+```
+
+`Slice_Writer` is `Buffer_Writer`'s fixed-capacity peer, for output into memory
+the caller owns. A write that does not fit is `Out_Of_Space` with operation `Write`
+and writes nothing, even where the `Writer` protocol would allow a prefix. An empty
+write succeeds even when full. It never allocates, and its zero value is a usable
+writer with no room.
 
 ### Formatting bridge
 

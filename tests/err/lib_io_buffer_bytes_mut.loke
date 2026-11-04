@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+import "core:io";
+
+// standard-library "Byte buffer": `bytes_mut` borrows, so no write can happen
+// while the view is in use.
+
+main :: proc() {
+	buffer: io.Buffer_Writer = {};
+	view := buffer.bytes_mut();
+	_ = buffer.write([]u8{1});
+	fmt.println(view.len());
+}

@@ -1013,6 +1013,8 @@ checklist.
 
 ### Added
 
+- `core:io` has `Slice_Writer`, a [bounded byte sink](standard-library.md#bounded-byte-sink) over a
+  caller's slice, and `Buffer_Writer.bytes_mut`, to patch a finished buffer in place.
 - `core:endian` has `load` and `store`, a field of a byte slice in a named order, for every
   type `is_fixed_width` accepts, floats included
   ([Fields of a byte slice](standard-library.md#fields-of-a-byte-slice)).

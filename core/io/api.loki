@@ -233,6 +233,12 @@ impl Buffer_Writer {
 	*/
 	bytes :: proc(self: ^) -> []u8 ---;
 
+	/*
+		Everything written so far, to patch in place: a length or a checksum known
+		only once the rest is written. A write while the view is in use is rejected.
+	*/
+	bytes_mut :: proc(self: inout) -> []mut u8 ---;
+
 	len :: proc(self) -> int ---;
 
 	// Forgets the contents and keeps the allocation, for the next document.
@@ -240,6 +246,31 @@ impl Buffer_Writer {
 
 	// The contents as owned bytes, without a copy.
 	into_bytes :: proc(self: move) -> [dynamic]u8 ---;
+}
+
+/*
+	`Buffer_Writer`'s fixed-capacity peer: a `Writer` whose bytes land in a slice
+	the caller owns. A write that does not fit fails with `Out_Of_Space` and writes
+	nothing, and nothing here allocates.
+
+	**The zero value is a usable writer with no room.**
+*/
+Slice_Writer :: struct {
+	// and fields private to the package
+}
+
+impl Slice_Writer {
+	init :: proc(target: []mut u8) -> Slice_Writer ---;
+
+	write :: proc(self: inout, source: []u8) -> Result(int, Error) ---;
+
+	// Everything written so far, borrowed: a write while the view is in use is rejected.
+	bytes :: proc(self: ^) -> []u8 ---;
+
+	len :: proc(self) -> int ---;
+
+	// How many more bytes fit.
+	space :: proc(self) -> int ---;
 }
 
 /*

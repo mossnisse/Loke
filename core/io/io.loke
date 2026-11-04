@@ -425,6 +425,12 @@ impl Buffer_Writer {
 	*/
 	bytes :: proc(self: ^) -> []u8 { return self.data[:]; }
 
+	/**
+		Everything written so far, to patch in place: a length or a checksum known
+		only once the rest is written. A write while the view is in use is rejected.
+	*/
+	bytes_mut :: proc(self: inout) -> []mut u8 { return &mut self.data[:]; }
+
 	len :: proc(self) -> int { return self.data.len(); }
 
 	/// Forgets the contents and keeps the allocation, for the next document.
@@ -435,6 +441,43 @@ impl Buffer_Writer {
 }
 
 // ------------------------------------------------------- formatting bridge --
+
+/**
+	`Buffer_Writer`'s fixed-capacity peer: a `Writer` whose bytes land in a slice
+	the caller owns. A write that does not fit fails with `Out_Of_Space` and writes
+	nothing, and nothing here allocates.
+
+	**The zero value is a usable writer with no room.**
+*/
+// standard-library "Bounded byte sink". All or nothing, where the protocol would
+// allow a prefix, so a failed field leaves no part of itself behind.
+Slice_Writer :: struct {
+	@(private) target: []mut u8,
+	@(private) used:   int,
+}
+
+impl Slice_Writer {
+	init :: proc(target: []mut u8) -> Slice_Writer { return {target, 0}; }
+
+	write :: proc(self: inout, source: []u8) -> Result(int, Error) {
+		if (source.len() > self.space()) {
+			return .err(make_error(.Out_Of_Space, .Write));
+		}
+		foreach (i in 0 ..< source.len()) {
+			self.target[self.used + i] = source[i];
+		}
+		self.used += source.len();
+		return source.len();
+	}
+
+	/// Everything written so far, borrowed: a write while the view is in use is rejected.
+	bytes :: proc(self: ^) -> []u8 { return self.target[:self.used]; }
+
+	len :: proc(self) -> int { return self.used; }
+
+	/// How many more bytes fit.
+	space :: proc(self) -> int { return self.target.len() - self.used; }
+}
 
 /**
 	A `fmt.Sink` cannot report a failure, which is fine for a diagnostic sink and
