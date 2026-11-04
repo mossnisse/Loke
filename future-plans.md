@@ -93,7 +93,8 @@ Implementation order:
 3. Add the testing and binary/text facilities those programs actually require.
    Introduce `core:bytes`, buffered I/O, or further encodings only when a
    caller establishes their contracts, as `core:time`, `core:random`, and
-   `core:encoding/json` were.
+   `core:encoding/json` were. Typed binary fields and checksums are designed in
+   the [binary data proposal](binary-data-proposal-2026-11-04.md#summary).
 4. For every public API, add an example and the applicable allocator-failure,
    cleanup, Unicode, short-I/O, and platform-conformance cases from
    [Standard-library verification](compiler-architecture.md#standard-library-verification).
