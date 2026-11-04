@@ -3,6 +3,7 @@
 package lokec
 
 import "core:reflect"
+import "core:strings"
 
 Opt_Mode :: enum {
 	None,
@@ -132,4 +133,38 @@ predeclare_build_config :: proc(c: ^Compiler) {
 		type        = TYPE_UNTYPED_STRING,
 		const_value = Const_Value{kind = .String, text = LOKE_VERSION_STRING},
 	})
+}
+
+@(private)
+seed_defines :: proc(c: ^Compiler, defines: []string) {
+	c.defines = make(map[string]Const_Value, len(defines), c.semantic_allocator)
+	for entry in defines {
+		split := strings.index_byte(entry, '=')
+		if split <= 0 {
+			errorf(c, NO_SPAN, "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
+			continue
+		}
+		name := entry[:split]
+		text := entry[split + 1:]
+		if !identifier_spelling(name) {
+			errorf(c, NO_SPAN, "L0388", "`%s` is not a valid configuration name", name)
+			continue
+		}
+		if _, duplicate := c.defines[name]; duplicate {
+			errorf(c, NO_SPAN, "L0388", "`%s` is defined more than once", name)
+			continue
+		}
+		switch text {
+		case "true":
+			c.defines[name] = bool_const(true)
+		case "false":
+			c.defines[name] = bool_const(false)
+		case:
+			if value, ok := bi_parse_int_literal(c, text); ok {
+				c.defines[name] = integer_const(value)
+			} else {
+				c.defines[name] = Const_Value{kind = .String, text = text}
+			}
+		}
+	}
 }

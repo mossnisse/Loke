@@ -1522,6 +1522,7 @@ checklist.
 - A pointer from a user `operator([])` is treated as the call's result it is, and no longer as pointing
   wherever the receiver's carriers do. A store through one, where the operator returned another
   argument, was blamed on the receiver's target, so a reset with that target live was rejected (L0537).
+- A bad `-define` no longer hides a bad `-collection`: both are reported in one run.
 - A field's name used as a key of a record literal no longer counts as a mention of what that name
   declares. `Vec :: [size_of(Cfg{Vec = 2})]$T` was rejected as defined in terms of itself (L0745), and an
   interface `slot` with such a key named after its subject as not dyn-compatible (L0463).

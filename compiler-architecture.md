@@ -872,12 +872,12 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration, and provider selection. |
+| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration including `-define`, and provider selection. |
 | `test_runner.odin` | The `-test` driver, which runs a built test executable once per test. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
-| `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
+| `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `-collection` entries and `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
 | `compiler.odin` | The `Compiler` record; destruction lives in `semantic.odin`. |
 | `source.odin` | Sources, spans, diagnostics, and probes. |
 | `lexer.odin` | Tokens, lexical scanning, and decoding a string or rune literal's spelling. |

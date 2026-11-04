@@ -1,0 +1,5 @@
+package main;
+
+// A bad `-define` does not hide a bad `-collection`: the two are read apart and
+// both reported.
+main :: proc() {}

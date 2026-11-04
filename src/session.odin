@@ -26,10 +26,7 @@ DEFAULT_COMPILATION_CONFIG :: Compilation_Config{
 	panic_unwind = true,
 }
 
-// Fill in place and never copy a live session: its allocators point into it.
-// Compiler data, IDs, diagnostics and emitted text are borrowed until the next
-// invalidation, overlay edit, check or destruction. Configuration is copied and
-// fixed for the session.
+// Never copy a live session: its allocators point into it (compiler-architecture.md "Reusable batch sessions").
 Compilation_Session :: struct {
 	compiler: Compiler,
 	config: Compilation_Config,
@@ -63,7 +60,8 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 	for entry, index in config.collections {
 		s.config.collections[index] = strings.clone(entry, allocator)
 	}
-	s.configured = configure_session(s)
+	configure_session(s)
+	s.configured = s.compiler.error_count == 0
 	return s.configured
 }
 
@@ -74,12 +72,7 @@ finalize_semantics :: proc(c: ^Compiler) {
 	_ = finalize_lifecycle_operations(c)
 }
 
-// External input changes invalidate the whole checked result. Keep copied
-// configuration, overlays, and package checkpoints: an incremental check re-reads
-// every input before reusing one, and `check_session` still rebuilds everything
-// (compiler-architecture.md "Invalidation rules"). Callers notify disk/project
-// changes; no watcher or path filter is implied. Requires exclusive use, just
-// like checking and overlay edits.
+// Expires the checked result after an external change, which the caller reports (compiler-architecture.md "Invalidation rules").
 invalidate_session :: proc(s: ^Compilation_Session) -> bool {
 	if !s.initialized { return false }
 	invalidate_session_snapshot(s)
@@ -87,19 +80,20 @@ invalidate_session :: proc(s: ^Compilation_Session) -> bool {
 }
 
 @(private = "file")
-configure_session :: proc(s: ^Compilation_Session) -> bool {
+configure_session :: proc(s: ^Compilation_Session) {
 	context.allocator = s.allocator
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	c, config := &s.compiler, s.config
 	c.copy_cost_threshold, c.copy_cost_enabled = config.copy_cost, config.copy_cost_enabled
 	c.panic_unwind = config.panic_unwind
 	c.opt_mode, c.build_mode = config.opt_mode, config.build_mode
-	c.cpu, c.target = config.cpu, windows_x64_target(config.cpu)
+	c.cpu = config.cpu
 	c.debug_info, c.debug = config.debug_info, config.debug
 	c.log_level = config.log_level
-	configured := seed_defines(c, config.defines) && register_collections(c, config.collections)
+	init_semantic_stores(c)
+	seed_defines(c, config.defines)
+	register_collections(c, config.collections)
 	c.source_overlays = &s.overlays
-	return configured
 }
 
 // Every check reloads sources, manifests and imports and runs the whole-program
@@ -118,9 +112,9 @@ check_session_incremental :: proc(s: ^Compilation_Session, input: string, docume
 
 @(private = "file")
 check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation, incremental: bool) -> bool {
-	if !s.initialized || !s.configured { return false }
-	s.compiler.provenance_stats = {}
+	if !s.configured { return false }
 	context.allocator = s.allocator
+	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	// Input may itself be borrowed from the preceding snapshot.
 	input_copy := strings.clone(input)
 	defer delete(input_copy)
@@ -129,45 +123,42 @@ check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation
 	virtual.arena_destroy(&s.stats_arena)
 	s.check_stats = {}
 	if incremental && s.started && try_incremental_check(s, input_copy, documentation) {
-		return finish_session_check(s, s.compiler.root_package, s.compiler.error_count == 0, documentation)
+		return finish_session_check(s, documentation)
 	}
 	destroy_package_cache(&s.package_cache)
 	if s.started {
 		destroy_compilation(&s.compiler)
 		virtual.arena_destroy(&s.scratch_arena)
-		if !configure_session(s) { return false }
+		configure_session(s)
 	}
-	s.started, s.ready = true, false
-	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
+	s.started = true
 	c := &s.compiler
 	if incremental {
 		s.package_cache.allocator = s.allocator
 		c.package_cache = &s.package_cache
-		// Configuration was already allocated; subsequent owned inputs join it.
+		// Checkpoint images cover sources, syntax and diagnostics only in the semantic arena.
 		c.sources.allocator, c.parsed_files.allocator = c.semantic_allocator, c.semantic_allocator
 		c.diagnostics.allocator, c.held_diagnostics.allocator = c.semantic_allocator, c.semantic_allocator
 	}
-	// The caller may release its path as soon as this call returns.
+	// The compiler keeps its path; input_copy is freed on return.
 	path := strings.clone(input_copy, c.semantic_allocator)
 	if !register_project(c, path) { return false }
-	root, compiled := compile_program(c, path)
-	if c.package_cache != nil && len(s.package_cache.entries) > 0 {
+	compile_program(c, path)
+	if incremental && len(s.package_cache.entries) > 0 {
 		remember_incremental_inputs(s, input_copy, documentation)
 	}
-	return finish_session_check(s, root, compiled, documentation)
+	allocator := virtual.arena_allocator(&s.stats_arena)
+	s.check_stats.rechecked_packages = make([]Package_Id, max(0, len(c.packages) - 1), allocator)
+	for index in 1 ..< len(c.packages) { s.check_stats.rechecked_packages[index - 1] = Package_Id(index) }
+	return finish_session_check(s, documentation)
 }
 
 @(private = "file")
-finish_session_check :: proc(s: ^Compilation_Session, root: Package_Id, compiled, documentation: bool) -> bool {
+finish_session_check :: proc(s: ^Compilation_Session, documentation: bool) -> bool {
 	c := &s.compiler
-	if len(s.check_stats.rechecked_packages) == 0 {
-		allocator := virtual.arena_allocator(&s.stats_arena)
-		s.check_stats.rechecked_packages = make([]Package_Id, max(0, len(c.packages) - 1), allocator)
-		for index in 1 ..< len(c.packages) { s.check_stats.rechecked_packages[index - 1] = Package_Id(index) }
-	}
-	if compiled {
-		if c.build_mode == .Exe && !documentation { validate_executable(c, root) }
-		if c.build_mode == .Test && !documentation { collect_tests(c, root) }
+	if c.error_count == 0 {
+		if c.build_mode == .Exe && !documentation { validate_executable(c, c.root_package) }
+		if c.build_mode == .Test && !documentation { collect_tests(c, c.root_package) }
 		check_exports(c, defines_entry = c.build_mode != .Obj && !documentation)
 	}
 	if c.error_count > 0 { return false }
@@ -178,9 +169,7 @@ finish_session_check :: proc(s: ^Compilation_Session, root: Package_Id, compiled
 	return c.error_count == 0
 }
 
-// In-memory emission creates no artifacts and performs no toolchain invocation.
-// It consumes only the finalized state; an unchecked/failed/documentation
-// session is rejected without entering the backend.
+// Rejects an unchecked, failed or documentation session.
 // ponytail: every call adds a module to the emission arena until the next check;
 // resetting it per call would also free emission diagnostics living there.
 emit_session_ir :: proc(s: ^Compilation_Session) -> (string, bool) {
@@ -189,12 +178,10 @@ emit_session_ir :: proc(s: ^Compilation_Session) -> (string, bool) {
 	return emit_llvm_module(&s.compiler)
 }
 
-// Artifact/toolchain policy is supplied separately from checking configuration.
 // A missing output path is the caller's mistake, rejected like an unchecked
 // session: no diagnostic, so it cannot block later emission of the same check.
 emit_session :: proc(s: ^Compilation_Session, opts: Emission_Options) -> int {
 	if !s.ready || s.compiler.error_count > 0 || opts.output == "" { return 2 }
-	context.allocator = s.allocator
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	return emit_package(&s.compiler, opts)
 }
@@ -213,77 +200,4 @@ destroy_session :: proc(s: ^Compilation_Session) {
 	}
 	delete(s.overlays)
 	s^ = {}
-}
-
-@(private = "file")
-seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
-	init_semantic_stores(c)
-	c.defines = make(map[string]Const_Value, len(defines), c.semantic_allocator)
-	for entry in defines {
-		split := strings.index_byte(entry, '=')
-		if split <= 0 {
-			errorf(c, NO_SPAN, "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
-			continue
-		}
-		name := entry[:split]
-		text := entry[split + 1:]
-		if !identifier_spelling(name) {
-			errorf(c, NO_SPAN, "L0388", "`%s` is not a valid configuration name", name)
-			continue
-		}
-		if _, duplicate := c.defines[name]; duplicate {
-			errorf(c, NO_SPAN, "L0388", "`%s` is defined more than once", name)
-			continue
-		}
-		switch text {
-		case "true":
-			c.defines[name] = bool_const(true)
-		case "false":
-			c.defines[name] = bool_const(false)
-		case:
-			if value, ok := bi_parse_int_literal(c, text); ok {
-				c.defines[name] = integer_const(value)
-			} else {
-				c.defines[name] = Const_Value{kind = .String, text = text}
-			}
-		}
-	}
-	return c.error_count == 0
-}
-
-// Explicit entries replace bundled `base:` and `core:` roots.
-@(private = "file")
-register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
-	init_semantic_stores(c)
-	for name in ([]string{"base", "core"}) {
-		if bundled := install_component(name); bundled != "" {
-			c.collections[name] = strings.clone(bundled, c.semantic_allocator)
-		}
-	}
-
-	explicit := make(map[string]bool, len(entries), context.temp_allocator)
-	for entry in entries {
-		split := strings.index_byte(entry, '=')
-		if split <= 0 {
-			errorf(c, NO_SPAN, "L0333", "`-collection %s` needs the form name=path", entry)
-			continue
-		}
-		name := entry[:split]
-		root := entry[split + 1:]
-		if strings.index_byte(name, ':') >= 0 {
-			errorf(c, NO_SPAN, "L0333", "collection name `%s` cannot contain `:`", name)
-			continue
-		}
-		if root == "" {
-			errorf(c, NO_SPAN, "L0333", "collection `%s` needs a path", name)
-			continue
-		}
-		if explicit[name] {
-			errorf(c, NO_SPAN, "L0333", "collection `%s` is registered more than once", name)
-			continue
-		}
-		explicit[name] = true
-		c.collections[name] = strings.clone(root, c.semantic_allocator)
-	}
-	return c.error_count == 0
 }

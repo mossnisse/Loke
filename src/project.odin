@@ -98,3 +98,38 @@ parse_require_line :: proc(line: string) -> (name, written: string, ok: bool) {
 	rest := strings.trim_space(line[len("require"):])
 	return name, strings.trim_space(rest[len(name):]), true
 }
+
+// Explicit entries replace bundled `base:` and `core:` roots.
+@(private)
+register_collections :: proc(c: ^Compiler, entries: []string) {
+	for name in ([]string{"base", "core"}) {
+		if bundled := install_component(name); bundled != "" {
+			c.collections[name] = strings.clone(bundled, c.semantic_allocator)
+		}
+	}
+
+	explicit := make(map[string]bool, len(entries), context.temp_allocator)
+	for entry in entries {
+		split := strings.index_byte(entry, '=')
+		if split <= 0 {
+			errorf(c, NO_SPAN, "L0333", "`-collection %s` needs the form name=path", entry)
+			continue
+		}
+		name := entry[:split]
+		root := entry[split + 1:]
+		if strings.index_byte(name, ':') >= 0 {
+			errorf(c, NO_SPAN, "L0333", "collection name `%s` cannot contain `:`", name)
+			continue
+		}
+		if root == "" {
+			errorf(c, NO_SPAN, "L0333", "collection `%s` needs a path", name)
+			continue
+		}
+		if explicit[name] {
+			errorf(c, NO_SPAN, "L0333", "collection `%s` is registered more than once", name)
+			continue
+		}
+		explicit[name] = true
+		c.collections[name] = strings.clone(root, c.semantic_allocator)
+	}
+}

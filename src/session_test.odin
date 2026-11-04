@@ -1,6 +1,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -216,6 +217,31 @@ session_creation_and_destruction_release_owned_state :: proc(t: ^testing.T) {
 		testing.expect(t, s.configuration_arena.curr_block == nil && s.scratch_arena.curr_block == nil && s.compiler.emission_arena.curr_block == nil)
 		destroy_session(&s)
 	}
+}
+
+// A host that never frees its temp allocator must not grow it by checking.
+@(test)
+session_checks_leave_the_callers_temp_allocator_alone :: proc(t: ^testing.T) {
+	root := session_fixture(t, "caller-temp")
+	if root == "" { return }
+	defer remove_tree(root)
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	if !write_session_source(t, path, "package main; import \"core:fmt\"; main :: proc() { fmt.println(1); }") { return }
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+
+	tracker: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&tracker, context.allocator)
+	defer mem.tracking_allocator_destroy(&tracker)
+	caller_temp := mem.tracking_allocator(&tracker)
+	{
+		context.temp_allocator = caller_temp
+		testing.expect(t, check_session_incremental(&s, path))
+		testing.expect(t, check_session_incremental(&s, path))
+		testing.expect(t, check_session(&s, path))
+	}
+	testing.expectf(t, tracker.total_allocation_count == 0, "%d allocations on the caller's temp allocator", tracker.total_allocation_count)
 }
 
 @(private = "file")

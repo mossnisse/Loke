@@ -204,7 +204,7 @@ The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771)
 
 #### Configuration declared three times
 
-The same nine settings are fields of `Compilation_Config` ([session.odin:9](src/session.odin#L9)), `Options` ([main.odin:88](src/main.odin#L88)) and `Compiler` ([source.odin:278](src/source.odin#L278)), and are copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and [session.odin:87](src/session.odin#L87). One embedded `Build_Settings` struct saves about 25 lines. [session.odin:90](src/session.odin#L90) also sets `c.target`, which [semantic.odin:937](src/semantic.odin#L937) overwrites from the same `c.cpu`.
+The same nine settings are fields of `Compilation_Config` ([session.odin:9](src/session.odin#L9)), `Options` ([main.odin:88](src/main.odin#L88)) and `Compiler` ([source.odin:278](src/source.odin#L278)), and are copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and [session.odin:87](src/session.odin#L87). One embedded `Build_Settings` struct saves about 25 lines.
 
 ### Provenance and borrow analysis
 
@@ -887,48 +887,11 @@ The stores and interning are sound, and the `Symbol` and `Type_Info` definitions
 
 ### src/session.odin
 
-A compact, sound orchestrator whose lifecycle ordering holds up. It carries about ten redundant checks and assignments, its contract comments repeat the architecture document, and a third of it is configuration parsing that the source map assigns elsewhere.
-
-**Bugs**
-
-- `BUG-session-1` **low** [session.odin:125](src/session.odin#L125) `check_session_impl`: `finish_session_check` on the incremental path runs on the caller's `temp_allocator`, because line 134 is reached only by a full check. Scenario: a host that never frees temp grows its thread temp arena on each incremental check; the retained data I traced is not temp, so nothing dangles. Fix: move line 134 up beside line 116. *Not verified.*
-
-**Simplification**
-
-- [session.odin:93](src/session.odin#L93) `configure_session`: `seed_defines`, `register_collections` and `configure_session` only return `error_count == 0`. Drop the bools, call both, and set `s.configured = s.compiler.error_count == 0` at line 66; a bad `-define` then no longer hides a bad `-collection` behind `&&`. (about 5 lines)
-- [session.odin:154](src/session.odin#L154) `finish_session_check`: `root` is `c.root_package` whenever it is read, and `compiled` is false only after a reported error (`load_source`, `load_package_dir`, `check_import_cycles`). Reduce to `finish_session_check(s, documentation)` with `if c.error_count == 0`. (2 parameters, about 1 line)
-
-**Dead code**
-
-- (branch) [session.odin:115](src/session.odin#L115): `provenance_stats = {}` has no effect on any path. A first check is already zero, a fallback hits `c^ = {}` in `destroy_compilation`, and a reuse hits `c^ = checkpoint.state`, captured before the analysis writes it. Delete it.
-- (branch) [session.odin:114](src/session.odin#L114): `!s.initialized` is implied by `!s.configured`, which is set only at line 66 and cleared by `s^ = {}`. Keep only the second test.
-- (branch) [session.odin:133](src/session.odin#L133): `s.ready` is already false from `invalidate_session_snapshot` at line 120. Write `s.started = true`.
-- (branch) [session.odin:90](src/session.odin#L90): `c.target` is overwritten by [semantic.odin:937](src/semantic.odin#L937) when `seed_defines` initializes the stores three lines later, always from a zeroed compiler. Assign only `c.cpu`.
-- (branch) [session.odin:131](src/session.odin#L131): this `configure_session` cannot fail, since it re-parses the copied strings that line 114 proved valid at initialization. The `return false` is unreachable.
-- (branch) [session.odin:147](src/session.odin#L147): `c.package_cache != nil` always equals `incremental` here: only line 138 sets it, and every earlier path leaves a zeroed compiler. Test `incremental`.
-- (branch) [session.odin:190](src/session.odin#L190): `context.allocator = s.allocator` has no effect, since `emit_session` allocates nothing and [emit_llvm_toolchain.odin:28](src/emit_llvm_toolchain.odin#L28) replaces it on entry. `emit_session_ir` already omits it. Delete it.
-- (branch) [session.odin:258](src/session.odin#L258): `len(name) > 0` is always true; the only caller rejects `split <= 0` at line 219. Return `true`.
-- (branch) [session.odin:264](src/session.odin#L264): `init_semantic_stores` is redundant, since the one caller always runs `seed_defines` first and that call initializes the stores. Delete it, or move the single call to `configure_session`.
-- `emit_session_ir` ([session.odin:179](src/session.odin#L179)): not dead, but only `session_test.odin` calls it; neither the CLI nor `lsp/` does. It is a documented API that the tests use to compare IR against fresh sessions.
+What remains is the configuration near copy, shared with `main.odin` and `source.odin`.
 
 **Near copies**
 
 - [session.odin:9](src/session.odin#L9), [main.odin:110](src/main.odin#L110) and [source.odin:278](src/source.odin#L278): the same nine settings are declared three times, then copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and session.odin:87-92. One embedded `Compilation_Settings` struct with its default replaces those copies. (about 25 lines)
-
-**Structure and boundaries**
-
-- [session.odin:156](src/session.odin#L156): `finish_session_check` infers "this was a full check" from an empty `rechecked_packages`. Move the block to the full path after line 146, so the shared finish step only finishes and the two paths each record their own stats.
-- [session.odin:213](src/session.odin#L213): lines 213-299 parse `-define` and `-collection`, while the source map gives this file orchestration and `build_config.odin` build configuration. Move `seed_defines` to `build_config.odin`, and `register_collections` to `project.odin`, whose comment already states the `-collection` precedence.
-
-**Comments**
-
-- [session.odin:29](src/session.odin#L29): shorten to `// Never copy a live session: its allocators point into it (compiler-architecture.md "Reusable batch sessions").` The lifetime list repeats that section.
-- [session.odin:70](src/session.odin#L70): shorten to `// Expires the checked result after an external change, which the caller reports (compiler-architecture.md "Invalidation rules").`
-- [session.odin:139](src/session.odin#L139): the wording does not give the reason. Use `// Checkpoint images cover sources, syntax and diagnostics only in the semantic arena.`
-- [session.odin:143](src/session.odin#L143): names the wrong owner, since `input_copy` is what dies here. Use `// The compiler keeps its path; input_copy is freed on return.`
-- [session.odin:174](src/session.odin#L174): delete the first sentence and shorten the second to `// Rejects an unchecked, failed or documentation session.` Keep the `ponytail:` note.
-- [session.odin:185](src/session.odin#L185): delete this sentence; the `Emission_Options` parameter says it. Keep the two lines on the missing output path.
-- [session.odin:267](src/session.odin#L267): shorten to `// The map owns its values, as for an explicit entry.`
 
 ### src/simd.odin
 

@@ -10,13 +10,13 @@ import "core:slice"
 import "core:strings"
 
 // Loads, discovers, and checks one program in dependency order.
-compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
+compile_program :: proc(c: ^Compiler, input: string) {
 	init_semantic_stores(c)
 	// Runtime types must exist before user signatures are resolved.
 	load_runtime_bootstrap(c)
 	root, loaded := load_root_package(c, input)
 	if !loaded {
-		return INVALID_PACKAGE, false
+		return
 	}
 	c.root_package = root
 	// Selected providers are build dependencies even without source imports.
@@ -29,11 +29,11 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	// own selection included, before its dependents gives checkpoints a boundary
 	// with no references back into a later package.
 	_ = discover_imports(c, &k)
-	if !check_import_cycles(c) { return root, false }
+	if !check_import_cycles(c) { return }
 	if static_package_graph(c) {
 		check_static_packages(&k, package_order(c), 0)
 		finish_program_analysis(&k)
-		return root, c.error_count == 0
+		return
 	}
 	for {
 		order := package_order(c)
@@ -53,7 +53,7 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 			changed = true
 		}
 		if !check_import_cycles(c) {
-			return root, false
+			return
 		}
 		if !changed {
 			break
@@ -70,7 +70,6 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		check_pending_impl_instances(&k)
 	}
 	finish_program_analysis(&k)
-	return root, c.error_count == 0
 }
 
 // A file-scope `when` changes the package graph only if it selects an `import`
