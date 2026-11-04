@@ -91,14 +91,9 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 	case ^Stmt_Branch:
 		// This path owes what it leaves inside the loop. The statement holding the
 		// loop owes the rest, since the loop's exit still falls through to its end.
-		drain_temporaries(e, e.loop_frames, e.loop_held)
-		if s.kind == .Break {
-			run_cleanups(e, e.break_depth)
-			branch(e, e.break_label)
-		} else {
-			run_cleanups(e, e.continue_depth)
-			branch(e, e.continue_label)
-		}
+		drain_temporaries(e, e.loop.frames, e.loop.held)
+		run_cleanups(e, e.loop.cleanup_depth)
+		branch(e, s.kind == .Break ? e.loop.break_label : e.loop.continue_label)
 
 	case ^Block:
 		emit_scoped_block(e, s)
@@ -612,16 +607,22 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	pop_scope(e)
 }
 
+// A loop begins here, with these `break` and `continue` targets.
+@(private)
+enter_loop :: proc(e: ^Emitter, break_label, continue_label: string) {
+	e.loop = Loop_Targets {
+		break_label = break_label,
+		continue_label = continue_label,
+		cleanup_depth = len(e.cleanups),
+		frames = len(e.temporaries),
+		held = len(e.held),
+	}
+}
+
 @(private = "file")
 emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
-	outer_break, outer_continue := e.break_label, e.continue_label
-	outer_break_depth, outer_continue_depth := e.break_depth, e.continue_depth
-	outer_frames, outer_held := e.loop_frames, e.loop_held
-	defer {
-		e.break_label, e.continue_label = outer_break, outer_continue
-		e.break_depth, e.continue_depth = outer_break_depth, outer_continue_depth
-		e.loop_frames, e.loop_held = outer_frames, outer_held
-	}
+	outer := e.loop
+	defer e.loop = outer
 
 	push_init_scope(e, s.init)
 
@@ -631,9 +632,7 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 	done := new_label(e, "for.done")
 	// `break` lands in the loop's own scope, whose exit disposes of what the
 	// initial statement declared once.
-	e.break_label, e.continue_label = done, post
-	e.break_depth, e.continue_depth = len(e.cleanups), len(e.cleanups)
-	e.loop_frames, e.loop_held = len(e.temporaries), len(e.held)
+	enter_loop(e, done, post)
 
 	place_label(e, head)
 	if s.cond != nil {

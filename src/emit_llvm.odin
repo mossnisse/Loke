@@ -134,6 +134,15 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	return strings.to_string(e.b), true
 }
 
+// Where `break` and `continue` go, and what they owe on the way. Both unwind
+// cleanups to `cleanup_depth`, and only the temporary frames and held values made
+// since the loop began.
+@(private)
+Loop_Targets :: struct {
+	break_label, continue_label: string,
+	cleanup_depth, frames, held: int,
+}
+
 // The enclosing function's buffer and state, restored when a nested one ends.
 @(private)
 Function_Emission :: struct {
@@ -172,14 +181,8 @@ Function_State :: struct {
 	// How many operands that may not run enclose the code being written: the
 	// right of `&&` and `||`, a conditional's arms, an `or_else` fallback.
 	conditional: int,
-	break_label:    string,
-	continue_label: string,
-	break_depth:    int,
-	continue_depth: int,
-	// The temporary frames and held values open when the loop began: a `break` or
-	// `continue` owes only those made since.
-	loop_frames: int,
-	loop_held:   int,
+	// The innermost loop.
+	loop: Loop_Targets,
 	// Arguments already bound at the current call, for default expressions.
 	param_values: map[Symbol_Id]Bound_Parameter,
 	unwind: Unwind_State,

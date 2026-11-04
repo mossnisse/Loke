@@ -484,12 +484,7 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	head, body, done := new_label(e, "fmt.map.head"), new_label(e, "fmt.map.body"), new_label(e, "fmt.map.done")
 	place_label(e, head)
 	current := load(e, "i64", cursor)
-	next := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
-		next, table, ops, current, key_out, value_out,
-	)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	next := emit_map_scan(e, table, ops, current, key_out, value_out, cursor)
 	more := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", more, next)
 	branch_if(e, more, body, done)

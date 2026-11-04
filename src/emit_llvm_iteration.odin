@@ -50,14 +50,8 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		return
 	}
 
-	outer_break, outer_continue := e.break_label, e.continue_label
-	outer_break_depth, outer_continue_depth := e.break_depth, e.continue_depth
-	outer_frames, outer_held := e.loop_frames, e.loop_held
-	defer {
-		e.break_label, e.continue_label = outer_break, outer_continue
-		e.break_depth, e.continue_depth = outer_break_depth, outer_continue_depth
-		e.loop_frames, e.loop_held = outer_frames, outer_held
-	}
+	outer := e.loop
+	defer e.loop = outer
 	push_scope(e, nil)
 
 	switch s.kind {
@@ -101,10 +95,8 @@ open_loop :: proc(e: ^Emitter, counted: bool) -> Loop_Labels {
 	if counted {
 		loop.counter = new_counter(e)
 	}
-	e.break_label, e.continue_label = loop.done, loop.post
 	// `break` lands in the loop scope, whose exit disposes of the iterator once.
-	e.break_depth, e.continue_depth = len(e.cleanups), len(e.cleanups)
-	e.loop_frames, e.loop_held = len(e.temporaries), len(e.held)
+	enter_loop(e, loop.done, loop.post)
 	return loop
 }
 
@@ -383,13 +375,7 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
-	current := load(e, "i64", cursor)
-	next := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
-		next, table, ops, current, key_out, value_out,
-	)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	next := emit_map_scan(e, table, ops, load(e, "i64", cursor), key_out, value_out, cursor)
 	finished := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
 	branch_if(e, finished, loop.done, loop.body)
@@ -462,6 +448,18 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	place_label(e, step)
 	step_counter(e, cursor, element)
 	close_loop(e, loop)
+}
+
+// The next occupied slot after `current`, 0 at the end, kept in `cursor`.
+@(private)
+emit_map_scan :: proc(e: ^Emitter, table, ops, current, key_out, value_out, cursor: string) -> string {
+	next := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
+		next, table, ops, current, key_out, value_out,
+	)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	return next
 }
 
 @(private)
@@ -835,12 +833,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	cursor := load(e, "i64", cursor_ptr)
 	key_out := alloca(e, "ptr")
 	value_out := alloca(e, "ptr")
-	next := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
-		next, table, ops, cursor, key_out, value_out,
-	)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor_ptr)
+	next := emit_map_scan(e, table, ops, cursor, key_out, value_out, cursor_ptr)
 	finished := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
