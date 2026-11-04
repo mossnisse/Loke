@@ -147,7 +147,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		// A vector constant is `<...>`; a `Simd(bool, N)` lane is `i8` in memory.
 		vector := info.kind == .Simd
 		lane := simd_lane_llvm_type(e, info)
-		mask := vector && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool
+		mask := vector && simd_is_mask(e, info)
 		b := strings.builder_make()
 		strings.write_string(&b, vector ? "<" : "[")
 		zero := true
@@ -1521,28 +1521,29 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
 		operands := [1]Expr{v.operand}
 		return emit_operator_call(e, v.resolution.symbol, operands[:])
 	}
-	if type_is_simd(e.c, as_type) {
-		return emit_simd_unary(e, v, as_type)
-	}
 	return emit_unary_op(e, v.op, as_type, emit_expr(e, v.operand))
 }
 
-// A scalar unary operation on an evaluated operand of `type`; a delegated
-// operator applies it to the unwrapped value too.
+// A unary operation on an evaluated operand of `type`, lane-wise on a vector; a
+// delegated operator applies it to the unwrapped value too.
 emit_unary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, operand: string) -> string {
 	llvm := llvm_type(e, type)
+	info := underlying_info(e.c, type)
+	vector := info.kind == .Simd
 	out := temp(e)
 	#partial switch op {
 	case .Plus:
 		return operand
 	case .Minus:
-		if type_is_float(e.c, type) {
+		if type_is_float(e.c, vector ? info.element : type) {
 			fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
+		} else if vector {
+			return emit_simd_checked(e, .Minus, info, llvm, "zeroinitializer", operand)
 		} else {
 			return emit_checked_integer(e, .Minus, type_signed(e.c, type), llvm, "0", operand)
 		}
 	case .Tilde:
-		fmt.sbprintfln(&e.b, "  %s = xor %s %s, -1", out, llvm, operand)
+		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", out, llvm, operand, vector ? simd_all_ones(e, info) : "-1")
 	case .Not:
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, operand)
 	}
@@ -1623,12 +1624,10 @@ emit_text_concat_parts :: proc(e: ^Emitter, left_data, left_len, right_data, rig
 
 // A checked integer `+`, `-`, or `*` and an integer `/` or `%` have lowerings of
 // their own, and a float has no bitwise operators.
-@(private = "file")
 Arith_Mnemonic :: struct {
 	integer, float: string,
 }
 
-@(private = "file")
 arith_mnemonic :: proc(op: Token_Kind) -> Arith_Mnemonic {
 	#partial switch op {
 	case .Plus:       return {"",    "fadd"}
@@ -1675,27 +1674,30 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 }
 
 // design.md "Integer overflow": a `+`, `-`, or `*` result that does not fit its
-// integer type panics. The `*.with.overflow` intrinsics answer the wrapped value
-// and whether it wrapped.
+// integer type panics.
 emit_checked_integer :: proc(e: ^Emitter, op: Token_Kind, signed: bool, llvm, lhs, rhs: string) -> string {
-	intrinsic := checked_intrinsic(op, signed)
-	pair_type := strings.concatenate({"{ ", llvm, ", i1 }"})
-	pair := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call %s @llvm.%s.with.overflow.%s(%s %s, %s %s)",
-		pair, pair_type, intrinsic, llvm, llvm, lhs, llvm, rhs,
-	)
-	overflowed := extract(e, pair_type, pair, 1)
+	wrapped, overflowed := emit_overflow_call(e, checked_intrinsic(op, signed, llvm), llvm, "i1", lhs, rhs)
 	panic_if(e, overflowed, "int.overflow", overflow_message(signed))
-	return extract(e, pair_type, pair, 0)
+	return wrapped
 }
 
-checked_intrinsic :: proc(op: Token_Kind, signed: bool) -> string {
+// A `*.with.overflow` intrinsic answers the wrapped value and whether it wrapped,
+// the latter in a `flag` of `i1` or `<N x i1>`.
+emit_overflow_call :: proc(e: ^Emitter, key, llvm, flag, lhs, rhs: string) -> (wrapped, overflowed: string) {
+	pair_type := strings.concatenate({"{ ", llvm, ", ", flag, " }"})
+	pair := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s)", pair, pair_type, key, llvm, lhs, llvm, rhs)
+	return extract(e, pair_type, pair, 0), extract(e, pair_type, pair, 1)
+}
+
+// The intrinsic's name, with `suffix` the mangling of its operand type.
+checked_intrinsic :: proc(op: Token_Kind, signed: bool, suffix: string) -> string {
+	operation := signed ? "smul" : "umul"
 	#partial switch op {
-	case .Plus:  return signed ? "sadd" : "uadd"
-	case .Minus: return signed ? "ssub" : "usub"
+	case .Plus:  operation = signed ? "sadd" : "uadd"
+	case .Minus: operation = signed ? "ssub" : "usub"
 	}
-	return signed ? "smul" : "umul"
+	return strings.concatenate({"llvm.", operation, ".with.overflow.", suffix})
 }
 
 overflow_message :: proc(signed: bool) -> string {
@@ -1806,6 +1808,16 @@ compare_predicate :: proc(op: Token_Kind) -> Compare_Predicate {
 	return {}
 }
 
+// The instruction and predicate that compare values of scalar `type`, such as
+// `icmp slt`.
+compare_instruction :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id) -> string {
+	predicate := compare_predicate(op)
+	if type_is_float(e.c, type) {
+		return strings.concatenate({"fcmp ", predicate.float})
+	}
+	return strings.concatenate({"icmp ", type_signed(e.c, type) ? predicate.signed : predicate.unsigned})
+}
+
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
 	// Text is ordered byte-wise; one runtime call answers all six operators.
 	if type_is_utf8_text(e.c, type) {
@@ -1835,15 +1847,8 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, equal)
 		return out
 	}
-	llvm := llvm_type(e, type)
 	out := temp(e)
-	if type_is_float(e.c, type) {
-		fmt.sbprintfln(&e.b, "  %s = fcmp %s %s %s, %s", out, compare_predicate(op).float, llvm, lhs, rhs)
-		return out
-	}
-	predicate := compare_predicate(op)
-	name := type_signed(e.c, type) ? predicate.signed : predicate.unsigned
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", out, name, llvm, lhs, rhs)
+	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, compare_instruction(e, op, type), llvm_type(e, type), lhs, rhs)
 	return out
 }
 

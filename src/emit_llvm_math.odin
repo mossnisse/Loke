@@ -162,7 +162,7 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
 		return "poison"
 	}
-	key := fmt.aprintf("llvm.fma.%s", llvm == "float" ? "f32" : "f64")
+	key := fmt.aprintf("llvm.fma.%s", intrinsic_type_suffix(llvm))
 	if key not_in e.simd_intrinsics {
 		e.simd_intrinsics[key] = true
 		append(&e.globals, fmt.aprintf("declare %s @%s(%s, %s, %s)\n", llvm, key, llvm, llvm, llvm))
@@ -179,6 +179,6 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // functions of those names; the result is exact either way.
 @(private)
 emit_float_instruction :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
-	suffix := llvm_type(e, expr_base(v.bound[0]).type) == "float" ? "f32" : "f64"
+	suffix := intrinsic_type_suffix(llvm_type(e, expr_base(v.bound[0]).type))
 	return emit_unary_intrinsic(e, v, fmt.aprintf("llvm.%s.%s", name, suffix))
 }

@@ -809,35 +809,11 @@ What remains is the cursor loop shared with three other files; `emit_format_sequ
 
 Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=none` and `-opt=speed` found no bug. Its main weight is integer lowering that repeats the scalar procedures in `emit_llvm_expr.odin` almost line for line.
 
-**Simplification**
-
-- [emit_llvm_simd.odin:63](src/emit_llvm_simd.odin#L63) `emit_simd_binary_values`: use one switch for the special cases, then `arith_mnemonic(op)` from `emit_llvm_expr.odin:1505` (drop its file privacy) instead of retyping the table at lines 77 and 85-93. `&~` falls through as `.Amp`; float `%` still reaches the `""` failure. (about 12 lines)
-- [emit_llvm_simd.odin:127](src/emit_llvm_simd.odin#L127) `emit_simd_compare`, `emit_simd_divrem`, `emit_simd_shift`: pass the `llvm` the caller already computed in place of `vector`, as `emit_simd_checked` and `simd_select` do; `vector` is used for nothing else. (about 3 lines)
-- [emit_llvm_simd.odin:334](src/emit_llvm_simd.odin#L334) `emit_simd_reduce`: `name` is computed before the checked fold, which ignores it, and `fold` is then retested three times. Give each case of one switch its own whole lowering: `.Any, .All`, `.Add, .Mul`, `.Min`, `.Max`. (about 5 lines)
-
-**Dead code**
-
-- (branch) [emit_llvm_simd.odin:221](src/emit_llvm_simd.odin#L221): `v.op == .Plus` is unreachable, because `check_simd_unary` (`simd.odin:362`) admits only `-` and `~`; `+v` gives L0686, confirmed with `lokec.exe`. Delete it and test `.Tilde` in place of `v.op != .Minus`.
-- (branch) [emit_llvm_simd.odin:295](src/emit_llvm_simd.odin#L295): the only caller, `emit_llvm_calls.odin:174`, dispatches exactly the three kinds handled here, so this failure cannot fire. Dispatch directly there and delete the 12-line `emit_simd_builtin`, which only forwards.
-
 **Near copies**
 
 - [emit_llvm_simd.odin:146](src/emit_llvm_simd.odin#L146) and [emit_llvm_expr.odin:1583](src/emit_llvm_expr.odin#L1583): `emit_simd_divrem` and `emit_divrem` differ only in constant spelling, `i1` versus `<N x i1>`, and reducing before `panic_if`. Make `emit_divrem` lane-generic with one constant helper and one any-lane helper, the shape at `emit_llvm_calls.odin:1707` and `:1729`. (about 30 lines)
 - [emit_llvm_simd.odin:182](src/emit_llvm_simd.odin#L182) and [emit_llvm_expr.odin:1622](src/emit_llvm_expr.odin#L1622): the same shift sequence; the scalar adds only count-width conversion, which a vector skips because its count has the lane width. The same helpers merge them, taking `bits` from the lane. (about 20 lines)
-- [emit_llvm_simd.odin:108](src/emit_llvm_simd.odin#L108) and [emit_llvm_expr.odin:1553](src/emit_llvm_expr.odin#L1553), with [emit_llvm_simd.odin:217](src/emit_llvm_simd.odin#L217) and [emit_llvm_expr.odin:1421](src/emit_llvm_expr.odin#L1421): checked call and unary operators, differing in declaration, mask type, and any-lane reduction. Once merged, `emit_simd_binary_values` is little more than splatting, compares, and `emit_binary_op`. (about 15 lines)
-- [emit_llvm_simd.odin:129](src/emit_llvm_simd.odin#L129) and [emit_llvm_expr.odin:1712](src/emit_llvm_expr.odin#L1712): both choose `fcmp`/`icmp` and the predicate from a lane type. A helper returning the text such as `"icmp slt"`, using `type_signed`, serves both. (about 6 lines)
 - [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113), [emit_llvm_simd.odin:274](src/emit_llvm_simd.odin#L274) and [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) (also `:228`, `:254`, `:324`, `:348`, `:358`, `:376`): the same declare-once block, nine times. Add `declare_intrinsic(e, key, declaration)` and rename `simd_intrinsics` (`emit_llvm.odin:59`), which also holds `llvm.ctpop` and `llvm.trap`. (about 18 lines)
-- [emit_llvm_simd.odin:36](src/emit_llvm_simd.odin#L36), [emit_llvm_abi.odin:1223](src/emit_llvm_abi.odin#L1223) and [emit_llvm_expr.odin:146](src/emit_llvm_expr.odin#L146): the mask test written out three times. Keep one unprivate `simd_is_mask` with body `type_is_boolean(e.c, info.element)` and call it from the other two.
-- [emit_llvm_simd.odin:260](src/emit_llvm_simd.odin#L260) and [emit_llvm_calls.odin:357](src/emit_llvm_calls.odin#L357) (also `:375`): both mangle a float spelling for an overloaded intrinsic. Rename `simd_mangled_lane` to a general name, make it package-visible, and use it at all three sites.
-
-**Comments**
-
-- [emit_llvm_simd.odin:104](src/emit_llvm_simd.odin#L104): keep the citation and first sentence; delete the sentence on the `*.with.overflow` intrinsics, which `emit_llvm_expr.odin:1551` already explains.
-- [emit_llvm_simd.odin:124](src/emit_llvm_simd.odin#L124): delete; the file header at line 2 says a mask lane is `i8` where `icmp` gives `i1`.
-- [emit_llvm_simd.odin:143](src/emit_llvm_simd.odin#L143): shorten to "Any zero lane faults the whole operation; otherwise lane by lane as `emit_divrem`."
-- [emit_llvm_simd.odin:178](src/emit_llvm_simd.odin#L178): shorten to "A negative count lane panics the whole operation; otherwise lane by lane as `emit_shift`."
-- [emit_llvm_simd.odin:235](src/emit_llvm_simd.odin#L235): delete; it restates the name and parameters.
-- [emit_llvm_simd.odin:269](src/emit_llvm_simd.odin#L269): keep only "`start` is the `type value, ` prefix of an ordered float fold, or empty."
 
 ### src/emit_llvm_stmt.odin
 

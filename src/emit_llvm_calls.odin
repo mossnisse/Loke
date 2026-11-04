@@ -166,8 +166,12 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return emit_atomic_builtin(e, v, kind, as_type)
-	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
-		return emit_simd_builtin(e, v, kind, as_type)
+	case .Simd_Cast:
+		return emit_simd_cast(e, v, as_type)
+	case .Simd_Select:
+		return emit_simd_select(e, v, as_type)
+	case .Simd_Reduce:
+		return emit_simd_reduce(e, v)
 	case .Unsafe_Free:
 		emit_free(e, v)
 		return "0"
@@ -253,14 +257,12 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 	}
 	op := operator_token(symbol.operator)
 	underlying := symbol.delegate_underlying
-	simd := type_is_simd(e.c, underlying)
 	if len(bound) == 1 {
-		operand := emit_expr(e, bound[0])
-		return simd ? emit_simd_unary_value(e, op, underlying, operand) : emit_unary_op(e, op, underlying, operand)
+		return emit_unary_op(e, op, underlying, emit_expr(e, bound[0]))
 	}
 	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_borrowed_operand(e, bound[0])
 	rhs := emit_borrowed_operand(e, bound[1])
-	if simd {
+	if type_is_simd(e.c, underlying) {
 		return emit_simd_binary_values(e, op, underlying, lhs, rhs)
 	}
 	if op == .Plus && type_is_utf8_text(e.c, underlying) {

@@ -257,10 +257,20 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 // lane mask: design.md gives `Simd(bool, N)` one byte per lane, while a scalar
 // `bool` is `i1`.
 simd_lane_llvm_type :: proc(e: ^Emitter, info: ^Type_Info) -> string {
-	if info.kind == .Simd && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool {
+	if info.kind == .Simd && simd_is_mask(e, info) {
 		return "i8"
 	}
 	return llvm_type(e, info.element)
+}
+
+// Overloaded intrinsics are mangled by bit width, so `double` is `f64`.
+intrinsic_type_suffix :: proc(llvm: string) -> string {
+	switch llvm {
+	case "half":   return "f16"
+	case "float":  return "f32"
+	case "double": return "f64"
+	}
+	return llvm
 }
 
 // ----------------------------------------------------------- foreign calls --
