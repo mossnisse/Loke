@@ -136,6 +136,14 @@ Container_Op_Effect :: enum {
 	Stores_Provider,
 	// It may drop a provider the receiver holds.
 	Drops_Provider,
+	// It may drop what the receiver holds, as a whole.
+	Drops_Contents,
+	// A present key's element is dropped for the one given.
+	Drops_Element,
+	// A present key drops the element given, which is in its own region.
+	Drops_Given,
+	// It drops the key it removes.
+	Drops_Key,
 	// It may allocate, resize, or free storage, or drop elements that own storage.
 	Allocates,
 	Empties,
@@ -151,6 +159,15 @@ Container_Op_Effect :: enum {
 	// result views what the receiver views, so the receiver is lent as a mutable
 	// carrier argument is.
 	Lends_Receiver,
+	// It hashes or compares keys: a lookup, an insertion, or a rehash.
+	Hashes_Key,
+	// It keeps a copy of the key it is given.
+	Stores_Key,
+	// design.md "Container insertion": it takes one element, in the slot
+	// `container_inserted_slot` names.
+	Inserts_Element,
+	// It compares elements by their order.
+	Compares_Elements,
 }
 
 // One row per operation, and not `#partial`, so a new operation has to say.
@@ -158,29 +175,29 @@ Container_Op_Effect :: enum {
 CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
 	.None               = {},
 	.Append             = {.Stores_Content, .Stores_Provider, .Allocates},
-	.Insert             = {.Stores_Content, .Stores_Provider, .Allocates, .Moves_Elements},
+	.Insert             = {.Stores_Content, .Stores_Provider, .Allocates, .Moves_Elements, .Inserts_Element},
 	.Pop                = {.Drops_Provider, .Removes_Element},
 	.Remove             = {.Drops_Provider, .Moves_Elements, .Removes_Element},
 	.Remove_Unordered   = {.Drops_Provider, .Moves_Elements, .Removes_Element},
-	.Clear              = {.Drops_Provider, .Allocates, .Empties},
-	.Resize             = {.Drops_Provider, .Allocates},
+	.Clear              = {.Drops_Provider, .Drops_Contents, .Allocates, .Empties},
+	.Resize             = {.Drops_Provider, .Drops_Contents, .Allocates},
 	.Reserve            = {.Allocates},
 	.Shrink             = {.Allocates},
-	.Sort               = {.Permutes, .Moves_Elements},
-	.Reverse_Sort       = {.Permutes, .Moves_Elements},
+	.Sort               = {.Permutes, .Moves_Elements, .Compares_Elements},
+	.Reverse_Sort       = {.Permutes, .Moves_Elements, .Compares_Elements},
 	.Swap               = {.Permutes, .Moves_Elements},
 	.Split_At_Mut       = {.Lends_Receiver},
 	.Chunks_Mut         = {.Lends_Receiver},
-	.Map_Find           = {},
+	.Map_Find           = {.Hashes_Key},
 	// No `.Stores_Provider`: a present key drops the element (design.md "Map
 	// container operations").
-	.Map_Find_Or_Insert = {.Stores_Content, .Allocates},
-	.Map_Lookup_Value   = {},
-	.Map_Try_Insert     = {.Stores_Content, .Stores_Provider, .Drops_Provider, .Allocates},
-	.Map_Remove         = {.Drops_Provider, .Allocates, .Removes_Element},
-	.Map_Clear          = {.Drops_Provider, .Allocates, .Empties},
-	.Map_Reserve        = {.Allocates},
-	.Map_Shrink         = {.Allocates},
+	.Map_Find_Or_Insert = {.Stores_Content, .Drops_Given, .Allocates, .Hashes_Key, .Stores_Key, .Inserts_Element},
+	.Map_Lookup_Value   = {.Hashes_Key},
+	.Map_Try_Insert     = {.Stores_Content, .Stores_Provider, .Drops_Provider, .Drops_Element, .Allocates, .Hashes_Key, .Stores_Key, .Inserts_Element},
+	.Map_Remove         = {.Drops_Provider, .Drops_Key, .Allocates, .Removes_Element, .Hashes_Key},
+	.Map_Clear          = {.Drops_Provider, .Drops_Contents, .Allocates, .Empties},
+	.Map_Reserve        = {.Allocates, .Hashes_Key},
+	.Map_Shrink         = {.Allocates, .Hashes_Key},
 	.Map_Entries        = {.Returns_View},
 	.Map_Keys           = {.Returns_View},
 	.Map_Values         = {.Returns_View},
@@ -471,11 +488,7 @@ require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
 // The bound slot of the element a container insertion takes, or -1 for any other
 // operation.
 container_inserted_slot :: proc(op: Container_Op) -> int {
-	#partial switch op {
-	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
-		return 2
-	}
-	return -1
+	return .Inserts_Element in CONTAINER_OP_EFFECTS[op] ? 2 : -1
 }
 
 // The requirements of a container operation, whichever spelling called it:

@@ -346,7 +346,7 @@ prov_call_may_use_reach :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
 		#partial switch callee.synth {
 		case .None, .Dyn_Forward, .Dyn_Proc_Adapter:
 		case .Container_Op:
-			return callee.container_op == .Sort || callee.container_op == .Reverse_Sort
+			return .Compares_Elements in CONTAINER_OP_EFFECTS[callee.container_op]
 		case:
 			return false
 		}

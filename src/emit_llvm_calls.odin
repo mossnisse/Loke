@@ -682,12 +682,8 @@ consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol, call_node: ^Expr_Cal
 	if symbol == nil || len(symbol.params) == 0 {
 		return -1, false
 	}
-	#partial switch symbol.container_op {
-	case .Append:
-		slot = 1
-	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
-		slot = 2
-	case:
+	slot = symbol.container_op == .Append ? 1 : container_inserted_slot(symbol.container_op)
+	if slot < 0 {
 		return -1, false
 	}
 	lifecycle := emit_lifecycle(e, container_element(e.c, symbol.params[0]))

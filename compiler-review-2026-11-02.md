@@ -97,12 +97,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
 
 
-#### Container operations classified in several tables
-
-`CONTAINER_OP_EFFECTS` in `container.odin` is exhaustive by construction. Beside it sit `KEY_HASHING_OPS` ([global_effects.odin:493](src/global_effects.odin#L493)), the drop cases of `prov_container_drop_effects` ([global_effects.odin](src/global_effects.odin)), the insertion test at [global_effects.odin:525](src/global_effects.odin#L525), and the per-kind cases at [check_calls.odin:482](src/check_calls.odin#L482) and [emit_llvm_calls.odin:1298](src/emit_llvm_calls.odin#L1298).
-
-Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Element` to `Container_Op_Effect` and drop the sets. Saves about 10 lines; the gain is that every new operation must answer every question.
-
 ### Checker and front end
 
 #### Built-in call opening and operands

@@ -490,13 +490,6 @@ add_effect_value :: proc(list: ^[dynamic]Effect_Arg, value: Effect_Arg) {
 	append(list, value)
 }
 
-// Map operations that hash or compare keys: a lookup, an insertion, and a
-// rehash.
-@(private = "file")
-KEY_HASHING_OPS :: bit_set[Container_Op]{
-	.Map_Find, .Map_Find_Or_Insert, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove, .Map_Reserve, .Map_Shrink,
-}
-
 // A member the compiler supplies that calls a type's own `hash`, `==`, or `<`: a
 // generated `hash`, a map operation on its keys, or a sort of its elements.
 @(private = "file")
@@ -519,7 +512,8 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	case .Standard_Hash:
 		prov_hash_effects(graph, subject, v.span)
 	case .Container_Op:
-		if sym.container_op in KEY_HASHING_OPS {
+		effects := CONTAINER_OP_EFFECTS[sym.container_op]
+		if .Hashes_Key in effects {
 			prov_key_effects(graph, subject, v.span)
 		}
 		// An `append` keeps a copy of what a lone spread lends it, and a lookup
@@ -527,11 +521,10 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if sym.container_op == .Map_Lookup_Value || sym.container_op == .Append && v.variadic_forwards {
 			prov_copy_effects(graph, container_element(c, subject), v.span)
 		}
-		// An insertion keeps a copy of its key.
-		if sym.container_op == .Map_Find_Or_Insert || sym.container_op == .Map_Try_Insert {
+		if .Stores_Key in effects {
 			prov_copy_effects(graph, container_key(c, subject), v.span)
 		}
-		if sym.container_op == .Sort || sym.container_op == .Reverse_Sort {
+		if .Compares_Elements in effects {
 			policy := resolved_element_order_policy(c, sequence_element(c, subject))
 			if policy.kind == .Inherent {
 				prov_effect_call(graph, Effect_Call{callee = policy.less}, v.span)
@@ -727,14 +720,17 @@ prov_container_drop_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 	subject := expr_base(v.bound[0]).type
 	region := prov_drop_region(graph, v.bound[0])
-	#partial switch sym.container_op {
-	case .Clear, .Resize, .Map_Clear:
+	effects := CONTAINER_OP_EFFECTS[sym.container_op]
+	if .Drops_Contents in effects {
 		prov_drop_effects(graph, subject, v.span, region = region)
-	case .Map_Try_Insert:
+	}
+	if .Drops_Element in effects {
 		prov_drop_effects(graph, container_element(c, subject), v.span, region = region)
-	case .Map_Find_Or_Insert:
+	}
+	if .Drops_Given in effects {
 		prov_drop_effects(graph, container_element(c, subject), v.span, region = prov_drop_region(graph, v.bound[2]))
-	case .Map_Remove:
+	}
+	if .Drops_Key in effects {
 		prov_drop_effects(graph, container_key(c, subject), v.span, region = region)
 	}
 }
