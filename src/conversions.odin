@@ -36,7 +36,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	// design.md "SIMD vectors": a scalar splats; nothing else converts.
 	if type_is_simd(c, to) && !type_is_simd(c, from) {
-		return assignable(c, from, type_of(c, type_underlying(c, to)).element)
+		return assignable(c, from, underlying_info(c, to).element)
 	}
 	if carrier_weakens_to(c, from, to) || record_drops_labels_to(c, from, to) || union_widens_to(c, from, to) {
 		return true

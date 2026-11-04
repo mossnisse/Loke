@@ -19,7 +19,7 @@ failure_assignment_borrows :: proc(c: ^Compiler, from, into: Type_Id) -> bool {
 }
 
 fallible_of :: proc(c: ^Compiler, type: Type_Id) -> (Fallible, bool) {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil || info.kind != .Union || !info.failure_designated {
 		return Fallible{}, false
 	}
@@ -38,7 +38,7 @@ fallible_of :: proc(c: ^Compiler, type: Type_Id) -> (Fallible, bool) {
 // is its failure.
 @(private = "file")
 note_anonymous_union_is_data :: proc(k: ^Checker, type: Type_Id, span: Span) {
-	if info := type_of(k.c, type_underlying(k.c, type)); info != nil && info.anonymous_union {
+	if info := underlying_info(k.c, type); info != nil && info.anonymous_union {
 		add_notef(
 			k.c, span,
 			"an anonymous union is plain data; a failure is a `Result`, an `Option`, or a named union with `@(failure=name)`",

@@ -152,8 +152,7 @@ const_element_count :: proc(c: ^Compiler, type: Type_Id) -> u64 {
 // is answered, and an aggregate comes back as an empty `.Aggregate`; with it,
 // an aggregate past `MAX_CONST_ELEMENTS` is not built and reports false.
 zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, bool) {
-	under := type_underlying(c, type)
-	info := type_of(c, under)
+	info := underlying_info(c, type)
 	if info == nil {
 		return Const_Value{}, false
 	}

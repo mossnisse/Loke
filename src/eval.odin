@@ -437,8 +437,7 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (out: Eval_Value, success: 
 	if type_is_slice(ev.k.c, type) {
 		return Eval_Value{kind = .Nil, type = type}, true
 	}
-	under := type_underlying(ev.k.c, type)
-	info := type_of(ev.k.c, under)
+	info := underlying_info(ev.k.c, type)
 	if info == nil { return Eval_Value{}, false }
 	#partial switch info.kind {
 	case .Int, .Enum, .Rune:

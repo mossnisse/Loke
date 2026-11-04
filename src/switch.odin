@@ -496,7 +496,7 @@ case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
 @(private = "file")
 report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: []int) {
 	missing := make([dynamic]string, context.temp_allocator)
-	for _, index in type_of(k.c, type_underlying(k.c, subject)).variants {
+	for _, index in underlying_info(k.c, subject).variants {
 		if !slice.contains(covered, index) {
 			append(&missing, concat(k.c, ".", union_variant_name(k.c, subject, index)))
 		}

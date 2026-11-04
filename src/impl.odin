@@ -320,7 +320,7 @@ replace_impl_member :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_p
 
 // Fields share the namespace members are declared into.
 subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	info := type_of(k.c, type_underlying(k.c, subject))
+	info := underlying_info(k.c, subject)
 	return info == nil ? INVALID_SYMBOL : member_named(k.c, info.fields, name)
 }
 

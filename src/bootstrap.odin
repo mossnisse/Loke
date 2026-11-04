@@ -89,7 +89,7 @@ result_type :: proc(k: ^Checker, payload, error: Type_Id) -> Type_Id {
 // An instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership" rejects
 // `via` on either.
 type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	return info != nil && info.instance_of != INVALID_SYMBOL &&
 	       (info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol)
 }
@@ -106,7 +106,7 @@ shared_payload_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	if !type_is_shared_handle(c, id) {
 		return INVALID_TYPE
 	}
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	if len(info.instance_args) != 1 || !info.instance_args[0].is_type {
 		return INVALID_TYPE
 	}

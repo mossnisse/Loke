@@ -2599,7 +2599,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// folded here, as a typed constant such as `T(0)` in a generic body does; an
 	// unfixed constant folds below.
 	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && (!base_is_const(base) || !type_is_untyped(k.c, base.type)) {
-		element := type_of(k.c, type_underlying(k.c, target)).element
+		element := underlying_info(k.c, target).element
 		// The scalar must be a valid lane before it becomes the vector.
 		if base.type != element && !materialize_value_expr(k, e, element, "splat") {
 			return false

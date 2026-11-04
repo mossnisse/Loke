@@ -51,8 +51,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	// Reports `L0364` here for a value whose layout is past the maximum.
 	type_size(k.c, target, v.span)
 
-	under := type_underlying(k.c, target)
-	info := type_of(k.c, under)
+	info := underlying_info(k.c, target)
 	if info == nil {
 		return
 	}

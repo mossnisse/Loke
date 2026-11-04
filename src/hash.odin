@@ -116,7 +116,7 @@ part_hash_member :: proc(c: ^Compiler, part: Type_Id) -> (Symbol_Id, Type_Id) {
 // A float, or a fixed array of them, as `type_is_hashable` excludes.
 @(private = "file")
 type_holds_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	if info == nil {
 		return false
 	}

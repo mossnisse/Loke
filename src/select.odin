@@ -699,6 +699,6 @@ composite_keys_are_values :: proc(w: ^When_Walk, v: ^Expr_Composite) -> bool {
 	probe := begin_probe(k.c)
 	target := resolve_type_syntax(k, v.type_expr)
 	end_probe(k.c, probe)
-	info := type_of(k.c, type_underlying(k.c, target))
+	info := underlying_info(k.c, target)
 	return info != nil && info.kind != .Struct
 }

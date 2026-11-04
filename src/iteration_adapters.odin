@@ -47,7 +47,7 @@ adapter_source_produces_values :: proc(c: ^Compiler, source: Expr) -> bool {
 // Whether indexed() preserves a pointer lent by its source.
 indexed_next_lends :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
 	handed := underlying_info(c, option_payload(c, callee.result))
-	element := underlying_info(c, type_of(c, type_underlying(c, callee.params[0])).element)
+	element := underlying_info(c, underlying_info(c, callee.params[0]).element)
 	lent, held := symbol_of(c, handed.fields[ELEMENT_FIRST]), symbol_of(c, element.fields[ELEMENT_FIRST])
 	// A mutable part is lent by the iterator, and ends before it advances.
 	return lent.type != held.type && !type_carries_borrow(c, lent.type).mutable
