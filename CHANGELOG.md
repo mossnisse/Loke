@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- `or_else break` and `or_else continue` in a static `foreach` body are `L0455`, as any `break` or
+  `continue` that would target the expansion is
+  ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over a value with no elements the
+  body compiled; with elements the exit was `L0368`, even in a runtime loop. Upgrade by testing the
+  value and handling the failure in the body, or by moving the loop into it.
 - A foreign block's rules are checked where they were let through
   ([Foreign system](design.md#foreign-system)). A global written `x: T = ---;` is `L0625`, as the
   grammar says a foreign variable has no initializer; `a, b: i32 = ---, 1;` compiled and dropped the
@@ -1519,6 +1524,9 @@ checklist.
 
 ### Fixed
 
+- `L0740` reads what a `where` clause holds as values: a literal's index, as `IDX` in
+  `[2]int{IDX = 1}`, and a parameter's default in a procedure type
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - `-api` and `-doc` show a private type a generic procedure's result names when a plain parameter has
   the same name, as in `proc(T: int, v: $U) -> T`. A plain parameter's name is in no type's scope, but
   the listing took it for that parameter and left the declaration out.

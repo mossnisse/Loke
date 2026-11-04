@@ -32,6 +32,10 @@ warning[L0740]: public `Short.through` names the private type `Corner`
 @78:50
 warning[L0740]: public `[]Point.spread` names the private type `Corner`
 @80:50
+warning[L0740]: public `keyed` names the private `KEY`
+@91:49
+warning[L0740]: public `defaulted` names the private `DEFAULTED`
+@92:63
 !public `Open`
 !public `Open_Crate`
 !`Padded._`

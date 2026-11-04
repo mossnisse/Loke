@@ -557,11 +557,9 @@ Ref_Walk :: struct {
 // not walked: only its signature is shown.
 @(private = "file")
 api_refs :: proc(w: ^Ref_Walk, e: Expr) {
-	if e == nil {
-		return
-	}
-	switch v in e {
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Propagated_Error, ^Type_Type, ^Type_Poly:
+	mark := len(w.bound)
+	defer resize(&w.bound, mark)
+	#partial switch v in e {
 	case ^Expr_Ident:
 		symbol := v.resolution.symbol != INVALID_SYMBOL ? v.resolution.symbol : v.symbol
 		if symbol == INVALID_SYMBOL {
@@ -579,84 +577,17 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		} else if ident, is_ident := v.operand.(^Expr_Ident); is_ident && ident.resolution.kind == .Unresolved && !slice.contains(w.bound[:], ident.name) {
 			append(&w.refs, fmt.aprintf("%s.%s", ident.name, v.name.text))
 		}
-		api_refs(w, v.operand)
-	case ^Expr_Index:
-		api_refs(w, v.operand)
-		for index in v.indices {
-			api_refs(w, index)
-		}
-	case ^Expr_Slice:
-		api_refs(w, v.operand)
-		api_refs(w, v.lo)
-		api_refs(w, v.hi)
-	case ^Expr_Call:
-		api_refs(w, v.callee)
-		for argument in v.args {
-			api_refs(w, argument.value)
-		}
-	case ^Expr_Postfix:
-		api_refs(w, v.operand)
-		api_refs(w, v.failure)
-	case ^Expr_Unary:
-		api_refs(w, v.operand)
-	case ^Expr_Binary:
-		api_refs(w, v.lhs)
-		api_refs(w, v.rhs)
-	case ^Expr_Range:
-		api_refs(w, v.lo)
-		api_refs(w, v.hi)
-	case ^Expr_Or_Else:
-		api_refs(w, v.value)
-		api_refs(w, v.fallback)
-	case ^Expr_Cond:
-		api_refs(w, v.cond)
-		api_refs(w, v.then)
-		api_refs(w, v.otherwise)
-	case ^Expr_Move:
-		api_refs(w, v.value)
-	case ^Expr_Composite:
-		api_refs(w, v.type_expr)
-		api_refs(w, v.via)
-		for element in v.elements {
-			if !key_names_field(v, element.key) {
-				api_refs(w, element.key)
-			}
-			api_refs(w, element.value)
-		}
 	case ^Expr_Proc:
-		mark := len(w.bound)
 		bind_signature(&w.bound, v.signature)
 		api_refs(w, v.signature)
 		for clause in v.where_clauses {
 			api_refs(w, clause)
 		}
-		resize(&w.bound, mark)
 	case ^Expr_Proc_Group:
 		for name in v.names {
 			ref_by_name(w, name.text)
 		}
-	case ^Expr_Operator:
-		api_refs(w, v.value)
-	case ^Type_Pointer:
-		api_refs(w, v.elem)
-	case ^Type_C_Pointer:
-		api_refs(w, v.elem)
-	case ^Type_Slice:
-		api_refs(w, v.elem)
-	case ^Type_Dynamic_Array:
-		api_refs(w, v.elem)
-	case ^Type_Distinct:
-		api_refs(w, v.elem)
-	case ^Type_Dyn:
-		api_refs(w, v.interface_expr)
-	case ^Type_Array:
-		api_refs(w, v.length)
-		api_refs(w, v.elem)
-	case ^Type_Map:
-		api_refs(w, v.key)
-		api_refs(w, v.value)
 	case ^Type_Proc:
-		mark := len(w.bound)
 		bind_signature(&w.bound, v)
 		for parameter in v.params {
 			api_refs(w, parameter.type)
@@ -673,11 +604,9 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		for parameter in v.params {
 			api_refs(w, parameter.default)
 		}
-		resize(&w.bound, mark)
+		return
 	case ^Type_Record:
-		mark := len(w.bound)
 		bind_generic_params(&w.bound, v.generic_params)
-		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)
 		}
@@ -692,23 +621,13 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		for variant in v.variants {
 			api_refs(w, variant.type)
 		}
-	case ^Type_Anon_Record:
-		for field in v.fields {
-			api_refs(w, field.type)
-		}
-	case ^Type_Anon_Union:
-		for variant in v.variants {
-			api_refs(w, variant.type)
-		}
 	case ^Type_Enum:
 		api_refs(w, v.backing)
 		for field in v.fields {
 			api_refs(w, field.value)
 		}
 	case ^Type_Interface:
-		mark := len(w.bound)
 		bind_generic_params(&w.bound, v.generic_params)
-		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)
 		}
@@ -724,6 +643,10 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			api_refs(w, requirement.slot_type)
 		}
 	}
+	expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
+		api_refs((^Ref_Walk)(data), child)
+		return false
+	})
 }
 
 // The values of `attributes` that are expressions, as `N` in `@(align=N)`.

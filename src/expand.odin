@@ -201,7 +201,7 @@ static_element_text :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> 
 }
 
 // design.md "Static `foreach` expansion": loops in the body own their branches,
-// so they are not walked.
+// so they are not walked, and neither is a procedure literal, which has its own.
 @(private = "file")
 report_block_branches :: proc(k: ^Checker, block: ^Block) {
 	if block != nil {
@@ -220,27 +220,73 @@ report_stmts_branches :: proc(k: ^Checker, stmts: []Stmt) {
 report_stmt_branches :: proc(k: ^Checker, stmt: Stmt) {
 	#partial switch v in stmt {
 	case ^Stmt_Branch:
-		errorf(
-			k.c, v.span, "L0455", "`%s` cannot target a static expansion; it is not a loop",
-			v.kind == .Break ? "break" : "continue",
-		)
+		report_branch(k, v)
 	case ^Block:
 		report_block_branches(k, v)
+	case ^Decl:
+		report_expr_branches(k, v.declared_type)
+		report_expr_branches(k, v.via)
+		report_exprs_branches(k, v.values)
+	case ^Stmt_Expr:
+		report_exprs_branches(k, v.exprs)
+	case ^Stmt_Assign:
+		report_exprs_branches(k, v.lhs)
+		report_exprs_branches(k, v.rhs)
+	case ^Stmt_Return:
+		if v.value != nil {
+			report_expr_branches(k, v.value.expr)
+		}
+	case ^Stmt_Spawn:
+		report_expr_branches(k, v.call)
 	case ^Stmt_Defer:
 		report_stmt_branches(k, v.stmt)
 	case ^Stmt_Parallel:
 		report_block_branches(k, v.body)
 	case ^Stmt_If:
+		report_stmt_branches(k, v.init)
+		report_expr_branches(k, v.cond)
 		report_block_branches(k, v.then)
 		report_stmt_branches(k, v.otherwise)
 	case ^Stmt_When:
 		report_block_branches(k, v.then)
 		report_stmt_branches(k, v.otherwise)
 	case ^Stmt_Switch:
+		report_stmt_branches(k, v.init)
+		report_expr_branches(k, v.subject)
 		for arm in v.cases {
+			report_exprs_branches(k, arm.values)
 			report_stmts_branches(k, arm.stmts)
 		}
 	}
+}
+
+@(private = "file")
+report_branch :: proc(k: ^Checker, branch: ^Stmt_Branch) {
+	errorf(
+		k.c, branch.span, "L0455", "`%s` cannot target a static expansion; it is not a loop",
+		branch.kind == .Break ? "break" : "continue",
+	)
+}
+
+@(private = "file")
+report_exprs_branches :: proc(k: ^Checker, exprs: []Expr) {
+	for e in exprs {
+		report_expr_branches(k, e)
+	}
+}
+
+// The `or_else` exits an expression holds. A `return` exit's value is its child.
+@(private = "file")
+report_expr_branches :: proc(k: ^Checker, e: Expr) {
+	if v, is_or_else := e.(^Expr_Or_Else); is_or_else {
+		if branch, is_branch := v.exit.(^Stmt_Branch); is_branch {
+			report_branch(k, branch)
+		}
+	}
+	expr_children(e, k, proc(data: rawptr, child: Expr) -> bool {
+		report_expr_branches((^Checker)(data), child)
+		return false
+	})
 }
 
 @(private = "file")

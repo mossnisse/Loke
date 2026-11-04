@@ -1429,102 +1429,127 @@ Name_Walk :: struct {
 
 @(private = "file")
 walk_names :: proc(w: ^Name_Walk, e: Expr) -> bool {
-	if e == nil {
-		return false
-	}
-	switch v in e {
+	#partial switch v in e {
 	case ^Expr_Ident, ^Type_Poly, ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
 		return w.matches(w.data, e)
-	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Expr_Proc_Group, ^Expr_Propagated_Error:
+	case ^Type_Distinct, ^Expr_Selector:
+		if w.matches(w.data, e) {
+			return true
+		}
+	case ^Expr_Composite:
+		if !w.skip_field_keys {
+			for element in v.elements {
+				if key_names_field(v, element.key) && walk_names(w, element.key) {
+					return true
+				}
+			}
+		}
+	}
+	return expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
+		return walk_names((^Name_Walk)(data), child)
+	})
+}
+
+// What `expr_children` asks of each child, which may be nil, with the caller's
+// data. True ends the walk.
+Expr_Visit :: proc(data: rawptr, child: Expr) -> bool
+
+// Asks `visit` about each expression `e` directly holds, in written order, until
+// it answers true, and says whether it did. A literal's key that names a field
+// (`key_names_field`) is no expression. A form that binds names of its own, an
+// `Expr_Proc`, `Type_Record`, `Type_Enum` or `Type_Interface`, has no children
+// here, as each walker decides what its body means for its question.
+expr_children :: proc(e: Expr, data: rawptr, visit: Expr_Visit) -> bool {
+	switch v in e {
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Ident, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Propagated_Error,
+	     ^Type_Type, ^Type_Poly, ^Type_Record, ^Type_Enum, ^Type_Interface:
 		return false
 	case ^Type_Pointer:
-		return walk_names(w, v.elem)
+		return visit(data, v.elem)
 	case ^Type_C_Pointer:
-		return walk_names(w, v.elem)
+		return visit(data, v.elem)
 	case ^Type_Slice:
-		return walk_names(w, v.elem)
+		return visit(data, v.elem)
 	case ^Type_Dynamic_Array:
-		return walk_names(w, v.elem)
+		return visit(data, v.elem)
 	case ^Type_Distinct:
-		return w.matches(w.data, e) || walk_names(w, v.elem)
+		return visit(data, v.elem)
 	case ^Type_Dyn:
-		return walk_names(w, v.interface_expr)
+		return visit(data, v.interface_expr)
 	case ^Type_Array:
-		return walk_names(w, v.length) || walk_names(w, v.elem)
+		return visit(data, v.length) || visit(data, v.elem)
 	case ^Type_Map:
-		return walk_names(w, v.key) || walk_names(w, v.value)
+		return visit(data, v.key) || visit(data, v.value)
 	case ^Expr_Selector:
-		return w.matches(w.data, e) || walk_names(w, v.operand)
+		return visit(data, v.operand)
 	case ^Expr_Index:
-		if walk_names(w, v.operand) {
+		if visit(data, v.operand) {
 			return true
 		}
 		for index in v.indices {
-			if walk_names(w, index) {
+			if visit(data, index) {
 				return true
 			}
 		}
 		return false
 	case ^Expr_Slice:
-		return walk_names(w, v.operand) ||
-		       walk_names(w, v.lo) ||
-		       walk_names(w, v.hi)
+		return visit(data, v.operand) || visit(data, v.lo) || visit(data, v.hi)
 	case ^Expr_Call:
-		for arg in v.args {
-			if walk_names(w, arg.value) {
+		if visit(data, v.callee) {
+			return true
+		}
+		for argument in v.args {
+			if visit(data, argument.value) {
 				return true
 			}
 		}
-		return walk_names(w, v.callee)
+		return false
 	case ^Expr_Postfix:
-		return walk_names(w, v.operand) || walk_names(w, v.failure)
+		return visit(data, v.operand) || visit(data, v.failure)
 	case ^Expr_Unary:
-		return walk_names(w, v.operand)
+		return visit(data, v.operand)
 	case ^Expr_Binary:
-		return walk_names(w, v.lhs) || walk_names(w, v.rhs)
+		return visit(data, v.lhs) || visit(data, v.rhs)
 	case ^Expr_Range:
-		return walk_names(w, v.lo) || walk_names(w, v.hi)
+		return visit(data, v.lo) || visit(data, v.hi)
 	case ^Expr_Or_Else:
-		return walk_names(w, v.value) || walk_names(w, v.fallback) ||
-		       walk_names(w, or_else_exit_value(v))
+		return visit(data, v.value) || visit(data, v.fallback) || visit(data, or_else_exit_value(v))
 	case ^Expr_Cond:
-		return walk_names(w, v.then) ||
-		       walk_names(w, v.cond) ||
-		       walk_names(w, v.otherwise)
+		return visit(data, v.cond) || visit(data, v.then) || visit(data, v.otherwise)
 	case ^Expr_Move:
-		return walk_names(w, v.value)
+		return visit(data, v.value)
 	case ^Expr_Composite:
-		if walk_names(w, v.type_expr) || walk_names(w, v.via) {
+		if visit(data, v.type_expr) || visit(data, v.via) {
 			return true
 		}
 		for element in v.elements {
-			if !(w.skip_field_keys && key_names_field(v, element.key)) && walk_names(w, element.key) {
+			if !key_names_field(v, element.key) && visit(data, element.key) {
 				return true
 			}
-			if walk_names(w, element.value) {
+			if visit(data, element.value) {
 				return true
 			}
 		}
 		return false
 	case ^Expr_Operator:
-		return walk_names(w, v.value)
+		return visit(data, v.value)
 	case ^Type_Proc:
 		for parameter in v.params {
-			if walk_names(w, parameter.type) || walk_names(w, parameter.default) {
+			if visit(data, parameter.type) || visit(data, parameter.default) {
 				return true
 			}
 		}
-		return v.result != nil && walk_names(w, v.result.type)
+		return v.result != nil && visit(data, v.result.type)
 	case ^Type_Anon_Record:
 		for field in v.fields {
-			if walk_names(w, field.type) {
+			if visit(data, field.type) {
 				return true
 			}
 		}
 		return false
 	case ^Type_Anon_Union:
 		for variant in v.variants {
-			if walk_names(w, variant.type) {
+			if visit(data, variant.type) {
 				return true
 			}
 		}

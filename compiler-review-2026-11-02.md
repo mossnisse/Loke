@@ -82,7 +82,7 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 
 
-18. **One syntax walker and one owned-parts walker.** `expr_children` replaces the descents at [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515) and [select.odin:313](src/select.odin#L313); `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Removes about 250 lines; no behavior change.
+18. **One owned-parts walker.** `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Removes about 60 lines; no behavior change.
 
 19. **Mechanical removal of failure boilerplate.** Drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
 
@@ -118,19 +118,6 @@ Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targ
 `check_expr` now sets `base.type = INVALID_TYPE` and `base.value_category = .Value` on entry, so `v.type = INVALID_TYPE` before an early return is needless in what it reaches: [check_builtin.odin](src/check_builtin.odin) 38, [check_calls.odin](src/check_calls.odin) 28. Some procedures write it once at the top ([check_builtin.odin:97](src/check_builtin.odin#L97), [simd.odin:421](src/simd.odin#L421)), which goes too.
 
 Shared form: assign only on success. Saves about 100 lines.
-
-#### Syntax walkers
-
-[ast.odin:1388](src/ast.odin#L1388) `type_syntax_any_name`, [doc.odin:578](src/doc.odin#L578) `api_refs`, [private_names.odin:515](src/private_names.odin#L515) `walk` and [select.odin:313](src/select.odin#L313) `first_unresolved_name` each repeat one descent through the expression and type-syntax kinds.
-
-| Child | ast | doc | private_names | select |
-| --- | --- | --- | --- | --- |
-| composite field-name key | walked, or skipped for a caller looking for a type | skipped unless resolved or keys are values | skipped | skipped unless keys are values |
-| `or_else` exit value | walked | no | no | walked |
-| composite `via` | walked | walked | no | no |
-| parameter default | walked | walked | no | no |
-
-The `or_else`, `via` and default rows are unexplained, and `private_names` and `select` simply do not look there. Shared form: `expr_children(e, data, visit) -> bool` in `ast.odin`, exhaustive over the kinds, with `data: rawptr` as `type_syntax_any_name` already takes. Each caller handles its own cases in a `#partial switch` and falls through to the children. Saves about 150 to 200 lines. `index_query_expr` ([query_index.odin:228](src/query_index.odin#L228)) reads checked fields and stays out.
 
 #### Type-component walkers
 
@@ -344,14 +331,6 @@ Counts per file, then the findings themselves in the same order.
 | [union.odin](src/union.odin) | 636 | 4 | 5 | 3 | 0 | 2 | 2 | 7 |
 | [universe.odin](src/universe.odin) | 132 | 0 | 0 | 0 | 0 | 2 | 0 | 1 |
 
-### src/ast.odin
-
-Mostly plain node definitions, in good shape: a scan of every struct field found each one still read, so there are no dead fields, and most comments earn their place. The main cost is a syntax walker that three other files repeat by hand.
-
-**Near copies**
-
-- [ast.odin:1388](src/ast.odin#L1388), [doc.odin:578](src/doc.odin#L578), [private_names.odin:515](src/private_names.odin#L515), and [select.odin:313](src/select.odin#L313): the same child traversal four times, and they have drifted: only this walker and `select` visit an `or_else` exit. Shared form: an `expr_children(e, data, visit) -> bool` here, each walker keeping only its special cases. (about 150 lines)
-
 ### src/attributes.odin
 
 A compact, table-driven validator in good shape overall; the table matches `design.md`.
@@ -514,15 +493,6 @@ The exact float algorithms hold up on reading. What remains is around the file: 
 **Near copies**
 
 - `require_nested_map_key_policies_walk` in [hash.odin](src/hash.odin) and [semantic.odin:2224](src/semantic.odin#L2224): this walk and `type_contains_invalid` enumerate the same components by kind; the latter is exhaustive on purpose and handles `.Box`. A shared `type_components` would serve both.
-
-### src/doc.odin
-
-What remains here belongs to the groups under "Findings that span files".
-
-**Near copies**
-
-- [doc.odin:578](src/doc.odin#L578) and [private_names.odin:515](src/private_names.odin#L515) and [ast.odin:1388](src/ast.odin#L1388): the same descent through index, call, unary, binary, and pointer, array, and map syntax, three times.
-  A child-visiting helper in `ast.odin` leaves `api_refs` only its Ident, Selector, Composite, Proc, Proc_Group, Record, Enum, and Interface cases. (about 60 lines here)
 
 ### src/emit_llvm_calls.odin
 
@@ -725,14 +695,6 @@ What remains here belongs to the groups under "Findings that span files".
 - [parallel.odin:651](src/parallel.odin#L651), [parallel.odin:668](src/parallel.odin#L668), [parallel.odin:723](src/parallel.odin#L723) and [check.odin:3888](src/check.odin#L3888), [check.odin:3856](src/check.odin#L3856), [check.odin:3897](src/check.odin#L3897): the same file-private ident, deref, and local builders under two names; [check_calls.odin:204](src/check_calls.odin#L204) hand-builds these nodes too. Share one set of `synth_*`, of which the ident, selector and deref builders are already package-visible.
 - [parallel.odin:181](src/parallel.odin#L181), [parallel.odin:723](src/parallel.odin#L723), [parallel.odin:735](src/parallel.odin#L735) and [capture.odin:110](src/capture.odin#L110), [capture.odin:140](src/capture.odin#L140): one-name `Decl` builders differing only in `kind` and type. Use one `synth_decl(c, kind, name, type, value, span)` built on `synth_name`, which interns, so callers drop their `id`. (about 20 lines here)
 - [parallel.odin:700](src/parallel.odin#L700) and [capture.odin:95](src/capture.odin#L95): a local struct whose field types are aliases only its scope binds. They differ in field names and spans; `synth_record` taking `[]Name`, with each field's span from its `Name`, serves both, moving capture fields from `entry.span` to `entry.name.span`. (about 15 lines)
-
-### src/private_names.odin
-
-Coherent and well tested on its main paths, but three drivers have grown around one by-name walk, so setup and guards repeat and the by-name model has gaps. Every bug below was reproduced with the `lokec.exe` built at this commit; roughly a sixth of the file could go.
-
-**Near copies**
-
-- [private_names.odin:515](src/private_names.odin#L515) `walk`, [doc.odin:578](src/doc.odin#L578) `api_refs` and [ast.odin:1388](src/ast.odin#L1388) `type_syntax_any_name` repeat one recursion and have drifted: the other two visit a composite's `via`, `walk` does not. A shared `syntax_children(e, out)`, like the `parts` in `pattern_shape`, leaves `walk` the Ident, Selector, `Type_Proc` and Composite arms. (about 60 lines here)
 
 ### src/provenance_form.odin
 

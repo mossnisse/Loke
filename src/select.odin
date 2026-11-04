@@ -310,6 +310,8 @@ When_Walk :: struct {
 	seen:      map[Symbol_Id]bool,
 	// What the reached declarations bind for themselves: parameters and locals.
 	bound:     [dynamic]string,
+	// The answer of the child that ended a walk of `expr_children`.
+	missing:   string,
 }
 
 // The first name `e` depends on that is not settled, or "" when all are. Only
@@ -342,33 +344,16 @@ unresolved_in :: proc(w: ^When_Walk, exprs: ..Expr) -> string {
 @(private = "file")
 unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 	k := w.k
-	switch v in e {
-	case ^Type_Pointer:
-		return unresolved_name(w, v.elem)
-	case ^Type_C_Pointer:
-		return unresolved_name(w, v.elem)
-	case ^Type_Slice:
-		return unresolved_name(w, v.elem)
-	case ^Type_Dynamic_Array:
-		return unresolved_name(w, v.elem)
-	case ^Type_Distinct:
-		return unresolved_name(w, v.elem)
-	case ^Type_Dyn:
-		return unresolved_name(w, v.interface_expr)
-	case ^Type_Array:
-		return unresolved_in(w, v.length, v.elem)
-	case ^Type_Map:
-		return unresolved_in(w, v.key, v.value)
+	#partial switch v in e {
 	case ^Type_Proc:
 		return unresolved_in_signature(w, v)
 	case ^Expr_Composite:
-		if missing := unresolved_name(w, v.type_expr); missing != "" {
+		if missing := unresolved_in(w, v.type_expr, v.via); missing != "" {
 			return missing
 		}
 		keys_are_values := composite_keys_are_values(w, v)
 		for element in v.elements {
-			_, names_field := element.key.(^Expr_Ident)
-			if !names_field || keys_are_values {
+			if keys_are_values || !key_names_field(v, element.key) {
 				if missing := unresolved_name(w, element.key); missing != "" {
 					return missing
 				}
@@ -377,6 +362,7 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 				return missing
 			}
 		}
+		return ""
 	case ^Expr_Ident:
 		if slice.contains(w.bound[:], v.name) {
 			return ""
@@ -396,26 +382,6 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 				return unresolved_in_package(w, package_of(k.c, alias.pkg), ident, v)
 			}
 		}
-		return unresolved_name(w, v.operand)
-	case ^Expr_Unary:
-		return unresolved_name(w, v.operand)
-	case ^Expr_Postfix:
-		return unresolved_in(w, v.operand, v.failure)
-	case ^Expr_Binary:
-		return unresolved_in(w, v.lhs, v.rhs)
-	case ^Expr_Cond:
-		return unresolved_in(w, v.cond, v.then, v.otherwise)
-	case ^Expr_Index:
-		if missing := unresolved_name(w, v.operand); missing != "" {
-			return missing
-		}
-		return unresolved_in(w, ..v.indices)
-	case ^Expr_Slice:
-		return unresolved_in(w, v.operand, v.lo, v.hi)
-	case ^Expr_Range:
-		return unresolved_in(w, v.lo, v.hi)
-	case ^Expr_Or_Else:
-		return unresolved_in(w, v.value, or_else_exit_value(v), v.fallback)
 	case ^Expr_Call:
 		if missing := unresolved_name(w, v.callee); missing != "" {
 			// `Simd`, `Range`, and `Box` are predeclared type constructors recognized
@@ -441,22 +407,18 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 				return missing
 			}
 		}
-	case ^Expr_Move:
-		return unresolved_name(w, v.value)
-	case ^Expr_Operator:
-		return unresolved_name(w, v.value)
-	case ^Type_Anon_Record:
-		return unresolved_in_fields(w, v.fields)
-	case ^Type_Anon_Union:
-		return unresolved_in_variants(w, v.variants)
+		return ""
 	case ^Type_Poly:
 		append(&w.bound, v.name.text)
 	case ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
 		return unresolved_in_own_scope(w, e)
-	// Nothing a condition waits on: no name, or `proc{...}`, which the checker rejects.
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Propagated_Error, ^Type_Type, ^Expr_Proc_Group:
 	}
-	return ""
+	found := expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
+		w := (^When_Walk)(data)
+		w.missing = unresolved_name(w, child)
+		return w.missing != ""
+	})
+	return w.missing if found else ""
 }
 
 // `name` selected from an imported package.

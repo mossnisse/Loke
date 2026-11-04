@@ -499,10 +499,17 @@ read_interface :: proc(x: ^Exposure, v: ^Type_Interface) {
 }
 
 @(private = "file")
+Exposure_Walk :: struct {
+	x:        ^Exposure,
+	position: Position,
+}
+
+// An array's length and a parameter's default are values, read only in a `where`
+// clause (design.md "Private names in public declarations").
+@(private = "file")
 walk :: proc(x: ^Exposure, e: Expr, position: Position) {
-	if e == nil {
-		return
-	}
+	mark := len(x.bound)
+	defer resize(&x.bound, mark)
 	#partial switch v in e {
 	case ^Expr_Ident:
 		if named, found := x.names.declared[v.name]; found && !slice.contains(x.bound[:], v.name) {
@@ -512,89 +519,29 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 		if written, named, found := selected_member(x, v); found {
 			found_name(x, written, v.name.span, v, named, position)
 		}
-		walk(x, v.operand, position)
-	case ^Expr_Index:
-		walk(x, v.operand, position)
-		for index in v.indices {
-			walk(x, index, position)
-		}
-	case ^Expr_Slice:
-		walk(x, v.operand, position)
-		walk(x, v.lo, position)
-		walk(x, v.hi, position)
-	case ^Expr_Call:
-		walk(x, v.callee, position)
-		for argument in v.args {
-			walk(x, argument.value, position)
-		}
-	case ^Expr_Postfix:
-		walk(x, v.operand, position)
-		walk(x, v.failure, position)
-	case ^Expr_Unary:
-		walk(x, v.operand, position)
-	case ^Expr_Binary:
-		walk(x, v.lhs, position)
-		walk(x, v.rhs, position)
-	case ^Expr_Range:
-		walk(x, v.lo, position)
-		walk(x, v.hi, position)
-	case ^Expr_Or_Else:
-		walk(x, v.value, position)
-		walk(x, v.fallback, position)
-	case ^Expr_Cond:
-		walk(x, v.cond, position)
-		walk(x, v.then, position)
-		walk(x, v.otherwise, position)
-	case ^Expr_Move:
-		walk(x, v.value, position)
-	case ^Expr_Composite:
-		walk(x, v.type_expr, position)
-		for element in v.elements {
-			// A field's name is not a reference.
-			if _, is_name := element.key.(^Expr_Ident); !is_name {
-				walk(x, element.key, position)
-			}
-			walk(x, element.value, position)
-		}
-	case ^Type_Pointer:
-		walk(x, v.elem, position)
-	case ^Type_C_Pointer:
-		walk(x, v.elem, position)
-	case ^Type_Slice:
-		walk(x, v.elem, position)
-	case ^Type_Dynamic_Array:
-		walk(x, v.elem, position)
-	case ^Type_Distinct:
-		walk(x, v.elem, position)
-	case ^Type_Dyn:
-		walk(x, v.interface_expr, position)
 	case ^Type_Array:
-		if position == .Where {
-			walk(x, v.length, position)
+		if position != .Where {
+			walk(x, v.elem, position)
+			return
 		}
-		walk(x, v.elem, position)
-	case ^Type_Map:
-		walk(x, v.key, position)
-		walk(x, v.value, position)
 	case ^Type_Proc:
-		mark := len(x.bound)
 		bind_signature(&x.bound, v)
-		for parameter in v.params {
-			walk(x, parameter.type, position)
-		}
-		if v.result != nil {
-			walk(x, v.result.type, position)
-		}
-		resize(&x.bound, mark)
-	case ^Type_Anon_Record:
-		for field in v.fields {
-			walk(x, field.type, position)
-		}
-	case ^Type_Anon_Union:
-		for variant in v.variants {
-			walk(x, variant.type, position)
+		if position != .Where {
+			for parameter in v.params {
+				walk(x, parameter.type, position)
+			}
+			if v.result != nil {
+				walk(x, v.result.type, position)
+			}
+			return
 		}
 	}
+	walking := Exposure_Walk{x, position}
+	expr_children(e, &walking, proc(data: rawptr, child: Expr) -> bool {
+		walking := (^Exposure_Walk)(data)
+		walk(walking.x, child, walking.position)
+		return false
+	})
 }
 
 // The member of an `impl` of the package that `Subject.member` or, from an

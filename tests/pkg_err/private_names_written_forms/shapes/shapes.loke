@@ -83,3 +83,10 @@ impl []Point { @(public) spread :: proc(self) -> Corner { return {}; } }
 	_ = size_of(Picks(int).Chosen);
 	_ = size_of(Picks(string).Chosen);
 }
+
+// A literal's key and a parameter's default are values, and a `where` clause reads
+// those too.
+@(private) KEY :: 1;
+@(private) DEFAULTED :: 2;
+@(public) keyed :: proc($T: type) where ([2]int{KEY = 1})[1] == 1 {}
+@(public) defaulted :: proc($T: type) where size_of(proc(x := DEFAULTED)) == 8 {}
