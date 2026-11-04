@@ -120,7 +120,7 @@ Prov_Root_Region :: struct {
 
 // Where a recorded operation ran. `first` and `count` are the construction events
 // it produced in `block`; `sequence` orders it among all the recorded operations.
-// The rest is the walk state it reads.
+// The rest is the walk state materialization restores.
 Prov_Site :: struct {
 	block:          Block_Id,
 	expansion:      Defer_Expansion,

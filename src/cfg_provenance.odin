@@ -165,7 +165,7 @@ Prov_State :: struct {
 // facts a body's fixed point carries from one round to the next. They only
 // grow, and their weight (`prov_fact_weight`) tells when a round read every
 // one at its final value. A round rebuilds everything else it holds from the
-// frozen input and the body's topology (`Prov_Topology`).
+// frozen input and the construction graph's topology (`prov_fact_graph`).
 Prov_Facts :: struct {
 	// Each local's allocator regions, and the path-indexed regions of storage.
 	region_of:        map[Symbol_Id]Region_Set,
@@ -881,7 +881,7 @@ prov_write_through_place :: proc(graph: ^Flow_Graph, place: Expr, span: Span) ->
 @(private)
 prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Value_Id, variants: []int, slot: int) {
 	recorded := prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Case{id, prov_effect_value(graph, subject), slice.clone(variants, graph.effect_program.alloc), slot}) }
+	if recorded { prov_effect_begin(graph, Prov_Effect_Case{id, prov_effect_value(graph, subject), slice.clone(variants, graph.alloc), slot}) }
 	defer prov_effect_end(graph, recorded)
 	if id == INVALID_SYMBOL || subject == 0 {
 		return
@@ -4046,6 +4046,42 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	prov_region_escape_through(graph, span, owned, owner)
 }
 
+@(private)
+prov_store_spread_region :: proc(graph: ^Flow_Graph, destination, value: Value_Id) {
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Spread{prov_effect_value(graph, destination), prov_effect_value(graph, value)}) }
+	defer prov_effect_end(graph, recorded)
+	region := prov_storage_region(graph, value)
+	prov_store_region_set(graph, destination, region, region, prov_owner_name(graph, prov_value(graph, value).origin), element = true)
+}
+
+// design.md "Allocator regions and region provenance": a swap or sort moves what a
+// view's elements hold among them, so each element takes what any of them holds.
+// Nothing new enters the storage, so no escape is checked, and a summary records a
+// copy of any element to any element, which its caller resolves in turn.
+@(private)
+prov_store_permuted_region :: proc(graph: ^Flow_Graph, receiver: Value_Id) {
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Permute{prov_effect_value(graph, receiver)}) }
+	defer prov_effect_end(graph, recorded)
+	nothing := Region_Set{}
+	element := slice.clone([]Proj_Step{proj_wild()}, graph.alloc)
+	contents := make([]Prov_Region_Content, 2, graph.alloc)
+	contents[0] = Prov_Region_Content{path = element, region = nothing, handle = true, from = Prov_Region_Source{element, .All}}
+	contents[1] = Prov_Region_Content{path = element, region = nothing, from = Prov_Region_Source{element, .Owners}}
+	prov_store_region_through(graph, receiver, nothing, nothing, "", contents = contents)
+}
+
+@(private)
+prov_store_map_key_region :: proc(graph: ^Flow_Graph, destination, value: Value_Id) {
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Map_Key{prov_effect_value(graph, destination), prov_effect_value(graph, value)}) }
+	defer prov_effect_end(graph, recorded)
+	region := prov_result_region(graph, value)
+	owned := prov_result_region_at(graph, value, nil, .Owners)
+	prov_store_region_through(graph, destination, region, owned, prov_owner_name(graph, prov_value(graph, value).origin), {proj_wild(), proj_field(PROJ_MAP_KEY)})
+}
+
 // An outer carrier, mutable or read-only, can reach writable carriers in its
 // contents. Normalized addresses keep the descriptor and its contents separate,
 // so a callee's aggregate write summary must follow those nested destinations.
@@ -5178,10 +5214,8 @@ prov_declare_region :: proc(
 prov_declare_provider :: proc(graph: ^Flow_Graph, id: Symbol_Id, initialized: bool, initializer_region: Region_Set) {
 	prov_merge_region_of(graph, id, prov_provider_region(graph, id))
 	if initialized {
-		parent := graph.provider_parents[id]
-		region_merge(&parent, initializer_region)
-		if !region_is_empty(parent) {
-			graph.provider_parents[id] = parent
+		if !region_is_empty(initializer_region) {
+			prov_merge_parent(graph, id, initializer_region)
 		}
 	}
 }
@@ -5304,12 +5338,12 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			if value != nil && type_is_region_provider(graph.k.c, target_type) {
 				// A provider's own region stays its token; the new value's parent joins
 				// the parents it depends on.
-				prov_merge_provider_parent(graph, ident.symbol, prov_input_value(graph, value), source, storage = !s.destructure.active && type_is_carrier(graph.k.c, target_type))
+				prov_merge_value_region(graph, ident.symbol, prov_input_value(graph, value), source, storage = !s.destructure.active && type_is_carrier(graph.k.c, target_type), provider = true)
 			} else if value != nil && prov_type_has_region(graph.k.c, target_type) {
 				if !type_is_carrier(graph.k.c, target_type) {
 					prov_define_value_regions(graph, prov_root_for_symbol(graph, ident.symbol), nil, prov_input_value(graph, value), source, copies, ident.symbol)
 				} else {
-					prov_assign_value_region(graph, ident.symbol, prov_input_value(graph, value), source, storage = !s.destructure.active && type_is_carrier(graph.k.c, target_type))
+					prov_merge_value_region(graph, ident.symbol, prov_input_value(graph, value), source, storage = !s.destructure.active, provider = false)
 				}
 			}
 			prov_note_written_alias(graph, ident.symbol, value, source = source)
@@ -5628,6 +5662,7 @@ prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 	if call, found := graph.operator_calls[rawptr(expr_base(e))]; found {
 		return call
 	}
+	assert(!graph.replaying_facts, "fact replay reached an operator call absent from normalization")
 	bound: []Expr
 	indexes := false
 	#partial switch v in e {
@@ -5663,15 +5698,14 @@ prov_synthetic_call :: proc(
 		if call, found := graph.input.synthetic_calls[key]; found { return call }
 		prov_writable_input(graph)
 	}
-	allocator := graph.effect_program != nil ? graph.effect_program.alloc : graph.alloc
-	call := new(Expr_Call, allocator)
+	call := new(Expr_Call, graph.alloc)
 	call.span = span
 	call.type = type
-	call.bound = slice.clone(bound, allocator)
+	call.bound = slice.clone(bound, graph.alloc)
 	call.resolution = Resolution{kind = .User_Operator, symbol = callee, chosen_overload = callee}
 	call.operation = Call_Procedure{}
 	if indexes && len(bound) > 1 {
-		call.bound_order = make([]int, len(bound), allocator)
+		call.bound_order = make([]int, len(bound), graph.alloc)
 		for index in 1 ..< len(bound) {
 			call.bound_order[index - 1] = index
 		}

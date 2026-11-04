@@ -167,8 +167,6 @@ Flow_Graph :: struct {
 	effect_program: ^Prov_Effect_Program,
 	effect_depth: int,
 	replaying_facts: bool,
-	// The recorded program a provenance graph was materialized from.
-	normalized_effects: ^Prov_Effect_Program,
 
 	// Nil in lifecycle mode, so a lifecycle walk cannot read what only the
 	// provenance walks build.
@@ -252,7 +250,8 @@ build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode := Flow_Mode.Lif
 	if mode == .Lifecycle || literal == nil || literal.body == nil {
 		return build_flow_pass(k, literal, k.c.analysis_allocator, mode)
 	}
-	return build_provenance_replay(k, literal, mode)
+	graph, _ := build_provenance_replay(k, literal, mode)
+	return graph
 }
 
 @(private)

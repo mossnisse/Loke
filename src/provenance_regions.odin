@@ -258,6 +258,37 @@ prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set)
 	graph.region_of[id] = existing
 }
 
+@(private)
+prov_merge_parent :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
+	parent := graph.provider_parents[id]
+	region_merge(&parent, set)
+	graph.provider_parents[id] = parent
+}
+
+// An assigned value's regions join a local's, or the parents a provider depends
+// on, since a provider's own region stays its token.
+@(private)
+prov_merge_value_region :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage, provider: bool) {
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Merge_Value{symbol, prov_effect_value(graph, value), prov_effect_path(graph, source), storage, provider}) }
+	defer prov_effect_end(graph, recorded)
+	region := storage ? prov_storage_region(graph, value) : prov_result_region_at(graph, value, source)
+	if provider {
+		prov_merge_parent(graph, symbol, region)
+	} else {
+		prov_merge_region_of(graph, symbol, region)
+	}
+}
+
+// Borrowed bindings are rebound independently for each case/defer expansion.
+@(private)
+prov_forget_region_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id) {
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Forget_Binding{symbol}) }
+	defer prov_effect_end(graph, recorded)
+	delete_key(&graph.region_aliases, symbol)
+}
+
 // Starts a pass from carried facts, copied so this pass's merges leave them
 // alone and the round that produced them can be reclaimed.
 @(private)
@@ -266,9 +297,7 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 		prov_merge_region_of(graph, id, set)
 	}
 	for id, set in seed.provider_parents {
-		parent := graph.provider_parents[id] or_else Region_Set{}
-		region_merge(&parent, set)
-		graph.provider_parents[id] = parent
+		prov_merge_parent(graph, id, set)
 	}
 	for id in seed.lent_locals {
 		graph.lent_locals[id] = true

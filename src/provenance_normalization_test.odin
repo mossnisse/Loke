@@ -34,6 +34,15 @@ normalization_graph :: proc(t: ^testing.T, k: ^Checker, p: ^Checked, name: strin
 	return build_flow_graph(k, body, .Prov_Diagnose)
 }
 
+// A body's graph and the operation program recorded for it.
+@(private = "file")
+normalization_replay :: proc(t: ^testing.T, k: ^Checker, p: ^Checked, name: string) -> (^Flow_Graph, ^Prov_Effect_Program) {
+	body := normalization_body(t, p, name)
+	if body == nil { return nil, nil }
+	k.c = &p.c
+	return build_provenance_replay(k, body, .Prov_Diagnose)
+}
+
 // The parameter facts a body starts from, before any of its operations.
 @(private = "file")
 normalization_parameter_seed :: proc(k: ^Checker, graph: ^Flow_Graph, program: ^Prov_Effect_Program) -> ^Flow_Graph {
@@ -734,7 +743,7 @@ main :: proc() {}`
 	defer destroy_checked(&p)
 	if !normalization_checked(t, &p, source) { return }
 	k: Checker
-	graph := normalization_graph(t, &k, &p, "chain")
+	graph, program := normalization_replay(t, &k, &p, "chain")
 	if graph == nil { return }
 	// The first iteration allocates from the default; later ones from what
 	// `allocator` reached through the chain.
@@ -742,8 +751,7 @@ main :: proc() {}`
 	testing.expect(t, region_has_param(current, 0), "the replay stopped before the forwarding chain reached the owner")
 	testing.expect(t, current.default, "the replay lost the default allocator of the first iteration")
 	testing.expect(t, !current.unknown, "a local forwarding chain made the region unknown")
-	program := graph.normalized_effects
-	testing.expect(t, program != nil && program.input.frozen && program.replays >= 4, "the loop did not saturate one frozen operation program")
+	testing.expect(t, program.input.frozen && program.replays >= 4, "the loop did not saturate one frozen operation program")
 }
 
 // Rebuilding a body's events after its facts settle allocates only in the
@@ -771,13 +779,13 @@ main :: proc() {}`) { return }
 	defer mem.tracking_allocator_destroy(&tracking)
 	k: Checker
 	graph: ^Flow_Graph
+	program: ^Prov_Effect_Program
 	{
 		context.allocator = mem.tracking_allocator(&tracking)
-		graph = normalization_graph(t, &k, &p, "forward")
+		graph, program = normalization_replay(t, &k, &p, "forward")
 	}
 	if graph == nil { return }
-	program := graph.normalized_effects
-	testing.expect(t, program != nil && program.replays > 0, "the body did not replay its recorded operations")
+	testing.expect(t, program.replays > 0, "the body did not replay its recorded operations")
 	testing.expectf(t, len(tracking.allocation_map) == 0, "materialization left %d allocations outside the analysis arena", len(tracking.allocation_map))
 }
 
@@ -803,10 +811,9 @@ forward :: proc(allocator: Allocator, pair: inout Pair) {
 }
 main :: proc() {}`) { return }
 	k: Checker
-	graph := normalization_graph(t, &k, &p, "forward")
+	graph, program := normalization_replay(t, &k, &p, "forward")
 	if graph == nil { return }
-	program := graph.normalized_effects
-	if !testing.expect(t, program != nil && program.replays > 0, "the body did not replay its recorded operations") { return }
+	if !testing.expect(t, program.replays > 0, "the body did not replay its recorded operations") { return }
 	weight := prov_fact_weight(&graph.facts)
 	carry := prov_carry_facts(graph, graph.alloc)
 	testing.expect_value(t, prov_fact_weight(carry), weight)
@@ -903,10 +910,8 @@ hooked :: proc(input: Nested) -> Nested {
 }
 main :: proc() {}`) { return }
 	k: Checker
-	graph := normalization_graph(t, &k, &p, "hooked")
+	graph, program := normalization_replay(t, &k, &p, "hooked")
 	if graph == nil { return }
-	program := graph.normalized_effects
-	if !testing.expect(t, program != nil) { return }
 	values, storage, calls := len(program.input.values), len(program.input.storages), len(program.input.calls)
 	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
 	hook := prov_input_copy_operation(graph, held).hook
@@ -943,10 +948,9 @@ global_value: int;
 write :: proc() { global_value = 3; }
 main :: proc() { write(); }`) { return }
 	k: Checker
-	graph := normalization_graph(t, &k, &p, "write")
+	graph, program := normalization_replay(t, &k, &p, "write")
 	if graph == nil { return }
-	program := graph.normalized_effects
-	if !testing.expect(t, program != nil && program.replays == 0, "a zero-weight construction graph should already be final") { return }
+	if !testing.expect(t, program.replays == 0, "a zero-weight construction graph should already be final") { return }
 	global_value := normalization_symbol(t, &p, "global_value")
 	written := false
 	for block in graph.blocks {
@@ -1002,11 +1006,11 @@ copied :: proc(allocator: Allocator, source: ^[dynamic]int) -> int {
 }
 main :: proc() {}`) { return }
 	k: Checker
-	graph := normalization_graph(t, &k, &p, "copied")
-	if graph == nil || !testing.expect(t, graph.normalized_effects != nil, "the body lost its recorded operations") { return }
+	graph, program := normalization_replay(t, &k, &p, "copied")
+	if graph == nil { return }
 	owners, table := normalization_symbol(t, &p, "owners"), normalization_symbol(t, &p, "table")
 	copied, keyed := false, false
-	for site in graph.normalized_effects.operations {
+	for site in program.operations {
 		define := site.operation.(Prov_Effect_Define) or_continue
 		destination := prov_storage(graph, define.storage).key.symbol
 		if destination == owners && define.copies {

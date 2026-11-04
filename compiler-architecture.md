@@ -213,8 +213,8 @@ Keep these phase rules:
   and carrier targets (`Prov_Facts`, embedded in each graph's state).
   `prov_carry_facts` deep-copies them into the carry arena, `prov_seed_regions`
   starts the next round from them, and `prov_fact_weight` counts them for
-  convergence. A fact graph takes the body's `Prov_Topology` (roots, provider
-  tokens, operator calls, and block count) from the program. Everything else it
+  convergence. A fact graph takes the body's topology (roots, provider tokens,
+  operator calls, and block count) from the construction graph. Everything else it
   holds is built afresh by the round, so a fact added anywhere else would not
   survive to the next round, and one added to `Prov_Facts` must also be copied,
   seeded, and weighed.

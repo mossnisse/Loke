@@ -756,46 +756,6 @@ Coherent and well tested on its main paths, but three drivers have grown around 
 - [private_names.odin:488](src/private_names.odin#L488) `poly_names` and [doc.odin:781](src/doc.odin#L781) `bind_poly_names` are identical; so are [private_names.odin:473](src/private_names.odin#L473) `bind_generic` and [doc.odin:771](src/doc.odin#L771) `bind_generic_params`. Keep one of each, not file-private. (about 15 lines)
 - [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` and [doc.odin:1106](src/doc.odin#L1106) `field_shown` have one body; doc's `package_name == "main"` is always false here, since this pass skips `main`. Share `field_exported(c, file, field)`. (about 9 lines)
 
-### src/provenance_effect.odin
-
-Sound and readable: the saturation loop, arena handling, and recording discipline held up under checking, and no bug was found. What can go is bookkeeping: statistics fields and a topology struct that restate what is already at hand, plus two near-identical fact writers.
-
-**Simplification**
-
-- [provenance_effect.odin:155](src/provenance_effect.odin#L155) `prov_note_replay_statistics`: the time and peak fields on `Prov_Effect_Program` (lines 79-80) are only copied into `c.provenance_stats`. Add to `stats := &k.c.provenance_stats` where measured, drop the proc and fields; keep `replays`, which tests read. (about 12 lines)
-- [provenance_effect.odin:181](src/provenance_effect.odin#L181) `prov_finish_effect_program`: `Prov_Topology` is a field-by-field view of the construction graph, which outlives every round in the same arena. Hold `construction: ^Flow_Graph` on the program and have `prov_fact_graph` read it; keep `program.input`, as a later query can replace `graph.input`. (about 24 lines)
-- [provenance_effect.odin:69](src/provenance_effect.odin#L69) `Prov_Effect_Program.alloc`: always equals the recording graph's `alloc`, since `effect_program` is set only at [cfg.odin:528](src/cfg.odin#L528) on the graph built with it. Use `graph.alloc` at line 250, [cfg_provenance.odin:625](src/cfg_provenance.odin#L625) and [cfg_provenance.odin:7801](src/cfg_provenance.odin#L7801), whose ternary then goes. (about 3 lines)
-- [provenance_effect.odin:101](src/provenance_effect.odin#L101) `build_provenance_replay`: `program.input` is assigned on both paths (also line 179); set it once after the walk at line 96. `initial.normalized_effects` (lines 104, 149) can move there too, as it is only a pointer. (about 4 lines)
-
-**Dead code**
-
-- (branch) [provenance_effect.odin:265](src/provenance_effect.odin#L265): `if value == 0` here and at line 276 cannot fire: the only callers ([cfg_provenance.odin:7515](src/cfg_provenance.odin#L7515), [cfg_provenance.odin:7519](src/cfg_provenance.odin#L7519)) guard `value != nil`, so `prov_input_value` is non-zero, and replay passes the recorded id.
-- (branch) [provenance_effect.odin:261](src/provenance_effect.odin#L261): the defaults `source = nil` and `storage := false` on `prov_merge_provider_parent` are never used; its one caller and the replay pass both.
-- `normalized_effects` ([cfg.odin:169](src/cfg.odin#L169)): set at lines 104 and 149 but read only by `provenance_normalization_test.odin`. Not dead, but it exists only for tests.
-
-**Data structures and algorithms**
-
-- [provenance_effect.odin:205](src/provenance_effect.odin#L205) `prov_fact_graph`: six maps are re-inserted key by key into fresh maps every round, growing with a body's locals and operators times its rounds. `operator_calls` should never be written in a round (a new entry means a node missing from the frozen input), so share it; `reserve` the rest. Performance only; measure with `perf.ps1`.
-
-**Near copies**
-
-- [provenance_effect.odin:261](src/provenance_effect.odin#L261) and [provenance_effect.odin:272](src/provenance_effect.odin#L272): `prov_merge_provider_parent` and `prov_assign_value_region` differ only in the final merge, and `Prov_Effect_Parent` and `Prov_Effect_Assign` are the same struct. One proc and operation with a `provider: bool` serves both, passed at [cfg_provenance.odin:7518](src/cfg_provenance.odin#L7518) and [cfg_provenance.odin:7525](src/cfg_provenance.odin#L7525). (about 12 lines)
-- [provenance_effect.odin:267](src/provenance_effect.odin#L267) and [cfg_provenance.odin:4019](src/cfg_provenance.odin#L4019): the same three lines merge a region into `provider_parents`. A small `prov_merge_parent(graph, symbol, set)` serves both, since the seed must not call the recording proc. (about 2 lines)
-
-**Structure and boundaries**
-
-- [provenance_effect.odin:253](src/provenance_effect.odin#L253): the six fact writers on lines 253-312 sit here while their siblings (`prov_store_region`, `prov_declare_region`, `prov_merge_moved_bits`, and others) live in `cfg_provenance.odin`, using helpers defined there. Move them beside those, leaving this file the operation types, recording, replay, and driver.
-
-**Comments**
-
-- [provenance_effect.odin:99](src/provenance_effect.odin#L99): "The walk recorded no carried fact, so replay could change nothing: this graph is final." The current text misstates the test (weight zero, not "changed") and records history ("the former fixed point").
-- [provenance_effect.odin:167](src/provenance_effect.odin#L167): drop "before reclaiming construction scratch", which is stale: nothing is reclaimed here and the construction graph is returned. Start at "Describe every value: no later fact round may add values, ...".
-- [provenance_effect.odin:177](src/provenance_effect.odin#L177): "These tables share the construction graph's arena, so a round reuses them." The second sentence argues against a second copy no one proposes.
-- [provenance_effect.odin:195](src/provenance_effect.odin#L195): "The caller seeds its facts; its loan and lifecycle buffers stay empty." The "event buffers" claim is false: materialization reads what replay emitted into `block.prov` ([provenance_event.odin:295](src/provenance_event.odin#L295)).
-- [provenance_effect.odin:46](src/provenance_effect.odin#L46): "The walk state materialization restores." Saturation rounds (lines 315-318) never restore it, so "its replay reads" misleads.
-- [provenance_effect.odin:322](src/provenance_effect.odin#L322): one line is enough, citing `compiler-architecture.md "Normalized provenance input"`, which states this rule; `assert`s enforce it.
-- [provenance_effect.odin:139](src/provenance_effect.odin#L139): "Only fact-dependent events change once the facts settle; they are materialized again, interleaved with one more replay."
-
 ### src/provenance_form.odin
 
 What remains here waits on a helper shared across files.
@@ -810,7 +770,7 @@ Compact and well ordered, with no bug found. The weight is in two mechanisms tha
 
 **Simplification**
 
-- [provenance_input.odin:93](src/provenance_input.odin#L93) `prov_writable_input`: production reads `program.input` only during `build_provenance_replay`; `normalized_effects` is read only by tests, and the `weight == 0` path already lets a finished graph write it directly. Clear `frozen` as the build returns, or reduce this to the assert; drop `seed` and `prov_clone_transfer`. `normalization_parameter_seed` and two test checks need adjusting. (about 60 lines)
+- [provenance_input.odin:93](src/provenance_input.odin#L93) `prov_writable_input`: production reads `program.input` only during `build_provenance_replay`; only tests read the program it returns, and the `weight == 0` path already lets a finished graph write it directly. Clear `frozen` as the build returns, or reduce this to the assert; drop `seed` and `prov_clone_transfer`. `normalization_parameter_seed` and two test checks need adjusting. (about 60 lines)
 - [provenance_input.odin:120](src/provenance_input.odin#L120) `new_prov_input`: if the copy stays, it can be shallow. Seed and copy share the analysis arena, no recorded path is written in place, and `Prov_Value.form` slices are already shared at L122. Keep the map loops; drop the clones at L123, L125-129, L130, L132 and L134. (about 45 lines)
 - [provenance_input.odin:75](src/provenance_input.odin#L75) `Prov_Input.alloc`: its one reader is `strings.clone(name, graph.input.alloc)` at [cfg_provenance.odin:6808](src/cfg_provenance.odin#L6808), where it equals `graph.alloc`, which already holds `name`; replay asserts first. Store `name` and delete the field and L104. (about 3 lines)
 - [provenance_input.odin:242](src/provenance_input.odin#L242) `prov_input_key`: its only caller is `prov_input_place`; build the key there, or lose both with the `places` change below. (about 6 lines)
