@@ -973,6 +973,27 @@ completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
 	}
 }
 
+// A name two `using` fields promote cannot be selected, so it is not offered;
+// a package's enum is a type whose members have no visibility of their own, and
+// a record containing itself gets an answer.
+@(test)
+completion_follows_selector_lookup :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-lookup") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nimport \"lib\";\nA :: struct { x: int, a_only: int }\nB :: struct { x: int }\nBoth :: struct { using a: A, using b: B }\nLoop :: struct { using l: Loop, using r: Loop, v: int }\nTint :: lib.Tint;\nmain :: proc() {\n\tboth := Both{};\n\tloop := Loop{};\n\t_ = both.a_only;\n\t_ = loop.v;\n\t_ = lib.Tint.red;\n\t_ = Tint.blue;\n}\n"
+	write_file(&h, "lib/lib.loke", "package lib;\n@(public) Tint :: enum { red, blue }\n")
+	open(&h, "main.loke", main_text)
+	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "both.a_only", 5))
+	testing.expect_value(t, completion_labels(reply), "a a_only b")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "loop.v", 5))
+	testing.expect_value(t, completion_labels(reply), "l r v")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "lib.Tint.red", 9))
+	testing.expect_value(t, completion_labels(reply), "blue red")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "Tint.blue", 5))
+	testing.expect_value(t, completion_labels(reply), "blue red")
+}
+
 // "label;label @signature/parameter", or "null".
 @(private = "file")
 signature_summary :: proc(reply: json.Value) -> string {
@@ -1300,6 +1321,12 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		{"self", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "self) -> int", "receiver", "`self` marks a method's receiver"},
 		{"call", "package main;\nPoint :: struct { x: int }\nimpl Point { call :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p(); }\n", "call ::", "invoke", "`call` is a member name the compiler or an interface looks up by name"},
 		{"to-call", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "read ::", "call", "`call` is a member name"},
+		// `foreach` looks an associated type up by name; no lookup finds a field
+		// that way, so a list's `next` renames freely.
+		{"associated-type", "package main;\nCursor :: struct { at: int }\nimpl Cursor { next :: proc(self: inout Cursor) -> Option(int) { return .none; } }\nBag :: struct { n: int }\nimpl Bag { Element :: int; iter :: proc(self) -> Cursor { return {}; } }\nmain :: proc() { foreach (item in Bag{}) { _ = item; } }\n", "Element ::", "Entry", "`Element` is a member name the compiler or an interface looks up by name"},
+		{"to-associated-type", "package main;\nBag :: struct { n: int }\nimpl Bag { Size :: int; }\nmain :: proc() { b := Bag{1}; _ = b.n; x: Bag.Size = 1; _ = x; }\n", "Size ::", "Item", "`Item` is a member name"},
+		{"field-next", "package main;\nNode :: struct { next: int }\nmain :: proc() { n := Node{1}; _ = n.next; }\n", "next: int", "after", "main.loke:2"},
+		{"to-field-next", "package main;\nNode :: struct { after: int }\nmain :: proc() { n := Node{1}; _ = n.after; }\n", "after: int", "next", "main.loke:2"},
 		// grammar.md "Keywords": a member may be renamed to or from a reserved
 		// word, which still marks a keyword wherever no member is named.
 		{"to-keyword", "package main;\nKind :: enum { old, other }\nmain :: proc() { k := Kind.old; switch (k) { case .old: default: } }\n", "old, other", "default", "main.loke:3"},

@@ -194,10 +194,12 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 			}
 			if member {
 				if conflict := member_conflict(rs, root_snapshot, handle, new_name); conflict != "" { return "", conflict }
-				// A method the compiler or an interface reaches by name has
-				// uses no reference records, such as `value()` for `call`.
+				// A method or associated type the compiler or an interface
+				// reaches by name has uses no reference records, such as
+				// `value()` for `call`. No such lookup finds a field or an enum
+				// member.
 				implicit: []string
-				if target.symbol.kind == .Proc || target.symbol.kind == .Proc_Group {
+				if target.symbol.kind != .Field && target.symbol.kind != .Enum_Member {
 					implicit, _ = lokec.query_implicit_names(rs, root_snapshot, context.temp_allocator)
 				}
 				for name in implicit {

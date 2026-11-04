@@ -431,8 +431,8 @@ main :: proc() {
 	signatures: []Query_Signature
 	signatures, found = query_signatures(&s, plain)
 	if testing.expect(t, found && len(signatures) == 1 && len(signatures[0].parameters) == 1) {
-		testing.expect(t, signatures[0].complete && signatures[0].parameters[0].name == "value" && signatures[0].parameters[0].has_default)
-		testing.expect(t, signatures[0].result.id == TYPE_INT && strings.contains(signatures[0].text, "int = 1"))
+		testing.expect_value(t, signatures[0].parameters[0], "value")
+		testing.expect(t, strings.contains(signatures[0].text, "int = 1"))
 	}
 	pick := snapshot_test_symbol(t, &s, snapshot, file, "pick")
 	signatures, found = query_signatures(&s, pick)
@@ -447,7 +447,7 @@ main :: proc() {
 	testing.expect(t, found && len(references) == 1, "static loop cloned uses were duplicated")
 	delete(references)
 	signatures, found = query_signatures(&s, identity)
-	testing.expect(t, found && len(signatures) == 1 && !signatures[0].complete && strings.contains(signatures[0].text, "$T"))
+	testing.expect(t, found && len(signatures) == 1 && strings.contains(signatures[0].text, "$T"))
 	_, found = query_at(&s, snapshot, file, u32(strings.index(text, "unknown()")))
 	testing.expect(t, !found, "inactive syntax must not invent checked bindings")
 	query_used := s.query_arena.total_used
@@ -881,6 +881,7 @@ session_queries_list_visible_names_and_members :: proc(t: ^testing.T) {
 import "values";
 Color :: enum { Red, Green }
 Shape :: union { circle: f64, empty:, }
+Tint_Alias :: values.Tint;
 Point :: struct { x, y: int }
 impl Point {
 	length :: proc(self) -> int { return self.x + self.y; }
@@ -909,11 +910,19 @@ main :: proc() {
 	_ = c == .Red;
 	_ = shape;
 	_ = values.shared;
+	_ = values.Tint.red;
+	_ = values.Form.solid;
+	_ = Tint_Alias.blue;
 	q := p.;
 	pp.
 }
 `
-	lib_text := "package values; @(public) shared :: 1; hidden :: 2;"
+	lib_text := `package values;
+@(public) shared :: 1;
+hidden :: 2;
+@(public) Tint :: enum { red, blue }
+@(public) Form :: union { solid: int, hollow, }
+`
 	s: Compilation_Session
 	defer destroy_session(&s)
 	if !testing.expect(t, init_session(&s, session_test_config())) { return }
@@ -944,7 +953,12 @@ main :: proc() {
 	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "pp.x"), "length x y")
 	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Color.Red"), "Green Red")
 	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Shape.empty"), "circle! empty!")
-	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "values.shared"), "shared")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "values.shared"), "Form Tint shared")
+	// A type named through its package is a type, and an enum's members have no
+	// visibility of their own (design.md "Compile-time reflection").
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Tint.red"), "blue red")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Tint_Alias.blue"), "blue red")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Form.solid"), "hollow! solid!")
 	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Point{1"), "length origin")
 }
 
@@ -985,6 +999,86 @@ main :: proc() {
 	testing.expect(t, len(names) > 0 && names[0] == "square" && slice.contains(names, "kept"), "a `when` branch's local is in the enclosing scope")
 	implicit, found := query_implicit_names(&s, snapshot, context.temp_allocator)
 	testing.expect(t, found && slice.contains(implicit, "call") && slice.contains(implicit, "area"), "protocol and interface slot names")
+	testing.expect(t, slice.contains(implicit, "Element") && slice.contains(implicit, "Item"), "associated types the compiler looks up by name")
+}
+
+// A member an interface reaches counts wherever its requirement spells it: in a
+// result, a binding's type, or a slot's type, and under any expression form.
+@(test)
+session_implicit_names_read_whole_requirements :: proc(t: ^testing.T) {
+	root := session_fixture(t, "implicit")
+	if root == "" { return }
+	defer remove_tree(root)
+	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
+	text := `package main;
+Reached :: interface($T: type) {
+	(x: T) x.through_postfix()^ -> int;
+	(x: T) -x.through_unary -> int;
+	(x: T, y: T.Through_Binding) x.plain -> T.Through_Result;
+	slot read: proc(self) -> T.Through_Slot;
+}
+main :: proc() {}
+`
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+	testing.expect(t, set_session_overlay(&s, path, text))
+	check_session(&s, path_dir(path, context.temp_allocator))
+	snapshot, captured := session_snapshot(&s)
+	if !testing.expect(t, captured) { return }
+	implicit, found := query_implicit_names(&s, snapshot, context.temp_allocator)
+	testing.expect(t, found)
+	for name in ([]string{"through_postfix", "through_unary", "Through_Binding", "plain", "Through_Result", "read", "Through_Slot"}) {
+		testing.expectf(t, slice.contains(implicit, name), "%s is reached by name", name)
+	}
+}
+
+// design.md "Promoted struct fields": a name two `using` fields supply is
+// ambiguous however deep each is, and is listed only so a rename can see it.
+// A record containing itself is an error that must not stop the walk ending.
+@(test)
+session_members_mark_ambiguous_promotion :: proc(t: ^testing.T) {
+	root := session_fixture(t, "ambiguous")
+	if root == "" { return }
+	defer remove_tree(root)
+	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
+	text := `package main;
+Leaf :: struct { deep: int }
+Left :: struct { shared: int, using leaf: Leaf, kept: int }
+Right :: struct { shared: int, using leaf: Leaf }
+Both :: struct { using left: Left, using right: Right, own: int }
+Hides :: struct { using left: Left, using right: Right, shared: int }
+Self_Using :: struct { using a: Self_Using, using b: Self_Using, v: int }
+main :: proc() {
+	both := Both{};
+	hides := Hides{};
+	cycle := Self_Using{};
+	_ = both.own;
+	_ = hides.kept;
+	_ = cycle.v;
+	_ = cycle.absent;
+}
+`
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+	testing.expect(t, set_session_overlay(&s, path, text))
+	testing.expect(t, !check_session(&s, path_dir(path, context.temp_allocator)), "a record cannot contain itself")
+	snapshot, captured := session_snapshot(&s)
+	if !testing.expect(t, captured) { return }
+	file, _ := query_file(&s, snapshot, path)
+	listed :: proc(t: ^testing.T, s: ^Compilation_Session, snapshot: Compilation_Snapshot, file: u32, text, needle: string) -> string {
+		members, _ := query_members(s, snapshot_test_position(t, s, snapshot, file, text, needle), file, context.temp_allocator)
+		b := strings.builder_make(context.temp_allocator)
+		for member in members {
+			strings.write_string(&b, member.name)
+			strings.write_string(&b, member.ambiguous ? "? " : " ")
+		}
+		return strings.to_string(b)
+	}
+	testing.expect_value(t, listed(t, &s, snapshot, file, text, "both.own"), "deep? kept leaf? left own right shared? ")
+	testing.expect_value(t, listed(t, &s, snapshot, file, text, "hides.kept"), "deep? kept leaf? left right shared ")
+	testing.expect_value(t, listed(t, &s, snapshot, file, text, "cycle.v"), "a b v ")
 }
 
 // A selector in a generic records its operand in the unchecked template and in

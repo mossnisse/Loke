@@ -66,6 +66,7 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 		members, listed := lokec.query_members(session, operand, file, context.temp_allocator)
 		if !listed { return EMPTY_COMPLETION }
 		for member in members {
+			if member.ambiguous { continue }
 			item := Completion_Item{label = member.name, kind = .Enum_Member}
 			if member.variant {
 				if type, typed := lokec.query_type(session, member.type); typed { item.detail = type.name }
@@ -239,10 +240,10 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 		if member, member_found := lokec.query_symbol(session, signature.symbol); member_found { name = member.name }
 		label := fmt.tprintf("%s :: %s", name, signature.text)
 		parameter := active
-		if receiver && len(signature.parameters) > 0 && signature.parameters[0].name == "self" { parameter += 1 }
+		if receiver && len(signature.parameters) > 0 && signature.parameters[0] == "self" { parameter += 1 }
 		if named != "" {
 			parameter = -1
-			for candidate, slot in signature.parameters { if candidate.name == named { parameter = slot } }
+			for candidate, slot in signature.parameters { if candidate == named { parameter = slot } }
 		}
 		if chosen < 0 && parameter >= 0 && parameter < len(signature.parameters) { chosen, chosen_parameter = index, parameter }
 		if index > 0 { strings.write_byte(&b, ',') }
@@ -267,11 +268,11 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 // parameter is never taken for that name. Label offsets count UTF-16 units
 // whatever position encoding was negotiated, as the protocol defines them.
 @(private = "file")
-write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, parameters: []lokec.Query_Parameter) {
+write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, parameters: []string) {
 	if !s.label_offsets {
 		for parameter, index in parameters {
 			if index > 0 { strings.write_byte(b, ',') }
-			write_parameter_name(b, parameter.name)
+			write_parameter_name(b, parameter)
 		}
 		return
 	}
@@ -292,13 +293,13 @@ write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, p
 			case .Colon: if depth == 1 { names = false }
 			case .Comma: if depth == 1 { names = true }
 			case .Ident:
-				if depth == 1 && names && label[token.lo:token.hi] == parameter.name { lo, hi = int(token.lo), int(token.hi) }
+				if depth == 1 && names && label[token.lo:token.hi] == parameter { lo, hi = int(token.lo), int(token.hi) }
 			}
 		}
 		if lo >= 0 {
 			fmt.sbprintf(b, `{{"label":[%d,%d]}}`, utf16_length(label[:lo]), utf16_length(label[:hi]))
 		} else {
-			write_parameter_name(b, parameter.name)
+			write_parameter_name(b, parameter)
 		}
 	}
 }

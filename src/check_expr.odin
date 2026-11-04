@@ -689,7 +689,7 @@ check_value_selector :: proc(k: ^Checker, v: ^Expr_Selector, checked: Type_Id, c
 	// into the typed AST as `b^`, which every later pass already understands.
 	if boxed := underlying_info(k.c, operand); boxed != nil && boxed.kind == .Box {
 		path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-		found, ambiguous := promoted_field_path(k.c, boxed.element, v.name.id, &path, 0)
+		found, ambiguous := promoted_field_path(k.c, boxed.element, v.name.id, &path)
 		if !found && !ambiguous && select_method(k, v, operand, callee) {
 			return
 		}
@@ -712,7 +712,7 @@ check_value_selector :: proc(k: ^Checker, v: ^Expr_Selector, checked: Type_Id, c
 	// design.md "Promoted struct fields": a declared field wins, then one reached
 	// through `using` fields. `e.x` becomes the checked chain `e.position.x`.
 	path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	found, ambiguous := promoted_field_path(k.c, base_type, v.name.id, &path, 0)
+	found, ambiguous := promoted_field_path(k.c, base_type, v.name.id, &path)
 	if ambiguous {
 		errorf(k.c, v.span, "L0703", "`%s` is promoted into `%s` by more than one `using` field; select it explicitly", v.name.text, type_name(k.c, operand))
 		return
@@ -917,13 +917,24 @@ on_raw_address_chain :: proc(k: ^Checker, v: ^Expr_Selector) -> bool {
 // `using` fields that each lead to the name are ambiguous, whatever their
 // depths (design.md "Promoted struct fields"). Only a by-value struct field
 // promotes.
-@(private = "file")
+@(private)
 promoted_field_path :: proc(
-	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id, depth: int,
+	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id,
+) -> (found: bool, ambiguous: bool) {
+	empty: Type_Walk
+	defer delete(empty)
+	return promoted_field_walk(c, record, name, path, &empty)
+}
+
+// `empty` holds the records being walked and those known not to lead to the
+// name: a record containing itself by value is already an error, and one reached
+// again by another path has nothing new to find.
+@(private = "file")
+promoted_field_walk :: proc(
+	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id, empty: ^Type_Walk,
 ) -> (found: bool, ambiguous: bool) {
 	info := underlying_info(c, record)
-	// A record containing itself by value is already an error; stop the recursion.
-	if info == nil || info.kind != .Struct || depth > 32 {
+	if info == nil || info.kind != .Struct {
 		return false, false
 	}
 	if direct := struct_field(c, record, name); direct != INVALID_SYMBOL {
@@ -935,14 +946,19 @@ promoted_field_path :: proc(
 		if sym == nil || !sym.is_using {
 			continue
 		}
+		inner := underlying_info(c, sym.type)
+		if inner == nil || !type_walk_enter(empty, sym.type, inner) {
+			continue
+		}
 		start := len(path)
 		append(path, field)
-		sub_found, sub_ambiguous := promoted_field_path(c, sym.type, name, path, depth + 1)
+		sub_found, sub_ambiguous := promoted_field_walk(c, sym.type, name, path, empty)
 		if sub_ambiguous || (sub_found && found) {
 			return false, true
 		}
 		if sub_found {
 			found = true
+			delete_key(empty, sym.type)
 		} else {
 			resize(path, start)
 		}

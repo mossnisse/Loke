@@ -1915,6 +1915,14 @@ checklist.
 - A program may bind `loke_rt_v1_cpu_dispatch`, or export a name spelling `loke.cpu_dispatch.v3.state`,
   beside a dispatched procedure. Either was a redefinition that clang rejected.
 - Editor completion no longer offers `move_only` as a keyword.
+- Editor completion lists the members of another package's enum or union named as `other.Color.`,
+  and of an alias of its enum, which came back empty. It no longer offers a name two `using` fields
+  promote, since selecting it is `L0703`.
+- A record containing itself through two `using` fields no longer hangs selector checking or
+  editor completion. The program still fails with `L0364`.
+- Rename now refuses an associated type the compiler looks up by name (`Element`, `Iterator`,
+  `Mut_Iterator`, `Item`), and a member named by an interface requirement under any expression form
+  or in a result, binding, or slot type. Renaming one broke `foreach` or the interface with no warning.
 - An adapter stored over a mutable view that owns something now holds a clone of it, and one over a
   mutable view that cannot be copied borrows it read-only. The source and the view each dropped the
   same value, which freed it twice ([Iteration adapters](design.md#iteration-adapters)).

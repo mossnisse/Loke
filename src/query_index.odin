@@ -2,30 +2,31 @@
 // No lookup, checking, or compiler registry mutation happens here.
 package lokec
 
-import "base:runtime"
-
 @(private = "file")
 Query_Index :: struct {
 	c:         ^Compiler,
 	q:         ^Snapshot_Queries,
 	visited:   map[rawptr]bool,
+	// Syntax that opens a lexical scope.
+	regions:   [dynamic]Span,
 	// The span of the statement a lowered block stands for, which the nodes
 	// lowering made up carry.
 	generated: Span,
 }
 
 // Written syntax first, then the clones and generated declarations only symbols
-// reach.
+// reach. Returns the regions, in the temporary allocator like the rest of what
+// only the walk reads.
 @(private)
-index_query_syntax :: proc(c: ^Compiler, q: ^Snapshot_Queries) {
-	index := Query_Index{c = c, q = q, visited = make(map[rawptr]bool, allocator = runtime.heap_allocator())}
-	defer delete(index.visited)
+index_query_syntax :: proc(c: ^Compiler, q: ^Snapshot_Queries) -> []Span {
+	index := Query_Index{c = c, q = q, visited = make(map[rawptr]bool, allocator = context.temp_allocator), regions = make([dynamic]Span, context.temp_allocator)}
 	for file in c.parsed_files { for item in file.items { index_query_item(&index, item) } }
 	for symbol in c.symbols {
 		if symbol == nil { continue }
 		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
 		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
 	}
+	return index.regions[:]
 }
 
 @(private)
@@ -57,9 +58,9 @@ query_index_enter :: proc(index: ^Query_Index, node: rawptr) -> bool {
 }
 
 @(private = "file")
-index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: Symbol_Id, type: Type_Id) {
+index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: Symbol_Id, type: Type_Id, type_value := false) {
 	if !query_span_spells(index.c, span, name) || !identifier_spelling(name) { return }
-	append(&index.q.occurrences, Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL, false})
+	append(&index.q.occurrences[span.file], Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL, type_value})
 }
 
 // A written name, bound to the candidates spelled the same.
@@ -85,7 +86,7 @@ index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span) {
 
 @(private = "file")
 index_query_region :: proc(index: ^Query_Index, span: Span) {
-	if valid_query_span(index.c, span) { append(&index.q.regions, span) }
+	if valid_query_span(index.c, span) { append(&index.regions, span) }
 }
 
 @(private = "file")
@@ -224,7 +225,7 @@ index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 	if base == nil { return }
 	symbol := base.resolution.symbol
 	if ident, named := operand.(^Expr_Ident); named && symbol == INVALID_SYMBOL { symbol = ident.symbol }
-	append(&index.q.operands, Query_Occurrence{span, symbol, query_node_type(base), false, base.denoted_type != INVALID_TYPE})
+	append(&index.q.operands[span.file], Query_Occurrence{span, symbol, query_node_type(base), false, base.denoted_type != INVALID_TYPE})
 }
 
 // The type a node denotes, or its value's. A package has neither.
@@ -250,7 +251,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	if !query_index_enter(index, base) { return }
 	type := query_node_type(base)
 	if valid_query_span(index.c, base.span) && base.span != index.generated && !is_implicit_deref(expr) {
-		append(&index.q.occurrences, Query_Occurrence{span = base.span, type = type, type_value = base.denoted_type != INVALID_TYPE})
+		append(&index.q.occurrences[base.span.file], Query_Occurrence{span = base.span, type = type, type_value = base.denoted_type != INVALID_TYPE})
 	}
 	switch v in expr {
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Propagated_Error, ^Expr_Proc_Group, ^Type_Type, ^Type_Poly:
@@ -258,7 +259,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		symbol := v.resolution.symbol != INVALID_SYMBOL ? v.resolution.symbol : v.symbol
 		index_query_name(index, v.span, v.name, symbol, type)
 	case ^Expr_Selector:
-		index_query_name(index, v.name.span, v.name.text, v.resolution.symbol, type)
+		index_query_name(index, v.name.span, v.name.text, v.resolution.symbol, type, v.denoted_type != INVALID_TYPE)
 		index_query_operand(index, v)
 		index_query_expr(index, v.operand)
 	case ^Expr_Index:
