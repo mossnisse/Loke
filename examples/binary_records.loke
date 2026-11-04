@@ -1,0 +1,226 @@
+package main;
+
+// A record in a binary format, written and read back: big-endian fields, a magic
+// number, a length patched in once it is known, and a CRC checked before anything
+// in the body is believed. Then the two things a format has to survive: a record
+// cut short, and a bit flipped anywhere in it.
+
+import "core:checksum";
+import "core:encoding/binary";
+import "core:endian";
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:mem";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// magic    4 bytes  "LOKR"
+// version  u16      1
+// flags    u16
+// length   u32      bytes of body
+// crc      u32      CRC-32/ISO-HDLC of the 12 bytes before it, then the body
+// body     scale: f32, count: u16, then count times (id: u32, weight: f64)
+
+MAGIC       := "LOKR".bytes();
+HEADER_SIZE :: 16;
+ENTRY_SIZE  :: 12;
+MAX_BODY    :: 1 << 24;
+MAX_ENTRIES :: 1 << 20;
+
+Entry  :: struct { id: u32, weight: f64 }
+Record :: struct { flags: u16, scale: f32, entries: [dynamic]Entry }
+
+Load_Error :: union {
+	io:          io.Error,
+	data:        binary.Error,
+	bad_version: u16,
+	bad_crc:     u64,
+}
+
+decode_record :: proc(bytes: []u8, base: u64 = 0) -> Result(Record, Load_Error) {
+	r := binary.Reader.init(bytes, .Big, base);
+	r.expect(MAGIC) or_return .data;
+
+	version := r.get(u16) or_return .data;
+	if (version != 1) { return .err(.bad_version(version)); }
+
+	flags := r.get(u16) or_return .data;
+	length := r.get_count(u32, 1, MAX_BODY) or_return .data;
+	crc_at := r.offset();
+	stored := r.get(u32) or_return .data;
+
+	// Check the bytes before believing anything in them.
+	body := r.sub(length) or_return .data;
+	r.finish() or_return .data;
+	crc: checksum.Crc32 = {};
+	crc.update(bytes[0:HEADER_SIZE - 4]);
+	crc.update(bytes[HEADER_SIZE:]);
+	if (crc.sum() != stored) { return .err(.bad_crc(crc_at)); }
+
+	scale := body.get(f32) or_return .data;
+	count := body.get_count(u16, ENTRY_SIZE, MAX_ENTRIES) or_return .data;
+	entries := make([dynamic]Entry, 0, count);
+	foreach (_ in 0 ..< count) {
+		id := body.get(u32) or_return .data;
+		weight := body.get(f64) or_return .data;
+		entries.append(Entry{id, weight});
+	}
+	body.finish() or_return .data;
+	return Record{flags, scale, move(entries)};
+}
+
+encode_record :: proc(record: Record, out: inout io.Buffer_Writer) -> Status(io.Error) {
+	start := out.len();
+	w := binary.writer(&mut out, .Big);
+	w.put_bytes(MAGIC) or_return;
+	w.put(u16(1)) or_return;
+	w.put(record.flags) or_return;
+	w.put(u32(0)) or_return;                 // length, patched below
+	w.put(u32(0)) or_return;                 // crc, patched below
+	w.put(record.scale) or_return;
+	w.put_length(u16, record.entries.len()) or_return;
+	foreach (entry in record.entries) {
+		w.put(entry.id) or_return;
+		w.put(entry.weight) or_return;
+	}
+
+	whole := &mut out.bytes_mut()[start:];
+	body_length := whole.len() - HEADER_SIZE;
+	endian.store(&mut whole[8:], u32(body_length), .Big);
+	crc: checksum.Crc32 = {};
+	crc.update(whole[0:HEADER_SIZE - 4]);
+	crc.update(whole[HEADER_SIZE:]);
+	endian.store(&mut whole[HEADER_SIZE - 4:], crc.sum(), .Big);
+	return .ok;
+}
+
+// A record at a file offset: the header first, then a body of a validated size.
+load_at :: proc(file: inout fs.File, offset: u64) -> Result(Record, Load_Error) {
+	header: [HEADER_SIZE]u8 = {};
+	file.read_exact_at(&mut header[:], offset) or_return .io;
+	probe := binary.Reader.init(header[:], .Big, offset);
+	probe.skip(8) or_return .data;
+	length := probe.get_length(u32, MAX_BODY) or_return .data;
+
+	bytes := make([dynamic]u8, HEADER_SIZE + length);
+	file.read_exact_at(&mut bytes[:], offset) or_return .io;
+	return decode_record(bytes[:], offset);
+}
+
+// Cut short at every length, and with each bit flipped in turn: each is an error,
+// and never a panic or an accepted record.
+damage :: proc(bytes: []u8) {
+	refused := 0;
+	accepted := 0;
+	foreach (length in 0 ..< bytes.len()) {
+		switch (decode_record(bytes[:length])) {
+		case .ok(_):  accepted += 1;
+		case .err(_): refused += 1;
+		}
+	}
+	copy := make([dynamic]u8);
+	copy.append(..bytes);
+	foreach (bit in 0 ..< 8*bytes.len()) {
+		mask := u8(1) << uint(bit % 8);
+		copy[bit / 8] ~= mask;
+		switch (decode_record(copy[:])) {
+		case .ok(_):  accepted += 1;
+		case .err(_): refused += 1;
+		}
+		copy[bit / 8] ~= mask;
+	}
+	fmt.println("damaged copies refused:", refused, "accepted:", accepted);
+}
+
+// A new, empty file under the system's temporary directory, under a name only this
+// run holds. `Create_New` never opens a file that is already there, so nothing of
+// anyone else's can be overwritten here or removed by the caller's cleanup. The
+// handle closes on the way out, so the caller can remove the file whatever it does
+// with it next.
+reserve_temporary :: proc(prefix: string_view) -> Result(string, io.Error) {
+	directory := "";
+	switch (os.get_environment("TEMP") or_return) {
+	case .some(base): directory = base;
+	case .none:
+	}
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := path.join([]string_view{directory, strings.join([]string_view{prefix, "-", digits, ".tmp"})});
+		switch (fs.open(name, fs.Open_Options{access = .Write, disposition = .Create_New})) {
+		case .ok(_):
+			return .ok(name);
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { return .err(error); }
+		}
+	}
+	return .err(io.make_error(.Already_Exists, .Open));
+}
+
+report :: proc(error: Load_Error) {
+	switch (error) {
+	case .io(failure):       fmt.println("i/o:", failure);
+	case .data(failure):     fmt.println("malformed:", failure);
+	case .bad_version(seen): fmt.println("unknown version", seen);
+	case .bad_crc(at):       fmt.println("checksum mismatch, stored at offset", at);
+	}
+}
+
+run :: proc() -> Result(int, Load_Error) {
+	record := Record{7, 1.5, make([dynamic]Entry)};
+	record.entries.append(Entry{1, 0.5});
+	record.entries.append(Entry{2, -2.25});
+
+	out: io.Buffer_Writer = {};
+	encode_record(record, inout out) or_return .io;
+	fmt.println(out.bytes());
+
+	// Through memory, with offsets as if the record sat at 0x1000 in a file.
+	back := decode_record(out.bytes(), 0x1000) or_return;
+	fmt.println(back.flags, back.scale, back.entries.len());
+	foreach (entry in back.entries) {
+		fmt.println(entry.id, entry.weight);
+	}
+
+	// Through a file, one read for the header and one for the record.
+	name := reserve_temporary("loke_binary_records") or_return .io;
+	defer _ = fs.remove(name);
+	fs.write_bytes(name, out.bytes()) or_return .io;
+	file := fs.open(name, fs.Open_Options{access = .Read, disposition = .Open_Existing}) or_return .io;
+	loaded := load_at(inout file, 0) or_return;
+	file.close() or_return .io;
+	fmt.println(loaded.entries[1].id, loaded.entries[1].weight);
+
+	damage(out.bytes());
+
+	// What a caller sees: a wrong version, a flipped bit, and a record cut short.
+	wrong: io.Buffer_Writer = {};
+	io.write_all(inout wrong, out.bytes()) or_return .io;
+	view := wrong.bytes_mut();
+	view[5] = 9;
+	switch (decode_record(wrong.bytes())) {
+	case .ok(_):       fmt.println("accepted");
+	case .err(failed): report(failed);
+	}
+	view = wrong.bytes_mut();
+	view[5] = 1;
+	view[20] = view[20] ~ 1;
+	switch (decode_record(wrong.bytes(), 0x1000)) {
+	case .ok(_):       fmt.println("accepted");
+	case .err(failed): report(failed);
+	}
+	switch (decode_record(out.bytes()[:20], 0x1000)) {
+	case .ok(_):       fmt.println("accepted");
+	case .err(failed): report(failed);
+	}
+
+	return out.len();
+}
+
+main :: proc() {
+	switch (run()) {
+	case .ok(size):    fmt.println("record size:", size);
+	case .err(failed): report(failed);
+	}
+}

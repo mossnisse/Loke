@@ -1,0 +1,393 @@
+package main;
+
+import "core:encoding/binary";
+import "core:endian";
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:math";
+import "core:mem";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// `binary.Writer` (standard-library "Writing fields"). A scripted sink stands in
+// for the streams a real program would meet: it takes at most `most` bytes a call,
+// fails once it has taken `capacity`, and counts every call, so the tests can say
+// that a refused request never reached it. A writer holds its sink's mutable
+// borrow, so each check reads the sink only after that writer's last use.
+
+failures := 0;
+
+fail :: proc(args: ..dyn fmt.Formattable) {
+	failures += 1;
+	fmt.println("FAILED", args);
+}
+
+U64_MAX :: ~u64(0);
+
+Script :: struct {
+	most:     int,
+	capacity: int,
+	taken:    [dynamic]u8,
+	calls:    int,
+}
+
+impl Script {
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		self.calls += 1;
+		room := self.capacity - self.taken.len();
+		if (room <= 0) { return .err(io.make_error(.Broken_Pipe, .Write)); }
+		count := source.len();
+		if (count > self.most) { count = self.most; }
+		if (count > room) { count = room; }
+		self.taken.append(..source[:count]);
+		return .ok(count);
+	}
+}
+
+script :: proc(most: int = 1000000, capacity: int = 1000000) -> Script {
+	return Script{most, capacity, make([dynamic]u8), 0};
+}
+
+// A sink that breaks the protocol, by accepting nothing and saying nothing.
+Stuck :: struct { calls: int }
+
+impl Stuck {
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		self.calls += 1;
+		return .ok(0);
+	}
+}
+
+expect_code :: proc(name: string_view, outcome: Status(io.Error), code: io.Code) {
+	switch (outcome) {
+	case .ok: fail(name, "was accepted");
+	case .err(error):
+		if (io.code_of(error) != code) { fail(name, "code", io.code_of(error)); }
+		if (io.operation_of(error) != .Write) { fail(name, "operation", io.operation_of(error)); }
+	}
+}
+
+expect_ok :: proc(name: string_view, outcome: Status(io.Error)) {
+	switch (outcome) {
+	case .ok:
+	case .err(error): fail(name, error);
+	}
+}
+
+// ---- fields, against hand-written bytes in both orders
+
+field :: proc(name: string_view, value: $T, big: []u8) {
+	width := size_of(T);
+	assert(big.len() == width);
+
+	wanted := script();
+	w := binary.writer(&mut wanted, .Big);
+	expect_ok(name, w.put(value));
+	if (w.offset() != u64(width)) { fail(name, "big offset", w.offset()); }
+	foreach (i in 0 ..< width) {
+		if (wanted.taken[i] != big[i]) { fail(name, "big byte", i); }
+	}
+
+	wanted_little := script();
+	l := binary.writer(&mut wanted_little, .Little);
+	expect_ok(name, l.put(value));
+	foreach (i in 0 ..< width) {
+		if (wanted_little.taken[i] != big[width - 1 - i]) { fail(name, "little byte", i); }
+	}
+}
+
+fields :: proc() {
+	field("u8", u8(0xA5), []u8{0xA5});
+	field("i8", i8(-91), []u8{0xA5});
+	field("u16", u16(0x0102), []u8{1, 2});
+	field("i16", i16(-2), []u8{0xFF, 0xFE});
+	field("u32", u32(0x01020304), []u8{1, 2, 3, 4});
+	field("i32", i32(-2), []u8{0xFF, 0xFF, 0xFF, 0xFE});
+	field("u64", u64(0x0102030405060708), []u8{1, 2, 3, 4, 5, 6, 7, 8});
+	field("i64", i64(-2), []u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE});
+	field("u128", (u128(0x0102030405060708) << 64) | u128(0x090A0B0C0D0E0F10),
+		[]u8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+	field("i128", i128(-2),
+		[]u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE});
+	field("f16", f16(1.0), []u8{0x3C, 0x00});
+	field("f32", f32(1.0), []u8{0x3F, 0x80, 0, 0});
+	field("f64", f64(-2.5), []u8{0xC0, 0x04, 0, 0, 0, 0, 0, 0});
+	field("f16 snan", math.from_bits(u16(0x7D01)), []u8{0x7D, 0x01});
+	field("f32 snan", math.from_bits(u32(0x7FA00001)), []u8{0x7F, 0xA0, 0, 0x01});
+	field("f64 snan", math.from_bits(u64(0x7FF4000000000001)), []u8{0x7F, 0xF4, 0, 0, 0, 0, 0, 0x01});
+}
+
+// ---- short writes and failures
+
+short_io :: proc() {
+	// One byte at a time still writes every field, and every byte is counted.
+	slow := script(most = 1);
+	w := binary.writer(&mut slow, .Big, 100);
+	expect_ok("slow u32", w.put(u32(0x01020304)));
+	expect_ok("slow bytes", w.put_bytes([]u8{5, 6}));
+	expect_ok("slow fill", w.fill(3, 7));
+	fmt.println(w.offset(), slow.calls, slow.taken);
+
+	// A sink that fails inside a field leaves the offset exactly where it stopped.
+	partial := script(most = 1, capacity = 2);
+	p := binary.writer(&mut partial, .Big, 100);
+	expect_code("mid-field", p.put(u32(0x01020304)), .Broken_Pipe);
+	fmt.println(p.offset(), partial.taken);
+
+	// `write` passes on a short count.
+	short := script(most = 2);
+	s := binary.writer(&mut short, .Big);
+	fmt.println(s.write([]u8{1, 2, 3}) or_else -1, s.offset());
+
+	// A sink breaking the protocol cannot spin.
+	stuck: Stuck = {};
+	k := binary.writer(&mut stuck, .Big);
+	expect_code("stuck", k.put(u32(1)), .Broken_Pipe);
+	fmt.println(k.offset(), stuck.calls);
+
+	// A bounded memory sink takes a whole field or none of it.
+	room: [6]u8 = {};
+	bounded := io.Slice_Writer.init(&mut room[:]);
+	b := binary.writer(&mut bounded, .Little);
+	expect_ok("first", b.put(u32(1)));
+	expect_code("no room", b.put(u32(2)), .Out_Of_Space);
+	fmt.println(b.offset());
+	expect_ok("third", b.put(u16(3)));
+	expect_code("full", b.put_bytes([]u8{1}), .Out_Of_Space);
+	fmt.println(b.offset(), bounded.bytes());
+}
+
+// ---- length fields
+
+put_lengths :: proc() {
+	sink := script();
+	w := binary.writer(&mut sink, .Big);
+	expect_ok("u8 max", w.put_length(u8, 255));
+	expect_ok("i8 max", w.put_length(i8, 127));
+	expect_ok("u16", w.put_length(u16, 0x0102));
+	expect_ok("zero", w.put_length(u32, 0));
+	expect_ok("u128", w.put_length(u128, 1));
+	at := w.offset();
+
+	// Invalid lengths are refused before any sink call, for every width.
+	expect_code("u8 above", w.put_length(u8, 256), .Limit_Exceeded);
+	expect_code("i8 above", w.put_length(i8, 128), .Limit_Exceeded);
+	expect_code("u16 above", w.put_length(u16, 0x10000), .Limit_Exceeded);
+	expect_code("u32 above", w.put_length(u32, 0x100000000), .Limit_Exceeded);
+	expect_code("negative u8", w.put_length(u8, -1), .Limit_Exceeded);
+	expect_code("negative i8", w.put_length(i8, -1), .Limit_Exceeded);
+	expect_code("negative i32", w.put_length(i32, -1), .Limit_Exceeded);
+	expect_code("negative i128", w.put_length(i128, -1), .Limit_Exceeded);
+	expect_code("negative u128", w.put_length(u128, -1), .Limit_Exceeded);
+	fmt.println(at, w.offset(), sink.calls, sink.taken[:4]);
+}
+
+// ---- fill
+
+fills :: proc() {
+	// Across several chunks, in the value asked for.
+	sink := script();
+	w := binary.writer(&mut sink, .Big);
+	expect_ok("long fill", w.fill(600, 0xAB));
+	filled := w.offset();
+	bad := 0;
+	foreach (b in sink.taken) { if (b != 0xAB) { bad += 1; } }
+	fmt.println(filled, sink.taken.len(), sink.calls > 1, bad);
+
+	zeros := script();
+	z := binary.writer(&mut zeros, .Big);
+	expect_ok("default fill", z.fill(3));
+	fmt.println(zeros.taken);
+
+	// A negative length and a zero one never reach the sink.
+	quiet := script();
+	q := binary.writer(&mut quiet, .Big);
+	expect_code("negative fill", q.fill(-1), .Limit_Exceeded);
+	expect_ok("zero fill", q.fill(0));
+	fmt.println(q.offset(), quiet.calls);
+
+	// A later failure keeps the accepted chunks counted, in a bounded memory sink too.
+	room: [300]u8 = {};
+	bounded := io.Slice_Writer.init(&mut room[:]);
+	b := binary.writer(&mut bounded, .Big);
+	expect_code("fill past capacity", b.fill(600, 1), .Out_Of_Space);
+	fmt.println(b.offset(), bounded.len());
+}
+
+// ---- the end of the offset range
+
+offset_space :: proc() {
+	base := U64_MAX - 4;
+
+	// put: below, at, and above.
+	{
+		sink := script();
+		w := binary.writer(&mut sink, .Big, base);
+		expect_ok("put below", w.put(u16(1)));
+		fmt.println(w.offset() == U64_MAX - 2);
+		expect_code("put above", w.put(u32(1)), .Limit_Exceeded);
+		fmt.println(w.offset() == U64_MAX - 2);
+		expect_ok("put at", w.put(u16(1)));
+		fmt.println(w.offset() == U64_MAX, sink.calls, sink.taken.len());
+	}
+
+	// Each output operation refuses its whole request without a sink call, even
+	// with a sink that would accept only a prefix.
+	{
+		sink := script(most = 1);
+		w := binary.writer(&mut sink, .Big, base);
+		five := [5]u8{1, 2, 3, 4, 5};
+		expect_code("put_bytes above", w.put_bytes(five[:]), .Limit_Exceeded);
+		expect_code("put above", w.put(u64(1)), .Limit_Exceeded);
+		expect_code("put_length above", w.put_length(u64, 1), .Limit_Exceeded);
+		expect_code("fill above", w.fill(5), .Limit_Exceeded);
+		expect_code("fill far above", w.fill(1000), .Limit_Exceeded);
+		switch (w.write(five[:])) {
+		case .ok(count): fail("write above", count);
+		case .err(error):
+			if (io.code_of(error) != .Limit_Exceeded) { fail("write above", io.code_of(error)); }
+		}
+		fmt.println(w.offset() == base, sink.calls, sink.taken.len());
+	}
+
+	// At the limit, each is accepted.
+	{
+		sink := script(most = 1);
+		w := binary.writer(&mut sink, .Big, base);
+		four := [4]u8{1, 2, 3, 4};
+		expect_ok("put_bytes at", w.put_bytes(four[:]));
+		fmt.println(w.offset() == U64_MAX, sink.calls, sink.taken.len());
+	}
+	{
+		sink := script();
+		w := binary.writer(&mut sink, .Big, base);
+		expect_ok("put_length at", w.put_length(u32, 1));
+		fmt.println(w.offset() == U64_MAX);
+	}
+	{
+		sink := script();
+		w := binary.writer(&mut sink, .Big, base);
+		expect_ok("fill at", w.fill(4));
+		fmt.println(w.offset() == U64_MAX);
+	}
+	{
+		sink := script();
+		w := binary.writer(&mut sink, .Big, base);
+		four := [4]u8{1, 2, 3, 4};
+		fmt.println(w.write(four[:]) or_else -1, w.offset() == U64_MAX);
+	}
+
+	// At the very end, empty operations succeed and one byte fails, none reaching
+	// the sink.
+	{
+		sink := script();
+		w := binary.writer(&mut sink, .Big, U64_MAX);
+		expect_ok("empty put_bytes", w.put_bytes({}));
+		expect_ok("zero fill", w.fill(0));
+		fmt.println(w.write({}) or_else -1);
+		expect_code("one byte", w.put(u8(1)), .Limit_Exceeded);
+		expect_code("one byte", w.put_bytes([]u8{1}), .Limit_Exceeded);
+		expect_code("one byte", w.fill(1), .Limit_Exceeded);
+		expect_code("one byte", w.put_length(u8, 1), .Limit_Exceeded);
+		switch (w.write([]u8{1})) {
+		case .ok(count): fail("one byte write", count);
+		case .err(error):
+			if (io.code_of(error) != .Limit_Exceeded) { fail("one byte write", io.code_of(error)); }
+		}
+		fmt.println(w.offset() == U64_MAX, sink.calls);
+	}
+}
+
+// A new, empty file under the system's temporary directory, under a name only this
+// run holds. `Create_New` never opens a file that is already there, so nothing of
+// anyone else's can be overwritten here or removed by the caller's cleanup. The
+// handle closes on the way out, so the caller can remove the file whatever it does
+// with it next.
+reserve_temporary :: proc(prefix: string_view) -> Result(string, io.Error) {
+	directory := "";
+	switch (os.get_environment("TEMP") or_return) {
+	case .some(base): directory = base;
+	case .none:
+	}
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := path.join([]string_view{directory, strings.join([]string_view{prefix, "-", digits, ".tmp"})});
+		switch (fs.open(name, fs.Open_Options{access = .Write, disposition = .Create_New})) {
+		case .ok(_):
+			return .ok(name);
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { return .err(error); }
+		}
+	}
+	return .err(io.make_error(.Already_Exists, .Open));
+}
+
+// ---- sinks
+
+sinks :: proc() -> Status(io.Error) {
+	// A growing buffer, patched once the writer's last use has passed.
+	buffer: io.Buffer_Writer = {};
+	w := binary.writer(&mut buffer, .Big);
+	w.put(u16(1)) or_return;
+	at := int(w.offset());
+	w.put(u32(0)) or_return;
+	w.put(u8(9)) or_return;
+	endian.store(&mut buffer.bytes_mut()[at:], u32(1), .Big);
+	fmt.println(buffer.bytes());
+
+	// A sink chosen at run time.
+	chosen: io.Buffer_Writer = {};
+	view := (dyn mut io.Writer)(&mut chosen);
+	d := binary.writer(&mut view, .Big);
+	d.put(u32(1)) or_return;
+
+	// Another writer, with its own order and offsets.
+	n := binary.writer(&mut d, .Little, 50);
+	n.put(u16(2)) or_return;
+	io.write_all(inout n, []u8{3}) or_return;
+	fmt.println(n.offset(), d.offset(), chosen.bytes());
+
+	// A file, read back.
+	name := reserve_temporary("loke_lib_binary_writer") or_return;
+	defer _ = fs.remove(name);
+	{
+		file := fs.open(name, fs.Open_Options{access = .Write, disposition = .Open_Existing}) or_return;
+		f := binary.writer(&mut file, .Big);
+		f.put(u16(0x0102)) or_return;
+		f.fill(2, 9) or_return;
+		file.close() or_return;
+	}
+	back := fs.read_bytes(name) or_return;
+	fmt.println(back);
+
+	// A name that is taken is skipped, not reused: the file there keeps its bytes,
+	// and the cleanup below removes only what this run reserved.
+	other := reserve_temporary("loke_lib_binary_writer") or_return;
+	defer _ = fs.remove(other);
+	fmt.println(name != other, fs.read_bytes(name) or_return);
+
+	// The order can change between fields.
+	mixed: io.Buffer_Writer = {};
+	m := binary.writer(&mut mixed, .Big);
+	fmt.println(m.order());
+	m.put(u16(1)) or_return;
+	m.set_order(.Little);
+	m.put(u16(1)) or_return;
+	fmt.println(m.order(), mixed.bytes());
+	return .ok;
+}
+
+main :: proc() {
+	fields();
+	short_io();
+	put_lengths();
+	fills();
+	offset_space();
+	switch (sinks()) {
+	case .ok:
+	case .err(error): fail("sinks", error);
+	}
+	fmt.println("failures", failures);
+}

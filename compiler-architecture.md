@@ -1164,6 +1164,17 @@ API:
   owners.
 - Allocation failure with unchanged destinations; a small `mem.Arena` makes it
   deterministic. Also check close followed by drop, double close, and unwind.
+- For `core:encoding/binary`: hand-written byte vectors in both orders, so that a
+  reader and writer sharing a mistake cannot agree; after every failure,
+  `error.offset == r.offset()` and nothing moved; lengths and counts just below, at,
+  and above each bound, through every integer type, with `i128` and `u128` values
+  beyond `u64` saturating in the diagnostic; a scripted sink that counts its calls,
+  for short writes, a failure inside a field, and requests refused at the end of the
+  offset range without reaching it. `examples/binary_records.loke` truncates a record
+  at every length and flips each of its bits.
+- For `core:checksum`: the catalogue's check values, every split of the check string,
+  and `lib_checksum_reference`, which compares each table entry and each update path
+  with a bitwise computation from the Rocksoft model, from outside the package.
 - For `core:random`: known-answer vectors from each generator's reference
   implementation, draw counts compared through `state()`, a scripted `Source`
   for rejection paths and float ends, and seeded statistical checks with

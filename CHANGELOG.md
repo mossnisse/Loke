@@ -1013,6 +1013,22 @@ checklist.
 
 ### Added
 
+- [`core:checksum`](standard-library.md#corechecksum) has `Crc(T, P)`, an incremental CRC of any
+  catalogue parameter set checked at compile time, with `Crc32`, `Crc32c`, and `Crc64`. Its zero
+  value is the checksum of no bytes, and it is an `io.Writer`.
+- [`core:encoding/binary`](standard-library.md#coreencodingbinary) reads and writes binary
+  formats: a bounded `Reader` over a borrowed slice, whose failed operations change nothing and
+  report an offset, with subrecords and lengths checked before they are used, and a `Writer(W)`
+  of typed fields into any `io.Writer`.
+- `core:io` has `Slice_Writer`, a [bounded byte sink](standard-library.md#bounded-byte-sink) over a
+  caller's slice, and `Buffer_Writer.bytes_mut`, to patch a finished buffer in place.
+- `core:endian` has `load` and `store`, a field of a byte slice in a named order, for every
+  type `is_fixed_width` accepts, floats included
+  ([Fields of a byte slice](standard-library.md#fields-of-a-byte-slice)).
+- `core:math` has `to_bits` and `from_bits`, a float's exact IEEE-754 encoding in each width
+  without `core:unsafe` ([`core:math`](standard-library.md#coremath)), and
+  [Floating-point operators](design.md#floating-point-operators) now promises that moving a
+  float keeps its encoding.
 - `@(move_only)` applies to a union too, which could be move-only only through a move-only
   payload before ([`@(move_only)`](design.md#move_only)).
 - `lokec -migrate` rewrites what an earlier release accepted into what this one does, in a

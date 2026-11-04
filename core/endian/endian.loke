@@ -13,6 +13,10 @@
 	    fmt.println(header.magic.load());
 
 	`T` is an integer type. A one-byte `T` needs no swap and gets none.
+
+	`load` and `store` read and write a field of a byte slice in a named order,
+	for offsets already validated. Untrusted input goes through
+	`core:encoding/binary`.
 */
 // standard-library "`core:endian`".
 @(public)
@@ -20,6 +24,7 @@ package endian;
 
 import "base:interfaces";
 import "core:fmt";
+import "core:math";
 
 Little_Endian :: struct($T: type) where interfaces.Integral(T) {
 	// Little-endian bytes of the value, held in a `T` because that is the only
@@ -133,5 +138,60 @@ byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) {
 			result |= part << uint(8*(width - 1 - i));
 		}
 		return result;
+	}
+}
+
+/**
+	Whether a format can name `T`: `u8` through `u128`, `i8` through `i128`, `f16`,
+	`f32`, and `f64`. `int`, `uint`, `uintptr`, `bool`, `rune`, and enums leave a
+	width or a representation to the target or the compiler.
+*/
+is_fixed_width :: proc($T: type) -> bool {
+	return T == u8 || T == u16 || T == u32 || T == u64 || T == u128 ||
+		T == i8 || T == i16 || T == i32 || T == i64 || T == i128 ||
+		T == f16 || T == f32 || T == f64;
+}
+
+/**
+	The `T` held by the first `size_of(T)` bytes, in `order`. A shorter slice
+	panics: the caller has already validated the offset.
+*/
+// A float goes through its own width's bits (`math.from_bits`), never through
+// arithmetic, so a signalling NaN comes back as it was stored.
+load :: proc($T: type, bytes: []u8, order: Order) -> T where is_fixed_width(T) {
+	when (T == f16) {
+		return math.from_bits(load(u16, bytes, order));
+	} else when (T == f32) {
+		return math.from_bits(load(u32, bytes, order));
+	} else when (T == f64) {
+		return math.from_bits(load(u64, bytes, order));
+	} else {
+		width := size_of(T);
+		field := bytes[:width];
+		value := T(0);
+		foreach (i in 0 ..< width) {
+			shift := i;
+			if (order == .Big) { shift = width - 1 - i; }
+			value |= math.wrap(T, field[i]) << uint(8*shift);
+		}
+		return value;
+	}
+}
+
+/**
+	`value` into the first `size_of(T)` bytes, in `order`. A shorter slice panics
+	and writes nothing.
+*/
+store :: proc(bytes: []mut u8, value: $T, order: Order) where is_fixed_width(T) {
+	when (T == f16 || T == f32 || T == f64) {
+		store(bytes, math.to_bits(value), order);
+	} else {
+		width := size_of(T);
+		field := &mut bytes[:width];
+		foreach (i in 0 ..< width) {
+			shift := i;
+			if (order == .Big) { shift = width - 1 - i; }
+			field[i] = math.wrap(u8, value >> uint(8*shift));
+		}
 	}
 }

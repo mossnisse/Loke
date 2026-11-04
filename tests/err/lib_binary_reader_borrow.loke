@@ -1,0 +1,27 @@
+package main;
+
+import "core:encoding/binary";
+import "core:fmt";
+
+// standard-library "Reading fields": the source cannot change, or go away, while a
+// reader or a slice taken from one is in use.
+
+written :: proc() {
+	bytes: [8]u8 = {};
+	r := binary.Reader.init(bytes[:], .Big);
+	bytes[0] = 1;
+	fmt.println(r.remaining());
+}
+
+dropped :: proc() {
+	bytes := make([dynamic]u8, 8);
+	r := binary.Reader.init(bytes[:], .Big);
+	part := r.take(2) or_else {};
+	drop(bytes);
+	fmt.println(part);
+}
+
+main :: proc() {
+	written();
+	dropped();
+}

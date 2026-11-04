@@ -1,0 +1,61 @@
+package main;
+
+import "core:checksum";
+import "core:encoding/binary";
+import "core:endian";
+import "core:fmt";
+import "core:io";
+
+// Typed fields and checksums over one buffer: reading every field in both orders,
+// writing them back, and checksumming the result with both a slice-by-8 CRC and a
+// byte-at-a-time one. perf.ps1 times the whole; the output pins what it computed.
+
+SIZE :: 64 * 1024 * 1024;
+
+// The sum of every `u32` field, which a compiler cannot drop.
+sum_fields :: proc(bytes: []u8, order: endian.Order) -> Result(u32, binary.Error) {
+	r := binary.Reader.init(bytes, order);
+	total := u32(0);
+	for (; r.remaining() >= 4;) {
+		total +%= r.get(u32) or_return;
+	}
+	return .ok(total);
+}
+
+copy_fields :: proc(bytes: []u8, out: []mut u8) -> Status(io.Error) {
+	sink := io.Slice_Writer.init(out);
+	w := binary.writer(&mut sink, .Big);
+	foreach (i in 0 ..< bytes.len() / 8) {
+		w.put(u32(i)) or_return;
+		w.put(f32(1.5)) or_return;
+	}
+	return .ok;
+}
+
+// Byte at a time, since a non-reflected register has one table.
+BZIP2 :: checksum.Crc_Params(u32){
+	width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+	reflect_in = false, reflect_out = false, final_xor = 0xFFFFFFFF,
+};
+
+main :: proc() {
+	data := make([dynamic]u8, SIZE);
+	state := u32(0x9E3779B9);
+	foreach (i in 0 ..< SIZE) {
+		state = state ~ (state << uint(13));
+		state = state ~ (state >> uint(17));
+		state = state ~ (state << uint(5));
+		data[i] = u8(state & 0xFF);
+	}
+
+	fmt.println(sum_fields(data[:], .Little) or_else 0);
+	fmt.println(sum_fields(data[:], .Big) or_else 0);
+
+	out := make([dynamic]u8, SIZE);
+	fmt.println(copy_fields(data[:], &mut out[:]) == .ok);
+
+	fmt.println(checksum.Crc32.of(data[:]));
+	fmt.println(checksum.Crc32c.of(out[:]));
+	fmt.println(checksum.Crc64.of(data[:]));
+	fmt.println(checksum.Crc(u32, BZIP2).of(data[:]));
+}

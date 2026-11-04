@@ -15,6 +15,10 @@
 	    fmt.println(header.magic.load());
 
 	`T` is an integer type. A one-byte `T` needs no swap and gets none.
+
+	`load` and `store` read and write a field of a byte slice in a named order,
+	for offsets already validated. Untrusted input goes through
+	`core:encoding/binary`.
 */
 package endian;
 
@@ -71,3 +75,22 @@ host_order :: proc() -> Order ---;
 	unchanged.
 */
 byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) ---;
+
+/*
+	Whether a format can name `T`: `u8` through `u128`, `i8` through `i128`, `f16`,
+	`f32`, and `f64`. `int`, `uint`, `uintptr`, `bool`, `rune`, and enums leave a
+	width or a representation to the target or the compiler.
+*/
+is_fixed_width :: proc($T: type) -> bool ---;
+
+/*
+	The `T` held by the first `size_of(T)` bytes, in `order`. A shorter slice
+	panics: the caller has already validated the offset.
+*/
+load :: proc($T: type, bytes: []u8, order: Order) -> T where is_fixed_width(T) ---;
+
+/*
+	`value` into the first `size_of(T)` bytes, in `order`. A shorter slice panics
+	and writes nothing.
+*/
+store :: proc(bytes: []mut u8, value: $T, order: Order) where is_fixed_width(T) ---;

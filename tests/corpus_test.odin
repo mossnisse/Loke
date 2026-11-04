@@ -2493,6 +2493,8 @@ case_directories :: proc(t: ^testing.T, root: string) -> []string {
 @(private)
 Exec :: struct {
 	command:  []string,
+	// Nil inherits this process's environment.
+	env:      []string,
 	// Zero is `DEADLINE`.
 	deadline: time.Duration,
 	state:   os.Process_State,
@@ -2521,7 +2523,7 @@ exec_all :: proc(jobs: []Exec) {
 		thread.pool_add_task(&pool, context.allocator, proc(task: thread.Task) {
 			job := (^Exec)(task.data)
 			job.state, job.stdout, job.stderr, job.err = exec(
-				os.Process_Desc{command = job.command},
+				os.Process_Desc{command = job.command, env = job.env},
 				runtime.heap_allocator(),
 				job.deadline if job.deadline != 0 else DEADLINE,
 			)
@@ -2529,6 +2531,99 @@ exec_all :: proc(jobs: []Exec) {
 	}
 	thread.pool_start(&pool)
 	thread.pool_finish(&pool)
+}
+
+// The programs that write under `TEMP` create what they use under a name only that
+// run holds. Each runs twice at once in a private `TEMP` whose first name is already
+// taken: both must give their usual output, the file already there must survive,
+// and nothing else may be left behind.
+@(test)
+scratch_paths_leave_existing_data_alone :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	Scratch_Case :: struct {
+		source, expected, taken: string,
+		is_directory:            bool,
+	}
+	cases := []Scratch_Case {
+		{"tests/run/lib_fs.loke", "tests/run/lib_fs.expected", "loke_fs_case-0", true},
+		{"tests/run/lib_fs_create_normalization.loke", "tests/run/lib_fs_create_normalization.expected", "loke_fs_create_normalization-0", true},
+		{"tests/run/lib_fs_link_normalization.loke", "tests/run/lib_fs_link_normalization.expected", "loke_fs_link_normalization-0", true},
+		{"tests/run/lib_fs_lock.loke", "tests/run/lib_fs_lock.expected", "loke_fs_lock-0", true},
+		{"tests/run/lib_fs_positional.loke", "tests/run/lib_fs_positional.expected", "loke_fs_positional-0", true},
+		{"tests/run/lib_fs_set_size.loke", "tests/run/lib_fs_set_size.expected", "loke_fs_set_size-0", true},
+		{"tests/run/lib_fs_unlock_failure.loke", "tests/run/lib_fs_unlock_failure.expected", "loke_fs_unlock_failure-0", true},
+		{"tests/run/lib_json.loke", "tests/run/lib_json.expected", "loke_json_case-0.json", false},
+		{"tests/run/lib_binary_writer.loke", "tests/run/lib_binary_writer.expected", "loke_lib_binary_writer-0.tmp", false},
+		{"examples/binary_records.loke", "tests/examples/binary_records.expected", "loke_binary_records-0.tmp", false},
+	}
+	inherited, environ_err := os.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+	base, base_err := filepath.abs(fmt.tprintf("%s/scratch-paths", TMP), context.temp_allocator)
+	if !testing.expect(t, base_err == nil, "cannot resolve the scratch directory") {
+		return
+	}
+	remove_tree(base)
+	os.make_directory(base)
+
+	compiles := make([]Exec, len(cases), context.temp_allocator)
+	runs := make([]Exec, 2 * len(cases), context.temp_allocator)
+	sentinels := make([]string, len(cases), context.temp_allocator)
+	temps := make([]string, len(cases), context.temp_allocator)
+	for c, i in cases {
+		exe := fmt.tprintf("%s/scratch-%d.exe", TMP, i)
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), c.source, "-o", exe)
+		append(&command, ..env_flags())
+		append(&command, ..extra_flags(c.source))
+		compiles[i].command = command[:]
+
+		temps[i] = fmt.tprintf("%s/%d", base, i)
+		os.make_directory(temps[i])
+		sentinels[i] = fmt.tprintf("%s/%s", temps[i], c.taken)
+		if c.is_directory {
+			os.make_directory(sentinels[i])
+			sentinels[i] = fmt.tprintf("%s/precious.txt", sentinels[i])
+		}
+		_ = os.write_entire_file(sentinels[i], "precious")
+
+		env := make([dynamic]string, context.temp_allocator)
+		for entry in inherited {
+			if !strings.has_prefix(strings.to_upper(entry, context.temp_allocator), "TEMP=") {
+				append(&env, entry)
+			}
+		}
+		append(&env, fmt.tprintf("TEMP=%s", temps[i]))
+		launch := make([]string, 1, context.temp_allocator)
+		launch[0] = launch_path(exe)
+		runs[2 * i] = Exec{command = launch, env = env[:]}
+		runs[2 * i + 1] = Exec{command = launch, env = env[:]}
+	}
+	exec_all(compiles)
+	for c, i in cases {
+		if !testing.expectf(t, compiles[i].err == nil && compiles[i].state.exit_code == 0, "%s: compile failed\n%s", c.source, string(compiles[i].stderr)) {
+			runs[2 * i].command = nil
+			runs[2 * i + 1].command = nil
+		}
+	}
+	exec_all(runs)
+
+	for c, i in cases {
+		if runs[2 * i].command == nil {
+			continue
+		}
+		expected, expected_err := os.read_entire_file(c.expected, context.temp_allocator)
+		testing.expectf(t, expected_err == nil, "%s: missing %s", c.source, c.expected)
+		for run in runs[2 * i:][:2] {
+			testing.expectf(t, run.err == nil && run.state.exit_code == 0, "%s: exited with %d\n%s", c.source, run.state.exit_code, string(run.stderr))
+			testing.expectf(t, normalise(string(run.stdout)) == normalise(string(expected)), "%s: expected %q, got %q", c.source, normalise(string(expected)), normalise(string(run.stdout)))
+		}
+		kept, kept_err := os.read_entire_file(sentinels[i], context.temp_allocator)
+		testing.expectf(t, kept_err == nil && string(kept) == "precious", "%s: did not leave %s alone", c.source, c.taken)
+		left, _ := filepath.glob(fmt.tprintf("%s/*", temps[i]), context.temp_allocator)
+		testing.expectf(t, len(left) == 1, "%s: left behind %v", c.source, left)
+	}
 }
 
 // One compiled-and-run case, a single file or a package directory. A program is
@@ -2810,6 +2905,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 	checks := []Entry {
 		{"aliasing",       .Output},
 		{"arena_pipeline", .Output},
+		{"binary_records", .Output},
 		{"channels",       .Output},
 		{"compile_time",   .Output},
 		{"config_parser",  .Output},

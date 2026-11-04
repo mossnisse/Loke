@@ -3,6 +3,7 @@ package main;
 import "core:fmt";
 import "core:fs";
 import "core:io";
+import "core:mem";
 import "core:os";
 import "core:path";
 import "core:strings";
@@ -36,16 +37,30 @@ report :: proc(outcome: Result(int, io.Error)) {
 	}
 }
 
+// A new directory under the system's temporary directory, under a name only this
+// run holds. `create_directory` refuses one that exists, so nothing of anyone
+// else's is used or removed here, and concurrent runs do not share it.
 root :: proc() -> string {
+	base := "";
 	switch (os.get_environment("TEMP")) {
 	case .ok(outcome):
 		switch (outcome) {
-		case .some(base): return path.join([]string_view{base, "loke_fs_positional"});
+		case .some(found): base = found;
 		case .none:
 		}
 	case .err:
 	}
-	return strings.copy("loke_fs_positional");
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := strings.join([]string_view{"loke_fs_positional-", digits});
+		candidate := path.join([]string_view{base, name});
+		switch (fs.create_directory(candidate)) {
+		case .ok: return candidate;
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { panic("a scratch directory could not be created"); }
+		}
+	}
+	panic("every scratch directory name is taken");
 }
 
 // The file's bytes, with each zero byte shown as `.`.
@@ -65,9 +80,6 @@ text :: proc(bytes: []u8) -> string_view {
 main :: proc() {
 	directory := root();
 	data := path.join([]string_view{directory, "data.bin"});
-	_ = fs.remove(data);
-	_ = fs.remove_directory(directory);
-	fmt.println(succeeded(fs.create_directories(directory)));
 
 	file := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Create_New, append = false}) or_else panic("a new file could not be created");
 	fmt.println(succeeded(io.write_string(inout file, "0123456789")));

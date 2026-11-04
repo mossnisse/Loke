@@ -1,0 +1,17 @@
+package main;
+
+import "core:endian";
+
+// standard-library "Fields of a byte slice": a type whose width or representation
+// the format cannot name is refused at the call.
+
+Color :: enum u8 { Red }
+
+main :: proc() {
+	bytes := [8]u8{};
+	_ = endian.load(int, bytes[:], .Big);
+	_ = endian.load(bool, bytes[:], .Big);
+	_ = endian.load(Color, bytes[:], .Big);
+	endian.store(&mut bytes[:], 7, .Big);
+	endian.store(&mut bytes[:], 'x', .Big);
+}

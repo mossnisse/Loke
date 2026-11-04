@@ -1,0 +1,12 @@
+L0434
+@12:6
+`Reader.get(int)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@13:6
+`Reader.get(bool)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@17:6
+`Writer(Buffer_Writer).put(int)` does not satisfy the bound `endian.is_fixed_width(T)`
+L0434
+@18:6
+`Writer(Buffer_Writer).put(bool)` does not satisfy the bound `endian.is_fixed_width(T)`

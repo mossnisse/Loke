@@ -3,6 +3,7 @@ package main;
 import "core:fmt";
 import "core:fs";
 import "core:io";
+import "core:mem";
 import "core:os";
 import "core:path";
 import "core:strings";
@@ -27,16 +28,30 @@ failure_of :: proc(outcome: Status(io.Error)) -> io.Error {
 	}
 }
 
+// A new directory under the system's temporary directory, under a name only this
+// run holds. `create_directory` refuses one that exists, so nothing of anyone
+// else's is used or removed here, and concurrent runs do not share it.
 root :: proc() -> string {
+	base := "";
 	switch (os.get_environment("TEMP")) {
 	case .ok(outcome):
 		switch (outcome) {
-		case .some(base): return path.join([]string_view{base, "loke_fs_set_size"});
+		case .some(found): base = found;
 		case .none:
 		}
 	case .err:
 	}
-	return strings.copy("loke_fs_set_size");
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := strings.join([]string_view{"loke_fs_set_size-", digits});
+		candidate := path.join([]string_view{base, name});
+		switch (fs.create_directory(candidate)) {
+		case .ok: return candidate;
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { panic("a scratch directory could not be created"); }
+		}
+	}
+	panic("every scratch directory name is taken");
 }
 
 // The file's bytes, with each zero byte shown as `.`.
@@ -58,11 +73,6 @@ size_of_open :: proc(file: fs.File) -> i64 {
 
 main :: proc() {
 	directory := root();
-	_ = fs.remove(path.join([]string_view{directory, "data.bin"}));
-	_ = fs.remove(path.join([]string_view{directory, "moved.bin"}));
-	_ = fs.remove(path.join([]string_view{directory, "log.txt"}));
-	_ = fs.remove_directory(directory);
-	fmt.println(succeeded(fs.create_directories(directory)));
 
 	// Shrinking discards the tail, and the position stays at 10, past the new
 	// end: the next write lands there, and the gap reads as zeros.

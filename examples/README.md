@@ -26,6 +26,7 @@ different part of the language:
 - `lexer.loke` — the compiler's lexer in Loke: byte scanning, enums, a constant table, `inout` parameters, and a recursive directory walk. It agrees with `lokec -dump-tokens` on every token's kind and span.
 - `dice.loke` — `core:random`: dice, a shuffled deck, a Monte Carlo estimate of pi, a loaded die from a weighted table, and a lottery draw without replacement, replayable from the seed it prints.
 - `lockstep.loke` — a lockstep simulation with `core:math/repro` and `core:random`: a fixed timestep, an input log, a hash of a canonical serialization each simulated second, a replay from the seed and from a snapshot that reach the same state, and the versions a recording carries so that a build computing other values refuses it. It prints the same hashes on every CPU level and optimization level.
+- `binary_records.loke` — `core:encoding/binary` and `core:checksum`: a record of big-endian fields written and read back through memory and a file, a length patched in once it is known, a CRC checked before anything in the body is believed, and every truncation and flipped bit refused.
 - `timestamps.loke` — `core:time`: ISO 8601 and RFC 3339 timestamps and durations read back and printed in UTC, at an offset, and in the basic format, with weekdays and ISO weeks; without arguments, a stamp from the clock and a sleep timed with the monotonic clock.
 - `compile_time.loke` — ordinary procedures run during compilation, `build_config`, `static_assert`, `when`, static expansion over reflection, and folded layout.
 
@@ -51,7 +52,7 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all twenty-two from these sources — not from copies — and
+`odin test tests` compiles all twenty-three from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and

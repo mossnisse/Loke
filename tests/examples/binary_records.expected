@@ -1,0 +1,10 @@
+[76, 79, 75, 82, 0, 1, 0, 7, 0, 0, 0, 30, 117, 255, 116, 179, 63, 192, 0, 0, 0, 2, 0, 0, 0, 1, 63, 224, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 192, 2, 0, 0, 0, 0, 0, 0]
+7 1.5 2
+1 0.5
+2 -2.25
+2 -2.25
+damaged copies refused: 414 accepted: 0
+unknown version 9
+checksum mismatch, stored at offset 4108
+malformed: Unexpected_End at offset 4104 (length 30)
+record size: 46

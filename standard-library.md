@@ -18,8 +18,10 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Search and build UTF-8 text | [`core:strings`](#corestrings) |
 | Parse scalar values | [`core:strconv`](#corestrconv) |
 | Read or write JSON | [`core:encoding/json`](#coreencodingjson) |
+| Read or write a binary format | [`core:encoding/binary`](#coreencodingbinary) |
+| Detect accidental corruption with a CRC | [`core:checksum`](#corechecksum) |
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
-| Store integers in a fixed byte order | [`core:endian`](#coreendian) |
+| Store integers in a fixed byte order, or read a field of validated bytes | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath), [`core:simd`](#coresimd) |
@@ -182,7 +184,9 @@ core:strings          UTF-8 algorithms and String_Builder
 core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
 core:encoding/json    JSON documents, values, and a streaming writer
-core:endian           fixed byte-order storage wrappers
+core:encoding/binary  typed fields over bytes, bounded readers, sink-generic writers
+core:checksum         CRCs of any catalogue parameter set
+core:endian           fixed byte-order wrappers and byte-slice fields
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
@@ -369,6 +373,7 @@ Buffer_Writer :: struct { /* private */ }
 Buffer_Writer.init(allocator: Allocator = mem.default_allocator()) -> Buffer_Writer
 Buffer_Writer.write(self: inout, source: []u8) -> Result(int, Error)
 Buffer_Writer.bytes(self: ^) -> []u8
+Buffer_Writer.bytes_mut(self: inout) -> []mut u8
 Buffer_Writer.len(self) -> int
 Buffer_Writer.clear(self: inout)
 Buffer_Writer.into_bytes(self: move) -> [dynamic]u8
@@ -378,11 +383,29 @@ Buffer_Writer.into_bytes(self: move) -> [dynamic]u8
 output assembled in memory before it is published, such as a document passed
 to `fs.replace_atomic`. A write appends all of its bytes or none: an allocation
 failure is `Out_Of_Memory` with operation `Write`, and the buffer is unchanged.
-`bytes` borrows the contents, so a write while that view is in use is rejected.
+`bytes` borrows the contents, so a write while that view is in use is rejected,
+and `bytes_mut` does the same for patching a finished record in place.
 `clear` keeps the capacity for reuse, and `into_bytes` transfers the storage
 without a copy. **The zero value is usable**: empty and allocator-unbound, its
 first growth binding the default allocator; `init` selects another without
 allocating.
+
+### Bounded byte sink
+
+```loke
+Slice_Writer :: struct { /* private */ }
+Slice_Writer.init(target: []mut u8) -> Slice_Writer
+Slice_Writer.write(self: inout, source: []u8) -> Result(int, Error)
+Slice_Writer.bytes(self: ^) -> []u8
+Slice_Writer.len(self) -> int
+Slice_Writer.space(self) -> int
+```
+
+`Slice_Writer` is `Buffer_Writer`'s fixed-capacity peer, for output into memory
+the caller owns. A write that does not fit is `Out_Of_Space` with operation `Write`
+and writes nothing, even where the `Writer` protocol would allow a prefix. An empty
+write succeeds even when full. It never allocates, and its zero value is a usable
+writer with no room.
 
 ### Formatting bridge
 
@@ -2015,6 +2038,263 @@ save_generation :: proc(path: string_view, generation: u64, allocator: Allocator
 }
 ```
 
+## `core:encoding/binary`
+
+Typed fields over bytes: a bounded `Reader` over a borrowed slice, and a `Writer`
+into any `io.Writer`. A format names each field's width, and the byte order lives
+in the cursor, set once, because it is one fact about the format. It is a run-time
+value because TIFF and ELF announce theirs in the file. Nothing here panics on
+malformed input, and nothing here allocates.
+
+### Reading fields
+
+```loke
+Reader :: struct { /* private */ }
+
+impl Reader {
+	init       :: proc(bytes: []u8, order: endian.Order, base: u64 = 0) -> Reader;
+
+	offset     :: proc(self) -> u64;
+	remaining  :: proc(self) -> int;
+	order      :: proc(self) -> endian.Order;
+	set_order  :: proc(self: inout, order: endian.Order);
+
+	get        :: proc(self: inout, $T: type) -> Result(T, Error) where endian.is_fixed_width(T);
+	take       :: proc(self: inout, length: $N) -> Result([]u8, Error);
+	skip       :: proc(self: inout, length: $N) -> Status(Error);
+	sub        :: proc(self: inout, length: $N) -> Result(Reader, Error);
+	seek       :: proc(self: inout, offset: u64) -> Status(Error);
+	expect     :: proc(self: inout, bytes: []u8) -> Status(Error);
+
+	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T);
+	get_count  :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T);
+
+	finish     :: proc(self) -> Status(Error);
+	read       :: proc(self: inout, destination: []mut u8) -> Result(int, io.Error);
+}
+```
+
+- **A failed operation changes nothing.** Every operation validates the whole field
+  before moving, so after a failure `error.offset == r.offset()`, and the caller can
+  retry, report, or try another reading. `get_length` and `get_count` stay on the
+  count field when the count is refused.
+- **Offsets are in the source's coordinates.** `offset()` is `base` plus the
+  position. Pass a record's file offset as `base` and every error names a file
+  offset, from subrecords too. A `base` that would overflow `u64` at the end of
+  `bytes` panics, as a programmer error.
+- **Lengths passed to `take`, `skip`, and `sub` may be any integer type**, because
+  they usually come straight from the input. A negative `length` is
+  `Invalid_Length`, and a positive one too big for `int` is `Unexpected_End`. Neither
+  traps in a conversion or wraps in an addition: the bound is compared against what
+  remains, and nothing is added first.
+- **Encoded lengths and counts are fixed-width integers.** `get_length` and
+  `get_count` accept only `u8` through `u128` and `i8` through `i128`; floats,
+  native-width integers, `bool`, `rune`, and enums do not compile. A negative value
+  read is `Invalid_Length`, and a non-negative value above `limit` is
+  `Limit_Exceeded`, checked before the remaining-byte bound in `get_count`.
+- **`sub` bounds a subrecord.** The child sees exactly `length` bytes and cannot read
+  past them, whatever the parent still holds. The parent moves past the subrecord at
+  once, so a malformed child cannot desynchronize it, and the child inherits the
+  order and keeps absolute offsets. A child's `seek` stays inside the child.
+- **Validate before allocating.** `get_length` reads a length and refuses one above
+  `limit`, for a body not yet in memory. `get_count` also refuses a count whose items
+  cannot fit in what remains, given each item's minimum encoded size, so the count
+  is safe to pass to `make`. It divides rather than multiplies, so it cannot
+  overflow. `limit` is required: the bytes remaining bound the wire size, and only the
+  caller knows what an element costs in memory. A negative `limit` or an `item_size`
+  below one panics.
+- **Bytes outlive the cursor.** `take` and `sub` borrow the source slice, not the
+  reader, so the reader stays usable while they are live and they may outlive it.
+  The compiler rejects them outliving the *source*.
+- **A copy is a checkpoint.** A `Reader` is a small value. `probe := r` peeks without
+  a `peek` operation, and `r = saved` backtracks. Its zero value is a usable reader
+  of no bytes.
+- **`seek` is absolute**, in the same coordinates as `offset()`. A format with
+  back-pointers can loop, so a parser following them must count its visits.
+- **`finish`** is `Trailing_Data` unless everything was consumed. A format that
+  allows an unread tail for forward compatibility does not call it.
+- **`read`** is the [`io.Reader`](#shared-io-contract) slot, with that protocol's
+  contract and error type, so `io.copy` and `io.read_line` work over bytes in memory.
+
+```loke
+Code :: enum {
+	Unexpected_End, Invalid_Length, Limit_Exceeded,
+	Invalid_Offset, Mismatch, Trailing_Data,
+}
+
+Error :: struct {
+	code:   Code,
+	offset: u64,
+	length: u64,
+}
+```
+
+| Code | Raised by | `offset` | `length` |
+| --- | --- | --- | --- |
+| `Unexpected_End` | `get`, `take`, `skip`, `sub`, `expect`, `get_length`, `get_count` | Start of the operation | Bytes wanted, or for `get_count` the items claimed; saturated to `u64` maximum |
+| `Invalid_Length` | A negative length, passed or read | Start of the operation | Its low 64 bits |
+| `Limit_Exceeded` | `get_length`, `get_count` above `limit` | The count field | The value read, saturated to `u64` maximum |
+| `Invalid_Offset` | `seek` | Current position | The target |
+| `Mismatch` | `expect` | Start of the expected bytes | Bytes expected |
+| `Trailing_Data` | `finish` | Current position | Bytes left |
+
+For a non-negative length, `length` is the exact value when it fits `u64`, and `u64`
+maximum otherwise, which then reports a lower bound. Validation uses the original
+integer before this conversion, so `u128(1) << 64` neither wraps to zero nor panics.
+
+`Error` owns scalars and has public fields and a `format` member. A loader that also
+does I/O names it and `io.Error` in a union of its own, using
+[`or_return` with a variant](design.md#changing-error-domains). A caller's own check
+on a field it just read has a field offset to report: capture `r.offset()` before
+the `get`.
+
+### Writing fields
+
+```loke
+Writer :: struct($W: type) where io.Writer(W) { /* private */ }
+
+writer :: proc(sink: ^mut $W, order: endian.Order, base: u64 = 0) -> Writer(W);
+
+impl Writer($W) {
+	offset     :: proc(self) -> u64;
+	order      :: proc(self) -> endian.Order;
+	set_order  :: proc(self: inout, order: endian.Order);
+
+	put        :: proc(self: inout, value: $T) -> Status(io.Error) where endian.is_fixed_width(T);
+	put_bytes  :: proc(self: inout, bytes: []u8) -> Status(io.Error);
+	put_length :: proc(self: inout, $T: type, length: int) -> Status(io.Error)
+		where endian.is_fixed_width(T), interfaces.Integral(T);
+	fill       :: proc(self: inout, length: int, value: u8 = 0) -> Status(io.Error);
+
+	write      :: proc(self: inout, source: []u8) -> Result(int, io.Error);
+}
+```
+
+- **`W` is any `io.Writer`**: `io.Buffer_Writer`, `io.Slice_Writer`, `fs.File`,
+  a [`checksum.Crc`](#corechecksum), another `binary.Writer`, or `dyn mut io.Writer`
+  where the sink is chosen at run time. Dispatch is monomorphic unless a `dyn` is asked for.
+- **The width is visible at the call.** `put` takes its type from the value, and
+  `is_fixed_width` rejects an `int`, so `w.put(count)` and `w.put(7)` do not compile.
+  `w.put(u32(count))` panics if the count does not fit, as `u32(count)` always does.
+  Use `put_length` when the value comes from data: a length that is negative or does
+  not fit `T` is `Limit_Exceeded` with operation `Write`, and nothing is written. Its
+  `T` has the same fixed-width integer restriction as `get_length` and `get_count`.
+- **`offset()` counts what the sink accepted**, plus `base`. A failed `put` into a
+  `Buffer_Writer` or `Slice_Writer`, which take all of a write or none of it, leaves
+  it unchanged. A stream may accept part of a field before failing, and then
+  `offset()` is inside the field, which is exactly where the stream stopped.
+- **Offset exhaustion is checked before writing.** Every output operation compares
+  its entire requested byte count with `u64` maximum minus `offset()`. A request above
+  that space returns `Limit_Exceeded` with operation `Write`, without calling the
+  sink or changing the offset, even if the sink would accept only a prefix. Reaching
+  exactly `u64` maximum is allowed. Empty `put_bytes`, `fill(0)`, and empty `write`
+  succeed without calling the sink, including at that offset.
+- **`fill` validates its length before writing.** A negative length returns
+  `Limit_Exceeded` with operation `Write` and changes nothing. After validation,
+  filling may use several writes; a later sink failure leaves accepted chunks counted
+  in `offset()`, even with a `Buffer_Writer` or `Slice_Writer`.
+- **Failures are `io.Error`.** Sink errors propagate unchanged; invalid lengths and
+  offset exhaustion use `Limit_Exceeded` with operation `Write`. A save routine
+  composes `w.put`, `file.lock`, and `fs.replace_atomic` with a bare `or_return` and
+  no error conversion.
+- **A writer holds its sink's mutable borrow**, so a sink is read only after the
+  writer's last use. Back-patching is [`endian.store`](#fields-of-a-byte-slice) over
+  [`Buffer_Writer.bytes_mut`](#byte-buffer) or the caller's slice, once that use has
+  passed.
+
+```loke
+buffer: io.Buffer_Writer = {};
+w := binary.writer(&mut buffer, .Big);
+w.put_bytes(MAGIC) or_return;
+length_at := int(w.offset());
+w.put(u32(0)) or_return;                     // patched below
+w.put(u16(1)) or_return;
+w.put_length(u16, entries.len()) or_return;
+
+whole := buffer.bytes_mut();
+body_length := whole.len() - length_at - 4;
+endian.store(&mut whole[length_at:], u32(body_length), .Big);
+```
+
+## `core:checksum`
+
+Checksums, for finding accidental corruption. `Crc_Params` is the Rocksoft model, the
+fields of the [CRC RevEng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm),
+so a format's CRC is pinned by copying its row.
+
+```loke
+Crc_Params :: struct($T: type) where interfaces.Integral(T) {
+	width:       int,
+	polynomial:  T,
+	initial:     T,
+	reflect_in:  bool,
+	reflect_out: bool,
+	final_xor:   T,
+}
+
+Crc :: struct($T: type, $P: Crc_Params(T)) where valid_params(T, P) { /* private */ }
+
+impl Crc($T, $P) {
+	of     :: proc(bytes: []u8) -> T;
+	update :: proc(self: inout, bytes: []u8);
+	sum    :: proc(self) -> T;
+	write  :: proc(self: inout, source: []u8) -> Result(int, io.Error);
+}
+
+valid_params :: proc($T: type, P: Crc_Params(T)) -> bool;
+
+CRC32_ISO_HDLC :: Crc_Params(u32){ /* the table below */ };
+CRC32_ISCSI    :: Crc_Params(u32){ /* the table below */ };
+CRC64_XZ       :: Crc_Params(u64){ /* the table below */ };
+
+Crc32  :: Crc(u32, CRC32_ISO_HDLC);   // zlib, gzip, PNG, ZIP
+Crc32c :: Crc(u32, CRC32_ISCSI);      // iSCSI, ext4, Btrfs
+Crc64  :: Crc(u64, CRC64_XZ);         // xz
+```
+
+- **A polynomial is in normal form** with the top bit implied, whatever the
+  reflection: CRC-32 is `0x04C11DB7`, never its reversed form `0xEDB88320`. `T` is an
+  unsigned integer as wide as `width` or wider.
+- **A parameter set is checked at compile time.** `valid_params` rejects a signed or
+  too narrow `T`, an even polynomial, and a value with bits above `width`. An
+  importer's literal must name its fields (`L0709`), so a parameter set is always
+  self-describing.
+- **The zero value is the checksum of no bytes**, so `c: checksum.Crc32 = {}` is the
+  only way to start and a forgotten initialization cannot exist. `c = {}` resets.
+- **`update` in any pieces gives the same sum**, an empty piece included. `sum` does
+  not disturb the state, so a running checksum can be read and continued.
+- **`write` is the [`io.Writer`](#shared-io-contract) slot** and never fails, so
+  `io.copy(inout crc, inout file)` checksums a stream with no whole-file buffer, and
+  a `binary.Writer` can write into one.
+- **Tables are constants**, computed at compile time per parameter set, so a program
+  pays only for the sets it names. Their layout, and any use of faster tables or
+  instructions, is not part of the contract.
+
+The check value is the CRC of the nine bytes `123456789`.
+
+| Catalogue name | Width | Polynomial | Initial | In | Out | Final XOR | Check |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CRC-32/ISO-HDLC | 32 | `0x04C11DB7` | `0xFFFFFFFF` | yes | yes | `0xFFFFFFFF` | `0xCBF43926` |
+| CRC-32/ISCSI | 32 | `0x1EDC6F41` | `0xFFFFFFFF` | yes | yes | `0xFFFFFFFF` | `0xE3069283` |
+| CRC-64/XZ | 64 | `0x42F0E1EBA9EA3693` | all ones | yes | yes | all ones | `0x995DC9BBDF1939FA` |
+
+### Using a CRC in a format
+
+A format's specification should state the catalogue name and every parameter above,
+the check value, the exact byte ranges covered, and the stored field's byte order.
+The library guarantees the arithmetic; these choices are the format's:
+
+- **A CRC finds accidental corruption.** It is not an identity, since collisions are
+  easy to construct, and not security, since anyone can recompute it. A stable content
+  hash is a separate decision for a separate package.
+- **Cover something non-empty.** CRC-32 of no bytes is `0`, so a wiped record whose
+  length and stored CRC both read as zero passes a check covering only the body. Cover
+  the magic and the length too.
+- **Check before trusting.** Verify a body's CRC before interpreting its fields, and
+  still bound-check them, because a CRC does not defend against a crafted file.
+
 ## `core:slice`
 
 `core:slice` has the slice algorithms. A `[]mut T` also has members the compiler
@@ -2313,6 +2593,29 @@ would let a host value land in a stored field unswapped. Equality compares the
 stored bytes, which is equality of the values. Formatting prints the loaded
 value, with the caller's options. Where the host order already matches, `store`
 and `load` compile to nothing.
+
+### Fields of a byte slice
+
+```loke
+is_fixed_width :: proc($T: type) -> bool;
+load  :: proc($T: type, bytes: []u8, order: Order) -> T where is_fixed_width(T);
+store :: proc(bytes: []mut u8, value: $T, order: Order) where is_fixed_width(T);
+```
+
+`is_fixed_width` accepts `u8` through `u128`, `i8` through `i128`, `f16`, `f32`,
+and `f64`. It rejects `int`, `uint`, `uintptr`, `bool`, `rune`, and enums: a format
+has to name a width and a representation, and these leave one of them to the
+target or the compiler.
+
+`load` and `store` use the first `size_of(T)` bytes. A shorter slice panics, and
+`store` then writes nothing, because the caller has already validated the offset.
+They are for back-patching and random access to validated data; untrusted input
+goes through `core:encoding/binary`. A float keeps its exact encoding, as
+[`math.to_bits`](#coremath) describes.
+
+The wrappers stay integral. Their stored form is held in a `T`, and a byte-swapped
+float is not a float: a struct that needs one stores `Big_Endian(u32)` and calls
+`math.from_bits`.
 
 ## `core:strconv`
 
@@ -3139,6 +3442,13 @@ these named policies:
   exactly, or `.none`. It is the integer counterpart of
   [`Enum.from_int`](design.md#integer-conversion).
 
+`math.to_bits(value)` is a float's IEEE-754 encoding, `u16` for an `f16`, `u32` for
+an `f32`, and `u64` for an `f64`, and `math.from_bits(bits)` is the float with that
+encoding. `to_bits(from_bits(bits)) == bits` for every pattern, a signalling NaN's
+included, because [moving a float keeps its encoding](design.md#floating-point-operators)
+and each width has its own overload. They replace `unsafe.transmute` wherever the
+question is only what the bits are.
+
 The floored forms of `/` and `%` are procedures for every integer type:
 `math.floor_div(x, y)` rounds the quotient toward negative infinity, and
 `math.floor_mod(x, y)` is the remainder that goes with it, so
@@ -3206,7 +3516,9 @@ The rest of the package is:
 
 Floating-point functions use an unsuffixed name for `f64` and `_f32` for
 `f32`, avoiding ambiguous overloads for untyped literals. There is no implicit
-widening and no `f16` variant.
+widening and no `f16` variant. The exceptions are the bit conversions `to_bits` and
+`from_bits`, procedure groups over `f16`, `f32`, and `f64`, whose width is the whole
+question; an untyped literal needs a type there.
 
 The procedures backed by the C library promise the classifications, signs,
 poles, and domain results documented on each one. They do not promise correctly
@@ -4674,8 +4986,8 @@ accept it.
 
 There is no async I/O, networking, global keyboard input, GUI or full-screen
 terminal UI, locale-sensitive text, Unicode normalization or grapheme
-segmentation, globbing, regex, memory-mapped files, file locking, automatic
-serialization, or general `core:util` package.
+segmentation, globbing, regex, memory-mapped files, automatic serialization, or
+general `core:util` package.
 
 Planned additions and smaller gaps are listed in
 [Standard-library maturity](future-plans.md#standard-library-maturity).

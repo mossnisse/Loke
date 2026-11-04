@@ -3,6 +3,7 @@ package main;
 import "core:fmt";
 import "core:fs";
 import "core:io";
+import "core:mem";
 import "core:os";
 import "core:path";
 import "core:process";
@@ -12,9 +13,9 @@ import "core:time";
 // `core:fs` and `core:path` against a real filesystem (standard-library
 // "`core:fs`" and "`core:path`").
 //
-// Every case runs inside an isolated temporary directory taken from the
-// environment, so nothing depends on the repository working directory or on a
-// developer's machine, and the directory is removed at the end.
+// Every case runs inside a new directory under the one the environment names, so
+// nothing depends on the repository working directory or on a developer's machine,
+// and the directory is removed at the end.
 
 // Every `Status(io.Error)` below is only ever asked which variant it is.
 succeeded :: proc(outcome: Status(io.Error)) -> bool {
@@ -33,16 +34,31 @@ failure_of :: proc(outcome: Status(io.Error)) -> io.Error {
 	}
 }
 
+// A new directory under the system's temporary directory, under a name only this
+// run holds. `create_directory` refuses one that exists, so nothing of anyone
+// else's is used or removed here, and concurrent runs do not share it.
 root :: proc() -> string {
+	// Absolute even without `TEMP`: the cases below change the working directory.
+	base := os.working_directory() or_else panic("no working directory");
 	switch (os.get_environment("TEMP")) {
 	case .ok(outcome):
 		switch (outcome) {
-		case .some(base): return path.join([]string_view{base, "loke_fs_case"});
+		case .some(found): base = found;
 		case .none:
 		}
 	case .err:
 	}
-	return strings.copy("loke_fs_case");
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := strings.join([]string_view{"loke_fs_case-", digits});
+		candidate := path.join([]string_view{base, name});
+		switch (fs.create_directory(candidate)) {
+		case .ok: return candidate;
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { panic("a scratch directory could not be created"); }
+		}
+	}
+	panic("every scratch directory name is taken");
 }
 
 in_root :: proc(directory: string_view, name: string_view) -> string {
@@ -51,8 +67,6 @@ in_root :: proc(directory: string_view, name: string_view) -> string {
 
 main :: proc() {
 	directory := root();
-	// A leftover directory from an interrupted earlier run is not a failure.
-	clean_up(directory);
 	fmt.println(succeeded(fs.create_directories(in_root(directory, "nested"))));
 
 	file := in_root(directory, "notes.txt");
@@ -388,8 +402,7 @@ entry_kind :: proc(directory: string_view, name: string_view) -> Result(int, io.
 	}
 }
 
-// Removes every file, then the directories. `remove` on a missing path is not
-// checked here: this runs before the first case as well.
+// Removes every file, then the directories, all of them this run's own.
 clean_up :: proc(directory: string_view) {
 	reader: fs.Directory_Reader;
 	switch (fs.read_directory(directory)) {
