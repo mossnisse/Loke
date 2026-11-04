@@ -302,10 +302,15 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 	for index := wanted; index < len(c.diagnostics); index += 1 {
 		discard_diagnostic(c, &c.diagnostics[index])
 	}
-	resize(&c.diagnostics, wanted)
-	// An instantiation stack is remembered by the length that attached it, so a
-	// rollback past that point must let the next diagnostic claim its own frames.
-	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
+	shrink_diagnostics(c, wanted)
+}
+
+// Cuts the list to `length`, whose dropped entries the caller has disposed of. An
+// instantiation stack is remembered by the length that attached it, so a rollback
+// past that point must let the next diagnostic claim its own frames.
+shrink_diagnostics :: proc(c: ^Compiler, length: int) {
+	resize(&c.diagnostics, length)
+	c.last_noted_diagnostic = min(c.last_noted_diagnostic, length)
 }
 
 // A hypothetical check (compiler-architecture.md "Checking and overload
@@ -403,8 +408,7 @@ hold_diagnostics :: proc(c: ^Compiler, length: int) {
 		}
 		append(&c.held_diagnostics, c.diagnostics[index])
 	}
-	resize(&c.diagnostics, wanted)
-	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
+	shrink_diagnostics(c, wanted)
 }
 
 release_held_diagnostics :: proc(c: ^Compiler) {

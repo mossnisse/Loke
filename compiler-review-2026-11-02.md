@@ -198,10 +198,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
 
-#### Diagnostics rollback
-
-[source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3350](src/check.odin#L3350) and `prov_drop_event_diagnostics` each shrink the list and clamp `last_noted_diagnostic`, and the second also undoes `error_count` by hand. A `shrink_diagnostics(c, length)` saves about 5 lines.
-
 #### Configuration declared three times
 
 The same nine settings are fields of `Compilation_Config` ([session.odin:9](src/session.odin#L9)), `Options` ([main.odin:88](src/main.odin#L88)) and `Compiler` ([source.odin:278](src/source.odin#L278)), and are copied at [main.odin:174](src/main.odin#L174), [main.odin:269](src/main.odin#L269) and [session.odin:87](src/session.odin#L87). One embedded `Build_Settings` struct saves about 25 lines.
@@ -475,10 +471,6 @@ What remains here waits on helpers shared across files.
 - [check.odin:3888](src/check.odin#L3888) and [parallel.odin:652](src/parallel.odin#L652): `lowered_name`, `lowered_deref` and `lowered_temporary` match `synth_ident`, `synth_deref` and `synth_var`, with `synth_const` and `hidden_declaration` as further `Decl` copies. Use the package-visible `synth_ident` and `synth_deref`, and promote the rest. (about 25 lines)
 - [check.odin:4796](src/check.odin#L4796): the one-argument call repeats [optional.odin:272](src/optional.odin#L272). Share `synth_call`. (about 5 lines)
 - [check.odin:4376](src/check.odin#L4376) and [optional.odin:574](src/optional.odin#L574): the same per-case flow merge and result; `flow_either(&flow, case_flow)` also serves `check_if` (4243). (about 15 lines)
-
-**Structure and boundaries**
-
-- [check.odin:3349](src/check.odin#L3349): `check_partial_statement` filters `diagnostics` and clamps `last_noted_diagnostic` directly, as `prov_drop_event_diagnostics` does. Give `source.odin`, which owns `truncate_diagnostics`, a drop-by-predicate helper for both.
 
 ### src/check_builtin.odin
 
@@ -809,14 +801,6 @@ What remains is the predeclared-callee near copy, shared with `box.odin` and `it
 **Near copies**
 
 - [simd.odin:15](src/simd.odin#L15), [box.odin:45](src/box.odin#L45) and [iterate.odin:68](src/iterate.odin#L68): `simd_callee`, `box_type_callee` and `range_callee` differ only in the name; use `predeclared_callee(k, callee, "Simd")`.
-
-### src/source.odin
-
-Small, sound procedures for loading and diagnostics.
-
-**Near copies**
-
-- [source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3355](src/check.odin#L3355) and `prov_drop_event_diagnostics`: each shrinks and clamps `last_noted_diagnostic`, and `hold_diagnostics` also undoes `error_count` by hand. Add one helper for `resize` plus the clamp. (about 5 lines)
 
 ### src/universe.odin
 

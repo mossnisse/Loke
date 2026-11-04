@@ -198,8 +198,7 @@ check_partial_statement :: proc(k: ^Checker, s: ^Stmt_Error) {
 		k.c.diagnostics[kept] = diagnostic
 		kept += 1
 	}
-	resize(&k.c.diagnostics, kept)
-	k.c.last_noted_diagnostic = min(k.c.last_noted_diagnostic, kept)
+	shrink_diagnostics(k.c, kept)
 }
 
 check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {

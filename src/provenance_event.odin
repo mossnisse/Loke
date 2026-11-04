@@ -196,8 +196,7 @@ prov_drop_event_diagnostics :: proc(c: ^Compiler, program: ^Prov_Effect_Program)
 		c.diagnostics[kept] = c.diagnostics[index]
 		kept += 1
 	}
-	resize(&c.diagnostics, kept)
-	c.last_noted_diagnostic = min(c.last_noted_diagnostic, kept)
+	shrink_diagnostics(c, kept)
 }
 
 @(private)
