@@ -1,0 +1,55 @@
+L0625
+a foreign global is declared without an initializer
+@14:2
+
+L0625
+a foreign global is declared without an initializer
+@15:2
+
+L0306
+unknown type `Nope`
+@18:11
+
+L0431
+`G` is generic and needs its arguments
+@19:12
+
+L0625
+a foreign block declares only `---` procedures and `x: T;` variables
+@22:2
+
+L0625
+a foreign block declares only `---` procedures and `x: T;` variables
+@23:2
+
+L0625
+a foreign block declares only `---` procedures and `x: T;` variables
+@24:2
+
+L0625
+a foreign block declares only `---` procedures and `x: T;` variables
+@25:2
+
+L0627
+`@(c_vararg)` must mark the final parameter
+@28:25
+
+L0608
+`@(link_name)` needs a symbol name
+@31:4
+
+L0608
+`@(link_name)` needs a symbol name
+@32:4
+
+L0608
+`@(link_name)` needs a symbol name
+@35:11
+
+L0618
+unknown calling convention `bogus`
+@38:3
+
+L0618
+unknown calling convention ``
+@47:3

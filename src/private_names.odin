@@ -26,8 +26,8 @@ check_private_names :: proc(k: ^Checker, package_id: Package_Id) {
 					read_public_decl(&x, v)
 				}
 			case ^Item_Foreign_Block:
-				for member in v.members {
-					if d, is_decl := member.(^Decl); is_decl && decl_is_public(c, file, d, v.attributes) {
+				for d in v.members {
+					if decl_is_public(c, file, d, v.attributes) {
 						read_public_decl(&x, d)
 					}
 				}
@@ -153,10 +153,8 @@ collect_named :: proc(c: ^Compiler, names: ^Package_Names, file: ^File) {
 		case ^Decl:
 			add_named(c, file, &names.declared, v, nil)
 		case ^Item_Foreign_Block:
-			for member in v.members {
-				if d, is_decl := member.(^Decl); is_decl {
-					add_named(c, file, &names.declared, d, v.attributes)
-				}
+			for d in v.members {
+				add_named(c, file, &names.declared, d, v.attributes)
 			}
 		case ^Item_Impl:
 			subject := subject_name(c, v.type)

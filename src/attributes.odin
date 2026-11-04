@@ -218,6 +218,11 @@ validate_attribute_list :: proc(
 			} else if lit, ok := attribute.value.(^Expr_Literal); !ok ||
 			          (lit.kind != .String && lit.kind != .Raw_String) {
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
+			} else if name == "link_name" {
+				// design.md "`@(link_name=<string>)`".
+				if text, _ := attribute_string_text(k.c, attribute); text == "" {
+					errorf(k.c, attribute.span, "L0608", "`@(link_name)` needs a symbol name, not an empty string")
+				}
 			}
 		case .Deferred:
 		}
@@ -254,10 +259,8 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 				validate_attribute_list(k, v.attributes, .Static_Assert)
 			case ^Item_Foreign_Block:
 				validate_attribute_list(k, v.attributes, .Foreign_Block)
-				for member in v.members {
-					if d, ok := member.(^Decl); ok {
-						validate_decl_attributes(k, d, .Foreign)
-					}
+				for d in v.members {
+					validate_decl_attributes(k, d, .Foreign)
 				}
 			}
 		}
@@ -522,7 +525,6 @@ field_is_public :: proc(k: ^Checker, field: ^Field) -> bool {
 	return attributes_are_public(k, field.attributes, field.span, "field", in_main)
 }
 
-@(private = "file")
 attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, what: string, by_default := false) -> bool {
 	own_public := has_attribute(attributes, "public")
 	own_private := has_attribute(attributes, "private")

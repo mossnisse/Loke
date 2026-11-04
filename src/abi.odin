@@ -20,6 +20,10 @@ foreign_param_is_pointer :: proc(modes: []Param_Mode, by_ptr: []bool, index: int
 	return param_mode_is_pointer(mode) || (index < len(by_ptr) && by_ptr[index])
 }
 
+report_unknown_convention :: proc(k: ^Checker, convention: string, span: Span) {
+	errorf(k.c, span, "L0618", "unknown calling convention `%s`; the accepted conventions are `c` and `stdcall`", convention)
+}
+
 // design.md "Calling conventions": the default is spelled as an empty string.
 // design.md "Parameter semantics and ABI lowering": move and Loke variadics have no C form.
 check_signature_convention :: proc(
@@ -36,13 +40,7 @@ check_signature_convention :: proc(
 		return
 	}
 	if !convention_is_foreign(convention) {
-		errorf(
-			k.c,
-			span,
-			"L0618",
-			"unknown calling convention `%s`; the accepted conventions are `c` and `stdcall`",
-			convention,
-		)
+		report_unknown_convention(k, convention, span)
 		return
 	}
 	for param, index in params {

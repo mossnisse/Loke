@@ -150,7 +150,10 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 	case ^Item_Foreign_Block:
 		dump_head(b, "(foreign", node.attributes, depth)
 		fmt.sbprintfln(b, " %q", node.library.text)
-		dump_members(b, node.members, depth)
+		for member in node.members {
+			dump_item(b, member, depth + 1)
+		}
+		dump_close(b, depth)
 
 	case ^Item_Impl:
 		dump_head(b, "(impl", node.attributes, depth)

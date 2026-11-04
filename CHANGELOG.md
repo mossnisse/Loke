@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- A foreign block's rules are checked where they were let through
+  ([Foreign system](design.md#foreign-system)). A global written `x: T = ---;` is `L0625`, as the
+  grammar says a foreign variable has no initializer; `a, b: i32 = ---, 1;` compiled and dropped the
+  `1`. `@(link_name="")` is `L0608`; it compiled and emitted a symbol with no name.
+  `@(c_vararg) a, b: ..` is `L0627`; it compiled with `b` unbound. A
+  `@(default_calling_convention)` that is not `c` or `stdcall`, including `""`, is `L0618` at the
+  attribute, where before it passed on a block with no procedure to report it on. Upgrade by
+  removing the `= ---`, the empty attribute or the extra name, and by writing a convention the
+  compiler accepts.
 - Attributes on `impl` members and foreign declarations are checked as the
   [attribute categories](design.md#attribute-categories) say, with `L0607`. On a member of a
   body-local `impl`, `@(public)`, `@(private)`, `@(export)` and `@(link_name)` are rejected as on any
@@ -1511,6 +1520,17 @@ checklist.
 - Compile-time evaluation no longer stays charged, against its memory limit, for what a float-to-integer
   conversion or a float literal's rounding built along the way, or for a second copy of a typed
   integer result already in range.
+- A foreign global whose type does not resolve, such as `foreign lib { x: Nope; }` or a generic
+  `x: G;`, reports it as `L0306` or `L0431` at the type. It stopped the build with an internal `L0405`
+  naming `<invalid>` and no location.
+- A foreign binding of an exported procedure that returns a record or a pointer no longer gets a false
+  `L0600`: `@(link_name="z") f :: proc(a: i32) -> P ---;` and `@(export, link_name="z") g :: proc "c"
+  (a: i32) -> P {...}` are one type ([`@(export)`](design.md#export)).
+- A bad `@(default_calling_convention)` is reported once, at the attribute, not at each procedure that
+  inherits it.
+- A foreign member that is neither a `---` procedure nor a variable, such as `X :: 1;` or a record, has
+  an `L0625` that says what a foreign block declares, not that a global has no initializer. A broken
+  `x := ---;` reports only the parser's `L0235`.
 - The language server resolves a name in three more places: an operand of an assignment through
   `operator([]=)`, such as `val` in `box[key] += val`; a member of a group under `operator`, as in
   `operator(<) proc { reversed }`; and an `else when` condition in a procedure. Hover and definition

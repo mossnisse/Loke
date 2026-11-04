@@ -198,8 +198,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
 
-[foreign.odin:21](src/foreign.odin#L21) restates member-then-block-then-file visibility, which `written_is_public` ([check.odin:662](src/check.odin#L662)) can express by nesting; [foreign.odin:49](src/foreign.odin#L49) repeats the `L0332` text of [check.odin:649](src/check.odin#L649). About 15 lines.
-
 #### Diagnostics rollback
 
 [source.odin:660](src/source.odin#L660), [source.odin:766](src/source.odin#L766), [check.odin:3350](src/check.odin#L3350) and `prov_drop_event_diagnostics` each shrink the list and clamp `last_noted_diagnostic`, and the second also undoes `error_count` by hand. A `shrink_diagnostics(c, length)` saves about 5 lines.
@@ -652,49 +650,6 @@ Readable and well commented. Its name checks are one more copy of those every ot
 
 - [expand.odin:173](src/expand.odin#L173), [iterate.odin:1056](src/iterate.odin#L1056) and [optional.odin:600](src/optional.odin#L600): `bind_static`, `bind_loop_name` and `bind_case_name` share the skip of `_`, the name lookup and the L0304/L0305/reserved checks.
   The last two are almost line for line; a shared `check_binding_name(k, name, outer) -> Identifier_Id` serves all three.
-
-### src/foreign.odin
-
-Small and readable, but the foreign-global path has real gaps: an unknown type reaches the backend, and link-name agreement rejects legal bindings. Every bug scenario below was run against the existing `lokec.exe` with `-emit-ll`.
-
-**Bugs**
-
-- `BUG-foreign-1` **medium** [foreign.odin:144](src/foreign.odin#L144) `resolve_foreign_global`: `resolve_type_syntax` can return `INVALID_TYPE` without reporting, and this returns silently. Scenario: `foreign lib { x: Nope; }` (or a generic `x: G;`) exits 2 with L0405 "`<invalid>` has no backend representation", no source location. Fix: use `resolve_type_name` ([check.odin:2304](src/check.odin#L2304)), made package-visible. *Confirmed: Reproduced: `foreign lib { x: Nope; }` and generic `x: G;` exit 2 with spanless L0405 `<invalid>`, while `x: i32;` builds and file-scope `x: Nope;` gives L0306. Line 144 returns without report_unresolved_type; no gap is recorded.*
-- `BUG-foreign-2` **medium** [foreign.odin:129](src/foreign.odin#L129) `foreign_links_agree`: compares interned proc types, but a defined procedure with a struct or `^mut` result carries a `proc_contract` ([check.odin:1598](src/check.odin#L1598)) and a foreign one never does. Scenario: `foreign lib { @(link_name="z") f :: proc(a: i32) -> P ---; }` with `@(export, link_name="z") g :: proc "c" (a: i32) -> P {...}` gives a false L0600. Fix: compare `erase_proc_contract(c, a.proc_type)` on both sides. *Confirmed: lokec gives L0600 for identical foreign/exported signatures with a struct, ^P or ^mut result; an i32 result compiles. check.odin:1598 sets proc_contract only on defined procs, and foreign_links_agree compares it, against design.md "@(export)".*
-- `BUG-foreign-3` **low** [foreign.odin:135](src/foreign.odin#L135) `resolve_foreign_global`: `d.values[0] != nil` lets `---` through, which parses to a nil value, against grammar.md's "a variable with no initializer". Scenario: `foreign lib { a, b: i32 = ---, 1; }` compiles and the `1` is dropped. Fix: `if len(d.values) > 0`. *Not verified.*
-- `BUG-foreign-4` **low** [foreign.odin:171](src/foreign.odin#L171) `check_c_vararg_param`: checks the parameter's position but not its name count, and the caller skips the L0574 path. Scenario: `f :: proc(@(c_vararg) a, b: ..) ---;` compiles, while `a, b: ..int` is L0574. Fix: also reject `len(parameter.names) != 1`. *Not verified.*
-- `BUG-foreign-5` **low** [foreign.odin:110](src/foreign.odin#L110) `check_foreign_links`: an empty link name skips the agreement check, and nothing rejects `@(link_name="")`. Scenario: two members with `@(link_name="")` and different signatures compile and emit one `declare void @""()`. Fix: reject the empty name in attribute validation. *Not verified.*
-- `BUG-foreign-6` **low** [foreign.odin:6](src/foreign.odin#L6) `foreign_default_convention`: the block's value is only validated through each member's `check_signature_convention`. Scenario: `@(default_calling_convention="bogus") foreign lib { x: i32; }` compiles; with three procedures it reports L0618 three times, at the members. Fix: validate once here at the attribute and fall back to `"c"`. *Not verified.*
-- `BUG-foreign-7` **low** [foreign.odin:136](src/foreign.odin#L136) `resolve_foreign_global`: every non-procedure member with a value is treated as a global. Scenario: `foreign lib { X :: 1; }` or a member struct reports "a foreign global is declared without an initializer", which names neither the construct nor the rule. Fix: for `d.kind != .Var`, say a foreign block declares only `---` procedures and `x: T;` variables. *Not verified.*
-
-**Simplification**
-
-- [foreign.odin:21](src/foreign.odin#L21) `declare_foreign_block`: drop `foreign_block_visibility` and `own_visibility`. `block_default := attributes_are_public(k, block.attributes, block.span, "foreign block")` ([check.odin:649](src/check.odin#L649), made package-visible) reports L0332 with the same text; then `if sym.kind != .Var { sym.public = written_is_public(d.attributes, nil, block_default) }`. (about 12 lines)
-- [foreign.odin:5](src/foreign.odin#L5) `foreign_default_convention`: one caller and five lines; inline as `convention, has := attribute_string_value(...)` plus `if !has { convention = "c" }`, unless the default-convention bug's validation lands here. (about 4 lines)
-
-**Dead code**
-
-- (branch) [foreign.odin:29](src/foreign.odin#L29): `literal.signature != nil` is always true: [parser.odin:3440](src/parser.odin#L3440) always sets it and [check.odin:1459](src/check.odin#L1459) reads it unguarded. Merge lines 29 and 30 into one `if`.
-- (branch) [foreign.odin:139](src/foreign.odin#L139): `d.declared_type == nil` is reachable only from `x := ---;`, which the parser already rejects as L0235, so L0625 here is a cascade. With `len(d.values) > 0` at line 135 the branch can never run; no expected file pins this message.
-- (branch) [foreign.odin:110](src/foreign.odin#L110): `sym.link_name == ""` cannot hold for a normal member, since `check_foreign_block` sets a name on every symbol at line 87. It only serves the `@(link_name="")` bug above and goes away with that fix.
-
-**Near copies**
-
-- [foreign.odin:24](src/foreign.odin#L24), [foreign.odin:64](src/foreign.odin#L64), [foreign.odin:104](src/foreign.odin#L104), [attributes.odin:258](src/attributes.odin#L258), [doc.odin:312](src/doc.odin#L312), [doc.odin:351](src/doc.odin#L351), [private_names.odin:48](src/private_names.odin#L48), [emit_llvm.odin:353](src/emit_llvm.odin#L353): all filter `member.(^Decl)`. Only `^Decl` or an already reported `^Item_Error` occurs, so `parse_foreign` could drop errors and `Item_Foreign_Block.members` become `[]^Decl`. (about 15 lines)
-- [foreign.odin:41](src/foreign.odin#L41): states "member, then block, then file" for visibility. `written_is_public` already composes, as `decl_is_public` now uses it. (about 5 lines)
-
-**Structure and boundaries**
-
-
-**Comments**
-
-- [foreign.odin:1](src/foreign.odin#L1): drop "`foreign import` and": nothing here handles imports, which [emit_llvm_toolchain.odin:615](src/emit_llvm_toolchain.odin#L615) reads.
-- [foreign.odin:15](src/foreign.odin#L15): delete; [ast.odin:1258](src/ast.odin#L1258) says the same on the `declared` field.
-- [foreign.odin:59](src/foreign.odin#L59): wrong as written, since it runs inside the signature loop ([check.odin:250](src/check.odin#L250)), not after it. Use "Runs in Phase 2b of `check_package_bodies`, among the signatures."
-- [foreign.odin:92](src/foreign.odin#L92): delete; it restates the four-line body.
-- [foreign.odin:127](src/foreign.odin#L127): repeats lines 100 and 101. Replace with the rule's source: `// design.md "`@(export)`": same kind and type.`
-- [foreign.odin:157](src/foreign.odin#L157): the second clause restates the three checks below; keep only `// design.md "`@(c_vararg)`".`
-
 
 ### src/generic.odin
 

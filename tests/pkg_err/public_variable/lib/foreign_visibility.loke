@@ -1,0 +1,12 @@
+@(public)
+package lib;
+
+foreign import ucrt "system:msvcrt.lib";
+
+// A foreign block's visibility wins over the file's, and a member's over the
+// block's.
+@(private)
+foreign ucrt {
+	@(link_name="abs") hidden_abs :: proc "c" (value: i32) -> i32 ---;
+	@(public, link_name="abs") shown_abs :: proc "c" (value: i32) -> i32 ---;
+}

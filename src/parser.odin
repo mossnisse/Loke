@@ -724,8 +724,16 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 		item.library = name_of(p, name)
 	}
 	_, opened := expect(p, .Lbrace, "L0251", "`{` to open the foreign block")
-	item.members = parse_member_list(p, .Foreign)
+	items := parse_member_list(p, .Foreign)
 	close_body(p, opened, "L0251", "`}` to close the foreign block")
+	// Anything but a declaration is an already reported `Item_Error`.
+	members := make([dynamic]^Decl, 0, len(items), p.allocator)
+	for member in items {
+		if d, is_decl := member.(^Decl); is_decl {
+			append(&members, d)
+		}
+	}
+	item.members = members[:]
 
 	item.span = span_to_here(p, start)
 	return item

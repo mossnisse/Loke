@@ -280,10 +280,8 @@ collect_declared :: proc(b: ^Api_Builder, items: []Item) {
 				b.private_names[v.names[0].text] = true
 			}
 		case ^Item_Foreign_Block:
-			for member in v.members {
-				if d, is_decl := member.(^Decl); is_decl {
-					declare(b, d, d.names[0].text)
-				}
+			for d in v.members {
+				declare(b, d, d.names[0].text)
 			}
 		case ^Item_Impl:
 			subject := subject_name(b.c, v.type)
@@ -319,10 +317,8 @@ api_items :: proc(b: ^Api_Builder, items: []Item, out: ^[dynamic]Api_Item, in_wh
 		case ^Decl:
 			api_decl(b, v, nil, nil, out, nil)
 		case ^Item_Foreign_Block:
-			for member in v.members {
-				if d, is_decl := member.(^Decl); is_decl {
-					api_decl(b, d, nil, v.attributes, out, nil)
-				}
+			for d in v.members {
+				api_decl(b, d, nil, v.attributes, out, nil)
 			}
 		case ^Item_Impl:
 			api_impl(b, v, out)

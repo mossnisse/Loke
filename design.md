@@ -10645,7 +10645,7 @@ product_error :: proc(a: f64, b: f64) -> f64 {
 #### `@(default_calling_convention=<string>)`
 
 This attribute specifies the default calling convention for all procedures in a
-foreign block:
+foreign block, `c` or `stdcall`:
 
 ```loke
 @(default_calling_convention = "stdcall")
@@ -10735,8 +10735,9 @@ rules.
 
 #### `@(link_name=<string>)`
 
-This attribute specifies the symbol name of a variable or procedure. It can
-occur on an exported declaration or on a declaration in a foreign block:
+This attribute specifies the symbol name of a variable or procedure, which
+cannot be empty. It can occur on an exported declaration or on a declaration in
+a foreign block:
 
 ```loke
 foreign libc {
@@ -11101,9 +11102,10 @@ foreign libc {
 }
 ```
 
-The parameter writes `..` with no type: a C variadic argument has no Loke element
-type, and each uses the C default argument promotions. A bare `..` is legal only
-with the attribute; any other variadic parameter names its element type.
+The parameter is the declaration's last, the only name in its group, and writes
+`..` with no type: a C variadic argument has no Loke element type, and each uses
+the C default argument promotions. A bare `..` is legal only with the attribute;
+any other variadic parameter names its element type.
 
 Such a procedure may be a member of a [procedure
 group](#explicit-procedure-overloading). Each argument past its fixed parameters

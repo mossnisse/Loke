@@ -121,7 +121,7 @@ index_query_item :: proc(index: ^Query_Index, item: Item) {
 	index_query_attributes(index, base.attributes)
 	switch v in item {
 	case ^Decl, ^Item_Error, ^Item_Import, ^Item_Foreign_Import, ^Item_Delegate:
-	case ^Item_Foreign_Block: for member in v.members { index_query_item(index, member) }
+	case ^Item_Foreign_Block: for member in v.members { index_query_decl(index, member) }
 	case ^Item_Impl:
 		index_query_expr(index, v.type)
 		for member in v.members { index_query_item(index, member) }

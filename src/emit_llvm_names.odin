@@ -65,11 +65,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 				}
 			case ^Item_Foreign_Block:
 				// design.md "Foreign system": foreign members keep their link names.
-				for member in v.members {
-					d, is_decl := member.(^Decl)
-					if !is_decl {
-						continue
-					}
+				for d in v.members {
 					for sid in d.symbols {
 						if sym := symbol_of(e.c, sid); sym != nil && sym.is_foreign {
 							e.names[sid] = foreign_llvm_name(sym)

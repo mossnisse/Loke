@@ -1247,7 +1247,7 @@ Item_Foreign_Import :: struct {
 Item_Foreign_Block :: struct {
 	using base: Node_Base,
 	library:    Name, // a label only; every block links against the one image
-	members:    []Item,
+	members:    []^Decl,
 	// Members collected; discovery re-prepares a package each round.
 	declared:   bool,
 }
