@@ -1,0 +1,145 @@
+package main;
+
+import "core:checksum";
+import "core:fmt";
+import "core:io";
+
+// `core:checksum` (standard-library "`core:checksum`"). The known answers are the
+// CRC RevEng catalogue's check values, the CRC of the nine bytes `123456789`; the
+// package's own tests compare its tables and update paths with a bitwise reference.
+
+CHECK :: "123456789";
+
+failures := 0;
+
+fail :: proc(args: ..dyn fmt.Formattable) {
+	failures += 1;
+	fmt.println("FAILED", args);
+}
+
+// A check value in one call, and through every way of splitting the string in two
+// and in three.
+known :: proc(name: string_view, $T: type, $P: checksum.Crc_Params(T), want: T) {
+	bytes := CHECK.bytes();
+	if (checksum.Crc(T, P).of(bytes) != want) {
+		fail(name, "got", checksum.Crc(T, P).of(bytes));
+	}
+	foreach (split in 0 ..= bytes.len()) {
+		c: checksum.Crc(T, P) = {};
+		c.update(bytes[:split]);
+		c.update(bytes[split:]);
+		if (c.sum() != want) { fail(name, "split at", split); }
+		foreach (second in split ..= bytes.len()) {
+			d: checksum.Crc(T, P) = {};
+			d.update(bytes[:split]);
+			_ = d.sum();
+			d.update({});
+			d.update(bytes[split:second]);
+			d.update(bytes[second:]);
+			if (d.sum() != want) { fail(name, "split at", split, second); }
+		}
+	}
+}
+
+// What `io.Writer` gives a checksum: a stream into it, in any pieces.
+stream :: proc() -> Status(io.Error) {
+	c: checksum.Crc32 = {};
+	bytes := CHECK.bytes();
+	fmt.println(c.write(bytes[:4]) or_return);
+	io.write_all(inout c, bytes[4:]) or_return;
+	fmt.println(c.sum() == 0xCBF43926);
+
+	// `write` of nothing.
+	fmt.println(c.write({}) or_return);
+	fmt.println(c.sum() == 0xCBF43926);
+
+	// A dyn view.
+	d: checksum.Crc32 = {};
+	view := (dyn mut io.Writer)(&mut d);
+	io.write_all(inout view, bytes) or_return;
+	fmt.println(d.sum() == 0xCBF43926);
+	return .ok;
+}
+
+main :: proc() {
+	known("CRC-32/ISO-HDLC", u32, checksum.CRC32_ISO_HDLC, 0xCBF43926);
+	known("CRC-32/ISCSI", u32, checksum.CRC32_ISCSI, 0xE3069283);
+	known("CRC-64/XZ", u64, checksum.CRC64_XZ, 0x995DC9BBDF1939FA);
+
+	// Formats can spell any catalogue row, by naming its fields.
+	known("CRC-32/BZIP2", u32, checksum.Crc_Params(u32){
+		width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+		reflect_in = false, reflect_out = false, final_xor = 0xFFFFFFFF,
+	}, 0xFC891918);
+	known("CRC-32/MPEG-2", u32, checksum.Crc_Params(u32){
+		width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	}, 0x0376E6E7);
+	known("CRC-16/IBM-3740", u16, checksum.Crc_Params(u16){
+		width = 16, polynomial = 0x1021, initial = 0xFFFF,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	}, 0x29B1);
+	known("CRC-16/ARC", u16, checksum.Crc_Params(u16){
+		width = 16, polynomial = 0x8005, initial = 0,
+		reflect_in = true, reflect_out = true, final_xor = 0,
+	}, 0xBB3D);
+	known("CRC-8/SMBUS", u8, checksum.Crc_Params(u8){
+		width = 8, polynomial = 0x07, initial = 0,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	}, 0xF4);
+	known("CRC-5/USB", u8, checksum.Crc_Params(u8){
+		width = 5, polynomial = 0x05, initial = 0x1F,
+		reflect_in = true, reflect_out = true, final_xor = 0x1F,
+	}, 0x19);
+	known("CRC-12/UMTS", u16, checksum.Crc_Params(u16){
+		width = 12, polynomial = 0x80F, initial = 0,
+		reflect_in = false, reflect_out = true, final_xor = 0,
+	}, 0xDAF);
+	known("CRC-24/OPENPGP", u32, checksum.Crc_Params(u32){
+		width = 24, polynomial = 0x864CFB, initial = 0xB704CE,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	}, 0x21CF02);
+	known("CRC-40/GSM", u64, checksum.Crc_Params(u64){
+		width = 40, polynomial = 0x0004820009, initial = 0,
+		reflect_in = false, reflect_out = false, final_xor = 0xFFFFFFFFFF,
+	}, 0xD4164FC646);
+
+	// A start value that is not its own reverse, reflected.
+	known("CRC-16/RIELLO", u16, checksum.Crc_Params(u16){
+		width = 16, polynomial = 0x1021, initial = 0xB2AA,
+		reflect_in = true, reflect_out = true, final_xor = 0,
+	}, 0x63D0);
+
+	// The aliases are those parameter sets.
+	fmt.println(checksum.Crc32.of(CHECK.bytes()) == 0xCBF43926);
+	fmt.println(checksum.Crc32c.of(CHECK.bytes()) == 0xE3069283);
+	fmt.println(checksum.Crc64.of(CHECK.bytes()) == 0x995DC9BBDF1939FA);
+
+	// No bytes, and a longer text.
+	fmt.println(checksum.Crc32.of({}) == 0);
+	fmt.println(checksum.Crc32.of("The quick brown fox jumps over the lazy dog".bytes()) == 0x414FA339);
+
+	// The zero value is the checksum of no bytes, and `{}` resets.
+	c: checksum.Crc32 = {};
+	fmt.println(c.sum() == 0);
+	c.update(CHECK.bytes());
+	fmt.println(c.sum() == 0xCBF43926);
+	c = {};
+	fmt.println(c.sum() == 0);
+	c.update(CHECK.bytes());
+	fmt.println(c.sum() == 0xCBF43926);
+
+	// `sum` does not disturb the state: a running checksum is read and continued.
+	running: checksum.Crc32 = {};
+	running.update("The quick brown fox ".bytes());
+	early := running.sum();
+	running.update("jumps over the lazy dog".bytes());
+	fmt.println(early != running.sum(), running.sum() == 0x414FA339);
+
+	switch (stream()) {
+	case .ok:
+	case .err(error): fail("stream", error);
+	}
+
+	fmt.println("failures", failures);
+}

@@ -1,0 +1,54 @@
+package main;
+
+import "core:checksum";
+
+// standard-library "`core:checksum`": a parameter set is checked at compile time.
+
+// A polynomial with bits above the width.
+WIDE_POLYNOMIAL :: checksum.Crc_Params(u16){
+	width = 12, polynomial = 0xF80F, initial = 0,
+	reflect_in = false, reflect_out = true, final_xor = 0,
+};
+
+// An even polynomial, which has no constant term.
+EVEN :: checksum.Crc_Params(u16){
+	width = 16, polynomial = 0x1020, initial = 0,
+	reflect_in = false, reflect_out = false, final_xor = 0,
+};
+
+// A width the register cannot hold.
+NARROW :: checksum.Crc_Params(u8){
+	width = 9, polynomial = 0x07, initial = 0,
+	reflect_in = false, reflect_out = false, final_xor = 0,
+};
+
+// A start value with bits above the width.
+HIGH_INITIAL :: checksum.Crc_Params(u16){
+	width = 12, polynomial = 0x80F, initial = 0x1000,
+	reflect_in = false, reflect_out = true, final_xor = 0,
+};
+
+// A final XOR with bits above the width.
+HIGH_XOR :: checksum.Crc_Params(u16){
+	width = 12, polynomial = 0x80F, initial = 0,
+	reflect_in = false, reflect_out = true, final_xor = 0x1000,
+};
+
+// A signed register.
+SIGNED :: checksum.Crc_Params(i32){
+	width = 16, polynomial = 0x1021, initial = 0,
+	reflect_in = false, reflect_out = false, final_xor = 0,
+};
+
+main :: proc() {
+	a: checksum.Crc(u16, WIDE_POLYNOMIAL) = {};
+	b: checksum.Crc(u16, EVEN) = {};
+	c: checksum.Crc(u8, NARROW) = {};
+	d: checksum.Crc(u16, HIGH_INITIAL) = {};
+	e: checksum.Crc(u16, HIGH_XOR) = {};
+	f: checksum.Crc(i32, SIGNED) = {};
+	_ = a; _ = b; _ = c; _ = d; _ = e; _ = f;
+
+	// An importer's literal must name its fields, so a set is self-describing.
+	_ = checksum.Crc_Params(u32){32, 0x04C11DB7, 0xFFFFFFFF, true, true, 0xFFFFFFFF};
+}

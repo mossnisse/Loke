@@ -1,0 +1,285 @@
+/**
+	Checksums, for finding accidental corruption.
+
+	A CRC is not an identity, since collisions are easy to construct, and not
+	security, since anyone can recompute it. A stable content hash is a separate
+	decision for a separate package.
+
+	`Crc_Params` holds the fields of the CRC RevEng catalogue, so a format's CRC is
+	pinned by copying its row:
+
+	    crc: checksum.Crc32 = {};
+	    crc.update(header);
+	    crc.update(body);
+	    if (crc.sum() != stored) { return .err(.Corrupt); }
+
+	A running checksum is also an `io.Writer`, so `io.copy(inout crc, inout file)`
+	checksums a stream with no whole-file buffer.
+*/
+// standard-library "`core:checksum`".
+@(public)
+package checksum;
+
+import "base:interfaces";
+import "core:io";
+
+/**
+	A CRC in the Rocksoft model. `polynomial` is in normal form with the top bit
+	implied, whatever the reflection: CRC-32 is `0x04C11DB7`, never its reversed
+	form `0xEDB88320`. `T` is an unsigned integer as wide as `width` or wider.
+*/
+Crc_Params :: struct($T: type) where interfaces.Integral(T) {
+	width:       int,
+	polynomial:  T,
+	initial:     T,
+	reflect_in:  bool,
+	reflect_out: bool,
+	final_xor:   T,
+}
+
+/**
+	Whether `P` describes a CRC a `T` can hold: an unsigned `T`, a width that fits,
+	an odd polynomial, and no value with bits above `width`.
+*/
+valid_params :: proc($T: type, P: Crc_Params(T)) -> bool {
+	unsigned := T == u8 || T == u16 || T == u32 || T == u64 || T == u128;
+	if (!unsigned || P.width < 1 || P.width > 8*size_of(T)) { return false; }
+	if ((P.polynomial & T(1)) == T(0)) { return false; }
+	if (P.width == 8*size_of(T)) { return true; }
+	high := ~T(0) << uint(P.width);
+	return (P.polynomial & high) == T(0) && (P.initial & high) == T(0) && (P.final_xor & high) == T(0);
+}
+
+// The low `width` bits of `value`, in the opposite order.
+@(private)
+reversed :: proc(value: $T, width: int) -> T where interfaces.Integral(T) {
+	result := T(0);
+	rest := value;
+	foreach (_ in 0 ..< width) {
+		result = (result << uint(1)) | (rest & T(1));
+		rest = rest >> uint(1);
+	}
+	return result;
+}
+
+// One byte through the register, bit by bit, as the table entry for that byte. A
+// reflected register holds the CRC in its low bits and shifts right; any other
+// holds it in its high bits and shifts left, so one loop serves every width.
+@(private)
+table_entry :: proc(byte_value: int, $T: type, P: Crc_Params(T)) -> T {
+	bits := 8*size_of(T);
+	register := T(0);
+	if (P.reflect_in) {
+		register = T(byte_value);
+		polynomial := reversed(P.polynomial, P.width);
+		foreach (_ in 0 ..< 8) {
+			if ((register & T(1)) != T(0)) {
+				register = (register >> uint(1)) ~ polynomial;
+			} else {
+				register = register >> uint(1);
+			}
+		}
+	} else {
+		register = T(byte_value) << uint(bits - 8);
+		top := T(1) << uint(bits - 1);
+		polynomial := P.polynomial << uint(bits - P.width);
+		foreach (_ in 0 ..< 8) {
+			if ((register & top) != T(0)) {
+				register = (register << uint(1)) ~ polynomial;
+			} else {
+				register = register << uint(1);
+			}
+		}
+	}
+	return register;
+}
+
+// `[k][b]` is the effect of byte `b` followed by `k` zero bytes. Each table follows
+// from the one before, and an update of eight bytes is then the XOR of eight
+// lookups. Only a reflected register has more than one table.
+@(private)
+tables_of :: proc($T: type, $P: Crc_Params(T), $COUNT: int) -> [COUNT][256]T {
+	tables: [COUNT][256]T = {};
+	foreach (b in 0 ..< 256) {
+		tables[0][b] = table_entry(b, T, P);
+	}
+	foreach (k in 1 ..< COUNT) {
+		foreach (b in 0 ..< 256) {
+			before := tables[k - 1][b];
+			tables[k][b] = tables[0][int(before & T(0xFF))] ~ shift_right_8(before);
+		}
+	}
+	return tables;
+}
+
+// A shift of the whole width is not a shift a `u8` register can spell.
+@(private)
+shift_right_8 :: proc(value: $T) -> T {
+	when (size_of(T) == 1) {
+		return T(0);
+	} else {
+		return value >> uint(8);
+	}
+}
+
+@(private)
+shift_left_8 :: proc(value: $T) -> T {
+	when (size_of(T) == 1) {
+		return T(0);
+	} else {
+		return value << uint(8);
+	}
+}
+
+// Slice-by-8 is worth its eight tables only for a reflected register of 32 or 64
+// bits, the shape of the CRCs in common use. Every other shape takes a byte at a
+// time from one table. Which applies is no part of the contract.
+@(private)
+uses_slices :: proc($T: type, P: Crc_Params(T)) -> bool {
+	return P.reflect_in && (size_of(T) == 4 || size_of(T) == 8);
+}
+
+@(private)
+table_count :: proc($T: type, P: Crc_Params(T)) -> int {
+	if (uses_slices(T, P)) { return 8; }
+	return 1;
+}
+
+/**
+	A running checksum. The zero value is the checksum of no bytes, so
+	`c: checksum.Crc32 = {}` is the only way to start, a forgotten initialization
+	cannot exist, and `c = {}` resets.
+
+	`update` in any pieces gives the same sum, an empty piece included, and `sum`
+	does not disturb the state, so a running checksum can be read and continued.
+*/
+// standard-library "`core:checksum`". `state` holds the register XORed with its
+// start value, which is what makes the zero value right, for one XOR at each end
+// of an `update`.
+Crc :: struct($T: type, $P: Crc_Params(T)) where valid_params(T, P) {
+	@(private) state: T,
+}
+
+impl Crc($T, $P) {
+	// Constants, computed during compilation for each parameter set a program
+	// names, and absent for the others.
+	@(private) TABLE_COUNT :: table_count(T, P);
+	@(private) TABLES :: tables_of(T, P, Crc(T, P).TABLE_COUNT);
+
+	@(private)
+	register_start :: proc() -> T {
+		when (P.reflect_in) {
+			return reversed(P.initial, P.width);
+		} else {
+			return P.initial << uint(8*size_of(T) - P.width);
+		}
+	}
+
+	/// The checksum of `bytes`, in one call.
+	of :: proc(bytes: []u8) -> T {
+		c: Crc(T, P) = {};
+		c.update(bytes);
+		return c.sum();
+	}
+
+	/// Adds `bytes` to the checksum.
+	update :: proc(self: inout, bytes: []u8) {
+		register := self.state ~ Crc(T, P).register_start();
+		at := 0;
+		when (uses_slices(T, P)) {
+			count := bytes.len();
+			for (; count - at >= 8; at += 8) {
+				register = Crc(T, P).step_8(register, bytes[at:at + 8]);
+			}
+		}
+		foreach (i in at ..< bytes.len()) {
+			register = Crc(T, P).step_1(register, bytes[i]);
+		}
+		self.state = register ~ Crc(T, P).register_start();
+	}
+
+	/// The checksum of everything so far.
+	sum :: proc(self) -> T {
+		register := self.state ~ Crc(T, P).register_start();
+		when (P.reflect_in) {
+			when (P.reflect_out) {
+				return register ~ P.final_xor;
+			} else {
+				return reversed(register, P.width) ~ P.final_xor;
+			}
+		} else {
+			aligned := register >> uint(8*size_of(T) - P.width);
+			when (P.reflect_out) {
+				return reversed(aligned, P.width) ~ P.final_xor;
+			} else {
+				return aligned ~ P.final_xor;
+			}
+		}
+	}
+
+	/// The `io.Writer` slot. It never fails.
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		self.update(source);
+		return source.len();
+	}
+
+	@(private)
+	step_1 :: proc(register: T, byte_value: u8) -> T {
+		when (P.reflect_in) {
+			index := int((register ~ T(byte_value)) & T(0xFF));
+			return Crc(T, P).TABLES[0][index] ~ shift_right_8(register);
+		} else {
+			top_byte := int(shift_right_top(register)) ~ int(byte_value);
+			return Crc(T, P).TABLES[0][top_byte] ~ shift_left_8(register);
+		}
+	}
+
+	// Eight bytes at once. Each byte of the register is XORed with the message
+	// byte it lines up with, and a byte `j` from the start is followed by `7 - j`
+	// more bytes, which is the table it looks up. A register narrower than the
+	// eight bytes contributes nothing to the later ones, and a CRC is linear in
+	// its bits, so this holds at every width.
+	@(private)
+	step_8 :: proc(register: T, block: []u8) -> T {
+		result := T(0);
+		foreach (j in 0 ..< 8) {
+			index := int(block[j]);
+			if (j < size_of(T)) {
+				index = int(((register >> uint(8*j)) ~ T(block[j])) & T(0xFF));
+			}
+			result = result ~ Crc(T, P).TABLES[7 - j][index];
+		}
+		return result;
+	}
+}
+
+@(private)
+shift_right_top :: proc(value: $T) -> T {
+	when (size_of(T) == 1) {
+		return value;
+	} else {
+		return value >> uint(8*size_of(T) - 8);
+	}
+}
+
+// The catalogue's zlib, gzip, PNG, and ZIP CRC.
+CRC32_ISO_HDLC :: Crc_Params(u32){
+	width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+	reflect_in = true, reflect_out = true, final_xor = 0xFFFFFFFF,
+};
+
+// The Castagnoli CRC of iSCSI, ext4, and Btrfs.
+CRC32_ISCSI :: Crc_Params(u32){
+	width = 32, polynomial = 0x1EDC6F41, initial = 0xFFFFFFFF,
+	reflect_in = true, reflect_out = true, final_xor = 0xFFFFFFFF,
+};
+
+// The CRC of xz.
+CRC64_XZ :: Crc_Params(u64){
+	width = 64, polynomial = 0x42F0E1EBA9EA3693, initial = 0xFFFFFFFFFFFFFFFF,
+	reflect_in = true, reflect_out = true, final_xor = 0xFFFFFFFFFFFFFFFF,
+};
+
+Crc32  :: Crc(u32, CRC32_ISO_HDLC);
+Crc32c :: Crc(u32, CRC32_ISCSI);
+Crc64  :: Crc(u64, CRC64_XZ);

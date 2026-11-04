@@ -1013,6 +1013,9 @@ checklist.
 
 ### Added
 
+- [`core:checksum`](standard-library.md#corechecksum) has `Crc(T, P)`, an incremental CRC of any
+  catalogue parameter set checked at compile time, with `Crc32`, `Crc32c`, and `Crc64`. Its zero
+  value is the checksum of no bytes, and it is an `io.Writer`.
 - [`core:encoding/binary`](standard-library.md#coreencodingbinary) reads and writes binary
   formats: a bounded `Reader` over a borrowed slice, whose failed operations change nothing and
   report an offset, with subrecords and lengths checked before they are used, and a `Writer(W)`

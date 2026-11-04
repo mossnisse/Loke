@@ -1,0 +1,21 @@
+L0434
+@44:5
+`Crc(u16, Crc_Params(u16){12, 63503, 0, false, true, 0})` does not satisfy the bound `valid_params(T, P)`
+L0434
+@45:5
+`Crc(u16, Crc_Params(u16){16, 4128, 0, false, false, 0})` does not satisfy the bound `valid_params(T, P)`
+L0434
+@46:5
+`Crc(u8, Crc_Params(u8){9, 7, 0, false, false, 0})` does not satisfy the bound `valid_params(T, P)`
+L0434
+@47:5
+`Crc(u16, Crc_Params(u16){12, 2063, 4096, false, true, 0})` does not satisfy the bound `valid_params(T, P)`
+L0434
+@48:5
+`Crc(u16, Crc_Params(u16){12, 2063, 0, false, true, 4096})` does not satisfy the bound `valid_params(T, P)`
+L0434
+@49:5
+`Crc(i32, Crc_Params(i32){16, 4129, 0, false, false, 0})` does not satisfy the bound `valid_params(T, P)`
+L0709
+@53:31
+the fields of `Crc_Params(u32)` are declared in another package, so its literal must name them

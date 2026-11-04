@@ -19,6 +19,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Parse scalar values | [`core:strconv`](#corestrconv) |
 | Read or write JSON | [`core:encoding/json`](#coreencodingjson) |
 | Read or write a binary format | [`core:encoding/binary`](#coreencodingbinary) |
+| Detect accidental corruption with a CRC | [`core:checksum`](#corechecksum) |
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order, or read a field of validated bytes | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
@@ -184,6 +185,7 @@ core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
 core:encoding/json    JSON documents, values, and a streaming writer
 core:encoding/binary  typed fields over bytes, bounded readers, sink-generic writers
+core:checksum         CRCs of any catalogue parameter set
 core:endian           fixed byte-order wrappers and byte-slice fields
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
@@ -2171,8 +2173,8 @@ impl Writer($W) {
 ```
 
 - **`W` is any `io.Writer`**: `io.Buffer_Writer`, `io.Slice_Writer`, `fs.File`,
-  another `binary.Writer`, or `dyn mut io.Writer` where the sink is chosen at run
-  time. Dispatch is monomorphic unless a `dyn` is asked for.
+  a [`checksum.Crc`](#corechecksum), another `binary.Writer`, or `dyn mut io.Writer`
+  where the sink is chosen at run time. Dispatch is monomorphic unless a `dyn` is asked for.
 - **The width is visible at the call.** `put` takes its type from the value, and
   `is_fixed_width` rejects an `int`, so `w.put(count)` and `w.put(7)` do not compile.
   `w.put(u32(count))` panics if the count does not fit, as `u32(count)` always does.
@@ -2215,6 +2217,83 @@ whole := buffer.bytes_mut();
 body_length := whole.len() - length_at - 4;
 endian.store(&mut whole[length_at:], u32(body_length), .Big);
 ```
+
+## `core:checksum`
+
+Checksums, for finding accidental corruption. `Crc_Params` is the Rocksoft model, the
+fields of the [CRC RevEng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm),
+so a format's CRC is pinned by copying its row.
+
+```loke
+Crc_Params :: struct($T: type) where interfaces.Integral(T) {
+	width:       int,
+	polynomial:  T,
+	initial:     T,
+	reflect_in:  bool,
+	reflect_out: bool,
+	final_xor:   T,
+}
+
+Crc :: struct($T: type, $P: Crc_Params(T)) where valid_params(T, P) { /* private */ }
+
+impl Crc($T, $P) {
+	of     :: proc(bytes: []u8) -> T;
+	update :: proc(self: inout, bytes: []u8);
+	sum    :: proc(self) -> T;
+	write  :: proc(self: inout, source: []u8) -> Result(int, io.Error);
+}
+
+valid_params :: proc($T: type, P: Crc_Params(T)) -> bool;
+
+CRC32_ISO_HDLC :: Crc_Params(u32){ /* the table below */ };
+CRC32_ISCSI    :: Crc_Params(u32){ /* the table below */ };
+CRC64_XZ       :: Crc_Params(u64){ /* the table below */ };
+
+Crc32  :: Crc(u32, CRC32_ISO_HDLC);   // zlib, gzip, PNG, ZIP
+Crc32c :: Crc(u32, CRC32_ISCSI);      // iSCSI, ext4, Btrfs
+Crc64  :: Crc(u64, CRC64_XZ);         // xz
+```
+
+- **A polynomial is in normal form** with the top bit implied, whatever the
+  reflection: CRC-32 is `0x04C11DB7`, never its reversed form `0xEDB88320`. `T` is an
+  unsigned integer as wide as `width` or wider.
+- **A parameter set is checked at compile time.** `valid_params` rejects a signed or
+  too narrow `T`, an even polynomial, and a value with bits above `width`. An
+  importer's literal must name its fields (`L0709`), so a parameter set is always
+  self-describing.
+- **The zero value is the checksum of no bytes**, so `c: checksum.Crc32 = {}` is the
+  only way to start and a forgotten initialization cannot exist. `c = {}` resets.
+- **`update` in any pieces gives the same sum**, an empty piece included. `sum` does
+  not disturb the state, so a running checksum can be read and continued.
+- **`write` is the [`io.Writer`](#shared-io-contract) slot** and never fails, so
+  `io.copy(inout crc, inout file)` checksums a stream with no whole-file buffer, and
+  a `binary.Writer` can write into one.
+- **Tables are constants**, computed at compile time per parameter set, so a program
+  pays only for the sets it names. Their layout, and any use of faster tables or
+  instructions, is not part of the contract.
+
+The check value is the CRC of the nine bytes `123456789`.
+
+| Catalogue name | Width | Polynomial | Initial | In | Out | Final XOR | Check |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CRC-32/ISO-HDLC | 32 | `0x04C11DB7` | `0xFFFFFFFF` | yes | yes | `0xFFFFFFFF` | `0xCBF43926` |
+| CRC-32/ISCSI | 32 | `0x1EDC6F41` | `0xFFFFFFFF` | yes | yes | `0xFFFFFFFF` | `0xE3069283` |
+| CRC-64/XZ | 64 | `0x42F0E1EBA9EA3693` | all ones | yes | yes | all ones | `0x995DC9BBDF1939FA` |
+
+### Using a CRC in a format
+
+A format's specification should state the catalogue name and every parameter above,
+the check value, the exact byte ranges covered, and the stored field's byte order.
+The library guarantees the arithmetic; these choices are the format's:
+
+- **A CRC finds accidental corruption.** It is not an identity, since collisions are
+  easy to construct, and not security, since anyone can recompute it. A stable content
+  hash is a separate decision for a separate package.
+- **Cover something non-empty.** CRC-32 of no bytes is `0`, so a wiped record whose
+  length and stored CRC both read as zero passes a check covering only the body. Cover
+  the magic and the length too.
+- **Check before trusting.** Verify a body's CRC before interpreting its fields, and
+  still bound-check them, because a CRC does not defend against a crafted file.
 
 ## `core:slice`
 

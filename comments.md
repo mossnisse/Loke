@@ -2560,6 +2560,22 @@ boundaries and API shapes follow a few common choices:
 - **`core:encoding/binary`, not `core:bytes`.** This is an encoding, beside
   `encoding/json` and `encoding/utf16`. `core:bytes` stays available for what the name
   suggests: searching and comparing byte slices, as `core:strings` does for text.
+- **`core:checksum`, not `core:hash`.** The language's `hash` member is a table hash
+  with no stability promise, and a name shared with it would suggest the wrong
+  guarantee. The package's name states what it is for.
+- **The whole Rocksoft model rather than CRC-32.** A general-purpose language reads
+  formats it did not define. The other widths and reflections are compile-time
+  branches, so a parameter set pays only for the cases it uses, and every catalogue
+  row goes through one implementation. Slice-by-8 applies to a reflected register of
+  32 or 64 bits, the shape of the CRCs in common use, where it was about four times
+  the speed of one table at `-opt=speed` for its 8 KiB of tables. Carry-less
+  multiplication and the SSE4.2 CRC-32C instruction can come later behind the same
+  API.
+- **A checksum's tests stand outside its package.** A test procedure is checked in
+  every build, so generic tests there would instantiate their parameter sets for every
+  importer. `tests/run/lib_checksum_reference.loke` reaches each table entry from the
+  public API instead: a byte at each place in an eight-byte block, against a bitwise
+  computation.
 - **Files and process state are separate.** `core:fs` owns files; `core:os` owns
   process state. There is one spelling for opening a file.
 - **I/O errors own scalar data.** An operation enum and native code avoid

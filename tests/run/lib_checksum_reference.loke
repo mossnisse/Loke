@@ -1,0 +1,174 @@
+package main;
+
+import "core:checksum";
+import "core:fmt";
+
+// `core:checksum` against a CRC computed a bit at a time, with no table, directly
+// from the Rocksoft model (standard-library "`core:checksum`"). Whichever tables
+// and update paths a parameter set takes, this reaches them from outside the
+// package: compile-time tables against a run-time computation, and the eight-byte
+// path against the one-byte path at every length and misalignment near its block.
+
+failures := 0;
+
+fail :: proc(args: ..dyn fmt.Formattable) {
+	failures += 1;
+	fmt.println("FAILED", args);
+}
+
+reverse :: proc(value: $T, width: int) -> T {
+	result := T(0);
+	rest := value;
+	foreach (_ in 0 ..< width) {
+		result = (result << uint(1)) | (rest & T(1));
+		rest = rest >> uint(1);
+	}
+	return result;
+}
+
+bitwise :: proc(bytes: []u8, $T: type, P: checksum.Crc_Params(T)) -> T {
+	mask := ~T(0);
+	if (P.width < 8*size_of(T)) { mask = (T(1) << uint(P.width)) - T(1); }
+	top := T(1) << uint(P.width - 1);
+	register := P.initial;
+	foreach (b in bytes) {
+		value := b;
+		if (P.reflect_in) { value = reverse(b, 8); }
+		foreach (bit in 0 ..< 8) {
+			incoming := ((value >> uint(7 - bit)) & 1) != 0;
+			carry := (register & top) != T(0);
+			register = (register << uint(1)) & mask;
+			if (carry != incoming) { register = register ~ P.polynomial; }
+		}
+	}
+	if (P.reflect_out) { register = reverse(register, P.width); }
+	return register ~ P.final_xor;
+}
+
+// A fixed, unstructured pattern with no dependence on `core:random`.
+pattern :: proc(out: []mut u8) {
+	state := u32(0x9E3779B9);
+	foreach (i in 0 ..< out.len()) {
+		state = state ~ (state << uint(13));
+		state = state ~ (state >> uint(17));
+		state = state ~ (state << uint(5));
+		out[i] = u8(state & 0xFF);
+	}
+}
+
+agrees :: proc(name: string_view, $T: type, $P: checksum.Crc_Params(T)) {
+	storage: [64]u8 = {};
+	pattern(&mut storage[:]);
+
+	// Every start and length near the block size, so that each path meets every
+	// misalignment and the tail after the last whole block.
+	foreach (start in 0 ..< 9) {
+		foreach (length in 0 ..< 40) {
+			piece := storage[start:start + length];
+			if (checksum.Crc(T, P).of(piece) != bitwise(piece, T, P)) {
+				fail(name, "start", start, "length", length);
+			}
+		}
+	}
+
+	// Every byte value at every place in a block, which reaches every entry of
+	// every table: a byte followed by `k` zeros is the entry at `[k][byte]`.
+	foreach (place in 0 ..< 8) {
+		block: [8]u8 = {};
+		foreach (value in 0 ..< 256) {
+			block[place] = u8(value);
+			if (checksum.Crc(T, P).of(block[:]) != bitwise(block[:], T, P)) {
+				fail(name, "place", place, "value", value);
+			}
+		}
+	}
+
+	// In pieces the same as whole, across a block boundary.
+	foreach (split in 0 ..< 33) {
+		c: checksum.Crc(T, P) = {};
+		c.update(storage[:split]);
+		c.update(storage[split:33]);
+		if (c.sum() != bitwise(storage[:33], T, P)) { fail(name, "split", split); }
+	}
+}
+
+main :: proc() {
+	// Reflected 32 and 64 bits, the two that take the eight-byte path.
+	agrees("iso-hdlc", u32, checksum.CRC32_ISO_HDLC);
+	agrees("iscsi", u32, checksum.CRC32_ISCSI);
+	agrees("xz", u64, checksum.CRC64_XZ);
+
+	// Reflected, narrower than its register, on that path too.
+	agrees("reflected 24", u32, checksum.Crc_Params(u32){
+		width = 24, polynomial = 0x864CFB, initial = 0xABCDEF,
+		reflect_in = true, reflect_out = true, final_xor = 0x123456,
+	});
+	agrees("reflected 40", u64, checksum.Crc_Params(u64){
+		width = 40, polynomial = 0x0004820009, initial = 0x12345,
+		reflect_in = true, reflect_out = true, final_xor = 0xFFFFFFFFFF,
+	});
+
+	// A start value that is not its own reverse, where reflecting it matters.
+	agrees("asymmetric start", u32, checksum.Crc_Params(u32){
+		width = 32, polynomial = 0x04C11DB7, initial = 0x12345678,
+		reflect_in = true, reflect_out = true, final_xor = 0,
+	});
+
+	// Reflection differing between input and output, each way.
+	agrees("in only", u32, checksum.Crc_Params(u32){
+		width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+		reflect_in = true, reflect_out = false, final_xor = 0,
+	});
+	agrees("out only", u32, checksum.Crc_Params(u32){
+		width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+		reflect_in = false, reflect_out = true, final_xor = 0,
+	});
+
+	// The byte path, in each register.
+	agrees("bzip2", u32, checksum.Crc_Params(u32){
+		width = 32, polynomial = 0x04C11DB7, initial = 0xFFFFFFFF,
+		reflect_in = false, reflect_out = false, final_xor = 0xFFFFFFFF,
+	});
+	agrees("openpgp", u32, checksum.Crc_Params(u32){
+		width = 24, polynomial = 0x864CFB, initial = 0xB704CE,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	});
+	agrees("ibm-3740", u16, checksum.Crc_Params(u16){
+		width = 16, polynomial = 0x1021, initial = 0xFFFF,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	});
+	agrees("arc", u16, checksum.Crc_Params(u16){
+		width = 16, polynomial = 0x8005, initial = 0,
+		reflect_in = true, reflect_out = true, final_xor = 0,
+	});
+	agrees("umts", u16, checksum.Crc_Params(u16){
+		width = 12, polynomial = 0x80F, initial = 0,
+		reflect_in = false, reflect_out = true, final_xor = 0,
+	});
+	agrees("smbus", u8, checksum.Crc_Params(u8){
+		width = 8, polynomial = 0x07, initial = 0,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	});
+	agrees("usb", u8, checksum.Crc_Params(u8){
+		width = 5, polynomial = 0x05, initial = 0x1F,
+		reflect_in = true, reflect_out = true, final_xor = 0x1F,
+	});
+	agrees("narrow non-reflected", u8, checksum.Crc_Params(u8){
+		width = 3, polynomial = 0x03, initial = 0x07,
+		reflect_in = false, reflect_out = false, final_xor = 0,
+	});
+	agrees("non-reflected 40", u64, checksum.Crc_Params(u64){
+		width = 40, polynomial = 0x0004820009, initial = 0,
+		reflect_in = false, reflect_out = false, final_xor = 0xFFFFFFFFFF,
+	});
+	agrees("u128 holding 64", u128, checksum.Crc_Params(u128){
+		width = 64, polynomial = 0x42F0E1EBA9EA3693, initial = 0xFFFFFFFFFFFFFFFF,
+		reflect_in = true, reflect_out = true, final_xor = 0xFFFFFFFFFFFFFFFF,
+	});
+	agrees("82 bits", u128, checksum.Crc_Params(u128){
+		width = 82, polynomial = 0x0308C0111011401440411, initial = 0,
+		reflect_in = true, reflect_out = true, final_xor = 0,
+	});
+
+	fmt.println("failures", failures);
+}
