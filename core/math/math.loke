@@ -252,6 +252,28 @@ to :: proc($To: type, value: $From) -> Option(To)
 // for generic code and procedure values. `floor_div` and `floor_mod` are the
 // floored counterparts of the truncating `/` and `%`.
 //
+/**
+	The IEEE-754 encoding of `value`, and the float with that encoding. Each width
+	has its own overload and none goes through another, so nothing is
+	canonicalized: `to_bits(from_bits(bits)) == bits` for every pattern, a
+	signalling NaN's included.
+
+	    math.to_bits(f32(1.0));          // 0x3F800000
+	    math.from_bits(u64(0x7FF0000000000000));  // infinity
+*/
+// design.md "Floating-point operators" promises that moving a float keeps its
+// encoding; a conversion such as `f64(x)` is an operation and may not.
+to_bits   :: proc{to_bits_f16, to_bits_f32, to_bits_f64};
+from_bits :: proc{from_bits_u16, from_bits_u32, from_bits_u64};
+
+to_bits_f16 :: proc(value: f16) -> u16 { return unsafe.transmute(u16, value); }
+to_bits_f32 :: proc(value: f32) -> u32 { return unsafe.transmute(u32, value); }
+to_bits_f64 :: proc(value: f64) -> u64 { return unsafe.transmute(u64, value); }
+
+from_bits_u16 :: proc(bits: u16) -> f16 { return unsafe.transmute(f16, bits); }
+from_bits_u32 :: proc(bits: u32) -> f32 { return unsafe.transmute(f32, bits); }
+from_bits_u64 :: proc(bits: u64) -> f64 { return unsafe.transmute(f64, bits); }
+
 // `interfaces.Integral` does not require the wrapping operators, so a distinct
 // integer that satisfies it may have none. The low bits of a sum, difference,
 // or product depend only on the low bits of its operands, so the wrapping forms

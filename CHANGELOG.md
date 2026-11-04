@@ -1013,6 +1013,10 @@ checklist.
 
 ### Added
 
+- `core:math` has `to_bits` and `from_bits`, a float's exact IEEE-754 encoding in each width
+  without `core:unsafe` ([`core:math`](standard-library.md#coremath)), and
+  [Floating-point operators](design.md#floating-point-operators) now promises that moving a
+  float keeps its encoding.
 - `@(move_only)` applies to a union too, which could be move-only only through a move-only
   payload before ([`@(move_only)`](design.md#move_only)).
 - `lokec -migrate` rewrites what an earlier release accepted into what this one does, in a

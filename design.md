@@ -5738,6 +5738,10 @@ compile time, or after the optimizer swaps the operands of `+` or `*`. Every
 other result, signed zeros and infinities included, is determined by the rules
 above.
 
+Copying, moving, passing, and returning a float are not operations: they keep
+its encoding, a NaN's sign and payload and a signalling NaN's signalling bit
+included. A conversion such as `f64(x)` is an operation.
+
 # 6. Statements & Control Flow
 
 *Grammar: [Statements](grammar.md#statements), [Control

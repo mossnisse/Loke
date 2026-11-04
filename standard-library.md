@@ -3139,6 +3139,13 @@ these named policies:
   exactly, or `.none`. It is the integer counterpart of
   [`Enum.from_int`](design.md#integer-conversion).
 
+`math.to_bits(value)` is a float's IEEE-754 encoding, `u16` for an `f16`, `u32` for
+an `f32`, and `u64` for an `f64`, and `math.from_bits(bits)` is the float with that
+encoding. `to_bits(from_bits(bits)) == bits` for every pattern, a signalling NaN's
+included, because [moving a float keeps its encoding](design.md#floating-point-operators)
+and each width has its own overload. They replace `unsafe.transmute` wherever the
+question is only what the bits are.
+
 The floored forms of `/` and `%` are procedures for every integer type:
 `math.floor_div(x, y)` rounds the quotient toward negative infinity, and
 `math.floor_mod(x, y)` is the remainder that goes with it, so
