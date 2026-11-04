@@ -1082,9 +1082,74 @@ main :: proc() {
   w := f() or_return +1;
   v := f() or_return .io;
   u := f() or_return ^;
+  switch (x) {
+    case .a,
+    .b:
+    y = 1;
+    y = 2;
+    case .c: y = 3;
+  }
+  f(/* name */ x);
+  f( /* name */ x);
+  f(/* name */x);
+  xs[/* n */ 1];
+  f(x /* name */);
+  t := x*/* c */y;
+  if (x)
+  {
+  y;
+  }
+  r := `+"`raw\n`"+` + f(
+  x,
+  );
 }
 
 rt :: proc "c"(code: i32) -> ! ---;
+
+T :: enum {
+  A = 1 +
+  2,
+  B,
+  C,
+}
+
+xs := []int{
+  1 +
+  2,
+  3,
+};
+
+W :: proc($T: type)
+where size_of(T) > 0,
+size_of(T) < 9
+{
+}
+
+V :: proc($T: type) where size_of(T) > 0,
+size_of(T) < 9 {
+  list := []int{
+    1 +
+    2,
+    3,
+  };
+}
+
+U :: struct($T: type) where f(T, 1),
+g(T) {
+  a: int,
+  b: int,
+}
+
+Q :: proc($T: type)
+where size_of(T) > 0,
+size_of(T) < 9 ---;
+
+@(a,
+  b)
+g :: proc() {}
+
+@(a) c :: 1 +
+2;
 `
 	want := `package main;
 
@@ -1114,9 +1179,74 @@ main :: proc() {
 	w := f() or_return + 1;
 	v := f() or_return .io;
 	u := f() or_return^;
+	switch (x) {
+	case .a,
+		.b:
+		y = 1;
+		y = 2;
+	case .c: y = 3;
+	}
+	f(/* name */ x);
+	f( /* name */ x);
+	f(/* name */x);
+	xs[/* n */ 1];
+	f(x /* name */);
+	t := x*/* c */y;
+	if (x)
+	{
+		y;
+	}
+	r := `+"`raw\n`"+` + f(
+		x,
+	);
 }
 
 rt :: proc "c" (code: i32) -> ! ---;
+
+T :: enum {
+	A = 1 +
+		2,
+	B,
+	C,
+}
+
+xs := []int{
+	1 +
+		2,
+	3,
+};
+
+W :: proc($T: type)
+	where size_of(T) > 0,
+	size_of(T) < 9
+{
+}
+
+V :: proc($T: type) where size_of(T) > 0,
+	size_of(T) < 9 {
+	list := []int{
+		1 +
+			2,
+		3,
+	};
+}
+
+U :: struct($T: type) where f(T, 1),
+	g(T) {
+	a: int,
+	b: int,
+}
+
+Q :: proc($T: type)
+	where size_of(T) > 0,
+	size_of(T) < 9 ---;
+
+@(a,
+	b)
+g :: proc() {}
+
+@(a) c :: 1 +
+	2;
 `
 	for text, pass in ([]string{input, want}) {
 		c := test_compiler(text)

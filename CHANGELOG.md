@@ -2552,6 +2552,10 @@ checklist.
   `L0322` ([The failure operand](design.md#the-failure-operand)).
 - A `case` of a union `switch` that repeats a variant or names none no longer reports its body again:
   `case .nope(z): return z + 1;` added `L0352` for `z`, bound at the union type.
+- `lokec -fmt` no longer indents these one level too deep: the list items after a wrapped item, the first line after a wrapped
+  `case` header or `@(...)` attribute, and a `{` that starts its own line, which now lines up with its `}`. Every later line of
+  a wrapped `where` clause now sits at the same level, and a bracket after a multi-line raw string or block comment indents from
+  where its line began. `f(/* name */ x)` stays as written instead of becoming `f( /* name */x)`.
 
 ## [0.9.0] - 2026-10-27
 

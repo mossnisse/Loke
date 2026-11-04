@@ -980,49 +980,6 @@ Small and readable, with no dead procedures. `ensure_format_member` lets a `wher
 - [format.odin:202](src/format.odin#L202): wrong, since line 206 also accepts `.Value`. Use "The thunk passes the caller's own storage, so the receiver cannot be `move` or `inout`, and nothing is given back."
 - [format.odin:269](src/format.odin#L269): delete with `local_type_named`.
 
-### src/formatter.odin
-
-A compact, linear token layout pass whose token-preservation check holds up, and every declared symbol is live. The real issues are indentation rules in `continues` that misfire on wrapped lists and comments, a command driver duplicated in `migrate.odin`, and output tracking that a stored indent would replace. The bugs were observed by running the built `lokec.exe -fmt` on scratch files.
-
-**Bugs**
-
-- `BUG-formatter-1` **medium** [formatter.odin:263](src/formatter.odin#L263) `continues`: a continued list item makes every later item of a `{` list continue too. Scenario: `T :: enum {\n A = 1 +\n 2,\n B,\n C,\n}` puts `B` and `C` at two tabs; slice literals do the same. Fix: key the comma rule on being inside a `where` clause, replacing `last_continued`. *Confirmed: Reproduced: -fmt moves B and C after a wrapped `A = 1 +`/`2,` to two tabs, and slice literal items likewise; no recorded decision covers it (the comment names `where` clauses). Whitespace-only and stable, so low rather than medium severity.*
-- `BUG-formatter-2` **low** [formatter.odin:260](src/formatter.odin#L260) `continues`: the `case` colon test reads only the last line's first token. Scenario: in `case .a,\n .b:\n y := 1;\n z := 2;` the `y` line gets one tab more than `z`. Fix: remember an open `case` header until its colon rather than testing `line_first`. *Not verified.*
-- `BUG-formatter-3` **low** [formatter.odin:160](src/formatter.odin#L160) `layout`: spacing treats an inline comment as absent, yet forces a space before it. Scenario: `f(/* name */ x)` becomes `f( /* name */x)`. Fix: keep the written gap after a comment (see line 175 under Simplification), and force no space after `(` or `[`. *Not verified.*
-- `BUG-formatter-4` **low** [formatter.odin:269](src/formatter.odin#L269) `continues`: the attribute test only sees the line the attribute ends on. Scenario: `@(a,\n b)\ng :: proc() {}` indents `g` one tab. Fix: when the `)` of an `Open` with `attribute` set pops, make `line_first` count as `.At`. *Not verified.*
-- `BUG-formatter-5` **low** [formatter.odin:256](src/formatter.odin#L256) `continues`: a `{` that starts a line counts as continuing its header. Scenario: `if (x)\n{\n y;\n}` in a body puts `{` at two tabs, `y` at two and `}` at one, so the braces do not align. Fix: in `indent`, a line starting with `.Lbrace` never continues. *Not verified.*
-- `BUG-formatter-6` **low** [formatter.odin:336](src/formatter.odin#L336) `line_indent`: a bracket after a multi-line raw string or block comment indents from that literal's last line. Scenario: in a proc body, a raw string ending at column zero followed by `+ g(\n a,\n);` writes `a` at one tab and `);` at column zero. Fix: the stored indent under Simplification. *Not verified.*
-
-**Simplification**
-
-- [formatter.odin:327](src/formatter.odin#L327) `write_out`, `line_indent`: every line start goes through `indent`, so set `l.indent = max(depth, 0)` there and read it at line 285. This drops `write_out`, `line_indent` and `line_start` for plain `write_string`, and fixes BUG-formatter-6. (about 19 lines)
-- [formatter.odin:206](src/formatter.odin#L206) `horizontal`: it is the identity. Each call is on a gap `break_line` just found free of `\n`, and a lone `\r` is L0115, refused before layout. Use `gap` directly. (about 5 lines)
-- [formatter.odin:195](src/formatter.odin#L195) `would_merge`: only the prefix rule at line 504 can drop a space between operator characters, so test there instead of patching at lines 177-179; only `&&`, `&~`, `--` can occur after a prefix operator. (about 8 lines)
-- [formatter.odin:380](src/formatter.odin#L380) `written_tight`: its list is exactly the enum range `.Plus ..= .Shr`, so use a range test as `any_keyword` does. `binary_operator` (line 363) likewise is `.Plus ..= .Shr_Eq` minus `.Not`, plus six named kinds. (about 5 lines)
-- [formatter.odin:151](src/formatter.odin#L151) `layout`: pass the tokens with their EOF, whose `lo` is `len(text)`. `for token in tokens` then drops the ternaries at lines 153 and 162 and the `index == len(tokens)` exit. (about 4 lines)
-- [formatter.odin:149](src/formatter.odin#L149) `layout`: `started` is `strings.builder_len(l.out) > 0`, since no comment or token is empty. (about 3 lines)
-- [formatter.odin:175](src/formatter.odin#L175) `layout`: `previous_hi == l.last.hi` replaces `l.last.kind != .EOF && l.last_line == l.line`, sending only a token right after a token to `spacing`; this is also half of the BUG-formatter-3 fix. (about 1 line)
-- [formatter.odin:303](src/formatter.odin#L303) `write_token`: this predicate and the one at line 506 are the same, `binary_operator(k) && (operand || !maybe_prefix(k))`; name it once as `used_as_binary(kind, operand)`. (about 1 line)
-- [formatter.odin:448](src/formatter.odin#L448) `spacing`: the `.Rbrace` and `.Lbrace` cases have one body, so `case .Rbrace, .Lbrace:`. (about 2 lines)
-
-**Dead code**
-
-- (branch) [formatter.odin:297](src/formatter.odin#L297): `len(l.opens) > 0` before `pop`; `format_source` only lays out text that parsed, so every closer has an opener. (about 2 lines)
-- (branch) [formatter.odin:385](src/formatter.odin#L385): `token.lo > 0 && token.hi < u32(len(l.text))`; a parsed file neither starts nor ends with an arithmetic operator.
-- (branch) [formatter.odin:322](src/formatter.odin#L322): `at > int(brace.hi)`; when equal, `l.text[at - 1]` is the `{` itself, which already fails the `'\n'` test.
-- (branch) [formatter.odin:405](src/formatter.odin#L405): `.At` in `maybe_prefix`; line 496 returns first for `last == .At`, `binary_operator(.At)` is false, and no prefix operator can precede an attribute now that a type holds none.
-
-**Structure and boundaries**
-
-- [formatter.odin:49](src/formatter.odin#L49): `input_sources` serves `-migrate` as well and only wraps `package_sources`, so it belongs beside that in `packages.odin`.
-
-**Comments**
-
-- [formatter.odin:3](src/formatter.odin#L3): lines 3-9 repeat comments.md "Formatting". Shorten to: "Changes whitespace only and refuses a file that does not parse; a result whose tokens differ is reported, not written (comments.md "Formatting")." (about 5 lines)
-- [formatter.odin:225](src/formatter.odin#L225): lines 225-227 narrate the switch below, and the rule is in comments.md. Shorten to: "Tabs for a line that starts with `first` (comments.md "Formatting")." (about 2 lines)
-- [formatter.odin:119](src/formatter.odin#L119): restates the field name. Say why it exists: "Recognizes the operator spelled `[]=`." Lines 152 and 325 narrate the code; delete those. (about 2 lines)
-- [formatter.odin:65](src/formatter.odin#L65): restates the signature and misses the internal-error refusal. Shorten to: "False, with `c`'s diagnostics saying why, where it refuses."
-
 ### src/generic.odin
 
 What remains needs a helper shared with `impl.odin`.

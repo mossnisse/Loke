@@ -829,8 +829,10 @@ The current formatter rules and rationale are in [comments.md
 "Formatting"](comments.md#formatting).
 
 Open: aligning columns automatically, as `gofmt` does, so a renamed field
-does not leave its neighbors misaligned; and indenting a continued line
-inside brackets, which `core/` leaves at the bracket's level.
+does not leave its neighbors misaligned; indenting a continued line inside
+brackets, which `core/` leaves at the bracket's level; and indenting the later
+values of a wrapped multi-value statement (`x, y :=` above `1,` and `2;`), whose
+commas read as a list's, since the tokens do not tell a block's `{` from a list's.
 
 ## Language design review (2026-10-03)
 

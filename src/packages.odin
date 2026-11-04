@@ -202,6 +202,17 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 	return id, true
 }
 
+// `input` as a list of files. Listed as a package's sources are, never as a
+// pattern, so a directory name holding `[` or `*` is only a name.
+input_sources :: proc(c: ^Compiler, input: string) -> []string {
+	if os.is_dir(input) {
+		return package_sources(c, input)
+	}
+	paths := make([]string, 1, context.temp_allocator)
+	paths[0] = input
+	return paths
+}
+
 // Direct regular `.loke` files, sorted for deterministic package order.
 @(private)
 package_sources :: proc(c: ^Compiler, dir: string) -> []string {

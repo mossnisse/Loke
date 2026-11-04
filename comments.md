@@ -2476,10 +2476,13 @@ with it, so a call to it is as unlikely through the dispatch as without one.
   formatter's code, and a renamed identifier would re-flow its neighbours in a
   diff.
 - **Tabs, one per enclosing bracket** opened on an earlier line, however many
-  opened together. A `case` sits at its `switch`'s level, and a line that
-  continues an unfinished statement outside any `(` or `[` goes one deeper. A
-  file-scope `when` body stays at column zero when written there, as `core/`'s
-  long platform blocks are.
+  opened together. A closing bracket sits at its opener's level and a `case` at
+  its `switch`'s. A line that continues an unfinished statement outside any `(`
+  or `[` goes one deeper; a `{` that starts a line does not continue the one
+  above, and only in a `where` clause does a comma leave a line unfinished, since
+  the tokens do not say which `{` holds a list and which a block. A file-scope
+  `when` body stays at column zero when written there, as `core/`'s long platform
+  blocks are.
 - **Spacing between tokens** is one space after a comma, around `::`, `:=`,
   assignment, comparison, logical, range, and arrow operators, and none inside
   brackets, before `,`, `;`, `)`, and `]`, or after a prefix operator. An
@@ -2487,7 +2490,9 @@ with it, so a call to it is as unlikely through the dispatch as without one.
   tight, because `core/` writes `a*b + c*d` by precedence; one written with a
   space on either side gets one on both.
 - **Extra spaces inside a line are kept.** `core/` aligns field types and
-  trailing comments with them. Only the leading indentation is recomputed.
+  trailing comments with them. Only the leading indentation is recomputed. The
+  gap after an inline comment is left as written, and a comment gets a space
+  before it unless it follows `(`, `[`, or a tight operator.
 
 It works on the real lexer's tokens rather than printing the syntax tree:
 keeping the author's breaks leaves nothing for a tree printer to decide, and a
