@@ -367,7 +367,7 @@ check_file_scope_static_assert :: proc(k: ^Checker, item: ^Item_Static_Assert) {
 	if !is_ident {
 		return // likewise: file-scope syntax admits only the unqualified spelling
 	}
-	symbol := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	symbol := ident_symbol(k, ident)
 	if symbol == nil || symbol.kind != .Builtin || symbol.builtin != .Static_Assert {
 		errorf(
 			k.c,
@@ -1447,6 +1447,11 @@ identifier_of :: proc(c: ^Compiler, v: ^Expr_Ident) -> Identifier_Id {
 		v.name_id = intern_identifier(c, v.name)
 	}
 	return v.name_id
+}
+
+// What an identifier names here, or nil.
+ident_symbol :: proc(k: ^Checker, ident: ^Expr_Ident) -> ^Symbol {
+	return symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
 }
 
 // ------------------------------------------------------- finite size --

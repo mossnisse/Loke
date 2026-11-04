@@ -296,7 +296,7 @@ callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool
 	if !is_ident {
 		return false
 	}
-	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	sym := ident_symbol(k, ident)
 	return sym != nil && sym.kind == .Builtin && sym.builtin == kind
 }
 

@@ -602,7 +602,7 @@ needs_temporary :: proc(k: ^Checker, e: Expr) -> bool {
 	if !is_ident {
 		return false
 	}
-	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	sym := ident_symbol(k, ident)
 	return sym != nil && (sym.kind == .Var || sym.kind == .Parameter) && type_is_panic_free_scalar(k.c, sym.type)
 }
 

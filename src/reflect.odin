@@ -309,7 +309,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	if !is_ident {
 		return false
 	}
-	named := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	named := ident_symbol(k, ident)
 	if named == nil || named.kind != .Const || !type_is_descriptor(k.c, named.type) {
 		return false
 	}
