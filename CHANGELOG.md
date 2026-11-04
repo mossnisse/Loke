@@ -1521,6 +1521,13 @@ checklist.
   never wrote.
 - A diagnostic in binding an expanded case's copy names its variant, as one in its body does
   ([Per-variant switch cases](design.md#per-variant-switch-cases)).
+- A generic type's `format` whose `where` bound fails leaves that instance the generated form
+  ([Printed forms](standard-library.md#printed-forms)). `fmt.println(G(int){1})` was `L0444` when
+  `format` required `T == string`.
+- A report (`assert`, `panic`) counts only a `format` its printed form calls
+  ([Global write effects](design.md#global-write-effects)). A `distinct` type's wrapped `format`, a
+  private field's, and a `dyn` view with no `format` slot were a false `L0512` when that `format`
+  wrote what the report held.
 - A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
   map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
   ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a

@@ -1236,6 +1236,23 @@ with resets of one field's region rejected and accepted as they do at 100, so no
 of a rejection this causes is known. If one turns up, the collapse should record `.Width` in
 what it returns.
 
+## A `dyn` view with a `format` slot of its own
+
+[Printed forms](standard-library.md#printed-forms) lists "any other `dyn` view" under what a
+generated method prints, as its type's name. A view of an interface that composes
+`fmt.Formattable`, or declares its own `format` slot of that shape, has a forwarding `format`
+member, so no method is generated and it prints the value it views, as `dyn fmt.Formattable` does:
+
+```loke
+Composed :: interface($Self: type) { fmt.Formattable(Self); }
+view := (dyn Composed)(&value);
+fmt.println(view); // the value, by its `format`
+```
+
+The compiler keeps this, and a report counts that `format`'s effects
+(tests/err/private_formatter_effects.loke). The table should either name these views or the
+compiler should print their names. Found on 2026-11-04 in the compiler review.
+
 ## The diverging arrow's spelling
 
 [`-> !`](design.md#diverging-procedures) means the procedure never returns

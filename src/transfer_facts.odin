@@ -233,7 +233,10 @@ transfer_facts_walk :: proc(
 	}
 	#partial switch info.kind {
 	case .Dyn:
-		if through_views && !view_is_printing(c, info) {
+		// standard-library.md "Printed forms": a printed argument is viewed where it is
+		// written, but a nested field or a generic instance reaches its formatter in a
+		// pass after the effects, so these witnesses are not all known while checked.
+		if through_views && !interface_is_printing(c, info.dyn_interface) {
 			for witness in view_witness_types(c, info) {
 				inner := via
 				if inner.view == INVALID_TYPE && !info.mutable {
@@ -266,14 +269,6 @@ transfer_facts_walk :: proc(
 			transfer_facts_walk(c, variant, facts, visited, through_views, via)
 		}
 	}
-}
-
-// standard-library.md "Printed forms": a printed argument is viewed where it is
-// written, but a nested field or a generic instance reaches its formatter in a
-// pass after the effects, so these witnesses are not all known while checked.
-@(private = "file")
-view_is_printing :: proc(c: ^Compiler, view: ^Type_Info) -> bool {
-	return format_view_interface(c) == view.dyn_interface
 }
 
 // design.md "@(wakes_on_drop)": the `waker` of `transfer_facts`.

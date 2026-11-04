@@ -1,0 +1,28 @@
+// design.md "where clauses": a `format` whose bound fails is no member of the
+// instance, so standard-library.md "Printed forms" gives the instance the default.
+package main;
+
+import "core:fmt";
+
+G :: struct($T: type) { value: T }
+
+impl G($T) {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) where T == string {
+		fmt.format_to(writer, "written");
+	}
+}
+
+show :: proc(value: ^$T) where fmt.Formattable(T) {
+	fmt.println(value);
+}
+
+main :: proc() {
+	number := G(int){1};
+	text := G(string){"a"};
+	fmt.println(number, text);
+	fmt.println([1]G(int){number}, [1]G(string){text});
+	show(&number);
+	show(&text);
+	view := (dyn fmt.Formattable)(&number);
+	fmt.println(view);
+}

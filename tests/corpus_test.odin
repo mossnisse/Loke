@@ -890,7 +890,7 @@ UNPINNED :: []string {
 	"L0350",
 	// `-migrate` reporting its own rewrite wrong, which no input should reach.
 	"L0751",
-	// `core:fmt` without its own `Writer`/`Options`.
+	// `core:fmt` without its own `Writer`.
 	"L0601",
 	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
 	"L0575",

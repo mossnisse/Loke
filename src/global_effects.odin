@@ -668,9 +668,9 @@ prov_destructure_copy_effects :: proc(graph: ^Flow_Graph, plan: ^Destructure, op
 }
 
 // design.md "Built-in procedures": an `assert` or `panic` report prints `type`
-// through its `format` methods and any `dyn` view in it. As for a failure `main`
-// returns, the slot may reach any `format` method. A value printed with no method
-// runs nothing, and that is most of them.
+// through its `format` methods and any `format` slot of a `dyn` view in it. As for
+// a failure `main` returns, the slot may reach any `format` method. A value printed
+// with no method runs nothing, and that is most of them.
 prov_report_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	c := graph.k.c
 	view := format_view_interface(c)
@@ -1653,7 +1653,7 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, seen: ^map[Effect_Key]bo
 		// standard-library.md "Printed forms": the witnesses nested and generic
 		// printing reach are built after this pass, so the slot may reach any
 		// `format` method it can meet, which a public type's private one is not.
-		if call.dyn_interface == format_view_interface(c) {
+		if interface_is_printing(c, call.dyn_interface) {
 			for body, index in bodies {
 				if sym := symbol_of(c, body.symbol); sym != nil && sym.has_receiver && identifier_text(c, sym.name) == "format" && format_meets_slot(c, sym, sym.owner_type) {
 					append(&out, index)

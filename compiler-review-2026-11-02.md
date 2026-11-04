@@ -108,7 +108,7 @@ Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Ele
 
 #### Built-in call opening and operands
 
-`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164), [format.odin:244](src/format.odin#L244) and `check_unsafe_builtin` in `check_builtin.odin`. A loop over fixed target types repeats at `check_typed_builtin_args` in `check_builtin.odin` and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
+`builtin_arity_ok` in `check_builtin.odin` writes the arity report, but it is still written by hand at [atomics.odin:164](src/atomics.odin#L164) and `check_unsafe_builtin` in `check_builtin.odin`. A loop over fixed target types repeats at `check_typed_builtin_args` in `check_builtin.odin` and [format.odin:251](src/format.odin#L251). The allocator argument repeats at [check_builtin.odin:586](src/check_builtin.odin#L586) and [box.odin:164](src/box.odin#L164).
 
 They differ in diagnostic code (`L0322`, `L0661`, `L0569`, `L0738`), and atomics reports every bad argument rather than the first.
 
@@ -932,53 +932,6 @@ Small and readable, but the foreign-global path has real gaps: an unknown type r
 - [foreign.odin:127](src/foreign.odin#L127): repeats lines 100 and 101. Replace with the rule's source: `// design.md "`@(export)`": same kind and type.`
 - [foreign.odin:157](src/foreign.odin#L157): the second clause restates the three checks below; keep only `// design.md "`@(c_vararg)`".`
 
-### src/format.odin
-
-Small and readable, with no dead procedures. `ensure_format_member` lets a `where`-excluded `format` block the default, and `type_prints_through_method` claims more than the emitter prints, so valid programs are rejected. `Writer` and `Options` are fetched and recorded in several ways, which is most of what can be shortened.
-
-**Bugs**
-
-- `BUG-format-1` **medium** [format.odin:26](src/format.odin#L26) `ensure_format_member`: the member loop ignores `bound_excluded`, so a `format` whose `where` failed blocks the default. Scenario: `impl G($T) { format :: proc(self, w: fmt.Writer, o: fmt.Options) where T == string {...} }`, then `fmt.println(G(int){1})` gives L0444 rather than the default form. Fix: the first Simplification bullet. *Confirmed: Probe: G(int) with `format ... where T == string` gets L0444 from fmt.println; G(string) prints custom, no-format G(int) prints the default. The spec gives an excluded method no presence; no doc records it. Rejects a valid program, no miscompile.*
-- `BUG-format-2` **low** [format.odin:88](src/format.odin#L88) `prints_through_method_walk`: asks about the wrapped type's `format`, but a distinct type prints by its own default and never calls it (design.md "Delegating operators"). Scenario: `D :: distinct Own`, where `Own.format` writes `data`; `panic("stop", data[0], D{1})` gives a false L0512. Fix: delete lines 88-90. *Not verified.*
-- `BUG-format-3` **low** [format.odin:101](src/format.odin#L101) `prints_through_method_walk`: walks every field, but a generated form prints public fields only (standard-library.md "Printed forms"). Scenario: in a library, a private `own: Own` field makes `panic("stop", data[0], holder)` a false L0512. Fix: require `sym.public`, and make the fields public in tests/err/private_formatter_effects.loke, which pins this at lines 59, 63 and 67. *Not verified.*
-- `BUG-format-4` **low** [format.odin:93](src/format.odin#L93) `prints_through_method_walk`: treats every `dyn` as running code, but any view other than `dyn fmt.Formattable` prints its type's name (standard-library.md "Printed forms"). Scenario: `a :: proc(v: dyn Sz) { data.append(7); panic("stop", data[0], v); }` gives a false L0512 when a `format` writes `data`. Fix: `return dyn_views_printing(c, under)`. *Not verified.*
-
-**Simplification**
-
-- [format.odin:20](src/format.odin#L20) `ensure_format_member`: replace lines 20-32 with `if type_has_written_format(k.c, type) { return }` and a loop finding the `.Standard_Format` member. This fixes BUG-format-1 and drops `hidden`, whose test restates `format_meets_slot`. (about 5 lines)
-- [format.odin:11](src/format.odin#L11) `ensure_format_member`: move the `Writer` and `Options` lookup inside `if id == INVALID_SYMBOL`, the only place that needs them, so a repeat `format` lookup skips the package scan and two interns. (no lines saved)
-- [format.odin:155](src/format.odin#L155) `discover_formatters`: [check.odin:322](src/check.odin#L322) already records `Format_View` once `core:fmt` is checked. Read it at the top, take the package from its interface's `sym.pkg`, and drop the loop, lookup and second write at 167-172. (about 8 lines)
-- [format.odin:135](src/format.odin#L135) `check_formatter`: start from `format_misdeclared(c, type)`, dropping the `writer` and `options` parameters and lines 156-160, since the same pair is read at 196-197. `formatter_signature_ok` then has one caller. (about 6 lines)
-- [format.odin:19](src/format.odin#L19) and [format.odin:230](src/format.odin#L230): both record `Writer` and `Options`. Record them once beside `Format_View` at [check.odin:321](src/check.odin#L321); only `format_misdeclared` reads them earlier, and it can answer false inside `core:fmt`. `check_fmt_builtin` then needs no `options`. (about 4 lines)
-- [format.odin:253](src/format.odin#L253) `check_fmt_builtin`: call `builtin_arguments_ok` ([check_builtin.odin:198](src/check_builtin.odin#L198)) in place of this shape check, which reports L0371 for a mode where the shared one reports L0370. Setting `v.type = INVALID_TYPE` first, as `check_layout_builtin` does, removes three more assignments. (about 8 lines)
-- [format.odin:271](src/format.odin#L271) `local_type_named`: a one-line wrapper with two callers in one procedure; call `package_type_named` directly. (about 5 lines)
-
-**Dead code**
-
-- (branch) [format.odin:108](src/format.odin#L108): `variant != TYPE_VOID` guards nothing; the walk answers false for void, which has no written `format` and no case in the switch.
-- (branch) [format.odin:53](src/format.odin#L53): `type != INVALID_TYPE` repeats `type_is_supported`, which answers false for that id.
-
-**Data structures and algorithms**
-
-- [format.odin:73](src/format.odin#L73) `type_prints_through_method`: hand-rolls a `map[Type_Id]bool` visited set where `Type_Walk` and `type_walk_enter` ([semantic.odin:2189](src/semantic.odin#L2189)) are the shared form. It would enter on `type`, not `under`, so `P :: distinct ^P` still stops. The input is one printed type, so this is consistency, not speed.
-
-**Near copies**
-
-- [format.odin:184](src/format.odin#L184), [hooks.odin:559](src/hooks.odin#L559) and [global_effects.odin:1658](src/global_effects.odin#L1658): three tests for "this `dyn` is printing's", the first by name and the others by the recorded view. Share one predicate on the interface symbol; the name form also works while `core:fmt` is being checked.
-- [format.odin:241](src/format.odin#L241), [atomics.odin:164](src/atomics.odin#L164) and `check_unsafe_builtin` in `check_builtin.odin`: the same plural-aware arity error with different codes. A `report_builtin_arity(k, v, code, name, wanted)` turns each five-line call into one.
-
-**Structure and boundaries**
-
-- [format.odin:150](src/format.odin#L150) `discover_formatters`: does two jobs under one name, reporting L0572 for every type (161-165) and building witnesses for typeids (166-180). Split at line 166, or name the first job in the procedure's name.
-- [format.odin:91](src/format.odin#L91) `prints_through_method_walk`: restates by hand what `emit_format_body` ([emit_llvm_runtime.odin:698](src/emit_llvm_runtime.odin#L698)) reaches, and the layering forbids sharing code, which is how BUG-format-2 to 4 arose. Say in its comment which emitter procedure it mirrors.
-
-**Comments**
-
-- [format.odin:20](src/format.odin#L20): delete with the first Simplification; it repeats lines 58-59.
-- [format.odin:57](src/format.odin#L57): shorten to "Whether a type's own `format` is what printing uses." Move the citation and the private-method sentence to `format_meets_slot` at line 65, where the rule is coded.
-- [format.odin:131](src/format.odin#L131): "design.md gives the name to the protocol" is no citation, and that text now lives in standard-library.md. Use `standard-library.md "Printed forms": a `format` that cannot serve the slot is a mistake, not an unrelated procedure.`
-- [format.odin:202](src/format.odin#L202): wrong, since line 206 also accepts `.Value`. Use "The thunk passes the caller's own storage, so the receiver cannot be `move` or `inout`, and nothing is given back."
-- [format.odin:269](src/format.odin#L269): delete with `local_type_named`.
 
 ### src/generic.odin
 
