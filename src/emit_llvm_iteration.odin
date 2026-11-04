@@ -488,8 +488,7 @@ emit_sequence_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	case .Slice:
 		// Evaluated once; the loop walks the root through the data word.
 		value := emit_expr(e, s.iterable)
-		base = extract(e, llvm_type(e, source), value, SLICE_DATA)
-		limit = extract(e, llvm_type(e, source), value, SLICE_LEN)
+		base, limit = ptr_len_parts(e, llvm_type(e, source), value)
 
 	case .Dynamic:
 		// The current allocation up to `len`, kept current by the loop's loan.
@@ -843,8 +842,7 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	open_synth_receiver(e, name, option)
 
 	view := load(e, STRING_VIEW_TYPE, gep_field(e, iterator, "%arg0", ITER_TEXT_VIEW))
-	data := extract(e, STRING_VIEW_TYPE, view, STRING_DATA)
-	length := extract(e, STRING_VIEW_TYPE, view, STRING_LEN)
+	data, length := ptr_len_parts(e, STRING_VIEW_TYPE, view)
 	offset_ptr := gep_field(e, iterator, "%arg0", ITER_TEXT_OFFSET)
 	offset := load(e, "i64", offset_ptr)
 	at_end := temp(e)

@@ -862,15 +862,6 @@ What remains is the predeclared-callee near copy, shared with `box.odin` and `it
 
 - [simd.odin:15](src/simd.odin#L15), [box.odin:45](src/box.odin#L45) and [iterate.odin:68](src/iterate.odin#L68): `simd_callee`, `box_type_callee` and `range_callee` differ only in the name; use `predeclared_callee(k, callee, "Simd")`.
 
-### src/slice.odin
-
-A small, focused file. What remains is the emitter's slice unpacking around it.
-
-**Near copies**
-
-- [emit_llvm_iteration.odin:493](src/emit_llvm_iteration.odin#L493), [emit_llvm_calls.odin:1073](src/emit_llvm_calls.odin#L1073), [emit_llvm_expr.odin:2410](src/emit_llvm_expr.odin#L2410), and [emit_llvm_containers.odin:128](src/emit_llvm_containers.odin#L128), 287, 322, 755, 896, 1413: each extracts data then length.
-  Shared form: `ptr_len_parts(e, storage, value) -> (data, length)` beside `emit_ptr_len`, its inverse; `#assert` at emit_llvm_runtime.odin:116 already ties `SLICE_*` to `VIEW_*`. (about 12 lines net)
-
 ### src/source.odin
 
 Small, sound procedures for loading and diagnostics.

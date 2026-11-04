@@ -526,8 +526,7 @@ emit_pack_operands :: proc(
 			expr := v.variadic_spreads[next_spread]
 			spread := emit_expr(e, expr)
 			storage := llvm_type(e, expr_base(expr).type)
-			out.spread_data[next_spread] = extract(e, storage, spread, SLICE_DATA)
-			out.spread_len[next_spread] = extract(e, storage, spread, SLICE_LEN)
+			out.spread_data[next_spread], out.spread_len[next_spread] = ptr_len_parts(e, storage, spread)
 			out.total = checked_variadic_total(e, out.total, out.spread_len[next_spread])
 			next_spread += 1
 			continue

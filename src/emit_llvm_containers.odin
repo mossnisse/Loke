@@ -97,8 +97,7 @@ synth_sequence_storage :: proc(e: ^Emitter, symbol: ^Symbol) -> (data: string, c
 	}
 	header := llvm_type(e, receiver)
 	self := synth_receiver_value(e, symbol)
-	data = extract(e, header, self, SLICE_DATA)
-	count = extract(e, header, self, SLICE_LEN)
+	data, count = ptr_len_parts(e, header, self)
 	return
 }
 
@@ -227,8 +226,7 @@ emit_synth_chunks_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	open_synth_receiver(e, name, option)
 	rest_ptr := gep_field(e, iterator, "%arg0", CHUNKS_REST)
 	rest := load(e, header, rest_ptr)
-	data := extract(e, header, rest, SLICE_DATA)
-	count := extract(e, header, rest, SLICE_LEN)
+	data, count := ptr_len_parts(e, header, rest)
 	size := load(e, "i64", gep_field(e, iterator, "%arg0", CHUNKS_SIZE))
 	empty := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp sle i64 %s, 0", empty, count)
@@ -260,8 +258,7 @@ emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
 	element := slice_element(e.c, slice_type)
 	value := emit_expr(e, v.bound[0])
 	storage := llvm_type(e, slice_type)
-	data := extract(e, storage, value, SLICE_DATA)
-	count := extract(e, storage, value, SLICE_LEN)
+	data, count := ptr_len_parts(e, storage, value)
 	ctx := emit_expr(e, v.bound[1])
 	less := sort_by_thunk(e, element, v.operation.(Call_Sort_By).comparator)
 	fmt.sbprintfln(
@@ -683,8 +680,7 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	case .Open_Fixed:
 		// Fixed storage cannot run out; a too-small buffer is a runtime fault.
 		buffer := llvm_type(e, symbol.params[0])
-		data := extract(e, buffer, "%arg0", SLICE_DATA)
-		length := extract(e, buffer, "%arg0", SLICE_LEN)
+		data, length := ptr_len_parts(e, buffer, "%arg0")
 		opened := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", opened, data, length,
@@ -957,8 +953,7 @@ status_call :: proc(e: ^Emitter, helper, ops: string) -> string {
 @(private = "file")
 emit_synth_append :: proc(e: ^Emitter, body: Container_Body) -> string {
 	pack := llvm_type(e, body.symbol.params[1])
-	data := extract(e, pack, "%arg1", SLICE_DATA)
-	count := extract(e, pack, "%arg1", SLICE_LEN)
+	data, count := ptr_len_parts(e, pack, "%arg1")
 	status := temp(e)
 	if body.masked {
 		fmt.sbprintfln(
@@ -1323,8 +1318,7 @@ emit_map_key_slot :: proc(e: ^Emitter, index: Expr, container: Type_Id, storage 
 // as an unowned static header that nothing clones or drops.
 @(private = "file")
 emit_borrowed_key_slot :: proc(e: ^Emitter, view: string) -> string {
-	data := extract(e, STRING_VIEW_TYPE, view, VIEW_DATA)
-	length := extract(e, STRING_VIEW_TYPE, view, VIEW_LEN)
+	data, length := ptr_len_parts(e, STRING_VIEW_TYPE, view)
 	slot := alloca(e, STRING_TYPE)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", data, gep_field(e, STRING_TYPE, slot, STRING_DATA))
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, gep_field(e, STRING_TYPE, slot, STRING_LEN))

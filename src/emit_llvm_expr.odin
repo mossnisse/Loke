@@ -2353,6 +2353,11 @@ emit_ptr_len :: proc(e: ^Emitter, storage, data, length: string) -> string {
 }
 
 @(private)
+ptr_len_parts :: proc(e: ^Emitter, storage, value: string) -> (data: string, length: string) {
+	return extract(e, storage, value, SLICE_DATA), extract(e, storage, value, SLICE_LEN)
+}
+
+@(private)
 emit_slice_value :: proc(e: ^Emitter, slice_type: Type_Id, data, length: string) -> string {
 	return emit_ptr_len(e, llvm_type(e, slice_type), data, length)
 }
@@ -2361,7 +2366,7 @@ emit_slice_value :: proc(e: ^Emitter, slice_type: Type_Id, data, length: string)
 emit_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: string) {
 	storage := llvm_type(e, expr_base(operand).type)
 	value := emit_expr(e, operand)
-	return extract(e, storage, value, SLICE_DATA), extract(e, storage, value, SLICE_LEN)
+	return ptr_len_parts(e, storage, value)
 }
 
 // The data pointer and byte length of a text operand.
