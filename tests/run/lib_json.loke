@@ -717,17 +717,31 @@ save_generation :: proc(
 	fs.replace_atomic(path, bytes.bytes()) or_return .file;
 }
 
+// A new, empty file under the system's temporary directory, under a name only this
+// run holds. `Create_New` never opens a file that is already there, so the save and
+// the removal below touch nothing of anyone else's.
+reserve_temporary :: proc(prefix: string_view) -> Result(string, io.Error) {
+	directory := "";
+	switch (os.get_environment("TEMP") or_return) {
+	case .some(base): directory = base;
+	case .none:
+	}
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := path.join([]string_view{directory, strings.join([]string_view{prefix, "-", digits, ".json"})});
+		switch (fs.open(name, fs.Open_Options{access = .Write, disposition = .Create_New})) {
+		case .ok(_):
+			return .ok(name);
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { return .err(error); }
+		}
+	}
+	return .err(io.make_error(.Already_Exists, .Open));
+}
+
 saving :: proc() {
 	fmt.println("-- saving");
-	file := strings.copy("loke_json_case.json");
-	switch (os.get_environment("TEMP")) {
-	case .ok(found):
-		switch (found) {
-		case .some(base): file = path.join([]string_view{base, "loke_json_case.json"});
-		case .none:
-		}
-	case .err:
-	}
+	file := reserve_temporary("loke_json_case") or_else panic("no scratch file");
 	switch (save_generation(file, 12, mem.default_allocator())) {
 	case .ok: fmt.println("saved");
 	case .err: fmt.println("not saved");
