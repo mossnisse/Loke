@@ -7,10 +7,7 @@ import "core:fmt"
 @(private = "file")
 emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, key: string) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
-	if key not_in e.simd_intrinsics {
-		e.simd_intrinsics[key] = true
-		append(&e.globals, fmt.aprintf("declare %s @%s(%s)\n", llvm, key, llvm))
-	}
+	declare_intrinsic(e, key, llvm, llvm)
 	operand := emit_expr(e, v.bound[0])
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s)", out, llvm, key, llvm, operand)
@@ -23,10 +20,7 @@ emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, key: string) -> string 
 @(private = "file")
 emit_zero_count :: proc(e: ^Emitter, name, llvm, operand: string) -> string {
 	key := fmt.aprintf("llvm.%s.%s", name, llvm)
-	if key not_in e.simd_intrinsics {
-		e.simd_intrinsics[key] = true
-		append(&e.globals, fmt.aprintf("declare %s @%s(%s, i1)\n", llvm, key, llvm))
-	}
+	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, i1", llvm))
 	count := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, i1 false)", count, llvm, key, llvm, operand)
 	return count
@@ -129,10 +123,7 @@ emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
 	key := fmt.aprintf("llvm.%s.%s", name, llvm)
-	if key not_in e.simd_intrinsics {
-		e.simd_intrinsics[key] = true
-		append(&e.globals, fmt.aprintf("declare %s @%s(%s, %s, %s)\n", llvm, key, llvm, llvm, llvm))
-	}
+	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, %s, %s", llvm, llvm, llvm))
 	value := emit_expr(e, v.bound[0])
 	count := emit_expr(e, v.bound[1])
 	count_llvm := llvm_type(e, TYPE_INT)
@@ -153,20 +144,14 @@ emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
 	if !emitted_has_fma(e) {
-		if "llvm.trap" not_in e.simd_intrinsics {
-			e.simd_intrinsics["llvm.trap"] = true
-			append(&e.globals, "declare void @llvm.trap()\n")
-		}
+		declare_intrinsic(e, "llvm.trap", "void", "")
 		fmt.sbprintln(&e.b, "  call void @llvm.trap()")
 		fmt.sbprintln(&e.b, "  unreachable")
 		fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
 		return "poison"
 	}
 	key := fmt.aprintf("llvm.fma.%s", intrinsic_type_suffix(llvm))
-	if key not_in e.simd_intrinsics {
-		e.simd_intrinsics[key] = true
-		append(&e.globals, fmt.aprintf("declare %s @%s(%s, %s, %s)\n", llvm, key, llvm, llvm, llvm))
-	}
+	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, %s, %s", llvm, llvm, llvm))
 	a, b, c := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1]), emit_expr(e, v.bound[2])
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s, %s %s)", out, llvm, key, llvm, a, llvm, b, llvm, c)

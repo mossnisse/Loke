@@ -151,10 +151,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 [emit_llvm_expr.odin:1583](src/emit_llvm_expr.odin#L1583) and [emit_llvm_simd.odin:146](src/emit_llvm_simd.odin#L146) are the same division, and [emit_llvm_expr.odin:1622](src/emit_llvm_expr.odin#L1622) and [emit_llvm_simd.odin:182](src/emit_llvm_simd.odin#L182) the same defined shift. They differ in constant spelling (`0` or `zeroinitializer`, `-1` or a splat), in the mask type, in reducing to any-lane before `panic_if`, and in the scalar's count-width conversion. A small `Int_Form` with `form_const`, `form_any` and `form_select` merges each pair. Saves about 40 lines, less than the 50 the per-file review estimated, because the shift's conversion stays scalar-only.
 
-#### Declare-once intrinsics
-
-The block at [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) repeats at [emit_llvm_calls.odin:228](src/emit_llvm_calls.odin#L228), [emit_llvm_calls.odin:254](src/emit_llvm_calls.odin#L254), [emit_llvm_calls.odin:324](src/emit_llvm_calls.odin#L324), [emit_llvm_calls.odin:348](src/emit_llvm_calls.odin#L348), [emit_llvm_calls.odin:358](src/emit_llvm_calls.odin#L358), [emit_llvm_calls.odin:376](src/emit_llvm_calls.odin#L376), [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113) and [emit_llvm_simd.odin:274](src/emit_llvm_simd.odin#L274), keyed on a field misnamed `simd_intrinsics` ([emit_llvm.odin:59](src/emit_llvm.odin#L59)). `declare_intrinsic(e, key, signature)` saves about 25 lines.
-
 #### Counted IR loops
 
 The cursor alloca, compare, branch, step and back-edge are written out at [emit_llvm_runtime.odin:902](src/emit_llvm_runtime.odin#L902), [emit_llvm_calls.odin:475](src/emit_llvm_calls.odin#L475), [emit_llvm_expr.odin:1884](src/emit_llvm_expr.odin#L1884) and [emit_llvm_cleanup.odin:1530](src/emit_llvm_cleanup.odin#L1530). `Counted_Loop` with `open_counted_loop(e, count)` and `close_counted_loop` saves about 8 lines per site, 30 in all. [emit_llvm_iteration.odin:559](src/emit_llvm_iteration.odin#L559) `step_counter` already covers the step and is also hand-written at [emit_llvm_adapters.odin:68](src/emit_llvm_adapters.odin#L68).
@@ -376,13 +372,6 @@ The exact float algorithms hold up on reading. What remains is around the file: 
 
 - `require_nested_map_key_policies_walk` in [hash.odin](src/hash.odin) and [semantic.odin:2224](src/semantic.odin#L2224): this walk and `type_contains_invalid` enumerate the same components by kind; the latter is exhaustive on purpose and handles `.Box`. A shared `type_components` would serve both.
 
-### src/emit_llvm_calls.odin
-
-Only near copies shared with other emitter files remain.
-
-**Near copies**
-
-- [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) and [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113): the four-line "declare once" block appears at 201, 227, 254, 324, 348, 358, 376 and simd:274. Share `declare_intrinsic(e, key, text)`, and rename `simd_intrinsics`, which now holds every intrinsic. (about 20 lines)
 
 ### src/emit_llvm_iteration.odin
 
@@ -409,7 +398,6 @@ Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=n
 
 - [emit_llvm_simd.odin:146](src/emit_llvm_simd.odin#L146) and [emit_llvm_expr.odin:1583](src/emit_llvm_expr.odin#L1583): `emit_simd_divrem` and `emit_divrem` differ only in constant spelling, `i1` versus `<N x i1>`, and reducing before `panic_if`. Make `emit_divrem` lane-generic with one constant helper and one any-lane helper, the shape at `emit_llvm_calls.odin:1707` and `:1729`. (about 30 lines)
 - [emit_llvm_simd.odin:182](src/emit_llvm_simd.odin#L182) and [emit_llvm_expr.odin:1622](src/emit_llvm_expr.odin#L1622): the same shift sequence; the scalar adds only count-width conversion, which a vector skips because its count has the lane width. The same helpers merge them, taking `bits` from the lane. (about 20 lines)
-- [emit_llvm_simd.odin:113](src/emit_llvm_simd.odin#L113), [emit_llvm_simd.odin:274](src/emit_llvm_simd.odin#L274) and [emit_llvm_calls.odin:201](src/emit_llvm_calls.odin#L201) (also `:228`, `:254`, `:324`, `:348`, `:358`, `:376`): the same declare-once block, nine times. Add `declare_intrinsic(e, key, declaration)` and rename `simd_intrinsics` (`emit_llvm.odin:59`), which also holds `llvm.ctpop` and `llvm.trap`. (about 18 lines)
 
 ### src/emit_llvm_stmt.odin
 

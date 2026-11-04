@@ -74,10 +74,7 @@ emit_simd_checked :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, l
 	signed := type_signed(e.c, info.element)
 	key := checked_intrinsic(op, signed, fmt.aprintf("v%d%s", info.count, simd_lane_llvm_type(e, info)))
 	flag := fmt.aprintf("<%d x i1>", info.count)
-	if key not_in e.simd_intrinsics {
-		e.simd_intrinsics[key] = true
-		append(&e.globals, fmt.aprintf("declare {{ %s, %s }} @%s(%s, %s)\n", llvm, flag, key, llvm, llvm))
-	}
+	declare_intrinsic(e, key, fmt.aprintf("{{ %s, %s }}", llvm, flag), fmt.aprintf("%s, %s", llvm, llvm))
 	wrapped, overflowed := emit_overflow_call(e, key, llvm, flag, left, right)
 	panic_if(e, simd_any_lane(e, info, overflowed), "int.overflow", overflow_message(signed))
 	return wrapped
@@ -184,11 +181,8 @@ simd_any_lane :: proc(e: ^Emitter, info: ^Type_Info, mask: string) -> string {
 @(private = "file")
 simd_call_reduce :: proc(e: ^Emitter, name, lane: string, count: int, value, start: string) -> string {
 	key := fmt.aprintf("llvm.vector.reduce.%s.v%d%s", name, count, intrinsic_type_suffix(lane))
-	if key not_in e.simd_intrinsics {
-		e.simd_intrinsics[key] = true
-		leading := start != "" ? fmt.aprintf("%s, ", lane) : ""
-		append(&e.globals, fmt.aprintf("declare %s @%s(%s<%d x %s>)\n", lane, key, leading, count, lane))
-	}
+	leading := start != "" ? fmt.aprintf("%s, ", lane) : ""
+	declare_intrinsic(e, key, lane, fmt.aprintf("%s<%d x %s>", leading, count, lane))
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s<%d x %s> %s)", out, lane, key, start, count, lane, value)
 	return out

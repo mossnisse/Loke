@@ -56,7 +56,7 @@ Emitter :: struct {
 	container_thunks: map[string]bool,
 	literals: map[string]string,
 	// The LLVM intrinsics a call has declared, by name.
-	simd_intrinsics: map[string]bool,
+	intrinsics: map[string]bool,
 	globals:  [dynamic]string,
 	// design.md "@(cpu_dispatch=<string>)": every procedure body by symbol, the
 	// copies for a higher level by name, those still to write, and each level's
@@ -516,6 +516,15 @@ next_id :: proc(e: ^Emitter) -> int {
 @(private)
 temp :: proc(e: ^Emitter) -> string {
 	return numbered_name("%t", "", next_id(e))
+}
+
+// The LLVM intrinsic `key`, declared on its first use.
+@(private)
+declare_intrinsic :: proc(e: ^Emitter, key, result, parameters: string) {
+	if key not_in e.intrinsics {
+		e.intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s)\n", result, key, parameters))
+	}
 }
 
 @(private)
