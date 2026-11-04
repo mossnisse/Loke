@@ -217,12 +217,10 @@ impl_subject_package :: proc(k: ^Checker, item: ^Item_Impl) -> Package_Id {
 	if !is_selector {
 		return k.pkg
 	}
-	ident, is_ident := selector.operand.(^Expr_Ident)
-	if !is_ident {
-		return k.pkg
+	if _, alias, is_alias := selector_package_alias(k, selector); is_alias {
+		return symbol_of(k.c, alias).pkg
 	}
-	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-	return sym != nil && sym.kind == .Package_Alias ? sym.pkg : k.pkg
+	return k.pkg
 }
 
 // design.md "Import statement": an import name is a lexical alias for a
@@ -1432,6 +1430,18 @@ name_identifier :: proc(c: ^Compiler, name: Name) -> Identifier_Id {
 	return name.id != INVALID_IDENTIFIER ? name.id : intern_identifier(c, name.text)
 }
 
+// The identifier a selector's operand is and the symbol it names, and whether
+// that is a package alias, which no check of the operand as a value may reach.
+selector_package_alias :: proc(k: ^Checker, sel: ^Expr_Selector) -> (ident: ^Expr_Ident, alias: Symbol_Id, ok: bool) {
+	ident, ok = sel.operand.(^Expr_Ident)
+	if !ok {
+		return nil, INVALID_SYMBOL, false
+	}
+	alias = lookup_symbol(k.scope, identifier_of(k.c, ident))
+	symbol := symbol_of(k.c, alias)
+	return ident, alias, symbol != nil && symbol.kind == .Package_Alias
+}
+
 identifier_of :: proc(c: ^Compiler, v: ^Expr_Ident) -> Identifier_Id {
 	if v.name_id == INVALID_IDENTIFIER {
 		v.name_id = intern_identifier(c, v.name)
@@ -1626,12 +1636,9 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Expr_Selector:
 		// `pkg.Point`.
-		if ident, is_ident := value.operand.(^Expr_Ident); is_ident {
-			alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
-			if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
-				check_package_selector(k, value, ident, alias, false)
-				return value.value_category == .Type ? value.denoted_type : INVALID_TYPE
-			}
+		if ident, alias, is_alias := selector_package_alias(k, value); is_alias {
+			check_package_selector(k, value, ident, alias, false)
+			return value.value_category == .Type ? value.denoted_type : INVALID_TYPE
 		}
 		// An associated type, `Countdown.Iterator`.
 		return resolve_associated_type(k, value)

@@ -376,11 +376,8 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 			return v.name
 		}
 	case ^Expr_Selector:
-		if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
-			alias := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-			if alias != nil && alias.kind == .Package_Alias {
-				return unresolved_in_package(w, package_of(k.c, alias.pkg), ident, v)
-			}
+		if ident, alias, is_alias := selector_package_alias(k, v); is_alias {
+			return unresolved_in_package(w, package_of(k.c, symbol_of(k.c, alias).pkg), ident, v)
 		}
 	case ^Expr_Call:
 		if missing := unresolved_name(w, v.callee); missing != "" {

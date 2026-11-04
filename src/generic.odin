@@ -817,15 +817,11 @@ named_callee_symbol :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	case ^Expr_Ident:
 		return lookup_symbol(k.scope, identifier_of(k.c, v))
 	case ^Expr_Selector:
-		ident, is_ident := v.operand.(^Expr_Ident)
-		if !is_ident {
+		_, alias, is_alias := selector_package_alias(k, v)
+		if !is_alias {
 			return INVALID_SYMBOL
 		}
-		alias := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-		if alias == nil || alias.kind != .Package_Alias {
-			return INVALID_SYMBOL
-		}
-		target := package_of(k.c, alias.pkg)
+		target := package_of(k.c, symbol_of(k.c, alias).pkg)
 		if target == nil || target.scope == nil {
 			return INVALID_SYMBOL
 		}

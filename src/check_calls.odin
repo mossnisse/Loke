@@ -94,10 +94,8 @@ check_receiver :: proc(k: ^Checker, sel: ^Expr_Selector) -> Type_Id {
 	if sel.receiver_checked {
 		return expr_base(sel.operand).type
 	}
-	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
-		if sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident))); sym != nil && sym.kind == .Package_Alias {
-			return INVALID_TYPE
-		}
+	if _, _, is_alias := selector_package_alias(k, sel); is_alias {
+		return INVALID_TYPE
 	}
 	type := check_single_expr(k, sel.operand)
 	sel.receiver_checked = true

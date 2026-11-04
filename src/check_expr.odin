@@ -542,12 +542,9 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 	// The parser reported the missing name. The operand is still checked, so
 	// an editor sees its type, and no lookup reports a second time.
 	if v.name.text == "" {
-		if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
-			alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
-			if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
-				annotate_package_alias(ident, alias)
-				return
-			}
+		if ident, alias, is_alias := selector_package_alias(k, v); is_alias {
+			annotate_package_alias(ident, alias)
+			return
 		}
 		if v.operand != nil {
 			check_single_expr(k, v.operand)
@@ -562,12 +559,9 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 
 	// A package alias is not a value, so it is resolved before the operand is
 	// checked as one.
-	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
-		alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
-		if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
-			check_package_selector(k, v, ident, alias, callee)
-			return
-		}
+	if ident, alias, is_alias := selector_package_alias(k, v); is_alias {
+		check_package_selector(k, v, ident, alias, callee)
+		return
 	}
 
 	// The operand is not in callee position, whatever this selector is. It is
