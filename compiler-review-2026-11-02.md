@@ -124,12 +124,6 @@ All parts are walked at [semantic.odin:2204](src/semantic.odin#L2204), [semantic
 
 Shared form: `type_parts(c, info, buf: ^[dynamic]Type_Id, follow_shared := false)`, returning element, key and element, field types or non-void variants, so each walker becomes its own test plus one loop; and one `type_any_part(c, id, seen, test)` for the second family. Saves about 60 lines in the first family and 70 in the second. A single kind list stops the next bug of this kind.
 
-#### Impl member declaration
-
-[impl.odin:209](src/impl.odin#L209) `declare_impl_member` and [generic.odin:3677](src/generic.odin#L3677) `declare_instance_impl_members` repeat the `L0409` clash checks, and [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693) repeat the `Symbol` literal. The generic copy has its own built-in member check. It also differs on purpose: it admits candidates from other blocks and takes `block.pkg`.
-
-Shared form: `member_name_clash(k, subject, name, name_id, existing) -> bool` and `new_member_symbol(k, d, name, name_id, subject, pkg)`. Saves about 30 lines.
-
 #### Checks on a new local name
 
 [check.odin:560](src/check.odin#L560), [iterate.odin:1064](src/iterate.odin#L1064) and [optional.odin:607](src/optional.odin#L607) repeat `L0304`, the reserved-name test, `L0305` and `note_shadowed_capture`. They differ in which scope they search from and in whether a reserved name stops the declaration; [check.odin:573](src/check.odin#L573) also exempts synthesized names. `static_name_is_free` in [expand.odin:173](src/expand.odin#L173) is another copy.
@@ -517,14 +511,6 @@ Readable and well commented. Its name checks are one more copy of those every ot
 - [expand.odin:173](src/expand.odin#L173), [iterate.odin:1056](src/iterate.odin#L1056) and [optional.odin:600](src/optional.odin#L600): `bind_static`, `bind_loop_name` and `bind_case_name` share the skip of `_`, the name lookup and the L0304/L0305/reserved checks.
   The last two are almost line for line; a shared `check_binding_name(k, name, outer) -> Identifier_Id` serves all three.
 
-### src/generic.odin
-
-What remains needs a helper shared with `impl.odin`.
-
-**Near copies**
-
-- [generic.odin:3677](src/generic.odin#L3677) and [impl.odin:209](src/impl.odin#L209): the L0409 name checks and the 14-line member `Symbol` literal (line 3693, impl.odin:240) differ only in package and subject. A `reject_impl_member_name` plus `new_impl_member_symbol` removes the copy. (about 25 lines)
-
 ### src/hooks.odin
 
 The classification logic is careful and its comments mostly explain why. What remains is two near copies shared with other files.
@@ -533,14 +519,6 @@ The classification logic is careful and its comments mostly explain why. What re
 
 - [hooks.odin:166](src/hooks.odin#L166), [hooks.odin:277](src/hooks.odin#L277), [hooks.odin:330](src/hooks.odin#L330), [hooks.odin:370](src/hooks.odin#L370) and [region.odin:136](src/region.odin#L136): the same element, key, field and non-void variant dispatch. A helper `owned_parts(c, info) -> []Type_Id` reduces each walker to one loop. (about 35 lines here)
 - [hooks.odin:1106](src/hooks.odin#L1106), [hooks.odin:1138](src/hooks.odin#L1138) and [attributes.odin:150](src/attributes.odin#L150): the same `file << 32 | lo` position key. Line 1138 should call `generic_hook_key`; a `span_key(span)` beside `Span` would serve all three.
-
-### src/impl.odin
-
-What remains needs a helper shared with `generic.odin`.
-
-**Near copies**
-
-- [impl.odin:209](src/impl.odin#L209) and [generic.odin:3677](src/generic.odin#L3677): duplicate and field checks, plus the `Symbol` literal at [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693), differ only in `pkg` and subject. Share `impl_member_clash(k, subject, name)` and `new_impl_member(k, d, name, subject, pkg)`. (about 25 lines)
 
 ### src/interface.odin
 

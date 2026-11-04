@@ -418,52 +418,17 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^
 					continue
 				}
 			}
-			if member_named(k.c, added[:], name_id) != INVALID_SYMBOL {
-				errorf(
-					k.c, name.span, "L0409",
-					"`%s` already has a member `%s`", type_name(k.c, subject), name.text,
-				)
+			if clash := impl_member_clash(k, subject, name.text, name_id, added[:]); clash != "" {
+				errorf(k.c, name.span, "L0409", "`%s` already has a %s `%s`", type_name(k.c, subject), clash, name.text)
 				append(&symbols, INVALID_SYMBOL)
 				continue
 			}
-			if subject_field_named(k, subject, name_id) != INVALID_SYMBOL {
-				errorf(
-					k.c, name.span, "L0409",
-					"`%s` already has a field `%s`", type_name(k.c, subject), name.text,
-				)
-				append(&symbols, INVALID_SYMBOL)
-				continue
-			}
-			// `u.as(.a)` selects the built-in, so a member of that name could never be reached.
-			if type_is_union(k.c, subject) && name.text == "as" {
-				errorf(
-					k.c, name.span, "L0409",
-					"`%s` already has a built-in member `%s`", type_name(k.c, subject), name.text,
-				)
-				append(&symbols, INVALID_SYMBOL)
-				continue
-			}
-			public := declaration_is_public(k, d)
-			is_proc := decl_proc_literal(d) != nil
-			id := new_symbol(k.c, Symbol {
-				name       = name_id,
-				span       = name.span,
-				decl       = d,
-				pkg        = block.pkg,
-				lookup_pkg = block.pkg,
-				owner_type = subject,
-				public     = public,
-				hook       = decl_hook_kind(d),
-				kind       = is_proc ? Symbol_Kind.Proc : Symbol_Kind.Const,
-				type       = is_proc ? TYPE_VOID : INVALID_TYPE,
-				def_scope  = k.scope,
-				def_file   = k.file,
-				def_file_node = k.file_node,
-			})
+			id := new_impl_member(k, d, name, name_id, subject, block.pkg)
 			// design.md "Methods and implementation blocks": a public extension
 			// procedure also gets its plain package-qualified spelling. A constant
 			// has none, since each instance gives it its own value.
-			if item.kind == .Extend && public && is_proc {
+			member := symbol_of(k.c, id)
+			if item.kind == .Extend && member.public && member.kind == .Proc {
 				register_instance_extension_name(k, block, name_id, id)
 			}
 			append(&symbols, id)

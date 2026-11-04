@@ -200,18 +200,9 @@ declare_impl_member :: proc(
 		name_id := name_identifier(k.c, name)
 		previous := symbol_of(k.c, member_named(k.c, existing, name_id))
 		generated := previous != nil && previous.synth != .None
-		clash := ""
-		switch {
-		case generated:
-			clash = "generated member"
-		case previous != nil || member_named(k.c, out[:], name_id) != INVALID_SYMBOL:
-			clash = "member"
-		// `c.v` selects the field, so a member of that name could never be reached.
-		case subject_field_named(k, item.subject, name_id) != INVALID_SYMBOL:
-			clash = "field"
-		case (type_is_enum(k.c, item.subject) && enum_builtin_member(name.text)) ||
-		     (type_is_union(k.c, item.subject) && name.text == "as"):
-			clash = "built-in member"
+		clash := impl_member_clash(k, item.subject, name.text, name_id, out[:])
+		if previous != nil {
+			clash = generated ? "generated member" : "member"
 		}
 		if clash != "" {
 			errorf(
@@ -224,32 +215,49 @@ declare_impl_member :: proc(
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
-		sym := Symbol {
-			name       = name_id,
-			span       = name.span,
-			decl       = d,
-			pkg        = k.pkg,
-			lookup_pkg = k.pkg,
-			def_scope     = k.scope,
-			def_file      = k.file,
-			def_file_node = k.file_node,
-			owner_type = item.subject,
-			public     = declaration_is_public(k, d),
-			hook       = decl_hook_kind(d),
-			kind       = decl_proc_literal(d) != nil ? Symbol_Kind.Proc : Symbol_Kind.Const,
-		}
-		if sym.kind == .Proc {
-			sym.type = TYPE_VOID
-		}
-		id := new_symbol(k.c, sym)
+		id := new_impl_member(k, d, name, name_id, item.subject, k.pkg)
 		append(&symbols, id)
 		append(out, id)
 		// A public extension is also reachable as `adapter.member(value)`.
-		if item.kind == .Extend && sym.public {
+		if item.kind == .Extend && symbol_of(k.c, id).public {
 			bind_member_in_package(k, name, name_id, id)
 		}
 	}
 	d.symbols = symbols[:]
+}
+
+// What L0409 calls the name `subject` already gives another meaning, or "" if it
+// is free among `added`, the members the block has declared so far.
+impl_member_clash :: proc(k: ^Checker, subject: Type_Id, name: string, name_id: Identifier_Id, added: []Symbol_Id) -> string {
+	switch {
+	case member_named(k.c, added, name_id) != INVALID_SYMBOL:
+		return "member"
+	// `c.v` selects the field, so a member of that name could never be reached.
+	case subject_field_named(k, subject, name_id) != INVALID_SYMBOL:
+		return "field"
+	case (type_is_enum(k.c, subject) && enum_builtin_member(name)) || (type_is_union(k.c, subject) && name == "as"):
+		return "built-in member"
+	}
+	return ""
+}
+
+new_impl_member :: proc(k: ^Checker, d: ^Decl, name: Name, name_id: Identifier_Id, subject: Type_Id, pkg: Package_Id) -> Symbol_Id {
+	is_proc := decl_proc_literal(d) != nil
+	return new_symbol(k.c, Symbol {
+		name          = name_id,
+		span          = name.span,
+		decl          = d,
+		pkg           = pkg,
+		lookup_pkg    = pkg,
+		owner_type    = subject,
+		public        = declaration_is_public(k, d),
+		hook          = decl_hook_kind(d),
+		kind          = is_proc ? Symbol_Kind.Proc : Symbol_Kind.Const,
+		type          = is_proc ? TYPE_VOID : INVALID_TYPE,
+		def_scope     = k.scope,
+		def_file      = k.file,
+		def_file_node = k.file_node,
+	})
 }
 
 // What a block may hold, reported once for a generic block, whose instances skip
