@@ -31,6 +31,6 @@ Near copies the review read and judged better kept apart:
 - `eval_hash` against `emit_hash_value`: one computes and one emits, so they can only change together.
 - `prints_through_method_walk` against `emit_format_body`: the layering rules out a shared form; the checker cannot call the emitter's walk.
 - `synchronized_field_walk` and `type_requires_results_walk`: inline-only walks with no closures to share them; a visitor would be longer.
-- `type_is_comparable_walk` and `type_is_hashable_walk`: each kind has its own rule, so `type_parts` would remove little.
+- `type_is_comparable_walk`, `record_order_blocker` and `type_is_hashable_walk`: each kind has its own rule, so `type_parts` would remove little.
 - Region-content find-or-grow in the provenance and borrow analyses: differing equality tests, path truncation and allocators leave a shared form no simpler.
 - `fmt.aprintf(..., allocator = c.semantic_allocator)`: a wrapper shortens the lines without removing any, and the checker's local failure blocks are better served by per-file helpers such as `requirement_failuref`.
