@@ -426,21 +426,12 @@ emit_clone_elements :: proc(
 	record: Type_Id, out: string, built_parts: []Deferred, result: Type_Id,
 ) -> Deferred {
 	element_llvm := llvm_type(e, element)
-	cursor := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	cursor := new_counter(e)
 	guard := register_array_cleanup(e, element, destination, "", cursor)
-	head := new_label(e, "elements.clone.head")
-	body, done := new_label(e, "elements.clone.body"), new_label(e, "elements.clone.done")
-	branch(e, head)
-	place_label(e, head)
-	at := load(e, "i64", cursor)
-	more := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", more, at, total)
-	branch_if(e, more, body, done)
+	loop := open_counted_loop(e, cursor, "elements.clone", total)
 
-	place_label(e, body)
-	from := gep_at(e, element_llvm, source, at)
-	into := gep_at(e, element_llvm, destination, at)
+	from := gep_at(e, element_llvm, source, loop.index)
+	into := gep_at(e, element_llvm, destination, loop.index)
 	cloned := ""
 	if !emit_lifecycle(e, element).clone_fallible {
 		cloned = emit_clone_value(e, element, load_place(e, element, from), "%arg1")
@@ -450,18 +441,14 @@ emit_clone_elements :: proc(
 		branch_if(e, failed, fail, ok)
 		place_label(e, fail)
 		finish_temporary_drop(e, guard)
-		emit_drop_elements_reversed(e, element, destination, at)
+		emit_drop_elements_reversed(e, element, destination, loop.index)
 		drop_built_parts(e, record, out, built_parts)
 		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		place_label(e, ok)
 		cloned = value
 	}
 	store(e, element, cloned, into)
-	next := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, at)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
-	branch(e, head)
-	place_label(e, done)
+	close_counted_loop(e, loop)
 	return guard
 }
 

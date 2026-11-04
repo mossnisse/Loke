@@ -85,7 +85,7 @@ Loop_Labels :: struct {
 	counter: string,
 }
 
-@(private = "file")
+@(private)
 new_counter :: proc(e: ^Emitter) -> string {
 	slot := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", slot)
@@ -470,6 +470,38 @@ step_counter :: proc(e: ^Emitter, slot, type: string) {
 	next := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add %s %s, 1", next, type, current)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", type, next, slot)
+}
+
+// A loop over `0 ..< count` in an `i64` cursor. `index` is the current value;
+// `close_counted_loop` steps it and places `done`.
+@(private)
+Counted_Loop :: struct {
+	cursor, index, head, done: string,
+}
+
+// `cursor` comes from `new_counter`, so a caller can publish it to a cleanup
+// before the loop's first test. `compare` is the `icmp` predicate.
+@(private)
+open_counted_loop :: proc(e: ^Emitter, cursor, prefix, count: string, compare := "slt") -> Counted_Loop {
+	head := new_label(e, fmt.aprintf("%s.head", prefix))
+	body := new_label(e, fmt.aprintf("%s.body", prefix))
+	done := new_label(e, fmt.aprintf("%s.done", prefix))
+	place_label(e, head)
+	index := load(e, "i64", cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp %s i64 %s, %s", more, compare, index, count)
+	branch_if(e, more, body, done)
+	place_label(e, body)
+	return Counted_Loop{cursor = cursor, index = index, head = head, done = done}
+}
+
+@(private)
+close_counted_loop :: proc(e: ^Emitter, loop: Counted_Loop) {
+	next := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, loop.index)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, loop.cursor)
+	branch(e, loop.head)
+	place_label(e, loop.done)
 }
 
 // A fixed array, a slice or a dynamic array: an index loop, with no iterator

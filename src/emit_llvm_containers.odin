@@ -1120,22 +1120,9 @@ rejoin :: proc(e: ^Emitter, kept_label: string) {
 // Every element of a `..T` pack, in order.
 @(private = "file")
 emit_drop_run :: proc(e: ^Emitter, element: Type_Id, data, count: string) {
-	index_slot := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
-	head, body, done := new_label(e, "unconsumed.head"), new_label(e, "unconsumed.body"), new_label(e, "unconsumed.done")
-	branch(e, head)
-	place_label(e, head)
-	index := load(e, "i64", index_slot)
-	more := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", more, index, count)
-	branch_if(e, more, body, done)
-	place_label(e, body)
-	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), data, index))
-	next := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, index)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, index_slot)
-	branch(e, head)
-	place_label(e, done)
+	loop := open_counted_loop(e, new_counter(e), "unconsumed", count, "ult")
+	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), data, loop.index))
+	close_counted_loop(e, loop)
 }
 
 // `key in m`: one probe, no insertion and no value. The key is evaluated, and
@@ -1395,26 +1382,13 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		// A large array is an address, so its elements are hashed in place, in a
 		// loop rather than unrolled.
 		element_llvm := llvm_type(e, info.element)
-		state, cursor := alloca(e, "i64"), alloca(e, "i64")
+		state := alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-		head := new_label(e, "hash.large.head")
-		body, done := new_label(e, "hash.large.body"), new_label(e, "hash.large.done")
-		branch(e, head)
-		place_label(e, head)
-		at := load(e, "i64", cursor)
-		more := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %d", more, at, info.count)
-		branch_if(e, more, body, done)
-		place_label(e, body)
-		element := load_temporary(e, info.element, gep_at(e, element_llvm, value, at))
+		loop := open_counted_loop(e, new_counter(e), "hash.large", fmt.aprintf("%d", info.count))
+		element := load_temporary(e, info.element, gep_at(e, element_llvm, value, loop.index))
 		next := emit_hash_value(e, info.element, element, load(e, "i64", state))
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
-		step := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", step, at)
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", step, cursor)
-		branch(e, head)
-		place_label(e, done)
+		close_counted_loop(e, loop)
 		return load(e, "i64", state)
 	}
 	if info != nil && info.kind == .Array {
