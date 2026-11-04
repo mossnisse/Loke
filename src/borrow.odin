@@ -207,6 +207,28 @@ proj_dynamic_element :: proc(index: i64) -> Proj_Step {
 	return Proj_Step{kind = .Range, lo = index, hi = index + 1, shifts = true}
 }
 
+// A new path, one step below `path`.
+path_extend :: proc(path: []Proj_Step, step: Proj_Step, allocator: mem.Allocator) -> []Proj_Step {
+	out := make([]Proj_Step, len(path) + 1, allocator)
+	copy(out, path)
+	out[len(path)] = step
+	return out
+}
+
+// `path` below `prefix`, which is one of the two when the other is empty.
+path_concat :: proc(prefix, path: []Proj_Step, allocator: mem.Allocator) -> []Proj_Step {
+	if len(prefix) == 0 {
+		return path
+	}
+	if len(path) == 0 {
+		return prefix
+	}
+	out := make([]Proj_Step, len(prefix) + len(path), allocator)
+	copy(out, prefix)
+	copy(out[len(prefix):], path)
+	return out
+}
+
 // Whether two steps name one place, whatever else each records of how it was
 // reached.
 same_step :: proc(a, b: Proj_Step) -> bool {

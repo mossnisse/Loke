@@ -358,7 +358,7 @@ carrier_shape_walk :: proc(
 	if type_is_carrier(c, type) {
 		append(out, Carrier_Path {
 			precision = path_precision(prefix),
-			steps   = carrier_steps(c, prefix, nil),
+			steps   = prefix,
 			type    = type,
 			mutable = carrier_is_mutable(c, type),
 		})
@@ -369,7 +369,7 @@ carrier_shape_walk :: proc(
 		return // a scalar subtree, and the one place a cycle of scalars stops
 	}
 	if depth >= CARRIER_DEPTH {
-		append(out, carrier_truncated(carrier_steps(c, prefix, nil), type, reach, {.Depth}))
+		append(out, carrier_truncated(prefix, type, reach, {.Depth}))
 		return
 	}
 	info := underlying_info(c, type)
@@ -378,7 +378,7 @@ carrier_shape_walk :: proc(
 	}
 	// A shared handle's payload is reached as a box's is.
 	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
-		carrier_shape_walk(c, payload, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
+		carrier_shape_walk(c, payload, carrier_extend(c, prefix, proj_wild()), depth + 1, out, elements)
 		return
 	}
 	#partial switch info.kind {
@@ -389,41 +389,41 @@ carrier_shape_walk :: proc(
 				continue
 			}
 			step := proj_field(int(sym.index))
-			carrier_shape_walk(c, sym.type, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
+			carrier_shape_walk(c, sym.type, carrier_extend(c, prefix, step), depth + 1, out, elements)
 		}
 	case .Union:
 		for variant in info.variants {
-			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
+			carrier_shape_walk(c, variant, carrier_extend(c, prefix, proj_wild()), depth + 1, out, elements)
 		}
 	case .Array:
 		if info.count > 0 && info.count <= CARRIER_ARRAY_ELEMENTS {
 			for index in 0 ..< i64(info.count) {
 				step := proj_range(index, index + 1)
-				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
+				carrier_shape_walk(c, info.element, carrier_extend(c, prefix, step), depth + 1, out, elements)
 			}
 			return
 		}
 		step := proj_wild()
 		if info.count > CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
+		carrier_shape_walk(c, info.element, carrier_extend(c, prefix, step), depth + 1, out, elements)
 	case .Dynamic_Array:
 		if elements {
 			for index in 0 ..< i64(CARRIER_ARRAY_ELEMENTS) {
-				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_dynamic_element(index)}), depth + 1, out, elements)
+				carrier_shape_walk(c, info.element, carrier_extend(c, prefix, proj_dynamic_element(index)), depth + 1, out, elements)
 			}
 			// Every element past those; an index that names one says it is merged
 			// (`prov_index_path_in`).
 			rest := proj_range(CARRIER_ARRAY_ELEMENTS, max(i64))
 			rest.shifts = true
-			carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {rest}), depth + 1, out, elements)
+			carrier_shape_walk(c, info.element, carrier_extend(c, prefix, rest), depth + 1, out, elements)
 			return
 		}
 		merged := proj_wild()
 		merged.precision = {.Array_Elements}
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {merged}), depth + 1, out, elements)
+		carrier_shape_walk(c, info.element, carrier_extend(c, prefix, merged), depth + 1, out, elements)
 	case .Box:
 		// A box's payload is reached by the same one wildcard step a place `b^` takes.
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
+		carrier_shape_walk(c, info.element, carrier_extend(c, prefix, proj_wild()), depth + 1, out, elements)
 	case .Map:
 		// No separate wildcard entry: an unknown key uses a wildcard step, which
 		// overlaps every keyed entry.
@@ -434,9 +434,9 @@ carrier_shape_walk :: proc(
 		for entry in 0 ..< entries {
 			step := entries == 1 ? proj_wild() : proj_range(i64(entry), i64(entry) + 1)
 			if entries == 1 { step.precision = {.Map_Width} }
-			base := carrier_steps(c, prefix, {step})
-			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out, elements)
-			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out, elements)
+			base := carrier_extend(c, prefix, step)
+			carrier_shape_walk(c, info.key, carrier_extend(c, base, proj_field(PROJ_MAP_KEY)), depth + 2, out, elements)
+			carrier_shape_walk(c, info.element, carrier_extend(c, base, proj_field(PROJ_MAP_VALUE)), depth + 2, out, elements)
 		}
 	}
 }
@@ -447,14 +447,8 @@ carrier_truncated :: proc(steps: []Proj_Step, cut: Type_Id, reach: Carrier_Reach
 }
 
 @(private = "file")
-carrier_steps :: proc(c: ^Compiler, prefix: []Proj_Step, extra: []Proj_Step) -> []Proj_Step {
-	if len(prefix) == 0 && len(extra) == 0 {
-		return nil
-	}
-	out := make([]Proj_Step, len(prefix) + len(extra), c.semantic_allocator)
-	copy(out, prefix)
-	copy(out[len(prefix):], extra)
-	return out
+carrier_extend :: proc(c: ^Compiler, prefix: []Proj_Step, step: Proj_Step) -> []Proj_Step {
+	return path_extend(prefix, step, c.semantic_allocator)
 }
 
 carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
@@ -743,6 +737,8 @@ region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator
 // The widest shape kept apart. A recursive union's entries multiply up to the
 // depth limit, and later code joins them pairwise.
 REGION_SHAPE_WIDTH :: 256
+// How far a walk for regions follows a type before taking the rest as a whole.
+REGION_SHAPE_DEPTH :: 8
 
 @(private = "file")
 region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step, out: ^[dynamic]Prov_Region_Content) {
@@ -752,7 +748,7 @@ region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step
 	payload := shared_payload_type(c, type)
 	compound := info != nil && (payload != INVALID_TYPE || info.kind == .Struct || info.kind == .Union ||
 	            info.kind == .Array || info.kind == .Dynamic_Array || info.kind == .Map || info.kind == .Box)
-	if !compound || type_is_region_provider(c, type) || len(prefix) >= 8 {
+	if !compound || type_is_region_provider(c, type) || len(prefix) >= REGION_SHAPE_DEPTH {
 		append(out, Prov_Region_Content{path = prefix, handle = !type_is_managed(c, type)})
 		return
 	}
@@ -761,22 +757,22 @@ region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step
 	}
 	switch {
 	case payload != INVALID_TYPE:
-		region_field_shape_into(c, payload, carrier_steps(c, prefix, {proj_wild()}), out)
+		region_field_shape_into(c, payload, carrier_extend(c, prefix, proj_wild()), out)
 	case info.kind == .Struct:
 		for field_id, index in info.fields {
 			field := symbol_of(c, field_id)
-			region_field_shape_into(c, field == nil ? INVALID_TYPE : field.type, carrier_steps(c, prefix, {proj_field(index)}), out)
+			region_field_shape_into(c, field == nil ? INVALID_TYPE : field.type, carrier_extend(c, prefix, proj_field(index)), out)
 		}
 	case info.kind == .Union:
 		for variant, index in info.variants {
-			region_field_shape_into(c, variant, carrier_steps(c, prefix, {proj_field(index)}), out)
+			region_field_shape_into(c, variant, carrier_extend(c, prefix, proj_field(index)), out)
 		}
 	case info.kind == .Map:
-		entry := carrier_steps(c, prefix, {proj_wild()})
-		region_field_shape_into(c, info.key, carrier_steps(c, entry, {proj_field(PROJ_MAP_KEY)}), out)
-		region_field_shape_into(c, info.element, carrier_steps(c, entry, {proj_field(PROJ_MAP_VALUE)}), out)
+		entry := carrier_extend(c, prefix, proj_wild())
+		region_field_shape_into(c, info.key, carrier_extend(c, entry, proj_field(PROJ_MAP_KEY)), out)
+		region_field_shape_into(c, info.element, carrier_extend(c, entry, proj_field(PROJ_MAP_VALUE)), out)
 	case:
-		region_field_shape_into(c, info.element, carrier_steps(c, prefix, {proj_wild()}), out)
+		region_field_shape_into(c, info.element, carrier_extend(c, prefix, proj_wild()), out)
 	}
 }
 

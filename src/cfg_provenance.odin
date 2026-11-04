@@ -2640,24 +2640,12 @@ prov_access :: proc(
 
 @(private)
 prov_extend :: proc(graph: ^Flow_Graph, path: []Proj_Step, step: Proj_Step) -> []Proj_Step {
-	out := make([]Proj_Step, len(path) + 1, graph.alloc)
-	copy(out, path)
-	out[len(path)] = step
-	return out
+	return path_extend(path, step, graph.alloc)
 }
 
 @(private)
 prov_concat_path :: proc(graph: ^Flow_Graph, prefix, path: []Proj_Step) -> []Proj_Step {
-	if len(prefix) == 0 {
-		return path
-	}
-	if len(path) == 0 {
-		return prefix
-	}
-	out := make([]Proj_Step, len(prefix) + len(path), graph.alloc)
-	copy(out, prefix)
-	copy(out[len(prefix):], path)
-	return out
+	return path_concat(prefix, path, graph.alloc)
 }
 
 // A place read by its root, when it has one.

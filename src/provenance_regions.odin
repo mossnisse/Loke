@@ -865,7 +865,7 @@ prov_type_or_wrapped :: proc(
 	leaf: proc(c: ^Compiler, type: Type_Id) -> bool,
 	depth := 0,
 ) -> bool {
-	if type == INVALID_TYPE || depth > 8 {
+	if type == INVALID_TYPE || depth > REGION_SHAPE_DEPTH {
 		return false
 	}
 	if leaf(c, type) {
@@ -896,7 +896,7 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // container has no region.
 @(private)
 prov_type_has_region :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
-	if depth > 8 {
+	if depth > REGION_SHAPE_DEPTH {
 		return true
 	}
 	if type_is_managed(c, type) || type_is_carrier(c, type) || type_underlying(c, type) == TYPE_ALLOCATOR {
@@ -1456,7 +1456,7 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 	c := graph.k.c
 	out := Region_Set{}
 	if !prov_type_has_region(c, type) { return out }
-	if depth > 8 {
+	if depth > REGION_SHAPE_DEPTH {
 		region_merge(&out, prov_copy_source_region_at(graph, source, path))
 		region_merge(&out, source.allocator)
 		return out

@@ -16,10 +16,10 @@ Written_Alias :: struct {
 	path:   []Proj_Step,
 }
 
-// Region field shapes also stop at eight projections. A recursive cursor can
-// keep extending its target path across passes; retain a conservative prefix
-// so that target facts converge (design.md "Minimum provenance precision").
-WRITTEN_ALIAS_DEPTH :: 8
+// Region field shapes also stop here. A recursive cursor can keep extending its
+// target path across passes; retain a conservative prefix so that target facts
+// converge (design.md "Minimum provenance precision").
+WRITTEN_ALIAS_DEPTH :: REGION_SHAPE_DEPTH
 
 // The storage a write through `destination` may land in, as `p^`, `p.x`, or
 // `p[i]` reach it: a parameter's, directly or through a local set from one,

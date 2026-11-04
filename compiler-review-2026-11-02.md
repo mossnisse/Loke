@@ -183,10 +183,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 
 ### Provenance and borrow analysis
 
-#### Paths
-
-[cfg_provenance.odin:3210](src/cfg_provenance.odin#L3210) `prov_extend`, [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218) `prov_concat_path` and [borrow.odin:949](src/borrow.odin#L949) `carrier_steps` differ only in the allocator. `path_extend` and `path_concat` beside `proj_*` save about 15 lines. The depth bound 8 is a literal at both [borrow.odin:1223](src/borrow.odin#L1223) and [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616).
-
 #### Naming a callable value, and reset points
 
 [borrow.odin:2574](src/borrow.odin#L2574) and [global_effects.odin:344](src/global_effects.odin#L344) unwrap a move and switch on identifier, selector and literal in the same way, then classify differently. `named_value_symbol(e) -> Symbol_Id` saves about 10 lines.
@@ -331,14 +327,6 @@ A compact, table-driven validator in good shape overall; the table matches `desi
 
 - [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106) and [hooks.odin:1138](src/hooks.odin#L1138): the same `u64(file) << 32 | u64(lo)` key. Make `generic_hook_key` a shared `span_key(span)`. (about 2 lines)
 
-### src/borrow.odin (part 1 of 3)
-
-Lines 1-2376 hold the shared vocabulary (roots, paths, carrier shapes, region sets, summaries) and the summary pass. The logic is careful but repeats small patterns, and two walks over types have no bound; three bugs were reproduced with the built `lokec.exe`.
-
-**Near copies**
-
-- [borrow.odin:949](src/borrow.odin#L949), [borrow.odin:1266](src/borrow.odin#L1266) and [cfg_provenance.odin:3218](src/cfg_provenance.odin#L3218), plus lines 1245 and 1255: "copy a path and add steps" with different allocators. One `path_concat(prefix, extra, allocator)` replaces them. (about 15 lines)
-
 ### src/borrow.odin (part 2 of 3)
 
 The solvers and the view-start fixed point are carefully reasoned, but this stretch holds three separate subsystems, repeats its worklist, block-entry and bit-scan shapes, and carries long prose comments. One real soundness bug sits in the callback substitution, and no procedure is dead.
@@ -382,14 +370,6 @@ This part is careful and I found no bugs; the reaching-places walk (Tarjan with 
 **Near copies**
 
 - [cfg_provenance.odin:489](src/cfg_provenance.odin#L489): span text is hand-indexed here, and at [parallel.odin:81](src/parallel.odin#L81), [cfg.odin:1913](src/cfg.odin#L1913) and [check.odin:2394](src/check.odin#L2394). A `span_text(c, span)` in `source.odin` is the shared form.
-
-### src/cfg_provenance.odin (part 2 of 4)
-
-This range holds reborrows, parameter loans and caller slots, read-only views, and the allocator-region section; the logic is careful but repeats its predicates and region idioms, and 384 of its 2770 lines are comments, many of them long restatements of the spec.
-
-**Simplification**
-
-- [cfg_provenance.odin:4616](src/cfg_provenance.odin#L4616): the literal depth 8 here and at [:4647](src/cfg_provenance.odin#L4647), [:5207](src/cfg_provenance.odin#L5207) and [borrow.odin:1222](src/borrow.odin#L1222) is one limit on one shape walk; name it beside `CARRIER_DEPTH`.
 
 ### src/cfg_provenance.odin (part 3 of 4)
 
