@@ -209,7 +209,7 @@ emit_spawn_arguments :: proc(
 		case .Address:
 			address := emit_address(e, argument)
 			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, field)
-			mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+			mode := param_mode_at(callee_type, index)
 			bound = param_mode_is_pointer(mode) ? address : load_place(e, type, address)
 		case .Copy:
 			bound = emit_expr(e, argument)

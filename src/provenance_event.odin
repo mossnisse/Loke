@@ -612,10 +612,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		value := prov_value(graph, argument)
 		type := value.type
 		span := expr_span(value.origin)
-		mode := Param_Mode.Value
-		if info != nil && index < len(info.param_modes) {
-			mode = info.param_modes[index]
-		}
+		mode := param_mode_at(info, index)
 		owns := type_owns_allocation(c, type)
 		switch {
 		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(value.origin):

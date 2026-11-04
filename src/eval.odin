@@ -2285,7 +2285,7 @@ eval_bind_arguments :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol: ^Symbol,
 @(private = "file")
 eval_argument_slot :: proc(ev: ^Evaluator, symbol: ^Symbol, index: int, argument: Expr, values: []Eval_Value) -> (out: ^Eval_Value, success: bool) {
 	info := type_of(ev.k.c, symbol.proc_type)
-	mode := info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+	mode := param_mode_at(info, index)
 	slot: ^Eval_Value
 	if values != nil {
 		copied := copy_value(ev, values[index]) or_return

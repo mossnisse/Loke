@@ -466,6 +466,6 @@ call_writes_caller :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
 @(private = "file")
 parameter_may_hold_written_borrow :: proc(c: ^Compiler, info: ^Type_Info, index: int) -> bool {
 	type := info.parameters[index]
-	return (index < len(info.param_modes) && info.param_modes[index] == .Inout) || carrier_is_mutable(c, type) ||
+	return param_mode_at(info, index) == .Inout || carrier_is_mutable(c, type) ||
 		prov_type_reaches_destination(c, type)
 }

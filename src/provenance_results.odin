@@ -96,7 +96,7 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 		if argument == nil {
 			continue
 		}
-		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		mode := param_mode_at(info, index)
 		// A moved argument is the task's alone, even one copied into the frame.
 		_, moved := argument.(^Expr_Move)
 		prov_transfer_argument(c, argument, task.kinds[index] != .Owned && mode != .Inout && !moved)

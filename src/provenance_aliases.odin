@@ -236,7 +236,7 @@ prov_call_written_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) {
 			for value, position in form.pack { if call.variadic_order[position] { prov_forget_argument_aliases(graph, value, info.parameters[index], false, &seen) } }
 			continue
 		}
-		inout := index < len(info.param_modes) && info.param_modes[index] == .Inout
+		inout := param_mode_at(info, index) == .Inout
 		prov_forget_argument_aliases(graph, argument, info.parameters[index], inout, &seen)
 	}
 }

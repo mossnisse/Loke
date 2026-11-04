@@ -816,7 +816,7 @@ emit_call_operands :: proc(
 			out.pack_cleanup = packed.cleanup
 			continue
 		}
-		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		mode := param_mode_at(callee_type, index)
 		if index == 0 && param_mode_is_pointer(mode) && symbol != nil && .Lends_Receiver in CONTAINER_OP_EFFECTS[symbol.container_op] {
 			// standard-library.md "Splitting a mutable slice": the receiver is evaluated
 			// before the index, which may rebind it, and the reborrow is taken of
@@ -912,7 +912,7 @@ emit_call_instruction :: proc(
 	// A large argument is passed as the address of a copy only the callee reads,
 	// and a large constant has no address yet.
 	for &operand, index in operands {
-		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		mode := param_mode_at(callee_type, index)
 		if !param_mode_is_pointer(mode) && is_large_value(e, callee_type.parameters[index]) && operand[0] != '%' {
 			spill := temporary_slot(e, callee_type.parameters[index])
 			store(e, callee_type.parameters[index], operand, spill)
@@ -932,7 +932,7 @@ emit_call_instruction :: proc(
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")
 		}
-		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		mode := param_mode_at(callee_type, index)
 		type := param_llvm(e, callee_type.parameters[index], mode)
 		if index == 0 && receiver_type != "" {
 			type = receiver_type

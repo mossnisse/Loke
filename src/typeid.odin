@@ -365,7 +365,7 @@ write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, mem
 		fmt.sbprintf(b, ":n%d", info.count)
 	}
 	for parameter, index in info.parameters {
-		mode := index < len(info.param_modes) ? int(info.param_modes[index]) : 0
+		mode := int(param_mode_at(info, index))
 		reset := index < len(info.param_resets) && info.param_resets[index]
 		by_ptr := index < len(info.param_by_ptr) && info.param_by_ptr[index]
 		escape := index < len(info.param_escapes) ? info.param_escapes[index] : Escape_Level.Result

@@ -191,7 +191,7 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 			_ = prov_input_value(graph, argument)
 		}
 		if info != nil && index < len(info.parameters) { part.type = info.parameters[index] }
-		if info != nil && index < len(info.param_modes) { part.mode = info.param_modes[index] }
+		part.mode = param_mode_at(info, index)
 		part.place = part.mode == .Inout
 		if index == 0 && input.has_receiver { part.place = input.receiver == .Inout }
 		if part.type != INVALID_TYPE {

@@ -1335,7 +1335,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 		if argument == 0 {
 			continue
 		}
-		moved := info != nil && index < len(info.param_modes) && info.param_modes[index] == .Move
+		moved := param_mode_at(info, index) == .Move
 		if moved || type_underlying(c, prov_value(graph, argument).type) == TYPE_ALLOCATOR {
 			// design.md "Allocator regions and region provenance": without a body
 			// to follow, an owner built with an allocator argument takes its

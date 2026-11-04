@@ -510,12 +510,10 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info, allocator: mem.Allocator)
 		if index < len(info.param_by_ptr) && info.param_by_ptr[index] {
 			strings.write_string(&b, "@(by_ptr) ")
 		}
-		if index < len(info.param_modes) {
-			#partial switch info.param_modes[index] {
-			case .Inout:  strings.write_string(&b, "inout ")
-			case .Borrow: strings.write_string(&b, "^")
-			case .Move:   strings.write_string(&b, "move ")
-			}
+		#partial switch param_mode_at(info, index) {
+		case .Inout:  strings.write_string(&b, "inout ")
+		case .Borrow: strings.write_string(&b, "^")
+		case .Move:   strings.write_string(&b, "move ")
 		}
 		strings.write_string(&b, type_name_alloc(c, parameter, allocator))
 	}

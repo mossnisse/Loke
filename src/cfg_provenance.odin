@@ -4166,7 +4166,7 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
 			if argument == 0 || index >= len(info.parameters) {
 				continue
 			}
-			moved := index < len(info.param_modes) && info.param_modes[index] == .Move
+			moved := param_mode_at(info, index) == .Move
 			if moved || type_underlying(c, info.parameters[index]) == TYPE_ALLOCATOR {
 				region_merge(&everything, prov_region_of(graph, argument))
 			}

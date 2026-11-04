@@ -550,7 +550,7 @@ report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 		if argument == nil || index >= len(info.parameters) || index == inserted {
 			continue
 		}
-		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		mode := param_mode_at(info, index)
 		type := info.parameters[index]
 		if mode != .Value || type_is_managed(k.c, type) || !type_is_aggregate(k.c, type) {
 			continue
@@ -752,7 +752,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		}
 
 		append(&order, slot)
-		expected_mode := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
+		expected_mode := param_mode_at(info, slot)
 		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected_mode)
 		bound[slot] = value
 		ok = ok && passed
@@ -815,7 +815,7 @@ bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, pr
 			continue
 		}
 		if index < fixed {
-			mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+			mode := param_mode_at(info, index)
 			value, passed := bind_written_argument(k, arg, info.parameters[index], mode, prechecked)
 			bound[index] = value
 			ok = ok && passed

@@ -100,7 +100,7 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 	destinations: []int
 	for held, index in actuals {
 		level := proc_param_escape(graph.k.c, proc_type, index)
-		if level >= .Stored && index < len(info.param_modes) && info.param_modes[index] == .Move {
+		if level >= .Stored && param_mode_at(info, index) == .Move {
 			prov_call_moved_owner(graph, v, index, level)
 		}
 		if len(held) == 0 || level < .Stored {

@@ -131,7 +131,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	defer finish_function_emission(e, function)
 	signature := type_of(e.c, symbol.proc_type)
 	view_type := llvm_type(e, symbol.params[0])
-	receiver_by_ptr := len(signature.param_modes) > 0 && param_mode_is_pointer(signature.param_modes[0])
+	receiver_by_ptr := param_mode_is_pointer(param_mode_at(signature, 0))
 	open_forwarding_function(e, llvm_linkage(name), name, symbol, signature, receiver_by_ptr ? "ptr" : view_type)
 
 	view := receiver_by_ptr ? load(e, view_type, "%arg0") : "%arg0"

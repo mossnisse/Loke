@@ -250,7 +250,7 @@ require_argument_ownership :: proc(
 		first = 1 // an `inout` receiver's marker is implicit in method-call syntax
 	}
 	for slot in first ..< len(v.bound) {
-		if slot >= len(info.param_modes) || info.param_modes[slot] != .Move {
+		if param_mode_at(info, slot) != .Move {
 			continue
 		}
 		argument := v.bound[slot]

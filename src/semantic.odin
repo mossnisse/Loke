@@ -1276,9 +1276,13 @@ proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escap
 	return info.param_escapes[index]
 }
 
-proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Param_Mode {
-	info := underlying_info(c, proc_type)
+// A parameter's mode, by value when the type records none for it.
+param_mode_at :: proc(info: ^Type_Info, index: int) -> Param_Mode {
 	return info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+}
+
+proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Param_Mode {
+	return param_mode_at(underlying_info(c, proc_type), index)
 }
 
 // The procedure type a call goes through: the chosen overload's, or the callee
@@ -1342,8 +1346,8 @@ parameters_weaken_to :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 	}
 	for index in 0 ..< len(a.parameters) {
 		from, to := a.parameters[index], b.parameters[index]
-		from_mode := index < len(a.param_modes) ? a.param_modes[index] : Param_Mode.Value
-		to_mode := index < len(b.param_modes) ? b.param_modes[index] : Param_Mode.Value
+		from_mode := param_mode_at(a, index)
+		to_mode := param_mode_at(b, index)
 		if from == to && from_mode == to_mode {
 			continue
 		}
