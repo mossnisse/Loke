@@ -48,10 +48,11 @@ emit_simd_binary_values :: proc(e: ^Emitter, op: Token_Kind, vector: Type_Id, le
 		}
 	case .Slash, .Percent:
 		if !float {
-			return emit_simd_divrem(e, op, info, llvm, left, right)
+			return emit_divrem(e, op, lane_int_form(e, info, llvm), left, right)
 		}
 	case .Shl, .Shr:
-		return emit_simd_shift(e, op, info, llvm, left, right)
+		form := lane_int_form(e, info, llvm)
+		return emit_shift(e, op, form, form, left, right)
 	case .Amp_Tilde:
 		complement := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", complement, llvm, right, simd_all_ones(e, info))
@@ -89,71 +90,15 @@ emit_simd_compare :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, l
 	return out
 }
 
-// Any zero lane faults the whole operation; otherwise lane by lane as
-// `emit_divrem`.
 @(private = "file")
-emit_simd_divrem :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, left, right: string) -> string {
-	zeroes := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, zeroinitializer", zeroes, llvm, right)
-	panic_if(e, simd_any_lane(e, info, zeroes), "div.zero", "integer division by zero")
-
-	if !type_signed(e.c, info.element) {
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, op == .Slash ? "udiv" : "urem", llvm, left, right)
-		return out
+lane_int_form :: proc(e: ^Emitter, info: ^Type_Info, llvm: string) -> Int_Form {
+	return Int_Form {
+		llvm = llvm,
+		mask = fmt.aprintf("<%d x i1>", info.count),
+		bits = type_bits(e.c, info.element),
+		signed = type_signed(e.c, info.element),
+		lanes = info,
 	}
-
-	bits := type_bits(e.c, info.element)
-	minimum := simd_repeated(e, info, bi_text(e.c, bi_neg(e.c, bi_pow2(e.c, bits - 1))))
-	is_min, is_neg_one, overflow := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_min, llvm, left, minimum)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_neg_one, llvm, right, simd_all_ones(e, info))
-	fmt.sbprintfln(&e.b, "  %s = and <%d x i1> %s, %s", overflow, info.count, is_min, is_neg_one)
-	if op == .Slash {
-		panic_if(e, simd_any_lane(e, info, overflow), "int.overflow", "signed integer overflow")
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = sdiv %s %s, %s", out, llvm, left, right)
-		return out
-	}
-	safe := simd_select(e, info, llvm, overflow, simd_repeated(e, info, "1"), right)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = srem %s %s, %s", out, llvm, left, safe)
-	return out
-}
-
-// A negative count lane panics the whole operation; otherwise lane by lane as
-// `emit_shift`.
-@(private = "file")
-emit_simd_shift :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, left, right: string) -> string {
-	bits := type_bits(e.c, info.element)
-	if type_signed(e.c, info.element) {
-		negative := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, zeroinitializer", negative, llvm, right)
-		panic_if(e, simd_any_lane(e, info, negative), "shift.negative", "negative shift count")
-	}
-	oversized := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = icmp uge %s %s, %s", oversized, llvm, right, simd_repeated(e, info, fmt.aprintf("%d", bits)),
-	)
-	if op == .Shr && type_signed(e.c, info.element) {
-		clamped := simd_select(e, info, llvm, oversized, simd_repeated(e, info, fmt.aprintf("%d", bits - 1)), right)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = ashr %s %s, %s", out, llvm, left, clamped)
-		return out
-	}
-	safe := simd_select(e, info, llvm, oversized, "zeroinitializer", right)
-	raw := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", raw, op == .Shl ? "shl" : "lshr", llvm, left, safe)
-	return simd_select(e, info, llvm, oversized, "zeroinitializer", raw)
-}
-
-@(private = "file")
-simd_select :: proc(e: ^Emitter, info: ^Type_Info, llvm, condition, if_true, if_false: string) -> string {
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = select <%d x i1> %s, %s %s, %s %s", out, info.count, condition, llvm, if_true, llvm, if_false,
-	)
-	return out
 }
 
 simd_repeated :: proc(e: ^Emitter, info: ^Type_Info, lane: string) -> string {
@@ -208,7 +153,10 @@ emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string
 	right := emit_expr(e, v.bound[2])
 	bits := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = trunc <%d x i8> %s to <%d x i1>", bits, info.count, mask, info.count)
-	return simd_select(e, info, llvm_type(e, as_type), bits, left, right)
+	llvm := llvm_type(e, as_type)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select <%d x i1> %s, %s %s, %s %s", out, info.count, bits, llvm, left, llvm, right)
+	return out
 }
 
 // Float sums and products use the ordered form, seeded with `-0.0` or `1.0`

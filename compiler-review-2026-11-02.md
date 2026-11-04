@@ -77,11 +77,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 ## The changes most worth making
 
-
-
-
-
-
 18. **One owned-parts walker.** `type_parts` serves [hooks.odin:277](src/hooks.odin#L277) and its siblings. Removes about 60 lines; no behavior change.
 
 19. **Mechanical removal of failure boilerplate.** Drop the `v.type = INVALID_TYPE` writes outside `check_expr.odin`, which now defaults it on entry. Low risk.
@@ -95,7 +90,6 @@ Commit 92cb0d18. Every site linked below was read; a count such as "33 sites" co
 #### One root behind separately reported bugs
 
 These ids describe one defect each and need one fix. Each is also confirmed by a repro in a per-file review.
-
 
 ### Checker and front end
 
@@ -145,12 +139,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 
-### LLVM emitter
-
-#### Integer lowering, scalar and lane-wise
-
-[emit_llvm_expr.odin:1583](src/emit_llvm_expr.odin#L1583) and [emit_llvm_simd.odin:146](src/emit_llvm_simd.odin#L146) are the same division, and [emit_llvm_expr.odin:1622](src/emit_llvm_expr.odin#L1622) and [emit_llvm_simd.odin:182](src/emit_llvm_simd.odin#L182) the same defined shift. They differ in constant spelling (`0` or `zeroinitializer`, `-1` or a splat), in the mask type, in reducing to any-lane before `panic_if`, and in the scalar's count-width conversion. A small `Int_Form` with `form_const`, `form_any` and `form_select` merges each pair. Saves about 40 lines, less than the 50 the per-file review estimated, because the shift's conversion stays scalar-only.
-
 ### Small idioms and misplaced code
 
 #### One-line helpers that exist, or should
@@ -169,7 +157,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 #### Code in the wrong file
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
-
 
 ### Looked at and left alone
 
@@ -362,16 +349,6 @@ The exact float algorithms hold up on reading. What remains is around the file: 
 **Near copies**
 
 - `require_nested_map_key_policies_walk` in [hash.odin](src/hash.odin) and [semantic.odin:2224](src/semantic.odin#L2224): this walk and `type_contains_invalid` enumerate the same components by kind; the latter is exhaustive on purpose and handles `.Box`. A shared `type_components` would serve both.
-
-
-### src/emit_llvm_simd.odin
-
-Correct and compact: probes of masks, splats, shifts, and array casts at `-opt=none` and `-opt=speed` found no bug. Its main weight is integer lowering that repeats the scalar procedures in `emit_llvm_expr.odin` almost line for line.
-
-**Near copies**
-
-- [emit_llvm_simd.odin:146](src/emit_llvm_simd.odin#L146) and [emit_llvm_expr.odin:1583](src/emit_llvm_expr.odin#L1583): `emit_simd_divrem` and `emit_divrem` differ only in constant spelling, `i1` versus `<N x i1>`, and reducing before `panic_if`. Make `emit_divrem` lane-generic with one constant helper and one any-lane helper, the shape at `emit_llvm_calls.odin:1707` and `:1729`. (about 30 lines)
-- [emit_llvm_simd.odin:182](src/emit_llvm_simd.odin#L182) and [emit_llvm_expr.odin:1622](src/emit_llvm_expr.odin#L1622): the same shift sequence; the scalar adds only count-width conversion, which a vector skips because its count has the lane width. The same helpers merge them, taking `bits` from the lane. (about 20 lines)
 
 ### src/enums.odin
 

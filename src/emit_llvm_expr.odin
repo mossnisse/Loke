@@ -1658,9 +1658,9 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 	case .Plus, .Minus, .Star:
 		return emit_checked_integer(e, op, signed, llvm, lhs, rhs)
 	case .Slash, .Percent:
-		return emit_divrem(e, op, type, signed, lhs, rhs)
+		return emit_divrem(e, op, scalar_int_form(e, type), lhs, rhs)
 	case .Shl, .Shr:
-		return emit_shift(e, op, type, signed, rhs_type, lhs, rhs)
+		return emit_shift(e, op, scalar_int_form(e, type), scalar_int_form(e, rhs_type), lhs, rhs)
 	case .Amp_Tilde:
 		complement := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, -1", complement, llvm, rhs)
@@ -1704,40 +1704,84 @@ overflow_message :: proc(signed: bool) -> string {
 	return signed ? "signed integer overflow" : "unsigned integer overflow"
 }
 
+// What `emit_divrem` and `emit_shift` lower over: one integer, or a vector's lanes,
+// where `mask` is the comparison type and `lanes` the vector's type. Over lanes, a
+// failing lane panics the whole operation (design.md "Lane-wise operators").
+@(private)
+Int_Form :: struct {
+	llvm, mask: string,
+	bits:       int,
+	signed:     bool,
+	lanes:      ^Type_Info,
+}
+
+@(private = "file")
+scalar_int_form :: proc(e: ^Emitter, type: Type_Id) -> Int_Form {
+	return Int_Form {
+		llvm = llvm_type(e, type),
+		mask = "i1",
+		bits = type_bits(e.c, type),
+		signed = type_signed(e.c, type),
+	}
+}
+
+@(private = "file")
+form_const :: proc(e: ^Emitter, form: Int_Form, value: string) -> string {
+	return form.lanes == nil ? value : simd_repeated(e, form.lanes, value)
+}
+
+@(private = "file")
+form_zero :: proc(form: Int_Form) -> string {
+	return form.lanes == nil ? "0" : "zeroinitializer"
+}
+
+// The `i1` a `panic_if` tests: whether any lane of `mask` is set.
+@(private = "file")
+form_any :: proc(e: ^Emitter, form: Int_Form, mask: string) -> string {
+	return form.lanes == nil ? mask : simd_any_lane(e, form.lanes, mask)
+}
+
+@(private = "file")
+form_select :: proc(e: ^Emitter, form: Int_Form, condition, if_true, if_false: string) -> string {
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = select %s %s, %s %s, %s %s", out, form.mask, condition, form.llvm, if_true, form.llvm, if_false,
+	)
+	return out
+}
+
 // Zero takes the trap seam. `MIN / -1` does not fit, so it panics as any signed
 // overflow does, and `MIN % -1` is 0 (design.md "Integer operators"); neither
 // reaches `sdiv`/`srem`, where it would be poison.
-@(private = "file")
-emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lhs, rhs: string) -> string {
-	llvm := llvm_type(e, type)
-	bits := type_bits(e.c, type)
+@(private)
+emit_divrem :: proc(e: ^Emitter, op: Token_Kind, form: Int_Form, lhs, rhs: string) -> string {
+	llvm := form.llvm
 
 	is_zero := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, 0", is_zero, llvm, rhs)
-	panic_if(e, is_zero, "div.zero", "integer division by zero")
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_zero, llvm, rhs, form_zero(form))
+	panic_if(e, form_any(e, form, is_zero), "div.zero", "integer division by zero")
 
-	if !signed {
+	if !form.signed {
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, op == .Slash ? "udiv" : "urem", llvm, lhs, rhs)
 		return out
 	}
 
-	minimum := bi_text(e.c, bi_neg(e.c, bi_pow2(e.c, bits - 1)))
+	minimum := form_const(e, form, bi_text(e.c, bi_neg(e.c, bi_pow2(e.c, form.bits - 1))))
 	is_min := temp(e)
 	is_neg_one := temp(e)
 	is_overflow := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_min, llvm, lhs, minimum)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, -1", is_neg_one, llvm, rhs)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", is_overflow, is_min, is_neg_one)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_neg_one, llvm, rhs, form_const(e, form, "-1"))
+	fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", is_overflow, form.mask, is_min, is_neg_one)
 	if op == .Slash {
-		panic_if(e, is_overflow, "int.overflow", "signed integer overflow")
+		panic_if(e, form_any(e, form, is_overflow), "int.overflow", "signed integer overflow")
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = sdiv %s %s, %s", out, llvm, lhs, rhs)
 		return out
 	}
 	// `MIN % -1` is 0, and so is `MIN % 1`, which `srem` defines.
-	divisor := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 1, %s %s", divisor, is_overflow, llvm, llvm, rhs)
+	divisor := form_select(e, form, is_overflow, form_const(e, form, "1"), rhs)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = srem %s %s, %s", out, llvm, lhs, divisor)
 	return out
@@ -1745,47 +1789,44 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lh
 
 // design.md "Arithmetic operators": a negative count panics, and a count at or
 // beyond the width is defined (zero, or the sign bit for an arithmetic right
-// shift), so none reaches an LLVM shift as poison.
-@(private = "file")
-emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, count_type: Type_Id, lhs, rhs: string) -> string {
-	llvm := llvm_type(e, type)
-	bits := type_bits(e.c, type)
-	count_llvm := llvm_type(e, count_type)
-	count_bits := type_bits(e.c, count_type)
+// shift), so none reaches an LLVM shift as poison. A vector's count has its form.
+@(private)
+emit_shift :: proc(e: ^Emitter, op: Token_Kind, form, count_form: Int_Form, lhs, rhs: string) -> string {
+	llvm := form.llvm
+	count_llvm := count_form.llvm
 
-	if type_signed(e.c, count_type) {
+	if count_form.signed {
 		negative := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, 0", negative, count_llvm, rhs)
-		panic_if(e, negative, "shift.negative", "negative shift count")
+		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, %s", negative, count_llvm, rhs, form_zero(count_form))
+		panic_if(e, form_any(e, count_form, negative), "shift.negative", "negative shift count")
 	}
 
 	// Compared in the count's own width, before truncation could hide its size.
 	oversized := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp uge %s %s, %d", oversized, count_llvm, rhs, bits)
+	fmt.sbprintfln(
+		&e.b, "  %s = icmp uge %s %s, %s", oversized, count_llvm, rhs,
+		form_const(e, count_form, fmt.aprintf("%d", form.bits)),
+	)
 
 	count := rhs
-	if count_bits != bits {
+	if count_form.bits != form.bits {
 		converted := temp(e)
-		operation := count_bits > bits ? "trunc" : "zext"
+		operation := count_form.bits > form.bits ? "trunc" : "zext"
 		fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", converted, operation, count_llvm, rhs, llvm)
 		count = converted
 	}
 
-	if op == .Shr && signed {
-		clamped := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %d, %s %s", clamped, oversized, llvm, bits - 1, llvm, count)
+	if op == .Shr && form.signed {
+		clamped := form_select(e, form, oversized, form_const(e, form, fmt.aprintf("%d", form.bits - 1)), count)
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = ashr %s %s, %s", out, llvm, lhs, clamped)
 		return out
 	}
 
-	safe := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 0, %s %s", safe, oversized, llvm, llvm, count)
+	safe := form_select(e, form, oversized, form_zero(form), count)
 	raw := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", raw, op == .Shl ? "shl" : "lshr", llvm, lhs, safe)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 0, %s %s", out, oversized, llvm, llvm, raw)
-	return out
+	return form_select(e, form, oversized, form_zero(form), raw)
 }
 
 // ------------------------------------------------- comparison and equality --
