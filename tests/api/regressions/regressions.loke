@@ -80,3 +80,13 @@ WRAPPED :: Wrapper{}.member.n;
 uses_member :: proc() -> int {
 	return member.N;
 }
+
+/// A plain parameter's name is in no type's scope, so the result here is the
+/// private `Shadowed` and is shown.
+@(private) Shadowed :: struct {
+	x: int,
+}
+
+shadows :: proc(Shadowed: int, v: $T, w := Shadowed) -> Shadowed {
+	return {};
+}

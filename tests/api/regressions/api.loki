@@ -72,3 +72,14 @@ Wrapper :: struct {
 WRAPPED :: Wrapper{}.member.n;
 
 uses_member :: proc() -> int ---;
+
+// Private to the package, but a public declaration names it.
+/*
+	A plain parameter's name is in no type's scope, so the result here is the
+	private `Shadowed` and is shown.
+*/
+Shadowed :: struct {
+	x: int,
+}
+
+shadows :: proc(Shadowed: int, v: $T, w := Shadowed) -> Shadowed ---;

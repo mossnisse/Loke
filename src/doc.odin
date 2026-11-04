@@ -507,24 +507,6 @@ decl_struct :: proc(d: ^Decl) -> ^Type_Record {
 	return nil
 }
 
-// Whether a struct field is shown: a public one, but not padding.
-@(private = "file")
-field_shown :: proc(b: ^Api_Builder, field: ^Field) -> bool {
-	for name, index in field.names {
-		if name.text == "_" {
-			continue
-		}
-		// A generic record's fields are checked per instance, and an untaken
-		// `when` branch's not at all.
-		if index >= len(field.symbols) {
-			return written_is_public(field.attributes, b.file.attributes, b.file.package_name == "main")
-		}
-		symbol := symbol_of(b.c, field.symbols[index])
-		return symbol != nil && symbol.public
-	}
-	return false
-}
-
 // `Name :: struct { ... }`, written at `lo`, with only its public fields, one
 // to a line, each after its doc comment.
 @(private = "file")
@@ -538,7 +520,7 @@ public_struct :: proc(b: ^Api_Builder, record: ^Type_Record, lo: u32) -> string 
 	fmt.sbprintln(&out, head)
 	hidden := false
 	for &field in record.fields {
-		if field_shown(b, &field) {
+		if field_is_exported(b.c, b.file, &field) {
 			write_doc_lines(&out, doc_comment(b.c, field.span), "\t")
 			strings.write_byte(&out, '\t')
 			for attribute in shown_attributes(b, source, field.attributes) {
@@ -678,10 +660,18 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		bind_signature(&w.bound, v)
 		for parameter in v.params {
 			api_refs(w, parameter.type)
-			api_refs(w, parameter.default)
 		}
 		if v.result != nil {
 			api_refs(w, v.result.type)
+		}
+		// A default may name a plain parameter, though no type can.
+		for parameter in v.params {
+			for name in parameter.names {
+				append(&w.bound, name.name.text)
+			}
+		}
+		for parameter in v.params {
+			api_refs(w, parameter.default)
 		}
 		resize(&w.bound, mark)
 	case ^Type_Record:
@@ -695,7 +685,7 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			api_refs(w, clause)
 		}
 		for &field in v.fields {
-			if field_shown(w.b, &field) {
+			if field_is_exported(w.b.c, w.b.file, &field) {
 				api_refs(w, field.type)
 			}
 		}
@@ -750,38 +740,6 @@ attribute_refs :: proc(w: ^Ref_Walk, attributes: []Attribute) {
 		}
 		api_refs(w, attribute.value)
 	}
-}
-
-// Each parameter's name, and each `$` name its types and defaults bind.
-@(private = "file")
-bind_signature :: proc(bound: ^[dynamic]string, signature: ^Type_Proc) {
-	for parameter in signature.params {
-		for name in parameter.names {
-			append(bound, name.name.text)
-		}
-		bind_poly_names(bound, parameter.type)
-		bind_poly_names(bound, parameter.default)
-	}
-}
-
-@(private = "file")
-bind_generic_params :: proc(bound: ^[dynamic]string, parameters: []Generic_Param) {
-	for parameter in parameters {
-		for name in parameter.names {
-			append(bound, name.text)
-		}
-	}
-}
-
-// The `$` names written in type syntax, as `T` in `[]$T`.
-@(private = "file")
-bind_poly_names :: proc(bound: ^[dynamic]string, e: Expr) {
-	type_syntax_any_name(e, bound, proc(data: rawptr, node: Expr) -> bool {
-		if poly, is_poly := node.(^Type_Poly); is_poly {
-			append((^[dynamic]string)(data), poly.name.text)
-		}
-		return false
-	})
 }
 
 // A name nothing resolved, and no parameter or `$` name binds: a declaration

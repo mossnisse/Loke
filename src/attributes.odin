@@ -546,6 +546,23 @@ written_is_public :: proc(attributes, file_attributes: []Attribute, by_default :
 	return has_attribute(attributes, "public") || by_default || has_attribute(file_attributes, "public")
 }
 
+// Whether an importer can name a field: a public one, but not padding. A generic
+// record's fields are checked per instance, and an untaken `when` branch's not at
+// all, so those take their visibility from what is written.
+field_is_exported :: proc(c: ^Compiler, file: ^File, field: ^Field) -> bool {
+	for name, index in field.names {
+		if name.text == "_" {
+			continue
+		}
+		if index >= len(field.symbols) {
+			return written_is_public(field.attributes, file.attributes, file.package_name == "main")
+		}
+		symbol := symbol_of(c, field.symbols[index])
+		return symbol != nil && symbol.public
+	}
+	return false
+}
+
 // Whether an importer can name `d`. A declaration no symbol records, in an
 // untaken `when` branch or a generic `impl`, which is checked per instance,
 // takes its visibility from its written attributes, as the checker would.

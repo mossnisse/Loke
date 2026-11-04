@@ -279,7 +279,7 @@ read_impl :: proc(x: ^Exposure, v: ^Item_Impl) {
 	}
 	x.subject = subject_name(x.c, v.type)
 	defer x.subject = ""
-	poly_names(v.type, &x.bound)
+	bind_poly_names(&x.bound, v.type)
 	defer clear(&x.bound)
 	for member in v.members {
 		if d, is_decl := member.(^Decl); is_decl && decl_is_public(x.c, x.file, d) {
@@ -354,7 +354,7 @@ read_public_decl :: proc(x: ^Exposure, d: ^Decl) {
 			// mean that parameter wherever they appear in it, whatever the
 			// package declares by the same name.
 			mark := len(x.bound)
-			poly_names(value, &x.bound)
+			bind_poly_names(&x.bound, value)
 			walk(x, value, .Type)
 			resize(&x.bound, mark)
 		} else if !x.instance && d.declared_type == nil && symbol != nil && symbol.kind == .Const {
@@ -406,7 +406,7 @@ read_signature :: proc(x: ^Exposure, literal: ^Expr_Proc) {
 	}
 	mark := len(x.bound)
 	defer resize(&x.bound, mark)
-	bind_parameters(x, signature)
+	bind_signature(&x.bound, signature)
 	for parameter in signature.params {
 		walk(x, parameter.type, .Type) // a default is a value the importer need not name
 	}
@@ -447,7 +447,7 @@ read_record :: proc(x: ^Exposure, record: ^Type_Record) {
 	owner := x.owner
 	mark := len(x.bound)
 	defer resize(&x.bound, mark)
-	bind_generic(x, record.generic_params)
+	bind_generic_params(&x.bound, record.generic_params)
 	for parameter in record.generic_params {
 		walk(x, parameter.type, .Type)
 	}
@@ -458,7 +458,7 @@ read_record :: proc(x: ^Exposure, record: ^Type_Record) {
 		walk(x, variant.type, .Type)
 	}
 	for &field in record.fields {
-		if !field_is_exported(x, &field) {
+		if !field_is_exported(x.c, x.file, &field) {
 			continue
 		}
 		for name in field.names {
@@ -470,28 +470,11 @@ read_record :: proc(x: ^Exposure, record: ^Type_Record) {
 	}
 }
 
-// A public field, but not padding. A generic record's fields are checked per
-// instance, so its template's take their visibility from what is written.
-@(private = "file")
-field_is_exported :: proc(x: ^Exposure, field: ^Field) -> bool {
-	for name, index in field.names {
-		if name.text == "_" {
-			continue
-		}
-		if index >= len(field.symbols) {
-			return written_is_public(field.attributes, x.file.attributes)
-		}
-		symbol := symbol_of(x.c, field.symbols[index])
-		return symbol != nil && symbol.public
-	}
-	return false
-}
-
 @(private = "file")
 read_interface :: proc(x: ^Exposure, v: ^Type_Interface) {
 	mark := len(x.bound)
 	defer resize(&x.bound, mark)
-	bind_generic(x, v.generic_params)
+	bind_generic_params(&x.bound, v.generic_params)
 	for parameter in v.generic_params {
 		walk(x, parameter.type, .Type)
 	}
@@ -513,42 +496,6 @@ read_interface :: proc(x: ^Exposure, v: ^Type_Interface) {
 		walk(x, requirement.slot_type, .Type)
 		resize(&x.bound, inner)
 	}
-}
-
-// Each `$` parameter's name, and each `$` name its types and defaults bind. A
-// plain parameter's name is in no type's scope, so `proc(T: int) -> T` means what
-// `T` means outside it.
-@(private = "file")
-bind_parameters :: proc(x: ^Exposure, signature: ^Type_Proc) {
-	for parameter in signature.params {
-		for name in parameter.names {
-			if name.is_poly {
-				append(&x.bound, name.name.text)
-			}
-		}
-		poly_names(parameter.type, &x.bound)
-		poly_names(parameter.default, &x.bound)
-	}
-}
-
-@(private = "file")
-bind_generic :: proc(x: ^Exposure, parameters: []Generic_Param) {
-	for parameter in parameters {
-		for name in parameter.names {
-			append(&x.bound, name.text)
-		}
-	}
-}
-
-// The `$` names written in type syntax, as `T` in `[]$T`.
-@(private = "file")
-poly_names :: proc(e: Expr, out: ^[dynamic]string) {
-	type_syntax_any_name(e, out, proc(data: rawptr, node: Expr) -> bool {
-		if poly, is_poly := node.(^Type_Poly); is_poly {
-			append((^[dynamic]string)(data), poly.name.text)
-		}
-		return false
-	})
 }
 
 @(private = "file")
@@ -631,7 +578,7 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 		walk(x, v.value, position)
 	case ^Type_Proc:
 		mark := len(x.bound)
-		bind_parameters(x, v)
+		bind_signature(&x.bound, v)
 		for parameter in v.params {
 			walk(x, parameter.type, position)
 		}
@@ -858,7 +805,7 @@ read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, call: ^Expr_C
 	// but an alias elsewhere may select one, so they are classified all the same.
 	read := !is_private_to(subject, k.pkg)
 	names := make([dynamic]string, context.temp_allocator)
-	poly_names(call, &names)
+	bind_poly_names(&names, call)
 	stand_ins := new_scope(k.c, k.scope, .Local)
 	for name in names {
 		declare_stand_in(k, stand_ins, name, expr_span(call))
@@ -1009,7 +956,7 @@ read_instance_declarations :: proc(k: ^Checker, pkg: ^Package, pending: Pending_
 	x.instance = true
 	x.file = pending.file_node
 	x.subject = subject_name(k.c, pending.item.type)
-	poly_names(pending.item.type, &x.bound)
+	bind_poly_names(&x.bound, pending.item.type)
 	x.scoped = len(x.bound)
 	for d in decls {
 		// A member selected here may be a type in a later instance, as `Hidden: T : V`
@@ -1047,7 +994,7 @@ check_generic_private_names :: proc(k: ^Checker, read: Pending_Private_Read) {
 			return
 		}
 		x.subject = subject_name(c, block.type)
-		poly_names(block.type, &x.bound)
+		bind_poly_names(&x.bound, block.type)
 	}
 	if decl_is_public(c, read.file_node, d) {
 		read_public_decl(&x, d)

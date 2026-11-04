@@ -1387,6 +1387,39 @@ type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match, skip_fi
 	return walk_names(&walk, e)
 }
 
+// The `$` names written in type syntax, as `T` in `[]$T`.
+bind_poly_names :: proc(bound: ^[dynamic]string, e: Expr) {
+	type_syntax_any_name(e, bound, proc(data: rawptr, node: Expr) -> bool {
+		if poly, is_poly := node.(^Type_Poly); is_poly {
+			append((^[dynamic]string)(data), poly.name.text)
+		}
+		return false
+	})
+}
+
+bind_generic_params :: proc(bound: ^[dynamic]string, parameters: []Generic_Param) {
+	for parameter in parameters {
+		for name in parameter.names {
+			append(bound, name.text)
+		}
+	}
+}
+
+// Each `$` parameter's name, and each `$` name its types and defaults bind. A
+// plain parameter's name is in no type's scope, so `proc(T: int) -> T` means what
+// `T` means outside it.
+bind_signature :: proc(bound: ^[dynamic]string, signature: ^Type_Proc) {
+	for parameter in signature.params {
+		for name in parameter.names {
+			if name.is_poly {
+				append(bound, name.name.text)
+			}
+		}
+		bind_poly_names(bound, parameter.type)
+		bind_poly_names(bound, parameter.default)
+	}
+}
+
 @(private = "file")
 Name_Walk :: struct {
 	data:            rawptr,

@@ -1519,6 +1519,9 @@ checklist.
 
 ### Fixed
 
+- `-api` and `-doc` show a private type a generic procedure's result names when a plain parameter has
+  the same name, as in `proc(T: int, v: $U) -> T`. A plain parameter's name is in no type's scope, but
+  the listing took it for that parameter and left the declaration out.
 - A pointer from a user `operator([])` is treated as the call's result it is, and no longer as pointing
   wherever the receiver's carriers do. A store through one, where the operator returned another
   argument, was blamed on the receiver's target, so a reset with that target live was rejected (L0537).

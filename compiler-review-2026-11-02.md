@@ -194,10 +194,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 
-#### Interface file and private-name checks
-
-The binders [doc.odin:757](src/doc.odin#L757), [doc.odin:771](src/doc.odin#L771) and [doc.odin:781](src/doc.odin#L781) match [private_names.odin:460](src/private_names.odin#L460), [private_names.odin:473](src/private_names.odin#L473) and [private_names.odin:488](src/private_names.odin#L488), except that the doc copy also binds plain parameter names. [doc.odin:1105](src/doc.odin#L1105) `field_shown` and [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` differ only in the `package main` default. Shared binders over `^[dynamic]string` and one field predicate save about 30 lines.
-
 ### Provenance and borrow analysis
 
 #### Variadic pack walk
@@ -527,10 +523,6 @@ What remains here belongs to the groups under "Findings that span files".
 
 - [doc.odin:578](src/doc.odin#L578) and [private_names.odin:515](src/private_names.odin#L515) and [ast.odin:1388](src/ast.odin#L1388): the same descent through index, call, unary, binary, and pointer, array, and map syntax, three times.
   A child-visiting helper in `ast.odin` leaves `api_refs` only its Ident, Selector, Composite, Proc, Proc_Group, Record, Enum, and Interface cases. (about 60 lines here)
-- [doc.odin:781](src/doc.odin#L781), [771](src/doc.odin#L771), [757](src/doc.odin#L757) and [private_names.odin:488](src/private_names.odin#L488), [473](src/private_names.odin#L473), [460](src/private_names.odin#L460): `$`-name and generic binders are identical, and the signature binder differs only in binding plain parameter names.
-  Share them over `^[dynamic]string`; the two rules on plain names need one decision. (about 20 lines)
-- [doc.odin:1105](src/doc.odin#L1105) and [private_names.odin:417](src/private_names.odin#L417): `field_shown` and `field_is_exported` differ only in the `package main` default, a case `private_names` never reads.
-  Share one predicate, which also serves the padding test repeated at 1140. (about 10 lines)
 
 ### src/emit_llvm_calls.odin
 
@@ -741,8 +733,6 @@ Coherent and well tested on its main paths, but three drivers have grown around 
 **Near copies**
 
 - [private_names.odin:515](src/private_names.odin#L515) `walk`, [doc.odin:578](src/doc.odin#L578) `api_refs` and [ast.odin:1388](src/ast.odin#L1388) `type_syntax_any_name` repeat one recursion and have drifted: the other two visit a composite's `via`, `walk` does not. A shared `syntax_children(e, out)`, like the `parts` in `pattern_shape`, leaves `walk` the Ident, Selector, `Type_Proc` and Composite arms. (about 60 lines here)
-- [private_names.odin:488](src/private_names.odin#L488) `poly_names` and [doc.odin:781](src/doc.odin#L781) `bind_poly_names` are identical; so are [private_names.odin:473](src/private_names.odin#L473) `bind_generic` and [doc.odin:771](src/doc.odin#L771) `bind_generic_params`. Keep one of each, not file-private. (about 15 lines)
-- [private_names.odin:417](src/private_names.odin#L417) `field_is_exported` and [doc.odin:1106](src/doc.odin#L1106) `field_shown` have one body; doc's `package_name == "main"` is always false here, since this pass skips `main`. Share `field_exported(c, file, field)`. (about 9 lines)
 
 ### src/provenance_form.odin
 
