@@ -263,15 +263,14 @@ bound_exprs :: proc(k: ^Checker, operands: ..Expr) -> []Expr {
 	return bound
 }
 
-// A value operand's type, an untyped constant taking its default type. `nil`
-// has none to take.
-@(private = "file")
-check_defaulted_operand :: proc(k: ^Checker, e: Expr) -> (type: Type_Id, ok: bool) {
-	type = check_single_expr(k, e)
+// A value operand's type, an untyped constant taking `expected` when there is
+// one and otherwise its default type. `nil` has no default to take.
+check_defaulted_operand :: proc(k: ^Checker, e: Expr, expected := INVALID_TYPE) -> (type: Type_Id, ok: bool) {
+	type = check_single_expr(k, e, expected)
 	if type == INVALID_TYPE {
 		return INVALID_TYPE, false
 	}
-	typed := default_type(k.c, type)
+	typed := expected != INVALID_TYPE && type_is_untyped(k.c, type) ? expected : default_type(k.c, type)
 	if typed == INVALID_TYPE {
 		errorf(k.c, expr_span(e), "L0310", "`nil` has no type to infer here")
 		return INVALID_TYPE, false

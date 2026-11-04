@@ -1,0 +1,53 @@
+// design.md "Owned values": an expected `Box(T)` gives the value its type, for
+// `box` and `try_box`, and an expected `[^]T` does for `unsafe.new` and
+// `unsafe.try_new`.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Pair :: struct { a, b: int }
+
+take :: proc(value: Box(u8)) -> u8 { return value^; }
+make_one :: proc() -> Box(u8) { return box(3); }
+size_of_payload :: proc(value: Box($T)) -> int { return size_of(T); }
+
+main :: proc() {
+	small: Box(u8) = box(1);
+	fraction: Box(f32) = box(1.5);
+	view: Box(string_view) = box("abc");
+	pair: Box(Pair) = box({1, 2});
+	absent: Box(rawptr) = box(nil);
+	fmt.println(small^, size_of(small^), fraction^, size_of(fraction^), view^, pair.b, absent^ == nil);
+
+	// A parameter and a result ask as a declaration does.
+	fmt.println(take(box(2)), make_one()^);
+
+	// A generic parameter asks for nothing, so the value takes its default type.
+	fmt.println(size_of_payload(box(1)));
+
+	tried: Result(Box(u8), Allocator_Error) = try_box(7);
+	switch (tried) {
+	case .ok(held): fmt.println(held^, size_of(held^));
+	case .err: fmt.println("refused");
+	}
+	tried_pair: Result(Box(Pair), Allocator_Error) = try_box({3, 4});
+	switch (tried_pair) {
+	case .ok(held): fmt.println(held.a);
+	case .err: fmt.println("refused");
+	}
+
+	raw: [^]u8 = unsafe.new(9);
+	fmt.println(raw[0], size_of(raw[0]));
+	unsafe.free(raw);
+	raw_pair: [^]Pair = unsafe.new({5, 6});
+	fmt.println(raw_pair[0].b);
+	unsafe.free(raw_pair);
+	tried_raw: Result([^]u8, Allocator_Error) = unsafe.try_new(8);
+	switch (tried_raw) {
+	case .ok(held):
+		fmt.println(held[0]);
+		unsafe.free(held);
+	case .err: fmt.println("refused");
+	}
+}

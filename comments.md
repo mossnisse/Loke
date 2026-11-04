@@ -495,6 +495,13 @@ call. When one lower-case name was both, `box(x)` was a type or an allocation
 depending on whether `x` named a type, and the compiler needed a rule for each
 handle to decide which.
 
+`b: Box(u8) = box(1)` holds a `u8` because the declaration states the payload,
+and a literal the declaration has already typed should not need repeating as
+`box(u8(1))`. `Box` is one allocation around what `x: u8 = 1` writes. The
+expectation applies to untyped constants and untyped literals only: a typed
+value keeps its type, so `Box(string_view) = box(s)` over a `string` stays an
+error rather than a hidden borrow.
+
 ### Zeros that are values
 
 `{}` means a usable zero: an empty view, invalid type id, default allocator,

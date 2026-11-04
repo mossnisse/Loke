@@ -77,7 +77,6 @@ boilerplate in `eval.odin` and the checker, and comments that narrate the code.
 
 ## The changes most worth making
 
-6. **`nil` operands crash.** Route the nil case at [box.odin:147](src/box.odin#L147) through `check_defaulted_operand` in `check_builtin.odin`. BUG-box-1. About 10 lines.
 
 
 
@@ -112,9 +111,7 @@ Shared form: add `.Hashes_Key`, `.Drops_Element`, `.Drops_Key` and `.Inserts_Ele
 
 They differ in diagnostic code (`L0322`, `L0661`, `L0569`, `L0738`), and atomics reports every bad argument rather than the first.
 
-The operand path has the real divergence. `check_defaulted_operand` in `check_builtin.odin` reports `nil`, but [box.odin:147](src/box.odin#L147) calls `default_type` directly, and `materialize` then fails silently on `INVALID_TYPE`.
-
-Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targets)`, `check_allocator_argument(k, e)`, and `check_defaulted_operand` shared with `box.odin`. Saves about 40 lines and fixes BUG-box-1.
+Shared form: `builtin_arity_ok` at those sites, `bind_typed_arguments(k, v, targets)`, and `check_allocator_argument(k, e)`. Saves about 30 lines.
 
 #### Failure writes that the default in `check_expr` makes unnecessary
 
@@ -264,9 +261,9 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 - `type_of(c, type_underlying(c, x))` at 33 sites is [semantic.odin:1885](src/semantic.odin#L1885) `underlying_info`.
 - `symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))` at 12 sites becomes `ident_symbol(k, ident)`.
 - `is_package_selector(k, sel)` replaces `check_receiver`'s test in `check_calls.odin`, [check.odin:1907](src/check.odin#L1907), [check_expr.odin:695](src/check_expr.odin#L695), [check_expr.odin:755](src/check_expr.odin#L755). About 15 lines.
-- [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68) differ in one string; [box.odin:34](src/box.odin#L34) and [select.odin:293](src/select.odin#L293) in one enum. `predeclared_callee(k, callee, name)` and `callee_is_builtin` save about 25 lines.
+- [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68) differ in one string. `predeclared_callee(k, callee, name)` saves about 12 lines.
 - A parameter's mode with the bounds test is written at 24 sites, for example [check_calls.odin:668](src/check_calls.odin#L668) and [emit_llvm_calls.odin:1423](src/emit_llvm_calls.odin#L1423), beside [semantic.odin:1339](src/semantic.odin#L1339) `proc_parameter_mode`. A `param_mode_at(info, index)` saves no lines but shortens every site.
-- `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [box.odin:226](src/box.odin#L226) and [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
+- `make([]Expr, 1, ...)` plus two assignments at about 15 checker sites, for example [enums.odin:51](src/enums.odin#L51), becomes `v.bound = bound_exprs(k, e)`, from `check_builtin.odin`. About 30 lines.
 - Copy cost then copy classification: `classify_copy_cost` at [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721) follows the same arguments' `classify_copy`. One wrapper, about 8 lines.
 - Storage named by duration: [cfg_provenance.odin:5674](src/cfg_provenance.odin#L5674), [cfg_provenance.odin:7350](src/cfg_provenance.odin#L7350), [cfg_provenance.odin:10455](src/cfg_provenance.odin#L10455), `check_via_policy` in [check.odin](src/check.odin), [lifecycle.odin:109](src/lifecycle.odin#L109). About 10 lines.
 - Attributes: the string-literal decode at [attributes.odin:454](src/attributes.odin#L454), [attributes.odin:477](src/attributes.odin#L477) and [providers.odin:91](src/providers.odin#L91) becomes `attribute_string_text`; [attributes.odin:373](src/attributes.odin#L373) and [attributes.odin:473](src/attributes.odin#L473) hand-write [check.odin:759](src/check.odin#L759) `find_attribute`. About 25 lines.
@@ -277,7 +274,6 @@ The cursor alloca, compare, branch, step and back-edge are written out at [emit_
 
 Each move below names a site with its only callers or its stated owner. Moves save no lines; they make the source-code map true.
 
-- Layering: [box.odin:12](src/box.odin#L12) layout is used only by `emit_llvm_box.odin`.
 
 ### Looked at and left alone
 
@@ -544,40 +540,12 @@ The checks are sound in intent and well cited, but overlapping place loans make 
 
 ### src/box.odin
 
-Small and readable, with no dead code and no algorithmic concerns. The untyped-payload path in `check_box_builtin` is wrong in two reproduced ways, including a compiler crash, and most of the shortening available is shared with sibling files.
-
-**Bugs**
-
-- `BUG-box-1` **high** [box.odin:148](src/box.odin#L148) `check_box_builtin`: `default_type` of untyped `nil` is `INVALID_TYPE`, and this returns with no diagnostic. Scenario: `box(nil);`, `try_box(nil)`, `unsafe.new(nil)` or `b: Box(^int) = box(nil)` panics at emit_llvm_box.odin:15, exit 132. Fix: report as check_builtin.odin:258 does for `nil`, or materialize to the expected payload. *Confirmed: Reproduced: box(nil), try_box(nil), unsafe.new(nil) and b: Box(^int) = box(nil) each panic at emit_llvm_box.odin:15, exit 132, while x := nil gives L0310. Not recorded in the docs. An internal crash with no output, on unusual code: medium rather than high.*
-- `BUG-box-2` **medium** [box.odin:146](src/box.odin#L146) `check_box_builtin`: an untyped payload always takes its default type, ignoring `payload_expected`, though an initialization would use it. Scenario: `b: Box(u8) = box(1)`, `Box(f32) = box(1.5)` and `Box(string_view) = box("abc")` get L0310. Fix: materialize to `payload_expected` when set, as enums.odin:41 does. *Confirmed: Reproduced L0310 on b: Box(u8) = box(1), while box({1, 2}) and box(.a) take the payload type; no spec text or decision covers it. Severity is low: a clean error, box(u8(1)) works, and shared(1) and id(1) reject alike; "as an initialization does" defines only ownership.*
-- `BUG-box-4` **low** [box.odin:138](src/box.odin#L138) `check_box_builtin`: only `box` passes an expected payload type, though design.md "Owned values" says `try_box` takes the same arguments. Scenario: `r: Result(Box(N), Allocator_Error) = try_box({1, 2})` gets L0376 where `box({1, 2})` compiles. Fix: read the box from the success variant through `fallible_of`. *Not verified.*
-- `BUG-box-5` **low** [box.odin:153](src/box.odin#L153) `check_box_builtin`: diagnostics name a box when the call is `unsafe.new`. Scenario: `unsafe.new(int)` says "a box holds a runtime value", and `unsafe.new(m)` with a move-only `m` says "this box cannot copy it" (the `.Box` site, line 156). Fix: word line 153 with `ident.name` and add a `Copy_Site` for it. *Not verified.*
-
-**Simplification**
-
-- [box.odin:34](src/box.odin#L34) `box_callee`: its only caller is line 67, which already holds the lookup in `named`. Delete it and test `sym := symbol_of(k.c, named)` in that case. (about 8 lines)
-- [box.odin:137](src/box.odin#L137) `check_box_builtin`: `box_element` already answers `INVALID_TYPE` for a non-box, so write `payload_expected := kind == .Box_New ? box_element(k.c, expected) : INVALID_TYPE`. (about 3 lines)
-- [box.odin:180](src/box.odin#L180) `check_box_builtin`: this interns an unused `[^]T` for every boxed type. Use `is_box := base == .Box_New`, `made := is_box ? box_of(k.c, payload) : c_pointer_to(k.c, payload)`, `contribute_lifecycle_members(k, is_box ? made : payload)`. (about 3 lines)
-- [box.odin:124](src/box.odin#L124) and [box.odin:215](src/box.odin#L215): `check_call` sets `v.value_category = .Value` at check_calls.odin:36 before either procedure can run, and both builtin dispatches are after it. Delete both assignments. (2 lines)
+What remains is the near copies shared with sibling files.
 
 **Near copies**
 
 - [box.odin:45](src/box.odin#L45), [simd.odin:15](src/simd.odin#L15) and [iterate.odin:68](src/iterate.odin#L68): `box_type_callee`, `simd_callee` and `range_callee` differ only in the name. Shared form: `predeclared_type_callee(k, callee, "Box")`. (about 12 lines)
 - [box.odin:164](src/box.odin#L164) and [check_builtin.odin:586](src/check_builtin.odin#L586): the same optional allocator check with the same L0490 text. Shared form: `check_allocator_argument(k, e) -> bool`. (about 8 lines)
-- [box.odin:226](src/box.odin#L226): the three-line one-element `v.bound` also appears at lifecycle.odin:38, 81 and reflect.odin:900. Shared form: `bound_exprs(k, e)`, from `check_builtin.odin`. (about 12 lines)
-
-**Structure and boundaries**
-
-- [box.odin:12](src/box.odin#L12): `box_payload_offset`, `box_block_size` and `box_block_align` are called only from emit_llvm_box.odin, so the layout belongs there, beside the only code that reads the header.
-- [box.odin:1](src/box.odin#L1): the `box.odin` row in compiler-architecture.md "Source-code map" lists "dereference projections", and nothing here does that. Correct the row; it also needs "shared allocation layout" changed if the layout moves.
-
-**Comments**
-
-- [box.odin:3](src/box.odin#L3): lines 3-7 restate design.md "Owned values". Delete them, keeping the line 1 citation; lines 10-11 already describe the allocation.
-- [box.odin:11](src/box.odin#L11): delete "Shared by the checker's size questions and the emitter."; no checker code calls these procedures.
-- [box.odin:53](src/box.odin#L53): shorten to `// design.md "Owned values", "Shared ownership": reports `box(T)`, `shared(T)`, or `weak(T)` written for the handle type, in type position or with a type argument. `weak` names nothing.` (about 1 line)
-- [box.odin:116](src/box.odin#L116): the first sentence restates the signature, and the second repeats the spec. Replace lines 116-118 with `// design.md "Owned values": the value is taken as an initialization takes it.` (about 2 lines)
-- [box.odin:199](src/box.odin#L199): repeats the design.md paragraph on `unbox`. Replace lines 199-201 with `// design.md "Owned values": `move(b).unbox()`.` (about 2 lines)
 
 ### src/capture.odin
 
@@ -1057,7 +1025,7 @@ The dataflow core is sound and the file is readable, but `exchange` lets an owne
 **Near copies**
 
 - [lifecycle.odin:589](src/lifecycle.odin#L589), [union.odin:484](src/union.odin#L484), [optional.odin:108](src/optional.odin#L108) and [check_expr.odin:2721](src/check_expr.odin#L2721): `classify_copy_cost` then `classify_copy` with the same arguments. A `classify_costed_copy` returning the bool serves these; box and insertion differ and keep the two calls.
-- [lifecycle.odin:38](src/lifecycle.odin#L38), [lifecycle.odin:81](src/lifecycle.odin#L81), [lifecycle.odin:199](src/lifecycle.odin#L199), [check_builtin.odin:748](src/check_builtin.odin#L748) and [box.odin:226](src/box.odin#L226): `make` a `[]Expr` then assign each slot. A variadic `bind_arguments(k, v, ..values)` makes each one line.
+- [lifecycle.odin:38](src/lifecycle.odin#L38), [lifecycle.odin:81](src/lifecycle.odin#L81), [lifecycle.odin:199](src/lifecycle.odin#L199), and [check_builtin.odin:748](src/check_builtin.odin#L748): `make` a `[]Expr` then assign each slot. A variadic `bind_arguments(k, v, ..values)` makes each one line.
 
 ### src/operators.odin
 
@@ -1283,7 +1251,6 @@ What remains is the predeclared-callee near copies, shared with `box.odin`, `sim
 
 **Near copies**
 
-- [select.odin:293](src/select.odin#L293) and [box.odin:34](src/box.odin#L34): `callee_is_builtin` and `box_callee` differ only in the kind. Drop the `file` privacy and make `box_callee` call it with `.Box_New`. (about 5 lines)
 - [simd.odin:15](src/simd.odin#L15), [iterate.odin:68](src/iterate.odin#L68) and [box.odin:45](src/box.odin#L45), combined at [select.odin:440](src/select.odin#L440): the same procedure but for the spelling. Share `unbound_callee(k, callee, name)`.
 
 ### src/semantic.odin

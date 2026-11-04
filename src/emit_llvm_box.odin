@@ -6,6 +6,23 @@ package lokec
 
 import "core:fmt"
 
+// The allocation behind a box: the allocator, then the payload at its own
+// alignment.
+@(private = "file")
+box_payload_offset :: proc(c: ^Compiler, element: Type_Id) -> u64 {
+	return align_to(u64(c.target.pointer_bits) / 8, type_align(c, element))
+}
+
+@(private = "file")
+box_block_size :: proc(c: ^Compiler, element: Type_Id) -> u64 {
+	return align_to(box_payload_offset(c, element) + type_size(c, element), box_block_align(c, element))
+}
+
+@(private = "file")
+box_block_align :: proc(c: ^Compiler, element: Type_Id) -> u64 {
+	return max(u64(c.target.pointer_bits) / 8, type_align(c, element))
+}
+
 // `box(value[, allocator])` and `try_box(...)`, and the headerless allocation
 // `unsafe.new` and `unsafe.try_new` hand out as a `[^]T`. The payload is held as
 // a temporary until the allocation publishes it, so a failure or a panic on the

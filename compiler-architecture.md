@@ -900,7 +900,7 @@ be file-private. Paths below are relative to `src/`.
 | `test_procedures.odin` | `@(test)` declarations, checked in every build and called only by a test build's entry. |
 | `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked; a generic `impl`'s untyped constant is read by its value's type at the declaration or per instance, and one whose value is a type by its target's syntax, as any type alias is. A selection of a generic `impl`'s private member is read in each instance of the generic declaration that writes it, queued in `pending_private_reads` since an instance can appear inside a probe. |
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
-| `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
+| `box.odin` | Checking of `Box` types, `box`, `try_box`, `unsafe.new`, and unboxing, and a box's view as a `^T`. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, and the iteration protocol members of built-ins. |
 | `iteration_foreach.odin`, `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | The runtime `foreach` checker and binder, iterable adapters, mutable lending, ownership/borrow modes of yielded bindings, and the associated types that follow from protocol signatures. |
 
@@ -967,7 +967,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, typed-comparator sort adapters, the `[]mut T` members, and the contributed `mem.Arena`/`mem.Scratch` bodies. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
-| `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |
+| `emit_llvm_box.odin` | Box allocation layout, construction, unboxing, and recursive drop/clone thunks. |
 | `emit_llvm_runtime.odin` | Runtime declarations, static-storage globals, runtime failures, reflection metadata, and the dispatch of compiler-contributed procedures. |
 | `emit_llvm_format.odin` | Printing: format thunks and bodies, the `core:fmt` sink and entry points, and the reports of formatted panics and failed entries. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |

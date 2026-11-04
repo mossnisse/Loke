@@ -1495,6 +1495,17 @@ checklist.
   `operator([]=)`, such as `val` in `box[key] += val`; a member of a group under `operator`, as in
   `operator(<) proc { reversed }`; and an `else when` condition in a procedure. Hover and definition
   found nothing there, references left the use out, and rename refused.
+- `box(nil)`, `try_box(nil)`, `unsafe.new(nil)` and `unsafe.try_new(nil)` are `L0310`, as `x := nil` is,
+  and `b: Box(^int) = box(nil)` says `nil` is not a value of `^int`. Each crashed the compiler with no
+  diagnostic.
+- An untyped payload takes the payload type the context expects, as an initialization does
+  ([Owned values](design.md#owned-values)): `b: Box(u8) = box(1)`, `Box(f32) = box(1.5)` and
+  `Box(string_view) = box("abc")` compile. They were `L0310`.
+- `try_box`, `unsafe.new` and `unsafe.try_new` take an expected payload type from an expected
+  `Result(Box(T), Allocator_Error)`, `[^]T` or `Result([^]T, Allocator_Error)`, as `box` does from
+  `Box(T)`. `r: Result(Box(N), Allocator_Error) = try_box({1, 2})` was `L0376`.
+- A diagnostic on `unsafe.new` or `unsafe.try_new` names the call rather than a box: `` `new` takes a
+  runtime value `` and "this unsafe allocation cannot copy it".
 - `string.from_utf8`, `string_view.from_utf8`, `cstring_view.from_bytes` and `string.from_runes` take
   a fixed or dynamic array of their element type, as a read-only `[]T` parameter does
   ([Implicit type conversions](design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a

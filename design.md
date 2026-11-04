@@ -874,6 +874,12 @@ policy](#allocation-failure); `try_box` takes the same arguments and returns
 `Result(Box(T), Allocator_Error)`. The type is `Box(T)`: `box` only builds one,
 so `box(int)` is not a type.
 
+An expected `Box(T)`, or for `try_box` an expected `Result(Box(T),
+Allocator_Error)`, gives `value` an expected `T`: `b: Box(u8) = box(1)` holds a
+`u8`, and `b: Box(Tree) = box({value = 1})` a `Tree`. A value with a type of its
+own keeps it. With no such expectation an untyped constant takes its default
+type, and `nil`, which has none, is an error.
+
 `b^` is the payload. It is a place, writable exactly when `b` is, as an element
 of a dynamic array has its container's capability. Field selection, indexing,
 and method calls reach through a box as through a [pointer](#pointers), after
@@ -8246,8 +8252,10 @@ one `T`, takes `value` into it as [`box`](#owned-values) does, and returns its
 address as a `[^]T`. Nothing owns that allocation: the value is never dropped
 and the storage is never released unless the program does it, and the address
 carries no provenance. `unsafe.try_new` takes the same arguments and returns
-`Result([^]T, Allocator_Error)`. A handle over an opaque control block,
-`Shared(T)` among them, allocates it this way.
+`Result([^]T, Allocator_Error)`. An expected `[^]T` or `Result([^]T,
+Allocator_Error)` gives `value` an expected `T`, as an expected `Box(T)` does for
+`box`. A handle over an opaque control block, `Shared(T)` among them, allocates it
+this way.
 
 `unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release the
 allocation a `[^]T` or `^mut T` names, sized by its element type. They do not

@@ -246,25 +246,27 @@ Copy_Site :: enum {
 	Or_Else_Fallback,
 	Conditional,
 	Box,
+	Unsafe_Allocation,
 }
 
 @(private = "file", rodata)
 COPY_SITE_TEXT := [Copy_Site]string {
-	.Argument         = "argument",
-	.Binding          = "binding",
-	.Assignment       = "assignment",
-	.Return           = "return",
-	.Or_Else          = "`or_else`",
-	.Or_Return        = "`or_return`",
-	.Literal          = "aggregate literal",
-	.Insertion        = "insertion",
-	.Write            = "write",
-	.Variadic         = "variadic argument",
-	.Variant          = "variant construction",
-	.Conversion       = "conversion",
-	.Or_Else_Fallback = "`or_else` fallback",
-	.Conditional      = "conditional expression",
-	.Box              = "box",
+	.Argument          = "argument",
+	.Binding           = "binding",
+	.Assignment        = "assignment",
+	.Return            = "return",
+	.Or_Else           = "`or_else`",
+	.Or_Return         = "`or_return`",
+	.Literal           = "aggregate literal",
+	.Insertion         = "insertion",
+	.Write             = "write",
+	.Variadic          = "variadic argument",
+	.Variant           = "variant construction",
+	.Conversion        = "conversion",
+	.Or_Else_Fallback  = "`or_else` fallback",
+	.Conditional       = "conditional expression",
+	.Box               = "box",
+	.Unsafe_Allocation = "unsafe allocation",
 }
 
 // A binding or assignment copy whose report waits for last-use transfer: the
