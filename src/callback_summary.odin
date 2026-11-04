@@ -194,15 +194,7 @@ passed_values :: proc(c: ^Compiler, site: Call_Site, call: ^Expr_Call, passed: i
 	if moved, is_move := value.(^Expr_Move); is_move {
 		value = moved.value
 	}
-	id := INVALID_SYMBOL
-	#partial switch v in value {
-	case ^Expr_Ident:
-		id = v.symbol
-	case ^Expr_Selector:
-		id = v.resolution.symbol
-	case ^Expr_Proc:
-		id = v.symbol
-	}
+	id := named_value_symbol(value)
 	named := Effect_Arg{}
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
 		named = Effect_Arg{kind = .Procedure, symbol = id}

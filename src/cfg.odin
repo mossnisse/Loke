@@ -67,6 +67,11 @@ Reset_Key :: struct {
 	expansion: Defer_Expansion,
 }
 
+@(private)
+reset_key :: proc(graph: ^Flow_Graph, node: rawptr, symbol := INVALID_SYMBOL) -> Reset_Key {
+	return Reset_Key{graph.literal, node, symbol, graph.expansion}
+}
+
 // One walk of a `defer` body: the deferred statement and the exit running it,
 // nil at its scope's end. `unwinding` is set from the start of a panic's unwind
 // path, whose cleanups may name the same exit, with no `defer` being walked yet.
@@ -758,18 +763,29 @@ unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit:
 	if sym.borrowed_binding != .None {
 		return
 	}
-	key := Reset_Key{graph.literal, exit, id, graph.expansion}
-	if graph.mode == .Lifecycle {
-		graph.k.c.cleanup_reset_dead[key] = {}
-		flow_emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
-		return
-	}
-	live, found := graph.k.c.cleanup_reset_dead[key]
-	assert(found, "the provenance walk reached an unwind drop the lifecycle walk did not")
-	if !live.reached || live.dead {
+	live, provenance := cleanup_reset_point(graph, exit, id, span)
+	if !provenance || !live.reached || live.dead {
 		return
 	}
 	prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name), region = prov_symbol_drop_region(graph, id))
+}
+
+// A cleanup that may end a region, as one reset point of both walks. The lifecycle
+// walk registers it; the provenance walk gets what lifecycle found there.
+@(private)
+cleanup_reset_point :: proc(
+	graph: ^Flow_Graph, node: rawptr, symbol: Symbol_Id, span: Span, location := #caller_location,
+) -> (live: Reset_Liveness, provenance: bool) {
+	key := reset_key(graph, node, symbol)
+	if graph.mode == .Lifecycle {
+		graph.k.c.cleanup_reset_dead[key] = {}
+		flow_emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
+		return {}, false
+	}
+	found: bool
+	live, found = graph.k.c.cleanup_reset_dead[key]
+	assert(found, "the provenance walk reached a cleanup the lifecycle walk did not", location)
+	return live, true
 }
 
 // The temporaries a statement made end with it: providers first, so an owner
@@ -782,7 +798,7 @@ end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt
 	resize(&graph.temp_roots, mark)
 	// A temporary provider can end after a declaration has installed its
 	// owner. Record that boundary in lifecycle too, after the statement's writes.
-	key := Reset_Key{graph.literal, stmt_base(stmt), INVALID_SYMBOL, graph.expansion}
+	key := reset_key(graph, stmt_base(stmt))
 	if graph.mode == .Lifecycle && graph.temp_provider_count > providers {
 		graph.k.c.cleanup_reset_dead[key] = {}
 		if len(graph.tracked) > 0 {
@@ -1967,22 +1983,30 @@ walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call, stores: bool) {
 	}
 }
 
+// The next argument a call passes to an `@(allocator_reset)` parameter. A walk
+// that acts on these needs the reset point `call_is_reset` has it note.
+@(private)
+call_reset_arguments :: proc(c: ^Compiler, v: ^Expr_Call, cursor: ^int) -> (argument: Expr, more: bool) {
+	proc_type := call_proc_type(c, v)
+	for cursor^ < len(v.bound) {
+		index := cursor^
+		cursor^ += 1
+		if v.bound[index] != nil && proc_param_resets(c, proc_type, index) {
+			return v.bound[index], true
+		}
+	}
+	return nil, false
+}
+
 // `free_all`, or an argument to an `@(allocator_reset)` parameter.
 @(private = "file")
 call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Free_All {
 		return true
 	}
-	proc_type := call_proc_type(c, v)
-	if proc_type == INVALID_TYPE {
-		return false
-	}
-	for argument, index in v.bound {
-		if argument != nil && proc_param_resets(c, proc_type, index) {
-			return true
-		}
-	}
-	return false
+	cursor := 0
+	_, resets := call_reset_arguments(c, v, &cursor)
+	return resets
 }
 
 // After the arguments, which may themselves move an owner out.
@@ -1991,7 +2015,7 @@ note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if !call_is_reset(graph.k.c, v) {
 		return
 	}
-	key := Reset_Key{graph.literal, v, INVALID_SYMBOL, graph.expansion}
+	key := reset_key(graph, v)
 	graph.k.c.reset_dead[key] = {}
 	if len(graph.tracked) > 0 {
 		flow_emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, reset = key, call = v})

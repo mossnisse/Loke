@@ -16,16 +16,9 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	if !provider_local(graph.k.c, id) {
 		return
 	}
-	key := Reset_Key{graph.literal, node, id, graph.expansion}
-	if graph.mode == .Lifecycle {
-		graph.k.c.cleanup_reset_dead[key] = {}
-		flow_emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
-		return
-	}
-	live, found := graph.k.c.cleanup_reset_dead[key]
-	assert(found, "the provenance walk reached a provider end the lifecycle walk did not")
+	live, provenance := cleanup_reset_point(graph, node, id, span)
 	// An unreachable exit ends nothing, and a consumed value has no region left.
-	if !live.reached || live.dead {
+	if !provenance || !live.reached || live.dead {
 		return
 	}
 	prov_provider_use(graph, id, span)
@@ -168,15 +161,8 @@ provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: 
 // was ever lent mutably, so the regions of all of those in scope end here.
 @(private = "file")
 provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb: string) {
-	key := Reset_Key{graph.literal, node, INVALID_SYMBOL, graph.expansion}
-	if graph.mode == .Lifecycle {
-		graph.k.c.cleanup_reset_dead[key] = {}
-		flow_emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
-		return
-	}
-	live, found := graph.k.c.cleanup_reset_dead[key]
-	assert(found, "the provenance walk reached a provider end the lifecycle walk did not")
-	if !live.reached {
+	live, provenance := cleanup_reset_point(graph, node, INVALID_SYMBOL, span)
+	if !provenance || !live.reached {
 		return
 	}
 	// Which of these was lent is a carried fact, read when the reset materializes.

@@ -181,14 +181,6 @@ The union path repeats the case-flow merge of [check.odin:4390](src/check.odin#L
 - A `Const_Aggregate` is built by hand at 14 sites, for example [check_expr.odin:3332](src/check_expr.odin#L3332), [const_ops.odin:884](src/const_ops.odin#L884), [check_builtin.odin:1378](src/check_builtin.odin#L1378), [enums.odin:83](src/enums.odin#L83), [expand.odin:99](src/expand.odin#L99), [simd.odin:291](src/simd.odin#L291) and [union.odin:618](src/union.odin#L618), while [reflect.odin:307](src/reflect.odin#L307) `aggregate_const` is file-private. Three sites use another allocator, so the shared one takes one as a default parameter. Saves about 30 lines.
 - Unary folding is at [check_expr.odin:2057](src/check_expr.odin#L2057) and [eval.odin:852](src/eval.odin#L852). They differ in the allocator, in the decimal spelling kept for `-x`, and in how a failure reports. A `fold_unary(c, op, value, type, allocator) -> (Const_Value, overflowed: bool)` in `const_ops.odin` saves about 25.
 
-### Provenance and borrow analysis
-
-#### Naming a callable value, and reset points
-
-[borrow.odin:2574](src/borrow.odin#L2574) and [global_effects.odin:344](src/global_effects.odin#L344) unwrap a move and switch on identifier, selector and literal in the same way, then classify differently. `named_value_symbol(e) -> Symbol_Id` saves about 10 lines.
-
-[cfg.odin:1092](src/cfg.odin#L1092) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356) build `Reset_Key` by hand, and the assert at the second depends on the first. [cfg.odin:2867](src/cfg.odin#L2867) and [cfg_provenance.odin:9904](src/cfg_provenance.odin#L9904) loop over `proc_param_resets` separately and must agree; a `call_reset_arguments` iterator ties them. Saves about 10 lines.
-
 ### LLVM emitter
 
 #### Allocation failure branch
@@ -327,14 +319,6 @@ A compact, table-driven validator in good shape overall; the table matches `desi
 
 - [attributes.odin:150](src/attributes.odin#L150), [hooks.odin:1106](src/hooks.odin#L1106) and [hooks.odin:1138](src/hooks.odin#L1138): the same `u64(file) << 32 | u64(lo)` key. Make `generic_hook_key` a shared `span_key(span)`. (about 2 lines)
 
-### src/borrow.odin (part 2 of 3)
-
-The solvers and the view-start fixed point are carefully reasoned, but this stretch holds three separate subsystems, repeats its worklist, block-entry and bit-scan shapes, and carries long prose comments. One real soundness bug sits in the callback substitution, and no procedure is dead.
-
-**Near copies**
-
-- [borrow.odin:2573](src/borrow.odin#L2573) and [global_effects.odin:343](src/global_effects.odin#L343) `passed_values`/`effect_value`: same move unwrap and ident/selector/literal switch to a symbol. Share `named_value_symbol(e: Expr) -> Symbol_Id` from global_effects.odin; each keeps its own classification. (about 10 lines)
-
 ### src/box.odin
 
 What remains is the near copies shared with sibling files.
@@ -359,8 +343,6 @@ What remains are near copies whose helper would span other files.
 
 **Near copies**
 
-- [cfg.odin:1092](src/cfg.odin#L1092), [1116](src/cfg.odin#L1116), [1253](src/cfg.odin#L1253), [1370](src/cfg.odin#L1370), [2881](src/cfg.odin#L2881) and [cfg_provenance.odin:5356](src/cfg_provenance.odin#L5356): build a `Reset_Key`, register in lifecycle, look up and assert in provenance. `reset_point(graph, node, id, span) -> (live, ok)` saves about 15 lines.
-- [cfg.odin:2863](src/cfg.odin#L2863) and [cfg_provenance.odin:9899](src/cfg_provenance.odin#L9899): the same loop over `proc_param_resets`, one as a test and one acting. They must agree, or the assert in `prov_reset` fires; an index-yielding helper would tie them together.
 - [cfg.odin:1913](src/cfg.odin#L1913), [cfg_provenance.odin:489](src/cfg_provenance.odin#L489), [parallel.odin:81](src/parallel.odin#L81): slicing a span out of `sources`; a span form in `source.odin` replaces them.
 
 ### src/cfg_provenance.odin (part 1 of 4)
@@ -562,14 +544,6 @@ What remains needs a helper shared with `impl.odin`.
 **Near copies**
 
 - [generic.odin:3677](src/generic.odin#L3677) and [impl.odin:209](src/impl.odin#L209): the L0409 name checks and the 14-line member `Symbol` literal (line 3693, impl.odin:240) differ only in package and subject. A `reject_impl_member_name` plus `new_impl_member_symbol` removes the copy. (about 25 lines)
-
-### src/global_effects.odin
-
-The solvers are sound in how they iterate and deterministic, and the comments are mostly about why.
-
-**Near copies**
-
-- [global_effects.odin:144](src/global_effects.odin#L144), L275, L359, L713 and [borrow.odin:2578](src/borrow.odin#L2578): the same `Ident`/`Selector`/`Proc` switch; share `expr_named_symbol(e) -> Symbol_Id`. L713 omits `Expr_Proc` since the race warning covers named procedures only, so keep that check at its caller. The tail of `effect_value` at L369-374 and borrow.odin:2587-2591 also match.
 
 ### src/hooks.odin
 

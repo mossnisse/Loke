@@ -29,14 +29,8 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 // Resets propagate through wrappers and indirect calls (design.md "@(allocator_reset)").
 @(private)
 prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
-	proc_type := call_proc_type(graph.k.c, v)
-	if proc_type == INVALID_TYPE {
-		return
-	}
-	for argument, index in v.bound {
-		if argument == nil || !proc_param_resets(graph.k.c, proc_type, index) {
-			continue
-		}
+	cursor := 0
+	for argument in call_reset_arguments(graph.k.c, v, &cursor) {
 		prov_reset(graph, prov_input_value(graph, argument), v.span, false, v)
 	}
 }

@@ -1561,7 +1561,7 @@ prov_reset :: proc(
 	live := cleanup_live
 	if at != nil {
 		found: bool
-		live, found = graph.k.c.reset_dead[Reset_Key{graph.literal, at, INVALID_SYMBOL, graph.expansion}]
+		live, found = graph.k.c.reset_dead[reset_key(graph, at)]
 		assert(found, "the provenance walk reached a reset the lifecycle walk did not")
 	}
 	if graph.current == NO_BLOCK {

@@ -157,17 +157,7 @@ prov_note_proc_value :: proc(graph: ^Flow_Graph, e: Expr) {
 	if c.global_writes_ready || e == nil {
 		return
 	}
-	id := INVALID_SYMBOL
-	#partial switch v in e {
-	case ^Expr_Ident:
-		id = v.symbol
-	case ^Expr_Selector:
-		id = v.resolution.symbol
-	case ^Expr_Proc:
-		id = v.symbol
-	case:
-		return
-	}
+	id := named_value_symbol(e)
 	sym := symbol_of(c, id)
 	if sym == nil || sym.kind != .Proc {
 		return
@@ -288,15 +278,7 @@ converted_view_call :: proc(c: ^Compiler, view: Expr, slot: int) -> (Effect_Call
 	if method, is_capture := c.capture_records[base.erased_from]; is_capture {
 		return Effect_Call{callee = method.symbol}, true
 	}
-	id := INVALID_SYMBOL
-	#partial switch named in value {
-	case ^Expr_Ident:
-		id = named.symbol
-	case ^Expr_Selector:
-		id = named.resolution.symbol
-	case ^Expr_Proc:
-		id = named.symbol
-	}
+	id := named_value_symbol(value)
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
 		return Effect_Call{held = id}, true
 	}
@@ -341,6 +323,20 @@ effect_args :: proc(c: ^Compiler, v: ^Expr_Call, allocator: mem.Allocator) -> []
 	return args[:]
 }
 
+// What a value written by its name, or as a procedure literal, names.
+@(private)
+named_value_symbol :: proc(e: Expr) -> Symbol_Id {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return v.symbol
+	case ^Expr_Selector:
+		return v.resolution.symbol
+	case ^Expr_Proc:
+		return v.symbol
+	}
+	return INVALID_SYMBOL
+}
+
 // A parameter, or a local, whose procedure value or `dyn proc` view is
 // followed through the body.
 @(private = "file")
@@ -372,17 +368,7 @@ effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
 	} else if underlying_kind(c, base.type) != .Proc {
 		return {}
 	}
-	id := INVALID_SYMBOL
-	#partial switch v in value {
-	case ^Expr_Ident:
-		id = v.symbol
-	case ^Expr_Selector:
-		id = v.resolution.symbol
-	case ^Expr_Proc:
-		id = v.symbol
-	case:
-		return {}
-	}
+	id := named_value_symbol(value)
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
 		return Effect_Arg{kind = .Procedure, symbol = id}
 	}
@@ -776,13 +762,10 @@ note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if argument == nil || !proc_param_crosses_thread(c, proc_type, index) {
 			continue
 		}
-		entry := INVALID_SYMBOL
-		#partial switch e in argument {
-		case ^Expr_Ident:
-			entry = e.symbol
-		case ^Expr_Selector:
-			entry = e.resolution.symbol
+		if _, literal := argument.(^Expr_Proc); literal {
+			continue
 		}
+		entry := named_value_symbol(argument)
 		if entry_sym := symbol_of(c, entry); entry_sym != nil && entry_sym.kind == .Proc {
 			append(&graph.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
 		}
