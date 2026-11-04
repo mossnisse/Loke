@@ -164,9 +164,9 @@ Shared form: `member_name_clash(k, subject, name, name_id, existing) -> bool` an
 
 #### Checks on a new local name
 
-[check.odin:560](src/check.odin#L560), [iterate.odin:1064](src/iterate.odin#L1064) and [optional.odin:607](src/optional.odin#L607) repeat `L0304`, the reserved-name test, `L0305` and `note_shadowed_capture`. They differ in which scope they search from and in whether a reserved name stops the declaration; [check.odin:573](src/check.odin#L573) also exempts `$` names. [expand.odin:173](src/expand.odin#L173) has none of the checks (BUG-expand-3), and [capture.odin:85](src/capture.odin#L85) inserts directly (BUG-capture-2).
+[check.odin:560](src/check.odin#L560), [iterate.odin:1064](src/iterate.odin#L1064) and [optional.odin:607](src/optional.odin#L607) repeat `L0304`, the reserved-name test, `L0305` and `note_shadowed_capture`. They differ in which scope they search from and in whether a reserved name stops the declaration; [check.odin:573](src/check.odin#L573) also exempts `$` names. `static_name_is_free` in [expand.odin:173](src/expand.odin#L173) is another copy, and [capture.odin:85](src/capture.odin#L85) inserts directly (BUG-capture-2).
 
-Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves about 20 lines and fixes both.
+Shared form: `check_new_local(k, name, id, span, outer_scope) -> bool`. Saves about 20 lines and fixes BUG-capture-2.
 
 #### Operator binding and the built-in operator table
 
@@ -683,7 +683,7 @@ What remains here waits on helpers shared across files.
 
 - [check.odin:3888](src/check.odin#L3888) and [parallel.odin:652](src/parallel.odin#L652): `lowered_name`, `lowered_deref` and `lowered_temporary` match `synth_ident`, `synth_deref` and `synth_var`, with `synth_const` and `hidden_declaration` as further `Decl` copies. Use the package-visible `synth_ident` and `synth_deref`, and promote the rest. (about 25 lines)
 - [check.odin:4796](src/check.odin#L4796): the one-argument call repeats [optional.odin:272](src/optional.odin#L272). Share `synth_call`. (about 5 lines)
-- [check.odin:4376](src/check.odin#L4376) and [optional.odin:574](src/optional.odin#L574): the same per-case flow merge and result; `flow_either(&flow, case_flow)` also serves `check_if` (4243). [check.odin:3138](src/check.odin#L3138) and [expand.odin:36](src/expand.odin#L36) share the sequential merge as `flow_then`. (about 15 lines)
+- [check.odin:4376](src/check.odin#L4376) and [optional.odin:574](src/optional.odin#L574): the same per-case flow merge and result; `flow_either(&flow, case_flow)` also serves `check_if` (4243). (about 15 lines)
 
 **Structure and boundaries**
 
@@ -882,75 +882,12 @@ The one finding left waits for the multi-file group it belongs to.
 
 ### src/expand.odin
 
-Readable and well commented, but the static `foreach` half re-implements binding rules the runtime `foreach` gets from helpers, and has drifted from them (BUG-expand-2 and BUG-expand-3). Each bug's scenario was run on the repository's `lokec.exe`; the proposed fixes are untested.
-
-**Bugs**
-
-- `BUG-expand-2` **medium** [expand.odin:146](src/expand.odin#L146) `bind_static_pattern`: counts raw `info.fields` and skips `destructure_fields`, against design.md "Destructuring". *Confirmed: Probes reproduce: $a, $b over padded struct gets L0454 'has 3 fields' (runtime prints 1 2); over geom.Point it compiles and runs (runtime gets L0708), against design.md Destructuring. The int wording also occurs, but the runtime form says the same.*
-  Scenario: `struct { a: int, _: [4]u8, b: int }` with `$a, $b` gets L0454 "has 3 fields" (runtime form accepts); `$a, $b` over another package's record is accepted (runtime gets L0708); an `int` says "binds 1 or 0 names".
-  Fix: call `destructure_fields(k, type, len(bindings), span, "L0454", "bound by a `foreach`")` and index the aggregate by `field.index`.
-- `BUG-expand-3` **medium** [expand.odin:181](src/expand.odin#L181) `bind_static`: writes `k.scope.names` with none of the checks of design.md "Variable declarations" that `bind_loop_name` makes. *Confirmed: Reproduced: foreach ($x) over local or param x compiles (runtime form L0305, local x :: 5 L0305); $a, $a binds last, printing 2 4 (runtime L0304); case $variant(p) with local variant and $s(s) on a payloadless union compile. Not recorded in the gap docs.*
-  Scenario: `x := 7; foreach ($x in 0..<2) {...}` compiles (runtime gets L0305); `foreach ($a, $a in R)` silently binds the last (runtime gets L0304); so do `variant := 7; ... case $variant(p):` and `case $s(s):` over a payloadless union.
-  Fix: share the L0304/L0305 checks with `bind_loop_name`, reporting them once from `check_static_pattern_markers`, or per copy.
-- `BUG-expand-4` **medium** [expand.odin:306](src/expand.odin#L306) `fold_static_iterable`: design.md "Static `foreach` expansion" says compile-time slices qualify, but a slice is accepted only as a written `a[i:j]`. *Confirmed: Reproduced: K :: ARR[:], K :: []int{1,2} and a []int{1,2} literal each give L0454 found `[]int`, while written ARR[:] expands; design.md lists compile-time slices and no gap or decision records this. Severity is low-medium: a clear error, workaround exists.*
-  Scenario: `K :: ARR[:]; foreach ($a in K)` and `foreach ($a in []int{1,2})` get L0454 "needs a compile-time array ... found `[]int`".
-  Fix: send `.Slice` down the `evaluate_static_elements` path with `.Dynamic_Array`.
-- `BUG-expand-5` **low** [expand.odin:237](src/expand.odin#L237) `stmt_has_branch`: does not descend into `Stmt_Defer`, so a deferred branch escapes the L0455 walk. *Not verified.*
-  Scenario: `foreach ($a in [0]int{}) { defer break; }` compiles while `{ break; }` gets L0455; with elements it gets L0368 "only valid inside a loop", even inside a runtime loop.
-  Fix: add `case ^Stmt_Defer: return stmt_has_branch(k, v.stmt)`.
-- `BUG-expand-6` **low** [expand.odin:200](src/expand.odin#L200) `static_element_text`: the spec says a diagnostic must show the element, but the note cannot for pairs or runes. *Not verified.*
-  Scenario: the spec's own `fields_of(T).indexed()` gives "in static expansion 0, for `<value>`", any aggregate element likewise, and rune `'a'` gives "for `97`".
-  Fix: unwrap an indexed pair before the descriptor test, and print a rune as a rune.
-
-**Simplification**
-
-- [expand.odin:305](src/expand.odin#L305) `fold_static_iterable`: test the kind first (`.Array`, `.Dynamic_Array`, `.Slice`), then one `evaluate_static_elements` call replaces `require_const`
-  plus the hand copy at 324-331. Needs a run of the suite, since a runtime array's message moves to the evaluator's. (about 14 lines)
-- [expand.odin:222](src/expand.odin#L222) `block_has_branch`, `stmts_have_branch`, `stmt_has_branch`: a predicate that also reports. Make them a void walk and set `k.branches_reported = k.c.error_count > before`;
-  the `found` juggling goes, and `v.otherwise != nil` too, since a nil `Stmt` reaches the final `return`. (about 12 lines)
-- [expand.odin:286](src/expand.odin#L286) `fold_static_iterable`: every fold returns a fresh slice, so transform in place: `slice.reverse(elements)` or an `indexed_pair` loop, with no `out`. (about 3 lines)
-- [expand.odin:380](src/expand.odin#L380) `fold_static_slice`: return `elements[int(lo):int(hi)]` with the element type from the operand's fold; `out`, `copy` and the `type` parameter go. (about 3 lines)
-- [expand.odin:98](src/expand.odin#L98) `indexed_pair` and [expand.odin:546](src/expand.odin#L546) `bind_expanded_case`: `aggregate_const` (reflect.odin:307) builds both; the Unit becomes `aggregate_const(k.c, k.c.unit_type, nil)`. (about 6 lines)
-- [expand.odin:173](src/expand.odin#L173) `bind_static`: takes a `Foreach_Binding` but reads only `.name`; take a `Name`, which drops the wrappers at 542 and 548, and use `name_identifier` for lines 177-180. (about 3 lines)
-- [expand.odin:192](src/expand.odin#L192) `static_element_text`: put the backticks in the format at line 73 and return the plain text, so neither `aprintf` is needed for quoting. (about 4 lines)
-- [expand.odin:55](src/expand.odin#L55) `expand_one_element`: bind before cloning, since a failed bind wastes the clone, and return a nil block instead of the `bool`. (about 3 lines)
-- [expand.odin:475](src/expand.odin#L475) `expand_variant_cases`: the temporary `Block` only works around `clone_stmts` being file-private in ast_clone.odin; make it package-visible and call it. (about 1 line)
-- [expand.odin:127](src/expand.odin#L127) and [expand.odin:511](src/expand.odin#L511): the `!= "_"` guard is unneeded, because `reject_reserved_name` rejects only universe symbols marked `reserved`. (no lines, shorter conditions)
-- [expand.odin:342](src/expand.odin#L342) `fold_static_range`: `distance` is used once; start `count` from the `bi_sub`. (about 1 line)
-- [expand.odin:307](src/expand.odin#L307) `fold_static_iterable`: `"L0454"` repeats the default of `code`, and this is the only caller, so the parameter at eval.odin:107 can go. (no lines here)
-
-**Dead code**
-
-- (branch) [expand.odin:32](src/expand.odin#L32): `s.adapter` is only set by `peel_resolved_adapter`, reached only from `check_runtime_foreach` (iterate.odin:507), so it is always `.None` here; `at` is `index`.
-- (branch) [expand.odin:89](src/expand.odin#L89): `s.indexed` is false here for the same reason (`.indexed()` arrives through the adapter branch at 283), so `bind_static_element` reduces to a call to `bind_static_pattern` and can go.
-- (branch) [expand.odin:37](src/expand.odin#L37): `copy_flow.breaks` and `.continues` are never true: a copy runs at `loop_depth` 0, where `check_branch` returns `FLOWS`, and nested loops do not pass them on.
-
-**Data structures and algorithms**
-
-- [expand.odin:360](src/expand.odin#L360) `fold_static_range`: `bi_from_i64(k.c, 1)` allocates on the arena once per element, and a range may reach `EVAL_MAX_STEPS` (1,000,000) elements; compute `one` once before the loop.
+Readable and well commented. Its name checks are one more copy of those every other local gets.
 
 **Near copies**
 
-- [expand.odin:146](src/expand.odin#L146) and [check.odin:1152](src/check.odin#L1152): `bind_static_pattern` has a weaker copy of `destructure_fields` (arity, visibility); calling it fixes BUG-expand-2 and drops lines 145-159 to about 5.
 - [expand.odin:173](src/expand.odin#L173), [iterate.odin:1056](src/iterate.odin#L1056) and [optional.odin:600](src/optional.odin#L600): `bind_static`, `bind_loop_name` and `bind_case_name` share the skip of `_`, the name lookup and the L0304/L0305/reserved checks.
-  The last two are almost line for line; a shared `check_binding_name(k, name, outer) -> Identifier_Id` serves all three and fixes BUG-expand-3.
-- [expand.odin:470](src/expand.odin#L470) and [expand.odin:627](src/expand.odin#L627): both build a one-element `[]Expr` holding a `.label` selector; a `variant_case_values(c, label, span)` covers them. Line 633 also interns the same name per variant; hoist that `Name`.
-- [expand.odin:36](src/expand.odin#L36) and [check.odin:3138](src/check.odin#L3138): the same sequence-composition of `Flow_Info`; a `flow_then(&flow, next)` in check.odin serves both.
-
-**Structure and boundaries**
-
-- [expand.odin:203](src/expand.odin#L203): `const_display_text` has nothing to do with expansion and is also used by eval.odin and generic.odin; it belongs in const_ops.odin.
-- [expand.odin:578](src/expand.odin#L578) `check_union_argument_expansion`: 117 lines doing three jobs. Seams: finding and classifying the spread (579-613), building the `dispatch` switch (618-655), and deciding the common result (658-692).
-- [expand.odin:409](src/expand.odin#L409) `expand_variant_cases`: 80 lines; the seam is at 449, between finding and validating the case (410-448) and making the copies (454-486).
-- [expand.odin:173](src/expand.odin#L173): `bind_static` has no caller outside this file but lacks `@(private = "file")`, unlike its siblings.
-
-**Comments**
-
-- [expand.odin:219](src/expand.odin#L219): cite the exact heading: `design.md "Static `foreach` expansion": loops in the body own their branches, so they are not walked.`
-- [expand.odin:385](src/expand.odin#L385): delete; the signature and two-line body say it.
-- [expand.odin:404](src/expand.odin#L404): the first sentence restates the spec. `design.md "Per-variant switch cases": each copy is an ordinary case with its own clone of the body, so nothing after the checker sees an expanded case. False after a diagnostic.`
-- [expand.odin:589](src/expand.odin#L589): six lines; keep the reasons only. `A union needing a destination type has none here, so it is left to the variadic path. Any other operand is checked once: a recheck would double per level of nested spreads.`
-- [expand.odin:658](src/expand.odin#L658): restates the spec bullet; reduce to `design.md "Union argument expansion": a call that never returns stands in for either.`
+  The last two are almost line for line; a shared `check_binding_name(k, name, outer) -> Identifier_Id` serves all three.
 
 ### src/foreign.odin
 
@@ -1256,7 +1193,7 @@ What remains here waits on helpers shared across files.
 
 - [optional.odin:713](src/optional.odin#L713) and [check.odin:4464](src/check.odin#L4464): the same "first three, then `, ...`" list and "does not cover" message, differing in the name source and the code. Each collects names into a temp slice and calls one `report_uncovered(k, s, subject, code, names)`. (about 12 lines)
 - [optional.odin:603](src/optional.odin#L603), [iterate.odin:1062](src/iterate.odin#L1062) and [check.odin:560](src/check.odin#L560): the L0304, reserved-name and L0305 checks for a new local. Share `check_local_name(k, name, id, span) -> bool`; they differ in `check.odin`'s synthesized-name exemption and in whether a reserved name still binds. (about 14 lines)
-- [optional.odin:574](src/optional.odin#L574), [check.odin:4390](src/check.odin#L4390) and [expand.odin:36](src/expand.odin#L36): the same `||=` merge of `Flow_Info` fields. Share `merge_flow(&flow, other)` beside `Flow_Info`. (about 6 lines)
+- [optional.odin:574](src/optional.odin#L574) and [check.odin:4390](src/check.odin#L4390): the same `||=` merge of `Flow_Info` fields. Share `merge_flow(&flow, other)` beside `Flow_Info`. (about 6 lines)
 - [optional.odin:259](src/optional.odin#L259), [optional.odin:272](src/optional.odin#L272), [check.odin:4796](src/check.odin#L4796) and [expand.odin:640](src/expand.odin#L640): a synthesized one-argument `Expr_Call`, five lines each. Share `new_call(c, span, callee, argument)`. (about 10 lines)
 
 ### src/parallel.odin

@@ -973,13 +973,15 @@ generic_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
 	return arg.is_type ? type_name(c, arg.type) : generic_value_text(c, arg.value)
 }
 
-@(private = "file")
 generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> string {
 	switch value.kind {
 	case .String:
 		return fmt.aprintf("%q", value.text, allocator = c.semantic_allocator)
 	case .Nil:
 		return "nil"
+	case .Rune:
+		code, _ := bi_to_i64(c, value.integer)
+		return fmt.aprintf("%q", rune(code), allocator = c.semantic_allocator)
 	case .Float:
 		if value.float != value.float {
 			return fmt.aprintf("NaN(f%d, 0x%x)", value.float_bits, value.float_raw, allocator = c.semantic_allocator)
@@ -1010,7 +1012,7 @@ generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> stri
 		return strings.to_string(b)
 	case .Invalid:
 		return "<invalid value>"
-	case .Integer, .Boolean, .Rune, .Type:
+	case .Integer, .Boolean, .Type:
 		return const_display_text(c, value)
 	}
 	return "<value>"

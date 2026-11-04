@@ -1,0 +1,13 @@
+package main;
+
+// design.md "Destructuring": a static `foreach` over a record binds its directly
+// declared fields, as the runtime form does. A padding field fills no binding.
+
+Padded :: struct { a: int, _: [4]u8, b: int }
+PADDED :: [1]Padded{{a = 1, b = 2}};
+
+main :: proc() {
+	foreach ($a, $b, $c in PADDED) { }
+	foreach ($a, $b in [2]int{1, 2}) { }
+	foreach (($a, $b), $i in [1]int{1}.indexed()) { }
+}

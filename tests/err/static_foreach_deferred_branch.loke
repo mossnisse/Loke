@@ -1,0 +1,19 @@
+package main;
+
+// design.md "Static `foreach` expansion": a `break` or `continue` in a deferred
+// statement targets the expansion like any other, whatever the iterable holds or
+// the loop around it. A loop inside the deferred statement owns its branch.
+
+main :: proc() {
+	foreach ($a in [0]int{}) {
+		defer break;
+	}
+	for (;;) {
+		foreach ($b in [1]int{1}) {
+			defer { if (true) { continue; } }
+		}
+	}
+	foreach ($c in [1]int{1}) {
+		defer { for (;;) { break; } }
+	}
+}

@@ -91,11 +91,16 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (o
 }
 
 // Static `foreach`: each element freezes on its own, so the container never
-// escapes evaluation.
-evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0454") -> (out: []Const_Value, success: bool) {
+// escapes evaluation. The result is the caller's to reorder. A constant is
+// already frozen, and reading its parts runs nothing.
+evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string) -> (out: []Const_Value, success: bool) {
+	if base := expr_base(e); base.is_const && base.const_value.aggregate != nil {
+		out = slice.clone(base.const_value.aggregate.elements, k.c.semantic_allocator)
+		return out, true
+	}
 	ev := Evaluator{k = k, origin = expr_span(e), what = what}
 	defer eval_storage_destroy(&ev.storage)
-	value := eval_root(&ev, e, code, "%s must be compile-time evaluable") or_return
+	value := eval_root(&ev, e, "L0454", "%s must be compile-time evaluable") or_return
 	out = make([]Const_Value, len(value.elements), k.c.semantic_allocator)
 	for element, index in value.elements {
 		out[index] = freeze_result(&ev, element) or_return

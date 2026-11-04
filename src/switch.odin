@@ -317,8 +317,8 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		entry.variant_indices = case_variants(k, subject, entry.values, &seen_variants)
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
-		bind_case(k, &entry, subject, borrows, packed_subject)
 		before := len(k.c.diagnostics)
+		bind_case(k, &entry, subject, borrows, packed_subject)
 		case_flow := check_stmts(k, entry.stmts)
 		if entry.arm != nil {
 			check_expr(k, entry.arm, s.arm_expected)
@@ -422,7 +422,7 @@ bind_case_name :: proc(k: ^Checker, binding: Name, type: Type_Id, is_ref, borrow
 		return INVALID_SYMBOL
 	}
 	outer, owner := lookup_symbol_with_scope(k.scope.parent, name)
-	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
+	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) && binding.text != DISPATCH_PAYLOAD {
 		errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
 		note_shadowed_capture(k, outer)
 	}

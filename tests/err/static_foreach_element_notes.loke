@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Static `foreach` expansion": a diagnostic inside an expansion shows
+// the element, whatever its kind, and its index.
+
+Point :: struct { x: int, name: string }
+Colour :: enum { Red, Green }
+
+main :: proc() {
+	foreach ($field, $index in fields_of(Point).indexed()) {
+		first: int = "descriptor";
+	}
+	foreach ($letter in 'a'..='b') {
+		second: int = "rune";
+	}
+	foreach ($point in [1]Point{{x = 1, name = "p"}}) {
+		third: int = "record";
+	}
+	foreach ($colour in Colour.values()) {
+		fourth: int = "enum";
+	}
+	foreach ($number, $index in [1]int{5}.indexed()) {
+		fifth: int = "pair";
+	}
+	foreach ($text in [1]string{"quoted"}) {
+		sixth: int = "string";
+	}
+}

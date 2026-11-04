@@ -1,0 +1,33 @@
+L0305
+@13:12
+`x` shadows an outer declaration
+L0305
+@14:12
+`x` shadows an outer declaration
+L0305
+@15:12
+`param` shadows an outer declaration
+L0304
+@16:16
+`a` is already declared in this scope
+L0304
+@17:22
+`b` is already declared in this scope
+L0305
+@19:13
+`i` shadows an outer declaration
+L0305
+@27:8
+`variant` shadows an outer declaration
+L0305
+@30:8
+`found` shadows an outer declaration
+L0305
+@34:10
+`p` shadows an outer declaration
+L0304
+@37:10
+`s` is already declared in this scope
+L0304
+@40:10
+`s` is already declared in this scope

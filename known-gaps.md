@@ -7,6 +7,27 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### `or_else break` in a static `foreach` body escapes `L0455`
+
+[Static `foreach` expansion](design.md#static-foreach-expansion) has no `break` or `continue` target
+the expansion, and `L0455` reports one on the written body, but the walk in
+[src/expand.odin](src/expand.odin) follows statements and not the expressions that hold an
+[`or_else` exit](design.md#or_else-expression). So this compiles, and with an element in the array it
+is `L0368`, "only valid inside a loop", even when a runtime loop surrounds the `foreach`:
+
+```loke
+package main;
+next :: proc() -> Option(int) { return .none; }
+main :: proc() {
+	foreach ($a in [0]int{}) {
+		x := next() or_else break;
+		_ = x;
+	}
+}
+```
+
+The fix is to walk expressions too, once the shared `expr_children` walker exists. Found on 2026-11-04.
+
 ### `L0740` reads a generic type's value argument as a type
 
 [Private names in public declarations](design.md#private-names-in-public-declarations) exempts a

@@ -4,6 +4,7 @@
 package lokec
 
 import "base:intrinsics"
+import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:strings"
@@ -849,4 +850,20 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 zero_is_nil :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	zero, ok := zero_const(c, type, false)
 	return ok && zero.kind == .Nil && type_has_zero(c, type)
+}
+
+const_display_text :: proc(c: ^Compiler, value: Const_Value) -> string {
+	#partial switch value.kind {
+	case .Integer, .Rune:
+		return bi_text(c, value.integer)
+	case .Boolean:
+		return value.boolean ? "true" : "false"
+	case .String:
+		return value.text
+	case .Type:
+		return type_name(c, value.type_value)
+	case .Float:
+		return fmt.aprintf("%v", value.float, allocator = c.semantic_allocator)
+	}
+	return "<value>"
 }

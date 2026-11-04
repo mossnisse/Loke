@@ -1,11 +1,11 @@
 package main;
 
 // design.md "Static `foreach` expansion": a `break` or `continue` nested under
-// `else if` or a `switch` case is reported once, not per copy; a slice constant
-// is not a compile-time iterable.
+// `else if` or a `switch` case is reported once, not per copy; a value with no
+// elements is not a compile-time iterable.
 
 A :: [2]int{1, 2};
-S :: []int{1, 2};
+S :: 1;
 
 main :: proc() {
 	foreach ($x in A) {

@@ -208,7 +208,6 @@ descriptor_array :: proc(c: ^Compiler, element: Type_Id, elements: []Const_Value
 	return type, aggregate_const(c, type, elements), true
 }
 
-@(private = "file")
 aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) -> Const_Value {
 	aggregate := new(Const_Aggregate, c.semantic_allocator)
 	aggregate.type = type

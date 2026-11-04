@@ -123,6 +123,14 @@ Flow_Info :: struct {
 
 FLOWS :: Flow_Info{can_fall_through = true}
 
+// `next` runs after what `flow` summarizes.
+flow_then :: proc(flow: ^Flow_Info, next: Flow_Info) {
+	flow.returns ||= next.returns
+	flow.breaks ||= next.breaks
+	flow.continues ||= next.continues
+	flow.can_fall_through = flow.can_fall_through && next.can_fall_through
+}
+
 // Scope, declarations, nominal shells, and import aliases, for whatever is
 // active so far. Every step guards against repeating itself, so a later
 // discovery round only does what a newly selected branch added.

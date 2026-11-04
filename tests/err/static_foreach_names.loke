@@ -1,0 +1,47 @@
+package main;
+
+// design.md "Variable declarations": a static binding and an expanded case's names
+// take the checks of any local, once, whatever the iterable holds.
+
+Pair :: struct { a: int, b: int }
+PAIRS :: [1]Pair{{a = 1, b = 2}};
+Bare :: union { a, b }
+Full :: union { a: int, b: int }
+
+foreach_names :: proc(param: int) {
+	x := 7;
+	foreach ($x in 0..<2) { }
+	foreach ($x in [0]int{}) { }
+	foreach ($param in 0..<2) { }
+	foreach ($a, $a in PAIRS) { }
+	foreach (($a, $b), $b in PAIRS.indexed()) { }
+	foreach ($i in 0..<1) {
+		foreach ($i in 0..<1) { }
+	}
+	foreach ($_, $_ in PAIRS) { }
+}
+
+case_names :: proc(bare: Bare, full: Full) {
+	variant := 7;
+	switch (full) {
+	case $variant(p):
+	}
+	switch (found := full; found) {
+	case $found(p):
+	}
+	p := 7;
+	switch (bare) {
+	case $v(p):
+	}
+	switch (bare) {
+	case $s(s):
+	}
+	switch (full) {
+	case $s(s):
+	}
+	switch (bare) {
+	case $_(_):
+	}
+}
+
+main :: proc() {}

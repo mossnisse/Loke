@@ -16,6 +16,7 @@ main :: proc() {
 	foreach (px, py in points) { fmt.println(px, py); }
 	l := Local(p);
 	lx, ly := l;
+	foreach ($sx, $sy in [1]geom.Point{{x = 5, y = 6}}) { fmt.println(sx, sy); }
 
 	low, high := geom.bounds();
 	fmt.println(p.x, q.x, r.x, x, y, lx, ly, low, high);

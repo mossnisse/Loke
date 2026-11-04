@@ -64,11 +64,7 @@ check_stmt_sequence :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	k.body.following = &following
 	for stmt, index in stmts {
 		following.stmts = stmts[index + 1:]
-		result := check_stmt(k, stmt)
-		flow.returns ||= result.returns
-		flow.breaks ||= result.breaks
-		flow.continues ||= result.continues
-		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
+		flow_then(&flow, check_stmt(k, stmt))
 	}
 	return flow
 }

@@ -20,6 +20,21 @@ checklist.
   takes one by position or named `bytes` ([string type conversions](design.md#string-type-conversions)).
   Any other name, a spread and `inout` were accepted and ignored, and are now `L0561`. Upgrade by
   passing the slice by position.
+- A static `foreach` binding and the names of an expanded case now take the checks of any local
+  ([Variable declarations](design.md#variable-declarations)). `x := 7; foreach ($x in 0..<2)` and
+  `variant := 7; ... case $variant(p):` are `L0305`, also over an empty iterable; `foreach ($a, $a
+  in R)` and `case $s(s):` over a payloadless variant are `L0304`. They compiled, and the last name
+  bound won. Upgrade by renaming the binding.
+- A static `foreach` over a record binds as the runtime form does
+  ([Destructuring](design.md#destructuring)). Over another package's nominal record, `$a, $b` is now
+  `L0708`; it compiled and relied on a field order that package may change. A padding field no
+  longer counts, so over `struct { a: int, _: [4]u8, b: int }`, `$a, $b` now compiles, and each name
+  takes the field it names. Upgrade by binding the whole value and selecting its fields by name.
+- `break` or `continue` in a `defer` inside a static `foreach` body is `L0455` however many elements
+  the iterable has ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over an empty
+  iterable it compiled, and otherwise it was `L0368`, "only valid inside a loop", even inside one.
+  Upgrade by deleting it, since a deferred statement cannot leave its construct.
+
 - A file-scope `when` now waits for a branch that may shadow a predeclared name it reads, directly or
   through a declaration ([when statement](design.md#when-statement)). A condition that read a
   predeclared `string` and took one branch, while another `when` declared `string`, now reads that
@@ -1493,6 +1508,19 @@ checklist.
 - `v <<= -1` on an unsigned vector reports `L0352` once, as `v << -1` does, and not `L0356` as well.
 - A negative `Simd` lane count now says that it is negative, and a zero one that a lane count is a
   power of two from 1.
+- A static `foreach` takes any compile-time slice, as
+  [Static `foreach` expansion](design.md#static-foreach-expansion) says: `K :: ARR[:]`,
+  `K :: []int{1, 2}` and a `[]int{1, 2}` literal were `L0454` unless written `ARR[:]` in the header.
+- A note in a static expansion shows every element
+  ([Static `foreach` expansion](design.md#static-foreach-expansion)). `fields_of(T).indexed()` and a
+  record said `<value>`, an enum member its number, and a rune its code point; they now say `name`,
+  `Point{1, "p"}`, `Red` and `'a'`. A string is quoted, and a rune in a generic instance's name
+  prints as one.
+- `open(..a).handle(..b)` compiles ([Union argument expansion](design.md#union-argument-expansion)):
+  a spread in the callee's receiver reported `L0305` for `dispatch$payload`, a name the program
+  never wrote.
+- A diagnostic in binding an expanded case's copy names its variant, as one in its body does
+  ([Per-variant switch cases](design.md#per-variant-switch-cases)).
 - A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
   map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
   ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a

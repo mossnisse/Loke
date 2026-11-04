@@ -50,7 +50,6 @@ clone_exprs :: proc(c: ^Compiler, list: []Expr) -> []Expr {
 	return out
 }
 
-@(private = "file")
 clone_stmts :: proc(c: ^Compiler, list: []Stmt) -> []Stmt {
 	out := clone_slice(c, list)
 	for entry, index in list {
