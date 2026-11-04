@@ -326,3 +326,59 @@ session_incremental_syntax_errors_follow_loading_order :: proc(t: ^testing.T) {
 	testing.expect(t, len(session_check_stats(&s).reused_packages) > 0, "the edit checked fully")
 	testing.expect_value(t, len(s.compiler.diagnostics), 2)
 }
+
+// Editing one file of a package rebinds its siblings' imports and `parallel`
+// edge, and editing two at once settles their selection on the final syntax.
+@(test)
+session_incremental_rebinds_an_edited_multi_file_package :: proc(t: ^testing.T) {
+	root := session_fixture(t, "incremental-multi-file")
+	if root == "" { return }
+	defer remove_tree(root)
+	for name in ([]string{"lib", "dep"}) {
+		if !testing.expect(t, os.make_directory_all(join_path({root, name}, context.temp_allocator)) == nil) { return }
+	}
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	first := join_path({root, "lib", "first.loke"}, context.temp_allocator)
+	second := join_path({root, "lib", "second.loke"}, context.temp_allocator)
+	first_text := `@(public) package lib; import "../dep";
+when (dep.WIDE) { one :: proc() -> int { return dep.WIDTH; } } else { one :: proc() -> int { return 0; } }`
+	second_text := `@(public) package lib; import d "../dep";
+two :: proc() -> int { parallel { } return d.WIDTH; }`
+	if !write_session_source(t, path, `package main; import "lib"; main :: proc() { assert(lib.one() == lib.two()); }`) ||
+	   !write_session_source(t, first, first_text) ||
+	   !write_session_source(t, second, second_text) ||
+	   !write_session_source(t, join_path({root, "dep", "dep.loke"}, context.temp_allocator), "@(public) package dep; WIDE :: true; WIDTH :: 64;") { return }
+	config := session_test_config()
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, config)) { return }
+	expect_session_matches_fresh(t, &s, path, config, true)
+	dep := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "dep"}, context.temp_allocator)))]
+	for edit in 0 ..< 3 {
+		if edit != 1 && !write_session_source(t, first, strings.concatenate({first_text, "\nextra :: 1;"}, context.temp_allocator) if edit == 0 else first_text) { return }
+		if edit != 0 && !write_session_source(t, second, strings.concatenate({second_text, "\nother :: 2;"}, context.temp_allocator)) { return }
+		expect_session_matches_fresh(t, &s, path, config, true)
+		testing.expectf(t, slice.contains(session_check_stats(&s).reused_packages, dep), "edit %d did not reuse the dependency", edit)
+	}
+}
+
+@(test)
+when_holds_dependency_looks_inside_every_branch :: proc(t: ^testing.T) {
+	Case :: struct { source: string, imports: int, holds: bool }
+	cases := []Case {
+		{`package p; import "a"; import b "c"; when (true) { X :: 1; } else { Y :: 2; }`, 2, false},
+		{`package p; when (true) { import "a"; }`, 1, true},
+		{`package p; when (true) { X :: 1; } else { import "a"; }`, 1, true},
+		{`package p; when (true) { X :: 1; } else when (false) { Y :: 2; } else { import "a"; }`, 1, true},
+		{`package p; when (true) { when (false) { import "a"; } }`, 1, true},
+		{`package p; f :: proc() { parallel { } } when (true) { X :: 1; }`, 0, false},
+		{`package p; when (true) { X :: 1; } else { f :: proc() { parallel { } } }`, 0, true},
+	}
+	for entry in cases {
+		p: Checked
+		defer destroy_checked(&p)
+		parse_source(&p, entry.source)
+		testing.expectf(t, len(p.f.imports) == entry.imports, "%s: %d imports", entry.source, len(p.f.imports))
+		testing.expectf(t, when_holds_dependency(&p.f) == entry.holds, "%s", entry.source)
+	}
+}

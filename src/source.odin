@@ -122,6 +122,11 @@ display_path :: proc(path: string) -> string {
 
 // Registers source text; `owned` is freed with the compilation.
 add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
+	append(&c.sources, make_source(c, path, text, owned))
+	return u32(len(c.sources) - 1)
+}
+
+make_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> Source {
 	context.allocator = c.semantic_allocator if c.package_cache != nil else context.allocator
 	starts := make([dynamic]u32)
 	append(&starts, 0)
@@ -130,8 +135,7 @@ add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
 			append(&starts, u32(i + 1))
 		}
 	}
-	append(&c.sources, Source{path = path, text = text, owned_text = owned, line_starts = starts[:], comments = make([dynamic]Span)})
-	return u32(len(c.sources) - 1)
+	return Source{path = path, text = text, owned_text = owned, line_starts = starts[:], comments = make([dynamic]Span)}
 }
 
 valid_utf8 :: proc(text: string) -> (valid: bool, bad_offset: u32) {

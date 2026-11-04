@@ -684,53 +684,6 @@ What remains needs a helper shared with `generic.odin`.
 
 - [impl.odin:209](src/impl.odin#L209) and [generic.odin:3677](src/generic.odin#L3677): duplicate and field checks, plus the `Symbol` literal at [impl.odin:240](src/impl.odin#L240) and [generic.odin:3693](src/generic.odin#L3693), differ only in `pkg` and subject. Share `impl_member_clash(k, subject, name)` and `new_impl_member(k, d, name, subject, pkg)`. (about 25 lines)
 
-### src/incremental.odin
-
-Sound: tracing rewinds, eviction, boundary contents across repeated edits and the arena watermark logic turned up no bug. The room is in three item walkers for facts the parser could record, one 123-line procedure with clear seams, and comments that restate `compiler-architecture.md`.
-
-**Simplification**
-
-- [incremental.odin:70](src/incremental.odin#L70) `selects_imports`, `selects_parallel_by_when`, `collect_file_imports`: three walkers, called as a pair at lines 63-64 and 180-182. Have the parser record `File.imports` as it does `File.parallels` ([parser.odin:1928](src/parser.odin#L1928)); one loop over top-level `Item_When`s tests both lists against its span, and lines 189-192 and 350-352 read the list. (about 25 lines)
-- [incremental.odin:79](src/incremental.odin#L79) `selects_imports`: if the walker stays, pass `branches[:]` alone. A nil `Item` matches no case of the `#partial switch`, as `validate_item_attributes` already relies on ([attributes.odin:282](src/attributes.odin#L282)).
-- [incremental.odin:105](src/incremental.odin#L105) `check_static_packages`: `cache` is bound only for its nil test and line 124 fetches it again. Write `if k.c.package_cache != nil && k.c.error_count == 0`.
-- [incremental.odin:294](src/incremental.odin#L294) `try_incremental_check`: the reverse index loop can be `for &entry in cache.entries[checkpoint_index + 1:] { discard_checkpoint(cache, &entry) }`; discarding only decrements the arena's temp count, so order does not matter. (about 2 lines)
-- [incremental.odin:331](src/incremental.odin#L331) `try_incremental_check`: `add_source`, copy, `pop` exists only to reuse the line-start scan. Split that scan out of [source.odin:530](src/source.odin#L530) as `make_source` returning a `Source`, then `c.sources[file.file] = make_source(c, path, text)`. (about 2 lines)
-- [incremental.odin:343](src/incremental.odin#L343) `try_incremental_check`: the second loop and the `edited` map go away if the first loop (line 319) resets the package's edges and bound flags, and the reparse loop calls `rebuild_active_items(c, entry.pkg)`, which keeps an unchanged view. Both are idempotent. (about 5 lines)
-
-**Dead code**
-
-- (branch) [incremental.odin:347](src/incremental.odin#L347): `pkg.bound_aliases = 0` is a no-op. Only `prepare_package` sets it ([check.odin:203](src/check.odin#L203)), a boundary is taken before its package is prepared, and every edited package lies at or after the boundary, so the restored value is already 0.
-- (branch) [incremental.odin:91](src/incremental.odin#L91): `selects_parallel_by_when` is only ever given `File.items`, and `parse_top_level_item` ([parser.odin:561](src/parser.odin#L561)) never returns an `Item_Block`; one exists only as a `when` branch, which this procedure does not enter.
-- (branch) [incremental.odin:206](src/incremental.odin#L206): `collect_file_imports` is unreachable on `Item_Block` for the same reason, since it does not descend into `Item_When`.
-- `session_check_stats` ([incremental.odin:17](src/incremental.odin#L17)): not dead, but its only callers are `incremental_test.odin`, `session_test.odin` and `lsp/server_test.odin`. It is documented API; `Compilation_Check_Stats`, `stats_arena` and lines 365-367 exist solely to serve it.
-
-**Data structures and algorithms**
-
-- [incremental.odin:258](src/incremental.odin#L258) `try_incremental_check`: `texts` is a map keyed by dense source indices. `make([]string, len(c.sources), context.temp_allocator)` indexes directly, once per loaded file per check, with no hashing and no extra lines. Minor.
-
-**Near copies**
-
-- [incremental.odin:334](src/incremental.odin#L334) and [packages.odin:232](src/packages.odin#L232): both lex, allocate a `File`, parse into the semantic allocator and delete the tokens. Extract `parse_source(c, index) -> ^File` from `parse_file`; the replacement becomes one call. (about 3 lines)
-- [incremental.odin:94](src/incremental.odin#L94) and [packages.odin:331](src/packages.odin#L331): the same test of `parallels` offsets against a span. Share `parallel_within(parallels, span)`.
-
-**Structure and boundaries**
-
-- [incremental.odin:247](src/incremental.odin#L247) `try_incremental_check`: 123 lines doing four jobs with seams already marked by blank lines and comments: compare inputs (251-279), `restore_checkpoint` (291-310), `reparse_edited_files` (312-342), `rebind_edited_packages` (343-357). The function that remains reads as the pipeline.
-- [incremental.odin:60](src/incremental.odin#L60) and [incremental.odin:103](src/incremental.odin#L103): `static_package_graph` and `check_static_packages` are the batch pipeline too, called from `compile_program` ([packages.odin:34](src/packages.odin#L34)); only the checkpoint hook at line 105 is incremental. They belong in `packages.odin`, leaving this file what the source-code map says it owns.
-
-**Comments**
-
-About 12 lines can go across the file, mostly text repeating `compiler-architecture.md` "Incremental checking".
-
-- [incremental.odin:54](src/incremental.odin#L54): shorten to: a file-scope `when` changes the graph only if it selects an `import` or a `parallel` (hence `core:thread`); one selecting declarations settles with its own package.
-- [incremental.odin:177](src/incremental.odin#L177): delete; the parameter names and the one call say it.
-- [incremental.odin:181](src/incremental.odin#L181) and [incremental.odin:188](src/incremental.odin#L188): delete; the first repeats lines 85-86 and the second narrates the loop below it.
-- [incremental.odin:280](src/incremental.odin#L280): `// Checkpoints stop at errors, so an edit after one restarts there.`
-- [incremental.odin:286](src/incremental.odin#L286): `// A batch reports syntax errors before any warning (compiler-architecture.md "Incremental checking").`
-- [incremental.odin:291](src/incremental.odin#L291): drop the last clause's restatement of [session.odin:29](src/session.odin#L29): keep `Rewind exactly, including mutations to earlier types, generic templates, registries and syntax.`
-- [incremental.odin:323](src/incremental.odin#L323): `// In loading order (source indices), as a batch reports syntax diagnostics.`
-- [incremental.odin:360](src/incremental.odin#L360): move to the early return at line 126 as `// A rewind keeps its pre-edit boundary: recapturing after reparsing would accumulate obsolete syntax.` The middle sentence narrates lines 315-318.
-
 ### src/interface.odin
 
 What remains is the part shared with `erased.odin` and `generic.odin`.

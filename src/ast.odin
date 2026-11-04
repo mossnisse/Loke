@@ -1341,6 +1341,9 @@ File :: struct {
 	// `items` with selected `when` branches flattened in, in source order. The
 	// checker reads this; `-dump-ast` prints `items`.
 	active_items: []Item,
+	// Every `import` the file writes, at file scope or in a `when` branch, in
+	// source order.
+	imports:        []^Item_Import,
 	// Where each `parallel` keyword is. A block's hidden scope is a
 	// `core:thread` type, so that package is a dependency of a file whose
 	// selected items hold one; `parallel_bound` once import discovery has

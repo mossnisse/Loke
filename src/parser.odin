@@ -48,6 +48,7 @@ Parser :: struct {
 	// A type or literal an argument's type probe already parsed, handed to the
 	// expression reparse so nested ones are not parsed exponentially.
 	probed:         Probed_Literal,
+	imports:        [dynamic]^Item_Import,
 	parallels:      [dynamic]u32, // each `parallel` keyword's offset
 	earlier_spellings: [dynamic]Earlier_Spelling,
 	accept_earlier_spellings: bool, // `-migrate`, which rewrites them
@@ -74,6 +75,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 		file      = file,
 		tokens    = tokens,
 		allocator = allocator,
+		imports   = make([dynamic]^Item_Import, 0, 0, allocator),
 		parallels = make([dynamic]u32, 0, 0, allocator),
 		earlier_spellings = make([dynamic]Earlier_Spelling, 0, 0, allocator),
 		accept_earlier_spellings = accept_earlier_spellings,
@@ -81,6 +83,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 	tag_written_move_only(&p)
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
+	result.imports = p.imports[:]
 	result.parallels = p.parallels[:]
 	result.earlier_spellings = p.earlier_spellings[:]
 	return result
@@ -684,6 +687,7 @@ parse_import :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item 
 	advance(p) // `import`
 
 	item := ast_new(p, Item_Import)
+	append(&p.imports, item)
 	item.attributes = attributes
 	if at(p, .Ident) {
 		item.alias = name_of(p, advance(p))

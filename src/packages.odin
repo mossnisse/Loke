@@ -73,6 +73,62 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	return root, c.error_count == 0
 }
 
+// A file-scope `when` changes the package graph only if it selects an `import`
+// or a `parallel` (hence `core:thread`); one selecting declarations settles with
+// its own package.
+@(private = "file")
+static_package_graph :: proc(c: ^Compiler) -> bool {
+	if any_provider_selected(c) {
+		return false
+	}
+	for file in c.parsed_files {
+		if when_holds_dependency(file) {
+			return false
+		}
+	}
+	return true
+}
+
+// Whether a file-scope `when` holds an `import` or a `parallel`.
+@(private)
+when_holds_dependency :: proc(file: ^File) -> bool {
+	for item in file.items {
+		v, is_when := item.(^Item_When)
+		if !is_when {
+			continue
+		}
+		if parallel_within(file.parallels, v.span) {
+			return true
+		}
+		for imported in file.imports {
+			if imported.span.lo >= v.span.lo && imported.span.lo < v.span.hi {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+@(private)
+check_static_packages :: proc(k: ^Checker, order: []Package_Id, start: int) {
+	for index in start ..< len(order) {
+		if k.c.package_cache != nil && k.c.error_count == 0 {
+			cache_package_checkpoint(k.c, index)
+		}
+		id := order[index]
+		prepare_package(k, id)
+		// The package's own selection fixed point. Every package it imports is
+		// already settled, and no branch adds an import.
+		for activate_when_items(k, package_of(k.c, id)) {
+			rebuild_active_items(k.c, package_of(k.c, id))
+			prepare_package(k, id)
+		}
+		report_stalled_whens(k, package_of(k.c, id))
+		check_package_bodies(k, id)
+		check_pending_impl_instances(k)
+	}
+}
+
 // The whole-program analyses that follow checking every body. The emission
 // boundary requires the completion fact this records.
 finish_program_analysis :: proc(k: ^Checker) {
@@ -247,6 +303,13 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 	if !loaded {
 		return nil, false
 	}
+	file := parse_loaded_source(c, index)
+	append(&c.parsed_files, file)
+	return file, true
+}
+
+@(private)
+parse_loaded_source :: proc(c: ^Compiler, index: u32) -> ^File {
 	tokens := lex(c, index)
 	defer delete(tokens)
 	// Incremental syntax joins the checkpointed arena; batch files own theirs.
@@ -254,8 +317,7 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 	if c.package_cache != nil { syntax = c.semantic_allocator }
 	file := new(File, syntax if c.package_cache != nil else context.allocator)
 	file^ = parse(c, index, tokens, syntax)
-	append(&c.parsed_files, file)
-	return file, true
+	return file
 }
 
 // ---------------------------------------------------------------- discovery --
@@ -342,11 +404,18 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 @(private = "file")
 selects_parallel :: proc(file: ^File) -> bool {
 	for item in file.active_items {
-		span := item_span(item)
-		for offset in file.parallels {
-			if offset >= span.lo && offset < span.hi {
-				return true
-			}
+		if parallel_within(file.parallels, item_span(item)) {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+parallel_within :: proc(parallels: []u32, span: Span) -> bool {
+	for offset in parallels {
+		if offset >= span.lo && offset < span.hi {
+			return true
 		}
 	}
 	return false
