@@ -847,35 +847,16 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (out: Eval_Value, success:
 // applies it to the unwrapped value too.
 @(private = "file")
 eval_unary_value :: proc(ev: ^Evaluator, op: Token_Kind, site: Span, value: Const_Value, type: Type_Id) -> (Eval_Value, bool) {
-	folded: Const_Value
 	#partial switch op {
-	case .Plus:
-		folded = value
-	case .Minus:
-		if value.kind == .Float {
-			folded = float_const(-value.float, value.float_bits)
-		} else {
-			folded = Const_Value{kind = value.kind, integer = bi_neg(ev.alloc, value.integer)}
-		}
-	case .Tilde:
-		if value.kind == .Boolean {
-			folded = bool_const(!value.boolean)
-		} else {
-			folded = Const_Value{kind = value.kind, integer = bi_not(ev.alloc, value.integer)}
-		}
-	case .Not:
-		folded = bool_const(!value.boolean)
+	case .Plus, .Minus, .Tilde, .Not:
 	case:
 		eval_fail(ev, site, "L0341", "`%s` has no compile-time meaning", operator_text(op))
 		return Eval_Value{}, false
 	}
-	if folded.kind == .Integer || folded.kind == .Rune {
-		if op == .Minus && !integer_fits(ev.k.c, folded.integer, type) {
-			report_integer_overflow(ev.k.c, site, folded.integer, type, ev.alloc)
-			eval_fold_failed(ev)
-			return Eval_Value{}, false
-		}
-		folded.integer = wrap_to_type(ev.k.c, folded.integer, type, ev.alloc)
+	folded, ok := fold_unary(ev.k.c, op, site, value, type, ev.alloc)
+	if !ok {
+		eval_fold_failed(ev)
+		return Eval_Value{}, false
 	}
 	return scalar(folded, type), true
 }

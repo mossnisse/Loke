@@ -1047,10 +1047,7 @@ source_location_const :: proc(k: ^Checker, type: Type_Id, span: Span, procedure:
 	elements[1] = string_const(procedure)
 	elements[2] = int_const(k.c, i64(line))
 	elements[3] = int_const(k.c, i64(column))
-	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-	aggregate.type = type
-	aggregate.elements = elements
-	return Const_Value{kind = .Aggregate, aggregate = aggregate}
+	return aggregate_const(k.c, type, elements)
 }
 
 @(private = "file")

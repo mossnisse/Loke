@@ -574,13 +574,11 @@ reject_incomplete_variant :: proc(k: ^Checker, sel: ^Expr_Selector) {
 }
 
 union_const :: proc(c: ^Compiler, union_type: Type_Id, index: int, payload: Const_Value) -> Const_Value {
-	aggregate := new(Const_Aggregate, c.semantic_allocator)
-	aggregate.type = union_type
-	aggregate.variant = index
 	elements := make([]Const_Value, 1, c.semantic_allocator)
 	elements[0] = payload
-	aggregate.elements = elements
-	return Const_Value{kind = .Aggregate, aggregate = aggregate}
+	value := aggregate_const(c, union_type, elements)
+	value.aggregate.variant = index
+	return value
 }
 
 // ---------------------------------------------------------------- inspection --

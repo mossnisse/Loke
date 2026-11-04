@@ -105,10 +105,7 @@ type_requires_results_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk
 capacity_const :: proc(c: ^Compiler, type: Type_Id) -> Const_Value {
 	info := underlying_info(c, type)
 	elements := make([]Const_Value, info.count, c.semantic_allocator)
-	aggregate := new(Const_Aggregate, c.semantic_allocator)
-	aggregate.type = type
-	aggregate.elements = elements
-	return Const_Value{kind = .Aggregate, aggregate = aggregate}
+	return aggregate_const(c, type, elements)
 }
 
 // Constant construction is held to the evaluator's scratch budget, counted as
@@ -221,10 +218,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		for &slot in elements {
 			slot = element
 		}
-		aggregate := new(Const_Aggregate, c.semantic_allocator)
-		aggregate.type = type
-		aggregate.elements = elements
-		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
+		return aggregate_const(c, type, elements), true
 	case .Struct, .Dyn, .Dynamic_Array, .Map:
 		// A record containing itself by value was already reported and has no
 		// zero value to build.
@@ -258,10 +252,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		if !build {
 			return Const_Value{kind = .Aggregate}, true
 		}
-		aggregate := new(Const_Aggregate, c.semantic_allocator)
-		aggregate.type = type
-		aggregate.elements = elements
-		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
+		return aggregate_const(c, type, elements), true
 	}
 	return Const_Value{}, false
 }

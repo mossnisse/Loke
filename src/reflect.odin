@@ -208,13 +208,6 @@ descriptor_array :: proc(c: ^Compiler, element: Type_Id, elements: []Const_Value
 	return type, aggregate_const(c, type, elements), true
 }
 
-aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) -> Const_Value {
-	aggregate := new(Const_Aggregate, c.semantic_allocator)
-	aggregate.type = type
-	aggregate.elements = elements
-	return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}
-}
-
 // ------------------------------------------------------------- checking --
 
 check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {

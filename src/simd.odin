@@ -242,10 +242,7 @@ fold_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary) {
 
 @(private = "file")
 set_simd_const :: proc(k: ^Checker, base: ^Expr_Base, elements: []Const_Value) {
-	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-	aggregate.type = base.type
-	aggregate.elements = elements
-	base.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+	base.const_value = aggregate_const(k.c, base.type, elements)
 }
 
 // A scalar operand splats. Materialising it at the vector type makes a written

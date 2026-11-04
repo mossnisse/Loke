@@ -85,6 +85,13 @@ float_const :: proc(value: f64, bits: u16) -> Const_Value {
 	return Const_Value{kind = .Float, float = rounded, float_bits = bits, float_raw = float_pattern(rounded, bits)}
 }
 
+aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value, allocator: mem.Allocator = {}) -> Const_Value {
+	aggregate := new(Const_Aggregate, value_allocator(c, allocator))
+	aggregate.type = type
+	aggregate.elements = elements
+	return Const_Value{kind = .Aggregate, aggregate = aggregate}
+}
+
 // The `unsafe.transmute` direction: exact bits in, the nearest `f64` view of
 // them alongside for every ordinary constant operation.
 float_bits_const :: proc(raw: u64, bits: u16) -> Const_Value {
@@ -188,6 +195,46 @@ fold_arithmetic :: proc(
 	}
 	errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 	return Const_Value{}, false
+}
+
+// A scalar unary operator, or one lane of a vector's. `~` on a boolean is a mask
+// lane's.
+fold_unary :: proc(
+	c: ^Compiler,
+	op: Token_Kind,
+	op_span: Span,
+	value: Const_Value,
+	type: Type_Id,
+	allocator: mem.Allocator = {},
+) -> (Const_Value, bool) {
+	storage := value_allocator(c, allocator)
+	folded: Const_Value
+	#partial switch op {
+	case .Plus:
+		folded = value
+	case .Minus:
+		if value.kind == .Float {
+			folded = float_const(-value.float, value.float_bits)
+		} else {
+			folded = Const_Value{kind = value.kind, integer = bi_neg(storage, value.integer)}
+		}
+	case .Tilde:
+		if value.kind == .Boolean {
+			folded = bool_const(!value.boolean)
+		} else {
+			folded = Const_Value{kind = value.kind, integer = bi_not(storage, value.integer)}
+		}
+	case .Not:
+		folded = bool_const(!value.boolean)
+	}
+	if const_is_integral(folded) {
+		if op == .Minus && !integer_fits(c, folded.integer, type) {
+			report_integer_overflow(c, op_span, folded.integer, type, storage)
+			return {}, false
+		}
+		folded.integer = wrap_to_type(c, folded.integer, type, storage)
+	}
+	return folded, true
 }
 
 @(private = "file")
@@ -671,7 +718,7 @@ const_from_storage :: proc(c: ^Compiler, storage: mem.Allocator, bytes: []u8, wr
 		}
 		aggregate.type = type
 		aggregate.elements = elements
-		return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}, .Folded
+		return Const_Value{kind = .Aggregate, aggregate = aggregate}, .Folded
 	}
 	return {}, .Unfoldable
 }
@@ -807,10 +854,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			elements[index] = converted
 		}
-		aggregate := new(Const_Aggregate, storage)
-		aggregate.type = target
-		aggregate.elements = elements
-		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
+		return aggregate_const(c, target, elements, storage), true
 	case .Struct, .Array, .Union, .Dynamic_Array, .Map:
 		return retype_aggregate(c, value, target, explicit, storage)
 	}

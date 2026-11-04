@@ -547,8 +547,5 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields:
 		}
 		element = zero
 	}
-	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-	aggregate.type = target
-	aggregate.elements = elements
-	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+	v.const_value = aggregate_const(k.c, target, elements)
 }

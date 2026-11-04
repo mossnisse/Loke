@@ -212,10 +212,7 @@ check_enum_values :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id) {
 	for member, index in fields {
 		members[index] = symbol_of(k.c, member).const_value
 	}
-	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-	aggregate.type = array_of(k.c, subject, u64(len(members)))
-	aggregate.elements = members
-	v.type = aggregate.type
-	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+	v.type = array_of(k.c, subject, u64(len(members)))
+	v.const_value = aggregate_const(k.c, v.type, members)
 	v.immutable = .Constant
 }

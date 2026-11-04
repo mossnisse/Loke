@@ -1860,42 +1860,18 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	v.const_value = folded
 }
 
-// One operand's folded operator at `type`: a scalar, or one lane of a vector.
+// `fold_unary` for the checker, whose float constants keep a decimal spelling.
+// It follows the sign, so `-(-x)` still rounds once.
 fold_unary_const :: proc(k: ^Checker, op: Token_Kind, op_span: Span, value: Const_Value, type: Type_Id) -> (Const_Value, bool) {
-	folded: Const_Value
-	#partial switch op {
-	case .Plus:
-		folded = value
-	case .Minus:
-		if value.kind == .Float {
-			// The decimal spelling follows the sign, so `-(-x)` still rounds once.
-			folded = float_const(-value.float, value.float_bits)
-			if value.text != "" && value.text[0] == '-' {
-				folded.text = value.text[1:]
-			} else if value.text != "" {
-				folded.text = strings.concatenate({"-", value.text}, k.c.semantic_allocator)
-			}
+	folded, ok := fold_unary(k.c, op, op_span, value, type)
+	if ok && op == .Minus && value.kind == .Float && value.text != "" {
+		if value.text[0] == '-' {
+			folded.text = value.text[1:]
 		} else {
-			folded = Const_Value{kind = value.kind, integer = bi_neg(k.c, value.integer)}
+			folded.text = strings.concatenate({"-", value.text}, k.c.semantic_allocator)
 		}
-	case .Tilde:
-		// `~` on a boolean is a mask lane's.
-		if value.kind == .Boolean {
-			folded = bool_const(!value.boolean)
-		} else {
-			folded = Const_Value{kind = value.kind, integer = bi_not(k.c, value.integer)}
-		}
-	case .Not:
-		folded = bool_const(!value.boolean)
 	}
-	if folded.kind == .Integer || folded.kind == .Rune {
-		if op == .Minus && !integer_fits(k.c, folded.integer, type) {
-			report_integer_overflow(k.c, op_span, folded.integer, type)
-			return {}, false
-		}
-		folded.integer = wrap_to_type(k.c, folded.integer, type)
-	}
-	return folded, true
+	return folded, ok
 }
 
 @(private = "file")
