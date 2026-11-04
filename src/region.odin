@@ -97,7 +97,7 @@ provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]b
 	// design.md "Shared ownership": any strong handle may be the last, whose end
 	// ends the payload. A `Weak` one keeps no payload.
 	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
-		return info.instance_of == c.shared_symbol && provider_reach_walk(c, payload, visited)
+		return type_info_is_shared(c, info) && provider_reach_walk(c, payload, visited)
 	}
 	#partial switch info.kind {
 	case .Struct:

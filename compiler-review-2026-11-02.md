@@ -467,15 +467,6 @@ No bugs found: the rounding, shift, wrap and range logic held up against `core:m
 - [bigint.odin:330](src/bigint.odin#L330): delete; it restates the signature.
 - [bigint.odin:494](src/bigint.odin#L494): end at "fraction was dropped."; the `1.0` and `1.5` examples add nothing.
 
-### src/bootstrap.odin
-
-Small and sound, with no behavior bugs found. What remains is shared with sibling files.
-
-**Near copies**
-
-- [bootstrap.odin:121](src/bootstrap.odin#L121), [check_expr.odin:2935](src/check_expr.odin#L2935), [union.odin:344](src/union.odin#L344) and [zero.odin:46](src/zero.odin#L46): the last three spell `instance_of != INVALID_SYMBOL && instance_of == shared_symbol`. A small `type_info_is_shared(c, info)` here would give them one form.
-- [bootstrap.odin:58](src/bootstrap.odin#L58), [atomics.odin:25](src/atomics.odin#L25) and [check_builtin.odin:1492](src/check_builtin.odin#L1492): only this site has `base:runtime` in hand; the others scan `c.packages` for its key on a lookup. Recording the id in `load_runtime_bootstrap` (`packages.odin:98`) would remove both loops.
-
 ### src/borrow.odin (part 1 of 3)
 
 Lines 1-2376 hold the shared vocabulary (roots, paths, carrier shapes, region sets, summaries) and the summary pass. The logic is careful but repeats small patterns, and two walks over types have no bound; three bugs were reproduced with the built `lokec.exe`.

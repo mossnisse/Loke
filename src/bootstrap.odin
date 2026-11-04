@@ -94,6 +94,11 @@ type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	       (info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol)
 }
 
+// An instance of `Shared(T)`, the strong handle, given its underlying info.
+type_info_is_shared :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	return info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol
+}
+
 // The payload type of a `Shared(T)` or `Weak(T)`, or INVALID_TYPE. The record
 // holds its block as a `rawptr`, so the compiler supplies what the handle
 // carries: its payload's borrows (design.md "Values that contain borrows").

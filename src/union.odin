@@ -252,7 +252,7 @@ type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	case .Pointer, .Proc, .Dyn, .CString_View, .Box:
 		return true
 	case .Struct:
-		return info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol
+		return type_info_is_shared(c, info)
 	}
 	return false
 }
