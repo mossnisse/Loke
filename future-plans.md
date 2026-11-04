@@ -93,8 +93,7 @@ Implementation order:
 3. Add the testing and binary/text facilities those programs actually require.
    Introduce `core:bytes`, buffered I/O, or further encodings only when a
    caller establishes their contracts, as `core:time`, `core:random`, and
-   `core:encoding/json` were. Typed binary fields and checksums are designed in
-   the [binary data proposal](binary-data-proposal-2026-11-04.md#summary).
+   `core:encoding/json` were.
 4. For every public API, add an example and the applicable allocator-failure,
    cleanup, Unicode, short-I/O, and platform-conformance cases from
    [Standard-library verification](compiler-architecture.md#standard-library-verification).
@@ -129,6 +128,16 @@ complex elements through `linalg.Scalar`.
 [`core:math/geometry`](standard-library.md#coremathgeometry) has the exact
 predicates, the shapes with their point queries, rays, culling, and
 transforms, polygons, and the measured `Simd` path of the `f32` box cast.
+
+[`core:encoding/binary`](standard-library.md#coreencodingbinary) and
+[`core:checksum`](standard-library.md#corechecksum) leave these for a caller, each of
+which fits on top without changing their API: buffered streams, which need their own
+contract for a `drop` that cannot report a failed flush and which `Writer(W)` will
+accept unchanged; bulk typed arrays, `get_all(destination: []mut T)` and its inverse,
+as a measured optimization with a host-order fast path; variable-length integers and
+bit fields, which are separate encodings with their own failure modes; a tee adapter;
+`combine` for CRCs, which matters for parallel checksums; and carry-less
+multiplication and the SSE4.2 CRC-32C instruction.
 
 `core:math/linalg` adds, with a caller: structure-of-arrays batch transforms,
 a vector a lane rather than a component a lane, measured against

@@ -6,6 +6,9 @@ import "core:fmt";
 import "core:fs";
 import "core:io";
 import "core:math";
+import "core:os";
+import "core:path";
+import "core:strings";
 
 // `binary.Writer` (standard-library "Writing fields"). A scripted sink stands in
 // for the streams a real program would meet: it takes at most `most` bytes a call,
@@ -296,6 +299,15 @@ offset_space :: proc() {
 	}
 }
 
+// A file under the system's temporary directory, so that a run leaves the working
+// directory alone.
+temporary :: proc(name: string_view) -> Result(string, io.Error) {
+	switch (os.get_environment("TEMP") or_return) {
+	case .some(base): return .ok(path.join([]string_view{base, name}));
+	case .none:       return .ok(strings.copy(name));
+	}
+}
+
 // ---- sinks
 
 sinks :: proc() -> Status(io.Error) {
@@ -322,16 +334,16 @@ sinks :: proc() -> Status(io.Error) {
 	fmt.println(n.offset(), d.offset(), chosen.bytes());
 
 	// A file, read back.
-	path := "lib_binary_writer.tmp";
-	defer _ = fs.remove(path);
+	name := temporary("loke_lib_binary_writer.tmp") or_return;
+	defer _ = fs.remove(name);
 	{
-		file := fs.create(path) or_return;
+		file := fs.create(name) or_return;
 		f := binary.writer(&mut file, .Big);
 		f.put(u16(0x0102)) or_return;
 		f.fill(2, 9) or_return;
 		file.close() or_return;
 	}
-	back := fs.read_bytes(path) or_return;
+	back := fs.read_bytes(name) or_return;
 	fmt.println(back);
 
 	// The order can change between fields.

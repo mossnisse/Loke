@@ -2810,6 +2810,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 	checks := []Entry {
 		{"aliasing",       .Output},
 		{"arena_pipeline", .Output},
+		{"binary_records", .Output},
 		{"channels",       .Output},
 		{"compile_time",   .Output},
 		{"config_parser",  .Output},
