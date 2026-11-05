@@ -442,13 +442,17 @@ touches no element, and `hook(drop)` and `hook(copy)` own the elements.
 
 A `[dynamic]T` is the right holder rather than a bare `[^]T`, because
 [a `[^]T` field carries no provenance](design.md#values-that-contain-borrows).
-With `[dynamic]T`, a borrow stored in an element is still tracked (keeping
-`&local` in an outer deque past `local`'s end is `L0513`), an allocator reset
-still sees the storage, and zero-sized elements need no special case.
+With `[dynamic]T` and the `@(escape=stored)` insertion parameters, a borrow
+stored in an element is tracked (keeping `&local` in an outer deque past
+`local`'s end is `L0513`), an allocator reset still sees the storage, and
+zero-sized elements need no special case. Reads and transfers must also keep
+that provenance, through the [slot views below](#lending-elements).
 
 Elements move in and out with [`unsafe.write` and `unsafe.take`](design.md#uninitialized-capacity).
 The order of updates is the one that section requires: write and then lengthen,
 shorten and then drop, so `count` is accurate wherever a panic can unwind from.
+The deque must arrange the remaining element cleanup itself, as described
+under [Cleanup during unwinding](#cleanup-during-unwinding).
 
 **Growing** allocates the new ring first, then moves the elements across in order
 and installs it, so a failed allocation leaves the deque exactly as it was, and
@@ -460,14 +464,52 @@ exact growth policy is implementation-defined, as it is for a dynamic array.
 **`make_contiguous`** slides the back run up against the front run, then rotates
 the now-contiguous run with `swap`, so no step reads a slot holding no value.
 
+### Cleanup during unwinding
+
+The backing array's length is always zero. Its generated cleanup releases the
+allocation but cannot find the live elements, and a drop hook that panics is
+not invoked a second time. Updating `count` before dropping an element prevents
+a double drop; it does not by itself release the rest.
+
+One private `drain` routine removes elements from the front until `count == 0`.
+For each element it saves the slot index, advances `head` with wraparound, and
+decrements `count` before taking the element through `slots_mut` and dropping
+it. Thus the remaining live range is accurate before any user drop hook runs.
+On completion it resets `head` to zero and keeps the allocation.
+
+`clear` registers a deferred drain before starting the ordinary drain, and the
+drop hook calls `clear`:
+
+```loke
+clear :: proc(self: inout) {
+	defer self.drain();
+	self.drain();
+}
+
+release :: hook(drop) proc(self: inout) { self.clear(); }
+```
+
+After a normal drain the deferred call has nothing left to do. If an element's
+drop raises the first panic under `unwind`, it drains the remaining elements
+in queue order before generated field cleanup releases the allocation. This
+holds for explicit `drop`, normal scope exit, and `clear`, including a wrapped
+ring. A [second panic during unwinding](design.md#panic-during-unwinding) aborts
+immediately; neither that case nor the `abort` strategy promises a full drain.
+
 ### Lending elements
 
-Moving an element in or out needs no checked borrow, but `first`, `at`, and
-`as_slices` hand one to the caller, and a pointer rebuilt from raw storage has
+Both lending an element and moving one out must preserve provenance. `first`,
+`at`, and `as_slices` lend the deque's storage; `pop`, `pop_front`, and `remove`
+transfer an element whose own fields may borrow something else. A pointer or
+element rebuilt from raw storage has
 [unknown provenance](open-questions.md#public-borrow-contracts-should-stand-on-their-own).
 A first prototype that returned one compiled a use after `pop_front` without
-complaint. Every lending path therefore goes through one private member that lends
-the whole capacity, called through a plain procedure type, whose
+complaint. Taking a borrowed element directly through `unsafe.raw_data` also
+allowed the removed value to outlive its source.
+
+Every lending and removal path therefore goes through private read-only or
+mutable slot views. Each lends the whole capacity through a plain procedure
+type, whose
 [result derives from every borrowed argument](design.md#procedure-result-contracts):
 
 ```loke
@@ -481,7 +523,30 @@ slots :: proc(self: ^) -> []T {
 	reach: proc(self: ^Deque(T)) -> []T = Deque(T).slots_of;
 	return reach(self);
 }
+
+@(private)
+slots_mut_of :: proc(self: ^mut Deque(T)) -> []mut T {
+	return unsafe.raw_data(self.storage)[0:self.storage.cap()];
+}
+
+@(private)
+slots_mut :: proc(self: inout) -> []mut T {
+	reach: proc(self: ^mut Deque(T)) -> []mut T = Deque(T).slots_mut_of;
+	return reach(&mut self);
+}
 ```
+
+Removal takes through `unsafe.take(self.slots_mut()[at])`, never directly
+through `unsafe.raw_data(self.storage)[at]`. A removed element retains what it
+borrows, but does not borrow the deque merely because it used to be stored
+there. It may outlive the deque when its own sources remain alive.
+
+Growth, shrinking, `make_contiguous`, insertion shifts, and `retain` must
+preserve the same element dependencies across their transfers. Keep raw pointer
+construction inside the slot-view helpers; use the checked views for element
+access, including `unsafe.write` and `unsafe.take`. These private views include
+uninitialized slots: bounds checks protect the allocation, while `head` and
+`count` still decide which slots may be read or taken and which may be written.
 
 This is the technique `Monitor_Guard.read` already uses. With it, each of these
 is rejected with `L0512`, and the indexing inside the deque is bounds-checked as
@@ -493,6 +558,26 @@ p := q.at(0);       q.clear();          use(p);
 a, b := q.as_slices();   q.append(2);   use(a);
 foreach (v in q) { q.append(v); }                  // the iterator is live
 ```
+
+Removal also preserves the lifetime of a borrow carried by `T`:
+
+```loke
+out: []int = {};
+{
+	local := [1]int{42};
+	q: container.Deque([]int) = {};
+	q.append(local[:]);
+	out = q.pop_front() or_else {};
+}
+use(out); // L0513: `local` has ended
+```
+
+Moving `local`'s declaration outside the block makes this valid: `q` may end
+before `out` is used. Both cases were checked in standalone probes at
+`b35c0bd1`. A cleanup probe at the same commit dropped only the first of three
+elements when its drop hook panicked without a deferred drain; with the guard,
+all three were dropped once. These checks refine the earlier prototype; the
+complete deque and its tests remain implementation work.
 
 ## What the prototype found
 
@@ -636,8 +721,12 @@ and adds these:
   (queue) and a plain array (deque), crossing every wrap and growth boundary.
 - **Ownership.** A move-only element whose drop hook counts: each element is
   dropped exactly once through `pop`, `clear`, `retain`, `push_pop`, `update_top`,
-  growth, `into_items`, and scope exit, and on a panicking `T` drop or comparator
-  under the `unwind` strategy.
+  growth, `into_items`, explicit `drop`, and scope exit. Check a panicking
+  comparator under `unwind`. For deque `clear`, explicit `drop`, and normal
+  scope exit, make the first or a middle element's drop hook raise the first
+  panic: every remaining element must drop once, in queue order, before storage
+  is freed. Run with wrapped and unwrapped rings. Separately check that a second
+  panic during unwinding aborts without requiring the remaining cleanup.
 - **Failure.** A small arena makes every `try_` form fail: the container is
   unchanged and still usable, a borrowed element is untouched, and a moved one is
   dropped.
@@ -645,6 +734,12 @@ and adds these:
   element, and reach no out-of-range slot.
 - **Diagnostics.** The `L0512` and `L0511` cases shown above, as `tests/` diagnostic
   cases, so that a compiler or library change cannot quietly unhook a borrow.
+  For `pop`, `pop_front`, and `remove`, reject a removed slice or record carrying
+  a borrow used after its source ends (`L0513`), and accept the same value
+  outliving the deque while its source remains alive. Repeat after growth,
+  shrinking, compaction, insertion shifts, and `retain`, with wrapped storage
+  where applicable. Also check allocator-region dependencies on removed owners,
+  so a reset cannot invalidate a live result.
 - **Interfaces.** `static_assert` of each catalogue interface claimed above.
 
 ## Open questions
