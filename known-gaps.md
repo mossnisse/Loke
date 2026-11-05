@@ -7,6 +7,83 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A call's loaded target includes sibling fields
+
+[Procedure result contracts](design.md#procedure-result-contracts) preserves the paths a
+result reads through a parameter. The call-target walk added in `f5774e5e` ignores
+`param_load_paths`, so `second(&two)` below reaches both `a` and `b`. Only `b` takes
+the new owner and it is dropped before the reset, but the reset reports `L0537` for
+`a`. The parent commit accepts this program.
+
+```loke
+package main;
+import "core:mem";
+Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
+second :: proc(two: ^Two) -> ^mut [dynamic]int { return two^.q; }
+run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    buffer := [1024]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 1, kept.allocator());
+    b := make([dynamic]int, 0, kept.allocator());
+    two := Two{&mut a, &mut b};
+    target := second(&two);
+    target^ = make([dynamic]int, 1, allocator);
+    drop(b);
+    free_all(allocator); // L0537 for `a`; should be accepted
+    return a[0];
+}
+main :: proc() {}
+```
+
+Use the summary's first-load paths before following the remaining loads, as
+`prov_substitute_result` already does for loans. Found reviewing `f5774e5e` on
+2026-11-05 (P2, over-rejection).
+
+### A returned record's targets lose their result paths
+
+The same [result contract](design.md#procedure-result-contracts) records dependencies
+per result carrier. In the [loaded-target reproduction](#a-calls-loaded-target-includes-sibling-fields),
+replace `second` with:
+
+```loke
+identity :: proc(two: Two) -> Two { return two; }
+```
+
+and replace `target := second(&two);` with:
+
+```loke
+returned := identity(two);
+target := returned.q;
+```
+
+This also reports `L0537` for `a`, although only `b` takes the new owner. The new
+`prov_call_result_aliases` uses the whole-result summary and clears every alias's
+`path`, so both returned fields reach both input targets. It needs the existing
+per-content summaries to keep each alias at its result path. The parent accepts
+this program. Found reviewing `f5774e5e` on 2026-11-05 (P2, over-rejection).
+
+### An operator signature can settle a delegate before its target is ready
+
+[Delegating operators](design.md#delegating-operators) should not depend on declaration
+order. The operator prepass resolves signatures in source order; a signature that
+evaluates a constant can run `settle_delegates` before the underlying operator's
+signature is resolved. The pending delegate is removed and never retried:
+
+```loke
+package main;
+D :: distinct V;
+impl D { delegate(+); } // L0420: `+` is not defined for `V`
+V :: struct { a: int }
+N :: V(D(V{1}) + D(V{2})).a;
+W :: struct { a: int }
+impl W { sub :: operator(-) proc(l: W, r: [N]int) -> W { return l; } }
+impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
+main :: proc() {}
+```
+
+This fails in both `f5774e5e` and its parent: it is a remaining edge of the
+delegate-order gap, not a new regression. Found on 2026-11-05 (P2).
+
 ### `L0740` reads a generic type's value argument as a type
 
 [Private names in public declarations](design.md#private-names-in-public-declarations) exempts a
