@@ -596,8 +596,11 @@ Keep these contracts:
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and
-  payload, and a union's variants each have an entry of their own.
-  Written-argument summaries keep the owners' part apart from allocator
+  payload, and a union's variants each have an entry of their own. A read through
+  a carrier whose targets are not all known is in what the carrier views, and names
+  an allocator the analysis cannot name only when what it reads holds one
+  (`prov_unknown_target_read`), so a handle beside an owner in the pointee backs
+  none of it. Written-argument summaries keep the owners' part apart from allocator
   handles (`Written_Summary.owners`) and keep each part at the path the body
   wrote (`Written_Summary.content`); a copy within one argument is a copy
   entry the call resolves in its caller, its source's path stopping at

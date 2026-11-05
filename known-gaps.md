@@ -48,40 +48,6 @@ Apply the same cost classification to every by-value adapter source, with
 stored and peeled cases for both allocating and inline copies. Both variants
 were reproduced on 2026-11-05 while reviewing `f8737e02` (P2).
 
-### An allocator handle in a pointee pollutes a sibling owner's returned region
-
-[Region tracking](design.md#region-tracking) keeps allocator handles apart from
-owners in sibling fields. The new selector/index branch of `prov_viewed_region`
-in [provenance_regions.odin](src/provenance_regions.odin) asks whether the whole
-pointee holds an allocator and can assign its view an unnamed region. A later
-read of an unrelated owner field falls back to that whole-pointee region.
-Returning the field then makes the caller's copied array appear backed by the
-unrelated handle:
-
-```loke
-package main;
-import "core:mem";
-Holder :: struct { allocator: mem.Allocator, items: [dynamic]int }
-Reader :: struct { holder: ^Holder }
-read_items :: proc(reader: Reader) -> [dynamic]int { return reader.holder^.items; }
-run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
-    source := Holder{allocator, [dynamic]int{1}};
-    copied := read_items(Reader{&source});
-    free_all(allocator); // L0537 for `copied`; should be accepted
-    return copied[0];
-}
-main :: proc() {}
-```
-
-Both arrays use the default allocator; the handle stored in `source.allocator`
-backs neither. The parent `1cefee9c` accepts this, and a version calling `run`
-with an arena prints `1`. Commit `0d7d1b47` rejects it. Reverting only its new
-whole-pointee branch in an isolated compiler restores acceptance, and the
-rejection also reproduces at the later commit `ecce89f3`.
-Keep the unnamed dependency on the allocator field when projecting an indirect
-read, rather than merging it into the sibling owner's backing region. Found on
-2026-11-05 while reviewing `0d7d1b47` (P2).
-
 ### Deque's fallible append can panic while copying its arguments
 
 The [growable container contract](standard-library.md#conventions-of-the-growable-containers)

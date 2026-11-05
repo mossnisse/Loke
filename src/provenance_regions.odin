@@ -80,7 +80,11 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		}
 		return set
 	}
-	if region, known := prov_read_storage_regions(graph, id, path, query); known { return region }
+	if region, known := prov_read_storage_regions(graph, id, path, query); known {
+		return region
+	} else if carrier := prov_place_carrier(graph, id); carrier != 0 && len(path) > 0 {
+		return prov_unknown_target_read(graph, carrier, region, prov_type_at(graph.k.c, type, path))
+	}
 	return prov_result_region(graph, id)
 }
 
@@ -1054,7 +1058,7 @@ prov_storage_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 }
 
 @(private)
-prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
+prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id, whole := true) -> Region_Set {
 	#partial switch form in prov_value(graph, id).form {
 	case Prov_Form_Symbol:
 		return prov_region_for_symbol(graph, form.symbol, viewed = true)
@@ -1076,13 +1080,14 @@ prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		if _, _, ok := prov_value_place_of(graph, id); !ok {
 			return prov_read_region(graph, id)
 		}
-		// A carrier held in named storage views what it was set to point at.
+		// A carrier held in named storage views what it was set to point at. Unless
+		// `whole`, a part of that is read, which names an allocator of its own.
 		viewed := INVALID_TYPE
 		if info := underlying_info(graph.k.c, prov_value(graph, id).type); info != nil {
 			viewed = info.element
 		}
 		out, known := prov_carrier_storage_regions(graph, id, nil, viewed, .All)
-		return prov_unnamed_allocator(graph, out, known, viewed)
+		return whole ? prov_unnamed_allocator(graph, out, known, viewed) : out
 	}
 	return Region_Set{}
 }
@@ -1194,10 +1199,23 @@ prov_unnamed_allocator :: proc(graph: ^Flow_Graph, set: Region_Set, known: bool,
 	return out
 }
 
+// design.md "@(allocator_reset)": a read of `type` through `carrier`, whose targets are not
+// all known, is in what the carrier views, and names an allocator the analysis cannot name
+// only if what it reads holds one: a handle beside it in the pointee backs none of it.
+@(private = "file")
+prov_unknown_target_read :: proc(graph: ^Flow_Graph, carrier: Value_Id, found: Region_Set, type: Type_Id) -> Region_Set {
+	out := found
+	region_merge(&out, prov_viewed_region(graph, carrier, whole = false))
+	return prov_unnamed_allocator(graph, out, false, type)
+}
+
 @(private = "file")
 prov_read_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	out, known := prov_read_storage_regions(graph, id, nil, .All)
 	if known { return out }
+	if carrier := prov_place_carrier(graph, id); carrier != 0 {
+		return prov_unknown_target_read(graph, carrier, out, prov_value(graph, id).type)
+	}
 	operand: Value_Id
 	#partial switch form in prov_value(graph, id).form {
 	case Prov_Form_Index:

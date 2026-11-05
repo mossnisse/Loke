@@ -1,0 +1,45 @@
+// design.md "@(allocator_reset)": an allocator read through a carrier whose targets the
+// body cannot name, as a field, a copy of the whole pointee, or nested below it, is one
+// the analysis cannot name, so a reset while what it made is live is rejected.
+package main;
+import "core:mem";
+Holder :: struct { allocator: mem.Allocator, items: [dynamic]int }
+Inner :: struct { holder: Holder }
+Reader :: struct { holder: ^Holder }
+Deep :: struct { inner: ^Inner }
+via_field :: proc(reader: Reader) -> [dynamic]int { return make([dynamic]int, 1, reader.holder^.allocator); }
+via_copy :: proc(reader: Reader) -> [dynamic]int { h := reader.holder^; return make([dynamic]int, 1, h.allocator); }
+via_nested :: proc(deep: Deep) -> [dynamic]int { return make([dynamic]int, 1, deep.inner^.holder.allocator); }
+via_nested_copy :: proc(deep: Deep) -> [dynamic]int { h := deep.inner^.holder; return make([dynamic]int, 1, h.allocator); }
+via_pointer :: proc(holder: ^Holder) -> [dynamic]int { return make([dynamic]int, 1, holder^.allocator); }
+a1 :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    source := Holder{allocator, [dynamic]int{1}};
+    d := via_field(Reader{&source});
+    free_all(allocator);
+    return d[0];
+}
+a2 :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    source := Holder{allocator, [dynamic]int{1}};
+    d := via_copy(Reader{&source});
+    free_all(allocator);
+    return d[0];
+}
+a3 :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    inner := Inner{Holder{allocator, [dynamic]int{1}}};
+    d := via_nested(Deep{&inner});
+    free_all(allocator);
+    return d[0];
+}
+a4 :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    inner := Inner{Holder{allocator, [dynamic]int{1}}};
+    d := via_nested_copy(Deep{&inner});
+    free_all(allocator);
+    return d[0];
+}
+a5 :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    source := Holder{allocator, [dynamic]int{1}};
+    d := via_pointer(&source);
+    free_all(allocator);
+    return d[0];
+}
+main :: proc() {}

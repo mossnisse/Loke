@@ -1,0 +1,35 @@
+// design.md "@(allocator_reset)": an owner read through a carrier whose targets the body
+// cannot name is in no region an allocator handle beside it in the pointee names, so a
+// reset of that handle's region leaves it alone.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+Holder :: struct { allocator: mem.Allocator, items: [dynamic]int }
+Inner :: struct { holder: Holder }
+Reader :: struct { holder: ^Holder }
+Deep :: struct { inner: ^Inner }
+
+read_items :: proc(reader: Reader) -> [dynamic]int { return reader.holder^.items; }
+nested_items :: proc(deep: Deep) -> [dynamic]int { return deep.inner^.holder.items; }
+
+run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Holder{allocator, [dynamic]int{1}};
+	copied := read_items(Reader{&source});
+	free_all(allocator);
+	return copied[0];
+}
+
+nested :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	inner := Inner{Holder{allocator, [dynamic]int{2}}};
+	copied := nested_items(Deep{&inner});
+	free_all(allocator);
+	return copied[0];
+}
+
+main :: proc() {
+	buffer := [256]u8{};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	fmt.println(run(arena.allocator()), nested(arena.allocator()));
+}

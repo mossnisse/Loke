@@ -1,0 +1,21 @@
+warning[L0507]
+@11:57
+this binding clones a value that may allocate
+warning[L0507]
+@13:60
+this binding clones a value that may allocate
+L0537
+@18:5
+this reset would end the region backing `d`, which is still live here
+L0537
+@24:5
+this reset would end the region backing `d`, which is still live here
+L0537
+@30:5
+this reset would end the region backing `d`, which is still live here
+L0537
+@36:5
+this reset would end the region backing `d`, which is still live here
+L0537
+@42:5
+this reset would end the region backing `d`, which is still live here

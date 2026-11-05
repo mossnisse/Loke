@@ -1632,6 +1632,12 @@ checklist.
 
 ### Fixed
 
+- An owner read through a carrier whose targets a body cannot name is no longer taken to be in the
+  region of an allocator handle beside it in the pointee. `return reader.holder^.items` with `reader`
+  a record holding `holder: ^Holder` made the caller's copy look backed by `holder.allocator`, so a
+  reset of that allocator was `L0537`. Reading the handle itself, or a copy of the whole pointee,
+  still names an allocator the analysis cannot name
+  ([@(allocator_reset)](design.md#allocator_reset)).
 - A callee that swaps or rotates carriers through a temporary, as `held := links[0]; links[0] =
   links[1]; links[1] = held;`, moves them, as the same swap in one statement does, so using each
   after the call is no longer `L0641` ([Weakening and reborrows](design.md#weakening-and-reborrows)).
