@@ -1,0 +1,48 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Procedure result contracts": a `$` parameter written before the
+// runtime ones names the same contract as one written after them, so a result
+// borrows only what it reads, and no more is rejected than without the `$`.
+
+second :: proc($T: type, first, other: []int) -> []int { return other; }
+
+size_and_value :: proc($T: type, _: int, value: move [dynamic]T) -> [dynamic]T {
+	first := value[0];
+	value.append(first);
+	return value;
+}
+
+Holder :: struct($V: type) { value: V }
+hold :: proc($T: type, value: move $V) -> Holder(V) { return {move(value)}; }
+
+@(move_only) Token :: struct { id: int }
+impl Token {
+	gone :: hook(drop) proc(self: inout) { fmt.println("drop", self.id); }
+}
+
+consume :: proc($T: type, token: move Token) -> int { return token.id; }
+
+main :: proc() {
+	// `first` is not borrowed by the result, so it may be written and dropped.
+	a := [dynamic]int{1};
+	b := [dynamic]int{2};
+	view := second(u8, a[:], b[:]);
+	a[0] = 5;
+	drop(a);
+	fmt.println(view[0]);
+
+	grown := size_and_value(int, 0, [dynamic]int{7});
+	fmt.println(grown.len());
+
+	cost := [2]int{1, 2};
+	less := proc(left, right: int) -> bool capture(&cost) { return cost[left] < cost[right]; };
+	held := hold(u8, move(less));
+	fmt.println(held.value(0, 1));
+	drop(held);
+	cost[0] = 9;   // the borrow ended with `held`
+	fmt.println(cost[0]);
+
+	fmt.println(consume(u8, Token{3}));
+}

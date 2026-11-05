@@ -1,0 +1,107 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Procedure result contracts": a `$` parameter is no runtime parameter,
+// so one written before the others does not shift what a result is known to
+// borrow, what a body stores, or which region it answers from.
+
+pick :: proc($T: type, view: []int) -> []int { return view; }
+pick_second :: proc(first: []int, $T: type, second: []int) -> []int { return second; }
+pick_after_value :: proc($N: int, $T: type, view: []int) -> []int { return view; }
+
+Holder :: struct($V: type) { value: V }
+hold :: proc($T: type, value: move $V) -> Holder(V) { return {move(value)}; }
+
+Maker :: struct {}
+impl Maker {
+	pick :: proc($T: type, view: []int) -> []int { return view; }
+}
+
+keep :: proc($T: type, into: inout [dynamic]^int, @(escape=stored) value: ^int) { into.append(value); }
+keep_unmarked :: proc($T: type, into: inout [dynamic]^int, value: ^int) { into.append(value); }
+store_unmarked :: proc($T: type, into: inout Holder([dynamic]int), value: move [dynamic]int) { into.value = move(value); }
+pick_after_blank :: proc($T: type, _: int, view: []int) -> []int { return view; }
+
+filled :: proc($T: type, allocator: Allocator) -> [dynamic]T {
+	return make([dynamic]T, 4, allocator);
+}
+
+dropped_owner :: proc() {
+	owner := [dynamic]int{1, 2};
+	view := pick(u8, owner[:]);
+	drop(owner);
+	fmt.println(view[0]);
+}
+
+written_owner :: proc() {
+	cost := [2]int{1, 2};
+	view := pick(u8, cost[:]);
+	cost[0] = 9;
+	fmt.println(view[0]);
+}
+
+second_of_two :: proc() {
+	a := [dynamic]int{1};
+	b := [dynamic]int{2};
+	view := pick_second(a[:], u8, b[:]);
+	drop(b);
+	fmt.println(view[0]);
+}
+
+after_a_value :: proc() {
+	owner := [dynamic]int{1, 2};
+	view := pick_after_value(3, u8, owner[:]);
+	drop(owner);
+	fmt.println(view[0]);
+}
+
+in_a_method :: proc() {
+	owner := [dynamic]int{1, 2};
+	view := Maker.pick(u8, owner[:]);
+	drop(owner);
+	fmt.println(view[0]);
+}
+
+moved_capture :: proc() {
+	cost := [2]int{1, 2};
+	less := proc(a, b: int) -> bool capture(&cost) { return cost[a] < cost[b]; };
+	held := hold(u8, move(less));
+	cost[0] = 9;
+	fmt.println(held.value(0, 1));
+}
+
+stored_argument :: proc() {
+	kept: [dynamic]^int = {};
+	{
+		x := 1;
+		keep(int, inout kept, &x);
+	}
+	fmt.println(kept[0]^);
+}
+
+instantiates_the_unmarked :: proc() {
+	kept: [dynamic]^int = {};
+	x := 1;
+	keep_unmarked(int, inout kept, &x);
+	held: Holder([dynamic]int) = {};
+	store_unmarked(int, inout held, [dynamic]int{1});
+}
+
+after_a_blank :: proc() {
+	owner := [dynamic]int{1, 2};
+	view := pick_after_blank(u8, 0, owner[:]);
+	drop(owner);
+	fmt.println(view[0]);
+}
+
+reset_region :: proc() {
+	buffer: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	values := filled(int, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(values.len());
+}
+
+main :: proc() {}

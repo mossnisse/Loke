@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A procedure with a `$` parameter before a runtime one keeps its [result
+  contract](design.md#procedure-result-contracts). `pick($T: type, view: []int) -> []int` lost the
+  borrow on its result, so dropping or writing the owner while the result was live compiled and read
+  freed storage. The same mistake hid what such a body stores in or returns from its arguments, and
+  which allocator region its result is in. These are now `L0511`, `L0512`, `L0513`, `L0537`, `L0536`,
+  or `L0646`, as they are with the `$` parameter written last. Upgrade by ending the result's use
+  first, or by writing `@(escape=stored)` on a parameter the body keeps.
 - A `foreach` over the iteration protocol counts as the calls it makes: `iter`, `next` at each step,
   and the iterator's drop ([Global write effects](design.md#global-write-effects)). So a `next` that
   writes or reads a global under a live mutable pointer of it is now `L0512` or `L0511`, and a procedure

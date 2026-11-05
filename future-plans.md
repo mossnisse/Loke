@@ -98,6 +98,10 @@ Implementation order:
    cleanup, Unicode, short-I/O, and platform-conformance cases from
    [Standard-library verification](compiler-architecture.md#standard-library-verification).
 
+[Queue containers for `core:container`](container-design.md) proposes
+`Priority_Queue`, `Deque`, and heap algorithms in `core:slice`, and lists the
+containers that could follow them.
+
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,
 `core:encoding/base64`, and `core:testing`; in

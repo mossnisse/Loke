@@ -7,6 +7,26 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A computed index is refused beside a second read of a mutable slice
+
+Two elements of a `[]mut T` of non-copyable elements passed to read-only parameters
+are `L0641` when the first index is computed, though nothing is written and the same
+call with named indices is accepted. It does not happen for copyable elements such as
+`int`, or for a read-only `[]T` or a `[dynamic]T`.
+
+```loke
+package main;
+@(move_only) Job :: struct { d: int }
+less :: proc(left, right: Job) -> bool { return left.d < right.d; }
+accepted :: proc(values: []mut Job) -> bool { a := 0; b := 1; return less(values[a], values[b]); }
+rejected :: proc(values: []mut Job) -> bool { x := 1; return less(values[x - 1], values[x]); } // L0641; should be accepted
+main :: proc() {}
+```
+
+Reading through a helper that takes `[]T` avoids it. Found on 2026-11-05 at
+`990612d0` while prototyping [heap sifting](container-design.md#heap-algorithms-in-coreslice)
+(P3, over-rejection).
+
 ### A long literal can still overflow the stack at `-opt=none`
 
 A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map

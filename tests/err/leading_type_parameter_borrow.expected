@@ -1,0 +1,33 @@
+L0646
+@23:75
+cannot reach `into`
+L0536
+@24:96
+does not let it be stored in `into`
+L0512
+@34:2
+`owner` cannot be dropped
+L0511
+@41:2
+this write of `cost`
+L0512
+@49:2
+`b` cannot be dropped
+L0512
+@56:2
+`owner` cannot be dropped
+L0512
+@63:2
+`owner` cannot be dropped
+L0511
+@71:2
+this write of `cost`
+L0513
+@81:14
+after `x`, the local it borrows, has ended
+L0512
+@95:2
+`owner` cannot be dropped
+L0537
+@103:2
+region backing `values`

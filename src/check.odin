@@ -1283,9 +1283,10 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 				append(&builder.param_names, name_id)
 			}
 		}
-		// An instance's `$` parameter is a bound constant, not a runtime one.
+		// An instance's `$` parameter is a bound constant, not a runtime one, so
+		// it takes no place in `parameter.symbols`: a position in those lists is a
+		// runtime parameter's index, which `_` has too, as an invalid symbol.
 		if parameter_name.is_poly && literal.generic_instance {
-			append(&bindings, INVALID_SYMBOL)
 			continue
 		}
 		name_type, mode, split_receiver := normalize_signature_parameter(
