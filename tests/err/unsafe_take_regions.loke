@@ -91,4 +91,16 @@ stored_in_a_global :: proc() {
 	global = unsafe.take(held[0]);
 }
 
+// A provider taken out of one field keeps that field's region.
+Arenas :: struct { first: mem.Arena, second: mem.Arena }
+
+taken_provider_field :: proc() {
+	pair := Arenas{mem.Arena.init(), mem.Arena.init()};
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	taken := unsafe.take(pair.second);
+	unsafe.write(pair.second, {});
+	drop(taken);
+	use(xs[0]);
+}
+
 main :: proc() {}

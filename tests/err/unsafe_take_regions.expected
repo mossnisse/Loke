@@ -22,3 +22,6 @@ this value is backed by an allocator region created in this procedure, so it can
 L0536
 @91:2
 this value is backed by an allocator region created in this procedure, so it cannot be stored in `global` (file-scope storage), which outlives that region
+L0537
+@102:2
+dropping `taken` would end the region backing `xs`, which is still live here

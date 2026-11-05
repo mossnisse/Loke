@@ -1632,6 +1632,13 @@ checklist.
 
 ### Fixed
 
+- A provider taken out of one field, with `unsafe.take` or `exchange`, carries only that field's
+  region. Taking `pair.first` carried `pair.second`'s too, so dropping it was `L0537` for an owner
+  only the second backed ([Allocators](design.md#allocators)).
+- `Deque.try_append` of one borrowed element copies it inside the call, so a copy that fails is
+  returned rather than panicking. `try_append` and `try_prepend` no longer grow the ring before a copy
+  succeeds, so a failed copy leaves the capacity, and where the ring starts, as they were
+  ([Errors are values](standard-library.md#errors-are-values)).
 - An owner read through a carrier whose targets a body cannot name is no longer taken to be in the
   region of an allocator handle beside it in the pointee. `return reader.holder^.items` with `reader`
   a record holding `holder: ^Holder` made the caller's copy look backed by `holder.allocator`, so a

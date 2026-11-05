@@ -106,22 +106,33 @@ impl Deque($T) {
 		self.put_back(move(value));
 	}
 
+	// standard-library.md "Errors are values": a failed copy leaves the capacity as it
+	// was too, so growth waits until the copy has succeeded.
+	@(private)
+	try_append_one_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
+		item := value.try_clone(self.allocator) or_return;
+		wanted := self.count + 1;
+		self.try_reserve(wanted) or_return;
+		self.put_back(move(item));
+		return .ok;
+	}
+
 	/// Adds all of the values, or none of them.
+	// The copies have nowhere to wait but the grown ring, so the elements move into it
+	// first, and back into the old ring, at their old slots, if a copy fails.
 	try_append_copied :: proc(self: inout, @(escape=stored) values: ..T) -> Status(Allocator_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
-		self.try_reserve(wanted) or_return;
-		added := 0;
-		foreach (value in values) {
-			switch (value.try_clone(self.allocator)) {
-			case .ok(item):
-				self.put_back(move(item));
-				added += 1;
-			case .err(failure):
-				foreach (_ in 0 ..< added) { _ = self.pop(); }
-				return .err(failure);
-			}
+		if (!self.must_grow(wanted)) { return self.try_put_back_clones(..values); }
+		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator) or_return;
+		head := self.head;
+		previous := self.relocate(move(ring), 0);
+		switch (self.try_put_back_clones(..values)) {
+		case .ok:
+			return .ok;
+		case .err(failure):
+			_ = self.relocate(move(previous), head);
+			return .err(failure);
 		}
-		return .ok;
 	}
 
 	try_append_moved :: proc(self: inout, @(escape=stored) value: move T) -> Status(Allocator_Error) {
@@ -144,10 +155,11 @@ impl Deque($T) {
 		self.put_front(move(value));
 	}
 
+	// As `try_append_one_copied`, the copy comes before the growth.
 	try_prepend_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
+		item := value.try_clone(self.allocator) or_return;
 		wanted := self.count + 1;
 		self.try_reserve(wanted) or_return;
-		item := value.try_clone(self.allocator) or_return;
 		self.put_front(move(item));
 		return .ok;
 	}
@@ -170,7 +182,7 @@ impl Deque($T) {
 		unchanged. An element that was moved in is dropped then, so a caller who must
 		keep it calls `try_reserve` first.
 	*/
-	try_append :: proc{try_append_copied, try_append_moved};
+	try_append :: proc{try_append_one_copied, try_append_copied, try_append_moved};
 
 	/// Adds at the start, in amortized O(1), one at a time so the order is never in question.
 	prepend :: proc{prepend_copied, prepend_moved};
@@ -306,14 +318,14 @@ impl Deque($T) {
 	reserve :: proc(self: inout, capacity: int) {
 		if (!self.must_grow(capacity)) { return; }
 		ring := make([dynamic]T, 0, self.grown_capacity(capacity), self.allocator);
-		self.relocate(move(ring));
+		_ = self.relocate(move(ring), 0);
 	}
 
 	/// As `reserve`, but a failure to allocate is returned and leaves the deque as it was.
 	try_reserve :: proc(self: inout, capacity: int) -> Status(Allocator_Error) {
 		if (!self.must_grow(capacity)) { return .ok; }
 		ring := try_make([dynamic]T, 0, self.grown_capacity(capacity), self.allocator) or_return;
-		self.relocate(move(ring));
+		_ = self.relocate(move(ring), 0);
 		return .ok;
 	}
 
@@ -322,7 +334,7 @@ impl Deque($T) {
 		wanted := minimum if minimum > self.count else self.count;
 		if (wanted >= self.storage.cap()) { return; }
 		ring := make([dynamic]T, 0, wanted, self.allocator);
-		self.relocate(move(ring));
+		_ = self.relocate(move(ring), 0);
 	}
 
 	/// As `shrink`, but a failure to allocate is returned and leaves the deque as it was.
@@ -330,7 +342,7 @@ impl Deque($T) {
 		wanted := minimum if minimum > self.count else self.count;
 		if (wanted >= self.storage.cap()) { return .ok; }
 		ring := try_make([dynamic]T, 0, wanted, self.allocator) or_return;
-		self.relocate(move(ring));
+		_ = self.relocate(move(ring), 0);
 		return .ok;
 	}
 
@@ -544,18 +556,39 @@ impl Deque($T) {
 		self.slots_mut().swap(left, right);
 	}
 
-	// Moves the elements in order into `ring`, which has room for them, and replaces
-	// the storage. Moves cannot fail, so an allocation failure happened before this
-	// and left the deque as it was. Length zero is why the assignment frees the old
-	// ring and drops no element.
+	// Copies each value in at the back, all or none, into room the ring already has.
 	@(private)
-	relocate :: proc(self: inout, @(escape=stored) ring: move [dynamic]T) {
+	try_put_back_clones :: proc(self: inout, @(escape=stored) values: ..T) -> Status(Allocator_Error) where is_copyable(T) {
+		added := 0;
+		foreach (value in values) {
+			switch (value.try_clone(self.allocator)) {
+			case .ok(item):
+				self.put_back(move(item));
+				added += 1;
+			case .err(failure):
+				foreach (_ in 0 ..< added) { _ = self.pop(); }
+				return .err(failure);
+			}
+		}
+		return .ok;
+	}
+
+	// Moves the elements in order into `ring`, which has room for them, the first to
+	// slot `head`, and returns the ring it replaces. Moves cannot fail, so an
+	// allocation failure happened before this and left the deque as it was. Length
+	// zero is why dropping the old ring frees it and drops no element, and why it can
+	// take the elements back.
+	@(private)
+	relocate :: proc(self: inout, @(escape=stored) ring: move [dynamic]T, head: int) -> [dynamic]T {
+		capacity := ring.cap();
 		foreach (i in 0 ..< self.count) {
 			at := self.wrap(i);
-			unsafe.write(Deque(T).ring_slots(inout ring)[i], unsafe.take(self.slots_mut()[at]));
+			to := head + i;
+			if (to >= capacity) { to -= capacity; }
+			unsafe.write(Deque(T).ring_slots(inout ring)[to], unsafe.take(self.slots_mut()[at]));
 		}
-		self.storage = move(ring);
-		self.head = 0;
+		self.head = head;
+		return exchange(inout self.storage, move(ring));
 	}
 
 	// The remaining live range is accurate before each user drop hook runs, and it

@@ -241,10 +241,47 @@ failure :: proc() {
 	}
 }
 
+// standard-library.md "Errors are values": a copy that fails leaves the capacity, and
+// where the ring starts, as they were. A borrowed element is copied inside the `try_`
+// form, so its failure is returned, and so are a spread slice's.
+Fragile :: struct { id: int }
+impl Fragile {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Fragile, Allocator_Error) {
+		if (self.id < 0) { return .err({}); }
+		return .ok(Fragile{self.id});
+	}
+}
+
+copy_failure :: proc() {
+	fmt.println();
+	fmt.println("-- copy failure");
+	empty: container.Deque(Fragile) = {};
+	broken := Fragile{-1};
+	fmt.println(empty.try_append(broken) != .ok, empty.try_prepend(broken) != .ok, empty.len(), empty.cap(), broken.id);
+	fmt.println(empty.try_append(..[]Fragile{Fragile{1}, Fragile{-1}}) != .ok, empty.len(), empty.cap());
+
+	// Full and wrapped, so the pack would grow the ring.
+	q := container.Deque(Fragile).init(4);
+	capacity := q.cap();
+	foreach (i in 0 ..< capacity) { q.append(Fragile{i + 1}); }
+	_ = q.pop_front();
+	q.append(Fragile{capacity + 1});
+	front, back := q.as_slices();
+	split := front.len();
+	shown := q.clone();
+	batch := [2]Fragile{Fragile{20}, Fragile{-1}};
+	fmt.println(q.try_append(..batch[:]) != .ok, q == shown, q.cap() == capacity, split < capacity);
+	after_front, after_back := q.as_slices();
+	fmt.println(after_front.len() == split, after_back.len() == capacity - split);
+	batch[1] = Fragile{21};
+	fmt.println(q.try_append(..batch[:]) == .ok, q.len() == capacity + 2, q.last() or_else panic("empty"));
+}
+
 main :: proc() {
 	paths();
 	borrows();
 	regions();
 	owned();
 	failure();
+	copy_failure();
 }

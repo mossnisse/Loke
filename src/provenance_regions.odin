@@ -825,9 +825,14 @@ prov_moved_bits :: proc(graph: ^Flow_Graph, id: Value_Id) -> u64 {
 		}
 		return bits
 	}
+	// Only the providers at the place moved from go with it (design.md "Allocators"): a
+	// sibling field keeps its own token.
 	if source != 0 {
-		if root, _, ok := prov_value_place_of(graph, source); ok && graph.roots[int(root)].kind == .Local {
-			return graph.provider_bits[graph.roots[int(root)].symbol]
+		if root, path, ok := prov_value_place_of(graph, source); ok && graph.roots[int(root)].kind == .Local {
+			symbol := graph.roots[int(root)].symbol
+			if _, found := graph.provider_bits[symbol]; found {
+				return prov_provider_region_at(graph, symbol, path).locals
+			}
 		}
 	}
 	return 0

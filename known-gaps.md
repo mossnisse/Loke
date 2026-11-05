@@ -7,47 +7,15 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Deque's fallible append can panic while copying its arguments
+### Deque's fallible append of several borrowed values panics while copying them
 
 The [growable container contract](standard-library.md#conventions-of-the-growable-containers)
-requires `try_append` to return an element-copy allocation failure. In
-[deque.loke](core/container/deque.loke), a borrowed element selects the variadic
-`try_append_copied`, so the caller copies it into the argument pack before the
-procedure can call `try_clone`. A failure in that first copy applies the default
-allocator's failure policy and panics instead of returning `.err`:
-
-```loke
-package main;
-import "core:container";
-import "core:fmt";
-Item :: struct { id: int }
-impl Item {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
-        return .err({});
-    }
-}
-main :: proc() {
-    q := container.Deque(Item).init(4);
-    item := Item{1};
-    result := q.try_append(item); // panics; should return .err
-    fmt.println(result != .ok, q.len(), item.id);
-}
-```
-
-Add a non-variadic borrowed-element overload, as `append_one_copied` already
-does for `append`, and arrange a borrowing path for several elements so their
-copies happen inside the fallible operation. The current allocation-failure
-tests pass owning temporaries or trivial elements, so do not cover this path.
-Reproduced with the compiler built from `1cefee9c` on 2026-11-05 while reviewing
-that commit (P2).
-
-### Deque grows before a fallible element copy succeeds
-
-The [unchanged-on-failure contract](standard-library.md#errors-are-values)
-includes observable capacity. `try_prepend_copied` in
-[deque.loke](core/container/deque.loke) calls `try_reserve` before `try_clone`;
-`try_append_copied` does the same before copying the pack's elements. A copy
-failure therefore leaves newly allocated storage installed:
+requires `try_append` to return an element-copy allocation failure, as
+[container insertion](design.md#container-insertion) copies a borrowed place only on success.
+Several borrowed values written one by one select the variadic `try_append_copied` in
+[deque.loke](core/container/deque.loke), and a [variadic pack](design.md#variadic-parameters)
+receives a copy, made by the caller before the procedure runs. A failure in that copy applies
+the default allocator's failure policy and panics instead of returning `.err`:
 
 ```loke
 package main;
@@ -61,47 +29,18 @@ impl Item {
 }
 main :: proc() {
     q: container.Deque(Item) = {};
-    item := Item{1};
-    fmt.println(q.cap()); // 0
-    result := q.try_prepend(item);
-    fmt.println(result != .ok, q.len(), q.cap()); // true 0 8; capacity should remain 0
+    a := Item{1};
+    b := Item{2};
+    result := q.try_append(a, b); // panics; should return .err
+    fmt.println(result != .ok, q.len());
 }
 ```
 
-Finish fallible copying before committing growth, including staging a batch's
-copies when needed. Rolling back appended elements alone does not restore the
-old capacity. The existing clone-failure case reserves sufficient capacity
-before calling, so misses successful growth followed by failed copying.
-Reproduced with the compiler built from `1cefee9c` on 2026-11-05 while reviewing
-that commit (P2).
-
-### Taking one provider field also carries its sibling's region
-
-[Allocators](design.md#allocators) preserve a provider's region identity when it moves. Taking
-`pair.first` below must leave `pair.second` independent, but `prov_moved_bits` in
-[src/provenance_regions.odin](src/provenance_regions.odin) discards the source place's path and
-returns every provider token of its root. Dropping `taken` therefore reports L0537 for `xs`,
-although only the second arena backs it:
-
-```loke
-package main;
-import "core:mem";
-import "core:unsafe";
-Pair :: struct { first: mem.Arena, second: mem.Arena }
-main :: proc() {
-    pair := Pair{mem.Arena.init(), mem.Arena.init()};
-    xs := make([dynamic]int, 1, pair.second.allocator());
-    taken := unsafe.take(pair.first);
-    unsafe.write(pair.first, {});
-    drop(taken); // L0537 for `xs`; should be accepted
-    _ = xs[0];
-}
-```
-
-The new `Unsafe_Take` branch in `f1a0cdf1` introduces this rejection; its parent accepts the
-program. Keep the projected provider tokens, using the place path as
-`prov_provider_region_at` does, instead of the whole root's set. Found on 2026-11-05 while
-reviewing that commit (P2).
+One borrowed value selects `try_append_one_copied`, and a lone spread `q.try_append(..items)`
+lends its elements, so both copy inside and return the failure. A built-in dynamic array's
+`try_append(a, b)` returns it too. A procedure has no pack that lends borrowed places, as a
+`..dyn I` pack lends its views, so fixing this needs one in the language. Reproduced with the
+compiler built from `1cefee9c` on 2026-11-05 while reviewing that commit (P2).
 
 ### A long literal can still overflow the stack at `-opt=none`
 

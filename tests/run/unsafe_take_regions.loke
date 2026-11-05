@@ -34,6 +34,22 @@ shift_down :: proc(self: inout Pairs) {
 	}
 }
 
+// design.md "Allocators": a provider taken out of one field carries that field's
+// region, and leaves its sibling's where it was.
+Arenas :: struct { first: mem.Arena, second: mem.Arena }
+
+taken_provider_field :: proc() {
+	pair := Arenas{mem.Arena.init(), mem.Arena.init()};
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	xs[0] = 10;
+	taken := unsafe.take(pair.first);
+	unsafe.write(pair.first, {});
+	drop(taken);
+	exchanged := exchange(inout pair.first, mem.Arena.init());
+	drop(exchanged);
+	fmt.println(xs[0]);
+}
+
 main :: proc() {
 	held := make([dynamic][dynamic]int, 2);
 	held[0].append(1);
@@ -86,4 +102,5 @@ main :: proc() {
 	pairs.items[1].first.append(2);
 	round_trip(inout pairs, 0, 1);
 	fmt.println(pairs.items[0].first, pairs.items[1].first);
+	taken_provider_field();
 }

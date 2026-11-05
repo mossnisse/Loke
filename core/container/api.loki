@@ -201,6 +201,9 @@ impl Deque($T) {
 
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) ---;
 
+	// Private to the package, but a public declaration names it.
+	try_append_one_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) ---;
+
 	// Adds all of the values, or none of them.
 	try_append_copied :: proc(self: inout, @(escape=stored) values: ..T) -> Status(Allocator_Error) where is_copyable(T) ---;
 
@@ -225,7 +228,7 @@ impl Deque($T) {
 		unchanged. An element that was moved in is dropped then, so a caller who must
 		keep it calls `try_reserve` first.
 	*/
-	try_append :: proc{try_append_copied, try_append_moved};
+	try_append :: proc{try_append_one_copied, try_append_copied, try_append_moved};
 
 	// Adds at the start, in amortized O(1), one at a time so the order is never in question.
 	prepend :: proc{prepend_copied, prepend_moved};
