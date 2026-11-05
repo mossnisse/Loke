@@ -1159,3 +1159,25 @@ main :: proc() {}`) { return }
 	}
 	testing.expect(t, copied && keyed, "the copy and the map key insertion must each record a store")
 }
+
+// compiler-architecture.md "Normalized provenance input": a replay that only marks an
+// alias as read at a load below a parameter, or a region as read there, grows the facts,
+// so convergence does not stop before them (`prov_fact_weight`).
+@(test)
+loaded_facts_have_weight :: proc(t: ^testing.T) {
+	aliases := [1]Written_Alias{{target = Storage_Id(1)}}
+	facts := Prov_Facts{written_aliases = make(map[Storage_Id][]Written_Alias), region_of = make(map[Symbol_Id]Region_Set)}
+	defer delete(facts.written_aliases)
+	defer delete(facts.region_of)
+	facts.written_aliases[Storage_Id(1)] = aliases[:]
+	set: Region_Set
+	region_add_param(&set, 0)
+	facts.region_of[Symbol_Id(1)] = set
+	before := prov_fact_weight(&facts)
+	aliases[0].loaded = true
+	after_alias := prov_fact_weight(&facts)
+	testing.expectf(t, after_alias > before, "a loaded alias has the weight of one that is not: %d", before)
+	region_add_loaded_param(&set, 0)
+	facts.region_of[Symbol_Id(1)] = set
+	testing.expectf(t, prov_fact_weight(&facts) > after_alias, "a loaded region has the weight of one that is not: %d", after_alias)
+}

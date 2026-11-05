@@ -2198,13 +2198,11 @@ index_links :: proc(state: ^Prov_Solve) {
 	state.links_via = make([][dynamic]int, state.slots)
 	state.link_is_named = make([]bool, len(graph.reborrows))
 	state.links_naming_element = make([]u8, state.link_row_bytes, graph.alloc)
-	for reborrow, index in graph.reborrows {
-		if reborrow.names_element {
-			bit_mark(state.links_naming_element, index)
-		}
-	}
 	stores := 0
 	for link, index in graph.reborrows {
+		if link.names_element {
+			bit_mark(state.links_naming_element, index)
+		}
 		append(&state.links_into[link.derived], index)
 		for carrier in link.via {
 			append(&state.links_via[carrier], index)

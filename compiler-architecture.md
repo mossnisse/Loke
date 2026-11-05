@@ -216,7 +216,8 @@ Keep these phase rules:
   operator calls, and block count) from the construction graph. Everything else it
   holds is built afresh by the round, so a fact added anywhere else would not
   survive to the next round, and one added to `Prov_Facts` must also be copied,
-  seeded, and weighed.
+  seeded, and weighed. A flag that only grows, as `Written_Alias.loaded` and
+  `Region_Set.loaded` do, is weighed too, as a round that only sets one is growth.
 - **Fact-dependent output is an event operation.** A construction site whose
   output depends on the facts, such as a reset, an escape, a region or key
   escape, allocator use, a received region, or a write published through a

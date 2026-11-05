@@ -278,8 +278,9 @@ COPY_SITE_TEXT := [Copy_Site]string {
 
 // A binding or assignment copy whose report waits for last-use transfer: the
 // copy it names may yet become a move (design.md "Last-use transfer"), or an adapter's
-// clone of its source, which `foreach` may yet peel and not make (design.md
-// "Iteration adapters").
+// copy of its source, which `foreach` may yet peel and not make (design.md
+// "Iteration adapters"). A copy that may allocate waits either way; one costed by its
+// bytes waits only for an adapter, as last-use transfer moves only what clones.
 Held_Copy_Report :: struct {
 	decl:    ^Decl,
 	assign:  ^Stmt_Assign,
@@ -288,7 +289,10 @@ Held_Copy_Report :: struct {
 	site:    Copy_Site,
 	span:    Span,
 	source:  Expr,
+	type:    Type_Id,
 	in_loop: bool,
+	// Costed by its bytes (`report_inline_copy`), not as a clone that may allocate.
+	inline:  bool,
 }
 
 // A copy of `source` at `type`: provenance reads what it clones at, and the
@@ -316,22 +320,34 @@ warn_copy_cost :: proc(
 		return
 	}
 	in_loop := k.loop_depth + k.expanded_in_loops > 0
-	if clone_may_allocate(k.c, type) {
-		if held.decl == nil && held.assign == nil && held.adapter == nil {
-			report_allocating_copy(k, site, span, source, in_loop)
-			return
-		}
-		if k.c.held_copy_reports == nil {
-			k.c.held_copy_reports = make([dynamic]Held_Copy_Report, 0, 4, k.c.semantic_allocator)
-		}
-		held := held
-		held.site, held.span, held.source, held.in_loop = site, span, source, in_loop
-		append(&k.c.held_copy_reports, held)
+	allocates := clone_may_allocate(k.c, type)
+	if !allocates && (underlying_kind(k.c, type) == .String || type_is_shared_handle(k.c, type) || type_size(k.c, type) < k.c.copy_cost_threshold) {
 		return
 	}
-	if underlying_kind(k.c, type) == .String || type_is_shared_handle(k.c, type) || type_size(k.c, type) < k.c.copy_cost_threshold {
+	waits := held.adapter != nil || allocates && (held.decl != nil || held.assign != nil)
+	if !waits {
+		report_copy(k, Held_Copy_Report{site = site, span = span, source = source, type = type, in_loop = in_loop, inline = !allocates})
 		return
 	}
+	if k.c.held_copy_reports == nil {
+		k.c.held_copy_reports = make([dynamic]Held_Copy_Report, 0, 4, k.c.semantic_allocator)
+	}
+	held := held
+	held.site, held.span, held.source, held.type, held.in_loop, held.inline = site, span, source, type, in_loop, !allocates
+	append(&k.c.held_copy_reports, held)
+}
+
+@(private = "file")
+report_copy :: proc(k: ^Checker, held: Held_Copy_Report) {
+	if held.inline {
+		report_inline_copy(k, held.site, held.span, held.source, held.type, held.in_loop)
+	} else {
+		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop)
+	}
+}
+
+@(private = "file")
+report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool) {
 	name := ""
 	// A binding that only views its source has no ownership to hand over, so the
 	// `move` advice below would name something `move` is not allowed to take.
@@ -351,12 +367,19 @@ warn_copy_cost :: proc(
 	if in_loop {
 		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
 	}
+	if site == .Adapter {
+		add_notef(k.c, NO_SPAN, "%s", ADAPTER_COPY_HINT)
+		return
+	}
 	// Never advise inout: it grants mutation and changes which aliases are legal (design.md).
 	if name != "" && transferable && site != .Return {
 		add_notef(k.c, NO_SPAN, "write `move(%s)` if `%s` is no longer needed", name, name)
 	}
 	add_notef(k.c, NO_SPAN, "take a pointer or `Shared(T)` if the two names should share one value")
 }
+
+@(private = "file")
+ADAPTER_COPY_HINT :: "a `foreach` written over the adapter call makes no copy"
 
 @(private = "file")
 report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, in_loop: bool) {
@@ -372,7 +395,7 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 		}
 	}
 	if site == .Adapter {
-		hint = "a `foreach` written over the adapter call makes no copy"
+		hint = ADAPTER_COPY_HINT
 	}
 	warnf(k.c, span, "L0507", "this %s clones %s", COPY_SITE_TEXT[site], object)
 	if in_loop {
@@ -392,15 +415,16 @@ held_copy_is_made :: proc(held: Held_Copy_Report) -> bool {
 	return held.index < len(clones) && clones[held.index]
 }
 
-// design.md "Iteration adapters": an adapter's view keeps its own clone of a source that
-// owns something, which its call makes unless `foreach` peels it.
+// design.md "Iteration adapters": an adapter over a mutable view keeps its own copy of the
+// source, which its call makes unless `foreach` peels it, and which is costed as any copy
+// is (design.md "Copy-cost diagnostics").
 record_adapter_copy :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 	if chosen == nil || chosen.synth != .Adapter_View || len(v.bound) != 1 || !committing(k.c) ||
 	   !type_of(k.c, chosen.result).adapter_by_value {
 		return
 	}
 	source := v.bound[0]
-	if base := expr_base(source); base != nil && type_is_managed(k.c, base.type) {
+	if base := expr_base(source); base != nil {
 		warn_copy_cost(k, .Adapter, expr_span(source), source, base.type, Held_Copy_Report{adapter = v})
 	}
 }
@@ -415,7 +439,7 @@ flush_held_copy_reports :: proc(k: ^Checker, mark: int) {
 			continue
 		}
 		reported[held.span] = true
-		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop)
+		report_copy(k, held)
 	}
 	resize(&k.c.held_copy_reports, mark)
 }

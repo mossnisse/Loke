@@ -366,15 +366,21 @@ prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
 			weight += 1 + region_weight(entry.region)
 		}
 	}
+	// An alias read at a load below a parameter is a fact of its own, which a replay
+	// that only sets `loaded` grows by.
 	for _, aliases in facts.written_aliases {
 		weight += len(aliases)
+		for alias in aliases {
+			weight += int(alias.loaded)
+		}
 	}
 	return weight + len(facts.lent_locals)
 }
 
 @(private = "file")
 region_weight :: proc(set: Region_Set) -> int {
-	return int(bits.count_ones(set.locals)) + int(bits.count_ones(set.params)) + int(set.default) + int(set.unknown) + int(set.crowded)
+	return int(bits.count_ones(set.locals)) + int(bits.count_ones(set.params)) + int(bits.count_ones(set.loaded)) +
+		int(set.default) + int(set.unknown) + int(set.crowded)
 }
 
 // Every region dependency of a symbol, including its field facts. A carrier's
