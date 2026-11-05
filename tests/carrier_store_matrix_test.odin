@@ -471,6 +471,10 @@ keep_ro :: proc(dst: ^mut RoLink, @(escape=stored) c: ^mut int) { dst^.to = c; }
 keep_ro_copy :: proc(dst: ^mut RoLink, @(escape=stored) c: ^int) { dst^.to = c; }
 keep_pointer_ro :: proc(dst: ^mut ^int, @(escape=stored) c: ^mut int) { dst^ = c; }
 keep_rs :: proc(dst: ^mut RoS, @(escape=stored) s: []mut int) { dst^.s = s; }
+swap_held :: proc(links: []mut Link) { held := links[0]; links[0] = links[1]; links[1] = held; }
+swap_pair :: proc(pair: ^mut Pair) { held := pair^.a; pair^.a = pair^.b; pair^.b = held; }
+swap_in_an_array :: proc(links: inout [2]Link) { held := links[0]; links[0] = links[1]; links[1] = held; }
+copied_back :: proc(links: []mut Link) { held := links[0]; links[0] = links[1]; links[1] = held; links[0] = links[1]; }
 impl Slots {
 	shuffle :: proc(self: inout Slots) { self.items[0] = self.items[1]; }
 }
@@ -507,6 +511,13 @@ CALL_COPY_PLACES := [?]Call_Copy_Place {
 	{"copy_holder_by_value", "h: Holder", "", "by_value_holder(h)", "h.links[0].to", "h.links[1].to"},
 	{"copy_method_on_local", "", COPY_SLOTS, "sl.shuffle()", "sl.items[0].to", "sl.items[1].to"},
 	{"copy_method_on_inout", "sl: inout Slots", "", "sl.shuffle()", "sl.items[0].to", "sl.items[1].to"},
+	// A swap through a temporary leaves each carrier in one place, and a copy after it
+	// is a copy all the same.
+	{"swap_view_parameter", "s: []mut Link", "", "swap_held(s)", "s[0].to", "s[1].to"},
+	{"swap_local_array", "", COPY_ARRAY, "swap_held(&mut ls[:])", "ls[0].to", "ls[1].to"},
+	{"swap_pair_local", "", COPY_PAIR, "swap_pair(&mut pr)", "pr.a", "pr.b"},
+	{"swap_local_array_inout", "", COPY_ARRAY, "swap_in_an_array(inout ls)", "ls[0].to", "ls[1].to"},
+	{"copy_after_swap", "", COPY_ARRAY, "copied_back(&mut ls[:])", "ls[0].to", "ls[1].to"},
 }
 
 // `$CALL` is the call, and `$A` and `$B` the two places. Reading one may use what the
@@ -533,6 +544,9 @@ CALL_COPY_CASES := [?]Store_Case {
 // stands for both places, which reading in turn does not make a conflict.
 @(private = "file")
 call_copy_rejected :: proc(place: Call_Copy_Place, entry: Store_Case) -> bool {
+	if strings.has_prefix(place.name, "swap_") {
+		return entry.name == "copy_live_across_call"
+	}
 	switch place.name {
 	case "copy_view_parameter_any", "copy_holder_parameter", "copy_holder_by_value":
 		switch entry.name {

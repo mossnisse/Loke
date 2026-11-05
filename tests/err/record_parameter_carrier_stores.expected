@@ -19,9 +19,6 @@ this reset would end the region backing `d`, which is still live here
 L0537
 @86:2
 this reset would end the region backing `d`, which is still live here
-L0536
-@96:14
-an owner this call leaves is backed by an allocator region created in this procedure, so it cannot be stored in storage reached through a pointer or slice, which outlives that region
 L0537
 @97:2
 this reset would end the region backing `a`, which is still live here

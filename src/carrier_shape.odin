@@ -446,7 +446,12 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 // allocator variable merges both identities. Make it flow-sensitive if that
 // rejects real programs.
 Region_Set :: struct {
-	params:  u64,  // one bit per `Allocator` parameter of the enclosing body
+	params:  u64,  // one bit per parameter of the enclosing body
+	// Of `params`, those read at a load below what the parameter names, as
+	// `p^.next^.allocator`: a call takes everything its argument's carriers lead to
+	// for these, and only what the argument names for the rest
+	// (`prov_substitute_region`).
+	loaded:  u64,
 	default: bool, // the default provider's region
 	unknown: bool,
 	locals:  u64,  // one bit per local `mem.Arena` or `mem.Scratch`
@@ -467,14 +472,27 @@ region_add_param :: proc(set: ^Region_Set, index: int) {
 	}
 }
 
+// A parameter's region read at a load below what it names (`Region_Set.loaded`).
+region_add_loaded_param :: proc(set: ^Region_Set, index: int) {
+	region_add_param(set, index)
+	if index < REGION_PARAM_LIMIT {
+		set.loaded |= u64(1) << uint(index)
+	}
+}
+
 region_remove_param :: proc(set: ^Region_Set, index: int) {
 	if index < REGION_PARAM_LIMIT {
 		set.params &~= u64(1) << uint(index)
+		set.loaded &~= u64(1) << uint(index)
 	}
 }
 
 region_has_param :: proc(set: Region_Set, index: int) -> bool {
 	return index < REGION_PARAM_LIMIT && set.params & (u64(1) << uint(index)) != 0
+}
+
+region_has_loaded_param :: proc(set: Region_Set, index: int) -> bool {
+	return index < REGION_PARAM_LIMIT && set.loaded & (u64(1) << uint(index)) != 0
 }
 
 // Takes the lowest parameter out of `params`, to walk a set's parameters.
@@ -525,6 +543,7 @@ region_is_empty :: proc(set: Region_Set) -> bool {
 region_merge :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 	before := into^
 	into.params |= from.params
+	into.loaded |= from.loaded
 	into.default ||= from.default
 	into.unknown ||= from.unknown
 	into.locals |= from.locals
@@ -881,10 +900,14 @@ receiver_dependencies :: proc(c: ^Compiler, from: Result_Dependencies) -> Result
 @(private)
 receiver_region :: proc(from: Region_Set) -> Region_Set {
 	out := from
-	out.params = 0
+	out.params, out.loaded = 0, 0
 	params := from.params
 	for index in next_region_param(&params) {
-		region_add_param(&out, index + 1)
+		if region_has_loaded_param(from, index) {
+			region_add_loaded_param(&out, index + 1)
+		} else {
+			region_add_param(&out, index + 1)
+		}
 	}
 	return out
 }

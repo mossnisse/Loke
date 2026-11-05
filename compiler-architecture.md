@@ -401,7 +401,7 @@ behavioral controls for all of it.
 | What a block keeps of the solver's tables, in pages shared with its neighbors, and each row of reaching loans or reborrows once | `block_table_take`, `reach_row_written`, `reach_settle`, `reach_load`, `Interned_Rows` in `borrow_tables.odin` |
 | What a load reads below the storage its carriers name, where one points below the whole of it | `prov_load_places`, `Prov_Event.load_places`, `load_pointee_content` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `cfg_provenance.odin`; `prov_link_retained` in `provenance_retention.odin` |
-| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `copies_outlast_body`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
 | Written-argument regions, by parameter and by path, and by which carrier of a record passed by value | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content`, `prov_parameter_carrier_path`, `prov_contents_held_at` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -526,7 +526,10 @@ Keep these contracts:
   Publishing into a parameter's own storage what it already holds retains
   nothing, so `summarize_body` records it instead: `Compiler.carrier_moves` says
   per parameter which carrier types may move there and whether a mutable one
-  may be left in two places. A call emits a `Rearrange` joining what the
+  may be left in two places. A store copies when what it read stays where it was,
+  and the copy counts only if one of the parameter's slots still holds a link from
+  another at an end of the body, which the links solve says (`copies_outlast_body`):
+  a later store over either place ends it, as a swap through a temporary does. A call emits a `Rearrange` joining what the
   argument's carriers hold (`rearrange_carriers`). For a copy the solve also links
   the carriers it reached as reborrows of each other through a hub, which
   hold from that `Rearrange` on (`Prov_Reborrow.from_store`), so an earlier use
@@ -603,8 +606,10 @@ Keep these contracts:
   through (`prov_parameter_carrier_path`), and a call lands the row only where the
   argument's carrier there leads (`prov_contents_held_at`). A read below what a
   parameter names has no path in it (`Written_Alias.loaded`), so it takes the parameter's
-  whole region, which a call substitutes with all its argument's carriers reach
-  (`prov_reached_regions`). A swap or sort records a copy of any
+  region marked as read below (`Region_Set.loaded`), as does a read of a carrier out of
+  the parameter, and a call substitutes that with all its argument's carriers reach
+  (`prov_reached_regions`); the parameter's region unmarked is only what the argument
+  names (`prov_substitute_region`). A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
   so it is no store through a carrier to check.

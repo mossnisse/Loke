@@ -1,6 +1,9 @@
 // design.md "Minimum provenance precision": a store through one carrier of a record
 // passed by value lands only where the argument's carrier at that field leads, so a
-// reset of what was stored there says nothing of the sibling's target.
+// reset of what was stored there says nothing of the sibling's target. And
+// design.md "Allocator regions and region provenance": what a body reads of a
+// parameter's own fields, and not through its carriers, is only what the argument
+// itself holds there.
 package main;
 
 import "core:fmt";
@@ -10,6 +13,7 @@ Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
 Outer :: struct { pair: Pair }
 Items :: struct { values: [dynamic]int }
 Carriers :: struct { first: ^mut Items, second: ^mut Items }
+Owned :: struct { items: [dynamic]int, out: ^mut [dynamic]int }
 
 store_second :: proc(pair: Pair, allocator: mem.Allocator) { pair.second^ = make([dynamic]int, 1, allocator); }
 forward :: proc(pair: Pair, allocator: mem.Allocator) { store_second(pair, allocator); }
@@ -21,6 +25,8 @@ nested :: proc(outer: Outer, allocator: mem.Allocator) { outer.pair.second^ = ma
 field_below :: proc(carriers: Carriers, allocator: mem.Allocator) {
 	carriers.second^.values = make([dynamic]int, 1, allocator);
 }
+leave_items :: proc(owned: Owned) { owned.out^ = owned.items; }
+leave_through :: proc(owned: ^Owned) { owned^.out^ = owned^.items; }
 
 from_literal :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
@@ -89,9 +95,29 @@ field_of_target :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	return a.values.len();
 }
 
+// What the record owned is of `allocator` alone, so storing it in `a` keeps no region
+// of `kept`, though `a` is in it.
+owned_left :: proc(allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	leave_items(Owned{make([dynamic]int, 7, allocator), &mut a});
+	return a.len();
+}
+
+owned_through_pointer :: proc(allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	owned := Owned{make([dynamic]int, 8, allocator), &mut a};
+	leave_through(&owned);
+	return a.len();
+}
+
 main :: proc() {
 	arena_buffer := [1024]u8{};
 	arena := mem.Arena.from_buffer(&mut arena_buffer[:]);
 	fmt.println(from_literal(arena.allocator()), from_named(arena.allocator()), forwarded(arena.allocator()));
 	fmt.println(copied_local(arena.allocator()), nested_record(arena.allocator()), field_of_target(arena.allocator()));
+	fmt.println(owned_left(arena.allocator()), owned_through_pointer(arena.allocator()));
 }

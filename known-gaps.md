@@ -198,35 +198,6 @@ main :: proc() {}
 Telling them apart needs a row to keep the carrier it went through beside the path below it. Found on
 2026-11-03 (P3): the rejection errs on the safe side.
 
-### A parameter's region at a call is everything its argument reaches
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance) puts
-what a body reads through its parameter's carriers in the regions those carriers lead to. A summary
-names such a read by the parameter alone, so a call substitutes every region its argument reaches
-(`prov_reached_regions` in [src/provenance_regions.odin](src/provenance_regions.odin)), at every
-load, even where the body read only the argument's own fields. Here the owner left in `a` is the
-record's own `items`, of `allocator`, but the call takes it to be of `kept` too, which is local, and
-reports `L0536` for storing it through a carrier:
-
-```loke
-package main;
-import "core:mem";
-Owned :: struct { items: [dynamic]int, out: ^mut [dynamic]int }
-leave_items :: proc(owned: Owned) { owned.out^ = owned.items; }
-owned_left :: proc(allocator: mem.Allocator) -> int {
-    buffer := [64]u8{};
-    kept := mem.Arena.from_buffer(&mut buffer[:]);
-    a := make([dynamic]int, 1, kept.allocator());
-    leave_items(Owned{make([dynamic]int, 1, allocator), &mut a}); // L0536; should be accepted
-    return a[0];
-}
-main :: proc() {}
-```
-
-[tests/err/record_parameter_carrier_stores.loke](tests/err/record_parameter_carrier_stores.loke)
-pins it as `owned_left`. Telling them apart needs a summary to say how many loads below the
-parameter a region was read. Found on 2026-11-05 while fixing a region read through two loads (P3).
-
 ### A hook in a `when` on a later constant comes too late for a record already used
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
@@ -352,35 +323,6 @@ under an `if`, and keeps the incoming region. An `Allocator` parameter reassigne
 another is treated the same way, for the same reason. Resetting `allowed` itself says
 the same thing. Telling them apart takes region facts by program point. Found while
 fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
-
-### A call that swaps with a temporary counts as copying
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering is not
-a copy, and a call summary (`Carrier_Move.copied`) says which its body does. A swap
-with a temporary in the callee compiles but counts as a copy, so using both elements
-after the call is `L0641`, as it is not after the same swap in a statement:
-
-```loke
-package main;
-Link :: struct { to: ^mut int }
-swap_by_hand :: proc(links: []mut Link) {
-    held := links[0];
-    links[0] = links[1];
-    links[1] = held;
-}
-caller :: proc() {
-    a := 1; b := 2;
-    links := [2]Link{Link{&mut a}, Link{&mut b}};
-    swap_by_hand(&mut links[:]);
-    links[0].to^ = 1; // L0641; should be accepted
-    links[1].to^ = 2;
-}
-main :: proc() {}
-```
-
-`collect_carrier_moves` asks only whether each store permutes in its own statement
-(`prov_assign_permutes`). Found on 2026-11-01 while deriving a store's links in the
-solve (P3, over-rejection).
 
 ### A cursor stepped through itself holds nothing of the field it came from
 

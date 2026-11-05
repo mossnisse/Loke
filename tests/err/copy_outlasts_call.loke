@@ -1,0 +1,110 @@
+// design.md "Weakening and reborrows": a callee's copy of a carrier within its argument
+// counts at the call as long as the copy and its source may both be left when it
+// returns, on some path, so using both is rejected. Only a later store over the source
+// on every path, or over the copy, ends it.
+package main;
+Link :: struct { to: ^mut int }
+Pair :: struct { a: ^mut int, b: ^mut int }
+
+via_local :: proc(links: []mut Link) { x := links[1]; links[0] = x; }
+in_branch :: proc(links: []mut Link, c: bool) { if (c) { links[0] = links[1]; } }
+source_replaced_on_one_path :: proc(links: []mut Link, @(escape=stored) other: ^mut int, c: bool) {
+	links[0] = links[1];
+	if (c) { links[1] = Link{other}; }
+}
+unknown_index :: proc(links: []mut Link, i: int, j: int) { links[i] = links[j]; }
+in_loop :: proc(links: []mut Link) { foreach (i in 0 ..< 2) { links[i] = links[0]; } }
+self_assigned :: proc(links: []mut Link) { links[0] = links[1]; links[1] = links[1]; }
+back_and_forth :: proc(links: []mut Link) { links[0] = links[1]; links[1] = links[0]; }
+pair_copy :: proc(pair: ^mut Pair) { pair^.a = pair^.b; }
+inout_copy :: proc(pair: inout Pair) { pair.a = pair.b; }
+held_then_copied :: proc(links: []mut Link) {
+	held := links[0];
+	links[0] = links[1];
+	links[1] = held;
+	links[0] = links[1];
+}
+copy_in_branch_after_swap :: proc(links: []mut Link, c: bool) {
+	held := links[0];
+	links[0] = links[1];
+	if (c) { links[1] = held; }
+}
+
+l1 :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	via_local(&mut links[:]);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l2 :: proc(c: bool) {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	in_branch(&mut links[:], c);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l3 :: proc(c: bool) {
+	a := 1; b := 2; o := 3;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	source_replaced_on_one_path(&mut links[:], &mut o, c);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l4 :: proc(i: int, j: int) {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	unknown_index(&mut links[:], i, j);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l5 :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	in_loop(&mut links[:]);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l6 :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	self_assigned(&mut links[:]);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l7 :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	back_and_forth(&mut links[:]);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l8 :: proc() {
+	a := 1; b := 2;
+	pair := Pair{&mut a, &mut b};
+	pair_copy(&mut pair);
+	pair.a^ = 1; // L0641
+	pair.b^ = 2;
+}
+l9 :: proc() {
+	a := 1; b := 2;
+	pair := Pair{&mut a, &mut b};
+	inout_copy(inout pair);
+	pair.a^ = 1; // L0641
+	pair.b^ = 2;
+}
+l10 :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	held_then_copied(&mut links[:]);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+l11 :: proc(c: bool) {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	copy_in_branch_after_swap(&mut links[:], c);
+	links[0].to^ = 1; // L0641
+	links[1].to^ = 2;
+}
+main :: proc() {}

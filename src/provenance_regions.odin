@@ -438,7 +438,7 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 
 // The region dependencies at one path; a whole-value fact reaches every path.
 @(private)
-prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
+prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, query := Region_Query.All, loc := #caller_location) -> Region_Set {
 	out := Region_Set{}
 	if root == NO_ROOT {
 		return out
@@ -455,6 +455,10 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 	if reads != nil && reads.symbol != id { reads = nil }
 	if direct, found := graph.region_of[id]; found && reads == nil {
 		region_merge(&out, direct)
+		// A carrier read out of a parameter leads below what the parameter names.
+		if prov_root_is_parameter(graph, root) && prov_type_holds_carrier(graph.k.c, prov_parameter_type_at(graph.k.c, symbol_of(graph.k.c, id), path)) {
+			prov_add_loaded_parameter(graph, &out, root)
+		}
 	} else if found {
 		// The parameter's own region here is what the argument held at `path`.
 		rest := direct
@@ -1108,16 +1112,52 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 		prov_add_received_allocator(graph, &out, root, type)
 		// Read below what the parameter names, so no path of it says what this holds:
 		// it stands for what the whole argument reaches (`prov_reached_regions`).
-		if direct, found := graph.region_of[graph.roots[int(root)].symbol]; found && alias.loaded {
-			region_merge(&out, direct)
+		if alias.loaded {
+			prov_add_loaded_parameter(graph, &out, root)
 		}
 	}
 	return out, known
 }
 
-// design.md "Allocator regions and region provenance": a parameter's region at a call
-// stands for what the body may read of its argument, which is what the carriers it holds
-// lead to as well as what it names, at every load below.
+// Whether a value of `type` is or holds a carrier, so what is read through it is
+// below where it is.
+@(private)
+prov_type_holds_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type != INVALID_TYPE && (type_is_carrier(c, type) || len(carrier_shape(c, type)) > 0)
+}
+
+// The type at `path` in what parameter `sym` names: a pointer's paths start at
+// its pointee, as its storage is the pointee's.
+@(private)
+prov_parameter_type_at :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Step) -> Type_Id {
+	type := sym.type
+	if sym.mode != .Inout && underlying_kind(c, type) == .Pointer {
+		type = underlying_info(c, type).element
+	}
+	return prov_type_at(c, type, path)
+}
+
+// The region of parameter `root`, read at a load below what it names
+// (`Region_Set.loaded`).
+@(private = "file")
+prov_add_loaded_parameter :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id) {
+	id := graph.roots[int(root)].symbol
+	direct, found := graph.region_of[id]
+	if !found {
+		return
+	}
+	region_merge(set, direct)
+	params := direct.params
+	for index in next_region_param(&params) {
+		region_add_loaded_param(set, index)
+	}
+}
+
+// design.md "Allocator regions and region provenance": a parameter's region read at a
+// load below what it names stands at a call for what its argument's carriers lead to, at
+// every load below, as well as what it names. A parameter of this body reached here
+// with carriers in it is one more load below for this body's callers
+// (`prov_region_content_at`).
 @(private = "file")
 prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id) -> Region_Set {
 	out := Region_Set{}
@@ -1673,23 +1713,26 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 prov_substitute_region :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, summary: Region_Set) -> Region_Set {
 	out := Region_Set{}
 	bound := prov_bound_values(form)
-	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id) {
+	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id, loaded: bool) {
 		if argument != 0 {
 			region_merge(out, prov_storage_region(graph, argument))
 			region_merge(out, prov_provider_viewed_by(graph, argument))
-			region_merge(out, prov_reached_regions(graph, argument))
+			if loaded {
+				region_merge(out, prov_reached_regions(graph, argument))
+			}
 		}
 	}
 	params := summary.params
 	for index in next_region_param(&params) {
+		loaded := region_has_loaded_param(summary, index)
 		// A pack built from separate arguments has no bound value: the parameter's
 		// region is its elements'.
 		if call_packs(form.call, index) {
 			for element in form.pack {
-				merge_argument(graph, &out, element)
+				merge_argument(graph, &out, element, loaded)
 			}
 		} else if index < len(bound) {
-			merge_argument(graph, &out, bound[index])
+			merge_argument(graph, &out, bound[index], loaded)
 		}
 	}
 	out.default ||= summary.default

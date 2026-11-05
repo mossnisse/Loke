@@ -1001,11 +1001,13 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	if stores_thread_local {
 		changed = collect_thread_local_writes(&state, literal.symbol) || changed
 	}
-	if moves_carriers {
-		changed = collect_carrier_moves(&state, literal.symbol) || changed
-	}
 	if returns {
 		changed = collect_escape_provenance(&state, literal.symbol, summary) || changed
+	}
+	// Last, as whether a copy outlasts the body takes solving the links, which settles
+	// the graph's loads and stores for the checks.
+	if moves_carriers {
+		changed = collect_carrier_moves(&state, literal.symbol) || changed
 	}
 	return changed
 }
@@ -1048,32 +1050,107 @@ slot_stores_in_inout :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 	return sym != nil && sym.kind == .Parameter && sym.mode == .Inout
 }
 
-// `Carrier_Move` of a body, read off each store that reaches its end of solving.
+// A `Carrier_Move` a store makes into the storage parameter root `root` names.
+@(private = "file")
+Noted_Move :: struct {
+	root: Root_Id,
+	move: Carrier_Move,
+}
+
+// `Carrier_Move` of a body, read off each store that reaches its end of solving. A
+// store that copies counts as one only if the copy outlasts the body, which a later
+// store over the place it was read from ends, as `held := links[0]; links[0] =
+// links[1]; links[1] = held;` does (`copies_outlast_body`).
 @(private = "file")
 collect_carrier_moves :: proc(state: ^Prov_Solve, declaration: Symbol_Id) -> bool {
-	changed := false
-	for block in state.graph.blocks {
+	graph := state.graph
+	moves := make([dynamic]Noted_Move, graph.alloc)
+	for block in graph.blocks {
 		if !enter_block(state, block) {
 			continue
 		}
 		for event in block.prov {
 			#partial switch event.kind {
 			case .Publish:
-				changed = note_published_move(state, event, declaration) || changed
+				note_published_move(state, event, &moves)
 			case .Def:
-				changed = note_inout_move(state, event, declaration) || changed
+				note_inout_move(state, event, &moves)
 			case .Rearrange:
-				changed = note_rearranged_move(state, event, declaration) || changed
+				note_rearranged_move(state, event, &moves)
 			}
 			run_prov_event(state, event, state.reach, state.ended)
 		}
 	}
+	copies := false
+	for noted in moves {
+		copies ||= noted.move.copied
+	}
+	if copies {
+		link_landed_stores(state)
+		resolve_content_reads(state)
+		prov_settle_pending_reborrows(graph)
+		solve_links_held(state)
+	}
+	changed := false
+	outlast := make(map[Root_Id]bool, graph.alloc)
+	for noted in moves {
+		move := noted.move
+		if move.copied {
+			if noted.root not_in outlast {
+				outlast[noted.root] = copies_outlast_body(state, noted.root)
+			}
+			move.copied = outlast[noted.root]
+		}
+		changed = merge_carrier_move(graph.k.c, declaration, graph.roots[int(noted.root)].param_index, move) || changed
+	}
 	return changed
+}
+
+// design.md "Weakening and reborrows": whether a carrier the body copied within the
+// storage parameter root `root` names may still be in two places of it when the body
+// ends. A carrier read out of that storage holds a link from the slot it was read from
+// until the slot holds another (`end_links_of_value`), so a copy is left only where one
+// of the storage's slots holds a link from another, at an end of the body. A reordering's
+// link moves the carrier, leaving none behind. With no links solved, nothing says the
+// copy ended.
+@(private = "file")
+copies_outlast_body :: proc(state: ^Prov_Solve, root: Root_Id) -> bool {
+	graph := state.graph
+	if state.link_row_bytes == 0 {
+		return true
+	}
+	storage := make([]bool, state.slots, graph.alloc)
+	for loan, slots in graph.caller_slots {
+		if graph.loans[int(loan)].root == root {
+			for slot in slots { storage[slot] = true }
+		}
+	}
+	for slot in root_own_slots(graph, graph.roots[int(root)]) {
+		storage[slot] = true
+	}
+	for block in graph.blocks {
+		if len(block.succs) > 0 || block.unwind {
+			continue
+		}
+		block_table_put(block.links_exit, state.links_held)
+		for held, slot in state.links_held {
+			if held == 0 || !storage[slot] {
+				continue
+			}
+			row := state.link_rows.rows[held]
+			for link, index in graph.reborrows {
+				if bit_get(row, index) && storage[link.source] && !link.moved {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // A store through carriers moves what it stores to every loan they hold.
 @(private = "file")
-note_published_move :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symbol_Id) -> bool {
+note_published_move :: proc(state: ^Prov_Solve, event: Prov_Event, moves: ^[dynamic]Noted_Move) {
 	graph := state.graph
 	mem.zero_slice(state.merged)
 	for source in event.sources {
@@ -1087,23 +1164,21 @@ note_published_move :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: 
 		}
 	}
 	types, any := carried_types(graph.k.c, event.carried, graph.alloc)
-	changed := false
 	it := slots_loans(state, event.into)
 	for _, index in next_live_loan(&it) {
 		loan := graph.loans[index]
 		// Reordering copies nothing: no place is deep enough to count.
 		level := event.permutes ? -1 : loan.depth + 1
-		changed = note_carrier_move(state, declaration, loan.root, level, types, any) || changed
+		note_carrier_move(state, moves, loan.root, level, types, any)
 	}
-	return changed
 }
 
 // A definition of an `inout` parameter's storage moves what it stores there.
 @(private = "file")
-note_inout_move :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symbol_Id) -> bool {
+note_inout_move :: proc(state: ^Prov_Solve, event: Prov_Event, moves: ^[dynamic]Noted_Move) {
 	graph := state.graph
 	if len(event.sources) == 0 || !slot_stores_in_inout(graph, event.slot) {
-		return false
+		return
 	}
 	mem.zero_slice(state.merged)
 	for source in event.sources {
@@ -1113,28 +1188,24 @@ note_inout_move :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symb
 	}
 	types, any := carried_types(graph.k.c, slot_carrier_type(graph, event.slot), graph.alloc)
 	symbol := graph.prov_slots[event.slot].symbol
-	changed := false
 	for root, at in graph.roots {
 		if root.kind == .Param && root.symbol == symbol {
-			changed = note_carrier_move(state, declaration, Root_Id(at), 0, types, any) || changed
+			note_carrier_move(state, moves, Root_Id(at), 0, types, any)
 		}
 	}
-	return changed
 }
 
 // A call's own moves apply to every parameter its argument's carriers name.
 @(private = "file")
-note_rearranged_move :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symbol_Id) -> bool {
+note_rearranged_move :: proc(state: ^Prov_Solve, event: Prov_Event, moves: ^[dynamic]Noted_Move) {
 	graph := state.graph
-	changed := false
 	it := slots_loans(state, event.into)
 	for _, index in next_live_loan(&it) {
-		root := graph.roots[int(graph.loans[index].root)]
-		if root.kind == .Param {
-			changed = merge_carrier_move(graph.k.c, declaration, root.param_index, event.rearranged) || changed
+		root := graph.loans[index].root
+		if graph.roots[int(root)].kind == .Param {
+			append(moves, Noted_Move{root, event.rearranged})
 		}
 	}
-	return changed
 }
 
 // A store of `types` into parameter storage at `root`, at `level` loads below
@@ -1142,13 +1213,13 @@ note_rearranged_move :: proc(state: ^Prov_Solve, event: Prov_Event, declaration:
 // same parameter held, and a copy when it came from no deeper than it lands.
 @(private = "file")
 note_carrier_move :: proc(
-	state: ^Prov_Solve, declaration: Symbol_Id, root: Root_Id, level: int, types: []Type_Id, any: bool,
-) -> bool {
+	state: ^Prov_Solve, moves: ^[dynamic]Noted_Move, root: Root_Id, level: int, types: []Type_Id, any: bool,
+) {
 	graph := state.graph
 	c := graph.k.c
 	descriptor := graph.roots[int(root)]
 	if descriptor.kind != .Param {
-		return false
+		return
 	}
 	type := symbol_of(c, descriptor.symbol).type
 	pointee := carrier_pointee_shape(c, type)
@@ -1168,10 +1239,9 @@ note_carrier_move :: proc(
 		}
 		copied ||= mutable && loan.depth <= level
 	}
-	if !held {
-		return false
+	if held {
+		append(moves, Noted_Move{root, Carrier_Move{types, any, copied}})
 	}
-	return merge_carrier_move(c, declaration, descriptor.param_index, Carrier_Move{types, any, copied})
 }
 
 // The carriers in a value of `type`, or `any` when they are not all known. An
@@ -1512,8 +1582,13 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 				if prov_same_path(from.path, entry.path) {
 					continue
 				}
+				// A carrier copied within the argument leads below what it names.
 				region = {}
-				region_add_param(&region, index)
+				if prov_type_holds_carrier(c, prov_parameter_type_at(c, symbol_of(c, id), from.path)) {
+					region_add_loaded_param(&region, index)
+				} else {
+					region_add_param(&region, index)
+				}
 			}
 			changed = region_merge(&summary.regions[index], region) || changed
 			if !entry.handle {

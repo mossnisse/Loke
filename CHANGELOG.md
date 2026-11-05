@@ -1632,6 +1632,13 @@ checklist.
 
 ### Fixed
 
+- A callee that swaps or rotates carriers through a temporary, as `held := links[0]; links[0] =
+  links[1]; links[1] = held;`, moves them, as the same swap in one statement does, so using each
+  after the call is no longer `L0641` ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- What a body reads of a parameter's own fields, and not through a carrier it holds, is only what the
+  argument holds there. `owned.out^ = owned.items` with `owned` a record took `items` to be in every
+  region the argument's carriers lead to, and storing it was `L0536` when one of them was local
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
 - A store to one place replaces what a call may have left there, through a pointer to a record of one
   carrier, a pointer to a carrier, or at one element of a view parameter, so a later use of what the
   call was given is no longer `L0641`.

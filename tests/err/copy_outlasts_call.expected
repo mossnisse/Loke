@@ -1,0 +1,33 @@
+L0641
+@37:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@44:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@51:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@58:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@65:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@72:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@79:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@86:2
+`pair` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@93:2
+`pair` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@100:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@107:2
+`links` cannot be used here: a mutable reborrow of it is still in use
