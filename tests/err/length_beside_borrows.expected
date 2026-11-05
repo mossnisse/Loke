@@ -76,3 +76,9 @@ L0512
 L0512
 @88:2
 `x` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@94:7
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@100:7
+this read of `d` is not compatible with the mutable pointer of it that is still in use

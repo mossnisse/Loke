@@ -88,4 +88,16 @@ write_named_target_then_length :: proc(a: Allocator) {
 	x = 2;
 	n := d.len();
 }
+// comments.md "A dynamic array's length conflicts with a mutable pointer to its element".
+through_a_pointer_beside_an_element :: proc(d: ^mut [dynamic]Pair) {
+	y := &mut d^[0];
+	n := d^.len();
+	y^.n = n;
+}
+local_beside_an_element :: proc(a: Allocator) {
+	d := make([dynamic]Pair, a);
+	y := &mut d[0];
+	n := d.len();
+	y^.n = n;
+}
 main :: proc() {}

@@ -1738,6 +1738,16 @@ another read. Permitting recognized read-only uses allows `slice.equal(xs, xs)`
 without weakening exclusivity. A mutable reborrow still excludes other reads,
 which could observe a partially updated value.
 
+### A dynamic array's length conflicts with a mutable pointer to its element
+
+`n := d^.len();` beside a live `y := &mut d^[0]` is rejected, though the call reads only the header
+and `s.len()` beside `&mut s[0]` is accepted. [Places and overlap](design.md#places-and-overlap) has
+an operation on a container header overlap every descendant, and a dynamic array's header is the
+storage an element borrow was reached through, where a view's is a value of its own that the element
+borrow does not go through. An exception for `len` would leave `cap`, a copy of the header, and every
+other reader to be argued one by one, for a program that costs one line to write the other way: take
+the length before the borrow.
+
 ### A view's constant elements are places only where its start is known
 
 `xs[0]` and `xs[1]` name different storage only relative to where `xs`

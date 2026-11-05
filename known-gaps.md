@@ -282,30 +282,6 @@ main :: proc() {}
 form this holds for, and a record of two carriers through a pointer is already accepted.
 End the use of `x` before using `other`.
 
-### The length of a dynamic array conflicts with a mutable pointer to its element
-
-A call to `len` reads only the array's header, as the same call on a view shows beside a
-pointer to one of its elements. A mutable borrow of an element of a dynamic array reached
-through a carrier reborrows that carrier, so the read of it conflicts:
-
-```loke
-package main;
-Pair :: struct { n: int }
-in_a_view :: proc(s: []mut Pair) {
-    y := &mut s[0];
-    n := s.len();
-    y^.n = n;
-}
-in_a_dynamic_array :: proc(d: ^mut [dynamic]Pair) {
-    y := &mut d^[0];
-    n := d^.len(); // L0641; should be accepted
-    y^.n = n;
-}
-main :: proc() {}
-```
-
-Take the length before the borrow.
-
 ### A read of a carrier a call may have weakened conflicts with the copy
 
 A read-only copy does not suspend a read of what it reborrows
