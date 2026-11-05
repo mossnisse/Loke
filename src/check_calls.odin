@@ -455,7 +455,7 @@ reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -
 	operation: string
 	#partial switch sym.hook {
 	case .Convert: operation = "`T(value)`"
-	case .Copy:    operation = "`clone(value)` or `try_clone(value)`"
+	case .Copy:    operation = "`value.clone()` or `value.try_clone()`"
 	case .Drop:    operation = "`drop(value)`"
 	}
 	errorf(k.c, span, "L0412", "`%s` implements `hook(%s)` and is not directly accessible; use %s", identifier_text(k.c, sym.name), hook_name(sym.hook), operation)

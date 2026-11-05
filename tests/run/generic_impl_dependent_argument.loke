@@ -1,0 +1,18 @@
+// design.md "Generics": a constant parameter whose type an earlier argument decides takes
+// a constant in an `impl` subject too, whatever else of that name the package declares.
+package main;
+
+import "core:fmt";
+
+T :: struct { unrelated: int }
+
+R :: struct($T: type, $V: T) { x: T }
+impl R(int, 0) { first :: proc(self) -> int { return self.x; } }
+impl R(string, "s") { first :: proc(self) -> string { return self.x; } }
+
+main :: proc() {
+	a := R(int, 0){1};
+	b := R(string, "s"){"two"};
+	fmt.println(a.first());
+	fmt.println(b.first());
+}

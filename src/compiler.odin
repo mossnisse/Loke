@@ -47,11 +47,12 @@ Compiler :: struct {
 	source_overlays: ^map[string]Source_Overlay,
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
-	// What a body checked on demand for compile-time execution reported
-	// (`ensure_proc_typed_for_eval`). That body is settled and never checked
-	// again, so a speculative check that led to it and then rolls its
-	// diagnostics back must not take these along; they rejoin the list when
-	// checking ends (`release_held_diagnostics`).
+	// What a declaration settled from inside a probe reported (`begin_settling`), and
+	// a body checked on demand for compile-time execution
+	// (`ensure_proc_typed_for_eval`). Each is settled and never checked again, so a
+	// speculative check that led to it and then rolls its diagnostics back must not
+	// take these along; they rejoin the list once no probe is open
+	// (`release_held_diagnostics`).
 	held_diagnostics: [dynamic]Diagnostic,
 
 	// While a capture literal's body is cloned into its record's `call`: the
@@ -73,6 +74,8 @@ Compiler :: struct {
 	// How many `begin_commit`s have run, so a probe can tell its own enrollment
 	// from a sanctioned commit inside it.
 	commits:           int,
+	// Commits under way (`begin_commit`), any of which may sit inside a probe.
+	open_commits:      int,
 
 	// The widths `int`, `uint`, `uintptr` and every pointer take. Checker and
 	// emitter read this one record so they cannot disagree.

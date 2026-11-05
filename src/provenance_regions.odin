@@ -1153,10 +1153,10 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id
 	return Region_Set{unknown = true}, true
 }
 
-// A provider reached through a carrier, when that names local ones: what a local
-// pointer points at, or what a call's result does, which for a handle's `get()` is
-// the handle, whose end ends the provider (design.md "Shared ownership"). A
-// received pointer names none.
+// A provider reached through a carrier, when that names one: what a local pointer
+// points at, or what a call's result does, which for a handle's `get()` is the
+// handle, whose end ends the provider (design.md "Shared ownership"). What a received
+// carrier reaches is its argument's, which the parameter's position names.
 @(private = "file")
 prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Region_Set, bool) {
 	value := prov_value(graph, id)
@@ -1168,12 +1168,36 @@ prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Regi
 	set := Region_Set{}
 	for alias in aliases {
 		if alias.target == 0 { return {}, false }
-		descriptor := graph.roots[int(prov_root_for_storage(graph, alias.target))]
+		// Named apart: asking may add the root.
+		root := prov_root_for_storage(graph, alias.target)
+		descriptor := graph.roots[int(root)]
 		holder := symbol_of(graph.k.c, descriptor.symbol)
+		if holder != nil && holder.kind == .Parameter {
+			if received, seeded := graph.region_of[descriptor.symbol]; seeded && prov_type_is_view_carrier(graph.k.c, holder.type) {
+				region_merge(&set, received)
+				continue
+			}
+			return {}, false
+		}
 		if descriptor.kind != .Local || holder == nil || holder.kind != .Var || !type_carries_provider(graph.k.c, holder.type) { return {}, false }
 		region_merge(&set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
 	}
 	return set, true
+}
+
+// The regions of the providers a carrier argument reaches, which a callee naming its
+// parameter's region may have drawn from: unknown when the carrier names no one of them.
+@(private)
+prov_provider_viewed_by :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
+	c := graph.k.c
+	type := prov_value(graph, id).type
+	if !prov_type_is_view_carrier(c, type) || !type_carries_provider(c, underlying_info(c, type).element) {
+		return {}
+	}
+	if set, known := prov_provider_through_carrier(graph, id); known {
+		return set
+	}
+	return Region_Set{unknown = true}
 }
 
 Temp_Provider :: struct {
@@ -1497,6 +1521,7 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, bound: []Value_Id, summary: R
 	for index in next_region_param(&params) {
 		if index < len(bound) && bound[index] != 0 {
 			region_merge(&out, prov_storage_region(graph, bound[index]))
+			region_merge(&out, prov_provider_viewed_by(graph, bound[index]))
 		}
 	}
 	out.default ||= summary.default

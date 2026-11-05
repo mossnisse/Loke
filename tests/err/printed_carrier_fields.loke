@@ -5,7 +5,7 @@ import "core:fmt";
 // design.md "Weakening and reborrows" and "Built-in procedures": what is printed is
 // held read-only until printing ends, so a later argument cannot write through it or
 // change it. A carrier whose pointee or elements hold borrows may be written through
-// by what prints them, and a distinct pointer by its own `format`, so those are lent.
+// by what prints them, and a distinct type by its own `format`, so those are lent.
 
 Holder :: struct { items: []mut int, p: ^mut int, count: int }
 Node :: struct { value: ^mut int }
@@ -94,6 +94,29 @@ distinct_pointer :: proc(x: int) {
 	y := x;
 	cell := Cell(&mut y);
 	fmt.println(cell, cell);
+}
+
+distinct_slice :: proc() {
+	storage := [2]int{1, 2};
+	cells := Cells(&mut storage[:]);
+	fmt.println(cells, cells);
+}
+
+impl Cell {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		pointer := (^mut int)(self);
+		pointer^ += 1;
+		fmt.format_to(writer, pointer^);
+	}
+}
+
+Cells :: distinct []mut int;
+impl Cells {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		view := ([]mut int)(self);
+		view[0] += 1;
+		fmt.format_to(writer, view[0]);
+	}
 }
 
 main :: proc() {}

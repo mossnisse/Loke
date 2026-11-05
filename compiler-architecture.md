@@ -325,8 +325,11 @@ call, value, loop, or witness must enroll them through `enroll_synth`, including
 adapter targets.
 
 The sanctioned nested commit is `ensure_proc_typed_for_eval`: it checks a CTFE
-body at depth zero between `begin_commit` and `end_commit`. Its diagnostics are
-held outside rollback and `error_count`, then released by
+body at depth zero between `begin_commit` and `end_commit`. A file-scope
+declaration first reached from a probe is the other (`begin_settling`): it is
+settled once and never checked again, so it is settled for the program, whichever
+check asked. The diagnostics of both are held outside rollback and `error_count`,
+and released once no probe is open, or at the latest by
 `finish_program_analysis`.
 
 Silent generic instantiation (`report = false`) is also a probe. It caches the

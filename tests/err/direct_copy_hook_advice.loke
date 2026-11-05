@@ -1,0 +1,17 @@
+// design.md "Lifecycle hooks and resource types": a copy hook runs through the generated
+// `clone` and `try_clone` members, which is what the report asks for.
+package main;
+
+import "core:mem";
+
+C :: struct { n: int }
+impl C {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(C, Allocator_Error) {
+		return .ok(C{self.n});
+	}
+}
+
+main :: proc() {
+	c := C{1};
+	_ = c.dup(mem.default_allocator());
+}

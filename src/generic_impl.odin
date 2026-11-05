@@ -118,24 +118,27 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 			require_impl_member_form(k, d)
 		}
 	}
-	if !generic_application_fits(k, call.args, expr_span(item.type), template, true) {
+	if template_rejected(k, template) || !generic_application_fits(k, call.args, expr_span(item.type), template, true) {
 		return
 	}
+	applied := applied_parameters(k, call.callee)
 	for arg, index in call.args {
 		if type_syntax_has_poly(arg.value) {
 			continue
 		}
-		parameter := template.params[index]
-		// The template reports its own parameter types; this only reads one.
-		errors := k.c.error_count
-		probe := begin_probe(k.c)
-		wanted := resolve_type_syntax(k, parameter.type_syntax)
-		end_probe(k.c, probe)
-		if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
-			if resolve_type_syntax(k, arg.value) == INVALID_TYPE && k.c.error_count == errors {
-				report_unresolved_type(k, arg.value)
+		// A type an earlier argument decides has no one answer here; only constness
+		// is known, as for `$V` in `struct($T: type, $V: T)`.
+		wanted, dependent := generic_parameter_kind(k, applied, index)
+		switch {
+		case wanted == TYPE_TYPE:
+			resolve_type_reporting(k, arg.value)
+		case dependent:
+			if check_single_expr(k, arg.value) != INVALID_TYPE {
+				require_const(k, arg.value, "a generic argument", "L0432")
 			}
-		} else if check_single_expr(k, arg.value, wanted) != INVALID_TYPE {
+		case wanted == INVALID_TYPE:
+			// The template said why, as this parameter's type names no other.
+		case check_single_expr(k, arg.value, wanted) != INVALID_TYPE:
 			require_const(k, arg.value, "a generic argument", "L0432")
 		}
 	}
@@ -618,6 +621,7 @@ check_pending_impl_instance :: proc(k: ^Checker, pending: Pending_Impl) {
 	for member in pending.item.members {
 		if d, is_decl := member.(^Decl); is_decl {
 			check_decl(k, d)
+			validate_instance_member_position(k, d)
 		}
 	}
 	validate_instance_hooks(k, pending.item)

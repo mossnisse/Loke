@@ -21,6 +21,26 @@ checklist.
   ([Delegating operators](design.md#delegating-operators)), so an overload of the distinct type
   declared after the block is now the redeclaration `L0420`, as one written ahead of it already was.
   Upgrade by removing the `delegate` of that operator or the overload.
+- What is wrong with a declaration is reported wherever the first question about it came from. A
+  declaration first reached from a speculative check, such as a generic parameter's type, kept its
+  answer and lost its report, so it compiled, or stopped with the internal `L0405`. A `$` parameter's
+  own type is also checked where it is declared rather than at the first instance
+  ([Generics](design.md#generics)), so a generic nothing instantiates may now report `L0306`. Upgrade
+  by fixing the reported declaration.
+- A distinct slice or pointer with a `format` of its own is lent while it is printed, as that `format`
+  may write through it ([Weakening and reborrows](design.md#weakening-and-reborrows)). So
+  `fmt.println(d, d)` over such a type is now `L0641`, where it compiled. Upgrade by printing it in two
+  statements.
+- A task using a provider through a pointer it received reserves that provider
+  ([Allocators and tasks](design.md#allocators-and-tasks)), so using its allocator in the parent or
+  another task before the join is now `L0732`. Upgrade by giving the task an arena of its own.
+- A generic union whose `@(zero=)` payload has no zero is `L0423` when a record names the instance in
+  its own fields, as it is elsewhere
+  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). Upgrade by designating a payload
+  with a zero.
+- A generic block's member takes only the attributes its kind allows, so `@(require_results)` on one
+  naming a constant is `L0607`, as it is in any other block
+  ([Attributes](design.md#attributes)). Upgrade by removing the attribute.
 - `or_else break` and `or_else continue` in a static `foreach` body are `L0455`, as any `break` or
   `continue` that would target the expansion is
   ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over a value with no elements the
@@ -1551,6 +1571,20 @@ checklist.
 
 ### Fixed
 
+- What a procedure draws from a provider it reaches through a parameter is in the argument's region
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
+  where it was in an unknown one, so another region ending no longer counts against it, and declaring
+  an arena beside the result compiles.
+- `impl R(int, 0)` over `R :: struct($T: type, $V: T)` compiles, where a constant argument whose type
+  an earlier argument decides was the "compiler defect" `L0350`
+  ([Generics](design.md#generics)). So does a distinct slice or pointer printed twice, when the
+  compiler generates its `format`.
+- An array type whose length names a constant that failed reports only that constant, not also
+  `L0350`.
+- `L0537` names the local whose cleanup ends a region, rather than calling its declaration a reset,
+  and says "may" where the region limit is why
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+- `L0412` asks for `value.clone()` or `value.try_clone()`, which exist, rather than `clone(value)`.
 - A `delegate` no longer fails with `L0420` when the operator it forwards is declared later in the
   package, when the underlying type's own `delegate` is, or when a constant a signature needs uses
   the operator ahead of the block ([Delegating operators](design.md#delegating-operators)).

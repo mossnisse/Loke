@@ -1,0 +1,21 @@
+// design.md "Zero values and `@(zero=)`": a designated payload needs a zero, which an
+// instance named in a record's own fields can tell only once the record has them.
+package main;
+
+@(zero=a) G :: union($T: type) { a: T, b: int }
+
+S :: struct { link: []G(S), @(required) x: int }
+
+@(zero=a) Through :: union($T: type) { a: T, b: int }
+
+Outer :: struct { inner: Inner }
+Inner :: struct { link: []Through(Outer), @(required) x: int }
+
+@(zero=a) In_A_Body :: union($T: type) { a: T, b: int }
+
+main :: proc() {
+	// A body-local record has its fields later than the package's.
+	R :: struct { link: []In_A_Body(R), @(required) x: int }
+	r := R{x = 1};
+	_ = r;
+}

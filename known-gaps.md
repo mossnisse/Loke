@@ -143,35 +143,6 @@ takes 16 s at 1000 statements and 3.5 minutes at 2000 on an unoptimized `lokec`,
 with `error: out of memory`. A `switch` no longer adds to this by its cases alone, as its bindings
 share one view of the subject. Fixing it needs sparse rows, or rows only where a slot is live. Found
 on 2026-11-03 (P2).
-### A distinct mutable slice is read as plain when printed
-
-`prov_type_is_plain_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes
-printing a slice of plain data to only read it, as
-[Weakening and reborrows](design.md#weakening-and-reborrows) says of printing, but a
-distinct slice type may have a `format` of its own that writes through its value. This
-compiles and prints `2 3`:
-
-```loke
-package main;
-import "core:fmt";
-D :: distinct []mut int;
-impl D {
-    format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-        view := ([]mut int)(self);
-        view[0] += 1;
-        fmt.format_to(writer, view[0]);
-    }
-}
-main :: proc() {
-    storage := [2]int{1, 2};
-    d := D(&mut storage[:]);
-    fmt.println(d, d);
-}
-```
-
-A distinct pointer in the same place reports `L0641`. Leaving distinct slices out of the
-plain views as well would reject `fmt.println(d, d)` for every such type, including those
-with no `format`, so that wants the method's presence checked. Found on 2026-11-01 (P3).
 
 ### A hook in a `when` on a later constant comes too late for a record already used
 
@@ -551,73 +522,6 @@ first step, and the first step here is the loop's copy, which a reordering in th
 does not make a move. Found on 2026-11-01 while replacing a carrier through its
 traversal binding (P3, over-rejection).
 
-### A declaration first checked in a probe loses its rejection
-
-A probe rolls back what it reports, but `check_alias_template` in
-[src/generic_alias.odin](src/generic_alias.odin) keeps `template.rejected` and the declaration
-stays settled, so what was wrong with it is never reported. The
-[parametric alias](design.md#parametric-aliases) rule below compiles, and moving
-`Bad` above `Record` reports `L0744`:
-
-```loke
-package main;
-Record :: struct($V: Bad(int)) {}
-Bad :: distinct Option($T);
-main :: proc() {}
-```
-
-`reject_typeid_generic_parameter` resolves `$V`'s type in a probe when `Record` is
-declared, which is the first thing to ask about `Bad`. The same loss turns a use into
-an internal error, as the only report is gone, so `size_of` reaches emission:
-
-```loke
-package main;
-Record :: struct($T: type, $V: Alias(int, 0)) { item: T }
-Alias :: Record($T, $V);
-main :: proc() { _ = size_of(Alias(int, 0)); }
-```
-
-This exits 2 with `L0405`, "an unfrozen compile-time built-in reached emission". A
-declaration settled in a probe should keep its report, or stay unsettled for the
-check that commits. Found on 2026-11-01 while fixing the instantiation limit for a
-parameter's type; traced for the alias only.
-
-### A generic union instantiated in a record's own fields misses L0423
-
-`check_union_zero_payload` in [src/union.odin](src/union.odin) judges a generic instance
-when it is instantiated, where a probe can still reject it, so an instance a record names
-in its own fields reads that record before it has any. [Zero values and
-`@(zero=)`](design.md#zero-values-and-zero) requires a designated payload to have a zero,
-and `S` has none, yet this compiles. A use that makes a zero still reports `L0424`, so no
-value goes wrong. A non-generic union is judged after every record has its fields, and does
-report it.
-
-```loke
-package main;
-@(zero=a) G :: union($T: type) { a: T, b: int }
-S :: struct { link: []G(S), @(required) x: int }
-main :: proc() {}
-```
-
-### An `impl` on a record whose parameter type does not resolve reports L0350
-
-`check_generic_impl_subject` in [src/generic_impl.odin](src/generic_impl.odin) reads an `impl`
-subject's constant argument as a type when its parameter's type does not resolve, and
-reports it as a compiler defect:
-
-```loke
-package main;
-Record :: struct($T: type, $V: Unknown) { item: T }
-impl Record(int, 0) { }
-main :: proc() {}
-```
-
-This reports only `L0350`, "this construct parses, but the checker has no rule for
-it", at the `0`, and nothing about `Unknown`. So does `$V: Record(T, 0)`, where the
-instantiation limit is what stops the parameter's type. The site's comment says the
-template reports its own parameter types, and it does not here. Found on 2026-11-01
-while fixing the instantiation limit for a parameter's type.
-
 ### An adapter's clone of its source draws no copy warning
 
 An adapter stored over a mutable view that owns something clones it
@@ -644,89 +548,6 @@ main :: proc() {
     _ = view;
 }
 ```
-
-### A reset past the region limit is reported as certain
-
-[Minimum provenance precision](design.md#minimum-provenance-precision) says a
-diagnostic caused by an analysis budget must describe the dependency as possible, not
-certain. Past `REGION_LOCAL_LIMIT` local regions merge, so a procedure that only declares
-65 arenas is rejected, which the budget permits, but `L0537` says "this reset would end the
-region backing `a0`". It names a declaration as the reset, and only the notes that follow
-say the limit may be the cause. [tests/err/crowded_regions.loke](tests/err/crowded_regions.loke)
-pins the current wording. The reproduction, with the lines between written out:
-
-```loke
-package main;
-import "core:mem";
-main :: proc() {
-    a0 := mem.Arena.init();
-    // a1 through a63 alike
-    a64 := mem.Arena.init();
-}
-```
-
-### Declaring an arena beside an owner of unknown region is reported as a reset
-
-An owner built from a provider the callee received has an unknown region, and
-[The allocator reset promise](design.md#allocator_reset) has a reset reach every such region, which
-is safe. But `other`'s declaration is not a reset, though `L0537` names it as one, and nothing here
-ends the region backing `r`:
-
-```loke
-package main;
-import "core:mem";
-build :: proc(a: ^mut mem.Arena) -> [dynamic]int {
-    inner: [dynamic]int via a.allocator() = {};
-    inner.append(1);
-    return inner;
-}
-main :: proc() {
-    arena := mem.Arena.init();
-    r := build(&mut arena);
-    other := mem.Arena.init();
-    _ = r[0];
-}
-```
-
-Declare `other` first. Found on 2026-11-05 while testing what a call's result points at (P3,
-over-rejection).
-
-### `L0412` recommends a `clone` that is not a name
-
-Calling a `hook(copy)` by name is `L0412`, "use `clone(value)` or `try_clone(value)`", but those are
-methods, and following the advice is `L0315`, "unknown name `clone`". `check_calls.odin` holds the
-wording. `value.clone()` is what works:
-
-```loke
-package main;
-C :: struct { n: int }
-impl C { dup :: hook(copy) proc(self, allocator: Allocator) -> Result(C, Allocator_Error) { return .ok(C{self.n}); } }
-main :: proc() {
-    c := C{1};
-    d := clone(c); // L0315; the advice for `c.dup(context.allocator)`
-    _ = d;
-}
-```
-
-Found on 2026-11-05 while testing a clone's targets (P3).
-
-### A generic block does not reject an attribute only a procedure may take
-
-A member takes only the attributes its kind allows, and `impl G` on a plain record reports `L0607`
-for this. A bare name
-in a generic block takes the type's rules instead, so it compiles:
-
-```loke
-package main;
-G :: struct($T: type) { x: T }
-impl G($T) {
-    @(require_results) N :: 3;
-}
-main :: proc() {}
-```
-
-`@(bogus)`, `@(packed)`, `@(test)` and `@(cpu_dispatch)` are rejected there. Found on 2026-11-04 in
-the compiler review (P3).
 
 ### A misplaced token reports its cascade
 

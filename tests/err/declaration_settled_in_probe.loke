@@ -1,0 +1,29 @@
+// compiler-architecture.md "Checking and overload resolution": a declaration is settled
+// once, so what is wrong with it is reported wherever the first question about it came
+// from, a probe included. design.md "Parametric aliases", "Generics".
+package main;
+
+Takes_Alias :: struct($V: Bad(int)) {}
+Bad :: distinct Option($T);
+
+Takes_Record :: struct($V: Fields) {}
+Fields :: struct { x: Missing }
+
+Takes_Constant :: struct($V: [N]int) {}
+N :: "x" + 1;
+
+// A use once reached emission, as the only report had been rolled back.
+Circle :: struct($T: type, $V: Alias(int, 0)) { item: T }
+Alias :: Circle($T, $V);
+sizes :: proc() { _ = size_of(Alias(int, 0)); }
+
+// A `$` parameter's own type means the same in every instance, so it needs none.
+Own_Type :: struct($T: type, $V: Absent) { item: T }
+impl Own_Type(int, 0) { }
+Own_Union :: union($V: Absent) { a: int }
+own_procedure :: proc($V: Absent) -> int { return 1; }
+
+// What `N` said is enough.
+length_that_failed :: proc(y: [N]int) {}
+
+main :: proc() {}

@@ -12,7 +12,7 @@ L0537
 dropping `pools` would end the region backing `xs`, which is still live here
 L0537
 @69:2
-this reset would end the region backing `xs`, which is still live here
+cleaning up `pools` would end the region backing `xs`, which is still live here
 L0537
 @70:2
 assigning into `pools` would end the region backing `xs`, which is still live here

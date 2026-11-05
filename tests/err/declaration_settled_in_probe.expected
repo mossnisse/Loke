@@ -1,0 +1,21 @@
+L0744
+@7:8
+a parametric alias names an existing type, so it cannot be `distinct`; declare a generic `struct` or `union` for a new one
+L0306
+@10:23
+unknown type `Missing`
+L0354
+@13:10
+mismatched operand types `untyped string` and `untyped int`
+L0432
+@16:43
+a generic `type` parameter needs a type argument
+L0306
+@21:34
+unknown type `Absent`
+L0306
+@23:24
+unknown type `Absent`
+L0306
+@24:27
+unknown type `Absent`

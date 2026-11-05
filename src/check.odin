@@ -14,6 +14,8 @@ Checker :: struct {
 	deferred_foreign_parts: [dynamic]Foreign_Part,
 	// Likewise, the types under `@(escape=...)` (`check_deferred_escape_parts`).
 	deferred_escape_parts: [dynamic]Escape_Part,
+	// Likewise, a generic union's designated payload (`check_deferred_union_zeros`).
+	deferred_union_zeros: [dynamic]Deferred_Union_Zero,
 	using location: Checker_Location,
 	// How deep interface composition is, and how many applications the outermost
 	// one has entered, so one that composes itself is a failure, not a spin
@@ -292,6 +294,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	// Every record has its fields now.
 	check_deferred_foreign_parts(k)
 	check_deferred_escape_parts(k)
+	check_deferred_union_zeros(k)
 
 	// Reject a type that contains itself by value, a layout past the maximum, and
 	// a union's designated zero with no zero value: each needs every record's
@@ -331,6 +334,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	// And any a body's own procedure type deferred.
 	check_deferred_foreign_parts(k)
 	check_deferred_escape_parts(k)
+	check_deferred_union_zeros(k)
 
 	// Every symbol has its kind and its constant its type.
 	check_private_names(k, package_id)
@@ -651,7 +655,11 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		return // resolved, or already on the stack below this call
 	}
 	d.sig_state = .Checking
-	defer d.sig_state = .Checked
+	settling := begin_settling(k.c, d)
+	defer {
+		end_settling(k.c, settling)
+		d.sig_state = .Checked
+	}
 	// A template has no signature of its own: `$T` names nothing until an
 	// instantiation binds it. Registration is all this phase does for one.
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL && declaration_generic_kind(d) != .None {
@@ -2057,6 +2065,11 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 				report_unresolved_type(k, poly)
 				return
 			}
+			// The element resolves, so the length failed, and the constant it reads
+			// said why.
+			if k.c.error_count > 0 {
+				return
+			}
 		}
 		unsupported_construct(k, expr_span(syntax))
 	}
@@ -2154,6 +2167,8 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	d.check_state = .Checking
+	settling := begin_settling(k.c, d)
+	defer end_settling(k.c, settling)
 	mark := len(k.c.diagnostics)
 	check_decl_inner(k, d)
 	d.check_state = .Checked

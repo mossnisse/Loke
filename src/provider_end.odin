@@ -10,7 +10,7 @@ import "core:fmt"
 // moved anywhere but a new local or a result, or assigned over; every owner the
 // region backs must be dead by then (design.md "Allocators"). `node` is the
 // written end, or for a cleanup, the jump running it or nil; `ends` names a
-// written end for the diagnostic.
+// written end for the diagnostic, and a cleanup, written nowhere, names its local.
 @(private)
 provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr, ends := "", path: []Proj_Step = nil) {
 	if !provider_local(graph.k.c, id) {
@@ -27,7 +27,8 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 		return
 	}
 	region := path == nil ? prov_provider_region(graph, id) : prov_provider_region_at(graph, id, path)
-	prov_reset(graph, region, span, true, nil, live, ends, id, provider_end = true)
+	named := ends != "" ? ends : provider_end_phrase(graph, "cleaning up", identifier_text(graph.k.c, symbol_of(graph.k.c, id).name))
+	prov_reset(graph, region, span, true, nil, live, named, id, provider_end = true)
 }
 
 // A local or `move` parameter holding a provider by value, whose end can end a

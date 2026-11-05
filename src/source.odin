@@ -376,6 +376,11 @@ end_probe :: proc(c: ^Compiler, probe: Probe, keep := false) {
 		truncate_diagnostics(c, probe.diagnostics)
 	}
 	c.speculation_depth -= 1
+	// Nothing is left to roll back what was held from this probe. A body under a
+	// commit may still sit inside a probe the commit set aside.
+	if c.speculation_depth == 0 && c.open_commits == 0 {
+		release_held_diagnostics(c)
+	}
 }
 
 // Whether what the checker finds now belongs to the program, as it does outside
@@ -390,11 +395,35 @@ begin_commit :: proc(c: ^Compiler) -> (saved: int) {
 	saved = c.speculation_depth
 	c.speculation_depth = 0
 	c.commits += 1
+	c.open_commits += 1
 	return
 }
 
 end_commit :: proc(c: ^Compiler, saved: int) {
 	c.speculation_depth = saved
+	c.open_commits -= 1
+}
+
+// A declaration is settled once, and the check that settles it is never run again,
+// so whichever check asks first, it is settled for the program: a probe that led to
+// it rolls back what the probe found, not what the declaration did.
+Settling :: struct {
+	speculation, mark: int,
+	in_probe:          bool,
+}
+
+begin_settling :: proc(c: ^Compiler, d: ^Decl) -> Settling {
+	if committing(c) || !d.top_level {
+		return {}
+	}
+	return {speculation = begin_commit(c), mark = len(c.diagnostics), in_probe = true}
+}
+
+end_settling :: proc(c: ^Compiler, settling: Settling) {
+	if settling.in_probe {
+		hold_diagnostics(c, settling.mark)
+		end_commit(c, settling.speculation)
+	}
 }
 
 // Whether an error was reported since `mark`, a length of `c.diagnostics`.

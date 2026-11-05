@@ -43,3 +43,6 @@ L0641
 L0641
 @96:20
 `cell` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@102:21
+`cells` cannot be used here: a read-only reborrow of it is still in use

@@ -1,12 +1,12 @@
 L0537
 @21:102
-this reset would end the region backing `a0`, which is still live here
+cleaning up `a64` may end the region backing `a0`, which is still live here
 `a0` is declared here and is cleaned up after this point
 provenance precision limit: more than 64 local allocator regions merge region identities
 this conservative dependency may cause the rejection; use fewer local allocator regions in the procedure to keep them apart
 L0537
 @23:2
-this reset would end the region backing `a0`, which is still live here
+this reset may end the region backing `a0`, which is still live here
 `a0` is declared here and is cleaned up after this point
 provenance precision limit: more than 64 local allocator regions merge region identities
 this conservative dependency may cause the rejection; use fewer local allocator regions in the procedure to keep them apart

@@ -3602,20 +3602,16 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 // A slice whose elements hold no borrows, or a pointer to such a value, which
 // printing it, or a read-only `dyn` view of it, reads as a `[]T` or `^T` is read:
-// nothing it calls can write through it. A distinct pointer type is left out, as
-// its own `format` may take it by value and write what it names.
+// nothing it calls can write through it. A distinct type's own `format` is left out,
+// as it takes the value and may write what it names; what it generates only reads.
 @(private = "file")
 prov_type_is_plain_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
-	case .Slice:
-	case .Pointer:
-		if type_underlying(c, type) != type {
-			return false
-		}
+	case .Slice, .Pointer:
 	case:
 		return false
 	}
-	return !type_carries_borrow(c, underlying_info(c, type).element).any
+	return written_format_member(c, type) == nil && !type_carries_borrow(c, underlying_info(c, type).element).any
 }
 
 // A plain view converted to a read-only carrier, as `(dyn Shape)(b)`, only reads it, as

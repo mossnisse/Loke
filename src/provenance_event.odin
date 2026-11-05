@@ -547,6 +547,7 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 			continue
 		}
 		set := prov_visible_region(graph, prov_used_region(graph, argument))
+		region_merge(&set, prov_visible_region(graph, prov_provider_viewed_by(graph, argument)))
 		if region_is_empty(set) {
 			continue
 		}

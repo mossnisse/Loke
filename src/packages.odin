@@ -125,15 +125,18 @@ check_static_packages :: proc(k: ^Checker, order: []Package_Id, start: int) {
 		report_stalled_whens(k, package_of(k.c, id))
 		check_package_bodies(k, id)
 		check_pending_impl_instances(k)
+		// A checkpoint holds the list, not what is out of it.
+		release_held_diagnostics(k.c)
 	}
 }
 
 // The whole-program analyses that follow checking every body. The emission
 // boundary requires the completion fact this records.
 finish_program_analysis :: proc(k: ^Checker) {
+	// What an analysis asks of a body takes every report made while checking it.
+	release_held_diagnostics(k.c)
 	analyze_program_provenance(k)
 	resolve_provider_factories(k)
-	release_held_diagnostics(k.c)
 	k.c.program_analyzed = true
 }
 

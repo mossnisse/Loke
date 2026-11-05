@@ -412,14 +412,20 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 		}
 	}
 	// A generic `impl`'s member has symbols only in its instances. Whether a bare
-	// name there is a type or a constant is unknown, and a type allows more.
+	// name there is a type or a constant is unknown, and a type allows more: its
+	// instances say (`validate_instance_member_position`).
 	if len(d.symbols) == 0 {
 		if decl_proc_literal(d) != nil {
 			return .Proc_Decl
 		}
 		if len(d.values) == 1 {
-			_, is_group := d.values[0].(^Expr_Proc_Group)
-			return is_group ? .Proc_Group : .Type_Decl
+			#partial switch _ in d.values[0] {
+			case ^Expr_Proc_Group:
+				return .Proc_Group
+			case ^Expr_Literal, ^Expr_Binary, ^Expr_Unary:
+				return .Const_Decl
+			}
+			return d.declared_type != nil ? .Const_Decl : .Type_Decl
 		}
 		return .Var_Decl
 	}
@@ -431,6 +437,21 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 		}
 	}
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
+}
+
+// A generic `impl`'s member reads as what its template's syntax allows, which is
+// more than what an instance finds a bare name to be (`decl_attr_position`). Every
+// instance sees the same, and a repeated report is shown once.
+validate_instance_member_position :: proc(k: ^Checker, d: ^Decl) {
+	position := decl_attr_position(k, d)
+	for attribute in d.attributes {
+		if len(attribute.path) != 1 {
+			continue
+		}
+		if spec, known := attribute_spec(attribute.path[0].text); known && position not_in spec.positions {
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", attribute.path[0].text, attr_pos_name(position))
+		}
+	}
 }
 
 // Runs while the signature resolves, so a use in another package already sees

@@ -204,10 +204,11 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	rejected := false
 	if literal != nil && literal.signature != nil {
 		check_independent_poly_defaults(k, literal.signature.params)
+		stand_ins := signature_stand_ins(k, literal.signature.params)
 		for parameter in literal.signature.params {
 			for entry in parameter.names {
 				if entry.is_poly {
-					rejected |= reject_typeid_generic_parameter(k, entry.name, parameter.type)
+					rejected |= reject_generic_parameter_type(k, stand_ins, entry.name, parameter.type)
 				}
 			}
 		}
@@ -216,9 +217,15 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 		}
 	}
 	if record, is_record := d.values[0].(^Type_Record); is_record {
+		stand_ins := new_scope(k.c, k.scope, .Local)
 		for group in record.generic_params {
 			for name in group.names {
-				rejected |= reject_typeid_generic_parameter(k, name, group.type)
+				declare_stand_in(k, stand_ins, name.text, name.span)
+			}
+		}
+		for group in record.generic_params {
+			for name in group.names {
+				rejected |= reject_generic_parameter_type(k, stand_ins, name, group.type)
 				rejected |= reject_reserved_name(k, name.id, name.span)
 			}
 		}
@@ -239,19 +246,52 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
-// design.md "`type` and `typeid`": a `typeid` is a runtime value and does not
-// make a generic declaration, so a `$` parameter of that type is an error here
-// rather than a failure at every call. Resolved as a speculation, since the type
-// may name an earlier `$T` that only an instance binds.
+// What a `$` parameter's type may name that only an instance binds, as a type
+// naming an earlier `$T` does. Each stand-in resolves to nothing, and marks the scope.
 @(private = "file")
-reject_typeid_generic_parameter :: proc(k: ^Checker, name: Name, type_syntax: Expr) -> bool {
-	if type_syntax == nil {
+signature_stand_ins :: proc(k: ^Checker, params: []Parameter) -> ^Scope {
+	stand_ins := new_scope(k.c, k.scope, .Local)
+	for parameter in params {
+		for entry in parameter.names {
+			declare_stand_in(k, stand_ins, entry.name.text, entry.name.span)
+		}
+		for name in pattern_names(parameter.type) {
+			declare_stand_in(k, stand_ins, name.text, name.span)
+		}
+	}
+	return stand_ins
+}
+
+// A `$` parameter's type names the same thing in every instance unless it names
+// another parameter, so what is wrong with it is said here rather than at the first
+// instance, which a declaration need never have. design.md "`type` and `typeid`": a
+// `typeid` is a runtime value and does not make a generic declaration, so a `$`
+// parameter of that type is an error here rather than a failure at every call.
+@(private = "file")
+reject_generic_parameter_type :: proc(k: ^Checker, stand_ins: ^Scope, name: Name, type_syntax: Expr) -> bool {
+	if type_syntax == nil || type_syntax_has_poly(type_syntax) {
 		return false
 	}
+	// From before the probe: a declaration it settled may have said why already.
+	reported := k.c.error_count
 	probe := begin_probe(k.c)
-	type := resolve_type_syntax(k, type_syntax)
+	saved := k.scope
+	k.scope = stand_ins
+	stand_ins.reached = false
+	_ = resolve_type_syntax(k, clone_expr(k.c, type_syntax))
+	k.scope = saved
 	end_probe(k.c, probe)
-	if type == INVALID_TYPE || type_underlying(k.c, type) != TYPE_TYPEID {
+	if stand_ins.reached {
+		return false
+	}
+	type := resolve_type_syntax(k, clone_expr(k.c, type_syntax))
+	if type == INVALID_TYPE {
+		if k.c.error_count == reported {
+			report_unresolved_type(k, type_syntax)
+		}
+		return true
+	}
+	if type_underlying(k.c, type) != TYPE_TYPEID {
 		return false
 	}
 	errorf(
@@ -267,15 +307,7 @@ reject_typeid_generic_parameter :: proc(k: ^Checker, name: Name, type_syntax: Ex
 // against stand-ins for every parameter name tells them apart.
 @(private = "file")
 check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
-	stand_ins := new_scope(k.c, k.scope, .Local)
-	for parameter in params {
-		for entry in parameter.names {
-			declare_stand_in(k, stand_ins, entry.name.text, entry.name.span)
-		}
-		for name in pattern_names(parameter.type) {
-			declare_stand_in(k, stand_ins, name.text, name.span)
-		}
-	}
+	stand_ins := signature_stand_ins(k, params)
 	for parameter in params {
 		poly := false
 		for entry in parameter.names {

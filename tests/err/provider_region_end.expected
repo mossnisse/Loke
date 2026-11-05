@@ -3,7 +3,7 @@ L0537
 dropping `arena` would end the region backing `xs`, which is still live here
 L0537
 @19:3
-this reset would end the region backing `xs`, which is still live here
+cleaning up `inner` would end the region backing `xs`, which is still live here
 L0537
 @30:7
 moving `arena` would end the region backing `xs`, which is still live here
@@ -15,7 +15,7 @@ L0537
 dropping `env` would end the region backing `xs`, which is still live here
 L0537
 @59:2
-this reset would end the region backing `xs`, which is still live here
+cleaning up `holder` would end the region backing `xs`, which is still live here
 L0592
 @67:9
 this result is backed by `env`, an allocator region that ends when this procedure returns

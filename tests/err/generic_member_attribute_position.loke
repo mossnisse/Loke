@@ -1,0 +1,21 @@
+// design.md "Attributes": a member takes only the attributes its kind allows. A bare
+// name in a generic block may name a type, which allows more, so an instance decides
+// what the syntax does not.
+package main;
+
+G :: struct($T: type) { x: T }
+impl G($T) {
+	@(require_results) N :: 3;
+	@(require_results) M : int : 3;
+	@(require_results) Size :: size_of(T);
+	@(public) Fine :: 4;
+}
+
+// With no instance, the syntax alone decides.
+Never :: struct($T: type) { x: T }
+impl Never($T) {
+	@(require_results) N :: 3 + 1;
+	@(require_results) Unknown_Until_An_Instance :: size_of(T);
+}
+
+main :: proc() { _ = G(int).Size; }

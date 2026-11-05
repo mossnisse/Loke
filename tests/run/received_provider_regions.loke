@@ -1,0 +1,46 @@
+// design.md "Allocator regions and region provenance": what a procedure draws from a
+// provider it reaches through a parameter is in the argument's region and no other, so
+// an unrelated region ending does not reach it.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+build :: proc(a: ^mut mem.Arena) -> [dynamic]int {
+	inner: [dynamic]int via a.allocator() = {};
+	inner.append(1);
+	return inner;
+}
+
+// `mine` did not exist when `a` was passed, so it backs nothing `a` reaches.
+beside_an_own_region :: proc(a: ^mut mem.Arena) -> [dynamic]int {
+	inner: [dynamic]int via a.allocator() = {};
+	mine := mem.Arena.init();
+	free_all(mine.allocator());
+	inner.append(3);
+	return inner;
+}
+
+use_arena :: proc(a: ^mut mem.Arena) {
+	v := make([dynamic]int, 0, a.allocator());
+	v.append(1);
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	r := build(&mut arena);
+	other := mem.Arena.init();
+	fmt.println(r[0]);
+
+	s := beside_an_own_region(&mut arena);
+	fmt.println(s[0]);
+
+	// Two tasks over two providers reserve one each.
+	left := mem.Arena.init();
+	right := mem.Arena.init();
+	parallel {
+		spawn use_arena(&mut left);
+		spawn use_arena(&mut right);
+	}
+	fmt.println("joined");
+}

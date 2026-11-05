@@ -75,16 +75,16 @@ L0641
 `list` cannot be used here: a mutable reborrow of it is still in use
 L0537
 @219:3
-this reset would end the region backing `items`, which is still live here
+cleaning up `arena` would end the region backing `items`, which is still live here
 L0537
 @229:3
-this reset would end the region backing `items`, which is still live here
+cleaning up `arena` would end the region backing `items`, which is still live here
 L0537
 @238:3
-this reset would end the region backing `items`, which is still live here
+cleaning up `arena` would end the region backing `items`, which is still live here
 L0537
 @248:3
-this reset would end the region backing `doc`, which is still live here
+cleaning up `arena` would end the region backing `doc`, which is still live here
 L0536
 @257:33
 this value is backed by an allocator region created in this procedure, so it cannot be stored in `items` (storage the caller owns), which outlives that region

@@ -1,15 +1,15 @@
 L0537
 @6:3
-this reset would end the region backing `xs`, which is still live here
+cleaning up `a` would end the region backing `xs`, which is still live here
 L0537
 @17:3
-this reset would end the region backing `p`, which is still live here
+cleaning up `a` would end the region backing `p`, which is still live here
 L0537
 @27:3
-this reset would end the region backing `xs`, which is still live here
+cleaning up `a` would end the region backing `xs`, which is still live here
 L0537
 @38:3
-this reset would end the region backing `xs`, which is still live here
+cleaning up `a` would end the region backing `xs`, which is still live here
 L0537
 @49:3
-this reset would end the region backing `xs`, which is still live here
+cleaning up `a` would end the region backing `xs`, which is still live here

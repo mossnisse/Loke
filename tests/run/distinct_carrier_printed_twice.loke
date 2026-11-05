@@ -1,0 +1,14 @@
+// design.md "Weakening and reborrows": printing only reads, and what the compiler
+// generates to print a distinct carrier only reads as well. Only a `format` the type
+// declares can write through the value.
+package main;
+
+import "core:fmt";
+
+Cells :: distinct []mut int;
+
+main :: proc() {
+	storage := [2]int{1, 2};
+	cells := Cells(&mut storage[:]);
+	fmt.println(cells, cells);
+}

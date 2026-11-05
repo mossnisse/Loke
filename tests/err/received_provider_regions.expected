@@ -1,0 +1,24 @@
+L0537
+@34:2
+dropping `arena` would end the region backing `r`, which is still live here
+L0537
+@42:2
+this reset would end the region backing `r`, which is still live here
+L0537
+@49:2
+this reset would end the region backing `r`, which is still live here
+L0537
+@57:2
+this reset would end the region backing `v`, which is still live here
+L0537
+@64:2
+dropping `arena` would end the region backing `r`, which is still live here
+L0538
+@70:2
+this resets a region that existed before the call, so the allocator must arrive through an `@(allocator_reset)` parameter
+L0732
+@77:3
+this uses `arena`'s allocator, which a running task reserves until this `parallel` block joins
+L0511
+@77:17
+this read of `arena` is not compatible with the mutable pointer of it that is still in use

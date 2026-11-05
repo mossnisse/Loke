@@ -3659,19 +3659,22 @@ check_region_reset :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_U
 		}
 		return
 	}
+	// design.md "Minimum provenance precision": past the regions a body tells apart, the
+	// dependency is only possible.
+	would := event.region.crowded || event.region.crowded_params ? "may" : "would"
 	if event.ends_result {
 		errorf(
 			state.k.c, event.span, "L0537",
-			"%s would end the region backing the returned value, which the caller already holds when deferred statements run",
-			event.ends != "" ? event.ends : "this reset",
+			"%s %s end the region backing the returned value, which the caller already holds when deferred statements run",
+			event.ends != "" ? event.ends : "this reset", would,
 		)
 		add_notef(state.k.c, event.owner_span, "the value is returned here")
 		return
 	}
 	if event.verb != "" {
 		errorf(
-			state.k.c, event.span, "L0537", "%s would end the region backing `%s`, which is still live here",
-			event.ends != "" ? event.ends : "this reset", event.verb,
+			state.k.c, event.span, "L0537", "%s %s end the region backing `%s`, which is still live here",
+			event.ends != "" ? event.ends : "this reset", would, event.verb,
 		)
 		add_notef(state.k.c, event.owner_span, "`%s` is declared here and is cleaned up after this point", event.verb)
 		if from, unwinding := event.unwind_from.?; unwinding {
@@ -3690,7 +3693,7 @@ check_region_reset :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_U
 		if graph.prov_slots[slot].returned && region_is_local_only(root.region) {
 			continue
 		}
-		errorf(state.k.c, event.span, "L0537", "%s would end an allocator control block whose handle is still in use", event.ends != "" ? event.ends : "this cleanup")
+		errorf(state.k.c, event.span, "L0537", "%s %s end an allocator control block whose handle is still in use", event.ends != "" ? event.ends : "this cleanup", would)
 		state.diagnostic_precision |= state.precision[slot]
 		add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
 		add_use_note(state, uses[slot])

@@ -115,7 +115,6 @@ alias_constructor_callee :: proc(k: ^Checker, callee: Expr) -> bool {
 // The parameters an application's arguments bind, with the scope their types
 // resolve in. `first` passes over an interface's subject, which `dyn` erases;
 // `alias` is the template when they are an alias's.
-@(private = "file")
 Applied_Parameters :: struct {
 	params: []Generic_Param_Decl,
 	scope:  ^Scope,
@@ -125,7 +124,6 @@ Applied_Parameters :: struct {
 
 // The parameters of what `callee` names, read in `k.scope`: none for a
 // predeclared constructor, whose arguments are typed by the constructor itself.
-@(private = "file")
 applied_parameters :: proc(k: ^Checker, callee: Expr) -> Applied_Parameters {
 	symbol := named_callee_symbol(k, callee)
 	if info := interface_info_for(k, symbol); info != nil {
@@ -149,7 +147,6 @@ applied_parameters :: proc(k: ^Checker, callee: Expr) -> Applied_Parameters {
 // when an earlier parameter decides that, so that it has no one answer, as for
 // `$V` in `struct($T: type, $V: T)`. INVALID_TYPE, reported, when a type does not
 // resolve.
-@(private = "file")
 generic_parameter_kind :: proc(k: ^Checker, applied: Applied_Parameters, at: int) -> (kind: Type_Id, dependent: bool) {
 	parameter := applied.params[at]
 	if applied.alias != nil {

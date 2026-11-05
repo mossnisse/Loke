@@ -1,0 +1,91 @@
+// design.md "Allocator regions and region provenance": what a procedure draws from a
+// provider it reaches through a parameter is in the argument's region, so its result
+// and what it leaves behind end with the provider the argument reaches.
+// design.md "Allocators and tasks": and a task using it reserves that provider.
+package main;
+
+import "core:mem";
+
+Holder :: struct { arena: mem.Arena }
+
+build :: proc(a: ^mut mem.Arena) -> [dynamic]int {
+	inner: [dynamic]int via a.allocator() = {};
+	inner.append(1);
+	return inner;
+}
+
+through_a_field :: proc(h: ^mut Holder) -> [dynamic]int {
+	inner: [dynamic]int via h^.arena.allocator() = {};
+	inner.append(1);
+	return inner;
+}
+
+stash :: proc(out: ^mut [dynamic]int, a: ^mut mem.Arena) {
+	out^ = make([dynamic]int, 0, a.allocator());
+}
+
+forwarded :: proc(a: ^mut mem.Arena) -> [dynamic]int {
+	return build(a);
+}
+
+dropped :: proc() {
+	arena := mem.Arena.init();
+	r := build(&mut arena);
+	drop(arena);
+	_ = r[0];
+}
+
+through_a_local_pointer :: proc() {
+	arena := mem.Arena.init();
+	p := &mut arena;
+	r := build(p);
+	free_all(arena.allocator());
+	_ = r[0];
+}
+
+in_a_field :: proc() {
+	h := Holder{mem.Arena.init()};
+	r := through_a_field(&mut h);
+	free_all(h.arena.allocator());
+	_ = r[0];
+}
+
+left_behind :: proc() {
+	arena := mem.Arena.init();
+	v: [dynamic]int = {};
+	stash(&mut v, &mut arena);
+	free_all(arena.allocator());
+	v.append(1);
+}
+
+through_two_calls :: proc() {
+	arena := mem.Arena.init();
+	r := forwarded(&mut arena);
+	drop(arena);
+	_ = r[0];
+}
+
+// A received provider is still not this body's to reset.
+reset_received :: proc(a: ^mut mem.Arena) {
+	free_all(a.allocator());
+}
+
+reserved_by_a_task :: proc() {
+	arena := mem.Arena.init();
+	parallel {
+		spawn use_arena(&mut arena);
+		use_allocator(arena.allocator());
+	}
+}
+
+use_arena :: proc(a: ^mut mem.Arena) {
+	v := make([dynamic]int, 0, a.allocator());
+	v.append(1);
+}
+
+use_allocator :: proc(allocator: Allocator) {
+	v := make([dynamic]int, 0, allocator);
+	v.append(1);
+}
+
+main :: proc() {}

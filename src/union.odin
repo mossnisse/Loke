@@ -120,10 +120,39 @@ resolve_union_zero :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info, value: 
 		return
 	}
 	info.zero_designated = true
-	// A probe can still reject an instance over this.
-	if info.instance_of != INVALID_SYMBOL {
-		check_union_zero_payload(k, type, value.attributes)
+	if info.instance_of == INVALID_SYMBOL {
+		return
 	}
+	// A probe can still reject an instance over this. But an instance a record names in
+	// its own fields reads that record before it has them, so the answer waits for them.
+	if committing(k.c) && !type_records_finished(k.c, info.variants[0]) {
+		if cap(k.deferred_union_zeros) == 0 {
+			k.deferred_union_zeros = make([dynamic]Deferred_Union_Zero, 0, 4, k.c.semantic_allocator)
+		}
+		append(&k.deferred_union_zeros, Deferred_Union_Zero{type, value.attributes})
+		return
+	}
+	check_union_zero_payload(k, type, value.attributes)
+}
+
+Deferred_Union_Zero :: struct {
+	type:       Type_Id,
+	attributes: []Attribute,
+}
+
+// The instances whose payload has its fields by now. A body-local record gets them
+// later than a package's, so the rest wait for the end of the package's bodies.
+check_deferred_union_zeros :: proc(k: ^Checker) {
+	waiting := 0
+	for deferred in k.deferred_union_zeros {
+		if type_records_finished(k.c, type_of(k.c, deferred.type).variants[0]) {
+			check_union_zero_payload(k, deferred.type, deferred.attributes)
+		} else {
+			k.deferred_union_zeros[waiting] = deferred
+			waiting += 1
+		}
+	}
+	resize(&k.deferred_union_zeros, waiting)
 }
 
 // design.md "Zero values": the payload `@(zero=)` designates needs a zero. Asked
