@@ -1,0 +1,12 @@
+package main;
+
+import "core:fmt";
+
+// design.md "`source_location() or source_location(<entity>)`": a file-scope
+// location's `procedure` is empty, read directly or through a copy.
+HERE :: source_location();
+
+main :: proc() {
+	v := HERE.procedure;
+	fmt.println(HERE.procedure == "", HERE.procedure.len(), v == "");
+}

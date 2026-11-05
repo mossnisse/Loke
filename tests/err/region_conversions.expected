@@ -35,5 +35,5 @@ L0536
 @100:2
 `kept` (file-scope storage)
 L0536
-@110:27
+@111:27
 storage reached through a pointer or slice

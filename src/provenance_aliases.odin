@@ -68,12 +68,85 @@ prov_place_aliases :: proc(graph: ^Flow_Graph, id: Value_Id, unresolved: bool) -
 	case Value_Id:
 		aliases = prov_load_aliases(graph, prov_place_aliases(graph, base, unresolved), value.place.path, value.unknown_alias)
 	case:
-		aliases = prov_place_aliases(graph, prov_read_fallback(value.form), unresolved)
+		if _, is_call := value.form.(Prov_Form_Call); is_call {
+			aliases = prov_call_result_aliases(graph, id)
+		} else {
+			aliases = prov_place_aliases(graph, prov_read_fallback(value.form), unresolved)
+		}
 	}
 	if unresolved && value.unknown_alias && len(aliases) == 0 {
 		return make([]Written_Alias, 1, graph.alloc)
 	}
 	return aliases
+}
+
+// design.md "Procedure result contracts": what a call's result may point at, by
+// what the callee's summary says it takes of each argument, which the caller knows
+// the targets of. A result the summary cannot tie to arguments alone, or one with
+// no summary yet, keeps an unresolved alternative: a walk over what it finds would
+// otherwise take the arguments' targets for all of them.
+@(private = "file")
+prov_call_result_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias {
+	c := graph.k.c
+	form := prov_value(graph, id).form.(Prov_Form_Call)
+	arguments := prov_bound_values(form)
+	// design.md "Shared ownership": `get()` lends what the handle holds, which the
+	// body cannot show through its `rawptr`, so the provider is the handle's place.
+	if prov_receiver_is_shared_handle(graph, form.call) && len(arguments) > 0 {
+		handle := prov_value(graph, arguments[0])
+		if root, path, ok := prov_root_place(graph, handle.place); ok {
+			return slice.clone([]Written_Alias{{target = prov_storage_for_root(graph, root), at = path}}, graph.alloc)
+		}
+		return nil
+	}
+	summary, found := result_summary(c, call_contract_declaration(c, form.call))
+	if !found || summary.unknown {
+		return nil
+	}
+	out := make([dynamic]Written_Alias, graph.alloc)
+	if summary.static || summary.thread || summary.local || len(summary.globals) > 0 {
+		append(&out, Written_Alias{})
+	}
+	for index in 0 ..< min(len(arguments), len(summary.params)) {
+		held := prov_value_aliases(graph, arguments[index])
+		if summary.params[index] {
+			append(&out, ..prov_result_taken_aliases(graph, form, summary.dependencies, index, held))
+		}
+		for depth in 1 ..= 8 {
+			held = prov_load_aliases(graph, held, nil, unknown = true)
+			if summary.param_loads[index] & (u8(1) << u8(depth - 1)) != 0 {
+				append(&out, ..held)
+			}
+		}
+	}
+	for &alias in out { alias.path = nil }
+	return out[:]
+}
+
+// Of what argument `index` holds, the carriers the result may take: those the
+// summary's paths of the parameter's shape name, or all of them.
+@(private = "file")
+prov_result_taken_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dependencies: Result_Dependencies, index: int, held: []Written_Alias) -> []Written_Alias {
+	c := graph.k.c
+	paths := dependencies.param_paths[index]
+	info := underlying_info(c, call_proc_type(c, form.call))
+	if paths == nil || info == nil || index >= len(info.parameters) {
+		return held
+	}
+	shape := carrier_shape(c, info.parameters[index])
+	if len(shape) != len(paths) {
+		return held
+	}
+	out := make([dynamic]Written_Alias, 0, len(held), graph.alloc)
+	for alias in held {
+		for carrier, position in shape {
+			if paths[position] && paths_overlap(alias.path, carrier.steps) {
+				append(&out, alias)
+				break
+			}
+		}
+	}
+	return out[:]
 }
 
 // What a value that is no place reads from: the operand a projection of a

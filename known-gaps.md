@@ -38,40 +38,6 @@ impl Box(string) { @(private) h :: proc(s: string) {} @(public) g :: proc{h}; }
 A selection such as `Box(int).Inner` resolves this by asking the checker. A group would read the
 members its block declares.
 
-### A local in a deferred block leaks when only a panic reaches the block
-
-[Scope-exit cleanup](design.md#what-the-unwind-runs-and-what-it-does-not) runs for every initialized
-managed owner, but a local declared in a deferred block registers its drop only if the block also
-has a normal exit. With none, `y` is never dropped, and this prints `5` without `drop 5`:
-
-```loke
-package main; import "core:fmt";
-@(move_only) Tracked :: struct { id: int }
-impl Tracked { release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); } }
-main :: proc() {
-	defer { y := Tracked{5}; fmt.println(y.id); }
-	panic("failed");
-}
-```
-
-### `delegate` does not see an operator declared after it
-
-[Delegating operators](design.md#delegating-operators) forwards the underlying type's overloads,
-and a package's declarations are otherwise order-independent, but `delegate` looks the overloads up
-when its own `impl` block is resolved. One whose operator comes later in the package fails with
-`L0420`, "`+` is not defined for `V`":
-
-```loke
-package main;
-W :: distinct V;
-impl W { delegate(+); }
-V :: struct { a: int }
-impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
-main :: proc() {}
-```
-
-Found on 2026-11-03 (P3). Moving the `impl V` block above the `delegate` is the workaround.
-
 ### An export can still spell a generated name the compiler fixes
 
 [`@(export)`](design.md#export) reserves only the `loke_rt_` prefix, and the names the naming pass
@@ -168,32 +134,15 @@ main :: proc() {}
 
 Found on 2026-11-03 (P3): the rejection errs on the safe side.
 
-### A switch of thousands of `return` cases is slow, then crashes the compiler
+### A body of thousands of borrows is slow, then runs out of memory
 
-Neither is a checker cost: a `switch` over an enum, with each `case .Mi: return i;`, takes 1 s at
-1000 cases and 130 s at 3000, and at 6000 ends in `solve_reaching` in
-[src/borrow.odin](src/borrow.odin) with `Index 0 is out of range 0..<0`, an empty block list. The
-language sets no such limit, and a C binding's generated switch can reach it. The cause of the empty
-list is not established; a failed allocation is the first thing to rule out. Found on 2026-11-03 (P2).
-
-### Comparing `source_location()`'s `procedure` constant to `""` is false
-
-[`source_location`](design.md#source_location-or-source_locationentity) gives a file-scope
-location an empty `procedure`, but a direct comparison of that constant field disagrees with a
-copy of it. This prints `false 0 true`:
-
-```loke
-package main;
-import "core:fmt";
-HERE :: source_location();
-main :: proc() {
-    v := HERE.procedure;
-    fmt.println(HERE.procedure == "", HERE.procedure.len(), v == "");
-}
-```
-
-A `string_view` field of an ordinary constant record compares correctly. Found on 2026-11-03 (P3).
-
+The language sets no limit on a body's size, but `prepare_state` in
+[src/borrow.odin](src/borrow.odin) gives every block a row per slot of a bit per loan, so a body's
+tables grow as blocks times slots times loans. A generated body of `if (c) { p := &mut v; p^ = i; }`
+takes 16 s at 1000 statements and 3.5 minutes at 2000 on an unoptimized `lokec`, and at 6000 stops
+with `error: out of memory`. A `switch` no longer adds to this by its cases alone, as its bindings
+share one view of the subject. Fixing it needs sparse rows, or rows only where a slot is live. Found
+on 2026-11-03 (P2).
 ### A distinct mutable slice is read as plain when printed
 
 `prov_type_is_plain_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes
@@ -716,68 +665,50 @@ main :: proc() {
 }
 ```
 
-### An owner stored through a pointer a call returned is not held against a reset
+### Declaring an arena beside an owner of unknown region is reported as a reset
 
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-rejects a reset while what its region backs is live, but `prov_store_region_through` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) records a store only in the targets it can
-name. A pointer from a call, or from a user `operator([])`, which is a call, names none, so `a`
-is not known to hold the new owner. This compiles, and `a[0]` reads the reset region:
-
-```loke
-package main;
-import "core:mem";
-Own :: struct { p: ^mut [dynamic]int }
-impl Own {
-    get :: proc(self) -> ^mut [dynamic]int { return self.p; }
-}
-reset_while_live :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
-    buffer := [64]u8{};
-    kept := mem.Arena.from_buffer(&mut buffer[:]);
-    a := make([dynamic]int, 0, kept.allocator());
-    own := Own{&mut a};
-    target := own.get();
-    target^ = make([dynamic]int, 1, allocator);
-    free_all(allocator);
-    return a[0];
-}
-main :: proc() {}
-```
-
-A copy hook returning a pointer it reads through `self`, such as `self.next^.next`, names no target
-in any clone form either, `.clone()` included, so storing through its result goes unflagged too; that
-form was compiled, not run. The fix is the one the next entry names: a call's result naming what its
-result dependencies say it points at. Found on 2026-11-04 (P2).
-
-### An owner built through a pointer a call returned has no known provider
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-has an owner end with its provider, but `prov_handle_region` in
-[src/provenance_regions.odin](src/provenance_regions.odin) follows a carrier only when it is a
-direct `held.get()`, or a local pointer whose written targets name the provider. A pointer
-stored from a call names no target, so the region is unknown, which a provider's end does
-not check against a returned value. This compiles, and the result is read from freed memory:
+An owner built from a provider the callee received has an unknown region, and
+[The allocator reset promise](design.md#allocator_reset) has a reset reach every such region, which
+is safe. But `other`'s declaration is not a reset, though `L0537` names it as one, and nothing here
+ends the region backing `r`:
 
 ```loke
 package main;
 import "core:mem";
-stored :: proc() -> [dynamic]int {
-    held := shared(mem.Arena.init());
-    q := held.get();
-    inner: [dynamic]int via q.allocator() = {};
+build :: proc(a: ^mut mem.Arena) -> [dynamic]int {
+    inner: [dynamic]int via a.allocator() = {};
     inner.append(1);
     return inner;
 }
 main :: proc() {
-    r := stored();
+    arena := mem.Arena.init();
+    r := build(&mut arena);
+    other := mem.Arena.init();
     _ = r[0];
 }
 ```
 
-`q := pick(&arena)`, with `pick` returning its `^mem.Arena` parameter, does the same. Treating
-every unknown region as local at a return would reject a provider received as a parameter, so
-the fix is for a call's result to name what the call's result dependencies say it points at.
-Found on 2026-11-03 (P2).
+Declare `other` first. Found on 2026-11-05 while testing what a call's result points at (P3,
+over-rejection).
+
+### `L0412` recommends a `clone` that is not a name
+
+Calling a `hook(copy)` by name is `L0412`, "use `clone(value)` or `try_clone(value)`", but those are
+methods, and following the advice is `L0315`, "unknown name `clone`". `check_calls.odin` holds the
+wording. `value.clone()` is what works:
+
+```loke
+package main;
+C :: struct { n: int }
+impl C { dup :: hook(copy) proc(self, allocator: Allocator) -> Result(C, Allocator_Error) { return .ok(C{self.n}); } }
+main :: proc() {
+    c := C{1};
+    d := clone(c); // L0315; the advice for `c.dup(context.allocator)`
+    _ = d;
+}
+```
+
+Found on 2026-11-05 while testing a clone's targets (P3).
 
 ### A generic block does not reject an attribute only a procedure may take
 

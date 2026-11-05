@@ -266,6 +266,8 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		check_doc_comments(k.c, file)
 	}
 
+	resolve_package_operators(k, pkg)
+
 	// Fields and callable signatures.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope

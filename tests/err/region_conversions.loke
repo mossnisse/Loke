@@ -106,7 +106,8 @@ unresolved_subject :: proc() {
 	arena := mem.Arena.init();
 	value: Option([dynamic]string) = .some(make([dynamic]string));
 	pointer := &mut value;
-	switch (point(pointer)^) {
+	through: proc(pointer: ^mut Option([dynamic]string)) -> ^mut Option([dynamic]string) = point;
+	switch (through(pointer)^) {
 	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
 	case .none:
 	}

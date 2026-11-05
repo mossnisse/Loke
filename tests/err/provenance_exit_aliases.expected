@@ -9,7 +9,7 @@ L0513
 used after `local`
 L0536
 @53:27
-storage reached through a pointer or slice
+stored in `kept_strings`
 L0536
 @63:2
 `copied` (file-scope storage)

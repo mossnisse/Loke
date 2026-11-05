@@ -1,0 +1,23 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": what a deferred
+// statement declares ends with that statement. Here a panic is the only exit that
+// runs them, so their own scope exits are the only cleanup points they have, and a
+// conditional move still needs its flag.
+
+@(move_only) Tracked :: struct { id: int }
+impl Tracked { release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); } }
+
+moved := true;
+
+main :: proc() {
+	defer { kept := Tracked{1}; fmt.println("deferred", kept.id); }
+	defer { maybe := Tracked{2}; if (moved) { drop(maybe); } }
+	defer { maybe := Tracked{3}; if (!moved) { drop(maybe); } }
+	defer { foreach (i in 0 ..< 2) { each := Tracked{10 + i}; _ = each; } }
+	outer := Tracked{0};
+	_ = outer;
+	panic("failed");
+}

@@ -9,8 +9,10 @@
 // valid, until the next reset releases every range but the first.
 package lokec
 
+import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
+import "core:os"
 
 Scratch_Block :: struct {
 	base:      [^]byte,
@@ -127,6 +129,9 @@ scratch_commit :: proc(block: ^Scratch_Block, end: uint) -> mem.Allocator_Error 
 	return nil
 }
 
+// `make` drops an allocation's error, so a body too large to analyze would go on
+// with empty tables and fail somewhere that says nothing of the cause. See
+// known-gaps.md "A body of thousands of borrows is slow, then runs out of memory".
 @(private = "file")
 scratch_allocator_proc :: proc(
 	allocator_data: rawptr,
@@ -137,6 +142,22 @@ scratch_allocator_proc :: proc(
 	location := #caller_location,
 ) -> (data: []byte, err: mem.Allocator_Error) {
 	arena := (^Scratch_Arena)(allocator_data)
+	data, err = scratch_serve(arena, mode, size, alignment, old_memory, old_size)
+	if err != nil && err != .Mode_Not_Implemented {
+		fmt.eprintfln("error: out of memory: analyzing one procedure holds %d bytes and needs %d more", scratch_arena_used(arena), size)
+		os.exit(2)
+	}
+	return
+}
+
+@(private = "file")
+scratch_serve :: proc(
+	arena: ^Scratch_Arena,
+	mode: mem.Allocator_Mode,
+	size, alignment: int,
+	old_memory: rawptr,
+	old_size: int,
+) -> (data: []byte, err: mem.Allocator_Error) {
 	switch mode {
 	case .Alloc, .Alloc_Non_Zeroed:
 		return scratch_alloc(arena, uint(size), uint(alignment))

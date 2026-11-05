@@ -1,0 +1,10 @@
+// design.md "Delegating operators": a redeclaration wherever the other is written.
+package main;
+
+W :: distinct V;
+impl W { delegate(+); }
+V :: struct { a: int }
+impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
+plus :: operator(+) proc(l, r: W) -> W { return l; }
+
+main :: proc() {}

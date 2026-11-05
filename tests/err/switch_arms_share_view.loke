@@ -1,0 +1,45 @@
+// design.md "Switch ownership": a switch's arms share one view of the subject, and
+// a binding's use still holds it in whichever arm writes the subject.
+package main;
+
+import "core:fmt";
+
+U :: union { a: int, b: int, c: string }
+
+first_arm :: proc() {
+	u := U.a(1);
+	switch (u) {
+	case .a(x): u = U.b(2); fmt.println(x);
+	case .b(y): fmt.println(y);
+	case .c(z): fmt.println(z);
+	}
+}
+
+other_arm :: proc() {
+	u := U.a(1);
+	switch (u) {
+	case .a(x): fmt.println(x);
+	case .b(y): u = U.a(2); fmt.println(y);
+	case .c(z): fmt.println(z);
+	}
+}
+
+// Each pass binds afresh, so a write after the binding's last use leaves the next
+// arm free, and an arm binding nothing holds nothing.
+accepted :: proc() {
+	u := U.a(1);
+	for (i := 0; i < 2; i += 1) {
+		switch (u) {
+		case .a(x): fmt.println(x); u = U.b(2);
+		case .b(y): fmt.println(y); u = U.a(3);
+		case .c(z): fmt.println(z);
+		}
+	}
+	switch (u) {
+	case .a: u = U.b(2);
+	case .b: u = U.a(2);
+	case .c:
+	}
+}
+
+main :: proc() {}

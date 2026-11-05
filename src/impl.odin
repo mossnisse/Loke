@@ -61,6 +61,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	own_package := owner != nil && owner.pkg == k.pkg
 	item.kind = own_package ? .Impl : .Extend
 	declare_impl_members(k, item)
+	defer_delegates(k, item)
 }
 
 // `resolve_type_syntax` reports nothing for a subject that names no type at all.
@@ -440,12 +441,7 @@ resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
 			resolve_declaration_signature(k, d)
 		}
 	}
-	// After the signatures: delegation forwards operators already declared.
-	for member in item.members {
-		if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
-			check_delegate(k, delegate, item.subject, item.kind, k.pkg)
-		}
-	}
+	settle_delegates(k, item.subject)
 }
 
 check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {

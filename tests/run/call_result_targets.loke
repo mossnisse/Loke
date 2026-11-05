@@ -1,0 +1,65 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Allocator regions and region provenance": a call's result reaches only
+// what its result dependencies say.
+
+Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
+impl Two { second :: proc(self) -> ^mut [dynamic]int { return self.q; } }
+
+// Only `b` takes the new owner, by the summary's path, so the reset spares `a`.
+reset_other_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	two := Two{&mut a, &mut b};
+	target := two.second();
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return a[0];
+}
+
+pick :: proc(a: ^mut mem.Arena) -> ^mut mem.Arena { return a; }
+
+// A provider the caller received stays the caller's to end.
+built_from_received :: proc(a: ^mut mem.Arena) -> [dynamic]int {
+	q := pick(a);
+	inner: [dynamic]int via q.allocator() = {};
+	inner.append(1);
+	return inner;
+}
+
+point :: proc(pointer: ^mut Option([dynamic]string)) -> ^mut Option([dynamic]string) { return pointer; }
+
+// The subject is `value`, which ends before `arena` does.
+stored_in_a_shorter_local :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	switch (point(pointer)^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	fmt.println(value);
+}
+
+first :: proc() {
+	arena := mem.Arena.init();
+	r := built_from_received(&mut arena);
+	fmt.println(r[0]);
+}
+
+second :: proc() {
+	arena := mem.Arena.init();
+	fmt.println(reset_other_field(arena.allocator()));
+}
+
+main :: proc() {
+	first();
+	second();
+	stored_in_a_shorter_local();
+}

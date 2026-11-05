@@ -132,6 +132,48 @@ main :: proc() {}`) { return }
 	testing.expect(t, retained, "storage correspondence changed across graph builds")
 }
 
+// design.md "Switch ownership": a case that binds nothing takes no view of the
+// subject, and those that bind the whole payload share one: the solver's tables grow
+// with loans and blocks together, and a loan per case would be one per block.
+@(test)
+normalization_switch_cases_share_a_view :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+E :: enum { A, B, C }
+U :: union { a: int, b: int, c: int }
+named :: proc(e: E) -> int {
+    switch (e) {
+    case .A: return 1;
+    case .B: return 2;
+    case .C: return 3;
+    }
+}
+tag_only :: proc(u: U) -> int {
+    switch (u) {
+    case .a: return 1;
+    case .b: return 2;
+    case .c: return 3;
+    }
+}
+bound :: proc(u: U) -> int {
+    switch (u) {
+    case .a(x): return x;
+    case .b(y): return y;
+    case .c(z): return z;
+    }
+}
+main :: proc() {}`) { return }
+	k: Checker
+	Expected :: struct { name: string, loans: int }
+	for expected in ([]Expected{{"named", 0}, {"tag_only", 0}, {"bound", 1}}) {
+		graph := normalization_graph(t, &k, &p, expected.name)
+		if graph != nil {
+			testing.expectf(t, len(graph.loans) == expected.loans, "%s took %d loans of its subject, not %d", expected.name, len(graph.loans), expected.loans)
+		}
+	}
+}
+
 // design.md "Storage roots and borrow carriers", "Allocator regions and region provenance".
 @(test)
 normalization_address_and_unknown_target_contract :: proc(t: ^testing.T) {

@@ -1,0 +1,49 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Delegating operators": a package's declarations are order-independent,
+// so a `delegate` sees what it forwards wherever that is written.
+
+// A chain of distinct types, written from its top down.
+W :: distinct X;
+impl W { delegate(+); }
+X :: distinct V;
+impl X { delegate(+); }
+V :: struct { a: int }
+impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
+
+// A file-scope operator after the block.
+A :: distinct B;
+impl A { delegate(-); }
+B :: struct { a: int }
+subtract :: operator(-) proc(l, r: B) -> B { return {l.a - r.a}; }
+
+// A constant a signature needs, ahead of the block it uses.
+N :: i64(M(2) * M(3));
+buffer: [N]u8;
+M :: distinct i64;
+impl M { delegate(*); }
+
+// The underlying type as the second operand.
+P :: distinct Q;
+impl P { delegate(*); }
+Q :: struct { a: int }
+scale :: operator(*) proc(k: int, q: Q) -> Q { return {k * q.a}; }
+
+// A generic instance named ahead of the block its field's type needs.
+held: Wrap(int);
+Wrap :: struct($T: type) { value: T, sum: Sum }
+Sum :: distinct Big;
+impl Sum { delegate(+); }
+Big :: struct { a: int }
+total :: operator(+) proc(l, r: Big) -> Big { return {l.a + r.a}; }
+
+main :: proc() {
+	fmt.println(V(W(V{1}) + W(V{2})).a);
+	fmt.println(V(X(V{3}) + X(V{4})).a);
+	fmt.println(B(A(B{5}) - A(B{3})).a);
+	fmt.println(size_of(buffer));
+	fmt.println(Q(2 * P(Q{4})).a);
+	fmt.println(Big(Sum(Big{1}) + Sum(Big{2})).a, held.value);
+}

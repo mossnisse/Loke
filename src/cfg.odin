@@ -52,6 +52,8 @@ Flow_Event :: struct {
 	call:          ^Expr_Call,
 	// The attempted operation, for diagnostics.
 	verb:          string,
+	// `Cleanup`: run by a panic's unwind, not by the end of the local's own scope.
+	unwinding:     bool,
 }
 
 // A point where a region may end, named alike by the lifecycle walk, which
@@ -100,7 +102,8 @@ Flow_Block :: struct {
 	exit_state:  []Liveness,
 	visited:     bool,
 	// On a panic's unwind path: the lifecycle pass records liveness there but
-	// checks only what deferred statements read and counts no cleanup point.
+	// checks only what deferred statements read, and counts only the cleanups of
+	// what those statements declare themselves (`Flow_Event.unwinding`).
 	unwind:      bool,
 	unwind_at:   Span,
 
@@ -745,6 +748,7 @@ emit_cleanups :: proc(
 				slot = action.slot,
 				span = sym.span,
 				name = identifier_text(graph.k.c, sym.name),
+				unwinding = unwinding,
 			})
 		}
 	}
@@ -1535,12 +1539,16 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 	}
 	roots := len(graph.temp_roots)
 	arm_roots := make([dynamic]Root_Id, graph.alloc)
+	shared_view: Prov_Case_View
 	for c, index in s.cases {
 		graph.current = bodies[index]
 		enter_flow_scope(graph)
 		if graph.mode != .Lifecycle {
-			if len(c.fields) == 0 {
-				prov_bind_case_name(graph, s, c.binding_symbol, c.binding_ref, prov_case_payload(graph, s, c, subject), c.span, consumes, c.variant_indices)
+			// A case that names nothing takes no view of the subject, which was
+			// read above: a loan per case is a loan per block, and the solver's
+			// tables grow with both.
+			if len(c.fields) == 0 && c.binding_symbol != INVALID_SYMBOL {
+				prov_bind_case_name(graph, s, c.binding_symbol, c.binding_ref, prov_case_payload(graph, s, c, subject), c.span, consumes, c.variant_indices, &shared_view)
 			}
 			// design.md "Inspecting a union": each field binding is that field of
 			// the payload, borrowed apart from its siblings.
@@ -1549,7 +1557,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 					continue
 				}
 				sources := prov_case_field(graph, s, field, subject, c.span)
-				prov_bind_case_name(graph, s, field.symbol, field.is_ref, sources, c.span, consumes, c.variant_indices, field.slot)
+				prov_bind_case_name(graph, s, field.symbol, field.is_ref, sources, c.span, consumes, c.variant_indices, &shared_view, field.slot)
 			}
 		} else {
 			track_case_binding(graph, c.binding_symbol, consumes)

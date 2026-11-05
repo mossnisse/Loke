@@ -430,13 +430,16 @@ report_events :: proc(
 			record_destination_state(graph, event, state[event.slot], assigned)
 		case .Cleanup:
 			// A deferred assignment may have revived what no panic point finds live.
-			graph.tracked[event.slot].live_at_panic ||= block.unwind && state[event.slot] != .Dead
+			graph.tracked[event.slot].live_at_panic ||= event.unwinding && state[event.slot] != .Dead
 		}
 		// An unwind's deferred statements read what they name, which must be live
 		// as it must be on any exit, and a deferred assignment drops what it
-		// finds. Its cleanups are no cleanup points, and what it writes is no write
-		// the normal paths see.
-		if !block.unwind {
+		// finds. What the panic left behind is no cleanup point, and what it writes
+		// is no write the normal paths see. What a deferred statement declares is
+		// its own: it starts and ends in the statement, which may have no other
+		// expansion to count them.
+		owned_by_deferred := event.kind == .Init || event.kind == .Cleanup && !event.unwinding
+		if !block.unwind || owned_by_deferred {
 			report_normal_event(k, graph, event, state)
 		}
 		run_event(event, state)

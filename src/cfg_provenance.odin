@@ -667,12 +667,24 @@ prov_payload_path :: proc(graph: ^Flow_Graph, base: []Proj_Step, slot: int) -> [
 	return slot >= 0 ? prov_extend(graph, path, proj_field(slot)) : path
 }
 
+// The read-only view of a place subject that a switch's whole-payload bindings
+// share. Its cases exclude each other and each runs the view's `Def` afresh, as
+// a creation site that runs again does, so one loan and slot stand for them all:
+// the solver's tables grow with loans and blocks together, and a loan per case
+// is one per block.
+@(private)
+Prov_Case_View :: struct {
+	sources: []int,
+	slot:    int,
+	loan:    Loan_Id,
+}
+
 // A `.name(&mut binding)` case borrows the subject exclusively for the case, as
 // `&mut subject` would (design.md "Switch ownership"). A field binding, `slot`
 // at or above zero, borrows only its field of the payload where the subject is
 // a place with a path, or is reached through carriers.
 @(private)
-prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot := -1) -> []int {
+prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot: int, shared: ^Prov_Case_View) -> []int {
 	if subject == nil {
 		return nil
 	}
@@ -680,9 +692,14 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 	root, path, ok := prov_place_of(graph, subject)
 	if ok && !mutable {
 		if slot >= 0 {
-			path = prov_payload_path(graph, path, slot)
+			return prov_borrow(graph, root, prov_payload_path(graph, path, slot), false, span, "payload")
 		}
-		return prov_borrow(graph, root, path, false, span, "payload")
+		if shared.sources == nil {
+			shared.slot, shared.loan = prov_new_borrow_slot(graph, root, path, false, span, "payload")
+			shared.sources = prov_join(graph, prov_one(graph, shared.slot), prov_root_view(graph, root))
+		}
+		prov_emit(graph, Prov_Event{kind = .Def, slot = shared.slot, loan = shared.loan, span = span})
+		return shared.sources
 	}
 	if mutable && slot >= 0 && ok {
 		if ident, is_ident := subject.(^Expr_Ident); is_ident {
@@ -2567,13 +2584,29 @@ prov_borrow :: proc(
 	access_block := NO_BLOCK,
 	access_index := -1,
 ) -> []int {
-	// design.md "@(synchronized)": even a read-only borrow of a synchronized
-	// field excludes every other access while it lasts.
-	loan := prov_new_loan(graph, root, path, mutable || path_is_synchronized(path), span, what)
-	slot := prov_temp_slot(graph)
-	graph.prov_slots[slot].borrow = Prov_Fresh_Borrow{loan, Prov_Event_At{access_block, access_index}}
+	slot, loan := prov_new_borrow_slot(graph, root, path, mutable, span, what, access_block, access_index)
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = loan, span = span})
 	return prov_join(graph, prov_one(graph, slot), prov_root_view(graph, root))
+}
+
+// The loan and slot of a fresh borrow, before anything defines the slot.
+@(private = "file")
+prov_new_borrow_slot :: proc(
+	graph: ^Flow_Graph,
+	root: Root_Id,
+	path: []Proj_Step,
+	mutable: bool,
+	span: Span,
+	what: string,
+	access_block := NO_BLOCK,
+	access_index := -1,
+) -> (slot: int, loan: Loan_Id) {
+	// design.md "@(synchronized)": even a read-only borrow of a synchronized
+	// field excludes every other access while it lasts.
+	loan = prov_new_loan(graph, root, path, mutable || path_is_synchronized(path), span, what)
+	slot = prov_temp_slot(graph)
+	graph.prov_slots[slot].borrow = Prov_Fresh_Borrow{loan, Prov_Event_At{access_block, access_index}}
+	return
 }
 
 // Returns where the event landed so weakening can revise it; `index` is -1 when
@@ -2919,7 +2952,7 @@ foreach_yields_chunks :: proc(c: ^Compiler, s: ^Stmt_Foreach) -> bool {
 @(private)
 prov_bind_case_name :: proc(
 	graph: ^Flow_Graph, s: ^Stmt_Switch, symbol: Symbol_Id, is_ref: bool, sources: []int, span: Span,
-	consumes: bool, variants: []int, slot := -1,
+	consumes: bool, variants: []int, shared_view: ^Prov_Case_View, slot := -1,
 ) {
 	// Over a place, the binding is the stored payload, not a copy of it.
 	// A deferred switch can be expanded more than once in the same graph.
@@ -2932,14 +2965,14 @@ prov_bind_case_name :: proc(
 	if !consumes {
 		// design.md "Switch ownership": `cursor = &mut node.next` keeps a
 		// loan of this case's `node`, which the next pass binds afresh.
-		if is_ref && symbol != INVALID_SYMBOL {
+		if is_ref {
 			prov_emit(graph, Prov_Event{kind = .Rebind, root = prov_root_for_symbol(graph, symbol), span = span})
 		}
-		prov_bind_view(graph, symbol, prov_subject_view(graph, s.subject, is_ref, slot))
+		prov_bind_view(graph, symbol, prov_subject_view(graph, s.subject, is_ref, slot, shared_view))
 		if !is_ref {
 			prov_note_view_use(graph, symbol, s.subject, slot)
 		}
-	} else if symbol != INVALID_SYMBOL {
+	} else {
 		root := prov_root_for_symbol(graph, symbol)
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
 	}

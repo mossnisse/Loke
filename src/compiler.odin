@@ -113,6 +113,9 @@ Compiler :: struct {
 	// a deep instantiation does not attach it once per level.
 	last_noted_diagnostic: int,
 	pending_impl_instances: [dynamic]Pending_Impl,
+	// The blocks of each subject whose `delegate` items have yet to run
+	// (`settle_delegates`).
+	pending_delegates:     map[Type_Id][dynamic]Pending_Delegate,
 	// The first of them `check_pending_impl_instances` has yet to check.
 	next_pending_impl:     int,
 	// Instances of generic declarations that `check_pending_impl_instances` has yet

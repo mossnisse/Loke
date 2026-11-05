@@ -220,6 +220,7 @@ arity_text :: proc(shape: Operator_Shape) -> string {
 operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	for operand in operands {
+		settle_delegates(k, operand)
 		if info := type_of(k.c, operand); info != nil {
 			add_operator_members(k, info.members, symbol, &out)
 		}
@@ -603,7 +604,91 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	return info != nil && info.result_inout
 }
 
+// An operator is found by its symbol and operands, not by a name that could wait
+// on its declaration, and both are known only once its signature is. So a package's
+// operators resolve ahead of its other signatures, and of any lookup those make,
+// wherever they are written. Nothing can load any more, so an `impl` subject that
+// does not resolve now is an error.
+resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
+	outer := k.impl_type
+	defer k.impl_type = outer
+	for file in pkg.files {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
+			#partial switch v in item {
+			case ^Decl:
+				resolve_if_operator(k, v)
+			case ^Item_Impl:
+				declare_impl_block(k, v, quiet = false)
+				if v.subject == INVALID_TYPE {
+					continue
+				}
+				k.impl_type = v.subject
+				for member in v.members {
+					if d, is_decl := member.(^Decl); is_decl {
+						resolve_if_operator(k, d)
+					}
+				}
+				k.impl_type = outer
+			}
+		}
+	}
+}
+
+@(private = "file")
+resolve_if_operator :: proc(k: ^Checker, d: ^Decl) {
+	if value, is_operator := decl_value(d).(^Expr_Operator); is_operator && value.hook == .None {
+		resolve_declaration_signature(k, d)
+	}
+}
+
 // ----------------------------------------------------------------- delegate --
+
+// A declared block whose `delegate` items have yet to run, and where it is written.
+Pending_Delegate :: struct {
+	item:     ^Item_Impl,
+	location: Checker_Location,
+}
+
+@(private)
+defer_delegates :: proc(k: ^Checker, item: ^Item_Impl) {
+	for member in item.members {
+		if _, is_delegate := member.(^Item_Delegate); is_delegate {
+			pending, found := &k.c.pending_delegates[item.subject]
+			if !found {
+				_, pending, _, _ = map_entry(&k.c.pending_delegates, item.subject)
+				pending^ = make([dynamic]Pending_Delegate, 0, 1, k.c.semantic_allocator)
+			}
+			append(pending, Pending_Delegate{item, k.location})
+			return
+		}
+	}
+}
+
+// design.md "Delegating operators": runs what `delegate` still owes `type`. A
+// package's declarations are order-independent, so this waits for the operators
+// it forwards (`resolve_package_operators`), and looking up an operator of the
+// underlying type runs that type's own first, which settles a chain of distinct
+// types from its end. A probe would lose what these report and leaves them to the
+// block.
+settle_delegates :: proc(k: ^Checker, type: Type_Id) {
+	pending, found := k.c.pending_delegates[type]
+	if !found || !committing(k.c) {
+		return
+	}
+	delete_key(&k.c.pending_delegates, type)
+	saved := k.location
+	defer k.location = saved
+	for entry in pending {
+		k.location = entry.location
+		k.impl_type = type
+		for member in entry.item.members {
+			if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
+				check_delegate(k, delegate, type, entry.item.kind, k.pkg)
+			}
+		}
+	}
+}
 
 // What an operator runs in the end: the first symbol of its delegate chain that
 // does not itself delegate, or `builtin` when a delegate with no target forwards

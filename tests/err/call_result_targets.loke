@@ -1,0 +1,70 @@
+// design.md "Allocator regions and region provenance": a pointer a call returned
+// reaches what its result dependencies say, so what is stored through it, or built
+// by a provider through it, is held to that storage's region.
+package main;
+
+import "core:mem";
+
+Own :: struct { p: ^mut [dynamic]int }
+impl Own {
+	get :: proc(self) -> ^mut [dynamic]int { return self.p; }
+	at :: operator([]) proc(self, i: int) -> ^mut [dynamic]int { return self.p; }
+}
+
+Inner :: struct { owner: ^mut [dynamic]int }
+Outer :: struct { inner: ^mut Inner }
+through_load :: proc(outer: ^Outer) -> ^mut [dynamic]int { return outer^.inner^.owner; }
+
+pick :: proc(a: ^mut mem.Arena) -> ^mut mem.Arena { return a; }
+
+stored_through_method :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	own := Own{&mut a};
+	target := own.get();
+	target^ = make([dynamic]int, 1, allocator);
+	free_all(allocator);
+	return a[0];
+}
+
+stored_through_operator :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	own := Own{&mut a};
+	target := own[0];
+	target^ = make([dynamic]int, 1, allocator);
+	free_all(allocator);
+	return a[0];
+}
+
+stored_through_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	inner := Inner{&mut a};
+	outer := Outer{&mut inner};
+	target := through_load(&outer);
+	target^ = make([dynamic]int, 1, allocator);
+	free_all(allocator);
+	return a[0];
+}
+
+built_through_handle :: proc() -> [dynamic]int {
+	held := shared(mem.Arena.init());
+	q := held.get();
+	inner: [dynamic]int via q.allocator() = {};
+	inner.append(1);
+	return inner;
+}
+
+built_through_call :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	q := pick(&mut arena);
+	inner: [dynamic]int via q.allocator() = {};
+	inner.append(1);
+	return inner;
+}
+
+main :: proc() {}

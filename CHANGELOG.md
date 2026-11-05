@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A pointer a call returned reaches what the call's result dependencies say, as
+  [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+  requires, where it named nothing. Two unsound programs are now rejected. An owner stored through
+  such a pointer, or a user `operator([])`'s, is held against a reset of its region (`L0537`), and an
+  owner built by a provider reached through one, whether `held.get()` stored in a local or
+  `pick(&mut arena)`, ends with that provider (`L0592`). Both compiled and read freed memory. Upgrade
+  by keeping the region alive for as long as the owner is used.
+- `delegate` sees what it forwards wherever that is written
+  ([Delegating operators](design.md#delegating-operators)), so an overload of the distinct type
+  declared after the block is now the redeclaration `L0420`, as one written ahead of it already was.
+  Upgrade by removing the `delegate` of that operator or the overload.
 - `or_else break` and `or_else continue` in a static `foreach` body are `L0455`, as any `break` or
   `continue` that would target the expansion is
   ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over a value with no elements the
@@ -1540,6 +1551,18 @@ checklist.
 
 ### Fixed
 
+- A `delegate` no longer fails with `L0420` when the operator it forwards is declared later in the
+  package, when the underlying type's own `delegate` is, or when a constant a signature needs uses
+  the operator ahead of the block ([Delegating operators](design.md#delegating-operators)).
+- A local declared in a deferred block is dropped when a panic is the only exit that runs the block
+  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not));
+  with no normal exit it leaked and its `hook(drop)` never ran.
+- A `switch` takes one view of its subject rather than one per case. A case binding nothing takes
+  none, so an enum `switch` of 6000 `return` cases compiles in under a second where it crashed the
+  compiler, and a union `switch` binding a payload in each of 3000 cases takes under a second rather
+  than more than a minute.
+- A body too large to analyze stops with `error: out of memory` rather than an internal index error
+  ([known gap](known-gaps.md#a-body-of-thousands-of-borrows-is-slow-then-runs-out-of-memory)).
 - A chain of procedure or map aliases that each name the previous one more than once compiles in time
   linear in its depth; every question about what a type holds took time exponential in it, at 5 to 6
   s for 20 aliases and without end for 48. The printed name of such a type is still exponential in

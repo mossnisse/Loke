@@ -1154,22 +1154,14 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id
 }
 
 // A provider reached through a carrier, when that names local ones: what a local
-// pointer points at, or the handle whose `get()` lends it, which ends the provider
-// (design.md "Shared ownership"). A received pointer names none.
+// pointer points at, or what a call's result does, which for a handle's `get()` is
+// the handle, whose end ends the provider (design.md "Shared ownership"). A
+// received pointer names none.
 @(private = "file")
 prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Region_Set, bool) {
 	value := prov_value(graph, id)
 	carrier := id
 	if base, indirect := value.place.base.(Value_Id); indirect { carrier = base }
-	if form, is_call := prov_value(graph, carrier).form.(Prov_Form_Call); is_call && prov_receiver_is_shared_handle(graph, form.call) {
-		handle := prov_value(graph, prov_receiver_value(prov_bound_values(form)))
-		if root, path, ok := prov_root_place(graph, handle.place); ok {
-			if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
-				return prov_provider_region_at(graph, descriptor.symbol, path), true
-			}
-		}
-		return {}, false
-	}
 	if !type_is_pointer(graph.k.c, prov_value(graph, carrier).type) { return {}, false }
 	aliases := prov_value_aliases(graph, carrier)
 	if len(aliases) == 0 { return {}, false }
