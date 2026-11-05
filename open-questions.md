@@ -39,6 +39,16 @@ the compiler, is the oracle for any of them.
   them would accept more rather than simplify, and a call may also write through
   an argument, which those effects do not cover.
 
+- **Remove the unused `unsafe.take` move marker (P3).** `f1a0cdf1` added
+  `Unsafe_Take` to `mark_aliased_moves` in
+  [src/provider_end.odin](src/provider_end.odin), but the only readers of
+  `graph.aliased_moves` are `provider_move_end` and `provider_exchange_end`.
+  Neither the lifecycle nor the provenance walk calls either for `unsafe.take`.
+  The new map entry therefore changes no decision. Remove that alternative
+  unless a take-specific provider-end check is introduced; keeping it suggests
+  the take path shares a check it never runs. Found on 2026-11-05 while reviewing
+  that commit.
+
 ### What counts as a fresh borrow of a range
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) separates constant

@@ -7,6 +7,34 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Taking one provider field also carries its sibling's region
+
+[Allocators](design.md#allocators) preserve a provider's region identity when it moves. Taking
+`pair.first` below must leave `pair.second` independent, but `prov_moved_bits` in
+[src/provenance_regions.odin](src/provenance_regions.odin) discards the source place's path and
+returns every provider token of its root. Dropping `taken` therefore reports L0537 for `xs`,
+although only the second arena backs it:
+
+```loke
+package main;
+import "core:mem";
+import "core:unsafe";
+Pair :: struct { first: mem.Arena, second: mem.Arena }
+main :: proc() {
+    pair := Pair{mem.Arena.init(), mem.Arena.init()};
+    xs := make([dynamic]int, 1, pair.second.allocator());
+    taken := unsafe.take(pair.first);
+    unsafe.write(pair.first, {});
+    drop(taken); // L0537 for `xs`; should be accepted
+    _ = xs[0];
+}
+```
+
+The new `Unsafe_Take` branch in `f1a0cdf1` introduces this rejection; its parent accepts the
+program. Keep the projected provider tokens, using the place path as
+`prov_provider_region_at` does, instead of the whole root's set. Found on 2026-11-05 while
+reviewing that commit (P2).
+
 ### A long literal can still overflow the stack at `-opt=none`
 
 A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
