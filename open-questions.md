@@ -1291,6 +1291,15 @@ code; no program has shown it. Found on 2026-11-04 in the compiler review.
 Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
 none of which they wait on.
 
+- **Share the slice iterator (P3).**
+  [Priority_Queue_Iterator](core/container/priority_queue.loke) duplicates the
+  read-only slice cursor in [Small_Array_Iterator](core/container/small_array.loke).
+  Replacing its record and implementation with
+  `Priority_Queue_Iterator :: Small_Array_Iterator($T);` and initializing the
+  direction to `false` removes 16 lines; a neutral shared name could follow.
+  The queue runtime test, including move-only elements, and its borrow diagnostic
+  codes still pass with this substitution in an isolated copy of `1cefee9c`.
+  Found on 2026-11-05 while reviewing that commit.
 - **A dynamic array's allocator.** `x.allocator` is not a member, which is the only
   reason `Deque` has its own field. An `x.allocator()` query would remove it, and
   would help any library container that replaces its storage. Is the query worth

@@ -7,6 +7,74 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Deque's fallible append can panic while copying its arguments
+
+The [growable container contract](standard-library.md#conventions-of-the-growable-containers)
+requires `try_append` to return an element-copy allocation failure. In
+[deque.loke](core/container/deque.loke), a borrowed element selects the variadic
+`try_append_copied`, so the caller copies it into the argument pack before the
+procedure can call `try_clone`. A failure in that first copy applies the default
+allocator's failure policy and panics instead of returning `.err`:
+
+```loke
+package main;
+import "core:container";
+import "core:fmt";
+Item :: struct { id: int }
+impl Item {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+        return .err({});
+    }
+}
+main :: proc() {
+    q := container.Deque(Item).init(4);
+    item := Item{1};
+    result := q.try_append(item); // panics; should return .err
+    fmt.println(result != .ok, q.len(), item.id);
+}
+```
+
+Add a non-variadic borrowed-element overload, as `append_one_copied` already
+does for `append`, and arrange a borrowing path for several elements so their
+copies happen inside the fallible operation. The current allocation-failure
+tests pass owning temporaries or trivial elements, so do not cover this path.
+Reproduced with the compiler built from `1cefee9c` on 2026-11-05 while reviewing
+that commit (P2).
+
+### Deque grows before a fallible element copy succeeds
+
+The [unchanged-on-failure contract](standard-library.md#errors-are-values)
+includes observable capacity. `try_prepend_copied` in
+[deque.loke](core/container/deque.loke) calls `try_reserve` before `try_clone`;
+`try_append_copied` does the same before copying the pack's elements. A copy
+failure therefore leaves newly allocated storage installed:
+
+```loke
+package main;
+import "core:container";
+import "core:fmt";
+Item :: struct { id: int }
+impl Item {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+        return .err({});
+    }
+}
+main :: proc() {
+    q: container.Deque(Item) = {};
+    item := Item{1};
+    fmt.println(q.cap()); // 0
+    result := q.try_prepend(item);
+    fmt.println(result != .ok, q.len(), q.cap()); // true 0 8; capacity should remain 0
+}
+```
+
+Finish fallible copying before committing growth, including staging a batch's
+copies when needed. Rolling back appended elements alone does not restore the
+old capacity. The existing clone-failure case reserves sufficient capacity
+before calling, so misses successful growth followed by failed copying.
+Reproduced with the compiler built from `1cefee9c` on 2026-11-05 while reviewing
+that commit (P2).
+
 ### Taking one provider field also carries its sibling's region
 
 [Allocators](design.md#allocators) preserve a provider's region identity when it moves. Taking
