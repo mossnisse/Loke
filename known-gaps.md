@@ -7,6 +7,116 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A viewed record's owned provider hides providers reached through its carriers
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+keeps the result below in `arena`'s region. This compiles after `6b292d78`, where its parent
+reports `L0537` at `drop(arena)`. The new slice walk in
+[src/provenance_regions.odin](src/provenance_regions.odin) stops at a viewed record that owns
+a provider: `prov_merge_provider_viewed` merges its owned provider tokens but never follows
+its carrier fields. The result is attributed to `holders[0].owned` and loses `external`:
+
+```loke
+package main;
+import "core:mem";
+Holder :: struct { owned: mem.Arena, external: ^mut mem.Arena }
+build :: proc(holders: []Holder) -> [dynamic]int {
+    v := make([dynamic]int, 0, holders[0].external.allocator());
+    v.append(1);
+    return v;
+}
+main :: proc() {
+    arena := mem.Arena.init();
+    holders := [1]Holder{Holder{mem.Arena.init(), &mut arena}};
+    r := build(holders[:]);
+    drop(arena);
+    _ = r[0];
+}
+```
+
+The walk must include providers reached through an aggregate's carriers alongside those it
+owns. An aggregate with only a carrier is also missed by `prov_view_reaches_provider`:
+`Holder :: struct { external: ^mut mem.Arena }`, passed to `build` as `^Holder`, loses the
+same dependency; that case predates this commit. Found reviewing `6b292d78` on 2026-11-05
+(P1).
+
+### A precomputed generic instance name bypasses the printed-name limit
+
+[Printed forms](standard-library.md#printed-forms) stops a type's name at about 4 KB.
+`type_name_text` in [src/types.odin](src/types.odin) checks the current builder length before
+writing an entire chunk, and a generic instance's precomputed name is one chunk. This prints
+40,953 characters without `...`; the names still double at each level, so deeper declarations
+retain the exponential cost the new limit was meant to prevent:
+
+```loke
+package main;
+import "core:fmt";
+Tag :: struct($A, $B: type) {}
+T0 :: int;
+T1 :: Tag(T0, T0);
+T2 :: Tag(T1, T1);
+T3 :: Tag(T2, T2);
+T4 :: Tag(T3, T3);
+T5 :: Tag(T4, T4);
+T6 :: Tag(T5, T5);
+T7 :: Tag(T6, T6);
+T8 :: Tag(T7, T7);
+T9 :: Tag(T8, T8);
+T10 :: Tag(T9, T9);
+T11 :: Tag(T10, T10);
+T12 :: Tag(T11, T11);
+main :: proc() { fmt.println(typeid_of(T12)); }
+```
+
+Bound each chunk by the remaining space, including named types, so generic instance names
+cannot keep growing through `generic_argument_text`. Found reviewing `6b292d78` on
+2026-11-05 (P2).
+
+### A computed dependent parameter type suppresses a private type warning
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+requires `L0740` for `Hidden` in `expose` below. The parent of `6b292d78` reports it, but this
+commit does not. In [src/private_names.odin](src/private_names.odin), `argument_is_value`
+assumes any dependent parameter type other than a bare name takes a value. A compile-time
+call can instead resolve to `type`, making the argument a type. Import this library from a
+root `main` package:
+
+```loke
+package lib;
+@(private) Hidden :: struct { x: int }
+identity_type :: proc($T: type) -> type { return T; }
+@(public) G :: struct($T: type, $V: identity_type(T)) {}
+@(public) expose :: proc(value: G(type, Hidden)) {}
+```
+
+Resolve a dependent parameter's type with the earlier arguments bound rather than classifying
+it only by its syntax. Found reviewing `6b292d78` on 2026-11-05 (P3).
+
+### An impl subject can demand an operator before the operator blocks are declared
+
+[Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)
+should not depend on declaration order. A subject's array length can need a later operator
+while `declare_impl_block` is still declaring the package's blocks. The pending-operator
+queue in [src/operators.odin](src/operators.odin) has not seen that later block, and the
+file-scope constant keeps the failed check. This reports `L0318` at `+`, followed by `L0406`
+for the subject and `L0363` for `count`:
+
+```loke
+package main;
+V :: struct { x: int }
+N :: (V{1} + V{2}).x;
+impl [N]int {
+    count :: proc(self) -> int { return self.len(); }
+}
+impl V {
+    add :: operator(+) proc(a, b: V) -> V { return {a.x + b.x}; }
+}
+main :: proc() { v := [3]int{}; _ = v.count(); }
+```
+
+This predates `6b292d78` and remains after its operator-signature ordering fix. Found
+reviewing that commit on 2026-11-05 (P2, over-rejection).
+
 ### A long literal can still overflow the stack at `-opt=none`
 
 A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
