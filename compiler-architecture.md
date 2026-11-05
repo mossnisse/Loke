@@ -601,9 +601,10 @@ Keep these contracts:
   handles (`Written_Summary.owners`) and keep each part at the path the body
   wrote (`Written_Summary.content`); a copy within one argument is a copy
   entry the call resolves in its caller, its source's path stopping at
-  `WRITTEN_ALIAS_DEPTH`, as a store may read its own copy. Nothing writes a record
-  parameter passed by value, so its row's path starts at the carrier the store went
-  through (`prov_parameter_carrier_path`), and a call lands the row only where the
+  `WRITTEN_ALIAS_DEPTH`, as a store may read its own copy. A carrier keeps no region
+  where it is held, so a row that went through one of the parameter's carriers has a
+  path starting at that carrier (`prov_parameter_carrier_path`), whether the record is
+  passed by value, behind a pointer, or `inout`, and a call lands the row only where the
   argument's carrier there leads (`prov_contents_held_at`). A read below what a
   parameter names has no path in it (`Written_Alias.loaded`), so it takes the parameter's
   region marked as read below (`Region_Set.loaded`), as does a read of a carrier out of

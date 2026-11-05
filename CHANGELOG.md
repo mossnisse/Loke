@@ -1649,8 +1649,9 @@ checklist.
   `L0641`.
 - The compiler no longer hangs on a store through a carrier held in the storage it reads from, as
   `owned^.out^ = owned^.items`.
-- A store through one carrier of a record passed by value lands only where the argument's carrier at
-  that field leads, so a reset of what was stored no longer reports `L0537` for the sibling's target
+- A store through one carrier of a record passed by value, behind a pointer, or `inout` lands only
+  where the argument's carrier at that field leads, so a reset of what was stored no longer reports
+  `L0537` for the sibling's target
   ([Minimum provenance precision](design.md#minimum-provenance-precision)).
 - An index that runs nothing of the program only reads, however it is computed: `less(xs[i - 1], xs[i])`
   over a `[]mut T` of move-only elements, with an arithmetic, converted, indexed, or `len()` index, is

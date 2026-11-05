@@ -4166,7 +4166,7 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
 	// `dst^.alloc` lands in the `alloc` field of what `dst` points at.
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, destination), suffix)
-	// A record taken by value: its rows say which of its carriers they went through.
+	// A call's rows say which of the destination's carriers they went through.
 	targets := prov_written_targets(graph, destination, held = by_carrier)
 	for alias in targets {
 		at := prov_concat_path(graph, alias.at, below)
@@ -4179,7 +4179,7 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 		}
 		prov_define_stored_contents(graph, prov_root_for_storage(graph, alias.target), at, region, owned, landed)
 		if owner == CALL_LEFT_OWNER && prov_type_reaches_mutable(graph.k.c, destination_type) {
-			if by_carrier {
+			if landed != nil {
 				for content in landed {
 					prov_store_reachable_regions(graph, alias.target, prov_concat_path(graph, at, content.path), false, region, owned, &seen)
 				}
@@ -4402,12 +4402,12 @@ prov_leave_region :: proc(graph: ^Flow_Graph, argument: Value_Id, region, owned:
 }
 
 // What a callee leaves in a place it is handed: there, and where the place's own mutable
-// carriers lead.
+// carriers lead, each row only where the carrier it went through does.
 @(private = "file")
 prov_leave_in_place :: proc(graph: ^Flow_Graph, place: Value_Id, region, owned: Region_Set, contents: []Prov_Region_Content) {
 	prov_store_region_set(graph, place, region, owned, CALL_LEFT_OWNER, contents = contents)
 	if prov_type_reaches_mutable(graph.k.c, prov_value(graph, place).type) {
-		prov_store_region_through(graph, place, region, owned, CALL_LEFT_OWNER, contents = contents)
+		prov_store_region_through(graph, place, region, owned, CALL_LEFT_OWNER, contents = contents, by_carrier = contents != nil)
 	}
 }
 

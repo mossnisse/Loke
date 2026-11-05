@@ -1,5 +1,6 @@
 // design.md "Minimum provenance precision": a store through one carrier of a record
-// passed by value still reaches what the argument's carrier at that field leads to.
+// passed by value, behind a pointer, or `inout`, still reaches what the argument's
+// carrier at that field leads to.
 package main;
 
 import "core:mem";
@@ -119,6 +120,31 @@ two_levels :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	two_loads(Chain{&mut head, &mut other}, allocator);
 	free_all(allocator);
 	return d[0];
+}
+
+store_behind_pointer :: proc(pair: ^Pair, allocator: mem.Allocator) { pair^.second^ = make([dynamic]int, 1, allocator); }
+store_in_place :: proc(pair: inout Pair, allocator: mem.Allocator) { pair.second^ = make([dynamic]int, 1, allocator); }
+
+behind_a_pointer :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	pair := Pair{&mut a, &mut b};
+	store_behind_pointer(&pair, allocator);
+	free_all(allocator);
+	return b[0];
+}
+
+in_place :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	pair := Pair{&mut a, &mut b};
+	store_in_place(inout pair, allocator);
+	free_all(allocator);
+	return b[0];
 }
 
 main :: proc() {}

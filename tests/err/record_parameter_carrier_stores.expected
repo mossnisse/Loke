@@ -1,30 +1,36 @@
 warning[L0507]
-@22:50
+@23:50
 this assignment clones part of `owned`, which may allocate
 L0537
-@34:2
+@35:2
 this reset would end the region backing `b`, which is still live here
 L0537
-@45:2
+@46:2
 this reset would end the region backing `b`, which is still live here
 L0537
-@55:2
+@56:2
 this reset would end the region backing `b`, which is still live here
 L0537
-@68:2
+@69:2
 this reset would end the region backing `d`, which is still live here
 L0537
-@79:2
+@80:2
 this reset would end the region backing `d`, which is still live here
 L0537
-@86:2
+@87:2
 this reset would end the region backing `d`, which is still live here
 L0537
-@97:2
+@98:2
 this reset would end the region backing `a`, which is still live here
 L0537
-@107:2
+@108:2
 this reset would end the region backing `b`, which is still live here
 L0537
-@120:2
+@121:2
 this reset would end the region backing `d`, which is still live here
+L0537
+@135:2
+this reset would end the region backing `b`, which is still live here
+L0537
+@146:2
+this reset would end the region backing `b`, which is still live here

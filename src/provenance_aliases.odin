@@ -243,18 +243,14 @@ prov_parameter_is_record_by_value :: proc(c: ^Compiler, mode: Param_Mode, type: 
 }
 
 // design.md "Minimum provenance precision": which of its carriers a read at `path`
-// of a parameter goes through, when the parameter is a record passed by value. Nothing
-// writes such a parameter's own storage, so what a body leaves there is known by the
-// carrier it went through, and a call lands it only where its argument's carrier at that
-// path leads (`prov_contents_held_at`). Any other parameter's storage is the caller's,
-// whose paths say where in it the body wrote, so it has no such path.
+// of what a parameter names goes through. A carrier keeps no region where it is held
+// (`prov_store_keeps_region`), so what a body leaves at a carrier's path, or below it,
+// went through that carrier, and a call lands it only where its argument's carrier at
+// that path leads (`prov_contents_held_at`).
 @(private = "file")
 prov_parameter_carrier_path :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Step) -> []Proj_Step {
-	if !prov_parameter_is_record_by_value(c, sym.mode, sym.type) {
-		return nil
-	}
 	for length in 1 ..< len(path) {
-		if type_is_carrier(c, prov_type_at(c, sym.type, path[:length])) {
+		if type_is_carrier(c, prov_parameter_type_at(c, sym, path[:length])) {
 			return path[:length]
 		}
 	}
