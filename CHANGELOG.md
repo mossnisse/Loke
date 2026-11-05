@@ -1080,6 +1080,13 @@ checklist.
 
 ### Added
 
+- [`core:container`](standard-library.md#corecontainer) has
+  [`Priority_Queue(T, C)`](standard-library.md#priority-queues) with `Min_Queue(T)` and `Max_Queue(T)`,
+  which always hand back the most urgent element under a comparator stored in the queue, and
+  [`Deque(T)`](standard-library.md#deques), a growable double-ended queue that extends a dynamic array's
+  names with `prepend` and `pop_front`. Both hold move-only elements and have fallible forms.
+- [`core:slice`](standard-library.md#heaps) has `make_heap`, `push_heap`, `pop_heap`, `sift_heap_top`,
+  and `is_heap` over a slice the caller owns, and the comparators `Ascending(T)` and `Descending(T)`.
 - [`core:checksum`](standard-library.md#corechecksum) has `Crc(T, P)`, an incremental CRC of any
   catalogue parameter set checked at compile time, with `Crc32`, `Crc32c`, and `Crc64`. Its zero
   value is the checksum of no bytes, and it is an `io.Writer`.

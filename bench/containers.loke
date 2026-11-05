@@ -1,0 +1,79 @@
+package main;
+import "core:container";
+import "core:fmt";
+
+// The queue containers under load: a deque used as a first-in-first-out work list
+// at a constant width, and a priority queue of small and of large elements, filled
+// and drained. Each result depends on every element, so nothing is optimized away.
+
+DEQUE_ROUNDS :: 40_000_000;
+DEQUE_WIDTH  :: 1024;
+QUEUE_COUNT  :: 2_000_000;
+LARGE_COUNT  :: 500_000;
+
+Large :: struct { key: u64, padding: [7]u64 }
+
+By_Key :: struct {}
+impl By_Key {
+	call :: proc(self, left, right: Large) -> bool { return left.key < right.key; }
+}
+
+// xorshift64: `<<` keeps the low bits, so the generator needs no masking.
+next :: proc(state: inout u64) -> u64 {
+	state ~= state << 13;
+	state ~= state >> 7;
+	state ~= state << 17;
+	return state;
+}
+
+deque_work_list :: proc() -> int {
+	queue := container.Deque(int).init(DEQUE_WIDTH);
+	foreach (i in 0 ..< DEQUE_WIDTH) { queue.append(i); }
+	checksum := 0;
+	foreach (_ in 0 ..< DEQUE_ROUNDS) {
+		value := queue.pop_front() or_else 0;
+		checksum = (checksum + value) & 0xFFFFFF;
+		queue.append(checksum);
+	}
+	return checksum;
+}
+
+queue_of_integers :: proc(state: inout u64) -> int {
+	queue: container.Min_Queue(int) = {};
+	foreach (_ in 0 ..< QUEUE_COUNT) { queue.push(int(next(inout state) % 1_000_000_000)); }
+	checksum := 0;
+	previous := 0;
+	foreach (_ in 0 ..< QUEUE_COUNT) {
+		value := queue.pop() or_else 0;
+		if (value < previous) { panic("out of order"); }
+		previous = value;
+		checksum = (checksum + value) % 1_000_000_007;
+	}
+	return checksum;
+}
+
+queue_of_records :: proc(state: inout u64) -> u64 {
+	queue := container.Priority_Queue(Large, By_Key).init({});
+	foreach (_ in 0 ..< LARGE_COUNT) { queue.push(Large{key = next(inout state)}); }
+	checksum: u64 = 0;
+	previous: u64 = 0;
+	for (;;) {
+		switch (queue.pop()) {
+		case .some(item):
+			if (item.key < previous) { panic("out of order"); }
+			previous = item.key;
+			checksum ~= item.key;
+			continue;
+		case .none:
+		}
+		break;
+	}
+	return checksum;
+}
+
+main :: proc() {
+	state: u64 = 0x9E3779B97F4A7C15;
+	fmt.println(deque_work_list());
+	fmt.println(queue_of_integers(inout state));
+	fmt.println(queue_of_records(inout state));
+}

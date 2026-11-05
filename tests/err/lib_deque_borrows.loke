@@ -1,0 +1,214 @@
+package main;
+
+import "core:container";
+import "core:mem";
+
+// standard-library.md "Deques": what the deque lends keeps it borrowed, an element
+// that carries a borrow keeps that borrow through every way in and out, and an
+// owner keeps its allocator region. Raw storage must not hide any of these.
+
+Q :: container.Deque(int);
+Views :: container.Deque([]int);
+
+use :: proc(value: $T) {}
+
+first_then_pop :: proc(q: inout Q) {
+	p := q.first();
+	_ = q.pop_front();
+	use(p);
+}
+
+at_then_clear :: proc(q: inout Q) {
+	p := q.at(0);
+	q.clear();
+	use(p);
+}
+
+runs_then_append :: proc(q: inout Q) {
+	a, b := q.as_slices();
+	q.append(2);
+	use(a);
+}
+
+iterate_and_append :: proc(q: inout Q) {
+	foreach (v in q) { q.append(v); }
+}
+
+lent_mut_then_read :: proc(q: inout Q) {
+	p := q.first_mut();
+	_ = q.len();
+	use(p);
+}
+
+contiguous_then_pop :: proc(q: inout Q) {
+	run := q.make_contiguous();
+	_ = q.pop();
+	use(run);
+}
+
+// An element's borrow outlives neither its source nor what it is moved through.
+popped_front_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.append(local[:]);
+		out = q.pop_front() or_else {};
+	}
+	use(out);
+}
+
+popped_back_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.append(local[:]);
+		out = q.pop() or_else {};
+	}
+	use(out);
+}
+
+removed_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.append(local[:]);
+		out = q.remove(0);
+	}
+	use(out);
+}
+
+through_growth_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.append(local[:]);
+		q.reserve(64);
+		out = q.pop_front() or_else {};
+	}
+	use(out);
+}
+
+through_shrink_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.append(local[:]);
+		q.shrink();
+		out = q.pop_front() or_else {};
+	}
+	use(out);
+}
+
+through_contiguous_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.prepend(local[:]);
+		_ = q.make_contiguous();
+		out = q.pop_front() or_else {};
+	}
+	use(out);
+}
+
+through_insert_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.insert(0, local[:]);
+		q.insert(0, {});
+		out = q.pop() or_else {};
+	}
+	use(out);
+}
+
+through_retain_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: Views = {};
+		q.append(local[:]);
+		q.retain(proc(item: []int) -> bool { return true; });
+		out = q.pop() or_else {};
+	}
+	use(out);
+}
+
+// The deque itself carries what it holds.
+kept_past_its_source :: proc() {
+	q: Views = {};
+	{
+		local := [1]int{42};
+		q.append(local[:]);
+	}
+	use(q.len());
+}
+
+source_written_while_held :: proc() {
+	local := [dynamic]int{1};
+	q: Views = {};
+	q.append(local[:]);
+	local.append(2);
+	use(q.len());
+}
+
+// An owner keeps the region it was built in, wherever the deque took it from.
+region_reset_under_removed :: proc() {
+	arena := mem.Arena.init();
+	q := container.Deque([dynamic]int).init(0, arena.allocator());
+	inner := make([dynamic]int, 0, 4, arena.allocator());
+	q.append(move(inner));
+	out := q.pop_front();
+	free_all(arena.allocator());
+	use(out);
+}
+
+deque_outlives_its_arena :: proc() {
+	q: Q = {};
+	{
+		arena := mem.Arena.init();
+		q = Q.init(0, arena.allocator());
+	}
+	use(q.len());
+}
+
+reset_under_live_deque :: proc() {
+	arena := mem.Arena.init();
+	q := Q.init(0, arena.allocator());
+	q.append(1);
+	free_all(arena.allocator());
+	use(q.len());
+}
+
+removed_after_moves_outlives_its_arena :: proc() {
+	kept: Option([dynamic]int) = .none;
+	{
+		arena := mem.Arena.init();
+		held: container.Deque([dynamic]int) = {};
+		held.append(make([dynamic]int, 0, 4, arena.allocator()));
+		held.reserve(32);
+		_ = held.make_contiguous();
+		kept = held.pop_front();
+	}
+	use(kept);
+}
+
+@(move_only) Token :: struct { id: int }
+
+// The members that copy an element are absent from a move-only instance.
+move_only_members :: proc(q: inout container.Deque(Token), token: ^Token) {
+	moved_out := q[0];
+	q.append(token^);
+	q.prepend(token^);
+	_ = q.try_append(token^);
+	q.insert(0, token^);
+	copied := q.clone();
+}
+
+main :: proc() {}

@@ -8,6 +8,8 @@
 
 	The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
 	compile-time error rather than a silent no-op.
+
+	`make_heap` and its relatives keep a binary heap in a slice the caller owns.
 */
 // design.md "Slices", standard-library.md "Sorting slices", and
 // standard-library.md "Slice queries and copies".

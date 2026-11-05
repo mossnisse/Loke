@@ -24,8 +24,8 @@ main :: proc() {}
 ```
 
 Reading through a helper that takes `[]T` avoids it. Found on 2026-11-05 at
-`990612d0` while prototyping [heap sifting](container-design.md#heap-algorithms-in-coreslice)
-(P3, over-rejection).
+`990612d0` while writing [heap sifting](standard-library.md#heaps), which reads through such a
+helper (P3, over-rejection).
 
 ### A long literal can still overflow the stack at `-opt=none`
 

@@ -1276,6 +1276,32 @@ re-checked at the same site and scope, as compound-assignment lowering makes, co
 fall back to the order of requests, so typeids would depend on it. This comes from reading the
 code; no program has shown it. Found on 2026-11-04 in the compiler review.
 
+## Growable container follow-ups
+
+Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
+none of which they wait on.
+
+- **A dynamic array's allocator.** `x.allocator` is not a member, which is the only
+  reason `Deque` has its own field. An `x.allocator()` query would remove it, and
+  would help any library container that replaces its storage. Is the query worth
+  having for its own sake?
+- **A written borrow contract.** `Deque.slots` goes through a plain procedure type
+  because no declaration can say "this result borrows `self`".
+  [The written result contract](#public-borrow-contracts-should-stand-on-their-own)
+  proposed there would replace the technique here as well as in `Monitor_Guard` and
+  `Shared`.
+- **Inline ring storage.** `@(initialized = count)` describes a live prefix, not a
+  wrapped range. A prototype `Small_Deque` works by naming a field that is always
+  `0`, so that the generated copy and drop touch nothing and hooks do the rest, but
+  that stretches the attribute's promise that the first `count` elements are the
+  values. Either bless this as the way to opt out of generated element handling, or
+  give it its own spelling before `Small_Deque` is built.
+- **Handing back a refused element.** A failed `try_push(move(x))` drops `x`, as all
+  container insertion does. `Ring.try_send` hands the item back instead, because
+  there a full ring is routine; an out-of-memory queue is not, and `try_reserve`
+  first covers the caller who cares. This stays with the language rule, but a bounded
+  queue, if one is added, should reconsider it.
+
 ## The diverging arrow's spelling
 
 [`-> !`](design.md#diverging-procedures) means the procedure never returns

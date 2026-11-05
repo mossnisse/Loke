@@ -10,11 +10,62 @@
 
 	The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
 	compile-time error rather than a silent no-op.
+
+	`make_heap` and its relatives keep a binary heap in a slice the caller owns.
 */
 package slice;
 
 import "base:interfaces";
 import "core:mem";
+
+/*
+	Callable as `left < right`, for `sort_by`, the heap algorithms, and a
+	`Priority_Queue`. Zero-sized: `slice.Ascending(int){}`.
+*/
+Ascending :: struct($T: type) where interfaces.Ordered(T) {}
+
+impl Ascending($T) {
+	call :: proc(self, left, right: T) -> bool ---;
+}
+
+// Callable as `right < left`, the opposite order of `Ascending`.
+Descending :: struct($T: type) where interfaces.Ordered(T) {}
+
+impl Descending($T) {
+	call :: proc(self, left, right: T) -> bool ---;
+}
+
+/*
+	Orders the whole slice into a heap, in O(n): a heap has first what `sort_by`
+	would put first under the same comparator, each element's parent at
+	`(i - 1) / 2`, and no element `less` than its parent.
+
+	None of the heap procedures allocates or copies an element. A comparator is
+	borrowed for the call and must define a strict weak ordering. One that does
+	not, or one that panics, leaves the elements in an unspecified order and
+	nothing worse: the slice is still a permutation of what it held, and every
+	call terminates.
+*/
+make_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+
+/*
+	The last element joins the heap formed by those before it, in O(log n).
+	Append to the storage first. An empty slice is a no-op.
+*/
+push_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+
+/*
+	The first element moves to the last place, and those before it form a heap
+	again, in O(log n). Remove it from the storage afterwards. An empty slice is
+	a no-op.
+*/
+pop_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+
+// Restores the order after the first element changed, in O(log n).
+sift_heap_top :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+
+// Whether no element is `less` than its parent. An empty slice is a heap.
+is_heap :: proc(values: []$T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
 
 /*
 	Sorts in place according to `less`: a plain procedure, or a value whose

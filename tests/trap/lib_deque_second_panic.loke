@@ -1,0 +1,19 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// design.md "Panic during unwinding": a second panic aborts. The remaining drain is
+// not promised then, so the third element's drop need not run.
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+	gone :: hook(drop) proc(self: inout) {
+		fmt.println("drop", self.id);
+		panic("drop failed");
+	}
+}
+
+main :: proc() {
+	d: container.Deque(Tracked) = {};
+	foreach (id in 1 ..= 3) { d.append(Tracked{id}); }
+}

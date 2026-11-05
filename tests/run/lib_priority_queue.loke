@@ -1,0 +1,430 @@
+package main;
+
+import "base:interfaces";
+import "core:container";
+import "core:fmt";
+import "core:mem";
+import "core:slice";
+
+// standard-library.md "Priority queues": the order, each kind of comparator, the
+// members, and the worked uses a general-purpose queue exists for.
+
+static_assert(interfaces.Iterable(container.Min_Queue(int)));
+static_assert(!interfaces.Sequence(container.Min_Queue(int)));
+static_assert(!interfaces.Equatable(container.Min_Queue(int)));
+static_assert(size_of(slice.Ascending(int)) == 0);
+static_assert(size_of(container.Min_Queue(int)) == size_of([dynamic]int));
+
+// ------------------------------------------------------------- shortest path --
+
+Edge :: struct { to: int, cost: int }
+
+Open_Entry :: (f: int, g: int, node: int);
+
+heuristic :: proc(node: int, goal: int) -> int { return goal - node; }
+
+// Duplicates in the queue, and a popped entry worse than the best known distance
+// is stale and skipped.
+shortest_path :: proc(graph: [][]Edge, start, goal: int) -> Option(int) {
+	best := make([dynamic]int, graph.len());
+	foreach (&mut distance in best) { distance = 1 << 62; }
+	best[start] = 0;
+
+	open: container.Min_Queue(Open_Entry) = {};
+	open.push(Open_Entry{heuristic(start, goal), 0, start});
+
+	for (;;) {
+		switch (open.pop()) {
+		case .none:
+			return .none;
+		case .some(entry):
+			if (entry.g > best[entry.node]) { continue; }
+			if (entry.node == goal) { return .some(entry.g); }
+			foreach (edge in graph[entry.node]) {
+				g := entry.g + edge.cost;
+				if (g < best[edge.to]) {
+					best[edge.to] = g;
+					open.push(Open_Entry{g + heuristic(edge.to, goal), g, edge.to});
+				}
+			}
+		}
+	}
+}
+
+// ------------------------------------------------------------------ requests --
+
+@(move_only) Request :: struct { deadline: i64, sequence: u64, body: [dynamic]u8 }
+
+Order :: (deadline: i64, sequence: u64);
+
+// Earlier deadline first, and first come first served among equals.
+By_Deadline :: struct {}
+impl By_Deadline {
+	call :: proc(self, left, right: Request) -> bool {
+		return Order{left.deadline, left.sequence} < Order{right.deadline, right.sequence};
+	}
+}
+
+Scheduler :: struct {
+	waiting: container.Priority_Queue(Request, By_Deadline),
+	next_sequence: u64,
+}
+
+impl Scheduler {
+	submit :: proc(self: inout, deadline: i64, @(escape=stored) body: move [dynamic]u8) -> Status(Allocator_Error) {
+		self.next_sequence += 1;
+		return self.waiting.try_push(Request{deadline, self.next_sequence, move(body)});
+	}
+	next :: proc(self: inout) -> Option(Request) { return self.waiting.pop(); }
+}
+
+// ---------------------------------------------------------- top k and merging --
+
+largest :: proc(values: []int, k: int) -> [dynamic]int {
+	kept: container.Min_Queue(int) = {};
+	kept.reserve(k);
+	foreach (value in values) {
+		if (kept.len() < k) { kept.push(value); } else { _ = kept.push_pop(value); }
+	}
+	return move(kept).into_sorted();
+}
+
+Run :: struct { data: []int, at: int }
+
+By_Head :: struct {}
+impl By_Head {
+	call :: proc(self, left, right: Run) -> bool { return left.data[left.at] < right.data[right.at]; }
+}
+
+merge :: proc(@(escape=stored) runs: [][]int) -> [dynamic]int {
+	heads := container.Priority_Queue(Run, By_Head).init({}, runs.len());
+	foreach (run in runs) {
+		if (run.len() > 0) { heads.push(Run{run, 0}); }
+	}
+	out: [dynamic]int = {};
+	for (!heads.is_empty()) {
+		exhausted := false;
+		heads.update_top(proc(top: inout Run) capture(&mut out, &mut exhausted) {
+			out.append(top.data[top.at]);
+			top.at += 1;
+			exhausted = top.at == top.data.len();
+			if (exhausted) { top.at -= 1; }
+		});
+		if (exhausted) { _ = heads.pop(); }
+	}
+	return out;
+}
+
+// ---------------------------------------------------------------- comparators --
+
+by_size :: proc(left, right: string) -> bool { return left.len() < right.len(); }
+
+Procedure_Queue :: container.Priority_Queue(string, proc(left, right: string) -> bool);
+
+Descending_Holder :: struct {
+	queue: container.Max_Queue(int),
+}
+
+drain :: proc(queue: inout $Q) -> [dynamic]Q.Element {
+	out: [dynamic]Q.Element = {};
+	for (;;) {
+		switch (queue.pop()) {
+		case .some(item):
+			out.append(move(item));
+			continue;
+		case .none:
+		}
+		break;
+	}
+	return out;
+}
+
+next_random :: proc(state: inout u64) -> u64 {
+	state ~= state << 13;
+	state ~= state >> 7;
+	state ~= state << 17;
+	return state;
+}
+
+// Random operations against a sorted array, the queue's meaning.
+model_check :: proc() {
+	state: u64 = 0x2545F4914F6CDD1D;
+	queue: container.Min_Queue(int) = {};
+	model: [dynamic]int = {};
+	foreach (step in 0 ..< 20000) {
+		choice := next_random(inout state) % 8;
+		value := int(next_random(inout state) % 200);
+		if (choice < 4) {
+			queue.push(value);
+			model.append(value);
+			slice.sort(&mut model[:]);
+		} else if (choice == 4) {
+			out := queue.push_pop(value);
+			model.append(value);
+			slice.sort(&mut model[:]);
+			if (out != model.remove(0)) { panic("push_pop"); }
+		} else if (choice == 5 && step % 512 == 0) {
+			queue.clear();
+			model.clear();
+		} else {
+			switch (queue.pop()) {
+			case .some(top):
+				if (top != model.remove(0)) { panic("pop"); }
+			case .none:
+				if (model.len() != 0) { panic("empty"); }
+			}
+		}
+		if (queue.len() != model.len()) { panic("len"); }
+		if (!slice.is_heap(queue.view(), slice.Ascending(int){})) { panic("order"); }
+	}
+	fmt.println("model ok");
+}
+
+// -------------------------------------------------------------------- ownership --
+
+drops: static int = 0;
+
+@(move_only) Token :: struct { id: int }
+impl Token {
+	gone :: hook(drop) proc(self: inout) { drops += 1; }
+}
+
+By_Token :: struct {}
+impl By_Token {
+	call :: proc(self, left, right: Token) -> bool { return left.id < right.id; }
+}
+
+ownership :: proc() {
+	drops = 0;
+	{
+		q := container.Priority_Queue(Token, By_Token).init({});
+		foreach (id in [6]int{5, 3, 8, 1, 9, 2}) { q.push(Token{id}); }
+		fmt.println("after pushes", drops);
+
+		// Growth moves elements and drops none.
+		wider := q.cap() * 4;
+		q.reserve(wider);
+		q.shrink();
+		fmt.println("after growth", drops);
+
+		switch (q.peek()) { case .some(top): fmt.println("peek", top^.id); case .none: }
+
+		switch (q.pop()) { case .some(t): fmt.println("pop", t.id); case .none: }
+		fmt.println("after pop", drops);
+
+		// A value ahead of the top comes straight back. One behind takes its place.
+		same := q.push_pop(Token{0});
+		fmt.println("push_pop", same.id, drops);
+		drop(same);
+		other := q.push_pop(Token{7});
+		fmt.println("push_pop", other.id, drops);
+		drop(other);
+		fmt.println("after push_pop", drops);
+
+		_ = q.update_top(proc(top: inout Token) { top.id = 100; });
+		switch (q.peek()) { case .some(top): fmt.println("update_top", top^.id); case .none: }
+		fmt.println("after update_top", drops);
+
+		// Reads a move-only element in place.
+		total := 0;
+		foreach (item in q) { total += item.id; }
+		fmt.println("total", total);
+
+		q.retain(proc(item: Token) -> bool { return item.id != 100; });
+		fmt.println("after retain", drops, q.len());
+
+		items := move(q).into_items();
+		fmt.println("into_items", items.len(), drops);
+		drop(items);
+		fmt.println("items dropped", drops);
+	}
+	fmt.println("scope ended", drops);
+
+	drops = 0;
+	{
+		q := container.Priority_Queue(Token, By_Token).from_items([dynamic]Token{Token{2}, Token{1}}, {});
+		q.clear();
+		fmt.println("after clear", drops, q.is_empty());
+		q.push(Token{3});
+		q.push(Token{1});
+		q.push(Token{2});
+		sorted := move(q).into_sorted();
+		foreach (item in sorted) { fmt.print(item.id, ""); }
+		fmt.println(drops);
+	}
+	fmt.println("scope ended", drops);
+
+	drops = 0;
+	{
+		q := container.Priority_Queue(Token, By_Token).init({});
+		q.push(Token{1});
+		q.push(Token{2});
+		drop(q);
+		fmt.println("explicit drop", drops);
+	}
+	fmt.println("scope ended", drops);
+}
+
+// ---------------------------------------------------------------------- failure --
+
+failure :: proc() {
+	room: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+
+	switch (container.Min_Queue(int).try_init({}, 100000, arena.allocator())) {
+	case .ok(q): fmt.println("unexpected", q.cap());
+	case .err(error): fmt.println("try_init out of memory");
+	}
+
+	q := container.Min_Queue(int).try_init({}, 4, arena.allocator()) or_else panic("small");
+	q.push(3);
+	q.push(1);
+	if (q.try_reserve(100000) != .ok) { fmt.println("try_reserve refused", q.len(), q.peek() != .none); }
+
+	// Fill what is left, then a borrowed place stays as it was, and a moved element is dropped.
+	drops = 0;
+	tokens := container.Priority_Queue(Token, By_Token).try_init({}, 1, arena.allocator()) or_else panic("small");
+	refused := 0;
+	foreach (i in 0 ..< 1000) {
+		if (tokens.try_push(Token{i}) != .ok) { refused = i; break; }
+	}
+	fmt.println("moved element dropped", drops, tokens.len() == refused);
+	fmt.println("still drains", tokens.pop() != .none, drops);
+
+	// A borrowed place is copied only on success.
+	spare: [256]u8 = {};
+	tight := mem.Arena.from_buffer(&mut spare[:]);
+	numbers := container.Min_Queue(int).try_init({}, 2, tight.allocator()) or_else panic("small");
+	large := 64;
+	pushed := 0;
+	for (numbers.try_push(large) == .ok) { pushed += 1; }
+	fmt.println("borrowed unchanged", large, numbers.len() == pushed);
+	fmt.println(numbers.pop() != .none);
+}
+
+// ------------------------------------------------------------------------- main --
+
+main :: proc() {
+	// The order: smallest first, the same as `sort_by`.
+	jobs: container.Min_Queue(int) = {};
+	fmt.println(jobs.pop(), jobs.peek() == .none, jobs.len(), jobs.is_empty());
+	jobs.push(5);
+	jobs.push(2);
+	jobs.push(9);
+	switch (jobs.peek()) { case .some(top): fmt.println("peek", top^); case .none: }
+	fmt.println(drain(inout jobs));
+
+	biggest: container.Max_Queue(int) = {};
+	foreach (value in [4]int{1, 4, 2, 3}) { biggest.push(value); }
+	fmt.println(drain(inout biggest));
+
+	// Bulk construction, retain, iteration.
+	q := container.Min_Queue(int).from_items([dynamic]int{5, 3, 8, 1}, {});
+	q.retain(proc(item: int) -> bool { return item != 3; });
+	total := 0;
+	foreach (item in q) { total += item; }
+	view_total := 0;
+	foreach (item in q.view()) { view_total += item; }
+	fmt.println("total", total, view_total);
+
+	// A copy clones the elements.
+	copy := q.clone();
+	_ = copy.pop();
+	fmt.println(q.len(), copy.len());
+
+	fmt.println(move(q).into_sorted());
+
+	// format prints as an array.
+	one: container.Min_Queue(int) = {};
+	one.push(7);
+	fmt.println(one);
+
+	// Capacity is reusable: clear keeps it, and only shrink gives it back.
+	reused := container.Min_Queue(int).init({}, 32);
+	before := reused.cap();
+	foreach (value in 0 ..< 32) { reused.push(value); }
+	reused.clear();
+	fmt.println(reused.len(), reused.cap() == before);
+	reused.shrink();
+	fmt.println(reused.cap());
+	fmt.println(reused.try_shrink(0) == .ok, reused.try_reserve(3) == .ok, reused.cap() >= 3);
+
+	// A named record, a procedure, a capture literal, a view, and inference.
+	strings_by_size := Procedure_Queue.init(by_size);
+	strings_by_size.push("long string");
+	strings_by_size.push("s");
+	fmt.println(strings_by_size.pop());
+
+	cost := [4]int{9, 1, 5, 3};
+	less := proc(left, right: int) -> bool capture(&cost) { return cost[left] < cost[right]; };
+	Less :: type_of(less);
+	nodes := container.Priority_Queue(int, Less).init(move(less));
+	foreach (node in 0 ..< 4) { nodes.push(node); }
+	fmt.println(drain(inout nodes));
+
+	inferred_less := proc(left, right: int) -> bool capture(&cost) { return cost[right] < cost[left]; };
+	inferred := container.priority_queue(int, move(inferred_less), 8);
+	foreach (node in 0 ..< 4) { inferred.push(node); }
+	fmt.println(drain(inout inferred), inferred.cap() >= 8);
+
+	viewed_less := proc(left, right: int) -> bool capture(&cost) { return cost[left] < cost[right]; };
+	view: dyn proc(left, right: int) -> bool = viewed_less;
+	viewed := container.priority_queue(int, move(view));
+	viewed.push(0);
+	viewed.push(1);
+	fmt.println(viewed.pop());
+
+	holder: Descending_Holder = {};
+	holder.queue.push(1);
+	holder.queue.push(2);
+	fmt.println(holder.queue.pop());
+
+	// Worked uses.
+	from_0 := [2]Edge{Edge{1, 7}, Edge{2, 1}};
+	from_1 := [1]Edge{Edge{3, 1}};
+	from_2 := [2]Edge{Edge{1, 2}, Edge{3, 9}};
+	graph := [4][]Edge{from_0[:], from_1[:], from_2[:], {}};
+	fmt.println("shortest", shortest_path(graph[:], 0, 3));
+
+	s: Scheduler = {};
+	_ = s.submit(5, [dynamic]u8{1});
+	_ = s.submit(2, [dynamic]u8{2, 2});
+	_ = s.submit(2, [dynamic]u8{3, 3, 3});
+	for (;;) {
+		switch (s.next()) {
+		case .some(r): fmt.println(r.deadline, r.sequence, r.body.len()); continue;
+		case .none:
+		}
+		break;
+	}
+
+	values := [8]int{5, 1, 9, 3, 7, 2, 8, 6};
+	fmt.println("largest", largest(values[:], 3));
+
+	a := [3]int{1, 4, 7};
+	b := [3]int{2, 5, 8};
+	c := [2]int{0, 9};
+	runs := [3][]int{a[:], b[:], c[:]};
+	fmt.println("merged", merge(runs[:]));
+
+	// An explicit allocator.
+	buffer: [4096]u8 = {};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	inlined := container.Max_Queue(int).init({}, allocator = arena.allocator());
+	inlined.push(1);
+	inlined.push(2);
+	fmt.println(inlined.pop());
+
+	// A bad comparator terminates, and loses nothing.
+	wild := container.priority_queue(int, proc(left, right: int) -> bool { return true; });
+	foreach (i in 0 ..< 100) { wild.push(i); }
+	_ = wild.push_pop(100);
+	_ = wild.update_top(proc(top: inout int) { top = -top; });
+	seen := 0;
+	for (wild.pop() != .none) { seen += 1; }
+	fmt.println("wild", seen);
+
+	model_check();
+	ownership();
+	failure();
+}

@@ -1,0 +1,104 @@
+// standard-library.md "Heaps": binary heap algorithms over a slice the caller owns,
+// and the two comparators most orderings need. `core:container`'s `Priority_Queue`
+// is built on these.
+@(public)
+package slice;
+
+import "base:interfaces";
+
+/**
+	Callable as `left < right`, for `sort_by`, the heap algorithms, and a
+	`Priority_Queue`. Zero-sized: `slice.Ascending(int){}`.
+*/
+Ascending :: struct($T: type) where interfaces.Ordered(T) {}
+
+impl Ascending($T) {
+	call :: proc(self, left, right: T) -> bool { return left < right; }
+}
+
+/// Callable as `right < left`, the opposite order of `Ascending`.
+Descending :: struct($T: type) where interfaces.Ordered(T) {}
+
+impl Descending($T) {
+	call :: proc(self, left, right: T) -> bool { return right < left; }
+}
+
+/**
+	Orders the whole slice into a heap, in O(n): a heap has first what `sort_by`
+	would put first under the same comparator, each element's parent at
+	`(i - 1) / 2`, and no element `less` than its parent.
+
+	None of the heap procedures allocates or copies an element. A comparator is
+	borrowed for the call and must define a strict weak ordering. One that does
+	not, or one that panics, leaves the elements in an unspecified order and
+	nothing worse: the slice is still a permutation of what it held, and every
+	call terminates.
+*/
+make_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	at := values.len() / 2;
+	for (at > 0) {
+		at -= 1;
+		sift_down(values, at, less);
+	}
+}
+
+/**
+	The last element joins the heap formed by those before it, in O(log n).
+	Append to the storage first. An empty slice is a no-op.
+*/
+push_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	at := values.len() - 1;
+	for (at > 0) {
+		parent := (at - 1) / 2;
+		if (!before(values, at, parent, less)) { break; }
+		values.swap(at, parent);
+		at = parent;
+	}
+}
+
+/**
+	The first element moves to the last place, and those before it form a heap
+	again, in O(log n). Remove it from the storage afterwards. An empty slice is
+	a no-op.
+*/
+pop_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	last := values.len() - 1;
+	if (last < 1) { return; }
+	values.swap(0, last);
+	sift_down(&mut values[:last], 0, less);
+}
+
+/// Restores the order after the first element changed, in O(log n).
+sift_heap_top :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	sift_down(values, 0, less);
+}
+
+/// Whether no element is `less` than its parent. An empty slice is a heap.
+is_heap :: proc(values: []$T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	foreach (child in 1 ..< values.len()) {
+		if (before(values, child, (child - 1) / 2, less)) { return false; }
+	}
+	return true;
+}
+
+@(private)
+sift_down :: proc(values: []mut $T, start: int, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	at := start;
+	count := values.len();
+	for (;;) {
+		child := 2 * at + 1;
+		if (child >= count) { break; }
+		if (child + 1 < count && before(values, child + 1, child, less)) { child += 1; }
+		if (!before(values, child, at, less)) { break; }
+		values.swap(at, child);
+		at = child;
+	}
+}
+
+// Reads through a read-only slice because known-gaps.md "A computed index is
+// refused beside a second read of a mutable slice" refuses the same call on the
+// `[]mut T` for a non-copyable element.
+@(private)
+before :: proc(values: []$T, a, b: int, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	return less(values[a], values[b]);
+}

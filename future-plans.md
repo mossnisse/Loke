@@ -98,9 +98,23 @@ Implementation order:
    cleanup, Unicode, short-I/O, and platform-conformance cases from
    [Standard-library verification](compiler-architecture.md#standard-library-verification).
 
-[Queue containers for `core:container`](container-design.md) proposes
-`Priority_Queue`, `Deque`, and heap algorithms in `core:slice`, and lists the
-containers that could follow them.
+The containers that could follow [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
+in the suggested order. Each is worth having in a general-purpose library on its own
+merits. Concurrent containers stay in [`core:thread`](standard-library.md#corethread).
+
+| Type | What it adds | Shape |
+| --- | --- | --- |
+| `Set(T)` | Hash set with `in` and set algebra. | A wrapper over `map[T]Unit` with `T` `Hashable`. A map with a zero-sized value already works. |
+| `Ordered_Map(K, V)`, `Ordered_Set(T)` | Sorted iteration, nearest-key and range queries, which `map` cannot offer. | A B-tree, ordered by `Ordered(K)` or a stored comparator exactly as `Priority_Queue` stores one. |
+| `Slot_Map(T)` | Stable handles with generation checks, O(1) insert and remove. For graphs and entity tables that would otherwise fight the borrow checker. | Dense or sparse slots, with a `Handle` value type. |
+| `Indexed_Priority_Queue` | True decrease-key, for a caller who has measured that duplicates cost too much. | Keys are `0 ..< cap`, with a position table beside the heap, so `set_priority(key, value)` is O(log n). |
+| `Small_Deque(T, N)` | A ring with inline storage and no allocation. | As `Deque`, over `[N]T`; see [Growable container follow-ups](open-questions.md#growable-container-follow-ups). |
+| `Inline_Array(T, N)` | A small array that spills to the heap. | `Small_Array` plus a `[dynamic]T`. |
+
+Linked lists are deliberately left out. Lists lose to arrays on cache behaviour for
+nearly all uses, and an owning doubly-linked list has no good expression under the
+borrow rules. `Slot_Map` with indices gives the same O(1) unlinking with checked
+handles.
 
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,

@@ -1,0 +1,78 @@
+L0512
+@17:6
+`q` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@23:2
+`q` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@29:2
+`q` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@34:21
+`q` cannot be modified here: a read-only iterator of it is still in use
+L0511
+@39:6
+this read of `q` is not compatible with the mutable borrow of it that is still in use
+L0512
+@45:6
+`q` cannot be modified here: a mutable borrow of it is still in use
+L0513
+@58:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@69:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@80:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@92:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@104:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@116:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@128:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@140:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@150:6
+this slice is used after `local`, the local it borrows, has ended
+L0512
+@157:2
+`local` cannot be modified here: a read-only slice of it is still in use
+L0537
+@168:2
+this reset would end the region backing `q`, which is still live here
+L0537
+@175:3
+cleaning up `arena` would end the region backing `q`, which is still live here
+L0537
+@185:2
+this reset would end the region backing `q`, which is still live here
+L0537
+@192:3
+cleaning up `arena` would end the region backing `kept`, which is still live here
+L0503
+@206:15
+`Token` is move-only, so this binding cannot copy it; write `move(...)` to transfer ownership instead
+L0392
+@207:2
+no overload of method `append` applies to these arguments
+L0392
+@208:2
+no overload of method `prepend` applies to these arguments
+L0392
+@209:6
+no overload of method `try_append` applies to these arguments
+L0392
+@210:2
+no overload of method `insert` applies to these arguments
+L0363
+@211:12
+`Deque(Token)` has no field or member `clone`

@@ -25,8 +25,8 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath), [`core:simd`](#coresimd) |
-| Sort, search, or divide slices | [`core:slice`](#coreslice) |
-| Hold a few elements without allocating, or sets of enum values and indices | [`core:container`](#corecontainer) |
+| Sort, search, divide slices, or keep a heap in one | [`core:slice`](#coreslice) |
+| Keep a queue, a priority queue, a few elements without allocating, or sets of enum values and indices | [`core:container`](#corecontainer) |
 | Use arenas and other allocators | [`core:mem`](#coremem) |
 | Use atomics, once-only initialization, or lazy values | [`core:sync`](#coresync) |
 | Constrain generic code | [Standard interface catalogue](#standard-interface-catalogue) |
@@ -194,9 +194,9 @@ core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenval
 core:math/geometry    shapes, rays, frustums, polygons, overlap tests, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
-core:slice            slice algorithms and sorting
+core:slice            slice algorithms, sorting, heaps
 core:container        Small_Array, Bit_Set, Enum_Array
-                      index sets
+                      index sets, Priority_Queue, Deque
 core:log              logging over the selected provider
 core:io               byte stream protocols and the I/O error
 core:path             lexical path operations
@@ -591,8 +591,8 @@ mutable place. The sequence interfaces also require a copyable element:
 [move-only](design.md#lifecycle-hooks-and-resource-types) element out of its place, and
 every sequence interface composes `Sequence`, so a move-only element leaves a
 container with none of them. It remains `Iterable`, and `foreach` borrows each
-element. The standard `Small_Array(T, N)` supplies the same members as a dynamic
-array and follows the same rule, since its copying members are
+element. The standard `Small_Array(T, N)` and `Deque(T)` supply the same members as a
+dynamic array and follow the same rule, since their copying members are
 [excluded](design.md#where-clauses) for a move-only element.
 
 ## `core:mem`
@@ -2396,6 +2396,51 @@ compile-time error, because a read-only slice has no mutable storage to sort.
 See [Calling a value](design.md#calling-a-value) and [Capture
 literals](design.md#capture-literals) for callable comparators.
 
+### Heaps
+
+These keep a binary heap in a slice the caller owns: a `Small_Array`, an arena
+block, a record's fixed array, or a bounded window of a stream.
+[`Priority_Queue`](#priority-queues) is the owning form, and is built on them.
+
+```loke
+make_heap     :: proc(values: []mut $T, less: $C)          // order the whole slice, O(n)
+push_heap     :: proc(values: []mut $T, less: $C)          // the last element joins the heap before it
+pop_heap      :: proc(values: []mut $T, less: $C)          // the first element moves to the last place
+sift_heap_top :: proc(values: []mut $T, less: $C)          // restore the order after the first element changed
+is_heap       :: proc(values: []$T, less: $C) -> bool
+
+Ascending  :: struct($T: type) where interfaces.Ordered(T) {}   // callable: left < right
+Descending :: struct($T: type) where interfaces.Ordered(T) {}   // callable: right < left
+```
+
+Each algorithm requires `interfaces.Callable(C, proc(left, right: T) -> bool)`,
+borrows its comparator for the call, retains nothing, and allocates nothing, as
+[`sort_by`](#sorting-slices) does. None copies an element, so a move-only element
+is fine. An empty slice is a no-op, and is a heap. `Ascending` and `Descending` are
+zero-sized comparators, usable with `sort_by` too. A fixed-capacity queue needs
+nothing else:
+
+```loke
+open: container.Small_Array(int, 64) = {};
+less := slice.Ascending(int){};
+
+open.try_append(value) or_return;
+slice.push_heap(open.slice(), less);
+
+slice.pop_heap(open.slice(), less);
+top := open.pop();
+```
+
+The layout is specified, because the storage belongs to the caller: a binary heap
+in array order, with the first element first in the comparator's order, each
+element's parent at `(i - 1) / 2`, and no element `less` than its parent. This is
+`sort_by`'s direction, so `make_heap` puts the smallest first, where C++'s
+`std::make_heap` puts the largest first.
+
+A comparator must define a strict weak ordering. One that does not, or one that
+panics, leaves the elements in an unspecified order and nothing worse: the slice
+is still a permutation of what it held, and each call terminates.
+
 ### Slice queries and copies
 
 `core:slice` also has these procedures. Only `fill` writes, and it takes
@@ -2421,8 +2466,21 @@ equal elements keep the earliest, and a NaN is the answer only when it is first.
 
 ## `core:container`
 
-`Small_Array`, `Bit_Set`, and `Enum_Array`, with the index sets below. The exact
-declarations are in the package's `api.loki`.
+`Small_Array`, `Bit_Set`, `Enum_Array`, `Priority_Queue`, and `Deque`, with the
+index sets below. The exact declarations are in the package's `api.loki`.
+
+### Choosing a container
+
+| Need | Use |
+| --- | --- |
+| A sequence that grows and shrinks at its end | `[dynamic]T` |
+| The same, with a small fixed bound and no allocation | [`Small_Array(T, N)`](#fixed-capacity-arrays) |
+| Add at one end, remove at the other; work at both ends | [`Deque(T)`](#deques) |
+| Always take the most urgent element | [`Priority_Queue(T, C)`](#priority-queues) |
+| The same, with no allocation or in a caller's buffer | [`core:slice` heap algorithms](#heaps) over a `[]mut T` |
+| Pass items between threads | [`thread.Channel`](#channels), [`thread.Ring`](#rings) |
+| Look up by key | `map[K]V` |
+| Sets of enum members or small indices | `Bit_Set(E)`, [index sets](#corecontainer-index-sets) |
 
 ### Fixed-capacity arrays
 
@@ -2463,6 +2521,248 @@ x: Small_Array(int, 8) = {};
 x.append(1, 2, 3);
 fmt.println(x.len(), x.cap()); // 3 8
 ```
+
+### Conventions of the growable containers
+
+`Priority_Queue` and `Deque` do what a dynamic array does wherever the two can be
+compared, so that a call reads the same.
+
+- **Fallible forms.** `push`, `append`, `reserve`, and the rest follow the
+  allocator's [failure policy](design.md#allocation-failure). Each `try_` form
+  returns `Status(Allocator_Error)` and leaves the container unchanged, under the
+  [`try_` convention](#errors-are-values).
+- **Element ownership.** Insertions are procedure groups, as on
+  [`Small_Array`](#fixed-capacity-arrays): a borrowed place is copied, and a
+  temporary or `move(x)` transfers. Under
+  [container insertion](design.md#container-insertion), a failed `try_` form drops
+  an element it took. A caller who must keep the element reserves first and then
+  inserts, which cannot fail for want of space.
+- **Move-only elements.** Held in full. Members that copy an element are bound on
+  `is_copyable(T)` and are absent from a move-only instance. As for every
+  container, the [sequence interfaces](#standard-interface-catalogue) then do not
+  apply.
+- **Borrowed elements.** An element may carry a borrow, and the container then
+  carries it too, under [values that contain borrows](design.md#values-that-contain-borrows).
+- **Absence.** `pop` and its relatives return `Option(T)`, and a peek returns
+  `Option(^T)`. An empty container is not an error.
+- **Programmer errors panic.** An index out of range panics, as an array index
+  does, and so does a negative capacity.
+- **Capacity is reusable.** `clear` drops the elements and keeps the storage, and
+  only `shrink` gives storage back. A queue reused across searches or frames stops
+  allocating once it has reached its largest size.
+- **Allocators.** A zero value binds the default allocator when it first needs
+  storage. `init` and `try_init` select another, since
+  [`via`](design.md#assignment-statements) governs a clone into the variable and
+  does not bind the storage of a record's dynamic-array field.
+
+### Priority queues
+
+```loke
+Priority_Queue :: struct($T, $C: type)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) { /* private */ }
+
+Min_Queue :: Priority_Queue($T, slice.Ascending(T));
+Max_Queue :: Priority_Queue($T, slice.Descending(T));
+```
+
+```loke
+jobs: container.Min_Queue(int) = {};
+jobs.push(5);
+jobs.push(2);
+jobs.pop();   // .some(2)
+```
+
+The comparator is the one [`slice.sort_by`](#sorting-slices) takes, called `less`,
+and it must define a strict weak ordering of the queued elements. `pop` returns an
+element that no other queued element is `less` than, so a queue drains in an order
+`sort_by` could produce with the same comparator: **the smallest first**. A
+largest-first queue uses `Max_Queue` or a comparator written the other way around.
+
+**Equal elements come out in an unspecified order**, which need not be arrival
+order and may change between versions. A caller who needs one writes a tie breaker
+into the element, usually a sequence number. [Anonymous records compare
+lexicographically](design.md#comparison-operators), so this costs no comparator
+logic:
+
+```loke
+Order :: (deadline: i64, sequence: u64);
+
+By_Deadline :: struct {}
+impl By_Deadline {
+	call :: proc(self, left, right: Request) -> bool {
+		return Order{left.deadline, left.sequence} < Order{right.deadline, right.sequence};
+	}
+}
+```
+
+A comparator that is not a strict weak ordering, a NaN under `Ascending(f32)`, or a
+comparator that panics gives an unspecified order and nothing worse: every element
+is still in the queue exactly once, and each operation still terminates.
+
+The comparator is part of the queue's type and is stored in it, so a queue cannot
+be pushed with one ordering and popped with another, a stateless comparator takes
+no space, and the borrow checker protects what a comparator reads:
+
+```loke
+cost := [4]int{9, 1, 5, 3};
+less := proc(left, right: int) -> bool capture(&cost) { return cost[left] < cost[right]; };
+nodes := container.priority_queue(int, move(less));
+nodes.push(0);
+cost[0] = 2;      // L0511: `cost` is borrowed by the queue, which is used below
+nodes.push(1);
+```
+
+A program whose keys must change keeps the key in the element and pushes a new
+entry, skipping a popped entry worse than the best known one.
+
+| Comparator | Example type | Zero value of the queue | Named in a file-scope record |
+| --- | --- | --- | --- |
+| Library | `slice.Ascending(int)` | yes | yes |
+| Named record | `By_Deadline` | when its fields have one | yes |
+| Procedure | `proc(left, right: T) -> bool` | no, `init` is required | yes |
+| Capture literal | `type_of(less)` | no | no: [no signature can name it](design.md#capture-literals) |
+| [Borrowed view](design.md#borrowed-callable-views) | `dyn proc(left, right: T) -> bool` | no | yes, and it carries its borrow |
+
+A queue whose comparator has no zero value has no zero value either, and `= {}` is
+a compile error (`L0424`). A type that is not a comparator is rejected where the
+queue type is named (`L0444`). A move-only comparator makes the queue move-only, as
+for any record.
+
+```loke
+Priority_Queue(T, C).init(less: move C, capacity := 0, allocator := mem.default_allocator()) -> Priority_Queue(T, C)
+Priority_Queue(T, C).try_init(less: move C, capacity := 0, allocator := mem.default_allocator())
+	-> Result(Priority_Queue(T, C), Allocator_Error)
+Priority_Queue(T, C).from_items(items: move [dynamic]T, less: move C) -> Priority_Queue(T, C)
+
+container.priority_queue($T: type, less: move $C, capacity := 0, allocator := mem.default_allocator())
+	-> Priority_Queue(T, C)
+```
+
+The free `priority_queue` infers the comparator type, which a capture literal has
+no other way to spell without first binding `Less :: type_of(less);`. Its result
+carries the comparator's borrow, as the `init` result does. A stateless comparator
+is spelled `{}`, as in `container.Max_Queue(int).init({}, 64)`.
+
+| Member | Cost | Meaning |
+| --- | --- | --- |
+| `len()`, `cap()`, `is_empty()` | O(1) | As on a dynamic array. |
+| `peek() -> Option(^T)` | O(1) | The element `pop` would return, lent until the queue next changes. |
+| `push(value)`, `try_push(value)` | O(log n) amortized | Adds an element. |
+| `pop() -> Option(T)` | O(log n) | Removes and returns the first element. Never allocates. |
+| `push_pop(value) -> T` | O(log n) | As `push` then `pop` with one sift. Never allocates, so it works on a full queue. Keeps the k largest with a `Min_Queue` of k elements. |
+| `update_top(change) -> bool` | O(log n) | Runs `change(inout top)` and restores the order, or is false when empty. |
+| `retain(keep)` | O(n) | Drops each element for which `keep(item)` is false, then restores the order. |
+| `reserve(n)`, `try_reserve(n)`, `shrink(min)`, `try_shrink(min)`, `clear()` | as on a dynamic array | Capacity, as on a dynamic array. |
+| `from_items(items, less)` | O(n) | Takes over an array and its allocator and orders it; much faster than pushing each element. |
+| `into_items(self: move) -> [dynamic]T` | O(1) | The elements in unspecified order, with the storage. |
+| `into_sorted(self: move) -> [dynamic]T` | O(n log n) | The elements in `pop` order, in place. |
+| `view() -> []T`, `iter()` | O(1) | Read every element, in unspecified order. |
+| `format` | O(n) | Prints as an array, in unspecified order. |
+
+The queue is `Iterable` but not a `Sequence`, because an index into a heap means
+nothing a caller could use. No member exposes an element mutably except
+`update_top`, which keeps the order correct. Its layout is unspecified: it is a
+binary heap today, and a measured wider one could replace it. A copy clones the
+elements and the comparator. Queues have no `==`, since two equal queues can have
+different layouts.
+
+### Deques
+
+```loke
+Deque :: struct($T: type) { /* private */ }
+```
+
+```loke
+frontier: container.Deque(int) = {};
+frontier.append(seed);
+for (;;) {
+	switch (frontier.pop_front()) {
+	case .none:
+		return;
+	case .some(at):
+		foreach (next in neighbours(at)) {
+			if (visit(next)) { frontier.append(next); }
+		}
+	}
+}
+```
+
+The names extend a dynamic array's: `append` and `pop` at the end, and `prepend`
+and `pop_front` at the start. Generic code that accepts `[dynamic]T` therefore
+accepts a `Deque(T)`, and replacing one with the other when `remove(0)` shows up in
+a profile changes only the type and that one call. For a copyable element,
+`Deque(T)` satisfies `Iterable`, `Reverse_Iterable`, `Mutable_Iterable`, `Sequence`,
+`Mutable_Sequence`, and `Growable_Sequence`. A move-only element leaves it the three
+iteration interfaces.
+
+`Deque` and [`thread.Ring`](#rings) are both ring buffers and share nothing else.
+`Ring` is a bounded communication primitive between two threads: it is move-only,
+has no zero value, uses atomics, and never grows. `Deque` is an ordinary local value
+that grows, copies when its elements do, and has no thread-safety of its own.
+
+```loke
+Deque(T).init(capacity := 0, allocator := mem.default_allocator()) -> Deque(T)
+Deque(T).try_init(capacity := 0, allocator := mem.default_allocator()) -> Result(Deque(T), Allocator_Error)
+```
+
+The zero value is an empty, usable deque. A capacity is a lower bound.
+
+| Member | Cost | Meaning |
+| --- | --- | --- |
+| `len()`, `cap()`, `is_empty()` | O(1) | As on a dynamic array. |
+| `append(values)`, `try_append(values)` | O(1) amortized | Add at the end. The copying `try_` form takes several values and adds all or none. |
+| `prepend(value)`, `try_prepend(value)` | O(1) amortized | Add at the start, one at a time, so the order is never in question. |
+| `pop() -> Option(T)`, `pop_front() -> Option(T)` | O(1) | Remove from either end. Never allocate or move other elements. |
+| `first()`, `last() -> Option(^T)` | O(1) | Lend an end, read-only. |
+| `first_mut()`, `last_mut() -> Option(^mut T)` | O(1) | Lend an end, mutably. |
+| `x[i]`, `x[i] = v`, `at(i) -> ^T` | O(1) | Indexed from the first element. `x[i]` reading copies, so a move-only element reads through `at`. |
+| `insert(i, value)`, `remove(i) -> T` | O(min(i, n - i)) | Moves whichever side is shorter. |
+| `retain(keep)` | O(n) | Keeps order, and drops each element for which `keep(item)` is false. |
+| `reserve(n)`, `try_reserve(n)`, `shrink(min)`, `try_shrink(min)`, `clear()` | as on a dynamic array | Capacity, as on a dynamic array. |
+| `as_slices() -> (front, back: []T)` | O(1) | The elements in order, as up to two runs; `back` is empty unless the ring has wrapped. For bulk copies and I/O. |
+| `as_slices_mut() -> (front, back: []mut T)` | O(1) | The same, writable. |
+| `make_contiguous() -> []mut T` | O(n) when wrapped | Rearranges in place so that one slice holds everything. Never allocates. |
+| `iter()`, `iter_reverse()`, `iter_mut()`, `iter_mut_reverse()` | O(1) | Traverse from either end. `foreach` borrows, as for an array. |
+| `==` | O(n) | Equal lengths and equal elements in order, regardless of where the ring starts. |
+| `format` | O(n) | Prints as an array, in order. |
+
+There is no `x[a:b]`, because a range may not be contiguous; `as_slices` and
+`make_contiguous` say what is actually available. A copy clones the elements in
+order into a new ring from the destination's allocator. A grown ring is allocated
+before anything moves, so a failed allocation leaves the deque exactly as it was.
+
+Whatever a deque lends keeps it borrowed, as for any container, including through
+the unchecked storage beneath it. Each of these is rejected with `L0512`:
+
+```loke
+p := q.first();     _ = q.pop_front();  use(p);    // the pointer is live
+p := q.at(0);       q.clear();          use(p);
+a, b := q.as_slices();   q.append(2);   use(a);
+foreach (v in q) { q.append(v); }                  // the iterator is live
+```
+
+A removed element retains what it borrows, and the allocator regions it was in, but
+does not borrow the deque merely because it used to be stored there. It may outlive
+the deque when its own sources remain alive:
+
+```loke
+out: []int = {};
+{
+	local := [1]int{42};
+	q: container.Deque([]int) = {};
+	q.append(local[:]);
+	out = q.pop_front() or_else {};
+}
+use(out); // L0513: `local` has ended
+```
+
+Moving `local`'s declaration outside the block makes this valid.
+
+`clear`, and through it an explicit `drop` and a normal scope exit, drops elements
+first to last. If an element's drop raises the first panic under `unwind`, the
+remaining elements still drop once, in the same order, before the storage is
+released. A [second panic during unwinding](design.md#panic-during-unwinding) aborts
+immediately; neither that case nor the `abort` strategy promises the rest.
 
 ## `core:container` index sets
 

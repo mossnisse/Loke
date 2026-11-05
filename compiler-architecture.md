@@ -1188,6 +1188,13 @@ API:
   `.expected` file holds only seeded values and comparisons, never an unseeded
   draw. `lib_random_ziggurat` checks the distribution tables against a
   recomputation, and `lib_random_pcg` pins vectors from numpy's PCG64DXSM.
+- For `core:container`'s `Priority_Queue` and `Deque`: random operations checked
+  against a sorted array and a plain array, crossing every wrap and growth boundary,
+  and `make_contiguous` at every head and length of one capacity. A move-only element
+  whose drop hook counts is dropped exactly once on each path, including a panicking
+  comparator or drop under `unwind` on wrapped and unwrapped rings (`tests/trap/lib_deque_*`).
+  `tests/err/lib_deque_borrows` and `lib_priority_queue_borrows` keep a compiler or
+  library change from quietly unhooking a borrow or a region.
 - For `core:time`: known answers checked against another calendar
   implementation, at both ends of every range and around 1970; a walk over
   every day from 0000-01-01 to 9999-12-31; every parse error; and a

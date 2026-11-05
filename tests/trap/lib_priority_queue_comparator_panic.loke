@@ -1,0 +1,27 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// standard-library.md "Priority queues": a comparator that panics leaves the order
+// unspecified and nothing worse. Each element is still dropped exactly once.
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+	gone :: hook(drop) proc(self: inout) { fmt.println("drop", self.id); }
+}
+
+By_Id :: struct {}
+impl By_Id {
+	call :: proc(self, left, right: Tracked) -> bool {
+		if (left.id == 3 || right.id == 3) { panic("comparator failed"); }
+		return left.id < right.id;
+	}
+}
+
+main :: proc() {
+	q := container.Priority_Queue(Tracked, By_Id).init({}, 8);
+	q.push(Tracked{1});
+	q.push(Tracked{2});
+	q.push(Tracked{3});
+	fmt.println("unreachable");
+}

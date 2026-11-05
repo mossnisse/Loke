@@ -1,0 +1,48 @@
+-- each path
+wrapped 1 4
+moved 0 6
+6 0
+~ 6 
+front 1 ~ 1 back 5 ~ 5 
+~ 3 
+total 21
+14 70 20
+~ 70 ~ 20 ~ 4 ~ 8 
+cleared 0
+scope ends 8
+scope ended 8
+-- dropped in order, wrapped
+4
+~ 1 ~ 2 ~ 3 ~ 4 
+~ 1 ~ 2 ~ 3 
+-- moved, then dropped once
+2
+~ 1 ~ 2 
+-- borrows
+[2, 3]
+-- regions
+[7]
+[first] [[1]] [2]
+-- copies
+[[2, 3], [2], [1], [2]] [[2], [2], [1], [2]] [99]
+-- failure
+try_init out of memory
+1 true
+true true true
+true true
+true true
+true true
+true true 5 true
+true true true
+true true
+~ 50 
+moved true 1
+~ 51 
+moved true 2
+false 60
+~ 8 
+true 60
+true 0 1 4096
+true 0
+try_clone out of memory 2
+~ 1 ~ 2 ~ 3 ~ 4 ~ 5 ~ 6 ~ 7 ~ 60 

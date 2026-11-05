@@ -1,0 +1,108 @@
+package main;
+
+import "core:container";
+import "core:mem";
+
+// standard-library.md "Priority queues": what the comparator reads stays borrowed
+// while the queue is live, what a queue lends keeps it borrowed, an element's own
+// borrow is carried, and a queue is no more than its comparator lets it be.
+
+use :: proc(value: $T) {}
+
+key_written_while_queued :: proc() {
+	cost := [4]int{9, 1, 5, 3};
+	less := proc(left, right: int) -> bool capture(&cost) { return cost[left] < cost[right]; };
+	Less :: type_of(less);
+	nodes := container.Priority_Queue(int, Less).init(move(less));
+	nodes.push(0);
+	cost[0] = 2;
+	nodes.push(1);
+}
+
+free_form_keeps_the_borrow :: proc() {
+	cost := [dynamic]int{9, 1};
+	less := proc(left, right: int) -> bool capture(&cost) { return cost[left] < cost[right]; };
+	nodes := container.priority_queue(int, move(less));
+	drop(cost);
+	nodes.push(0);
+}
+
+peek_then_push :: proc(q: inout container.Min_Queue(int)) {
+	p := q.peek();
+	q.push(1);
+	use(p);
+}
+
+view_then_pop :: proc(q: inout container.Min_Queue(int)) {
+	all := q.view();
+	_ = q.pop();
+	use(all);
+}
+
+iterate_and_push :: proc(q: inout container.Min_Queue(int)) {
+	foreach (v in q) { q.push(v); }
+}
+
+Slice_Order :: struct {}
+impl Slice_Order {
+	call :: proc(self, left, right: []int) -> bool { return left.len() < right.len(); }
+}
+
+popped_dangles :: proc() {
+	out: []int = {};
+	{
+		local := [1]int{42};
+		q: container.Priority_Queue([]int, Slice_Order) = {};
+		q.push(local[:]);
+		out = q.pop() or_else {};
+	}
+	use(out);
+}
+
+kept_past_its_source :: proc() {
+	q: container.Priority_Queue([]int, Slice_Order) = {};
+	{
+		local := [1]int{42};
+		q.push(local[:]);
+	}
+	use(q.len());
+}
+
+reset_under_live_queue :: proc() {
+	arena := mem.Arena.init();
+	q := container.Min_Queue(int).init({}, 4, arena.allocator());
+	q.push(1);
+	free_all(arena.allocator());
+	use(q.len());
+}
+
+// A comparator with no zero value leaves the queue with none, and something that
+// is not a comparator is refused where the type is named.
+by_value :: proc(left, right: int) -> bool { return left < right; }
+
+no_zero_value :: proc() {
+	q: container.Priority_Queue(int, proc(left, right: int) -> bool) = {};
+	use(q.len());
+}
+
+not_a_comparator: container.Priority_Queue(int, int);
+
+// Comparing queues means nothing, and a move-only element has no copying members.
+@(move_only) Token :: struct { id: int }
+By_Id :: struct {}
+impl By_Id {
+	call :: proc(self, left, right: Token) -> bool { return left.id < right.id; }
+}
+
+not_comparable :: proc(a, b: ^container.Min_Queue(int)) -> bool {
+	return a^ == b^;
+}
+
+move_only_members :: proc(q: inout container.Priority_Queue(Token, By_Id), token: ^Token) {
+	q.push(token^);
+	_ = q.try_push(token^);
+	_ = q.push_pop(token^);
+	copied := q.clone();
+}
+
+main :: proc() {}

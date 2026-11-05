@@ -1,0 +1,264 @@
+/**
+	`Priority_Queue(T, C)`: always hands back the most urgent element.
+
+	The comparator is the one `slice.sort_by` takes, called `less`, and it must
+	define a strict weak ordering of the queued elements. `pop` returns an element
+	no other queued element is `less` than, so a queue drains in an order `sort_by`
+	could produce with the same comparator: the smallest first. Equal elements come
+	out in an unspecified order, which need not be arrival order and may change
+	between versions; a caller who needs one writes a tie breaker into the element.
+
+	A comparator that is not a strict weak ordering, or one that panics, leaves
+	the order unspecified and nothing worse: every element is still in the queue
+	exactly once.
+
+	The comparator is part of the type and stored in the queue, so what it reads
+	stays borrowed for as long as the queue is live, and a key cannot change under
+	a queued element. A queue whose comparator has no zero value has no zero value
+	either, and needs `init`. Elements may be move-only: the members that copy one
+	are absent from such an instance.
+*/
+// standard-library.md "Priority queues".
+//
+// The representation is an ordinary dynamic array in heap order and the
+// comparator, so this file needs no `core:unsafe` and no hooks. The heap order
+// is not part of the interface: a measured wider heap could replace it. The
+// struct's `where` bound rejects a non-comparator where the type is named, but
+// grants no `call` here for a comparator from another package (design.md
+// "Calling a value"), so the members hand `self.less` to helpers carrying their
+// own bound, as `slice.sort_by` hands its comparator to `Ordering`.
+@(public)
+package container;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:mem";
+import "core:slice";
+
+/**
+	A queue of `T` in the order `C` defines. Use `Min_Queue` or `Max_Queue` for an
+	element's own order.
+*/
+Priority_Queue :: struct($T, $C: type) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	@(private) items: [dynamic]T,
+	@(private) less: C,
+}
+
+/// Smallest first, by the element's own `<`. The zero value is an empty queue.
+Min_Queue :: Priority_Queue($T, slice.Ascending(T));
+
+/// Largest first, by the element's own `<`. The zero value is an empty queue.
+Max_Queue :: Priority_Queue($T, slice.Descending(T));
+
+/**
+	`Priority_Queue(T, C).init` with `C` inferred, which spares naming the type of
+	a capture literal: `priority_queue(int, move(less))`.
+*/
+priority_queue :: proc(
+	$T: type, less: move $C, capacity: int = 0, allocator: Allocator = mem.default_allocator(),
+) -> Priority_Queue(T, C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	return Priority_Queue(T, C).init(move(less), capacity, allocator);
+}
+
+impl Priority_Queue($T, $C) {
+	Element :: T;
+
+	/**
+		A queue with room for `capacity` elements, drawing on `allocator`. A negative
+		`capacity` panics. A stateless comparator is spelled `{}`.
+	*/
+	init :: proc(
+		less: move C, capacity: int = 0, allocator: Allocator = mem.default_allocator(),
+	) -> Priority_Queue(T, C) {
+		return {make([dynamic]T, 0, capacity, allocator), move(less)};
+	}
+
+	/// As `init`, but a failure to allocate is returned rather than handled by the allocator's failure policy.
+	try_init :: proc(
+		less: move C, capacity: int = 0, allocator: Allocator = mem.default_allocator(),
+	) -> Result(Priority_Queue(T, C), Allocator_Error) {
+		items := try_make([dynamic]T, 0, capacity, allocator) or_return;
+		return .ok(Priority_Queue(T, C){move(items), move(less)});
+	}
+
+	/// Takes over an array and its allocator and orders it, in O(n): much faster than pushing each element.
+	from_items :: proc(items: move [dynamic]T, less: move C) -> Priority_Queue(T, C) {
+		slice.make_heap(&mut items[:], less);
+		return {move(items), move(less)};
+	}
+
+	// ------------------------------------------------------------- queries --
+
+	len :: proc(self: ^) -> int { return self.items.len(); }
+	cap :: proc(self: ^) -> int { return self.items.cap(); }
+	is_empty :: proc(self: ^) -> bool { return self.items.len() == 0; }
+
+	/// The element `pop` would return, lent until the queue next changes.
+	peek :: proc(self: ^) -> Option(^T) {
+		if (self.items.len() == 0) { return .none; }
+		return .some(&self.items[0]);
+	}
+
+	/// Every element, in unspecified order.
+	view :: proc(self: ^) -> []T { return self.items[:]; }
+
+	/// Reads every element, in unspecified order.
+	iter :: proc(self: ^) -> Priority_Queue_Iterator(T) { return {self.items[:], 0}; }
+
+	// ------------------------------------------------------------ mutation --
+
+	push_copied :: proc(self: inout, @(escape=stored) value: T) where is_copyable(T) {
+		self.items.append(value);
+		slice.push_heap(&mut self.items[:], self.less);
+	}
+
+	push_moved :: proc(self: inout, @(escape=stored) value: move T) {
+		self.items.append(move(value));
+		slice.push_heap(&mut self.items[:], self.less);
+	}
+
+	try_push_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
+		self.items.try_append(value) or_return;
+		slice.push_heap(&mut self.items[:], self.less);
+		return .ok;
+	}
+
+	try_push_moved :: proc(self: inout, @(escape=stored) value: move T) -> Status(Allocator_Error) {
+		self.items.try_append(move(value)) or_return;
+		slice.push_heap(&mut self.items[:], self.less);
+		return .ok;
+	}
+
+	/**
+		Adds an element, in amortized O(log n). A borrowed place is copied, and a
+		temporary or `move(x)` transfers.
+	*/
+	push :: proc{push_copied, push_moved};
+
+	/**
+		As `push`, but a failure to allocate is returned and leaves the queue unchanged.
+		An element that was moved in is dropped then, so a caller who must keep it
+		calls `try_reserve` first.
+	*/
+	try_push :: proc{try_push_copied, try_push_moved};
+
+	/// Removes and returns the first element, in O(log n). Never allocates.
+	pop :: proc(self: inout) -> Option(T) {
+		slice.pop_heap(&mut self.items[:], self.less);
+		return self.items.pop();
+	}
+
+	push_pop_copied :: proc(self: inout, @(escape=stored) value: T) -> T where is_copyable(T) {
+		return self.push_pop_moved(value.clone());
+	}
+
+	push_pop_moved :: proc(self: inout, @(escape=stored) value: move T) -> T {
+		if (self.items.len() == 0 || !top_is_before(self.items[:], value, self.less)) { return value; }
+		// The value takes the top's place, so nothing is copied and no capacity is
+		// needed.
+		top := exchange(inout self.items[0], move(value));
+		slice.sift_heap_top(&mut self.items[:], self.less);
+		return top;
+	}
+
+	/**
+		As `push` then `pop` with one sift, in O(log n). Never allocates, so it works
+		on a full queue. Keeps the k largest with a `Min_Queue` of k elements.
+	*/
+	push_pop :: proc{push_pop_copied, push_pop_moved};
+
+	/**
+		Runs `change` on the first element and restores the order, in O(log n), or is
+		false when the queue is empty. It is the only way to reach an element mutably,
+		so the order cannot be left wrong.
+	*/
+	update_top :: proc(self: inout, change: $F) -> bool where interfaces.Callable(F, proc(top: inout T)) {
+		if (self.items.len() == 0) { return false; }
+		change(inout self.items[0]);
+		slice.sift_heap_top(&mut self.items[:], self.less);
+		return true;
+	}
+
+	/// Drops each element for which `keep(item)` is false, then restores the order, in O(n).
+	retain :: proc(self: inout, keep: $F) where interfaces.Callable(F, proc(item: T) -> bool) {
+		at := 0;
+		for (at < self.items.len()) {
+			if (keep(self.items[at])) {
+				at += 1;
+			} else {
+				_ = self.items.remove_unordered(at);
+			}
+		}
+		slice.make_heap(&mut self.items[:], self.less);
+	}
+
+	// ------------------------------------------------------------ capacity --
+
+	reserve :: proc(self: inout, capacity: int) { self.items.reserve(capacity); }
+
+	/// As `reserve`, but a failure to allocate is returned.
+	try_reserve :: proc(self: inout, capacity: int) -> Status(Allocator_Error) {
+		return self.items.try_reserve(capacity);
+	}
+
+	shrink :: proc(self: inout, minimum: int = 0) { self.items.shrink(minimum); }
+
+	/// As `shrink`, but a failure to allocate is returned.
+	try_shrink :: proc(self: inout, minimum: int = 0) -> Status(Allocator_Error) {
+		return self.items.try_shrink(minimum);
+	}
+
+	/// Drops every element and keeps the capacity.
+	clear :: proc(self: inout) { self.items.clear(); }
+
+	// --------------------------------------------------------- conversions --
+
+	/// The elements in unspecified order, with their storage, in O(1).
+	into_items :: proc(self: move) -> [dynamic]T {
+		return exchange(inout self.items, {});
+	}
+
+	/// The elements in `pop` order, in place, in O(n log n).
+	into_sorted :: proc(self: move) -> [dynamic]T {
+		items := exchange(inout self.items, {});
+		end := items.len();
+		for (end > 1) {
+			slice.pop_heap(&mut items[:end], self.less);
+			end -= 1;
+		}
+		slice.reverse(&mut items[:]);
+		return items;
+	}
+
+	/// Prints as an array, in unspecified order.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.items);
+	}
+}
+
+@(private)
+top_is_before :: proc(values: []$T, value: T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	return less(values[0], value);
+}
+
+/**
+	A borrow of the queue's elements. The queue cannot change while this is live.
+	Elements are lent where the queue stores them, so a move-only `T` is read too.
+*/
+Priority_Queue_Iterator :: struct($T: type) {
+	@(private) items: []T,
+	@(private) at: int,
+}
+
+impl Priority_Queue_Iterator($T) {
+	Element :: T;
+
+	iter :: proc(self) -> Priority_Queue_Iterator(T) { return self; }
+
+	next :: proc(self: inout) -> Option(^T) {
+		if (self.at >= self.items.len()) { return .none; }
+		index := self.at;
+		self.at += 1;
+		return &self.items[index];
+	}
+}

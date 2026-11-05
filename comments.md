@@ -3322,6 +3322,79 @@ boundaries and API shapes follow a few common choices:
   in the same place reports. The operator is `contains` respelled, so the
   two can be swapped without changing what a program does.
 
+- **A priority queue stores its comparator in its type.** A heap's order means
+  something only under one comparator, so tying the two together rules out pushing
+  with one and popping with another. It also calls the comparator directly, makes a
+  stateless one zero-sized, and lets the borrow checker keep what the comparator
+  reads stable: changing a key while it is queued would silently corrupt a heap, and
+  is a compile error here for as long as the queue is live. A comparator passed to
+  each call, as C++'s heap algorithms and Go's `container/heap` take, gives up all
+  three, and the `core:slice` algorithms offer exactly that for a caller who wants
+  it. Ordering only through `Ordered(T)`, as Rust's `BinaryHeap` with `Reverse`, is
+  tidy until the order depends on state such as a cost table, and then every ordering
+  needs a wrapper type; `Min_Queue` gives the same convenience for the simple case.
+  Stored procedure pointers only, as Odin has, make each comparison an indirect call
+  and put captured state outside the borrow checker; a `dyn proc` comparator offers
+  that where type erasure is what is wanted.
+- **A queue drains smallest first, where C++ and Rust default to largest first.**
+  Loke's own sort is the precedent, and one comparator then means one direction
+  across `sort_by`, the heap algorithms, and the queue.
+- **Equal elements are unordered, and the tie breaker is the caller's.** A stable
+  queue would spend a sequence number on every element for every caller, and most
+  have none to break. Anonymous records compare lexicographically, so a caller who
+  wants arrival order writes one more field and no comparator logic.
+- **A priority queue sifts by swapping.** A hole-based sift takes the element out,
+  shifts its ancestors or children, and writes it back, so a panic from the comparator
+  would need a guard to refill the hole. A measurement on 2026-11-05, on a queue of
+  random keys filled and then drained, at `-opt=speed`, best of three, found it not
+  worth that: swap against hole was 297 ms and 295 ms at 8 bytes (2M elements), 317 and
+  299 at 64 bytes (1M), 176 and 156 at 256 bytes (300k), and 244 and 176 at 1024
+  bytes (100k). An element large enough to gain is better queued by index or
+  pointer. `bench/containers.loke` keeps the shape of these costs in view.
+- **Linked heaps are left out, and duplicates beat decrease-key by default.** Pairing
+  and Fibonacci heaps win on paper for decrease-key, and in practice lose to an array
+  heap on cache behaviour. Published measurements of Dijkstra's algorithm (Chen et
+  al., "Priority Queues and Dijkstra's Algorithm", 2007) find a plain heap with
+  duplicate entries competitive with decrease-key as well, and it needs no position
+  table, so pushing again and skipping stale entries is the recipe a general queue
+  supports.
+- **A deque is a ring in the capacity of a length-zero dynamic array.** The array's
+  cleanup then releases the allocation and touches no element, and hooks own the
+  elements. A `[^]T` field would need no such trick and would lose the provenance a
+  stored borrow and an allocator reset depend on. The alternatives each lose something
+  a general queue needs. A dynamic array with a head cursor is as fast for plain data,
+  but its dead prefix is inside the array's length, so its drop and copy would visit
+  elements already taken; every slot would need an `Option(T)` or a flag, it never
+  reuses the front without a compaction, which is a latency spike, and `prepend` has
+  no place to go. A flag per slot, as `thread.Ring` has, doubles a deque of `int`,
+  which a small fixed ring can afford and a general queue cannot. Two stacks need no
+  unchecked code, but a single `pop_front` may then reverse half the other stack, so
+  it becomes O(n) and may allocate. A list of blocks, as C++'s `std::deque`, keeps
+  elements from moving when it grows, and in Loke the borrow checker already forbids
+  holding a pointer across a growth, so the indirection buys nothing.
+- **A deque's unchecked access stays in two helpers, and is lent through a plain
+  procedure type.** A pointer or element rebuilt from raw storage has unknown
+  provenance, and a first prototype that returned one compiled a use after `pop_front`
+  without complaint. A plain procedure type's result
+  [derives from every borrowed argument](design.md#procedure-result-contracts), which
+  is the technique `Monitor_Guard.read` also uses. It was measured at about 1 ns per
+  `at`, optimized away. Growth fills the new ring through such a view and only then
+  installs it, so a failed allocation has changed nothing. `make_contiguous` slides the
+  back run from its last element down, because that run may overlap its destination.
+- **A deque's cleanup survives a panicking drop with a deferred drain.** Its backing
+  array's length is always zero, so generated cleanup cannot find live elements, and a
+  drop hook that panics is not invoked a second time. Updating `count` first prevents a
+  double drop but does not release the rest, so `clear`, which the drop hook calls,
+  defers a second drain that finishes the job under `unwind`.
+- **`Deque` names extend a dynamic array's rather than introducing `push_back`.** Code
+  written against `Growable_Sequence` accepts either, and a profile's advice to replace
+  `remove(0)` then changes one type and one call. The queue is not a `Sequence`, because
+  an index into a heap means nothing a caller could use, and has no `==`, because two
+  equal queues can have different layouts.
+- **Neither queue is a language built-in.** Nothing here needs the compiler, and the
+  [package rule](standard-library.md#small-packages-and-explicit-imports) keeps what
+  needs no compiler out of `base:`.
+
 ## Compiler design choices
 
 ### Compiler-supplied names are declared in source

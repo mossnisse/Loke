@@ -1,0 +1,51 @@
+.none true 0 true
+peek 2
+[2, 5, 9]
+[4, 3, 2, 1]
+total 14 14
+3 2
+[1, 5, 8]
+[7]
+0 true
+0
+true true true
+.some("s")
+[1, 3, 2, 0]
+[0, 2, 3, 1] true
+.some(1)
+.some(2)
+shortest .some(4)
+2 2 2
+2 3 3
+5 1 1
+largest [7, 8, 9]
+merged [0, 1, 2, 4, 5, 7, 8, 9]
+.some(2)
+wild 100
+model ok
+after pushes 0
+after growth 0
+peek 1
+pop 1
+after pop 1
+push_pop 0 1
+push_pop 2 2
+after push_pop 3
+update_top 5
+after update_top 3
+total 129
+after retain 4 4
+into_items 4 4
+items dropped 8
+scope ended 8
+after clear 2 true
+1 2 3 2
+scope ended 5
+explicit drop 2
+scope ended 2
+try_init out of memory
+try_reserve refused 2 true
+moved element dropped 1 true
+still drains true 1
+borrowed unchanged 64 true
+true

@@ -1,0 +1,26 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// standard-library.md "Deques": `clear` is where the deque's cleanup lives. A panic
+// partway through drains the rest, and nothing is dropped again with the deque.
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+	gone :: hook(drop) proc(self: inout) {
+		if (self.id == 0) { return; }
+		fmt.println("drop", self.id);
+		if (self.id == 2) { panic("clear failed"); }
+	}
+}
+
+main :: proc() {
+	d := container.Deque(Tracked).init(4);
+	foreach (_ in 0 ..< d.cap() - 2) {
+		d.append(Tracked{0});
+		_ = d.pop_front();
+	}
+	foreach (id in 1 ..= 4) { d.append(Tracked{id}); }
+	d.clear();
+	fmt.println("unreachable");
+}

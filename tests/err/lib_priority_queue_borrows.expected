@@ -1,0 +1,45 @@
+L0511
+@18:2
+this write of `cost` is not compatible with the read-only pointer of it that is still in use
+L0512
+@26:2
+`cost` cannot be dropped here: a read-only pointer of it is still in use
+L0512
+@32:2
+`q` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@38:6
+`q` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@43:21
+`q` cannot be modified here: a read-only iterator of it is still in use
+L0513
+@59:6
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@68:6
+this slice is used after `local`, the local it borrows, has ended
+L0537
+@75:2
+this reset would end the region backing `q`, which is still live here
+L0424
+@84:69
+`proc(int, int) -> bool` has no zero value, so it cannot be produced by the omitted field `less`
+L0444
+@88:19
+`int` does not satisfy `Callable(int, proc(int, int) -> bool)`
+L0355
+@98:12
+`Priority_Queue(int, Ascending(int))` is not comparable
+L0392
+@102:2
+no overload of method `push` applies to these arguments
+L0392
+@103:6
+no overload of method `try_push` applies to these arguments
+L0392
+@104:6
+no overload of method `push_pop` applies to these arguments
+L0363
+@105:12
+`Priority_Queue(Token, By_Id)` has no field or member `clone`

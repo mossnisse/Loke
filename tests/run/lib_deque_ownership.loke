@@ -1,0 +1,250 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+import "core:mem";
+
+// standard-library.md "Deques": each element dropped exactly once on every path,
+// borrows carried by elements, copies, and allocation failure.
+
+drops: static int = 0;
+
+@(move_only) Token :: struct { id: int }
+impl Token {
+	gone :: hook(drop) proc(self: inout) {
+		drops += 1;
+		if (self.id != 0) { fmt.print("~", self.id, ""); }
+	}
+}
+
+// A deque whose elements wrap past the end of the capacity.
+wrapped_tokens :: proc(count: int) -> container.Deque(Token) {
+	d := container.Deque(Token).init(count);
+	capacity := d.cap();
+	foreach (_ in 0 ..< capacity - 1) {
+		d.append(Token{0});
+		_ = d.pop_front();
+	}
+	drops = 0;
+	foreach (id in 1 ..= count) { d.append(Token{id}); }
+	return d;
+}
+
+paths :: proc() {
+	fmt.println("-- each path");
+	{
+		d := wrapped_tokens(5);
+		front, back := d.as_slices();
+		fmt.println("wrapped", front.len(), back.len());
+
+		// Growth, shrinking, compaction, and swapping move elements and drop none.
+		wider := d.cap() * 2;
+		d.reserve(wider);
+		d.shrink();
+		_ = d.make_contiguous();
+		d.insert(1, Token{6});
+		fmt.println("moved", drops, d.len());
+
+		p := d.remove(1);
+		fmt.println(p.id, drops);
+		drop(p);
+		fmt.println();
+
+		switch (d.pop_front()) { case .some(t): fmt.print("front", t.id, ""); case .none: }
+		switch (d.pop()) { case .some(t): fmt.print("back", t.id, ""); case .none: }
+		fmt.println();
+
+		d.retain(proc(item: Token) -> bool { return item.id != 3; });
+		fmt.println();
+
+		d.prepend(Token{7});
+		d.append(Token{8});
+		// A reader sees a move-only element in place.
+		total := 0;
+		foreach (item in d) { total += item.id; }
+		fmt.println("total", total);
+		total = d.at(0)^.id;
+		switch (d.first()) { case .some(t): total += t^.id; case .none: }
+		switch (d.first_mut()) { case .some(t): t^.id = 70; case .none: }
+		d[1].id = 20;
+		fmt.println(total, d.at(0)^.id, d.at(1)^.id);
+
+		d.clear();
+		fmt.println();
+		fmt.println("cleared", d.len());
+		fmt.println("scope ends", drops);
+	}
+	fmt.println("scope ended", drops);
+
+	fmt.println("-- dropped in order, wrapped");
+	{
+		d := wrapped_tokens(4);
+		fmt.println(d.len());
+	}
+	fmt.println();
+	d := wrapped_tokens(3);
+	drop(d);
+	fmt.println();
+
+	fmt.println("-- moved, then dropped once");
+	moved := wrapped_tokens(2);
+	holder := move(moved);
+	fmt.println(holder.len());
+	drop(holder);
+	fmt.println();
+}
+
+// A removed element keeps what it borrows without borrowing the deque.
+borrows :: proc() {
+	fmt.println("-- borrows");
+	local := [3]int{1, 2, 3};
+	out: []int = {};
+	{
+		q: container.Deque([]int) = {};
+		q.append(local[:]);
+		q.prepend(local[1:]);
+		q.reserve(64);
+		_ = q.make_contiguous();
+		out = q.pop_front() or_else {};
+	}
+	fmt.println(out);
+}
+
+// An owner keeps its region through a removal, and a deque of owners has no part in
+// an arena that is none of its business.
+regions :: proc() {
+	fmt.println("-- regions");
+	room: [4096]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+	kept: Option([dynamic]int) = .none;
+	{
+		q := container.Deque([dynamic]int).init(0, arena.allocator());
+		inner := make([dynamic]int, 0, 4, arena.allocator());
+		inner.append(7);
+		q.append(move(inner));
+		q.reserve(32);
+		_ = q.make_contiguous();
+		kept = q.pop_front();
+	}
+	switch (kept) { case .some(values): fmt.println(values); case .none: }
+
+	names: container.Deque(string) = {};
+	names.append("first");
+	names.reserve(64);
+	numbers: container.Deque([dynamic]int) = {};
+	numbers.append([dynamic]int{1});
+	unrelated_room: [512]u8 = {};
+	unrelated := mem.Arena.from_buffer(&mut unrelated_room[:]);
+	scratch := make([dynamic]int, 0, 4, unrelated.allocator());
+	scratch.append(2);
+	fmt.println(names, numbers, scratch);
+}
+
+owned :: proc() {
+	fmt.println("-- copies");
+	d: container.Deque([dynamic]int) = {};
+	d.append([dynamic]int{1});
+	buffer := [dynamic]int{2};
+	d.append(buffer);
+	d.prepend(buffer);
+	d.insert(1, buffer);
+	buffer[0] = 99;
+	copied := d.clone();
+	switch (d.first_mut()) { case .some(first): first^.append(3); case .none: }
+	fmt.println(d, copied, buffer);
+}
+
+failure :: proc() {
+	fmt.println("-- failure");
+	room: [512]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+
+	switch (container.Deque(int).try_init(100000, arena.allocator())) {
+	case .ok(d): fmt.println("unexpected", d.cap());
+	case .err(error): fmt.println("try_init out of memory");
+	}
+
+	// Full, wrapped, and with no room to grow. Each `try_` form leaves it as it was.
+	d := container.Deque(int).try_init(8, arena.allocator()) or_else panic("small");
+	filled := 0;
+	for (d.try_append(filled) == .ok) { filled += 1; }
+	capacity := d.cap();
+	_ = d.pop_front();
+	d.append(filled);
+	front, back := d.as_slices();
+	shown := d.clone();
+	fmt.println(back.len(), d.len() == capacity);
+	fmt.println(d.try_reserve(capacity + 1) != .ok, d == shown, d.cap() == capacity);
+	fmt.println(d.try_append(1) != .ok, d == shown);
+	fmt.println(d.try_append(1, 2, 3) != .ok, d == shown);
+	fmt.println(d.try_prepend(1) != .ok, d == shown);
+	value := 5;
+	fmt.println(d.try_append(value) != .ok, d.try_prepend(value) != .ok, value, d == shown);
+
+	// So does a shrink that cannot get a smaller ring.
+	blocks: [dynamic][dynamic]u8 = {};
+	for (;;) {
+		switch (try_make([dynamic]u8, 0, 1, arena.allocator())) {
+		case .ok(block):
+			blocks.append(move(block));
+			continue;
+		case .err(error):
+		}
+		break;
+	}
+	foreach (_ in 0 ..< capacity / 2) { _ = d.pop_front(); }
+	foreach (_ in 0 ..< capacity / 2) { _ = shown.pop_front(); }
+	fmt.println(d.try_shrink() != .ok, d == shown, d.cap() == capacity);
+	d.clear();
+	fmt.println(d.try_append(1) == .ok, d.cap() == capacity);
+
+	// A moved element is dropped.
+	spare: [256]u8 = {};
+	tight := mem.Arena.from_buffer(&mut spare[:]);
+	tokens := container.Deque(Token).try_init(1, tight.allocator()) or_else panic("small");
+	foreach (i in 0 ..< tokens.cap()) { tokens.append(Token{i + 1}); }
+	drops = 0;
+	refused := tokens.try_append(Token{50}) != .ok;
+	fmt.println();
+	fmt.println("moved", refused, drops);
+	refused = tokens.try_prepend(Token{51}) != .ok;
+	fmt.println();
+	fmt.println("moved", refused, drops);
+
+	// Reserving first lets a move in without failing.
+	keep := Token{60};
+	reserved := tokens.try_reserve(100000) == .ok;
+	fmt.println(reserved, keep.id);
+
+	// Removing still works, and frees room to insert.
+	_ = tokens.pop();
+	fmt.println();
+	fmt.println(tokens.try_append(move(keep)) == .ok, tokens.at(tokens.len() - 1)^.id);
+
+	// A clone that fails after the ring has room adds nothing.
+	small: [512]u8 = {};
+	limited := mem.Arena.from_buffer(&mut small[:]);
+	lists := container.Deque([dynamic]int).try_init(4, limited.allocator()) or_else panic("small");
+	big := make([dynamic]int, 4096);
+	one := [dynamic]int{1};
+	// Bound by value, so these copy from the destination's allocator.
+	fmt.println(lists.try_append(one.clone(), big.clone()) != .ok, lists.len(), one.len(), big.len());
+	fmt.println(lists.try_prepend(big) != .ok, lists.len());
+
+	// A copy that fails partway drops what it cloned so far.
+	source: container.Deque([dynamic]int) = {};
+	source.append(one);
+	source.append(big);
+	switch (source.try_clone(limited.allocator())) {
+	case .ok(c): fmt.println("unexpected", c.len());
+	case .err(error): fmt.println("try_clone out of memory", source.len());
+	}
+}
+
+main :: proc() {
+	paths();
+	borrows();
+	regions();
+	owned();
+	failure();
+}

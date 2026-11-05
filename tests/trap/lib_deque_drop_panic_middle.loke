@@ -1,0 +1,23 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// standard-library.md "Deques": a middle element's drop raises the panic during an
+// explicit `drop`, on a ring that has not wrapped.
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+	gone :: hook(drop) proc(self: inout) {
+		fmt.println("drop", self.id);
+		if (self.id == 2) { panic("middle drop failed"); }
+	}
+}
+
+main :: proc() {
+	d: container.Deque(Tracked) = {};
+	foreach (id in 1 ..= 4) { d.append(Tracked{id}); }
+	front, back := d.as_slices();
+	fmt.println("wrapped", back.len() > 0);
+	drop(d);
+	fmt.println("unreachable");
+}
