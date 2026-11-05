@@ -49,6 +49,51 @@ the compiler, is the oracle for any of them.
   the take path shares a check it never runs. Found on 2026-11-05 while reviewing
   that commit.
 
+### Loaded alias facts need convergence weight
+
+Correctness finding from the `f8737e02` review (P2): the new
+`Written_Alias.loaded` flag grows from false to true in `prov_add_written_alias`
+in [provenance_aliases.odin](src/provenance_aliases.odin), but `prov_fact_weight`
+in [provenance_regions.odin](src/provenance_regions.odin) counts only the number
+of alias rows. [Replay convergence](compiler-architecture.md#normalized-provenance-input)
+therefore treats this growth as no change, discards the changed round, and can
+materialize events before the alias facts have settled.
+
+This package-local Odin test fails with an unchanged weight of 1:
+
+```odin
+package lokec
+import "core:testing"
+@(test)
+review_loaded_alias_growth_has_weight :: proc(t: ^testing.T) {
+    aliases := [1]Written_Alias{{target = Storage_Id(1)}}
+    facts := Prov_Facts{written_aliases = make(map[Storage_Id][]Written_Alias)}
+    defer delete(facts.written_aliases)
+    facts.written_aliases[Storage_Id(1)] = aliases[:]
+    before := prov_fact_weight(&facts)
+    aliases[0].loaded = true
+    testing.expectf(t, prov_fact_weight(&facts) > before, "new loaded fact has the same weight: %d", before)
+}
+```
+
+A normalization probe with four locals initially set to `&node^`, followed by a
+loop that assigns `d = c; c = b; b = a; a = node^.next or_else node;`, stops
+after one replay with `b`, `c`, and `d` still lacking the loaded alternative.
+Counting every set `loaded` bit in the weight makes both probes pass, along
+with the existing carry and fixed-point contract tests. Keep this metadata in
+the convergence measure. No externally visible unsafe acceptance was established
+by these probes. Found on 2026-11-05.
+
+### Index traversal-link metadata in one pass
+
+Optional simplification from the `f8737e02` review (P3): `index_links` in
+[borrow.odin](src/borrow.odin) builds `links_naming_element` in a separate loop
+over `graph.reborrows`, immediately before the loop that fills `links_into` and
+`links_via`. Move its `if link.names_element { bit_mark(...); }` into that
+existing loop, removing two lines and one traversal. The stored-argument,
+read-only-copy, and walk-reader matrices pass with this substitution in an
+isolated copy. Found on 2026-11-05.
+
 ### What counts as a fresh borrow of a range
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) separates constant

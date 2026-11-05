@@ -7,6 +7,47 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A peeled adapter reports an inline copy that never runs
+
+[Iteration adapters](design.md#iteration-adapters) make no adapter copy when a
+`foreach` peels the call. `record_adapter_copy` in
+[copy_sites.odin](src/copy_sites.odin) holds allocating-copy reports until that
+decision, but `warn_copy_cost` emits byte-count reports immediately. A mutable
+view whose copy retains a string and copies a large inline field therefore
+reports a copy even when the adapter is never made:
+
+```loke
+package main;
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+Large_View :: struct { bytes: [1024]u8, label: string }
+impl Large_View {
+    Element :: int;
+    Iterator :: Cursor;
+    Mut_Iterator :: Cursor;
+    iter :: proc(self: ^) -> Cursor { return {0}; }
+    iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+main :: proc() {
+    source: Large_View = {};
+    foreach (value, index in source.indexed()) { _ = value; _ = index; }
+}
+```
+
+At the default copy-cost threshold this is `L0507`, reporting a 1048-byte
+iteration-adapter copy. The emitted loop instead calls `Large_View.iter` with a
+pointer to `source`, with no adapter construction. The parent `0d7d1b47` is
+silent; `f8737e02` and the later `ecce89f3` warn. Defer byte-count reports as well
+as allocating-copy reports until peeling is settled.
+
+There is a complementary omission in the same path: removing `label` and storing
+`view := source.indexed()` makes a real 1024-byte copy, but produces no warning.
+`record_adapter_copy` excludes unmanaged sources before the ordinary
+[copy-cost policy](design.md#copy-cost-diagnostics) can inspect their size.
+Apply the same cost classification to every by-value adapter source, with
+stored and peeled cases for both allocating and inline copies. Both variants
+were reproduced on 2026-11-05 while reviewing `f8737e02` (P2).
+
 ### An allocator handle in a pointee pollutes a sibling owner's returned region
 
 [Region tracking](design.md#region-tracking) keeps allocator handles apart from
