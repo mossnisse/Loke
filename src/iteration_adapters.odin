@@ -35,6 +35,11 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) {
 		}
 		source = call.bound[0]
 	}
+	for at := s.iterable; at != source; {
+		call := at.(^Expr_Call)
+		call.adapter_peeled = true
+		at = call.bound[0]
+	}
 	s.iterable, s.indexed, s.reversed = source, indexed, reversed
 }
 

@@ -102,6 +102,35 @@ main :: proc() {}
 Telling them apart needs a row to keep the carrier it went through beside the path below it. Found on
 2026-11-03 (P3): the rejection errs on the safe side.
 
+### A parameter's region at a call is everything its argument reaches
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance) puts
+what a body reads through its parameter's carriers in the regions those carriers lead to. A summary
+names such a read by the parameter alone, so a call substitutes every region its argument reaches
+(`prov_reached_regions` in [src/provenance_regions.odin](src/provenance_regions.odin)), at every
+load, even where the body read only the argument's own fields. Here the owner left in `a` is the
+record's own `items`, of `allocator`, but the call takes it to be of `kept` too, which is local, and
+reports `L0536` for storing it through a carrier:
+
+```loke
+package main;
+import "core:mem";
+Owned :: struct { items: [dynamic]int, out: ^mut [dynamic]int }
+leave_items :: proc(owned: Owned) { owned.out^ = owned.items; }
+owned_left :: proc(allocator: mem.Allocator) -> int {
+    buffer := [64]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 1, kept.allocator());
+    leave_items(Owned{make([dynamic]int, 1, allocator), &mut a}); // L0536; should be accepted
+    return a[0];
+}
+main :: proc() {}
+```
+
+[tests/err/record_parameter_carrier_stores.loke](tests/err/record_parameter_carrier_stores.loke)
+pins it as `owned_left`. Telling them apart needs a summary to say how many loads below the
+parameter a region was read. Found on 2026-11-05 while fixing a region read through two loads (P3).
+
 ### A hook in a `when` on a later constant comes too late for a record already used
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
@@ -257,55 +286,6 @@ main :: proc() {}
 (`prov_assign_permutes`). Found on 2026-11-01 while deriving a store's links in the
 solve (P3, over-rejection).
 
-### A carrier a call may have left stays after its place is replaced
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a store to one place
-replaces what it held, and a local's record already does after a call that may have
-stored there. Through a parameter's pointer to a record of one carrier, through a
-pointer to a carrier, or at one element of a view parameter, it does not. In the
-reproduction, the call's carrier is joined into a caller slot of no path or type as well
-as the typed one, the store replaces only the typed one, and the load reads both.
-
-```loke
-package main;
-Link :: struct { to: ^mut int }
-keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
-replaced :: proc(l: ^mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
-    keep(l, other);
-    l^.to = fresh;
-    x := l^.to;
-    other^ = 1; // L0641; should be accepted
-    x^ = 2;
-}
-main :: proc() {}
-```
-
-[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) lists each place
-form this holds for, and a record of two carriers through a pointer is already accepted.
-End the use of `x` before using `other`.
-
-### A read of a carrier a call may have weakened conflicts with the copy
-
-A read-only copy does not suspend a read of what it reborrows
-([Weakening and reborrows](design.md#weakening-and-reborrows)), and after `m^.b = m^.a;`
-by hand the read below is accepted. After a call that does the same, it is `L0641`,
-as the links a call's copies get say nothing of which carrier was weakened:
-
-```loke
-package main;
-Mixed :: struct { a: ^mut int, b: ^int }
-weakened :: proc(mixed: ^mut Mixed) { mixed^.b = mixed^.a; }
-read_while_copy_live :: proc(m: ^mut Mixed) {
-    weakened(m);
-    x := m^.b;
-    y := m^.a^; // L0641; should be accepted
-    z := x^;
-}
-main :: proc() {}
-```
-
-Read through the mutable carrier before making the copy.
-
 ### A cursor stepped through itself holds nothing of the field it came from
 
 A carrier copied out of storage reborrows the carrier stored there
@@ -339,59 +319,3 @@ would reject `cur^.next = cur^.next^.next; cur = cur^.next;` in a loop, which is
 needs a read through the cursor's own value told from a read of what it was copied from.
 
 Finish with one copy before making the other.
-
-### A reordering of fields through a traversal binding is rejected
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves
-each carrier in one place. Reordering two carrier fields through a
-`foreach (&mut x in xs)` binding compiles, but a copy out of one field then conflicts
-with a use of the other, though the same statement through a view parameter's element
-or a pointer's fields does not:
-
-```loke
-package main;
-Node :: struct { value: int }
-Two :: struct { a: ^mut Node, b: ^mut Node }
-fields_reordered :: proc() {
-    a := Node{1}; b := Node{2};
-    twos := [1]Two{Two{&mut a, &mut b}};
-    foreach (&mut two in twos) { two.a, two.b = two.b, two.a; }
-    node := twos[0].a; // L0641; should be accepted
-    twos[0].b^.value = 1;
-    node^.value = 1;
-}
-main :: proc() {}
-```
-
-`twos[0].b` reaches `twos[0].a` through the loop's copy of what the elements held, the
-binding's slot, and the store's link: `Prov_Reborrow.moved` only stops a walk at the
-first step, and the first step here is the loop's copy, which a reordering in the body
-does not make a move. Found on 2026-11-01 while replacing a carrier through its
-traversal binding (P3, over-rejection).
-
-### An adapter's clone of its source draws no copy warning
-
-An adapter stored over a mutable view that owns something clones it
-([Iteration adapters](design.md#iteration-adapters)), which may allocate, but `L0507` does
-not report it as it reports other implicit clones. The adapter call is checked before
-`foreach` knows whether it will peel the adapter and make no clone, so warning there would
-also report a loop that copies nothing. This compiles with no warning:
-
-```loke
-package main;
-Cursor :: struct { at: int }
-impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
-Owning :: struct { owned: [dynamic]int }
-impl Owning {
-    Element :: int;
-    Iterator :: Cursor;
-    Mut_Iterator :: Cursor;
-    iter :: proc(self) -> Cursor { return {0}; }
-    iter_mut :: proc(self) -> Cursor { return {0}; }
-}
-main :: proc() {
-    source := Owning{};
-    view := source.indexed();
-    _ = view;
-}
-```

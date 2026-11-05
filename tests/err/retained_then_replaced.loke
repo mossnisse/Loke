@@ -1,0 +1,59 @@
+// design.md "Weakening and reborrows": what a call leaves stays there until a store to
+// that one place replaces it, and a write through a carrier conflicts with a read-only
+// copy of it however the copy was made.
+package main;
+
+Link :: struct { to: ^mut int }
+Mixed :: struct { a: ^mut int, b: ^int }
+Two :: struct { a: ^mut int, b: ^mut int, c: ^int }
+
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+keep_view :: proc(dst: []mut Link, @(escape=stored) c: ^mut int) { dst[0].to = c; }
+weakened :: proc(mixed: ^mut Mixed) { mixed^.b = mixed^.a; }
+copied_and_weakened :: proc(two: ^mut Two) { two^.a = two^.b; two^.c = two^.a; }
+
+flip :: proc() -> bool { return true; }
+
+// Not replaced on every path.
+replaced_on_one_path :: proc(l: ^mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+	keep(l, other);
+	if (flip()) { l^.to = fresh; }
+	x := l^.to;
+	other^ = 1;
+	x^ = 2;
+}
+
+// Replaced at one element, read at another.
+replaced_elsewhere :: proc(s: []mut Link, k: int, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+	keep_view(s, other);
+	s[0].to = fresh;
+	x := s[k].to;
+	other^ = 1;
+	x^ = 2;
+}
+
+// What the replacing store itself stores conflicts as ever.
+replacement_used :: proc(l: ^mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+	keep(l, other);
+	l^.to = fresh;
+	x := l^.to;
+	fresh^ = 1;
+	x^ = 2;
+}
+
+written_beside_weakened :: proc(m: ^mut Mixed) {
+	weakened(m);
+	x := m^.b;
+	m^.a^ = 1;
+	y := x^;
+}
+
+// A mutable copy still suspends a read.
+read_beside_mutable_copy :: proc(two: ^mut Two) {
+	copied_and_weakened(two);
+	x := two^.a;
+	y := two^.b^;
+	x^ = 1;
+}
+
+main :: proc() {}

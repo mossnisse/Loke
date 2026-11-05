@@ -87,7 +87,8 @@ result_through_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> in
 	return d[0];
 }
 
-// What the record itself owned, left through its carrier.
+// What the record itself owned, left through its carrier. The L0536 errs on the safe side:
+// known-gaps.md "A parameter's region at a call is everything its argument reaches".
 owned_left :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
 	kept := mem.Arena.from_buffer(&mut buffer[:]);

@@ -244,6 +244,7 @@ settle_call :: proc(k: ^Checker, v: ^Expr_Call, result: Type_Id, result_inout: b
 	set_call_result(v, result, result_inout, result_written_but_unresolved(chosen))
 	check_container_call(k, v, chosen)
 	fold_standard_customization_call(k, v, chosen)
+	record_adapter_copy(k, v, chosen)
 }
 
 // design.md "Calling a value": `x(args)` on a value whose type has a `call`

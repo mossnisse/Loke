@@ -27,7 +27,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Selector, "operand name", "variant_union variant_index synchronized receiver_checked"},
 		{Expr_Index, "operand indices", "bound map_inserts"},
 		{Expr_Slice, "operand lo hi mutable", "bound"},
-		{Expr_Call, "callee args", "bound bound_order operation overload_members group is_variadic variadic_slot variadic_forwards variadic_elements variadic_spreads variadic_order dispatch"},
+		{Expr_Call, "callee args", "bound bound_order operation adapter_peeled overload_members group is_variadic variadic_slot variadic_forwards variadic_elements variadic_spreads variadic_order dispatch"},
 		{Expr_Postfix, "op op_span operand failure", "borrows boxed failure_exit failure_maps"},
 		{Expr_Propagated_Error, "", "owner"},
 		{Expr_Unary, "op op_span mutable operand", ""},

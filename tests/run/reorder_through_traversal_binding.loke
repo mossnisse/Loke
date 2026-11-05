@@ -1,0 +1,55 @@
+// design.md "Weakening and reborrows": a reordering leaves each carrier in one place, and
+// a `&mut` binding is the element, so one through the binding copies nothing.
+package main;
+
+import "core:fmt";
+
+Node :: struct { value: int }
+Two :: struct { a: ^mut Node, b: ^mut Node }
+Three :: struct { a: ^mut Node, b: ^mut Node, c: ^mut Node }
+
+fields_reordered :: proc() {
+	a := Node{1};
+	b := Node{2};
+	twos := [1]Two{Two{&mut a, &mut b}};
+	foreach (&mut two in twos) { two.a, two.b = two.b, two.a; }
+	node := twos[0].a;
+	twos[0].b^.value = 10;
+	node^.value = 20;
+	fmt.println(a.value, b.value);
+}
+
+// Reordered more than once, and through a view.
+reordered_twice :: proc(twos: []mut Two) {
+	foreach (&mut two in twos) {
+		two.a, two.b = two.b, two.a;
+		two.a, two.b = two.b, two.a;
+	}
+	node := twos[0].a;
+	twos[0].b^.value = 30;
+	node^.value = 40;
+}
+
+rotated :: proc(threes: []mut Three) {
+	foreach (&mut three in threes) { three.a, three.b, three.c = three.b, three.c, three.a; }
+	first := threes[0].a;
+	second := threes[0].b;
+	threes[0].c^.value = 50;
+	first^.value = 60;
+	second^.value = 70;
+}
+
+main :: proc() {
+	fields_reordered();
+	a := Node{1};
+	b := Node{2};
+	twos := [1]Two{Two{&mut a, &mut b}};
+	reordered_twice(&mut twos[:]);
+	fmt.println(a.value, b.value);
+	x := Node{1};
+	y := Node{2};
+	z := Node{3};
+	threes := [1]Three{Three{&mut x, &mut y, &mut z}};
+	rotated(&mut threes[:]);
+	fmt.println(x.value, y.value, z.value);
+}

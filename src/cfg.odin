@@ -1318,7 +1318,11 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 		iterated = walk_flow_expr(graph, iterable)
 	}
 	if graph.mode != .Lifecycle {
+		first_read := len(graph.reborrows)
 		iterated = prov_reborrow_traversal(graph, iterated, expr_span(s.iterable), place_loop)
+		for &reborrow in graph.reborrows[first_read:] {
+			reborrow.names_element = place_loop
+		}
 	}
 	// A copied element keeps its own borrows without borrowing the container.
 	elements := iterated

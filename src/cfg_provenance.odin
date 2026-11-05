@@ -1232,6 +1232,8 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 	// What earlier elements hold, used again as each later mutable carrier is
 	// lent, as `prov_call` does for arguments.
 	held := make([dynamic]int, 0, len(v.elements), graph.alloc)
+	// A borrow an element takes, which lasts until the literal is built.
+	borrows := make([dynamic]int, 0, len(v.elements), graph.alloc)
 	last_write := -1
 	for element, index in v.elements {
 		if prov_expr_may_write(graph.k.c, element.key) || prov_expr_may_write(graph.k.c, element.value) {
@@ -1261,6 +1263,11 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		// design.md "Weakening and reborrows": a mutable carrier stored in an
 		// element, or in a record there, is a reborrow of it, live until the literal
 		// is built: `Pair{xs, xs}` would hold two mutable views of one sequence.
+		for slot in loans {
+			if graph.prov_slots[slot].borrow != nil {
+				append(&borrows, slot)
+			}
+		}
 		lent := type_carries_borrow(graph.k.c, element_type).mutable
 		if lent {
 			prov_use_copied(graph, loans, element_type, expr_span(element.value), true)
@@ -1275,17 +1282,16 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		prefix, known := prov_element_prefix(graph, v, literal_type, index)
 		append(&parts, Part{loans, prefix, prov_type(graph, element.value), known})
 	}
-	// Building the literal uses each reborrow its elements took, so the
-	// carrier stays suspended through every later element, not only the
-	// lent ones: `Pair{xs, g(xs)}` uses `xs` while the pair's view is live.
-	reborrows := make([dynamic]int, 0, len(held), graph.alloc)
+	// Building the literal uses each borrow and reborrow its elements took, so what
+	// they lend stays lent through every later element, not only the lent ones:
+	// `Pair{xs, g(xs)}` uses `xs` while the pair's view is live.
 	for slot in held {
 		if prov_slot_is_reborrow(graph, slot) || prov_slot_is_pending(graph, slot) {
-			append(&reborrows, slot)
+			append(&borrows, slot)
 		}
 	}
-	if len(reborrows) > 0 {
-		prov_emit(graph, Prov_Event{kind = .Live, sources = reborrows[:], span = v.span})
+	if len(borrows) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = borrows[:], span = v.span})
 	}
 	for slot in content {
 		sources := make([dynamic]int, 0, len(parts), graph.alloc)
@@ -2424,7 +2430,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 		if prov_slot_is_mutable_carrier(graph, source) || graph.prov_slots[source].caller_mutable {
 			append(&graph.reborrows, Prov_Reborrow {
 				source = source, derived = event.slot, span = event.span, mutable = mutable, passes_on = passes_on, via = event.into,
-				moved = graph.prov_slots[event.slot].moved_out,
+				moved = graph.prov_slots[event.slot].moved_out, names_element = graph.prov_slots[event.slot].names_element,
 			})
 		}
 	}
@@ -2961,6 +2967,11 @@ walk_foreach_binding_provenance :: proc(
 				graph, elements, binding.is_ref ? at : nil, sym.type, expr_span(s.iterable),
 				reads_only = prov_read_is_reads_only(graph.k.c, sym.type),
 			)
+			if binding.is_ref {
+				for slot in loans {
+					graph.prov_slots[slot].names_element = true
+				}
+			}
 		}
 		// The leaf starts as what the element holds, which only a store through
 		// it afterwards adds to.
@@ -4096,10 +4107,10 @@ prov_clone_region_content :: proc(entry: Prov_Region_Content, region: Region_Set
 // design.md "Minimum provenance precision": of what a call leaves in a record passed
 // by value, the rows that went through the carrier at `held` in it, each at its path
 // below where that carrier points. One copied from elsewhere in the record reads other
-// storage, so it takes what the whole argument holds, `region`, and what the `targets`
-// of the carrier it came through hold there.
+// storage: what `record` holds at that path itself, and what the `targets` of the carrier
+// it came through hold there.
 @(private = "file")
-prov_contents_held_at :: proc(graph: ^Flow_Graph, contents: []Prov_Region_Content, held: []Proj_Step, targets: []Written_Alias, region: Region_Set) -> []Prov_Region_Content {
+prov_contents_held_at :: proc(graph: ^Flow_Graph, contents: []Prov_Region_Content, held: []Proj_Step, targets: []Written_Alias, record: Value_Id) -> []Prov_Region_Content {
 	out := make([dynamic]Prov_Region_Content, 0, len(contents), graph.alloc)
 	for content in contents {
 		if !paths_overlap(held, content.path) {
@@ -4112,7 +4123,7 @@ prov_contents_held_at :: proc(graph: ^Flow_Graph, contents: []Prov_Region_Conten
 				entry.from = Prov_Region_Source{from.path[len(held):], from.query}
 			} else {
 				entry.from, entry.region = nil, prov_targets_region_at(graph, targets, from)
-				region_merge(&entry.region, region)
+				region_merge(&entry.region, prov_result_region_at(graph, record, from.path, from.query))
 			}
 		}
 		append(&out, entry)
@@ -4142,7 +4153,7 @@ prov_targets_region_at :: proc(graph: ^Flow_Graph, targets: []Written_Alias, fro
 // this body cannot name.
 @(private)
 prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, region: Region_Set, owned: Region_Set, owner: string, suffix: []Proj_Step = nil,
-                                   contents: []Prov_Region_Content = nil) {
+                                   contents: []Prov_Region_Content = nil, by_carrier := false) {
 	if region_is_empty(region) && len(contents) == 0 {
 		return
 	}
@@ -4155,14 +4166,13 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
 	// `dst^.alloc` lands in the `alloc` field of what `dst` points at.
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, destination), suffix)
-	// A record's rows say which of its carriers they went through.
-	by_carrier := contents != nil && !type_is_carrier(graph.k.c, destination_type)
+	// A record taken by value: its rows say which of its carriers they went through.
 	targets := prov_written_targets(graph, destination, held = by_carrier)
 	for alias in targets {
 		at := prov_concat_path(graph, alias.at, below)
 		landed := contents
 		if by_carrier && len(alias.path) > 0 {
-			landed = prov_contents_held_at(graph, contents, alias.path, targets, region)
+			landed = prov_contents_held_at(graph, contents, alias.path, targets, destination)
 			if len(landed) == 0 {
 				continue
 			}
@@ -4365,7 +4375,9 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
 		if packed {
 			for element in form.pack { prov_leave_region(graph, element, region, owned) }
 		} else if prov_argument_is_place(graph, v, index) {
-			prov_store_region_set(graph, destination, region, owned, CALL_LEFT_OWNER, contents = contents)
+			prov_leave_in_place(graph, destination, region, owned, contents)
+		} else if prov_parameter_is_record_by_value(c, param_mode_at(info, index), info.parameters[index]) {
+			prov_store_region_through(graph, destination, region, owned, CALL_LEFT_OWNER, contents = contents, by_carrier = contents != nil)
 		} else {
 			prov_leave_region(graph, destination, region, owned, contents)
 		}
@@ -4383,13 +4395,20 @@ prov_leave_region :: proc(graph: ^Flow_Graph, argument: Value_Id, region, owned:
 	c := graph.k.c
 	value := prov_value(graph, argument)
 	if address, ok := value.form.(Prov_Form_Unary); ok && address.op == .Amp && carrier_is_mutable(c, value.type) {
-		prov_store_region_set(graph, address.operand, region, owned, CALL_LEFT_OWNER, contents = contents)
-		if prov_type_reaches_mutable(c, prov_value(graph, address.operand).type) {
-			prov_store_region_through(graph, address.operand, region, owned, CALL_LEFT_OWNER, contents = contents)
-		}
+		prov_leave_in_place(graph, address.operand, region, owned, contents)
 		return
 	}
 	prov_store_region_through(graph, argument, region, owned, CALL_LEFT_OWNER, contents = contents)
+}
+
+// What a callee leaves in a place it is handed: there, and where the place's own mutable
+// carriers lead.
+@(private = "file")
+prov_leave_in_place :: proc(graph: ^Flow_Graph, place: Value_Id, region, owned: Region_Set, contents: []Prov_Region_Content) {
+	prov_store_region_set(graph, place, region, owned, CALL_LEFT_OWNER, contents = contents)
+	if prov_type_reaches_mutable(graph.k.c, prov_value(graph, place).type) {
+		prov_store_region_through(graph, place, region, owned, CALL_LEFT_OWNER, contents = contents)
+	}
 }
 
 @(private)

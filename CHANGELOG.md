@@ -10,6 +10,19 @@ checklist.
 
 ### Breaking changes
 
+- A borrow one element of a literal takes lasts until the literal is built, so a later element reading
+  what it lends is `L0511`, as it is written as statements or as a call's arguments. `Views{&mut d, &d}`
+  compiled, and growing `d` through the first left the second reading freed storage. Upgrade by
+  reading what you need first, as `count := d.len(); Measured{&mut d, count}`.
+- A parameter's [allocator region](design.md#allocator-regions-and-region-provenance) at a call covers
+  what the carriers its argument holds lead to, however many loads below. A `make` from
+  `handles^.second^.allocator` with `handles: ^Handles`, or an `inout` record whose carriers a call
+  copied a handle between, had no region the caller could see, so a reset while the result was live
+  compiled and read freed memory. These are now `L0537`. Upgrade by passing the `Allocator` as a
+  parameter of its own, or by ending the result's use before the reset.
+- An adapter stored over a mutable view that owns something reports the clone it makes as `L0507`, as
+  other clones that may allocate do. Upgrade by writing the `foreach` directly over the adapter call,
+  which clones nothing.
 - An allocator read through a carrier that a record parameter holds is one the analysis cannot name,
   as one read from the record itself already was. `make(.., holder.target^.allocator)` with `holder`
   a record, and a call copying one of its carriers' handles to another, had no region at all, so a
@@ -1619,6 +1632,14 @@ checklist.
 
 ### Fixed
 
+- A store to one place replaces what a call may have left there, through a pointer to a record of one
+  carrier, a pointer to a carrier, or at one element of a view parameter, so a later use of what the
+  call was given is no longer `L0641`.
+- A call that leaves only a read-only copy of a carrier suspends no read of that carrier, as the same
+  store written in place does not, so this read is no longer `L0641`.
+- A reordering through a `foreach` binding's `&mut` moves the element's carriers. Over a view parameter
+  it was rejected outright, and over an array a copy out of one field conflicted with the other, both
+  `L0641`.
 - The compiler no longer hangs on a store through a carrier held in the storage it reads from, as
   `owned^.out^ = owned^.items`.
 - A store through one carrier of a record passed by value lands only where the argument's carrier at

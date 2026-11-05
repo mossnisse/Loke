@@ -252,6 +252,7 @@ Copy_Site :: enum {
 	Conditional,
 	Box,
 	Unsafe_Allocation,
+	Adapter,
 }
 
 @(private = "file", rodata)
@@ -272,13 +273,17 @@ COPY_SITE_TEXT := [Copy_Site]string {
 	.Conditional       = "conditional expression",
 	.Box               = "box",
 	.Unsafe_Allocation = "unsafe allocation",
+	.Adapter           = "iteration adapter",
 }
 
 // A binding or assignment copy whose report waits for last-use transfer: the
-// copy it names may yet become a move (design.md "Last-use transfer").
+// copy it names may yet become a move (design.md "Last-use transfer"), or an adapter's
+// clone of its source, which `foreach` may yet peel and not make (design.md
+// "Iteration adapters").
 Held_Copy_Report :: struct {
 	decl:    ^Decl,
 	assign:  ^Stmt_Assign,
+	adapter: ^Expr_Call,
 	index:   int,
 	site:    Copy_Site,
 	span:    Span,
@@ -312,7 +317,7 @@ warn_copy_cost :: proc(
 	}
 	in_loop := k.loop_depth + k.expanded_in_loops > 0
 	if clone_may_allocate(k.c, type) {
-		if held.decl == nil && held.assign == nil {
+		if held.decl == nil && held.assign == nil && held.adapter == nil {
 			report_allocating_copy(k, site, span, source, in_loop)
 			return
 		}
@@ -366,6 +371,9 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 			object = fmt.aprintf("part of `%s`, which may allocate", name, allocator = k.c.semantic_allocator)
 		}
 	}
+	if site == .Adapter {
+		hint = "a `foreach` written over the adapter call makes no copy"
+	}
 	warnf(k.c, span, "L0507", "this %s clones %s", COPY_SITE_TEXT[site], object)
 	if in_loop {
 		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
@@ -374,14 +382,36 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 }
 
 // The held reports, from `mark` on, whose copies last-use transfer left copies.
+// Whether the copy a held report names is still made, now the body is checked.
+@(private = "file")
+held_copy_is_made :: proc(held: Held_Copy_Report) -> bool {
+	if held.adapter != nil {
+		return !held.adapter.adapter_peeled
+	}
+	clones := held.decl != nil ? held.decl.value_clones : held.assign.rhs_clones
+	return held.index < len(clones) && clones[held.index]
+}
+
+// design.md "Iteration adapters": an adapter's view keeps its own clone of a source that
+// owns something, which its call makes unless `foreach` peels it.
+record_adapter_copy :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
+	if chosen == nil || chosen.synth != .Adapter_View || len(v.bound) != 1 || !committing(k.c) ||
+	   !type_of(k.c, chosen.result).adapter_by_value {
+		return
+	}
+	source := v.bound[0]
+	if base := expr_base(source); base != nil && type_is_managed(k.c, base.type) {
+		warn_copy_cost(k, .Adapter, expr_span(source), source, base.type, Held_Copy_Report{adapter = v})
+	}
+}
+
 // A nested procedure literal is analysed while its enclosing body is still being
 // checked, so each body flushes only what it held. A static `foreach` checks a
 // copy of its body per expansion, so one site may be held more than once.
 flush_held_copy_reports :: proc(k: ^Checker, mark: int) {
 	reported := make(map[Span]bool, context.temp_allocator)
 	for held in k.c.held_copy_reports[mark:] {
-		clones := held.decl != nil ? held.decl.value_clones : held.assign.rhs_clones
-		if held.index >= len(clones) || !clones[held.index] || reported[held.span] {
+		if reported[held.span] || !held_copy_is_made(held) {
 			continue
 		}
 		reported[held.span] = true

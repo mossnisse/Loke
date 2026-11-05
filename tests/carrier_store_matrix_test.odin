@@ -274,20 +274,6 @@ stored_case_rejected :: proc(place: Stored_Place, entry: Store_Case) -> bool {
 	return entry.rejected
 }
 
-// Where the compiler rejects what the rules accept: known-gaps.md "A carrier a call may
-// have left stays after its place is replaced". Listed so that closing it shows up here.
-@(private = "file")
-stored_case_over_rejected :: proc(place: Stored_Place, entry: Store_Case) -> bool {
-	if entry.name != "kept_then_replaced" {
-		return false
-	}
-	switch place.name {
-	case "stored_parameter_pointer", "stored_view_parameter_first", "stored_view_parameter_second", "stored_pointer_to_pointer_parameter":
-		return true
-	}
-	return false
-}
-
 @(test)
 stored_argument_matrix :: proc(t: ^testing.T) {
 	names := make([dynamic]string, context.temp_allocator)
@@ -319,7 +305,7 @@ stored_argument_matrix :: proc(t: ^testing.T) {
 	}
 	for place, index in STORED_PLACES {
 		for entry, at in STORED_CASES {
-			expected := stored_case_rejected(place, entry) || stored_case_over_rejected(place, entry)
+			expected := stored_case_rejected(place, entry)
 			store_matrix_expect(t, place.name, entry.name, first + 4 * at, errors[index], expected)
 		}
 	}
@@ -652,12 +638,6 @@ READ_ONLY_COPY_CASES := [?]Stored_Reach_Case {
 	{"plain_read_only_never_conflicts", COPY_KEPT, COPY_RO + "q := ro.to; r := q; c^ = 1; y := r^;", false},
 }
 
-// known-gaps.md "A read of a carrier a call may have weakened conflicts with the copy".
-@(private = "file")
-read_only_copy_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
-	return entry.name == "weakened_parameter_read" || entry.name == "weakened_local_read"
-}
-
 @(test)
 read_only_copy_matrix :: proc(t: ^testing.T) {
 	source := strings.builder_make(context.temp_allocator)
@@ -675,7 +655,7 @@ read_only_copy_matrix :: proc(t: ^testing.T) {
 		return
 	}
 	for entry, at in READ_ONLY_COPY_CASES {
-		expected := entry.rejected || read_only_copy_over_rejected(entry)
+		expected := entry.rejected
 		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
 	}
 }

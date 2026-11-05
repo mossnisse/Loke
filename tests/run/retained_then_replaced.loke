@@ -1,0 +1,62 @@
+// design.md "Weakening and reborrows": a store to one place replaces what it held, as it
+// does after a call that may have left a carrier there; and a call that leaves only a
+// read-only copy of a carrier suspends no read of it, as the same store by hand does not.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+Mixed :: struct { a: ^mut int, b: ^int }
+
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+keep_view :: proc(dst: []mut Link, @(escape=stored) c: ^mut int) { dst[0].to = c; }
+keep_pointer :: proc(dst: ^mut ^mut int, @(escape=stored) c: ^mut int) { dst^ = c; }
+weakened :: proc(mixed: ^mut Mixed) { mixed^.b = mixed^.a; }
+
+through_pointer :: proc(l: ^mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+	keep(l, other);
+	l^.to = fresh;
+	x := l^.to;
+	other^ = 1;
+	x^ = 2;
+}
+
+at_one_element :: proc(s: []mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+	keep_view(s, other);
+	s[0].to = fresh;
+	x := s[0].to;
+	other^ = 3;
+	x^ = 4;
+}
+
+through_pointer_to_pointer :: proc(p: ^mut ^mut int, @(escape=stored) other: ^mut int, @(escape=stored) fresh: ^mut int) {
+	keep_pointer(p, other);
+	p^ = fresh;
+	x := p^;
+	other^ = 5;
+	x^ = 6;
+}
+
+read_beside_weakened :: proc(m: ^mut Mixed) -> int {
+	weakened(m);
+	x := m^.b;
+	y := m^.a^;
+	return x^ + y;
+}
+
+main :: proc() {
+	v, w, o, f := 0, 0, 0, 0;
+	link := Link{&mut v};
+	through_pointer(&mut link, &mut o, &mut f);
+	fmt.println(o, f);
+	links := [1]Link{Link{&mut w}};
+	at_one_element(&mut links[:], &mut o, &mut f);
+	fmt.println(o, f);
+	r := &mut v;
+	through_pointer_to_pointer(&mut r, &mut o, &mut f);
+	fmt.println(o, f);
+	n := 7;
+	before := 8;
+	mixed := Mixed{&mut n, &before};
+	fmt.println(read_beside_weakened(&mut mixed));
+}

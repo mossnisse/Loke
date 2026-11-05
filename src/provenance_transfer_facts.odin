@@ -31,7 +31,7 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 			}
 			out := make([dynamic]Written_Alias, graph.alloc)
 			for alias in prov_written_targets(graph, operation.source, as_place = true) {
-				append(&out, Written_Alias{target = alias.target, at = prov_concat_path(graph, alias.at, source.place.path)})
+				append(&out, Written_Alias{target = alias.target, at = prov_concat_path(graph, alias.at, source.place.path), loaded = alias.loaded})
 			}
 			if len(out) == 0 { append(&out, Written_Alias{}) }
 			return out[:]
@@ -54,7 +54,7 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 		for alias in aliases {
 			if !paths_overlap(alias.path, from) { continue }
 			rest := alias.path[min(len(from), len(alias.path)):]
-			append(&out, Written_Alias{target = alias.target, at = alias.at, path = prov_concat_path(graph, to, rest)})
+			append(&out, Written_Alias{target = alias.target, at = alias.at, path = prov_concat_path(graph, to, rest), loaded = alias.loaded})
 		}
 		if uncertain {
 			append(&out, Written_Alias{path = to})

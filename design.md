@@ -3773,7 +3773,9 @@ for every iterable:
 `indexed()` and `reversed()` work in both [modes](#traversal-modes) and nest
 where the underlying traversal supplies the required direction. Over a mutable
 view each is a mutable view, holding a copy of its source; over a container, or
-a mutable view that cannot be copied, each is a read-only view. `copied()` turns a borrowed leaf into an owned one, cloning
+a mutable view that cannot be copied, each is a read-only view. Such a copy of a source
+that owns something is a [copy site](#copy-cost-diagnostics), unless a `foreach` is
+written directly over the adapter, which makes none. `copied()` turns a borrowed leaf into an owned one, cloning
 it with the element's own copy hook, allocator selection, and failure behavior;
 a loop never copies an element on its own. An already-owned leaf passes through
 uncloned. It rejects a non-copyable borrowed leaf and an `&mut` leaf.

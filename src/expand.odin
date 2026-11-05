@@ -293,6 +293,7 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 	}
 	if call, is_call := iterable.(^Expr_Call); is_call {
 		if sym := symbol_of(k.c, call.resolution.chosen_overload); sym != nil && sym.synth == .Adapter_View {
+			call.adapter_peeled = true
 			elements, _, ok := fold_static_iterable(k, call.bound[0])
 			if !ok { return nil, INVALID_TYPE, false }
 			element_type := associated_type_of(k, type, "Element")

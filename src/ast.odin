@@ -253,6 +253,9 @@ Expr_Call :: struct {
 	// nil when that is parameter order.
 	bound_order: []int,
 	operation: Call_Operation,
+	// A `foreach` took this adapter's call apart, so its view is never made
+	// (`peel_resolved_adapter`).
+	adapter_peeled: bool,
 	// The members overload resolution chose among, when there were several; only
 	// diagnostics read it.
 	overload_members: []Symbol_Id,

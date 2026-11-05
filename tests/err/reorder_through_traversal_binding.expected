@@ -1,0 +1,18 @@
+L0641
+@13:23
+`twos` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@20:2
+`twos` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@28:18
+`two` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@37:2
+`twos` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@43:23
+`twos` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@45:2
+`twos` cannot be used here: a mutable reborrow of it is still in use

@@ -99,7 +99,7 @@ L0512
 `x` cannot be assigned here: a mutable pointer of it is still in use
 L0641
 @326:2
-`mixed` cannot be used here: a mutable reborrow of it is still in use
+`mixed` cannot be used here: a read-only reborrow of it is still in use
 L0641
 @336:12
 `links` cannot be used here: a mutable reborrow of it is still in use

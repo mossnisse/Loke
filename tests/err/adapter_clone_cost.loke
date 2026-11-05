@@ -1,0 +1,50 @@
+// design.md "Iteration adapters": an adapter's view keeps its own clone of a mutable view
+// that owns something, which is reported as any other clone that may allocate. A loop
+// that takes the adapter apart makes no view, and clones nothing.
+package main;
+
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+Owning :: struct { owned: [dynamic]int }
+impl Owning {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {0}; }
+	iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+
+stored :: proc() {
+	source := Owning{};
+	view := source.indexed();
+	_ = view;
+}
+
+in_a_loop :: proc() {
+	source := Owning{};
+	for (i := 0; i < 2; i += 1) {
+		view := source.copied();
+		_ = view;
+	}
+}
+
+passed_to_a_loop_stored :: proc() {
+	source := Owning{};
+	view := source.copied();
+	foreach (element in view) { _ = element; }
+}
+
+// A plain list is borrowed, and a peeled adapter is not made.
+peeled :: proc() {
+	source := Owning{};
+	foreach (element, index in source.indexed()) { _ = element; _ = index; }
+	list := [dynamic]int{1, 2};
+	foreach (element in list.reversed()) { _ = element; }
+	view := list.indexed();
+	_ = view;
+}
+
+// A diagnostic case needs an error to report beside its warnings.
+mismatched :: proc() -> int { return "text"; }
+
+main :: proc() {}

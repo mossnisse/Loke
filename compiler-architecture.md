@@ -540,7 +540,9 @@ Keep these contracts:
   But the reborrow it took from the place it read is `Prov_Reborrow.moved`: a walk
   starting at that place passes over it, as what the place holds afterwards is
   another carrier, and a walk reaching the place follows it. Reads of the statement
-  come before its writes, so a later read of a target finds the old value too.
+  come before its writes, so a later read of a target finds the old value too. A `&mut`
+  traversal's binding is the element, so what its read of the elements took
+  (`Prov_Reborrow.names_element`) does not go on with a carrier moved through it.
 - **Storing a carrier back links nothing.** Storing what a place holds into that
   place leaves it as it is, and one read from below it, as `list.next^.next` for
   `list.next` (`prov_reads_below`), replaces the carrier it was read through, so
@@ -599,7 +601,10 @@ Keep these contracts:
   `WRITTEN_ALIAS_DEPTH`, as a store may read its own copy. Nothing writes a record
   parameter passed by value, so its row's path starts at the carrier the store went
   through (`prov_parameter_carrier_path`), and a call lands the row only where the
-  argument's carrier there leads (`prov_contents_held_at`). A swap or sort records a copy of any
+  argument's carrier there leads (`prov_contents_held_at`). A read below what a
+  parameter names has no path in it (`Written_Alias.loaded`), so it takes the parameter's
+  whole region, which a call substitutes with all its argument's carriers reach
+  (`prov_reached_regions`). A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
   so it is no store through a carrier to check.

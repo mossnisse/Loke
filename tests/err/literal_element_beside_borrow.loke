@@ -1,0 +1,55 @@
+// design.md "Places and overlap": a borrow taken by one element of a literal lasts until
+// the literal is built, so a later element may not read or write what it lends, whichever
+// comes first. Written as statements, or as a call's arguments, these are rejected too.
+package main;
+
+import "core:fmt";
+
+Mixed :: struct { a: ^mut int, b: ^int }
+Reversed :: struct { b: ^int, a: ^mut int }
+Value_Beside :: struct { a: ^mut int, b: int }
+Owner_Beside :: struct { a: ^mut [dynamic]int, b: ^[dynamic]int }
+Measured :: struct { a: ^mut [dynamic]int, count: int }
+
+mutable_then_read_only :: proc() {
+	n := 7;
+	mixed := Mixed{&mut n, &n};
+	mixed.a^ = 1;
+	fmt.println(mixed.b^);
+}
+
+read_only_then_mutable :: proc() {
+	n := 7;
+	mixed := Reversed{&n, &mut n};
+	mixed.a^ = 1;
+	fmt.println(mixed.b^);
+}
+
+mutable_then_value :: proc() {
+	n := 7;
+	mixed := Value_Beside{&mut n, n};
+	mixed.a^ = 1;
+	fmt.println(mixed.b);
+}
+
+// This one read freed storage when it compiled.
+growing_beside_a_view :: proc() {
+	d := make([dynamic]int, 1);
+	mixed := Owner_Beside{&mut d, &d};
+	mixed.a^.append(1);
+	fmt.println(mixed.b^[0]);
+}
+
+measured_beside :: proc() {
+	d := make([dynamic]int, 1);
+	mixed := Measured{&mut d, d.len()};
+	mixed.a^.append(mixed.count);
+}
+
+in_an_array :: proc() {
+	n := 7;
+	both := [2]^int{&mut n, &n};
+	fmt.println(both[0]^);
+}
+
+main :: proc() {}

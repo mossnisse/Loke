@@ -398,6 +398,9 @@ Prov_Slot :: struct {
 	// Read by a reordering, or handed back by a container's removal, whose reborrow
 	// of what it read is a move (`Prov_Reborrow.moved`).
 	moved_out:      bool,
+	// Holds an element a `&mut` traversal's binding names, loaded through a mutable
+	// view; what it reborrows is `Prov_Reborrow.names_element`.
+	names_element:  bool,
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
@@ -508,6 +511,10 @@ Prov_Reborrow :: struct {
 	// the next element there, so `source` is not suspended, while what `source` was
 	// itself derived from goes on to where the carrier went.
 	moved: bool,
+	// A `&mut` traversal's read of the elements it walks. Its binding is the element,
+	// not a copy of it, so a reordering through the binding moves the carrier stored in
+	// the element, and what it moves holds nothing of this read (`run_links_held_event`).
+	names_element: bool,
 }
 
 // A loan of `place`, reached through carriers, at `path` below their pointee
@@ -650,6 +657,8 @@ Prov_Solve :: struct {
 	// through (`Prov_Reborrow.via`), and those each `store_id` makes.
 	links_into:     [][dynamic]int,
 	links_via:      [][dynamic]int,
+	// A bit per reborrow that is `names_element`.
+	links_naming_element: []u8,
 	links_of_store: [][dynamic]int,
 	// Whether a definition of a reborrow's derived slot names its source. One that none
 	// does, as a capture's copy of what its source derives from, is made by each of them.
@@ -2113,6 +2122,12 @@ index_links :: proc(state: ^Prov_Solve) {
 	state.links_into = make([][dynamic]int, state.slots)
 	state.links_via = make([][dynamic]int, state.slots)
 	state.link_is_named = make([]bool, len(graph.reborrows))
+	state.links_naming_element = make([]u8, state.link_row_bytes, graph.alloc)
+	for reborrow, index in graph.reborrows {
+		if reborrow.names_element {
+			bit_mark(state.links_naming_element, index)
+		}
+	}
 	stores := 0
 	for link, index in graph.reborrows {
 		append(&state.links_into[link.derived], index)
@@ -2221,7 +2236,14 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 			if link.from_store > 0 || state.link_is_named[index] && !slice.contains(event.sources, link.source) {
 				continue
 			}
-			bytes_or(value, state.link_rows.rows[held[link.source]])
+			from := state.link_rows.rows[held[link.source]]
+			if link.moved {
+				for byte, at in from {
+					value[at] |= byte &~ state.links_naming_element[at]
+				}
+			} else {
+				bytes_or(value, from)
+			}
 			bit_mark(value, index)
 		}
 		// What was loaded through this carrier and is stored back, as `cur = cur^.next`,
@@ -3044,6 +3066,7 @@ publish_into_loan :: proc(state: ^Prov_Solve, reach: []u8, loan_index: int, even
 				}
 			}
 			publish_into_caller(state, reach, landing, loan, event.path, INVALID_TYPE, carrier_loss, INVALID_TYPE, by_type)
+			return
 		}
 	} else if element, names_element := event.store.(Prov_Element_Slots); names_element && one && Loan_Id(loan_index) == element.loan {
 		if publish_into_caller(state, reach, element.slots, loan, event.path, stored, carrier_loss, linked, by_type) {

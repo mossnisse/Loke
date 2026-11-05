@@ -1,0 +1,27 @@
+// design.md "Places and overlap": a literal's elements may borrow apart from each other, and
+// read what the borrow does not reach.
+package main;
+
+import "core:fmt";
+
+Mixed :: struct { a: ^mut int, b: ^int }
+Pair :: struct { x: int, y: int }
+Fields :: struct { a: ^mut int, b: ^int, c: int }
+Read_Only :: struct { a: ^int, b: ^int, c: int }
+
+main :: proc() {
+	n := 1;
+	m := 2;
+	apart := Mixed{&mut n, &m};
+	apart.a^ = apart.b^ + 1;
+	fmt.println(n, m);
+
+	pair := Pair{3, 4};
+	fields := Fields{&mut pair.x, &pair.y, pair.y};
+	fields.a^ = fields.b^ + fields.c;
+	fmt.println(pair.x, pair.y);
+
+	// Read-only borrows and reads of one place sit together.
+	shared := Read_Only{&n, &n, n};
+	fmt.println(shared.a^ + shared.b^ + shared.c);
+}

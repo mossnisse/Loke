@@ -1,0 +1,18 @@
+L0641
+@22:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@31:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@40:2
+`fresh` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@47:2
+`m` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@54:7
+`two` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:7
+`two` cannot be used here: a mutable reborrow of it is still in use

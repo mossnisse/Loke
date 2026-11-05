@@ -1,0 +1,18 @@
+L0511
+@16:25
+this read of `n` is not compatible with the mutable pointer of it that is still in use
+L0511
+@23:24
+this write of `n` is not compatible with the read-only pointer of it that is still in use
+L0511
+@30:32
+this read of `n` is not compatible with the mutable pointer of it that is still in use
+L0511
+@38:32
+this read of `d` is not compatible with the mutable pointer of it that is still in use
+L0511
+@45:28
+this read of `d` is not compatible with the mutable pointer of it that is still in use
+L0511
+@51:26
+this read of `n` is not compatible with the mutable pointer of it that is still in use

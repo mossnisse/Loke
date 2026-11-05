@@ -14,6 +14,9 @@ Written_Alias :: struct {
 	target: Storage_Id,
 	at:     []Proj_Step,
 	path:   []Proj_Step,
+	// `target` is a parameter standing for what its carriers lead to, reached by a load
+	// through it, and not the storage it names itself: `at` says nothing of where.
+	loaded: bool,
 }
 
 // Region field shapes also stop here. A recursive cursor can keep extending its
@@ -47,7 +50,7 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place
 			known ||= seen.target == alias.target && prov_same_path(seen.at, alias.at) && prov_same_path(seen.path, path)
 		}
 		if !known {
-			append(&out, Written_Alias{target = alias.target, at = alias.at, path = path})
+			append(&out, Written_Alias{target = alias.target, at = alias.at, path = path, loaded = alias.loaded})
 		}
 	}
 	return out[:]
@@ -224,10 +227,19 @@ prov_load_aliases :: proc(graph: ^Flow_Graph, targets: []Written_Alias, path: []
 			continue
 		}
 		loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, path))
+		for &alias in loaded {
+			alias.loaded ||= prov_target_stands_for_caller(graph, alias.target)
+		}
 		if len(loaded) == 0 && unknown { append(&out, Written_Alias{})
 		} else { append(&out, ..loaded) }
 	}
 	return out[:]
+}
+
+// A record a parameter takes by value: its own storage is nothing the caller can see.
+@(private)
+prov_parameter_is_record_by_value :: proc(c: ^Compiler, mode: Param_Mode, type: Type_Id) -> bool {
+	return mode == .Value && !type_is_carrier(c, type)
 }
 
 // design.md "Minimum provenance precision": which of its carriers a read at `path`
@@ -238,7 +250,7 @@ prov_load_aliases :: proc(graph: ^Flow_Graph, targets: []Written_Alias, path: []
 // whose paths say where in it the body wrote, so it has no such path.
 @(private = "file")
 prov_parameter_carrier_path :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Step) -> []Proj_Step {
-	if !sym.immutable || sym.mode == .Inout || type_is_carrier(c, sym.type) {
+	if !prov_parameter_is_record_by_value(c, sym.mode, sym.type) {
 		return nil
 	}
 	for length in 1 ..< len(path) {
@@ -249,9 +261,17 @@ prov_parameter_carrier_path :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Ste
 	return path
 }
 
+// Whether `target` is a writable parameter, which holds no aliases of its own.
+@(private = "file")
+prov_target_stands_for_caller :: proc(graph: ^Flow_Graph, target: Storage_Id) -> bool {
+	sym := symbol_of(graph.k.c, prov_storage(graph, target).key.symbol)
+	return sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym)
+}
+
 @(private)
 prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj_Step) -> []Written_Alias {
-	if sym := symbol_of(graph.k.c, prov_storage(graph, id).key.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
+	if prov_target_stands_for_caller(graph, id) {
+		sym := symbol_of(graph.k.c, prov_storage(graph, id).key.symbol)
 		return slice.clone([]Written_Alias{{target = id, at = prov_parameter_carrier_path(graph.k.c, sym, path)}}, graph.alloc)
 	}
 	out := make([dynamic]Written_Alias, 0, 2, graph.alloc)
@@ -271,7 +291,7 @@ prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj
 		if len(alias.path) > len(path) {
 			rest = alias.path[len(path):]
 		}
-		append(&out, Written_Alias{target = alias.target, at = alias.at, path = rest})
+		append(&out, Written_Alias{target = alias.target, at = alias.at, path = rest, loaded = alias.loaded})
 	}
 	return out[:]
 }
@@ -310,7 +330,7 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Val
 		if !paths_overlap(alias.path, source) { continue }
 		rest := alias.path[min(len(source), len(alias.path)):]
 		prov_add_written_alias(graph, local, Written_Alias{target = alias.target, at = alias.at,
-		                       path = prov_concat_path(graph, prefix, rest)})
+		                       path = prov_concat_path(graph, prefix, rest), loaded = alias.loaded})
 	}
 }
 
@@ -338,8 +358,9 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 		}
 	}
 	existing := graph.written_aliases[local]
-	for known in existing {
+	for &known in existing {
 		if known.target == alias.target && prov_same_path(known.at, alias.at) && prov_same_path(known.path, alias.path) {
+			known.loaded ||= alias.loaded
 			return
 		}
 	}
@@ -349,6 +370,7 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 		target = alias.target,
 		at     = slice.clone(alias.at, graph.alloc),
 		path   = slice.clone(alias.path, graph.alloc),
+		loaded = alias.loaded,
 	}
 	graph.written_aliases[local] = grown
 }

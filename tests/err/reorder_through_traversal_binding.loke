@@ -1,0 +1,49 @@
+// design.md "Weakening and reborrows": what a binding copies out of an element still
+// reborrows that element's carrier, whether or not the loop reorders them too.
+package main;
+
+Node :: struct { value: int }
+Two :: struct { a: ^mut Node, b: ^mut Node }
+
+flip :: proc() -> bool { return true; }
+
+// A copy kept beside a reordering on another path.
+copied_on_another_path :: proc(twos: []mut Two, @(escape=stored) outer: ^mut Node) {
+	kept := outer;
+	foreach (&mut two in twos) {
+		if (flip()) {
+			kept = two.b;
+		} else {
+			two.a, two.b = two.b, two.a;
+		}
+	}
+	twos[0].b^.value = 1;
+	kept^.value = 2;
+}
+
+// Copied before the reordering, which then reads what the copy reborrows.
+copied_first :: proc(twos: []mut Two) {
+	foreach (&mut two in twos) {
+		kept := two.b;
+		two.a, two.b = two.b, two.a;
+		kept^.value = 1;
+	}
+}
+
+// A plain copy out of the element, with no reordering.
+copied_out :: proc(twos: []mut Two, @(escape=stored) outer: ^mut Node) {
+	kept := outer;
+	foreach (&mut two in twos) { kept = two.a; }
+	twos[0].a^.value = 1;
+	kept^.value = 2;
+}
+
+// What is stored there and copied stays two paths to one node.
+not_a_reordering :: proc(twos: []mut Two) {
+	foreach (&mut two in twos) { two.a = two.b; }
+	node := twos[0].a;
+	twos[0].b^.value = 1;
+	node^.value = 2;
+}
+
+main :: proc() {}

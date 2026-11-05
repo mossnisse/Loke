@@ -331,7 +331,7 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 	for id, aliases in graph.written_aliases {
 		copied := make([]Written_Alias, len(aliases), allocator)
 		for alias, index in aliases {
-			copied[index] = Written_Alias{target = alias.target, at = slice.clone(alias.at, allocator), path = slice.clone(alias.path, allocator)}
+			copied[index] = Written_Alias{target = alias.target, at = slice.clone(alias.at, allocator), path = slice.clone(alias.path, allocator), loaded = alias.loaded}
 		}
 		carry.written_aliases[id] = copied
 	}
@@ -1106,8 +1106,41 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 		root := prov_root_for_storage(graph, alias.target)
 		region_merge(&out, prov_region_content_at(graph, root, prov_concat_path(graph, alias.at, below), query))
 		prov_add_received_allocator(graph, &out, root, type)
+		// Read below what the parameter names, so no path of it says what this holds:
+		// it stands for what the whole argument reaches (`prov_reached_regions`).
+		if direct, found := graph.region_of[graph.roots[int(root)].symbol]; found && alias.loaded {
+			region_merge(&out, direct)
+		}
 	}
 	return out, known
+}
+
+// design.md "Allocator regions and region provenance": a parameter's region at a call
+// stands for what the body may read of its argument, which is what the carriers it holds
+// lead to as well as what it names, at every load below.
+@(private = "file")
+prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id) -> Region_Set {
+	out := Region_Set{}
+	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
+	walk :: proc(graph: ^Flow_Graph, target: Storage_Id, at: []Proj_Step, seen: ^[dynamic]Written_Alias_Visit, out: ^Region_Set) {
+		if target == 0 {
+			return
+		}
+		bounded, first := prov_first_alias_visit(seen, target, at, false)
+		if !first {
+			return
+		}
+		region_merge(out, prov_region_content_at(graph, prov_root_for_storage(graph, target), bounded, .All))
+		for carrier in carrier_shape(graph.k.c, prov_type_at(graph.k.c, prov_storage(graph, target).type, bounded)) {
+			for alias in prov_written_aliases_of(graph, target, prov_concat_path(graph, bounded, carrier.steps)) {
+				walk(graph, alias.target, alias.at, seen, out)
+			}
+		}
+	}
+	for alias in prov_value_aliases(graph, argument) {
+		walk(graph, alias.target, alias.at, &seen, &out)
+	}
+	return out
 }
 
 // design.md "@(allocator_reset)": an allocator read through a carrier of unknown
@@ -1644,6 +1677,7 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, summary
 		if argument != 0 {
 			region_merge(out, prov_storage_region(graph, argument))
 			region_merge(out, prov_provider_viewed_by(graph, argument))
+			region_merge(out, prov_reached_regions(graph, argument))
 		}
 	}
 	params := summary.params

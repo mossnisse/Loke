@@ -66,6 +66,12 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, event: Prov_Event, rearran
 		}
 		return false
 	}
+	// A body that leaves only read-only carriers there weakened what it copied, so what
+	// came of it suspends no read of the carrier it came from.
+	copies_mutable := event.rearranged.any
+	for moved in event.rearranged.types {
+		copies_mutable ||= carrier_is_mutable(c, moved)
+	}
 	for candidate in rearranged {
 		entry := graph.prov_slots[candidate]
 		sym := symbol_of(c, entry.symbol)
@@ -78,7 +84,7 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, event: Prov_Event, rearran
 		}
 		if may_hold(c, type, event.rearranged) {
 			// Only a mutable one suspends a read of it.
-			mutable := type == INVALID_TYPE || carrier_is_mutable(c, type)
+			mutable := copies_mutable && (type == INVALID_TYPE || carrier_is_mutable(c, type))
 			append(&graph.reborrows, Prov_Reborrow{source = candidate, derived = hub, span = event.span, mutable = mutable})
 			append(&graph.reborrows, Prov_Reborrow{source = hub, derived = candidate, span = event.span, mutable = true})
 		}
