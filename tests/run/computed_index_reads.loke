@@ -1,0 +1,25 @@
+// design.md "Weakening and reborrows": an index that runs nothing of the program only
+// reads, so two elements of a mutable view of non-copyable elements can be read beside
+// each other however the index is computed.
+package main;
+
+import "core:fmt";
+
+@(move_only) Job :: struct { d: int }
+Pick :: struct { at: int, xs: [2]int }
+
+less :: proc(left, right: Job) -> bool { return left.d < right.d; }
+
+named :: proc(values: []mut Job) -> bool { a := 0; b := 1; return less(values[a], values[b]); }
+computed :: proc(values: []mut Job) -> bool { x := 1; return less(values[x - 1], values[x]); }
+converted :: proc(values: []mut Job) -> bool { x: u8 = 1; return less(values[int(x) - 1], values[int(x)]); }
+indexed :: proc(values: []mut Job) -> bool { at := [2]int{0, 1}; return less(values[at[0]], values[at[1]]); }
+fielded :: proc(values: []mut Job, pick: Pick) -> bool { return less(values[pick.xs[0] + pick.at], values[pick.xs[1]]); }
+measured :: proc(values: []mut Job) -> bool { return less(values[values.len() - 1], values[0]); }
+chosen :: proc(values: []mut Job, flag: bool) -> bool { return less(values[0 if flag else 1], values[1 if flag else 0]); }
+
+main :: proc() {
+	jobs := [3]Job{Job{1}, Job{2}, Job{3}};
+	fmt.println(named(&mut jobs[:]), computed(&mut jobs[:]), converted(&mut jobs[:]));
+	fmt.println(indexed(&mut jobs[:]), fielded(&mut jobs[:], Pick{0, {0, 1}}), measured(&mut jobs[:]), chosen(&mut jobs[:], true));
+}

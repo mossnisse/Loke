@@ -395,14 +395,14 @@ behavioral controls for all of it.
 
 | Concept | Owner |
 | --- | --- |
-| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
+| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, the reborrow a loaded copy takes, and whether an index may write what it indexes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded`, `prov_expr_may_write` in `cfg_provenance.odin` |
 | Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | What a block keeps of the solver's tables, in pages shared with its neighbors, and each row of reaching loans or reborrows once | `block_table_take`, `reach_row_written`, `reach_settle`, `reach_load`, `Interned_Rows` in `borrow_tables.odin` |
 | What a load reads below the storage its carriers name, where one points below the whole of it | `prov_load_places`, `Prov_Event.load_places`, `load_pointee_content` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `cfg_provenance.odin`; `prov_link_retained` in `provenance_retention.odin` |
 | What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
-| Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content` |
+| Written-argument regions, by parameter and by path, and by which carrier of a record passed by value | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content`, `prov_parameter_carrier_path`, `prov_contents_held_at` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
@@ -595,7 +595,11 @@ Keep these contracts:
   Written-argument summaries keep the owners' part apart from allocator
   handles (`Written_Summary.owners`) and keep each part at the path the body
   wrote (`Written_Summary.content`); a copy within one argument is a copy
-  entry the call resolves in its caller. A swap or sort records a copy of any
+  entry the call resolves in its caller, its source's path stopping at
+  `WRITTEN_ALIAS_DEPTH`, as a store may read its own copy. Nothing writes a record
+  parameter passed by value, so its row's path starts at the carrier the store went
+  through (`prov_parameter_carrier_path`), and a call lands the row only where the
+  argument's carrier there leads (`prov_contents_held_at`). A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
   so it is no store through a carrier to check.

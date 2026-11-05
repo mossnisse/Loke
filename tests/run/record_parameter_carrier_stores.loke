@@ -1,0 +1,97 @@
+// design.md "Minimum provenance precision": a store through one carrier of a record
+// passed by value lands only where the argument's carrier at that field leads, so a
+// reset of what was stored there says nothing of the sibling's target.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
+Outer :: struct { pair: Pair }
+Items :: struct { values: [dynamic]int }
+Carriers :: struct { first: ^mut Items, second: ^mut Items }
+
+store_second :: proc(pair: Pair, allocator: mem.Allocator) { pair.second^ = make([dynamic]int, 1, allocator); }
+forward :: proc(pair: Pair, allocator: mem.Allocator) { store_second(pair, allocator); }
+through_local :: proc(pair: Pair, allocator: mem.Allocator) {
+	second := pair.second;
+	second^ = make([dynamic]int, 1, allocator);
+}
+nested :: proc(outer: Outer, allocator: mem.Allocator) { outer.pair.second^ = make([dynamic]int, 1, allocator); }
+field_below :: proc(carriers: Carriers, allocator: mem.Allocator) {
+	carriers.second^.values = make([dynamic]int, 1, allocator);
+}
+
+from_literal :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	store_second(Pair{&mut a, &mut b}, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+
+from_named :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 2, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	pair := Pair{&mut a, &mut b};
+	store_second(pair, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+
+forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 3, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	forward(Pair{&mut a, &mut b}, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+
+copied_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 4, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	through_local(Pair{&mut a, &mut b}, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+
+nested_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 5, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	nested(Outer{Pair{&mut a, &mut b}}, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+
+field_of_target :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := Items{make([dynamic]int, 6, kept.allocator())};
+	b := Items{make([dynamic]int, 0, kept.allocator())};
+	field_below(Carriers{&mut a, &mut b}, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.values.len();
+}
+
+main :: proc() {
+	arena_buffer := [1024]u8{};
+	arena := mem.Arena.from_buffer(&mut arena_buffer[:]);
+	fmt.println(from_literal(arena.allocator()), from_named(arena.allocator()), forwarded(arena.allocator()));
+	fmt.println(copied_local(arena.allocator()), nested_record(arena.allocator()), field_of_target(arena.allocator()));
+}

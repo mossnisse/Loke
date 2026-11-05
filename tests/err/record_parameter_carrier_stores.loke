@@ -1,0 +1,123 @@
+// design.md "Minimum provenance precision": a store through one carrier of a record
+// passed by value still reaches what the argument's carrier at that field leads to.
+package main;
+
+import "core:mem";
+
+Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
+Items :: struct { values: [dynamic]int }
+Carriers :: struct { first: ^mut Items, second: ^mut Items }
+Node :: struct { next: ^mut [dynamic]int }
+Chain :: struct { head: ^mut Node, other: ^mut Node }
+Holder :: struct { allocator: mem.Allocator }
+Handles :: struct { first: ^mut Holder, second: ^mut Holder }
+Reader :: struct { holder: ^Holder }
+Owned :: struct { items: [dynamic]int, out: ^mut [dynamic]int }
+
+store_second :: proc(pair: Pair, allocator: mem.Allocator) { pair.second^ = make([dynamic]int, 1, allocator); }
+forward :: proc(pair: Pair, allocator: mem.Allocator) { store_second(pair, allocator); }
+cross_field :: proc(handles: Handles) { handles.first^.allocator = handles.second^.allocator; }
+cross_whole :: proc(handles: Handles) { handles.first^ = handles.second^; }
+make_through :: proc(reader: Reader) -> [dynamic]int { return make([dynamic]int, 1, reader.holder^.allocator); }
+leave_items :: proc(owned: Owned) { owned.out^ = owned.items; }
+field_below :: proc(carriers: Carriers, allocator: mem.Allocator) {
+	carriers.second^.values = make([dynamic]int, 1, allocator);
+}
+two_loads :: proc(chain: Chain, allocator: mem.Allocator) { chain.head^.next^ = make([dynamic]int, 1, allocator); }
+
+from_literal :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	store_second(Pair{&mut a, &mut b}, allocator);
+	free_all(allocator);
+	return b[0];
+}
+
+from_named :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	pair := Pair{&mut a, &mut b};
+	store_second(pair, allocator);
+	free_all(allocator);
+	return b[0];
+}
+
+forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	forward(Pair{&mut a, &mut b}, allocator);
+	free_all(allocator);
+	return b[0];
+}
+
+// An allocator read through a carrier the record holds is one the analysis cannot name,
+// whether it is the field, the whole record holding it, or a result made from it.
+field_crossed :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := Holder{kept.allocator()};
+	b := Holder{allocator};
+	cross_field(Handles{&mut a, &mut b});
+	d := make([dynamic]int, 1, a.allocator);
+	free_all(allocator);
+	return d[0];
+}
+
+whole_crossed :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := Holder{kept.allocator()};
+	b := Holder{allocator};
+	cross_whole(Handles{&mut a, &mut b});
+	d := make([dynamic]int, 1, a.allocator);
+	free_all(allocator);
+	return d[0];
+}
+
+result_through_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	b := Holder{allocator};
+	d := make_through(Reader{&b});
+	free_all(allocator);
+	return d[0];
+}
+
+// What the record itself owned, left through its carrier.
+owned_left :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	leave_items(Owned{make([dynamic]int, 1, allocator), &mut a});
+	free_all(allocator);
+	return a[0];
+}
+
+field_of_target :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := Items{make([dynamic]int, 1, kept.allocator())};
+	b := Items{make([dynamic]int, 1, kept.allocator())};
+	field_below(Carriers{&mut a, &mut b}, allocator);
+	free_all(allocator);
+	return b.values[0];
+}
+
+// Stored through a carrier reached through the first, below the record.
+two_levels :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	d := make([dynamic]int, 1, kept.allocator());
+	spare := make([dynamic]int, 1, kept.allocator());
+	head := Node{&mut d};
+	other := Node{&mut spare};
+	two_loads(Chain{&mut head, &mut other}, allocator);
+	free_all(allocator);
+	return d[0];
+}
+
+main :: proc() {}

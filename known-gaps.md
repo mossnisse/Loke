@@ -7,26 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A computed index is refused beside a second read of a mutable slice
-
-Two elements of a `[]mut T` of non-copyable elements passed to read-only parameters
-are `L0641` when the first index is computed, though nothing is written and the same
-call with named indices is accepted. It does not happen for copyable elements such as
-`int`, or for a read-only `[]T` or a `[dynamic]T`.
-
-```loke
-package main;
-@(move_only) Job :: struct { d: int }
-less :: proc(left, right: Job) -> bool { return left.d < right.d; }
-accepted :: proc(values: []mut Job) -> bool { a := 0; b := 1; return less(values[a], values[b]); }
-rejected :: proc(values: []mut Job) -> bool { x := 1; return less(values[x - 1], values[x]); } // L0641; should be accepted
-main :: proc() {}
-```
-
-Reading through a helper that takes `[]T` avoids it. Found on 2026-11-05 at
-`990612d0` while writing [heap sifting](standard-library.md#heaps), which reads through such a
-helper (P3, over-rejection).
-
 ### A long literal can still overflow the stack at `-opt=none`
 
 A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
@@ -88,37 +68,39 @@ main :: proc() {}
 
 Found on 2026-11-05 while narrowing the first load (P3).
 
-### A store through one field of a record parameter blames the sibling field's target at the call
+### A store through one carrier of a record behind a pointer parameter blames the sibling's target
 
 [Minimum provenance precision](design.md#minimum-provenance-precision) keeps a record's carrier
-leaves apart, and one body does: the same store written in the caller, through `pair.second^` or a
-local `s := pair.second`, lands only in `b`, so this program is accepted. Across a call it is
-rejected with L0537 naming `a`, because `prov_written_aliases_of` in
-[src/provenance_aliases.odin](src/provenance_aliases.odin) answers a parameter's written target
-without the path of the carrier reached, and the summary row's paths are then applied below every
-target of the argument:
+leaves apart. A record passed by value does across a call (`prov_parameter_carrier_path` in
+[src/provenance_aliases.odin](src/provenance_aliases.odin)), as its own storage is never written, so a
+summary row's path can only name the carrier it went through. Behind a pointer or `inout`, the row's
+path says where in the caller's storage the body wrote, so a store through a carrier held there is
+recorded at the whole of it, and reaches every carrier the argument holds. This is rejected with L0537
+naming `a`, though the store lands only in `b`:
 
 ```loke
 package main;
 import "core:mem";
 Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
-store_second :: proc(pair: Pair, allocator: mem.Allocator) {
-    pair.second^ = make([dynamic]int, 1, allocator);
+store_second :: proc(pair: ^Pair, allocator: mem.Allocator) {
+    pair^.second^ = make([dynamic]int, 1, allocator);
 }
 caller :: proc(@(allocator_reset) allocator: mem.Allocator) {
     buffer := [64]u8{};
     kept := mem.Arena.from_buffer(&mut buffer[:]);
-    a := make([dynamic]int, 0, kept.allocator());
+    a := make([dynamic]int, 1, kept.allocator());
     b := make([dynamic]int, 0, kept.allocator());
-    store_second(Pair{&mut a, &mut b}, allocator);
+    pair := Pair{&mut a, &mut b};
+    store_second(&pair, allocator);
     drop(b);
-    free_all(allocator);
+    free_all(allocator); // L0537 for `a`; should be accepted
     _ = a[0];
 }
 main :: proc() {}
 ```
 
-Found on 2026-11-03 (P3): the rejection errs on the safe side.
+Telling them apart needs a row to keep the carrier it went through beside the path below it. Found on
+2026-11-03 (P3): the rejection errs on the safe side.
 
 ### A hook in a `when` on a later constant comes too late for a record already used
 

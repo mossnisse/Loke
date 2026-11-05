@@ -1234,7 +1234,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 	held := make([dynamic]int, 0, len(v.elements), graph.alloc)
 	last_write := -1
 	for element, index in v.elements {
-		if prov_expr_may_write(element.key) || prov_expr_may_write(element.value) {
+		if prov_expr_may_write(graph.k.c, element.key) || prov_expr_may_write(graph.k.c, element.value) {
 			last_write = index
 		}
 	}
@@ -1244,7 +1244,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 			prov_hold_owner(graph, element.key)
 			// The key is evaluated before its own value, which may write what it
 			// read, as may a later element.
-			if len(loans) > 0 && (prov_expr_may_write(element.value) || index < last_write) {
+			if len(loans) > 0 && (prov_expr_may_write(graph.k.c, element.value) || index < last_write) {
 				loans = prov_capture(graph, loans, expr_span(element.key))
 			}
 			entry := prov_extend(graph, nil, prov_map_entry_step(graph, literal_type, element.key))
@@ -1321,9 +1321,53 @@ prov_element_type :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, type: Type_Id,
 	return prov_type(graph, v.elements[index].value)
 }
 
-@(private = "file")
-prov_expr_may_write :: proc(e: Expr) -> bool {
-	return e != nil && !is_const_expr(e) && !is_effect_free_place(e)
+// Whether evaluating `e` may run a program's code, which could write a carrier read
+// beside it. A constant and a plain read of a place run nothing, and neither does a
+// built-in operation on scalars, whose values copy as plain bits: `xs[x - 1]` and
+// `xs[xs.len() - 1]` only read. A read of anything else may run a hook, and a map's
+// key a hash.
+@(private)
+prov_expr_may_write :: proc(c: ^Compiler, e: Expr) -> bool {
+	if e == nil || is_const_expr(e) {
+		return false
+	}
+	scalar :: proc(c: ^Compiler, e: Expr) -> bool {
+		base := expr_base(e)
+		return base != nil && type_is_panic_free_scalar(c, base.type)
+	}
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return false
+	case ^Expr_Selector:
+		return prov_expr_may_write(c, v.operand)
+	case ^Expr_Postfix:
+		return v.op != .Caret || prov_expr_may_write(c, v.operand)
+	case ^Expr_Unary:
+		return v.op == .Amp || v.resolution.kind == .User_Operator || !scalar(c, v) || !scalar(c, v.operand) ||
+		       prov_expr_may_write(c, v.operand)
+	case ^Expr_Binary:
+		return v.resolution.kind != .Builtin_Operator || !scalar(c, v) || !scalar(c, v.lhs) || !scalar(c, v.rhs) ||
+		       prov_expr_may_write(c, v.lhs) || prov_expr_may_write(c, v.rhs)
+	case ^Expr_Cond:
+		return !scalar(c, v) || prov_expr_may_write(c, v.cond) || prov_expr_may_write(c, v.then) ||
+		       prov_expr_may_write(c, v.otherwise)
+	case ^Expr_Index:
+		if v.resolution.kind == .User_Operator || len(v.bound) != 0 || !scalar(c, v) ||
+		   underlying_kind(c, expr_base(v.operand).type) == .Map {
+			return true
+		}
+		return prov_expr_may_write(c, v.operand) || prov_indices_may_write(c, v.indices)
+	case ^Expr_Call:
+		// A numeric conversion, as `int(x)`.
+		if _, converts := v.operation.(Call_Conversion); converts && len(v.args) == 1 && scalar(c, v) && scalar(c, v.args[0].value) {
+			return prov_expr_may_write(c, v.args[0].value)
+		}
+		// A built-in container's `len()` or `cap()` only reads its header.
+		if chosen := symbol_of(c, v.resolution.chosen_overload); chosen != nil && (chosen.synth == .Standard_Len || chosen.synth == .Standard_Cap) && len(v.bound) == 1 {
+			return prov_expr_may_write(c, v.bound[0])
+		}
+	}
+	return true
 }
 
 // The path one literal element's value fills: a field, an index range, or a
@@ -2762,7 +2806,7 @@ prov_read_index :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []int {
 	// An element of plain data read out of a slice local only reads the
 	// carrier (design.md "Weakening and reborrows").
 	if ident, plain := prov_plain_slice_local(graph, v.operand); plain && len(v.bound) == 0 &&
-	   !prov_indices_may_write(v.indices) {
+	   !prov_indices_may_write(graph.k.c, v.indices) {
 		carriers := prov_read_ident(graph, ident, reads_only = true)
 		for index in v.indices {
 			walk_flow_expr(graph, index)
@@ -4049,6 +4093,51 @@ prov_clone_region_content :: proc(entry: Prov_Region_Content, region: Region_Set
 	return out
 }
 
+// design.md "Minimum provenance precision": of what a call leaves in a record passed
+// by value, the rows that went through the carrier at `held` in it, each at its path
+// below where that carrier points. One copied from elsewhere in the record reads other
+// storage, so it takes what the whole argument holds, `region`, and what the `targets`
+// of the carrier it came through hold there.
+@(private = "file")
+prov_contents_held_at :: proc(graph: ^Flow_Graph, contents: []Prov_Region_Content, held: []Proj_Step, targets: []Written_Alias, region: Region_Set) -> []Prov_Region_Content {
+	out := make([dynamic]Prov_Region_Content, 0, len(contents), graph.alloc)
+	for content in contents {
+		if !paths_overlap(held, content.path) {
+			continue
+		}
+		entry := content
+		entry.path = content.path[min(len(held), len(content.path)):]
+		if from, copied := content.from.?; copied {
+			if len(from.path) >= len(held) && prov_same_path(from.path[:len(held)], held) {
+				entry.from = Prov_Region_Source{from.path[len(held):], from.query}
+			} else {
+				entry.from, entry.region = nil, prov_targets_region_at(graph, targets, from)
+				region_merge(&entry.region, region)
+			}
+		}
+		append(&out, entry)
+	}
+	return out[:]
+}
+
+// What the carriers `targets` were read from lead to at `from` in the record holding them.
+@(private = "file")
+prov_targets_region_at :: proc(graph: ^Flow_Graph, targets: []Written_Alias, from: Prov_Region_Source) -> Region_Set {
+	out := Region_Set{}
+	for target in targets {
+		if !paths_overlap(target.path, from.path) {
+			continue
+		}
+		if target.target == 0 {
+			out.unknown = true
+			continue
+		}
+		below := from.path[min(len(target.path), len(from.path)):]
+		region_merge(&out, prov_region_content_at(graph, prov_root_for_storage(graph, target.target), prov_concat_path(graph, target.at, below), from.query))
+	}
+	return out
+}
+
 // An owner written through the carriers `destination` reaches, into storage
 // this body cannot name.
 @(private)
@@ -4066,11 +4155,27 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
 	// `dst^.alloc` lands in the `alloc` field of what `dst` points at.
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, destination), suffix)
-	for alias in prov_written_targets(graph, destination) {
+	// A record's rows say which of its carriers they went through.
+	by_carrier := contents != nil && !type_is_carrier(graph.k.c, destination_type)
+	targets := prov_written_targets(graph, destination, held = by_carrier)
+	for alias in targets {
 		at := prov_concat_path(graph, alias.at, below)
-		prov_define_stored_contents(graph, prov_root_for_storage(graph, alias.target), at, region, owned, contents)
+		landed := contents
+		if by_carrier && len(alias.path) > 0 {
+			landed = prov_contents_held_at(graph, contents, alias.path, targets, region)
+			if len(landed) == 0 {
+				continue
+			}
+		}
+		prov_define_stored_contents(graph, prov_root_for_storage(graph, alias.target), at, region, owned, landed)
 		if owner == CALL_LEFT_OWNER && prov_type_reaches_mutable(graph.k.c, destination_type) {
-			prov_store_reachable_regions(graph, alias.target, at, false, region, owned, &seen)
+			if by_carrier {
+				for content in landed {
+					prov_store_reachable_regions(graph, alias.target, prov_concat_path(graph, at, content.path), false, region, owned, &seen)
+				}
+			} else {
+				prov_store_reachable_regions(graph, alias.target, at, false, region, owned, &seen)
+			}
 		}
 		sym := symbol_of(graph.k.c, prov_storage(graph, alias.target).key.symbol)
 		if !checked || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, at)) {
@@ -4439,7 +4544,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 	indices := make([dynamic]Expr, 0, 0, graph.alloc)
 	prov_segment_indices(inner, carrier, &indices)
 	// An index that may write the carrier, read after it, sees it as it was.
-	captures := prov_indices_may_write(indices[:]) && !(store && at == 0)
+	captures := prov_indices_may_write(graph.k.c, indices[:]) && !(store && at == 0)
 	only := reads_only && !captures
 	slots: []int
 	if at == len(hops) - 1 {
@@ -4448,7 +4553,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 			prov_segment_indices(carrier, nil, &own)
 			from := prov_next_event(graph)
 			slots = prov_read_carrier(graph, carrier, only)
-			if !prov_indices_may_write(own[:]) {
+			if !prov_indices_may_write(graph.k.c, own[:]) {
 				prov_note_walk_reads(graph, walk, from)
 			}
 		} else {
@@ -4531,12 +4636,11 @@ prov_reborrow_read_only :: proc(graph: ^Flow_Graph, slots: []int, span: Span) ->
 	return out[:]
 }
 
-// An index that is not a constant or a plain read may call something that
-// writes the carrier being indexed.
+// An index that may run a program's code may write the carrier being indexed.
 @(private)
-prov_indices_may_write :: proc(indices: []Expr) -> bool {
+prov_indices_may_write :: proc(c: ^Compiler, indices: []Expr) -> bool {
 	for index in indices {
-		if !is_const_expr(index) && !is_effect_free_place(index) {
+		if prov_expr_may_write(c, index) {
 			return true
 		}
 	}

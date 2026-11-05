@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- An allocator read through a carrier that a record parameter holds is one the analysis cannot name,
+  as one read from the record itself already was. `make(.., holder.target^.allocator)` with `holder`
+  a record, and a call copying one of its carriers' handles to another, had no region at all, so a
+  reset while the result was live compiled and read freed memory. These are now `L0537`. Upgrade by
+  passing the `Allocator` as a parameter of its own.
 - A value [`unsafe.take`](design.md#uninitialized-capacity) reads out keeps the
   [allocator regions](design.md#allocator-regions-and-region-provenance) it was in, as one `exchange`
   reads out does. It had none the analysis could name, so returning such a value from an arena of the
@@ -1614,6 +1619,14 @@ checklist.
 
 ### Fixed
 
+- The compiler no longer hangs on a store through a carrier held in the storage it reads from, as
+  `owned^.out^ = owned^.items`.
+- A store through one carrier of a record passed by value lands only where the argument's carrier at
+  that field leads, so a reset of what was stored no longer reports `L0537` for the sibling's target
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+- An index that runs nothing of the program only reads, however it is computed: `less(xs[i - 1], xs[i])`
+  over a `[]mut T` of move-only elements, with an arithmetic, converted, indexed, or `len()` index, is
+  no longer `L0641`.
 - A body's analysis no longer grows with blocks times slots times loans: a block keeps what changed
   in pages it shares with its neighbors, and each row of loans once. So 2000 branches that each borrow,
   which took a minute and ran out of memory at three times that, take under a second, and a chain of

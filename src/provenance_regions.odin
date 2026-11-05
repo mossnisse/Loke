@@ -85,14 +85,14 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 }
 
 // design.md "@(allocator_reset)": an allocator a parameter received inside another
-// value, as an `Option(Allocator)`'s payload or a record's field, is one the analysis
-// cannot name. Region facts merge without regard to control flow, so a write this
+// value, as an `Option(Allocator)`'s payload, a record's field, or what a carrier in
+// a record leads to, is one the analysis cannot name. Region facts merge without regard to control flow, so a write this
 // body makes there, which they record beside it, does not show the incoming one gone.
 // A parameter `prov_bind_parameters` gives a region of its own names it by that.
 @(private = "file")
 prov_add_received_allocator :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id, type: Type_Id) {
 	c := graph.k.c
-	if root == NO_ROOT || !prov_root_is_parameter(graph, root) || type_underlying(c, type) != TYPE_ALLOCATOR {
+	if root == NO_ROOT || !prov_root_is_parameter(graph, root) || !prov_holds_allocator(c, type) {
 		return
 	}
 	if !prov_type_keeps_argument_region(c, symbol_of(c, graph.roots[int(root)].symbol).type) {
@@ -481,7 +481,9 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 
 // What a read at `path` takes from a copy at `at` of the argument's content at
 // `from`: the same place below `from`, or all of `from` when the read covers
-// the copy. The wider query keeps both reads' regions.
+// the copy. The wider query keeps both reads' regions. A store through a carrier held
+// in what it reads, as `p^.out^ = p^.items`, reads its own copy, so the path stops at
+// the written-alias depth, where a cut source reads all below it, and the facts settle.
 @(private = "file")
 prov_copied_source :: proc(graph: ^Flow_Graph, from: Prov_Region_Source, at, path: []Proj_Step, query: Region_Query) -> Prov_Region_Source {
 	out := Prov_Region_Source{path = from.path, query = from.query}
@@ -492,6 +494,9 @@ prov_copied_source :: proc(graph: ^Flow_Graph, from: Prov_Region_Source, at, pat
 		out.query = .All
 	} else if query == .Owners || from.query == .Owners {
 		out.query = .Owners
+	}
+	if len(out.path) > WRITTEN_ALIAS_DEPTH {
+		out.path, out.query = out.path[:WRITTEN_ALIAS_DEPTH], .All
 	}
 	return out
 }
@@ -892,6 +897,39 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	})
 }
 
+// Whether a value of `type` holds an allocator handle anywhere in it, a record's
+// fields included, not behind a carrier.
+@(private = "file")
+prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+	if depth > REGION_SHAPE_DEPTH {
+		return true
+	}
+	if prov_carries_allocator(c, type) {
+		return true
+	}
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && prov_holds_allocator(c, sym.type, depth + 1) {
+				return true
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if variant != TYPE_VOID && prov_holds_allocator(c, variant, depth + 1) {
+				return true
+			}
+		}
+	case .Array:
+		return prov_holds_allocator(c, info.element, depth + 1)
+	}
+	return false
+}
+
 // Whether a value of `type` can depend on an allocator region: somewhere in it
 // is an owner, a view, an `Allocator`, or a provider (design.md "Allocator
 // regions and region provenance"). An `int` read out of a region-backed
@@ -1034,6 +1072,13 @@ prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		if _, _, ok := prov_value_place_of(graph, id); !ok {
 			return prov_read_region(graph, id)
 		}
+		// A carrier held in named storage views what it was set to point at.
+		viewed := INVALID_TYPE
+		if info := underlying_info(graph.k.c, prov_value(graph, id).type); info != nil {
+			viewed = info.element
+		}
+		out, known := prov_carrier_storage_regions(graph, id, nil, viewed, .All)
+		return prov_unnamed_allocator(graph, out, known, viewed)
 	}
 	return Region_Set{}
 }
@@ -1043,18 +1088,37 @@ prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 // Known targets retain field precision, including anonymous backing arrays.
 @(private = "file")
 prov_read_storage_regions :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Step, query: Region_Query) -> (Region_Set, bool) {
-	out := Region_Set{}
 	carrier := prov_place_carrier(graph, id)
-	if carrier == 0 { return out, false }
+	if carrier == 0 { return {}, false }
+	below := prov_concat_path(graph, prov_path_below_carrier(graph, id), path)
+	return prov_carrier_storage_regions(graph, carrier, below, prov_type_at(graph.k.c, prov_value(graph, id).type, path), query)
+}
+
+// What `carrier`'s known targets hold at `below`, a value of `type`, and whether every
+// target it may have is known.
+@(private = "file")
+prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, below: []Proj_Step, type: Type_Id, query: Region_Query) -> (Region_Set, bool) {
+	out := Region_Set{}
 	aliases := prov_place_aliases(graph, carrier, unresolved = false)
 	known := len(aliases) > 0
-	below := prov_concat_path(graph, prov_path_below_carrier(graph, id), path)
 	for alias in aliases {
 		if alias.target == 0 { known = false; continue }
-		region_merge(&out, prov_region_content_at(graph, prov_root_for_storage(graph, alias.target),
-		                                        prov_concat_path(graph, alias.at, below), query))
+		root := prov_root_for_storage(graph, alias.target)
+		region_merge(&out, prov_region_content_at(graph, root, prov_concat_path(graph, alias.at, below), query))
+		prov_add_received_allocator(graph, &out, root, type)
 	}
 	return out, known
+}
+
+// design.md "@(allocator_reset)": an allocator read through a carrier of unknown
+// targets, which found nothing, is one the analysis cannot name.
+@(private = "file")
+prov_unnamed_allocator :: proc(graph: ^Flow_Graph, set: Region_Set, known: bool, type: Type_Id) -> Region_Set {
+	out := set
+	if !known && region_is_empty(out) && type != INVALID_TYPE && prov_holds_allocator(graph.k.c, type) {
+		out.unknown = true
+	}
+	return out
 }
 
 @(private = "file")
@@ -1074,7 +1138,7 @@ prov_read_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		return out
 	}
 	region_merge(&out, prov_storage_region(graph, operand))
-	return out
+	return prov_unnamed_allocator(graph, out, false, prov_value(graph, id).type)
 }
 
 // A loop element is in the storage of what the loop iterates. A `&mut` leaf,

@@ -1,0 +1,26 @@
+// A store through a carrier held in the storage it reads from, as `p^.out^ = p^.items`,
+// reads its own copy. Its source's path stops at the written-alias depth, so the facts
+// settle: this once kept the compiler from finishing.
+package main;
+
+import "core:fmt";
+
+Owned :: struct { items: [dynamic]int, out: ^mut [dynamic]int }
+
+by_value :: proc(owned: Owned) { owned.out^ = owned.items; }
+by_inout :: proc(owned: inout Owned) { owned.out^ = owned.items; }
+by_pointer :: proc(owned: ^mut Owned) { owned^.out^ = owned^.items; }
+by_read_only_pointer :: proc(owned: ^Owned) { owned^.out^ = owned^.items; }
+
+main :: proc() {
+	target := make([dynamic]int, 0);
+	items := make([dynamic]int, 3);
+	by_value(Owned{items.clone(), &mut target});
+	fmt.println(target.len());
+	owned := Owned{items.clone(), &mut target};
+	by_inout(inout owned);
+	by_pointer(&mut owned);
+	by_read_only_pointer(&owned);
+	drop(owned);
+	fmt.println(target.len());
+}

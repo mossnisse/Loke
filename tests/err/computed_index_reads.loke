@@ -1,0 +1,15 @@
+// design.md "Weakening and reborrows": an index that may run the program's code may
+// write what is being indexed, so a mutable reborrow stays taken beside it.
+package main;
+
+@(move_only) Job :: struct { d: int }
+Key :: struct { at: int }
+add :: operator(+) proc(left, right: Key) -> int { return left.at + right.at; }
+
+less :: proc(left, right: Job) -> bool { return left.d < right.d; }
+pick :: proc(at: int) -> int { return at; }
+
+called :: proc(values: []mut Job) -> bool { return less(values[pick(0)], values[1]); }
+operated :: proc(values: []mut Job, key: Key) -> bool { return less(values[key + key], values[1]); }
+
+main :: proc() {}

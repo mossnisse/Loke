@@ -23,9 +23,11 @@ WRITTEN_ALIAS_DEPTH :: REGION_SHAPE_DEPTH
 
 // The storage a write through `destination` may land in, as `p^`, `p.x`, or
 // `p[i]` reach it: a parameter's, directly or through a local set from one,
-// or a local place a local carrier was set to point at.
+// or a local place a local carrier was set to point at. With `held`, each keeps
+// where in `destination` the carrier leading there is, which a record passed by
+// value tells apart (`prov_contents_held_at`).
 @(private)
-prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place := false) -> []Written_Alias {
+prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place := false, held := false) -> []Written_Alias {
 	carrier := destination
 	value := prov_value(graph, destination)
 	if as_place || !type_is_carrier(graph.k.c, value.type) {
@@ -39,12 +41,13 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place
 	}
 	out := make([dynamic]Written_Alias, 0, 2, graph.alloc)
 	for alias in prov_place_aliases(graph, carrier, unresolved = false) {
+		path := held ? alias.path : nil
 		known := false
 		for seen in out {
-			known ||= seen.target == alias.target && prov_same_path(seen.at, alias.at)
+			known ||= seen.target == alias.target && prov_same_path(seen.at, alias.at) && prov_same_path(seen.path, path)
 		}
 		if !known {
-			append(&out, Written_Alias{target = alias.target, at = alias.at})
+			append(&out, Written_Alias{target = alias.target, at = alias.at, path = path})
 		}
 	}
 	return out[:]
@@ -227,10 +230,29 @@ prov_load_aliases :: proc(graph: ^Flow_Graph, targets: []Written_Alias, path: []
 	return out[:]
 }
 
+// design.md "Minimum provenance precision": which of its carriers a read at `path`
+// of a parameter goes through, when the parameter is a record passed by value. Nothing
+// writes such a parameter's own storage, so what a body leaves there is known by the
+// carrier it went through, and a call lands it only where its argument's carrier at that
+// path leads (`prov_contents_held_at`). Any other parameter's storage is the caller's,
+// whose paths say where in it the body wrote, so it has no such path.
+@(private = "file")
+prov_parameter_carrier_path :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Step) -> []Proj_Step {
+	if !sym.immutable || sym.mode == .Inout || type_is_carrier(c, sym.type) {
+		return nil
+	}
+	for length in 1 ..< len(path) {
+		if type_is_carrier(c, prov_type_at(c, sym.type, path[:length])) {
+			return path[:length]
+		}
+	}
+	return path
+}
+
 @(private)
 prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj_Step) -> []Written_Alias {
 	if sym := symbol_of(graph.k.c, prov_storage(graph, id).key.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
-		return slice.clone([]Written_Alias{{target = id}}, graph.alloc)
+		return slice.clone([]Written_Alias{{target = id, at = prov_parameter_carrier_path(graph.k.c, sym, path)}}, graph.alloc)
 	}
 	out := make([dynamic]Written_Alias, 0, 2, graph.alloc)
 	for alias in graph.region_aliases[prov_storage(graph, id).key.symbol] {
