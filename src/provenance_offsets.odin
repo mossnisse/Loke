@@ -355,6 +355,36 @@ prov_slot_offsets :: proc(graph: ^Flow_Graph, slot: int) -> []Prov_Offset {
 	return whole
 }
 
+// design.md "Places and overlap": a load's `path` is below what its carriers point
+// at, and the storage their loans name is what a load reads. So `h^.to` after
+// `h := &mut r^.b` reads `r^.b.to`, and no other field's. Nil when they point at the
+// whole of that storage. A prefix places were merged into may be above where `path`
+// starts, so it is read whole.
+@(private)
+prov_load_places :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step) -> [][]Proj_Step {
+	pointing := false
+	for carrier in carriers {
+		pointing ||= graph.prov_slots[carrier].offsets != nil
+	}
+	if !pointing {
+		return nil
+	}
+	offsets, found, merged := prov_value_offset(graph, carriers)
+	if !found {
+		return nil
+	}
+	places := prov_offset_paths(graph, offsets)
+	if len(places) == 1 && len(places[0]) == 0 {
+		return nil
+	}
+	if !merged {
+		for &place in places {
+			place = prov_concat_path(graph, place, path)
+		}
+	}
+	return places
+}
+
 // The places of `offsets`, apart from which storage each was reached in, as a
 // place loan and an access through carriers take them.
 @(private)

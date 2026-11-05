@@ -1,0 +1,86 @@
+// design.md "Global write effects": a `foreach` calls a protocol's `iter` once and its `next` each
+// step, and drops the iterator when the loop ends. Each counts as a call there.
+package main;
+
+counter: int;
+
+Writes_Next :: struct { done: bool }
+impl Writes_Next {
+	Element :: int;
+	Iterator :: Writes_Next;
+	iter :: proc(self) -> Writes_Next { return self; }
+	next :: proc(self: inout Writes_Next) -> Option(int) {
+		counter += 1;
+		return .none;
+	}
+}
+
+Reads_Next :: struct { done: bool }
+impl Reads_Next {
+	Element :: int;
+	Iterator :: Reads_Next;
+	iter :: proc(self) -> Reads_Next { return self; }
+	next :: proc(self: inout Reads_Next) -> Option(int) { return .some(counter); }
+}
+
+Writes_Iter :: struct { done: bool }
+impl Writes_Iter {
+	Element :: int;
+	Iterator :: Reads_Nothing;
+	iter :: proc(self) -> Reads_Nothing {
+		counter += 1;
+		return {};
+	}
+}
+Reads_Nothing :: struct { done: bool }
+impl Reads_Nothing {
+	next :: proc(self: inout Reads_Nothing) -> Option(int) { return .none; }
+}
+
+@(move_only) Writes_Drop :: struct { done: bool }
+impl Writes_Drop {
+	Element :: int;
+	Iterator :: Writes_Drop;
+	iter :: proc(self) -> Writes_Drop { return Writes_Drop{true}; }
+	next :: proc(self: inout Writes_Drop) -> Option(int) { return .none; }
+	close :: hook(drop) proc(self: inout Writes_Drop) { counter += 1; }
+}
+
+a_step_writes :: proc() {
+	p := &mut counter;
+	foreach (item in Writes_Next{false}) { p^ = item; }
+}
+a_step_reads :: proc() {
+	p := &mut counter;
+	foreach (item in Reads_Next{false}) { p^ = item; }
+}
+an_adapter_runs_what_it_wraps :: proc() {
+	p := &mut counter;
+	foreach (item, index in Writes_Next{false}.indexed()) { p^ = item + index; }
+}
+the_start_writes :: proc() {
+	p := &mut counter;
+	foreach (item in Writes_Iter{false}) { p^ = item; }
+}
+the_drop_writes :: proc() {
+	p := &mut counter;
+	foreach (item in Writes_Drop{false}) { p^ = item; }
+	p^ = 0;
+}
+// What a loop calls is in the effect of the procedure it is in.
+loops :: proc() {
+	foreach (item in Writes_Next{false}) { _ = item; }
+}
+a_caller_reaches_the_step :: proc() {
+	p := &mut counter;
+	loops();
+	p^ = 1;
+}
+main :: proc() {
+	a_step_writes();
+	a_step_reads();
+	an_adapter_runs_what_it_wraps();
+	the_start_writes();
+	the_drop_writes();
+	a_caller_reaches_the_step();
+}

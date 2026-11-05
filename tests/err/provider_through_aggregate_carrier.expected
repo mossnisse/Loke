@@ -1,0 +1,6 @@
+L0537
+@25:2
+dropping `arena` would end the region backing `r`
+L0537
+@32:2
+dropping `arena` would end the region backing `r`

@@ -596,10 +596,11 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	// A supplied member changes storage only as a growing or shrinking
-	// container operation does.
+	// container operation does, and a conversion, as `rawptr(p)`, never does.
 	member := symbol_of(c, v.resolution.chosen_overload)
 	supplied := member != nil && member.synth != .None
-	changes_storage := !supplied || (member.synth == .Container_Op && .Allocates in CONTAINER_OP_EFFECTS[member.container_op])
+	_, converts := v.operation.(Call_Conversion)
+	changes_storage := !converts && (!supplied || (member.synth == .Container_Op && .Allocates in CONTAINER_OP_EFFECTS[member.container_op]))
 	followed := call_follows_bodies(c, v)
 	info := underlying_info(c, call_proc_type(c, v))
 	// A text operation borrows its operands rather than copying them.

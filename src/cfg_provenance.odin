@@ -459,6 +459,9 @@ Prov_Event :: struct {
 	lands_by_type: bool,
 	// `Load`: the one element of a view parameter it names, whose caller slots it
 	// reads when through that loan, instead of those standing for every element.
+	// `Load`: what it reads below the storage its carriers name, where one of them
+	// points below the whole of it (`prov_load_places`); nil reads `path`.
+	load_places:   [][]Proj_Step,
 	load_element:  Prov_Element_Slots,
 	// `Load`, `Publish`: its carriers may all point into one element of a view
 	// parameter, which the solve settles (`carriers_element`).
@@ -1004,6 +1007,9 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 		prov_note_offset(graph, event.slot, event.sources)
 		prov_note_element_pointer(graph, event)
 		emitted.view_def = prov_note_view(graph, event)
+	}
+	if event.kind == .Load && event.load != .Writable {
+		emitted.load_places = prov_load_places(graph, event.into, event.path)
 	}
 	append(&graph.blocks[graph.current].prov, emitted)
 }
@@ -4879,6 +4885,17 @@ prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> [
 	}
 	prov_access(graph, root, path, mutable ? .Write : .Read, span)
 	return prov_join(graph, iterated, prov_borrow(graph, root, path, mutable, span, "iterator"))
+}
+
+// A protocol loop's iterator is dropped with the loop, like an extended temporary
+// nothing can name.
+@(private)
+prov_note_iterator_drop :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
+	span := expr_span(s.iterable)
+	root := prov_new_root(graph, .Temporary, span, "this iterator")
+	graph.roots[int(root)].extended = true
+	graph.roots[int(root)].dropped = s.iterator_type
+	append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
 }
 
 // A root that ends with the statement that created it.

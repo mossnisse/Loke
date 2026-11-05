@@ -10,6 +10,20 @@ checklist.
 
 ### Breaking changes
 
+- A `foreach` over the iteration protocol counts as the calls it makes: `iter`, `next` at each step,
+  and the iterator's drop ([Global write effects](design.md#global-write-effects)). So a `next` that
+  writes or reads a global under a live mutable pointer of it is now `L0512` or `L0511`, and a procedure
+  with such a loop has those effects. It compiled and aliased the global. Upgrade by ending the
+  pointer's use before the loop, or by not touching the global from the iterator.
+- A load through a pointer to a field reads that field ([Places and overlap](design.md#places-and-overlap)).
+  After `h := &mut r^.b`, `x := h^.to` holds what `r^.b.to` holds, so a program that stored a carrier
+  there and went on using it beside `x` is now `L0641`. It compiled, as the load read the first field
+  instead, and held two mutable paths to one place. Upgrade by finishing with one before using the other.
+- What a callee draws from a provider reached through a viewed record's carrier is in that provider's
+  region ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
+  whether or not the record also owns one. So `build(holders[:])` over a `Holder` with a `^mut mem.Arena`
+  field is now `L0537` if that arena ends while the result lives. It compiled and read freed memory.
+  Upgrade by keeping the arena alive for as long as the result.
 - A result drawn from a provider received in a variadic pack, or through a slice of pointers to
   providers, is in the region of the arenas it was given
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
@@ -1579,6 +1593,24 @@ checklist.
 
 ### Fixed
 
+- A body's analysis no longer grows with blocks times slots times loans: a block keeps what changed
+  in pages it shares with its neighbors, and each row of loans once. So 2000 branches that each borrow,
+  which took a minute and ran out of memory at three times that, take under a second, and a chain of
+  4000 reborrows went from 28 s to under a second.
+- A protocol `next` that hands back its element runs no copy of it, so a `foreach` over one, or its
+  `copied()`, no longer counts the element's `hook(copy)` reads ([Global write effects](design.md#global-write-effects)).
+- A load through a pointer to a field leaves the other fields alone
+  ([Places and overlap](design.md#places-and-overlap)), so `y := &mut h^.d; y^.clear();` no longer
+  conflicts with itself, and a store to `r^.a` no longer conflicts with a read through `&mut r^.b`.
+- A generic instance's name stops at the same limit as any other
+  ([Printed forms](standard-library.md#printed-forms)), where one deep enough printed tens of KB.
+- `L0740` asks a generic parameter's type with the arguments before it bound, so a private type passed
+  to `$V: identity_type(T)` where `T` is `type` is reported
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- A conversion uses no allocator, so tasks that each call `receive` on a `core:thread` channel no longer
+  report `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).
+- An `impl` subject may compute with an operator a later block declares, which was `L0318` then `L0406`
+  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)).
 - A pointer a call read out of a parameter reaches only the field the call read, and each field of a
   returned record only what that field was given, where both reached the siblings' targets too. So a
   reset that spares the other field no longer reports `L0537`

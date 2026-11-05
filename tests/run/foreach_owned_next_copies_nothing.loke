@@ -1,0 +1,34 @@
+// design.md "Global write effects": a protocol `next` that returns its element hands it over, so no
+// step of the traversal runs the element's `hook(copy)`, and what the hook reads is not in use.
+package main;
+
+import "core:fmt";
+
+counter: int;
+
+Tagged :: struct { n: int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		return .ok(Tagged{self.n + counter});
+	}
+}
+
+It :: struct { done: bool }
+impl It {
+	Element :: Tagged;
+	Iterator :: It;
+	iter :: proc(self) -> It { return self; }
+	next :: proc(self: inout It) -> Option(Tagged) {
+		if (self.done) { return .none; }
+		self.done = true;
+		return .some(Tagged{1});
+	}
+}
+
+main :: proc() {
+	p := &mut counter;
+	foreach (t in It{false}) { p^ += t.n; }
+	foreach (t in It{false}.copied()) { p^ += t.n; }
+	foreach (t, i in It{false}.indexed()) { p^ += t.n + i; }
+	fmt.println(p^);
+}

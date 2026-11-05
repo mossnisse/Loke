@@ -1166,16 +1166,22 @@ prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Regi
 	aliases := prov_value_aliases(graph, carrier)
 	if len(aliases) == 0 { return {}, false }
 	set := Region_Set{}
+	// A place reached through the carrier is that part of what it views.
 	viewed := underlying_info(graph.k.c, prov_value(graph, carrier).type).element
+	below: []Proj_Step
+	if carrier != id { viewed, below = value.type, value.place.path }
 	for alias in aliases {
-		if !prov_merge_provider_viewed(graph, alias, viewed, &set, 0) { return {}, false }
+		at := alias
+		at.at = prov_concat_path(graph, alias.at, below)
+		if !prov_merge_provider_viewed(graph, at, viewed, &set, 0) { return {}, false }
 	}
 	return set, true
 }
 
-// Merges the region of the provider of type `viewed` that `alias` names, or that the
-// carriers held there point at, as the elements of a `[]^mut Arena` do. False when one
-// of them names no provider this body knows.
+// Merges the regions of the providers a value of type `viewed` at `alias` reaches: those
+// it owns, and those the carriers it holds point at, as the elements of a `[]^mut Arena`
+// do, or an arena beside a pointer to another. False when one of them names no provider
+// this body knows.
 @(private = "file")
 prov_merge_provider_viewed :: proc(graph: ^Flow_Graph, alias: Written_Alias, viewed: Type_Id, set: ^Region_Set, depth: int) -> bool {
 	c := graph.k.c
@@ -1190,18 +1196,23 @@ prov_merge_provider_viewed :: proc(graph: ^Flow_Graph, alias: Written_Alias, vie
 		region_merge(set, received)
 		return true
 	}
-	if prov_type_is_view_carrier(c, viewed) {
-		held := prov_written_aliases_of(graph, alias.target, alias.at)
+	named := false
+	for carrier in carrier_shape(c, viewed) {
+		if !prov_view_reaches_provider(c, carrier.type) { continue }
+		held := prov_written_aliases_of(graph, alias.target, prov_concat_path(graph, alias.at, carrier.steps))
 		if len(held) == 0 { return false }
-		element := underlying_info(c, viewed).element
+		element := underlying_info(c, carrier.type).element
 		for loaded in held {
 			if !prov_merge_provider_viewed(graph, loaded, element, set, depth + 1) { return false }
 		}
-		return true
+		named = true
 	}
-	if descriptor.kind != .Local || holder == nil || holder.kind != .Var || !type_carries_provider(c, holder.type) { return false }
-	region_merge(set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
-	return true
+	if type_carries_provider(c, viewed) {
+		if descriptor.kind != .Local || holder == nil || holder.kind != .Var { return false }
+		region_merge(set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
+		named = true
+	}
+	return named
 }
 
 // The regions of the providers a carrier argument reaches, which a callee naming its
@@ -1219,16 +1230,26 @@ prov_provider_viewed_by :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set 
 	return Region_Set{unknown = true}
 }
 
-// Whether a carrier views a provider, directly or through the carriers it views.
+// Whether a carrier views a provider, directly or through a carrier held in what it
+// views, at any place there. A shape cut short may hold anything, so it may reach one.
 @(private = "file")
 prov_view_reaches_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	viewed := type
-	for _ in 0 ..< CARRIER_DEPTH {
-		if !prov_type_is_view_carrier(c, viewed) {
-			return false
-		}
-		viewed = underlying_info(c, viewed).element
-		if type_carries_provider(c, viewed) {
+	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
+	return prov_view_reach_walk(c, type, &visited)
+}
+
+@(private = "file")
+prov_view_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> bool {
+	if visited[type] || !prov_type_is_view_carrier(c, type) {
+		return false
+	}
+	visited[type] = true
+	viewed := underlying_info(c, type).element
+	if type_carries_provider(c, viewed) {
+		return true
+	}
+	for carrier in carrier_shape(c, viewed) {
+		if .Width in carrier.precision || .Depth in carrier.precision || prov_view_reach_walk(c, carrier.type, visited) {
 			return true
 		}
 	}

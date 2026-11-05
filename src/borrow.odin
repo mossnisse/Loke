@@ -627,6 +627,11 @@ Prov_Solve :: struct {
 	// bits travel with every copy of the row.
 	row_bytes: int,
 	reach:   []u8,
+	// Each row `reach` holds, by handle, and which rows have changed since
+	// (`src/borrow_tables.odin`).
+	reach_rows:    Interned_Rows,
+	reach_handles: []u32,
+	reach_written: [dynamic]int,
 	// A loan ended on every path to here. Checks skip only these, so an
 	// invalidation that reaches its own loop head still meets the loan it ends.
 	ended:   []bool,
@@ -635,16 +640,12 @@ Prov_Solve :: struct {
 	// Per slot, which links its value may have come through, as a handle of
 	// `link_rows` (`solve_links_held`).
 	links_held: []u32,
-	// Each distinct row, with one bit per reborrow, kept once however many slots and
-	// blocks hold it. Handle 0 holds no link.
-	link_rows:      [dynamic][]u8,
-	link_row_ids:   map[string]u32,
+	// Each distinct row, with one bit per reborrow.
+	link_rows:      Interned_Rows,
 	link_row_bytes: int,
-	// Scratch: a value being defined, a row being changed, and the reborrows of one
-	// slot.
+	// Scratch: a value being defined, and a row being changed.
 	link_row_value: []u8,
 	link_row_edit:  []u8,
-	link_row_mask:  []u8,
 	// The reborrows into each slot, those through each carrier they were loaded
 	// through (`Prov_Reborrow.via`), and those each `store_id` makes.
 	links_into:     [][dynamic]int,
@@ -787,10 +788,15 @@ next_live_loan :: proc(it: ^Live_Loans) -> (slot: int, index: int, ok: bool) {
 // Sets up `state` as a walk reaches `block`; false for a block no path reaches.
 @(private = "file")
 enter_block :: proc(state: ^Prov_Solve, block: ^Flow_Block) -> bool {
-	copy(state.reach, block.reach_entry)
-	copy(state.precision, block.precision_entry)
-	copy(state.ended, block.ended_entry)
+	enter_block_tables(state, block.reach_entry, block.precision_entry, block.ended_entry)
 	return block.prov_visited
+}
+
+@(private = "file")
+enter_block_tables :: proc(state: ^Prov_Solve, reach: [][]u32, precision: [][]Precision_Loss, ended: [][]bool) {
+	reach_load(state, reach)
+	block_table_put(precision, state.precision)
+	block_table_put(ended, state.ended)
 }
 
 @(private)
@@ -1301,7 +1307,7 @@ rearrange_carriers :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
 		}
 		for index in reads {
 			if every || slot_carrier_type(graph, index) == type || slot_carrier_type(graph, index) == INVALID_TYPE {
-				bytes_or(reach_row(state, reach, index), state.merged)
+				bytes_or(reach_row_written(state, reach, index), state.merged)
 				state.precision[index] |= loss
 			}
 		}
@@ -1921,21 +1927,13 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 	// A row holds each loan's bit, whether it was invalidated, and then a bit
 	// per place loan (`place_bit`).
 	state.row_bytes = (2 * state.loans + len(graph.place_loans) + 7) / 8
-	width := max(state.slots * state.row_bytes, 1)
 	for block in graph.blocks {
-		block.reach_entry = make([]u8, width, graph.alloc)
-		block.precision_entry = make([]Precision_Loss, state.slots, graph.alloc)
-		block.precision_exit = make([]Precision_Loss, state.slots, graph.alloc)
-		block.reach_exit = make([]u8, width, graph.alloc)
-		block.ended_entry = make([]bool, state.loans, graph.alloc)
-		block.ended_exit = make([]bool, state.loans, graph.alloc)
-		block.live_entry = make([]Slot_Use, state.slots, graph.alloc)
-		block.live_exit = make([]Slot_Use, state.slots, graph.alloc)
-		block.use_entry = make([]Span, state.slots, graph.alloc)
-		block.use_exit = make([]Span, state.slots, graph.alloc)
 		block.prov_visited = false
 	}
-	state.reach = make([]u8, width, graph.alloc)
+	state.reach = make([]u8, max(state.slots * state.row_bytes, 1), graph.alloc)
+	state.reach_rows = interned_rows_make(state.row_bytes, graph.alloc)
+	state.reach_handles = make([]u32, state.slots, graph.alloc)
+	state.reach_written = make([dynamic]int, 0, 16, graph.alloc)
 	state.precision = make([]Precision_Loss, state.slots, graph.alloc)
 	state.released = make([]bool, state.loans, graph.alloc)
 	state.released_indices = make([dynamic]int, graph.alloc)
@@ -2000,53 +1998,66 @@ solve_reaching :: proc(state: ^Prov_Solve) {
 	queue := block_queue_from_entry(graph)
 	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
-		mem.zero_slice(state.reach)
-		mem.zero_slice(state.precision)
-		mem.zero_slice(state.ended)
-		if id != 0 {
-			seen := false
-			for predecessor in block.preds {
-				source := graph.blocks[predecessor]
-				if !source.prov_visited {
-					continue
-				}
-				bytes_or(state.reach, source.reach_exit)
-				for loss, slot in source.precision_exit { state.precision[slot] |= loss }
-				// A predecessor not visited yet stays out of the meet.
-				if seen {
-					for value, index in source.ended_exit {
-						state.ended[index] &&= value
-					}
-				} else {
-					copy(state.ended, source.ended_exit)
-				}
-				seen = true
-			}
-		} else {
-			// A borrowed parameter arrives already holding the caller's root.
-			for entry in graph.entry_defs {
-				bit_mark(reach_row(state, state.reach, entry.slot), int(entry.loan))
-				state.precision[entry.slot] |= graph.prov_slots[entry.slot].precision
-			}
-		}
-		copy(block.reach_entry, state.reach)
-		copy(block.precision_entry, state.precision)
-		copy(block.ended_entry, state.ended)
+		first := join_block_entry(state, block, id)
+		reach_settle(state)
+		block_table_take(&block.reach_entry, state.reach_handles, first == nil ? nil : first.reach_exit, graph.alloc)
+		block_table_take(&block.precision_entry, state.precision, first == nil ? nil : first.precision_exit, graph.alloc)
+		block_table_take(&block.ended_entry, state.ended, first == nil ? nil : first.ended_exit, graph.alloc)
 		for event in block.prov {
 			run_prov_event(state, event, state.reach, state.ended)
 		}
+		reach_settle(state)
 		if block.prov_visited &&
-		   slice.equal(block.precision_exit, state.precision) &&
-		   slice.equal(block.reach_exit, state.reach) &&
-		   slice.equal(block.ended_exit, state.ended) {
+		   block_table_equal(block.precision_exit, state.precision) &&
+		   block_table_equal(block.reach_exit, state.reach_handles) &&
+		   block_table_equal(block.ended_exit, state.ended) {
 			continue
 		}
-		copy(block.reach_exit, state.reach)
-		copy(block.precision_exit, state.precision)
-		copy(block.ended_exit, state.ended)
+		block_table_take(&block.reach_exit, state.reach_handles, block.reach_entry, graph.alloc)
+		block_table_take(&block.precision_exit, state.precision, block.precision_entry, graph.alloc)
+		block_table_take(&block.ended_exit, state.ended, block.ended_entry, graph.alloc)
 		block.prov_visited = true
 		block_queue_wake(&queue, block.succs[:])
 	}
+}
+
+// Makes the flat tables what reaches `block`, and returns the first predecessor they were
+// taken from. A predecessor not visited yet stays out of the meet.
+@(private = "file")
+join_block_entry :: proc(state: ^Prov_Solve, block: ^Flow_Block, id: int) -> ^Flow_Block {
+	graph := state.graph
+	if id == 0 {
+		enter_block_tables(state, nil, nil, nil)
+		// A borrowed parameter arrives already holding the caller's root.
+		for entry in graph.entry_defs {
+			bit_mark(reach_row_written(state, state.reach, entry.slot), int(entry.loan))
+			state.precision[entry.slot] |= graph.prov_slots[entry.slot].precision
+		}
+		return nil
+	}
+	first: ^Flow_Block
+	for predecessor in block.preds {
+		source := graph.blocks[predecessor]
+		if !source.prov_visited {
+			continue
+		}
+		if first == nil {
+			first = source
+			enter_block_tables(state, source.reach_exit, source.precision_exit, source.ended_exit)
+			continue
+		}
+		reach_join(state, source.reach_exit)
+		for page, at in source.precision_exit {
+			for loss, index in page { state.precision[at * BLOCK_TABLE_PAGE + index] |= loss }
+		}
+		for page, at in source.ended_exit {
+			for value, index in page { state.ended[at * BLOCK_TABLE_PAGE + index] &&= value }
+		}
+	}
+	if first == nil {
+		enter_block_tables(state, nil, nil, nil)
+	}
+	return first
 }
 
 // design.md "Weakening and reborrows": forward, once every reborrow has settled, which of
@@ -2065,34 +2076,30 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 	state.links_held = make([]u32, state.slots, graph.alloc)
 	state.link_row_value = make([]u8, state.link_row_bytes, graph.alloc)
 	state.link_row_edit = make([]u8, state.link_row_bytes, graph.alloc)
-	state.link_row_mask = make([]u8, state.link_row_bytes, graph.alloc)
-	state.link_rows = make([dynamic][]u8, 0, 16, graph.alloc)
-	state.link_row_ids = make(map[string]u32, graph.alloc)
-	intern_link_row(state, state.link_row_value)
+	state.link_rows = interned_rows_make(state.link_row_bytes, graph.alloc)
 	index_links(state)
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	queue := block_queue_from_entry(graph)
 	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
 		mem.zero_slice(state.links_held)
+		first: [][]u32
 		for predecessor in block.preds {
 			if visited[int(predecessor)] {
-				join_links_held(state, graph.blocks[predecessor].links_exit)
+				from := graph.blocks[predecessor].links_exit
+				join_links_held(state, from)
+				if first == nil { first = from }
 			}
 		}
-		if block.links_entry == nil {
-			block.links_entry = make([]u32, state.slots, graph.alloc)
-			block.links_exit = make([]u32, state.slots, graph.alloc)
-		}
-		copy(block.links_entry, state.links_held)
+		block_table_take(&block.links_entry, state.links_held, first, graph.alloc)
 		for event in block.prov {
 			run_links_held_event(state, event, state.links_held)
 		}
-		if visited[id] && slice.equal(block.links_exit, state.links_held) {
+		if visited[id] && block_table_equal(block.links_exit, state.links_held) {
 			continue
 		}
 		visited[id] = true
-		copy(block.links_exit, state.links_held)
+		block_table_take(&block.links_exit, state.links_held, block.links_entry, graph.alloc)
 		block_queue_wake(&queue, block.succs[:])
 	}
 }
@@ -2135,31 +2142,22 @@ index_links :: proc(state: ^Prov_Solve) {
 }
 
 @(private = "file")
-intern_link_row :: proc(state: ^Prov_Solve, row: []u8) -> u32 {
-	if id, found := state.link_row_ids[string(row)]; found {
-		return id
-	}
-	kept := slice.clone(row, state.graph.alloc)
-	id := u32(len(state.link_rows))
-	append(&state.link_rows, kept)
-	state.link_row_ids[string(kept)] = id
-	return id
-}
-
-@(private = "file")
-join_links_held :: proc(state: ^Prov_Solve, from: []u32) {
-	for row, slot in from {
-		held := state.links_held[slot]
-		if row == held || row == 0 {
-			continue
+join_links_held :: proc(state: ^Prov_Solve, from: [][]u32) {
+	for page, at in from {
+		for row, index in page {
+			slot := at * BLOCK_TABLE_PAGE + index
+			held := state.links_held[slot]
+			if row == held || row == 0 {
+				continue
+			}
+			if held == 0 {
+				state.links_held[slot] = row
+				continue
+			}
+			copy(state.link_row_edit, state.link_rows.rows[held])
+			bytes_or(state.link_row_edit, state.link_rows.rows[row])
+			state.links_held[slot] = intern_row(&state.link_rows, state.link_row_edit)
 		}
-		if held == 0 {
-			state.links_held[slot] = row
-			continue
-		}
-		copy(state.link_row_edit, state.link_rows[held])
-		bytes_or(state.link_row_edit, state.link_rows[row])
-		state.links_held[slot] = intern_link_row(state, state.link_row_edit)
 	}
 }
 
@@ -2176,26 +2174,29 @@ end_links_of_value :: proc(state: ^Prov_Solve, held: []u32, slot: int, value: []
 	if len(links) == 0 {
 		return
 	}
-	mask := state.link_row_mask
-	for index in links {
-		bit_mark(mask, index)
-	}
+	// A row holding none of them stays as it is, so this asks each row only about these
+	// links: a row may be as wide as the body has reborrows.
+	edit := state.link_row_edit
 	for &row in held {
 		if row == 0 {
 			continue
 		}
-		edit := state.link_row_edit
-		changed := false
-		for byte, at in state.link_rows[row] {
-			edit[at] = byte &~ mask[at]
-			changed ||= edit[at] != byte
+		kept := state.link_rows.rows[row]
+		holds := false
+		for index in links {
+			if bit_get(kept, index) {
+				holds = true
+				break
+			}
 		}
-		if changed {
-			row = intern_link_row(state, edit)
+		if !holds {
+			continue
 		}
-	}
-	for index in links {
-		bit_clear(mask, index)
+		copy(edit, kept)
+		for index in links {
+			bit_clear(edit, index)
+		}
+		row = intern_row(&state.link_rows, edit)
 	}
 }
 
@@ -2213,14 +2214,14 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 		// A definition joining the slot's own value does not end it.
 		joins := event.kind == .Def && slice.contains(event.sources, slot)
 		if joins {
-			bytes_or(value, state.link_rows[held[slot]])
+			bytes_or(value, state.link_rows.rows[held[slot]])
 		}
 		for index in state.links_into[slot] {
 			link := graph.reborrows[index]
 			if link.from_store > 0 || state.link_is_named[index] && !slice.contains(event.sources, link.source) {
 				continue
 			}
-			bytes_or(value, state.link_rows[held[link.source]])
+			bytes_or(value, state.link_rows.rows[held[link.source]])
 			bit_mark(value, index)
 		}
 		// What was loaded through this carrier and is stored back, as `cur = cur^.next`,
@@ -2231,14 +2232,14 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 		if !joins {
 			end_links_of_value(state, held, slot, value)
 		}
-		held[slot] = intern_link_row(state, value)
+		held[slot] = intern_row(&state.link_rows, value)
 	case .Publish, .Rearrange:
 		// A store or a call starts what it links, and a store ends what was taken from a
 		// slot it replaces, which holds another carrier now.
 		stored := state.link_row_value
 		mem.zero_slice(stored)
 		for source in event.sources {
-			bytes_or(stored, state.link_rows[held[source]])
+			bytes_or(stored, state.link_rows.rows[held[source]])
 		}
 		for slot in event.replaces {
 			held[slot] = 0
@@ -2249,10 +2250,10 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 				changed = false
 				for index in state.links_of_store[event.store_id] {
 					link := graph.reborrows[index]
-					copy(state.link_row_edit, state.link_rows[held[link.derived]])
+					copy(state.link_row_edit, state.link_rows.rows[held[link.derived]])
 					bit_mark(state.link_row_edit, index)
-					bytes_or(state.link_row_edit, state.link_rows[held[link.source]])
-					row := intern_link_row(state, state.link_row_edit)
+					bytes_or(state.link_row_edit, state.link_rows.rows[held[link.source]])
+					row := intern_row(&state.link_rows, state.link_row_edit)
 					if row != held[link.derived] {
 						held[link.derived] = row
 						changed = true
@@ -2288,7 +2289,7 @@ run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended
 		if event.place_loan > 0 {
 			bit_mark(state.merged, place_bit(state, event.place_loan - 1))
 		}
-		copy(reach_row(state, reach, event.slot), state.merged)
+		copy(reach_row_written(state, reach, event.slot), state.merged)
 		state.precision[event.slot] = loss
 	case .Load:
 		load_pointee_content(state, event, reach)
@@ -2301,8 +2302,11 @@ run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended
 			}
 			for slot in 0 ..< state.slots {
 				row := reach_row(state, reach, slot)
-				bit_clear(row, index)
-				bit_clear(row, state.loans + index)
+				if bit_get(row, index) || bit_get(row, state.loans + index) {
+					row = reach_row_written(state, reach, slot)
+					bit_clear(row, index)
+					bit_clear(row, state.loans + index)
+				}
 			}
 		}
 	case .Publish:
@@ -2465,10 +2469,11 @@ mark_released :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
 	for slot in 0 ..< state.slots {
 		row := reach_row(state, reach, slot)
 		for index in state.released_indices {
+			stale := state.loans + index
 			if revived {
-				bit_clear(row, state.loans + index)
-			} else if bit_get(row, index) {
-				bit_mark(row, state.loans + index)
+				if bit_get(row, stale) { bit_clear(reach_row_written(state, reach, slot), stale) }
+			} else if bit_get(row, index) && !bit_get(row, stale) {
+				bit_mark(reach_row_written(state, reach, slot), stale)
 			}
 		}
 	}
@@ -2552,8 +2557,16 @@ load_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 			if narrowed, known := view_element_loan(graph, event.element, index); known {
 				lent = narrowed.path
 			}
-			if !load_through_loan(state, index, event.path, reach, &loss, reads, elements, lent) {
-				loss |= state.precision[carrier]
+			if event.load_places == nil {
+				if !load_through_loan(state, index, event.path, reach, &loss, reads, elements, lent) {
+					loss |= state.precision[carrier]
+				}
+				continue
+			}
+			for place in event.load_places {
+				if !load_through_loan(state, index, place, reach, &loss, reads, elements, lent) {
+					loss |= state.precision[carrier]
+				}
 			}
 		}
 	}
@@ -2572,7 +2585,7 @@ load_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 		}
 	}
 	carry_place_bits(state, event, reach)
-	copy(reach_row(state, reach, event.slot), state.merged)
+	copy(reach_row_written(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
 }
 
@@ -2619,7 +2632,7 @@ load_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8
 		}
 	}
 	carry_place_bits(state, event, reach)
-	copy(reach_row(state, reach, event.slot), state.merged)
+	copy(reach_row_written(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
 }
 
@@ -2967,25 +2980,33 @@ solve_loan_liveness :: proc(state: ^Prov_Solve) {
 		block := graph.blocks[id]
 		mem.zero_slice(state.live)
 		slice.fill(state.uses, NO_SPAN)
+		first: ^Flow_Block
 		for successor in block.succs {
 			target := graph.blocks[successor]
-			for value, index in target.live_entry {
-				if value > state.live[index] {
-					state.live[index] = value
-					state.uses[index] = target.use_entry[index]
+			if target.live_entry == nil {
+				continue
+			}
+			if first == nil { first = target }
+			for page, at in target.live_entry {
+				for value, offset in page {
+					index := at * BLOCK_TABLE_PAGE + offset
+					if value > state.live[index] {
+						state.live[index] = value
+						state.uses[index] = block_table_at(target.use_entry, index)
+					}
 				}
 			}
 		}
-		copy(block.live_exit, state.live)
-		copy(block.use_exit, state.uses)
+		block_table_take(&block.live_exit, state.live, first == nil ? nil : first.live_entry, graph.alloc)
+		block_table_take(&block.use_exit, state.uses, first == nil ? nil : first.use_entry, graph.alloc)
 		for index := len(block.prov) - 1; index >= 0; index -= 1 {
 			run_live_event(block.prov[index], state.live, state.uses)
 		}
-		if slice.equal(block.live_entry, state.live) {
+		if block_table_equal(block.live_entry, state.live) {
 			continue
 		}
-		copy(block.live_entry, state.live)
-		copy(block.use_entry, state.uses)
+		block_table_take(&block.live_entry, state.live, block.live_exit, graph.alloc)
+		block_table_take(&block.use_entry, state.uses, block.use_exit, graph.alloc)
 		block_queue_wake(&queue, block.preds[:])
 	}
 }
@@ -3048,11 +3069,11 @@ land_in_slot :: proc(state: ^Prov_Solve, reach: []u8, index: int, replaces: bool
 	loss := state.merged_precision | carrier_loss | state.graph.prov_slots[index].precision
 	if state.landed != nil { append(state.landed, index) }
 	if replaces {
-		copy(reach_row(state, reach, index), state.merged)
+		copy(reach_row_written(state, reach, index), state.merged)
 		state.precision[index] = loss
 		return
 	}
-	bytes_or(reach_row(state, reach, index), state.merged)
+	bytes_or(reach_row_written(state, reach, index), state.merged)
 	state.precision[index] |= loss | path_precision(loan_path)
 }
 
@@ -3238,15 +3259,15 @@ report_provenance :: proc(state: ^Prov_Solve) {
 		// `marks[index + 1]` up to `marks[index]`.
 		clear(&changes)
 		resize(&marks, count + 1)
-		copy(state.live, block.live_exit)
-		copy(state.uses, block.use_exit)
+		block_table_put(block.live_exit, state.live)
+		block_table_put(block.use_exit, state.uses)
 		marks[count] = 0
 		for index := count - 1; index >= 0; index -= 1 {
 			run_live_event(block.prov[index], state.live, state.uses, &changes)
 			marks[index] = len(changes)
 		}
 		enter_block(state, block)
-		copy(state.links_held, block.links_entry)
+		block_table_put(block.links_entry, state.links_held)
 		for event, index in block.prov {
 			// Liveness after this event, which is what it consults.
 			undo := changes[marks[index + 1]:marks[index]]
@@ -3446,7 +3467,7 @@ live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use:
 			continue
 		}
 		for slot in candidates {
-			if !bit_get(state.link_rows[state.links_held[slot]], index) {
+			if !bit_get(state.link_rows.rows[state.links_held[slot]], index) {
 				continue
 			}
 			// A slot standing for many places holds the copy too, whichever it is.
@@ -3491,7 +3512,7 @@ at_once_reaches :: proc(state: ^Prov_Solve, use: Prov_Event, source: int) -> boo
 			continue
 		}
 		for index in links {
-			if bit_get(state.link_rows[held], index) {
+			if bit_get(state.link_rows.rows[held], index) {
 				append(&derived, slot)
 				break
 			}

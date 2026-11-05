@@ -181,23 +181,31 @@ alias_dependent_type :: proc(
 	if parameter.dependent_index >= len(applied.params) {
 		return INVALID_TYPE
 	}
+	return applied_parameter_type(k, call.args, applied, parameter.dependent_index, scope, report)
+}
+
+// The type of applied parameter `at`, with the arguments before it bound, as each is
+// resolved in `scope`. INVALID_TYPE when they do not bind, which `report` reports.
+// Leaves `k.scope` wherever the last step left it.
+@(private)
+applied_parameter_type :: proc(k: ^Checker, args: []Argument, applied: Applied_Parameters, at: int, scope: ^Scope, report: bool) -> Type_Id {
 	inner := new_scope(k.c, applied.scope == nil ? build_universe(k.c) : applied.scope, .Local)
 	if applied.first > 0 {
 		subject := applied.params[0]
 		bind_generic_name(k, inner, Generic_Binding{name = subject.name, span = subject.span, arg = Generic_Arg{is_type = true, type = TYPE_RAWPTR}})
 	}
 	bindings := make([dynamic]Generic_Binding, 0, len(applied.params), context.temp_allocator)
-	for at in applied.first ..< parameter.dependent_index {
-		wanted := parameter_type_in(k, applied, at, inner, report)
+	for index in applied.first ..< at {
+		wanted := parameter_type_in(k, applied, index, inner, report)
 		k.scope = scope
-		if wanted == INVALID_TYPE {
+		if wanted == INVALID_TYPE || index - applied.first >= len(args) {
 			return INVALID_TYPE
 		}
-		if !bind_record_argument(k, applied.params[at], call.args[at - applied.first], wanted, inner, &bindings, report) {
+		if !bind_record_argument(k, applied.params[index], args[index - applied.first], wanted, inner, &bindings, report) {
 			return INVALID_TYPE
 		}
 	}
-	return parameter_type_in(k, applied, parameter.dependent_index, inner, report)
+	return parameter_type_in(k, applied, at, inner, report)
 }
 
 // The type of applied parameter `at`, with those before it bound in `inner`.

@@ -10,15 +10,6 @@ entry is removed once it is settled: the reasons go to
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Duplicate procedure-group classification
-
-The `written_group` helper added in [src/check.odin](src/check.odin) repeats the
-classification already available as `decl_is_proc_group` in
-[src/generic_impl.odin](src/generic_impl.odin). In `declare_all`, replace
-`d.kind == .Const && len(d.values) == 1 && written_group(d.values[0])` with
-`d.kind == .Const && decl_is_proc_group(d)` and delete the new helper: six lines can
-go without changing behavior. Found reviewing `6b292d78` on 2026-11-05 (P3).
-
 ## Provenance architecture
 
 A review of the root and region provenance checker on 2026-11-01 asked where its

@@ -1,0 +1,32 @@
+// design.md "Allocators and tasks": a conversion uses no allocator, so taking a channel's queue
+// past its guard's provenance leaves its tasks with nothing to reserve, by `foreach` or by hand.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+by_hand :: proc(jobs: move thread.Receiver(int)) {
+	for (;;) {
+		switch (jobs.receive()) {
+		case .none: return;
+		case .some(job): _ = job;
+		}
+	}
+}
+by_loop :: proc(jobs: move thread.Receiver(int)) {
+	foreach (job in jobs) { _ = job; }
+}
+
+main :: proc() {
+	jobs := thread.Channel(int).init(4);
+	parallel {
+		send, receive := jobs.split();
+		foreach (_ in 0 ..< 2) {
+			spawn by_hand(receive.fork());
+			spawn by_loop(receive.fork());
+		}
+		drop(receive);
+		drop(send);
+	}
+	fmt.println("done");
+}

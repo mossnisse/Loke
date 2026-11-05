@@ -39,6 +39,10 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	// speculation: it must not claim a report-once cache the retry needs.
 	subject: Type_Id
 	if quiet {
+		visited := make(map[Symbol_Id]bool, 8, context.temp_allocator)
+		if subject_may_need_operator(k, item.type, k.scope, &visited) {
+			return
+		}
 		probe := begin_probe(k.c)
 		subject = resolve_type_syntax(k, item.type)
 		end_probe(k.c, probe, keep = subject != INVALID_TYPE)
@@ -73,6 +77,57 @@ resolve_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) -> Type_Id {
 		errorf(k.c, expr_span(item.type), "L0406", "this `impl` subject does not name a type")
 	}
 	return subject
+}
+
+// Whether resolving a subject may ask for an operator, as `[N]int` does where
+// `N :: a + b`. Whatever asks settles that constant for the program, and the blocks
+// declaring operators are not all declared yet, so a quiet attempt leaves these alone
+// until `resolve_package_operators` has them queued.
+@(private = "file")
+subject_may_need_operator :: proc(k: ^Checker, e: Expr, scope: ^Scope, visited: ^map[Symbol_Id]bool) -> bool {
+	if e == nil {
+		return false
+	}
+	#partial switch v in e {
+	case ^Expr_Binary, ^Expr_Unary, ^Expr_Composite, ^Expr_Index, ^Expr_Slice:
+		return true
+	case ^Expr_Ident:
+		return symbol_may_need_operator(k, lookup_symbol(scope, identifier_of(k.c, v)), visited)
+	case ^Expr_Selector:
+		// A member of another package is asked about there.
+		if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
+			if alias := symbol_of(k.c, lookup_symbol(scope, identifier_of(k.c, ident))); alias != nil && alias.kind == .Package_Alias {
+				pkg := package_of(k.c, alias.pkg)
+				return pkg != nil && pkg.scope != nil && symbol_may_need_operator(k, pkg.scope.names[intern_identifier(k.c, v.name.text)], visited)
+			}
+		}
+	}
+	Walk :: struct {
+		k:       ^Checker,
+		scope:   ^Scope,
+		visited: ^map[Symbol_Id]bool,
+	}
+	walk := Walk{k, scope, visited}
+	return expr_children(e, &walk, proc(data: rawptr, child: Expr) -> bool {
+		w := (^Walk)(data)
+		return subject_may_need_operator(w.k, child, w.scope, w.visited)
+	})
+}
+
+@(private = "file")
+symbol_may_need_operator :: proc(k: ^Checker, id: Symbol_Id, visited: ^map[Symbol_Id]bool) -> bool {
+	sym := symbol_of(k.c, id)
+	if sym == nil || visited[id] {
+		return false
+	}
+	visited[id] = true
+	#partial switch sym.kind {
+	case .Proc, .Proc_Group:
+		return true
+	case .Const:
+		return sym.decl != nil && subject_may_need_operator(k, decl_value(sym.decl), sym.def_scope, visited)
+	}
+	return false
 }
 
 // `delegate` and recovery nodes are handled by later phases.

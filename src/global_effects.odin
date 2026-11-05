@@ -501,14 +501,13 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 	subject := expr_base(v.bound[0]).type
 	#partial switch sym.synth {
-	case .Clone, .Try_Clone, .Iterator_Copy:
+	case .Clone, .Try_Clone:
 		prov_copy_effects(graph, subject, v.span)
 	case .Adapter_View:
 		// A view holding its source by value keeps a copy of it.
 		if type_of(c, sym.result).adapter_by_value { prov_copy_effects(graph, subject, v.span) }
-	case .Indexed_Next, .Copied_Next, .Array_Next:
-		// What an iterator's `next` hands back by value, it clones out.
-		prov_copy_effects(graph, sym.result, v.span)
+	case .Adapter_Iter, .Iterator_Copy, .Indexed_Next, .Copied_Next, .Array_Next:
+		prov_iteration_member_effects(graph, sym, v.span)
 	case .Standard_Hash:
 		prov_hash_effects(graph, subject, v.span)
 	case .Container_Op:
@@ -530,6 +529,37 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 				prov_effect_call(graph, Effect_Call{callee = policy.less}, v.span)
 			}
 		}
+	}
+}
+
+// design.md "Global write effects": a `foreach` calls a protocol's `iter` once and
+// its `next` each step, and each counts as a call there. Both are handed what the
+// iterable holds, so `region` is its region, as `prov_drop_effects` takes a value's.
+prov_iteration_call_effects :: proc(graph: ^Flow_Graph, member: Symbol_Id, span: Span, region: Maybe(Prov_Use_Region) = nil) {
+	if sym := symbol_of(graph.k.c, member); sym != nil {
+		prov_effect_call(graph, Effect_Call{callee = member}, span, dropped_region = region)
+		prov_iteration_member_effects(graph, sym, span, region)
+	}
+}
+
+// What a member the compiler supplies on an iterator runs besides itself: the member
+// it wraps, and a clone where it hands back a copy (`emit_synth_adapter`). A `copied()`
+// over a `next` that hands back its element by value makes none, as there is nothing
+// lent to copy out of.
+@(private = "file")
+prov_iteration_member_effects :: proc(graph: ^Flow_Graph, sym: ^Symbol, span: Span, region: Maybe(Prov_Use_Region) = nil) {
+	c := graph.k.c
+	wrapped := symbol_of(c, sym.iteration_target)
+	#partial switch sym.synth {
+	case .Iterator_Copy, .Array_Next:
+		prov_copy_effects(graph, sym.result, span)
+	case .Copied_Next:
+		if wrapped != nil && wrapped.result != sym.result {
+			prov_copy_effects(graph, sym.result, span)
+		}
+	}
+	if wrapped != nil {
+		prov_iteration_call_effects(graph, sym.iteration_target, span, region)
 	}
 }
 

@@ -26,13 +26,7 @@ L0641
 @28:67
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@28:79
-`h` cannot be used here: a mutable reborrow of it is still in use
-L0641
 @29:80
-`h` cannot be used here: a mutable reborrow of it is still in use
-L0641
-@29:92
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
 @30:82

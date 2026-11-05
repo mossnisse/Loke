@@ -870,6 +870,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
 	c.pending_delegates = make(map[Type_Id][dynamic]Pending_Delegate, c.semantic_allocator)
+	c.pending_operator_blocks = make([dynamic]Pending_Operator_Block, 0, 8, c.semantic_allocator)
 	c.pending_operators = make([dynamic]Pending_Operator, 0, 8, c.semantic_allocator)
 	c.pending_private_reads = make([dynamic]Pending_Private_Read, 0, 4, c.semantic_allocator)
 	c.private_reads_settled = make(map[Span]bool, c.semantic_allocator)

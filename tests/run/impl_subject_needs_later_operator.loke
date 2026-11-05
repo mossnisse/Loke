@@ -1,0 +1,25 @@
+// design.md "Operator lookup and overload resolution": what an `impl` subject computes may need an
+// operator whichever block declares it, however the subject reaches that computation.
+package main;
+
+import "core:fmt";
+
+V :: struct { x: int }
+N :: (V{1} + V{2}).x;
+impl [N]int {
+	count :: proc(self) -> int { return self.len(); }
+}
+Grid :: [M]int;
+M :: (V{3} + V{1}).x;
+impl Grid {
+	size :: proc(self) -> int { return self.len(); }
+}
+impl V {
+	add :: operator(+) proc(a, b: V) -> V { return {a.x + b.x}; }
+}
+
+main :: proc() {
+	three := [3]int{};
+	four := [4]int{};
+	fmt.println(three.count(), four.size());
+}

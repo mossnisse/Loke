@@ -1,0 +1,58 @@
+// standard-library.md "Printed forms": a generic instance's name is written once, from its
+// arguments' names, so it stops at the limit like any other, however deep the instance is.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+Tag :: struct($A, $B: type) {}
+T0 :: int;
+T1 :: Tag(T0, T0);
+T2 :: Tag(T1, T1);
+T3 :: Tag(T2, T2);
+T4 :: Tag(T3, T3);
+T5 :: Tag(T4, T4);
+T6 :: Tag(T5, T5);
+T7 :: Tag(T6, T6);
+T8 :: Tag(T7, T7);
+T9 :: Tag(T8, T8);
+T10 :: Tag(T9, T9);
+T11 :: Tag(T10, T10);
+T12 :: Tag(T11, T11);
+T13 :: Tag(T12, T12);
+T14 :: Tag(T13, T13);
+T15 :: Tag(T14, T14);
+T16 :: Tag(T15, T15);
+T17 :: Tag(T16, T16);
+T18 :: Tag(T17, T17);
+T19 :: Tag(T18, T18);
+T20 :: Tag(T19, T19);
+T21 :: Tag(T20, T20);
+T22 :: Tag(T21, T21);
+T23 :: Tag(T22, T22);
+T24 :: Tag(T23, T23);
+T25 :: Tag(T24, T24);
+T26 :: Tag(T25, T25);
+T27 :: Tag(T26, T26);
+T28 :: Tag(T27, T27);
+T29 :: Tag(T28, T28);
+T30 :: Tag(T29, T29);
+T31 :: Tag(T30, T30);
+T32 :: Tag(T31, T31);
+T33 :: Tag(T32, T32);
+T34 :: Tag(T33, T33);
+T35 :: Tag(T34, T34);
+T36 :: Tag(T35, T35);
+T37 :: Tag(T36, T36);
+T38 :: Tag(T37, T37);
+T39 :: Tag(T38, T38);
+T40 :: Tag(T39, T39);
+
+main :: proc() {
+	shallow := fmt.to_string(mem.default_allocator(), typeid_of(T2));
+	fmt.println(shallow);
+	near := fmt.to_string(mem.default_allocator(), typeid_of(T12));
+	fmt.println(near.len() <= 4100, near[near.len() - 3:]);
+	deep := fmt.to_string(mem.default_allocator(), typeid_of(T40));
+	fmt.println(deep.len() <= 4100, deep[deep.len() - 3:]);
+}

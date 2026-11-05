@@ -5,6 +5,7 @@ package lokec
 import "core:fmt"
 import "core:mem"
 import "core:strings"
+import "core:unicode/utf8"
 
 type_of :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	index := int(id)
@@ -470,9 +471,21 @@ type_name_open :: proc(w: ^Type_Name_Writer) -> bool {
 
 @(private = "file")
 type_name_text :: proc(w: ^Type_Name_Writer, text: string) {
-	if type_name_open(w) {
-		strings.write_string(&w.b, text)
+	if !type_name_open(w) {
+		return
 	}
+	room := TYPE_NAME_LIMIT - strings.builder_len(w.b)
+	if len(text) <= room {
+		strings.write_string(&w.b, text)
+		return
+	}
+	// A generic instance's name is one such text, however long its arguments' are.
+	for room > 0 && !utf8.rune_start(text[room]) {
+		room -= 1
+	}
+	strings.write_string(&w.b, text[:room])
+	w.cut = true
+	strings.write_string(&w.b, "...")
 }
 
 @(private = "file")

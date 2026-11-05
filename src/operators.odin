@@ -611,8 +611,9 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 // wherever they are written. Nothing can load any more, so an `impl` subject that
 // does not resolve now is an error.
 //
-// A signature can itself need an operator, as `[N]int` does where `N :: a + b`, so
-// the blocks are all declared first, and a lookup finishes what is still pending.
+// A signature or a block's subject can itself need an operator, as `[N]int` does where
+// `N :: a + b`, so nothing is resolved until all of these are queued, and a lookup
+// finishes what is still pending, wherever the operator it needs is written.
 resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
 	saved := k.location
 	defer k.location = saved
@@ -623,17 +624,7 @@ resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
 			case ^Decl:
 				defer_if_operator(k, v)
 			case ^Item_Impl:
-				declare_impl_block(k, v, quiet = false)
-				if v.subject == INVALID_TYPE {
-					continue
-				}
-				k.impl_type = v.subject
-				for member in v.members {
-					if d, is_decl := member.(^Decl); is_decl {
-						defer_if_operator(k, d)
-					}
-				}
-				k.impl_type = saved.impl_type
+				append(&k.c.pending_operator_blocks, Pending_Operator_Block{v, k.location})
 			}
 		}
 	}
@@ -643,6 +634,12 @@ resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
 // An operator whose signature has yet to resolve, and where it is written.
 Pending_Operator :: struct {
 	decl:     ^Decl,
+	location: Checker_Location,
+}
+
+// A block yet to be declared, and where it is written.
+Pending_Operator_Block :: struct {
+	item:     ^Item_Impl,
 	location: Checker_Location,
 }
 
@@ -659,7 +656,7 @@ defer_if_operator :: proc(k: ^Checker, d: ^Decl) {
 @(private = "file")
 settle_pending_operators :: proc(k: ^Checker) {
 	c := k.c
-	if c.next_pending_operator == len(c.pending_operators) {
+	if c.next_pending_operator_block == len(c.pending_operator_blocks) && c.next_pending_operator == len(c.pending_operators) {
 		return
 	}
 	saved := k.location
@@ -667,6 +664,21 @@ settle_pending_operators :: proc(k: ^Checker) {
 	defer {
 		end_settling(c, settling)
 		k.location = saved
+	}
+	for c.next_pending_operator_block < len(c.pending_operator_blocks) {
+		entry := c.pending_operator_blocks[c.next_pending_operator_block]
+		c.next_pending_operator_block += 1
+		k.location = entry.location
+		declare_impl_block(k, entry.item, quiet = false)
+		if entry.item.subject == INVALID_TYPE {
+			continue
+		}
+		k.impl_type = entry.item.subject
+		for member in entry.item.members {
+			if d, is_decl := member.(^Decl); is_decl {
+				defer_if_operator(k, d)
+			}
+		}
 	}
 	for c.next_pending_operator < len(c.pending_operators) {
 		entry := c.pending_operators[c.next_pending_operator]

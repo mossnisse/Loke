@@ -7,116 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A viewed record's owned provider hides providers reached through its carriers
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-keeps the result below in `arena`'s region. This compiles after `6b292d78`, where its parent
-reports `L0537` at `drop(arena)`. The new slice walk in
-[src/provenance_regions.odin](src/provenance_regions.odin) stops at a viewed record that owns
-a provider: `prov_merge_provider_viewed` merges its owned provider tokens but never follows
-its carrier fields. The result is attributed to `holders[0].owned` and loses `external`:
-
-```loke
-package main;
-import "core:mem";
-Holder :: struct { owned: mem.Arena, external: ^mut mem.Arena }
-build :: proc(holders: []Holder) -> [dynamic]int {
-    v := make([dynamic]int, 0, holders[0].external.allocator());
-    v.append(1);
-    return v;
-}
-main :: proc() {
-    arena := mem.Arena.init();
-    holders := [1]Holder{Holder{mem.Arena.init(), &mut arena}};
-    r := build(holders[:]);
-    drop(arena);
-    _ = r[0];
-}
-```
-
-The walk must include providers reached through an aggregate's carriers alongside those it
-owns. An aggregate with only a carrier is also missed by `prov_view_reaches_provider`:
-`Holder :: struct { external: ^mut mem.Arena }`, passed to `build` as `^Holder`, loses the
-same dependency; that case predates this commit. Found reviewing `6b292d78` on 2026-11-05
-(P1).
-
-### A precomputed generic instance name bypasses the printed-name limit
-
-[Printed forms](standard-library.md#printed-forms) stops a type's name at about 4 KB.
-`type_name_text` in [src/types.odin](src/types.odin) checks the current builder length before
-writing an entire chunk, and a generic instance's precomputed name is one chunk. This prints
-40,953 characters without `...`; the names still double at each level, so deeper declarations
-retain the exponential cost the new limit was meant to prevent:
-
-```loke
-package main;
-import "core:fmt";
-Tag :: struct($A, $B: type) {}
-T0 :: int;
-T1 :: Tag(T0, T0);
-T2 :: Tag(T1, T1);
-T3 :: Tag(T2, T2);
-T4 :: Tag(T3, T3);
-T5 :: Tag(T4, T4);
-T6 :: Tag(T5, T5);
-T7 :: Tag(T6, T6);
-T8 :: Tag(T7, T7);
-T9 :: Tag(T8, T8);
-T10 :: Tag(T9, T9);
-T11 :: Tag(T10, T10);
-T12 :: Tag(T11, T11);
-main :: proc() { fmt.println(typeid_of(T12)); }
-```
-
-Bound each chunk by the remaining space, including named types, so generic instance names
-cannot keep growing through `generic_argument_text`. Found reviewing `6b292d78` on
-2026-11-05 (P2).
-
-### A computed dependent parameter type suppresses a private type warning
-
-[Private names in public declarations](design.md#private-names-in-public-declarations)
-requires `L0740` for `Hidden` in `expose` below. The parent of `6b292d78` reports it, but this
-commit does not. In [src/private_names.odin](src/private_names.odin), `argument_is_value`
-assumes any dependent parameter type other than a bare name takes a value. A compile-time
-call can instead resolve to `type`, making the argument a type. Import this library from a
-root `main` package:
-
-```loke
-package lib;
-@(private) Hidden :: struct { x: int }
-identity_type :: proc($T: type) -> type { return T; }
-@(public) G :: struct($T: type, $V: identity_type(T)) {}
-@(public) expose :: proc(value: G(type, Hidden)) {}
-```
-
-Resolve a dependent parameter's type with the earlier arguments bound rather than classifying
-it only by its syntax. Found reviewing `6b292d78` on 2026-11-05 (P3).
-
-### An impl subject can demand an operator before the operator blocks are declared
-
-[Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)
-should not depend on declaration order. A subject's array length can need a later operator
-while `declare_impl_block` is still declaring the package's blocks. The pending-operator
-queue in [src/operators.odin](src/operators.odin) has not seen that later block, and the
-file-scope constant keeps the failed check. This reports `L0318` at `+`, followed by `L0406`
-for the subject and `L0363` for `count`:
-
-```loke
-package main;
-V :: struct { x: int }
-N :: (V{1} + V{2}).x;
-impl [N]int {
-    count :: proc(self) -> int { return self.len(); }
-}
-impl V {
-    add :: operator(+) proc(a, b: V) -> V { return {a.x + b.x}; }
-}
-main :: proc() { v := [3]int{}; _ = v.count(); }
-```
-
-This predates `6b292d78` and remains after its operator-signature ordering fix. Found
-reviewing that commit on 2026-11-05 (P2, over-rejection).
-
 ### A long literal can still overflow the stack at `-opt=none`
 
 A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
@@ -138,13 +28,14 @@ main :: proc() {
 
 Found on 2026-11-03 (P3).
 
-### A long chain of reborrows in one body takes cubic time to solve
+### A carrier redefined thousands of times, each value copied, takes cubic time
 
-A generated body of `p1 := p0; keep(p1); p2 := p1; keep(p2); ...` compiled by an optimized `lokec`
-takes 0.6 s at 1000 links, 3.8 s at 2000 and 34 s at 4000. Walking the body is 75 ms of the last;
-the rest is `solve_provenance` in [src/borrow.odin](src/borrow.odin). The cause is not established.
-Found on 2026-11-03 (P3).
-
+A generated body of `q0 := p; keep(q0); p = &mut v; q1 := p; keep(q1); p = &mut v; ...` compiled by
+an optimized `lokec` takes 1.3 s at 1000 repeats and 45 s at 4000. Each new value in `p` ends what was
+taken from the old one (`end_links_of_value` in [src/borrow.odin](src/borrow.odin)), which asks every
+slot about every reborrow of `p`, and `p` has one per copy. A chain of copies, where each slot has one
+reborrow, is quadratic with a small constant. Telling which slots may hold a reborrow from which it
+derives could avoid the asking. Found on 2026-11-05 while fixing the chain (P3).
 ### A result read through two loads reaches every field of the second
 
 [Procedure result contracts](design.md#procedure-result-contracts) keep which paths of a parameter's
@@ -208,16 +99,6 @@ main :: proc() {}
 ```
 
 Found on 2026-11-03 (P3): the rejection errs on the safe side.
-
-### A body of thousands of borrows is slow, then runs out of memory
-
-The language sets no limit on a body's size, but `prepare_state` in
-[src/borrow.odin](src/borrow.odin) gives every block a row per slot of a bit per loan, so a body's
-tables grow as blocks times slots times loans. A generated body of `if (c) { p := &mut v; p^ = i; }`
-takes 16 s at 1000 statements and 3.5 minutes at 2000 on an unoptimized `lokec`, and at 6000 stops
-with `error: out of memory`. A `switch` no longer adds to this by its cases alone, as its bindings
-share one view of the subject. Fixing it needs sparse rows, or rows only where a slot is live. Found
-on 2026-11-03 (P2).
 
 ### A hook in a `when` on a later constant comes too late for a record already used
 
@@ -321,47 +202,6 @@ no answer during selection. The block cannot be declared first, as a `when` may 
 what it needs, so a fix has to say which questions a condition may ask. Found on
 2026-11-01 while fixing the lost hooks of a body-local record.
 
-### An owned `next` counts a copy of its element that no step makes
-
-[Global write effects](design.md#global-write-effects) count the copies that may
-run. A protocol `next` that returns its element hands it over, and no step of the
-traversal clones it, yet `Tagged.duplicate`'s read of `counter` is counted:
-
-```loke
-package main;
-counter: int;
-Tagged :: struct { n: int }
-impl Tagged {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
-        return .ok(Tagged{self.n + counter});
-    }
-}
-It :: struct { done: bool }
-impl It {
-    Element :: Tagged;
-    Iterator :: It;
-    iter :: proc(self) -> It { return self; }
-    next :: proc(self: inout It) -> Option(Tagged) {
-        if (self.done) { return .none; }
-        self.done = true;
-        return .some(Tagged{1});
-    }
-}
-main :: proc() {
-    p := &mut counter;
-    foreach (t in It{false}) { p^ = t.n; }
-}
-```
-
-This reports `L0511` at `It{false}`, though with `p` removed the emitted loop calls
-only `It.next`, and no `Tagged.clone`. `walk_flow_foreach` in
-[src/cfg.odin](src/cfg.odin) calls `prov_copy_effects` for any step that does not lend
-its element. `in_a_copying_traversal` in
-[tests/err/global_read_effects.loke](tests/err/global_read_effects.loke) pins `L0511`
-for `items.copied()`, so a fix must keep that read counted, as a clone inside `next`
-or otherwise. Found while fixing destructuring's copy effects on 2026-11-01 (P3,
-over-rejection).
-
 ### A write on every path does not end a received allocator's region
 
 [The allocator reset promise](design.md#allocator_reset) covers the regions a reset
@@ -441,52 +281,6 @@ main :: proc() {}
 [carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) lists each place
 form this holds for, and a record of two carriers through a pointer is already accepted.
 End the use of `x` before using `other`.
-
-### A pointer to one field of a record stands for the others
-
-A store by hand of `r^.a.to = other` leaves `r^.b.to` free, and so does a pointer into a view
-parameter's element ([Places and overlap](design.md#places-and-overlap)). A load through a
-pointer to one field of a record reached through a carrier reads what the other fields hold
-as well, so a copy out of one conflicts with what was stored in another:
-
-```loke
-package main;
-Link :: struct { to: ^mut int }
-Two :: struct { a: Link, b: Link }
-other_field :: proc(r: ^mut Two, @(escape=stored) other: ^mut int) {
-    r^.a.to = other;
-    h := &mut r^.b;
-    x := h^.to;
-    other^ = 1; // L0641; should be accepted
-    x^ = 2;
-}
-main :: proc() {}
-```
-
-Read `r^.b.to` by name.
-
-### Clearing a dynamic array field through a pointer to it uses the pointer's source
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) has a mutable reborrow suspend
-its source until the reborrow's last use, and a use of the reborrow is no use of the source.
-A pointer to a dynamic array field whose elements hold a mutable carrier conflicts with
-itself when it clears the array, though the same call by name, through a pointer to the whole
-array, or on elements of plain data, is accepted:
-
-```loke
-package main;
-Pair :: struct { a: ^mut int }
-Holder :: struct { d: [dynamic]Pair }
-by_name :: proc(h: ^mut Holder) { h^.d.clear(); }
-through_a_field_pointer :: proc(h: ^mut Holder) {
-    y := &mut h^.d;
-    y^.clear(); // L0641; should be accepted
-}
-main :: proc() {}
-```
-
-Call it by name through `h`. Found on 2026-11-02 while checking a length beside a borrow of
-the field (over-rejection).
 
 ### The length of a dynamic array conflicts with a mutable pointer to its element
 

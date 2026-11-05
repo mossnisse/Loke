@@ -8095,6 +8095,10 @@ reset();                        // ERROR: a read-only slice of `cache` is still 
 fmt.println(view[0]);
 ```
 
+A `foreach` over the [iteration protocol](#iteration-protocol) calls `iter` once and
+`next` at each step, and drops the iterator when the loop ends, and each of these
+counts as a call there.
+
 The effect covers a value parameter, whose managed storage is shared with the
 caller for the call, as much as a view. Since no variable is [public](#public), a
 caller borrows another package's storage only through a procedure's result, whose

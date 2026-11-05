@@ -1449,6 +1449,12 @@ STORE_LANDING_CASES := [?]Stored_Reach_Case {
 	{"element_local_store_by_name_read_by_field_pointer", "@(escape=stored) other: ^mut int", "v := 1; w := Wrapped{Link{&mut v}, 1}; w.link.to = other; h := &mut w.link; x := h^.to; other^ = 1; x^ = 2;", true},
 	{"element_ok_view_read_by_field_pointer_done", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "s[0].link.to = other; h := &mut s[0].link; x := h^.to; x^ = 2; other^ = 1;", false},
 	{"element_ok_record_other_field_pointer", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "r^.a.to = other; h := &mut r^.b; x := h^.to; other^ = 1; x^ = 2;", false},
+	{"element_ok_record_first_field_pointer", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "r^.b.to = other; h := &mut r^.a; x := h^.to; other^ = 1; x^ = 2;", false},
+	{"element_record_store_second_read_by_field_pointer", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "r^.b.to = other; h := &mut r^.b; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_record_store_by_second_field_pointer_read_by_second", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "g := &mut r^.b; g^.to = other; h := &mut r^.b; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_record_read_by_pointer_to_pointer_of_second", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "r^.b.to = other; h := &mut r^.b; g := h; x := g^.to; other^ = 1; x^ = 2;", true},
+	{"element_record_store_second_read_by_either_field_pointer", "r: ^mut Two_Links, c: bool, @(escape=stored) other: ^mut int", "r^.b.to = other; h := &mut r^.a; if (c) { h = &mut r^.b; } x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_local_store_second_read_by_field_pointer", "@(escape=stored) other: ^mut int", "v := 1; w := Two_Links{Link{&mut v}, Link{&mut v}}; w.b.to = other; h := &mut w.b; x := h^.to; other^ = 1; x^ = 2;", true},
 	// A mutable carrier behind a read-only one keeps its capability, so a call given the
 	// read-only one may write through it, whatever its body does.
 	{"reach_ro_copy_across_write", "l: ^mut Held_Pair", "y: ^int = l^.a; write_pair(l); z := y^;", true},
@@ -1477,12 +1483,6 @@ STORE_LANDING_CASES := [?]Stored_Reach_Case {
 	{"reach_ok_read_by_name_beside_copy", "l: ^mut Held_Pair", "y: ^int = l^.a; u := l^.a^; z := y^;", false},
 }
 
-// known-gaps.md "A pointer to one field of a record stands for the others".
-@(private = "file")
-store_landing_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
-	return entry.name == "element_ok_record_other_field_pointer"
-}
-
 @(test)
 store_landing_matrix :: proc(t: ^testing.T) {
 	source := strings.builder_make(context.temp_allocator)
@@ -1500,8 +1500,7 @@ store_landing_matrix :: proc(t: ^testing.T) {
 		return
 	}
 	for entry, at in STORE_LANDING_CASES {
-		expected := entry.rejected || store_landing_over_rejected(entry)
-		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], entry.rejected)
 	}
 }
 

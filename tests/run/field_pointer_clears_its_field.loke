@@ -1,0 +1,28 @@
+// design.md "Weakening and reborrows": a use of a reborrow is no use of its source. A pointer to a
+// dynamic array field of a record reached through a carrier clears that array like any other.
+package main;
+
+import "core:fmt";
+
+Pair :: struct { a: ^mut int }
+Holder :: struct { n: int, d: [dynamic]Pair }
+
+through_a_field_pointer :: proc(h: ^mut Holder) {
+	y := &mut h^.d;
+	y^.clear();
+}
+by_name :: proc(h: ^mut Holder) {
+	h^.d.clear();
+}
+
+main :: proc() {
+	first, second := 1, 2;
+	h := Holder{};
+	h.d.append(Pair{&mut first});
+	through_a_field_pointer(&mut h);
+	fmt.println(h.d.len());
+	g := Holder{};
+	g.d.append(Pair{&mut second});
+	by_name(&mut g);
+	fmt.println(g.d.len());
+}

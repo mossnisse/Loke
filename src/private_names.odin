@@ -597,8 +597,9 @@ walk_application :: proc(x: ^Exposure, call: ^Expr_Call) -> bool {
 }
 
 // Whether the parameter at `at` takes a value in this application. `$V: T` takes a
-// type where `T` is `type`, so an argument that decides it through a `$` name has no
-// one answer, and what it selects is read in each instance.
+// type where `T` is `type`, and `$V: Kind_Of(T)` where that call gives `type`, so its
+// type is asked for with the arguments before it bound. What an argument decides
+// through a `$` name has no one answer, and what it selects is read in each instance.
 @(private = "file")
 argument_is_value :: proc(x: ^Exposure, call: ^Expr_Call, applied: Applied_Parameters, at: int) -> bool {
 	if at >= len(applied.params) {
@@ -610,26 +611,24 @@ argument_is_value :: proc(x: ^Exposure, call: ^Expr_Call, applied: Applied_Param
 	if !dependent {
 		return kind != TYPE_TYPE && kind != INVALID_TYPE
 	}
-	if applied.alias != nil {
-		return false
-	}
-	// `$V: []T` is a value whatever `T` is.
-	written, is_name := applied.params[at].type_syntax.(^Expr_Ident)
-	if !is_name {
-		return true
-	}
-	for parameter, index in applied.params[:at] {
-		position := index - applied.first
-		if identifier_text(x.c, parameter.name) == written.name && position >= 0 && position < len(call.args) {
-			decided := call.args[position].value
-			if names_bound(x, decided) {
+	// An argument written with a `$` name is known only in each instance. There, only a
+	// name or a call can come to be `type`: `$V: []T` is a value whatever `T` is.
+	for argument in call.args[:min(at - applied.first, len(call.args))] {
+		if names_bound(x, argument.value) {
+			if applied.alias != nil {
 				return false
 			}
-			type := resolve_type_syntax(x.k, clone_expr(x.c, decided))
-			return type != TYPE_TYPE && type != INVALID_TYPE
+			#partial switch _ in applied.params[at].type_syntax {
+			case ^Expr_Ident, ^Expr_Call:
+				return false
+			}
+			return true
 		}
 	}
-	return false
+	saved := x.k.location
+	defer x.k.location = saved
+	type := applied_parameter_type(x.k, clone_expr(x.c, call).(^Expr_Call).args, applied, at, x.k.scope, report = false)
+	return type != TYPE_TYPE && type != INVALID_TYPE
 }
 
 // Whether `e` writes a `$` name, whether or not the checker's scope binds it.

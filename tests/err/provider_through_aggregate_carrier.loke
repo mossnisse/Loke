@@ -1,0 +1,38 @@
+// design.md "Allocator regions and region provenance": what a callee draws from a provider it
+// reaches through a parameter is in that provider's region, whichever field of a viewed record
+// holds the carrier that leads there, and whatever else the record owns.
+package main;
+
+import "core:mem";
+
+Mixed :: struct { owned: mem.Arena, external: ^mut mem.Arena }
+Pointing :: struct { external: ^mut mem.Arena }
+
+from_a_field_beside_an_owned_arena :: proc(holders: []Mixed) -> [dynamic]int {
+	v := make([dynamic]int, 0, holders[0].external.allocator());
+	v.append(1);
+	return v;
+}
+from_a_record_of_a_carrier :: proc(holder: ^Pointing) -> [dynamic]int {
+	v := make([dynamic]int, 0, holder^.external.allocator());
+	v.append(1);
+	return v;
+}
+beside_an_owned_arena :: proc() {
+	arena := mem.Arena.init();
+	holders := [1]Mixed{Mixed{mem.Arena.init(), &mut arena}};
+	r := from_a_field_beside_an_owned_arena(holders[:]);
+	drop(arena);
+	_ = r[0];
+}
+through_a_record_of_a_carrier :: proc() {
+	arena := mem.Arena.init();
+	holder := Pointing{&mut arena};
+	r := from_a_record_of_a_carrier(&holder);
+	drop(arena);
+	_ = r[0];
+}
+main :: proc() {
+	beside_an_owned_arena();
+	through_a_record_of_a_carrier();
+}

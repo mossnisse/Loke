@@ -1,0 +1,18 @@
+L0512
+@51:19
+`counter` cannot be modified by `next` here: a mutable pointer of it is still in use
+L0511
+@55:19
+`counter` cannot be read by `next` here: a mutable pointer of it is still in use
+L0512
+@59:26
+`counter` cannot be modified by `next` here: a mutable pointer of it is still in use
+L0512
+@63:19
+`counter` cannot be modified by `iter` here: a mutable pointer of it is still in use
+L0512
+@67:19
+`counter` cannot be modified by `close` when this iterator is dropped here: a mutable pointer of it is still in use
+L0512
+@76:2
+`counter` cannot be modified by `loops` here: a mutable pointer of it is still in use

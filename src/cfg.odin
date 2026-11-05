@@ -107,23 +107,24 @@ Flow_Block :: struct {
 	unwind:      bool,
 	unwind_at:   Span,
 
-	// Provenance modes, solved by `src/borrow.odin`. Reaching loans are packed
-	// one `ceil(2*loans/8)`-byte row per slot: which loans the slot may hold,
-	// then which of those it may hold after their release.
+	// Provenance modes, solved by `src/borrow.odin`. Each table is the solver's flat
+	// one at this block's entry or exit, kept in pages shared with its neighbors
+	// (`src/borrow_tables.odin`). Reaching loans are per slot a handle of a row of
+	// `Prov_Solve.reach_rows`.
 	prov:            [dynamic]Prov_Event,
-	reach_entry:     []u8,
-	reach_exit:      []u8,
-	precision_entry: []Precision_Loss,
-	precision_exit:  []Precision_Loss,
-	ended_entry:     []bool,
-	ended_exit:      []bool,
+	reach_entry:     [][]u32,
+	reach_exit:      [][]u32,
+	precision_entry: [][]Precision_Loss,
+	precision_exit:  [][]Precision_Loss,
+	ended_entry:     [][]bool,
+	ended_exit:      [][]bool,
 	// Per slot, a handle of what it holds of the reborrows (`solve_links_held`).
-	links_entry:     []u32,
-	links_exit:      []u32,
-	live_entry:      []Slot_Use,
-	live_exit:       []Slot_Use,
-	use_entry:       []Span,
-	use_exit:        []Span,
+	links_entry:     [][]u32,
+	links_exit:      [][]u32,
+	live_entry:      [][]Slot_Use,
+	live_exit:       [][]Slot_Use,
+	use_entry:       [][]Span,
+	use_exit:        [][]Span,
 	prov_visited:    bool,
 	// A walk took what reaches this block's end, or what its last definition
 	// left, so a new predecessor or definition invalidates that
@@ -1332,6 +1333,15 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	if graph.mode != .Lifecycle {
 		iterated = prov_iterate(graph, s, iterated)
 		through = foreach_reborrow_through_carrier(graph, s, place_loop)
+		if s.kind == .Protocol {
+			prov_iteration_call_effects(graph, s.iter_symbol, expr_span(s.iterable), prov_drop_region(graph, s.iterable))
+		}
+	}
+	// The loop owns a protocol's iterator, dropped however the loop ends.
+	drops_iterator := graph.mode != .Lifecycle && s.kind == .Protocol && len(type_drop_hooks(graph.k.c, s.iterator_type)) > 0
+	if drops_iterator {
+		enter_flow_scope(graph)
+		prov_note_iterator_drop(graph, s)
 	}
 	head := new_flow_block(graph)
 	link(graph, graph.current, head)
@@ -1364,6 +1374,10 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 			kind = .Live, sources = through, span = expr_span(s.iterable), revives = true, reads_only = !place_loop,
 		})
 	}
+	// design.md "Iteration protocol": each step of a protocol loop calls `next`.
+	if graph.mode != .Lifecycle && s.kind == .Protocol {
+		prov_iteration_call_effects(graph, s.next_symbol, expr_span(s.iterable), prov_drop_region(graph, s.iterable))
+	}
 
 	body := new_flow_block(graph)
 	link(graph, head, body)
@@ -1374,8 +1388,9 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 		})
 	}
 	if graph.mode != .Lifecycle {
-		// A step that does not lend its element clones it out of the source.
-		if !s.borrows && !place_loop && s.element_type != INVALID_TYPE {
+		// A step of a built-in traversal that does not lend its element clones it
+		// out of the source. A protocol's `next` hands back what it hands back.
+		if s.kind != .Protocol && !s.borrows && !place_loop && s.element_type != INVALID_TYPE {
 			prov_copy_effects(graph, s.element_type, expr_span(s.iterable))
 		}
 		prov_bind_foreach(graph, s, iterated, elements, through)
@@ -1385,6 +1400,9 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	walk_flow_loop_body(graph, s.body, head, done, s.bindings, place_loop || !s.borrows)
 	link(graph, graph.current, head)
 	graph.current = done
+	if drops_iterator {
+		leave_flow_scope(graph)
+	}
 }
 
 // design.md "Borrowing iteration": the source cannot change while the

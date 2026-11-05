@@ -130,8 +130,7 @@ scratch_commit :: proc(block: ^Scratch_Block, end: uint) -> mem.Allocator_Error 
 }
 
 // `make` drops an allocation's error, so a body too large to analyze would go on
-// with empty tables and fail somewhere that says nothing of the cause. See
-// known-gaps.md "A body of thousands of borrows is slow, then runs out of memory".
+// with empty tables and fail somewhere that says nothing of the cause.
 @(private = "file")
 scratch_allocator_proc :: proc(
 	allocator_data: rawptr,
