@@ -57,7 +57,7 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id, relocating := false) ->
 	if existing, found := interned[under]; found {
 		return existing
 	}
-	name := fmt.aprintf(relocates ? "@.loke.ops.%d.move" : "@.loke.ops.%d", int(under))
+	name := generated_name(e, fmt.aprintf(relocates ? "@.loke.ops.%d.move" : "@.loke.ops.%d", int(under)))
 	// Registered first, so a container of containers does not recurse forever.
 	interned[under] = name
 
@@ -271,7 +271,7 @@ emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
 // future generic `call` would collide loudly rather than load the wrong type.
 @(private = "file")
 sort_by_thunk :: proc(e: ^Emitter, element: Type_Id, method: Symbol_Id) -> string {
-	name := fmt.aprintf("@loke.csortby.%d.%d", int(method), int(element))
+	name := generated_name(e, fmt.aprintf("@loke.csortby.%d.%d", int(method), int(element)))
 	thunk, fresh := begin_thunk(e, name)
 	if !fresh {
 		return name
@@ -301,7 +301,7 @@ emit_ret_flag :: proc(e: ^Emitter, flag: string) {
 @(private = "file")
 container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 	return container_thunk(
-		e, fmt.aprintf("@loke.cless.%d", int(element)), element,
+		e, generated_name(e, fmt.aprintf("@loke.cless.%d", int(element))), element,
 		"i32", "ptr %a, ptr %b",
 		proc(e: ^Emitter, element: Type_Id) {
 			before := ""
@@ -400,7 +400,7 @@ container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	// design.md "What the unwind runs, and what it does not": the element's own
 	// drop registers what it has not dropped yet, as a procedure's would.
 	return container_thunk(
-		e, fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part))), part,
+		e, generated_name(e, fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part)))), part,
 		"void", "ptr %p",
 		proc(e: ^Emitter, part: Type_Id) {
 			emit_drop_place(e, part, "%p")
@@ -418,7 +418,7 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 		return "null"
 	}
 	return container_thunk(
-		e, fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part))), part,
+		e, generated_name(e, fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part)))), part,
 		"i32", "ptr %out, ptr %src, ptr %a",
 		proc(e: ^Emitter, part: Type_Id) {
 			emit_ret_flag(e, emit_try_clone_into(e, part, "%out", "%src", "%a"))
@@ -432,7 +432,7 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 @(private = "file")
 container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	return container_thunk(
-		e, fmt.aprintf("@loke.chash.%d", int(key)), key,
+		e, generated_name(e, fmt.aprintf("@loke.chash.%d", int(key))), key,
 		"i64", "ptr %p, i64 %seed",
 		proc(e: ^Emitter, key: Type_Id) {
 			out := ""
@@ -453,7 +453,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 @(private = "file")
 container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	return container_thunk(
-		e, fmt.aprintf("@loke.cequal.%d", int(key)), key,
+		e, generated_name(e, fmt.aprintf("@loke.cequal.%d", int(key))), key,
 		"i32", "ptr %a, ptr %b",
 		proc(e: ^Emitter, key: Type_Id) {
 			same := ""

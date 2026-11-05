@@ -1,0 +1,24 @@
+// design.md "Private names in public declarations": a generic type's value argument is a
+// value, which an importer can write without naming what it names, and a type argument is a
+// type. A group means the members of its own block.
+package shapes;
+
+@(private) Priv :: struct { x: int }
+@(private) COUNT :: 3;
+@(private) Fill :: enum { Solid }
+
+@(public) Vec :: struct($N: int) { x: [N]int }
+@(public) Two :: struct($T: type, $V: T) { x: T }
+@(public) Short :: Vec($K);
+
+@(public) by_size :: proc(v: Vec(size_of(Priv))) {}
+@(public) by_dependent :: proc(v: Two(int, size_of(Priv))) {}
+@(public) by_constant :: proc(v: Vec(COUNT)) {}
+@(public) by_alias :: proc(v: Short(size_of(Priv))) {}
+
+@(public) by_type :: proc(v: Two(Priv, Priv{})) {}
+@(public) by_option :: proc(v: Option(Priv)) {}
+
+@(public) Box :: struct($V: type) { v: V }
+impl Box(int) { @(private) h :: proc(fill: Fill) {} @(public) g :: proc{h}; }
+impl Box(string) { @(private) h :: proc(s: string) {} @(public) g :: proc{h}; }

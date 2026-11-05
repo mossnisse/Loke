@@ -103,23 +103,68 @@ prov_call_result_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_
 	if !found || summary.unknown {
 		return nil
 	}
+	// Each result path keeps what it takes, so that a field of the result reaches
+	// what that field was given and not what its siblings were.
+	if summary.content_type == prov_value(graph, id).type && len(summary.content) > 0 {
+		out := make([dynamic]Written_Alias, graph.alloc)
+		for content in summary.content {
+			for alias in prov_dependency_aliases(graph, form, arguments, content.dependencies) {
+				append(&out, Written_Alias{target = alias.target, at = alias.at, path = content.path.steps})
+			}
+		}
+		return out[:]
+	}
+	return prov_dependency_aliases(graph, form, arguments, summary.dependencies)
+}
+
+// What one result path may point at, by what `dependencies` take of each argument.
+// Where the result holds it is the caller's to say.
+@(private = "file")
+prov_dependency_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, arguments: []Value_Id, dependencies: Result_Dependencies) -> []Written_Alias {
 	out := make([dynamic]Written_Alias, graph.alloc)
-	if summary.static || summary.thread || summary.local || len(summary.globals) > 0 {
+	if dependencies.static || dependencies.thread || dependencies.local || len(dependencies.globals) > 0 {
 		append(&out, Written_Alias{})
 	}
-	for index in 0 ..< min(len(arguments), len(summary.params)) {
+	for index in 0 ..< min(len(arguments), len(dependencies.params)) {
 		held := prov_value_aliases(graph, arguments[index])
-		if summary.params[index] {
-			append(&out, ..prov_result_taken_aliases(graph, form, summary.dependencies, index, held))
+		if dependencies.params[index] {
+			append(&out, ..prov_result_taken_aliases(graph, form, dependencies, index, held))
 		}
-		for depth in 1 ..= 8 {
-			held = prov_load_aliases(graph, held, nil, unknown = true)
-			if summary.param_loads[index] & (u8(1) << u8(depth - 1)) != 0 {
-				append(&out, ..held)
+		append(&out, ..prov_result_loaded_aliases(graph, form, dependencies, index, held))
+	}
+	for &alias in out { alias.path = nil }
+	return out[:]
+}
+
+// What the result may hold of what is read through argument `index`, whose first
+// load goes along the summary's paths of the pointee and the rest below them, as
+// `prov_substitute_result` reads loans.
+@(private = "file")
+prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dependencies: Result_Dependencies, index: int, held: []Written_Alias) -> []Written_Alias {
+	out := make([dynamic]Written_Alias, graph.alloc)
+	shape := prov_parameter_pointee_shape(graph, form.call, index)
+	follow := proc(graph: ^Flow_Graph, held: []Written_Alias, first: []Proj_Step, depth: int, out: ^[dynamic]Written_Alias) {
+		loaded := prov_load_aliases(graph, held, first, unknown = true)
+		for _ in 1 ..< depth {
+			loaded = prov_load_aliases(graph, loaded, nil, unknown = true)
+		}
+		append(out, ..loaded)
+	}
+	for depth in 1 ..= 8 {
+		if dependencies.param_loads[index] & (u8(1) << u8(depth - 1)) == 0 {
+			continue
+		}
+		paths := result_load_paths(dependencies, index, depth)
+		if len(paths) == 0 || len(paths) != len(shape) {
+			follow(graph, held, nil, depth, &out)
+			continue
+		}
+		for named, position in paths {
+			if named {
+				follow(graph, held, shape[position].steps, depth, &out)
 			}
 		}
 	}
-	for &alias in out { alias.path = nil }
 	return out[:]
 }
 

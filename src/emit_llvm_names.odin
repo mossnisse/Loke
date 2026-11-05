@@ -113,6 +113,19 @@ claim_name :: proc(e: ^Emitter, base: string) -> string {
 	return name
 }
 
+// design.md "@(export)": a name the compiler generates under one spelling at each
+// use, such as one thunk per type, claimed at its first use, so that it too stays
+// clear of a link name.
+@(private)
+generated_name :: proc(e: ^Emitter, base: string) -> string {
+	if name, claimed := e.generated_names[base]; claimed {
+		return name
+	}
+	name := claim_name(e, base)
+	e.generated_names[base] = name
+	return name
+}
+
 // A claimed name stays clear of every link name the program gives, exported or
 // foreign, which may spell `loke.` too. Quoted or not, LLVM reads one symbol, so
 // these go in as the bytes a claim would spell.

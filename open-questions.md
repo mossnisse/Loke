@@ -10,16 +10,6 @@ entry is removed once it is settled: the reasons go to
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Scratch allocator callback
-
-Reviewing `f5774e5e` on 2026-11-05 found a small simplification (P3):
-`scratch_serve` has one caller and exists to let `scratch_allocator_proc` inspect
-its returned allocation error. Keep the allocator switch in the callback and
-check its named `err` return in a `defer`; explicit returns and `or_return` both
-set it before deferred code runs. This removes the forwarding procedure and
-its duplicated parameter list, about eleven lines, while keeping the same
-out-of-memory report. See [Allocation domains](compiler-architecture.md#allocation-domains).
-
 ## Provenance architecture
 
 A review of the root and region provenance checker on 2026-11-01 asked where its

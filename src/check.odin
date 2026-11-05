@@ -545,6 +545,10 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		case decl_proc_literal(d) != nil:
 			sym.kind = .Proc
 			sym.type = TYPE_VOID
+		case d.kind == .Const && len(d.values) == 1 && written_group(d.values[0]):
+			// A group from the start, as a constant's value may call it before
+			// its signature is reached.
+			sym.kind = .Proc_Group
 		case d.kind == .Const:
 			sym.kind = .Const
 		case:
@@ -555,6 +559,12 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		append(&symbols, id)
 	}
 	d.symbols = symbols[:]
+}
+
+@(private = "file")
+written_group :: proc(value: Expr) -> bool {
+	_, is_group := value.(^Expr_Proc_Group)
+	return is_group
 }
 
 // Is a signature here one binding of a declaration written for many? Anything

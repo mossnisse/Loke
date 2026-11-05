@@ -1,0 +1,33 @@
+// design.md "@(export)": a program may export any name outside the `loke_rt_` prefix, and
+// what the compiler generates steps aside for it, whichever name it would have used.
+package main;
+
+import "core:fmt";
+
+@(export, link_name = "loke.fmt.std_write") a :: proc "c" () -> i32 { return 1; }
+@(export, link_name = "loke.fmt.std_sink") b :: proc "c" () -> i32 { return 2; }
+@(export, link_name = "loke.fmt.panic_options") c :: proc "c" () -> i32 { return 3; }
+@(export, link_name = ".str.0") d :: proc "c" () -> i32 { return 4; }
+@(export, link_name = ".loke.type_names") e :: proc "c" () -> i32 { return 5; }
+@(export, link_name = ".loke.type_info") f :: proc "c" () -> i32 { return 6; }
+@(export, link_name = ".slice.0") g :: proc "c" () -> i32 { return 7; }
+
+Item :: struct { name: string, n: int }
+
+// A clone and a drop of a managed element each take a thunk.
+@(export, link_name = "loke.cdrop.1") h :: proc "c" () -> i32 { return 8; }
+
+work :: proc(items: []Item) -> int {
+	defer fmt.println("done");
+	return items.len();
+}
+
+main :: proc() {
+	fmt.println(a() + b() + c() + d() + e() + f() + g() + h());
+	items := [2]Item{Item{"one", 1}, Item{"two", 2}};
+	fmt.println(items[0], work(items[:]));
+	kind := typeid_of(Item);
+	fmt.println(kind);
+	many := [dynamic]string{"a", "b"};
+	fmt.println(many);
+}

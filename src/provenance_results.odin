@@ -369,7 +369,7 @@ prov_load_held :: proc(graph: ^Flow_Graph, v: ^Expr_Call, held: []int, depth: in
 
 // The carrier paths of what one load through parameter `index` reads. A
 // `self: ^` receiver's signature type is the pointee itself.
-@(private = "file")
+@(private)
 prov_parameter_pointee_shape :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> []Carrier_Path {
 	type := prov_parameter_type(graph, v, index)
 	if input := prov_input_call(graph, v); index == 0 && input.has_receiver && input.receiver == .Borrow {

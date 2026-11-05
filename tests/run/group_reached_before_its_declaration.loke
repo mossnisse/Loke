@@ -1,0 +1,15 @@
+// design.md "Explicit procedure overloading": a group means what it lists wherever it is
+// written, including when a constant's value calls it ahead of its declaration.
+package main;
+
+import "core:fmt";
+
+A :: struct { x: [M]int }
+M :: pick(2);
+pick :: proc{pick_int, pick_string};
+pick_int :: proc(x: int) -> int { return x; }
+pick_string :: proc(x: string) -> int { return 0; }
+
+main :: proc() {
+	fmt.println(M, size_of(A));
+}

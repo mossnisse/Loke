@@ -1497,7 +1497,7 @@ A generated method prints:
 | `string`, `string_view`, `cstring_view`, `rune` | its text |
 | `^T`, `^mut T` | the value it points to, as for `Box(T)` |
 | `rawptr`, `[^]T`, procedure | `0x` and the address in hexadecimal, or `<nil>` |
-| `typeid` | the type's name |
+| `typeid` | the type's name, which stops at `...` past about 4 KB |
 | enum | the member's name, or the number of a value no member names |
 | array, slice, dynamic array, `Simd` | `[1, 2, 3]` |
 | map | `[key = value, ...]` in [iteration order](design.md#maps) |

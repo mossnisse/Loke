@@ -69,7 +69,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 resolve_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) -> Type_Id {
 	errors := k.c.error_count
 	subject := resolve_type_syntax(k, item.type)
-	if subject == INVALID_TYPE && k.c.error_count == errors {
+	if subject == INVALID_TYPE && k.c.error_count == errors && !expr_has_error(item.type) {
 		errorf(k.c, expr_span(item.type), "L0406", "this `impl` subject does not name a type")
 	}
 	return subject

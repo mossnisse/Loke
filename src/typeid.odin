@@ -7,6 +7,7 @@
 package lokec
 
 import "core:fmt"
+import "core:hash"
 import "core:slice"
 import "core:strings"
 
@@ -273,18 +274,38 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
 	return typeid_sort_key_walk(c, type, &memo)
 }
 
-// Memoization saves rework, not key length. A type being walked holds the memo's
-// cycle sentinel: valid recursive types cross a nominal name and never recur
-// structurally; malformed by-value cycles get that one stable key until the
-// finite-size pass rejects them. A memo that can still meet one is per top-level
-// call, which keeps the sentinel out of an unrelated type's key.
+// A key past this length is replaced by a digest of it. A key holds its components'
+// keys, so a chain of aliases each naming the last twice doubles it at each step.
+SORT_KEY_LIMIT :: 1024
+
+// Stands for `key` in whatever holds it: the same text gives the same digest in every
+// build, and the digest's two seeds and the length keep two long keys apart.
+@(private = "file")
+bounded_sort_key :: proc(c: ^Compiler, key: string) -> string {
+	if len(key) <= SORT_KEY_LIMIT {
+		return key
+	}
+	data := transmute([]u8)key
+	return fmt.aprintf(
+		"digest:%d:%x:%x", len(key), hash.fnv64a(data), hash.fnv64a(data, 0x9e3779b97f4a7c15),
+		allocator = c.semantic_allocator,
+	)
+}
+
+// A type being walked holds the memo's cycle sentinel: valid recursive types cross a
+// nominal name and never recur structurally; malformed by-value cycles get that one
+// stable key until the finite-size pass rejects them. A memo that can still meet one
+// is per top-level call, which keeps the sentinel out of an unrelated type's key.
 @(private = "file")
 typeid_sort_key_walk :: proc(c: ^Compiler, type: Type_Id, memo: ^map[Type_Id]string) -> (result: string) {
 	if key, found := memo^[type]; found {
 		return key
 	}
 	memo^[type] = "000:<invalid-recursive-type>"
-	defer memo^[type] = result
+	defer {
+		result = bounded_sort_key(c, result)
+		memo^[type] = result
+	}
 
 	// Distinct identities can share a shape (`int`, `i64`), so these key on their name.
 	if type < FIRST_DYNAMIC_TYPE {

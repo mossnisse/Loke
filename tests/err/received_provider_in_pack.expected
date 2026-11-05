@@ -1,0 +1,15 @@
+L0537
+@17:2
+dropping `arena` would end the region backing `r`
+L0537
+@25:2
+dropping `second` would end the region backing `r`
+L0537
+@27:2
+dropping `first` would end the region backing `r`
+L0537
+@34:2
+dropping `arena` would end the region backing `r`
+L0732
+@52:3
+this uses `arena`'s allocator

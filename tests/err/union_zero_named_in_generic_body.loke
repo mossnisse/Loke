@@ -1,0 +1,19 @@
+// design.md "Zero values and `@(zero=)`": a designated payload needs a zero, including where an
+// instance's body is what names the union, after the package's own checks have run.
+package main;
+
+@(zero=a) G :: union($T: type) { a: T, b: int }
+
+Box :: struct($T: type) { x: T }
+impl Box($T) {
+	run :: proc(self) {
+		R :: struct { link: []G(R), @(required) x: int }
+		r := R{x = 1};
+		_ = r;
+	}
+}
+
+main :: proc() {
+	b := Box(int){1};
+	b.run();
+}

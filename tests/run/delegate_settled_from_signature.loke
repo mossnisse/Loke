@@ -1,0 +1,31 @@
+// design.md "Delegating operators": a delegate sees what it forwards wherever that is
+// written, including when a signature needs the delegate before its target's own signature
+// has been reached, directly or from a question asked in a probe.
+package main;
+
+import "core:fmt";
+
+D :: distinct V;
+impl D { delegate(+); }
+V :: struct { a: int }
+N :: V(D(V{1}) + D(V{2})).a;
+W :: struct { a: int }
+impl W { sub :: operator(-) proc(l: W, r: [N]int) -> W { return W{l.a + r.len()}; } }
+impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
+
+// Overload resolution asks about each candidate's arguments in a probe.
+E :: distinct F;
+impl E { delegate(*); }
+F :: struct { a: int }
+pick_int :: proc(x: int) -> int { return x; }
+pick_string :: proc(x: string) -> int { return 0; }
+pick :: proc{pick_int, pick_string};
+M :: pick(F(E(F{2}) * E(F{3})).a);
+X :: struct { a: int }
+impl X { negate :: operator(-) proc(l: X, r: [M]int) -> X { return X{l.a + r.len()}; } }
+impl F { times :: operator(*) proc(l, r: F) -> F { return {l.a * r.a}; } }
+
+main :: proc() {
+	fmt.println(N, (W{1} - [3]int{}).a);
+	fmt.println(M, (X{1} - [6]int{}).a);
+}

@@ -1229,8 +1229,9 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	if k.result_type == INVALID_TYPE {
-		// A written result that did not resolve was already reported.
-		if k.proc_literal.signature.result != nil {
+		// A written result that did not resolve was already reported, and so was
+		// a value the parser could not read.
+		if k.proc_literal.signature.result != nil || expr_has_error(s.value.expr) {
 			return terminated
 		}
 		errorf(k.c, s.span, "L0326", "this procedure returns nothing")

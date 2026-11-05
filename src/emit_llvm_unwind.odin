@@ -76,7 +76,7 @@ begin_unwind_frame :: proc(e: ^Emitter, llvm_name: string) {
 	e.unwind.live = fmt.aprintf("%%ulive.%d", id)
 	e.unwind.env = fmt.aprintf("%%uenv.%d", id)
 	e.unwind.ctx = fmt.aprintf("%%uctx.%d", id)
-	e.unwind.thunk = fmt.aprintf("@loke.u%d.%s", id, strings.trim_prefix(llvm_name, "@"))
+	e.unwind.thunk = claim_name(e, fmt.aprintf("@loke.u%d.%s", id, strings.trim_prefix(llvm_name, "@")))
 }
 
 @(private)

@@ -119,6 +119,10 @@ Compiler :: struct {
 	// The blocks of each subject whose `delegate` items have yet to run
 	// (`settle_delegates`).
 	pending_delegates:     map[Type_Id][dynamic]Pending_Delegate,
+	// The operators of the package being declared whose signatures have yet to
+	// resolve (`settle_pending_operators`), and the first of them not yet taken.
+	pending_operators:     [dynamic]Pending_Operator,
+	next_pending_operator: int,
 	// The first of them `check_pending_impl_instances` has yet to check.
 	next_pending_impl:     int,
 	// Instances of generic declarations that `check_pending_impl_instances` has yet

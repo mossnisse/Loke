@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A result drawn from a provider received in a variadic pack, or through a slice of pointers to
+  providers, is in the region of the arenas it was given
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
+  and a task using one reserves it ([Allocators and tasks](design.md#allocators-and-tasks)). So
+  `build(&mut arena)` over `build :: proc(arenas: ..^mut mem.Arena)` is now `L0537` if `arena` ends
+  while the result lives, and the task is `L0732` beside a use of that arena's allocator. Both
+  compiled and read freed memory. Upgrade by keeping the arena alive for as long as the result, and
+  by giving the task an arena of its own.
 - A pointer a call returned reaches what the call's result dependencies say, as
   [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
   requires, where it named nothing. Two unsound programs are now rejected. An owner stored through
@@ -1571,6 +1579,32 @@ checklist.
 
 ### Fixed
 
+- A pointer a call read out of a parameter reaches only the field the call read, and each field of a
+  returned record only what that field was given, where both reached the siblings' targets too. So a
+  reset that spares the other field no longer reports `L0537`
+  ([Procedure result contracts](design.md#procedure-result-contracts)).
+- `delegate` no longer depends on which signature comes first when a signature's constant needs an
+  operator, which was `L0420` naming an operator that was declared
+  ([Delegating operators](design.md#delegating-operators)). A constant may also call a procedure
+  group declared after it, which was the "compiler defect" `L0350`
+  ([Explicit procedure overloading](design.md#explicit-procedure-overloading)).
+- `L0740` reads a generic type's value argument as a value and a group's members in the group's own
+  block, so `Vec(size_of(Priv))` no longer warns and a private type in `Box(int)`'s group member is
+  reported whatever another block of `Box` declares
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- A program can export any name outside the reserved prefix, as the names the compiler generates all
+  step aside for it ([`@(export)`](design.md#export)), where some of them failed in clang with
+  `L0403`.
+- A misplaced token is one report: the parser no longer takes an `impl` block for a procedure's body,
+  so `impl proc() { }` is the block on a procedure type [the grammar](grammar.md#source-files)
+  says it is, and a `return` value it could not read is not reported again.
+- A type's name stops at `...` past about 4 KB ([Printed forms](standard-library.md#printed-forms)),
+  so a chain of aliases each naming the last twice compiles and prints at any depth, where a value of
+  one forty deep never finished.
+- A generic union whose `@(zero=)` payload has no zero is `L0423` when an instance's body names it,
+  which went unreported ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). A public type
+  with a private `format` prints by the generated form, which only reads, so printing one twice no
+  longer reports `L0641`.
 - What a procedure draws from a provider it reaches through a parameter is in the argument's region
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
   where it was in an unknown one, so another region ending no longer counts against it, and declaring

@@ -40,7 +40,7 @@ emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fal
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic_begin(ptr %s)", text_literal_global(e, message))
 	for arg, index in args {
 		emit_format_literal_to(e, writer, " ")
-		emit_format_thunk_call(e, expr_base(arg).type, addresses[index], writer, PANIC_OPTIONS)
+		emit_format_thunk_call(e, expr_base(arg).type, addresses[index], writer, generated_name(e, PANIC_OPTIONS))
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_panic_end()")
 	fmt.sbprintln(&e.b, "  unreachable")
@@ -53,7 +53,7 @@ emit_stderr_writer :: proc(e: ^Emitter) -> string {
 	writer := alloca(e, "{ ptr, ptr }")
 	fmt.sbprintfln(
 		&e.b, "  store {{ ptr, ptr }} {{ ptr inttoptr (i64 %d to ptr), ptr %s }}, ptr %s",
-		SINK_STDERR, SINK_STD_WITNESS, writer,
+		SINK_STDERR, generated_name(e, SINK_STD_WITNESS), writer,
 	)
 	return writer
 }
@@ -94,7 +94,7 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	if emit_lifecycle(e, failure).managed {
 		held = begin_temporary_drop(e, failure, data)
 	}
-	emit_format_thunk_call(e, failure, data, writer, PANIC_OPTIONS)
+	emit_format_thunk_call(e, failure, data, writer, generated_name(e, PANIC_OPTIONS))
 	emit_format_literal_to(e, writer, "\n")
 	drop_temporary_value(e, held)
 	fmt.sbprintfln(&e.b, "  store i32 1, ptr %s", status)
@@ -110,7 +110,7 @@ PANIC_OPTIONS :: "@loke.fmt.panic_options"
 
 @(private = "file")
 fmt_thunk_name :: proc(e: ^Emitter, type: Type_Id) -> string {
-	return fmt.aprintf("@loke.f.%d", typeid_value(e.c, type))
+	return generated_name(e, fmt.aprintf("@loke.f.%d", typeid_value(e.c, type)))
 }
 
 // Runtime-ABI wrappers for recursive aggregate formatting, one per printable
@@ -130,9 +130,9 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	}
 	append(&e.globals, fmt.aprintf(
 		"%s = private unnamed_addr constant {{ i64, i8, [7 x i8] }} {{ i64 10, i8 0, [7 x i8] zeroinitializer }}\n",
-		PANIC_OPTIONS,
+		generated_name(e, PANIC_OPTIONS),
 	))
-	append_constant_array(e, TYPE_NAMES, STRING_VIEW_TYPE, names)
+	append_constant_array(e, generated_name(e, TYPE_NAMES), STRING_VIEW_TYPE, names)
 }
 
 // Aggregates print as `[elements]`, `Name{field = value}`, `(field = value)`,
@@ -398,7 +398,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 // A `typeid` prints its type's name, or its number when it has none.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
-	view := gep_at(e, STRING_VIEW_TYPE, TYPE_NAMES, typeid_index(e, id))
+	view := gep_at(e, STRING_VIEW_TYPE, generated_name(e, TYPE_NAMES), typeid_index(e, id))
 	data, length := load_pair(e, STRING_VIEW_TYPE, view, VIEW_DATA, VIEW_LEN)
 	missing := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", missing, length)
@@ -580,15 +580,17 @@ entry:
   ret void
 }
 
-define private void @loke.fmt.std_write(ptr %stream, { ptr, i64 } %s) {
-entry:
+`)
+	std_write := generated_name(e, "@loke.fmt.std_write")
+	fmt.sbprintfln(&e.b, "define private void %s(ptr %%stream, {{ ptr, i64 }} %%s) {{", std_write)
+	fmt.sbprintln(&e.b, `entry:
   %bytes = extractvalue { ptr, i64 } %s, 0
   %count = extractvalue { ptr, i64 } %s, 1
   call void @loke_rt_v1_write_std(ptr %stream, ptr %bytes, i64 %count)
   ret void
 }
 `)
-	fmt.sbprintfln(&e.b, "%s = private unnamed_addr constant [1 x ptr] [ptr @loke.fmt.std_write]", SINK_STD_WITNESS)
+	fmt.sbprintfln(&e.b, "%s = private unnamed_addr constant [1 x ptr] [ptr %s]", generated_name(e, SINK_STD_WITNESS), std_write)
 	fmt.sbprintln(&e.b, "")
 }
 
@@ -602,7 +604,7 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 		return "0"
 	}
 	stream := fmt.aprintf("inttoptr (i64 %d to ptr)", kind == .Fmt_Stdout_Writer ? SINK_STDOUT : SINK_STDERR)
-	return dyn_view_value(e, llvm_type(e, e.c.runtime_types["Writer"]), stream, SINK_STD_WITNESS)
+	return dyn_view_value(e, llvm_type(e, e.c.runtime_types["Writer"]), stream, generated_name(e, SINK_STD_WITNESS))
 }
 
 @(private = "file")

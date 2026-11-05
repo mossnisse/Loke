@@ -1,0 +1,8 @@
+package main;
+
+import "./shapes";
+
+main :: proc() {
+	_ = shapes.Vec(1){};
+	wrong: int = "text"; // the case's one error
+}

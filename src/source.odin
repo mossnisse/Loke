@@ -413,7 +413,13 @@ Settling :: struct {
 }
 
 begin_settling :: proc(c: ^Compiler, d: ^Decl) -> Settling {
-	if committing(c) || !d.top_level {
+	return begin_settling_file_scope(c) if d.top_level else {}
+}
+
+// For what is declared at file scope but is not a `top_level` declaration, such as a
+// member of a block.
+begin_settling_file_scope :: proc(c: ^Compiler) -> Settling {
+	if committing(c) {
 		return {}
 	}
 	return {speculation = begin_commit(c), mark = len(c.diagnostics), in_probe = true}

@@ -136,7 +136,7 @@ text_literal_global :: proc(e: ^Emitter, text: string) -> string {
 	if existing, found := e.literals[text]; found {
 		return existing
 	}
-	name := fmt.aprintf("@.str.%d", len(e.literals))
+	name := claim_name(e, fmt.aprintf("@.str.%d", len(e.literals)))
 	e.literals[text] = name
 	append(&e.globals, fmt.aprintf(
 		"%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n",
@@ -434,7 +434,7 @@ emit_type_info_tables :: proc(e: ^Emitter) {
 	for type in e.c.typeid_order {
 		entries[typeid_value(e.c, type)] = type_info_entry(e, record, member, type)
 	}
-	append_constant_array(e, TYPE_INFO_TABLE, struct_name(e, record), entries)
+	append_constant_array(e, generated_name(e, TYPE_INFO_TABLE), struct_name(e, record), entries)
 }
 
 // A private constant array; an empty entry is the element's zero.
@@ -553,7 +553,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 	if len(entries) == 0 {
 		return "zeroinitializer"
 	}
-	name := fmt.aprintf("@.loke.members.%d", len(e.globals))
+	name := claim_name(e, fmt.aprintf("@.loke.members.%d", len(e.globals)))
 	append_constant_array(e, name, struct_name(e, member), entries[:])
 	return slice_constant(name, len(entries))
 }
@@ -602,7 +602,7 @@ record_constant :: proc(e: ^Emitter, record: Type_Id, values: []string) -> strin
 @(private)
 emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	safe := typeid_index(e, emit_expr(e, v.bound[0]))
-	return gep_at(e, struct_name(e, e.c.runtime_types["Type_Info"]), TYPE_INFO_TABLE, safe)
+	return gep_at(e, struct_name(e, e.c.runtime_types["Type_Info"]), generated_name(e, TYPE_INFO_TABLE), safe)
 }
 
 // `id` clamped into a table of every `typeid`: a nil or out-of-range id maps to

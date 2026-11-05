@@ -437,99 +437,159 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	return type_name_alloc(c, id, c.semantic_allocator)
 }
 
+// standard-library.md "Printed forms": a structural type prints in full, and an alias
+// has no name of its own, so a chain of aliases each naming the last twice doubles
+// its text at each step. A name past this length stops at `...`, so that printing one
+// costs no more than this, whatever its depth. Identity never reads this text.
+TYPE_NAME_LIMIT :: 4096
+
 // Queries format names in their own arena without allocating semantic state.
 type_name_alloc :: proc(c: ^Compiler, id: Type_Id, allocator: mem.Allocator) -> string {
+	w := Type_Name_Writer{c = c, b = strings.builder_make(allocator)}
+	write_type_name(&w, id)
+	return strings.to_string(w.b)
+}
+
+@(private = "file")
+Type_Name_Writer :: struct {
+	c:   ^Compiler,
+	b:   strings.Builder,
+	cut: bool,
+}
+
+// Whether the name goes on; the first write past the limit ends it, and nothing that
+// would close what is open is written after that.
+@(private = "file")
+type_name_open :: proc(w: ^Type_Name_Writer) -> bool {
+	if !w.cut && strings.builder_len(w.b) >= TYPE_NAME_LIMIT {
+		w.cut = true
+		strings.write_string(&w.b, "...")
+	}
+	return !w.cut
+}
+
+@(private = "file")
+type_name_text :: proc(w: ^Type_Name_Writer, text: string) {
+	if type_name_open(w) {
+		strings.write_string(&w.b, text)
+	}
+}
+
+@(private = "file")
+write_type_name :: proc(w: ^Type_Name_Writer, id: Type_Id) {
+	if !type_name_open(w) {
+		return
+	}
+	c := w.c
 	if int(id) < len(PREDECLARED_NAMES) && PREDECLARED_NAMES[id] != "" {
-		return PREDECLARED_NAMES[id]
+		type_name_text(w, PREDECLARED_NAMES[id])
+		return
 	}
 	info := type_of(c, id)
 	if info == nil {
-		return "<invalid>"
+		type_name_text(w, "<invalid>")
+		return
 	}
 	if info.name != INVALID_IDENTIFIER {
-		return identifier_text(c, info.name)
+		type_name_text(w, identifier_text(c, info.name))
+		return
 	}
 	#partial switch info.kind {
 	case .Pointer:
-		return fmt.aprintf("^%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, info.mutable ? "^mut " : "^")
+		write_type_name(w, info.element)
 	case .C_Pointer:
-		return fmt.aprintf("[^]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, "[^]")
+		write_type_name(w, info.element)
 	case .Array:
-		return fmt.aprintf("[%d]%s", info.count, type_name_alloc(c, info.element, allocator), allocator = allocator)
+		fmt.sbprintf(&w.b, "[%d]", info.count)
+		write_type_name(w, info.element)
 	case .Simd:
-		return fmt.aprintf("Simd(%s, %d)", type_name_alloc(c, info.element, allocator), info.count, allocator = allocator)
+		type_name_text(w, "Simd(")
+		write_type_name(w, info.element)
+		if type_name_open(w) {
+			fmt.sbprintf(&w.b, ", %d)", info.count)
+		}
 	case .Slice:
-		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, info.mutable ? "[]mut " : "[]")
+		write_type_name(w, info.element)
 	case .Dynamic_Array:
-		return fmt.aprintf("[dynamic]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, "[dynamic]")
+		write_type_name(w, info.element)
 	case .Box:
-		return fmt.aprintf("Box(%s)", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, "Box(")
+		write_type_name(w, info.element)
+		type_name_text(w, ")")
 	case .Map:
-		return fmt.aprintf("map[%s]%s", type_name_alloc(c, info.key, allocator), type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, "map[")
+		write_type_name(w, info.key)
+		type_name_text(w, "]")
+		write_type_name(w, info.element)
 	case .Distinct:
-		return fmt.aprintf("distinct %s", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		type_name_text(w, "distinct ")
+		write_type_name(w, info.element)
 	case .Struct:
-		return "struct"
+		type_name_text(w, "struct")
 	case .Enum:
-		return "enum"
+		type_name_text(w, "enum")
 	case .Union:
-		return "union"
+		type_name_text(w, "union")
 	case .Interface:
-		return "interface"
+		type_name_text(w, "interface")
 	case .Proc:
-		return proc_type_name(c, info, allocator)
+		write_proc_type_name(w, info)
+	case:
+		type_name_text(w, "<type>")
 	}
-	return "<type>"
 }
 
 // Everything in the type's identity prints, or a mismatch report names the same
 // text twice.
 @(private = "file")
-proc_type_name :: proc(c: ^Compiler, info: ^Type_Info, allocator: mem.Allocator) -> string {
-	b := strings.builder_make(allocator)
-	strings.write_string(&b, "proc")
-	if info.convention != "" {
-		fmt.sbprintf(&b, " %q", info.convention)
+write_proc_type_name :: proc(w: ^Type_Name_Writer, info: ^Type_Info) {
+	c := w.c
+	type_name_text(w, "proc")
+	if info.convention != "" && type_name_open(w) {
+		fmt.sbprintf(&w.b, " %q", info.convention)
 	}
-	strings.write_string(&b, "(")
+	type_name_text(w, "(")
 	for parameter, index in info.parameters {
 		if index > 0 {
-			strings.write_string(&b, ", ")
+			type_name_text(w, ", ")
 		}
 		if index < len(info.param_resets) && info.param_resets[index] {
-			strings.write_string(&b, "@(allocator_reset) ")
+			type_name_text(w, "@(allocator_reset) ")
 		}
 		if index < len(info.param_cross_thread) && info.param_cross_thread[index] {
-			strings.write_string(&b, "@(cross_thread) ")
+			type_name_text(w, "@(cross_thread) ")
 		}
 		if index < len(info.param_escapes) && info.param_escapes[index] != .Result {
-			strings.write_string(&b, "@(escape=")
-			strings.write_string(&b, escape_level_name(info.param_escapes[index]))
-			strings.write_string(&b, ") ")
+			type_name_text(w, "@(escape=")
+			type_name_text(w, escape_level_name(info.param_escapes[index]))
+			type_name_text(w, ") ")
 		}
 		if index < len(info.param_by_ptr) && info.param_by_ptr[index] {
-			strings.write_string(&b, "@(by_ptr) ")
+			type_name_text(w, "@(by_ptr) ")
 		}
 		#partial switch param_mode_at(info, index) {
-		case .Inout:  strings.write_string(&b, "inout ")
-		case .Borrow: strings.write_string(&b, "^")
-		case .Move:   strings.write_string(&b, "move ")
+		case .Inout:  type_name_text(w, "inout ")
+		case .Borrow: type_name_text(w, "^")
+		case .Move:   type_name_text(w, "move ")
 		}
-		strings.write_string(&b, type_name_alloc(c, parameter, allocator))
+		write_type_name(w, parameter)
 	}
 	if info.c_vararg {
-		strings.write_string(&b, len(info.parameters) > 0 ? ", .." : "..")
+		type_name_text(w, len(info.parameters) > 0 ? ", .." : "..")
 	}
-	strings.write_string(&b, ")")
+	type_name_text(w, ")")
 	if info.result != INVALID_TYPE {
-		strings.write_string(&b, " -> ")
+		type_name_text(w, " -> ")
 		if info.result_inout {
-			strings.write_string(&b, "inout ")
+			type_name_text(w, "inout ")
 		}
-		strings.write_string(&b, type_name_alloc(c, info.result, allocator))
+		write_type_name(w, info.result)
 	}
-	if sym := symbol_of(c, info.proc_contract); sym != nil {
-		fmt.sbprintf(&b, " [result contract: %s]", identifier_text(c, sym.name))
+	if sym := symbol_of(c, info.proc_contract); sym != nil && type_name_open(w) {
+		fmt.sbprintf(&w.b, " [result contract: %s]", identifier_text(c, sym.name))
 	}
-	return strings.to_string(b)
 }

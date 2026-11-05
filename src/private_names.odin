@@ -66,6 +66,9 @@ Package_Names :: struct {
 	members:  map[string]map[string]Named,
 	// The `impl` each member is declared in, by its name's span.
 	blocks:   map[Span]^Item_Impl,
+	// What each `impl` itself declares, which a group in it means first, by the
+	// block's span: an instance reads a copy of the block.
+	own_members: map[Span]map[string]Named,
 }
 
 @(private = "file")
@@ -99,7 +102,8 @@ Exposure :: struct {
 	// declared in.
 	scope:    ^Scope,
 	names:    ^Package_Names,
-	// The written subject of the `impl` being read, or "".
+	// The `impl` being read and its written subject, or nil and "".
+	block:    ^Item_Impl,
 	subject:  string,
 	// The `$` parameters and names in scope, which a written name means before any
 	// declaration of the package.
@@ -162,9 +166,12 @@ collect_named :: proc(c: ^Compiler, names: ^Package_Names, file: ^File) {
 				names.members[subject] = make(map[string]Named)
 			}
 			members := &names.members[subject]
+			names.own_members[v.span] = make(map[string]Named)
+			own := &names.own_members[v.span]
 			for member in v.members {
 				if d, is_decl := member.(^Decl); is_decl {
 					add_named(c, file, members, d, nil)
+					add_named(c, file, own, d, nil)
 					names.blocks[d.names[0].span] = v
 				}
 			}
@@ -224,12 +231,11 @@ collect_group_exports :: proc(c: ^Compiler, names: ^Package_Names, file: ^File) 
 	for item in file.active_items {
 		#partial switch v in item {
 		case ^Decl:
-			note_group_exports(c, file, &names.declared, v)
+			note_group_exports(c, file, names, nil, v)
 		case ^Item_Impl:
-			members := &names.members[subject_name(c, v.type)]
 			for member in v.members {
 				if d, is_decl := member.(^Decl); is_decl {
-					note_group_exports(c, file, members, d)
+					note_group_exports(c, file, names, v, d)
 				}
 			}
 		}
@@ -237,7 +243,7 @@ collect_group_exports :: proc(c: ^Compiler, names: ^Package_Names, file: ^File) 
 }
 
 @(private = "file")
-note_group_exports :: proc(c: ^Compiler, file: ^File, into: ^map[string]Named, d: ^Decl) {
+note_group_exports :: proc(c: ^Compiler, file: ^File, names: ^Package_Names, block: ^Item_Impl, d: ^Decl) {
 	if len(d.values) == 0 {
 		return
 	}
@@ -246,10 +252,28 @@ note_group_exports :: proc(c: ^Compiler, file: ^File, into: ^map[string]Named, d
 		return
 	}
 	for name in group.names {
-		if named, found := &into[name.text]; found && named.group == "" {
+		if named := group_member(c, names, block, name.text); named != nil && named.group == "" {
 			named.group = d.names[0].text
 		}
 	}
+}
+
+// What a group in `block`, or at file scope with none, lists by `name`: an `impl`'s
+// members in one (L0395), or else the package's. Blocks of one generic type each
+// declare for their own instances, so the group's own block answers first, and
+// another block on its subject only for a name its own does not declare.
+@(private = "file")
+group_member :: proc(c: ^Compiler, names: ^Package_Names, block: ^Item_Impl, name: string) -> ^Named {
+	if block == nil {
+		return &names.declared[name] if name in names.declared else nil
+	}
+	if own, declared := &names.own_members[block.span]; declared && name in own {
+		return &own[name]
+	}
+	if shared, declared := &names.members[subject_name(c, block.type)]; declared && name in shared {
+		return &shared[name]
+	}
+	return nil
 }
 
 // `Name` of `impl Name`, `impl Name($T)`, and `impl ^Name`, and otherwise the
@@ -277,15 +301,22 @@ read_impl :: proc(x: ^Exposure, v: ^Item_Impl) {
 	if !impl_members_read(x, v) {
 		return
 	}
-	x.subject = subject_name(x.c, v.type)
-	defer x.subject = ""
-	bind_poly_names(&x.bound, v.type)
-	defer clear(&x.bound)
+	enter_block(x, v)
+	defer {
+		x.block, x.subject = nil, ""
+		clear(&x.bound)
+	}
 	for member in v.members {
 		if d, is_decl := member.(^Decl); is_decl && decl_is_public(x.c, x.file, d) {
 			read_public_decl(x, d)
 		}
 	}
+}
+
+@(private = "file")
+enter_block :: proc(x: ^Exposure, v: ^Item_Impl) {
+	x.block, x.subject = v, subject_name(x.c, v.type)
+	bind_poly_names(&x.bound, v.type)
 }
 
 @(private = "file")
@@ -424,22 +455,15 @@ read_signature :: proc(x: ^Exposure, literal: ^Expr_Proc) {
 @(private = "file")
 read_group :: proc(x: ^Exposure, group: ^Expr_Proc_Group) {
 	owner := x.owner
-	names := names_in_view(x)
 	for name in group.names {
-		named, found := names[name.text]
-		if !found || named.public || !named.is_proc || named.decl in x.read_members {
+		named := group_member(x.c, x.names, x.block, name.text)
+		if named == nil || named.public || !named.is_proc || named.decl in x.read_members {
 			continue
 		}
 		x.read_members[named.decl] = true
 		start(x, qualified(x.subject, name.text), owner)
 		read_signature(x, decl_proc_literal(named.decl))
 	}
-}
-
-// What a group lists: an `impl`'s members in one (L0395), or else the package's.
-@(private = "file")
-names_in_view :: proc(x: ^Exposure) -> map[string]Named {
-	return x.names.members[x.subject] if x.subject != "" else x.names.declared
 }
 
 @(private = "file")
@@ -524,6 +548,10 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 			walk(x, v.elem, position)
 			return
 		}
+	case ^Expr_Call:
+		if position != .Where && walk_application(x, v) {
+			return
+		}
 	case ^Type_Proc:
 		bind_signature(&x.bound, v)
 		if position != .Where {
@@ -540,6 +568,80 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 	expr_children(e, &walking, proc(data: rawptr, child: Expr) -> bool {
 		walking := (^Exposure_Walk)(data)
 		walk(walking.x, child, walking.position)
+		return false
+	})
+}
+
+// `Name(...)` where `Name` is a generic type or a parametric alias: an argument of a
+// constant parameter is a value, whatever it names, and only the others are types.
+// False for anything else, which has no parameters to read. A parameter whose type
+// did not resolve is reported where it is declared, so these questions are probes.
+@(private = "file")
+walk_application :: proc(x: ^Exposure, call: ^Expr_Call) -> bool {
+	if callee, is_name := call.callee.(^Expr_Ident); is_name && slice.contains(x.bound[:], callee.name) {
+		return false
+	}
+	probe := begin_probe(x.c)
+	applied := applied_parameters(x.k, call.callee)
+	end_probe(x.c, probe)
+	if applied.params == nil {
+		return false
+	}
+	walk(x, call.callee, .Type)
+	for argument, index in call.args {
+		if !argument_is_value(x, call, applied, applied.first + index) {
+			walk(x, argument.value, .Type)
+		}
+	}
+	return true
+}
+
+// Whether the parameter at `at` takes a value in this application. `$V: T` takes a
+// type where `T` is `type`, so an argument that decides it through a `$` name has no
+// one answer, and what it selects is read in each instance.
+@(private = "file")
+argument_is_value :: proc(x: ^Exposure, call: ^Expr_Call, applied: Applied_Parameters, at: int) -> bool {
+	if at >= len(applied.params) {
+		return false
+	}
+	probe := begin_probe(x.c)
+	defer end_probe(x.c, probe)
+	kind, dependent := generic_parameter_kind(x.k, applied, at)
+	if !dependent {
+		return kind != TYPE_TYPE && kind != INVALID_TYPE
+	}
+	if applied.alias != nil {
+		return false
+	}
+	// `$V: []T` is a value whatever `T` is.
+	written, is_name := applied.params[at].type_syntax.(^Expr_Ident)
+	if !is_name {
+		return true
+	}
+	for parameter, index in applied.params[:at] {
+		position := index - applied.first
+		if identifier_text(x.c, parameter.name) == written.name && position >= 0 && position < len(call.args) {
+			decided := call.args[position].value
+			if names_bound(x, decided) {
+				return false
+			}
+			type := resolve_type_syntax(x.k, clone_expr(x.c, decided))
+			return type != TYPE_TYPE && type != INVALID_TYPE
+		}
+	}
+	return false
+}
+
+// Whether `e` writes a `$` name, whether or not the checker's scope binds it.
+@(private = "file")
+names_bound :: proc(x: ^Exposure, e: Expr) -> bool {
+	return type_syntax_any_name(e, x, proc(data: rawptr, node: Expr) -> bool {
+		#partial switch v in node {
+		case ^Type_Poly:
+			return true
+		case ^Expr_Ident:
+			return slice.contains((^Exposure)(data).bound[:], v.name)
+		}
 		return false
 	})
 }
@@ -902,8 +1004,7 @@ read_instance_declarations :: proc(k: ^Checker, pkg: ^Package, pending: Pending_
 	x := exposure_of(k, pkg)
 	x.instance = true
 	x.file = pending.file_node
-	x.subject = subject_name(k.c, pending.item.type)
-	bind_poly_names(&x.bound, pending.item.type)
+	enter_block(&x, pending.item)
 	x.scoped = len(x.bound)
 	for d in decls {
 		// A member selected here may be a type in a later instance, as `Hidden: T : V`
@@ -940,14 +1041,14 @@ check_generic_private_names :: proc(k: ^Checker, read: Pending_Private_Read) {
 			c.private_reads_settled[read_as] = true
 			return
 		}
-		x.subject = subject_name(c, block.type)
-		bind_poly_names(&x.bound, block.type)
+		enter_block(&x, block)
 	}
 	if decl_is_public(c, read.file_node, d) {
 		read_public_decl(&x, d)
 	} else if literal := decl_proc_literal(d); literal != nil {
-		if group := names_in_view(&x)[name.text].group; group != "" {
-			start(&x, qualified(x.subject, name.text), qualified(x.subject, group))
+		named := group_member(c, x.names, x.block, name.text)
+		if named != nil && named.group != "" {
+			start(&x, qualified(x.subject, name.text), qualified(x.subject, named.group))
 			read_signature(&x, literal)
 		}
 	}

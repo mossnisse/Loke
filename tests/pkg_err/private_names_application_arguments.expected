@@ -1,0 +1,8 @@
+L0310
+@7:15
+warning[L0740]: public `by_type` names the private type `Priv`
+@19:34
+warning[L0740]: public `by_option` names the private type `Priv`
+@20:39
+warning[L0740]: `Box.h`, which the public group `Box.g` exports, names the private type `Fill`
+@23:44

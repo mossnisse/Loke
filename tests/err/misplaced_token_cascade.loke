@@ -1,0 +1,11 @@
+// grammar.md "Source files": one misplaced token is one report. What the parser could not
+// read is not reported again by the checker, and the items after it stay items.
+package main;
+
+impl proc { }
+
+f :: proc() {
+	return );
+}
+
+main :: proc() {}

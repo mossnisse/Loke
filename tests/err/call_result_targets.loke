@@ -67,4 +67,35 @@ built_through_call :: proc() -> [dynamic]int {
 	return inner;
 }
 
+// What crosses the fields of a record crosses what they reach.
+Crossing :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
+crossed :: proc(two: Crossing) -> Crossing { return Crossing{two.q, two.p}; }
+stored_through_crossed_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	back := crossed(Crossing{&mut a, &mut b});
+	target := back.q;
+	target^ = make([dynamic]int, 1, allocator);
+	free_all(allocator);
+	return a[0];
+}
+
+// A summary narrows only the first load, so a second reaches every field it may.
+Nest :: struct { two: ^Crossing }
+through_two :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.q; }
+stored_through_two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	two := Crossing{&mut a, &mut b};
+	nest := Nest{&two};
+	target := through_two(&nest);
+	target^ = make([dynamic]int, 1, allocator);
+	free_all(allocator);
+	return a[0];
+}
+
 main :: proc() {}

@@ -28,8 +28,10 @@ Emitter :: struct {
 	names:        map[Symbol_Id]string,
 	// Every foreign member the naming pass met, in declaration order.
 	foreign_symbols: [dynamic]Symbol_Id,
-	// Every internal procedure name handed out, across all packages (`claim_name`).
+	// Every internal name handed out, across all packages (`claim_name`).
 	taken_names:  map[string]bool,
+	// What each name asked for at several uses was claimed as (`generated_name`).
+	generated_names: map[string]string,
 	struct_names: map[Type_Id]string,
 	// Every witness table's global, numbered in commit order (`name_witnesses`).
 	witness_names: map[^Witness]string,
@@ -82,13 +84,13 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	}
 	e := make_emitter(c)
 
+	reserve_link_names(&e)
 	emit_preamble(&e)
 	emit_struct_definitions(&e)
 	emit_materialized_constants(&e)
 
 	// Every procedure is named before any body refers to it.
 	order := package_order(c)
-	reserve_link_names(&e)
 	for id in order {
 		name_package_symbols(&e, package_of(c, id))
 	}

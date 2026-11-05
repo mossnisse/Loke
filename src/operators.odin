@@ -219,6 +219,7 @@ arity_text :: proc(shape: Operator_Shape) -> string {
 // Inherent operators plus file-scope and extension operators in this package.
 operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	settle_pending_operators(k)
 	for operand in operands {
 		settle_delegates(k, operand)
 		if info := type_of(k.c, operand); info != nil {
@@ -609,15 +610,18 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 // operators resolve ahead of its other signatures, and of any lookup those make,
 // wherever they are written. Nothing can load any more, so an `impl` subject that
 // does not resolve now is an error.
+//
+// A signature can itself need an operator, as `[N]int` does where `N :: a + b`, so
+// the blocks are all declared first, and a lookup finishes what is still pending.
 resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
-	outer := k.impl_type
-	defer k.impl_type = outer
+	saved := k.location
+	defer k.location = saved
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
-				resolve_if_operator(k, v)
+				defer_if_operator(k, v)
 			case ^Item_Impl:
 				declare_impl_block(k, v, quiet = false)
 				if v.subject == INVALID_TYPE {
@@ -626,19 +630,49 @@ resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
 				k.impl_type = v.subject
 				for member in v.members {
 					if d, is_decl := member.(^Decl); is_decl {
-						resolve_if_operator(k, d)
+						defer_if_operator(k, d)
 					}
 				}
-				k.impl_type = outer
+				k.impl_type = saved.impl_type
 			}
 		}
 	}
+	settle_pending_operators(k)
+}
+
+// An operator whose signature has yet to resolve, and where it is written.
+Pending_Operator :: struct {
+	decl:     ^Decl,
+	location: Checker_Location,
 }
 
 @(private = "file")
-resolve_if_operator :: proc(k: ^Checker, d: ^Decl) {
+defer_if_operator :: proc(k: ^Checker, d: ^Decl) {
 	if value, is_operator := decl_value(d).(^Expr_Operator); is_operator && value.hook == .None {
-		resolve_declaration_signature(k, d)
+		append(&k.c.pending_operators, Pending_Operator{d, k.location})
+	}
+}
+
+// Resolves what is pending, from wherever a lookup asked. A signature already being
+// resolved below this call returns at once and finishes there. All of these are
+// declared at file scope, so a probe that led here does not take them with it.
+@(private = "file")
+settle_pending_operators :: proc(k: ^Checker) {
+	c := k.c
+	if c.next_pending_operator == len(c.pending_operators) {
+		return
+	}
+	saved := k.location
+	settling := begin_settling_file_scope(c)
+	defer {
+		end_settling(c, settling)
+		k.location = saved
+	}
+	for c.next_pending_operator < len(c.pending_operators) {
+		entry := c.pending_operators[c.next_pending_operator]
+		c.next_pending_operator += 1
+		k.location = entry.location
+		resolve_declaration_signature(k, entry.decl)
 	}
 }
 
@@ -669,16 +703,27 @@ defer_delegates :: proc(k: ^Checker, item: ^Item_Impl) {
 // package's declarations are order-independent, so this waits for the operators
 // it forwards (`resolve_package_operators`), and looking up an operator of the
 // underlying type runs that type's own first, which settles a chain of distinct
-// types from its end. A probe would lose what these report and leaves them to the
-// block.
+// types from its end. A body-local block belongs to the check of its body, so a
+// probe leaves one to the block; a probe that reaches a file-scope one settles it.
 settle_delegates :: proc(k: ^Checker, type: Type_Id) {
 	pending, found := k.c.pending_delegates[type]
-	if !found || !committing(k.c) {
+	if !found {
 		return
+	}
+	if !committing(k.c) {
+		for entry in pending {
+			if in_local_scope(entry.location.scope) {
+				return
+			}
+		}
 	}
 	delete_key(&k.c.pending_delegates, type)
 	saved := k.location
-	defer k.location = saved
+	settling := begin_settling_file_scope(k.c)
+	defer {
+		end_settling(k.c, settling)
+		k.location = saved
+	}
 	for entry in pending {
 		k.location = entry.location
 		k.impl_type = type

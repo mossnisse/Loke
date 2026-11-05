@@ -1,0 +1,17 @@
+// grammar.md "Source files": the `{` after an `impl` subject opens the block, so a procedure
+// type is a subject like any other, which design.md "Methods and implementation blocks"
+// lets a package extend.
+package main;
+
+import "core:fmt";
+
+impl proc() -> int {
+	twice :: proc(self) -> int { return self() * 2; }
+}
+
+one :: proc() -> int { return 21; }
+
+main :: proc() {
+	f: proc() -> int = one;
+	fmt.println(f.twice());
+}

@@ -1,0 +1,56 @@
+// design.md "Allocator regions and region provenance": a result drawn from a provider received
+// in a variadic pack is in the region of the elements it was built from, and design.md
+// "Allocators and tasks": a task using one reserves it.
+package main;
+
+import "core:mem";
+
+build :: proc(arenas: ..^mut mem.Arena) -> [dynamic]int {
+	v := make([dynamic]int, 0, arenas[0].allocator());
+	v.append(1);
+	return v;
+}
+
+result_outlives_element :: proc() {
+	arena := mem.Arena.init();
+	r := build(&mut arena);
+	drop(arena);
+	_ = r[0];
+}
+
+result_outlives_second_element :: proc() {
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	r := build(&mut first, &mut second);
+	drop(second);
+	_ = r[0];
+	drop(first);
+}
+
+result_outlives_spread :: proc() {
+	arena := mem.Arena.init();
+	arenas := [1]^mut mem.Arena{&mut arena};
+	r := build(..arenas[:]);
+	drop(arena);
+	_ = r[0];
+}
+
+use_pack :: proc(arenas: ..^mut mem.Arena) {
+	v := make([dynamic]int, 0, arenas[0].allocator());
+	v.append(1);
+}
+
+use_handle :: proc(allocator: mem.Allocator) {
+	_ = make([dynamic]int, 0, allocator);
+}
+
+task_reserves_element :: proc() {
+	arena := mem.Arena.init();
+	handle := arena.allocator();
+	parallel {
+		spawn use_pack(&mut arena);
+		use_handle(handle);
+	}
+}
+
+main :: proc() {}

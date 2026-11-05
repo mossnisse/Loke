@@ -23,6 +23,37 @@ reset_other_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	return a[0];
 }
 
+// As much by a free procedure, whose first load the summary narrows to `q`.
+second_of :: proc(two: ^Two) -> ^mut [dynamic]int { return two^.q; }
+reset_other_loaded_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	two := Two{&mut a, &mut b};
+	target := second_of(&two);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return a[0];
+}
+
+// A returned record's fields each hold what that field was given.
+identity :: proc(two: Two) -> Two { return two; }
+reset_other_returned_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	two := Two{&mut a, &mut b};
+	returned := identity(two);
+	target := returned.q;
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return a[0];
+}
+
 pick :: proc(a: ^mut mem.Arena) -> ^mut mem.Arena { return a; }
 
 // A provider the caller received stays the caller's to end.
@@ -56,6 +87,8 @@ first :: proc() {
 second :: proc() {
 	arena := mem.Arena.init();
 	fmt.println(reset_other_field(arena.allocator()));
+	fmt.println(reset_other_loaded_field(arena.allocator()));
+	fmt.println(reset_other_returned_field(arena.allocator()));
 }
 
 main :: proc() {

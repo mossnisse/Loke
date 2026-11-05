@@ -7,215 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A received provider passed in a variadic pack loses its region at the call
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-requires a result drawn from a received provider to stay in that provider's region.
-`prov_provider_through_carrier` in [src/provenance_regions.odin](src/provenance_regions.odin)
-now names the variadic parameter's region, but `prov_substitute_region` substitutes only a
-nonzero bound value. A pack made from separate arguments has none, so this compiles without
-`L0537`, leaving `r` backed by the dropped arena:
-
-```loke
-package main;
-import "core:mem";
-build :: proc(arenas: ..^mut mem.Arena) -> [dynamic]int {
-    v := make([dynamic]int, 0, arenas[0].allocator());
-    v.append(1);
-    return v;
-}
-main :: proc() {
-    arena := mem.Arena.init();
-    r := build(&mut arena);
-    drop(arena);
-    _ = r[0];
-}
-```
-
-The pack branch of `prov_argument_regions` in
-[src/provenance_event.odin](src/provenance_event.odin) also omits the providers reached
-through its elements. A void callee allocating through the same pack reserves no provider:
-`spawn use_pack(&mut arena)` beside a use of a saved `arena.allocator()` handle also
-compiles without the `L0732` required by [Allocators and tasks](design.md#allocators-and-tasks).
-Found in the review of `4e9e87f2` on 2026-11-05 (P1).
-
-### A generic impl body's deferred union zero check is never drained
-
-[Zero values and `@(zero=)`](design.md#zero-values-and-zero) requires `L0423` here,
-but this compiles. `resolve_union_zero` in [src/union.odin](src/union.odin) defers the
-check until `R` has its fields. The final `check_deferred_union_zeros` in
-[src/check.odin](src/check.odin) precedes `check_pending_impl_instances`, whose bodies
-can add to the queue; no later pass drains it for the last package.
-
-```loke
-package main;
-@(zero=a) G :: union($T: type) { a: T, b: int }
-Box :: struct($T: type) { x: T }
-impl Box($T) {
-    run :: proc(self) {
-        R :: struct { link: []G(R), @(required) x: int }
-        r := R{x = 1};
-        _ = r;
-    }
-}
-main :: proc() { b := Box(int){1}; b.run(); }
-```
-
-Found in the review of `4e9e87f2` on 2026-11-05 (P2).
-
-### A public distinct slice's private format prevents repeated printing
-
-A public type's private method meets no slot
-([Interface bodies](design.md#interface-bodies)), so its generated formatter is what
-[printing](standard-library.md#printed-forms) calls. `prov_type_is_plain_view` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) asks only whether a written `format`
-exists, rather than using `type_has_written_format`'s slot-visibility check, so this
-library procedure reports `L0641`. Import the library and call `lib.show()` from `main`:
-
-```loke
-package lib;
-import "core:fmt";
-@(public) Cells :: distinct []mut int;
-impl Cells {
-    @(private) format :: proc(self, w: fmt.Writer, o: fmt.Options) {
-        view := ([]mut int)(self);
-        view[0] += 1;
-        fmt.format_to(w, view[0]);
-    }
-}
-@(public) show :: proc() {
-    storage := [2]int{1, 2};
-    cells := Cells(&mut storage[:]);
-    fmt.println(cells, cells);
-}
-```
-
-Use the existing visibility-aware predicate so provenance and formatter dispatch share
-the decision. Found in the review of `4e9e87f2` on 2026-11-05 (P2, over-rejection).
-
-### A call's loaded target includes sibling fields
-
-[Procedure result contracts](design.md#procedure-result-contracts) preserves the paths a
-result reads through a parameter. The call-target walk added in `f5774e5e` ignores
-`param_load_paths`, so `second(&two)` below reaches both `a` and `b`. Only `b` takes
-the new owner and it is dropped before the reset, but the reset reports `L0537` for
-`a`. The parent commit accepts this program.
-
-```loke
-package main;
-import "core:mem";
-Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
-second :: proc(two: ^Two) -> ^mut [dynamic]int { return two^.q; }
-run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
-    buffer := [1024]u8{};
-    kept := mem.Arena.from_buffer(&mut buffer[:]);
-    a := make([dynamic]int, 1, kept.allocator());
-    b := make([dynamic]int, 0, kept.allocator());
-    two := Two{&mut a, &mut b};
-    target := second(&two);
-    target^ = make([dynamic]int, 1, allocator);
-    drop(b);
-    free_all(allocator); // L0537 for `a`; should be accepted
-    return a[0];
-}
-main :: proc() {}
-```
-
-Use the summary's first-load paths before following the remaining loads, as
-`prov_substitute_result` already does for loans. Found reviewing `f5774e5e` on
-2026-11-05 (P2, over-rejection).
-
-### A returned record's targets lose their result paths
-
-The same [result contract](design.md#procedure-result-contracts) records dependencies
-per result carrier. In the [loaded-target reproduction](#a-calls-loaded-target-includes-sibling-fields),
-replace `second` with:
-
-```loke
-identity :: proc(two: Two) -> Two { return two; }
-```
-
-and replace `target := second(&two);` with:
-
-```loke
-returned := identity(two);
-target := returned.q;
-```
-
-This also reports `L0537` for `a`, although only `b` takes the new owner. The new
-`prov_call_result_aliases` uses the whole-result summary and clears every alias's
-`path`, so both returned fields reach both input targets. It needs the existing
-per-content summaries to keep each alias at its result path. The parent accepts
-this program. Found reviewing `f5774e5e` on 2026-11-05 (P2, over-rejection).
-
-### An operator signature can settle a delegate before its target is ready
-
-[Delegating operators](design.md#delegating-operators) should not depend on declaration
-order. The operator prepass resolves signatures in source order; a signature that
-evaluates a constant can run `settle_delegates` before the underlying operator's
-signature is resolved. The pending delegate is removed and never retried:
-
-```loke
-package main;
-D :: distinct V;
-impl D { delegate(+); } // L0420: `+` is not defined for `V`
-V :: struct { a: int }
-N :: V(D(V{1}) + D(V{2})).a;
-W :: struct { a: int }
-impl W { sub :: operator(-) proc(l: W, r: [N]int) -> W { return l; } }
-impl V { add :: operator(+) proc(l, r: V) -> V { return {l.a + r.a}; } }
-main :: proc() {}
-```
-
-This fails in both `f5774e5e` and its parent: it is a remaining edge of the
-delegate-order gap, not a new regression. Found on 2026-11-05 (P2).
-
-### `L0740` reads a generic type's value argument as a type
-
-[Private names in public declarations](design.md#private-names-in-public-declarations) exempts a
-generic type's value argument, but the walk is by name and cannot tell a value parameter's argument
-from a type parameter's. So `Priv` warns here, where it would not in an array length:
-
-```loke
-package shapes;
-@(private) Priv :: struct { x: int }
-@(public) Vec :: struct($N: int) { x: [N]int }
-@(public) a :: proc(v: Vec(size_of(Priv))) {}
-```
-
-The fix is to read the callee's generic parameters where a call in type syntax has a template.
-
-### `L0740` misses a group's private member when another block declares its name
-
-Two blocks of one generic type share a member table by written subject, so a group in the first
-reads the second's member of that name, and `Box(int).h`'s private `Fill` is not reported:
-
-```loke
-package shapes;
-@(private) Fill :: enum { Solid }
-@(public) Box :: struct($V: type) { v: V }
-impl Box(int) { @(private) h :: proc(f: Fill) {} @(public) g :: proc{h}; }
-impl Box(string) { @(private) h :: proc(s: string) {} @(public) g :: proc{h}; }
-```
-
-A selection such as `Box(int).Inner` resolves this by asking the checker. A group would read the
-members its block declares.
-
-### An export can still spell a generated name the compiler fixes
-
-[`@(export)`](design.md#export) reserves only the `loke_rt_` prefix, and the names the naming pass
-hands out step aside for a link name, but the rest are written as they stand: `loke.fmt.*`,
-`loke.f.<n>`, the container and box thunks, and a replay's `loke.u<n>.*`. This fails in clang with `L0403`, "invalid redefinition", rather than compiling:
-
-```loke
-package main;
-@(export, link_name = "loke.fmt.std_write")
-f :: proc "c" () -> i32 { return 1; }
-main :: proc() { _ = f(); }
-```
-
-Found on 2026-11-03 (P3).
-
 ### A long literal can still overflow the stack at `-opt=none`
 
 A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
@@ -244,26 +35,37 @@ takes 0.6 s at 1000 links, 3.8 s at 2000 and 34 s at 4000. Walking the body is 7
 the rest is `solve_provenance` in [src/borrow.odin](src/borrow.odin). The cause is not established.
 Found on 2026-11-03 (P3).
 
-### A type's printed name doubles with each alias naming the previous one twice
+### A result read through two loads reaches every field of the second
 
-`type_name` spells a structural type in full and an alias has no name of its own, so the printed
-form of this type is about 2^40 characters. Declaring a value of it never finishes, since checking
-a map value prints the map's name; at depth 16 the name is already 1.1 MB:
+[Procedure result contracts](design.md#procedure-result-contracts) keep which paths of a parameter's
+pointee a result's first load goes along, and nothing of the loads below it. So `through_two` here
+reaches both `a` and `b` at the call, and the reset reports `L0537` for `a`, as only `b` takes the
+new owner. [tests/err/call_result_targets.loke](tests/err/call_result_targets.loke) pins this as
+`stored_through_two_loads`, and the rejection errs on the safe side:
 
 ```loke
 package main;
-M0 :: map[int]int;
-M1 :: map[^M0]M0;
-// ... each `Mn :: map[^Mn-1]Mn-1`, up to:
-M40 :: map[^M39]M39;
-main :: proc() { m: M40 = {}; _ = m; }
+import "core:mem";
+Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
+Nest :: struct { two: ^Two }
+through_two :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.q; }
+run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    buffer := [1024]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 1, kept.allocator());
+    b := make([dynamic]int, 0, kept.allocator());
+    two := Two{&mut a, &mut b};
+    nest := Nest{&two};
+    target := through_two(&nest);
+    target^ = make([dynamic]int, 1, allocator);
+    drop(b);
+    free_all(allocator); // L0537 for `a`; should be accepted
+    return a[0];
+}
+main :: proc() {}
 ```
 
-The same holds of a diagnostic naming a deep procedure alias, such as `x: P40 = 1;` over `Pn ::
-proc(a: Pn-1, b: Pn-1) -> Pn-1`, and of whatever else names one, such as `Option(P40)` or `-g`. The
-walks over such a type's components are linear in its depth; only the text is not. A fix has to
-abbreviate a long printed type, or print the alias a type was written through. Found on 2026-11-04
-(P3).
+Found on 2026-11-05 while narrowing the first load (P3).
 
 ### A store through one field of a record parameter blames the sibling field's target at the call
 
@@ -711,20 +513,3 @@ main :: proc() {
     _ = view;
 }
 ```
-
-### A misplaced token reports its cascade
-
-[Grammar](grammar.md) has one error here, but the parser recovers into more. `impl proc() { }` reads
-`{ }` as the body the type cannot have, and reports `L0406` and `L0252` after `L0210`. `return );`
-in a procedure with no result reports `L0326` before the `L0220` that names the token:
-
-```loke
-package main;
-impl proc() { }
-f :: proc() {
-    return );
-}
-main :: proc() {}
-```
-
-Found on 2026-11-04 in the compiler review (P3).

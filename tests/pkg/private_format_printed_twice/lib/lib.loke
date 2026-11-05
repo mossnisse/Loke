@@ -1,0 +1,17 @@
+// design.md "Interface bodies": a public type's private method meets no slot, so printing
+// calls the generated formatter, which only reads, and printing it twice lends nothing.
+package lib;
+import "core:fmt";
+@(public) Cells :: distinct []mut int;
+impl Cells {
+    @(private) format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+        view := ([]mut int)(self);
+        view[0] += 1;
+        fmt.format_to(w, view[0]);
+    }
+}
+@(public) show :: proc() {
+    storage := [2]int{1, 2};
+    cells := Cells(&mut storage[:]);
+    fmt.println(cells, cells);
+}

@@ -1,0 +1,53 @@
+// standard-library.md "Printed forms": a type's printed name doubles with each alias naming
+// the last twice, and printing it stops at a limit, as does the key that orders `typeid`s, so
+// that declaring, printing and emitting one this deep costs what its depth does.
+package main;
+
+import "core:fmt";
+
+M0 :: map[int]int;
+M1 :: map[^M0]M0;
+M2 :: map[^M1]M1;
+M3 :: map[^M2]M2;
+M4 :: map[^M3]M3;
+M5 :: map[^M4]M4;
+M6 :: map[^M5]M5;
+M7 :: map[^M6]M6;
+M8 :: map[^M7]M7;
+M9 :: map[^M8]M8;
+M10 :: map[^M9]M9;
+M11 :: map[^M10]M10;
+M12 :: map[^M11]M11;
+M13 :: map[^M12]M12;
+M14 :: map[^M13]M13;
+M15 :: map[^M14]M14;
+M16 :: map[^M15]M15;
+M17 :: map[^M16]M16;
+M18 :: map[^M17]M17;
+M19 :: map[^M18]M18;
+M20 :: map[^M19]M19;
+M21 :: map[^M20]M20;
+M22 :: map[^M21]M21;
+M23 :: map[^M22]M22;
+M24 :: map[^M23]M23;
+M25 :: map[^M24]M24;
+M26 :: map[^M25]M25;
+M27 :: map[^M26]M26;
+M28 :: map[^M27]M27;
+M29 :: map[^M28]M28;
+M30 :: map[^M29]M29;
+M31 :: map[^M30]M30;
+M32 :: map[^M31]M31;
+M33 :: map[^M32]M32;
+M34 :: map[^M33]M33;
+M35 :: map[^M34]M34;
+M36 :: map[^M35]M35;
+M37 :: map[^M36]M36;
+M38 :: map[^M37]M37;
+M39 :: map[^M38]M38;
+M40 :: map[^M39]M39;
+
+main :: proc() {
+	m: M40 = {};
+	fmt.println(m, m.len(), size_of(M40), typeid_of(M40) == typeid_of(M39));
+}

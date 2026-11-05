@@ -1162,27 +1162,46 @@ prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Regi
 	value := prov_value(graph, id)
 	carrier := id
 	if base, indirect := value.place.base.(Value_Id); indirect { carrier = base }
-	if !type_is_pointer(graph.k.c, prov_value(graph, carrier).type) { return {}, false }
+	if !prov_type_is_view_carrier(graph.k.c, prov_value(graph, carrier).type) { return {}, false }
 	aliases := prov_value_aliases(graph, carrier)
 	if len(aliases) == 0 { return {}, false }
 	set := Region_Set{}
+	viewed := underlying_info(graph.k.c, prov_value(graph, carrier).type).element
 	for alias in aliases {
-		if alias.target == 0 { return {}, false }
-		// Named apart: asking may add the root.
-		root := prov_root_for_storage(graph, alias.target)
-		descriptor := graph.roots[int(root)]
-		holder := symbol_of(graph.k.c, descriptor.symbol)
-		if holder != nil && holder.kind == .Parameter {
-			if received, seeded := graph.region_of[descriptor.symbol]; seeded && prov_type_is_view_carrier(graph.k.c, holder.type) {
-				region_merge(&set, received)
-				continue
-			}
-			return {}, false
-		}
-		if descriptor.kind != .Local || holder == nil || holder.kind != .Var || !type_carries_provider(graph.k.c, holder.type) { return {}, false }
-		region_merge(&set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
+		if !prov_merge_provider_viewed(graph, alias, viewed, &set, 0) { return {}, false }
 	}
 	return set, true
+}
+
+// Merges the region of the provider of type `viewed` that `alias` names, or that the
+// carriers held there point at, as the elements of a `[]^mut Arena` do. False when one
+// of them names no provider this body knows.
+@(private = "file")
+prov_merge_provider_viewed :: proc(graph: ^Flow_Graph, alias: Written_Alias, viewed: Type_Id, set: ^Region_Set, depth: int) -> bool {
+	c := graph.k.c
+	if alias.target == 0 || depth >= CARRIER_DEPTH { return false }
+	// Named apart: asking may add the root.
+	root := prov_root_for_storage(graph, alias.target)
+	descriptor := graph.roots[int(root)]
+	holder := symbol_of(c, descriptor.symbol)
+	if holder != nil && holder.kind == .Parameter {
+		received, seeded := graph.region_of[descriptor.symbol]
+		if !seeded || !prov_type_is_view_carrier(c, holder.type) { return false }
+		region_merge(set, received)
+		return true
+	}
+	if prov_type_is_view_carrier(c, viewed) {
+		held := prov_written_aliases_of(graph, alias.target, alias.at)
+		if len(held) == 0 { return false }
+		element := underlying_info(c, viewed).element
+		for loaded in held {
+			if !prov_merge_provider_viewed(graph, loaded, element, set, depth + 1) { return false }
+		}
+		return true
+	}
+	if descriptor.kind != .Local || holder == nil || holder.kind != .Var || !type_carries_provider(c, holder.type) { return false }
+	region_merge(set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
+	return true
 }
 
 // The regions of the providers a carrier argument reaches, which a callee naming its
@@ -1191,13 +1210,29 @@ prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Regi
 prov_provider_viewed_by :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	c := graph.k.c
 	type := prov_value(graph, id).type
-	if !prov_type_is_view_carrier(c, type) || !type_carries_provider(c, underlying_info(c, type).element) {
+	if !prov_view_reaches_provider(c, type) {
 		return {}
 	}
 	if set, known := prov_provider_through_carrier(graph, id); known {
 		return set
 	}
 	return Region_Set{unknown = true}
+}
+
+// Whether a carrier views a provider, directly or through the carriers it views.
+@(private = "file")
+prov_view_reaches_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	viewed := type
+	for _ in 0 ..< CARRIER_DEPTH {
+		if !prov_type_is_view_carrier(c, viewed) {
+			return false
+		}
+		viewed = underlying_info(c, viewed).element
+		if type_carries_provider(c, viewed) {
+			return true
+		}
+	}
+	return false
 }
 
 Temp_Provider :: struct {
@@ -1341,7 +1376,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	direct := prov_has_direct_body(c, callee)
 	prov_note_summary_dependency(graph, callee)
 	if summary, found := result_summary(c, callee); found {
-		region_merge(&out, prov_substitute_region(graph, bound, summary.region))
+		region_merge(&out, prov_substitute_region(graph, form, summary.region))
 	}
 	if direct {
 		return out
@@ -1515,13 +1550,25 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 }
 
 @(private)
-prov_substitute_region :: proc(graph: ^Flow_Graph, bound: []Value_Id, summary: Region_Set) -> Region_Set {
+prov_substitute_region :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, summary: Region_Set) -> Region_Set {
 	out := Region_Set{}
+	bound := prov_bound_values(form)
+	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id) {
+		if argument != 0 {
+			region_merge(out, prov_storage_region(graph, argument))
+			region_merge(out, prov_provider_viewed_by(graph, argument))
+		}
+	}
 	params := summary.params
 	for index in next_region_param(&params) {
-		if index < len(bound) && bound[index] != 0 {
-			region_merge(&out, prov_storage_region(graph, bound[index]))
-			region_merge(&out, prov_provider_viewed_by(graph, bound[index]))
+		// A pack built from separate arguments has no bound value: the parameter's
+		// region is its elements'.
+		if call_packs(form.call, index) {
+			for element in form.pack {
+				merge_argument(graph, &out, element)
+			}
+		} else if index < len(bound) {
+			merge_argument(graph, &out, bound[index])
 		}
 	}
 	out.default ||= summary.default
@@ -1552,7 +1599,7 @@ prov_call_region_content :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Prov_Reg
 	for content, index in summary.region_content {
 		out[index] = Prov_Region_Content {
 			path = slice.clone(content.path, graph.alloc),
-			region = prov_substitute_region(graph, prov_bound_values(form), content.region),
+			region = prov_substitute_region(graph, form, content.region),
 			handle = content.handle,
 			own = content.own,
 		}

@@ -597,6 +597,8 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 			k.c.next_pending_impl += 1
 			check_pending_impl_instance(k, pending)
 		}
+		// An instance's body may have asked about a union, as a package's did.
+		check_deferred_union_zeros(k)
 		check_deferred_escape_parts(k)
 
 		if len(k.c.pending_private_reads) == 0 {

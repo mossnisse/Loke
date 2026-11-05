@@ -142,22 +142,10 @@ scratch_allocator_proc :: proc(
 	location := #caller_location,
 ) -> (data: []byte, err: mem.Allocator_Error) {
 	arena := (^Scratch_Arena)(allocator_data)
-	data, err = scratch_serve(arena, mode, size, alignment, old_memory, old_size)
-	if err != nil && err != .Mode_Not_Implemented {
+	defer if err != nil && err != .Mode_Not_Implemented {
 		fmt.eprintfln("error: out of memory: analyzing one procedure holds %d bytes and needs %d more", scratch_arena_used(arena), size)
 		os.exit(2)
 	}
-	return
-}
-
-@(private = "file")
-scratch_serve :: proc(
-	arena: ^Scratch_Arena,
-	mode: mem.Allocator_Mode,
-	size, alignment: int,
-	old_memory: rawptr,
-	old_size: int,
-) -> (data: []byte, err: mem.Allocator_Error) {
 	switch mode {
 	case .Alloc, .Alloc_Non_Zeroed:
 		return scratch_alloc(arena, uint(size), uint(alignment))

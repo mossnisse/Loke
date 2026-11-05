@@ -566,6 +566,7 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 				continue
 			}
 			region_merge(&pack, prov_visible_region(graph, prov_used_region(graph, element)))
+			region_merge(&pack, prov_visible_region(graph, prov_provider_viewed_by(graph, element)))
 		}
 		if out == nil {
 			out = make([]Region_Set, count, graph.alloc)

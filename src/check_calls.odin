@@ -465,6 +465,7 @@ reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -
 // A call through a group or generic procedure.
 @(private = "file")
 check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
+	resolve_symbol_signature_in_place(k, group)
 	sym := symbol_of(k.c, group)
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
 	description := concat(k.c, "`", identifier_text(k.c, sym.name), "`")

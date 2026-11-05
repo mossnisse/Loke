@@ -3611,7 +3611,7 @@ prov_type_is_plain_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	case:
 		return false
 	}
-	return written_format_member(c, type) == nil && !type_carries_borrow(c, underlying_info(c, type).element).any
+	return !type_has_written_format(c, type) && !type_carries_borrow(c, underlying_info(c, type).element).any
 }
 
 // A plain view converted to a read-only carrier, as `(dyn Shape)(b)`, only reads it, as
@@ -4213,16 +4213,16 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
 			if index >= len(written) {
 				continue
 			}
-			region = prov_substitute_region(graph, bound, written[index])
+			region = prov_substitute_region(graph, form, written[index])
 			owned = Region_Set{}
 			if index < len(owners) {
-				owned = prov_substitute_region(graph, bound, owners[index])
+				owned = prov_substitute_region(graph, form, owners[index])
 			}
 			if has_rows && !packed && index < len(rows) {
 				contents = make([]Prov_Region_Content, len(rows[index]), graph.alloc)
 				for entry, position in rows[index] {
 					contents[position] = entry
-					contents[position].region = prov_substitute_region(graph, bound, entry.region)
+					contents[position].region = prov_substitute_region(graph, form, entry.region)
 				}
 			}
 		} else if packed || !prov_argument_is_place(graph, v, index) {

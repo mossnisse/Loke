@@ -745,7 +745,13 @@ parse_impl :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> ^Item_I
 
 	item := ast_new(p, Item_Impl)
 	item.attributes = attributes
-	item.type = parse_type(p)
+	// grammar.md "Source files": the `{` after the subject opens the block.
+	item.type = parse_signature_type(p)
+	// What the subject said is enough: the items after it are not this block's.
+	if !at(p, .Lbrace) && expr_has_error(item.type) {
+		item.span = span_to_here(p, start)
+		return item
+	}
 	_, opened := expect(p, .Lbrace, "L0252", "`{` to open the block")
 	item.members = parse_member_list(p, .Impl)
 	close_body(p, opened, "L0252", "`}` to close the block")
@@ -3605,12 +3611,19 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 		return item, true
 	}
 	item.is_inout = allow(p, .Inout)
-	outer := p.signature_only
-	p.signature_only = true
-	item.type = parse_type(p)
-	p.signature_only = outer
+	item.type = parse_signature_type(p)
 	item.span = span_to_here(p, start)
 	return item, !expr_has_error(item.type)
+}
+
+// A type that a body or a block may follow, so that a `proc` in it is a
+// `Proc_Type` and nothing after its signature is its own.
+@(private = "file")
+parse_signature_type :: proc(p: ^Parser) -> Expr {
+	outer := p.signature_only
+	p.signature_only = true
+	defer p.signature_only = outer
+	return parse_type(p)
 }
 
 // A top-level `where` expression stops before the declaration body.

@@ -497,7 +497,7 @@ const_operand :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string 
 	if !large && !const_needs_image(e, value, type) {
 		return image
 	}
-	name := fmt.aprintf("@.image.%d", len(e.globals))
+	name := claim_name(e, fmt.aprintf("@.image.%d", len(e.globals)))
 	append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s%s\n", name, image_type, image, align))
 	return large ? name : load(e, llvm_type(e, type), name)
 }
@@ -511,7 +511,7 @@ large_zero :: proc(e: ^Emitter, type: Type_Id) -> string {
 	if name, known := e.large_zeros[type]; known {
 		return name
 	}
-	name := fmt.aprintf("%s%d", LARGE_ZERO_PREFIX, len(e.globals))
+	name := claim_name(e, fmt.aprintf("%s%d", LARGE_ZERO_PREFIX, len(e.globals)))
 	append(&e.globals, fmt.aprintf("%s = private unnamed_addr global %s zeroinitializer\n", name, llvm_type(e, type)))
 	e.large_zeros[type] = name
 	return name
@@ -575,7 +575,7 @@ slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info)
 		strings.write_string(&b, " ]")
 		contents = strings.to_string(b)
 	}
-	name := fmt.aprintf("@.slice.%d", len(e.globals))
+	name := claim_name(e, fmt.aprintf("@.slice.%d", len(e.globals)))
 	append(&e.globals, fmt.aprintf(
 		"%s = private %s %s%s\n",
 		name, info.mutable ? "global" : "unnamed_addr constant", contents, align,
@@ -719,7 +719,7 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 		}
 		from := value
 		if value[0] != '%' && value[0] != '@' {
-			from = fmt.aprintf("@.aggregate.%d", len(e.globals))
+			from = claim_name(e, fmt.aprintf("@.aggregate.%d", len(e.globals)))
 			append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s\n", from, llvm_type(e, type), value))
 		}
 		copy_bytes(e, address, from, size)
