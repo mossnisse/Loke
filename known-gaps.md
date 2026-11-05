@@ -7,6 +7,92 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A received provider passed in a variadic pack loses its region at the call
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+requires a result drawn from a received provider to stay in that provider's region.
+`prov_provider_through_carrier` in [src/provenance_regions.odin](src/provenance_regions.odin)
+now names the variadic parameter's region, but `prov_substitute_region` substitutes only a
+nonzero bound value. A pack made from separate arguments has none, so this compiles without
+`L0537`, leaving `r` backed by the dropped arena:
+
+```loke
+package main;
+import "core:mem";
+build :: proc(arenas: ..^mut mem.Arena) -> [dynamic]int {
+    v := make([dynamic]int, 0, arenas[0].allocator());
+    v.append(1);
+    return v;
+}
+main :: proc() {
+    arena := mem.Arena.init();
+    r := build(&mut arena);
+    drop(arena);
+    _ = r[0];
+}
+```
+
+The pack branch of `prov_argument_regions` in
+[src/provenance_event.odin](src/provenance_event.odin) also omits the providers reached
+through its elements. A void callee allocating through the same pack reserves no provider:
+`spawn use_pack(&mut arena)` beside a use of a saved `arena.allocator()` handle also
+compiles without the `L0732` required by [Allocators and tasks](design.md#allocators-and-tasks).
+Found in the review of `4e9e87f2` on 2026-11-05 (P1).
+
+### A generic impl body's deferred union zero check is never drained
+
+[Zero values and `@(zero=)`](design.md#zero-values-and-zero) requires `L0423` here,
+but this compiles. `resolve_union_zero` in [src/union.odin](src/union.odin) defers the
+check until `R` has its fields. The final `check_deferred_union_zeros` in
+[src/check.odin](src/check.odin) precedes `check_pending_impl_instances`, whose bodies
+can add to the queue; no later pass drains it for the last package.
+
+```loke
+package main;
+@(zero=a) G :: union($T: type) { a: T, b: int }
+Box :: struct($T: type) { x: T }
+impl Box($T) {
+    run :: proc(self) {
+        R :: struct { link: []G(R), @(required) x: int }
+        r := R{x = 1};
+        _ = r;
+    }
+}
+main :: proc() { b := Box(int){1}; b.run(); }
+```
+
+Found in the review of `4e9e87f2` on 2026-11-05 (P2).
+
+### A public distinct slice's private format prevents repeated printing
+
+A public type's private method meets no slot
+([Interface bodies](design.md#interface-bodies)), so its generated formatter is what
+[printing](standard-library.md#printed-forms) calls. `prov_type_is_plain_view` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) asks only whether a written `format`
+exists, rather than using `type_has_written_format`'s slot-visibility check, so this
+library procedure reports `L0641`. Import the library and call `lib.show()` from `main`:
+
+```loke
+package lib;
+import "core:fmt";
+@(public) Cells :: distinct []mut int;
+impl Cells {
+    @(private) format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+        view := ([]mut int)(self);
+        view[0] += 1;
+        fmt.format_to(w, view[0]);
+    }
+}
+@(public) show :: proc() {
+    storage := [2]int{1, 2};
+    cells := Cells(&mut storage[:]);
+    fmt.println(cells, cells);
+}
+```
+
+Use the existing visibility-aware predicate so provenance and formatter dispatch share
+the decision. Found in the review of `4e9e87f2` on 2026-11-05 (P2, over-rejection).
+
 ### A call's loaded target includes sibling fields
 
 [Procedure result contracts](design.md#procedure-result-contracts) preserves the paths a
