@@ -1,0 +1,24 @@
+L0537
+@15:3
+cleaning up `arena` would end the region backing `kept`, which is still live here
+L0537
+@28:2
+this reset would end the region backing `held`, which is still live here
+L0537
+@39:3
+cleaning up `arena` would end the region backing `kept`, which is still live here
+L0537
+@50:3
+cleaning up `arena` would end the region backing `kept`, which is still live here
+L0537
+@62:3
+cleaning up `arena` would end the region backing `out`, which is still live here
+L0592
+@75:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+L0536
+@82:2
+this value is backed by an allocator region created in this procedure, so it cannot be stored in `into` (storage the caller owns), which outlives that region
+L0536
+@91:2
+this value is backed by an allocator region created in this procedure, so it cannot be stored in `global` (file-scope storage), which outlives that region

@@ -1,0 +1,94 @@
+package main;
+
+import "core:container";
+import "core:mem";
+import "core:unsafe";
+
+// design.md "Uninitialized capacity": a taken value is the one the place held, so
+// it stays in that value's allocator region. Each of these frees what it reads.
+
+use :: proc(value: $T) {}
+
+outlives_its_arena :: proc() {
+	kept: [dynamic]int = {};
+	{
+		arena := mem.Arena.init();
+		held := make([dynamic][dynamic]int, 1, arena.allocator());
+		held[0] = make([dynamic]int, 0, 4, arena.allocator());
+		kept = unsafe.take(held[0]);
+	}
+	use(kept.len());
+}
+
+reset_under_taken :: proc() {
+	arena := mem.Arena.init();
+	held := make([dynamic][dynamic]int, 1, arena.allocator());
+	held[0] = make([dynamic]int, 0, 4, arena.allocator());
+	kept := unsafe.take(held[0]);
+	free_all(arena.allocator());
+	use(kept.len());
+}
+
+Holder :: struct { items: [dynamic]int }
+
+take_items :: proc(self: inout Holder) -> [dynamic]int { return unsafe.take(self.items); }
+
+through_a_call :: proc() {
+	kept: [dynamic]int = {};
+	{
+		arena := mem.Arena.init();
+		holder := Holder{make([dynamic]int, 0, 4, arena.allocator())};
+		kept = take_items(inout holder);
+		unsafe.write(holder.items, {});
+	}
+	use(kept.len());
+}
+
+through_small_array :: proc() {
+	kept: Option([dynamic]int) = .none;
+	{
+		arena := mem.Arena.init();
+		held: container.Small_Array([dynamic]int, 2) = {};
+		held.append(make([dynamic]int, 0, 4, arena.allocator()));
+		kept = held.pop();
+	}
+	use(kept);
+}
+
+// A stored taken value takes its region along.
+stored_past_its_arena :: proc() {
+	out: [dynamic][dynamic]int = {};
+	{
+		arena := mem.Arena.init();
+		held := make([dynamic][dynamic]int, 1, arena.allocator());
+		held[0] = make([dynamic]int, 0, 4, arena.allocator());
+		out.append(unsafe.take(held[0]));
+	}
+	use(out.len());
+}
+
+// Neither a result nor a caller's or file-scope store may keep it past this frame.
+returned_past_its_arena :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	held := make([dynamic][dynamic]int, 1, arena.allocator());
+	held[0] = make([dynamic]int, 0, 4, arena.allocator());
+	return unsafe.take(held[0]);
+}
+
+stored_in_the_caller :: proc(into: inout Holder) {
+	arena := mem.Arena.init();
+	held := make([dynamic][dynamic]int, 1, arena.allocator());
+	held[0] = make([dynamic]int, 0, 4, arena.allocator());
+	into.items = unsafe.take(held[0]);
+}
+
+global: [dynamic]int = {};
+
+stored_in_a_global :: proc() {
+	arena := mem.Arena.init();
+	held := make([dynamic][dynamic]int, 1, arena.allocator());
+	held[0] = make([dynamic]int, 0, 4, arena.allocator());
+	global = unsafe.take(held[0]);
+}
+
+main :: proc() {}

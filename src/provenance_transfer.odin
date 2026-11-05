@@ -177,6 +177,11 @@ prov_call_transfer :: proc(graph: ^Flow_Graph, v: ^Expr_Call, type: Type_Id) -> 
 	if builtin != nil && builtin.builtin == .Exchange && len(v.bound) == 2 {
 		return prov_parts(graph, prov_component(graph, prov_operand_value(graph, v.bound[0])))
 	}
+	// design.md "Uninitialized capacity": a taken value is the one the place held,
+	// so it keeps that value's regions too.
+	if builtin != nil && builtin.builtin == .Unsafe_Take && len(v.bound) == 1 {
+		return prov_parts(graph, prov_component(graph, prov_operand_value(graph, v.bound[0])))
+	}
 	allocator := len(v.bound) > 1 ? v.bound[1] : nil
 	#partial switch operation in v.operation {
 	case Call_Box_Unbox:

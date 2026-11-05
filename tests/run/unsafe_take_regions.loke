@@ -1,0 +1,89 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+import "core:mem";
+import "core:unsafe";
+
+// design.md "Uninitialized capacity": a value taken out of a place stays in the
+// region it was in, and in no other. An arena that backs none of it can end first,
+// just as it can for a value `exchange` reads out.
+
+Holder :: struct { items: [dynamic]int }
+
+take_items :: proc(self: inout Holder) -> [dynamic]int { return unsafe.take(self.items); }
+
+// Copies among a parameter's own elements, in a cycle and in a loop, as a container
+// shifting its elements makes them. The analysis once grew without end on these,
+// since each pass read a field of a source that already ended in that field.
+Pair :: struct { first: [dynamic]int, second: [dynamic]int }
+Pairs :: struct { items: [3]Pair, count: int }
+
+round_trip :: proc(self: inout Pairs, a, b: int) {
+	held := unsafe.take(self.items[a]);
+	unsafe.write(self.items[a], unsafe.take(self.items[b]));
+	unsafe.write(self.items[b], unsafe.take(self.items[a]));
+	unsafe.write(self.items[a], move(held));
+}
+
+shift_down :: proc(self: inout Pairs) {
+	at := 0;
+	for (at + 1 < self.count) {
+		unsafe.write(self.items[at], unsafe.take(self.items[at + 1]));
+		at += 1;
+	}
+}
+
+main :: proc() {
+	held := make([dynamic][dynamic]int, 2);
+	held[0].append(1);
+	kept := unsafe.take(held[0]);
+	unsafe.write(held[0], {});
+	{
+		room: [512]u8 = {};
+		arena := mem.Arena.from_buffer(&mut room[:]);
+		scratch := make([dynamic]int, 0, 4, arena.allocator());
+		scratch.append(2);
+		fmt.println(kept, scratch);
+	}
+
+	holder := Holder{[dynamic]int{3}};
+	from_call := take_items(inout holder);
+	unsafe.write(holder.items, {});
+	room: [512]u8 = {};
+	unrelated := mem.Arena.from_buffer(&mut room[:]);
+	other := make([dynamic]int, 0, 4, unrelated.allocator());
+	other.append(9);
+	fmt.println(from_call, other);
+
+	small: container.Small_Array([dynamic]int, 2) = {};
+	small.append([dynamic]int{4});
+	popped := small.pop();
+	room2: [512]u8 = {};
+	later := mem.Arena.from_buffer(&mut room2[:]);
+	values := make([dynamic]int, 0, 4, later.allocator());
+	values.append(5);
+	fmt.println(popped, values);
+
+	// The region it was in still counts: this arena outlives what it backs.
+	room3: [512]u8 = {};
+	backing := mem.Arena.from_buffer(&mut room3[:]);
+	into_arena: container.Small_Array([dynamic]int, 2) = {};
+	fresh := make([dynamic]int, 0, 4, backing.allocator());
+	fresh.append(6);
+	into_arena.append(move(fresh));
+	result := into_arena.pop();
+	fmt.println(result);
+
+	shifted: container.Small_Array(Pair, 3) = {};
+	shifted.append(Pair{[dynamic]int{7}, [dynamic]int{8}});
+	shifted.append(Pair{[dynamic]int{9}, {}});
+	removed := shifted.remove(0);
+	fmt.println(removed.first, shifted[0].first);
+
+	pairs := Pairs{count = 2};
+	pairs.items[0].first.append(1);
+	pairs.items[1].first.append(2);
+	round_trip(inout pairs, 0, 1);
+	fmt.println(pairs.items[0].first, pairs.items[1].first);
+}

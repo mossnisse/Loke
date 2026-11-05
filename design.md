@@ -8365,7 +8365,9 @@ dropped first. The value is [taken as an initialization
 takes it](#value-semantics-and-the-ownership-rule).
 
 `unsafe.take(place)` reads the value out and runs no cleanup for what is left
-behind. The result is owned by the caller like any other value. Afterwards the
+behind. The result is owned by the caller like any other value, and it keeps what
+the value borrowed and the [allocator regions](#allocator-regions-and-region-provenance)
+it was in. Afterwards the
 storage holds the bits of a value that no longer exists, and reading it again as
 one is undefined.
 

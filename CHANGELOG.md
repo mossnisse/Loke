@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A value [`unsafe.take`](design.md#uninitialized-capacity) reads out keeps the
+  [allocator regions](design.md#allocator-regions-and-region-provenance) it was in, as one `exchange`
+  reads out does. It had none the analysis could name, so returning such a value from an arena of the
+  frame, or storing it in the caller's storage or a global, compiled and read freed memory. These are
+  now `L0592` and `L0536`. Upgrade by keeping the arena alive for as long as the value. In the other
+  direction, `Small_Array.pop` and `remove` of an owning element, and any such `unsafe.take`, no longer
+  report `L0537` against an unrelated arena that ends first.
 - A procedure with a `$` parameter before a runtime one keeps its [result
   contract](design.md#procedure-result-contracts). `pick($T: type, view: []int) -> []int` lost the
   borrow on its result, so dropping or writing the owner while the result was live compiled and read

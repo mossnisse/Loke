@@ -781,7 +781,7 @@ prov_provider_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 }
 
 // The provider tokens a value moved out of locals carries, through composite
-// literals, `exchange`, and `box`, or 0.
+// literals, `exchange`, `unsafe.take`, and `box`, or 0.
 @(private)
 prov_moved_bits :: proc(graph: ^Flow_Graph, id: Value_Id) -> u64 {
 	source: Value_Id
@@ -791,6 +791,8 @@ prov_moved_bits :: proc(graph: ^Flow_Graph, id: Value_Id) -> u64 {
 	case Prov_Form_Call:
 		v, bound := form.call, prov_bound_values(form)
 		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange && len(bound) == 2 {
+			source = bound[0]
+		} else if sym != nil && sym.builtin == .Unsafe_Take && len(bound) == 1 {
 			source = bound[0]
 		} else if boxed_payload(graph.k.c, v) != nil {
 			return prov_moved_bits(graph, bound[0])

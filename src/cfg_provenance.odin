@@ -3908,11 +3908,31 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Value_Id, value: Valu
 	region := prov_result_region(graph, value)
 	copied := prov_take_self_sources(graph, reads, region, at, handle = true)
 	owned := prov_result_region_at(graph, value, nil, .Owners)
-	copied_owners := prov_take_self_sources(graph, reads, owned, at)
+	copied_owners := prov_take_owner_sources(graph, reads, value, type, owned, at)
 	prov_self_reads_end(graph, reads)
 	prov_store_region_set(graph, destination, region, owned, prov_owner_name(graph, prov_value(graph, value).origin), element)
 	prov_define_copied_content(graph, root, copied)
 	prov_define_copied_content(graph, root, copied_owners)
+}
+
+// The copies at `at` that `owned`, read since the last call, made from the
+// parameter's own fields. An `.Owners` query reads a record field by field, so each
+// copy is recorded at its field, as `prov_define_value_regions` records one. Recorded
+// at the whole value, a later read of that field would add its step to a source that
+// already ends in it, and a cycle of copies would grow the path without end.
+@(private = "file")
+prov_take_owner_sources :: proc(graph: ^Flow_Graph, reads: ^Prov_Self_Reads, value: Value_Id, type: Type_Id, owned: Region_Set, at: []Proj_Step) -> []Prov_Region_Content {
+	if reads == nil { return nil }
+	fields := region_field_shape(graph.k.c, type, graph.alloc)
+	if len(fields) == 0 { return prov_take_self_sources(graph, reads, owned, at) }
+	clear(&reads.sources)
+	out := make([dynamic]Prov_Region_Content, graph.alloc)
+	for field in fields {
+		if field.handle { continue }
+		set := prov_result_region_at(graph, value, field.path, field.own ? .Own : .All, type)
+		append(&out, ..prov_take_self_sources(graph, reads, set, prov_concat_path(graph, at, field.path), own = field.own))
+	}
+	return out[:]
 }
 
 // Starts listing reads for a store through `destination` when the only storage
