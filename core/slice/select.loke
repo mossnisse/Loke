@@ -1,0 +1,269 @@
+// standard-library.md "Partitioning and selection": partitioning by a predicate,
+// and nth-element selection by introselect with a median-of-medians fallback.
+//
+// Plain Loke over `swap`, like the heap algorithms: nothing is copied, so a
+// move-only element and one with no zero value both work, and every pivot is
+// compared where it lies. The reasoning is in comments.md "Standard-library API
+// choices".
+@(public)
+package slice;
+
+import "base:interfaces";
+
+/**
+	Reorders the slice so every element `keep` accepts comes before every element
+	it rejects, and returns how many it accepted. `keep` is called exactly once
+	per element, in an unspecified order, and is borrowed for the call. The order
+	within each side is unspecified. At most `values.len() / 2` swaps, in O(n).
+*/
+// standard-library.md "Partitioning and selection".
+//
+// `values[:low]` is known accepted and `values[high:]` known rejected. Each
+// element is tested once: a swap trades two that are already tested, and both
+// cursors step past them.
+partition :: proc(values: []mut $T, keep: $P) -> int where interfaces.Callable(P, proc(value: T) -> bool) {
+	low := 0;
+	high := values.len();
+	for (;;) {
+		for (low < high && keep(values[low])) { low += 1; }
+		// Everything left was accepted, or the slice is empty.
+		if (low == high) { break; }
+		// `values[low]` is rejected, so `high - 1 >= low`.
+		high -= 1;
+		for (high > low && !keep(values[high])) { high -= 1; }
+		// `values[low]` was tested already, and rejected.
+		if (low == high) { break; }
+		values.swap(low, high);
+		low += 1;
+	}
+	return low;
+}
+
+/// Whether no element `keep` accepts comes after one it rejects.
+// standard-library.md "Partitioning and selection".
+is_partitioned :: proc(values: []$T, keep: $P) -> bool where interfaces.Callable(P, proc(value: T) -> bool) {
+	at := 0;
+	for (at < values.len() && keep(values[at])) { at += 1; }
+	for (at < values.len()) {
+		if (keep(values[at])) { return false; }
+		at += 1;
+	}
+	return true;
+}
+
+/**
+	The index of the first element `keep` rejects, found by binary search, in
+	O(log n). The slice must already be partitioned by `keep`; one that is not
+	gets a meaningless answer, not a trap. This is the general form of
+	`binary_search`, by any key.
+*/
+// standard-library.md "Partitioning and selection".
+partition_point :: proc(values: []$T, keep: $P) -> int where interfaces.Callable(P, proc(value: T) -> bool) {
+	low := 0;
+	high := values.len();
+	for (low < high) {
+		middle := low + (high - low)/2;
+		if (keep(values[middle])) { low = middle + 1; } else { high = middle; }
+	}
+	return low;
+}
+
+/**
+	Puts at index `n` the element `sort_by` would put there under the same
+	comparator, with nothing after it to its left and nothing before it to its
+	right. Elements equivalent to it may end up on either side. For a strict
+	weak ordering, O(n) comparisons in the worst case. No allocation, and no
+	element copied. `n` is checked like
+	an index, so an empty slice always panics. Follow up with
+	`values.split_at_mut(n)` for the two sides.
+
+	A comparator must define a strict weak ordering. One that does not, or one
+	that panics, leaves the slice an unspecified permutation of what it held, and
+	every call terminates.
+*/
+// standard-library.md "Partitioning and selection".
+select_nth_by :: proc(values: []mut $T, n: int, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	count := values.len();
+	if (n < 0 || n >= count) { panic("selection index is out of range"); }
+	select_in(values, 0, count, n, less);
+}
+
+/**
+	The same as `select_nth_by`, ascending by `Ordered`, as `sort` relates to
+	`sort_by`. A NaN leaves an unspecified permutation, as it does for `sort`.
+*/
+// standard-library.md "Partitioning and selection".
+select_nth :: proc(values: []mut $T, n: int) where interfaces.Ordered(T) {
+	select_nth_by(values, n, Ascending(T){});
+}
+
+// A range this short is finished by insertion sort, as `LOKE_RT_SORT_SMALL` in
+// runtime/container.c finishes the sort.
+@(private) SELECT_SMALL :: 16;
+
+// From this length the pivot is Tukey's ninther rather than a median of three.
+@(private) SELECT_NINTHER :: 128;
+
+// Rounds that keep more than 7/8 of their range, allowed before every remaining
+// round takes its pivot from the median of medians.
+@(private) SELECT_BAD_ROUNDS :: 4;
+
+// Selects index `n` within `values[low:high]`, which already holds every
+// element that belongs there.
+//
+// Every round leaves its pivot out of the next range, so the range shrinks
+// whatever the comparator answers, and the call terminates. For a strict weak
+// ordering the work is linear. A round that keeps at most 7/8 costs its range,
+// and at most `SELECT_BAD_ROUNDS` rounds keep more. After them every pivot is a
+// median of medians, whose round costs its range plus a selection on a fifth
+// of it, so such a round must keep less than 4/5 for the sum to stay linear.
+//
+// At most about 0.7 of the range is strictly larger than a median of medians,
+// and as much strictly smaller, but Hoare's partition can put every element
+// equivalent to the pivot on the kept side, which may then hold up to about
+// 0.85. So a fallback round that keeps more than 3/4 gathers the equivalent
+// block beside the pivot, and keeps only what is strictly smaller or strictly
+// larger, at most about 0.7; or it stops, if `n` is in that block. Each
+// fallback round then keeps at most 3/4, and 1/5 + 3/4 < 1.
+@(private)
+select_in :: proc(values: []mut $T, low_in: int, high_in: int, n: int, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	low := low_in;
+	high := high_in;
+	bad := 0;
+	for (high - low > SELECT_SMALL) {
+		fallback := bad >= SELECT_BAD_ROUNDS;
+		if (fallback) {
+			pivot_median_of_medians(values, low, high, less);
+		} else {
+			pivot_sample(values, low, high, less);
+		}
+		p := partition_at_low(values, low, high, less);
+		if (p == n) { return; }
+		kept_low := p + 1;
+		kept_high := high;
+		if (n < p) {
+			kept_low = low;
+			kept_high = p;
+		}
+		kept := kept_high - kept_low;
+		if (!fallback) {
+			if (kept * 8 > (high - low) * 7) { bad += 1; }
+		} else if (kept * 4 > (high - low) * 3) {
+			if (n < p) {
+				// Everything on the left is `<=` the pivot: move what is strictly
+				// smaller first, leaving the equivalent block beside `p`.
+				equal := low;
+				foreach (i in low ..< p) {
+					if (less(values[i], values[p])) {
+						values.swap(equal, i);
+						equal += 1;
+					}
+				}
+				if (n >= equal) { return; }
+				kept_high = equal;
+			} else {
+				// Everything on the right is `>=` the pivot: move what is
+				// equivalent to it first, beside `p`.
+				equal := p + 1;
+				foreach (i in p + 1 ..< high) {
+					if (!less(values[p], values[i])) {
+						values.swap(equal, i);
+						equal += 1;
+					}
+				}
+				if (n < equal) { return; }
+				kept_low = equal;
+			}
+		}
+		low = kept_low;
+		high = kept_high;
+	}
+	insertion_sort_range(values, low, high, less);
+}
+
+// Insertion sort by swaps: the element being placed moves down one slot at a
+// time, so no copy of it is held anywhere.
+@(private)
+insertion_sort_range :: proc(values: []mut $T, low: int, high: int, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	foreach (i in low + 1 ..< high) {
+		j := i;
+		for (j > low && less(values[j], values[j - 1])) {
+			values.swap(j, j - 1);
+			j -= 1;
+		}
+	}
+}
+
+// Orders three distinct slots by swaps, so the median lands in `b`.
+@(private)
+order_three :: proc(values: []mut $T, a: int, b: int, c: int, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	if (less(values[b], values[a])) { values.swap(a, b); }
+	if (less(values[c], values[b])) {
+		values.swap(b, c);
+		if (less(values[b], values[a])) { values.swap(a, b); }
+	}
+}
+
+// A median of three, or from `SELECT_NINTHER` elements Tukey's ninther, moved to
+// `low`.
+@(private)
+pivot_sample :: proc(values: []mut $T, low: int, high: int, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	middle := low + (high - low)/2;
+	last := high - 1;
+	if (high - low >= SELECT_NINTHER) {
+		step := (high - low)/8;
+		order_three(values, low, low + step, low + 2*step, less);
+		order_three(values, middle - step, middle, middle + step, less);
+		order_three(values, last - 2*step, last - step, last, less);
+		order_three(values, low + step, middle, last - step, less);
+	} else {
+		order_three(values, low, middle, last, less);
+	}
+	values.swap(low, middle);
+}
+
+// The median of the medians of groups of five, moved to `low`. Each full group
+// is sorted and its median swapped to the front of the range; a last group of
+// one to four elements is left out. The median of those medians is selected by
+// the same procedure, on a fifth of the range.
+@(private)
+pivot_median_of_medians :: proc(values: []mut $T, low: int, high: int, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	groups := 0;
+	at := low;
+	for (at + 5 <= high) {
+		insertion_sort_range(values, at, at + 5, less);
+		values.swap(low + groups, at + 2);
+		groups += 1;
+		at += 5;
+	}
+	middle := low + groups/2;
+	select_in(values, low, low + groups, middle, less);
+	values.swap(low, middle);
+}
+
+// Hoare's partition around the pivot at `low`, compared where it lies, as
+// `sort_partition` in runtime/container.c does. Both scans stop on an
+// equivalent element, so a run of duplicates splits in the middle, and both
+// are bounded by the range rather than by the comparator. The pivot ends in
+// its final slot, which is returned.
+@(private)
+partition_at_low :: proc(values: []mut $T, low: int, high: int, less: $C) -> int
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	i := low;
+	j := high;
+	for (;;) {
+		i += 1;
+		for (i < high && less(values[i], values[low])) { i += 1; }
+		j -= 1;
+		for (j > low && less(values[low], values[j])) { j -= 1; }
+		if (i >= j) { break; }
+		values.swap(i, j);
+	}
+	values.swap(low, j);
+	return j;
+}

@@ -1,0 +1,9 @@
+package main;
+import "core:slice";
+
+// standard-library.md "Partitioning and selection": `n` is checked like an
+// index, so an empty slice has nothing to select and always panics.
+main :: proc() {
+	nothing: [dynamic]int = {};
+	slice.select_nth(&mut nothing[:], 0);
+}

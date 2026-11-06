@@ -13,12 +13,21 @@ L0363
 L0392
 @24:2
 no overload of `swap` applies to these arguments
-L0512
+L0392
+@31:2
+no overload of `partition` applies to these arguments
+L0392
 @32:2
+no overload of `select_nth` applies to these arguments
+L0392
+@33:2
+no overload of `select_nth_by` applies to these arguments
+L0512
+@41:2
 `numbers` cannot be modified here
 L0444
-@41:2
+@50:2
 `No_Comparator` has no method `call(self, ...)` matching `proc(Opaque, Opaque) -> bool`
 L0444
-@42:2
+@51:2
 `proc(int, int) -> bool` does not convert to `proc(Opaque, Opaque) -> bool`

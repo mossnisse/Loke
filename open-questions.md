@@ -1358,14 +1358,6 @@ code; no program has shown it. Found on 2026-11-04 in the compiler review.
 Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
 none of which they wait on.
 
-- **Remove the resolved heap-read workaround (P3).**
-  [heap.loke](core/slice/heap.loke) still sends comparisons through `before`
-  to avoid the computed-index rejection that `0d7d1b47` fixes. Its comment also
-  cites the known-gap heading removed by that commit. Inline the four comparisons
-  as `less(values[a], values[b])` and remove the helper and its stale comment,
-  saving seven lines. The heap and priority queue runtime cases, including
-  move-only elements, and comparator-panic cleanup still pass with this change
-  in an isolated copy of the commit. Found on 2026-11-05 while reviewing it.
 - **Share the slice iterator (P3).**
   [Priority_Queue_Iterator](core/container/priority_queue.loke) duplicates the
   read-only slice cursor in [Small_Array_Iterator](core/container/small_array.loke).

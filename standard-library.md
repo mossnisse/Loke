@@ -25,7 +25,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath), [`core:simd`](#coresimd) |
-| Sort, search, divide slices, or keep a heap in one | [`core:slice`](#coreslice) |
+| Sort, search, partition, select, divide slices, or keep a heap in one | [`core:slice`](#coreslice) |
 | Keep a queue, a priority queue, a few elements without allocating, or sets of enum values and indices | [`core:container`](#corecontainer) |
 | Use arenas and other allocators | [`core:mem`](#coremem) |
 | Use atomics, once-only initialization, or lazy values | [`core:sync`](#coresync) |
@@ -194,7 +194,7 @@ core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenval
 core:math/geometry    shapes, rays, frustums, polygons, overlap tests, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
-core:slice            slice algorithms, sorting, heaps
+core:slice            slice algorithms, sorting, selection, heaps
 core:container        Small_Array, Bit_Set, Enum_Array
                       index sets, Priority_Queue, Deque
 core:log              logging over the selected provider
@@ -2395,6 +2395,73 @@ compile-time error, because a read-only slice has no mutable storage to sort.
 
 See [Calling a value](design.md#calling-a-value) and [Capture
 literals](design.md#capture-literals) for callable comparators.
+
+### Partitioning and selection
+
+These reorder a slice in O(n) where a sort would cost O(n log n): splitting it
+by a predicate, or finding the element at one sorted position, such as a median.
+
+```loke
+partition       :: proc(values: []mut $T, keep: $P) -> int      // accepted first; returns how many
+is_partitioned  :: proc(values: []$T, keep: $P) -> bool         // no accepted element after a rejected one
+partition_point :: proc(values: []$T, keep: $P) -> int          // index of the first rejected, O(log n)
+select_nth_by   :: proc(values: []mut $T, n: int, less: $C)     // what sort_by would put at n
+select_nth      :: proc(values: []mut $T, n: int)               // the same, ascending by Ordered
+```
+
+`keep` requires `interfaces.Callable(P, proc(value: T) -> bool)`, and `less`
+requires `interfaces.Callable(C, proc(left, right: T) -> bool)` as for
+[`sort_by`](#sorting-slices): either may be a plain procedure or a record whose
+`call` method decides, is borrowed for the call, and is retained nowhere.
+Nothing allocates, and nothing copies an element: elements only move by
+[`swap`](#swapping-elements), so a move-only element and one with no zero value
+are fine. `select_nth` requires `interfaces.Ordered(T)`, and relates to
+`select_nth_by` as `sort` does to `sort_by`; a descending selection passes
+[`slice.Descending(T){}`](#heaps).
+
+After `partition`, the slice is a permutation of what it held, and `keep`
+accepts exactly the elements in `values[:k]`, where `k` is the returned count.
+`keep` is called exactly once per element, in an unspecified order, so an
+expensive or counting predicate costs `n` calls. The order within each side is
+unspecified. It makes at most `n / 2` swaps, in O(n).
+
+`partition_point` is a binary search on a slice that `keep` already partitions,
+returning the index of the first element it rejects: the general form of
+`binary_search`, by any key. A slice that is not partitioned gets a meaningless
+answer, not a trap. An empty slice gives 0 for `partition_point` and true for
+`is_partitioned`.
+
+After `select_nth_by(values, n, less)`, the slice is a permutation of what it
+held, and:
+
+- `values[n]` is equivalent to what `sort_by` would leave at index `n`.
+- No `values[i]` with `i < n` comes after it: `!less(values[n], values[i])`.
+- No `values[j]` with `j > n` comes before it: `!less(values[j], values[n])`.
+
+Elements equivalent to `values[n]` may end up on either side, and nothing is
+stable. A caller who needs a deterministic choice among ties puts the tie
+breaker in the comparator, such as a key and then an id. `n` is checked like an
+index, `0 <= n < values.len()`, so an empty slice always panics. Nothing is
+returned: the two sides would be two mutable views at once, which is what
+[`split_at_mut`](#splitting-a-mutable-slice) is for:
+
+```loke
+mid := prims.len() / 2;
+slice.select_nth_by(prims, mid, By_Centroid{axis});
+left, right := prims.split_at_mut(mid);                 // a median split, no full sort
+
+count := slice.partition(prims, Left_Of{axis, split}); // a bucketed split instead
+```
+
+For a comparator that defines a strict weak ordering, selection takes O(n)
+comparisons in the worst case, not only on average, and O(log n) stack. A
+comparator that does not define one, or one that panics, leaves the slice an
+unspecified permutation of what it held and nothing worse, and every call
+terminates; the linear bound is not promised then. A NaN under `select_nth`
+leaves an unspecified permutation, as it does for `sort`.
+
+All three reordering procedures accept `[]mut T`; passing a read-only `[]T` is a
+compile-time error.
 
 ### Heaps
 

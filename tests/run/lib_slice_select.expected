@@ -1,0 +1,19 @@
+exhaustive small: 3280 arrays, 0 failures
+past the threshold: 131072 arrays, 2400 permutation rounds, 0 failures
+random 0 failures
+sorted 0 failures
+reversed 0 failures
+organ pipe 0 failures
+all equal 0 failures
+duplicated 0 failures
+adversary: true true true
+tokens: 25 true 20 true
+ranked: 5 10 10 0 copies
+empty: 0 0 true 0
+all accepted: 5 5 5 true
+all rejected: 0 5 0 true
+not partitioned: false
+one: 3
+misbehaving 17 true
+misbehaving 200 true
+misbehaving 1000 true

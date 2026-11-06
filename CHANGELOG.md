@@ -1113,6 +1113,11 @@ checklist.
 
 ### Added
 
+- [`core:slice`](standard-library.md#partitioning-and-selection) has `partition`, which puts the
+  elements a predicate accepts first and calls it exactly once per element, `is_partitioned`,
+  `partition_point`, a binary search by any key, and `select_nth_by` and `select_nth`, which put at
+  index `n` what a sort would without sorting: O(n) comparisons in the worst case, by introselect
+  with a median-of-medians fallback. None allocates or copies an element, so move-only elements work.
 - [`core:random`](standard-library.md#mixing-and-derived-seeds) has `mix64`, the SplitMix64
   finalizer, and `Seed_Path`, which derives a 64-bit value from a seed and a path of integer words,
   such as a domain tag and a chunk's coordinates, without a generator and whatever order places are

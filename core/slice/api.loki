@@ -11,6 +11,9 @@
 	The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
 	compile-time error rather than a silent no-op.
 
+	`partition` and `select_nth_by` reorder in O(n) where a sort would cost
+	O(n log n): by a predicate, or around the element at one sorted position.
+
 	`make_heap` and its relatives keep a binary heap in a slice the caller owns.
 */
 package slice;
@@ -66,6 +69,46 @@ sift_heap_top :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, p
 
 // Whether no element is `less` than its parent. An empty slice is a heap.
 is_heap :: proc(values: []$T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+
+/*
+	Reorders the slice so every element `keep` accepts comes before every element
+	it rejects, and returns how many it accepted. `keep` is called exactly once
+	per element, in an unspecified order, and is borrowed for the call. The order
+	within each side is unspecified. At most `values.len() / 2` swaps, in O(n).
+*/
+partition :: proc(values: []mut $T, keep: $P) -> int where interfaces.Callable(P, proc(value: T) -> bool) ---;
+
+// Whether no element `keep` accepts comes after one it rejects.
+is_partitioned :: proc(values: []$T, keep: $P) -> bool where interfaces.Callable(P, proc(value: T) -> bool) ---;
+
+/*
+	The index of the first element `keep` rejects, found by binary search, in
+	O(log n). The slice must already be partitioned by `keep`; one that is not
+	gets a meaningless answer, not a trap. This is the general form of
+	`binary_search`, by any key.
+*/
+partition_point :: proc(values: []$T, keep: $P) -> int where interfaces.Callable(P, proc(value: T) -> bool) ---;
+
+/*
+	Puts at index `n` the element `sort_by` would put there under the same
+	comparator, with nothing after it to its left and nothing before it to its
+	right. Elements equivalent to it may end up on either side. For a strict
+	weak ordering, O(n) comparisons in the worst case. No allocation, and no
+	element copied. `n` is checked like
+	an index, so an empty slice always panics. Follow up with
+	`values.split_at_mut(n)` for the two sides.
+
+	A comparator must define a strict weak ordering. One that does not, or one
+	that panics, leaves the slice an unspecified permutation of what it held, and
+	every call terminates.
+*/
+select_nth_by :: proc(values: []mut $T, n: int, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+
+/*
+	The same as `select_nth_by`, ascending by `Ordered`, as `sort` relates to
+	`sort_by`. A NaN leaves an unspecified permutation, as it does for `sort`.
+*/
+select_nth :: proc(values: []mut $T, n: int) where interfaces.Ordered(T) ---;
 
 /*
 	Sorts in place according to `less`: a plain procedure, or a value whose

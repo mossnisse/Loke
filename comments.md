@@ -3391,6 +3391,44 @@ boundaries and API shapes follow a few common choices:
   in the same place reports. The operator is `contains` respelled, so the
   two can be swapped without changing what a program does.
 
+- **[Selection](standard-library.md#partitioning-and-selection) is plain Loke, not
+  a runtime routine.** `sort_by` reaches a C introsort through a compiler bridge;
+  a selection there would need a second intrinsic and bridge. Generic Loke instead
+  gets the comparator inlined into each instance and needs no compiler change,
+  and the bounds checks it keeps proved cheap. A measurement on 2026-11-06, at
+  `-opt=speed`, best of several runs on random keys, put `select_nth_by` at the
+  middle index against `sort_by` followed by the same read: 3.6 µs and 80 µs at
+  10³ `int`s, 0.63 ms and 13.3 ms at 10⁵, and 6.7 ms and 162 ms at 10⁶; for a
+  32-byte record, 4.0 µs and 88 µs, 0.77 ms and 14.9 ms, and 9.7 ms and 184 ms.
+- **Selection falls back to the median of medians, not to heapsort.** libstdc++'s
+  `nth_element` falls back to heapsort past a depth limit, which bounds the worst
+  case at O(n log n). Introselect with a median-of-medians fallback, as Rust's
+  `select_nth_unstable` uses, promises O(n) at the cost of a rarely run path: a
+  round that keeps more than ⅞ of its range is bad, and after four bad rounds every
+  pivot is a median of medians. Such a round costs its range plus a selection on a
+  fifth of it, so it must keep less than 4/5 of the range for the total to stay
+  linear. At most about 7/10 is strictly larger than such a pivot, and as much
+  strictly smaller, but Hoare's partition can put every tie on the kept side,
+  which then holds up to about 0.85: its scans pass only strictly smaller or
+  larger elements, and each swap adds one element to both sides. So a fallback
+  round that keeps more than ¾ also gathers the elements equivalent to the pivot
+  beside it, and keeps only what is strictly smaller or larger. With the fallback
+  forced from the first round, 200,000 duplicate-heavy inputs reached that pass,
+  and every result met the contract.
+- **`n` is an index, and selection returns nothing.** An `n` out of range is a
+  miscomputed index, as `values[n]` would be, so it panics rather than clamping; an
+  empty slice has no element to select. The two sides around `n` would be two
+  mutable views at once, which only the compiler-known `split_at_mut` can return, so
+  the caller asks for them.
+- **`partition` calls its predicate exactly once per element.** A predicate may be
+  expensive, such as a centroid computed from a mesh, or keep state, such as a
+  count. Testing each element once costs nothing a two-ended scan needed, and the
+  promise lets a caller reason about both.
+- **Neither partitioning nor selection is stable.** A stable partition needs an
+  allocation or O(n log n) work by rotation, and a stable selection is a sort. As
+  with sorting and queues, a caller who needs a deterministic tie break puts it in
+  the comparator.
+
 - **A priority queue stores its comparator in its type.** A heap's order means
   something only under one comparator, so tying the two together rules out pushing
   with one and popping with another. It also calls the comparator directly, makes a
