@@ -7,7 +7,9 @@ import "core:slice";
 // design.md "Compile-time procedure evaluation" permits mutation, and a slice
 // views the storage it slices (design.md "Slices"), so `swap` and `sort`
 // through a `[]mut T` rearrange that storage during compilation exactly as
-// they do at run time.
+// they do at run time. Selection and partitioning (standard-library.md
+// "Partitioning and selection") are plain Loke over `swap`, so they run there
+// too.
 
 swapped :: proc() -> [3]int {
 	values := [3]int{3, 1, 2};
@@ -34,6 +36,22 @@ reversed_dynamic :: proc() -> [4]int {
 	return [4]int{values[0], values[1], values[2], values[3]};
 }
 
+// Past the insertion-sort threshold, so through the pivot and the partition.
+median_of_scattered :: proc() -> int {
+	values := [33]int{};
+	foreach (i in 0 ..< 33) { values[i] = (i * 19) % 33; }
+	slice.select_nth(&mut values[:], 16);
+	return values[16];
+}
+
+evens_first :: proc() -> [6]int {
+	values := [6]int{1, 2, 3, 4, 5, 6};
+	count := slice.partition(&mut values[:], proc(value: int) -> bool { return value % 2 == 0; });
+	slice.sort(&mut values[:count]);
+	slice.sort(&mut values[count:]);
+	return values;
+}
+
 dealt :: proc(seed: u64) -> [8]int {
 	rng := random.Xoshiro256.from_seed(seed);
 	deck := [8]int{0, 1, 2, 3, 4, 5, 6, 7};
@@ -45,10 +63,14 @@ SWAPPED :: swapped();
 SORTED_TAIL :: sorted_tail();
 REVERSED :: reversed_dynamic();
 DEALT :: dealt(42);
+MEDIAN :: median_of_scattered();
+EVENS_FIRST :: evens_first();
 
 main :: proc() {
 	fmt.println(SWAPPED, SWAPPED == swapped());
 	fmt.println(SORTED_TAIL, SORTED_TAIL == sorted_tail());
 	fmt.println(REVERSED, REVERSED == reversed_dynamic());
 	fmt.println(DEALT, DEALT == dealt(42));
+	fmt.println(MEDIAN, MEDIAN == median_of_scattered());
+	fmt.println(EVENS_FIRST, EVENS_FIRST == evens_first());
 }

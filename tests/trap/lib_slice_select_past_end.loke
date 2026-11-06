@@ -1,0 +1,10 @@
+package main;
+import "core:slice";
+
+// standard-library.md "Partitioning and selection": `n` is checked like an
+// index, `0 <= n < len`, so the length itself is out of range rather than
+// clamped to the last element.
+main :: proc() {
+	values := [3]int{3, 1, 2};
+	slice.select_nth_by(&mut values[:], 3, slice.Ascending(int){});
+}

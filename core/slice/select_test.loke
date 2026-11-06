@@ -1,0 +1,92 @@
+// standard-library.md "Partitioning and selection": selection with the
+// median-of-medians fallback from the first round. Ordinary inputs reach the
+// fallback only after four bad rounds, and seldom on a range with many ties, so
+// tests/run/lib_slice_select.loke cannot count on its tie-gathering pass or on
+// its stop inside the equivalent block. These call the private `select_in`
+// with `SELECT_BAD_ROUNDS` spent already; run them with `lokec core/slice -test`.
+@(public)
+package slice;
+
+// xorshift64: a fixed sequence, so a failure reproduces.
+@(private)
+next_test_word :: proc(state: inout u64) -> u64 {
+	state ~= state << 13;
+	state ~= state >> 7;
+	state ~= state << 17;
+	return state;
+}
+
+// Fills `values` with keys below 8 in one of four shapes: uniform over
+// `alphabet` keys, mostly one key, ascending runs, or descending runs.
+@(private)
+fill_duplicates :: proc(values: []mut int, shape: int, alphabet: int, state: inout u64) {
+	count := values.len();
+	foreach (i in 0 ..< count) {
+		word := int(next_test_word(inout state) % 1024);
+		if (shape == 0) { values[i] = word % alphabet; }
+		if (shape == 1) {
+			values[i] = alphabet / 2;
+			if (word % 4 == 0) { values[i] = word % alphabet; }
+		}
+		if (shape == 2) { values[i] = i * alphabet / count; }
+		if (shape == 3) { values[i] = (count - 1 - i) * alphabet / count; }
+	}
+}
+
+// Selects `n` with the fallback forced, and checks every promise of
+// `select_nth`: the key a sort puts at `n`, nothing greater before it, nothing
+// smaller after it, and the same count of each key as before.
+@(private)
+forced_selection_holds :: proc(values: []mut int, n: int) -> bool {
+	before := [8]int{};
+	foreach (value in values) { before[value] += 1; }
+	wanted := 0;
+	seen := before[0];
+	for (seen <= n) {
+		wanted += 1;
+		seen += before[wanted];
+	}
+	count := values.len();
+	select_in(values, 0, count, n, Ascending(int){}, SELECT_BAD_ROUNDS);
+	after := [8]int{};
+	foreach (value in values) { after[value] += 1; }
+	if (after != before || values[n] != wanted) { return false; }
+	foreach (i in 0 ..< n) {
+		if (values[n] < values[i]) { return false; }
+	}
+	foreach (j in n + 1 ..< count) {
+		if (values[j] < values[n]) { return false; }
+	}
+	return true;
+}
+
+@(test)
+forced_fallback_selects_among_duplicates :: proc() {
+	state: u64 = 0x9E3779B97F4A7C15;
+	work := [96]int{};
+	foreach (shape in 0 ..< 4) {
+		foreach (alphabet in [4]int{2, 3, 5, 8}) {
+			foreach (count in SELECT_SMALL + 1 ..< 97) {
+				seed := state;
+				foreach (n in 0 ..< count) {
+					state = seed;
+					fill_duplicates(&mut work[:count], shape, alphabet, inout state);
+					assert(forced_selection_holds(&mut work[:count], n));
+				}
+			}
+		}
+	}
+}
+
+// A single key: every round's kept side is all ties, so the gathering pass
+// finds the whole block equivalent and every round stops at once.
+@(test)
+forced_fallback_selects_among_equal_keys :: proc() {
+	work := [64]int{};
+	foreach (count in [3]int{17, 24, 64}) {
+		foreach (n in 0 ..< count) {
+			foreach (i in 0 ..< count) { work[i] = 0; }
+			assert(forced_selection_holds(&mut work[:count], n));
+		}
+	}
+}

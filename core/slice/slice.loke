@@ -9,9 +9,13 @@
 	The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
 	compile-time error rather than a silent no-op.
 
+	`partition` and `select_nth_by` reorder in O(n) where a sort would cost
+	O(n log n): by a predicate, or around the element at one sorted position.
+
 	`make_heap` and its relatives keep a binary heap in a slice the caller owns.
 */
-// design.md "Slices", standard-library.md "Sorting slices", and
+// design.md "Slices", standard-library.md "Sorting slices",
+// standard-library.md "Partitioning and selection", and
 // standard-library.md "Slice queries and copies".
 //
 // The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private

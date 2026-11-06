@@ -50,7 +50,7 @@ push_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(
 	at := values.len() - 1;
 	for (at > 0) {
 		parent := (at - 1) / 2;
-		if (!before(values, at, parent, less)) { break; }
+		if (!less(values[at], values[parent])) { break; }
 		values.swap(at, parent);
 		at = parent;
 	}
@@ -76,7 +76,7 @@ sift_heap_top :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, p
 /// Whether no element is `less` than its parent. An empty slice is a heap.
 is_heap :: proc(values: []$T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
 	foreach (child in 1 ..< values.len()) {
-		if (before(values, child, (child - 1) / 2, less)) { return false; }
+		if (less(values[child], values[(child - 1) / 2])) { return false; }
 	}
 	return true;
 }
@@ -88,17 +88,9 @@ sift_down :: proc(values: []mut $T, start: int, less: $C) where interfaces.Calla
 	for (;;) {
 		child := 2 * at + 1;
 		if (child >= count) { break; }
-		if (child + 1 < count && before(values, child + 1, child, less)) { child += 1; }
-		if (!before(values, child, at, less)) { break; }
+		if (child + 1 < count && less(values[child + 1], values[child])) { child += 1; }
+		if (!less(values[child], values[at])) { break; }
 		values.swap(at, child);
 		at = child;
 	}
-}
-
-// Reads through a read-only slice because known-gaps.md "A computed index is
-// refused beside a second read of a mutable slice" refuses the same call on the
-// `[]mut T` for a non-copyable element.
-@(private)
-before :: proc(values: []$T, a, b: int, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
-	return less(values[a], values[b]);
 }

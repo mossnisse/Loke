@@ -1,0 +1,365 @@
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:slice";
+import "core:sync";
+
+// standard-library.md "Partitioning and selection": `partition` puts every
+// accepted element first and tests each element once, and `select_nth_by` leaves
+// at `n` what `sort_by` would, with nothing after it to its left and nothing
+// before it to its right. Both leave a permutation, copy nothing, and terminate
+// whatever the comparator answers.
+
+@(move_only) Token :: struct { id: int }
+
+By_Id :: struct {}
+
+impl By_Id {
+	call :: proc(self, left, right: Token) -> bool { return left.id < right.id; }
+}
+
+Even_Id :: struct {}
+
+impl Even_Id {
+	call :: proc(self, value: Token) -> bool { return value.id % 2 == 0; }
+}
+
+// Counts its copies: selection and partition move elements only by `swap`.
+copies: sync.Atomic(int);
+
+Ranked :: struct { rank: int }
+
+impl Ranked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Ranked, Allocator_Error) {
+		copies.add(1);
+		return .ok(Ranked{self.rank});
+	}
+	@(public) less :: operator(<) proc(left, right: Ranked) -> bool { return left.rank < right.rank; }
+}
+
+Low_Rank :: struct {}
+
+impl Low_Rank {
+	call :: proc(self, value: Ranked) -> bool { return value.rank < 10; }
+}
+
+// A predicate that counts its calls: `partition` makes exactly one per element.
+Below :: struct { limit: int, calls: ^mut int }
+
+impl Below {
+	call :: proc(self, value: int) -> bool {
+		self.calls^ += 1;
+		return value < self.limit;
+	}
+}
+
+// The same predicate without a count, for checking a result.
+Under :: struct { limit: int }
+
+impl Under {
+	call :: proc(self, value: int) -> bool { return value < self.limit; }
+}
+
+// McIlroy's adversary ("A Killer Adversary for Quicksort", 1999). Every element
+// starts as "gas", above every frozen one; comparing two gas elements freezes
+// one of them at the next value. The answers stay consistent with the values
+// the elements end with, so it is a strict weak ordering, chosen lazily to
+// spoil each pivot: a quickselect without a fallback is quadratic against it.
+Adversary :: struct {
+	keys:        [dynamic]int,
+	gas:         int,
+	solid:       int,
+	candidate:   int,
+	comparisons: int,
+}
+
+Against :: struct { state: ^mut Adversary }
+
+impl Against {
+	call :: proc(self, left, right: int) -> bool {
+		self.state^.comparisons += 1;
+		gas := self.state^.gas;
+		if (self.state^.keys[left] == gas && self.state^.keys[right] == gas) {
+			frozen := right;
+			if (left == self.state^.candidate) { frozen = left; }
+			self.state^.keys[frozen] = self.state^.solid;
+			self.state^.solid += 1;
+		}
+		if (self.state^.keys[left] == gas) {
+			self.state^.candidate = left;
+		} else if (self.state^.keys[right] == gas) {
+			self.state^.candidate = right;
+		}
+		return self.state^.keys[left] < self.state^.keys[right];
+	}
+}
+
+// A comparator that is not a strict weak ordering in two ways: everything is
+// before everything, or the answer alternates.
+Always_Before :: struct {}
+
+impl Always_Before {
+	call :: proc(self, left, right: int) -> bool { return true; }
+}
+
+Alternating :: struct { flip: ^mut bool }
+
+impl Alternating {
+	call :: proc(self, left, right: int) -> bool {
+		self.flip^ = !self.flip^;
+		return self.flip^;
+	}
+}
+
+next :: proc(state: inout u64) -> u64 {
+	state ~= state << 13;
+	state ~= state >> 7;
+	state ~= state << 17;
+	return state;
+}
+
+// The postcondition for `n` under `less`, and that `values[n]` is `wanted`, the
+// element a sort by `less` puts there.
+selected :: proc(values: []int, n: int, wanted: int, less: $C) -> bool where interfaces.Callable(C, proc(left, right: int) -> bool) {
+	if (values[n] != wanted) { return false; }
+	foreach (i in 0 ..< n) {
+		if (less(values[n], values[i])) { return false; }
+	}
+	foreach (j in n + 1 ..< values.len()) {
+		if (less(values[j], values[n])) { return false; }
+	}
+	return true;
+}
+
+// Whether two slices hold the same elements, in any order.
+same_elements :: proc(left: []int, right: []int) -> bool {
+	a := slice.clone(left);
+	b := slice.clone(right);
+	a.sort();
+	b.sort();
+	return slice.equal(a[:], b[:]);
+}
+
+// Whether `values` holds each of `0 ..< values.len()` once.
+is_identity_permutation :: proc(values: []int) -> bool {
+	seen: [dynamic]bool = {};
+	foreach (_ in values) { seen.append(false); }
+	foreach (value in values) {
+		if (value < 0 || value >= values.len() || seen[value]) { return false; }
+		seen[value] = true;
+	}
+	return true;
+}
+
+// Every array over {0, 1, 2} up to length 7, selected at every `n` and
+// partitioned by four predicates. These reach only the insertion sort.
+exhaustive_small :: proc() {
+	original := [7]int{};
+	work := [7]int{};
+	arrays := 0;
+	failures := 0;
+	foreach (len in 0 ..< 8) {
+		total := 1;
+		foreach (_ in 0 ..< len) { total *= 3; }
+		foreach (code in 0 ..< total) {
+			rest := code;
+			foreach (i in 0 ..< len) {
+				original[i] = rest % 3;
+				rest /= 3;
+			}
+			sorted := original;
+			slice.sort(&mut sorted[:len]);
+			foreach (n in 0 ..< len) {
+				work = original;
+				slice.select_nth(&mut work[:len], n);
+				if (!selected(work[:len], n, sorted[n], slice.Ascending(int){}) || !same_elements(work[:len], original[:len])) {
+					failures += 1;
+				}
+			}
+			foreach (limit in [4]int{0, 1, 2, 3}) {
+				work = original;
+				calls := 0;
+				accepted := 0;
+				foreach (i in 0 ..< len) {
+					if (original[i] < limit) { accepted += 1; }
+				}
+				count := slice.partition(&mut work[:len], Below{limit, &mut calls});
+				check := Under{limit};
+				counted := count == accepted && calls == len;
+				split := slice.is_partitioned(work[:len], check) && slice.partition_point(work[:len], check) == count;
+				if (!counted || !split || !same_elements(work[:len], original[:len])) { failures += 1; }
+			}
+			arrays += 1;
+		}
+	}
+	fmt.println("exhaustive small:", arrays, "arrays,", failures, "failures");
+}
+
+// Every array over {0, 1} of length 17, and permutations of lengths 17 to 40:
+// past the insertion-sort threshold, so through pivot choice, Hoare
+// partitioning, and the loop.
+exhaustive_past_threshold :: proc() {
+	work := [40]int{};
+	failures := 0;
+	foreach (code in 0 ..< 1 << 17) {
+		foreach (n in [5]int{0, 1, 8, 15, 16}) {
+			ones := 0;
+			foreach (i in 0 ..< 17) {
+				work[i] = (code >> u64(i)) & 1;
+				ones += work[i];
+			}
+			wanted := 0;
+			if (n >= 17 - ones) { wanted = 1; }
+			slice.select_nth(&mut work[:17], n);
+			after := 0;
+			foreach (i in 0 ..< 17) { after += work[i]; }
+			if (!selected(work[:17], n, wanted, slice.Ascending(int){}) || after != ones) { failures += 1; }
+		}
+	}
+	state: u64 = 0x9E3779B97F4A7C15;
+	permutations := 0;
+	foreach (round in 0 ..< 2400) {
+		len := 17 + round % 24;
+		foreach (n in 0 ..< len) {
+			foreach (i in 0 ..< len) { work[i] = i; }
+			foreach (i in 0 ..< len - 1) {
+				j := i + int(next(inout state) % u64(len - i));
+				slice.swap(&mut work[:len], i, j);
+			}
+			slice.select_nth(&mut work[:len], n);
+			if (!selected(work[:len], n, n, slice.Ascending(int){}) || !is_identity_permutation(work[:len])) { failures += 1; }
+		}
+		permutations += 1;
+	}
+	fmt.println("past the threshold:", 1 << 17, "arrays,", permutations, "permutation rounds,", failures, "failures");
+}
+
+// Large inputs of the shapes that defeat simple pivots.
+large_inputs :: proc() {
+	count := 10_000;
+	state: u64 = 0x2545F4914F6CDD1D;
+	names := [6]string{"random", "sorted", "reversed", "organ pipe", "all equal", "duplicated"};
+	foreach (shape in 0 ..< 6) {
+		original: [dynamic]int = {};
+		foreach (i in 0 ..< count) {
+			value := 7;
+			if (shape == 0) { value = int(next(inout state) % 1_000_000); }
+			if (shape == 1) { value = i; }
+			if (shape == 2) { value = count - i; }
+			if (shape == 3) { value = i; if (count - i < i) { value = count - i; } }
+			if (shape == 5) { value = int(next(inout state) % 4); }
+			original.append(value);
+		}
+		sorted := slice.clone(original[:]);
+		sorted.sort();
+		failures := 0;
+		foreach (n in [5]int{0, 1, count / 3, count / 2, count - 1}) {
+			work := slice.clone(original[:]);
+			slice.select_nth(&mut work[:], n);
+			if (!selected(work[:], n, sorted[n], slice.Ascending(int){}) || !same_elements(work[:], original[:])) { failures += 1; }
+			work = slice.clone(original[:]);
+			descending := slice.Descending(int){};
+			slice.select_nth_by(&mut work[:], n, descending);
+			if (!selected(work[:], n, sorted[count - 1 - n], descending) || !same_elements(work[:], original[:])) { failures += 1; }
+		}
+		fmt.println(names[shape], failures, "failures");
+	}
+}
+
+// The adversary forces the median-of-medians fallback: the count of
+// comparisons stays linear. The bound pins this implementation, not the spec.
+adversary :: proc() {
+	count := 20_000;
+	state := Adversary{keys = {}, gas = count, solid = 0, candidate = 0, comparisons = 0};
+	values: [dynamic]int = {};
+	foreach (i in 0 ..< count) {
+		state.keys.append(count);
+		values.append(i);
+	}
+	slice.select_nth_by(&mut values[:], count / 2, Against{&mut state});
+	comparisons := state.comparisons;
+	// Gas left at the end is still above every frozen key, and equal to the
+	// rest of the gas, which the answers given agree with.
+	keys: [dynamic]int = {};
+	foreach (value in values) { keys.append(state.keys[value]); }
+	sorted := slice.clone(keys[:]);
+	sorted.sort();
+	fmt.println(
+		"adversary:", selected(keys[:], count / 2, sorted[count / 2], slice.Ascending(int){}),
+		is_identity_permutation(values[:]), comparisons < 40 * count,
+	);
+}
+
+// Only `swap` moves elements: a move-only element, and no copy hook run.
+element_kinds :: proc() {
+	tokens: [dynamic]Token = {};
+	foreach (i in 0 ..< 40) { tokens.append(Token{(i * 17) % 40}); }
+	slice.select_nth_by(&mut tokens[:], 25, By_Id{});
+	before := true;
+	foreach (i in 0 ..< 25) { before = before && tokens[i].id < 25; }
+	evens := slice.partition(&mut tokens[:], Even_Id{});
+	fmt.println("tokens:", tokens[25].id, before, evens, slice.is_partitioned(tokens[:], Even_Id{}));
+
+	ranks: [dynamic]Ranked = {};
+	foreach (i in 0 ..< 40) { ranks.append(Ranked{(i * 13) % 40}); }
+	copies.store(0);
+	slice.select_nth(&mut ranks[:], 5);
+	low := slice.partition(&mut ranks[:], Low_Rank{});
+	point := slice.partition_point(ranks[:], Low_Rank{});
+	fmt.println("ranked:", ranks[5].rank, low, point, copies.load(), "copies");
+}
+
+edge_cases :: proc() {
+	calls := 0;
+	nothing: [dynamic]int = {};
+	empty := slice.partition(&mut nothing[:], Below{1, &mut calls});
+	fmt.println(
+		"empty:", empty, calls, slice.is_partitioned(nothing[:], Under{1}),
+		slice.partition_point(nothing[:], Under{1}),
+	);
+	small := [5]int{4, 0, 3, 1, 2};
+	calls = 0;
+	all := slice.partition(&mut small[:], Below{9, &mut calls});
+	fmt.println(
+		"all accepted:", all, calls, slice.partition_point(small[:], Under{9}),
+		slice.is_partitioned(small[:], Under{9}),
+	);
+	calls = 0;
+	none := slice.partition(&mut small[:], Below{0, &mut calls});
+	fmt.println(
+		"all rejected:", none, calls, slice.partition_point(small[:], Under{0}),
+		slice.is_partitioned(small[:], Under{0}),
+	);
+	mixed := [4]int{0, 5, 0, 5};
+	fmt.println("not partitioned:", slice.is_partitioned(mixed[:], Under{1}));
+
+	one := [1]int{3};
+	slice.select_nth(&mut one[:], 0);
+	fmt.println("one:", one[0]);
+}
+
+// Neither comparator defines an ordering; both must terminate and keep every
+// element.
+misbehaving :: proc() {
+	flip := false;
+	foreach (count in [3]int{17, 200, 1000}) {
+		values: [dynamic]int = {};
+		foreach (i in 0 ..< count) { values.append(i); }
+		foreach (n in [3]int{0, count / 2, count - 1}) {
+			slice.select_nth_by(&mut values[:], n, Always_Before{});
+			slice.select_nth_by(&mut values[:], n, Alternating{&mut flip});
+		}
+		fmt.println("misbehaving", count, is_identity_permutation(values[:]));
+	}
+}
+
+main :: proc() {
+	exhaustive_small();
+	exhaustive_past_threshold();
+	large_inputs();
+	adversary();
+	element_kinds();
+	edge_cases();
+	misbehaving();
+}

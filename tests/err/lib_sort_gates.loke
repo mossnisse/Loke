@@ -24,6 +24,15 @@ read_only :: proc() {
 	slice.swap(readable, 0, 1);
 }
 
+// standard-library.md "Partitioning and selection": the reordering procedures
+// take `[]mut T` too, so a read-only slice is refused rather than left as it is.
+read_only_selection :: proc() {
+	readable := []int{3, 1, 2};
+	slice.partition(readable, proc(value: int) -> bool { return value < 2; });
+	slice.select_nth(readable, 1);
+	slice.select_nth_by(readable, 1, slice.Ascending(int){});
+}
+
 // A sort rearranges the whole container, so it is an invalidating access to it
 // exactly as `append` is.
 borrowed :: proc(out: inout int) {
@@ -46,6 +55,7 @@ main :: proc() {
 	total := 0;
 	unordered();
 	read_only();
+	read_only_selection();
 	borrowed(inout total);
 	bad_comparator();
 }
