@@ -7,6 +7,53 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A procedure contract ignores loaded parameter regions
+
+[Procedure result contracts](design.md#procedure-result-contracts) permit a
+substitute only when its region dependencies fit the destination contract.
+`ecce89f3` distinguishes a parameter's own storage from what its carriers reach
+with `Region_Set.loaded`, but `region_contract_within` in
+[proc_contracts.odin](src/proc_contracts.odin) compares only `params`. An inferred
+contract that returns an owner's direct field therefore accepts a procedure
+that returns an owner reached through another carrier. The call then uses the
+narrower contract and loses that owner's allocator dependency:
+
+```loke
+package main;
+import "core:mem";
+import "core:strings";
+Leaf :: struct { text: string }
+Input :: struct { text: string, next: ^mut Leaf }
+own :: proc(input: ^Input) -> string { return input^.text; }
+deep :: proc(input: ^Input) -> string { return input^.next^.text; }
+Own :: type_of(own);
+run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    kept: string = "";
+    {
+        leaf := Leaf{strings.copy("arena text", allocator)};
+        input := Input{"default text", &mut leaf};
+        callback: Own = deep; // should be L0645
+        kept = callback(&input);
+    }
+    free_all(allocator); // wrongly accepted while `kept` still depends on it
+    return int(kept.bytes()[0]);
+}
+main :: proc() {}
+```
+
+The program compiles in `ecce89f3` and in the later committed snapshot
+`dbebf669`, allowing a read after the arena reset; the parent `f8737e02` reports
+`L0537`. Requiring `a.loaded & ~b.loaded == 0` alongside the existing parameter
+subset check rejects the incompatible conversion with `L0645`. A matching
+`type_of(deep)` contract retains the dependency and reports `L0537`, and a
+matching `Own` substitution remains valid. Apply this check to result and
+written-region bounds, which share the helper.
+
+The separate omission of `Region_Set.loaded` from replay weighting, also
+introduced by `ecce89f3`, is already fixed by `dbf1b4c5`; that correction alone
+still accepts this conversion. Found on 2026-11-06 while reviewing `ecce89f3`
+(P1).
+
 ### Deque's fallible append of several borrowed values panics while copying them
 
 The [growable container contract](standard-library.md#conventions-of-the-growable-containers)

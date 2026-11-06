@@ -49,6 +49,18 @@ the compiler, is the oracle for any of them.
   the take path shares a check it never runs. Found on 2026-11-05 while reviewing
   that commit.
 
+### Reuse the cached carrier-presence query
+
+Optional simplification from the `ecce89f3` review (P3):
+`prov_type_holds_carrier` in [provenance_regions.odin](src/provenance_regions.odin)
+answers the same question as `type_carries_borrow(c, type).any` in
+[carrier_shape.odin](src/carrier_shape.odin). Use that existing cached query at
+its call sites and remove the seven-line helper, which otherwise constructs a
+carrier shape just to ask whether it is empty. The substitution passes the 208
+existing compiler unit tests, the added region-weight probe, the call-copy and
+read-only-copy matrices, and the focused integration and contract cases in an
+isolated copy. Found on 2026-11-06.
+
 ### What counts as a fresh borrow of a range
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
