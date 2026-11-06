@@ -286,11 +286,11 @@ prov_substitute_result :: proc(
 		if content, found := graph.receiver_content[v]; found && index == 0 {
 			through, held = nil, content
 		}
-		load_through := proc(graph: ^Flow_Graph, v: ^Expr_Call, through, held: []int, depth: int, path: []Proj_Step) -> []int {
+		load_through := proc(graph: ^Flow_Graph, v: ^Expr_Call, through, held: []int, depth: int, route: Load_Route) -> []int {
 			if len(held) > 0 {
-				return prov_load_held(graph, v, held, depth, path)
+				return prov_load_held(graph, v, held, depth, route)
 			}
-			return prov_load_deep(graph, through, v.span, depth, path)
+			return prov_load_deep(graph, through, v.span, depth, route.first, route.last)
 		}
 		shape := prov_parameter_pointee_shape(graph, v, index)
 		for depth in 1 ..= 8 {
@@ -298,16 +298,9 @@ prov_substitute_result :: proc(
 				continue
 			}
 			// A load narrowed to some of the pointee's paths goes along only
-			// those, and so do the loads below it.
-			paths := result_load_paths(dependencies, index, depth)
-			if len(paths) == 0 || len(paths) != len(shape) {
-				out = prov_join(graph, out, load_through(graph, v, through, held, depth, nil))
-				continue
-			}
-			for named, position in paths {
-				if named {
-					out = prov_join(graph, out, load_through(graph, v, through, held, depth, shape[position].steps))
-				}
+			// those, and so do the loads below it, the last along its own.
+			for route in result_load_routes(graph.k.c, dependencies, index, depth, shape, graph.alloc) {
+				out = prov_join(graph, out, load_through(graph, v, through, held, depth, route))
 			}
 		}
 	}
@@ -356,15 +349,15 @@ prov_substitute_result :: proc(
 // What `depth` loads through a `self: ^` receiver read of what its place holds,
 // `held`, with the first load along `path`: the first load is `held` itself.
 @(private = "file")
-prov_load_held :: proc(graph: ^Flow_Graph, v: ^Expr_Call, held: []int, depth: int, path: []Proj_Step) -> []int {
+prov_load_held :: proc(graph: ^Flow_Graph, v: ^Expr_Call, held: []int, depth: int, route: Load_Route) -> []int {
 	if len(held) == 0 {
 		return nil
 	}
-	selected := prov_select_content(graph, held, prov_parameter_type(graph, v, 0), path)
+	selected := prov_select_content(graph, held, prov_parameter_type(graph, v, 0), route.first)
 	if depth == 1 {
 		return selected
 	}
-	return prov_load_deep(graph, selected, v.span, depth - 1)
+	return prov_load_deep(graph, selected, v.span, depth - 1, last = route.last)
 }
 
 // The carrier paths of what one load through parameter `index` reads. A

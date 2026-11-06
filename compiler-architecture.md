@@ -409,6 +409,7 @@ behavioral controls for all of it.
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
 | Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Flow_Graph.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
 | Written aliases: what a local's carriers may reach | `Written_Alias`, `written_aliases`, `prov_written_targets`, `prov_call_written_aliases`, `WRITTEN_ALIAS_DEPTH` |
+| Which paths a result's loads through a parameter go along: the first load's, and the last's where each load between reads one carrier, and the routes a caller loads along | `Load_Paths`, `last_load_shape`, `result_load_routes` in `carrier_shape.odin`; `Prov_Loan.last`, `merge_param_load_paths` |
 | What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
 | Global write and read effects and the callbacks a call passes | `compute_global_writes`, `Compiler.global_reads`, `prov_copy_effects`, `Expr_Base.copied_as`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |

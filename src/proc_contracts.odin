@@ -238,7 +238,9 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 		if depths != 0 && (index >= len(b.param_loads) || depths & ~b.param_loads[index] != 0) { return false }
 		for depth in 1 ..= 8 {
 			if depths & (u8(1) << u8(depth - 1)) == 0 { continue }
-			if !paths_within(result_load_paths(a, index, depth), result_load_paths(b, index, depth)) { return false }
+			inner, outer := result_load_paths(a, index, depth), result_load_paths(b, index, depth)
+			if !paths_within(inner.first, outer.first) { return false }
+			if len(outer.last) > 0 && (inner.along != outer.along || !paths_within(inner.last, outer.last)) { return false }
 		}
 	}
 	for wanted, index in a.params {

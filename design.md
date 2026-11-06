@@ -7865,6 +7865,11 @@ xs[0] = "c";       // fine
 fmt.println(low);
 ```
 
+A value read through a parameter keeps which path of the pointee its first load
+goes along and, where each load after it reads the one carrier its storage
+holds, which path its last goes along: `nest^.two^.q`, with `nest: ^Nest` and
+`two: ^Two`, names `q` of what `two` points at, not the `p` beside it.
+
 At a call, actual argument roots and allocator regions replace the corresponding
 parameters. The contract is transitive, independent of declaration order, and
 specific to each concrete generic instantiation. It does not change the runtime

@@ -149,10 +149,10 @@ prov_dependency_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, argume
 prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dependencies: Result_Dependencies, index: int, held: []Written_Alias) -> []Written_Alias {
 	out := make([dynamic]Written_Alias, graph.alloc)
 	shape := prov_parameter_pointee_shape(graph, form.call, index)
-	follow := proc(graph: ^Flow_Graph, held: []Written_Alias, first: []Proj_Step, depth: int, out: ^[dynamic]Written_Alias) {
-		loaded := prov_load_aliases(graph, held, first, unknown = true)
-		for _ in 1 ..< depth {
-			loaded = prov_load_aliases(graph, loaded, nil, unknown = true)
+	follow := proc(graph: ^Flow_Graph, held: []Written_Alias, route: Load_Route, depth: int, out: ^[dynamic]Written_Alias) {
+		loaded := prov_load_aliases(graph, held, route.first, unknown = true)
+		for at in 2 ..= depth {
+			loaded = prov_load_aliases(graph, loaded, at == depth ? route.last : nil, unknown = true)
 		}
 		append(out, ..loaded)
 	}
@@ -160,15 +160,8 @@ prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dep
 		if dependencies.param_loads[index] & (u8(1) << u8(depth - 1)) == 0 {
 			continue
 		}
-		paths := result_load_paths(dependencies, index, depth)
-		if len(paths) == 0 || len(paths) != len(shape) {
-			follow(graph, held, nil, depth, &out)
-			continue
-		}
-		for named, position in paths {
-			if named {
-				follow(graph, held, shape[position].steps, depth, &out)
-			}
+		for route in result_load_routes(graph.k.c, dependencies, index, depth, shape, graph.alloc) {
+			follow(graph, held, route, depth, &out)
 		}
 	}
 	return out[:]

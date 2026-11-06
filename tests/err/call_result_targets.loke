@@ -82,7 +82,8 @@ stored_through_crossed_field :: proc(@(allocator_reset) allocator: mem.Allocator
 	return a[0];
 }
 
-// A summary narrows only the first load, so a second reaches every field it may.
+// A summary narrows the first load and the last, so a result read through two loads
+// reaches only the field it names: `b`, dropped after the reset that ended it, not `a`.
 Nest :: struct { two: ^Crossing }
 through_two :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.q; }
 stored_through_two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {

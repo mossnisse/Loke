@@ -844,9 +844,10 @@ merge_param_paths :: proc(
 }
 
 // Narrows a load dependency to the pointee path the loan's first load goes
-// along, so a caller loads only through those fields. Nil means every path.
-// Runs before the load's bit is set, which is how a first narrowing tells
-// itself apart from a dependency already widened to the whole pointee.
+// along, and to the path its last goes along where the loan says (`Prov_Loan.last`),
+// so a caller loads only through those fields. Nil means every path. Runs before
+// the load's bit is set, which is how a first narrowing tells itself apart from a
+// dependency already widened to the whole pointee.
 @(private = "file")
 merge_param_load_paths :: proc(
 	state: ^Prov_Solve,
@@ -862,24 +863,39 @@ merge_param_load_paths :: proc(
 	first := into.param_loads[index] & (u8(1) << u8(loan.depth - 1)) == 0
 	sym := symbol_of(c, root.symbol)
 	shape := sym == nil ? nil : carrier_pointee_shape(c, sym.type)
-	paths := result_load_paths(into^, index, loan.depth)
-	if loan.pointee == 0 || loan.pointee > len(shape) {
-		if paths == nil {
-			return false
-		}
-		load_paths_at(into, index, loan.depth, c.semantic_allocator)^ = nil
+	paths := load_paths_at(into, index, loan.depth, c.semantic_allocator)
+	changed := narrow_path_row(&paths.first, loan.pointee, len(shape), first, c.semantic_allocator)
+	last := len(last_load_shape(c, shape, loan.pointee, loan.depth))
+	if first {
+		paths.along = loan.pointee
+	} else if paths.along != loan.pointee && paths.last != nil {
+		paths.last = nil
 		return true
 	}
-	if paths == nil {
-		if !first {
-			return false // already widened to the whole pointee
+	return narrow_path_row(&paths.last, loan.last, last, first, c.semantic_allocator) || changed
+}
+
+// Marks path `position` (plus one) of `count` in `row`, or widens the row to
+// every path when `position` names none. `first` says nothing has been marked yet,
+// as a nil row is also one widened already.
+@(private = "file")
+narrow_path_row :: proc(row: ^[]bool, position, count: int, first: bool, allocator: mem.Allocator) -> bool {
+	if position == 0 || position > count {
+		if row^ == nil {
+			return false
 		}
-		paths = make([]bool, len(shape), c.semantic_allocator)
-		load_paths_at(into, index, loan.depth, c.semantic_allocator)^ = paths
+		row^ = nil
+		return true
 	}
-	if paths[loan.pointee - 1] {
+	if row^ == nil {
+		if !first {
+			return false // already widened to every path
+		}
+		row^ = make([]bool, count, allocator)
+	}
+	if row[position - 1] {
 		return false
 	}
-	paths[loan.pointee - 1] = true
+	row[position - 1] = true
 	return true
 }

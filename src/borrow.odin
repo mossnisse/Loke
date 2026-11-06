@@ -326,6 +326,10 @@ Prov_Loan :: struct {
 	// A `pointee_loans` entry: the position in `carrier_pointee_shape` of the
 	// path its first load goes along, plus one; zero for every other loan.
 	pointee: int,
+	// A loan of one of the carriers in the storage a chain of loads leads to, each
+	// load between reading one carrier (`prov_caller_slots`): its position in that
+	// storage's `last_load_shape`, plus one; zero when they share a loan.
+	last: int,
 	// A `thread_local` borrow a spawned call leaves in an argument, which the
 	// spawn reports from the summary. One left by any other call crosses no
 	// further than a borrow taken directly.

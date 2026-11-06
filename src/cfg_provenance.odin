@@ -2853,16 +2853,18 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 			prov_caller_slot(graph, Loan_Id(index), whole, held, name, mutable, one)
 			continue
 		}
-		for path in paths {
+		for path, position in paths {
 			// Each carrier in one storage holds a loan of its own, as each
 			// pointee path's does, so what `p^^.head` and `p^^.tail` point at
-			// are told apart. Loads below it read what `held` stands for.
+			// are told apart, and a result's contract says which it holds. Loads
+			// below it read what `held` stands for.
 			own := held
 			if one {
 				own = prov_new_content_loan(
 					graph, root, nil, path.mutable, descriptor.span, carrier_path_noun(c, path),
 					graph.loans[int(held)].depth, graph.loans[int(held)].pointee,
 				)
+				graph.loans[int(own)].last = position + 1
 			}
 			prov_caller_slot(graph, Loan_Id(index), path, own, name, path.mutable, one)
 		}

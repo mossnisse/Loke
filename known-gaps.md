@@ -42,38 +42,6 @@ lends its elements, so both copy inside and return the failure. A built-in dynam
 `..dyn I` pack lends its views, so fixing this needs one in the language. Reproduced with the
 compiler built from `1cefee9c` on 2026-11-05 while reviewing that commit (P2).
 
-### A result read through two loads reaches every field of the second
-
-[Procedure result contracts](design.md#procedure-result-contracts) keep which paths of a parameter's
-pointee a result's first load goes along, and nothing of the loads below it. So `through_two` here
-reaches both `a` and `b` at the call, and the reset reports `L0537` for `a`, as only `b` takes the
-new owner. [tests/err/call_result_targets.loke](tests/err/call_result_targets.loke) pins this as
-`stored_through_two_loads`, and the rejection errs on the safe side:
-
-```loke
-package main;
-import "core:mem";
-Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
-Nest :: struct { two: ^Two }
-through_two :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.q; }
-run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
-    buffer := [1024]u8{};
-    kept := mem.Arena.from_buffer(&mut buffer[:]);
-    a := make([dynamic]int, 1, kept.allocator());
-    b := make([dynamic]int, 0, kept.allocator());
-    two := Two{&mut a, &mut b};
-    nest := Nest{&two};
-    target := through_two(&nest);
-    target^ = make([dynamic]int, 1, allocator);
-    drop(b);
-    free_all(allocator); // L0537 for `a`; should be accepted
-    return a[0];
-}
-main :: proc() {}
-```
-
-Found on 2026-11-05 while narrowing the first load (P3).
-
 ### A hook in a `when` on a later constant comes too late for a record already used
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)

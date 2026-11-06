@@ -618,9 +618,9 @@ Result_Dependencies :: struct {
 	// Per parameter, a bit per load depth at which the result may hold what is
 	// read through it: bit 0 for an element copied out of a slice, not the slice.
 	param_loads:  []u8,
-	// Per parameter and load depth, which paths of its `carrier_pointee_shape`
-	// the first of those loads may go along. Nil means all of them.
-	param_load_paths: [][][]bool,
+	// Per parameter and load depth, which paths the first and the last of those
+	// loads may go along (`Load_Paths`).
+	param_load_paths: [][]Load_Paths,
 	static:       bool,
 	thread:       bool,
 	// The globals the result may borrow, so a caller's write to one, or a call
@@ -631,14 +631,91 @@ Result_Dependencies :: struct {
 	unknown:      bool,
 }
 
-// The paths of parameter `index`'s pointee the first of `depth` loads through
-// it may go along; nil means every path.
-result_load_paths :: proc(dependencies: Result_Dependencies, index, depth: int) -> []bool {
+// design.md "Procedure result contracts": which paths a result's loads through a
+// parameter go along. `first` is of the parameter's `carrier_pointee_shape`. `last`
+// is of what the last load reads, `last_load_shape` below the first load's path
+// `along` (plus one, or zero for the one path there is), when each load between
+// them reads one carrier, so `nest^.two^.q` names `q` and not `two^.p`. Nil means
+// every path.
+Load_Paths :: struct {
+	first, last: []bool,
+	along:       int,
+}
+
+// The paths `depth` loads through parameter `index` may go along.
+result_load_paths :: proc(dependencies: Result_Dependencies, index, depth: int) -> Load_Paths {
 	if index >= len(dependencies.param_load_paths) {
-		return nil
+		return {}
 	}
 	depths := dependencies.param_load_paths[index]
-	return depth - 1 < len(depths) ? depths[depth - 1] : nil
+	return depth - 1 < len(depths) ? depths[depth - 1] : {}
+}
+
+// The carrier paths of what the last of `depth` loads reads, the first along
+// `pointee`'s path `first` (plus one, or zero for the one path there is) and each
+// one between reading one carrier; nil when that is not one type, or `depth` is 1.
+last_load_shape :: proc(c: ^Compiler, pointee: []Carrier_Path, first, depth: int) -> []Carrier_Path {
+	if depth < 2 {
+		return nil
+	}
+	path: Carrier_Path
+	switch {
+	case first > 0 && first <= len(pointee):
+		path = pointee[first - 1]
+	case first == 0 && len(pointee) == 1:
+		path = pointee[0]
+	case:
+		return nil
+	}
+	if path.truncated {
+		return nil
+	}
+	at := path.type
+	for _ in 2 ..< depth {
+		inner := carrier_pointee_shape(c, at)
+		if len(inner) != 1 || inner[0].truncated {
+			return nil
+		}
+		at = inner[0].type
+	}
+	return carrier_pointee_shape(c, at)
+}
+
+// Which paths a caller's loads through one argument go along for a result
+// `depth` loads down: the first load's and the last's, nil for every path.
+Load_Route :: struct {
+	first, last: []Proj_Step,
+}
+
+// The routes of `depth` loads through parameter `index`, whose pointee has the
+// carrier paths `pointee`, as the summary's `Load_Paths` say.
+result_load_routes :: proc(
+	c: ^Compiler, dependencies: Result_Dependencies, index, depth: int, pointee: []Carrier_Path, allocator: mem.Allocator,
+) -> []Load_Route {
+	paths := result_load_paths(dependencies, index, depth)
+	out := make([dynamic]Load_Route, 0, 2, allocator)
+	add := proc(c: ^Compiler, out: ^[dynamic]Load_Route, paths: Load_Paths, pointee: []Carrier_Path, first, depth: int, steps: []Proj_Step) {
+		shape := last_load_shape(c, pointee, first, depth)
+		if paths.along != first || len(paths.last) == 0 || len(paths.last) != len(shape) {
+			append(out, Load_Route{steps, nil})
+			return
+		}
+		for named, position in paths.last {
+			if named {
+				append(out, Load_Route{steps, shape[position].steps})
+			}
+		}
+	}
+	if len(paths.first) == 0 || len(paths.first) != len(pointee) {
+		add(c, &out, paths, pointee, 0, depth, nil)
+		return out[:]
+	}
+	for named, position in paths.first {
+		if named {
+			add(c, &out, paths, pointee, position + 1, depth, pointee[position].steps)
+		}
+	}
+	return out[:]
 }
 
 // Whether a result may depend on a parameter: borrow it, or hold what its
@@ -669,7 +746,7 @@ new_result_dependencies :: proc(param_count: int, allocator: mem.Allocator) -> R
 		params      = make([]bool, param_count, allocator),
 		param_paths = make([][]bool, param_count, allocator),
 		param_loads = make([]u8, param_count, allocator),
-		param_load_paths = make([][][]bool, param_count, allocator),
+		param_load_paths = make([][]Load_Paths, param_count, allocator),
 	}
 }
 
@@ -888,7 +965,7 @@ receiver_dependencies :: proc(c: ^Compiler, from: Result_Dependencies) -> Result
 	out.params = make([]bool, count, c.analysis_allocator)
 	out.param_paths = make([][]bool, count, c.analysis_allocator)
 	out.param_loads = make([]u8, count, c.analysis_allocator)
-	out.param_load_paths = make([][][]bool, count, c.analysis_allocator)
+	out.param_load_paths = make([][]Load_Paths, count, c.analysis_allocator)
 	copy(out.params[1:], from.params)
 	copy(out.param_paths[1:], from.param_paths)
 	copy(out.param_loads[1:], from.param_loads)
@@ -942,11 +1019,28 @@ joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Pro
 
 // Where parameter `index`'s paths at `depth` are kept, made on first use.
 @(private)
-load_paths_at :: proc(into: ^Result_Dependencies, index, depth: int, allocator: mem.Allocator) -> ^[]bool {
+load_paths_at :: proc(into: ^Result_Dependencies, index, depth: int, allocator: mem.Allocator) -> ^Load_Paths {
 	if into.param_load_paths[index] == nil {
-		into.param_load_paths[index] = make([][]bool, CARRIER_DEPTH, allocator)
+		into.param_load_paths[index] = make([]Load_Paths, CARRIER_DEPTH, allocator)
 	}
 	return &into.param_load_paths[index][depth - 1]
+}
+
+// Joins `from` into the paths of one depth. `first` says nothing has been joined
+// yet. A last load's paths below different first paths are of different storage,
+// so they widen to every path.
+@(private = "file")
+join_load_paths :: proc(into: ^Load_Paths, from: Load_Paths, first: bool, allocator: mem.Allocator) {
+	join_path_row(&into.first, from.first, first, allocator)
+	switch {
+	case first:
+		into.along = from.along
+		join_path_row(&into.last, from.last, true, allocator)
+	case into.along != from.along:
+		into.last = nil
+	case:
+		join_path_row(&into.last, from.last, false, allocator)
+	}
 }
 
 // Joins `from` into a row of paths, where nil means every path. `first` says
@@ -982,7 +1076,7 @@ merge_result_dependencies :: proc(into: ^Result_Dependencies, from: Result_Depen
 				continue
 			}
 			first := into.param_loads[index] & bit == 0
-			join_path_row(load_paths_at(into, index, depth, allocator), result_load_paths(from, index, depth), first, allocator)
+			join_load_paths(load_paths_at(into, index, depth, allocator), result_load_paths(from, index, depth), first, allocator)
 		}
 		into.param_loads[index] |= depths
 	}
