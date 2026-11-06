@@ -112,8 +112,20 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 		if len(held) == 0 || level < .Stored {
 			continue
 		}
-		// The callee may keep what the argument reaches as well as the argument.
-		slots := prov_with_content(graph, held, v.span)
+		// The callee may keep what the argument reaches as well as the argument, or
+		// of a `..^T` pack only what its lent values hold (design.md "Variadic
+		// parameters"): below each operand's borrow, or for a forwarded `[]^T`, below
+		// the pointers it holds. Values that hold no borrow leave nothing, where a
+		// load into storage with no carriers would stand for the storage itself.
+		slots: []int
+		if lent, lends := proc_param_lent_type(graph.k.c, proc_type, index); lends {
+			if !type_carries_borrow(graph.k.c, lent).any {
+				continue
+			}
+			slots = prov_load_deep(graph, held, v.span, from = call_packs(v, index) ? 1 : 2)
+		} else {
+			slots = prov_with_content(graph, held, v.span)
+		}
 		if level == .Static {
 			prov_emit(graph, Prov_Event {
 				kind    = .Retain,

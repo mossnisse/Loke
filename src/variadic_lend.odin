@@ -95,3 +95,29 @@ slice_clone_bool :: proc(k: ^Checker, value: bool) -> []bool {
 prov_pack_spread_type :: proc(c: ^Compiler, spread, pack: Type_Id) -> Type_Id {
 	return spread != pack && variadic_spread_lends(c, spread, pack) ? slice_element(c, pack) : pack
 }
+
+// design.md "Variadic parameters": the `T` of a `..^T` pack at parameter `index`
+// of `proc_type`, which lends its values only for the call.
+proc_param_lent_type :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> (Type_Id, bool) {
+	info := underlying_info(c, proc_type)
+	if info == nil || index >= len(info.parameters) || param_mode_at(info, index) != .Variadic {
+		return INVALID_TYPE, false
+	}
+	return variadic_lent_pointee(c, slice_element(c, info.parameters[index]))
+}
+
+// Whether parameter symbol `sym` is a `..^T` pack.
+param_symbol_lends :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
+	if sym == nil || sym.kind != .Parameter || sym.mode != .Variadic {
+		return false
+	}
+	_, lends := variadic_lent_pointee(c, slice_element(c, sym.type))
+	return lends
+}
+
+// Whether a loan of a `..^T` pack names its own storage or what one of its pointers
+// names, which a call may not keep at any escape level: only what the lent values
+// hold, one load further, is bounded by the level.
+loan_names_lent_value :: proc(loan: Prov_Loan) -> bool {
+	return !loan.content || loan.depth <= 1
+}

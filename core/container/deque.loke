@@ -118,9 +118,11 @@ impl Deque($T) {
 	}
 
 	/// Adds all of the values, or none of them.
-	// The copies have nowhere to wait but the grown ring, so the elements move into it
-	// first, and back into the old ring, at their old slots, if a copy fails.
-	try_append_copied :: proc(self: inout, @(escape=stored) values: ..T) -> Status(Allocator_Error) where is_copyable(T) {
+	// design.md "Variadic parameters": the pack lends the values, so each is copied
+	// here, where a failure is returned. The copies have nowhere to wait but the grown
+	// ring, so the elements move into it first, and back into the old ring, at their
+	// old slots, if a copy fails.
+	try_append_copied :: proc(self: inout, @(escape=stored) values: ..^T) -> Status(Allocator_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
 		if (!self.must_grow(wanted)) { return self.try_put_back_clones(..values); }
 		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator) or_return;
@@ -558,10 +560,10 @@ impl Deque($T) {
 
 	// Copies each value in at the back, all or none, into room the ring already has.
 	@(private)
-	try_put_back_clones :: proc(self: inout, @(escape=stored) values: ..T) -> Status(Allocator_Error) where is_copyable(T) {
+	try_put_back_clones :: proc(self: inout, @(escape=stored) values: ..^T) -> Status(Allocator_Error) where is_copyable(T) {
 		added := 0;
 		foreach (value in values) {
-			switch (value.try_clone(self.allocator)) {
+			switch (value^.try_clone(self.allocator)) {
 			case .ok(item):
 				self.put_back(move(item));
 				added += 1;

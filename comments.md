@@ -1251,6 +1251,25 @@ needs compiler support beyond this expansion, every callback and its captures
 are evaluated though one body runs, so two `&mut` captures of one place
 conflict, and a capture literal per variant is longer than a case.
 
+### A lending pack keeps nothing it lends
+
+A [`..^T` pack](design.md#variadic-parameters) exists so that a call can copy
+each value itself, where a failure can be returned, instead of the caller copying
+it into the pack first. A fallible container append is the reason: it must return
+an element copy's allocation failure, and a copy the caller makes before the call
+can only panic.
+
+Such a callee keeps copies and what they borrow, so it needs `@(escape=stored)`.
+If that level also bounded the pack's own pointers, every call would leave its
+arguments borrowed for as long as the container lives, which is the opposite of
+what the caller asked for. The pack therefore lends its values only for the call
+at any level, and the level bounds what the values hold, as it does for a
+`value: T` parameter that receives a copy. A caller of either form keeps its
+arguments borrowed only for the call, and what a kept copy borrows for as long as
+the copy lives.
+
+A callee that wants to keep a value itself takes a `..T` pack, which copies it in.
+
 ### Distinct types
 
 A `distinct` type inherits comparisons but no other operators by default.

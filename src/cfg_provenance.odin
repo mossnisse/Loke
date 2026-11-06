@@ -2769,8 +2769,12 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			graph.roots[int(root)].symbol = id
 			graph.roots[int(root)].storage = prov_storage_id(graph, Written_Storage{symbol = id})
 			graph.roots[int(root)].param_index = index
-			// What the caller storage it reaches holds, which loads through it yield.
-			depths := make([]Loan_Id, max(1, load_depth(graph.k.c, sym.type)), graph.alloc)
+			// What the caller storage it reaches holds, which loads through it yield. A
+			// `..^T` pack's lent values have a loan apart from what they hold, which a
+			// call may keep, even where they hold no borrow (design.md "Variadic
+			// parameters").
+			least := param_symbol_lends(graph.k.c, sym) ? 2 : 1
+			depths := make([]Loan_Id, max(least, load_depth(graph.k.c, sym.type)), graph.alloc)
 			for &loan, depth in depths {
 				loan = prov_new_content_loan(graph, root, nil, type_carries_borrow(graph.k.c, sym.type).mutable, sym.span, carrier_noun(graph.k.c, sym.type), depth + 1)
 			}

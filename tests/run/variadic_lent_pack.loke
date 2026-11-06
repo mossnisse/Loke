@@ -1,6 +1,7 @@
 // design.md "Variadic parameters": a `..^T` pack lends what is written at the call,
 // a value where it is or in a temporary, a constant in read-only storage, and a
-// spread's elements, and passes a `^T` or a `[]^T` as it is.
+// spread's elements, and passes a `^T` or a `[]^T` as it is. A call may keep what
+// the values hold, as its escape level allows, but not the values.
 package main;
 import "core:fmt";
 
@@ -18,10 +19,24 @@ sum :: proc(xs: ..^int) -> int {
 	return s;
 }
 
-first :: proc(xs: ..^int) -> ^int { return xs[0]; }
+first :: proc(xs: ..^int) -> int { return xs[0]^; }
 
 N :: 9;
-named :: proc() -> ^int { return first(N); }
+named :: proc() -> int { return first(N); }
+
+// A result may borrow what a value holds, and a stored pack may keep it.
+name_of :: proc(items: ..^Item) -> string { return items[0]^.name; }
+Shelf :: struct { names: [dynamic]string, ids: [dynamic]int }
+shelve :: proc(shelf: inout Shelf, @(escape=stored) items: ..^Item) {
+	foreach (item in items) {
+		shelf.names.append(item^.name);
+		shelf.ids.append(item^.id);
+	}
+}
+// Forwarding the pack lends the same values on.
+forward :: proc(shelf: inout Shelf, @(escape=stored) items: ..^Item) {
+	shelve(inout shelf, ..items);
+}
 
 // The callee sees each value where it is.
 same :: proc(xs: ..^int) -> bool { return xs.len() == 2 && xs[0] == xs[1]; }
@@ -40,9 +55,21 @@ main :: proc() {
 	pointers := []^Item{&a, &b};
 	fmt.println(total(p, b), total(..pointers), sum(1, 2, 3));
 	x := 5;
-	fmt.println(same(x, x), named()^, named() == named());
+	fmt.println(same(x, x), named(), same(N, N));
 	// The name is still `a`'s own: nothing was copied or moved.
 	fmt.println(a.name, b.name);
+
+	// The shelf outlives the values it was lent, keeping only what they hold.
+	shelf: Shelf = {};
+	label := "";
+	{
+		c := Item{5, "c"};
+		d := Item{6, "d"};
+		shelve(inout shelf, c, d);
+		forward(inout shelf, d, Item{7, "e"});
+		label = name_of(c);
+	}
+	fmt.println(shelf.names[:], shelf.ids[:], label);
 
 	one, two: int;
 	numbers := []int{4, 5};

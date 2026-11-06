@@ -89,42 +89,29 @@ introduced by `ecce89f3`, is already fixed by `dbf1b4c5`; that correction alone
 still accepts this conversion. Found on 2026-11-06 while reviewing `ecce89f3`
 (P1).
 
-### Deque's fallible append of several borrowed values panics while copying them
+### A result read through a pointer to a temporary keeps the temporary
 
-The [growable container contract](standard-library.md#conventions-of-the-growable-containers)
-requires `try_append` to return an element-copy allocation failure, as
-[container insertion](design.md#container-insertion) copies a borrowed place only on success.
-Several borrowed values written one by one select the variadic `try_append_copied` in
-[deque.loke](core/container/deque.loke), and a [variadic pack](design.md#variadic-parameters)
-receives a copy, made by the caller before the procedure runs. A failure in that copy applies
-the default allocator's failure policy and panics instead of returning `.err`:
+A [result contract](design.md#procedure-result-contracts) that reads a value stored behind a
+pointer argument substitutes only that value's borrows, at every nesting depth, so
+`name_one(x: ^View) -> string_view { return x^.name; }` gives a result that borrows what the
+`View` holds and not the `View`. Where the `View` is a
+[temporary](design.md#temporaries-and-procedure-boundaries) the caller keeps the temporary's loan
+in the result too, so a later use is rejected as if the result borrowed it:
 
 ```loke
 package main;
-import "core:container";
 import "core:fmt";
-Item :: struct { id: int }
-impl Item {
-    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
-        return .err({});
-    }
-}
+View :: struct { name: string_view }
+name_one :: proc(x: ^View) -> string_view { return x^.name; }
 main :: proc() {
-    q: container.Deque(Item) = {};
-    a := Item{1};
-    b := Item{2};
-    result := q.try_append(a, b); // panics; should return .err
-    fmt.println(result != .ok, q.len());
+    text := "kept";
+    s := name_one(&View{text});
+    fmt.println(s); // L0513: used after this temporary has ended; should print "kept"
 }
 ```
 
-One borrowed value selects `try_append_one_copied`, and a lone spread `q.try_append(..items)`
-lends its elements, so both copy inside and return the failure. A built-in dynamic array's
-`try_append(a, b)` returns it too. The language now has a pack that lends, `..^T`, but
-`try_append_copied` cannot take one yet: it is written `@(escape=stored)` so that what a copy
-carries may stay in the deque, and a level bounds every carrier of the parameter, the pack's own
-pointers included, so a call would keep `a` and `b` borrowed as long as `q` lives. Using it needs
-a rule that a lending pack's pointers are kept only for the call, with the level bounding what the
-values carry, as on a `value: T` parameter, and the caller's pack contract to tell a lent
-element's borrow from what it carries. Reproduced with the compiler built from `1cefee9c` on
-2026-11-05 while reviewing that commit (P2); narrowed on 2026-11-06.
+The same holds for a value a `..^View` pack lends from a temporary. The same call on a named
+`View` local is accepted. The likely cause is that the temporary's root has no local content for
+the result's load to read, so the load stands for the temporary itself. Found on 2026-11-06
+with the compiler built from `dbebf669`, while adding the rule that a lending pack is kept only
+for the call.

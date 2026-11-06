@@ -1,0 +1,31 @@
+// standard-library.md "Conventions of the growable containers": `try_append` returns
+// an element copy's failure. Several values written one by one are lent to the deque
+// (design.md "Variadic parameters"), which copies each and keeps none on a failure.
+package main;
+import "core:container";
+import "core:fmt";
+
+Item :: struct { id: int, fails: bool }
+impl Item {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+		if (self.fails) { return .err({}); }
+		return .ok(Item{self.id, false});
+	}
+}
+
+main :: proc() {
+	q: container.Deque(Item) = {};
+	a := Item{1, false};
+	b := Item{2, true};
+	c := Item{3, false};
+	fmt.println(q.try_append(a, b) != .ok, q.len());
+	fmt.println(q.try_append(a, c) == .ok, q.len());
+	// Room the ring already has, then a grown ring that a failure gives back.
+	fmt.println(q.try_append(c, b) != .ok, q.len());
+	fmt.println(q.try_append(a, c, a, c, a, b) != .ok, q.len());
+	items := []Item{c.clone(), a.clone()};
+	fmt.println(q.try_append(..items) == .ok, q.len());
+	foreach (item in q.iter()) { fmt.println(item.id); }
+	// The values are still the caller's.
+	fmt.println(a.id, b.id, c.id);
+}

@@ -1,21 +1,21 @@
 // design.md "Variadic parameters": what a `..^T` pack lends follows the rules of any
-// pointer.
+// pointer, and is lent only for the call at any escape level.
 package main;
 import "core:fmt";
 
 kept: Option(^int) = .none;
-keep :: proc(xs: ..^int) { kept = .some(xs[0]); }
+keep :: proc(@(escape=static) xs: ..^int) { kept = .some(xs[0]); }
 bump :: proc(x: inout int, xs: ..^int) { x += xs[0]^; }
 first :: proc(xs: ..^int) -> ^int { return xs[0]; }
+Shelf :: struct { all: []^int, one: Option(^int) }
+stash :: proc(shelf: inout Shelf, @(escape=stored) xs: ..^int) { shelf.all = xs; }
+point :: proc(shelf: inout Shelf, @(escape=stored) xs: ..^int) { shelf.one = .some(xs[0]); }
+whole :: proc(@(escape=stored) xs: ..^int) -> []^int { return xs; }
 
 main :: proc() {
 	a := 1;
 	bump(inout a, a);
-	p := first(5);
-	fmt.println(p^);
 	list := make([dynamic]int);
 	list.append(1);
-	q := first(..list);
-	list.append(2);
-	fmt.println(q^);
+	fmt.println(a, list[0]);
 }

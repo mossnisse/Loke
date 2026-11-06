@@ -1108,6 +1108,9 @@ checklist.
 - A [`..^T` variadic parameter](design.md#variadic-parameters) lends what is written at the call
   instead of copying it: a `T` is borrowed where it is or from a temporary, a named constant in its
   read-only storage, and a spread of `T`s lends each element. A `^T` or a `[]^T` is passed as it is.
+  The pack lends its values only for the call: keeping the pack, a pointer in it, or a borrow of a
+  value it lends is `L0646`, and a result that may borrow one is `L0644`, at any escape level, which
+  bounds what the values hold instead.
 - [`core:container`](standard-library.md#corecontainer) has
   [`Priority_Queue(T, C)`](standard-library.md#priority-queues) with `Min_Queue(T)` and `Max_Queue(T)`,
   which always hand back the most urgent element under a comparator stored in the queue, and
@@ -1677,8 +1680,8 @@ checklist.
 - A provider taken out of one field, with `unsafe.take` or `exchange`, carries only that field's
   region. Taking `pair.first` carried `pair.second`'s too, so dropping it was `L0537` for an owner
   only the second backed ([Allocators](design.md#allocators)).
-- `Deque.try_append` of one borrowed element copies it inside the call, so a copy that fails is
-  returned rather than panicking. `try_append` and `try_prepend` no longer grow the ring before a copy
+- `Deque.try_append` of one borrowed element, or of several, copies them inside the call, so a copy
+  that fails is returned rather than panicking; several are lent through a `..^T` pack. `try_append` and `try_prepend` no longer grow the ring before a copy
   succeeds, so a failed copy leaves the capacity, and where the ring starts, as they were
   ([Errors are values](standard-library.md#errors-are-values)).
 - An owner read through a carrier whose targets a body cannot name is no longer taken to be in the

@@ -6746,9 +6746,16 @@ spread of a `[]T`, or of a `[N]T` or `[dynamic]T` it views, lends each of its
 elements in a pack sized when the call runs, which panics past 256 KiB of
 pointers as a spread among other operands does; a `[]^T` spread is passed as it
 is. The callee receives the pack as a `[]^T`, and the borrows follow the rules of
-any pointer: a call may keep one only as its [escape level](#escape-levels)
-allows, and one of a temporary ends with the call's statement. A generic
-`..^$T` infers `T` only from arguments already a `^T`.
+any pointer, and one of a temporary ends with the call's statement.
+
+The pack lends its values only for the call, at any escape level: neither the
+pack nor a pointer in it, nor a borrow of a value it lends, may reach the result
+or storage that outlives the call. Keeping one is an error where it is kept, and
+a result that may borrow one is an error at the parameter. The parameter's
+[escape level](#escape-levels) bounds what the lent values hold, as it does for a
+`value: T` parameter, so a call that may keep a copy of a value, and what the
+copy borrows, declares the pack `@(escape=stored)`. A generic `..^$T` infers `T`
+only from arguments already a `^T`.
 
 ```loke
 Item :: struct { id: int, name: string }
@@ -6763,6 +6770,14 @@ total :: proc(items: ..^Item) -> int {
 a := Item{1, "a"};
 list := []Item{a, Item{2, "b"}};
 fmt.println(total(a, Item{3, "c"}), total(..list)); // 4 3: nothing is copied
+
+Shelf :: struct { names: [dynamic]string }
+shelve :: proc(shelf: inout Shelf, @(escape=stored) items: ..^Item) {
+	foreach (item in items) {
+		shelf.names.append(item^.name); // what a value holds: allowed
+	}
+}
+latest :: proc(items: ..^Item) -> ^Item { return items[0]; } // error: lends `items` only for the call
 ```
 
 `..` before a union is a [union argument expansion](#union-argument-expansion)
