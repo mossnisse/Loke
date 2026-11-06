@@ -1,0 +1,20 @@
+// design.md "What the unwind runs, and what it does not": the entries of a map literal
+// take the unwind actions of the entries before them once those are in the map, so a
+// panic in a later entry still drops what that entry owns, and then what the map holds.
+package main;
+import "core:fmt";
+@(move_only) Res :: struct { id: int }
+impl Res {
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+Key :: struct { id: int }
+impl Key {
+    hash :: proc(self, seed: uint) -> uint { if (self.id == 4) { panic("hash failed"); } return self.id.hash(seed); }
+    same :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}
+named :: proc(id: int) -> Res { return Res{id}; }
+main :: proc() {
+    defer fmt.println("unwound");
+    m := map[Key]Res{Key{1} = named(1), Key{1} = named(2), Key{1} = named(3), Key{4} = named(4)};
+    fmt.println(m.len());
+}

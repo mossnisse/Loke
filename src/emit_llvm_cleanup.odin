@@ -69,8 +69,10 @@ register_published :: proc(e: ^Emitter, entry: ^Deferred, address: string) {
 	if !unwind_enabled(e) {
 		return
 	}
-	entry.place_env = unwind_reserve_env(e)
-	unwind_reserve(e, entry)
+	if !unwind_reuse(e, entry) {
+		entry.place_env = unwind_reserve_env(e)
+		unwind_reserve(e, entry)
+	}
 	unwind_publish_env(e, entry.place_env, address)
 	unwind_register(e, entry^)
 }
@@ -258,7 +260,7 @@ pop_temporaries :: proc(e: ^Emitter) {
 // (`end_operand_temporaries`).
 @(private)
 Operand_Temporaries :: struct {
-	large, temporaries, scope, held: int,
+	large, temporaries, scope, held, actions: int,
 }
 
 @(private)
@@ -268,6 +270,7 @@ begin_operand_temporaries :: proc(e: ^Emitter) -> Operand_Temporaries {
 		temporaries = len(e.temporaries) > 0 ? len(e.temporaries[len(e.temporaries) - 1]) : 0,
 		scope       = len(e.cleanups) > 0 ? len(e.cleanups[len(e.cleanups) - 1]) : 0,
 		held        = len(e.held),
+		actions     = unwind_next_action(e),
 	}
 }
 
@@ -276,17 +279,22 @@ begin_operand_temporaries :: proc(e: ^Emitter) -> Operand_Temporaries {
 // operand of types holding no borrow, consumed whole, and owing no drop at the
 // end of its full expression or its block names none of its temporaries, so its
 // large slots serve the operands after it. Each element of a long literal of
-// large calls otherwise kept a slot of its own in the frame.
+// large calls otherwise kept a slot of its own in the frame. One that owes no
+// drop has also cleared the unwind actions of its temporaries, which the next
+// one takes again (`unwind_rewind`), whatever it borrows; a long map literal's
+// entries each kept their own. A caller ends the reuse once its operands are
+// done (`unwind_stop_reusing`).
 @(private)
 end_operand_temporaries :: proc(e: ^Emitter, mark: Operand_Temporaries, types: ..Type_Id) {
+	now := begin_operand_temporaries(e)
+	if now.temporaries != mark.temporaries || now.scope != mark.scope || now.held != mark.held {
+		return
+	}
+	unwind_rewind(e, mark.actions)
 	for type in types {
 		if type_carries_borrow(e.c, type).any {
 			return
 		}
-	}
-	now := begin_operand_temporaries(e)
-	if now.temporaries != mark.temporaries || now.scope != mark.scope || now.held != mark.held {
-		return
 	}
 	append(&e.large_free, ..e.large_taken[mark.large:])
 	resize(&e.large_taken, mark.large)

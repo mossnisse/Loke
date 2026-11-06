@@ -860,7 +860,12 @@ procedure's prologue, and only the locals it names are published: `bind_local`
 stores every local's address through its slot's name, then
 `unwind_finished_body` deletes the stores the thunk does not read, and the
 prologue names only the slots that remain. A procedure that registers nothing
-keeps no frame, live flags, or env at all.
+keeps no frame, live flags, or env at all. Each action replays newest first by
+its index, so a temporary's drop takes an action again only from a point every
+action after which is a cleared temporary's: a container literal's element that
+owes nothing at its end rewinds there (`unwind_rewind`), and the next element's
+drops take the same actions in order (`unwind_reuse`). Any other reservation
+ends the reuse.
 
 ### Intrinsic declarations
 
@@ -1035,7 +1040,10 @@ Preserve these lowering rules:
   through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
   `emit_ret`, and `sret_param`; reuse temporary storage between full
   expressions, and between a container literal's elements once the container
-  holds one that names none of its temporaries (`end_operand_temporaries`).
+  holds one that names none of its temporaries (`end_operand_temporaries`). A
+  map entry's address and value wait in slots its literal's entries share
+  (`park_map_entry`), as a value used past the block defining it takes a stack
+  slot of its own at `-opt=none`; `long_literal_frames_do_not_grow` guards this.
 - Fixed-array clone failures drop the built prefix in reverse order with a loop,
   keeping cleanup IR linear. `fixed_array_clone_ir_grows_linearly` guards this.
 - Debug locations follow statements, conditions, and switch subjects. Each

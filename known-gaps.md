@@ -42,23 +42,6 @@ lends its elements, so both copy inside and return the failure. A built-in dynam
 `..dyn I` pack lends its views, so fixing this needs one in the language. Reproduced with the
 compiler built from `1cefee9c` on 2026-11-05 while reviewing that commit (P2).
 
-### A long map literal of managed values can still overflow the stack at `-opt=none`
-
-A managed key or value of a map literal keeps its own unwind action, 9 bytes in the frame, so a
-100000-entry `map[string]string` overflows where a `[dynamic]string` of that length runs:
-
-```loke
-package main;
-main :: proc() {
-	m := map[string]string{ "k0" = "v0", "k1" = "v1" /* and 99998 more */ };
-}
-```
-
-An action could be shared by the entries only while nothing newer has been reserved, since the
-thunk replays the newest reservation first; each entry's guard holds its value in the same slot,
-so its actions repeat. The large temporaries of such a literal's elements are reused between
-elements since 2026-11-06 (`end_operand_temporaries`). Found on 2026-11-03 (P3).
-
 ### A result read through two loads reaches every field of the second
 
 [Procedure result contracts](design.md#procedure-result-contracts) keep which paths of a parameter's

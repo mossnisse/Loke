@@ -1639,6 +1639,9 @@ checklist.
 
 ### Fixed
 
+- A map literal of 100000 entries, as `map[string]string{ "k0" = "v0", ... }`, runs at `-opt=none`,
+  where it overflowed the stack: each entry kept its own unwind actions and two stack slots, and now
+  `main`'s frame is the same size whatever the literal's length.
 - A `[dynamic]` or map literal of large values, such as 300 calls each returning 5000 bytes, no
   longer overflows the stack at `-opt=none`: once the container holds an element that borrows
   nothing and owes no drop, the next element reuses its temporary storage.

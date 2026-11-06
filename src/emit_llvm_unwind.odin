@@ -36,6 +36,13 @@ Unwind_State :: struct {
 	// Every action in source order, so descending-index replay is reverse
 	// registration order.
 	actions:      [dynamic]Deferred,
+	// Per action, whether the body's last word on it registered it rather than
+	// cleared it.
+	open:         [dynamic]bool,
+	// While `reusing`, the next temporary's drop takes action `reuse_at` if that
+	// one is the same, as every action from there on is dead (`unwind_rewind`).
+	reusing:      bool,
+	reuse_at:     int,
 	// Each published local's index in `env_bindings`.
 	binding_of:   map[Symbol_Id]int,
 	env_bindings: [dynamic]Unwind_Env_Binding,
@@ -62,6 +69,7 @@ unwind_enabled :: proc(e: ^Emitter) -> bool {
 begin_unwind_frame :: proc(e: ^Emitter, llvm_name: string) {
 	e.unwind = Unwind_State {
 		actions        = make([dynamic]Deferred),
+		open           = make([dynamic]bool),
 		binding_of     = make(map[Symbol_Id]int),
 		env_bindings   = make([dynamic]Unwind_Env_Binding),
 		body_lines     = make([dynamic]Unwind_Body_Line),
@@ -86,6 +94,65 @@ unwind_reserve :: proc(e: ^Emitter, entry: ^Deferred) {
 	}
 	entry.slot = len(e.unwind.actions) + 1
 	append(&e.unwind.actions, entry^)
+	append(&e.unwind.open, false)
+	// An action reused after this one would replay after it, though registered later.
+	e.unwind.reusing = false
+}
+
+// design.md "What the unwind runs, and what it does not": a temporary's drop that the
+// action at the rewind point already is takes that action, its env slot included, and
+// the next one is asked about the action after it. Its replay is newest first among
+// the live ones still, as every action from the rewind point on was dead, so a long
+// literal's entries share their actions rather than each adding its own to the frame.
+@(private)
+unwind_reuse :: proc(e: ^Emitter, entry: ^Deferred) -> bool {
+	u := &e.unwind
+	if !unwind_enabled(e) || !u.reusing || u.reuse_at >= len(u.actions) {
+		return false
+	}
+	kept := u.actions[u.reuse_at]
+	if !is_plain_temporary(kept) || !is_plain_temporary(entry^) || kept.type != entry.type {
+		u.reusing = false
+		return false
+	}
+	entry.slot = u.reuse_at + 1
+	entry.place_env = kept.place_env
+	u.reuse_at += 1
+	return true
+}
+
+@(private = "file")
+is_plain_temporary :: proc(entry: Deferred) -> bool {
+	return entry.kind == .Temporary && entry.flag == "" && !entry.on_failure
+}
+
+// Where the next action would go: a reused one, or a new one.
+@(private)
+unwind_next_action :: proc(e: ^Emitter) -> int {
+	return e.unwind.reusing ? e.unwind.reuse_at : len(e.unwind.actions)
+}
+
+// Every action from `from` on is a temporary's drop the body has cleared since it last
+// registered it, so later temporaries may take them again in order (`unwind_reuse`).
+// False when one is not, and nothing changes.
+@(private)
+unwind_rewind :: proc(e: ^Emitter, from: int) -> bool {
+	u := &e.unwind
+	if !unwind_enabled(e) || from > len(u.actions) {
+		return false
+	}
+	for index in from ..< len(u.actions) {
+		if !is_plain_temporary(u.actions[index]) || u.open[index] {
+			return false
+		}
+	}
+	u.reusing, u.reuse_at = true, from
+	return true
+}
+
+@(private)
+unwind_stop_reusing :: proc(e: ^Emitter) {
+	e.unwind.reusing = false
 }
 
 @(private)
@@ -182,6 +249,7 @@ unwind_register :: proc(e: ^Emitter, entry: Deferred) {
 	if entry.slot == 0 || !unwind_enabled(e) {
 		return
 	}
+	e.unwind.open[entry.slot - 1] = true
 	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, entry.slot - 1))
 }
 
@@ -216,6 +284,9 @@ unwind_flag_address :: proc(e: ^Emitter, symbol: Symbol_Id) -> string {
 unwind_clear :: proc(e: ^Emitter, slot: int) {
 	if slot == 0 {
 		return
+	}
+	if !e.unwind.replaying && slot <= len(e.unwind.open) {
+		e.unwind.open[slot - 1] = false
 	}
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", unwind_live_address(e, slot - 1))
 }

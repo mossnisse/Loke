@@ -564,6 +564,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 		emit_container_policy_failure(e, address, status)
 		end_operand_temporaries(e, operand, element)
 	}
+	unwind_stop_reusing(e)
 	finish_temporary_drop(e, cleanup)
 }
 
@@ -594,45 +595,59 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		emit_map_insert_store(e, {as_type, address, key_slot, key_cleanup, slots}, value, guard)
 		end_operand_temporaries(e, operand, element, container_key(e.c, as_type))
 	}
+	unwind_stop_reusing(e)
 	finish_temporary_drop(e, cleanup)
 }
 
-// Where a map insertion reports whether the entry is new, and where a replaced
-// value waits for its drop.
+// Where a map insertion reports whether the entry is new, where the entry is,
+// where the value waits to be stored, and where a replaced value waits for its
+// drop. A literal's entries share them.
 @(private)
 Map_Entry_Slots :: struct {
-	inserted, old: string,
+	inserted, place, value, old: string,
 }
 
 @(private = "file")
 make_map_entry_slots :: proc(e: ^Emitter, element: Type_Id) -> Map_Entry_Slots {
-	return {alloca(e, "i32"), alloca(e, llvm_type(e, element))}
+	return {alloca(e, "i32"), alloca(e, "ptr"), alloca(e, llvm_type(e, element)), alloca(e, llvm_type(e, element))}
 }
 
-// Stores `value` into a map entry, which then owns it in place of `guard`. A
-// new entry holds inert bytes; an existing one's old value is moved out and
-// dropped only once the entry holds the new one, so a panicking drop hook
-// leaves the map no value to drop again (design.md "Lifecycle hooks and
-// resource types").
+// The entry `emit_map_entry` found, and the value to store there, kept in `slots`
+// across the check for a failed insertion: a value that crossed the branch would take
+// a stack slot of its own at `-opt=none`, one per entry of a long literal. What a
+// guard holds is not always the value, as a destructured union widens after it.
 @(private = "file")
-emit_store_entry :: proc(
-	e: ^Emitter, element: Type_Id, place, inserted, value: string, guard: Deferred, old: string,
-) {
+park_map_entry :: proc(e: ^Emitter, element: Type_Id, slots: Map_Entry_Slots, place, value: string) -> string {
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)
+	store(e, element, value, slots.value)
+	return slots.value
+}
+
+// Stores the value at `value_place` into the map entry `park_map_entry` kept,
+// which then owns it in place of `guard`. A new entry holds inert bytes; an
+// existing one's old value is moved out and dropped only once the entry holds the
+// new one, so a panicking drop hook leaves the map no value to drop again
+// (design.md "Lifecycle hooks and resource types"). Moving out a new entry's inert
+// bytes harms nothing, so only the drop branches, and nothing this block computes
+// is used after it.
+@(private = "file")
+emit_store_entry :: proc(e: ^Emitter, element: Type_Id, slots: Map_Entry_Slots, value_place: string, guard: Deferred) {
+	place := load(e, "ptr", slots.place)
+	managed := emit_lifecycle(e, element).managed
+	if managed {
+		store(e, element, load_temporary(e, element, place), slots.old)
+	}
+	store(e, element, load_temporary(e, element, value_place), place)
+	finish_temporary_drop(e, guard)
+	if !managed {
+		return
+	}
 	is_new := temp(e)
-	replace_label := new_label(e, "mentry.replace")
-	write_label := new_label(e, "mentry.write")
-	done_label := new_label(e, "mentry.stored")
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, inserted)
-	branch_if(e, is_new, write_label, replace_label)
-	place_label(e, replace_label)
-	store(e, element, load_temporary(e, element, place), old)
-	store(e, element, value, place)
-	finish_temporary_drop(e, guard)
-	emit_drop_place(e, element, old)
-	branch(e, done_label)
-	place_label(e, write_label)
-	store(e, element, value, place)
-	finish_temporary_drop(e, guard)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, load(e, "i32", slots.inserted))
+	replaced_label, done_label := new_label(e, "mentry.replaced"), new_label(e, "mentry.stored")
+	branch_if(e, is_new, done_label, replaced_label)
+	place_label(e, replaced_label)
+	emit_drop_place(e, element, slots.old)
 	branch(e, done_label)
 	place_label(e, done_label)
 }
@@ -1049,7 +1064,7 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 	if !moves {
 		guard = guard_built_element(e, element, staged)
 	}
-	place, _ := emit_map_entry(e, ops, "%arg0", key_slot, alloca(e, "i32"))
+	place := emit_map_entry(e, ops, "%arg0", key_slot, alloca(e, "i32"))
 	missing := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 	finish_temporary_drop(e, guard)
@@ -1089,7 +1104,8 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	guard := guard_built_element(e, element, staged)
 	key_slot := value_storage(e, container_key(e.c, body.container), "%arg1")
 	slots := make_map_entry_slots(e, element)
-	place, inserted := emit_map_entry(e, body.ops, "%arg0", key_slot, slots.inserted)
+	place := emit_map_entry(e, body.ops, "%arg0", key_slot, slots.inserted)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)
 	missing, ok_label, failed_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 	branch_if(e, missing, failed_label, ok_label)
@@ -1099,7 +1115,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "true"))
 
 	place_label(e, ok_label)
-	emit_store_entry(e, element, place, inserted, load_temporary(e, element, staged), guard, slots.old)
+	emit_store_entry(e, element, slots, staged, guard)
 	emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "false"))
 }
 
@@ -1235,7 +1251,8 @@ emit_map_insert_store :: proc(e: ^Emitter, destination: Map_Assignment_Destinati
 	container, header, key_slot := destination.container, destination.header, destination.key_slot
 	element := container_element(e.c, container)
 	ops := container_ops_global(e, container)
-	place, inserted := emit_map_entry(e, ops, header, key_slot, destination.slots.inserted)
+	place := emit_map_entry(e, ops, header, key_slot, destination.slots.inserted)
+	value_place := park_map_entry(e, element, destination.slots, place, value)
 	missing := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 	fail_label, store_label := new_label(e, "mset.fail"), new_label(e, "mset.store")
@@ -1244,7 +1261,7 @@ emit_map_insert_store :: proc(e: ^Emitter, destination: Map_Assignment_Destinati
 	emit_alloc_failure(e, header)
 	place_label(e, store_label)
 	// The map owns the value before a user key destructor can panic.
-	emit_store_entry(e, element, place, inserted, value, guard, destination.slots.old)
+	emit_store_entry(e, element, destination.slots, value_place, guard)
 	drop_temporary_value(e, destination.key_cleanup)
 }
 
@@ -1313,14 +1330,13 @@ emit_borrowed_key_slot :: proc(e: ^Emitter, view: string) -> string {
 // Finds or creates a map slot, and whether it was newly inserted (inert) or
 // already held a live value.
 @(private = "file")
-emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot, inserted: string) -> (string, string) {
+emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot, inserted: string) -> string {
 	place := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_entry(ptr %s, ptr %s, ptr %s, ptr %s)",
 		place, header, ops, key_slot, inserted,
 	)
-	was_inserted := load(e, "i32", inserted)
-	return place, was_inserted
+	return place
 }
 
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {

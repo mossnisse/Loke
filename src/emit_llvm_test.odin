@@ -927,3 +927,88 @@ runtime_bitcode_keeps_the_cpu_check_native :: proc(t: ^testing.T) {
 	testing.expect(t, !links_runtime_bitcode(`C:\Program Files\LLVM\bin\clang.exe`, .None), "an unoptimized build links bitcode")
 	testing.expect(t, !links_runtime_bitcode("clang", .Speed), "a clang found on PATH, with no directory, was taken to have lld-link beside it")
 }
+
+// What `main`'s frame holds at `-opt=none` for a literal of `count` entries: its unwind
+// actions, its allocas, and the values used outside the block defining them, each of
+// which unoptimized code generation gives a stack slot.
+@(private = "file")
+Literal_Frame :: struct {
+	actions, allocas, crossing: int,
+}
+
+@(private = "file")
+literal_frame :: proc(t: ^testing.T, open, entry, close: string, count: int) -> (frame: Literal_Frame, ok: bool) {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "package main;\nmain :: proc() {\n\tm := ")
+	strings.write_string(&b, open)
+	for index in 0 ..< count {
+		if index > 0 { strings.write_string(&b, ", ") }
+		numbered, _ := strings.replace_all(entry, "#", fmt.tprint(index), context.temp_allocator)
+		strings.write_string(&b, numbered)
+	}
+	strings.write_string(&b, close)
+	strings.write_string(&b, ";\n}\n")
+	p: Checked
+	check_for_emission(&p, strings.to_string(b))
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	p.c.panic_unwind = true
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	start := strings.index(module, "define internal void @loke.p.main()")
+	if !testing.expect(t, start >= 0, "no `main` in the module") { return }
+	body := module[start:]
+	body = body[:strings.index(body, "\n}\n")]
+	defined := make(map[string]string, 64, context.temp_allocator)
+	block := "entry"
+	for line in strings.split_lines(body, context.temp_allocator)[1:] {
+		if len(line) > 0 && line[0] != ' ' && strings.has_suffix(line, ":") {
+			block = line[:len(line) - 1]
+			continue
+		}
+		text := strings.trim_left_space(line)
+		name := ""
+		if equals := strings.index(text, " = "); strings.has_prefix(text, "%") && equals > 0 {
+			name, text = text[:equals], text[equals + 3:]
+			if strings.has_prefix(text, "alloca ") {
+				frame.allocas += 1
+				if strings.has_prefix(name, "%ulive.") {
+					frame.actions = len(text)
+				}
+				continue
+			}
+		}
+		for rest := text; len(rest) > 0; {
+			at := strings.index_byte(rest, '%')
+			if at < 0 { break }
+			end := at + 1
+			for end < len(rest) && (rest[end] == '.' || rest[end] == '_' || rest[end] >= '0' && rest[end] <= '9' || rest[end] >= 'a' && rest[end] <= 'z' || rest[end] >= 'A' && rest[end] <= 'Z') {
+				end += 1
+			}
+			if from, found := defined[rest[at:end]]; found && from != block {
+				frame.crossing += 1
+			}
+			rest = rest[end:]
+		}
+		if name != "" { defined[name] = block }
+	}
+	return frame, true
+}
+
+// design.md "Maps": a literal's entries share their storage, so its frame does not
+// grow with it at `-opt=none`. Each entry of a map literal took unwind actions of its
+// own and left the entry and its value live across the check for a failed insertion,
+// and 100000 of them overflowed the stack. `actions` is the text of the action
+// array's alloca, whose length grows with its count.
+@(test)
+long_literal_frames_do_not_grow :: proc(t: ^testing.T) {
+	Literal :: struct { open, entry, close: string }
+	literals := []Literal{{"map[string]string{ ", `"k#" = "v#"`, " }"}, {"[dynamic]string{ ", `"v#"`, " }"}}
+	for literal in literals {
+		small, small_ok := literal_frame(t, literal.open, literal.entry, literal.close, 20)
+		large, large_ok := literal_frame(t, literal.open, literal.entry, literal.close, 200)
+		if !small_ok || !large_ok { return }
+		testing.expectf(t, small == large, "%s: 20 entries left %v in the frame, 200 left %v", literal.open, small, large)
+	}
+}
