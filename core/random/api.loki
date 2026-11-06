@@ -185,7 +185,7 @@ impl Seed_Path {
 		This path with `word` appended. The word is the value modulo 2^64, as
 		`math.wrap(u64, word)` gives, whatever its type: a negative value is
 		sign-extended, so `-1` is all ones as an `i8` or an `i64`, and widening
-		a coordinate's type keeps every value.
+		a coordinate's type keeps every value. A rune is its code point.
 
 		The step is `mix64(state ~ mix64(word +% 0x9e3779b97f4a7c15))`, from a
 		state of 0. Mixing the word before it meets the state keeps two paths

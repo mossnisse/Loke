@@ -87,6 +87,8 @@ words :: proc() {
 	fmt.println("unsigned zero-extends",
 		root.with(u32(0xFFFF_FFFF)).value() == root.with(u64(0xFFFF_FFFF)).value(),
 		root.with(u32(0xFFFF_FFFF)).value() != root.with(i32(-1)).value());
+	// A rune is its code point.
+	fmt.println("rune", root.with('a').value() == root.with(97).value());
 	// Order and number of words.
 	fmt.println("order", root.with(1).with(2).value() != root.with(2).with(1).value());
 	fmt.println("length", root.with(7).value() != root.with(7).with(0).value(),

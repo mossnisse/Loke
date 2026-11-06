@@ -2772,8 +2772,13 @@ boundaries and API shapes follow a few common choices:
   million worlds or entities, some pairs' `d` falls within the coordinates in
   use, about 2^-32 per pair. Mixing the word first scatters that relation, at
   two `mix64` per word instead of one. The count is the last word, so a
-  path's value is never a longer path's state: `(a)` and `(a, 1)` encode
-  as `a, 1` and `a, 1, 2`.
+  value is not the state every child continues from, as it would be were
+  `value()` the state: `(a, x)` would then be one step from `(a)`'s value for
+  every `x`. One child still is, the one whose next word is the parent's
+  length: `(a)` encodes as `a, 1`, and `(a, 1)` continues from that state.
+  Nothing outside the package reads a state, and every step is invertible,
+  so no keyless finish could hide such a relation; the count keeps it to one
+  child and gives the empty path a nonzero value.
 - **Derived values are frozen, not versioned.** A seeded generator's values
   replay, and a replay can refuse another `SEQUENCE_VERSION`. A derived value
   is more often an identity, saved in a file or agreed with a peer, and an ID

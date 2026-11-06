@@ -33,13 +33,7 @@ impl Pcg64 {
 		state and the stream, which PCG's own seeding then mixes in.
 	*/
 	from_seed :: proc(seed: u64) -> Pcg64 {
-		counter := seed;
-		words: [4]u64 = {};
-		foreach (i in 0 ..< 4) {
-			counter +%= SPLITMIX_GAMMA;
-			words[i] = mix64(counter);
-		}
-		return pcg_from_words(words);
+		return pcg_from_words(splitmix64_words(seed));
 	}
 
 	/**

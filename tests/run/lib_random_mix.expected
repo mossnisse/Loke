@@ -14,6 +14,7 @@ empty true
 seed is the first word true
 negative true true true
 unsigned zero-extends true true
+rune true
 order true
 length true true
 prefix reused true true

@@ -4703,7 +4703,7 @@ impl Seed_Path {
 Each procedure taking a `source` requires `Source(G)`, so a caller's own source
 and a `dyn mut random.Source` view work as well as either generator. `in_range`
 accepts integer and rune endpoints of at most 64 bits, `choose` a copyable
-element type, and `Seed_Path.with` an integer word of at most 64 bits.
+element type, and `Seed_Path.with` an integer or rune word of at most 64 bits.
 
 Example (imports `core:random`):
 
@@ -4919,8 +4919,10 @@ A `Seed_Path` is a sequence of 64-bit words, the first being the seed, and its
   unsigned one is zero-extended, so `u32(0xFFFF_FFFF)` is
   `0x0000_0000_FFFF_FFFF`, unlike `i32(-1)`. A word depends on its value,
   not its type, so widening a coordinate type from `i32` to `i64` keeps every
-  value. A float, `bool`, rune, or enum is not a word, nor is a 128-bit
-  integer: write that as two words, in an order the program fixes.
+  value. A rune is a word, its code point, so `'a'` and `97` are one word. A
+  float, `bool`, or enum is not a word, nor is a `distinct` integer type,
+  which has no arithmetic: convert it, as `i32(x)`. Nor is a 128-bit integer:
+  write that as two words, in an order the program fixes.
 - **Order and number.** Paths whose words differ in any position, in order,
   or in number are different paths: `(x, y)` and `(y, x)` differ, and so do
   `(a)` and `(a, 0)`.

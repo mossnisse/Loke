@@ -37,6 +37,20 @@ mix64 :: proc(value: u64) -> u64 {
 // odd.
 @(private) SPLITMIX_GAMMA :: u64(0x9e3779b97f4a7c15);
 
+// The first four outputs of SplitMix64 started at `seed`, which seed both
+// generators. They come from distinct inputs to a bijection, so they are
+// never all zero.
+@(private)
+splitmix64_words :: proc(seed: u64) -> [4]u64 {
+	counter := seed;
+	words: [4]u64 = {};
+	foreach (i in 0 ..< 4) {
+		counter +%= SPLITMIX_GAMMA;
+		words[i] = mix64(counter);
+	}
+	return words;
+}
+
 /**
 	A seed and a path of words below it, naming a 64-bit value that depends on
 	those words alone, never on what was computed before:
@@ -59,15 +73,14 @@ impl Seed_Path {
 		is an ordinary word, so a path from a recorded seed replays exactly.
 	*/
 	from_seed :: proc(seed: u64) -> Seed_Path {
-		path: Seed_Path = {};
-		return path.with(seed);
+		return Seed_Path{}.with(seed);
 	}
 
 	/**
 		This path with `word` appended. The word is the value modulo 2^64, as
 		`math.wrap(u64, word)` gives, whatever its type: a negative value is
 		sign-extended, so `-1` is all ones as an `i8` or an `i64`, and widening
-		a coordinate's type keeps every value.
+		a coordinate's type keeps every value. A rune is its code point.
 
 		The step is `mix64(state ~ mix64(word +% 0x9e3779b97f4a7c15))`, from a
 		state of 0. Mixing the word before it meets the state keeps two paths

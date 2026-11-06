@@ -35,13 +35,7 @@ impl Xoshiro256 {
 		are never all zero.
 	*/
 	from_seed :: proc(seed: u64) -> Xoshiro256 {
-		counter := seed;
-		words: [4]u64 = {};
-		foreach (i in 0 ..< 4) {
-			counter +%= SPLITMIX_GAMMA;
-			words[i] = mix64(counter);
-		}
-		return {words};
+		return {splitmix64_words(seed)};
 	}
 
 	/**
@@ -137,7 +131,3 @@ impl Xoshiro256 {
 @(private) LONG_JUMP :: [4]u64{
 	0x76e15d3efefdcbbf, 0xc5004e441c522fb3, 0x77710069854ee241, 0x39109bb02acbe635,
 };
-
-// SplitMix64 (Steele, Lea, and Flood, "Fast splittable pseudorandom number
-// generators", 2014) is a counter stepped by `SPLITMIX_GAMMA` and passed
-// through `mix64`; both are in mix.loke, which `Seed_Path` shares.
