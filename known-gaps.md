@@ -42,65 +42,6 @@ lends its elements, so both copy inside and return the failure. A built-in dynam
 `..dyn I` pack lends its views, so fixing this needs one in the language. Reproduced with the
 compiler built from `1cefee9c` on 2026-11-05 while reviewing that commit (P2).
 
-### A hook in a `when` on a later constant comes too late for a record already used
-
-[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
-counts a hook wherever its block is written, and a body-local record's hooks are
-found where the record is declared, ahead of their block. A `when` whose condition
-names a constant declared after the record cannot be selected there, so a record
-already used by the time that block is reached is rejected, though the program is
-valid:
-
-```loke
-package main;
-import "core:fmt";
-main :: proc() {
-    @(move_only) H :: struct { fd: int }
-    a := H{1};
-    N :: 1;
-    when (N == 1) {
-        impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }
-    }
-    fmt.println(a.fd);
-}
-```
-
-This is `L0488`, "comes too late". Moving `a` after the `when`, or `N` before `H`,
-compiles and runs the hook. A block inside a static `foreach` is treated the same,
-since each expansion checks its own copy. It is an error rather than a late hook
-because earlier copies may already have been decided without the hook, which would
-release a value twice. `reject_unhoisted_local_hook` in
-[src/impl.odin](src/impl.odin) reports it. Found on 2026-11-01 while fixing the lost
-hooks of a body-local record.
-
-### A body-local block cannot take a name an earlier use generated
-
-[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) makes a
-body-local block's members other than its hooks visible from its statement on, and does not
-say what happens when a use before that statement already made the compiler generate a member
-of that name:
-
-```loke
-package main;
-import "core:fmt";
-main :: proc() {
-    R :: struct { x: int }
-    r := R{1};
-    fmt.println(r);
-    impl R {
-        format :: proc(self, writer: fmt.Writer, options: fmt.Options) { fmt.concat_to(writer, "R"); }
-    }
-    fmt.println(r);
-}
-```
-
-This is `L0409`, "already has a generated member `format`", and `hash` is the same;
-moving the block up compiles. It stays an error because letting the written member
-in would not reach what the earlier use settled: `Formattable`'s witness is chosen once
-per type, so the second `println` would print the generated form with a written `format`
-in scope, and a map's entries could be hashed two ways. Making this valid needs a
-decision on which member such a program means. Found on 2026-11-04 in the compiler review.
-
 ### A file-scope `when` cannot call a member declared in a package still selecting
 
 [when statement](design.md#when-statement) lets a condition read what its names

@@ -205,8 +205,7 @@ declare_local_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, subject: Type_Id
 // The one block `declare_local_impl_hooks` cannot reach is in a `when` whose
 // condition names a constant declared after the record. If the record's lifecycle
 // was already read, copies may have been decided without this hook, so running it
-// now could release a value twice. See known-gaps.md "A hook in a `when` on a later
-// constant comes too late for a record already used".
+// now could release a value twice (design.md "Lifecycle hooks and resource types").
 @(private = "file")
 reject_unhoisted_local_hook :: proc(k: ^Checker, d: ^Decl, subject: Type_Id) {
 	if !decl_is_lifecycle_hook(d) || len(d.symbols) > 0 {

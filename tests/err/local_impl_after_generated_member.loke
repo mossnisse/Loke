@@ -1,6 +1,6 @@
-// A body-local block cannot take a name an earlier use made the compiler generate:
-// a type has one printed form and one hash. See known-gaps.md "A body-local block
-// cannot take a name an earlier use generated".
+// design.md "Lifecycle hooks and resource types": a body-local block cannot take a
+// name an earlier use made the compiler generate, as a type has one printed form and
+// one hash.
 package main;
 
 import "core:fmt";

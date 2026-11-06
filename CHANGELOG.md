@@ -1416,6 +1416,10 @@ checklist.
 
 ### Changed
 
+- [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) now states the
+  two body-local blocks that are errors after a use of their record, which the compiler already
+  reported: a hook under a `when` that could not be selected where the record is declared
+  (`L0488`), and a member named like one the use generated, as `format` or `hash` (`L0409`).
 - `find_or_insert`, `try_find_or_insert` and `try_insert` on a map of unmanaged elements, such as the
   counting idiom on a `map[int]int`, push no unwind frame.
 - Slicing a `string` or a `string_view` tests only the bytes at its bounds, in constant time, rather
