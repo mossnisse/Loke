@@ -1,0 +1,21 @@
+// design.md "Variadic parameters": what a `..^T` pack lends follows the rules of any
+// pointer.
+package main;
+import "core:fmt";
+
+kept: Option(^int) = .none;
+keep :: proc(xs: ..^int) { kept = .some(xs[0]); }
+bump :: proc(x: inout int, xs: ..^int) { x += xs[0]^; }
+first :: proc(xs: ..^int) -> ^int { return xs[0]; }
+
+main :: proc() {
+	a := 1;
+	bump(inout a, a);
+	p := first(5);
+	fmt.println(p^);
+	list := make([dynamic]int);
+	list.append(1);
+	q := first(..list);
+	list.append(2);
+	fmt.println(q^);
+}

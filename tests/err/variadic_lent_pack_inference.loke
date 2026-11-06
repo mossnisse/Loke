@@ -1,0 +1,10 @@
+// design.md "Variadic parameters": a generic `..^$T` infers `T` only from arguments
+// already a `^T`.
+package main;
+import "core:fmt";
+count :: proc(xs: ..^$T) -> int { return xs.len(); }
+main :: proc() {
+	a := 1;
+	fmt.println(count(&a));
+	fmt.println(count(a));
+}

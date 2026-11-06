@@ -117,7 +117,7 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		element := slice_element(c, param_type)
 		cursor: Call_Pack_Cursor
 		for operand, is_spread in call_pack_next(v, &cursor) {
-			type := is_spread ? param_type : element
+			type := is_spread ? prov_pack_spread_type(c, prov_type(graph, operand), param_type) : element
 			lent := walk_flow_expr(graph, operand)
 			prov_reborrow(graph, lent, type)
 			if type_carries_borrow(c, type).mutable {

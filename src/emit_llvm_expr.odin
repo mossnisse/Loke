@@ -1280,6 +1280,9 @@ emit_implicit_conversion :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> (
 			if underlying_kind(e.c, from) == .Box {
 				return emit_box_payload_address(e, from, load_place(e, from, emit_lent_address(e, expr, from))), true
 			}
+			// design.md "Variadic parameters": a `T` a `..^T` pack lends, where it is
+			// or in a temporary that lives through the call.
+			return emit_lent_address(e, expr, from), true
 		case .Slice:
 			// A `[N]T` read as a `[]T` of all its elements.
 			if underlying_kind(e.c, from) == .Array {

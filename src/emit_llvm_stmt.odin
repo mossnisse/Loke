@@ -240,7 +240,7 @@ emit_spawn_pack :: proc(
 		position := cursor.taken - 1
 		slot := spawn_field_address(e, pack, record, position)
 		if is_spread {
-			store(e, slice, emit_expr(e, expr), slot)
+			store(e, spawn_spread_type(e.c, expr, slice), emit_expr(e, expr), slot)
 			continue
 		}
 		value := emit_copied_expr(e, expr, element, managed && expression_is_borrowed_place(expr))

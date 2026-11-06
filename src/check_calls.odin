@@ -1246,10 +1246,18 @@ bind_variadic_arguments :: proc(
 	rest := args[fixed + named:]
 	if len(rest) == 1 && rest[0].mode == .Spread {
 		spread, passed := check_spread_argument(k, rest[0], info.parameters[pack], prechecked)
-		bound[pack] = spread
-		v.bound = bound
 		v.is_variadic = true
 		v.variadic_slot = pack
+		v.bound = bound
+		// A spread whose elements a `..^T` pack lends is no `[]^T` to forward: its
+		// pack is built, as one spread among other operands is.
+		if variadic_pack_spread_lends(k.c, spread, info.parameters[pack]) {
+			v.variadic_elements = {}
+			v.variadic_spreads = slice_clone_expr(k, spread)
+			v.variadic_order = slice_clone_bool(k, true)
+			return ok && passed
+		}
+		bound[pack] = spread
 		v.variadic_forwards = true
 		return ok && passed
 	}
@@ -1350,7 +1358,9 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 	if type == INVALID_TYPE {
 		return arg.value, false
 	}
-	if !assignable(k.c, type, pack) {
+	// design.md "Variadic parameters": a `..^T` pack lends the elements of a `[]T`.
+	spread_as := variadic_spread_type(k.c, type, pack)
+	if !assignable(k.c, type, spread_as) {
 		errorf(
 			k.c, arg.span, "L0574",
 			"`..` spreads a `%s`, found `%s`", type_name(k.c, pack), type_name(k.c, type),
@@ -1359,6 +1369,6 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 	}
 	// A `[dynamic]T` or `[N]T` is spread as the `[]T` it views, so a lone
 	// spread forwards a slice and several spreads read a slice's data and length.
-	return arg.value, materialize(k, arg.value, pack)
+	return arg.value, materialize(k, arg.value, spread_as)
 }
 

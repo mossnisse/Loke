@@ -1,0 +1,54 @@
+// design.md "Variadic parameters": a `..^T` pack lends what is written at the call,
+// a value where it is or in a temporary, a constant in read-only storage, and a
+// spread's elements, and passes a `^T` or a `[]^T` as it is.
+package main;
+import "core:fmt";
+
+Item :: struct { id: int, name: string }
+
+total :: proc(items: ..^Item) -> int {
+	sum := 0;
+	foreach (item in items) { sum += item^.id; }
+	return sum;
+}
+
+sum :: proc(xs: ..^int) -> int {
+	s := 0;
+	foreach (x in xs) { s += x^; }
+	return s;
+}
+
+first :: proc(xs: ..^int) -> ^int { return xs[0]; }
+
+N :: 9;
+named :: proc() -> ^int { return first(N); }
+
+// The callee sees each value where it is.
+same :: proc(xs: ..^int) -> bool { return xs.len() == 2 && xs[0] == xs[1]; }
+
+main :: proc() {
+	a := Item{1, "a"};
+	b := Item{2, "b"};
+	fmt.println(total(a, b), total(), total(a, Item{10, "t"}));
+	list := []Item{a, b, Item{4, "c"}};
+	fmt.println(total(..list), total(a, ..list, b));
+	array := [2]Item{a, b};
+	grown := make([dynamic]Item);
+	grown.append(a);
+	fmt.println(total(..array), total(..grown));
+	p := &a;
+	pointers := []^Item{&a, &b};
+	fmt.println(total(p, b), total(..pointers), sum(1, 2, 3));
+	x := 5;
+	fmt.println(same(x, x), named()^, named() == named());
+	// The name is still `a`'s own: nothing was copied or moved.
+	fmt.println(a.name, b.name);
+
+	one, two: int;
+	numbers := []int{4, 5};
+	parallel {
+		spawn one = sum(x, x);
+		spawn two = sum(..numbers);
+	}
+	fmt.println(one, two);
+}

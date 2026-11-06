@@ -583,8 +583,11 @@ emit_spread_pack :: proc(
 		if is_spread {
 			data := operands.spread_data[next_spread]
 			advance = operands.spread_len[next_spread]
+			lent := slice_element(e.c, expr_base(v.variadic_spreads[next_spread]).type)
 			next_spread += 1
-			if lend || !managed {
+			if lent != element {
+				emit_pack_lend_spread(e, lent, element, data, advance, buffer, position)
+			} else if lend || !managed {
 				// Bitwise, with any flags left clear.
 				bytes := temp(e)
 				fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, advance, size)
@@ -610,6 +613,17 @@ emit_spread_pack :: proc(
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
 	}
 	return buffer, cleanup
+}
+
+// design.md "Variadic parameters": a `..^T` pack lends each element of a spread of
+// `T`s, from `start`.
+@(private = "file")
+emit_pack_lend_spread :: proc(e: ^Emitter, lent, element: Type_Id, data, length, buffer, start: string) {
+	loop := open_counted_loop(e, new_counter(e), "vararg.lend", length, "ult")
+	position := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", position, start, loop.index)
+	store(e, element, gep_at(e, llvm_type(e, lent), data, loop.index), gep_at(e, llvm_type(e, element), buffer, position))
+	close_counted_loop(e, loop)
 }
 
 // Clones a spread's elements into the pack from `start`, flagging each as it is

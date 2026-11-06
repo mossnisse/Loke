@@ -3303,7 +3303,11 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return carriers
 	}
 	loans := walk_flow_expr(graph, e)
-	if base_is_const(base) || !prov_expr_is_temporary(e) {
+	// A constant viewed in read-only storage is never gone. One a `..^T` pack lends
+	// with no such storage is in a temporary of its call (design.md "Variadic
+	// parameters").
+	static := base_is_const(base) && (underlying_kind(graph.k.c, viewed) != .Pointer || materialization_of(graph.k.c, e) != nil)
+	if static || !base_is_const(base) && !prov_expr_is_temporary(e) {
 		return loans
 	}
 	return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, noun))

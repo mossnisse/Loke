@@ -55,7 +55,9 @@ constant_root_of :: proc(c: ^Compiler, e: Expr) -> (Expr, Symbol_Id) {
 materialized_key :: proc(c: ^Compiler, symbol: Symbol_Id, e: Expr) -> Materialized_Key {
 	key := Materialized_Key{symbol = symbol}
 	if type_is_untyped(c, symbol_of(c, symbol).type) {
-		key.type = expr_base(e).type
+		// The type stored, ahead of an implicit view of it on the same node.
+		base := expr_base(e)
+		key.type = base.view_from != INVALID_TYPE ? base.view_from : base.type
 	}
 	return key
 }

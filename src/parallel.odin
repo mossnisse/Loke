@@ -526,12 +526,21 @@ spawn_pack_record :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, pack
 	task.pack = make([]Spawn_Field_Kind, len(call.variadic_order), c.semantic_allocator)
 	types := make([]Type_Id, len(call.variadic_order), c.semantic_allocator)
 	names := make([]string, len(call.variadic_order), c.semantic_allocator)
-	for is_spread, index in call.variadic_order {
+	cursor: Call_Pack_Cursor
+	for operand, is_spread in call_pack_next(call, &cursor) {
+		index := cursor.taken - 1
 		names[index] = spawn_pack_field_name(c, index)
-		types[index] = is_spread ? pack : element
+		types[index] = is_spread ? spawn_spread_type(c, operand, pack) : element
 		task.pack[index] = !is_spread && type_is_managed(c, element) ? .Owned : .Copy
 	}
 	return synth_record(k, "spawn$pack", "spawn$pack$type", names, types, span)
+}
+
+// A spread is held as the slice it views, the `[]T` a `..^T` pack lends the
+// elements of included, which the worker spreads again (design.md "Variadic
+// parameters").
+spawn_spread_type :: proc(c: ^Compiler, spread: Expr, pack: Type_Id) -> Type_Id {
+	return variadic_pack_spread_lends(c, spread, pack) ? expr_base(spread).type : pack
 }
 
 @(private = "file")

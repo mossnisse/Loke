@@ -1105,6 +1105,9 @@ checklist.
 
 ### Added
 
+- A [`..^T` variadic parameter](design.md#variadic-parameters) lends what is written at the call
+  instead of copying it: a `T` is borrowed where it is or from a temporary, a named constant in its
+  read-only storage, and a spread of `T`s lends each element. A `^T` or a `[]^T` is passed as it is.
 - [`core:container`](standard-library.md#corecontainer) has
   [`Priority_Queue(T, C)`](standard-library.md#priority-queues) with `Min_Queue(T)` and `Max_Queue(T)`,
   which always hand back the most urgent element under a comparator stored in the queue, and

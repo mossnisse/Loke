@@ -38,6 +38,11 @@ main :: proc() {
 
 One borrowed value selects `try_append_one_copied`, and a lone spread `q.try_append(..items)`
 lends its elements, so both copy inside and return the failure. A built-in dynamic array's
-`try_append(a, b)` returns it too. A procedure has no pack that lends borrowed places, as a
-`..dyn I` pack lends its views, so fixing this needs one in the language. Reproduced with the
-compiler built from `1cefee9c` on 2026-11-05 while reviewing that commit (P2).
+`try_append(a, b)` returns it too. The language now has a pack that lends, `..^T`, but
+`try_append_copied` cannot take one yet: it is written `@(escape=stored)` so that what a copy
+carries may stay in the deque, and a level bounds every carrier of the parameter, the pack's own
+pointers included, so a call would keep `a` and `b` borrowed as long as `q` lives. Using it needs
+a rule that a lending pack's pointers are kept only for the call, with the level bounding what the
+values carry, as on a `value: T` parameter, and the caller's pack contract to tell a lent
+element's borrow from what it carries. Reproduced with the compiler built from `1cefee9c` on
+2026-11-05 while reviewing that commit (P2); narrowed on 2026-11-06.

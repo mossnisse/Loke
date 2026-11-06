@@ -6737,6 +6737,34 @@ small := Square{2};
 fmt.println(total_area(small, Square{3})); // 13.0: `small` and the temporary are viewed
 ```
 
+A `..^T` parameter, whose element is a read-only pointer, lends what is
+written at the call instead of copying it. An argument of type `T` converts
+implicitly to a borrow of itself, where it is or from a temporary holding it; an
+unfixed constant takes type `T` first, and a named constant is borrowed in its
+read-only storage. An argument that is already a `^T` is passed as it is. A
+spread of a `[]T`, or of a `[N]T` or `[dynamic]T` it views, lends each of its
+elements in a pack sized when the call runs, which panics past 256 KiB of
+pointers as a spread among other operands does; a `[]^T` spread is passed as it
+is. The callee receives the pack as a `[]^T`, and the borrows follow the rules of
+any pointer: a call may keep one only as its [escape level](#escape-levels)
+allows, and one of a temporary ends with the call's statement. A generic
+`..^$T` infers `T` only from arguments already a `^T`.
+
+```loke
+Item :: struct { id: int, name: string }
+total :: proc(items: ..^Item) -> int {
+	sum := 0;
+	foreach (item in items) {
+		sum += item^.id;
+	}
+	return sum;
+}
+
+a := Item{1, "a"};
+list := []Item{a, Item{2, "b"}};
+fmt.println(total(a, Item{3, "c"}), total(..list)); // 4 3: nothing is copied
+```
+
 `..` before a union is a [union argument expansion](#union-argument-expansion)
 instead, which passes the active variant's payload to the parameter its label
 names.

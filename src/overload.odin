@@ -312,6 +312,27 @@ variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int 
 	return variadic_view_satisfied(k, concrete, element, arg.span) ? RANK_BUILTIN : RANK_NONE
 }
 
+// design.md "Variadic parameters": a value a `..^T` pack borrows ranks as a borrow,
+// an unfixed constant as its conversion to `T`, and a spread lending its elements as
+// that spread of a `[]T` would.
+@(private = "file")
+variadic_lend_rank :: proc(k: ^Checker, arg: Arg_Info, element, want: Type_Id) -> int {
+	pointee, lends := variadic_lent_pointee(k.c, element)
+	if !lends || arg.waiting || arg.mode == .Inout {
+		return RANK_NONE
+	}
+	if arg.mode == .Spread {
+		if !variadic_spread_lends(k.c, arg.type, want) {
+			return RANK_NONE
+		}
+		return argument_rank(k, arg, slice_of(k.c, pointee, false), .Value)
+	}
+	if !variadic_lend_accepts(k.c, arg.type, element) {
+		return RANK_NONE
+	}
+	return type_is_untyped(k.c, arg.type) ? argument_rank(k, arg, pointee, .Value) : RANK_ADJUST
+}
+
 // ----------------------------------------------------------------- candidates --
 
 arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
@@ -500,6 +521,9 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		rank := argument_rank(k, arg, want, mode)
 		if rank == RANK_NONE && slot == pack && arg.mode != .Spread {
 			rank = variadic_view_rank(k, arg, element)
+		}
+		if rank == RANK_NONE && slot == pack {
+			rank = variadic_lend_rank(k, arg, element, want)
 		}
 		if rank == RANK_NONE {
 			cand.reason = Rejected_Argument{index, want, mode}

@@ -85,6 +85,9 @@ dyn_view_witness :: proc(k: ^Checker, concrete, view: Type_Id, span: Span) -> ^W
 // One element of a `..dyn I` pack: a value is viewed where it is, or in a
 // temporary that lives through the call, with the witness of its type.
 pass_variadic_element :: proc(k: ^Checker, e: Expr, element: Type_Id, prechecked: bool) -> (Expr, bool) {
+	if pointee, lends := variadic_lent_pointee(k.c, element); lends {
+		return pass_lent_element(k, e, element, pointee, prechecked)
+	}
 	if !variadic_view_element(k.c, element) {
 		return pass_argument(k, e, element, prechecked)
 	}
