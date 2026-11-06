@@ -7,6 +7,42 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A direct copied loop still copies its source
+
+[Iteration adapters](design.md#iteration-adapters) says a `foreach` written directly over an
+adapter makes no copy of its source, and the new inline
+[copy-cost report](design.md#copy-cost-diagnostics) recommends that form. For `copied()`,
+however, `peel_resolved_adapter` in [iteration_adapters.odin](src/iteration_adapters.odin)
+stops before peeling the call. This program makes the copy and receives `L0507` together
+with the advice that the very form already written makes none:
+
+```loke
+package main;
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+View :: struct { bytes: [1024]u8 }
+impl View {
+    Element :: int;
+    Iterator :: Cursor;
+    Mut_Iterator :: Cursor;
+    iter :: proc(self: ^) -> Cursor { return {0}; }
+    iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+main :: proc() {
+    source: View = {};
+    foreach (value in source.copied()) { _ = value; }
+}
+```
+
+`dbf1b4c5` and `dbebf669` report a 1024-byte iteration-adapter copy and suggest a
+`foreach` over the adapter call. The emitted adapter loads and stores the complete
+1024-byte `View`, so this is a real copy, not merely a report left behind after peeling.
+The source copy predates the reviewed commit; its new inline report introduces this
+unusable advice for plain views, and the older allocating-copy advice has the same
+limitation. Avoid the source copy for a directly used `copied()` as the specification
+requires, and add a direct `copied()` case beside the peeled `indexed()` tests.
+Found on 2026-11-06 while reviewing `dbf1b4c5` (P2).
+
 ### An unknown-target owner read loses its actual allocator dependency
 
 [Allocators](design.md#allocators) requires a reset to reject live owners that still refer to

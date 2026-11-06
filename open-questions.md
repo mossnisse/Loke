@@ -61,6 +61,44 @@ existing compiler unit tests, the added region-weight probe, the call-copy and
 read-only-copy matrices, and the focused integration and contract cases in an
 isolated copy. Found on 2026-11-06.
 
+### Weigh parameter-overflow precision in replay convergence
+
+The `dbf1b4c5` convergence fix counts `Written_Alias.loaded` and `Region_Set.loaded`,
+but `region_weight` in [provenance_regions.odin](src/provenance_regions.odin) still
+omits `Region_Set.crowded_params`. This flag records a parameter past the 64-bit region
+budget and only grows, as the [replay contract](compiler-architecture.md#normalized-provenance-input)
+requires counted facts to do. An already-unknown set can gain the flag without gaining
+weight:
+
+```odin
+package lokec
+import "core:testing"
+@(test)
+review_precision_flag_has_weight :: proc(t: ^testing.T) {
+    facts := Prov_Facts{region_of = make(map[Symbol_Id]Region_Set)}
+    defer delete(facts.region_of)
+    set := Region_Set{unknown = true}
+    facts.region_of[Symbol_Id(1)] = set
+    before := prov_fact_weight(&facts)
+    set.crowded_params = true
+    facts.region_of[Symbol_Id(1)] = set
+    testing.expect(t, prov_fact_weight(&facts) > before)
+}
+```
+
+A normalization probe with an allocator at parameter index 64 initializes four locals
+from an unnamed allocator, then runs `d = c; c = b; b = a; a = overflow;` in a loop.
+The reviewed implementation stops after one replay with `b`, `c`, and `d` missing the
+overflow flag. Adding `int(set.crowded_params)` to the weight makes both probes pass,
+alongside all 209 existing compiler unit tests. The omission predates the reviewed
+commit and remains in `dbebf669`.
+
+This flag controls precision notes and the diagnostic's possible-dependency wording;
+the set's existing `unknown` flag still conservatively preserves overlap. No externally
+visible missing rejection or incorrect diagnostic was established by these probes.
+Count the precision flag too and retain a regression for metadata-only growth.
+Found on 2026-11-06 while reviewing `dbf1b4c5` (P3).
+
 ### What counts as a fresh borrow of a range
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
