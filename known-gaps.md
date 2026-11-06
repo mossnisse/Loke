@@ -7,6 +7,39 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Providers moved into sibling fields retain each other's regions
+
+[Allocators](design.md#allocators) preserves a provider's identity across a move, and
+[region tracking](design.md#region-tracking) keeps independent record fields apart.
+`8d9af257` projects the fixed provider tokens when taking or exchanging a field, but
+`provider_moved` still joins every incoming provider token at the whole local. The
+`prov_provider_region_at` lookup in [provenance_regions.odin](src/provenance_regions.odin)
+includes that entire set regardless of the requested field:
+
+```loke
+package main;
+import "core:mem";
+Pair :: struct { first: mem.Arena, second: mem.Arena }
+main :: proc() {
+    first := mem.Arena.init();
+    second := mem.Arena.init();
+    pair := Pair{move(first), move(second)};
+    xs := make([dynamic]int, 1, pair.second.allocator());
+    taken := exchange(inout pair.first, mem.Arena.init());
+    drop(taken); // L0537 for `xs`, though only the second arena backs it
+    _ = xs[0];
+}
+```
+
+Replacing the first three statements with
+`pair := Pair{mem.Arena.init(), mem.Arena.init()};` is accepted by the reviewed commit.
+The same false rejection occurs with `unsafe.take` followed by reinitializing the first
+field, and when the fields receive the providers through later assignments. Preserve
+the destination path of moved-in tokens and project them alongside the fixed tokens.
+This is a remaining precision gap, not a new regression: the moved-field case rejects
+on the parent of `8d9af257`, that commit, and `dbebf669`. Found on 2026-11-06 while
+reviewing `8d9af257` (P3).
+
 ### A direct copied loop still copies its source
 
 [Iteration adapters](design.md#iteration-adapters) says a `foreach` written directly over an
