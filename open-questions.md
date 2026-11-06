@@ -99,6 +99,23 @@ visible missing rejection or incorrect diagnostic was established by these probe
 Count the precision flag too and retain a regression for metadata-only growth.
 Found on 2026-11-06 while reviewing `dbf1b4c5` (P3).
 
+### Simplify the single analysis timing case
+
+Optional simplification from the `2cd5aade` review (P3):
+[analysis_time_test.odin](tests/analysis_time_test.odin) defines `Analysis_Case`,
+builds one-element case and job arrays, and runs two loops plus `exec_all` for one
+compiler launch. Use the existing `exec` helper's deadline argument directly instead.
+Keep the source fixture, file-write check, 30-second deadline, and the assertion on
+process exit and compiler stderr.
+
+An isolated version reduces the file from 64 to 40 lines, including shorter comments
+that retain the regression's cause. It passes against the reviewed compiler in about
+0.2 seconds, and the parent compiler fails through the same 30-second timeout, so the
+test still detects the original performance problem. The 209 existing compiler unit
+tests, ten carrier matrices, and two focused alias-prefix and visit-identity probes
+also pass for the reviewed implementation. Remove the scaffolding, not the regression
+test. Found on 2026-11-06.
+
 ### What counts as a fresh borrow of a range
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
