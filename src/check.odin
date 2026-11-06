@@ -676,6 +676,9 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		mark_template_operator(k, d)
 		mark_template_hook(k, d)
 		reject_uninstantiated_generic(k, d)
+		// design.md "@(require_results)" and "`@(deprecated=<string>)`" bind
+		// the declaration, so a call of any instance reads them here.
+		apply_proc_metadata(k, d, d.symbols[0])
 		if template != nil && template.kind == .Alias {
 			check_alias_template(k, d, template)
 		}

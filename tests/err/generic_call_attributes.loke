@@ -1,0 +1,40 @@
+package main;
+
+// design.md "@(require_results)" and "`@(deprecated=<string>)`": both bind
+// the declaration, so a call reaches them however it chose the procedure: by
+// name, as a method, as a group's member, or as an instance of a generic one.
+
+@(require_results) plain :: proc(w: int) -> int { return w; }
+@(require_results) generic :: proc(w: $T) -> T { return w; }
+
+Box :: struct { v: int }
+
+impl Box {
+	@(require_results) method :: proc(self, w: int) -> Box { return {self.v + w}; }
+	@(require_results) generic_method :: proc(self, w: $T) -> Box { return {self.v}; }
+	@(deprecated = "m") old_method :: proc(self) -> int { return self.v; }
+	@(deprecated = "gm") old_generic_method :: proc(self, w: $T) -> int { return self.v; }
+}
+
+@(deprecated = "g") old_generic :: proc(w: $T) -> T { return w; }
+@(deprecated = "o") old_member :: proc(w: int) -> int { return w; }
+current_member :: proc(w: string) -> int { return 0; }
+members :: proc{old_member, current_member};
+
+main :: proc() {
+	plain(1);
+	generic(1);
+	b := Box{1};
+	b.method(2);
+	b.generic_method(2);
+	b.generic_method("text");
+	kept := generic(3);
+	_ = generic(4);
+	_ = b.generic_method(5);
+
+	_ = b.old_method();
+	_ = b.old_generic_method(1);
+	_ = old_generic(1);
+	_ = members(1);
+	_ = members("not deprecated");
+}

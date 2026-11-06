@@ -344,8 +344,9 @@ required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string,
 		}
 		return "", false
 	}
-	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil && selected.require_results {
-		return identifier_text(k.c, selected.name), true
+	// A generic call chose an instance; the attribute is on its template.
+	if declared := declaration_of_choice(k, call.resolution.chosen_overload); declared != nil && declared.require_results {
+		return identifier_text(k.c, declared.name), true
 	}
 	if group := symbol_of(k.c, call.group); group != nil && group.require_results {
 		return identifier_text(k.c, group.name), true
@@ -444,6 +445,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	}
 	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
 	sel.type = chosen.proc_type
+	warn_deprecated_choice(k, cand.symbol, sel.name.span)
 	record_called_procedure(k, v, cand.symbol)
 	finish_chosen_call(k, v, cand)
 }
@@ -521,7 +523,33 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
 		ident.symbol = chosen
 	}
+	warn_deprecated_choice(k, chosen, expr_span(v.callee))
 	record_called_procedure(k, v, chosen)
+}
+
+// design.md "`@(deprecated=<string>)`": a method, a group's member, or a
+// generic instance is a use of the declaration it was chosen from. A plain
+// named call warns where its name resolves instead.
+@(private = "file")
+warn_deprecated_choice :: proc(k: ^Checker, chosen: Symbol_Id, span: Span) {
+	sym := declaration_of_choice(k, chosen)
+	if sym != nil {
+		warn_deprecated_use(k, sym, identifier_text(k.c, sym.name), span)
+	}
+}
+
+// The declaration a call chose: a generic instance's template, or the
+// procedure itself.
+@(private = "file")
+declaration_of_choice :: proc(k: ^Checker, chosen: Symbol_Id) -> ^Symbol {
+	sym := symbol_of(k.c, chosen)
+	if sym == nil {
+		return nil
+	}
+	if template := symbol_of(k.c, sym.instance_of); template != nil {
+		return template
+	}
+	return sym
 }
 
 // A place copied into a trivial aggregate `value: T` parameter is a copy site; a

@@ -1,0 +1,34 @@
+L0612
+the result of `plain` must be used
+@25:2
+
+L0612
+the result of `generic` must be used
+@26:2
+
+L0612
+the result of `method` must be used
+@28:2
+
+L0612
+the result of `generic_method` must be used
+@29:2
+
+L0612
+@30:2
+
+L0698
+`kept` holds the result of `generic`, which is never used
+@31:2
+
+warning[L0611]: `old_method` is deprecated: m
+@35:8
+
+warning[L0611]: `old_generic_method` is deprecated: gm
+@36:8
+
+warning[L0611]: `old_generic` is deprecated: g
+@37:6
+
+warning[L0611]: `old_member` is deprecated: o
+@38:6

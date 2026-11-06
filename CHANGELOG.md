@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- [`@(require_results)`](design.md#require_results) and
+  [`@(deprecated)`](design.md#deprecatedstring) bind a generic procedure's declaration, so they hold
+  for every instance: a bare call of a generic `@(require_results)` procedure, free or a method, is
+  now `L0612`, and a result bound and never read is `L0698`, as for any other procedure. Both
+  compiled. A deprecated generic procedure, a deprecated method, and a deprecated member chosen from a
+  group now warn with `L0611` at each call; only a plain named call did. Upgrade by using the result
+  or discarding it with `_ = ...`.
 - A cursor stepped through itself, as `cur := head; cur = cur^.next;`, is a copy of the `next` it
   came from ([Weakening and reborrows](design.md#weakening-and-reborrows)), however it was given its
   new value: by name, through `p := &mut cur` as `p^ = p^^.next`, or in a record's field. A second
