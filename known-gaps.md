@@ -7,6 +7,41 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A local pointer to a slice blames an untouched carrier's target
+
+[Region tracking](design.md#region-tracking) requires a pointer stored in a local to preserve
+the destinations of the same pointer passed directly, and
+[minimum provenance precision](design.md#minimum-provenance-precision) keeps a record's carrier
+leaves apart. A call through a local pointer to a slice instead attributes a store through
+`second` to `first` too:
+
+```loke
+package main;
+import "core:mem";
+Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
+store :: proc(pairs: ^mut []Pair, allocator: mem.Allocator) {
+    pairs^[0].second^ = make([dynamic]int, 1, allocator);
+}
+caller :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    buffer := [256]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 1, kept.allocator());
+    b := make([dynamic]int, 1, kept.allocator());
+    pairs := []Pair{Pair{&mut a, &mut b}};
+    pointer := &mut pairs;
+    store(pointer, allocator);
+    drop(b);
+    free_all(allocator); // L0537 for `a`; should be accepted
+    return a.len();
+}
+main :: proc() {}
+```
+
+Replacing the pointer declaration and call with `store(&mut pairs, allocator)` is accepted.
+The local-pointer rejection predates `ac656b11` and remains in that commit and `dbebf669`;
+it is an existing precision gap, not a regression from the reviewed commit.
+Found on 2026-11-06 while reviewing `ac656b11` (P3).
+
 ### A procedure contract ignores loaded parameter regions
 
 [Procedure result contracts](design.md#procedure-result-contracts) permit a
