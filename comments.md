@@ -3977,13 +3977,16 @@ Per-block region sets had no prototype, so a shadow measured a lower bound on th
 cost: each block visit also joined, transferred, compared, and copied one region
 set per slot, read by nothing. It added 0.1 to 6.5 ms to checks of 8.2 to 295.7 ms,
 the same order as the replay it could remove (0.6 to 17.8 ms), and the construction
-walk stays either way. The cost does not rule it out; the benefit does. Only
-[a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
-needs facts by program point, and that is an over-rejection, against moving 70
+walk stays either way. The cost does not rule it out; the benefit does. The one gap
+that seemed to need facts by program point, a reset after a write on every path to a
+received allocator, needed only which parameter places every path assigned before
+each read. That is control flow alone, so the construction walk answers it where each
+value is interned (`prov_overwritten_here`), and the flow-insensitive facts stay
+(design.md "@(allocator_reset)"). Per-block sets would instead have moved 70
 procedures in the construction walk and 28 places that set an event's region. The
 other gap first blamed on the lattice, a swap of owners not being seen, was fixed on
-today's facts. Reconsider if a real program meets that over-rejection, or if a
-soundness gap turns up that does need facts by program point.
+today's facts. Reconsider if a soundness gap turns up that does need region facts by
+program point.
 
 ### What a panic may drop is decided apart from what an exit drops
 

@@ -75,7 +75,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
 		at := prov_concat_path(graph, base, path)
-		set := prov_region_content_at(graph, root, at, query)
+		set := prov_region_content_at(graph, root, at, query, id)
 		if query == .All {
 			prov_add_received_allocator(graph, &set, root, prov_type_at(graph.k.c, type, path), id, at)
 		}
@@ -219,7 +219,7 @@ prov_symbol_region_at :: proc(graph: ^Flow_Graph, id: Symbol_Id, type: Type_Id, 
 
 // What reading the local `id` as a `type` value depends on.
 @(private = "file")
-prov_symbol_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, type: Type_Id) -> Region_Set {
+prov_symbol_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, type: Type_Id, read: Value_Id = 0) -> Region_Set {
 	if type != INVALID_TYPE && !prov_type_has_region(graph.k.c, type) {
 		return Region_Set{}
 	}
@@ -228,7 +228,7 @@ prov_symbol_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, type: Type_Id) -> 
 	if type_is_region_provider(graph.k.c, type) {
 		return graph.provider_parents[id]
 	}
-	return prov_region_for_symbol(graph, id)
+	return prov_region_for_symbol(graph, id, read = read)
 }
 
 // Returning a region provider transfers its parent dependency, not its local
@@ -247,9 +247,14 @@ prov_escape_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	return prov_result_region(graph, id)
 }
 
-// Region facts only grow, within a pass and from one pass to the next.
+// Region facts only grow, within a pass and from one pass to the next. A write, as
+// opposed to a round seeded from the last one's facts, that puts a parameter's own
+// region back into it is noted (`prov_note_restored`).
 @(private)
-prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
+prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set, written := true) {
+	if written {
+		prov_note_restored(graph, id, set)
+	}
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		sym := symbol_of(graph.k.c, id)
 		for alias in aliases {
@@ -301,7 +306,10 @@ prov_forget_region_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id) {
 @(private)
 prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 	for id, set in seed.region_of {
-		prov_merge_region_of(graph, id, set)
+		prov_merge_region_of(graph, id, set, written = false)
+	}
+	for id in seed.restored {
+		graph.restored[id] = true
 	}
 	for id, set in seed.provider_parents {
 		prov_merge_parent(graph, id, set)
@@ -334,6 +342,8 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 	for id, set in graph.provider_parents { carry.provider_parents[id] = set }
 	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
 	for id in graph.lent_locals { carry.lent_locals[id] = true }
+	carry.restored = make(map[Symbol_Id]bool, len(graph.restored), allocator)
+	for id in graph.restored { carry.restored[id] = true }
 	carry.written_aliases = make(map[Storage_Id][]Written_Alias, len(graph.written_aliases), allocator)
 	for id, aliases in graph.written_aliases {
 		copied := make([]Written_Alias, len(aliases), allocator)
@@ -377,7 +387,7 @@ prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
 			weight += int(alias.loaded)
 		}
 	}
-	return weight + len(facts.lent_locals)
+	return weight + len(facts.lent_locals) + len(facts.restored)
 }
 
 @(private = "file")
@@ -389,7 +399,7 @@ region_weight :: proc(set: Region_Set) -> int {
 // Every region dependency of a symbol, including its field facts. A carrier's
 // own entry is what it views, which only a read through it reaches.
 @(private)
-prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false) -> Region_Set {
+prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false, read: Value_Id = 0) -> Region_Set {
 	out := Region_Set{}
 	sym := symbol_of(graph.k.c, id)
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
@@ -403,7 +413,7 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 	}
 	carrier := sym != nil && prov_type_is_view_carrier(graph.k.c, sym.type)
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
-		region_merge(&out, direct)
+		region_merge(&out, prov_received_region(graph, id, direct, read, nil))
 	}
 	for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
 		region_merge(&out, content.region)
@@ -451,7 +461,7 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 
 // The region dependencies at one path; a whole-value fact reaches every path.
 @(private)
-prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, query := Region_Query.All, loc := #caller_location) -> Region_Set {
+prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, query := Region_Query.All, read: Value_Id = 0) -> Region_Set {
 	out := Region_Set{}
 	if root == NO_ROOT {
 		return out
@@ -467,17 +477,21 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 	reads := graph.self_reads
 	if reads != nil && reads.symbol != id { reads = nil }
 	if direct, found := graph.region_of[id]; found && reads == nil {
+		direct = prov_received_region(graph, id, direct, read, path)
 		region_merge(&out, direct)
 		// A carrier read out of a parameter leads below what the parameter names.
 		if prov_root_is_parameter(graph, root) && prov_type_holds_carrier(graph.k.c, prov_parameter_type_at(graph.k.c, symbol_of(graph.k.c, id), path)) {
-			prov_add_loaded_parameter(graph, &out, root)
+			prov_add_loaded_parameter(&out, direct)
 		}
 	} else if found {
 		// The parameter's own region here is what the argument held at `path`.
 		rest := direct
 		region_remove_param(&rest, reads.index)
 		region_merge(&out, rest)
-		append(&reads.sources, Prov_Region_Source{slice.clone(path, graph.alloc), query})
+		// A read that finds none of what the parameter received copies none of it.
+		if _, replaced := prov_seed_replaced(graph, id, read, path); !replaced {
+			append(&reads.sources, Prov_Region_Source{slice.clone(path, graph.alloc), query})
+		}
 	}
 	for content in graph.region_content[storage] {
 		// Own backing facts stay at their value's path. In particular, a
@@ -1009,7 +1023,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	}
 	#partial switch form in value.form {
 	case Prov_Form_Symbol:
-		return prov_symbol_region(graph, form.symbol, value.type)
+		return prov_symbol_region(graph, form.symbol, value.type, id)
 	case Prov_Form_Error:
 		return prov_error_region_at(graph, form, nil, .All)
 	case Prov_Form_Selector, Prov_Form_Index:
@@ -1017,7 +1031,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			return prov_result_region(graph, call)
 		}
 		if root, path, ok := prov_value_place_of(graph, id); ok {
-			set := prov_region_content_at(graph, root, path)
+			set := prov_region_content_at(graph, root, path, read = id)
 			// An allocator no write named is one the analysis cannot name.
 			if region_is_empty(set) && type_underlying(c, value.type) == TYPE_ALLOCATOR {
 				set.unknown = true
@@ -1079,7 +1093,7 @@ prov_storage_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id, whole := true) -> Region_Set {
 	#partial switch form in prov_value(graph, id).form {
 	case Prov_Form_Symbol:
-		return prov_region_for_symbol(graph, form.symbol, viewed = true)
+		return prov_region_for_symbol(graph, form.symbol, viewed = true, read = id)
 	case Prov_Form_Unary:
 		if form.op == .Amp {
 			return prov_storage_region(graph, form.operand)
@@ -1135,8 +1149,8 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 		prov_add_received_allocator(graph, &out, root, type, 0, nil)
 		// Read below what the parameter names, so no path of it says what this holds:
 		// it stands for what the whole argument reaches (`prov_reached_regions`).
-		if alias.loaded {
-			prov_add_loaded_parameter(graph, &out, root)
+		if direct, found := graph.region_of[graph.roots[int(root)].symbol]; found && alias.loaded {
+			prov_add_loaded_parameter(&out, direct)
 		}
 	}
 	return out, known
@@ -1160,15 +1174,10 @@ prov_parameter_type_at :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Step) ->
 	return prov_type_at(c, type, path)
 }
 
-// The region of parameter `root`, read at a load below what it names
+// The region of a parameter, `direct`, read at a load below what it names
 // (`Region_Set.loaded`).
 @(private = "file")
-prov_add_loaded_parameter :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id) {
-	id := graph.roots[int(root)].symbol
-	direct, found := graph.region_of[id]
-	if !found {
-		return
-	}
+prov_add_loaded_parameter :: proc(set: ^Region_Set, direct: Region_Set) {
 	region_merge(set, direct)
 	params := direct.params
 	for index in next_region_param(&params) {

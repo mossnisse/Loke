@@ -10,6 +10,7 @@ import "core:mem";
 
 Holder :: struct { allocator: Allocator }
 Wrap :: struct { holder: Holder, count: int }
+Owned :: struct { items: [dynamic]int, allocator: Allocator }
 
 field :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
 	h.allocator = allowed;
@@ -73,6 +74,26 @@ option_payload :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, m
 	}
 }
 
+// A parameter that keeps its argument's region, assigned whole or at a field.
+reassigned :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, other: inout Allocator) {
+	other = allowed;
+	free_all(other);
+}
+managed_field :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Owned, flag: bool) {
+	if (flag) { h.allocator = allowed; } else { h.allocator = allowed; }
+	free_all(h.allocator);
+}
+
+// A store reading the assigned field copies only what was assigned there, so the
+// caller's allocator never comes back.
+refilled :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Owned) {
+	h.allocator = allowed;
+	h.items = make([dynamic]int, 0, h.allocator);
+	free_all(h.allocator);
+	h.items = make([dynamic]int, 0, h.allocator);
+	h.items.append(4);
+}
+
 main :: proc() {
 	arena := mem.Arena.init();
 	other := mem.Arena.init();
@@ -90,4 +111,12 @@ main :: proc() {
 	maybe := Option(Allocator).none;
 	option_payload(arena.allocator(), inout maybe);
 	fmt.println(maybe != .none);
+	handle := other.allocator();
+	reassigned(arena.allocator(), inout handle);
+	owned := Owned{make([dynamic]int, 0, other.allocator()), other.allocator()};
+	owned.items.append(5);
+	managed_field(arena.allocator(), inout owned, true);
+	fmt.println(owned.items.len(), owned.items[0]);
+	// `refilled` is only checked: what a call of it leaves is backed by the region it
+	// resets, which the caller cannot order, so even dropping that is L0537.
 }

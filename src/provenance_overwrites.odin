@@ -1,9 +1,10 @@
 // design.md "@(allocator_reset)": what a parameter received is gone from a place the
 // body wrote on every path to a read, so the read is in what those writes stored and
 // not in an allocator the caller supplied there. Region facts merge without regard to
-// control flow and record only the writes; the incoming value is added at each read
-// (`prov_add_received_allocator`), so a read records the places written on every path
-// to it, from the construction walk's control flow, which no fact changes.
+// control flow. The incoming value is added at each read (`prov_add_received_allocator`),
+// or seeded into a parameter's own entry (`prov_received_region`), so a read records the
+// places written on every path to it, from the construction walk's control flow, which no
+// fact changes, and leaves the incoming value out there.
 package lokec
 
 import "core:slice"
@@ -201,6 +202,71 @@ prov_received_replaced :: proc(graph: ^Flow_Graph, value: Value_Id, path: []Proj
 	}
 	for written in prov_value(graph, value).replaced {
 		if path_has_exact_prefix(path, written) {
+			return true
+		}
+	}
+	return false
+}
+
+// A parameter that keeps its argument's region has it in `region_of` from the start
+// (`prov_seed_parameter_region`), where its whole-value writes merge too. `direct`, that
+// entry, read by `value` at `path`, leaves the seed out where every path to the read
+// assigned the place, unless a write may have put the parameter's own region back.
+@(private)
+prov_received_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, direct: Region_Set, value: Value_Id, path: []Proj_Step) -> Region_Set {
+	out := direct
+	if index, replaced := prov_seed_replaced(graph, id, value, path); replaced {
+		region_remove_param(&out, index)
+	}
+	return out
+}
+
+// Whether the read of parameter `id` by `value` at `path` finds none of what it received,
+// and the region index that names that. Only a read that may find it hands it on, so a
+// write can put it back only from a read this is false for (`prov_parameter_restored`).
+@(private)
+prov_seed_replaced :: proc(graph: ^Flow_Graph, id: Symbol_Id, value: Value_Id, path: []Proj_Step) -> (index: int, replaced: bool) {
+	if !prov_received_replaced(graph, value, path) {
+		return
+	}
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil || sym.kind != .Parameter || type_is_region_provider(graph.k.c, sym.type) {
+		return
+	}
+	own: bool
+	index, own = slice.linear_search(graph.param_symbols, id)
+	if !own || index >= REGION_PARAM_LIMIT || prov_parameter_restored(graph, id, index) {
+		return
+	}
+	return index, true
+}
+
+// A write that may hold what parameter `id` received: one merged into its own entry
+// with its region, which a copy of it read before an assignment carries.
+@(private)
+prov_note_restored :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
+	if set.params == 0 || graph.restored[id] {
+		return
+	}
+	if sym := symbol_of(graph.k.c, id); sym == nil || sym.kind != .Parameter {
+		return
+	}
+	if index, own := slice.linear_search(graph.param_symbols, id); own && region_has_param(set, index) {
+		graph.restored[id] = true
+	}
+}
+
+// Whether a write may have put back what parameter `id`, at region `index`, received:
+// one merged into its own entry (`Prov_Facts.restored`), or one into a place of it
+// with its region, or copied from another place of it (`Prov_Region_Content.from`).
+@(private = "file")
+prov_parameter_restored :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int) -> bool {
+	if graph.restored[id] {
+		return true
+	}
+	storage := graph.input.storage_ids[Written_Storage{symbol = id}]
+	for content in graph.region_content[storage] {
+		if _, copied := content.from.?; copied || region_has_param(content.region, index) {
 			return true
 		}
 	}

@@ -181,6 +181,8 @@ Prov_Facts :: struct {
 	// write the caller learns of, or a variable's place `&mut place` lent, so a
 	// reset sees an owner written there and static storage rejects one.
 	written_aliases:  map[Storage_Id][]Written_Alias,
+	// The parameters a write put their own region back into (`prov_note_restored`).
+	restored:         map[Symbol_Id]bool,
 }
 
 @(private)
@@ -239,6 +241,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.temp_provider_bits = make(map[^Expr_Call]u64, allocator)
 	state.temp_providers = make([dynamic]Temp_Provider, allocator)
 	state.lent_locals = make(map[Symbol_Id]bool, allocator)
+	state.restored = make(map[Symbol_Id]bool, allocator)
 	state.written_aliases = make(map[Storage_Id][]Written_Alias, allocator)
 	state.scope_drops = make(map[Span]bool, allocator)
 	return state

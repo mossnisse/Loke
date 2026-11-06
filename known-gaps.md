@@ -143,38 +143,3 @@ This prints `1 false`. The hook itself is no longer lost, since `lifecycle_of` k
 no answer during selection. The block cannot be declared first, as a `when` may select
 what it needs, so a fix has to say which questions a condition may ask. Found on
 2026-11-01 while fixing the lost hooks of a body-local record.
-
-### A write on every path does not end a parameter's own region
-
-[The allocator reset promise](design.md#allocator_reset) covers the regions a reset
-can reach. A parameter that keeps its argument's region, an `Allocator` or a managed
-record, written on every path before the reset, holds only what the write put there:
-
-```loke
-package main;
-Owned :: struct { items: [dynamic]int, allocator: Allocator }
-reassigned :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, other: inout Allocator) {
-    other = allowed;
-    free_all(other);
-}
-managed :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Owned) {
-    h.allocator = allowed;
-    free_all(h.allocator);
-}
-main :: proc() {}
-```
-
-Both resets report `L0538`, though they can only reach `allowed`'s region. A field of a
-record that keeps no region, as `Holder :: struct { allocator: Allocator }`, or an
-`Option(Allocator)`'s payload, now holds only what such a write stored: the incoming
-allocator there is added at each read, unless the read records that every path to it
-assigned the place (`prov_overwritten_here` in
-[src/provenance_overwrites.odin](src/provenance_overwrites.odin)). A parameter like the
-ones above has its incoming region seeded into `region_of` by `prov_seed_parameter_region`
-in [src/cfg_provenance.odin](src/cfg_provenance.odin), the same flow-insensitive entry
-its whole-value writes merge into and that every path of it reads, so a read cannot
-leave the seed out without also leaving out a write that copied the old value back.
-Telling them apart takes keeping the seed apart from the writes for every reader of a
-parameter's region, summaries included. Found while fixing the conditional write on
-2026-11-01 at `46cf2aa8` (P3, over-rejection); narrowed to these parameters on
-2026-11-06.

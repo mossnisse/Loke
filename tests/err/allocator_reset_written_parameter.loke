@@ -7,6 +7,8 @@ package main;
 
 Holder :: struct { allocator: Allocator }
 Owned :: struct { items: [dynamic]int, allocator: Allocator }
+Two :: struct { first: Allocator, second: Allocator, items: [dynamic]int }
+pick :: proc(a: Allocator, b: Allocator) -> Allocator { return a; }
 
 built_payload :: proc(@(allocator_reset) allowed: Allocator, @(allocator_reset) other: Allocator) {
 	maybe := Option(Allocator).some(other);
@@ -107,6 +109,42 @@ payload_written_on_one_path :: proc(@(allocator_reset) @(escape=stored) allowed:
 	case .some(selected): free_all(selected);
 	case .none:
 	}
+}
+
+// A parameter that keeps its argument's region: what it received is still possible
+// where a path skips the assignment, or where a write may have put it back.
+reassigned_on_one_path :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, other: inout Allocator, flag: bool) {
+	if (flag) { other = allowed; }
+	free_all(other);
+}
+reassigned_back :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, @(escape=stored) other: inout Allocator) {
+	saved := other;
+	other = allowed;
+	other = saved;
+	free_all(other);
+}
+reassigned_from_itself :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, @(escape=stored) other: inout Allocator) {
+	other = pick(other, allowed);
+	free_all(other);
+}
+reset_before_reassigning :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, other: inout Allocator) {
+	free_all(other);
+	other = allowed;
+}
+copied_from_a_sibling :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Two) {
+	h.first = allowed;
+	h.first = h.second;
+	free_all(h.first);
+}
+the_sibling :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Two) {
+	h.first = allowed;
+	free_all(h.second);
+}
+managed_field_written_back :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Owned) {
+	saved := h.allocator;
+	h.allocator = allowed;
+	h.allocator = saved;
+	free_all(h.allocator);
 }
 
 main :: proc() {}
