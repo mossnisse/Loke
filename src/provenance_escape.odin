@@ -111,43 +111,55 @@ prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Value_Id, region: Reg
 // value the path is known to stay in.
 @(private)
 prov_type_at :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
-	current := type
+	current, _ := prov_type_along(c, type, path)
+	return current
+}
+
+// `prov_type_at`, and how many steps of `path` the value has. Only a step that a
+// record, union, map, or array it reaches has not, as an element of a record,
+// leaves some out; below a type the walk does not look into, as a pointer
+// parameter's pointee, every step counts.
+@(private)
+prov_type_along :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> (current: Type_Id, named: int) {
+	current = type
 	for step in path {
 		if payload := shared_payload_type(c, current); payload != INVALID_TYPE && step.kind == .Wild {
 			current = payload
+			named += 1
 			continue
 		}
 		info := underlying_info(c, current)
 		if info == nil {
-			return current
+			return current, len(path)
 		}
 		#partial switch info.kind {
 		case .Struct:
 			if step.kind != .Field || step.lo < 0 || int(step.lo) >= len(info.fields) {
-				return current
+				return
 			}
 			field := symbol_of(c, info.fields[int(step.lo)])
 			if field == nil {
-				return current
+				return current, len(path)
 			}
 			current = field.type
 		case .Union:
-			if step.kind != .Field || step.lo < 0 || int(step.lo) >= len(info.variants) { return current }
+			if step.kind != .Field || step.lo < 0 || int(step.lo) >= len(info.variants) { return }
 			current = info.variants[int(step.lo)]
 		case .Map:
 			if step.kind == .Field {
 				current = step.lo == PROJ_MAP_KEY ? info.key : info.element
-			} else if step.kind != .Range && step.kind != .Wild { return current }
+			} else if step.kind != .Range && step.kind != .Wild { return }
 		case .Array, .Dynamic_Array, .Slice, .Box:
 			if step.kind != .Range && step.kind != .Wild {
-				return current
+				return
 			}
 			current = info.element
 		case:
-			return current
+			return current, len(path)
 		}
+		named += 1
 	}
-	return current
+	return
 }
 
 // Whether storing an owner of `region` into the variable `id`, at `span`, lets
@@ -440,7 +452,7 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	// place rejects only where an owner is stored.
 	checked := !region_is_empty(owned) && (owner == CALL_LEFT_OWNER || type_is_managed(graph.k.c, destination_type))
 	escaped := false
-	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
+	seen := make(Written_Alias_Visits, graph.alloc)
 	// `dst^.alloc` lands in the `alloc` field of what `dst` points at.
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, destination), suffix)
 	// A call's rows say which of the destination's carriers they went through.
@@ -519,9 +531,9 @@ prov_store_map_key_region :: proc(graph: ^Flow_Graph, destination, value: Value_
 // so a callee's aggregate write summary must follow those nested destinations.
 @(private = "file")
 prov_store_reachable_regions :: proc(graph: ^Flow_Graph, storage: Storage_Id, path: []Proj_Step,
-                                      writable: bool, region, owned: Region_Set, seen: ^[dynamic]Written_Alias_Visit) {
+                                      writable: bool, region, owned: Region_Set, seen: ^Written_Alias_Visits) {
 	if storage == 0 { return }
-	bounded, first := prov_first_alias_visit(seen, storage, path, writable)
+	bounded, first := prov_first_alias_visit(graph, seen, storage, path, writable)
 	if !first { return }
 	if writable { prov_define_stored_content(graph, prov_root_for_storage(graph, storage), bounded, region, owned) }
 	type := prov_type_at(graph.k.c, prov_storage(graph, storage).type, bounded)

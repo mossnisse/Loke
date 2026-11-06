@@ -1177,12 +1177,12 @@ prov_add_loaded_parameter :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Ro
 @(private = "file")
 prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id) -> Region_Set {
 	out := Region_Set{}
-	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
-	walk :: proc(graph: ^Flow_Graph, target: Storage_Id, at: []Proj_Step, seen: ^[dynamic]Written_Alias_Visit, out: ^Region_Set) {
+	seen := make(Written_Alias_Visits, graph.alloc)
+	walk :: proc(graph: ^Flow_Graph, target: Storage_Id, at: []Proj_Step, seen: ^Written_Alias_Visits, out: ^Region_Set) {
 		if target == 0 {
 			return
 		}
-		bounded, first := prov_first_alias_visit(seen, target, at, false)
+		bounded, first := prov_first_alias_visit(graph, seen, target, at, false)
 		if !first {
 			return
 		}

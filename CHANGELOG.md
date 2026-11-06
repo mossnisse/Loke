@@ -1632,6 +1632,9 @@ checklist.
 
 ### Fixed
 
+- A `Deque` of borrowing elements, as `Deque([]int)`, compiles in well under a second. Its
+  `make_contiguous` took the region analysis two to three minutes, and every program using such a
+  deque paid it.
 - A provider taken out of one field, with `unsafe.take` or `exchange`, carries only that field's
   region. Taking `pair.first` carried `pair.second`'s too, so dropping it was `L0537` for an owner
   only the second backed ([Allocators](design.md#allocators)).

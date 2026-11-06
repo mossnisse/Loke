@@ -460,7 +460,12 @@ Keep these contracts:
   specification asks for, the borrow takes the gathered offsets.
   Alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated path carries the
   precision marker, so `L0646`, `L0647`, and `L0730` say the borrow *may* be
-  there, and recursive cursors converge. A place loan or `.Through` event made
+  there, and recursive cursors converge. A walk over written aliases also cuts a path at the
+  first step that a record, union, map, or array of its storage's type does not
+  have, so the path names all of the place before it, and finds a place it
+  visited by hashing (`prov_first_alias_visit`): a view known only to point
+  into a writable parameter would otherwise lead back into that parameter at
+  every path up to the depth. A place loan or `.Through` event made
   from merged offsets (`Prov_Slot.offsets_merged`) carries
   `Precision_Limit.Places`, and one from offsets of several storages that do
   not cover each other `Precision_Limit.Storages`, so its `L0641` or `L0511`
