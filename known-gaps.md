@@ -7,6 +7,42 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### An unrelated carrier store forgets what was loaded below a cursor
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) permits a load through
+what was loaded below a cursor's current value. `run_loaded_below_event` in
+[borrow_loaded_below.odin](src/borrow_loaded_below.odin) clears every such fact on a
+carrier store, including one into a separate record that cannot relink the chain:
+
+```loke
+package main;
+Node :: struct { value: int, next: ^mut Node }
+Holder :: struct { p: ^int }
+walk :: proc(head: ^mut Node, other: ^mut Holder, @(escape=stored) spare: ^int) {
+    cur := head;
+    for (i := 0; i < 3; i += 1) {
+        cur = cur^.next;
+        t := cur^.next;
+        other^.p = spare;
+        u := t^.next; // L0641, though this still reads below `cur`
+        u^.value = 1;
+        cur^.value = 2;
+    }
+}
+main :: proc() {}
+```
+
+The parent `18885562` accepts this program; `a6097991` and `dbebf669` reject the
+load of `t^.next`. The store changes only a read-only integer pointer in `other`,
+so `t` remains below `cur`. Once the loop's deeper loads share an analysis slot,
+forgetting that fact makes the load appear to compete with the cursor's copy.
+Removing the unrelated store, or moving it before `t := cur^.next`, is accepted.
+
+Invalidate facts only where a store may change an anchor or relink the storage
+that establishes its below relation; retain them across provably unrelated
+stores. Keep the stale-cursor rejection tests alongside this valid-loop case.
+Found on 2026-11-06 while reviewing `a6097991` (P2, new over-rejection).
+
 ### Literal element reuse overwrites a temporary still reached through a C pointer
 
 [Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)
