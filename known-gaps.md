@@ -7,6 +7,76 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### An unknown-target owner read loses its actual allocator dependency
+
+[Allocators](design.md#allocators) requires a reset to reject live owners that still refer to
+the allocator's storage; a `string` copy shares its allocation. `e08ad0ff` removes the
+whole-pointee unnamed-allocator mark in `prov_unknown_target_read` in
+[provenance_regions.odin](src/provenance_regions.odin), but does not replace it with the
+region of the owner actually loaded. For a read-only carrier in a record parameter, the
+known-target lookup and `prov_viewed_region(..., whole = false)` can both return an empty
+set. Since `string` contains no allocator handle, the fallback remains empty, and the
+caller's returned string loses its genuine backing dependency:
+
+```loke
+package main;
+import "core:mem";
+import "core:strings";
+Holder :: struct { allocator: mem.Allocator, text: string }
+Reader :: struct { holder: ^Holder }
+read_text :: proc(reader: Reader) -> string { return reader.holder^.text; }
+caller :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    kept: string = "";
+    {
+        source := Holder{allocator, strings.copy("arena text", allocator)};
+        kept = read_text(Reader{&source});
+    }
+    free_all(allocator); // wrongly accepted while `kept` still shares the allocation
+    return int(kept.bytes()[0]);
+}
+main :: proc() {}
+```
+
+The parent of `e08ad0ff` rejects the reset with `L0537`; the reviewed commit and
+`dbebf669` accept it, permitting use and cleanup after reset. The same regression occurs
+when the loaded value is a `[dynamic]string`: copying its backing array does not copy the
+strings' allocations. Keep the loaded owner's actual region distinct from an unrelated
+sibling handle, and add rejection cases for shared owners and retained container elements
+alongside the accepted integer-array case. Found on 2026-11-06 while reviewing `e08ad0ff`
+(P1).
+
+### A local copy of a carrier retains a sibling allocator's region
+
+[Region tracking](design.md#region-tracking) keeps sibling allocator handles apart from
+owners and preserves a pointer's destinations when it is stored in a local. The
+`e08ad0ff` fix accepts a direct `return reader.holder^.items`, but a local pointer still
+keeps the whole-pointee unnamed-allocator mark. `prov_unknown_target_read` asks
+`prov_viewed_region` for `whole = false`, but its symbol branch returns that previously
+cached mark unchanged:
+
+```loke
+package main;
+import "core:mem";
+Holder :: struct { allocator: mem.Allocator, items: [dynamic]int }
+Reader :: struct { holder: ^Holder }
+read_items :: proc(reader: Reader) -> [dynamic]int {
+    pointer := reader.holder;
+    return pointer^.items;
+}
+caller :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    source := Holder{allocator, [dynamic]int{1}};
+    copied := read_items(Reader{&source});
+    free_all(allocator); // L0537 for `copied`; both arrays use the default allocator
+    return copied[0];
+}
+main :: proc() {}
+```
+
+The local-pointer rejection predates `e08ad0ff` and remains in it and `dbebf669`;
+the direct-read control is accepted by those latter snapshots. Preserve the distinction
+when recording and forwarding a carrier's viewed regions, rather than only suppressing
+the mark on a selector read. Found on 2026-11-06 while reviewing `e08ad0ff` (P3).
+
 ### A local pointer to a slice blames an untouched carrier's target
 
 [Region tracking](design.md#region-tracking) requires a pointer stored in a local to preserve
