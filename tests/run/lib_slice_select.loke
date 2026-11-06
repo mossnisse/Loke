@@ -1,5 +1,6 @@
 package main;
 
+import "base:interfaces";
 import "core:fmt";
 import "core:slice";
 import "core:sync";
@@ -118,15 +119,15 @@ next :: proc(state: inout u64) -> u64 {
 	return state;
 }
 
-// The postcondition for `n` under `<`, and that `values[n]` is `wanted`, the
-// element `sort` puts there.
-selected :: proc(values: []int, n: int, wanted: int) -> bool {
+// The postcondition for `n` under `less`, and that `values[n]` is `wanted`, the
+// element a sort by `less` puts there.
+selected :: proc(values: []int, n: int, wanted: int, less: $C) -> bool where interfaces.Callable(C, proc(left, right: int) -> bool) {
 	if (values[n] != wanted) { return false; }
 	foreach (i in 0 ..< n) {
-		if (values[n] < values[i]) { return false; }
+		if (less(values[n], values[i])) { return false; }
 	}
 	foreach (j in n + 1 ..< values.len()) {
-		if (values[j] < values[n]) { return false; }
+		if (less(values[j], values[n])) { return false; }
 	}
 	return true;
 }
@@ -172,7 +173,7 @@ exhaustive_small :: proc() {
 			foreach (n in 0 ..< len) {
 				work = original;
 				slice.select_nth(&mut work[:len], n);
-				if (!selected(work[:len], n, sorted[n]) || !same_elements(work[:len], original[:len])) {
+				if (!selected(work[:len], n, sorted[n], slice.Ascending(int){}) || !same_elements(work[:len], original[:len])) {
 					failures += 1;
 				}
 			}
@@ -202,9 +203,8 @@ exhaustive_past_threshold :: proc() {
 	work := [40]int{};
 	failures := 0;
 	foreach (code in 0 ..< 1 << 17) {
-		ones := 0;
 		foreach (n in [5]int{0, 1, 8, 15, 16}) {
-			ones = 0;
+			ones := 0;
 			foreach (i in 0 ..< 17) {
 				work[i] = (code >> u64(i)) & 1;
 				ones += work[i];
@@ -214,7 +214,7 @@ exhaustive_past_threshold :: proc() {
 			slice.select_nth(&mut work[:17], n);
 			after := 0;
 			foreach (i in 0 ..< 17) { after += work[i]; }
-			if (!selected(work[:17], n, wanted) || after != ones) { failures += 1; }
+			if (!selected(work[:17], n, wanted, slice.Ascending(int){}) || after != ones) { failures += 1; }
 		}
 	}
 	state: u64 = 0x9E3779B97F4A7C15;
@@ -228,7 +228,7 @@ exhaustive_past_threshold :: proc() {
 				slice.swap(&mut work[:len], i, j);
 			}
 			slice.select_nth(&mut work[:len], n);
-			if (!selected(work[:len], n, n) || !is_identity_permutation(work[:len])) { failures += 1; }
+			if (!selected(work[:len], n, n, slice.Ascending(int){}) || !is_identity_permutation(work[:len])) { failures += 1; }
 		}
 		permutations += 1;
 	}
@@ -257,10 +257,11 @@ large_inputs :: proc() {
 		foreach (n in [5]int{0, 1, count / 3, count / 2, count - 1}) {
 			work := slice.clone(original[:]);
 			slice.select_nth(&mut work[:], n);
-			if (!selected(work[:], n, sorted[n]) || !same_elements(work[:], original[:])) { failures += 1; }
+			if (!selected(work[:], n, sorted[n], slice.Ascending(int){}) || !same_elements(work[:], original[:])) { failures += 1; }
 			work = slice.clone(original[:]);
-			slice.select_nth_by(&mut work[:], n, slice.Descending(int){});
-			if (work[n] != sorted[count - 1 - n]) { failures += 1; }
+			descending := slice.Descending(int){};
+			slice.select_nth_by(&mut work[:], n, descending);
+			if (!selected(work[:], n, sorted[count - 1 - n], descending) || !same_elements(work[:], original[:])) { failures += 1; }
 		}
 		fmt.println(names[shape], failures, "failures");
 	}
@@ -285,7 +286,7 @@ adversary :: proc() {
 	sorted := slice.clone(keys[:]);
 	sorted.sort();
 	fmt.println(
-		"adversary:", selected(keys[:], count / 2, sorted[count / 2]),
+		"adversary:", selected(keys[:], count / 2, sorted[count / 2], slice.Ascending(int){}),
 		is_identity_permutation(values[:]), comparisons < 40 * count,
 	);
 }

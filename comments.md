@@ -3407,14 +3407,17 @@ boundaries and API shapes follow a few common choices:
   round that keeps more than ⅞ of its range is bad, and after four bad rounds every
   pivot is a median of medians. Such a round costs its range plus a selection on a
   fifth of it, so it must keep less than 4/5 of the range for the total to stay
-  linear. At most about 7/10 is strictly larger than such a pivot, and as much
-  strictly smaller, but Hoare's partition can put every tie on the kept side,
-  which then holds up to about 0.85: its scans pass only strictly smaller or
-  larger elements, and each swap adds one element to both sides. So a fallback
-  round that keeps more than ¾ also gathers the elements equivalent to the pivot
-  beside it, and keeps only what is strictly smaller or larger. With the fallback
-  forced from the first round, 200,000 duplicate-heavy inputs reached that pass,
-  and every result met the contract.
+  linear. At most ¾ of the range is strictly smaller than such a pivot, reached
+  at 24 elements and nearer 7/10 for long ranges, and no more is strictly
+  larger. But Hoare's partition can put every tie on the kept side, which then
+  holds up to about 0.85: its scans pass only strictly smaller or larger
+  elements, and each swap adds one element to both sides. So every fallback
+  round also gathers the elements equivalent to the pivot beside it, and keeps
+  only what is strictly smaller or larger. Gathering only in a round that kept
+  more than ¾ would save one comparison per kept element in a rare round, but
+  then no test input reached the pass with a valid comparator, not even
+  McIlroy's adversary. `core/slice/select_test.loke` forces the fallback from
+  the first round on duplicate-heavy inputs.
 - **`n` is an index, and selection returns nothing.** An `n` out of range is a
   miscomputed index, as `values[n]` would be, so it panics rather than clamping; an
   empty slice has no element to select. The two sides around `n` would be two

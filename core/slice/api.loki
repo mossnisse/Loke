@@ -94,9 +94,8 @@ partition_point :: proc(values: []$T, keep: $P) -> int where interfaces.Callable
 	comparator, with nothing after it to its left and nothing before it to its
 	right. Elements equivalent to it may end up on either side. For a strict
 	weak ordering, O(n) comparisons in the worst case. No allocation, and no
-	element copied. `n` is checked like
-	an index, so an empty slice always panics. Follow up with
-	`values.split_at_mut(n)` for the two sides.
+	element copied. `n` is checked like an index, so an empty slice always
+	panics. Follow up with `values.split_at_mut(n)` for the two sides.
 
 	A comparator must define a strict weak ordering. One that does not, or one
 	that panics, leaves the slice an unspecified permutation of what it held, and
