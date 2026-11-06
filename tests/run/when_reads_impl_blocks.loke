@@ -1,0 +1,46 @@
+// design.md "when statement": a file-scope condition reads the `impl` blocks outside
+// any `when`, which count from the start, and waits for a branch holding a block that
+// may declare a member it calls or a hook `is_copyable` counts.
+package main;
+import "core:fmt";
+
+S :: struct { x: int }
+impl S { size :: proc() -> int { return 1; } }
+when (S.size() == 1) { MEMBER :: 1; } else { MEMBER :: 2; }
+
+// The member's body reads a constant a later branch declares.
+T :: struct { x: int }
+impl T { size :: proc() -> int { return LATER; } }
+when (T.size() == 3) { THROUGH_MEMBER :: 1; } else { THROUGH_MEMBER :: 2; }
+when (true) { LATER :: 3; }
+
+// The member is in a block a branch selected by another condition supplies.
+U :: struct { x: int }
+when (U.size() == 4) { FROM_BRANCH :: 1; } else { FROM_BRANCH :: 2; }
+SUPPLY :: true;
+when (SUPPLY) { impl U { size :: proc() -> int { return 4; } } }
+
+// A copy hook bounded to `int` leaves `G(string)` move-only.
+G :: struct($T: type) { value: T }
+when (is_copyable(G(string))) { BOUNDED :: 1; } else { BOUNDED :: 2; }
+impl G($T) {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(G(T), Allocator_Error) where T == int {
+		return .ok(G(T){self.value});
+	}
+}
+
+// The same, with the block in a branch.
+H :: struct($T: type) { value: T }
+when (is_copyable(H(string))) { BOUNDED_IN_BRANCH :: 1; } else { BOUNDED_IN_BRANCH :: 2; }
+when (SUPPLY) {
+	impl H($T) {
+		dup :: hook(copy) proc(self, allocator: Allocator) -> Result(H(T), Allocator_Error) where T == int {
+			return .ok(H(T){self.value});
+		}
+	}
+}
+
+main :: proc() {
+	fmt.println(MEMBER, THROUGH_MEMBER, FROM_BRANCH);
+	fmt.println(BOUNDED, BOUNDED_IN_BRANCH, is_copyable(G(string)), is_copyable(G(int)));
+}

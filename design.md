@@ -6300,14 +6300,24 @@ File-scope conditions and declarations may appear in any order, so a condition i
 answered only once what it reads can no longer change. It reads the names it writes
 and what they declare: a constant's value, a record's fields, a procedure's signature
 and body, in any package. It waits for a branch that may declare one of those names,
-which includes a branch that may shadow a predeclared name. A condition still waiting
-when no more branches can be selected is an error, and selects neither branch.
+which includes a branch that may shadow a predeclared name. A condition also reads
+the `impl` blocks outside any `when`, which count from the start: a member it calls
+and what that member declares, and the hooks and bounds that decide
+`is_copyable`. It waits for a branch holding an `impl` block that may declare a
+member it calls but cannot find, and while any branch holds a lifecycle hook,
+for `is_copyable`. A condition still waiting when no more branches can be
+selected is an error, and selects neither branch.
 
 ```loke
 when (size_of(string) == 4) { A :: 1; } else { A :: 2; }
 when (true) { string :: i32; } // `A` is 1: the first condition reads this `string`
 
 when (size_of(int) == 4) { int :: i32; } // error: its own branch may shadow `int`
+
+S :: struct { x: int }
+impl S { size :: proc() -> int { return 1; } }
+when (S.size() == 1) { B :: 1; } else { B :: 2; } // `B` is 1
+when (S.count() == 1) { impl S { count :: proc() -> int { return 1; } } } // error: its own branch declares `count`
 ```
 
 ```loke

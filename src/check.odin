@@ -182,10 +182,13 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	bind_runtime_bootstrap(k, pkg)
 	// Before `impl` blocks, which may name their subject as `vendor.Vector2`.
 	bind_import_aliases(k, pkg)
-	// Only blocks whose subject's package (and its imports) has no pending `when`:
-	// declaring a block resolves its subject once, and a record's fields may come
-	// from a branch not selected yet, as `core:fs`'s `File.handle` does. Any block
-	// left is declared by `resolve_impl_signatures`.
+	// Declaring a block resolves its subject once, and a record's fields may come
+	// from a branch not selected yet, as `core:fs`'s `File.handle` does. So a block
+	// is declared now only where its subject's package (and its imports) has no
+	// pending `when`, or where its subject names nothing a pending `when` may still
+	// declare, as a condition must (`first_unresolved_name`): design.md "when
+	// statement" lets a condition reach such a block. Any block left is declared by
+	// `resolve_impl_signatures`.
 	pending := make(map[Package_Id]bool, 8, context.temp_allocator)
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
@@ -200,7 +203,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 				waits = package_closure_has_pending_whens(k.c, subject)
 				pending[subject] = waits
 			}
-			if !waits {
+			if !waits || first_unresolved_name(k, impl.type) == "" {
 				declare_impl_block(k, impl)
 			}
 		}
