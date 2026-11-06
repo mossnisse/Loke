@@ -527,31 +527,6 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	record_called_procedure(k, v, chosen)
 }
 
-// design.md "`@(deprecated=<string>)`": a method, a group's member, or a
-// generic instance is a use of the declaration it was chosen from. A plain
-// named call warns where its name resolves instead.
-@(private = "file")
-warn_deprecated_choice :: proc(k: ^Checker, chosen: Symbol_Id, span: Span) {
-	sym := declaration_of_choice(k, chosen)
-	if sym != nil {
-		warn_deprecated_use(k, sym, identifier_text(k.c, sym.name), span)
-	}
-}
-
-// The declaration a call chose: a generic instance's template, or the
-// procedure itself.
-@(private = "file")
-declaration_of_choice :: proc(k: ^Checker, chosen: Symbol_Id) -> ^Symbol {
-	sym := symbol_of(k.c, chosen)
-	if sym == nil {
-		return nil
-	}
-	if template := symbol_of(k.c, sym.instance_of); template != nil {
-		return template
-	}
-	return sym
-}
-
 // A place copied into a trivial aggregate `value: T` parameter is a copy site; a
 // managed one is borrowed for the call (design.md). Operations that read no
 // arguments, or report their own copies, are skipped.

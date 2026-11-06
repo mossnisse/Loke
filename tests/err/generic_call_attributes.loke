@@ -1,8 +1,9 @@
 package main;
 
 // design.md "@(require_results)" and "`@(deprecated=<string>)`": both bind
-// the declaration, so a call reaches them however it chose the procedure: by
-// name, as a method, as a group's member, or as an instance of a generic one.
+// the declaration, so a use reaches them however it chose the procedure: by
+// name, as a method, as a group's member, as an operator or a conversion hook,
+// or as an instance of a generic one.
 
 @(require_results) plain :: proc(w: int) -> int { return w; }
 @(require_results) generic :: proc(w: $T) -> T { return w; }
@@ -14,12 +15,25 @@ impl Box {
 	@(require_results) generic_method :: proc(self, w: $T) -> Box { return {self.v}; }
 	@(deprecated = "m") old_method :: proc(self) -> int { return self.v; }
 	@(deprecated = "gm") old_generic_method :: proc(self, w: $T) -> int { return self.v; }
+	@(deprecated = "c") from_bool :: hook(convert) proc(v: bool) -> Box { return {1}; }
 }
 
+Wrap :: struct($T: type) { v: T }
+
+impl Wrap($T) {
+	@(require_results) get :: proc(self) -> T { return self.v; }
+	@(deprecated = "w") old :: proc(self) -> T { return self.v; }
+}
+
+@(deprecated = "op") add :: operator(+) proc(a: Box, w: $T) -> Box { return a; }
+
+@(deprecated = "p") old_plain :: proc(w: int) -> int { return w; }
 @(deprecated = "g") old_generic :: proc(w: $T) -> T { return w; }
 @(deprecated = "o") old_member :: proc(w: int) -> int { return w; }
 current_member :: proc(w: string) -> int { return 0; }
 members :: proc{old_member, current_member};
+@(require_results) generic_member :: proc(w: $T) -> T { return w; }
+required :: proc{generic_member, current_member};
 
 main :: proc() {
 	plain(1);
@@ -28,13 +42,22 @@ main :: proc() {
 	b.method(2);
 	b.generic_method(2);
 	b.generic_method("text");
+	Box.generic_method(b, 3);
 	kept := generic(3);
 	_ = generic(4);
 	_ = b.generic_method(5);
+	w := Wrap(int){1};
+	w.get();
+	required(1);
 
+	_ = old_plain(1);
 	_ = b.old_method();
 	_ = b.old_generic_method(1);
+	_ = Box.old_generic_method(b, 1);
 	_ = old_generic(1);
 	_ = members(1);
 	_ = members("not deprecated");
+	_ = w.old();
+	_ = b + 1;
+	_ = Box(true);
 }

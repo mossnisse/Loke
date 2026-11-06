@@ -14,8 +14,9 @@ checklist.
   [`@(deprecated)`](design.md#deprecatedstring) bind a generic procedure's declaration, so they hold
   for every instance: a bare call of a generic `@(require_results)` procedure, free or a method, is
   now `L0612`, and a result bound and never read is `L0698`, as for any other procedure. Both
-  compiled. A deprecated generic procedure, a deprecated method, and a deprecated member chosen from a
-  group now warn with `L0611` at each call; only a plain named call did. Upgrade by using the result
+  compiled. A deprecated generic procedure or operator, a deprecated method, a deprecated member
+  chosen from a group, and a deprecated conversion hook reached as `T(value)` now warn with `L0611`
+  at each use; only a plain named call and a non-generic operator did. Upgrade by using the result
   or discarding it with `_ = ...`.
 - A cursor stepped through itself, as `cur := head; cur = cur^.next;`, is a copy of the `next` it
   came from ([Weakening and reborrows](design.md#weakening-and-reborrows)), however it was given its

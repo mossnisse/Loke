@@ -560,7 +560,7 @@ resolve_operator_set :: proc(k: ^Checker, span: Span, set: Operator_Set, args: [
 	if !ok {
 		return INVALID_SYMBOL, nil
 	}
-	warn_deprecated_use(k, sym, identifier_text(k.c, sym.name), span)
+	warn_deprecated_choice(k, cand.symbol, span)
 	promote_operator_instance(k, cand.symbol, span)
 	return cand.symbol, bound
 }

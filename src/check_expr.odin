@@ -1898,6 +1898,28 @@ warn_deprecated_use :: proc(k: ^Checker, sym: ^Symbol, name: string, span: Span)
 	}
 }
 
+// design.md "`@(deprecated=<string>)`": a method, a group's member, an
+// operator, or a generic instance is a use of the declaration it was chosen
+// from. A plain named call warns where its name resolves instead.
+warn_deprecated_choice :: proc(k: ^Checker, chosen: Symbol_Id, span: Span) {
+	if sym := declaration_of_choice(k, chosen); sym != nil {
+		warn_deprecated_use(k, sym, identifier_text(k.c, sym.name), span)
+	}
+}
+
+// The declaration overload resolution chose: a generic instance's template,
+// which holds its attributes, or the procedure itself.
+declaration_of_choice :: proc(k: ^Checker, chosen: Symbol_Id) -> ^Symbol {
+	sym := symbol_of(k.c, chosen)
+	if sym == nil {
+		return nil
+	}
+	if template := symbol_of(k.c, sym.instance_of); template != nil {
+		return template
+	}
+	return sym
+}
+
 // `v` as a call of the operator overload resolution chose.
 @(private = "file")
 annotate_user_operator :: proc(k: ^Checker, v: ^Expr_Base, chosen: Symbol_Id) -> ^Symbol {

@@ -677,8 +677,12 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		mark_template_hook(k, d)
 		reject_uninstantiated_generic(k, d)
 		// design.md "@(require_results)" and "`@(deprecated=<string>)`" bind
-		// the declaration, so a call of any instance reads them here.
-		apply_proc_metadata(k, d, d.symbols[0])
+		// the declaration: recorded on the template, a call of any instance
+		// reads them there (`declaration_of_choice`). A generic type takes
+		// its `@(require_results)` per instance (`apply_type_metadata`).
+		if template != nil && template.kind == .Procedure {
+			apply_proc_metadata(k, d, d.symbols[0])
+		}
 		if template != nil && template.kind == .Alias {
 			check_alias_template(k, d, template)
 		}
