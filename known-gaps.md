@@ -7,6 +7,47 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Literal element reuse overwrites a temporary still reached through a C pointer
+
+[Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)
+keeps a value temporary alive until its complete expression ends.
+[`unsafe.raw_data`](design.md#unsaferaw_data-procedure) discards checked provenance;
+it does not shorten that specified lifetime. `end_operand_temporaries` in
+[emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) instead reuses large slots after
+each literal element when its result type holds no checked borrow and no cleanup
+remains. A borrowed receiver can already have exposed the temporary's address as a
+C pointer. This reads both receivers during the same complete expression:
+
+```loke
+package main;
+import "core:fmt";
+import "core:unsafe";
+Large :: struct { bytes: [5000]u8 }
+impl Large {
+    data :: proc(self: ^) -> [^]u8 { return unsafe.raw_data(&self.bytes); }
+}
+large :: proc(value: u8) -> Large {
+    out: Large = {};
+    out.bytes[0] = value;
+    return out;
+}
+inspect :: proc(values: [][^]u8) { fmt.println(values[0][0], values[1][0]); }
+main :: proc() {
+    inspect([dynamic][^]u8{large(1).data(), large(2).data()});
+}
+```
+
+The parent `2cd5aade` prints `1 2`; `18885562` and `dbebf669` print `2 2` because
+the second receiver reuses the first one's storage. The regression occurs at both
+`-opt=none` and `-opt=speed`, and with `map[int][^]u8{0 = large(1).data(),
+1 = large(2).data()}` passed to a corresponding map reader. Returning checked `^u8`
+pointers instead preserves `1 2`, since the element type then blocks reuse.
+
+Keep temporaries whose addresses have been exposed alive through their complete
+expression, even when the literal's stored type carries no checked borrow. Add the
+C-pointer case alongside the large-value stack regression and checked-borrow controls.
+Found on 2026-11-06 while reviewing `18885562` (P2).
+
 ### Providers moved into sibling fields retain each other's regions
 
 [Allocators](design.md#allocators) preserves a provider's identity across a move, and
