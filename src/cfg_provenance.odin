@@ -158,6 +158,8 @@ Prov_State :: struct {
 	has_replacing_store: bool,
 	// A `Publish` the solve links to where it lands (`link_landed_stores`).
 	has_linked_store: bool,
+	// The parameter places the walk's assignments wrote, by block.
+	overwrites: Prov_Overwrites,
 }
 
 // design.md "Allocator regions and region provenance": the flow-insensitive
@@ -952,13 +954,13 @@ prov_case_region_aliases :: proc(
 ) -> (aliases: []Prov_Region_Alias, uncertain: bool) {
 	places := make([dynamic]Prov_Region_Alias, graph.alloc)
 	if root, at, ok := prov_value_place_of(graph, subject); ok {
-		append(&places, Prov_Region_Alias{root, at})
+		append(&places, Prov_Region_Alias{root = root, path = at, from = subject})
 	} else {
 		below := prov_path_below_carrier(graph, subject)
 		for target in prov_written_targets(graph, subject, as_place = true) {
 			target_root := prov_root_for_storage(graph, target.target)
 			if target_root == NO_ROOT { uncertain = true; continue }
-			append(&places, Prov_Region_Alias{target_root, prov_concat_path(graph, target.at, below)})
+			append(&places, Prov_Region_Alias{root = target_root, path = prov_concat_path(graph, target.at, below)})
 		}
 	}
 	out := make([dynamic]Prov_Region_Alias, graph.alloc)
@@ -970,7 +972,7 @@ prov_case_region_aliases :: proc(
 		for variant in variants {
 			path := prov_extend(graph, place.path, proj_field(variant))
 			if slot >= 0 { path = prov_extend(graph, path, proj_field(slot)) }
-			append(&out, Prov_Region_Alias{place.root, path})
+			append(&out, Prov_Region_Alias{root = place.root, path = path, from = place.from})
 		}
 	}
 	uncertain ||= len(out) == 0

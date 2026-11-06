@@ -74,9 +74,10 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		}
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
-		set := prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query)
+		at := prov_concat_path(graph, base, path)
+		set := prov_region_content_at(graph, root, at, query)
 		if query == .All {
-			prov_add_received_allocator(graph, &set, root, prov_type_at(graph.k.c, type, path))
+			prov_add_received_allocator(graph, &set, root, prov_type_at(graph.k.c, type, path), id, at)
 		}
 		return set
 	}
@@ -90,16 +91,18 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 
 // design.md "@(allocator_reset)": an allocator a parameter received inside another
 // value, as an `Option(Allocator)`'s payload, a record's field, or what a carrier in
-// a record leads to, is one the analysis cannot name. Region facts merge without regard to control flow, so a write this
-// body makes there, which they record beside it, does not show the incoming one gone.
-// A parameter `prov_bind_parameters` gives a region of its own names it by that.
+// a record leads to, is one the analysis cannot name. Region facts record only this
+// body's writes there, so the incoming one is added at a read of `value` at `path` of
+// its root, unless a write on every path to the read replaced it
+// (`prov_received_replaced`). A parameter `prov_bind_parameters` gives a region of
+// its own names it by that.
 @(private = "file")
-prov_add_received_allocator :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id, type: Type_Id) {
+prov_add_received_allocator :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id, type: Type_Id, value: Value_Id, path: []Proj_Step) {
 	c := graph.k.c
 	if root == NO_ROOT || !prov_root_is_parameter(graph, root) || !prov_holds_allocator(c, type) {
 		return
 	}
-	if !prov_type_keeps_argument_region(c, symbol_of(c, graph.roots[int(root)].symbol).type) {
+	if !prov_type_keeps_argument_region(c, symbol_of(c, graph.roots[int(root)].symbol).type) && !prov_received_replaced(graph, value, path) {
 		set.unknown = true
 	}
 }
@@ -393,7 +396,7 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 		for alias in aliases {
 			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, .All))
 			if sym != nil {
-				prov_add_received_allocator(graph, &out, alias.root, sym.type)
+				prov_add_received_allocator(graph, &out, alias.root, sym.type, alias.from, alias.path)
 			}
 		}
 		if prov_aliases_settle(aliases) { return out }
@@ -609,6 +612,10 @@ prov_destination_allocator :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_
 Prov_Region_Alias :: struct {
 	root: Root_Id,
 	path: []Proj_Step,
+	// The value read at the place, when it names one directly: what was written on
+	// every path to that read is still written where the binding is read, which it
+	// dominates (`prov_received_replaced`).
+	from: Value_Id,
 }
 
 // Whether `aliases` name every place the binding's facts live, with no local
@@ -1015,7 +1022,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			if region_is_empty(set) && type_underlying(c, value.type) == TYPE_ALLOCATOR {
 				set.unknown = true
 			}
-			prov_add_received_allocator(graph, &set, root, value.type)
+			prov_add_received_allocator(graph, &set, root, value.type, id, path)
 			return set
 		}
 		// A field of a temporary is in what produced it, each alternative of a
@@ -1125,7 +1132,7 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 		if alias.target == 0 { known = false; continue }
 		root := prov_root_for_storage(graph, alias.target)
 		region_merge(&out, prov_region_content_at(graph, root, prov_concat_path(graph, alias.at, below), query))
-		prov_add_received_allocator(graph, &out, root, type)
+		prov_add_received_allocator(graph, &out, root, type, 0, nil)
 		// Read below what the parameter names, so no path of it says what this holds:
 		// it stands for what the whole argument reaches (`prov_reached_regions`).
 		if alias.loaded {
@@ -1272,15 +1279,15 @@ prov_bind_traversal_aliases :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable:
 	carrier := type_is_carrier(graph.k.c, prov_value(graph, iterable).type)
 	aliases := make([dynamic]Prov_Region_Alias, graph.alloc)
 	uncertain := false
-	add :: proc(graph: ^Flow_Graph, id: Symbol_Id, aliases: ^[dynamic]Prov_Region_Alias, uncertain: ^bool, root: Root_Id, path: []Proj_Step) {
+	add :: proc(graph: ^Flow_Graph, id: Symbol_Id, aliases: ^[dynamic]Prov_Region_Alias, uncertain: ^bool, root: Root_Id, path: []Proj_Step, from: Value_Id = 0) {
 		if root == NO_ROOT || prov_region_alias_reaches(graph, root, id) {
 			uncertain^ = true
 		} else {
-			append(aliases, Prov_Region_Alias{root, path})
+			append(aliases, Prov_Region_Alias{root = root, path = path, from = from})
 		}
 	}
 	if root, path, named := prov_value_place_of(graph, iterable); named && !carrier {
-		add(graph, id, &aliases, &uncertain, root, prov_concat_path(graph, path, element))
+		add(graph, id, &aliases, &uncertain, root, prov_concat_path(graph, path, element), iterable)
 	} else {
 		below := carrier ? nil : prov_path_below_carrier(graph, iterable)
 		for target in prov_written_targets(graph, iterable, as_place = !carrier) {

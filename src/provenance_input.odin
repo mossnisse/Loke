@@ -53,6 +53,9 @@ Prov_Value :: struct {
 	// A read through it may find targets no write named
 	// (`prov_alias_source_is_unknown`).
 	unknown_alias: bool,
+	// The paths of its parameter storage written on every path to where it is read
+	// (`prov_overwritten_here`).
+	replaced: [][]Proj_Step,
 	// `prov_value_transfer`'s answer; nil when described as no transfer.
 	transfer: Prov_Transfer,
 	described: bool,
@@ -240,6 +243,7 @@ prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr) -> Value
 	value := &graph.input.values[int(id)]
 	value.place, value.form, value.temporary = place, form, prov_expr_is_temporary(e)
 	value.unknown_alias = prov_alias_source_is_unknown(graph.k.c, repr.type, e)
+	value.replaced = prov_overwritten_here(graph, place)
 	return id
 }
 

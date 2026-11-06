@@ -331,6 +331,7 @@ build_flow_pass :: proc(
 	leave_flow_scope(graph)
 
 	if mode != .Lifecycle {
+		graph.overwrites.walked = true
 		return graph
 	}
 	return len(graph.tracked) == 0 ? nil : graph
@@ -1166,6 +1167,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			value_loans := make([][]int, 1, graph.alloc)
 			value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span))
 			prov_assign(graph, s, value_loans)
+			prov_note_overwrites(graph, s)
 			return
 		}
 	}
@@ -1190,6 +1192,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			prov_destructure_copy_effects(graph, &s.destructure, s.rhs[0])
 		}
 		prov_assign(graph, s, value_loans)
+		prov_note_overwrites(graph, s)
 		if !s.destructure.active {
 			for target, index in s.lhs {
 				if is_discard(target) && index < len(s.rhs) {

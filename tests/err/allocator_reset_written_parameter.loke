@@ -72,4 +72,41 @@ managed_parameter :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator
 	free_all(h.allocator);
 }
 
+// A write on every path to the reset replaces what was received
+// (tests/run/allocator_reset_overwritten_parameter.loke); these reach it without one.
+read_before_the_write :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) {
+	for (i := 0; i < n; i += 1) {
+		free_all(h.allocator);
+		h.allocator = allowed;
+	}
+}
+written_in_a_loop :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) {
+	for (i := 0; i < n; i += 1) { h.allocator = allowed; }
+	free_all(h.allocator);
+}
+written_back :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
+	saved := h.allocator;
+	h.allocator = allowed;
+	h.allocator = saved;
+	free_all(h.allocator);
+}
+unwound_before_the_write :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) {
+	defer free_all(h.allocator);
+	if (n > 3) { panic("too many"); }
+	h.allocator = allowed;
+}
+read_by_the_same_assignment :: proc(
+	@(allocator_reset) @(escape=stored) allowed: Allocator, @(escape=stored) h: inout Holder, other: inout Holder,
+) {
+	h.allocator, other.allocator = allowed, h.allocator;
+	free_all(other.allocator);
+}
+payload_written_on_one_path :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, maybe: inout Option(Allocator), flag: bool) {
+	if (flag) { maybe = Option(Allocator).some(allowed); }
+	switch (maybe) {
+	case .some(selected): free_all(selected);
+	case .none:
+	}
+}
+
 main :: proc() {}

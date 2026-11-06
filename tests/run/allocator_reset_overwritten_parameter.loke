@@ -1,0 +1,93 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "@(allocator_reset)": what a parameter received is gone from a place this
+// body wrote on every path to a reset, so the reset reaches only what the writes put
+// there. tests/err/allocator_reset_written_parameter.loke keeps the paths that skip
+// the write.
+
+Holder :: struct { allocator: Allocator }
+Wrap :: struct { holder: Holder, count: int }
+
+field :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
+	h.allocator = allowed;
+	free_all(h.allocator);
+}
+
+// Writing the whole record writes its field.
+whole_record :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
+	h = Holder{allowed};
+	free_all(h.allocator);
+}
+
+nested_field :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, w: inout Wrap) {
+	w.holder.allocator = allowed;
+	free_all(w.holder.allocator);
+}
+
+// One branch writes the field and the other the whole record.
+both_branches :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, flag: bool) {
+	if (flag) { h.allocator = allowed; } else { h = Holder{allowed}; }
+	free_all(h.allocator);
+}
+
+every_case :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) {
+	switch (n) {
+	case 0: h.allocator = allowed;
+	case: h.allocator = allowed;
+	}
+	free_all(h.allocator);
+}
+
+// A path that returns first never reaches the reset.
+after_early_return :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, flag: bool) {
+	if (flag) { return; }
+	h.allocator = allowed;
+	free_all(h.allocator);
+}
+
+// The loop is left only through the `break` after the write.
+before_break :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
+	for (;;) {
+		h.allocator = allowed;
+		break;
+	}
+	free_all(h.allocator);
+}
+
+// The deferred reset runs after the write on a panic's unwind path too.
+deferred_after_write :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) -> int {
+	h.allocator = allowed;
+	defer free_all(h.allocator);
+	return n + 1;
+}
+
+// A switch binding reads the payload the write stored.
+option_payload :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, maybe: inout Option(Allocator)) {
+	maybe = Option(Allocator).some(allowed);
+	switch (maybe) {
+	case .some(selected): free_all(selected);
+	case .none:
+	}
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	other := mem.Arena.init();
+	h := Holder{other.allocator()};
+	field(arena.allocator(), inout h);
+	whole_record(arena.allocator(), inout h);
+	w := Wrap{Holder{other.allocator()}, 2};
+	nested_field(arena.allocator(), inout w);
+	both_branches(arena.allocator(), inout h, true);
+	both_branches(arena.allocator(), inout h, false);
+	every_case(arena.allocator(), inout h, 1);
+	after_early_return(arena.allocator(), inout h, false);
+	before_break(arena.allocator(), inout h);
+	fmt.println(deferred_after_write(arena.allocator(), inout h, 2), w.count);
+	maybe := Option(Allocator).none;
+	option_payload(arena.allocator(), inout maybe);
+	fmt.println(maybe != .none);
+}
