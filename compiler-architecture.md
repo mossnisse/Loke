@@ -513,7 +513,8 @@ Keep these contracts:
   place loan bits they may hold there, as a definition may come over a loop's back
   edge after the walk met the store (`publish_place_settled`). A store to one place ends what
   was taken from what it replaced, unless it stores what it read there
-  (`end_links_of_value`). Which reborrows each slot's value may have come through is
+  (`end_links_of_value`), which for a slot with many reborrows asks each interned row
+  about them once (`row_holds_reborrow_of`). Which reborrows each slot's value may have come through is
   solved last, as it depends on every link (`solve_links_held`): a slot holds a row with
   a bit per reborrow, which a copy passes on, and each distinct row is kept once, so a
   block holds only a handle per slot. A use of a carrier conflicts with a live slot
@@ -1030,7 +1031,8 @@ Preserve these lowering rules:
   avoiding LLVM first-class aggregates that can crash clang. Route Loke values
   through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
   `emit_ret`, and `sret_param`; reuse temporary storage between full
-  expressions.
+  expressions, and between a container literal's elements once the container
+  holds one that names none of its temporaries (`end_operand_temporaries`).
 - Fixed-array clone failures drop the built prefix in reverse order with a loop,
   keeping cleanup IR linear. `fixed_array_clone_ir_grows_linearly` guards this.
 - Debug locations follow statements, conditions, and switch subjects. Each

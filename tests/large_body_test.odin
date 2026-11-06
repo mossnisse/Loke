@@ -38,6 +38,15 @@ large_bodies_compile :: proc(t: ^testing.T) {
 			}
 			strings.write_string(b, "}\n")
 		}},
+		// Each new value of `p` ends what every copy took from the old one, which once
+		// asked each slot's row about every copy again: cubic, minutes at this size.
+		{"redefined_after_copies", proc(b: ^strings.Builder) {
+			strings.write_string(b, "keep :: proc(p: ^mut int) { p^ = 1; }\nrun :: proc() {\n\tv := 0;\n\tp := &mut v;\n")
+			for index in 0 ..< 3000 {
+				fmt.sbprintfln(b, "\tq%d := p;\n\tkeep(q%d);\n\tp = &mut v;", index, index)
+			}
+			strings.write_string(b, "}\n")
+		}},
 	}
 	os.make_directory(TMP)
 	os.make_directory(LARGE_BODY_DIR)

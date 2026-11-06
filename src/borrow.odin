@@ -660,6 +660,10 @@ Prov_Solve :: struct {
 	// A bit per reborrow that is `names_element`.
 	links_naming_element: []u8,
 	links_of_store: [][dynamic]int,
+	// Whether an interned link row holds a reborrow of a slot with many
+	// (`row_holds_reborrow_of`), as of `row_holds_indexed` reborrows.
+	row_holds:         map[u64]bool,
+	row_holds_indexed: int,
 	// Whether a definition of a reborrow's derived slot names its source. One that none
 	// does, as a capture's copy of what its source derives from, is made by each of them.
 	link_is_named:  []bool,
@@ -1389,26 +1393,53 @@ end_links_of_value :: proc(state: ^Prov_Solve, held: []u32, slot: int, value: []
 	// links: a row may be as wide as the body has reborrows.
 	edit := state.link_row_edit
 	for &row in held {
-		if row == 0 {
+		if row == 0 || !row_holds_reborrow_of(state, row, slot, links) {
 			continue
 		}
-		kept := state.link_rows.rows[row]
-		holds := false
-		for index in links {
-			if bit_get(kept, index) {
-				holds = true
-				break
-			}
-		}
-		if !holds {
-			continue
-		}
-		copy(edit, kept)
+		copy(edit, state.link_rows.rows[row])
 		for index in links {
 			bit_clear(edit, index)
 		}
 		row = intern_row(&state.link_rows, edit)
 	}
+}
+
+// Past this many reborrows of one slot, whether a row holds one is kept.
+@(private = "file")
+ROW_HOLDS_KEPT_PAST :: 8
+
+// Whether interned link row `row` holds any of `links`, the reborrows of `slot`. A row
+// never changes once interned, so for a slot with many reborrows the answer is kept: a
+// carrier given a new value after each of thousands of copies asked every row about
+// every copy again, and took cubic time.
+@(private = "file")
+row_holds_reborrow_of :: proc(state: ^Prov_Solve, row: u32, slot: int, links: []int) -> bool {
+	kept := state.link_rows.rows[row]
+	if len(links) <= ROW_HOLDS_KEPT_PAST {
+		for index in links {
+			if bit_get(kept, index) {
+				return true
+			}
+		}
+		return false
+	}
+	if state.row_holds == nil || state.row_holds_indexed != state.reborrows_indexed {
+		state.row_holds = make(map[u64]bool, 64, state.graph.alloc)
+		state.row_holds_indexed = state.reborrows_indexed
+	}
+	key := u64(row) << 32 | u64(slot)
+	if holds, found := state.row_holds[key]; found {
+		return holds
+	}
+	holds := false
+	for index in links {
+		if bit_get(kept, index) {
+			holds = true
+			break
+		}
+	}
+	state.row_holds[key] = holds
+	return holds
 }
 
 @(private)

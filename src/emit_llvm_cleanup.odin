@@ -254,6 +254,44 @@ pop_temporaries :: proc(e: ^Emitter) {
 	}
 }
 
+// Where one operand's temporaries start within the open full expression
+// (`end_operand_temporaries`).
+@(private)
+Operand_Temporaries :: struct {
+	large, temporaries, scope, held: int,
+}
+
+@(private)
+begin_operand_temporaries :: proc(e: ^Emitter) -> Operand_Temporaries {
+	return {
+		large       = len(e.large_taken),
+		temporaries = len(e.temporaries) > 0 ? len(e.temporaries[len(e.temporaries) - 1]) : 0,
+		scope       = len(e.cleanups) > 0 ? len(e.cleanups[len(e.cleanups) - 1]) : 0,
+		held        = len(e.held),
+	}
+}
+
+// design.md "Borrows and lifetimes": a temporary lives until its full expression
+// ends, which nothing tells from an earlier end once no value names it. An
+// operand of types holding no borrow, consumed whole, and owing no drop at the
+// end of its full expression or its block names none of its temporaries, so its
+// large slots serve the operands after it. Each element of a long literal of
+// large calls otherwise kept a slot of its own in the frame.
+@(private)
+end_operand_temporaries :: proc(e: ^Emitter, mark: Operand_Temporaries, types: ..Type_Id) {
+	for type in types {
+		if type_carries_borrow(e.c, type).any {
+			return
+		}
+	}
+	now := begin_operand_temporaries(e)
+	if now.temporaries != mark.temporaries || now.scope != mark.scope || now.held != mark.held {
+		return
+	}
+	append(&e.large_free, ..e.large_taken[mark.large:])
+	resize(&e.large_taken, mark.large)
+}
+
 // Saves the stack pointer for the open full expression before a runtime-sized
 // alloca, unless a path through it already has; `pop_temporaries` restores it.
 @(private)

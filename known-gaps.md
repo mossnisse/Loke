@@ -42,35 +42,23 @@ lends its elements, so both copy inside and return the failure. A built-in dynam
 `..dyn I` pack lends its views, so fixing this needs one in the language. Reproduced with the
 compiler built from `1cefee9c` on 2026-11-05 while reviewing that commit (P2).
 
-### A long literal can still overflow the stack at `-opt=none`
+### A long map literal of managed values can still overflow the stack at `-opt=none`
 
-A large temporary lives to the end of its full expression, so each element of a `[dynamic]` or map
-literal that is a call or a place of more than 4096 bytes keeps a slot of its own in the frame, and
-300 elements of a 5 KB `L` overflow the stack. A managed key or value of a map literal also keeps its
-own unwind action, 9 bytes in the frame: a 100000-entry `map[string]string` overflows where a
-`[dynamic]string` of that length runs. An element's slot can be reused only once its temporaries are
-known not to outlive it, and an action only while nothing newer has been reserved, since the thunk
-replays newest reservation first.
+A managed key or value of a map literal keeps its own unwind action, 9 bytes in the frame, so a
+100000-entry `map[string]string` overflows where a `[dynamic]string` of that length runs:
 
 ```loke
 package main;
-L :: struct { a: [5000]u8 };
-make_l :: proc() -> L { return {}; }
 main :: proc() {
-	xs := [dynamic]L{ make_l(), make_l(), make_l() /* and 297 more */ };
+	m := map[string]string{ "k0" = "v0", "k1" = "v1" /* and 99998 more */ };
 }
 ```
 
-Found on 2026-11-03 (P3).
+An action could be shared by the entries only while nothing newer has been reserved, since the
+thunk replays the newest reservation first; each entry's guard holds its value in the same slot,
+so its actions repeat. The large temporaries of such a literal's elements are reused between
+elements since 2026-11-06 (`end_operand_temporaries`). Found on 2026-11-03 (P3).
 
-### A carrier redefined thousands of times, each value copied, takes cubic time
-
-A generated body of `q0 := p; keep(q0); p = &mut v; q1 := p; keep(q1); p = &mut v; ...` compiled by
-an optimized `lokec` takes 1.3 s at 1000 repeats and 45 s at 4000. Each new value in `p` ends what was
-taken from the old one (`end_links_of_value` in [src/borrow.odin](src/borrow.odin)), which asks every
-slot about every reborrow of `p`, and `p` has one per copy. A chain of copies, where each slot has one
-reborrow, is quadratic with a small constant. Telling which slots may hold a reborrow from which it
-derives could avoid the asking. Found on 2026-11-05 while fixing the chain (P3).
 ### A result read through two loads reaches every field of the second
 
 [Procedure result contracts](design.md#procedure-result-contracts) keep which paths of a parameter's
@@ -258,7 +246,17 @@ main :: proc() {}
 ```
 
 One slot stands for the `next` of every node below the first, so keeping these copies as they are
-would reject `cur^.next = cur^.next^.next; cur = cur^.next;` in a loop, which is valid. Fixing it
-needs a read through the cursor's own value told from a read of what it was copied from.
+would reject `cur^.next = cur^.next^.next; cur = cur^.next;` in a loop, which is valid. Two shortcuts
+accept that loop by forgetting the copy: `run_links_held_event` in [src/borrow.odin](src/borrow.odin)
+clears the reborrows a definition was loaded through (`Prov_Reborrow.via`) from its row, and a store
+read from below the place it replaces (`replaces_read` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin)) links nothing. Keeping the copy and exempting a
+load through a carrier loaded through the cursor instead accepts the loop and rejects both
+functions above, as tried on 2026-11-06, but `via` names a slot, not its value then: in
+`t := cur^.next; cur = t^.next; other := t^.next;` it would follow `t` back to `cur`, which holds
+another value by then, and accept two live copies of one `next`. A sound fix needs "loaded below
+the current value of" as a fact of its own, solved with the links held: killed when an anchoring
+carrier takes a new value, and joined as a must-fact, by intersection, so it never exempts a use
+on only some paths.
 
 Finish with one copy before making the other.

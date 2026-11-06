@@ -1632,6 +1632,11 @@ checklist.
 
 ### Fixed
 
+- A `[dynamic]` or map literal of large values, such as 300 calls each returning 5000 bytes, no
+  longer overflows the stack at `-opt=none`: once the container holds an element that borrows
+  nothing and owes no drop, the next element reuses its temporary storage.
+- A carrier given a new value after each of thousands of copies compiles in quadratic time, not
+  cubic: 4000 of them took an optimized `lokec` 45 s, and take under 4 s.
 - A `Deque` of borrowing elements, as `Deque([]int)`, compiles in well under a second. Its
   `make_contiguous` took the region analysis two to three minutes, and every program using such a
   deque paid it.

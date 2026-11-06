@@ -545,6 +545,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 	relocating := container_ops_global(e, as_type, relocating = true)
 	slot := alloca(e, llvm_type(e, element))
 	for written, index in v.elements {
+		operand := begin_operand_temporaries(e)
 		borrowed := index < len(v.element_clones) && v.element_clones[index]
 		// design.md "Widening by label": a widened element is copied at its own
 		// type through the array's provider, and the copy relocates.
@@ -561,6 +562,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 			status, address, borrowed ? ops : relocating, slot,
 		)
 		emit_container_policy_failure(e, address, status)
+		end_operand_temporaries(e, operand, element)
 	}
 	finish_temporary_drop(e, cleanup)
 }
@@ -581,6 +583,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 	held := emit_lifecycle(e, element).managed ? alloca(e, llvm_type(e, element)) : ""
 	slots := make_map_entry_slots(e, element)
 	for written, index in v.elements {
+		operand := begin_operand_temporaries(e)
 		// The map clones the key, so the probe only borrows it.
 		key_slot, key_cleanup := emit_map_key_slot(e, written.key, as_type, key_storage)
 		value := emit_copied_expr(e, written.value, element, index < len(v.element_clones) && v.element_clones[index], provider)
@@ -589,6 +592,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		// the drop of an entry it replaces.
 		guard := hold_temporary_value(e, element, value, held)
 		emit_map_insert_store(e, {as_type, address, key_slot, key_cleanup, slots}, value, guard)
+		end_operand_temporaries(e, operand, element, container_key(e.c, as_type))
 	}
 	finish_temporary_drop(e, cleanup)
 }
