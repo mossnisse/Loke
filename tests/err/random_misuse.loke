@@ -4,8 +4,10 @@ import "core:random";
 import "core:thread";
 
 // standard-library "`core:random`": a generator is move-only, so one moved into
-// a thread is gone here; a 128-bit range has no `in_range`; and the operating
-// system's generator is not reachable during compilation.
+// a thread is gone here; a 128-bit range has no `in_range`; the operating
+// system's generator is not reachable during compilation; and a
+// `Seed_Path` word is an integer of at most 64 bits, and `with` returns the
+// longer path instead of changing its receiver ("Mixing and derived seeds").
 
 worker :: proc(rng: move random.Xoshiro256) {}
 
@@ -23,4 +25,8 @@ main :: proc() {
 	rng.next_u64();
 	copy := random.Xoshiro256.from_seed(2);
 	wide := random.in_range(inout copy, u128(0) ..< 10);
+	path := random.Seed_Path.from_seed(3);
+	_ = path.with(u128(1));
+	_ = path.with(1.5);
+	path.with(4);
 }

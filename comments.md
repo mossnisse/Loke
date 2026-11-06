@@ -2748,6 +2748,41 @@ boundaries and API shapes follow a few common choices:
 - **`Weighted` is an alias table.** Vose's construction is linear and draws in
   constant time, against a cumulative table's logarithmic binary search. The
   construction order is specified, so a table's picks replay from a seed.
+- **Derived values need no generator.** Procedural content wants a value fixed
+  by a place, such as a chunk's coordinates, whatever order places are
+  visited in. `split` cannot give that, since a child depends on every draw
+  its parent made first, and a program that writes its own coordinate hash
+  usually reaches for ordinary `*`, which panics, or a map's `hash`, whose
+  seed changes every run. `mix64` and `Seed_Path` are the library's answer,
+  and SplitMix64's finalizer was already the package's, behind `from_seed`
+  and `split`.
+- **A path is a value built word by word.** A variadic `derive(seed, ..u64)`
+  would take a negative coordinate only through `math.wrap`, since `u64(-1)`
+  panics, and a `..i64` would do the same to a `u64` ID. A generic `with`
+  takes either, and a word as its value modulo 2^64 makes `i32` and `i64`
+  coordinates agree, so widening one keeps a world. A copyable value lets a
+  prefix, a world's terrain domain, be computed once, which is most of the
+  cost of a lookup. Byte strings were left out: a word field and a byte field
+  at one position could encode alike unless every field paid for a tag, and
+  a domain is a constant the program names.
+- **Each word is mixed before it meets the state.** A cheaper step,
+  `mix64(state ~ w)`, is a bijection of each word too, but two states differ
+  by an exclusive-or then, so path `(a, x)` equals `(b, x ~ d)` for one `d`
+  along the whole axis: one world's terrain is another's, shifted. Among a
+  million worlds or entities, some pairs' `d` falls within the coordinates in
+  use, about 2^-32 per pair. Mixing the word first scatters that relation, at
+  two `mix64` per word instead of one. The count is the last word, so a
+  path's value is never a longer path's state: `(a)` and `(a, 1)` encode
+  as `a, 1` and `a, 1, 2`.
+- **Derived values are frozen, not versioned.** A seeded generator's values
+  replay, and a replay can refuse another `SEQUENCE_VERSION`. A derived value
+  is more often an identity, saved in a file or agreed with a peer, and an ID
+  that changes with a release is a broken save. So `mix64` and `Seed_Path`
+  never change and a successor would be a new name, as the generators are
+  named for their algorithms.
+- **`with` requires its result.** It returns a longer path and leaves its
+  receiver alone, as a value should, but its name reads like a mutation, and
+  `path.with(x);` alone would silently derive from the shorter path.
 - **Seeding never reads the clock.** Processes started together share a clock
   reading and often a process-ID range. The documented idiom is to draw a seed
   with `secure_u64`, record it, and seed with `from_seed`.

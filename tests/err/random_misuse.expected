@@ -1,9 +1,18 @@
 L0341
-@17:9
+@19:9
 has no body to evaluate
 L0500
-@23:2
+@25:2
 `rng` cannot be used here
 L0434
-@25:10
+@27:10
 does not satisfy the bound `size_of(T) <= 8`
+L0434
+@29:6
+`Seed_Path.with(u128)` does not satisfy the bound `size_of(T) <= 8`
+L0444
+@30:6
+does not satisfy `Integral(f64)`
+L0612
+@31:2
+the result of `with` must be used

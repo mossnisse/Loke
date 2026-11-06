@@ -30,7 +30,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Use arenas and other allocators | [`core:mem`](#coremem) |
 | Use atomics, once-only initialization, or lazy values | [`core:sync`](#coresync) |
 | Constrain generic code | [Standard interface catalogue](#standard-interface-catalogue) |
-| Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
+| Draw random numbers, shuffle, sample, derive stable seeds and IDs, or get secret bytes | [`core:random`](#corerandom) |
 | Read clocks, work with dates and the local time zone, or print and parse ISO 8601 times | [`core:time`](#coretime) |
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
@@ -4616,9 +4616,10 @@ documented order, which changes its speed and not its bits
 
 ## `core:random`
 
-`core:random` draws reproducible values from seeded generators and secret bytes
-from the operating system. Every procedure takes the generator `inout`, as
-`core:io` takes a stream; the package owns no generator of its own.
+`core:random` draws reproducible values from seeded generators, derives stable
+values from a seed and a path of words without a generator, and reads secret
+bytes from the operating system. Every procedure that draws takes the generator
+`inout`, as `core:io` takes a stream; the package owns no generator of its own.
 
 ```loke
 Source :: interface($Self: type) {
@@ -4687,12 +4688,22 @@ impl Weighted {
 	len              :: proc(self) -> int;
 	pick             :: proc(self, source: inout $G) -> int;
 }
+
+mix64 :: proc(value: u64) -> u64;
+
+Seed_Path :: struct { /* private state */ }
+
+impl Seed_Path {
+	from_seed :: proc(seed: u64) -> Seed_Path;
+	with      :: proc(self, word: $T) -> Seed_Path;
+	value     :: proc(self) -> u64;
+}
 ```
 
 Each procedure taking a `source` requires `Source(G)`, so a caller's own source
 and a `dyn mut random.Source` view work as well as either generator. `in_range`
-accepts integer and rune endpoints of at most 64 bits, and `choose` a copyable
-element type.
+accepts integer and rune endpoints of at most 64 bits, `choose` a copyable
+element type, and `Seed_Path.with` an integer word of at most 64 bits.
 
 Example (imports `core:random`):
 
@@ -4734,7 +4745,8 @@ to get a second generator.
   An all-zero state is the unseeded zero value, so an unseeded generator's
   snapshot restores to an unseeded generator.
 - `split()` returns a generator whose state is four draws from this one, each
-  passed through the SplitMix64 finalizer. The child depends only on the
+  passed through the SplitMix64 finalizer,
+  [`mix64`](#mixing-and-derived-seeds). The child depends only on the
   parent's state, so splitting is reproducible however deeply it nests.
 - `jump()` and `long_jump()` advance the state as 2^128 and 2^192 draws would.
   Giving each worker the current generator and then jumping divides one stream
@@ -4862,6 +4874,128 @@ zero weight's index is never drawn. The table's arrays come from the given
 allocator: `from_weights` follows its failure policy and `try_from_weights`
 returns the error. The construction is deterministic, so a table built from the
 same weights picks the same indices from the same draws.
+
+### Mixing and derived seeds
+
+A generator's tenth value depends on the nine drawn before it. Procedural
+content usually needs the opposite: a value fixed by *where* it is, such as a
+chunk's coordinates, an entity's index, or a level's number, so that it is the
+same whichever order a program visits them in, on every machine, and in every
+release. `mix64` and `Seed_Path` compute such values without a generator.
+
+```loke
+TERRAIN :: u64(1);
+LOOT    :: u64(2);
+
+// The same chunk, whichever order chunks are generated in.
+chunk_rng :: proc(world: u64, x, y: i32) -> random.Xoshiro256 {
+	path := random.Seed_Path.from_seed(world).with(TERRAIN).with(x).with(y);
+	return random.Xoshiro256.from_seed(path.value());
+}
+```
+
+`mix64(value)` is the SplitMix64 finalizer (Steele, Lea, and Flood, 2014),
+whose constants are Stafford's Mix13. With every operation modulo 2^64:
+
+```text
+z = (z ~ (z >> 30)) *% 0xbf58476d1ce4e5b9
+z = (z ~ (z >> 27)) *% 0x94d049bb133111eb
+result = z ~ (z >> 31)
+```
+
+It is a bijection on 64 bits in which every input bit affects every output
+bit. It is a mixer, not a hash: `mix64(0)` is 0, so a counter is first spread
+out, as SplitMix64's `n`th output from `seed` is
+`mix64(seed +% n *% 0x9e3779b97f4a7c15)`. `Xoshiro256` and `Pcg64` are
+[seeded](#seeding) from that sequence and `split` through `mix64`.
+
+A `Seed_Path` is a sequence of 64-bit words, the first being the seed, and its
+`value()` is 64 bits that depend on those words alone:
+
+- **Words.** `with(word)` returns the path with `word` appended. The word is
+  an integer of at most 64 bits and contributes its value modulo 2^64, as
+  [`math.wrap(u64, word)`](design.md#type-conversion) gives: a negative value
+  is sign-extended, so `-1` is all ones as an `i8` or an `i64`, and an
+  unsigned one is zero-extended, so `u32(0xFFFF_FFFF)` is
+  `0x0000_0000_FFFF_FFFF`, unlike `i32(-1)`. A word depends on its value,
+  not its type, so widening a coordinate type from `i32` to `i64` keeps every
+  value. A float, `bool`, rune, or enum is not a word, nor is a 128-bit
+  integer: write that as two words, in an order the program fixes.
+- **Order and number.** Paths whose words differ in any position, in order,
+  or in number are different paths: `(x, y)` and `(y, x)` differ, and so do
+  `(a)` and `(a, 0)`.
+- **Domain separation is a word.** One seed serves several uses when each
+  gets its own constant at a fixed position, as `TERRAIN` and `LOOT` above,
+  and their values are then unrelated. A path records words, not their types
+  or meanings, so the program fixes what each position means; two schemas
+  that put equal words in the same positions name the same values.
+- **A path is a value.** It is copyable, and `with` leaves its receiver
+  unchanged, so a prefix computed once, `terrain := root.with(TERRAIN)`,
+  serves every path below it. `with` is
+  [`@(require_results)`](design.md#require_results), since a bare
+  `path.with(x);` changes nothing. The zero value is the empty path, and
+  `from_seed(seed)` is `Seed_Path{}.with(seed)`.
+- **The algorithm.** A state starts at 0, and each word `w` replaces it with
+  `mix64(state ~ mix64(w +% 0x9e3779b97f4a7c15))`. `value()` takes that step
+  once more, with the number of words, the seed included, as `w`, and returns
+  the result without changing the path. Each step costs two `mix64`, so a
+  two-coordinate value below a computed prefix costs six.
+
+With every other word fixed, a path's value is a bijection of any one word,
+since each step is one: two chunks of one row, or one chunk under two seeds,
+never share a value. Otherwise distinct paths collide as random 64-bit values
+do, which grows likely only among billions of values. Two paths are not
+related by a shift of one word, because each word passes through `mix64`
+before it meets the state; were the step `mix64(state ~ w)`, a row of one
+world would equal a shifted row of another. Neither `mix64` nor a path
+resists crafted inputs or keeps a seed secret, so neither is for
+authentication, keys, or a table exposed to hostile keys; see
+[`fill_secure`](#operating-system-entropy).
+
+`path.value()` serves as an ID, as the seed of a generator for many values
+from one place, as above, or as one value: its top 53 bits times 2^-53 are in
+[0, 1), as [`unit`](#reproducibility) maps a draw. Prefer a path to `split`
+when the order in which places are visited is not fixed, since `split`
+depends on every draw the parent made before it.
+
+Both are frozen: `mix64(v)` and every path's `value()` are the same in every
+release, and [`SEQUENCE_VERSION`](#reproducibility) does not cover them,
+because they never change. A value saved in a file or sent to a peer keeps
+its meaning, and a different algorithm would be a new name. Values drawn from
+a generator that a path seeds are covered by `SEQUENCE_VERSION` as any other
+draw is.
+
+These are the known answers, which
+[tests/run/lib_random_mix.loke](tests/run/lib_random_mix.loke) checks. A path
+is written as its words, seed first:
+
+| Input | Result |
+| --- | --- |
+| `mix64(0)` | `0x0000000000000000` |
+| `mix64(1)` | `0x5692161d100b05e5` |
+| `mix64(0x9e3779b97f4a7c15)` | `0xe220a8397b1dcdaf`, SplitMix64's first output from seed 0 |
+| `mix64(0xffffffffffffffff)` | `0xb4d055fcf2cbbd7b` |
+| `mix64(0x0123456789abcdef)` | `0xb2c058e4ebb5112c` |
+| `Seed_Path{}` | `0x48218226ff3cd4bf` |
+| `(0)` | `0x62bf47c30a90056f` |
+| `(42)` | `0xf71946f3ba67166c` |
+| `(0, 0)` | `0xe7c78d6e6cce68d8` |
+| `(42, 0, 0)` | `0x435d4ff15aa50e26` |
+| `(42, 1, 0)` | `0x7fc23b921bb3edaf` |
+| `(42, 0, 1)` | `0xa27dd9f57aa502b6` |
+| `(42, -1, 0)` | `0x4ac770b1a45bfe33` |
+| `(42, 0, -1)` | `0x7b97a6102cec9903` |
+| `(42, 7, -3, 5)` | `0x5035bf946152a002` |
+| `(0xffffffffffffffff)` | `0xf2a0877da29e3497` |
+
+A map key's [`hash(seed)`](design.md#maps) is not a substitute. Its algorithm
+is unspecified, its result is a `uint` of the target's width, and the runtime
+seeds each table itself, so its values change between runs and releases and
+must never name saved content.
+
+Both run during
+[compile-time evaluation](design.md#compile-time-procedure-evaluation), so a
+constant can be derived from a fixed seed and gives the value a run would.
 
 ### Operating-system entropy
 

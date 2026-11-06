@@ -1,0 +1,21 @@
+mix64 true true true true true
+splitmix true
+empty true
+[0] true
+[42] true
+[0, 0] true
+[42, 0, 0] true
+[42, 1, 0] true
+[42, 0, 1] true
+[42, -1, 0] true
+[42, 0, -1] true
+[42, 7, -3, 5] true
+[-1] true
+seed is the first word true
+negative true true true
+unsigned zero-extends true true
+order true
+length true true
+prefix reused true true
+distinct true true true
+compile time true

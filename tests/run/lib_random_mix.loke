@@ -1,0 +1,123 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:random";
+import "core:slice";
+
+// `mix64` and `Seed_Path` (standard-library "Mixing and derived seeds").
+//
+// The vectors are the table there, computed apart from the compiler from the
+// algorithm as the section states it. The section freezes these values, so a
+// changed line here is a broken promise, not a new expectation.
+
+Vector :: struct {
+	words:    [4]i64,
+	count:    int,
+	expected: u64,
+}
+
+// The path of `count` words, the first as the seed.
+path_of :: proc(v: Vector) -> u64 {
+	path := random.Seed_Path.from_seed(math.wrap(u64, v.words[0]));
+	foreach (i in 1 ..< v.count) { path = path.with(v.words[i]); }
+	return path.value();
+}
+
+TERRAIN :: u64(1);
+
+chunk :: proc(world: u64, x, y: i32) -> u64 {
+	return random.Seed_Path.from_seed(world).with(TERRAIN).with(x).with(y).value();
+}
+
+// Evaluated during compilation; `main` compares it with the same call at run
+// time.
+CHUNK :: chunk(42, -3, 5);
+
+main :: proc() {
+	mixer();
+	paths();
+	words();
+	bijection();
+	fmt.println("compile time", CHUNK == chunk(42, -3, 5));
+}
+
+mixer :: proc() {
+	fmt.println("mix64",
+		random.mix64(0) == 0,
+		random.mix64(1) == 0x5692161d100b05e5,
+		random.mix64(0x9e3779b97f4a7c15) == 0xe220a8397b1dcdaf,
+		random.mix64(~u64(0)) == 0xb4d055fcf2cbbd7b,
+		random.mix64(0x0123456789abcdef) == 0xb2c058e4ebb5112c);
+	// SplitMix64's first output from seed 0, which seeds xoshiro's first word.
+	rng := random.Xoshiro256.from_seed(0);
+	fmt.println("splitmix", rng.state()[0] == random.mix64(0x9e3779b97f4a7c15));
+}
+
+paths :: proc() {
+	empty: random.Seed_Path = {};
+	fmt.println("empty", empty.value() == 0x48218226ff3cd4bf);
+	vectors := [?]Vector{
+		{{0, 0, 0, 0}, 1, 0x62bf47c30a90056f},
+		{{42, 0, 0, 0}, 1, 0xf71946f3ba67166c},
+		{{0, 0, 0, 0}, 2, 0xe7c78d6e6cce68d8},
+		{{42, 0, 0, 0}, 3, 0x435d4ff15aa50e26},
+		{{42, 1, 0, 0}, 3, 0x7fc23b921bb3edaf},
+		{{42, 0, 1, 0}, 3, 0xa27dd9f57aa502b6},
+		{{42, -1, 0, 0}, 3, 0x4ac770b1a45bfe33},
+		{{42, 0, -1, 0}, 3, 0x7b97a6102cec9903},
+		{{42, 7, -3, 5}, 4, 0x5035bf946152a002},
+		{{-1, 0, 0, 0}, 1, 0xf2a0877da29e3497},
+	};
+	foreach (v in vectors) {
+		fmt.println(v.words[:v.count], path_of(v) == v.expected);
+	}
+	fmt.println("seed is the first word",
+		random.Seed_Path.from_seed(42).value() == empty.with(u64(42)).value());
+}
+
+words :: proc() {
+	root := random.Seed_Path.from_seed(42);
+	// The word is the value modulo 2^64, whatever the type.
+	all_ones := root.with(~u64(0)).value();
+	fmt.println("negative",
+		root.with(i8(-1)).value() == all_ones,
+		root.with(i32(-1)).value() == all_ones,
+		root.with(-1).value() == all_ones);
+	fmt.println("unsigned zero-extends",
+		root.with(u32(0xFFFF_FFFF)).value() == root.with(u64(0xFFFF_FFFF)).value(),
+		root.with(u32(0xFFFF_FFFF)).value() != root.with(i32(-1)).value());
+	// Order and number of words.
+	fmt.println("order", root.with(1).with(2).value() != root.with(2).with(1).value());
+	fmt.println("length", root.with(7).value() != root.with(7).with(0).value(),
+		root.value() != root.with(0).value());
+	// A path is a value: `with` leaves its receiver alone.
+	prefix := root.with(TERRAIN);
+	first := prefix.with(3).value();
+	_ = prefix.with(9);
+	fmt.println("prefix reused", prefix.with(3).value() == first,
+		prefix.value() == root.with(TERRAIN).value());
+}
+
+// With the other words fixed, the value is a bijection of any one: a row of
+// chunks, a column, and a run of seeds at one chunk never repeat.
+bijection :: proc() {
+	row: [4096]u64 = {};
+	column: [4096]u64 = {};
+	seeds: [4096]u64 = {};
+	foreach (i in 0 ..< 4096) {
+		row[i] = chunk(42, i32(i - 2048), 5);
+		column[i] = chunk(42, 5, i32(i - 2048));
+		seeds[i] = chunk(u64(i), 0, 0);
+	}
+	fmt.println("distinct", all_distinct(&mut row[:]), all_distinct(&mut column[:]),
+		all_distinct(&mut seeds[:]));
+}
+
+all_distinct :: proc(values: []mut u64) -> bool {
+	slice.sort(values);
+	foreach (i in 1 ..< values.len()) {
+		if (values[i] == values[i - 1]) { return false; }
+	}
+	return true;
+}

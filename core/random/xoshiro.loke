@@ -139,14 +139,5 @@ impl Xoshiro256 {
 };
 
 // SplitMix64 (Steele, Lea, and Flood, "Fast splittable pseudorandom number
-// generators", 2014): a counter stepped by the golden-ratio gamma and passed
-// through this finalizer. The finalizer is a bijection on 64 bits.
-@(private) SPLITMIX_GAMMA :: u64(0x9e3779b97f4a7c15);
-
-@(private)
-mix64 :: proc(value: u64) -> u64 {
-	z := value;
-	z = (z ~ (z >> 30)) *% 0xbf58476d1ce4e5b9;
-	z = (z ~ (z >> 27)) *% 0x94d049bb133111eb;
-	return z ~ (z >> 31);
-}
+// generators", 2014) is a counter stepped by `SPLITMIX_GAMMA` and passed
+// through `mix64`; both are in mix.loke, which `Seed_Path` shares.

@@ -1,0 +1,102 @@
+/**
+	Values fixed by where they are rather than by when they are drawn: `mix64`,
+	the SplitMix64 finalizer, and `Seed_Path`, which derives a 64-bit value from
+	a seed and a path of words below it, such as a domain tag and a chunk's
+	coordinates.
+
+	Both are frozen. Their results are the same in every release and are not
+	covered by `SEQUENCE_VERSION`, so a value saved in a file or sent to a peer
+	keeps its meaning; a different algorithm would get a new name.
+*/
+// standard-library "Mixing and derived seeds". `tests/run/lib_random_mix.loke`
+// pins the vectors.
+@(public)
+package random;
+
+import "base:interfaces";
+import "core:math";
+
+/**
+	The SplitMix64 finalizer (Steele, Lea, and Flood, "Fast splittable
+	pseudorandom number generators", 2014), whose constants are Stafford's
+	Mix13: two xor-shift-multiply rounds and a last xor-shift, modulo 2^64.
+
+	A bijection on 64 bits in which every input bit affects every output bit.
+	It is a mixer, not a hash of its own: `mix64(0)` is 0, so offset a counter
+	first, as SplitMix64's `n`th output from `seed` is
+	`mix64(seed +% n *% 0x9e3779b97f4a7c15)`.
+*/
+mix64 :: proc(value: u64) -> u64 {
+	z := value;
+	z = (z ~ (z >> 30)) *% 0xbf58476d1ce4e5b9;
+	z = (z ~ (z >> 27)) *% 0x94d049bb133111eb;
+	return z ~ (z >> 31);
+}
+
+// SplitMix64's increment, the golden ratio's fraction times 2^64, rounded to
+// odd.
+@(private) SPLITMIX_GAMMA :: u64(0x9e3779b97f4a7c15);
+
+/**
+	A seed and a path of words below it, naming a 64-bit value that depends on
+	those words alone, never on what was computed before:
+
+	    terrain := random.Seed_Path.from_seed(world).with(TERRAIN);
+	    chunk := random.Xoshiro256.from_seed(terrain.with(x).with(y).value());
+
+	A path is a value: `with` returns a longer path and leaves its receiver
+	alone, so a prefix computed once serves every path below it. The zero value
+	is the empty path.
+*/
+Seed_Path :: struct {
+	@(private) state:  u64,
+	@(private) length: u64,
+}
+
+impl Seed_Path {
+	/**
+		The path whose first word is `seed`: `Seed_Path{}.with(seed)`. The seed
+		is an ordinary word, so a path from a recorded seed replays exactly.
+	*/
+	from_seed :: proc(seed: u64) -> Seed_Path {
+		path: Seed_Path = {};
+		return path.with(seed);
+	}
+
+	/**
+		This path with `word` appended. The word is the value modulo 2^64, as
+		`math.wrap(u64, word)` gives, whatever its type: a negative value is
+		sign-extended, so `-1` is all ones as an `i8` or an `i64`, and widening
+		a coordinate's type keeps every value.
+
+		The step is `mix64(state ~ mix64(word +% 0x9e3779b97f4a7c15))`, from a
+		state of 0. Mixing the word before it meets the state keeps two paths
+		from being translations of each other along an axis.
+
+		The result is required: `path.with(x);` alone changes nothing.
+	*/
+	@(require_results)
+	with :: proc(self, word: $T) -> Seed_Path where interfaces.Integral(T), size_of(T) <= 8 {
+		return Seed_Path{
+			state  = absorb(self.state, math.wrap(u64, word)),
+			length = self.length + 1,
+		};
+	}
+
+	/**
+		The path's value: one more step, with the number of words, the seed
+		included, as the word. Paths that differ in a word, in the words' order,
+		or in their number give unrelated values, and with the other words
+		fixed the value is a bijection of any one of them.
+	*/
+	value :: proc(self) -> u64 {
+		return absorb(self.state, self.length);
+	}
+}
+
+// standard-library "Mixing and derived seeds": the one step a path takes per
+// word and once more to finish.
+@(private)
+absorb :: proc(state: u64, word: u64) -> u64 {
+	return mix64(state ~ mix64(word +% SPLITMIX_GAMMA));
+}

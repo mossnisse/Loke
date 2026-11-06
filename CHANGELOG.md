@@ -1112,6 +1112,11 @@ checklist.
 
 ### Added
 
+- [`core:random`](standard-library.md#mixing-and-derived-seeds) has `mix64`, the SplitMix64
+  finalizer, and `Seed_Path`, which derives a 64-bit value from a seed and a path of integer words,
+  such as a domain tag and a chunk's coordinates, without a generator and whatever order places are
+  visited in. A word is its value modulo 2^64, so negative and `i32` or `i64` coordinates need no
+  conversion. Both are frozen, with known-answer vectors: their values never change in a release.
 - A [`..^T` variadic parameter](design.md#variadic-parameters) lends what is written at the call
   instead of copying it: a `T` is borrowed where it is or from a temporary, a named constant in its
   read-only storage, and a spread of `T`s lends each element. A `^T` or a `[]^T` is passed as it is.
