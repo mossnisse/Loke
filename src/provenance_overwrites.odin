@@ -7,6 +7,7 @@
 // fact changes, and leaves the incoming value out there.
 package lokec
 
+import "core:mem"
 import "core:slice"
 
 // A place in a parameter's storage that a direct assignment wrote: a whole parameter
@@ -17,17 +18,36 @@ Prov_Overwrite :: struct {
 	path:    []Proj_Step,
 }
 
+// Where a value is read: a block of the walk, and how many of the writes its
+// assignments made come first. A value read after the walk has no block.
+@(private)
+Prov_Read_Point :: struct {
+	block:  Block_Id,
+	writes: int,
+}
+
 @(private)
 Prov_Overwrites :: struct {
 	// Each distinct place written, numbered by its position here.
-	places:   [dynamic]Prov_Overwrite,
-	// Per block, the places its assignments wrote, in order.
-	by_block: [dynamic][dynamic]int,
-	// Set once the walk is done: a value interned later was not read where the walk
-	// stood, so it records nothing.
-	walked:   bool,
-	// Scratch rows of the solve, per block and one more.
-	exit, row: [dynamic]u8,
+	places:  [dynamic]Prov_Overwrite,
+	// Per block, the places written on every path into it (`prov_link_overwrites`),
+	// and the places its own assignments wrote, in order.
+	entry:   map[Block_Id][]int,
+	wrote:   map[Block_Id][dynamic]int,
+	// Where the value whose transfer is being described was read, so what describing
+	// it interns is read there too (`prov_value_transfer`).
+	reading: Maybe(Prov_Read_Point),
+	// Set once the walk is done (`prov_end_overwrites`).
+	walked:  bool,
+}
+
+@(private)
+new_prov_overwrites :: proc(allocator: mem.Allocator) -> Prov_Overwrites {
+	return Prov_Overwrites {
+		places = make([dynamic]Prov_Overwrite, allocator),
+		entry = make(map[Block_Id][]int, allocator),
+		wrote = make(map[Block_Id][dynamic]int, allocator),
+	}
 }
 
 // A finished assignment's direct writes. They take effect once all of its
@@ -48,6 +68,13 @@ prov_note_overwrites :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 		prov_add_overwrite(graph, Prov_Overwrite{storage, place.path})
 	}
+}
+
+// The walk is done: a value interned from here on, outside the description of one
+// read during it, was not read where the walk stood, so it records nothing.
+@(private)
+prov_end_overwrites :: proc(graph: ^Flow_Graph) {
+	graph.overwrites.walked = true
 }
 
 // Whether `storage` is one of this body's parameters, whose contents the caller
@@ -76,10 +103,6 @@ prov_path_is_fields :: proc(graph: ^Flow_Graph, storage: Storage_Id, path: []Pro
 @(private = "file")
 prov_add_overwrite :: proc(graph: ^Flow_Graph, overwrite: Prov_Overwrite) {
 	written := &graph.overwrites
-	if written.places == nil {
-		written.places = make([dynamic]Prov_Overwrite, graph.alloc)
-		written.by_block = make([dynamic][dynamic]int, graph.alloc)
-	}
 	index := -1
 	for place, at in written.places {
 		if place.storage == overwrite.storage && slice.equal(place.path, overwrite.path) {
@@ -91,106 +114,138 @@ prov_add_overwrite :: proc(graph: ^Flow_Graph, overwrite: Prov_Overwrite) {
 		index = len(written.places)
 		append(&written.places, Prov_Overwrite{overwrite.storage, slice.clone(overwrite.path, graph.alloc)})
 	}
-	block := int(graph.current)
-	for len(written.by_block) <= block {
-		append(&written.by_block, make([dynamic]int, graph.alloc))
-	}
 	// A block ends where it is linked onward, so what its successors see is all it
 	// wrote.
-	assert(len(graph.blocks[block].succs) == 0, "an assignment wrote into a block already linked onward")
-	append(&written.by_block[block], index)
+	assert(len(graph.blocks[int(graph.current)].succs) == 0, "an assignment wrote into a block already linked onward")
+	wrote := written.wrote[graph.current]
+	if wrote == nil {
+		wrote = make([dynamic]int, graph.alloc)
+	}
+	append(&wrote, index)
+	written.wrote[graph.current] = wrote
 }
 
-// The paths of `storage` written on every path to the walk's current point, for a
-// value interned there, which is where it is read. A loop's back edge only adds
-// writes to what its head already had, so the blocks not walked yet change nothing.
+// The edge the walk links from `from` to `to` carries what `from` wrote on every path
+// through it. Every predecessor of a block but a loop's back edge is linked before
+// the walk enters the block, and a back edge comes from a block the head reaches,
+// which wrote all the head was entered with, so a block's entry is final once the
+// walk reads in it or links it onward.
 @(private)
-prov_overwritten_here :: proc(graph: ^Flow_Graph, place: Prov_Place) -> [][]Proj_Step {
+prov_link_overwrites :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 	written := &graph.overwrites
-	storage, direct := place.base.(Storage_Id)
-	if written.walked || !direct || graph.current == NO_BLOCK || graph.replaying_facts {
-		return nil
+	if len(written.places) == 0 {
+		// Every entry is empty so far, and a meet with an empty one stays so.
+		return
 	}
-	named := false
-	for at in written.places {
-		named ||= at.storage == storage
+	block := graph.blocks[int(to)]
+	exit := prov_exit_overwrites(graph, from)
+	if len(block.preds) == 1 {
+		written.entry[to] = exit
+		return
 	}
-	if !named {
-		return nil
+	entry := written.entry[to]
+	if len(block.succs) > 0 {
+		assert(prov_overwrites_cover(written, exit, entry), "a back edge left out a place its loop head was entered with")
+		return
 	}
-	here := prov_overwritten_at(graph, graph.current)
-	out := make([dynamic][]Proj_Step, 0, 1, graph.alloc)
-	for at, index in written.places {
-		if at.storage == storage && bit_get(here, index) {
-			append(&out, at.path)
+	// A place written on every path is one each side wrote, itself or a place above
+	// it: one branch writing `h` and the other `h.allocator` both wrote `h.allocator`.
+	met := make([dynamic]int, 0, min(len(entry), len(exit)), graph.alloc)
+	for index in entry {
+		if prov_overwrite_covered(written, exit, index) {
+			append(&met, index)
+		}
+	}
+	for index in exit {
+		if !slice.contains(met[:], index) && prov_overwrite_covered(written, entry, index) {
+			append(&met, index)
+		}
+	}
+	written.entry[to] = met[:]
+}
+
+// The places written on every path to `block`'s end. An entry is never changed in
+// place, so a block with no writes of its own shares its entry.
+@(private = "file")
+prov_exit_overwrites :: proc(graph: ^Flow_Graph, block: Block_Id) -> []int {
+	written := &graph.overwrites
+	entry, wrote := written.entry[block], written.wrote[block]
+	if len(wrote) == 0 {
+		return entry
+	}
+	out := make([dynamic]int, 0, len(entry) + len(wrote), graph.alloc)
+	append(&out, ..entry)
+	for index in wrote {
+		if !slice.contains(out[:], index) {
+			append(&out, index)
 		}
 	}
 	return out[:]
 }
 
-// A must-fact over the blocks walked so far, solved down from everything written: a
-// block with no predecessor yet is entered with nothing written, and every other one
-// with what each predecessor's exit wrote. The bits of `graph.overwrites.places`
-// written at `block`'s end.
+// Whether `set` wrote place `index`, or a place above it.
 @(private = "file")
-prov_overwritten_at :: proc(graph: ^Flow_Graph, block: Block_Id) -> []u8 {
-	written := &graph.overwrites
-	bytes := (len(written.places) + 7) / 8
-	blocks := len(graph.blocks)
-	if written.exit == nil {
-		written.exit = make([dynamic]u8, graph.alloc)
-		written.row = make([dynamic]u8, graph.alloc)
+prov_overwrite_covered :: proc(written: ^Prov_Overwrites, set: []int, index: int) -> bool {
+	place := written.places[index]
+	for other in set {
+		above := written.places[other]
+		if above.storage == place.storage && path_has_exact_prefix(place.path, above.path) {
+			return true
+		}
 	}
-	resize(&written.exit, blocks * bytes)
-	resize(&written.row, bytes)
-	exit, row := written.exit[:], written.row[:]
-	// A write of a place writes every place below it, so one branch writing `h` and
-	// the other `h.allocator` both wrote `h.allocator`.
-	gen :: proc(written: ^Prov_Overwrites, row: []u8, block: int) {
-		if block >= len(written.by_block) {
+	return false
+}
+
+@(private = "file")
+prov_overwrites_cover :: proc(written: ^Prov_Overwrites, set, places: []int) -> bool {
+	for index in places {
+		if !prov_overwrite_covered(written, set, index) {
+			return false
+		}
+	}
+	return true
+}
+
+// Where the walk stands, for a value interned now, which is where it is read; or,
+// while a transfer is described, where the described value was read.
+@(private)
+prov_read_point :: proc(graph: ^Flow_Graph) -> Prov_Read_Point {
+	written := &graph.overwrites
+	if point, describing := written.reading.?; describing {
+		return point
+	}
+	if written.walked || graph.current == NO_BLOCK || graph.replaying_facts {
+		return {block = NO_BLOCK}
+	}
+	return {graph.current, len(written.wrote[graph.current])}
+}
+
+// The paths of `place`'s parameter storage written on every path to `point`.
+@(private)
+prov_overwritten_at :: proc(graph: ^Flow_Graph, place: Prov_Place, point: Prov_Read_Point) -> [][]Proj_Step {
+	storage, direct := place.base.(Storage_Id)
+	if !direct || point.block == NO_BLOCK {
+		return nil
+	}
+	written := &graph.overwrites
+	out: [dynamic][]Proj_Step
+	add :: proc(graph: ^Flow_Graph, out: ^[dynamic][]Proj_Step, storage: Storage_Id, index: int) {
+		at := graph.overwrites.places[index]
+		if at.storage != storage {
 			return
 		}
-		for index in written.by_block[block] {
-			at := written.places[index]
-			for below, other in written.places {
-				if below.storage == at.storage && path_has_exact_prefix(below.path, at.path) {
-					bit_mark(row, other)
-				}
-			}
+		if out^ == nil {
+			out^ = make([dynamic][]Proj_Step, 0, 1, graph.alloc)
 		}
+		append(out, at.path)
 	}
-	for at in 0 ..< blocks {
-		out := exit[at * bytes:][:bytes]
-		if len(graph.blocks[at].preds) > 0 {
-			slice.fill(out, 0xff)
-		} else {
-			slice.fill(out, 0)
-			gen(written, out, at)
-		}
+	for index in written.entry[point.block] {
+		add(graph, &out, storage, index)
 	}
-	for changed := true; changed; {
-		changed = false
-		for at in 0 ..< blocks {
-			preds := graph.blocks[at].preds
-			if len(preds) == 0 {
-				continue
-			}
-			slice.fill(row, 0xff)
-			for pred in preds {
-				from := exit[int(pred) * bytes:][:bytes]
-				for &byte, offset in row {
-					byte &= from[offset]
-				}
-			}
-			gen(written, row, at)
-			out := exit[at * bytes:][:bytes]
-			if !slice.equal(row, out) {
-				copy(out, row)
-				changed = true
-			}
-		}
+	for index in written.wrote[point.block][:point.writes] {
+		add(graph, &out, storage, index)
 	}
-	return exit[int(block) * bytes:][:bytes]
+	return out[:]
 }
 
 // Whether a read of `value` at `path` of its root, a path below the value's own

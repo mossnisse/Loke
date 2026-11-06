@@ -190,6 +190,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state := new(Prov_State, allocator)
 	state.input = input
 	state.converting = make([dynamic]Prov_Converting, allocator)
+	state.overwrites = new_prov_overwrites(allocator)
 	state.roots = make([dynamic]Prov_Root, allocator)
 	state.loans = make([dynamic]Prov_Loan, allocator)
 	state.prov_slots = make([dynamic]Prov_Slot, allocator)

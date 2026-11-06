@@ -146,5 +146,20 @@ managed_field_written_back :: proc(@(allocator_reset) @(escape=stored) allowed: 
 	h.allocator = saved;
 	free_all(h.allocator);
 }
+// The post statement runs after the first iteration's reset.
+written_by_the_post_statement :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) {
+	for (i := 0; i < n; h.allocator = allowed) {
+		free_all(h.allocator);
+		i += 1;
+	}
+}
+// The path through the `continue` skips the write.
+skipped_by_a_continue :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, n: int) {
+	for (i := 0; i < n; i += 1) {
+		if (i == 0) { continue; }
+		h.allocator = allowed;
+	}
+	free_all(h.allocator);
+}
 
 main :: proc() {}

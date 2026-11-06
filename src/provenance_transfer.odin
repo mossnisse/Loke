@@ -54,10 +54,11 @@ prov_value_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfer {
 	entry := &graph.input.values[int(id)]
 	// A value that is no transfer is also described only once.
 	if entry.described { return entry.transfer }
-	expansion := graph.expansion
-	graph.expansion = entry.expansion
+	// What describing it interns is read where it was, in its expansion.
+	expansion, reading := graph.expansion, graph.overwrites.reading
+	graph.expansion, graph.overwrites.reading = entry.expansion, entry.read_at
 	transfer := prov_describe_transfer(graph, id)
-	graph.expansion = expansion
+	graph.expansion, graph.overwrites.reading = expansion, reading
 	prov_writable_input(graph)
 	entry = &graph.input.values[int(id)]
 	entry.transfer, entry.described = transfer, true

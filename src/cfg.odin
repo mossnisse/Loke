@@ -331,7 +331,7 @@ build_flow_pass :: proc(
 	leave_flow_scope(graph)
 
 	if mode != .Lifecycle {
-		graph.overwrites.walked = true
+		prov_end_overwrites(graph)
 		return graph
 	}
 	return len(graph.tracked) == 0 ? nil : graph
@@ -356,6 +356,9 @@ link :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 		return
 	}
 	append(&graph.blocks[to].preds, from)
+	if graph.prov != nil {
+		prov_link_overwrites(graph, from, to)
+	}
 	if graph.blocks[to].reach_known {
 		// As a loop's head is linked to its back edge (`prov_reaching_offsets`).
 		prov_reach_invalidate(graph, to)
