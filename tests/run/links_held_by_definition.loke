@@ -151,14 +151,41 @@ ok_redefined_after_a_call_stored :: proc(s: []mut Link) {
 	d^ = 2;
 }
 Node :: struct { value: int, next: ^mut Node }
-// One slot stands for every node's `next`, so a cursor holding what it stepped to would
-// conflict with reading further down the list.
+Holder :: struct { p: ^mut Node }
+// One slot stands for every node's `next`, so a cursor holds a copy out of the slot it reads
+// further down the list through, which is below the cursor's own value on every path.
 ok_unlink_through_a_cursor :: proc(head: ^mut Node) {
 	cur := head;
 	for (i := 0; i < 3; i += 1) {
 		cur^.next = cur^.next^.next;
 		cur = cur^.next;
 	}
+}
+ok_unlink_through_a_held_cursor :: proc(head: ^mut Node) {
+	h := Holder{head};
+	for (i := 0; i < 3; i += 1) {
+		h.p^.next = h.p^.next^.next;
+		h.p = h.p^.next;
+	}
+}
+ok_stepped_through_a_pointer :: proc(head: ^mut Node) {
+	cur := head;
+	p := &mut cur;
+	for (i := 0; i < 3; i += 1) {
+		p^ = p^^.next;
+	}
+	t := cur^.next^.next;
+	t^.value = 1;
+	cur^.value = 2;
+}
+ok_read_below_a_copy_of_the_cursor :: proc(head: ^mut Node, c: bool) {
+	cur := head;
+	cur = cur^.next;
+	t := cur;
+	if (c) { t = cur^.next; }
+	u := t^.next;
+	u^.value = 1;
+	cur^.value = 2;
 }
 main :: proc() {
 	a, b := 1, 2;

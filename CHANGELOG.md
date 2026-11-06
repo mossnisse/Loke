@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A cursor stepped through itself, as `cur := head; cur = cur^.next;`, is a copy of the `next` it
+  came from ([Weakening and reborrows](design.md#weakening-and-reborrows)), however it was given its
+  new value: by name, through `p := &mut cur` as `p^ = p^^.next`, or in a record's field. A second
+  copy of that `next`, as `other := head^.next`, while the cursor was live compiled and left two
+  mutable paths to one node. These are now `L0641`. Reading below the cursor, as
+  `cur^.next = cur^.next^.next`, is still no use of it. Upgrade by finishing with one copy before
+  making the other.
 - A borrow one element of a literal takes lasts until the literal is built, so a later element reading
   what it lends is `L0511`, as it is written as statements or as a call's arguments. `Views{&mut d, &d}`
   compiled, and growing `d` through the first left the second reading freed storage. Upgrade by

@@ -3798,7 +3798,7 @@ Now each slot holds a row with a bit per link, solved forward once the links hav
 (`solve_links_held`). A copy takes what its source held and the link it was copied by, and a new
 value in a slot ends what was taken from the old unless it came from there (`end_links_of_value`).
 A use conflicts with a live slot holding one of its reborrows. That one rule replaced the walk,
-the severing pass, and the exceptions above. `via`, `passes_on`, and `moved` stay, as they say
+the severing pass, and the exceptions above. `passes_on` and `moved` stay, as they say
 what a link means, not when it holds, and `prov_slots_overlap` still filters, as a row
 says a value came through a link and a loan says whether it can still name the same storage.
 
@@ -3825,11 +3825,38 @@ only changes in verdict found.
 Removing each guard in turn, against those tables, the matrices, the fixtures, and the generated
 programs, showed which were left over from the walk. `walked` changed no verdict, and neither did
 a store sparing its own links, a copy of a replaced slot's old row, or the conditions on a slot
-holding its own link, the last three of which no input reached, so all are gone. `via` was checked
-in two places, either of which was enough, so only the strip on storing back stays. Removing that
-too rejects only `cur^.next = cur^.next^.next; cur = cur^.next;`, which is valid, though it closes most
-of [A cursor stepped through itself](known-gaps.md#a-cursor-stepped-through-itself-holds-nothing-of-the-field-it-came-from),
-a hole the walk had as well. A guard that no fixture told apart then got one that does.
+holding its own link, the last three of which no input reached, so all are gone. A link's `via`,
+the carriers it was loaded through, was checked in two places, either of which was enough, so only
+a strip on storing back stayed: a definition dropped from its row each link loaded through the slot
+it defined. A guard that no fixture told apart then got one that does. That strip was a hole the
+walk had as well, and [What a cursor's load is below](#what-a-cursors-load-is-below) replaced it.
+
+### What a cursor's load is below
+
+One slot stands for the `next` of every node below the first, so after `cur = cur^.next` the
+cursor holds a copy out of that slot, and `cur^.next^.next` reads the same slot again. Keeping the
+copy as any other rejects `cur^.next = cur^.next^.next; cur = cur^.next;` in a loop, which is valid.
+Two shortcuts accepted it by forgetting the copy: a definition dropped the links loaded through the
+slot it defined (`via`), and a store whose value was read below the place it replaces linked
+nothing. Both forgot it also where the cursor's old value was a copy of a carrier still held, so
+`cur := head; cur = cur^.next; other := head^.next;` gave two live copies of `head^.next`, as did
+the same step through `p := &mut cur` or in a record's field.
+
+Only the value matters, not the slot. A copy of the cursor's `next` loaded through a carrier that
+was loaded through the cursor reads below the cursor's value. In a structure no mutable path reaches
+twice, that is never the place the cursor was copied from. Asking which carriers a load went through
+by slot was tried first, and it accepted `t := cur^.next; cur = t^.next; other := t^.next;`: `t` was
+loaded through `cur`, but through its old value, and `other` is a second copy of what `cur` now
+holds. So the fact is of values (`Loaded_Below`): which carriers a slot's value was loaded at or
+below, as of their current values. A new value in a carrier ends it, and a store of a carrier
+ends all of it, since such a store may relink what any of them reach. It is a must-fact, joined by
+intersection, so a load is exempt only where it is below the cursor on every path. Only a slot
+holding one value can be an anchor: what is below one `next` may be where another was copied from.
+
+The store's shortcut stays where it is sound. Once the place a value was read below has been
+replaced, nothing reaches what it was read from, unless the place's old value was a copy of a
+carrier held elsewhere. A store read below its own target is linked as any other when the old
+value holds a reborrow, and not otherwise (`Prov_Event.replaces_read`).
 
 ### A task holds what it is lent until the join
 

@@ -1,0 +1,44 @@
+// design.md "Weakening and reborrows": a cursor stepped through itself, as `cur = cur^.next`,
+// holds a copy of the `next` it was loaded out of, so a second copy of that `next` is
+// suspended while the cursor is live, however the cursor was given its new value.
+package main;
+
+Node :: struct { value: int, next: ^mut Node }
+Holder :: struct { p: ^mut Node }
+
+stepped :: proc(head: ^mut Node) {
+	cur := head;
+	cur = cur^.next;
+	other := head^.next;
+	other^.value = 1;
+	cur^.value = 2;
+}
+
+stepped_through_a_pointer :: proc(head: ^mut Node) {
+	cur := head;
+	p := &mut cur;
+	p^ = p^^.next;
+	other := head^.next;
+	other^.value = 1;
+	cur^.value = 2;
+}
+
+stepped_in_a_record :: proc(head: ^mut Node) {
+	h := Holder{head};
+	h.p = h.p^.next;
+	other := head^.next;
+	other^.value = 1;
+	h.p^.value = 2;
+}
+
+// `t` was loaded below `cur`'s old value, which is where `cur` now came from.
+stepped_past_a_copy :: proc(head: ^mut Node) {
+	cur := head;
+	t := cur^.next;
+	cur = t^.next;
+	other := t^.next;
+	other^.value = 1;
+	cur^.value = 2;
+}
+
+main :: proc() {}

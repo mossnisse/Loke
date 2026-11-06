@@ -494,10 +494,6 @@ Prov_Reborrow :: struct {
 	mutable: bool,
 	// Only extends the reborrow `source` belongs to: its copies do not suspend it.
 	passes_on: bool,
-	// `derived` was loaded out of `source` through these carriers, so storing it
-	// back into one of them, as `cur = cur^.next` does, replaces that
-	// carrier's value rather than holding a second path to `source`.
-	via: []int,
 	// Taken from a read-only carrier that may come to hold a reborrow of a mutable one,
 	// which extends it only if that carrier does, which is settled once every link is
 	// made (`prov_settle_pending_reborrows`). Until then the solve does not see it.
@@ -647,16 +643,16 @@ Prov_Solve :: struct {
 	// Per slot, which links its value may have come through, as a handle of
 	// `link_rows` (`solve_links_held`).
 	links_held: []u32,
+	// Per slot, which carriers its value was loaded below (`Loaded_Below`).
+	below: Loaded_Below,
 	// Each distinct row, with one bit per reborrow.
 	link_rows:      Interned_Rows,
 	link_row_bytes: int,
 	// Scratch: a value being defined, and a row being changed.
 	link_row_value: []u8,
 	link_row_edit:  []u8,
-	// The reborrows into each slot, those through each carrier they were loaded
-	// through (`Prov_Reborrow.via`), and those each `store_id` makes.
+	// The reborrows into each slot, and those each `store_id` makes.
 	links_into:     [][dynamic]int,
-	links_via:      [][dynamic]int,
 	// A bit per reborrow that is `names_element`.
 	links_naming_element: []u8,
 	links_of_store: [][dynamic]int,
@@ -1289,28 +1285,37 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 	state.link_row_edit = make([]u8, state.link_row_bytes, graph.alloc)
 	state.link_rows = interned_rows_make(state.link_row_bytes, graph.alloc)
 	index_links(state)
+	loaded_below_make(state)
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	queue := block_queue_from_entry(graph)
 	for id in block_queue_pop(&queue) {
 		block := graph.blocks[id]
 		mem.zero_slice(state.links_held)
-		first: [][]u32
+		first, first_below: [][]u32
+		joined := false
 		for predecessor in block.preds {
 			if visited[int(predecessor)] {
-				from := graph.blocks[predecessor].links_exit
-				join_links_held(state, from)
-				if first == nil { first = from }
+				from := graph.blocks[predecessor]
+				join_links_held(state, from.links_exit)
+				join_loaded_below(state, from.below_exit, !joined)
+				if !joined { first, first_below = from.links_exit, from.below_exit }
+				joined = true
 			}
 		}
+		if !joined {
+			mem.zero_slice(state.below.held)
+		}
 		block_table_take(&block.links_entry, state.links_held, first, graph.alloc)
+		block_table_take(&block.below_entry, state.below.held, first_below, graph.alloc)
 		for event in block.prov {
 			run_links_held_event(state, event, state.links_held)
 		}
-		if visited[id] && block_table_equal(block.links_exit, state.links_held) {
+		if visited[id] && block_table_equal(block.links_exit, state.links_held) && block_table_equal(block.below_exit, state.below.held) {
 			continue
 		}
 		visited[id] = true
 		block_table_take(&block.links_exit, state.links_held, block.links_entry, graph.alloc)
+		block_table_take(&block.below_exit, state.below.held, block.below_entry, graph.alloc)
 		block_queue_wake(&queue, block.succs[:])
 	}
 }
@@ -1322,7 +1327,6 @@ index_links :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	context.allocator = graph.alloc
 	state.links_into = make([][dynamic]int, state.slots)
-	state.links_via = make([][dynamic]int, state.slots)
 	state.link_is_named = make([]bool, len(graph.reborrows))
 	state.links_naming_element = make([]u8, state.link_row_bytes, graph.alloc)
 	stores := 0
@@ -1331,9 +1335,6 @@ index_links :: proc(state: ^Prov_Solve) {
 			bit_mark(state.links_naming_element, index)
 		}
 		append(&state.links_into[link.derived], index)
-		for carrier in link.via {
-			append(&state.links_via[carrier], index)
-		}
 		stores = max(stores, link.from_store)
 	}
 	state.links_of_store = make([][dynamic]int, stores + 1)
@@ -1448,6 +1449,7 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 	if state.link_row_bytes == 0 {
 		return
 	}
+	run_loaded_below_event(state, event)
 	#partial switch event.kind {
 	case .Def, .Load:
 		slot := event.slot
@@ -1458,9 +1460,11 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 		if joins {
 			bytes_or(value, state.link_rows.rows[held[slot]])
 		}
+		// What was read below an old value that is no copy is reached no more.
+		keeps_nothing := event.replaces_read && !holds_a_copy(state, held[slot])
 		for index in state.links_into[slot] {
 			link := graph.reborrows[index]
-			if link.from_store > 0 || state.link_is_named[index] && !slice.contains(event.sources, link.source) {
+			if keeps_nothing || link.from_store > 0 || state.link_is_named[index] && !slice.contains(event.sources, link.source) {
 				continue
 			}
 			from := state.link_rows.rows[held[link.source]]
@@ -1472,11 +1476,6 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 				bytes_or(value, from)
 			}
 			bit_mark(value, index)
-		}
-		// What was loaded through this carrier and is stored back, as `cur = cur^.next`,
-		// is the carrier's own value, not a competing use of what it was loaded out of.
-		for index in state.links_via[slot] {
-			bit_clear(value, index)
 		}
 		if !joins {
 			end_links_of_value(state, held, slot, value)
@@ -1490,10 +1489,14 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 		for source in event.sources {
 			bytes_or(stored, state.link_rows.rows[held[source]])
 		}
+		links := event.store_id > 0 && event.store_id < len(state.links_of_store)
+		if links && event.replaces_read {
+			links = !lands_on_nothing_held(state, event.store_id, held)
+		}
 		for slot in event.replaces {
 			held[slot] = 0
 		}
-		if event.store_id > 0 && event.store_id < len(state.links_of_store) {
+		if links {
 			// A call's links run both ways through a hub, so this goes until they settle.
 			for changed := true; changed; {
 				changed = false
@@ -1514,6 +1517,30 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 			end_links_of_value(state, held, slot, stored)
 		}
 	}
+}
+
+// Whether every slot a store lands in holds no copy of another carrier, so a value read
+// below the place it replaces is reached no more once it does (`Prov_Event.replaces_read`).
+@(private = "file")
+lands_on_nothing_held :: proc(state: ^Prov_Solve, store_id: int, held: []u32) -> bool {
+	for index in state.links_of_store[store_id] {
+		if holds_a_copy(state, held[state.graph.reborrows[index].derived]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Whether a link row holds a reborrow other than a `&mut` traversal's read of the
+// element its binding names, which is that element and no copy of it.
+@(private = "file")
+holds_a_copy :: proc(state: ^Prov_Solve, row: u32) -> bool {
+	for byte, at in state.link_rows.rows[row] {
+		if byte &~ state.links_naming_element[at] != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 @(private)

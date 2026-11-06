@@ -121,6 +121,9 @@ Flow_Block :: struct {
 	// Per slot, a handle of what it holds of the reborrows (`solve_links_held`).
 	links_entry:     [][]u32,
 	links_exit:      [][]u32,
+	// Per slot, a handle of what carriers it was loaded below (`Loaded_Below`).
+	below_entry:     [][]u32,
+	below_exit:      [][]u32,
 	live_entry:      [][]Slot_Use,
 	live_exit:       [][]Slot_Use,
 	use_entry:       [][]Span,

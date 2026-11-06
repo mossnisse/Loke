@@ -197,7 +197,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	if prov_slot_is_loaded_read_only(graph, event.slot) {
 		for source in event.sources {
 			append(&graph.reborrows, Prov_Reborrow {
-				source = source, derived = event.slot, span = event.span, passes_on = true, via = event.into,
+				source = source, derived = event.slot, span = event.span, passes_on = true,
 				pending = true,
 			})
 		}
@@ -217,7 +217,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	for source in event.sources {
 		if prov_slot_is_mutable_carrier(graph, source) || graph.prov_slots[source].caller_mutable {
 			append(&graph.reborrows, Prov_Reborrow {
-				source = source, derived = event.slot, span = event.span, mutable = mutable, passes_on = passes_on, via = event.into,
+				source = source, derived = event.slot, span = event.span, mutable = mutable, passes_on = passes_on,
 				moved = graph.prov_slots[event.slot].moved_out, names_element = graph.prov_slots[event.slot].names_element,
 			})
 		}

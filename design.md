@@ -7587,9 +7587,13 @@ tally_first :: proc(xs: []mut Counter, i: int) {
 }
 ```
 
-Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. Nor does
-storing a carrier copied out through another carrier back into that one, as
-`cur = cur^.next`: the copy becomes that carrier's value. An allocator or other
+Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. Storing a
+carrier copied out through another carrier back into that one, as
+`cur = cur^.next`, makes the copy that carrier's value: reading through it again,
+as the next `cur^.next`, or through what is loaded below it on every path, is no
+use of the place it was copied from. It is still a copy of that place, so after
+`cur := head; cur = cur^.next;` another copy of `head^.next` is suspended while
+`cur` is live. An allocator or other
 region provider is not reborrowed by a copy: its copies share it by design.
 
 A carrier copied out of storage reborrows the carrier stored there, wherever
@@ -7624,7 +7628,10 @@ is used afterwards. A
 carrier read from below the place it is stored in replaces the one it was read
 through, as `list^.head = list^.head^.next` does, and reordering, as `swap`,
 `sort`, or `a[0], a[1] = a[1], a[0]`, leaves each carrier in one place; neither
-is a copy. `insert`, `remove`, and `remove_unordered` on a dynamic array move
+is a copy. The carrier read from below is a copy after all where the one it
+replaces was itself a copy of a carrier held elsewhere, as `p^ = p^^.next` with
+`p := &mut cur` after `cur := head`, since what it was read from is still
+reached from there. `insert`, `remove`, and `remove_unordered` on a dynamic array move
 what its elements hold in the same way. A call that stores no carrier leaves
 each one its own:
 

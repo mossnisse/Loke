@@ -437,10 +437,15 @@ Prov_Event :: struct {
 	// in another slot, also joins into the parameter itself (`publish_into_loan`).
 	linked:        bool,
 	// `Publish`: the solve links each carrier it copies to the slots it lands in
-	// (`prov_link_landed`), not when what it reads through is replaced, from this
-	// store on, which `store_id` tells its links from another's (`from_store`).
+	// (`prov_link_landed`), from this store on, which `store_id` tells its links from
+	// another's (`from_store`).
 	links_copies:  bool,
 	store_id:      int,
+	// `Publish`, `Def`: the value stored was read below the place it replaces, as
+	// `cur^.next = cur^.next^.next`. Where that place's old value holds no reborrow, no
+	// copy of it outlives the statement, so what was read below it is reached no more
+	// and its copies are linked nowhere (`run_links_held_event`).
+	replaces_read: bool,
 	// `Publish`: the type stored, or INVALID_TYPE when not known
 	// (`Carrier_Move`).
 	carried:       Type_Id,
@@ -1854,6 +1859,7 @@ prov_define_content :: proc(
 	copies := true,
 	replace_matching := false,
 	reborrows := true,
+	replaces_read := false,
 ) {
 	indistinct := path_is_indistinct(written)
 	for slot in into {
@@ -1873,7 +1879,7 @@ prov_define_content :: proc(
 		   (indistinct || path_is_indistinct(entry.path) || partial_truncated_write)) {
 			sources = prov_join(graph, prov_one(graph, slot), sources)
 		}
-		prov_define_one_content(graph, slot, sources, span, path_precision(written), copies, reborrows)
+		prov_define_one_content(graph, slot, sources, span, path_precision(written), copies, reborrows, replaces_read)
 	}
 }
 
@@ -1881,7 +1887,7 @@ prov_define_content :: proc(
 @(private)
 prov_define_one_content :: proc(
 	graph: ^Flow_Graph, slot: int, sources: []int, span: Span, precision: Precision_Loss = {}, copies := true,
-	reborrows := true,
+	reborrows := true, replaces_read := false,
 ) {
 	entry := graph.prov_slots[slot]
 	type := entry.content_type
@@ -1891,11 +1897,13 @@ prov_define_one_content :: proc(
 	if !copies {
 		graph.lent_aliases[slot] = sources
 	} else if reborrows {
-		prov_reborrow(graph, sources, type, slot, span, copies = true)
+		// A value read below the place it replaces was used by that read
+		// (`prov_publish_store`).
+		prov_reborrow(graph, sources, type, slot, span, copies = !replaces_read)
 	}
-	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision, replaces_read = replaces_read})
 	if traversal, traversed := graph.traversals[entry.symbol]; traversed {
-		prov_publish_traversal(graph, traversal, slot, sources, span, type, reborrows)
+		prov_publish_traversal(graph, traversal, slot, sources, span, type, reborrows, replaces_read)
 	} else if len(graph.region_aliases[entry.symbol]) > 0 {
 		prov_event(graph, Prov_Event_View_Publish {
 			symbol = entry.symbol, path = entry.path, sources = sources, span = span,
@@ -1960,7 +1968,9 @@ prov_note_traversal :: proc(
 // What `slot`, of a `&mut` binding, was just set to, also in the source
 // (`prov_note_traversal`). What the slot already held is there already.
 @(private = "file")
-prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, slot: int, sources: []int, span: Span, type: Type_Id, reborrows: bool) {
+prov_publish_traversal :: proc(
+	graph: ^Flow_Graph, traversal: Prov_Traversal, slot: int, sources: []int, span: Span, type: Type_Id, reborrows, replaces_read: bool,
+) {
 	stored := make([dynamic]int, 0, len(sources), graph.alloc)
 	for source in sources {
 		if source != slot {
@@ -1974,25 +1984,30 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 	if traversal.root != NO_ROOT && traversal.lent {
 		for held in prov_content_at(graph, traversal.root, traversal.path) {
 			if carrier_may_land_in(graph.k.c, slot_carrier_type(graph, held), type) {
-				prov_define_one_content(graph, held, prov_join(graph, prov_one(graph, held), stored[:]), span, reborrows = reborrows)
+				prov_define_one_content(graph, held, prov_join(graph, prov_one(graph, held), stored[:]), span, reborrows = reborrows, replaces_read = replaces_read)
 			}
 		}
 	} else if traversal.root != NO_ROOT {
 		written := prov_concat_path(graph, traversal.path, at)
-		prov_define_content(graph, prov_content_at(graph, traversal.root, written), stored[:], span, written, type, preserve_previous = true, reborrows = reborrows)
+		prov_define_content(graph, prov_content_at(graph, traversal.root, written), stored[:], span, written, type, preserve_previous = true, reborrows = reborrows, replaces_read = replaces_read)
 		return
 	}
 	if len(traversal.into) == 0 {
 		return
 	}
-	publish := Prov_Event{kind = .Publish, span = span, sources = stored[:], into = traversal.into, strips = true, carried = type, lands_by_type = traversal.lent}
+	publish := Prov_Event{
+		kind = .Publish, span = span, sources = stored[:], into = traversal.into, strips = true, carried = type, lands_by_type = traversal.lent,
+		replaces_read = replaces_read,
+	}
 	if traversal.known {
 		publish.path = prov_concat_path(graph, traversal.path, at)
 	}
 	if type != INVALID_TYPE && type_is_carrier(graph.k.c, type) {
 		publish.linked = true
 		if reborrows {
-			prov_reborrow(graph, stored[:], type, span = span, copies = true)
+			if !replaces_read {
+				prov_reborrow(graph, stored[:], type, span = span, copies = true)
+			}
 			publish.links_copies = true
 			graph.has_linked_store = true
 		}
@@ -4352,7 +4367,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			// suspends nothing, and leaves what the place holds as it is.
 			stored_back := value != nil && len(s.lhs) == 1 && prov_names_same_place(graph.k.c, value, target)
 			if content := prov_content_at(graph, root, path); len(content) > 0 && s.op == .Assign && !stored_back {
-				prov_define_content(graph, content, sources, expr_span(target), path, target_type, reborrows = !replaces_read)
+				prov_define_content(graph, content, sources, expr_span(target), path, target_type, replaces_read = replaces_read)
 			}
 			continue
 		}
@@ -4466,19 +4481,23 @@ prov_assign_through_carrier :: proc(
 @(private = "file")
 prov_publish_store :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, target: Expr, sources, through: []int, below: []Proj_Step, permutes, replaces_read: bool) {
 	target_type := prov_type(graph, target)
-	// What it reads through is replaced, so it copies nothing to link.
-	links := !replaces_read && len(sources) > 0
+	links := len(sources) > 0
 	lands: Prov_Store_Target
 	if element, found := prov_view_element_store(graph, target, target_type); found {
 		lands = element
 	}
 	if links {
-		prov_use_stored(graph, sources, target_type, expr_span(target))
+		// What it read below its target was used by that read, which reports a copy of it
+		// in use, so it does not use it again.
+		if !replaces_read {
+			prov_use_stored(graph, sources, target_type, expr_span(target))
+		}
 		graph.has_linked_store = true
 	}
 	publish := Prov_Event {
 		kind = .Publish, span = expr_span(target), sources = sources, into = through,
 		linked = prov_store_linked(graph.k.c, target_type), store = lands, carried = target_type, links_copies = links,
+		replaces_read = replaces_read,
 		permutes = permutes, element = prov_local_view_element(graph, target),
 		through_element = lands == nil && prov_may_point_at_element(graph, through),
 	}

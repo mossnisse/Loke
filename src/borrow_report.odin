@@ -42,6 +42,7 @@ report_provenance :: proc(state: ^Prov_Solve) {
 		}
 		solve_enter_block(state, block)
 		block_table_put(block.links_entry, state.links_held)
+		block_table_put(block.below_entry, state.below.held)
 		for event, index in block.prov {
 			// Liveness after this event, which is what it consults.
 			undo := changes[marks[index + 1]:marks[index]]
@@ -248,11 +249,11 @@ live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use:
 			if slot == source {
 				return reborrow, source, true
 			}
-			// What was stored back into the carrier it was loaded through is that one's
-			// current value, not a competing use; nor is a carrier the use itself goes
-			// through, as a slice argument holding a reborrow of the elements a call
-			// reads through it.
-			if use.kind == .Load && !at_once && slice.contains(use.into, slot) {
+			// A load through the reborrow itself is no competing use, as a slice argument
+			// holding a reborrow of the elements a call reads through it, or `cur^.next`
+			// once `cur = cur^.next` has stepped; nor is one only through what was loaded
+			// below it, as `cur^.next^.next`.
+			if use.kind == .Load && !at_once && (slice.contains(use.into, slot) || loads_below(state, use.into, slot)) {
 				continue
 			}
 			// A load defines its slot afresh, as a loop's `list^.head` loads its temporary
@@ -266,6 +267,21 @@ live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use:
 		}
 	}
 	return {}, -1, false
+}
+
+// Whether every carrier a load goes through was loaded below `cursor`'s current value
+// (`Loaded_Below`). One slot stands for a field of every node, as a list's `next`, so what
+// the cursor was copied out of and what is read below it share a slot. In a structure no
+// mutable path reaches twice, a place below the cursor's value is not the one that value
+// was copied from.
+@(private = "file")
+loads_below :: proc(state: ^Prov_Solve, carriers: []int, cursor: int) -> bool {
+	for carrier in carriers {
+		if !loaded_below(state, carrier, cursor) {
+			return false
+		}
+	}
+	return len(carriers) > 0
 }
 
 // Whether a call's `At_Once` load reaches `source` by other than what was reborrowed

@@ -518,7 +518,9 @@ Keep these contracts:
   solved last, as it depends on every link (`solve_links_held`): a slot holds a row with
   a bit per reborrow, which a copy passes on, and each distinct row is kept once, so a
   block holds only a handle per slot. A use of a carrier conflicts with a live slot
-  holding one of its reborrows (`live_reborrow_of`). A store through a `foreach` loop's `&mut` binding
+  holding one of its reborrows (`live_reborrow_of`), unless the use loads only through
+  that slot or through what was loaded below its current value on every path
+  (`Loaded_Below`, solved with the links held), as a stepped cursor's `cur^.next^.next`. A store through a `foreach` loop's `&mut` binding
   also lands in the element it names, whichever that is, joined into what each
   holds (`Prov_Traversal`, `prov_publish_traversal`): by path into a source that
   is a named place, otherwise as a `Publish` through what the traversal holds,
@@ -973,6 +975,7 @@ be file-private. Paths below are relative to `src/`.
 | `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
 | `borrow.odin` | The provenance solver: roots, loans, and slots; solving each body and its declared escape contracts; reaching loans, publication, and liveness. |
 | `borrow_summaries.odin` | What a body leaves for its callers' summaries: the carriers it moves, its `thread_local` writes, the regions it leaves in written arguments, and what may escape. |
+| `borrow_loaded_below.odin` | Which carriers each slot's value was loaded at or below on every path, which tells a read below a stepped cursor from a second copy of what it was copied out of. |
 | `borrow_report.odin` | Root and region diagnostics: each block's events replayed against the settled facts, reporting conflicts, outlived storage, escapes, region resets, and retention. |
 | `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
 | `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
