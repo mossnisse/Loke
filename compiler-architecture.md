@@ -380,7 +380,7 @@ is registered, CFG construction models a possible panic at each statement and
 walks the applicable cleanups. Unwind blocks record liveness for provenance but
 do not report lifecycle errors or add normal-path cleanup points.
 
-`borrow.odin` tracks two related facts:
+`borrow.odin` and the `borrow_*` files beside it track two related facts:
 
 - **Root provenance:** which storage a view, pointer-like result, or aggregate
   carrier borrows; checks exclusivity, invalidation, retention, and escape.
@@ -396,13 +396,13 @@ behavioral controls for all of it.
 
 | Concept | Owner |
 | --- | --- |
-| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, the reborrow a loaded copy takes, and whether an index may write what it indexes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded`, `prov_expr_may_write` in `cfg_provenance.odin` |
-| Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
+| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, the reborrow a loaded copy takes, and whether an index may write what it indexes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_expr_may_write` in `cfg_provenance.odin`; `prov_reborrow_loaded` in `provenance_reborrow.odin` |
+| Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `place_bit`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `check_place_loans` in `borrow_report.odin`; `prov_place_loan`, `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | What a block keeps of the solver's tables, in pages shared with its neighbors, and each row of reaching loans or reborrows once | `block_table_take`, `reach_row_written`, `reach_settle`, `reach_load`, `Interned_Rows` in `borrow_tables.odin` |
 | What a load reads below the storage its carriers name, where one points below the whole of it | `prov_load_places`, `Prov_Event.load_places`, `load_pointee_content` |
-| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `cfg_provenance.odin`; `prov_link_retained` in `provenance_retention.odin` |
-| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `copies_outlast_body`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
+| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `provenance_reborrow.odin`; `prov_link_retained` in `provenance_retention.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `copies_outlast_body`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in` in `borrow_summaries.odin`; `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
 | Written-argument regions, by parameter and by path, and by which carrier of a record passed by value | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content`, `prov_parameter_carrier_path`, `prov_contents_held_at` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -955,6 +955,7 @@ be file-private. Paths below are relative to `src/`.
 | `extended_temporaries.odin` | Which temporaries a statement extends to its block's end. |
 | `transfer_facts.odin` | What a value takes to another thread, and what its storage holds or points to. |
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, places, and the statement hooks. |
+| `provenance_reborrow.odin`, `provenance_escape.odin`, `provenance_call_walk.odin` | What a stored carrier takes from what it was read from, weakened or reborrowed; what a store or a call lets escape, and the regions it stores or leaves; how the walk records a call, its arguments, and what it leaves afterwards. |
 | `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
 | `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |
 | `provenance_offsets.odin`, `provenance_aliases.odin` | Where a carrier may point below its storage, merged past the limits, with the definitions reaching a block; written aliases, what a local's carriers and a value with no transfer may reach. |
@@ -964,7 +965,9 @@ be file-private. Paths below are relative to `src/`.
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |
 | `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
-| `borrow.odin` | The provenance solver: root loans, publication, retention, escape contracts, and their diagnostics. |
+| `borrow.odin` | The provenance solver: roots, loans, and slots; solving each body and its declared escape contracts; reaching loans, publication, and liveness. |
+| `borrow_summaries.odin` | What a body leaves for its callers' summaries: the carriers it moves, its `thread_local` writes, the regions it leaves in written arguments, and what may escape. |
+| `borrow_report.odin` | Root and region diagnostics: each block's events replayed against the settled facts, reporting conflicts, outlived storage, escapes, region resets, and retention. |
 | `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
 | `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
 | `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
