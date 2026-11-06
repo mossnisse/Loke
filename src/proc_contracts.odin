@@ -240,7 +240,11 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 			if depths & (u8(1) << u8(depth - 1)) == 0 { continue }
 			inner, outer := result_load_paths(a, index, depth), result_load_paths(b, index, depth)
 			if !paths_within(inner.first, outer.first) { return false }
-			if len(outer.last) > 0 && (inner.along != outer.along || !paths_within(inner.last, outer.last)) { return false }
+			if outer.last == nil { continue }
+			if len(inner.last) != len(outer.last) { return false }
+			for row, along in inner.last {
+				if load_goes_along(inner.first, along) && !paths_within(row, outer.last[along]) { return false }
+			}
 		}
 	}
 	for wanted, index in a.params {

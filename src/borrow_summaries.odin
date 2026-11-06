@@ -844,10 +844,10 @@ merge_param_paths :: proc(
 }
 
 // Narrows a load dependency to the pointee path the loan's first load goes
-// along, and to the path its last goes along where the loan says (`Prov_Loan.last`),
-// so a caller loads only through those fields. Nil means every path. Runs before
-// the load's bit is set, which is how a first narrowing tells itself apart from a
-// dependency already widened to the whole pointee.
+// along, and below it to the path its last goes along where the loan says
+// (`Prov_Loan.last`), so a caller loads only through those fields. Nil means every
+// path. Runs before the load's bit is set, which is how a first narrowing tells
+// itself apart from a dependency already widened to the whole pointee.
 @(private = "file")
 merge_param_load_paths :: proc(
 	state: ^Prov_Solve,
@@ -860,26 +860,41 @@ merge_param_load_paths :: proc(
 		return false
 	}
 	c := state.k.c
-	first := into.param_loads[index] & (u8(1) << u8(loan.depth - 1)) == 0
+	fresh := into.param_loads[index] & (u8(1) << u8(loan.depth - 1)) == 0
 	sym := symbol_of(c, root.symbol)
-	shape := sym == nil ? nil : carrier_pointee_shape(c, sym.type)
+	pointee := sym == nil ? nil : carrier_pointee_shape(c, sym.type)
 	paths := load_paths_at(into, index, loan.depth, c.semantic_allocator)
-	changed := narrow_path_row(&paths.first, loan.pointee, len(shape), first, c.semantic_allocator)
-	last := len(last_load_shape(c, shape, loan.pointee, loan.depth))
-	if first {
-		paths.along = loan.pointee
-	} else if paths.along != loan.pointee && paths.last != nil {
+	// The pointee path the first load goes along: the loan's, or the one there is.
+	along := -1
+	switch {
+	case loan.pointee > 0 && loan.pointee <= len(pointee):
+		along = loan.pointee - 1
+	case loan.pointee == 0 && len(pointee) == 1:
+		along = 0
+	}
+	// Whether a loan went along it before, read before `first` takes this one in.
+	seen := !fresh && along >= 0 && load_goes_along(paths.first, along)
+	changed := narrow_path_row(&paths.first, loan.pointee, len(pointee), fresh, c.semantic_allocator)
+	if along < 0 || (!fresh && paths.last == nil) {
+		// Along any of several paths, or already below every path.
+		if paths.last == nil {
+			return changed
+		}
 		paths.last = nil
 		return true
 	}
-	return narrow_path_row(&paths.last, loan.last, last, first, c.semantic_allocator) || changed
+	if paths.last == nil {
+		paths.last = make([][]bool, len(pointee), c.semantic_allocator)
+	}
+	count := len(last_load_shape(c, pointee[along], loan.depth))
+	return narrow_path_row(&paths.last[along], loan.last, count, !seen, c.semantic_allocator) || changed
 }
 
 // Marks path `position` (plus one) of `count` in `row`, or widens the row to
-// every path when `position` names none. `first` says nothing has been marked yet,
+// every path when `position` names none. `fresh` says nothing has been marked yet,
 // as a nil row is also one widened already.
 @(private = "file")
-narrow_path_row :: proc(row: ^[]bool, position, count: int, first: bool, allocator: mem.Allocator) -> bool {
+narrow_path_row :: proc(row: ^[]bool, position, count: int, fresh: bool, allocator: mem.Allocator) -> bool {
 	if position == 0 || position > count {
 		if row^ == nil {
 			return false
@@ -888,7 +903,7 @@ narrow_path_row :: proc(row: ^[]bool, position, count: int, first: bool, allocat
 		return true
 	}
 	if row^ == nil {
-		if !first {
+		if !fresh {
 			return false // already widened to every path
 		}
 		row^ = make([]bool, count, allocator)

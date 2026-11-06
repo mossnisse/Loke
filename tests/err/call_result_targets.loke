@@ -99,4 +99,64 @@ stored_through_two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) ->
 	return a[0];
 }
 
+// The field beside the one the last load reads is still reached when the result names it.
+through_two_p :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.p; }
+stored_through_two_loads_p :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	two := Crossing{&mut a, &mut b};
+	nest := Nest{&two};
+	target := through_two_p(&nest);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return 0;
+}
+
+// A result that may be either field reaches both.
+through_two_either :: proc(nest: ^Nest, flag: bool) -> ^mut [dynamic]int {
+	if (flag) { return nest^.two^.p; }
+	return nest^.two^.q;
+}
+stored_through_two_loads_either :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool) -> int {
+	buffer := [64]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	two := Crossing{&mut a, &mut b};
+	nest := Nest{&two};
+	target := through_two_either(&nest, flag);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return 0;
+}
+
+// Each first path keeps its own last path: `two^.q` or `other^.p` reaches `b` and
+// `c`, so the reset names `c`, not `a`.
+Wide :: struct { two: ^Crossing, other: ^Crossing }
+through_wide :: proc(w: ^Wide, flag: bool) -> ^mut [dynamic]int {
+	if (flag) { return w^.two^.q; }
+	return w^.other^.p;
+}
+stored_through_crossed_loads :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool) -> int {
+	buffer := [128]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 0, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	c := make([dynamic]int, 0, kept.allocator());
+	d := make([dynamic]int, 0, kept.allocator());
+	two := Crossing{&mut a, &mut b};
+	other := Crossing{&mut c, &mut d};
+	w := Wide{&two, &other};
+	target := through_wide(&w, flag);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	drop(d);
+	free_all(allocator);
+	return 0;
+}
+
 main :: proc() {}

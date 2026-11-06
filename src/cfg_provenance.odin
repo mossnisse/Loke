@@ -2827,7 +2827,7 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 		switch {
 		case loan.pointee > 0:
 			at := pointee[loan.pointee - 1]
-			below, pointers := prov_carrier_below(c, at.type, loan.depth - 1)
+			below, pointers := carrier_below(c, at.type, loan.depth - 1)
 			holder = below
 			one = underlying_kind(c, type) == .Pointer && prov_path_names_one_place(at.steps) && pointers
 		case !loan.content:
@@ -2841,7 +2841,7 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 			}
 			one = holder != INVALID_TYPE && prov_path_names_one_place(loan.path) && underlying_kind(c, holder) == .Pointer
 		case loan.depth < len(descriptor.content_loans):
-			below, pointers := prov_carrier_below(c, type, loan.depth)
+			below, pointers := carrier_below(c, type, loan.depth)
 			holder = below
 			one = pointers
 		}
@@ -2862,6 +2862,10 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 			prov_caller_slot(graph, Loan_Id(index), whole, held, name, mutable, one)
 			continue
 		}
+		// `paths` are what a load one below this loan's reads, its `last_load_shape`
+		// at `held`'s depth, unless `held` is this loan: the last content loan,
+		// standing for every depth below it.
+		names_last := graph.loans[int(held)].depth == loan.depth + 1
 		for path, position in paths {
 			// Each carrier in one storage holds a loan of its own, as each
 			// pointee path's does, so what `p^^.head` and `p^^.tail` point at
@@ -2873,7 +2877,9 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 					graph, root, nil, path.mutable, descriptor.span, carrier_path_noun(c, path),
 					graph.loans[int(held)].depth, graph.loans[int(held)].pointee,
 				)
-				graph.loans[int(own)].last = position + 1
+				if names_last {
+					graph.loans[int(own)].last = position + 1
+				}
 			}
 			prov_caller_slot(graph, Loan_Id(index), path, own, name, path.mutable, one)
 		}
@@ -2887,29 +2893,6 @@ prov_pointee_type :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 		return info.element
 	}
 	return INVALID_TYPE
-}
-
-// The carrier `depth` loads below one of `type`, when each storage on the way
-// holds exactly one; INVALID_TYPE otherwise. `all_pointers` when each carrier on
-// the way and the one found is a pointer, not a view of several elements, so they
-// name one storage.
-@(private = "file")
-prov_carrier_below :: proc(c: ^Compiler, type: Type_Id, depth: int) -> (carrier: Type_Id, all_pointers: bool) {
-	at := type
-	all_pointers = true
-	for _ in 0 ..< depth {
-		all_pointers &&= underlying_kind(c, at) == .Pointer
-		element := prov_pointee_type(c, at)
-		if element == INVALID_TYPE {
-			return INVALID_TYPE, false
-		}
-		inner := carrier_shape(c, element)
-		if len(inner) != 1 || inner[0].truncated {
-			return INVALID_TYPE, false
-		}
-		at = inner[0].type
-	}
-	return at, all_pointers && underlying_kind(c, at) == .Pointer
 }
 
 @(private = "file")

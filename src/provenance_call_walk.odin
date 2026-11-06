@@ -115,9 +115,11 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 
 // What is stored behind `carriers`, `from` loads down and at every depth below:
 // what a callee may hand back or keep from the storage an argument reaches.
-// `path` narrows the first load to one place in what `carriers` name.
+// `route` narrows the first load to one place in what `carriers` name, and the
+// last, the `from`th, to one place in what it reads; when they are one load, the
+// last's place wins, as `prov_load_held` has taken the first's already.
 @(private)
-prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 1, path: []Proj_Step = nil, last: []Proj_Step = nil) -> []int {
+prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 1, route := Load_Route{}) -> []int {
 	if len(carriers) == 0 {
 		return nil
 	}
@@ -127,10 +129,10 @@ prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 
 		slot := prov_temp_slot(graph)
 		along: []Proj_Step
 		switch {
-		case depth == from && last != nil:
-			along = last
+		case depth == from && route.last != nil:
+			along = route.last
 		case depth == 1:
-			along = path
+			along = route.first
 		}
 		prov_emit(graph, Prov_Event{
 			kind = .Load, slot = slot, into = through, path = along, load = .Deep if depth == from else .Place, span = span,

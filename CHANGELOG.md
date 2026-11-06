@@ -1679,7 +1679,8 @@ checklist.
   last load reads, as one read through one load already named its field. Storing an allocator's
   value through it and then resetting the allocator was `L0537` for the `p` beside it. Loads between
   the first and the last that each read the one carrier their storage holds keep this, as
-  `t^.nest^.two^.q` does.
+  `t^.nest^.two^.q` does, and so does each first path of a result read along several:
+  `w^.two^.q` or `w^.other^.p` names neither `two^.p` nor `other^.q`.
 - A map literal of 100000 entries, as `map[string]string{ "k0" = "v0", ... }`, runs at `-opt=none`,
   where it overflowed the stack: each entry kept its own unwind actions and two stack slots, and now
   `main`'s frame is the same size whatever the literal's length.

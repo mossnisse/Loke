@@ -19,3 +19,12 @@ this reset would end the region backing `a`
 L0537
 @98:2
 this reset would end the region backing `b`
+L0537
+@114:2
+this reset would end the region backing `a`
+L0537
+@133:2
+this reset would end the region backing `a`
+L0537
+@158:2
+this reset would end the region backing `c`

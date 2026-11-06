@@ -7945,9 +7945,12 @@ fmt.println(low);
 ```
 
 A value read through a parameter keeps which path of the pointee its first load
-goes along and, where each load after it reads the one carrier its storage
-holds, which path its last goes along: `nest^.two^.q`, with `nest: ^Nest` and
-`two: ^Two`, names `q` of what `two` points at, not the `p` beside it.
+goes along and, where each load between the first and the last reads the one
+carrier its storage holds, which path its last goes along below that first path:
+`nest^.two^.q`, with `nest: ^Nest` and `two: ^Two`, names `q` of what `two`
+points at, not the `p` beside it. A result that is `w^.two^.q` or `w^.other^.p`
+names `q` below `two` and `p` below `other`, and neither `p` below `two` nor `q`
+below `other`.
 
 At a call, actual argument roots and allocator regions replace the corresponding
 parameters. The contract is transitive, independent of declaration order, and

@@ -62,8 +62,34 @@ three_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	return a[0] + 2;
 }
 
+// Each first path keeps its own last path: `two^.q` or `other^.p` reaches `b` and
+// `c`, and nothing of `a` or `d`.
+either_first :: proc(w: ^Wide, flag: bool) -> ^mut [dynamic]int {
+	if (flag) { return w^.two^.q; }
+	return w^.other^.p;
+}
+
+two_first_paths :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 0, kept.allocator());
+	c := make([dynamic]int, 0, kept.allocator());
+	d := make([dynamic]int, 1, kept.allocator());
+	two := Two{&mut a, &mut b};
+	other := Two{&mut c, &mut d};
+	w := Wide{&two, &other};
+	target := either_first(&w, flag);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	drop(c);
+	free_all(allocator);
+	return a[0] + d[0] + 2;
+}
+
 main :: proc() {
 	buffer := [4096]u8{};
 	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	fmt.println(two_loads(arena.allocator()), beside_the_first(arena.allocator()), three_loads(arena.allocator()));
+	fmt.println(two_first_paths(arena.allocator(), true), two_first_paths(arena.allocator(), false));
 }

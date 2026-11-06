@@ -633,13 +633,20 @@ Result_Dependencies :: struct {
 
 // design.md "Procedure result contracts": which paths a result's loads through a
 // parameter go along. `first` is of the parameter's `carrier_pointee_shape`. `last`
-// is of what the last load reads, `last_load_shape` below the first load's path
-// `along` (plus one, or zero for the one path there is), when each load between
-// them reads one carrier, so `nest^.two^.q` names `q` and not `two^.p`. Nil means
-// every path.
+// has a row per path of that shape, the paths of its `last_load_shape` the last
+// load may go along below it, so `nest^.two^.q` names `q` and not `two^.p`, and a
+// result that is `w^.two^.q` or `w^.other^.p` names neither `two^.p` nor `other^.q`.
+// Nil, as `last` or as one of its rows, means every path. `last` is nil when the
+// first load may go along any of several paths, and a row counts only for a path
+// `first` includes (`load_goes_along`).
 Load_Paths :: struct {
-	first, last: []bool,
-	along:       int,
+	first: []bool,
+	last:  [][]bool,
+}
+
+// Whether a row of paths, where nil means every path, includes `along`.
+load_goes_along :: proc(row: []bool, along: int) -> bool {
+	return row == nil || (along < len(row) && row[along])
 }
 
 // The paths `depth` loads through parameter `index` may go along.
@@ -651,34 +658,36 @@ result_load_paths :: proc(dependencies: Result_Dependencies, index, depth: int) 
 	return depth - 1 < len(depths) ? depths[depth - 1] : {}
 }
 
-// The carrier paths of what the last of `depth` loads reads, the first along
-// `pointee`'s path `first` (plus one, or zero for the one path there is) and each
-// one between reading one carrier; nil when that is not one type, or `depth` is 1.
-last_load_shape :: proc(c: ^Compiler, pointee: []Carrier_Path, first, depth: int) -> []Carrier_Path {
-	if depth < 2 {
-		return nil
-	}
-	path: Carrier_Path
-	switch {
-	case first > 0 && first <= len(pointee):
-		path = pointee[first - 1]
-	case first == 0 && len(pointee) == 1:
-		path = pointee[0]
-	case:
-		return nil
-	}
-	if path.truncated {
-		return nil
-	}
-	at := path.type
-	for _ in 2 ..< depth {
+// The carrier `depth` loads below one of `type`, when each storage on the way
+// holds exactly one; INVALID_TYPE otherwise. `all_pointers` when each carrier on
+// the way and the one found is a pointer, not a view of several elements, so they
+// name one storage.
+carrier_below :: proc(c: ^Compiler, type: Type_Id, depth: int) -> (carrier: Type_Id, all_pointers: bool) {
+	at := type
+	all_pointers = true
+	for _ in 0 ..< depth {
+		all_pointers &&= underlying_kind(c, at) == .Pointer
 		inner := carrier_pointee_shape(c, at)
 		if len(inner) != 1 || inner[0].truncated {
-			return nil
+			return INVALID_TYPE, false
 		}
 		at = inner[0].type
 	}
-	return carrier_pointee_shape(c, at)
+	return at, all_pointers && underlying_kind(c, at) == .Pointer
+}
+
+// The carrier paths of what the last of `depth` loads reads, the first along the
+// pointee path `along` and each one between reading the one carrier its storage
+// holds; nil when that is not one type, or `depth` is 1.
+last_load_shape :: proc(c: ^Compiler, along: Carrier_Path, depth: int) -> []Carrier_Path {
+	if depth < 2 || along.truncated {
+		return nil
+	}
+	below, _ := carrier_below(c, along.type, depth - 2)
+	if below == INVALID_TYPE {
+		return nil
+	}
+	return carrier_pointee_shape(c, below)
 }
 
 // Which paths a caller's loads through one argument go along for a result
@@ -694,25 +703,26 @@ result_load_routes :: proc(
 ) -> []Load_Route {
 	paths := result_load_paths(dependencies, index, depth)
 	out := make([dynamic]Load_Route, 0, 2, allocator)
-	add := proc(c: ^Compiler, out: ^[dynamic]Load_Route, paths: Load_Paths, pointee: []Carrier_Path, first, depth: int, steps: []Proj_Step) {
-		shape := last_load_shape(c, pointee, first, depth)
-		if paths.along != first || len(paths.last) == 0 || len(paths.last) != len(shape) {
-			append(out, Load_Route{steps, nil})
-			return
-		}
-		for named, position in paths.last {
-			if named {
-				append(out, Load_Route{steps, shape[position].steps})
-			}
-		}
-	}
-	if len(paths.first) == 0 || len(paths.first) != len(pointee) {
-		add(c, &out, paths, pointee, 0, depth, nil)
+	whole := len(paths.first) == 0 || len(paths.first) != len(pointee)
+	if whole && len(pointee) != 1 {
+		append(&out, Load_Route{})
 		return out[:]
 	}
-	for named, position in paths.first {
-		if named {
-			add(c, &out, paths, pointee, position + 1, depth, pointee[position].steps)
+	for along, position in pointee {
+		if !whole && !paths.first[position] {
+			continue
+		}
+		first := whole ? nil : along.steps
+		shape := last_load_shape(c, along, depth)
+		row := position < len(paths.last) ? paths.last[position] : nil
+		if len(row) == 0 || len(row) != len(shape) {
+			append(&out, Load_Route{first, nil})
+			continue
+		}
+		for named, last in row {
+			if named {
+				append(&out, Load_Route{first, shape[last].steps})
+			}
 		}
 	}
 	return out[:]
@@ -1026,29 +1036,41 @@ load_paths_at :: proc(into: ^Result_Dependencies, index, depth: int, allocator: 
 	return &into.param_load_paths[index][depth - 1]
 }
 
-// Joins `from` into the paths of one depth. `first` says nothing has been joined
-// yet. A last load's paths below different first paths are of different storage,
-// so they widen to every path.
+// Joins `from` into the paths of one depth. `fresh` says nothing has been joined
+// yet. Each first path's last paths join only what reaches them along it.
 @(private = "file")
-join_load_paths :: proc(into: ^Load_Paths, from: Load_Paths, first: bool, allocator: mem.Allocator) {
-	join_path_row(&into.first, from.first, first, allocator)
+join_load_paths :: proc(into: ^Load_Paths, from: Load_Paths, fresh: bool, allocator: mem.Allocator) {
 	switch {
-	case first:
-		into.along = from.along
-		join_path_row(&into.last, from.last, true, allocator)
-	case into.along != from.along:
+	case fresh:
+		if from.last != nil {
+			into.last = make([][]bool, len(from.last), allocator)
+			for row, along in from.last {
+				join_path_row(&into.last[along], row, true, allocator)
+			}
+		}
+	case into.last == nil:
+	case from.last == nil || len(from.last) != len(into.last):
 		into.last = nil
 	case:
-		join_path_row(&into.last, from.last, false, allocator)
+		// Before `into.first` takes in `from.first`, it says which rows are new.
+		for row, along in from.last {
+			if load_goes_along(from.first, along) {
+				join_path_row(&into.last[along], row, !load_goes_along(into.first, along), allocator)
+			}
+		}
+	}
+	join_path_row(&into.first, from.first, fresh, allocator)
+	if into.first == nil && len(into.last) != 1 {
+		into.last = nil // along every one of several paths
 	}
 }
 
-// Joins `from` into a row of paths, where nil means every path. `first` says
+// Joins `from` into a row of paths, where nil means every path. `fresh` says
 // nothing has been joined yet.
 @(private = "file")
-join_path_row :: proc(into: ^[]bool, from: []bool, first: bool, allocator: mem.Allocator) {
+join_path_row :: proc(into: ^[]bool, from: []bool, fresh: bool, allocator: mem.Allocator) {
 	switch {
-	case first:
+	case fresh:
 		if from != nil {
 			into^ = slice.clone(from, allocator)
 		}
@@ -1075,8 +1097,8 @@ merge_result_dependencies :: proc(into: ^Result_Dependencies, from: Result_Depen
 			if depths & bit == 0 {
 				continue
 			}
-			first := into.param_loads[index] & bit == 0
-			join_load_paths(load_paths_at(into, index, depth, allocator), result_load_paths(from, index, depth), first, allocator)
+			fresh := into.param_loads[index] & bit == 0
+			join_load_paths(load_paths_at(into, index, depth, allocator), result_load_paths(from, index, depth), fresh, allocator)
 		}
 		into.param_loads[index] |= depths
 	}

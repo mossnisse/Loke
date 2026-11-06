@@ -290,7 +290,7 @@ prov_substitute_result :: proc(
 			if len(held) > 0 {
 				return prov_load_held(graph, v, held, depth, route)
 			}
-			return prov_load_deep(graph, through, v.span, depth, route.first, route.last)
+			return prov_load_deep(graph, through, v.span, depth, route)
 		}
 		shape := prov_parameter_pointee_shape(graph, v, index)
 		for depth in 1 ..= 8 {
@@ -347,7 +347,7 @@ prov_substitute_result :: proc(
 }
 
 // What `depth` loads through a `self: ^` receiver read of what its place holds,
-// `held`, with the first load along `path`: the first load is `held` itself.
+// `held`, along `route`: the first load is `held` itself.
 @(private = "file")
 prov_load_held :: proc(graph: ^Flow_Graph, v: ^Expr_Call, held: []int, depth: int, route: Load_Route) -> []int {
 	if len(held) == 0 {
@@ -357,7 +357,7 @@ prov_load_held :: proc(graph: ^Flow_Graph, v: ^Expr_Call, held: []int, depth: in
 	if depth == 1 {
 		return selected
 	}
-	return prov_load_deep(graph, selected, v.span, depth - 1, last = route.last)
+	return prov_load_deep(graph, selected, v.span, depth - 1, Load_Route{last = route.last})
 }
 
 // The carrier paths of what one load through parameter `index` reads. A

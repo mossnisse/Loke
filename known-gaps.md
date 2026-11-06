@@ -7,6 +7,48 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A result read through more than four loads reaches nothing
+
+[Procedure result contracts](design.md#procedure-result-contracts) let a result hold what
+is read through a parameter at any depth. A summary keeps a parameter's loads to
+`CARRIER_DEPTH` (four) in
+[carrier_shape.odin](src/carrier_shape.odin), and a result read through a fifth carries no
+dependency at the call, so the reset here is accepted although `target` names `a`:
+
+```loke
+package main;
+import "core:mem";
+Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
+A :: struct { b: ^B }
+B :: struct { c: ^C }
+C :: struct { d: ^Two }
+E :: struct { a: ^A }
+f :: proc(x: ^E) -> ^mut [dynamic]int { return x^.a^.b^.c^.d^.p; }
+run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    buffer := [1024]u8{};
+    kept := mem.Arena.from_buffer(&mut buffer[:]);
+    a := make([dynamic]int, 1, kept.allocator());
+    b := make([dynamic]int, 1, kept.allocator());
+    two := Two{&mut a, &mut b};
+    cc := C{&two};
+    bb := B{&cc};
+    aa := A{&bb};
+    x := E{&aa};
+    target := f(&x);
+    target^ = make([dynamic]int, 1, allocator);
+    free_all(allocator); // wrongly accepted: `a` now holds the allocator's array
+    return a[0];
+}
+main :: proc() {}
+```
+
+The same read in `run` itself, `px^.a^.b^.c^.d^.p` with `px := &x`, is rejected with
+`L0537`, and so is a call reading through four loads, `x^.a^.c^.d^.p` with
+`E :: struct { a: ^B }`. The parent of `b5279ced`
+accepts it too, so it predates last-load paths. A result past the last depth a summary
+keeps should depend on what that depth reaches, as a deeper local load does. Found on
+2026-11-06 while reviewing `b5279ced` (P1).
+
 ### An unrelated carrier store forgets what was loaded below a cursor
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) permits a load through
