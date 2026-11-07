@@ -45,12 +45,12 @@ dropped :: proc() -> int { return sink.dropped(); }
 
 /**
 	Closes the log, once every thread that logs has been joined, and answers
-	whether `close` succeeded. The sink is left over a closed file, which refuses
-	every later record.
+	whether `close` succeeded. A `static` sink cannot be consumed in place, so a
+	new one over a zero `File` takes its place: closed, it refuses every later
+	record, and `dropped` counts them afresh.
 */
 close_log :: proc() -> bool {
-	old := exchange(inout sink, log.writer_sink(fs.File{}));
-	opened := move(old).into_writer();
+	opened := exchange(inout sink, log.writer_sink(fs.File{})).into_writer();
 	switch (opened.close()) {
 	case .ok:  return true;
 	case .err: return false;

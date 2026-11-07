@@ -2,7 +2,8 @@
 // the built compiler, plus the parser's own:
 //
 //   tests/run/*.loke + .expected   compile, run, compare stdout; an optional
-//                                  sibling .expected-err compares stderr too
+//                                  sibling .expected-err compares stderr too,
+//                                  and .expected-compile the compiler's output
 //   tests/ll/*.loke  + .expected   compile with -emit-ll, assert the generated
 //                                  IR still contains each listed shape; a `*`
 //                                  matches any run inside one IR line, and a
@@ -2727,7 +2728,9 @@ Program_Case :: struct {
 // Compile every case, run what compiled, and compare what it printed. stderr is
 // compared when the case has a sibling `.expected-err`: a program needs one only
 // for a `core:log` record on the standard sink, the logger every unselected
-// build gets, which comparing stdout alone never sees.
+// build gets, which comparing stdout alone never sees. A sibling
+// `.expected-compile` pins the compiler's own output the same way, so an empty
+// one asserts a build without warnings, which the exit code alone cannot.
 @(private)
 run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 	compiles := make([]Exec, len(cases), context.temp_allocator)
@@ -2748,6 +2751,17 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 		}
 		if !testing.expectf(t, job.state.exit_code == 0, "%s: compile failed\n%s", c.path, string(job.stderr)) {
 			continue
+		}
+		diagnostics, diagnostics_err := os.read_entire_file(fmt.tprintf("%s-compile", c.expected_file), context.temp_allocator)
+		if diagnostics_err == nil {
+			testing.expectf(
+				t,
+				normalise(string(job.stderr)) == normalise(string(diagnostics)),
+				"%s: expected compiler output %q, got %q",
+				c.path,
+				normalise(string(diagnostics)),
+				normalise(string(job.stderr)),
+			)
 		}
 		runs[i].command = make([]string, 1, context.temp_allocator)
 		runs[i].command[0] = launch_path(c.exe)

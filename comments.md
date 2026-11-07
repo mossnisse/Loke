@@ -1887,6 +1887,14 @@ Each line is built in memory before the writer sees it, because `fs.File` keeps
 no buffer: writing the pieces would cost a system call each, and a second
 process appending to the same file could split a line between them.
 
+A record refused part way, by a disk that fills, leaves bytes the sink cannot
+take back. The next record starts with a newline, so the fragment stands on a
+line of its own and the next record is not read as part of it. The sink tracks
+whether any byte went out rather than starting a new line after every refusal,
+which would leave an empty line wherever the writer refused a record whole.
+That needs the count `io.write_all`'s `Status` does not carry, so the sink
+keeps its own copy of that loop.
+
 ### `assert` and `panic` print without `core:fmt`
 
 The printers take `..dyn fmt.Formattable`, but `assert` and `panic` are

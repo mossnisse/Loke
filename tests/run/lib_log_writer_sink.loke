@@ -6,8 +6,9 @@ import "core:log";
 import "core:mem";
 
 // `log.Writer_Sink` (standard-library "Writer sink"): the standard logger's
-// lines into any `io.Writer`, one write per record that `io.write_all` finishes,
-// and a record the writer refuses dropped and counted rather than reported.
+// lines into any `io.Writer`, one write per record that a short writer's further
+// calls finish, and a record the writer refuses dropped and counted rather than
+// reported.
 
 // Accepts at most three bytes a call, so a record takes several calls, which
 // `io.write_all` joins into the whole line.
@@ -30,6 +31,30 @@ impl Refusing {
 		if (self.allowed == 0) { return .err(io.make_error(.Broken_Pipe, .Write)); }
 		self.allowed -= 1;
 		return self.accepted.write(source);
+	}
+}
+
+// Accepts `budget` bytes, a disk filling part way through a record, then refuses
+// one write and takes its next budget from `refills`. With none left it accepts
+// everything.
+Filling :: struct { budget: int, refills: []int, used: int, bytes: io.Buffer_Writer }
+
+impl Filling {
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		if (self.budget == 0) {
+			self.budget = -1;
+			if (self.used < self.refills.len()) {
+				self.budget = self.refills[self.used];
+				self.used += 1;
+			}
+			return .err(io.make_error(.Broken_Pipe, .Write));
+		}
+		count := source.len();
+		if (self.budget > 0) {
+			if (count > self.budget) { count = self.budget; }
+			self.budget -= count;
+		}
+		return self.bytes.write(source[:count]);
 	}
 }
 
@@ -70,6 +95,19 @@ main :: proc() {
 	fmt.println("dropped", refusing.dropped());
 	left := move(refusing).into_writer();
 	fmt.print(text(left.accepted.bytes()));
+
+	// A record refused part way leaves "[Info] to" behind, and the next record
+	// starts a new line after it. That one gets only its leading newline out, so
+	// the writer is back at a line start and the last record needs no newline of
+	// its own: no fragment is continued and no empty line appears.
+	filling := log.writer_sink(Filling{budget = 22, refills = []int{1}});
+	filling.write(log.Level.Info, "first");
+	filling.write(log.Level.Info, "torn");
+	filling.write(log.Level.Info, "only the newline");
+	filling.write(log.Level.Info, "whole");
+	fmt.println("dropped", filling.dropped());
+	full := move(filling).into_writer();
+	fmt.print(text(full.bytes.bytes()));
 
 	// A sink may also borrow a writer the caller keeps, through a `dyn` view.
 	kept := io.Buffer_Writer{};

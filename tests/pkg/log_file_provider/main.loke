@@ -12,8 +12,9 @@ import "./provider";
 
 // A program logging to a file through a selected `log.Writer_Sink(fs.File)`
 // (standard-library "Writer sink"). Two threads log at once, and every record
-// still reaches the file as one whole line; spawning code that logs through the
-// selected provider is free of L0707, as it is through the standard logger.
+// still reaches the file as one whole line. Spawning code that logs through the
+// selected provider is free of L0707, as it is through the standard logger, which
+// the empty `log_file_provider.expected-compile` asserts.
 
 worker :: proc() {
 	foreach (_ in 0 ..< 200) { log.warning("RECORD"); }
@@ -41,8 +42,9 @@ main :: proc() {
 	fmt.println("started", started, "records", records, "other", other);
 	fmt.println("dropped", provider.dropped());
 
-	// Closing the file reports what `close` answers, and every later record is
-	// refused by the closed file and counted rather than reported.
+	// Closing the file reports what `close` answers. The sink put in its place is
+	// over a zero `File`, which is closed, so it refuses every later record and
+	// counts it from zero rather than reporting it.
 	fmt.println("closed", provider.close_log());
 	log.error("after close");
 	fmt.println("dropped", provider.dropped());

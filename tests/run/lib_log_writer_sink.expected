@@ -8,4 +8,8 @@ calls 6
 [Warning] split
 dropped 2
 [Error] kept
+dropped 2
+[Info] first
+[Info] to
+[Info] whole
 [Info] borrowed

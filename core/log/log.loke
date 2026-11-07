@@ -96,7 +96,7 @@ impl Standard {
 		lines := standard_lines.lock();
 		w := fmt.stderr();
 		fmt.format_to(w, "[");
-		fmt.format_to(w, level);
+		fmt.format_to(w, level_name(level));
 		fmt.format_to(w, "] ");
 		fmt.format_to(w, message);
 		fmt.format_to(w, "\n");
@@ -107,28 +107,33 @@ impl Standard {
 	A sink that writes the standard logger's lines, `[Level] message` and a
 	newline, to an `io.Writer` it owns: an `fs.File`, a pipe, an
 	`io.Buffer_Writer`. Each record is built in memory and handed to the writer
-	whole, through one `io.write_all`, under a lock held for the whole record, so
+	whole, in one sequence of writes, under a lock held for the whole record, so
 	records from different threads never share a line.
 
 	`Sink.write` has nothing to report through, so a record the writer refuses,
 	in whole or in part, or that cannot be buffered, is dropped and counted;
-	`dropped` answers the count. The sink keeps the buffer of its longest record
-	for the next one.
+	`dropped` answers the count. A record refused part way leaves its first bytes
+	behind, and the next record starts a new line after them rather than
+	continuing that one. The sink keeps the buffer of its longest record for the
+	next one.
 
 	As a provider it lives in `static` storage, zero until the factory fills it:
 	`sink = log.writer_sink(move(file)); return (log.Logger)(&mut sink);`.
 */
 // standard-library "Writer sink".
 // A provider's view is shared by every thread that logs, so `inout self` does
-// not make a record exclusive: `records` does, held for the whole record and
-// for reading `lost`, as `standard_lines` is for the standard logger. Every
-// field is declared here so `into_writer` can destructure the sink, which
-// needs no zero `W` to leave behind: a `dyn mut io.Writer` has none.
+// not make a record exclusive: `lines` does, held for the whole record and for
+// reading `lost`, as `standard_lines` is for the standard logger. Every field
+// is declared here so `into_writer` can destructure the sink, which needs no
+// zero `W` to leave behind: a `dyn mut io.Writer` has none.
 Writer_Sink :: struct($W: type) where io.Writer(W) {
-	@(private) writer:  W,
-	@(private) line:    io.Buffer_Writer,
-	@(private) lost:    int,
-	@(private) records: thread.Mutex(Unit),
+	@(private) writer: W,
+	@(private) line:   io.Buffer_Writer,
+	// The writer took part of the last record it was given and refused the rest,
+	// so what it holds ends without a newline.
+	@(private) torn:   bool,
+	@(private) lost:   int,
+	@(private) lines:  thread.Mutex(Unit),
 }
 
 /// A sink over `writer`, which it owns until `into_writer` gives it back.
@@ -139,8 +144,8 @@ writer_sink :: proc(writer: move $W) -> Writer_Sink(W) where io.Writer(W) {
 impl Writer_Sink($W) {
 	/// The `Sink` slot: one record, written whole or dropped and counted.
 	write :: proc(self: inout, level: Level, message: string_view) where io.Writer(W) {
-		held := self.records.lock();
-		switch (put_line(inout self.writer, inout self.line, level, message)) {
+		held := self.lines.lock();
+		switch (put_line(inout self.writer, inout self.line, inout self.torn, level, message)) {
 		case .ok:
 		case .err: self.lost += 1;
 		}
@@ -148,7 +153,7 @@ impl Writer_Sink($W) {
 
 	/// How many records the writer refused or the sink could not buffer.
 	dropped :: proc(self: ^) -> int {
-		held := self.records.lock();
+		held := self.lines.lock();
 		return self.lost;
 	}
 
@@ -157,7 +162,7 @@ impl Writer_Sink($W) {
 		what `close` answers, or to read what a buffer collected.
 	*/
 	into_writer :: proc(self: move) -> W {
-		writer, _, _, _ := move(self);
+		writer, _, _, _, _ := move(self);
 		return move(writer);
 	}
 }
@@ -165,24 +170,54 @@ impl Writer_Sink($W) {
 // The whole line in memory first, so the writer sees one write per record: an
 // unbuffered file then makes one system call, and an append handle shared with
 // another process keeps the line together.
+//
+// This is `io.write_all`'s loop, kept here because a failure must say whether
+// any byte went out, which `write_all`'s `Status` cannot: bytes left behind by a
+// refused record make `torn`, and the next record ends that line first. A
+// failure that sent only that newline leaves the writer at a line start again.
 @(private)
 put_line :: proc(
 	writer: inout $W,
 	line: inout io.Buffer_Writer,
+	torn: inout bool,
 	level: Level,
 	message: string_view,
 ) -> Status(io.Error) where io.Writer(W) {
 	line.clear();
+	lead := 0;
+	if (torn) {
+		io.write_string(inout line, "\n") or_return;
+		lead = 1;
+	}
 	io.write_string(inout line, "[") or_return;
 	io.write_string(inout line, level_name(level)) or_return;
 	io.write_string(inout line, "] ") or_return;
 	io.write_string(inout line, message) or_return;
 	io.write_string(inout line, "\n") or_return;
-	return io.write_all(inout writer, line.bytes());
+
+	bytes := line.bytes();
+	written := 0;
+	for (; written < bytes.len(); ) {
+		switch (writer.write(bytes[written:])) {
+		case .ok(count):
+			// Zero for a non-empty slice breaks the `Writer` contract, and is
+			// refused as `write_all` refuses it, rather than spinning.
+			if (count == 0) {
+				if (written > 0) { torn = written > lead; }
+				return .err(io.make_error(.Broken_Pipe, .Write));
+			}
+			written += count;
+		case .err(error):
+			if (written > 0) { torn = written > lead; }
+			return .err(error);
+		}
+	}
+	torn = false;
+	return .ok;
 }
 
-// The spelling `fmt` gives a `Level`, which is what the standard logger
-// prints, without formatting through a `fmt.Writer`.
+// The spelling `fmt` gives a `Level`, which both sinks print, without
+// formatting through a `fmt.Writer`.
 @(private)
 level_name :: proc(level: Level) -> string_view {
 	switch (level) {

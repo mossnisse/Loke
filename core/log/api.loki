@@ -56,13 +56,15 @@ standard_logger :: proc() -> Logger ---;
 	A sink that writes the standard logger's lines, `[Level] message` and a
 	newline, to an `io.Writer` it owns: an `fs.File`, a pipe, an
 	`io.Buffer_Writer`. Each record is built in memory and handed to the writer
-	whole, through one `io.write_all`, under a lock held for the whole record, so
+	whole, in one sequence of writes, under a lock held for the whole record, so
 	records from different threads never share a line.
 
 	`Sink.write` has nothing to report through, so a record the writer refuses,
 	in whole or in part, or that cannot be buffered, is dropped and counted;
-	`dropped` answers the count. The sink keeps the buffer of its longest record
-	for the next one.
+	`dropped` answers the count. A record refused part way leaves its first bytes
+	behind, and the next record starts a new line after them rather than
+	continuing that one. The sink keeps the buffer of its longest record for the
+	next one.
 
 	As a provider it lives in `static` storage, zero until the factory fills it:
 	`sink = log.writer_sink(move(file)); return (log.Logger)(&mut sink);`.
