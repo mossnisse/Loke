@@ -1,0 +1,45 @@
+// design.md "Region tracking": a pointer stored in a local keeps the destinations of the
+// same pointer passed directly, and design.md "Minimum provenance precision" keeps a
+// record's carrier leaves apart. A write through a local pointer to a slice, at one
+// element's field, lands where that field's carrier leads and nowhere else.
+package main;
+
+import "core:fmt";
+import "core:mem";
+Pair :: struct { first: ^mut [dynamic]int, second: ^mut [dynamic]int }
+store_second :: proc(pairs: ^mut []Pair, allocator: mem.Allocator) {
+	pairs^[0].second^ = make([dynamic]int, 1, allocator);
+}
+store_first :: proc(pairs: ^mut []Pair, allocator: mem.Allocator) {
+	pairs^[0].first^ = make([dynamic]int, 1, allocator);
+}
+ok_second :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	pairs := []Pair{Pair{&mut a, &mut b}};
+	pointer := &mut pairs;
+	store_second(pointer, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+ok_named :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [256]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	array := [1]Pair{Pair{&mut a, &mut b}};
+	pairs := array[:];
+	pointer := &mut pairs;
+	store_second(pointer, allocator);
+	drop(b);
+	free_all(allocator);
+	return a.len();
+}
+main :: proc() {
+	buffer := [1024]u8{};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	fmt.println(ok_second(arena.allocator()), ok_named(arena.allocator()));
+}

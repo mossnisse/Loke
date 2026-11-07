@@ -4057,7 +4057,11 @@ by slot was tried first, and it accepted `t := cur^.next; cur = t^.next; other :
 loaded through `cur`, but through its old value, and `other` is a second copy of what `cur` now
 holds. So the fact is of values (`Loaded_Below`): which carriers a slot's value was loaded at or
 below, as of their current values. A new value in a carrier ends it, and a store of a carrier
-ends all of it, since such a store may relink what any of them reach. It is a must-fact, joined by
+ends all of it, since such a store may relink what any of them reach. A store relinks only by
+replacing a carrier some load reads, so one whose carriers could land in none of the types the
+body's loads read, as a `^int` stored beside a list of `^mut Node`, keeps the fact
+(`store_may_relink`); the type is the only test, so a `^mut Node` stored into an unrelated record
+still ends it. It is a must-fact, joined by
 intersection, so a load is exempt only where it is below the cursor on every path. Only a slot
 holding one value can be an anchor: what is below one `next` may be where another was copied from.
 

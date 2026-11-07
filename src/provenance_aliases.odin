@@ -155,6 +155,12 @@ prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dep
 			loaded = prov_load_aliases(graph, loaded, at == depth ? route.last : nil, unknown = true)
 		}
 		append(out, ..loaded)
+		// A summary keeps `CARRIER_DEPTH` loads; its last stands for every depth
+		// from its own on, as the content loan it records does (`deeper_content_loan`),
+		// so a result read through more loads may hold what any load below reaches.
+		if depth >= CARRIER_DEPTH {
+			append(out, ..prov_load_aliases_below(graph, loaded))
+		}
 	}
 	for depth in 1 ..= 8 {
 		if dependencies.param_loads[index] & (u8(1) << u8(depth - 1)) == 0 {
@@ -163,6 +169,26 @@ prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dep
 		for route in result_load_routes(graph.k.c, dependencies, index, depth, shape, graph.alloc) {
 			follow(graph, held, route, depth, &out)
 		}
+	}
+	return out[:]
+}
+
+// What loads through `targets` reach at every depth below them, each place once.
+@(private = "file")
+prov_load_aliases_below :: proc(graph: ^Flow_Graph, targets: []Written_Alias) -> []Written_Alias {
+	out := make([dynamic]Written_Alias, graph.alloc)
+	seen := make(Written_Alias_Visits, graph.alloc)
+	frontier := targets
+	for len(frontier) > 0 {
+		next := make([dynamic]Written_Alias, graph.alloc)
+		for alias in prov_load_aliases(graph, frontier, nil, unknown = true) {
+			if alias.target != 0 {
+				if _, first := prov_first_alias_visit(graph, &seen, alias.target, alias.at, false); !first { continue }
+				append(&next, alias)
+			}
+			append(&out, alias)
+		}
+		frontier = next[:]
 	}
 	return out[:]
 }
@@ -275,12 +301,18 @@ prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj
 		if !paths_overlap(alias.path, path) {
 			continue
 		}
-		// What lies below the asked-for storage keeps its place there.
+		// What lies below the asked-for storage keeps its place there. A path
+		// asked below the carrier the local holds goes on in the storage that
+		// carrier points at, as `p^[0].second` does (`prov_store_region_through`),
+		// rather than standing for all of it.
 		rest: []Proj_Step
+		at := alias.at
 		if len(alias.path) > len(path) {
 			rest = alias.path[len(path):]
+		} else if len(path) > len(alias.path) && alias.target != 0 {
+			at = prov_concat_path(graph, alias.at, path[len(alias.path):])
 		}
-		append(&out, Written_Alias{target = alias.target, at = alias.at, path = rest, loaded = alias.loaded})
+		append(&out, Written_Alias{target = alias.target, at = at, path = rest, loaded = alias.loaded})
 	}
 	return out[:]
 }

@@ -1,0 +1,55 @@
+// design.md "Allocators": a provider moved into a field, or a record holding moved
+// providers moved on as a whole, still backs what it made, so ending it there while
+// that is live is rejected.
+package main;
+
+import "core:mem";
+
+Pair :: struct { first: mem.Arena, second: mem.Arena }
+Outer :: struct { pair: Pair, other: mem.Arena }
+
+use :: proc(value: $T) {}
+
+same_field :: proc() {
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	pair := Pair{move(first), move(second)};
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	taken := exchange(inout pair.second, mem.Arena.init());
+	drop(taken);
+	use(xs[0]);
+}
+
+assigned_field :: proc() {
+	second := mem.Arena.init();
+	pair := Pair{mem.Arena.init(), mem.Arena.init()};
+	pair.second = move(second);
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	taken := exchange(inout pair.second, mem.Arena.init());
+	drop(taken);
+	use(xs[0]);
+}
+
+nested_field :: proc() {
+	a := mem.Arena.init();
+	b := mem.Arena.init();
+	pair := Pair{move(a), move(b)};
+	outer := Outer{move(pair), mem.Arena.init()};
+	xs := make([dynamic]int, 1, outer.pair.second.allocator());
+	taken := exchange(inout outer.pair.second, mem.Arena.init());
+	drop(taken);
+	use(xs[0]);
+}
+
+// The record's own tokens may not exist before it is moved on.
+moved_on_whole :: proc() {
+	a := mem.Arena.init();
+	b := mem.Arena.init();
+	xs := make([dynamic]int, 1, b.allocator());
+	pair := Pair{move(a), move(b)};
+	other := move(pair);
+	drop(other);
+	use(xs[0]);
+}
+
+main :: proc() {}

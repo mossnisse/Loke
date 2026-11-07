@@ -23,7 +23,7 @@ Prov_Effect_Permute :: struct { receiver: Value_Id }
 Prov_Effect_Map_Key :: struct { destination, value: Value_Id }
 Prov_Effect_Define :: struct { storage: Storage_Id, path: []Proj_Step, value: Value_Id, source: []Proj_Step, copies: bool, allocated_by: Symbol_Id }
 Prov_Effect_Merge_Value :: struct { symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage, provider: bool }
-Prov_Effect_Move_Provider :: struct { symbol: Symbol_Id, value: Value_Id }
+Prov_Effect_Move_Provider :: struct { symbol: Symbol_Id, value: Value_Id, path: []Proj_Step }
 Prov_Effect_Forget_Binding :: struct { symbol: Symbol_Id }
 Prov_Effect_Borrow_Owner :: struct { value: Value_Id }
 Prov_Fact_Operation :: union {
@@ -235,7 +235,7 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 	case Prov_Effect_Merge_Value:
 		prov_merge_value_region(graph, operation.symbol, operation.value, operation.source, operation.storage, operation.provider)
 	case Prov_Effect_Move_Provider:
-		prov_merge_moved_bits(graph, operation.symbol, operation.value)
+		prov_merge_moved_providers(graph, operation.symbol, operation.value, operation.path)
 	case Prov_Effect_Forget_Binding:
 		prov_forget_region_binding(graph, operation.symbol)
 	case Prov_Effect_Borrow_Owner:

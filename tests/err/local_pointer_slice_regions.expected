@@ -1,0 +1,9 @@
+L0537
+@23:2
+this reset would end the region backing `b`, which is still live here
+L0537
+@35:2
+this reset would end the region backing `a`, which is still live here
+L0537
+@47:2
+this reset would end the region backing `b`, which is still live here

@@ -224,13 +224,16 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	if root := provider_place_root(graph, v.bound[0]); root != INVALID_SYMBOL {
+		// An element sits at the container's one position.
+		_, container, _ := prov_place_of(graph, v.bound[0])
+		element := prov_extend(graph, container, proj_wild())
 		for argument in v.bound[1:] {
 			if argument != nil {
-				prov_merge_moved_bits(graph, root, prov_input_value(graph, argument))
+				prov_merge_moved_providers(graph, root, prov_input_value(graph, argument), element)
 			}
 		}
 		for argument in v.variadic_elements {
-			prov_merge_moved_bits(graph, root, prov_input_value(graph, argument))
+			prov_merge_moved_providers(graph, root, prov_input_value(graph, argument), element)
 		}
 	}
 }

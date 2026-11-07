@@ -187,6 +187,20 @@ ok_read_below_a_copy_of_the_cursor :: proc(head: ^mut Node, c: bool) {
 	u^.value = 1;
 	cur^.value = 2;
 }
+// A store that could not be one of the carriers a load reads relinks nothing, so what was
+// loaded below the cursor before it is still below it after.
+Pointed :: struct { p: ^int }
+ok_unrelated_store_below_a_cursor :: proc(head: ^mut Node, other: ^mut Pointed, @(escape=stored) spare: ^int) {
+	cur := head;
+	for (i := 0; i < 3; i += 1) {
+		cur = cur^.next;
+		t := cur^.next;
+		other^.p = spare;
+		u := t^.next;
+		u^.value = 1;
+		cur^.value = 2;
+	}
+}
 main :: proc() {
 	a, b := 1, 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};

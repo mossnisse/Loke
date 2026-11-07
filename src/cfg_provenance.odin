@@ -140,9 +140,9 @@ Prov_State :: struct {
 	provider_bits:    map[Symbol_Id]u64,
 	provider_symbols: [dynamic]Symbol_Id,
 	// Per local, one token per provider position its type fixes, and the tokens
-	// of providers moved in, which may sit at any position.
+	// of providers moved in, keyed by the position each was moved into.
 	provider_paths: map[Symbol_Id][]Provider_Path,
-	provider_moved: map[Symbol_Id]u64,
+	provider_moved: map[Symbol_Id][]Provider_Path,
 	// A temporary provider, as in `mem.Arena.init().allocator()`: the token of
 	// each handle taken of one, and the ones the current statement ends.
 	temp_provider_bits: map[^Expr_Call]u64,
@@ -238,7 +238,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.reborrows = make([dynamic]Prov_Reborrow, allocator)
 	state.provider_symbols = make([dynamic]Symbol_Id, allocator)
 	state.provider_paths = make(map[Symbol_Id][]Provider_Path, allocator)
-	state.provider_moved = make(map[Symbol_Id]u64, allocator)
+	state.provider_moved = make(map[Symbol_Id][]Provider_Path, allocator)
 	state.temp_provider_bits = make(map[^Expr_Call]u64, allocator)
 	state.temp_providers = make([dynamic]Temp_Provider, allocator)
 	state.lent_locals = make(map[Symbol_Id]bool, allocator)
@@ -4160,11 +4160,7 @@ prov_declare_region :: proc(
 	}
 	// A provider moved in keeps its region, and so its token.
 	if initializer != nil && sym.duration == .None && projected < 0 {
-		if _, found := graph.provider_bits[id]; !found {
-			if bits := prov_moved_bits(graph, value); bits != 0 {
-				graph.provider_moved[id] = bits
-			}
-		}
+		prov_declare_moved_providers(graph, id, value)
 	}
 	if type_is_region_provider(graph.k.c, sym.type) && sym.duration == .None {
 		prov_declare_provider(graph, id, initializer != nil, initializer_region)
@@ -4336,7 +4332,8 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			}
 			provider_assign_end(graph, target)
 			if root := provider_place_root(graph, target); root != INVALID_SYMBOL && value != nil {
-				prov_merge_moved_bits(graph, root, prov_input_value(graph, value))
+				_, path, _ := prov_place_of(graph, target)
+				prov_merge_moved_providers(graph, root, prov_input_value(graph, value), path)
 			}
 		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {

@@ -1715,6 +1715,26 @@ checklist.
 
 ### Fixed
 
+- A store through a call's result read through more than four loads lands in what those loads
+  reach, as a deeper read written in the caller does
+  ([Procedure result contracts](design.md#procedure-result-contracts)). With `f` returning
+  `x^.a^.b^.c^.d^.p`, a reset after `target := f(&x); target^ = make(..., allocator)` compiled
+  while `a`, which `target` pointed at, was still used, and read freed memory; it is now `L0537`.
+  A summary keeps four loads, so such a store may land in anything below the fourth.
+- A provider moved into a record is in the field it was moved into
+  ([Allocators](design.md#allocators)). `pair := Pair{move(first), move(second)}` followed by
+  ending `pair.first`, by `exchange` or `unsafe.take`, was `L0537` for what `pair.second` backs;
+  so was the same after `pair.first = move(first)`. A record holding moved providers that is moved
+  on whole, as `other := move(pair); drop(other)`, is now `L0537` for what they back, which
+  compiled and freed it.
+- A call through a local pointer to a slice, as `pointer := &mut pairs; store(pointer, ...)`,
+  leaves what it stores at `pairs^[0].second` in what `second` points at only, as passing
+  `&mut pairs` directly does ([Region tracking](design.md#region-tracking)). A reset after it was
+  `L0537` for what `first` pointed at.
+- A store of a carrier that could not be one the body's loads read, as `other^.p = spare` with
+  `p: ^int` inside a loop stepping `cur = cur^.next`, no longer forgets what was loaded below the
+  cursor ([Weakening and reborrows](design.md#weakening-and-reborrows)). The load of `t^.next` after
+  it was `L0641`.
 - A long literal of large calls keeps each element's temporaries until the literal is built when
   the element can hold a C pointer, as `[dynamic][^]u8{large(1).data(), large(2).data()}` with
   `data` returning `unsafe.raw_data(&self.bytes)` does. The second call reused the first one's stack

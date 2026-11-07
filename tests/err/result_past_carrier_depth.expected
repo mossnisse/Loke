@@ -1,0 +1,6 @@
+L0537
+@32:2
+this reset would end the region backing `a`, which is still live here
+L0537
+@50:2
+this reset would end the region backing `a`, which is still live here

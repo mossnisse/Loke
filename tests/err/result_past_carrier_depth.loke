@@ -1,0 +1,54 @@
+// design.md "Procedure result contracts": a result may hold what is read through a
+// parameter at any depth. A summary keeps four loads, and its last stands for every
+// depth below, so a store through a result read through five or six loads lands in
+// what any of those loads reaches, and a reset then ends what it made there.
+package main;
+
+import "core:mem";
+
+Two :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
+A :: struct { b: ^B }
+B :: struct { c: ^C }
+C :: struct { d: ^Two }
+E :: struct { a: ^A }
+F :: struct { e: ^E }
+
+five :: proc(x: ^E) -> ^mut [dynamic]int { return x^.a^.b^.c^.d^.p; }
+six :: proc(y: ^F) -> ^mut [dynamic]int { return y^.e^.a^.b^.c^.d^.p; }
+
+through_five :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	two := Two{&mut a, &mut b};
+	cc := C{&two};
+	bb := B{&cc};
+	aa := A{&bb};
+	x := E{&aa};
+	target := five(&x);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return a[0];
+}
+
+through_six :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	two := Two{&mut a, &mut b};
+	cc := C{&two};
+	bb := B{&cc};
+	aa := A{&bb};
+	x := E{&aa};
+	y := F{&x};
+	target := six(&y);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(b);
+	free_all(allocator);
+	return a[0];
+}
+
+main :: proc() {}

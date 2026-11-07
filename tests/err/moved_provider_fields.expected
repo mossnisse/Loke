@@ -1,0 +1,12 @@
+L0537
+@19:2
+dropping `taken` would end the region backing `xs`, which is still live here
+L0537
+@29:2
+dropping `taken` would end the region backing `xs`, which is still live here
+L0537
+@40:2
+dropping `taken` would end the region backing `xs`, which is still live here
+L0537
+@51:2
+dropping `other` would end the region backing `xs`, which is still live here

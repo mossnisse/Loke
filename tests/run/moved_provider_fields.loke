@@ -1,0 +1,64 @@
+// design.md "Allocators": a provider keeps its identity across a move, and design.md
+// "Region tracking" keeps a record's fields apart. A provider moved into one field,
+// by a literal, an assignment, or a nested record, is at that field only, so ending
+// its sibling leaves what it backs alone.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:unsafe";
+
+Pair :: struct { first: mem.Arena, second: mem.Arena }
+Outer :: struct { pair: Pair, other: mem.Arena }
+
+by_literal :: proc() -> int {
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	pair := Pair{move(first), move(second)};
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	xs[0] = 1;
+	taken := exchange(inout pair.first, mem.Arena.init());
+	drop(taken);
+	return xs[0];
+}
+
+by_take :: proc() -> int {
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	pair := Pair{move(first), move(second)};
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	xs[0] = 2;
+	taken := unsafe.take(pair.first);
+	unsafe.write(pair.first, mem.Arena.init());
+	drop(taken);
+	return xs[0];
+}
+
+by_assignment :: proc() -> int {
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	pair := Pair{mem.Arena.init(), mem.Arena.init()};
+	pair.first = move(first);
+	pair.second = move(second);
+	xs := make([dynamic]int, 1, pair.second.allocator());
+	xs[0] = 3;
+	taken := exchange(inout pair.first, mem.Arena.init());
+	drop(taken);
+	return xs[0];
+}
+
+nested :: proc() -> int {
+	a := mem.Arena.init();
+	b := mem.Arena.init();
+	pair := Pair{move(a), move(b)};
+	outer := Outer{move(pair), mem.Arena.init()};
+	xs := make([dynamic]int, 1, outer.pair.second.allocator());
+	xs[0] = 4;
+	taken := exchange(inout outer.pair.first, mem.Arena.init());
+	drop(taken);
+	return xs[0];
+}
+
+main :: proc() {
+	fmt.println(by_literal(), by_take(), by_assignment(), nested());
+}

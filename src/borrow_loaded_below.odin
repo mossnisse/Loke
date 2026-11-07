@@ -5,10 +5,12 @@
 // down through it. This tells such a load, which is below the cursor's own value and so
 // never the place the cursor was copied from, from a read of that place, which competes
 // with the cursor (`loads_below`). A carrier's new value ends what was below its old one,
-// and a store of a carrier may relink what any of them reach, so it ends all of it.
+// and a store of a carrier may relink what any of them reach, so it ends all of it, unless
+// nothing it stores could be one of the carriers a load reads (`store_may_relink`).
 package lokec
 
 import "core:mem"
+import "core:slice"
 
 @(private)
 Loaded_Below :: struct {
@@ -26,6 +28,9 @@ Loaded_Below :: struct {
 	value, edit: []u8,
 	// An interned row without one anchor, by `u64(row) << 32 | u64(anchor)`.
 	cleared: map[u64]u32,
+	// The carrier type of each value a load in the body reads, one for each: only a
+	// store that may land in a carrier of one of these relinks what a load reaches.
+	links: [dynamic]Type_Id,
 }
 
 @(private)
@@ -50,6 +55,81 @@ loaded_below_make :: proc(state: ^Prov_Solve) {
 	below.value = make([]u8, below.row_bytes, graph.alloc)
 	below.edit = make([]u8, below.row_bytes, graph.alloc)
 	below.cleared = make(map[u64]u32, 16, graph.alloc)
+	below.links = make([dynamic]Type_Id, graph.alloc)
+	explored := make([dynamic]Type_Id, graph.alloc)
+	for block in graph.blocks {
+		for event in block.prov {
+			if event.kind != .Load {
+				continue
+			}
+			if event.load != .Deep {
+				add_link(&below.links, slot_carrier_type(graph, event.slot))
+				continue
+			}
+			// A deep load reads every carrier below the ones it goes through, at any depth.
+			for carrier in event.into {
+				add_links_below(graph.k.c, &below.links, &explored, slot_carrier_type(graph, carrier))
+			}
+		}
+	}
+}
+
+@(private = "file")
+add_link :: proc(links: ^[dynamic]Type_Id, type: Type_Id) {
+	if !slice.contains(links[:], type) {
+		append(links, type)
+	}
+}
+
+// Every carrier type in what a carrier of `type` points at, and below those, each
+// carrier type `explored` once.
+@(private = "file")
+add_links_below :: proc(c: ^Compiler, links, explored: ^[dynamic]Type_Id, type: Type_Id) {
+	if slice.contains(explored[:], type) {
+		return
+	}
+	append(explored, type)
+	info := underlying_info(c, type)
+	if type == INVALID_TYPE || info == nil || (info.kind != .Pointer && info.kind != .Slice) {
+		add_link(links, INVALID_TYPE) // what it reads is not known
+		return
+	}
+	for path in carrier_shape(c, info.element) {
+		if path.truncated {
+			add_link(links, INVALID_TYPE)
+			continue
+		}
+		add_link(links, path.type)
+		if underlying_kind(c, path.type) == .Pointer || underlying_kind(c, path.type) == .Slice {
+			add_links_below(c, links, explored, path.type)
+		}
+	}
+}
+
+// Whether a store of `carried` may change one of the carriers a load reads, and so
+// relink what was loaded below a cursor. Each carrier it holds lands only in a slot that
+// could hold that type (`carrier_may_land_in`), so storing a `^int` beside a list of
+// `^mut Node` relinks nothing. An unknown type may relink anything.
+@(private = "file")
+store_may_relink :: proc(state: ^Prov_Solve, carried: Type_Id) -> bool {
+	c := state.graph.k.c
+	if carried == INVALID_TYPE {
+		return true
+	}
+	stored := make([dynamic]Type_Id, 0, 2, context.temp_allocator)
+	if type_is_carrier(c, carried) {
+		append(&stored, carried)
+	}
+	for path in carrier_shape(c, carried) {
+		if path.truncated { return true }
+		append(&stored, path.type)
+	}
+	for link in state.below.links {
+		for carrier in stored {
+			if carrier_may_land_in(c, link, carrier) { return true }
+		}
+	}
+	return false
 }
 
 // A slot standing for many places, as one for every node's `next`, has no one value to be
@@ -148,7 +228,9 @@ run_loaded_below_event :: proc(state: ^Prov_Solve, event: Prov_Event) {
 			}
 			return
 		}
-		mem.zero_slice(below.held)
+		if event.kind == .Rearrange || store_may_relink(state, event.carried) {
+			mem.zero_slice(below.held)
+		}
 	}
 }
 
