@@ -224,7 +224,8 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	if root := provider_place_root(graph, v.bound[0]); root != INVALID_SYMBOL {
-		// An element sits at the container's one position.
+		// An element sits at the container's one position: below the element step,
+		// no field the element's providers sit at is one of the local's.
 		_, container, _ := prov_place_of(graph, v.bound[0])
 		element := prov_extend(graph, container, proj_wild())
 		for argument in v.bound[1:] {

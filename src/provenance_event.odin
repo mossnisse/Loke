@@ -390,9 +390,10 @@ prov_materialize_reset :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset) {
 		provider_end  = op.provider_end,
 		unwind_from   = op.unwind_from,
 	}
-	if owner := prov_reset_blocker(graph, op, set); owner != nil {
+	if owner, merged := prov_reset_blocker(graph, op, set); owner != nil {
 		event.verb = identifier_text(graph.k.c, owner.name)
 		event.owner_span = owner.span
+		event.precision |= merged
 	}
 	// Evaluated operands remain live while later operands run.
 	if event.verb == "" {
@@ -424,8 +425,10 @@ prov_materialize_reset :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset) {
 // design.md "Allocator regions and region provenance": a live owner in an
 // overlapping region blocks the reset, since its cleanup still runs; a dropped
 // owner no longer blocks. A live child provider depends on its parent's region.
+// One whose overlap a store may have left only through a merged target blocks with
+// that budget's `merged` loss, so an owner that certainly blocks is named first.
 @(private = "file")
-prov_reset_blocker :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset, set: Region_Set) -> ^Symbol {
+prov_reset_blocker :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset, set: Region_Set) -> (blocker: ^Symbol, merged: Precision_Loss) {
 	for id in op.live.owners {
 		owner := symbol_of(graph.k.c, id)
 		// The local being ended is what ends the region, not a dependant of it.
@@ -441,11 +444,21 @@ prov_reset_blocker :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset, set: Region
 		case:
 			region = prov_reset_symbol_region(graph, id, owner.type)
 		}
-		if !region_is_empty(region) && regions_may_overlap(region, set) {
-			return owner
+		if region_is_empty(region) || !regions_may_overlap(region, set) {
+			continue
+		}
+		stored: Prov_Merged_Region
+		if root, found := graph.root_by_symbol[id]; found {
+			stored = graph.merged_regions[prov_storage_for_root(graph, root)]
+		}
+		if stored.precision == {} || !regions_may_overlap(stored.region, set) {
+			return owner, {}
+		}
+		if blocker == nil {
+			blocker, merged = owner, stored.precision
 		}
 	}
-	return nil
+	return
 }
 
 // What a result already handed to the caller holds while its return's

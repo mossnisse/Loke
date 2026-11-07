@@ -28,8 +28,8 @@ Loaded_Below :: struct {
 	value, edit: []u8,
 	// An interned row without one anchor, by `u64(row) << 32 | u64(anchor)`.
 	cleared: map[u64]u32,
-	// The carrier type of each value a load in the body reads, one for each: only a
-	// store that may land in a carrier of one of these relinks what a load reaches.
+	// The carrier types of the values the body's loads read, each once: only a store
+	// that may land in a carrier of one of these relinks what a load reaches.
 	links: [dynamic]Type_Id,
 }
 
@@ -56,6 +56,9 @@ loaded_below_make :: proc(state: ^Prov_Solve) {
 	below.edit = make([]u8, below.row_bytes, graph.alloc)
 	below.cleared = make(map[u64]u32, 16, graph.alloc)
 	below.links = make([dynamic]Type_Id, graph.alloc)
+	if anchors == 0 {
+		return // no event reads the fact (`run_loaded_below_event`)
+	}
 	explored := make([dynamic]Type_Id, graph.alloc)
 	for block in graph.blocks {
 		for event in block.prov {
@@ -89,18 +92,18 @@ add_links_below :: proc(c: ^Compiler, links, explored: ^[dynamic]Type_Id, type: 
 		return
 	}
 	append(explored, type)
-	info := underlying_info(c, type)
-	if type == INVALID_TYPE || info == nil || (info.kind != .Pointer && info.kind != .Slice) {
+	kind := underlying_kind(c, type)
+	if type == INVALID_TYPE || (kind != .Pointer && kind != .Slice) {
 		add_link(links, INVALID_TYPE) // what it reads is not known
 		return
 	}
-	for path in carrier_shape(c, info.element) {
+	for path in carrier_pointee_shape(c, type) {
 		if path.truncated {
 			add_link(links, INVALID_TYPE)
 			continue
 		}
 		add_link(links, path.type)
-		if underlying_kind(c, path.type) == .Pointer || underlying_kind(c, path.type) == .Slice {
+		if below := underlying_kind(c, path.type); below == .Pointer || below == .Slice {
 			add_links_below(c, links, explored, path.type)
 		}
 	}
@@ -116,17 +119,11 @@ store_may_relink :: proc(state: ^Prov_Solve, carried: Type_Id) -> bool {
 	if carried == INVALID_TYPE {
 		return true
 	}
-	stored := make([dynamic]Type_Id, 0, 2, context.temp_allocator)
-	if type_is_carrier(c, carried) {
-		append(&stored, carried)
-	}
+	// A carrier's own shape is itself, at no path.
 	for path in carrier_shape(c, carried) {
 		if path.truncated { return true }
-		append(&stored, path.type)
-	}
-	for link in state.below.links {
-		for carrier in stored {
-			if carrier_may_land_in(c, link, carrier) { return true }
+		for link in state.below.links {
+			if carrier_may_land_in(c, link, path.type) { return true }
 		}
 	}
 	return false
@@ -230,6 +227,12 @@ run_loaded_below_event :: proc(state: ^Prov_Solve, event: Prov_Event) {
 		}
 		if event.kind == .Rearrange || store_may_relink(state, event.carried) {
 			mem.zero_slice(below.held)
+			return
+		}
+		// The slots it replaces still take new values.
+		for slot in event.replaces {
+			end_loaded_below(state, slot)
+			below.held[slot] = 0
 		}
 	}
 }

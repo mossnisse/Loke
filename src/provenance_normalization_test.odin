@@ -1181,3 +1181,69 @@ loaded_facts_have_weight :: proc(t: ^testing.T) {
 	facts.region_of[Symbol_Id(1)] = set
 	testing.expectf(t, prov_fact_weight(&facts) > after_alias, "a loaded region has the weight of one that is not: %d", after_alias)
 }
+
+// design.md "Minimum provenance precision": a path asked below the carrier a local holds
+// goes on in what that carrier points at only where the alias sits at that very carrier.
+// One standing for a whole record, as a call result whose summary keeps no path does, or
+// one cut at the alias depth names carriers further down, so the steps below are not the
+// target's and the store stands for all of it (`prov_alias_at_carrier`).
+@(test)
+written_alias_extends_only_at_its_carrier :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Pair :: struct { first: int, second: ^mut int }
+Wrapper :: struct { inner: ^mut Pair }
+held :: proc(pair: ^mut Pair) -> int {
+    value := 2;
+    target := Pair{1, &mut value};
+    w := Wrapper{&mut target};
+    return w.inner^.first + pair^.first;
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "held")
+	if graph == nil { return }
+	local := prov_storage_id(graph, Written_Storage{symbol = normalization_symbol(t, &p, "w")})
+	target := prov_storage_id(graph, Written_Storage{symbol = normalization_symbol(t, &p, "target")})
+	inner := []Proj_Step{proj_field(0)}
+	asked := []Proj_Step{proj_field(0), proj_field(1)}
+	cut := []Proj_Step{proj_field(0)}
+	cut[0].precision += {.Depth}
+	cases := []struct { path: []Proj_Step, extends: bool } {
+		{inner, true},
+		{nil, false},
+		{cut, false},
+	}
+	for c in cases {
+		aliases := [1]Written_Alias{{target = target, path = c.path}}
+		graph.written_aliases[local] = aliases[:]
+		found := prov_written_aliases_of(graph, local, asked)
+		if !testing.expect_value(t, len(found), 1) { continue }
+		if c.extends {
+			testing.expectf(t, len(found[0].at) == 1 && found[0].at[0].kind == .Field && found[0].at[0].lo == 1,
+			                "a store below the carrier at %v must land at `second` in its target: %v", c.path, found[0].at)
+		} else {
+			testing.expectf(t, len(found[0].at) == 0, "an alias at %v is not that carrier, so its target is all of it: %v", c.path, found[0].at)
+		}
+	}
+}
+
+// compiler-architecture.md "Normalized provenance input": an alias found again without
+// the budget that merged it in, and a merged store, grow the facts (`prov_fact_weight`).
+@(test)
+merged_facts_have_weight :: proc(t: ^testing.T) {
+	aliases := [1]Written_Alias{{target = Storage_Id(1), precision = {.Depth}}}
+	facts := Prov_Facts{written_aliases = make(map[Storage_Id][]Written_Alias), merged_regions = make(map[Storage_Id]Prov_Merged_Region)}
+	defer delete(facts.written_aliases)
+	defer delete(facts.merged_regions)
+	facts.written_aliases[Storage_Id(1)] = aliases[:]
+	before := prov_fact_weight(&facts)
+	aliases[0].precision = {}
+	cleared := prov_fact_weight(&facts)
+	testing.expectf(t, cleared > before, "an alias found without a budget has the weight of a merged one: %d", before)
+	set: Region_Set
+	region_add_param(&set, 0)
+	facts.merged_regions[Storage_Id(1)] = Prov_Merged_Region{region = set, precision = {.Depth}}
+	testing.expectf(t, prov_fact_weight(&facts) > cleared, "a merged store has no weight: %d", cleared)
+}

@@ -1,7 +1,10 @@
 // design.md "Procedure result contracts": a result may hold what is read through a
 // parameter at any depth. A summary keeps four loads, and its last stands for every
 // depth below, so a store through a result read through five or six loads lands in
-// what any of those loads reaches, and a reset then ends what it made there.
+// what any of those loads reaches, and a reset then ends what it made there. Past the
+// fourth load the summary names no place, so design.md "Minimum provenance precision"
+// has each rejection say it may and name that limit: `sibling` is rejected though
+// `five` returns only `p`.
 package main;
 
 import "core:mem";
@@ -49,6 +52,23 @@ through_six :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	drop(b);
 	free_all(allocator);
 	return a[0];
+}
+
+sibling :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [1024]u8{};
+	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	a := make([dynamic]int, 1, kept.allocator());
+	b := make([dynamic]int, 1, kept.allocator());
+	two := Two{&mut a, &mut b};
+	cc := C{&two};
+	bb := B{&cc};
+	aa := A{&bb};
+	x := E{&aa};
+	target := five(&x);
+	target^ = make([dynamic]int, 1, allocator);
+	drop(a);
+	free_all(allocator);
+	return b[0];
 }
 
 main :: proc() {}

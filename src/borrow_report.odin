@@ -470,9 +470,11 @@ check_region_reset :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_U
 		}
 		return
 	}
-	// design.md "Minimum provenance precision": past the regions a body tells apart, the
-	// dependency is only possible.
-	would := event.region.crowded || event.region.crowded_params ? "may" : "would"
+	// design.md "Minimum provenance precision": past the regions a body tells apart, or
+	// where a store reached the owner only through a merged target, the dependency is
+	// only possible.
+	state.diagnostic_precision |= event.precision
+	would := event.region.crowded || event.region.crowded_params || state.diagnostic_precision != {} ? "may" : "would"
 	if event.ends_result {
 		errorf(
 			state.k.c, event.span, "L0537",

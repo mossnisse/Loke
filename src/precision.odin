@@ -24,7 +24,7 @@ add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss, crow
 		add_notef(c, span, "provenance precision limit: fixed arrays longer than %d elements merge element borrows, as a dynamic array does past that many elements or where telling them apart would pass %d carrier paths; this value may therefore depend on other elements", CARRIER_ARRAY_ELEMENTS, CARRIER_WIDTH)
 	}
 	if .Depth in loss {
-		add_notef(c, span, "provenance precision limit: paths below %d aggregate projection steps, or %d through a written alias, are merged", CARRIER_DEPTH, WRITTEN_ALIAS_DEPTH)
+		add_notef(c, span, "provenance precision limit: paths below %d aggregate projection steps, or %d through a written alias, are merged; a procedure result contract keeps %d loads, so a result read through that many may hold what any load below them reaches", CARRIER_DEPTH, WRITTEN_ALIAS_DEPTH, CARRIER_DEPTH)
 	}
 	if .Width in loss {
 		add_notef(c, span, "provenance precision limit: more than %d carrier paths collapse to one whole-value dependency", CARRIER_WIDTH)

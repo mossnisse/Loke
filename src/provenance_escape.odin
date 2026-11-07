@@ -467,6 +467,12 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 			}
 		}
 		prov_define_stored_contents(graph, prov_root_for_storage(graph, alias.target), at, region, owned, landed)
+		if alias.precision != {} {
+			merged := region
+			region_merge(&merged, owned)
+			for content in landed { region_merge(&merged, content.region) }
+			prov_note_merged_region(graph, alias.target, merged, alias.precision)
+		}
 		if owner == CALL_LEFT_OWNER && prov_type_reaches_mutable(graph.k.c, destination_type) {
 			if landed != nil {
 				for content in landed {

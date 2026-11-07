@@ -183,6 +183,14 @@ Prov_Facts :: struct {
 	written_aliases:  map[Storage_Id][]Written_Alias,
 	// The parameters a write put their own region back into (`prov_note_restored`).
 	restored:         map[Symbol_Id]bool,
+	// What stores left in storage only through a target an analysis budget merged
+	// in (`prov_note_merged_region`).
+	merged_regions:   map[Storage_Id]Prov_Merged_Region,
+}
+
+Prov_Merged_Region :: struct {
+	region:    Region_Set,
+	precision: Precision_Loss,
 }
 
 @(private)
@@ -244,6 +252,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.lent_locals = make(map[Symbol_Id]bool, allocator)
 	state.restored = make(map[Symbol_Id]bool, allocator)
 	state.written_aliases = make(map[Storage_Id][]Written_Alias, allocator)
+	state.merged_regions = make(map[Storage_Id]Prov_Merged_Region, allocator)
 	state.scope_drops = make(map[Span]bool, allocator)
 	return state
 }

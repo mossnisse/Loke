@@ -17,6 +17,10 @@ Written_Alias :: struct {
 	// `target` is a parameter standing for what its carriers lead to, reached by a load
 	// through it, and not the storage it names itself: `at` says nothing of where.
 	loaded: bool,
+	// The analysis budget that merged this target in, as a result read past the loads
+	// a summary keeps: a store landing here only through it may not land here at all
+	// (design.md "Minimum provenance precision").
+	precision: Precision_Loss,
 }
 
 // Region field shapes also stop here. A recursive cursor can keep extending its
@@ -46,11 +50,15 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place
 	for alias in prov_place_aliases(graph, carrier, unresolved = false) {
 		path := held ? alias.path : nil
 		known := false
-		for seen in out {
-			known ||= seen.target == alias.target && prov_same_path(seen.at, alias.at) && prov_same_path(seen.path, path)
+		for &seen in out {
+			if seen.target == alias.target && prov_same_path(seen.at, alias.at) && prov_same_path(seen.path, path) {
+				// Found without a budget once, it is not merged in.
+				seen.precision &= alias.precision
+				known = true
+			}
 		}
 		if !known {
-			append(&out, Written_Alias{target = alias.target, at = alias.at, path = path, loaded = alias.loaded})
+			append(&out, Written_Alias{target = alias.target, at = alias.at, path = path, loaded = alias.loaded, precision = alias.precision})
 		}
 	}
 	return out[:]
@@ -115,7 +123,7 @@ prov_call_result_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_
 		out := make([dynamic]Written_Alias, graph.alloc)
 		for content in summary.content {
 			for alias in prov_dependency_aliases(graph, form, arguments, content.dependencies) {
-				append(&out, Written_Alias{target = alias.target, at = alias.at, path = content.path.steps})
+				append(&out, Written_Alias{target = alias.target, at = alias.at, path = content.path.steps, precision = alias.precision})
 			}
 		}
 		return out[:]
@@ -174,6 +182,7 @@ prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dep
 }
 
 // What loads through `targets` reach at every depth below them, each place once.
+// The summary names none of them, so each is merged in by its load budget.
 @(private = "file")
 prov_load_aliases_below :: proc(graph: ^Flow_Graph, targets: []Written_Alias) -> []Written_Alias {
 	out := make([dynamic]Written_Alias, graph.alloc)
@@ -182,6 +191,8 @@ prov_load_aliases_below :: proc(graph: ^Flow_Graph, targets: []Written_Alias) ->
 	for len(frontier) > 0 {
 		next := make([dynamic]Written_Alias, graph.alloc)
 		for alias in prov_load_aliases(graph, frontier, nil, unknown = true) {
+			alias := alias
+			alias.precision += {.Depth}
 			if alias.target != 0 {
 				if _, first := prov_first_alias_visit(graph, &seen, alias.target, alias.at, false); !first { continue }
 				append(&next, alias)
@@ -248,6 +259,7 @@ prov_load_aliases :: proc(graph: ^Flow_Graph, targets: []Written_Alias, path: []
 		loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, path))
 		for &alias in loaded {
 			alias.loaded ||= prov_target_stands_for_caller(graph, alias.target)
+			alias.precision |= target.precision
 		}
 		if len(loaded) == 0 && unknown { append(&out, Written_Alias{})
 		} else { append(&out, ..loaded) }
@@ -309,12 +321,29 @@ prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj
 		at := alias.at
 		if len(alias.path) > len(path) {
 			rest = alias.path[len(path):]
-		} else if len(path) > len(alias.path) && alias.target != 0 {
+		} else if len(path) > len(alias.path) && prov_alias_at_carrier(graph, id, alias) {
 			at = prov_concat_path(graph, alias.at, path[len(alias.path):])
 		}
-		append(&out, Written_Alias{target = alias.target, at = at, path = rest, loaded = alias.loaded})
+		append(&out, Written_Alias{target = alias.target, at = at, path = rest, loaded = alias.loaded, precision = alias.precision})
 	}
 	return out[:]
+}
+
+// Whether `alias.path` in the local `id` is the very carrier pointing at `alias.at`,
+// so the steps below it name places in its target. A path cut at the alias depth
+// stands for carriers further down, and a value's own position, as a call result
+// whose summary does not say where in it each target is held, for those inside it.
+@(private = "file")
+prov_alias_at_carrier :: proc(graph: ^Flow_Graph, id: Storage_Id, alias: Written_Alias) -> bool {
+	if alias.target == 0 || .Depth in path_precision(alias.path) {
+		return false
+	}
+	type := prov_storage(graph, id).type
+	if type == INVALID_TYPE {
+		return false
+	}
+	held, named := prov_type_along(graph.k.c, type, alias.path)
+	return named == len(alias.path) && type_is_carrier(graph.k.c, held)
 }
 
 // design.md "Allocator regions and region provenance": a local set from a
@@ -351,7 +380,7 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Val
 		if !paths_overlap(alias.path, source) { continue }
 		rest := alias.path[min(len(source), len(alias.path)):]
 		prov_add_written_alias(graph, local, Written_Alias{target = alias.target, at = alias.at,
-		                       path = prov_concat_path(graph, prefix, rest), loaded = alias.loaded})
+		                       path = prov_concat_path(graph, prefix, rest), loaded = alias.loaded, precision = alias.precision})
 	}
 }
 
@@ -382,16 +411,19 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 	for &known in existing {
 		if known.target == alias.target && prov_same_path(known.at, alias.at) && prov_same_path(known.path, alias.path) {
 			known.loaded ||= alias.loaded
+			// Set without a budget once, it was not merged in.
+			known.precision &= alias.precision
 			return
 		}
 	}
 	grown := make([]Written_Alias, len(existing) + 1, graph.alloc)
 	copy(grown, existing)
 	grown[len(existing)] = Written_Alias {
-		target = alias.target,
-		at     = slice.clone(alias.at, graph.alloc),
-		path   = slice.clone(alias.path, graph.alloc),
-		loaded = alias.loaded,
+		target    = alias.target,
+		at        = slice.clone(alias.at, graph.alloc),
+		path      = slice.clone(alias.path, graph.alloc),
+		loaded    = alias.loaded,
+		precision = alias.precision,
 	}
 	graph.written_aliases[local] = grown
 }

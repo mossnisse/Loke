@@ -336,6 +336,23 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 		}
 		graph.region_content[id] = copied
 	}
+	for id, merged in seed.merged_regions {
+		prov_note_merged_region(graph, id, merged.region, merged.precision)
+	}
+}
+
+// Records that a store left `region` in `storage` only through a target the
+// budgets in `precision` merged in, so a reset it blocks says it may
+// (design.md "Minimum provenance precision").
+@(private)
+prov_note_merged_region :: proc(graph: ^Flow_Graph, storage: Storage_Id, region: Region_Set, precision: Precision_Loss) {
+	if storage == 0 || precision == {} || region_is_empty(region) {
+		return
+	}
+	merged := graph.merged_regions[storage]
+	region_merge(&merged.region, region)
+	merged.precision |= precision
+	graph.merged_regions[storage] = merged
 }
 
 // A round's facts alone, deep-copied into `allocator` to seed the next round
@@ -355,7 +372,7 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 	for id, aliases in graph.written_aliases {
 		copied := make([]Written_Alias, len(aliases), allocator)
 		for alias, index in aliases {
-			copied[index] = Written_Alias{target = alias.target, at = slice.clone(alias.at, allocator), path = slice.clone(alias.path, allocator), loaded = alias.loaded}
+			copied[index] = Written_Alias{target = alias.target, at = slice.clone(alias.at, allocator), path = slice.clone(alias.path, allocator), loaded = alias.loaded, precision = alias.precision}
 		}
 		carry.written_aliases[id] = copied
 	}
@@ -367,6 +384,8 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 		}
 		carry.region_content[id] = copied
 	}
+	carry.merged_regions = make(map[Storage_Id]Prov_Merged_Region, len(graph.merged_regions), allocator)
+	for id, merged in graph.merged_regions { carry.merged_regions[id] = merged }
 	return carry
 }
 
@@ -387,12 +406,15 @@ prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
 		}
 	}
 	// An alias read at a load below a parameter is a fact of its own, which a replay
-	// that only sets `loaded` grows by.
+	// that only sets `loaded` grows by, and so is one found without a budget.
 	for _, aliases in facts.written_aliases {
 		weight += len(aliases)
 		for alias in aliases {
-			weight += int(alias.loaded)
+			weight += int(alias.loaded) + int(alias.precision == {})
 		}
+	}
+	for _, merged in facts.merged_regions {
+		weight += 1 + region_weight(merged.region) + card(merged.precision)
 	}
 	return weight + len(facts.lent_locals) + len(facts.restored)
 }
@@ -869,16 +891,18 @@ prov_moved_providers :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Provider_Pat
 			source = bound[0]
 		} else if boxed_payload(graph.k.c, v) != nil {
 			// A box is one position: its payload's fields are not the local's.
-			return prov_rekey_providers(graph, prov_moved_providers(graph, bound[0]), nil, collapse = true)
+			return prov_rekey_providers(graph, prov_moved_providers(graph, bound[0]), prov_extend(graph, nil, proj_wild()))
 		}
 	case Prov_Form_Composite:
 		out := make([dynamic]Provider_Path, graph.alloc)
-		composite, _ := prov_value(graph, id).origin.(^Expr_Composite)
+		value := prov_value(graph, id)
+		composite, _ := value.origin.(^Expr_Composite)
 		for element, index in form.elements {
 			if element == 0 { continue }
-			prefix: []Proj_Step
+			// An element whose field is not known may be at any position.
+			prefix := prov_extend(graph, nil, proj_wild())
 			if composite != nil {
-				prefix, _ = prov_element_prefix(graph, composite, prov_value(graph, id).type, index)
+				prefix, _ = prov_element_prefix(graph, composite, value.type, index)
 			}
 			append(&out, ..prov_rekey_providers(graph, prov_moved_providers(graph, element), prefix))
 		}
@@ -891,10 +915,12 @@ prov_moved_providers :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Provider_Pat
 	if !ok || graph.roots[int(root)].kind != .Local { return nil }
 	symbol := graph.roots[int(root)].symbol
 	// Moving a local's providers is a use of its tokens, which may not exist yet.
+	// Past `REGION_LOCAL_LIMIT` they never will, and every region read of the local
+	// is crowded, which overlaps any end of what it is moved into, so it carries none.
 	if !prov_provider_tokens(graph, symbol) { return nil }
 	key := provider_key(path)
 	out := make([dynamic]Provider_Path, graph.alloc)
-	take := proc(graph: ^Flow_Graph, out: ^[dynamic]Provider_Path, held: Provider_Path, key: []Proj_Step) {
+	take := proc(out: ^[dynamic]Provider_Path, held: Provider_Path, key: []Proj_Step) {
 		if !provider_keys_overlap(held.key, key) { return }
 		// What sat below the place moved keeps its place in the value; what held the
 		// place, as a container of providers, is the whole value.
@@ -902,18 +928,18 @@ prov_moved_providers :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Provider_Pat
 		if len(held.key) > len(key) { below = held.key[len(key):] }
 		append(out, Provider_Path{key = below, bit = held.bit})
 	}
-	for position in graph.provider_paths[symbol] { take(graph, &out, position, key) }
-	for moved in graph.provider_moved[symbol] { take(graph, &out, moved, key) }
+	for position in graph.provider_paths[symbol] { take(&out, position, key) }
+	for moved in graph.provider_moved[symbol] { take(&out, moved, key) }
 	return out[:]
 }
 
-// `moved`, read as held at `prefix`; with `collapse`, all at `prefix` itself.
+// `moved`, read as held at `prefix`. A prefix past a field path, as a box's or an
+// array element's, puts them all at the position holding it.
 @(private = "file")
-prov_rekey_providers :: proc(graph: ^Flow_Graph, moved: []Provider_Path, prefix: []Proj_Step, collapse := false) -> []Provider_Path {
+prov_rekey_providers :: proc(graph: ^Flow_Graph, moved: []Provider_Path, prefix: []Proj_Step) -> []Provider_Path {
 	out := make([]Provider_Path, len(moved), graph.alloc)
 	for held, index in moved {
-		key := prefix if collapse else prov_concat_path(graph, prefix, held.key)
-		out[index] = Provider_Path{key = provider_key(key), bit = held.bit}
+		out[index] = Provider_Path{key = provider_key(prov_concat_path(graph, prefix, held.key)), bit = held.bit}
 	}
 	return out
 }

@@ -1748,7 +1748,10 @@ checklist.
   ([Procedure result contracts](design.md#procedure-result-contracts)). With `f` returning
   `x^.a^.b^.c^.d^.p`, a reset after `target := f(&x); target^ = make(..., allocator)` compiled
   while `a`, which `target` pointed at, was still used, and read freed memory; it is now `L0537`.
-  A summary keeps four loads, so such a store may land in anything below the fourth.
+  A summary keeps four loads, so such a store may land in anything below the fourth, its sibling
+  `b` too: the reset there says it *may* end the region and names that limit, as
+  [Minimum provenance precision](design.md#minimum-provenance-precision) asks, and the note for a
+  merged path says a result contract keeps 4 loads.
 - A provider moved into a record is in the field it was moved into
   ([Allocators](design.md#allocators)). `pair := Pair{move(first), move(second)}` followed by
   ending `pair.first`, by `exchange` or `unsafe.take`, was `L0537` for what `pair.second` backs;
@@ -1758,7 +1761,9 @@ checklist.
 - A call through a local pointer to a slice, as `pointer := &mut pairs; store(pointer, ...)`,
   leaves what it stores at `pairs^[0].second` in what `second` points at only, as passing
   `&mut pairs` directly does ([Region tracking](design.md#region-tracking)). A reset after it was
-  `L0537` for what `first` pointed at.
+  `L0537` for what `first` pointed at. Only a local whose alias names the very carrier goes on
+  below it: one standing for a whole record, or one past the 8 steps a written alias keeps, still
+  takes all of its target.
 - A store of a carrier that could not be one the body's loads read, as `other^.p = spare` with
   `p: ^int` inside a loop stepping `cur = cur^.next`, no longer forgets what was loaded below the
   cursor ([Weakening and reborrows](design.md#weakening-and-reborrows)). The load of `t^.next` after

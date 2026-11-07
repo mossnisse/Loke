@@ -103,7 +103,7 @@ handed a borrow of `counter`
 L0730
 @328:19
 may be handed a borrow of `counter`
-provenance precision limit: paths below 4 aggregate projection steps, or 8 through a written alias, are merged
+provenance precision limit: paths below 4 aggregate projection steps, or 8 through a written alias, are merged; a procedure result contract keeps 4 loads, so a result read through that many may hold what any load below them reaches
 L0730
 @337:19
 may be handed a borrow of `counter`
@@ -111,7 +111,7 @@ provenance precision limit: more than 64 carrier paths collapse to one whole-val
 L0647
 @355:2
 this borrow borrows `counter`, which does not outlive `fallback`, where it may be stored
-provenance precision limit: paths below 4 aggregate projection steps, or 8 through a written alias, are merged
+provenance precision limit: paths below 4 aggregate projection steps, or 8 through a written alias, are merged; a procedure result contract keeps 4 loads, so a result read through that many may hold what any load below them reaches
 L0730
 @381:19
 is handed a borrow of `counter`
