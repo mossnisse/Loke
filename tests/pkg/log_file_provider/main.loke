@@ -1,0 +1,59 @@
+@(default_logger = "./provider:logger_factory")
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:log";
+import "core:strings";
+import "core:thread";
+
+import "./provider";
+
+// A program logging to a file through a selected `log.Writer_Sink(fs.File)`
+// (standard-library "Writer sink"). Two threads log at once, and every record
+// still reaches the file as one whole line; spawning code that logs through the
+// selected provider is free of L0707, as it is through the standard logger.
+
+worker :: proc() {
+	foreach (_ in 0 ..< 200) { log.warning("RECORD"); }
+}
+
+main :: proc() {
+	log.info("started");
+	first := thread.spawn(worker);
+	second := thread.spawn(worker);
+	first.join();
+	second.join();
+
+	// `File` keeps no buffer, so every record is in the file already.
+	bytes := fs.read_bytes(provider.log_file()) or_else panic("the log could not be read");
+	text := string_view.from_utf8(bytes[:]) or_else panic("the log is not UTF-8");
+	started, records, other := 0, 0, 0;
+	foreach (line in strings.split(text, "\n")) {
+		switch (line) {
+		case "[Info] started":   started += 1;
+		case "[Warning] RECORD": records += 1;
+		case "":
+		case:                    other += 1;
+		}
+	}
+	fmt.println("started", started, "records", records, "other", other);
+	fmt.println("dropped", provider.dropped());
+
+	// Closing the file reports what `close` answers, and every later record is
+	// refused by the closed file and counted rather than reported.
+	fmt.println("closed", provider.close_log());
+	log.error("after close");
+	fmt.println("dropped", provider.dropped());
+
+	fmt.println(succeeded(fs.remove(provider.log_file())));
+	fmt.println(succeeded(fs.remove_directory(provider.log_directory())));
+}
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}

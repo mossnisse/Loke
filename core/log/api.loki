@@ -15,6 +15,7 @@
 package log;
 
 import "core:fmt";
+import "core:io";
 
 /*
 	The severity of a message, which is also `LOKE_LOG_LEVEL`'s type. `Off` is a
@@ -50,6 +51,42 @@ current :: proc() -> Logger ---;
 	build may select `log.standard_logger` explicitly to say so.
 */
 standard_logger :: proc() -> Logger ---;
+
+/*
+	A sink that writes the standard logger's lines, `[Level] message` and a
+	newline, to an `io.Writer` it owns: an `fs.File`, a pipe, an
+	`io.Buffer_Writer`. Each record is built in memory and handed to the writer
+	whole, through one `io.write_all`, under a lock held for the whole record, so
+	records from different threads never share a line.
+
+	`Sink.write` has nothing to report through, so a record the writer refuses,
+	in whole or in part, or that cannot be buffered, is dropped and counted;
+	`dropped` answers the count. The sink keeps the buffer of its longest record
+	for the next one.
+
+	As a provider it lives in `static` storage, zero until the factory fills it:
+	`sink = log.writer_sink(move(file)); return (log.Logger)(&mut sink);`.
+*/
+Writer_Sink :: struct($W: type) where io.Writer(W) {
+	// and fields private to the package
+}
+
+// A sink over `writer`, which it owns until `into_writer` gives it back.
+writer_sink :: proc(writer: move $W) -> Writer_Sink(W) where io.Writer(W) ---;
+
+impl Writer_Sink($W) {
+	// The `Sink` slot: one record, written whole or dropped and counted.
+	write :: proc(self: inout, level: Level, message: string_view) where io.Writer(W) ---;
+
+	// How many records the writer refused or the sink could not buffer.
+	dropped :: proc(self: ^) -> int ---;
+
+	/*
+		The writer back, for a caller that owns the sink: to close a file and see
+		what `close` answers, or to read what a buffer collected.
+	*/
+	into_writer :: proc(self: move) -> W ---;
+}
 
 debug :: proc(args: ..dyn fmt.Formattable) ---;
 

@@ -1869,6 +1869,24 @@ A formatter uses the sink during its call. A logger provider lends static
 storage for process lifetime. Neither requires an owned closure, and neither
 view has a null state.
 
+### A writer sink, not a file sink
+
+[`log.Writer_Sink`](standard-library.md#writer-sink) takes any `io.Writer`
+rather than a path. A file is one writer among pipes, buffers, and captured test
+output, and `core:log` then needs `core:io` but not `core:fs`. Opening the file,
+choosing its path, and rotating it stay with the program, whose factory knows
+its own configuration.
+
+A record the writer refuses is dropped and counted. `Sink.write` has nothing to
+return it through. Panicking would end the process over a log line, possibly one
+written while handling a failure. Falling back to the error stream would mix
+those lines with the standard logger's and hide that the file stopped taking
+them. A count is cheap, and a program that cares asks `dropped`.
+
+Each line is built in memory before the writer sees it, because `fs.File` keeps
+no buffer: writing the pieces would cost a system call each, and a second
+process appending to the same file could split a line between them.
+
 ### `assert` and `panic` print without `core:fmt`
 
 The printers take `..dyn fmt.Formattable`, but `assert` and `panic` are

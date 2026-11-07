@@ -1,0 +1,11 @@
+dropped 0
+[Info] count 3
+[Debug] debug
+[Warning] warning
+[Error] error
+dropped 0
+calls 6
+[Warning] split
+dropped 2
+[Error] kept
+[Info] borrowed

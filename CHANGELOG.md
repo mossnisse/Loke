@@ -1117,6 +1117,11 @@ checklist.
 
 ### Added
 
+- `core:log` has [`Writer_Sink`](standard-library.md#writer-sink), a sink that writes the standard
+  logger's lines to any `io.Writer` it owns, such as an `fs.File`: `log.writer_sink(move(file))`.
+  Each record reaches the writer whole, through one `io.write_all` under a lock, and a record the
+  writer refuses is dropped and counted by `dropped`. A logging provider keeps one in `static`
+  storage to log to a file.
 - A tree input, a directory followed by `/...` or `\...`, makes `-test` [test every
   package](compiler-guide.md#testing-a-tree) in that directory and below it, each as a root of its
   own: `lokec core/... -test`. Every package is checked, those that declare a test are built and

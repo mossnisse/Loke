@@ -1,0 +1,81 @@
+package main;
+
+import "core:fmt";
+import "core:io";
+import "core:log";
+import "core:mem";
+
+// `log.Writer_Sink` (standard-library "Writer sink"): the standard logger's
+// lines into any `io.Writer`, one write per record that `io.write_all` finishes,
+// and a record the writer refuses dropped and counted rather than reported.
+
+// Accepts at most three bytes a call, so a record takes several calls, which
+// `io.write_all` joins into the whole line.
+Short :: struct { bytes: io.Buffer_Writer, calls: int }
+
+impl Short {
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		self.calls += 1;
+		count := source.len();
+		if (count > 3) { count = 3; }
+		return self.bytes.write(source[:count]);
+	}
+}
+
+// Accepts its first `allowed` writes and refuses every one after.
+Refusing :: struct { allowed: int, accepted: io.Buffer_Writer }
+
+impl Refusing {
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		if (self.allowed == 0) { return .err(io.make_error(.Broken_Pipe, .Write)); }
+		self.allowed -= 1;
+		return self.accepted.write(source);
+	}
+}
+
+text :: proc(bytes: []u8) -> string_view {
+	return string_view.from_utf8(bytes) or_else "not UTF-8";
+}
+
+// Code that is handed a logger rather than using the program's one.
+report :: proc(logger: log.Logger, count: int) {
+	logger.write(log.Level.Info, fmt.to_string(mem.default_allocator(), "count", count));
+}
+
+main :: proc() {
+	// One line per record, each level spelled as the standard logger spells it.
+	memory := log.writer_sink(io.Buffer_Writer{});
+	report((log.Logger)(&mut memory), 3);
+	memory.write(log.Level.Debug, "debug");
+	memory.write(log.Level.Warning, "warning");
+	memory.write(log.Level.Error, "error");
+	fmt.println("dropped", memory.dropped());
+	collected := move(memory).into_writer();
+	fmt.print(text(collected.bytes()));
+
+	// "[Warning] split" and the newline are 16 bytes: six calls of at most three.
+	short := log.writer_sink(Short{});
+	short.write(log.Level.Warning, "split");
+	fmt.println("dropped", short.dropped());
+	split := move(short).into_writer();
+	fmt.println("calls", split.calls);
+	fmt.print(text(split.bytes.bytes()));
+
+	// The first record is accepted, the other two are refused and counted, and
+	// the next write after a refusal is tried again rather than given up on.
+	refusing := log.writer_sink(Refusing{allowed = 1});
+	refusing.write(log.Level.Error, "kept");
+	refusing.write(log.Level.Error, "lost");
+	refusing.write(log.Level.Error, "lost too");
+	fmt.println("dropped", refusing.dropped());
+	left := move(refusing).into_writer();
+	fmt.print(text(left.accepted.bytes()));
+
+	// A sink may also borrow a writer the caller keeps, through a `dyn` view.
+	kept := io.Buffer_Writer{};
+	{
+		borrowing := log.writer_sink((dyn mut io.Writer)(&mut kept));
+		borrowing.write(log.Level.Info, "borrowed");
+	}
+	fmt.print(text(kept.bytes()));
+}

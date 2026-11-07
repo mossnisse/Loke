@@ -3056,6 +3056,14 @@ at(level: Level, args: ..dyn fmt.Formattable)
 enabled(level: Level) -> bool
 current() -> Logger
 standard_logger() -> Logger
+
+Writer_Sink :: struct($W: type) where io.Writer(W) { /* private */ }
+writer_sink(writer: move $W) -> Writer_Sink(W)
+impl Writer_Sink($W) {
+	write(self: inout, level: Level, message: string_view)
+	dropped(self: ^) -> int
+	into_writer(self: move) -> W
+}
 ```
 
 The compiler contributes `Level` so that it and `LOKE_LOG_LEVEL` are one type.
@@ -3076,6 +3084,44 @@ standard one when none is selected or before it is published.
 A provider's factory returns `(log.Logger)(&mut sink)` over a `static` record
 with a `write` method, which is the process-lifetime storage design.md
 "Provider initialization" asks for.
+
+### Writer sink
+
+`Writer_Sink(W)` is a sink over an `io.Writer` it owns: an `fs.File`, a pipe,
+an `io.Buffer_Writer`, or a `dyn mut io.Writer` borrowing one the caller keeps.
+It writes the standard logger's lines, `[Level] message` and a newline. Each
+record is built in memory and handed to the writer through one `io.write_all`,
+under a lock held for the whole record, so records from different threads
+never share a line and an unbuffered file takes one write per record. The sink
+keeps the buffer of its longest record for the next one.
+
+`Sink.write` returns nothing, so a record that cannot be buffered, or that the
+writer refuses in whole or in part, is dropped and counted. `dropped` answers
+the count. A refusal does not stop the sink: the next record tries the writer
+again. `into_writer` consumes the sink and returns the writer, so its owner can
+close a file and see what `close` answers, or read what a buffer collected.
+
+To log to a file, a provider keeps the sink in `static` storage, zero until the
+factory fills it, and falls back to the standard logger when the file does not
+open:
+
+```loke
+sink: static log.Writer_Sink(fs.File) = {};
+
+logger_factory :: proc() -> log.Logger {
+	switch (fs.append("app.log")) {
+	case .ok(file):
+		sink = log.writer_sink(move(file));
+		return (log.Logger)(&mut sink);
+	case .err:
+		return log.standard_logger();
+	}
+}
+```
+
+The factory chooses the path, since it takes no arguments: a constant, or one
+it reads from the environment. Rotation and other file policy belong to a sink
+of the program's own.
 
 ### Compiled log level
 

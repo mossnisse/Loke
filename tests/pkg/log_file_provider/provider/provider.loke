@@ -1,0 +1,84 @@
+@(public)
+package provider;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:log";
+import "core:mem";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// A file logger as a build selects one (standard-library "Writer sink"): the
+// sink lives in `static` storage, zero until the factory opens the file and
+// fills it, which is the process-lifetime storage design.md "Provider
+// initialization" asks for.
+
+@(private)
+sink: static log.Writer_Sink(fs.File) = {};
+
+// Where the factory put the log, for `main` to read back and remove.
+@(private)
+directory: static string = "";
+
+@(private)
+file: static string = "";
+
+logger_factory :: proc() -> log.Logger {
+	directory = scratch_directory();
+	file = path.join([]string_view{directory, "app.log"});
+	switch (fs.append(file)) {
+	case .ok(opened):
+		sink = log.writer_sink(move(opened));
+		return (log.Logger)(&mut sink);
+	case .err:
+		return log.standard_logger();
+	}
+}
+
+log_directory :: proc() -> string_view { return directory; }
+
+log_file :: proc() -> string_view { return file; }
+
+dropped :: proc() -> int { return sink.dropped(); }
+
+/**
+	Closes the log, once every thread that logs has been joined, and answers
+	whether `close` succeeded. The sink is left over a closed file, which refuses
+	every later record.
+*/
+close_log :: proc() -> bool {
+	old := exchange(inout sink, log.writer_sink(fs.File{}));
+	opened := move(old).into_writer();
+	switch (opened.close()) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}
+
+// A new directory under the system's temporary directory, under a name only this
+// run holds, so concurrent runs do not share it.
+@(private)
+scratch_directory :: proc() -> string {
+	base := "";
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(found): base = found;
+		case .none:
+		}
+	case .err:
+	}
+	foreach (attempt in 0 ..< 10000) {
+		digits := fmt.to_string(mem.default_allocator(), attempt);
+		name := strings.join([]string_view{"loke_log_file_provider-", digits});
+		candidate := path.join([]string_view{base, name});
+		switch (fs.create_directory(candidate)) {
+		case .ok: return candidate;
+		case .err(error):
+			if (!io.is(error, .Already_Exists)) { panic("a scratch directory could not be created"); }
+		}
+	}
+	panic("every scratch directory name is taken");
+}
