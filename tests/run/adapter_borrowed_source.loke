@@ -1,0 +1,55 @@
+// design.md "Iteration adapters": a `reversed()` that can only read a mutable view
+// borrows it, and `copied()` borrows another adapter's mutable view, so each walks
+// the source in place and the build reports no copy. Written first, `copied()`
+// lets a mutably walking `reversed()` over it copy nothing either.
+package main;
+
+import "core:fmt";
+
+Cursor :: struct { values: [3]int, at: int, step: int }
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(int) {
+		if (self.at < 0 || self.at >= 3) { return .none; }
+		value := self.values[self.at];
+		self.at += self.step;
+		return value;
+	}
+}
+forward :: proc(owned: ^[dynamic]int) -> Cursor { return {{owned^[0], owned^[1], owned^[2]}, 0, 1}; }
+backward :: proc(owned: ^[dynamic]int) -> Cursor { return {{owned^[0], owned^[1], owned^[2]}, 2, -1}; }
+
+Reads_Back :: struct { owned: [dynamic]int }
+impl Reads_Back {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return forward(&self.owned); }
+	iter_reverse :: proc(self) -> Cursor { return backward(&self.owned); }
+	iter_mut :: proc(self) -> Cursor { return forward(&self.owned); }
+}
+
+Walks_Back :: struct { owned: [dynamic]int }
+impl Walks_Back {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return forward(&self.owned); }
+	iter_reverse :: proc(self) -> Cursor { return backward(&self.owned); }
+	iter_mut :: proc(self) -> Cursor { return forward(&self.owned); }
+	iter_mut_reverse :: proc(self) -> Cursor { return backward(&self.owned); }
+}
+
+main :: proc() {
+	reads := Reads_Back{[dynamic]int{1, 2, 3}};
+	foreach (value in reads.reversed().copied()) { fmt.print(value, ""); }
+	backwards := reads.reversed();
+	foreach (value in backwards) { fmt.print(value, ""); }
+	stored := reads.reversed().copied();
+	foreach (value in stored) { fmt.print(value, ""); }
+	fmt.println();
+	walks := Walks_Back{[dynamic]int{4, 5, 6}};
+	foreach (value in walks.copied().reversed()) { fmt.print(value, ""); }
+	first := walks.copied().reversed();
+	foreach (value in first) { fmt.print(value, ""); }
+	fmt.println();
+}

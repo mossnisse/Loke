@@ -13,6 +13,9 @@ this iteration adapter copies 1048 bytes from `source`
 warning[L0507]
 @82:10
 this iteration adapter copies 1024 bytes from `source`
+warning[L0507]
+@137:20
+this iteration adapter clones `walks`, which may allocate
 L0310
-@110:38
+@144:38
 this constant is not a value of `int`

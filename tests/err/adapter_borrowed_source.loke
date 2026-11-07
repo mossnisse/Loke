@@ -1,0 +1,42 @@
+// design.md "Iteration adapters": an adapter that cannot walk a mutable view
+// mutably borrows it as it does a container, as `copied()` does every mutable
+// view. A `reversed()` without the source's `iter_mut_reverse` holds no copy, so
+// the source cannot move while the adapter is used, and one stored over a
+// temporary ends with it.
+package main;
+
+import "core:fmt";
+
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+Reads_Back :: struct { owned: [dynamic]int }
+impl Reads_Back {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {0}; }
+	iter_reverse :: proc(self) -> Cursor { return {0}; }
+	iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+reads_back :: proc() -> Reads_Back { return {}; }
+
+moved_while_reversed :: proc() {
+	source := Reads_Back{};
+	view := source.reversed();
+	taken := move(source);
+	foreach (value in view) { fmt.println(value); }
+	_ = taken;
+}
+
+stored_over_a_temporary :: proc() {
+	view := reads_back().reversed();
+	foreach (value in view) { fmt.println(value); }
+}
+
+copied_over_a_temporary_adapter :: proc() {
+	source := Reads_Back{};
+	view := source.reversed().copied();
+	foreach (value in view) { fmt.println(value); }
+}
+
+main :: proc() {}

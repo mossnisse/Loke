@@ -88,16 +88,22 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	}
 	c := k.c
 	label := kind == .Indexed ? "Indexed" : kind == .Copied ? "Copied" : "Reversed"
-	// Nested views own their small source descriptor. An adapter that is itself
-	// a mutable view owns its mutable-view source too, whose capability is in the
-	// value rather than in a place; holding one copies it, so one that cannot be
-	// copied stays borrowed. `copied()` is never a mutable view and walks its
-	// source only through `iter(self: ^)`, so it borrows such a source, as it
-	// does a container, and copies nothing however it is used.
+	// A range, slice, or text view is its own small descriptor, and the adapter
+	// holds it. A mutable view's capability is in the value rather than in a
+	// place, so an adapter that walks it mutably, and is a mutable view itself,
+	// holds a copy of it unless it cannot be copied. Any other adapter borrows a
+	// mutable view, as it does a container: `copied()` and a `reversed()` without
+	// the source's `iter_mut_reverse` walk it only through `iter(self: ^)`, and a
+	// copy would buy them nothing. A read-only view another adapter made holds only
+	// such descriptors and borrows, so holding it copies nothing either.
 	source_info := underlying_info(c, source)
-	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice ||
-	            source_info.kind == .String_View ||
-	            (kind != .Copied && is_mutable_view(k, source) && !type_clone_disabled(c, source))
+	walk, walks_mutably := mutable_adapter_walk(k, source, kind)
+	by_value := source_info.is_range || source_info.kind == .Slice || source_info.kind == .String_View
+	if is_mutable_view(k, source) {
+		by_value ||= walks_mutably && (source_info.is_view || !type_clone_disabled(c, source))
+	} else {
+		by_value ||= source_info.is_view
+	}
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
 	fields[0] = new_field(c, "source", by_value ? source : TYPE_RAWPTR, 0, public = false)
 	view := new_type(c, Type_Info{
@@ -122,8 +128,8 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	if backward != INVALID_SYMBOL {
 		add_members(c, view, []Symbol_Id{synth_self_member(k.c, "iter_reverse", .Adapter_Iter, view, .Borrow, result_iterator, backward)})
 	}
-	if by_value && kind != .Copied {
-		add_mutable_adapter_members(k, view, source, kind)
+	if by_value && walks_mutably {
+		add_mutable_adapter_members(k, view, source, kind, walk)
 	}
 	// The view keeps its own copy of a source that owns something.
 	if by_value && type_is_managed(c, source) { contribute_lifecycle_members(k, source) }
@@ -186,19 +192,40 @@ is_mutable_view :: proc(k: ^Checker, type: Type_Id) -> bool {
 	return found && protocol.receiver != .Inout
 }
 
+// How an adapter of `kind` walks a mutable-view source mutably: the source's
+// `iter_mut`, its iterator's `next`, and for `reversed()` its `iter_mut_reverse`.
+@(private = "file")
+Mutable_Adapter_Walk :: struct {
+	protocol: Mutable_Protocol,
+	next:     Symbol_Id,
+	item:     Type_Id,
+	reverse:  Symbol_Id,
+}
+
+// design.md "Iteration adapters": whether an adapter of `kind` over `source`
+// walks it mutably, which makes the adapter a mutable view. `copied()` never
+// does, and `reversed()` needs the source's `iter_mut_reverse`.
+@(private = "file")
+mutable_adapter_walk :: proc(k: ^Checker, source: Type_Id, kind: Adapter_Kind) -> (walk: Mutable_Adapter_Walk, ok: bool) {
+	if kind == .Copied { return }
+	found: bool
+	walk.protocol, found = mutable_protocol(k, source)
+	if !found || walk.protocol.receiver == .Inout { return }
+	walk.next, _, walk.item, ok = adapter_source_next(k, walk.protocol.iterator, walk.protocol.element, .Mutable)
+	if !ok || kind != .Reversed { return }
+	walk.reverse = iteration_member(k, source, "iter_mut_reverse")
+	_, ok = mutable_iteration_receiver(k, walk.reverse, source, walk.protocol.iterator)
+	return
+}
+
 // design.md "Iteration adapters": over a mutable view, an adapter walks its
 // source through the source's own `iter_mut`.
 @(private = "file")
-add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Adapter_Kind) {
-	protocol, found := mutable_protocol(k, source)
-	if !found || protocol.receiver == .Inout { return }
+add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Adapter_Kind, walk: Mutable_Adapter_Walk) {
 	c := k.c
-	element, iterator, iter := protocol.element, protocol.iterator, protocol.iter
-	next, _, item, usable := adapter_source_next(k, iterator, element, .Mutable)
-	if !usable { return }
+	element, iterator, iter := walk.protocol.element, walk.protocol.iterator, walk.protocol.iter
+	next, item, reverse := walk.next, walk.item, walk.reverse
 	if kind == .Reversed {
-		reverse := iteration_member(k, source, "iter_mut_reverse")
-		if _, reversible := mutable_iteration_receiver(k, reverse, source, iterator); !reversible { return }
 		add_members(c, view, []Symbol_Id{
 			new_associated_type(c, "Mut_Iterator", iterator, view),
 			synth_self_member(k.c, "iter_mut", .Adapter_Iter, view, .Borrow, iterator, reverse),

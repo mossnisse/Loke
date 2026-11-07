@@ -95,3 +95,43 @@ the direct-read control is accepted by those latter snapshots. Preserve the dist
 when recording and forwarding a carrier's viewed regions, rather than only suppressing
 the mark on a selector read. Found on 2026-11-06 while reviewing `e08ad0ff` (P3).
 
+
+### Literal element reuse overwrites a temporary whose address left through a side effect
+
+[Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)
+keeps a value temporary alive until its complete expression ends, and
+[`unsafe.raw_data`](design.md#unsaferaw_data-procedure) does not shorten that.
+`end_operand_temporaries` in [emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) hands a
+literal element's large slots to the next element when the element's type cannot hold an
+address (`type_may_hold_address`). The type says what the element's value can name, not
+where else the element's calls left a temporary's address: a global or an out-parameter
+can keep one, and a later element reads it during the same complete expression:
+
+```loke
+package main;
+import "core:fmt";
+import "core:unsafe";
+Large :: struct { bytes: [5000]u8 }
+stashed: [^]u8 = nil;
+impl Large {
+    stash :: proc(self: ^) -> int { stashed = unsafe.raw_data(&self.bytes); return int(self.bytes[0]); }
+    peek :: proc(self: ^) -> int { return int(stashed[0]); }
+}
+large :: proc(value: u8) -> Large {
+    out: Large = {};
+    out.bytes[0] = value;
+    return out;
+}
+show :: proc(values: []int) { fmt.println(values[0], values[1]); }
+main :: proc() {
+    show([dynamic]int{large(1).stash(), large(2).peek()}); // prints `1 2`; should print `1 1`
+}
+```
+
+`large(2)` takes the slot `large(1)` used, so `peek` reads the second receiver. This is the
+same at `-opt=none` and `-opt=speed`, and in `ceaa8984`, which made the element type's
+addresses block reuse, as before it, when a checked borrow in the type did. Reuse that is
+sound for every program has to know that no element exposed a temporary's address at all,
+for instance by keeping the slots of an element whose calls borrow one of its temporaries,
+or that take the address of one by `unsafe` means. Found on 2026-11-07 while reviewing
+`ceaa8984` (P3: it needs `unsafe` and a side channel).

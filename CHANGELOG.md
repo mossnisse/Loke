@@ -1126,6 +1126,15 @@ checklist.
   was written in. A stored `copied()` adapter now borrows its source, so moving or reassigning the
   source while the adapter is still used is `L0512`. Upgrade by finishing with the adapter first,
   or by copying the source into a local the adapter can borrow.
+- An [adapter](design.md#iteration-adapters) holds a copy of a mutable-view source only when it
+  walks that source mutably, and borrows it otherwise; `copied()` borrows another adapter's mutable
+  view too. `source.reversed().copied()`, over a mutable view with `iter_reverse` and no
+  `iter_mut_reverse`, cloned `source` twice, once for a `reversed()` that could only read it and
+  once more for `copied()`. A stored `reversed()` over such a view now borrows it, so moving the
+  source while the adapter is still used is `L0512`, and a stored one over a temporary is
+  `L0513`. Upgrade as for `copied()` above. A `reversed()` or `indexed()` that does walk mutably
+  and is written under `copied()` still copies its source, and its `L0507` now advises writing
+  `copied()` first, as `source.copied().reversed()`, rather than a `foreach` over the call.
 
 ### Added
 

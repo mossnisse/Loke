@@ -293,6 +293,8 @@ Held_Copy_Report :: struct {
 	in_loop: bool,
 	// Costed by its bytes (`report_inline_copy`), not as a clone that may allocate.
 	inline:  bool,
+	// The adapter's view is the source of a `copied()` (`record_adapter_copy`).
+	under_copied: bool,
 }
 
 // A copy of `source` at `type`: provenance reads what it clones at, and the
@@ -339,15 +341,16 @@ warn_copy_cost :: proc(
 
 @(private = "file")
 report_copy :: proc(k: ^Checker, held: Held_Copy_Report) {
+	adapter_hint := held.under_copied ? ADAPTER_UNDER_COPIED_HINT : ADAPTER_COPY_HINT
 	if held.inline {
-		report_inline_copy(k, held.site, held.span, held.source, held.type, held.in_loop)
+		report_inline_copy(k, held.site, held.span, held.source, held.type, held.in_loop, adapter_hint)
 	} else {
-		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop)
+		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop, adapter_hint)
 	}
 }
 
 @(private = "file")
-report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool) {
+report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool, adapter_hint: string) {
 	name := ""
 	// A binding that only views its source has no ownership to hand over, so the
 	// `move` advice below would name something `move` is not allowed to take.
@@ -368,7 +371,7 @@ report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Exp
 		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
 	}
 	if site == .Adapter {
-		add_notef(k.c, NO_SPAN, "%s", ADAPTER_COPY_HINT)
+		add_notef(k.c, NO_SPAN, "%s", adapter_hint)
 		return
 	}
 	// Never advise inout: it grants mutation and changes which aliases are legal (design.md).
@@ -381,8 +384,13 @@ report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Exp
 @(private = "file")
 ADAPTER_COPY_HINT :: "a `foreach` written over the adapter call makes no copy"
 
+// A `foreach` takes apart no adapter below `copied()`, but `copied()` written first
+// borrows the source, and an adapter over it holds only that borrow.
 @(private = "file")
-report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, in_loop: bool) {
+ADAPTER_UNDER_COPIED_HINT :: "write `copied()` before this adapter: it borrows the source, and this adapter over it copies nothing"
+
+@(private = "file")
+report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, in_loop: bool, adapter_hint: string) {
 	object := "a value that may allocate"
 	hint := "write `.clone()` on it if the copy is intended"
 	if root := symbol_of(k.c, place_root_symbol(source)); root != nil {
@@ -395,7 +403,7 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 		}
 	}
 	if site == .Adapter {
-		hint = ADAPTER_COPY_HINT
+		hint = adapter_hint
 	}
 	warnf(k.c, span, "L0507", "this %s clones %s", COPY_SITE_TEXT[site], object)
 	if in_loop {
@@ -419,11 +427,23 @@ held_copy_is_made :: proc(held: Held_Copy_Report) -> bool {
 // source, which its call makes unless `foreach` peels it, and which is costed as any copy
 // is (design.md "Copy-cost diagnostics").
 record_adapter_copy :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
-	if chosen == nil || chosen.synth != .Adapter_View || len(v.bound) != 1 || !committing(k.c) ||
-	   !type_of(k.c, chosen.result).adapter_by_value {
+	if chosen == nil || chosen.synth != .Adapter_View || len(v.bound) != 1 || !committing(k.c) {
 		return
 	}
 	source := v.bound[0]
+	// A `foreach` peels no adapter below `copied()`, so the held report of the
+	// adapter it is written over gives other advice (`ADAPTER_UNDER_COPIED_HINT`).
+	if inner, is_call := source.(^Expr_Call); is_call && type_of(k.c, chosen.result).adapter_kind == .Copied {
+		#reverse for &held in k.c.held_copy_reports {
+			if held.adapter == inner {
+				held.under_copied = true
+				break
+			}
+		}
+	}
+	if !type_of(k.c, chosen.result).adapter_by_value {
+		return
+	}
 	if base := expr_base(source); base != nil {
 		warn_copy_cost(k, .Adapter, expr_span(source), source, base.type, Held_Copy_Report{adapter = v})
 	}

@@ -2159,6 +2159,50 @@ main :: proc() {}
 	}
 }
 
+// design.md "Iteration adapters": a `foreach` takes apart no adapter below
+// `copied()`, so the copy a mutably walking `reversed()` under it makes advises
+// writing `copied()` first, which borrows the source. A stored `reversed()` keeps
+// the advice to write a `foreach` over the call. The `.expected` format of
+// tests/err pins no notes, so these are pinned here.
+@(test)
+an_adapter_under_copied_advises_copied_first :: proc(t: ^testing.T) {
+	p: Checked
+	parse_source(&p, `package main;
+Cursor :: struct { at: int }
+impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
+Walks_Back :: struct { owned: [dynamic]int }
+impl Walks_Back {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {0}; }
+	iter_reverse :: proc(self) -> Cursor { return {0}; }
+	iter_mut :: proc(self) -> Cursor { return {0}; }
+	iter_mut_reverse :: proc(self) -> Cursor { return {0}; }
+}
+main :: proc() {
+	walks := Walks_Back{};
+	foreach (value in walks.reversed().copied()) { _ = value; }
+	view := walks.reversed();
+	foreach (value in view) { _ = value; }
+}
+`)
+	defer destroy_checked(&p)
+	p.c.copy_cost_enabled, p.c.copy_cost_threshold = true, 512
+	check_parsed(&p)
+	if !testing.expect_value(t, len(p.c.diagnostics), 2) { report(&p.c); return }
+	wanted := [2]string{
+		"write `copied()` before this adapter: it borrows the source, and this adapter over it copies nothing",
+		"a `foreach` written over the adapter call makes no copy",
+	}
+	for diagnostic, index in p.c.diagnostics {
+		testing.expect_value(t, diagnostic.code, "L0507")
+		if testing.expect(t, len(diagnostic.notes) > 0) {
+			testing.expect_value(t, diagnostic.notes[len(diagnostic.notes) - 1].message, wanted[index])
+		}
+	}
+}
+
 // A speculative check reports, rolls back, and must leave the compilation
 // exactly as it found it — including `error_count`, which decides the exit code.
 @(test)

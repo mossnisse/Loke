@@ -1,0 +1,6 @@
+L0512
+@26:11
+`source` cannot be moved here: a read-only borrow of it is still in use
+L0513
+@33:20
+this borrow is used after this temporary has ended

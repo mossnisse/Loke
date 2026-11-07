@@ -106,6 +106,40 @@ copied_borrows :: proc() {
 	foreach (value in stored) { _ = value; }
 }
 
+// `reversed()` over a view it can only read borrows it, and so does `copied()` over
+// another adapter's mutable view; one that walks its source mutably still copies it.
+Reads_Back :: struct { owned: [dynamic]int }
+impl Reads_Back {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {0}; }
+	iter_reverse :: proc(self) -> Cursor { return {0}; }
+	iter_mut :: proc(self) -> Cursor { return {0}; }
+}
+Walks_Back :: struct { owned: [dynamic]int }
+impl Walks_Back {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {0}; }
+	iter_reverse :: proc(self) -> Cursor { return {0}; }
+	iter_mut :: proc(self) -> Cursor { return {0}; }
+	iter_mut_reverse :: proc(self) -> Cursor { return {0}; }
+}
+
+chained_under_copied :: proc() {
+	reads := Reads_Back{};
+	foreach (value in reads.reversed().copied()) { _ = value; }
+	backwards := reads.reversed();
+	foreach (value in backwards) { _ = value; }
+	walks := Walks_Back{};
+	foreach (value in walks.reversed().copied()) { _ = value; }
+	foreach (value in walks.copied().reversed()) { _ = value; }
+	first := walks.copied().reversed();
+	foreach (value in first) { _ = value; }
+}
+
 // A diagnostic case needs an error to report beside its warnings.
 mismatched :: proc() -> int { return "text"; }
 
