@@ -4091,7 +4091,7 @@ walk stays either way. The cost does not rule it out; the benefit does. The one 
 that seemed to need facts by program point, a reset after a write on every path to a
 received allocator, needed only which parameter places every path assigned before
 each read. That is control flow alone, so the construction walk answers it where each
-value is interned (`prov_overwritten_here`), and the flow-insensitive facts stay
+value is interned (`prov_overwritten_at`), and the flow-insensitive facts stay
 (design.md "@(allocator_reset)"). Per-block sets would instead have moved 70
 procedures in the construction walk and 28 places that set an event's region. The
 other gap first blamed on the lattice, a swap of owners not being seen, was fixed on

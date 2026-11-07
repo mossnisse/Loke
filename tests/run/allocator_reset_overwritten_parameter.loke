@@ -94,6 +94,14 @@ refilled :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inou
 	h.items.append(4);
 }
 
+// A copy of the received allocator into another field leaves the assigned field alone.
+sibling_copied_first :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Owned) {
+	h.items = make([dynamic]int, 0, h.allocator);
+	h.items.append(6);
+	h.allocator = allowed;
+	free_all(h.allocator);
+}
+
 main :: proc() {
 	arena := mem.Arena.init();
 	other := mem.Arena.init();
@@ -117,6 +125,7 @@ main :: proc() {
 	owned.items.append(5);
 	managed_field(arena.allocator(), inout owned, true);
 	fmt.println(owned.items.len(), owned.items[0]);
-	// `refilled` is only checked: what a call of it leaves is backed by the region it
-	// resets, which the caller cannot order, so even dropping that is L0537.
+	// `refilled` and `sibling_copied_first` are only checked: what a call of either
+	// leaves is backed by the region it resets, which the caller cannot order, so even
+	// dropping that is L0537.
 }

@@ -578,7 +578,7 @@ prov_self_reads_begin :: proc(graph: ^Flow_Graph, root: Root_Id) -> ^Prov_Self_R
 	id := graph.roots[int(root)].symbol
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil || sym.kind != .Parameter || !param_writes_caller(graph.k.c, sym) { return nil }
-	index, is_own := slice.linear_search(graph.param_symbols, id)
+	index, is_own := prov_param_index(graph, id)
 	if !is_own { return nil }
 	graph.self_reads = new_clone(Prov_Self_Reads{symbol = id, index = index, sources = make([dynamic]Prov_Region_Source, graph.alloc)}, graph.alloc)
 	return graph.self_reads

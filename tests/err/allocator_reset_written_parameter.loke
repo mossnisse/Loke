@@ -162,4 +162,15 @@ skipped_by_a_continue :: proc(@(allocator_reset) @(escape=stored) allowed: Alloc
 	free_all(h.allocator);
 }
 
+// The write back comes after the reset in the loop body, so the next iteration's reset
+// reaches what was received.
+written_back_in_a_loop :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, @(escape=stored) other: inout Allocator, n: int) {
+	saved := other;
+	other = allowed;
+	for (i := 0; i < n; i += 1) {
+		free_all(other);
+		other = saved;
+	}
+}
+
 main :: proc() {}

@@ -2,9 +2,10 @@
 // body wrote on every path to a read, so the read is in what those writes stored and
 // not in an allocator the caller supplied there. Region facts merge without regard to
 // control flow. The incoming value is added at each read (`prov_add_received_allocator`),
-// or seeded into a parameter's own entry (`prov_received_region`), so a read records the
-// places written on every path to it, from the construction walk's control flow, which no
-// fact changes, and leaves the incoming value out there.
+// or seeded into a parameter's own entry (`prov_seed_parameter_region`), so a read records
+// the places written on every path to it, from the construction walk's control flow, which
+// no fact changes, and leaves the incoming value out there (`prov_received_replaced`,
+// `prov_received_region`).
 package lokec
 
 import "core:mem"
@@ -284,16 +285,20 @@ prov_seed_replaced :: proc(graph: ^Flow_Graph, id: Symbol_Id, value: Value_Id, p
 	if !prov_received_replaced(graph, value, path) {
 		return
 	}
-	sym := symbol_of(graph.k.c, id)
-	if sym == nil || sym.kind != .Parameter || type_is_region_provider(graph.k.c, sym.type) {
-		return
-	}
 	own: bool
-	index, own = slice.linear_search(graph.param_symbols, id)
-	if !own || index >= REGION_PARAM_LIMIT || prov_parameter_restored(graph, id, index) {
+	index, own = prov_param_index(graph, id)
+	if !own || index >= REGION_PARAM_LIMIT || type_is_region_provider(graph.k.c, symbol_of(graph.k.c, id).type) ||
+	   prov_parameter_restored(graph, id, index, path) {
 		return
 	}
 	return index, true
+}
+
+// The region index of `id` among this body's parameters, if it is one; only a
+// parameter is among them.
+@(private)
+prov_param_index :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (index: int, found: bool) {
+	return slice.linear_search(graph.param_symbols, id)
 }
 
 // A write that may hold what parameter `id` received: one merged into its own entry
@@ -303,24 +308,26 @@ prov_note_restored :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
 	if set.params == 0 || graph.restored[id] {
 		return
 	}
-	if sym := symbol_of(graph.k.c, id); sym == nil || sym.kind != .Parameter {
-		return
-	}
-	if index, own := slice.linear_search(graph.param_symbols, id); own && region_has_param(set, index) {
+	if index, own := prov_param_index(graph, id); own && region_has_param(set, index) {
 		graph.restored[id] = true
 	}
 }
 
-// Whether a write may have put back what parameter `id`, at region `index`, received:
-// one merged into its own entry (`Prov_Facts.restored`), or one into a place of it
-// with its region, or copied from another place of it (`Prov_Region_Content.from`).
+// Whether a write may have put back what parameter `id`, at region `index`, received
+// at `path`: one merged into its own entry (`Prov_Facts.restored`), or one into a
+// place of it that the read reaches, with its region or copied from another place of
+// it (`Prov_Region_Content.from`). A place the read does not reach is not part of
+// what it finds (`prov_region_content_at`).
 @(private = "file")
-prov_parameter_restored :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int) -> bool {
+prov_parameter_restored :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int, path: []Proj_Step) -> bool {
 	if graph.restored[id] {
 		return true
 	}
 	storage := graph.input.storage_ids[Written_Storage{symbol = id}]
 	for content in graph.region_content[storage] {
+		if !paths_overlap(content.path, path) {
+			continue
+		}
 		if _, copied := content.from.?; copied || region_has_param(content.region, index) {
 			return true
 		}

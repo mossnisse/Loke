@@ -1677,9 +1677,11 @@ checklist.
   path before an [`@(allocator_reset)`](design.md#allocator_reset) reset holds only what the
   assignments stored. `h.allocator = allowed; free_all(h.allocator);` with `h: inout Holder` or a
   managed record, and `other = allowed; free_all(other);` with `other: inout Allocator`, were
-  `L0538`, as if the caller's allocator could still be there. A write on only some paths, in a loop
-  body, or of a value read before the assignment, as a saved copy written back, still leaves the
-  caller's allocator possible.
+  `L0538`, as if the caller's allocator could still be there, and so was a managed record's field
+  after another field took a copy of the caller's allocator, as
+  `h.items = make([dynamic]int, 0, h.allocator)`. A write on only some paths, in a loop body, or of
+  a value read before the assignment, as a saved copy written back, still leaves the caller's
+  allocator possible.
 - A result read through two loads, as `nest^.two^.q` from `nest: ^Nest`, names only the field its
   last load reads, as one read through one load already named its field. Storing an allocator's
   value through it and then resetting the allocator was `L0537` for the `p` beside it. Loads between
