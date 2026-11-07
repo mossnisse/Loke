@@ -2,6 +2,7 @@
 // ordinary package symbols marked foreign.
 package lokec
 
+import "core:path/filepath"
 import "core:strings"
 
 // design.md "`@(default_calling_convention=<string>)`".
@@ -108,6 +109,41 @@ check_foreign_links :: proc(c: ^Compiler, block: ^Item_Foreign_Block, linked: ^m
 // design.md "`@(export)`": same kind and type.
 foreign_links_agree :: proc(c: ^Compiler, a, b: ^Symbol) -> bool {
 	return a.kind == b.kind && erase_proc_contract(c, a.proc_type) == erase_proc_contract(c, b.proc_type) && a.type == b.type
+}
+
+// design.md "Foreign system": a path names a library or a file. An empty one
+// names neither, and a block needs no import to name what the link already has.
+check_foreign_import :: proc(k: ^Checker, imp: ^Item_Foreign_Import) {
+	if !imp.path_written {
+		return
+	}
+	if library, is_system := system_library_name(imp.path); is_system {
+		if library == "" {
+			errorf(k.c, imp.span, "L0756", "`%s` names no system library; write its name, as `system:kernel32.lib`", imp.path)
+		}
+		return
+	}
+	if imp.path == "" {
+		errorf(k.c, imp.span, "L0756", "a foreign import's path is empty; name a library, as `system:kernel32.lib`, or a file")
+		add_notef(
+			k.c, NO_SPAN,
+			"a foreign block needs no foreign import when the program's other inputs already define what it declares",
+		)
+	}
+}
+
+// design.md "Foreign system": the library a `system:` path names, without the
+// optional `.lib` or `.a` suffix.
+system_library_name :: proc(path: string) -> (library: string, is_system: bool) {
+	if !strings.has_prefix(path, "system:") {
+		return "", false
+	}
+	library = path[len("system:"):]
+	extension := filepath.ext(library)
+	if strings.equal_fold(extension, ".lib") || strings.equal_fold(extension, ".a") {
+		library = library[:len(library) - len(extension)]
+	}
+	return library, true
 }
 
 // A foreign global is a bare `x: T;` with an ABI-safe type.

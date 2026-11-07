@@ -38,6 +38,10 @@ checklist.
 - An adapter stored over a mutable view reports the copy it makes of its source as `L0507`, as other
   copies do: a clone that may allocate whatever its size, and any other past the copy-cost threshold.
   Upgrade by writing the `foreach` directly over the adapter call, which copies nothing.
+- A foreign import whose path names nothing, `""`, `"system:"`, or `"system:.lib"`, is now `L0756`
+  in every build mode ([Foreign system](design.md#foreign-system)). It compiled and linked nothing.
+  Upgrade by deleting the import: a foreign block needs none when another input of the link already
+  defines what it declares.
 - An allocator read through a carrier that a record parameter holds is one the analysis cannot name,
   as one read from the record itself already was. `make(.., holder.target^.allocator)` with `holder`
   a record, and a call copying one of its carriers' handles to another, had no region at all, so a

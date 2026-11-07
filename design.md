@@ -10391,6 +10391,14 @@ takes one of three forms:
   the importing file, and `"../lib/square.obj"` one in a sibling directory.
 - An absolute path names that file.
 
+An empty path, or `system:` with no library name such as `"system:"` or
+`"system:.lib"`, names nothing and is an error (`L0756`) in every build mode.
+A foreign import that should link nothing is left out: a foreign block's name
+labels its declarations without selecting a library, since every foreign
+import is linked into the whole program, so a block needs no foreign import
+when another input of the link, such as the runtime, already defines what it
+declares.
+
 A build that links, an executable or a test build, requires each file named by
 a path to exist (`L0631`); a file named twice, in any spelling, is linked once.
 A `.asm` file is assembled with NASM, and a `.s` or `.S` file by Clang, before
@@ -10478,7 +10486,7 @@ and synchronize access. Returning a pointer likewise transfers no ownership
 unless the binding wraps it in an explicitly documented Loke resource type.
 
 This declaration creates the foreign import name `kernel32`. A foreign block
-uses that name to associate declarations with the library:
+names it to show which library its declarations come from:
 
 ```loke
 foreign import kernel32 "system:kernel32.lib";

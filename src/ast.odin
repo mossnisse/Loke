@@ -1265,9 +1265,11 @@ Item_Import :: struct {
 
 // `foreign import raylib "raylib.lib";`
 Item_Foreign_Import :: struct {
-	using base: Node_Base,
-	name:       Name,
-	path:       string,
+	using base:   Node_Base,
+	name:         Name,
+	path:         string,
+	// The literal was there and decoded; the parser reported it otherwise.
+	path_written: bool,
 }
 
 // `foreign raylib { ... }`.

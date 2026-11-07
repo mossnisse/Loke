@@ -313,7 +313,9 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 				check_decl(k, v)
 			case ^Item_Impl:
 				check_impl_block(k, v)
-			case ^Item_Import, ^Item_Foreign_Import, ^Item_Foreign_Block, ^Item_Error, ^Item_Static_Assert:
+			case ^Item_Foreign_Import:
+				check_foreign_import(k, v)
+			case ^Item_Import, ^Item_Foreign_Block, ^Item_Error, ^Item_Static_Assert:
 			case:
 				unsupported_construct(k, item_span(item))
 			}

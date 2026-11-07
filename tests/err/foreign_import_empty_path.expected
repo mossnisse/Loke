@@ -1,0 +1,15 @@
+L0756
+a foreign import's path is empty
+@7:1
+
+L0756
+`system:` names no system library
+@8:1
+
+L0756
+`system:.LIB` names no system library
+@9:1
+
+L0756
+`system:` names no system library
+@10:1

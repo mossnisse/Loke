@@ -1,0 +1,27 @@
+package main;
+
+// design.md "Foreign system": a foreign import's path names a library or a
+// file. One that names neither compiled and linked nothing; it is an error in
+// every build mode, as an empty package import path is.
+
+foreign import nothing "";
+foreign import bare_system "system:";
+foreign import suffix_only "system:.LIB";
+foreign import escaped "\x73ystem:";
+
+// A system library with or without its suffix names a library.
+foreign import kernel "system:kernel32";
+foreign import kernel_lib "system:kernel32.lib";
+
+// A branch that is not selected is not checked.
+when (LOKE_OS == .Linux) {
+	foreign import unselected "";
+}
+
+foreign kernel {
+	GetLastError :: proc "stdcall" () -> u32 ---;
+}
+
+main :: proc() {
+	_ = GetLastError();
+}

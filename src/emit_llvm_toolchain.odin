@@ -289,22 +289,13 @@ collect_foreign_link_inputs :: proc(
 	objects := make([dynamic]string)
 	seen := make(map[string]bool)
 	ok = true
+	// The checker rejected a path that names nothing (`L0756`).
 	for imp in foreign_imports(c) {
-		if imp.path == "" {
-			continue
-		}
-		if strings.has_prefix(imp.path, "system:") {
-			name := imp.path[len("system:"):]
-			extension := filepath.ext(name)
-			if strings.equal_fold(extension, ".lib") || strings.equal_fold(extension, ".a") {
-				name = strings.trim_suffix(name, extension)
-			}
-			if name != "" {
-				flag := fmt.aprintf("-l%s", name)
-				if !seen[flag] {
-					seen[flag] = true
-					append(&out, flag)
-				}
+		if name, is_system := system_library_name(imp.path); is_system {
+			flag := fmt.aprintf("-l%s", name)
+			if !seen[flag] {
+				seen[flag] = true
+				append(&out, flag)
 			}
 			continue
 		}
