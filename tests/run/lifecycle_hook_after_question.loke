@@ -238,6 +238,29 @@ file_scope :: proc() {
 	fmt.println(a.value, b.fd);
 }
 
+// design.md "Lifecycle hooks and resource types": the record's size alone relies on
+// nothing a hook changes, so a later `when` is still in time.
+sized_first :: proc() {
+	@(move_only) H :: struct { fd: int }
+	n := size_of(H);
+	N :: 1;
+	when (N == 1) {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("sized close", self.fd); } }
+	}
+	a := H{17};
+	fmt.println(n == size_of(int), a.fd);
+}
+
+// A static `foreach` body is in time for values made after it.
+expanded :: proc() {
+	@(move_only) H :: struct { fd: int }
+	foreach ($i in 0 ..< 1) {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("expanded close", self.fd); } }
+	}
+	a := H{18};
+	fmt.println(a.fd);
+}
+
 main :: proc() {
 	asked_first();
 	value_first();
@@ -254,4 +277,6 @@ main :: proc() {
 	in_generic(string, "s");
 	generics();
 	file_scope();
+	sized_first();
+	expanded();
 }

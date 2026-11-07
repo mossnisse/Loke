@@ -22,3 +22,6 @@ L0363
 L0488
 @71:12
 `hook(drop)` comes too late: `H` was already used
+L0488
+@93:12
+`hook(drop)` comes too late: `H` was already used, and this block could not be found where `H` is declared

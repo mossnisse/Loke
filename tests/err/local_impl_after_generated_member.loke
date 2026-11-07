@@ -1,4 +1,4 @@
-// design.md "Lifecycle hooks and resource types": a body-local block cannot take a
+// design.md "Methods and implementation blocks": a body-local block cannot take a
 // name an earlier use made the compiler generate, as a type has one printed form and
 // one hash.
 package main;

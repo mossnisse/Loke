@@ -195,17 +195,19 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 // declared, ahead of the statement holding their block. Their signatures wait for
 // that statement, as a block's names may be declared after the record, and what
 // asks about the record before then needs only that they exist. The other members
-// stay visible from the statement on.
+// stay visible from the statement on (design.md "Methods and implementation blocks").
 declare_local_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, subject: Type_Id) {
 	item.subject = subject
 	item.kind = .Impl
 	declare_impl_members(k, item, hooks_only = true)
 }
 
-// The one block `declare_local_impl_hooks` cannot reach is in a `when` whose
-// condition names a constant declared after the record. If the record's lifecycle
-// was already read, copies may have been decided without this hook, so running it
-// now could release a value twice (design.md "Lifecycle hooks and resource types").
+// The blocks `declare_local_impl_hooks` cannot reach are in a `when` whose
+// condition cannot be answered where the record is declared, and in a static
+// `foreach` body, which each expansion checks as a copy of its own. If the record's
+// lifecycle was already read, copies may have been decided without this hook, so
+// running it now could release a value twice (design.md "Lifecycle hooks and
+// resource types").
 @(private = "file")
 reject_unhoisted_local_hook :: proc(k: ^Checker, d: ^Decl, subject: Type_Id) {
 	if !decl_is_lifecycle_hook(d) || len(d.symbols) > 0 {
@@ -214,7 +216,7 @@ reject_unhoisted_local_hook :: proc(k: ^Checker, d: ^Decl, subject: Type_Id) {
 	if _, read := k.c.lifecycles[type_underlying(k.c, subject)]; read {
 		errorf(
 			k.c, d.span, "L0488",
-			"`hook(%s)` comes too late: `%s` was already used, and whether this block applies could not be told where `%s` is declared",
+			"`hook(%s)` comes too late: `%s` was already used, and this block could not be found where `%s` is declared",
 			hook_name(decl_hook_kind(d)), type_name(k.c, subject), type_name(k.c, subject),
 		)
 	}
@@ -264,6 +266,8 @@ declare_impl_member :: proc(
 				k.c, name.span, "L0409",
 				"`%s` already has a %s `%s`", type_name(k.c, item.subject), clash, name.text,
 			)
+			// design.md "Methods and implementation blocks": a body-local block
+			// cannot take a name an earlier use generated.
 			if generated {
 				add_notef(k.c, item.span, "a use ahead of this block generated it, so write the block before that use")
 			}

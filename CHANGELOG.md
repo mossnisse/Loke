@@ -1466,10 +1466,14 @@ checklist.
 
 ### Changed
 
-- [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) now states the
-  two body-local blocks that are errors after a use of their record, which the compiler already
-  reported: a hook under a `when` that could not be selected where the record is declared
-  (`L0488`), and a member named like one the use generated, as `format` or `hash` (`L0409`).
+- [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) now states
+  which body-local hooks come too late (`L0488`), as the compiler already reported: one under a
+  `when` that could not be selected where the record is declared, or in a static `foreach` body,
+  once an earlier statement relied on how the record is copied or dropped; asking only its size
+  does not. [Methods and implementation blocks](design.md#methods-and-implementation-blocks) now
+  states that a body-local block cannot declare a member an earlier use generated, as `format` or
+  `hash` (`L0409`). The `L0488` report no longer says whether a block applies could not be told,
+  which did not fit a `foreach`.
 - `find_or_insert`, `try_find_or_insert` and `try_insert` on a map of unmanaged elements, such as the
   counting idiom on a `map[int]int`, push no unwind frame.
 - Slicing a `string` or a `string_view` tests only the bytes at its bounds, in constant time, rather

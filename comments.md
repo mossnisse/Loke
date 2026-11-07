@@ -644,15 +644,24 @@ signatures are fixed, so nothing needs to resolve them early, and a block's name
 may be declared after the record. Hoisting a whole block would make methods visible
 above the statement that declares them, with signatures that cannot resolve there.
 
-Two blocks cannot join in time, and [are errors](design.md#lifecycle-hooks-and-resource-types)
-once the record was used before them. A hook under a `when` that can only be selected
-later cannot join where the record is declared, and running it from the block on would
-release values copied earlier without it a second time. A member the compiler already
-generated for an earlier use, as `format` or `hash`, is chosen once per type: a written
-one from the block on would leave the earlier `println` printing the generated form with
-the written one in scope, and a map's entries hashed two ways. Accepting either would need
-a rule for which member such a program means, and moving the block or the constant up
-already says it.
+Two kinds of hook cannot join in time, and [are
+errors](design.md#lifecycle-hooks-and-resource-types) once an earlier statement relied on
+how the record is copied or dropped. One is under a `when` that can only be selected
+later. The other is in a static `foreach` body, which is checked once per expansion, each
+a copy of its own made after the record; a hook there serves its record only when at most
+one expansion holds it, so finding it early would mean expanding the loop ahead of its
+statement. Running either hook from its block on would release values copied earlier
+without it a second time. Only that reliance matters: what asks for the record's size
+alone has decided nothing a hook changes.
+
+A member the compiler already generated for an earlier use, as `format` or `hash`, [is
+also an error](design.md#methods-and-implementation-blocks) to write later. That member
+is chosen once per type: a written one from the block on would leave the earlier
+`println` printing the generated form with the written one in scope, and a map's entries
+hashed two ways.
+
+Accepting any of these would need a rule for which hook or member such a program means,
+and moving the block, the constant, or the uses already says it.
 
 ### Value-semantic assignment
 
