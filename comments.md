@@ -2311,6 +2311,23 @@ Only the root package's tests run. A package's test build is a statement about
 that package. Running the tests of everything it imports, `core` included,
 would repeat the same tests in every package's report.
 
+Whether a project's packages all pass is a different question, about a tree
+rather than a package, and a [tree input](compiler-guide.md#testing-a-tree)
+asks it: `core/...` names the packages in `core` and below it, as Go's
+`./...` does. Each package is the root of a compilation of its own, so the
+tests of a package that others import still run once, under its own path. The
+tree is an input rather than a flag because it says which packages are
+compiled, which is what the input says otherwise, and a plain directory keeps
+meaning one package: a project's tree holds packages that are not meant to
+pass alone, such as the deliberately broken cases under `tests/pkg_err`.
+
+Every package of a tree is checked, though only one that declares a test is
+built: a package nothing tests must still compile, which is the other half of
+what a run over a project is for, and checking costs a fraction of building and
+linking. A directory named with a leading `.` holds a tool's state, as `.git`
+does, not packages, so the walk skips it. Packages run one after another, like
+tests, so the report is deterministic.
+
 ## Changed syntax
 
 ### Statement termination

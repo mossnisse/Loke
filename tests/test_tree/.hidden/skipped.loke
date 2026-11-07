@@ -1,0 +1,6 @@
+// A directory named with a leading `.` is skipped, so this never compiles.
+package skipped;
+
+wrong :: proc() -> int {
+	return "not an int";
+}

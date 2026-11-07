@@ -22,7 +22,7 @@ examples under `tests/` require a source checkout.
 ## Inputs and output paths
 
 ```text
-lokec <file.loke | directory> [options]
+lokec <file.loke | directory | directory/...> [options]
 ```
 
 Each invocation accepts one root input:
@@ -31,6 +31,9 @@ Each invocation accepts one root input:
   `.loke` files beside it are not automatically included in the root package.
 - A **directory** compiles all `.loke` files directly inside it as one package,
   plus its imports. It does not recursively compile every subdirectory.
+- A **tree**, a directory followed by `/...` or `\...`, compiles each package
+  in that directory and below it as a root package of its own. Only a test
+  build takes one; see [Testing a tree](#testing-a-tree).
 
 Executable builds require a root package named `main` with a `main` procedure
 that takes no parameters. It may return nothing, an `i32` exit status, or a
@@ -65,8 +68,8 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 
 | Option | Purpose and default |
 | --- | --- |
-| `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe`, `.obj`, or, for a test build, `.test.exe`. |
-| `-test` | Build the root package's tests and run each in its own process; see [Running tests](#running-tests). |
+| `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe`, `.obj`, or, for a test build, `.test.exe`. With a tree input, it names a directory; see [Testing a tree](#testing-a-tree). |
+| `-test` | Build the root package's tests and run each in its own process, or do so for each package of a tree; see [Running tests](#running-tests). |
 | `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. Above `none`, when `lld-link.exe` is installed beside Clang, as the LLVM installer does, the runtime is linked as bitcode and optimized with the program; `-print-toolchain` reports this as `lto=yes`. |
 | `-cpu=<level>` | Set the instruction set the build may use: `x86-64` (default), `x86-64-v2`, or `x86-64-v3`; see [CPU levels](#cpu-levels). |
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
@@ -315,12 +318,60 @@ FAIL fails_an_assert (tests/test/outcomes.loke:31:1)
 A passing test's output is hidden; a failing one's standard output and then
 standard error follow its name and declaration. `lokec` exits 1 when a test
 fails, and 2 when the executable cannot be run. Only the root package's tests
-run; to test an imported package, pass its directory.
+run; to test an imported package, pass its directory, or
+[test a tree](#testing-a-tree).
 
 The executable is written to `-o`, by default the input path with `.test.exe`,
 and stays there. Run it with a test's name to repeat that test alone, under a
 debugger or with `-g` for a panic's call stack, or with no argument to run every
 test until the first failure. `-build-mode=test` builds it without running it.
+
+### Testing a tree
+
+A directory followed by `/...` or `\...` names a tree of packages: that
+directory and each directory below it that directly holds a `.loke` file. A
+directory whose name begins with `.` is skipped, with everything below it, and
+a link to a directory is not followed. `...` alone names the working
+directory's tree. `-test` takes each package of the tree in turn, a directory
+before those below it and the directories in one by name, as the root of a
+compilation of its own, as if it had been given alone:
+
+```powershell
+.\lokec.exe core\... -test
+```
+
+```text
+core/slice
+ok   forced_fallback_selects_among_duplicates
+ok   forced_fallback_selects_among_equal_keys
+2 passed, 0 failed
+
+core/time
+ok   eu_offsets_change_at_one_utc
+...
+13 passed, 0 failed
+
+30 packages, 2 with tests: 15 passed, 0 failed
+```
+
+A package's tests therefore run once, under its own path, however many
+packages of the tree import it. Every package is checked, so one that declares
+no test must still compile. Only a package that declares a test is built and
+run, and only such a package, and one that is not built, is listed. A package
+that is not built, because it does not compile or its executable cannot be
+built, is listed with `not built` under its path, its diagnostics go to
+standard error, and the last line counts it, as
+`30 packages, 2 with tests, 1 not built`. The run goes on to the next package
+either way. `lokec` exits 2 when an executable cannot be built or run, otherwise
+1 when a package does not compile or a test fails, and 0 when none does; a
+tree with no package at all is an error.
+
+Each test executable is written where `-test` alone would write it: `core\slice`
+makes `core\slice.test.exe`. With a tree, `-o` names a directory that takes the
+place of the one holding the tree's directory: `-o out` makes
+`out\core\slice.test.exe` for `core\slice`, and would make `out\core.test.exe`
+for `core` itself. `-build-mode=test` builds the executables without running
+them. No other action takes a tree.
 
 ## Default allocator and logger
 

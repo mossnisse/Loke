@@ -911,6 +911,17 @@ brackets, which `core/` leaves at the bracket's level; and indenting the later
 values of a wrapped multi-value statement (`x, y :=` above `1,` and `2;`), whose
 commas read as a list's, since the tokens do not tell a block's `{` from a list's.
 
+## Packages a tree skips
+
+A [tree input](compiler-guide.md#testing-a-tree) checks every package below its
+directory except those under a directory named with a leading `.`. A project
+whose tree holds packages that are meant not to compile, such as this
+repository's `tests/pkg_err` cases, cannot run its whole tree, only subtrees
+that hold none. Go skips directories named `testdata` or beginning with `_`.
+Open: whether Loke should have such a convention, an attribute on a package
+clause, or a list in `loke.project`, and whether `-fmt-check` and `-api-check`
+should take a tree as well.
+
 ## Language design review (2026-10-03)
 
 Proposals from a review of the specification, not amendments to it; backward

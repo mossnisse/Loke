@@ -1117,6 +1117,10 @@ checklist.
 
 ### Added
 
+- A tree input, a directory followed by `/...` or `\...`, makes `-test` [test every
+  package](compiler-guide.md#testing-a-tree) in that directory and below it, each as a root of its
+  own: `lokec core/... -test`. Every package is checked, those that declare a test are built and
+  run, and a last line totals the tree. With a tree, `-o` names a directory.
 - An executable links the static C runtime, as `/MT` selects; [C runtime](compiler-guide.md#c-runtime)
   documents this and which builds of a foreign library match it. A foreign import of an object or
   static library compiled for another runtime, as `/MD`, `/MDd`, or `/MTd` select, now warns with

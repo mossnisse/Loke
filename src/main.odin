@@ -11,10 +11,11 @@ import "core:strings"
 USAGE :: `lokec - the Loke compiler
 
 An input is a .loke file or a directory; a directory compiles every .loke file
-directly in it as one package.
+directly in it as one package. A tree, a directory followed by /..., tests
+each package in it and below it as a root of its own.
 
 usage:
-    lokec <file.loke | directory> [options]
+    lokec <file.loke | directory | directory/...> [options]
 
 options:
     -h, --help    print this message and stop
@@ -23,9 +24,11 @@ options:
                   print the clang, MSVC toolset, and flags a link would use
                   here, and whether one could run at all, then stop
     -o <path>     output path (default: input name with .exe, .obj or .test.exe
-                  by build mode)
+                  by build mode); with a tree, the directory that takes the
+                  place of the one holding it
     -test         build the root package's @(test) procedures into a test
-                  executable, run each in its own process, and report them
+                  executable, run each in its own process, and report them;
+                  with a tree, do so for each package that declares a test
     -emit-ll      write the LLVM IR next to the output and stop
     -keep-temps   keep the generated .ll, and any object assembled from a .asm
                   import, after linking
@@ -125,6 +128,7 @@ ACTION_FLAGS := [Action]string {
 Options :: struct {
 	action:      Action,
 	input:       string,
+	tree:        string,
 	run_tests:   bool,
 	defines:     [dynamic]string,
 	collections: [dynamic]string,
@@ -180,10 +184,15 @@ run :: proc() -> int {
 		return print_toolchain(opts.config.cpu)
 	}
 
+	opts.config.defines, opts.config.collections = opts.defines[:], opts.collections[:]
+	if opts.tree != "" {
+		output := opts.emission.output
+		opts.emission.output = ""
+		return test_tree(opts.tree, opts.config, opts.emission, output, opts.run_tests)
+	}
 	s: Compilation_Session
 	defer destroy_session(&s)
 	c := &s.compiler
-	opts.config.defines, opts.config.collections = opts.defines[:], opts.collections[:]
 	if !init_session(&s, opts.config) {
 		report(c)
 		return 1
@@ -191,7 +200,7 @@ run :: proc() -> int {
 	code := run_action(&s, &opts)
 	report(c)
 	if code == 0 && opts.action == .Build && opts.run_tests && !opts.emission.emit_ll {
-		code = run_tests(c, opts.emission.output)
+		code, _, _ = run_tests(c, opts.emission.output)
 	}
 	return code
 }
@@ -381,6 +390,13 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			return opts, false
 		}
 		opts.config.build_mode = .Test
+	}
+	if root, is_tree := tree_root(opts.input); is_tree {
+		if opts.action != .Build || opts.config.build_mode != .Test {
+			fmt.eprintfln("error: a tree input `%s` needs -test or -build-mode=test", opts.input)
+			return opts, false
+		}
+		opts.tree = root
 	}
 	return opts, opts.action == .Print_Toolchain || opts.input != ""
 }

@@ -1,0 +1,7 @@
+// A package that does not compile is listed as not built, though it declares
+// no test.
+package c_broken;
+
+wrong :: proc() -> int {
+	return "not an int";
+}

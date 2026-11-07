@@ -912,7 +912,7 @@ be file-private. Paths below are relative to `src/`.
 | Files | Responsibility |
 | --- | --- |
 | `main.odin`, `session.odin`, `build_config.odin`, `providers.odin`, `subsystem.odin` | CLI presentation, session orchestration, build configuration including `-define`, provider selection, and the executable's Windows subsystem. |
-| `test_runner.odin` | The `-test` driver, which runs a built test executable once per test. |
+| `test_runner.odin` | The `-test` driver, which runs a built test executable once per test, and the tree driver, which checks, builds and tests each package of a `/...` input. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
@@ -1119,7 +1119,7 @@ reclamation. The integration harness is in `tests/`:
 | `ll/`, `layout/` | Required/forbidden LLVM shapes and LLVM acceptance; compiler/LLVM layout agreement. |
 | `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, environment, and file links where the account may create one. |
 | `doc/`, `examples/` | Generated documentation and classified real example programs with expected output. |
-| `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. Every package under `core/` or `base/` that declares a test is also built with `-test`, and its tests must pass. |
+| `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. `test_tree/` is a tree input's report. `core/...` and `base/...` are also tested as trees, and must pass. |
 | `api/` | Interface files: `-api-check` against each case's checked-in `api.loki`, with and without `-debug`, and `-api` restoring them to a copy. |
 | `debugger/` | Debug information: cdb runs a `-g` build, stops in it, and shows the caller's locals through the Natvis rules. |
 | `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |

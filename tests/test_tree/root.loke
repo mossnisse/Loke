@@ -1,0 +1,11 @@
+// compiler-guide.md "Testing a tree": `tests/test_tree/...` tests each package
+// here and below as a root of its own. This one imports `inner`, whose tests
+// run once, under its own path, and not in this package's report.
+package test_tree;
+
+import "./d_nested/inner";
+
+@(test)
+root_passes :: proc() {
+	assert(inner.answer() == 42);
+}

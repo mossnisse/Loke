@@ -1124,45 +1124,85 @@ a_test_executable_runs_one_test_by_name :: proc(t: ^testing.T) {
 
 // A bundled package's own tests reach its private declarations, which a
 // program under tests/run cannot: core:time gives its rule evaluation known
-// rules that way. Every package under core/ or base/ whose files declare a test
-// runs them with `-test`, and each must pass.
+// rules that way. `core/...` and `base/...` are tested as trees: every package
+// in them must compile as a root, and every test in them must pass.
 @(test)
 library_packages_pass_their_tests :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	packages := make([dynamic]string, context.temp_allocator)
-	for pattern in ([]string{"core/*/*.loke", "core/*/*/*.loke", "base/*/*.loke"}) {
-		files, _ := filepath.glob(pattern, context.temp_allocator)
-		for file in files {
-			text, err := os.read_entire_file(file, context.temp_allocator)
-			if err != nil || !strings.contains(string(text), "\n@(test)") {
-				continue
-			}
-			dir := path_dir(file, context.temp_allocator)
-			if !slice.contains(packages[:], dir) {
-				append(&packages, dir)
-			}
-		}
-	}
-	testing.expect(t, len(packages) > 0, "no library package declares a test")
-	jobs := make([]Exec, len(packages), context.temp_allocator)
-	for dir, i in packages {
-		name, _ := strings.replace_all(filepath.base(dir), " ", "_", context.temp_allocator)
+	trees := []string{"core/...", "base/..."}
+	jobs := make([]Exec, len(trees), context.temp_allocator)
+	for tree, i in trees {
 		command := make([dynamic]string, context.temp_allocator)
-		append(&command, compiler_path(), dir, "-test", "-o", fmt.tprintf("%s/library-%s-%d.test.exe", TMP, name, i))
+		append(&command, compiler_path(), tree, "-test", "-o", fmt.tprintf("%s/library", TMP))
 		append(&command, ..env_flags())
 		jobs[i].command = command[:]
 	}
 	exec_all(jobs)
-	for dir, i in packages {
+	for tree, i in trees {
 		job := jobs[i]
-		if !testing.expectf(t, job.err == nil, "%s: cannot run %s", dir, compiler_path()) {
+		if !testing.expectf(t, job.err == nil, "%s: cannot run %s", tree, compiler_path()) {
 			continue
 		}
 		testing.expectf(
 			t, job.state.exit_code == 0,
-			"%s: its tests did not all pass\n%s%s", dir, string(job.stdout), string(job.stderr),
+			"%s: a package did not compile or a test failed\n%s%s", tree, string(job.stdout), string(job.stderr),
 		)
 	}
+	testing.expectf(
+		t, !strings.contains(string(jobs[0].stdout), ", 0 with tests"),
+		"no package in core declares a test\n%s", string(jobs[0].stdout),
+	)
+}
+
+// compiler-guide.md "Testing a tree": a `/...` input tests each package of the
+// tree as a root of its own, lists those with tests and those not built, and
+// totals them. `-o` stands in for the directory holding the tree.
+@(test)
+a_tree_tests_each_package :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/tree", TMP)
+	remove_tree(out)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, compiler_path(), "tests/test_tree/...", "-test", "-o", out)
+	append(&command, ..env_flags())
+	state, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+	if !testing.expect(t, err == nil, "cannot run the tree") {
+		return
+	}
+	expected, _ := os.read_entire_file("tests/test_tree.expected", context.temp_allocator)
+	testing.expectf(t, state.exit_code == 1, "exited with %d\n%s", state.exit_code, string(stderr))
+	testing.expectf(
+		t, normalise(string(stdout)) == normalise(string(expected)),
+		"expected\n%s\ngot\n%s", normalise(string(expected)), normalise(string(stdout)),
+	)
+	testing.expectf(t, strings.contains(string(stderr), "c_broken/broken.loke"), "no diagnostic for c_broken\n%s", string(stderr))
+	testing.expectf(t, !strings.contains(string(stderr), "skipped.loke"), "the `.hidden` directory was checked\n%s", string(stderr))
+	Output :: struct {
+		path:  string,
+		built: bool,
+	}
+	for output in ([]Output {
+		{"test_tree.test.exe", true},
+		{"test_tree/a_failing.test.exe", true},
+		{"test_tree/d_nested/inner.test.exe", true},
+		{"test_tree/b_untested.test.exe", false},
+		{"test_tree/c_broken.test.exe", false},
+	}) {
+		path := fmt.tprintf("%s/%s", out, output.path)
+		testing.expectf(t, os.exists(path) == output.built, "%s: built is %v", output.path, !output.built)
+	}
+
+	// Only a test build takes a tree, spelled with either separator.
+	rejected, _, rejected_stderr, rejected_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests\\test_tree\\...", "-doc"}},
+		context.allocator,
+	)
+	testing.expect(t, rejected_err == nil, "cannot run the rejected tree")
+	testing.expectf(t, rejected.exit_code == 2, "-doc on a tree exited with %d", rejected.exit_code)
+	testing.expect(
+		t, strings.contains(string(rejected_stderr), "needs -test or -build-mode=test"),
+		"missing tree diagnostic",
+	)
 }
 
 // The generated IR is not compared whole — that would break on every temporary

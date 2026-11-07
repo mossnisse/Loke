@@ -1,0 +1,12 @@
+// A failing test is reported in its package's block and counted in the totals.
+package a_failing;
+
+@(test)
+passes_first :: proc() {
+	assert(2 + 2 == 4);
+}
+
+@(test)
+fails_second :: proc() {
+	assert(2 + 2 == 5);
+}

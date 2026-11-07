@@ -1,0 +1,12 @@
+// A package below a directory that holds none is still part of the tree.
+package inner;
+
+@(public)
+answer :: proc() -> int {
+	return 42;
+}
+
+@(test)
+inner_passes :: proc() {
+	assert(answer() == 42);
+}

@@ -1,0 +1,6 @@
+// A package that declares no test is checked but neither built nor listed.
+package b_untested;
+
+double :: proc(x: int) -> int {
+	return x * 2;
+}

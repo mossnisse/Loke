@@ -1,0 +1,19 @@
+tests/test_tree
+ok   root_passes
+1 passed, 0 failed
+
+tests/test_tree/a_failing
+ok   passes_first
+FAIL fails_second (tests/test_tree/a_failing/fails.loke:10:1)
+     loke: panic: assertion failed
+     loke: panicked
+1 passed, 1 failed
+
+tests/test_tree/c_broken
+not built
+
+tests/test_tree/d_nested/inner
+ok   inner_passes
+1 passed, 0 failed
+
+5 packages, 3 with tests, 1 not built: 3 passed, 1 failed
