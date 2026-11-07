@@ -6,7 +6,6 @@ package lsp
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
-import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
@@ -164,7 +163,7 @@ directory_entries :: proc(s: ^Server, dir: string) -> map[string]bool {
 	entries := make(map[string]bool, allocator)
 	infos, _ := os.read_all_directory_by_path(dir, context.temp_allocator)
 	for info in infos {
-		if info.type != .Regular || !strings.equal_fold(filepath.ext(info.name), ".loke") { continue }
+		if !lokec.is_source_file(info) { continue }
 		path := lokec.join_path({dir, info.name}, context.temp_allocator)
 		data, err := os.read_entire_file(path, context.temp_allocator)
 		entries[path_key(path, allocator)] = err == nil && declares_entry(string(data))

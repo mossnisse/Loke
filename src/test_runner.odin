@@ -75,36 +75,35 @@ tree_root :: proc(input: string) -> (string, bool) {
 // compiler-guide.md "Testing a tree": each package of the tree is the root of
 // a compilation of its own. Every one is checked; one that declares a test is
 // built and, when `run`, tested; and the report ends with the tree's totals.
-// `output` is empty, or the directory standing in for the one holding `root`.
-test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_Options, output: string, run: bool) -> int {
+// `emission.output` is empty, or the directory standing in for the one holding
+// `root`.
+test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_Options, run: bool) -> int {
 	if !os.is_dir(root) {
 		fmt.eprintfln("error: `%s` is not a directory", root)
 		return 1
 	}
-	packages := make([dynamic]string)
-	defer {
-		for dir in packages {
-			delete(dir)
-		}
-		delete(packages)
-	}
-	collect_tree_packages(root, &packages)
+	// The packages and `parent` outlive each package's temporary guard below.
+	packages := make([dynamic]string, context.temp_allocator)
+	readable := collect_tree_packages(root, &packages)
 	if len(packages) == 0 {
-		fmt.eprintfln("error: no package in `%s` or below it", root)
+		if readable {
+			fmt.eprintfln("error: no package in `%s` or below it", root)
+		}
 		return 1
 	}
-	parent: string
-	defer delete(parent)
+	output := emission.output
+	parent := ""
 	if output != "" {
 		absolute, err := filepath.abs(root, context.temp_allocator)
 		if err != nil {
 			fmt.eprintfln("error: cannot resolve `%s`", root)
 			return 2
 		}
-		parent = path_dir(absolute)
+		parent = path_dir(absolute, context.temp_allocator)
 	}
 
-	code, tested, not_built, passed, failed, listed := 0, 0, 0, 0, 0, 0
+	code := 0 if readable else 1
+	tested, not_built, passed, failed, listed := 0, 0, 0, 0, 0
 	for dir in packages {
 		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 		s: Compilation_Session
@@ -125,12 +124,15 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 		exe := tree_output_path(dir, parent, output)
 		status := 0 if checked else 1
 		if checked && exe == "" {
-			fmt.eprintfln("error: `%s` has no name for its test executable; pass -o", display_path(dir))
+			// Only a root, as `C:\`, has no name, and with a tree `-o` cannot give it one.
+			fmt.eprintfln("error: `%s` is a root directory, which names no test executable", display_path(dir))
 			status = 2
 		} else if checked {
+			if output != "" {
+				os.make_directory_all(path_dir(exe, context.temp_allocator))
+			}
 			opts := emission
 			opts.output = exe
-			os.make_directory_all(path_dir(exe, context.temp_allocator))
 			status = emit_session(&s, opts)
 		}
 		report(c)
@@ -141,7 +143,7 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 			continue
 		}
 		tested += 1
-		if run && !emission.emit_ll {
+		if run {
 			outcome, package_passed, package_failed := run_tests(c, exe)
 			passed += package_passed
 			failed += package_failed
@@ -156,7 +158,7 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 	if not_built > 0 {
 		fmt.printf(", %d not built", not_built)
 	}
-	if run && !emission.emit_ll {
+	if run {
 		fmt.printf(": %d passed, %d failed", passed, failed)
 	}
 	fmt.println()
@@ -165,31 +167,36 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 
 // `dir` when it directly holds a `.loke` file, then the packages below it, a
 // directory's entries by name. A directory named with a leading `.` is skipped,
-// and a link to one is not followed: it is not a `.Directory` entry.
-@(private = "file")
-collect_tree_packages :: proc(dir: string, packages: ^[dynamic]string) {
+// and a link to one is not followed: it is not a `.Directory` entry. False
+// after saying which directory could not be read; the walk goes on without it.
+// `packages` borrows `dir` and the temporary paths below it.
+@(private)
+collect_tree_packages :: proc(dir: string, packages: ^[dynamic]string) -> bool {
 	entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
 	if err != nil {
-		return
+		fmt.eprintfln("error: cannot read `%s`: %v", display_path(dir), err)
+		return false
 	}
 	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool { return a.name < b.name })
 	for entry in entries {
-		if entry.type == .Regular && strings.equal_fold(filepath.ext(entry.name), ".loke") {
-			append(packages, strings.clone(dir))
+		if is_source_file(entry) {
+			append(packages, dir)
 			break
 		}
 	}
+	readable := true
 	for entry in entries {
 		if entry.type == .Directory && !strings.has_prefix(entry.name, ".") {
 			below, _ := filepath.join({dir, entry.name}, context.temp_allocator)
-			collect_tree_packages(below, packages)
+			readable = collect_tree_packages(below, packages) && readable
 		}
 	}
+	return readable
 }
 
 // Where `-test` alone would write `dir`'s executable, or, with `output`, that
 // path below `parent` moved below `output`. Empty when `dir` has no name.
-@(private = "file")
+@(private)
 tree_output_path :: proc(dir, parent, output: string) -> string {
 	if output == "" {
 		return default_output_path(dir, .Test)

@@ -186,9 +186,7 @@ run :: proc() -> int {
 
 	opts.config.defines, opts.config.collections = opts.defines[:], opts.collections[:]
 	if opts.tree != "" {
-		output := opts.emission.output
-		opts.emission.output = ""
-		return test_tree(opts.tree, opts.config, opts.emission, output, opts.run_tests)
+		return test_tree(opts.tree, opts.config, opts.emission, opts.run_tests && !opts.emission.emit_ll)
 	}
 	s: Compilation_Session
 	defer destroy_session(&s)

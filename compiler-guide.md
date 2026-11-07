@@ -356,15 +356,17 @@ ok   eu_offsets_change_at_one_utc
 
 A package's tests therefore run once, under its own path, however many
 packages of the tree import it. Every package is checked, so one that declares
-no test must still compile. Only a package that declares a test is built and
-run, and only such a package, and one that is not built, is listed. A package
-that is not built, because it does not compile or its executable cannot be
-built, is listed with `not built` under its path, its diagnostics go to
-standard error, and the last line counts it, as
-`30 packages, 2 with tests, 1 not built`. The run goes on to the next package
-either way. `lokec` exits 2 when an executable cannot be built or run, otherwise
-1 when a package does not compile or a test fails, and 0 when none does; a
-tree with no package at all is an error.
+no test must still compile. Only packages that declare a test are built and
+run. The report lists those, and every package that is not built, because it
+does not compile or its executable cannot be built: such a package is listed
+with `not built` under its path, its diagnostics go to standard error, and the
+last line counts it, as `30 packages, 2 with tests, 1 not built`. "With tests"
+counts the packages that were built, so a package whose tests do not compile
+is counted only as not built. The run goes on to the next package either way,
+and past a directory that cannot be read, which is reported on standard error.
+`lokec` exits 2 when an executable cannot be built or run, otherwise 1 when a
+package does not compile, a directory cannot be read, or a test fails, and 0
+when none does; a tree with no package at all is an error.
 
 Each test executable is written where `-test` alone would write it: `core\slice`
 makes `core\slice.test.exe`. With a tree, `-o` names a directory that takes the

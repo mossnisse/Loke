@@ -263,6 +263,11 @@ input_sources :: proc(c: ^Compiler, input: string) -> []string {
 	return paths
 }
 
+// Whether a directory entry is a source file a package directory loads.
+is_source_file :: proc(entry: os.File_Info) -> bool {
+	return entry.type == .Regular && strings.equal_fold(filepath.ext(entry.name), ".loke")
+}
+
 // Direct regular `.loke` files, sorted for deterministic package order.
 @(private)
 package_sources :: proc(c: ^Compiler, dir: string) -> []string {
@@ -274,7 +279,7 @@ package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 	paths := make([dynamic]string, 0, len(entries), c.semantic_allocator)
 	seen := make(map[string]bool, context.temp_allocator)
 	for entry in entries {
-		if entry.type == .Regular && strings.equal_fold(filepath.ext(entry.name), ".loke") {
+		if is_source_file(entry) {
 			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
 			seen[dir_key(canonical_dir(entry.fullpath))] = true
 		}

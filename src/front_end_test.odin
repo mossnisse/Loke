@@ -911,6 +911,57 @@ default_output_requires_a_name_for_a_root_directory :: proc(t: ^testing.T) {
 	testing.expectf(t, actual == "", "drive root defaulted to %q", actual)
 }
 
+// compiler-guide.md "Testing a tree": a final `/...` or `\...` names a tree,
+// and a root keeps the separator that makes it one.
+@(test)
+tree_root_is_the_directory_before_the_dots :: proc(t: ^testing.T) {
+	Case :: struct {
+		input, root: string,
+		is_tree:     bool,
+	}
+	for item in ([]Case {
+		{"...", ".", true},
+		{"./...", ".", true},
+		{"core/...", "core", true},
+		{`core\time\...`, `core\time`, true},
+		{"/...", "/", true},
+		{`C:\...`, `C:\`, true},
+		{"C:/...", "C:/", true},
+		{"core", "", false},
+		{"core/..", "", false},
+		{"core...", "", false},
+	}) {
+		root, is_tree := tree_root(item.input)
+		testing.expectf(
+			t, root == item.root && is_tree == item.is_tree,
+			"%q gave %q, %v", item.input, root, is_tree,
+		)
+	}
+}
+
+// compiler-guide.md "Testing a tree": with `-o`, the output directory takes
+// the place of the one holding the tree, and a root has no name either way.
+@(test)
+tree_output_moves_a_package_below_the_output :: proc(t: ^testing.T) {
+	parent, err := filepath.abs("tests", context.temp_allocator)
+	if !testing.expect(t, err == nil, "cannot resolve tests") { return }
+	actual, _ := strings.replace_all(tree_output_path("tests/test_tree/a_failing", parent, "out"), "\\", "/", context.temp_allocator)
+	testing.expectf(t, actual == "out/test_tree/a_failing.test.exe", "a package moved to %q", actual)
+	root := tree_output_path(`C:\`, `C:\`, "out")
+	testing.expectf(t, root == "", "a drive root moved to %q", root)
+	root = tree_output_path(`C:\`, "", "")
+	testing.expectf(t, root == "", "a drive root defaulted to %q", root)
+}
+
+// compiler-guide.md "Testing a tree": a directory the walk cannot read is
+// reported, not passed over as if it held no package.
+@(test)
+tree_walk_reports_an_unreadable_directory :: proc(t: ^testing.T) {
+	packages := make([dynamic]string, context.temp_allocator)
+	testing.expect(t, !collect_tree_packages("tests/no such directory", &packages), "an unreadable directory was read")
+	testing.expectf(t, len(packages) == 0, "an unreadable directory gave %v", packages[:])
+}
+
 // The two properties the cross-volume package key leans on: one directory's
 // name is not its identity, and Windows spellings of one path are.
 @(test)
