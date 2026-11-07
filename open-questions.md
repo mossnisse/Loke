@@ -1421,3 +1421,56 @@ the declaration, not to a procedure-value type. `@(noreturn)` would state that
 more literally than punctuation. `-> never` also reads well, but should be
 spelled only if the language adds a real uninhabited type, with its rules for
 procedure types and conversions.
+
+## Reading a mutable argument in the call's later arguments
+
+A mutable loan that a call's argument takes starts when that argument is
+[evaluated](design.md#evaluation-order), so the arguments after it cannot even
+read the same place under [the one rule](design.md#capabilities-and-the-one-rule).
+A method call evaluates its receiver first, so it can never read its own
+`inout` receiver in its arguments. Each of these is rejected with `L0511`:
+
+```loke
+c.set(!c.flag);          // `self: inout`
+c.add(c.get());
+xs.append(xs.len());
+xs.append(xs[0]);        // `[dynamic]int`
+put(inout c, c.n + 1);   // a free call is the same
+poke(&mut c, c.n + 1);
+```
+
+`later(c.n, inout c)` is accepted, because there the loan comes last. The
+rejection comes from when the loan starts, not from any alias the callee
+could see.
+
+**Proposal: reserve the loan until the call starts.** A mutable loan that a
+call's receiver or argument takes, through `inout` or a `&mut place` written as
+the argument, would be reserved while the later arguments and defaults are
+evaluated. It would become mutable when the call starts. While it is reserved,
+the place may be read, as under a read-only borrow. It may not be written,
+moved, mutably borrowed, or invalidated, so the place the receiver computed
+first stays valid. A loan of it that a later argument hands to the call is
+still live when the call starts, so it conflicts as it does today. These stay
+rejected:
+
+```loke
+views.append(views[:]);   // the view is live through the call
+c.set_name(c.name);       // a `string` argument shares its storage for the call
+c.add(bump(&mut c));      // a write while reserved
+```
+
+The change only accepts more programs. It would add the rule to
+[Weakening and reborrows](design.md#weakening-and-reborrows), with a note under
+[Evaluation order](design.md#evaluation-order). In the checker, a receiver
+would take a read-only loan in `prov_inout_receiver` and the mutable one after
+the other arguments in `prov_bound_arguments`, as a split receiver's capture
+already is lent after them.
+
+Still to decide:
+
+- Should a `self: move` receiver be deferred the same way, so that
+  `move(c).consume(c.n)` reads `c` before the move?
+- Should an existing mutable carrier lent to a call, as `p` in `poke(p, p^.n)`,
+  be reserved too, or only a loan the argument forms itself?
+
+Found on 2026-11-07.
