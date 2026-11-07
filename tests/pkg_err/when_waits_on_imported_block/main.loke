@@ -1,0 +1,9 @@
+// design.md "when statement": a condition waits on a hook in a pending branch of a
+// package it imports, and is reported once that branch can no longer be selected,
+// whichever package is reported first. `c` comes before `b`, and the `when` holding
+// an import makes the program select its packages together.
+package main;
+import "./c";
+import "./b";
+when (true) { import "core:fmt"; }
+main :: proc() {}

@@ -1704,8 +1704,10 @@ checklist.
 - A file-scope [`when`](design.md#when-statement) condition reads the `impl` blocks outside any
   `when`, in a package with other pending conditions too. `when (S.size() == 1)` was `L0408`, and
   `is_copyable(G(string))` ignored a later block's bounded `hook(copy)` and took the other branch.
-  A condition waits for a branch holding a block that may declare a member it calls, or a hook, for
-  `is_copyable`; one only its own or another unselected branch could answer is `L0389`.
+  A condition waits for a branch, in its package or one it imports, holding a block that may
+  declare a member it calls on a type or a value, or a hook, for `is_copyable`, including a branch
+  an earlier condition just selected. One only its own or another unselected branch could answer
+  is `L0389`, naming the member or saying `is_copyable` asked, whichever package is reported first.
 - A parameter, a field of one, or an `Option` parameter's payload that the body assigns on every
   path before an [`@(allocator_reset)`](design.md#allocator_reset) reset holds only what the
   assignments stored. `h.allocator = allowed; free_all(h.allocator);` with `h: inout Holder` or a

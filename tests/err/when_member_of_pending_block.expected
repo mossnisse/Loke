@@ -1,9 +1,15 @@
 L0389
-@6:7
+@7:7
 this `when` condition needs `S.size`, which an `impl` block in a `when` not selected may declare
 L0389
-@7:7
+@8:7
 this `when` condition needs `T.first`, which an `impl` block in a `when` not selected may declare
 L0389
-@8:7
+@9:7
 this `when` condition needs `S.second`, which an `impl` block in a `when` not selected may declare
+L0389
+@11:7
+this `when` condition needs `C.third`, which an `impl` block in a `when` not selected may declare
+L0389
+@13:7
+this `when` condition asks `is_copyable`, whose answer a lifecycle hook in an `impl` block in a `when` not selected may change

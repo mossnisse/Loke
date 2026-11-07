@@ -604,6 +604,19 @@ shows `string` retain and release on a hot path, when contended counts are
 measured, or when a freestanding target is added, since that decides whether
 `string` is usable unchanged there.
 
+## What a file-scope `when` waits on
+
+[when statement](design.md#when-statement) makes a condition that calls
+`is_copyable` wait while any pending branch in its package or one it imports
+holds a lifecycle hook, whatever type the hook's block is for. So
+`is_copyable(int)` in one package waits on `impl H { d :: hook(drop) ... }` in a
+`when` of a package it imports, and is an error when that `when` stalls, though
+no hook of `H` could change the answer. The same coarseness applies to a member
+whose receiver the walk cannot type, which waits on any pending block declaring
+a member of that name. Narrowing either needs a rule for which subjects a block
+may extend: the subject is a type expression that may itself wait, alias
+another, or be generic. Found on 2026-11-07 while reviewing `6017278d`.
+
 ## Compile-time code generation
 
 The current language evaluates ordinary procedures at compile time, treats

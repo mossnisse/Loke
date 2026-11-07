@@ -87,47 +87,72 @@ collect_pending_whens :: proc(item: Item, out: ^[dynamic]^Item_When) {
 	}
 }
 
-// Rebuilt only between rounds: a round reads the names its predecessor left, which
-// still cover whatever this round selects until `prepare_package` declares it.
+// The pending file-scope `when`s of one file.
+@(private = "file")
+file_pending_whens :: proc(file: ^File) -> []^Item_When {
+	pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
+	for item in file.items {
+		collect_pending_whens(item, &pending)
+	}
+	return pending[:]
+}
+
+// Rebuilt only between rounds: a round reads what its predecessor left, which
+// still covers whatever this round selects until `prepare_package` declares it.
 @(private = "file")
 note_pending_whens :: proc(c: ^Compiler, pkg: ^Package) {
-	pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
+	forget_pending_whens(pkg)
 	for file in pkg.files {
-		for item in file.items {
-			collect_pending_whens(item, &pending)
-		}
-	}
-	pkg.has_pending_whens = len(pending) > 0
-	pkg.pending_when_names = nil
-	if pkg.has_pending_whens {
-		pkg.pending_when_names = make(map[Identifier_Id]bool, c.semantic_allocator)
-		for item in pending {
-			note_branch_names(c, item, &pkg.pending_when_names)
+		for item in file_pending_whens(file) {
+			if !pkg.has_pending_whens {
+				pkg.has_pending_whens = true
+				pkg.pending_when_names = make(map[Identifier_Id]bool, c.semantic_allocator)
+				pkg.pending_block_members = make(map[Identifier_Id]bool, c.semantic_allocator)
+			}
+			note_branch_names(c, item, pkg)
 		}
 	}
 }
 
-// Every name selecting something under `item` could bring into the package scope.
 @(private = "file")
-note_branch_names :: proc(c: ^Compiler, item: Item, names: ^map[Identifier_Id]bool) {
+forget_pending_whens :: proc(pkg: ^Package) {
+	pkg.has_pending_whens = false
+	pkg.pending_when_names = nil
+	pkg.pending_block_members = nil
+	pkg.pending_block_hooks = false
+}
+
+// Every name selecting something under `item` could bring into the package scope,
+// and every member and hook it could bring into an `impl` block.
+@(private = "file")
+note_branch_names :: proc(c: ^Compiler, item: Item, pkg: ^Package) {
 	#partial switch v in item {
 	case ^Decl:
 		for name in v.names {
-			names[intern_identifier(c, name.text)] = true
+			pkg.pending_when_names[intern_identifier(c, name.text)] = true
 		}
 	case ^Item_Import:
-		names[intern_identifier(c, import_binding_name(v))] = true
+		pkg.pending_when_names[intern_identifier(c, import_binding_name(v))] = true
+	case ^Item_Impl:
+		for member in v.members {
+			if d, is_decl := member.(^Decl); is_decl {
+				pkg.pending_block_hooks ||= decl_is_lifecycle_hook(d)
+				for name in d.names {
+					pkg.pending_block_members[intern_identifier(c, name.text)] = true
+				}
+			}
+		}
 	case ^Item_Foreign_Block:
 		for member in v.members {
-			note_branch_names(c, member, names)
+			note_branch_names(c, member, pkg)
 		}
 	case ^Item_Block:
 		for sub in v.items {
-			note_branch_names(c, sub, names)
+			note_branch_names(c, sub, pkg)
 		}
 	case ^Item_When:
-		note_branch_names(c, v.then, names)
-		note_branch_names(c, v.otherwise, names)
+		note_branch_names(c, v.then, pkg)
+		note_branch_names(c, v.otherwise, pkg)
 	}
 }
 
@@ -143,26 +168,51 @@ when_branch_may_declare :: proc(k: ^Checker, name: Identifier_Id) -> bool {
 // declaration there has stopped changing shape is not a question one package
 // answers alone.
 package_closure_has_pending_whens :: proc(c: ^Compiler, id: Package_Id) -> bool {
-	seen := make([]bool, len(c.packages), context.temp_allocator)
-	return closure_has_pending_whens(c, id, seen)
+	return closure_any(c, id, proc(pkg: ^Package, _: Identifier_Id) -> bool {
+		return pkg.has_pending_whens
+	})
 }
 
+// Whether an `impl` block inside a `when` still pending in this package or in
+// anything it imports may declare a member named `name`.
 @(private = "file")
-closure_has_pending_whens :: proc(c: ^Compiler, id: Package_Id, seen: []bool) -> bool {
-	if id == INVALID_PACKAGE || seen[id] {
-		return false
-	}
-	seen[id] = true
-	pkg := package_of(c, id)
-	if pkg.has_pending_whens {
-		return true
-	}
-	for edge in pkg.imports {
-		if closure_has_pending_whens(c, edge.target, seen) {
+pending_block_may_declare :: proc(c: ^Compiler, id: Package_Id, name: Identifier_Id) -> bool {
+	return closure_any(c, id, proc(pkg: ^Package, name: Identifier_Id) -> bool {
+		return name in pkg.pending_block_members
+	}, name)
+}
+
+// Whether an `impl` block inside a `when` still pending in this package or in
+// anything it imports holds a lifecycle hook.
+@(private = "file")
+pending_block_holds_hook :: proc(c: ^Compiler, id: Package_Id) -> bool {
+	return closure_any(c, id, proc(pkg: ^Package, _: Identifier_Id) -> bool {
+		return pkg.pending_block_hooks
+	})
+}
+
+// Whether `holds` is true of this package or of anything it imports.
+@(private = "file")
+closure_any :: proc(
+	c: ^Compiler, id: Package_Id, holds: proc(pkg: ^Package, name: Identifier_Id) -> bool, name := INVALID_IDENTIFIER,
+) -> bool {
+	walk :: proc(c: ^Compiler, id: Package_Id, seen: []bool, holds: proc(pkg: ^Package, name: Identifier_Id) -> bool, name: Identifier_Id) -> bool {
+		if id == INVALID_PACKAGE || seen[id] {
+			return false
+		}
+		seen[id] = true
+		pkg := package_of(c, id)
+		if holds(pkg, name) {
 			return true
 		}
+		for edge in pkg.imports {
+			if walk(c, edge.target, seen, holds, name) {
+				return true
+			}
+		}
+		return false
 	}
-	return false
+	return walk(c, id, make([]bool, len(c.packages), context.temp_allocator), holds, name)
 }
 
 // Calls `visit` on each pending `when` of the package, from its own location, and
@@ -175,12 +225,8 @@ visit_pending_whens :: proc(k: ^Checker, pkg: ^Package, visit: proc(k: ^Checker,
 
 	progressed := false
 	for file in pkg.files {
-		pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
-		for item in file.items {
-			collect_pending_whens(item, &pending)
-		}
 		k.file, k.file_node = file.file, file
-		for item in pending {
+		for item in file_pending_whens(file) {
 			progressed |= visit(k, item)
 		}
 	}
@@ -215,45 +261,40 @@ resolve_item_when :: proc(k: ^Checker, item: ^Item_When) -> bool {
 
 // Everything still pending once no round can make progress. Naming the
 // dependency distinguishes a condition waiting on discovery from a typo.
-report_stalled_whens :: proc(k: ^Checker, pkg: ^Package) {
-	saved := k.location
-	defer k.location = saved
-	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
-	// What each waits on is asked while all are still pending, as one may wait on a
-	// block in another's branch, or in its own.
-	Stalled :: struct { file: ^File, item: ^Item_When, missing: string, block: bool }
-	stalled := make([dynamic]Stalled, 0, 4, context.temp_allocator)
-	for file in pkg.files {
-		pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
-		for item in file.items {
-			collect_pending_whens(item, &pending)
-		}
-		k.file, k.file_node = file.file, file
-		for item in pending {
-			missing, block := first_unresolved(k, item.cond)
-			append(&stalled, Stalled{file, item, missing, block})
-		}
+//
+// Each condition is asked what it waits on from the last round's view, which
+// nothing here changes until every package is reported: one may wait on a block
+// in another's branch, its own, or another package's.
+report_stalled_whens :: proc(k: ^Checker, packages: []^Package) {
+	for pkg in packages {
+		visit_pending_whens(k, pkg, report_stalled_when)
 	}
-	for entry in stalled {
-		k.file, k.file_node = entry.file.file, entry.file
-		report_stalled_when(k, entry.item, entry.missing, entry.block)
+	for pkg in packages {
+		forget_pending_whens(pkg)
 	}
-	pkg.has_pending_whens = false
-	pkg.pending_when_names = nil
 }
 
 @(private = "file")
-report_stalled_when :: proc(k: ^Checker, item: ^Item_When, missing: string, block: bool) {
+report_stalled_when :: proc(k: ^Checker, item: ^Item_When) -> bool {
 	item.state = .Stalled
-	if block {
-		// design.md "when statement": a block no round can select, such as one in
-		// this condition's own branch, cannot answer it.
+	missing, wait := first_unresolved(k, item.cond)
+	// design.md "when statement": a block no round can select, such as one in
+	// this condition's own branch, cannot answer it.
+	switch wait {
+	case .Member:
 		errorf(
 			k.c, expr_span(item.cond), "L0389",
 			"this `when` condition needs `%s`, which an `impl` block in a `when` not selected may declare",
 			missing,
 		)
-		return
+		return false
+	case .Hook:
+		errorf(
+			k.c, expr_span(item.cond), "L0389",
+			"this `when` condition asks `is_copyable`, whose answer a lifecycle hook in an `impl` block in a `when` not selected may change",
+		)
+		return false
+	case .Name:
 	}
 	// A condition that could only be answered by an import inside its own
 	// branch can never be answered: selecting the branch is what would supply
@@ -272,6 +313,7 @@ report_stalled_when :: proc(k: ^Checker, item: ^Item_When, missing: string, bloc
 	} else {
 		errorf(k.c, expr_span(item.cond), "L0389", "`%s` is not declared, so this `when` condition cannot be answered", missing)
 	}
+	return false
 }
 
 @(private = "file")
@@ -341,8 +383,18 @@ When_Walk :: struct {
 	bound:     [dynamic]string,
 	// The answer of the child that ended a walk of `expr_children`.
 	missing:   string,
-	// The walk ended on what an `impl` block in a pending `when` may declare.
-	block:     bool,
+	// What ended the walk.
+	wait:      When_Wait,
+	// The package whose imports bound which pending `impl` blocks it waits on.
+	origin:    Package_Id,
+}
+
+// What a condition waits on: a name a branch may declare, a member an `impl`
+// block in a branch may declare, or, for `is_copyable`, a hook one may hold.
+When_Wait :: enum u8 {
+	Name,
+	Member,
+	Hook,
 }
 
 // The first name `e` depends on that is not settled, or "" when all are. Only
@@ -358,17 +410,17 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	return missing
 }
 
-// As `first_unresolved_name`, and whether what is missing is a member or a hook an
-// `impl` block inside a pending `when` may declare.
+// As `first_unresolved_name`, and what kind of declaration is missing.
 @(private = "file")
-first_unresolved :: proc(k: ^Checker, e: Expr) -> (string, bool) {
+first_unresolved :: proc(k: ^Checker, e: Expr) -> (string, When_Wait) {
 	w := When_Walk {
-		k     = k,
-		seen  = make(map[Symbol_Id]bool, context.temp_allocator),
-		bound = make([dynamic]string, context.temp_allocator),
+		k      = k,
+		seen   = make(map[Symbol_Id]bool, context.temp_allocator),
+		bound  = make([dynamic]string, context.temp_allocator),
+		origin = k.pkg,
 	}
 	missing := unresolved_in(&w, e)
-	return missing, w.block
+	return missing, w.wait
 }
 
 @(private = "file")
@@ -419,13 +471,14 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 		if ident, alias, is_alias := selector_package_alias(k, v); is_alias {
 			return unresolved_in_package(w, package_of(k.c, symbol_of(k.c, alias).pkg), ident, v)
 		}
-		if missing := unresolved_in_member(w, v); missing != "" {
+		if missing := unresolved_name(w, v.operand); missing != "" {
 			return missing
 		}
+		return unresolved_in_member(w, v)
 	case ^Expr_Call:
 		// A copy the answer counts may run a hook a pending block declares.
-		if callee_is_builtin(k, v.callee, .Is_Copyable) && pending_block_declares(k, "", hook = true) {
-			w.block = true
+		if callee_is_builtin(k, v.callee, .Is_Copyable) && pending_block_holds_hook(k.c, w.origin) {
+			w.wait = .Hook
 			return "is_copyable"
 		}
 		if missing := unresolved_name(w, v.callee); missing != "" {
@@ -466,90 +519,92 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 	return w.missing if found else ""
 }
 
-// `Type.member`: what the member declares, read as a called procedure's body is. A
-// member not declared yet waits while a block inside a pending `when` declares one
-// of that name, which may be the block that supplies it.
+// `x.member`, once `x` is settled: what the member declares, read as a called
+// procedure's body is. A member not found waits while a block inside a pending
+// `when` may declare one of that name, which may be the block that supplies it;
+// so does one whose receiver the walk cannot type, as a local of a body it reads.
 @(private = "file")
 unresolved_in_member :: proc(w: ^When_Walk, v: ^Expr_Selector) -> string {
 	k := w.k
-	ident, is_ident := v.operand.(^Expr_Ident)
-	if !is_ident || slice.contains(w.bound[:], ident.name) {
+	if v.operand == nil || v.name.text == "" {
 		return ""
 	}
-	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-	if sym == nil || sym.kind != .Type || sym.type == INVALID_TYPE {
-		return ""
+	name := intern_identifier(k.c, v.name.text)
+	if receiver, is_value, typed := receiver_type(w, v.operand); typed {
+		if is_value && selects_field(k, receiver, name) {
+			return ""
+		}
+		if member := receiver_member(k, receiver, name, is_value); member != INVALID_SYMBOL {
+			return unresolved_in_symbol(w, member)
+		}
 	}
-	if member := find_member(k, sym.type, v.name.id); member != INVALID_SYMBOL {
-		return unresolved_in_symbol(w, member)
-	}
-	if pending_block_declares(k, v.name.text) {
-		w.block = true
-		return concat(k.c, ident.name, ".", v.name.text)
+	if pending_block_may_declare(k.c, w.origin, name) {
+		w.wait = .Member
+		return concat(k.c, source_text(k.c, v.operand), ".", v.name.text)
 	}
 	return ""
 }
 
-// Whether an `impl` block inside a `when` still pending in this package or anything
-// it imports declares a member named `member`, or, with `hook`, a lifecycle hook.
+// What `operand` is as a selector's operand: the type it denotes, or the type of
+// its value. It is checked as `check_selector` checks it, in a probe, so only once
+// nothing it reads can change, and not when it reads a name the walk bound, which
+// has no binding here.
 @(private = "file")
-pending_block_declares :: proc(k: ^Checker, member: string, hook := false) -> bool {
-	declares :: proc(item: Item, member: string, hook: bool) -> bool {
-		#partial switch v in item {
-		case ^Item_Impl:
-			for entry in v.members {
-				d, is_decl := entry.(^Decl)
-				if !is_decl {
-					continue
-				}
-				if hook && decl_is_lifecycle_hook(d) {
-					return true
-				}
-				for name in d.names {
-					if !hook && name.text == member {
-						return true
-					}
-				}
-			}
-		case ^Item_Block:
-			for sub in v.items {
-				if declares(sub, member, hook) {
-					return true
-				}
-			}
-		case ^Item_When:
-			return declares(v.then, member, hook) || declares(v.otherwise, member, hook)
-		}
-		return false
+receiver_type :: proc(w: ^When_Walk, operand: Expr) -> (type: Type_Id, is_value: bool, typed: bool) {
+	k := w.k
+	if reads_bound_name(w, operand) {
+		return
 	}
-	seen := make([]bool, len(k.c.packages), context.temp_allocator)
-	in_closure :: proc(c: ^Compiler, id: Package_Id, seen: []bool, member: string, hook: bool) -> bool {
-		if id == INVALID_PACKAGE || seen[id] {
-			return false
-		}
-		seen[id] = true
-		pkg := package_of(c, id)
-		if pkg.has_pending_whens {
-			for file in pkg.files {
-				pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
-				for item in file.items {
-					collect_pending_whens(item, &pending)
-				}
-				for item in pending {
-					if declares(item, member, hook) {
-						return true
-					}
-				}
-			}
-		}
-		for edge in pkg.imports {
-			if in_closure(c, edge.target, seen, member, hook) {
-				return true
-			}
-		}
-		return false
+	probe := begin_probe(k.c)
+	checked := check_single_expr(k, operand)
+	end_probe(k.c, probe)
+	if checked == INVALID_TYPE {
+		return
 	}
-	return in_closure(k.c, k.pkg, seen, member, hook)
+	if base := expr_base(operand); base.value_category == .Type {
+		return base.denoted_type, false, true
+	}
+	return checked, true, true
+}
+
+@(private = "file")
+reads_bound_name :: proc(w: ^When_Walk, e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return slice.contains(w.bound[:], v.name)
+	case ^Type_Poly:
+		return true
+	}
+	return expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
+		return reads_bound_name((^When_Walk)(data), child)
+	})
+}
+
+// Whether `x.name` on a value of `type` selects a field, which wins over a member
+// (design.md "Methods and implementation blocks"), through one box or pointer as
+// `check_value_selector` reaches it.
+@(private = "file")
+selects_field :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> bool {
+	base := type_underlying(k.c, type)
+	if info := type_of(k.c, base); info != nil && (info.kind == .Pointer || info.kind == .Box) {
+		base = type_underlying(k.c, info.element)
+	}
+	path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	found, ambiguous := promoted_field_path(k.c, base, name, &path)
+	return found || ambiguous
+}
+
+// The member `name` of `type`, or of a value's box or pointer target after the
+// value's own, as `check_value_selector` finds it.
+@(private = "file")
+receiver_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id, is_value: bool) -> Symbol_Id {
+	if member := find_member(k, type, name); member != INVALID_SYMBOL || !is_value {
+		return member
+	}
+	if info := underlying_info(k.c, type); info != nil && (info.kind == .Pointer || info.kind == .Box) {
+		return find_member(k, info.element, name)
+	}
+	return INVALID_SYMBOL
 }
 
 // `name` selected from an imported package.
@@ -568,7 +623,9 @@ unresolved_in_package :: proc(w: ^When_Walk, target: ^Package, ident: ^Expr_Iden
 	return concat(k.c, ident.name, ".", v.name.text)
 }
 
-// What a package-scope name declares, read where it was declared.
+// What a package-scope name declares, read where it was declared. What the
+// declaration binds, its own name included, ends with it, so a receiver read later
+// is not taken for a local (`receiver_type`).
 @(private = "file")
 unresolved_in_symbol :: proc(w: ^When_Walk, id: Symbol_Id) -> string {
 	k := w.k
@@ -577,10 +634,11 @@ unresolved_in_symbol :: proc(w: ^When_Walk, id: Symbol_Id) -> string {
 		return ""
 	}
 	w.seen[id] = true
-	saved, following := k.location, w.following
+	saved, following, bound := k.location, w.following, len(w.bound)
 	defer {
 		k.location = saved
 		w.following = following
+		resize(&w.bound, bound)
 	}
 	enter_symbol_location(k, symbol)
 	w.following = true

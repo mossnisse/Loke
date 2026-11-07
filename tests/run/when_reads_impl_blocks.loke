@@ -20,6 +20,31 @@ when (U.size() == 4) { FROM_BRANCH :: 1; } else { FROM_BRANCH :: 2; }
 SUPPLY :: true;
 when (SUPPLY) { impl U { size :: proc() -> int { return 4; } } }
 
+// The same, with the branch selected earlier in the same round, before its block
+// is declared.
+when (SUPPLY) { impl V { size :: proc() -> int { return 5; } } }
+V :: struct { x: int }
+when (V.size() == 5) { FROM_EARLIER_BRANCH :: 1; } else { FROM_EARLIER_BRANCH :: 2; }
+
+// Receivers other than a type's name: a constant value, a generic instance, and a
+// local of a procedure the condition calls.
+W :: struct { x: int }
+VALUE :: W{6};
+when (VALUE.size() == 6) { ON_VALUE :: 1; } else { ON_VALUE :: 2; }
+Pair :: struct($T: type) { x: T }
+when (Pair(int).size() == 7) { ON_INSTANCE :: 1; } else { ON_INSTANCE :: 2; }
+local_size :: proc() -> int { w := W{0}; return w.size() + 2; }
+when (local_size() == 8) { ON_LOCAL :: 1; } else { ON_LOCAL :: 2; }
+when (true) {
+	impl W { size :: proc(self) -> int { return 6; } }
+	impl Pair($T) { size :: proc() -> int { return 7; } }
+}
+
+// A field is no member, so `VALUE.x` waits on no block declaring one named `x`,
+// even one in its own branch.
+Empty :: struct {}
+when (VALUE.x == 6) { impl Empty { x :: proc() -> int { return 0; } } FIELD :: 1; } else { FIELD :: 2; }
+
 // A copy hook bounded to `int` leaves `G(string)` move-only.
 G :: struct($T: type) { value: T }
 when (is_copyable(G(string))) { BOUNDED :: 1; } else { BOUNDED :: 2; }
@@ -40,7 +65,19 @@ when (SUPPLY) {
 	}
 }
 
+// The same, with the branch selected earlier in the same round.
+when (SUPPLY) {
+	impl K($T) {
+		dup :: hook(copy) proc(self, allocator: Allocator) -> Result(K(T), Allocator_Error) where T == int {
+			return .ok(K(T){self.value});
+		}
+	}
+}
+K :: struct($T: type) { value: T }
+when (is_copyable(K(string))) { BOUNDED_IN_EARLIER_BRANCH :: 1; } else { BOUNDED_IN_EARLIER_BRANCH :: 2; }
+
 main :: proc() {
-	fmt.println(MEMBER, THROUGH_MEMBER, FROM_BRANCH);
-	fmt.println(BOUNDED, BOUNDED_IN_BRANCH, is_copyable(G(string)), is_copyable(G(int)));
+	fmt.println(MEMBER, THROUGH_MEMBER, FROM_BRANCH, FROM_EARLIER_BRANCH);
+	fmt.println(ON_VALUE, ON_INSTANCE, ON_LOCAL, FIELD);
+	fmt.println(BOUNDED, BOUNDED_IN_BRANCH, BOUNDED_IN_EARLIER_BRANCH, is_copyable(G(string)), is_copyable(G(int)));
 }

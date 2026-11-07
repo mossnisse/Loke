@@ -60,10 +60,9 @@ compile_program :: proc(c: ^Compiler, input: string) {
 		}
 	}
 
-	// The last unchanged round left every active view current.
-	for index in 1 ..< len(c.packages) {
-		report_stalled_whens(&k, c.packages[index])
-	}
+	// The last unchanged round left every active view current. All at once, as a
+	// condition may wait on what another package's stalled branch holds.
+	report_stalled_whens(&k, c.packages[1:])
 	// Bodies wait until selections and imports are stable.
 	for id in package_order(c) {
 		check_package_bodies(&k, id)
@@ -122,7 +121,7 @@ check_static_packages :: proc(k: ^Checker, order: []Package_Id, start: int) {
 			rebuild_active_items(k.c, package_of(k.c, id))
 			prepare_package(k, id)
 		}
-		report_stalled_whens(k, package_of(k.c, id))
+		report_stalled_whens(k, {package_of(k.c, id)})
 		check_package_bodies(k, id)
 		check_pending_impl_instances(k)
 		// A checkpoint holds the list, not what is out of it.

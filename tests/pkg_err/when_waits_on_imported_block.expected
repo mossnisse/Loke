@@ -1,0 +1,4 @@
+L0389
+`NOPE` is not declared, so this `when` condition cannot be answered
+L0389
+this `when` condition asks `is_copyable`, whose answer a lifecycle hook in an `impl` block in a `when` not selected may change

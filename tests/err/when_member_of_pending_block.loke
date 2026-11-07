@@ -1,9 +1,20 @@
 // design.md "when statement": a condition waiting on a member only an unselected
-// block may declare is an error once no branch can be selected.
+// block may declare, or on a hook one may hold, is an error once no branch can be
+// selected.
 package main;
 S :: struct { x: int }
 T :: struct { x: int }
 when (S.size() == 1) { impl S { size :: proc() -> int { return 1; } } }
 when (T.first() == 1) { impl S { second :: proc() -> int { return 1; } } }
 when (S.second() == 1) { impl T { first :: proc() -> int { return 1; } } }
+C :: S{1};
+when (C.third() == 1) { impl S { third :: proc(self) -> int { return 1; } } }
+H :: struct($T: type) { value: T }
+when (is_copyable(H(string))) {
+	impl H($T) {
+		dup :: hook(copy) proc(self, allocator: Allocator) -> Result(H(T), Allocator_Error) where T == int {
+			return .ok(H(T){self.value});
+		}
+	}
+}
 main :: proc() {}

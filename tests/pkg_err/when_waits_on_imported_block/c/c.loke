@@ -1,0 +1,3 @@
+package c;
+H :: struct { v: int }
+when (NOPE) { impl H { d :: hook(drop) proc(self: inout H) {} } }

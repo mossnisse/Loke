@@ -6315,12 +6315,15 @@ answered only once what it reads can no longer change. It reads the names it wri
 and what they declare: a constant's value, a record's fields, a procedure's signature
 and body, in any package. It waits for a branch that may declare one of those names,
 which includes a branch that may shadow a predeclared name. A condition also reads
-the `impl` blocks outside any `when`, which count from the start: a member it calls
-and what that member declares, and the hooks and bounds that decide
-`is_copyable`. It waits for a branch holding an `impl` block that may declare a
-member it calls but cannot find, and while any branch holds a lifecycle hook,
-for `is_copyable`. A condition still waiting when no more branches can be
-selected is an error, and selects neither branch.
+the `impl` blocks outside any `when`, which count from the start, and those of a
+branch once it is selected: a member it calls on a type or a value, what that
+member declares, and the hooks and bounds that decide `is_copyable`. It waits for
+a branch, in its package or one it imports, holding an `impl` block that may
+declare a member of that name, while it cannot find the member, or cannot look
+because the receiver is a local of a procedure it reads. A field is not a member,
+so selecting one waits for no block. While any such branch holds a lifecycle
+hook, `is_copyable` waits too. A condition still waiting when no more branches
+can be selected is an error, and selects neither branch.
 
 ```loke
 when (size_of(string) == 4) { A :: 1; } else { A :: 2; }

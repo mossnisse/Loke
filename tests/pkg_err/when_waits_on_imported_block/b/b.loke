@@ -1,0 +1,3 @@
+package b;
+import "../c";
+when (is_copyable(int)) { X :: 1; }

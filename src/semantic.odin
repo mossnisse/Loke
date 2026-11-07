@@ -811,11 +811,15 @@ Package :: struct {
 	intrinsics:     [dynamic]Intrinsic_Decl,
 	// Its declarations by name, for the private-name reads (`src/private_names.odin`).
 	declared_names: ^Package_Names,
-	// Whether a file-scope `when` here has not settled, and every name its branches
-	// could declare. Rebuilt with the active view, so within a round they still
-	// cover what that round's choices selected but have not declared.
-	has_pending_whens:  bool,
-	pending_when_names: map[Identifier_Id]bool,
+	// Whether a file-scope `when` here has not settled, every name its branches
+	// could declare, every member an `impl` block in them could declare, and
+	// whether one holds a lifecycle hook. Rebuilt with the active view, so within a
+	// round they still cover what that round's choices selected but have not
+	// declared.
+	has_pending_whens:     bool,
+	pending_when_names:    map[Identifier_Id]bool,
+	pending_block_members: map[Identifier_Id]bool,
+	pending_block_hooks:   bool,
 }
 
 // Address space each per-body scratch arena reserves.
