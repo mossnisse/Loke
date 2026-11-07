@@ -1,0 +1,15 @@
+// design.md "Variadic parameters" and "Spawn statements": a value a `..^T` pack lends
+// from a temporary ends with the call's statement, and a `spawn` statement ends
+// before its task runs, so a spawned call may lend only what outlives the block.
+package main;
+import "core:fmt";
+sum :: proc(xs: ..^int) -> int { s := 0; foreach (x in xs) { s += x^; } return s; }
+main :: proc() {
+	x := 5;
+	one, two: int;
+	parallel {
+		spawn one = sum(x, x);
+		spawn two = sum(x + 1);
+	}
+	fmt.println(one, two);
+}

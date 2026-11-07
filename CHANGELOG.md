@@ -1154,7 +1154,9 @@ checklist.
   read-only storage, and a spread of `T`s lends each element. A `^T` or a `[]^T` is passed as it is.
   The pack lends its values only for the call: keeping the pack, a pointer in it, or a borrow of a
   value it lends is `L0646`, and a result that may borrow one is `L0644`, at any escape level, which
-  bounds what the values hold instead.
+  bounds what the values hold instead. A pack past 256 KiB is allocated from the default provider,
+  so a spread has no limit, and between two variadic overloads the one whose pack copies wins a tie.
+  A spread of the wrong type is `L0574`, which names both the `[]^T` and the `[]T` the pack takes.
 - [`core:container`](standard-library.md#corecontainer) has
   [`Priority_Queue(T, C)`](standard-library.md#priority-queues) with `Min_Queue(T)` and `Max_Queue(T)`,
   which always hand back the most urgent element under a comparator stored in the queue, and

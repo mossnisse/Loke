@@ -413,7 +413,8 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound, v)
 }
 
-// A variadic pack is a read-only slice over compiler-owned stack storage.
+// A variadic pack is a read-only slice over compiler-owned stack storage, or, for
+// a large `..^T` pack, a block its `cleanup` releases.
 @(private = "file")
 Variadic_Pack :: struct {
 	value:   string,
@@ -462,7 +463,7 @@ emit_variadic_pack :: proc(
 		// Staging already has the pack's shape, so it is the pack.
 		release_held(e, cleanup)
 	} else {
-		buffer, cleanup = emit_spread_pack(e, v, element, operands, lend)
+		buffer, cleanup = emit_spread_pack(e, v, pack_type, operands, lend)
 		unwind_clear(e, operands.cleanup.slot)
 		release_held(e, operands.cleanup)
 	}
@@ -552,18 +553,23 @@ emit_pack_operands :: proc(
 // operand in written order, in storage for exactly that many elements.
 @(private = "file")
 emit_spread_pack :: proc(
-	e: ^Emitter, v: ^Expr_Call, element: Type_Id, operands: Pack_Operands, lend: bool,
+	e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, operands: Pack_Operands, lend: bool,
 ) -> (buffer: string, cleanup: Deferred) {
+	element := slice_element(e.c, pack_type)
 	element_llvm := llvm_type(e, element)
 	managed := emit_lifecycle(e, element).managed
 	size := type_size(e.c, element)
 	limit := size == 0 ? u64(max(i64)) : PACK_STACK_BYTES / size
 	too_large := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, operands.total, limit)
-	panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
-	save_stack_for_expression(e)
-	buffer = temp(e)
-	alloca_count(e, buffer, element_llvm, operands.total)
+	if _, lends := variadic_lent_pointee(e.c, element); lends {
+		buffer, cleanup = emit_lent_pack_storage(e, element, operands.total, too_large)
+	} else {
+		panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
+		save_stack_for_expression(e)
+		buffer = temp(e)
+		alloca_count(e, buffer, element_llvm, operands.total)
+	}
 	flags := ""
 	if managed {
 		flags = temp(e)
@@ -583,10 +589,10 @@ emit_spread_pack :: proc(
 		if is_spread {
 			data := operands.spread_data[next_spread]
 			advance = operands.spread_len[next_spread]
-			lent := slice_element(e.c, expr_base(v.variadic_spreads[next_spread]).type)
+			lent, spread_lends := variadic_spread_type(e.c, expr_base(v.variadic_spreads[next_spread]).type, pack_type)
 			next_spread += 1
-			if lent != element {
-				emit_pack_lend_spread(e, lent, element, data, advance, buffer, position)
+			if spread_lends {
+				emit_pack_lend_spread(e, slice_element(e.c, lent), element, data, advance, buffer, position)
 			} else if lend || !managed {
 				// Bitwise, with any flags left clear.
 				bytes := temp(e)
@@ -613,6 +619,44 @@ emit_spread_pack :: proc(
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
 	}
 	return buffer, cleanup
+}
+
+// design.md "Variadic parameters": a `..^T` pack too `large` for the stack is
+// allocated from the default provider, which the call releases when it returns,
+// so a spread it lends has no limit.
+@(private = "file")
+emit_lent_pack_storage :: proc(e: ^Emitter, element: Type_Id, total, large: string) -> (buffer: string, release: Deferred) {
+	size := type_size(e.c, element)
+	record := alloca(e, PACK_RELEASE_TYPE)
+	storage := alloca(e, "ptr")
+	heap, stack, ready := new_label(e, "vararg.heap"), new_label(e, "vararg.stack"), new_label(e, "vararg.ready")
+	branch_if(e, large, heap, stack)
+
+	place_label(e, heap)
+	too_large := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, total, u64(max(i64)) / size)
+	panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
+	bytes := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, total, size)
+	allocator := emit_default_allocator(e)
+	block, failed := emit_rt_alloc_sized(e, allocator, bytes, type_align(e.c, element))
+	alloc_failed_if(e, failed, allocator, "vararg.no_pack")
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, gep_field(e, PACK_RELEASE_TYPE, record, 0))
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", bytes, gep_field(e, PACK_RELEASE_TYPE, record, 2))
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", block, gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", block, storage)
+	branch(e, ready)
+
+	place_label(e, stack)
+	save_stack_for_expression(e)
+	on_stack := temp(e)
+	alloca_count(e, on_stack, llvm_type(e, element), total)
+	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", on_stack, storage)
+	branch(e, ready)
+
+	place_label(e, ready)
+	return load(e, "ptr", storage), begin_pack_release(e, element, record)
 }
 
 // design.md "Variadic parameters": a `..^T` pack lends each element of a spread of
@@ -969,8 +1013,12 @@ emit_after_call :: proc(e: ^Emitter, call: ^Bound_Operands, callee_type: ^Type_I
 	   (pack.kind == .Array || len(call.argument_cleanups) > 0) {
 		guard = hold_temporary_value(e, callee_type.result, result)
 	}
-	if pack.kind == .Array {
+	#partial switch pack.kind {
+	case .Array:
 		emit_drop_staged_array(e, pack)
+		unwind_clear(e, pack.slot)
+	case .Pack_Release:
+		emit_pack_release(e, pack.type, pack.place)
 		unwind_clear(e, pack.slot)
 	}
 	#reverse for entry in call.argument_cleanups {

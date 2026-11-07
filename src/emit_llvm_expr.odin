@@ -1282,7 +1282,9 @@ emit_implicit_conversion :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> (
 			}
 			// design.md "Variadic parameters": a `T` a `..^T` pack lends, where it is
 			// or in a temporary that lives through the call.
-			return emit_lent_address(e, expr, from), true
+			if pointee, lends := variadic_lent_pointee(e.c, as_type); lends && pointee == from {
+				return emit_lent_address(e, expr, from), true
+			}
 		case .Slice:
 			// A `[N]T` read as a `[]T` of all its elements.
 			if underlying_kind(e.c, from) == .Array {

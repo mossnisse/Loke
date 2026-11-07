@@ -1,0 +1,27 @@
+// design.md "Operator lookup and overload resolution": a value a `..^T` pack lends
+// ranks as a borrow, an unfixed constant as its conversion to `T`, and a spread as
+// that spread into a `..T` pack. Tie-breaker 2 then prefers the candidate that
+// lends fewer arguments, so a pack that copies wins a tie.
+package main;
+import "core:fmt";
+
+copies :: proc(xs: ..int) -> string { return "copies"; }
+lends :: proc(xs: ..^int) -> string { return "lends"; }
+pick :: proc { copies, lends };
+
+one :: proc(x: int) -> string { return "one"; }
+single :: proc { one, lends };
+
+main :: proc() {
+	a := 1;
+	list := []int{1, 2};
+	array := [2]int{3, 4};
+	grown := make([dynamic]int);
+	grown.append(5);
+	// A typed value copies exactly; a pointer is passed as it is.
+	fmt.println(pick(a), pick(&a));
+	// Constants and spreads rank alike in both, and the copying pack wins.
+	fmt.println(pick(1, 2), pick(..list), pick(..array), pick(..grown), pick(a, ..list));
+	// A fixed-arity candidate wins as before; two values reach only the pack.
+	fmt.println(single(a), single(7), single(a, a));
+}

@@ -1254,10 +1254,12 @@ bind_variadic_arguments :: proc(
 		v.bound = bound
 		// A spread whose elements a `..^T` pack lends is no `[]^T` to forward: its
 		// pack is built, as one spread among other operands is.
-		if variadic_pack_spread_lends(k.c, spread, info.parameters[pack]) {
+		if _, lends := variadic_spread_type(k.c, expr_base(spread).type, info.parameters[pack]); lends {
 			v.variadic_elements = {}
-			v.variadic_spreads = slice_clone_expr(k, spread)
-			v.variadic_order = slice_clone_bool(k, true)
+			v.variadic_spreads = make([]Expr, 1, k.c.semantic_allocator)
+			v.variadic_spreads[0] = spread
+			v.variadic_order = make([]bool, 1, k.c.semantic_allocator)
+			v.variadic_order[0] = true
 			return ok && passed
 		}
 		bound[pack] = spread
@@ -1362,12 +1364,19 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 		return arg.value, false
 	}
 	// design.md "Variadic parameters": a `..^T` pack lends the elements of a `[]T`.
-	spread_as := variadic_spread_type(k.c, type, pack)
+	spread_as, _ := variadic_spread_type(k.c, type, pack)
 	if !assignable(k.c, type, spread_as) {
-		errorf(
-			k.c, arg.span, "L0574",
-			"`..` spreads a `%s`, found `%s`", type_name(k.c, pack), type_name(k.c, type),
-		)
+		if pointee, lends := variadic_lent_pointee(k.c, slice_element(k.c, pack)); lends {
+			errorf(
+				k.c, arg.span, "L0574", "`..` spreads a `%s`, or a `%s` whose elements it lends, found `%s`",
+				type_name(k.c, pack), type_name(k.c, slice_of(k.c, pointee, false)), type_name(k.c, type),
+			)
+		} else {
+			errorf(
+				k.c, arg.span, "L0574",
+				"`..` spreads a `%s`, found `%s`", type_name(k.c, pack), type_name(k.c, type),
+			)
+		}
 		return arg.value, false
 	}
 	// A `[dynamic]T` or `[N]T` is spread as the `[]T` it views, so a lone

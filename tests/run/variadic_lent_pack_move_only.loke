@@ -1,0 +1,27 @@
+// design.md "Variadic parameters": a `..^T` pack copies nothing, so it lends a
+// move-only `T`. A place stays usable after the call, and a temporary, or a spread
+// of one, is dropped once, when the call's statement ends.
+package main;
+import "core:fmt";
+
+@(move_only) Res :: struct { tag: int }
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.tag); }
+}
+
+make_res :: proc(tag: int) -> Res { return Res{tag}; }
+count :: proc(xs: ..^Res) -> int { s := 0; foreach (x in xs) { s += x^.tag; } return s; }
+pair :: proc() -> [dynamic]Res {
+	list := make([dynamic]Res);
+	list.append(make_res(10));
+	list.append(make_res(20));
+	return list;
+}
+
+main :: proc() {
+	a := make_res(1);
+	fmt.println("sum", count(a, make_res(2)));
+	fmt.println("spread", count(..pair()));
+	fmt.println("mixed", count(a, ..pair()));
+	fmt.println("kept", a.tag);
+}

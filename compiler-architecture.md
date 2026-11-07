@@ -936,6 +936,7 @@ be file-private. Paths below are relative to `src/`.
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates and comparability, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
+| `variadic_lend.odin` | Which arguments and spreads a `..^T` pack lends, how each is checked, ranked, and held, and which loans of the pack a call may not keep. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `synth.odin` | Builders for the syntax lowerings write and then check: names, calls, selectors, one-name declarations, and scope-local records. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
@@ -972,7 +973,6 @@ be file-private. Paths below are relative to `src/`.
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, places, and the statement hooks. |
 | `provenance_reborrow.odin`, `provenance_escape.odin`, `provenance_call_walk.odin` | What a stored carrier takes from what it was read from, weakened or reborrowed; what a store or a call lets escape, and the regions it stores or leaves; how the walk records a call, its arguments, and what it leaves afterwards. |
 | `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
-| `variadic_lend.odin` | Which arguments and spreads a `..^T` pack lends, how each is checked, ranked, and held, and which loans of the pack a call may not keep. |
 | `provenance_overwrites.odin` | The parameter places assigned on every path to each read, from the walk's control flow, so a read there is not in what the caller supplied unless a write may have put that back. |
 | `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |
 | `provenance_offsets.odin`, `provenance_aliases.odin` | Where a carrier may point below its storage, merged past the limits, with the definitions reaching a block; written aliases, what a local's carriers and a value with no transfer may reach. |

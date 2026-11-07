@@ -27,6 +27,10 @@ Deferred_Kind :: enum {
 	// A spawn's frame of record `type`, published at `place_env`, which no task
 	// has claimed: replay returns it to the default provider.
 	Frame_Release,
+	// A variadic pack's storage, whose `PACK_RELEASE_TYPE` record at `place` (and
+	// published at `place_env`) names a block to release, or null for one on the
+	// stack.
+	Pack_Release,
 }
 
 // One registered cleanup action. The zero value registers nothing. Written
@@ -99,6 +103,35 @@ begin_frame_release :: proc(e: ^Emitter, frame_type: Type_Id, frame: string) -> 
 @(private)
 emit_frame_release :: proc(e: ^Emitter, frame_type: Type_Id, frame: string) {
 	emit_rt_free(e, emit_default_allocator(e), frame, type_size(e.c, frame_type), type_align(e.c, frame_type))
+}
+
+// A pack's storage record: the provider, the block or null, and its size in bytes.
+PACK_RELEASE_TYPE :: "{ ptr, ptr, i64 }"
+
+// design.md "Variadic parameters": a pack allocated from the default provider is
+// its call's until the call returns, so a panic in the callee releases it.
+@(private)
+begin_pack_release :: proc(e: ^Emitter, element: Type_Id, record: string) -> Deferred {
+	entry := Deferred{kind = .Pack_Release, type = element, place = record, order = next_id(e)}
+	register_published(e, &entry, record)
+	return entry
+}
+
+// Releases the block `record` names, if any.
+@(private)
+emit_pack_release :: proc(e: ^Emitter, element: Type_Id, record: string) {
+	block := load(e, "ptr", gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	taken := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", taken, block)
+	release, done := new_label(e, "pack.release"), new_label(e, "pack.done")
+	branch_if(e, taken, release, done)
+	place_label(e, release)
+	allocator := load(e, "ptr", gep_field(e, PACK_RELEASE_TYPE, record, 0))
+	bytes := load(e, "i64", gep_field(e, PACK_RELEASE_TYPE, record, 2))
+	emit_rt_free_sized(e, allocator, block, bytes, type_align(e.c, element))
+	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	branch(e, done)
+	place_label(e, done)
 }
 
 // Registers a box's allocation for panic replay while its payload is dropped,

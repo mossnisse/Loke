@@ -15,7 +15,8 @@ variadic_lent_pointee :: proc(c: ^Compiler, element: Type_Id) -> (Type_Id, bool)
 
 // Whether a value of type `from` written into a `..^T` pack is lent as a `^T`: one
 // of type `T`, or an unfixed constant that fixes at it. A value already a `^T` is
-// passed as it is.
+// passed as it is. `nil` is the null address, not an unfixed constant (design.md
+// "Unfixed constants"), so it is never lent, even into a `..^rawptr` pack.
 variadic_lend_accepts :: proc(c: ^Compiler, from, element: Type_Id) -> bool {
 	pointee, lends := variadic_lent_pointee(c, element)
 	if !lends || from == INVALID_TYPE || assignable(c, from, element) {
@@ -27,21 +28,20 @@ variadic_lend_accepts :: proc(c: ^Compiler, from, element: Type_Id) -> bool {
 	return from == pointee
 }
 
-// Whether a spread of type `from` into a `..^T` pack lends its elements: one that
-// spreads as a `[]T`, rather than as the `[]^T` the pack is.
-variadic_spread_lends :: proc(c: ^Compiler, from, pack: Type_Id) -> bool {
+// The slice type a spread of type `from` into `pack` is checked and held as, and
+// whether the pack lends its elements: a `..^T` pack lends those of a spread that
+// is a `[]T`, or views as one, rather than the `[]^T` the pack is. Any other spread
+// is the pack's own type. Once checked, a lending spread's type is that `[]T`.
+variadic_spread_type :: proc(c: ^Compiler, from, pack: Type_Id) -> (Type_Id, bool) {
 	pointee, lends := variadic_lent_pointee(c, slice_element(c, pack))
-	return lends && from != INVALID_TYPE && !assignable(c, from, pack) && assignable(c, from, slice_of(c, pointee, false))
-}
-
-// The slice type a spread into `pack` is checked as: the `[]T` whose elements a
-// `..^T` pack lends, when the spread is not already a `[]^T`.
-variadic_spread_type :: proc(c: ^Compiler, from, pack: Type_Id) -> Type_Id {
-	if variadic_spread_lends(c, from, pack) {
-		pointee, _ := variadic_lent_pointee(c, slice_element(c, pack))
-		return slice_of(c, pointee, false)
+	if !lends || from == INVALID_TYPE || assignable(c, from, pack) {
+		return pack, false
 	}
-	return pack
+	lent := slice_of(c, pointee, false)
+	if !assignable(c, from, lent) {
+		return pack, false
+	}
+	return lent, true
 }
 
 // One element of a `..^T` pack: a `T` is borrowed, an unfixed constant fixed at
@@ -69,31 +69,12 @@ pass_lent_element :: proc(k: ^Checker, e: Expr, element, pointee: Type_Id, prech
 	return e, true
 }
 
-// Whether the checked spread `spread` into `pack` lends its elements.
-variadic_pack_spread_lends :: proc(c: ^Compiler, spread: Expr, pack: Type_Id) -> bool {
-	base := expr_base(spread)
-	return base != nil && base.type != pack && variadic_spread_lends(c, base.type, pack)
-}
-
-@(private)
-slice_clone_expr :: proc(k: ^Checker, e: Expr) -> []Expr {
-	out := make([]Expr, 1, k.c.semantic_allocator)
-	out[0] = e
-	return out
-}
-
-@(private)
-slice_clone_bool :: proc(k: ^Checker, value: bool) -> []bool {
-	out := make([]bool, 1, k.c.semantic_allocator)
-	out[0] = value
-	return out
-}
-
 // design.md "Variadic parameters": the type a spread operand lends as in `pack`.
 // A spread a `..^T` pack lends the elements of points where it points, as one
 // `^T` element whose targets are the spread's, and any other at the pack's type.
 prov_pack_spread_type :: proc(c: ^Compiler, spread, pack: Type_Id) -> Type_Id {
-	return spread != pack && variadic_spread_lends(c, spread, pack) ? slice_element(c, pack) : pack
+	_, lends := variadic_spread_type(c, spread, pack)
+	return lends ? slice_element(c, pack) : pack
 }
 
 // design.md "Variadic parameters": the `T` of a `..^T` pack at parameter `index`

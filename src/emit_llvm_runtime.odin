@@ -26,8 +26,14 @@ emit_default_allocator :: proc(e: ^Emitter) -> string {
 // A block from the runtime, and whether it was refused.
 @(private)
 emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (block, failed: string) {
+	return emit_rt_alloc_sized(e, allocator, fmt.tprintf("%d", size), align)
+}
+
+// As `emit_rt_alloc`, for a size known only at run time.
+@(private)
+emit_rt_alloc_sized :: proc(e: ^Emitter, allocator, size: string, align: u64) -> (block, failed: string) {
 	block = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)", block, allocator, size, align)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %s, i64 %d)", block, allocator, size, align)
 	failed = temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, block)
 	return
@@ -35,7 +41,12 @@ emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (bloc
 
 @(private)
 emit_rt_free :: proc(e: ^Emitter, allocator, block: string, size, align: u64) {
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)", allocator, block, size, align)
+	emit_rt_free_sized(e, allocator, block, fmt.tprintf("%d", size), align)
+}
+
+@(private)
+emit_rt_free_sized :: proc(e: ^Emitter, allocator, block, size: string, align: u64) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %s, i64 %d)", allocator, block, size, align)
 }
 
 // The runtime entries that end the program, as `LOKE_RT_FAILURE` in

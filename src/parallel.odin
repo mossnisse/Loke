@@ -540,7 +540,8 @@ spawn_pack_record :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, pack
 // elements of included, which the worker spreads again (design.md "Variadic
 // parameters").
 spawn_spread_type :: proc(c: ^Compiler, spread: Expr, pack: Type_Id) -> Type_Id {
-	return variadic_pack_spread_lends(c, spread, pack) ? expr_base(spread).type : pack
+	held, _ := variadic_spread_type(c, expr_base(spread).type, pack)
+	return held
 }
 
 @(private = "file")

@@ -1,0 +1,10 @@
+// design.md "Variadic parameters": a `..^T` pack takes a spread of `[]^T` as it is,
+// and lends the elements of a `[]T`, or of a `[N]T` or `[dynamic]T` viewed as one.
+// Any other spread is an error that names both.
+package main;
+import "core:fmt";
+count :: proc(xs: ..^int) -> int { return xs.len(); }
+main :: proc() {
+	words := []string{"a"};
+	fmt.println(count(..words));
+}

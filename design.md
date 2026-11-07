@@ -573,6 +573,8 @@ extensions cannot add conversions.
   the same data borrow and selects the base witness
 - A value whose type satisfies `I` -> a `dyn I` view of it, when it is an
   element of a [`..dyn I` parameter](#variadic-parameters)
+- A `T` -> a `^T` borrow of it, when it is an element of a [`..^T`
+  parameter](#variadic-parameters), and a spread of `T`s -> a borrow of each
 - A procedure, or a capture literal's value, -> a [`dyn proc`
   view](#borrowed-callable-views) of a signature it meets, when a `dyn proc`
   parameter or typed destination is expected
@@ -3414,6 +3416,10 @@ rank per argument:
 3. Any other built-in implicit conversion, including unfixed integer constant to
    floating type.
 
+An argument a [`..^T` pack](#variadic-parameters) lends ranks as a borrow when
+it has type `T`, an unfixed constant as its conversion to `T`, and a spread as
+the same spread into a `..T` pack would.
+
 Only built-in conversions rank. A user `hook(convert)` never enters ranking at
 all, because it applies only where it is written, so no candidate is reachable
 through one. The default type of an unfixed constant does not participate in
@@ -3432,7 +3438,9 @@ When conversion vectors are identical, tie-breakers apply in order:
    ordinary parameters if no consuming candidate is viable. Borrowed places
    cannot use `move` parameters. This preference applies only to tied conversion
    vectors and precedes structural tie-breakers.
-2. A fixed-arity candidate beats a variadic one.
+2. A fixed-arity candidate beats a variadic one, and of two variadic
+   candidates, the one whose `..^T` pack lends fewer arguments wins, so a pack
+   that copies beats one that lends.
 3. A candidate needing fewer omitted defaults wins.
 4. A non-parametric candidate beats a parametric one.
 5. Between parametric candidates, a structural specialization beats an
@@ -6718,10 +6726,10 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 The pack is a temporary of the complete call expression, as is anything an
 argument creates for it, so neither outlives that expression.
 
-A pack lives on the stack. A lone spread passes its own slice and copies nothing,
-so `sum(..odds)` has no limit. A spread among other operands is copied into a pack
-sized when the call runs, and one whose elements would take more than 256 KiB
-panics instead of being built.
+A pack lives on the stack, except a large `..^T` one (below). A lone spread
+passes its own slice and copies nothing, so `sum(..odds)` has no limit. A spread
+among other operands is copied into a pack sized when the call runs, and one
+whose elements would take more than 256 KiB panics instead of being built.
 
 A `..dyn I` parameter, whose element is a read-only
 [`dyn` view](#borrowed-dynamic-interface-values) other than a `dyn proc`, also
@@ -6760,9 +6768,10 @@ implicitly to a borrow of itself, where it is or from a temporary holding it; an
 unfixed constant takes type `T` first, and a named constant is borrowed in its
 read-only storage. An argument that is already a `^T` is passed as it is. A
 spread of a `[]T`, or of a `[N]T` or `[dynamic]T` it views, lends each of its
-elements in a pack sized when the call runs, which panics past 256 KiB of
-pointers as a spread among other operands does; a `[]^T` spread is passed as it
-is. The callee receives the pack as a `[]^T`, and the borrows follow the rules of
+elements in a pack sized when the call runs; a `[]^T` spread is passed as it
+is. A `..^T` pack whose pointers would take more than 256 KiB is allocated from
+the default provider instead of the stack and released when the call returns,
+so, as with a lone spread into a `..T` pack, a spread has no limit. The callee receives the pack as a `[]^T`, and the borrows follow the rules of
 any pointer, and one of a temporary ends with the call's statement.
 
 The pack lends its values only for the call, at any escape level: neither the

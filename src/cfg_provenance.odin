@@ -3264,9 +3264,12 @@ prov_view_parts_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span,
 	return content, kept, true
 }
 
-// design.md "string type conversions", "Dynamic arrays", and "Fixed arrays": a
-// `string` read as a `string_view`, or a `[dynamic]T` or `[N]T` as a `[]T`, borrows the owner it came
-// from, or the temporary that holds it. A constant's storage is static.
+// design.md "string type conversions", "Dynamic arrays", "Fixed arrays", and
+// "Variadic parameters": a `string` read as a `string_view`, a `[dynamic]T` or
+// `[N]T` as a `[]T`, or a `T` a `..^T` pack lends as a `^T`, borrows the owner it
+// came from, or the temporary that holds it. A constant viewed in its read-only
+// storage borrows nothing, which a `..^T` pack's is only when it is materialized:
+// an unnamed one is lent from a temporary of its call.
 @(private)
 prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	base := expr_base(e)
@@ -3291,10 +3294,7 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return carriers
 	}
 	loans := walk_flow_expr(graph, e)
-	// A constant viewed in read-only storage is never gone. One a `..^T` pack lends
-	// with no such storage is in a temporary of its call (design.md "Variadic
-	// parameters").
-	static := base_is_const(base) && (underlying_kind(graph.k.c, viewed) != .Pointer || materialization_of(graph.k.c, e) != nil)
+	static :=base_is_const(base) && (underlying_kind(graph.k.c, viewed) != .Pointer || materialization_of(graph.k.c, e) != nil)
 	if static || !base_is_const(base) && !prov_expr_is_temporary(e) {
 		return loans
 	}

@@ -462,6 +462,8 @@ emit_replay_action :: proc(e: ^Emitter, entry: Deferred, env: string) {
 		emit_box_release(e, entry.type, unwind_env_load(e, env, entry.place_env))
 	case .Frame_Release:
 		emit_frame_release(e, entry.type, unwind_env_load(e, env, entry.place_env))
+	case .Pack_Release:
+		emit_pack_release(e, entry.type, unwind_env_load(e, env, entry.place_env))
 	case .Temporary:
 		emit_drop_place(e, entry.type, unwind_env_load(e, env, entry.place_env))
 	case .Local:
