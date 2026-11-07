@@ -3,6 +3,8 @@
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
+import "core:mem/virtual"
+import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
@@ -17,10 +19,41 @@ Crt_Kind :: enum u8 {
 
 Crt_Kinds :: bit_set[Crt_Kind; u8]
 
+// The library a `/DEFAULTLIB` directive names for each runtime, without `.lib`.
+@(private = "file")
+CRT_LIBRARIES := [Crt_Kind]string {
+	.Static        = "libcmt",
+	.Static_Debug  = "libcmtd",
+	.Dynamic       = "msvcrt",
+	.Dynamic_Debug = "msvcrtd",
+}
+
+// Each runtime as a diagnostic names it, with the option that selects it.
+@(private)
+CRT_DESCRIPTIONS := [Crt_Kind]string {
+	.Static        = "the static C runtime (`/MT`)",
+	.Static_Debug  = "the debug static C runtime (`/MTd`)",
+	.Dynamic       = "the dynamic C runtime (`/MD`)",
+	.Dynamic_Debug = "the debug dynamic C runtime (`/MDd`)",
+}
+
+// `coff_requested_crts` of the file at `path`, or none when it cannot be read.
+// The file is mapped rather than read, so a large archive costs the pages of
+// its headers and directives, not a copy of all of it.
+@(private)
+file_requested_crts :: proc(path: string) -> Crt_Kinds {
+	data, err := virtual.map_file_from_path(path, {.Read})
+	if err != nil {
+		return {}
+	}
+	defer virtual.unmap_file(data)
+	return coff_requested_crts(data)
+}
+
 // The C runtimes named by the `.drectve` sections of an object file or of each
-// object in an archive (`.lib`). An import library's members, an LTO bitcode
-// member, and anything that is not COFF name none; so does an object compiled
-// with `/Zl`.
+// object in an archive (`.lib`). An import library's members name none, and so
+// do an object compiled with `/Zl` and anything that is not plain COFF: neither
+// clang's `-flto` bitcode nor MSVC's `/GL` objects are read.
 @(private)
 coff_requested_crts :: proc(data: []u8) -> Crt_Kinds {
 	ARCHIVE_SIGNATURE :: "!<arch>\n"
@@ -50,7 +83,7 @@ coff_requested_crts :: proc(data: []u8) -> Crt_Kinds {
 
 // `ANON_OBJECT_HEADER_BIGOBJ`'s class identifier, which tells a `/bigobj`
 // object from an import member sharing its first four bytes.
-@(private = "file")
+@(private)
 BIGOBJ_CLASS :: "\xc7\xa1\xba\xd1\xee\xba\xa9\x4b\xaf\x20\xfa\xf6\x6a\xa4\xdc\xb8"
 
 @(private = "file")
@@ -99,12 +132,13 @@ coff_object_crts :: proc(object: []u8) -> Crt_Kinds {
 // from MSVC, `-defaultlib:msvcrt.lib` from clang.
 @(private = "file")
 directive_crts :: proc(directives: string) -> Crt_Kinds {
+	SEPARATORS :: " \t\r\n\x00"
 	text := strings.trim_prefix(directives, "\xef\xbb\xbf")
 	kinds: Crt_Kinds
 	for len(text) > 0 {
-		text = strings.trim_left(text, " \t\r\n\x00")
+		text = strings.trim_left(text, SEPARATORS)
 		end, quoted := 0, false
-		for end < len(text) && (quoted || !strings.contains_rune(" \t\r\n\x00", rune(text[end]))) {
+		for end < len(text) && (quoted || strings.index_byte(SEPARATORS, text[end]) < 0) {
 			if text[end] == '"' {
 				quoted = !quoted
 			}
@@ -120,18 +154,13 @@ directive_crts :: proc(directives: string) -> Crt_Kinds {
 			continue
 		}
 		library := strings.trim(value, "\"")
-		if len(library) >= 4 && strings.equal_fold(library[len(library) - 4:], ".lib") {
-			library = library[:len(library) - 4]
+		if extension := filepath.ext(library); strings.equal_fold(extension, ".lib") {
+			library = strings.trim_suffix(library, extension)
 		}
-		switch {
-		case strings.equal_fold(library, "libcmt"):
-			kinds += {.Static}
-		case strings.equal_fold(library, "libcmtd"):
-			kinds += {.Static_Debug}
-		case strings.equal_fold(library, "msvcrt"):
-			kinds += {.Dynamic}
-		case strings.equal_fold(library, "msvcrtd"):
-			kinds += {.Dynamic_Debug}
+		for runtime_library, kind in CRT_LIBRARIES {
+			if strings.equal_fold(library, runtime_library) {
+				kinds += {kind}
+			}
 		}
 	}
 	return kinds

@@ -7,7 +7,6 @@ import "core:testing"
 // ordinary layout or the one `/bigobj` writes.
 @(private = "file")
 coff_object :: proc(directives: string, bigobj := false) -> []u8 {
-	BIGOBJ_CLASS_BYTES :: "\xc7\xa1\xba\xd1\xee\xba\xa9\x4b\xaf\x20\xfa\xf6\x6a\xa4\xdc\xb8"
 	header := bigobj ? 56 : 20
 	out := make([dynamic]u8, header + 40, context.temp_allocator)
 	put_u16 :: proc(out: []u8, at: int, value: u16) {
@@ -21,7 +20,7 @@ coff_object :: proc(directives: string, bigobj := false) -> []u8 {
 		put_u16(out[:], 2, 0xFFFF)
 		put_u16(out[:], 4, 2)
 		put_u16(out[:], 6, 0x8664)
-		copy(out[12:28], BIGOBJ_CLASS_BYTES)
+		copy(out[12:28], BIGOBJ_CLASS)
 		put_u32(out[:], 44, 1)
 	} else {
 		put_u16(out[:], 0, 0x8664)

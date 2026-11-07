@@ -420,8 +420,10 @@ with `/MD`, and `glfw3dll.lib` for `glfw3.dll`: import the first or the last.
 `lokec` reads the runtime each object asks for from its `/DEFAULTLIB`
 directives. It reads the objects and libraries an import names by path; a
 `system:` library comes from the Windows SDK or the MSVC toolset, which use
-the same runtime, and is not read. An object build links nothing, so the C
-host's link chooses its runtime.
+the same runtime, and is not read. Nor is an object compiled for link-time
+optimization, by clang's `-flto` or MSVC's `/GL`: a library built that way
+draws no warning whatever its runtime. An object build links nothing, so the
+C host's link chooses its runtime.
 
 ## Building an object for a C host
 

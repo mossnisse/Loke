@@ -4,7 +4,6 @@
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
@@ -331,9 +330,7 @@ collect_foreign_link_inputs :: proc(
 			}
 			continue
 		}
-		if extension := filepath.ext(resolved); extension != ".s" && extension != ".S" {
-			warn_foreign_crt(c, imp, resolved)
-		}
+		warn_foreign_crt(c, imp, resolved)
 		append(&out, resolved)
 	}
 	return out[:], objects[:], ok
@@ -345,31 +342,24 @@ collect_foreign_link_inputs :: proc(
 // the toolset, which link the same one, and is not read.
 @(private = "file")
 warn_foreign_crt :: proc(c: ^Compiler, imp: ^Item_Foreign_Import, path: string) {
-	// Not the emission arena, which would keep a large archive to the end.
-	data, err := os.read_entire_file(path, runtime.heap_allocator())
-	if err != nil {
-		// The linker names an input it cannot read.
+	// An input that cannot be read asks for nothing here; the linker names it.
+	others := file_requested_crts(path) - {.Static}
+	if others == {} {
 		return
 	}
-	defer delete(data, runtime.heap_allocator())
-	CRT_NAMES := [Crt_Kind]string {
-		.Static        = "the static C runtime (`/MT`)",
-		.Static_Debug  = "the debug static C runtime (`/MTd`)",
-		.Dynamic       = "the dynamic C runtime (`/MD`)",
-		.Dynamic_Debug = "the debug dynamic C runtime (`/MDd`)",
+	descriptions := make([dynamic]string, context.temp_allocator)
+	for kind in others {
+		append(&descriptions, CRT_DESCRIPTIONS[kind])
 	}
-	for kind in coff_requested_crts(data) - {.Static} {
-		warnf(
-			c, imp.span, "L0755",
-			"`%s` was compiled for %s, but the executable links %s, so it would hold two C runtimes",
-			path, CRT_NAMES[kind], CRT_NAMES[.Static],
-		)
-		add_notef(
-			c, NO_SPAN,
-			"link a build of the library compiled with `/MT`, or its DLL through the DLL's import library",
-		)
-		return
-	}
+	warnf(
+		c, imp.span, "L0755",
+		"`%s` was compiled for %s, but the executable links %s, so it would hold more than one C runtime",
+		path, strings.join(descriptions[:], " and ", context.temp_allocator), CRT_DESCRIPTIONS[.Static],
+	)
+	add_notef(
+		c, NO_SPAN,
+		"link a build of the library compiled with `/MT`, or its DLL through the DLL's import library",
+	)
 }
 
 @(private = "file")
