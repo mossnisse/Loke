@@ -1,0 +1,32 @@
+// design.md "Temporaries and procedure boundaries": a value temporary lives until its
+// complete expression ends, and `unsafe.raw_data` discards checked provenance without
+// shortening that. A literal element's large temporaries go back to the pool for the
+// next element only when its type can hold no address at all, so a `[^]u8` into one
+// receiver still reads it when the next element is made.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Large :: struct { bytes: [5000]u8 }
+
+impl Large {
+	data :: proc(self: ^) -> [^]u8 { return unsafe.raw_data(&self.bytes); }
+	first :: proc(self: ^) -> ^u8 { return &self.bytes[0]; }
+}
+
+large :: proc(value: u8) -> Large {
+	out: Large = {};
+	out.bytes[0] = value;
+	return out;
+}
+
+inspect :: proc(values: [][^]u8) { fmt.println(values[0][0], values[1][0]); }
+inspect_map :: proc(values: map[int][^]u8) { fmt.println(values[0][0], values[1][0]); }
+inspect_checked :: proc(values: []^u8) { fmt.println(values[0]^, values[1]^); }
+
+main :: proc() {
+	inspect([dynamic][^]u8{large(1).data(), large(2).data()});
+	inspect_map(map[int][^]u8{0 = large(3).data(), 1 = large(4).data()});
+	inspect_checked([dynamic]^u8{large(5).first(), large(6).first()});
+}

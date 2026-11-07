@@ -258,7 +258,7 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 @(private = "file")
 region_contract_within :: proc(a, b: Region_Set) -> bool {
 	if region_has_local(a) || (a.default && !b.default) || (a.unknown && !b.unknown) { return false }
-	return a.params & ~b.params == 0
+	return region_params_within(a, b)
 }
 
 @(private = "file")

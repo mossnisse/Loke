@@ -1,0 +1,6 @@
+L0645
+@24:19
+procedure result provenance does not satisfy the inferred contract of `own`
+L0537
+@40:2
+this reset would end the region backing `kept`, which is still live here

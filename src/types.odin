@@ -224,6 +224,39 @@ type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_contains_invalid(c, id, &seen)
 }
 
+// Whether a value of `type` may hold an address, checked or not: a carrier, a C
+// pointer or `rawptr`, or an allocator, procedure, or interface value referring to
+// storage elsewhere, inline or in what the value owns. Provenance follows only
+// checked borrows; `unsafe.raw_data` leaves an address no borrow records, and a
+// value of a type holding none cannot name a temporary at all.
+type_may_hold_address :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	seen: Type_Walk
+	defer delete(seen)
+	return type_may_hold_address_walk(c, type, &seen)
+}
+
+@(private = "file")
+type_may_hold_address_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
+	if type_is_carrier(c, id) {
+		return true
+	}
+	info := underlying_info(c, id)
+	if info == nil || !type_walk_enter(seen, id, info) {
+		return false
+	}
+	#partial switch info.kind {
+	case .Raw_Pointer, .C_Pointer, .Pointer, .Slice, .String_View, .CString_View,
+	     .Allocator, .Proc, .Interface, .Dyn:
+		return true
+	}
+	for part in type_owned_parts(c, info) {
+		if type_may_hold_address_walk(c, part, seen) {
+			return true
+		}
+	}
+	return false
+}
+
 // The types a walk over a type's components has entered: the nominal ones, since
 // a recursive type can only refer back to itself through one, and the structural
 // ones with several components, since a chain of aliases naming the previous one

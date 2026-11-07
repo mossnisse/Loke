@@ -3801,7 +3801,9 @@ where the underlying traversal supplies the required direction. Over a mutable
 view each is a mutable view, holding a copy of its source; over a container, or
 a mutable view that cannot be copied, each is a read-only view. Such a copy of a source
 is a [copy site](#copy-cost-diagnostics), costed as any other copy, unless a `foreach`
-is written directly over the adapter, which makes none. `copied()` turns a borrowed leaf into an owned one, cloning
+is written directly over the adapter, which makes none. `copied()` is a read-only
+view over every source and borrows a mutable view as it does a container, so it
+never copies its source. `copied()` turns a borrowed leaf into an owned one, cloning
 it with the element's own copy hook, allocator selection, and failure behavior;
 a loop never copies an element on its own. An already-owned leaf passes through
 uncloned. It rejects a non-copyable borrowed leaf and an `&mut` leaf.

@@ -88,12 +88,16 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	}
 	c := k.c
 	label := kind == .Indexed ? "Indexed" : kind == .Copied ? "Copied" : "Reversed"
-	// Nested views own their small source descriptor, and so does a mutable
-	// view, whose capability is in the value rather than in a place. Holding
-	// one copies it, so one that cannot be copied stays borrowed.
+	// Nested views own their small source descriptor. An adapter that is itself
+	// a mutable view owns its mutable-view source too, whose capability is in the
+	// value rather than in a place; holding one copies it, so one that cannot be
+	// copied stays borrowed. `copied()` is never a mutable view and walks its
+	// source only through `iter(self: ^)`, so it borrows such a source, as it
+	// does a container, and copies nothing however it is used.
 	source_info := underlying_info(c, source)
 	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice ||
-	            source_info.kind == .String_View || (is_mutable_view(k, source) && !type_clone_disabled(c, source))
+	            source_info.kind == .String_View ||
+	            (kind != .Copied && is_mutable_view(k, source) && !type_clone_disabled(c, source))
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
 	fields[0] = new_field(c, "source", by_value ? source : TYPE_RAWPTR, 0, public = false)
 	view := new_type(c, Type_Info{

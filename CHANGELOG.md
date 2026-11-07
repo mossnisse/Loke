@@ -1114,6 +1114,18 @@ checklist.
   is `L0736`. An unknown or misplaced attribute on the block's `impl` is reported like any other. All
   compiled, unchecked, and `-doc` showed them. Upgrade by writing the declaration as the bundled
   package's source does.
+- A procedure converts to a [result contract](design.md#procedure-result-contracts) only when what
+  its result reads through its parameters' carriers fits the contract too. `callback: Own = deep`,
+  with `own` returning `input^.text` and `deep` returning `input^.next^.text`, compiled, and a call
+  through `callback` lost the allocator `deep`'s result came from, so a reset left it reading freed
+  memory. This is now `L0645`. Upgrade by declaring the contract from the deeper procedure, as
+  `type_of(deep)`.
+- [`copied()`](design.md#iteration-adapters) borrows a mutable-view source, as it does a container,
+  rather than holding a copy of it, so it copies nothing however it is used. A `foreach` directly
+  over `view.copied()` copied all of `view` and reported it as `L0507`, advising the very form it
+  was written in. A stored `copied()` adapter now borrows its source, so moving or reassigning the
+  source while the adapter is still used is `L0512`. Upgrade by finishing with the adapter first,
+  or by copying the source into a local the adapter can borrow.
 
 ### Added
 
@@ -1703,6 +1715,16 @@ checklist.
 
 ### Fixed
 
+- A long literal of large calls keeps each element's temporaries until the literal is built when
+  the element can hold a C pointer, as `[dynamic][^]u8{large(1).data(), large(2).data()}` with
+  `data` returning `unsafe.raw_data(&self.bytes)` does. The second call reused the first one's stack
+  slot, so both pointers read `2`
+  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+- A result read through a pointer to a temporary borrows what the temporary held, not the
+  temporary, as one through a named local's pointer does
+  ([Procedure result contracts](design.md#procedure-result-contracts)). `s := name_one(&View{text})`
+  with `name_one` returning `x^.name` was `L0513` at the next use of `s`; so was the same read
+  through a `..^View` pack lending a temporary.
 - A file-scope [`when`](design.md#when-statement) condition reads the `impl` blocks outside any
   `when`, in a package with other pending conditions too. `when (S.size() == 1)` was `L0408`, and
   `is_copyable(G(string))` ignored a later block's bounded `hook(copy)` and took the other branch.

@@ -134,14 +134,15 @@ Prov_Root :: struct {
 	content:  int,
 	// `Slice_Literal`: the slots holding what its hidden array holds, by the
 	// array's carrier shape, which stores and loads through a loan of it find as
-	// they find a named local's content.
+	// they find a named local's content. A borrowed `Temporary` holds what its
+	// value carries in the same way (`prov_temp_root_content`).
 	slots:    []int,
 	// The managed temporary lending this root, before a view or erasure.
 	owner:    Expr,
 }
 
 // The slots holding what a root's own storage holds, a local's or a slice
-// literal's; none for a temporary root.
+// literal's, or a borrowed temporary's.
 root_own_slots :: proc(graph: ^Flow_Graph, root: Prov_Root) -> []int {
 	return root.slots if len(root.slots) > 0 else graph.own_slots[root.symbol]
 }

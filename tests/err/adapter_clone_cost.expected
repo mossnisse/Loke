@@ -1,18 +1,18 @@
 warning[L0507]
-@44:10
+@45:10
 this iteration adapter clones `source`, which may allocate
 warning[L0507]
-@51:11
+@52:11
 this iteration adapter clones `source`, which may allocate
 warning[L0507]
-@58:10
+@59:10
 this iteration adapter clones `source`, which may allocate
 warning[L0507]
-@75:10
+@76:10
 this iteration adapter copies 1048 bytes from `source`
 warning[L0507]
-@81:10
+@82:10
 this iteration adapter copies 1024 bytes from `source`
 L0310
-@99:38
+@110:38
 this constant is not a value of `int`

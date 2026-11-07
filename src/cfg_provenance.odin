@@ -3975,6 +3975,7 @@ prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr, content: []int) -> Root_I
 	if type_is_managed(graph.k.c, extended.dropped) && !expression_is_borrowed_place(holder) {
 		extended.owner = holder
 	}
+	prov_temp_root_content(graph, root, prov_type(graph, e), content, span)
 	if extends {
 		held := content
 		if holder != e {
@@ -3988,6 +3989,29 @@ prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr, content: []int) -> Root_I
 	}
 	prov_define_value_regions(graph, root, nil, prov_input_value(graph, e))
 	return root
+}
+
+// design.md "Procedure result contracts": a load through a borrow of a temporary
+// reads what the temporary holds, as one through a borrow of a named local reads
+// the local's content, and never stands for the temporary itself. Its root holds
+// `content`, what walking the value gave, in slots of its type's carrier shape, as
+// a slice literal's root does (`prov_slice_literal`), so `name(&View{text})`
+// borrows what `text` lends and not the `View` that ends with the statement.
+@(private = "file")
+prov_temp_root_content :: proc(graph: ^Flow_Graph, root: Root_Id, type: Type_Id, content: []int, span: Span) {
+	if len(content) == 0 {
+		return
+	}
+	slots := graph.roots[int(root)].slots
+	if slots == nil {
+		slots = prov_temp_content(graph, type)
+		if len(slots) == 0 {
+			return
+		}
+		graph.roots[int(root)].slots = slots
+		graph.has_content_load = true
+	}
+	prov_define_content(graph, slots, content, span, value_type = type)
 }
 
 // The temporary that holds the borrowed value `e`: a field, an element, or a

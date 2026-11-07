@@ -1,0 +1,34 @@
+// design.md "Temporaries and procedure boundaries": a result that borrows the
+// temporary a pointer argument names, or a part of it, ends with that temporary,
+// and one holding a mutable borrow the temporary held keeps that borrow.
+package main;
+
+import "core:fmt";
+
+View :: struct { name: string_view }
+Ref :: struct { at: ^mut int }
+
+name_field :: proc(x: ^View) -> ^string_view { return &x^.name; }
+same :: proc(x: ^View) -> ^View { return x; }
+target :: proc(r: ^Ref) -> ^mut int { return r^.at; }
+
+field_of_temporary :: proc() {
+	text := "kept";
+	s := name_field(&View{text});
+	fmt.println(s^);
+}
+
+temporary_itself :: proc() {
+	text := "kept";
+	s := same(&View{text});
+	fmt.println(s^.name);
+}
+
+mutable_borrow_kept :: proc() {
+	n := 1;
+	p := target(&Ref{&mut n});
+	fmt.println(n);
+	p^ = 2;
+}
+
+main :: proc() {}

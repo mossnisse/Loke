@@ -1,0 +1,29 @@
+// design.md "Procedure result contracts": a result read through a pointer argument
+// holds what was stored behind it, not the pointee, so when the pointee is a
+// temporary the result outlives it (design.md "Temporaries and procedure
+// boundaries"). The same holds for what a `..^T` pack lends from a temporary, and
+// for a mutable borrow held in one.
+package main;
+
+import "core:fmt";
+
+View :: struct { name: string_view }
+Pair :: struct { a: string_view, b: string_view }
+Ref :: struct { at: ^mut int }
+
+name_one :: proc(x: ^View) -> string_view { return x^.name; }
+first :: proc(x: ^Pair) -> string_view { return x^.a; }
+names :: proc(xs: ..^View) -> string_view { return xs[0]^.name; }
+target :: proc(r: ^Ref) -> ^mut int { return r^.at; }
+
+main :: proc() {
+	text := "kept";
+	s := name_one(&View{text});
+	t := first(&Pair{text, "other"});
+	u := names(View{text});
+	fmt.println(s, t, u);
+	n := 1;
+	p := target(&Ref{&mut n});
+	p^ = 2;
+	fmt.println(n);
+}

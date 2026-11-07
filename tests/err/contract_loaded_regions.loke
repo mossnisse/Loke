@@ -1,0 +1,55 @@
+package main;
+
+import "core:mem";
+import "core:strings";
+
+// design.md "Procedure result contracts": a substitute converts only when its
+// region dependencies fit the contract's. A result read through a carrier the
+// argument holds depends on what that carrier reaches, which a result read from
+// the argument's own field does not, so the deeper read does not fit.
+
+Leaf :: struct { text: string }
+Input :: struct { text: string, next: ^mut Leaf }
+own :: proc(input: ^Input) -> string { return input^.text; }
+deep :: proc(input: ^Input) -> string { return input^.next^.text; }
+other_own :: proc(input: ^Input) -> string { return input^.text; }
+Own :: type_of(own);
+Deep :: type_of(deep);
+
+reaches_past_its_contract :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		leaf := Leaf{strings.copy("arena text", allocator)};
+		input := Input{"default text", &mut leaf};
+		callback: Own = deep;
+		kept = callback(&input);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+// Through a contract that reads as deep, the call keeps the dependency.
+deep_contract_keeps_it :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		leaf := Leaf{strings.copy("arena text", allocator)};
+		input := Input{"default text", &mut leaf};
+		callback: Deep = deep;
+		kept = callback(&input);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+// The same reads, or shallower ones, convert.
+within_its_contract :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	leaf := Leaf{"default text"};
+	input := Input{"default text", &mut leaf};
+	first: Own = other_own;
+	second: Deep = own;
+	length := first(&input).len() + second(&input).len();
+	free_all(allocator);
+	return length;
+}
+
+main :: proc() {}

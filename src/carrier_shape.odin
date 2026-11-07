@@ -495,6 +495,15 @@ region_has_loaded_param :: proc(set: Region_Set, index: int) -> bool {
 	return index < REGION_PARAM_LIMIT && set.loaded & (u64(1) << uint(index)) != 0
 }
 
+// Whether a call substitutes no more for `a`'s parameters than for `b`'s: each
+// parameter of `a` is in `b`, and each `a` reads through its argument's
+// carriers `b` reads through them too (`prov_substitute_region`). Comparing
+// `params` alone would let a set that takes what an argument's carriers lead to
+// pass for one that takes only what the argument names.
+region_params_within :: proc(a, b: Region_Set) -> bool {
+	return a.params & ~b.params == 0 && a.loaded & ~b.loaded == 0
+}
+
 // Takes the lowest parameter out of `params`, to walk a set's parameters.
 next_region_param :: proc(params: ^u64) -> (index: int, ok: bool) {
 	if params^ == 0 {

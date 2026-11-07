@@ -309,9 +309,11 @@ begin_operand_temporaries :: proc(e: ^Emitter) -> Operand_Temporaries {
 
 // design.md "Borrows and lifetimes": a temporary lives until its full expression
 // ends, which nothing tells from an earlier end once no value names it. An
-// operand of types holding no borrow, consumed whole, and owing no drop at the
+// operand of types holding no address, consumed whole, and owing no drop at the
 // end of its full expression or its block names none of its temporaries, so its
-// large slots serve the operands after it. Each element of a long literal of
+// large slots serve the operands after it. A borrow is not the only address: a
+// `[^]T` from `unsafe.raw_data` names its temporary with no borrow to show it
+// (`type_may_hold_address`). Each element of a long literal of
 // large calls otherwise kept a slot of its own in the frame. One that owes no
 // drop has also cleared the unwind actions of its temporaries, which the next
 // one takes again (`unwind_rewind`), whatever it borrows; a long map literal's
@@ -325,7 +327,7 @@ end_operand_temporaries :: proc(e: ^Emitter, mark: Operand_Temporaries, types: .
 	}
 	unwind_rewind(e, mark.actions)
 	for type in types {
-		if type_carries_borrow(e.c, type).any {
+		if type_may_hold_address(e.c, type) {
 			return
 		}
 	}

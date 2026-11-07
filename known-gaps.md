@@ -85,47 +85,6 @@ that establishes its below relation; retain them across provably unrelated
 stores. Keep the stale-cursor rejection tests alongside this valid-loop case.
 Found on 2026-11-06 while reviewing `a6097991` (P2, new over-rejection).
 
-### Literal element reuse overwrites a temporary still reached through a C pointer
-
-[Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)
-keeps a value temporary alive until its complete expression ends.
-[`unsafe.raw_data`](design.md#unsaferaw_data-procedure) discards checked provenance;
-it does not shorten that specified lifetime. `end_operand_temporaries` in
-[emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) instead reuses large slots after
-each literal element when its result type holds no checked borrow and no cleanup
-remains. A borrowed receiver can already have exposed the temporary's address as a
-C pointer. This reads both receivers during the same complete expression:
-
-```loke
-package main;
-import "core:fmt";
-import "core:unsafe";
-Large :: struct { bytes: [5000]u8 }
-impl Large {
-    data :: proc(self: ^) -> [^]u8 { return unsafe.raw_data(&self.bytes); }
-}
-large :: proc(value: u8) -> Large {
-    out: Large = {};
-    out.bytes[0] = value;
-    return out;
-}
-inspect :: proc(values: [][^]u8) { fmt.println(values[0][0], values[1][0]); }
-main :: proc() {
-    inspect([dynamic][^]u8{large(1).data(), large(2).data()});
-}
-```
-
-The parent `2cd5aade` prints `1 2`; `18885562` and `dbebf669` print `2 2` because
-the second receiver reuses the first one's storage. The regression occurs at both
-`-opt=none` and `-opt=speed`, and with `map[int][^]u8{0 = large(1).data(),
-1 = large(2).data()}` passed to a corresponding map reader. Returning checked `^u8`
-pointers instead preserves `1 2`, since the element type then blocks reuse.
-
-Keep temporaries whose addresses have been exposed alive through their complete
-expression, even when the literal's stored type carries no checked borrow. Add the
-C-pointer case alongside the large-value stack regression and checked-borrow controls.
-Found on 2026-11-06 while reviewing `18885562` (P2).
-
 ### Providers moved into sibling fields retain each other's regions
 
 [Allocators](design.md#allocators) preserves a provider's identity across a move, and
@@ -158,42 +117,6 @@ the destination path of moved-in tokens and project them alongside the fixed tok
 This is a remaining precision gap, not a new regression: the moved-field case rejects
 on the parent of `8d9af257`, that commit, and `dbebf669`. Found on 2026-11-06 while
 reviewing `8d9af257` (P3).
-
-### A direct copied loop still copies its source
-
-[Iteration adapters](design.md#iteration-adapters) says a `foreach` written directly over an
-adapter makes no copy of its source, and the new inline
-[copy-cost report](design.md#copy-cost-diagnostics) recommends that form. For `copied()`,
-however, `peel_resolved_adapter` in [iteration_adapters.odin](src/iteration_adapters.odin)
-stops before peeling the call. This program makes the copy and receives `L0507` together
-with the advice that the very form already written makes none:
-
-```loke
-package main;
-Cursor :: struct { at: int }
-impl Cursor { next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; } }
-View :: struct { bytes: [1024]u8 }
-impl View {
-    Element :: int;
-    Iterator :: Cursor;
-    Mut_Iterator :: Cursor;
-    iter :: proc(self: ^) -> Cursor { return {0}; }
-    iter_mut :: proc(self) -> Cursor { return {0}; }
-}
-main :: proc() {
-    source: View = {};
-    foreach (value in source.copied()) { _ = value; }
-}
-```
-
-`dbf1b4c5` and `dbebf669` report a 1024-byte iteration-adapter copy and suggest a
-`foreach` over the adapter call. The emitted adapter loads and stores the complete
-1024-byte `View`, so this is a real copy, not merely a report left behind after peeling.
-The source copy predates the reviewed commit; its new inline report introduces this
-unusable advice for plain views, and the older allocating-copy advice has the same
-limitation. Avoid the source copy for a directly used `copied()` as the specification
-requires, and add a direct `copied()` case beside the peeled `indexed()` tests.
-Found on 2026-11-06 while reviewing `dbf1b4c5` (P2).
 
 ### An unknown-target owner read loses its actual allocator dependency
 
@@ -232,6 +155,24 @@ strings' allocations. Keep the loaded owner's actual region distinct from an unr
 sibling handle, and add rejection cases for shared owners and retained container elements
 alongside the accepted integer-array case. Found on 2026-11-06 while reviewing `e08ad0ff`
 (P1).
+
+The gap is wider than the sibling handle. A body's parameter gets a region
+(`prov_seed_parameter_region`) only when its type is an allocator, an owner, or a view
+carrier, so a record parameter holding a carrier, as `reader: Reader` with
+`Reader :: struct { holder: ^Holder }`, has none. A read through its carrier then names
+nothing: with `Holder` replaced by `Plain :: struct { items: [dynamic]int }`, whose
+`items` came from `make(..., allocator)`, returning `reader.holder^.items` is accepted
+with no allocator in the record at all. The same holds for `^mut Holder` and for an
+`inout reader`, whose loaded alias finds an empty `region_of` to mark as loaded, while a
+`reader: ^Reader` pointer parameter is rejected correctly. Seeding a region for such a
+parameter and marking the read as loaded would be sound, but a loaded parameter's region
+at a call is everything its argument reaches (`prov_reached_regions`), handles included,
+which brings back the sibling over-rejection `tests/run/sibling_handle_regions` pins; a
+`holder: ^Holder` parameter already has it, so returning `holder^.items` beside the
+handle is `L0537` though `items` uses the default allocator. A precise fix needs a
+loaded read to say what it read, an owner or a handle, or better its path, as
+`Result_Dependencies.param_loads` does for borrows. Found on 2026-11-07 while
+investigating this entry.
 
 ### A local copy of a carrier retains a sibling allocator's region
 
@@ -300,76 +241,3 @@ The local-pointer rejection predates `ac656b11` and remains in that commit and `
 it is an existing precision gap, not a regression from the reviewed commit.
 Found on 2026-11-06 while reviewing `ac656b11` (P3).
 
-### A procedure contract ignores loaded parameter regions
-
-[Procedure result contracts](design.md#procedure-result-contracts) permit a
-substitute only when its region dependencies fit the destination contract.
-`ecce89f3` distinguishes a parameter's own storage from what its carriers reach
-with `Region_Set.loaded`, but `region_contract_within` in
-[proc_contracts.odin](src/proc_contracts.odin) compares only `params`. An inferred
-contract that returns an owner's direct field therefore accepts a procedure
-that returns an owner reached through another carrier. The call then uses the
-narrower contract and loses that owner's allocator dependency:
-
-```loke
-package main;
-import "core:mem";
-import "core:strings";
-Leaf :: struct { text: string }
-Input :: struct { text: string, next: ^mut Leaf }
-own :: proc(input: ^Input) -> string { return input^.text; }
-deep :: proc(input: ^Input) -> string { return input^.next^.text; }
-Own :: type_of(own);
-run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
-    kept: string = "";
-    {
-        leaf := Leaf{strings.copy("arena text", allocator)};
-        input := Input{"default text", &mut leaf};
-        callback: Own = deep; // should be L0645
-        kept = callback(&input);
-    }
-    free_all(allocator); // wrongly accepted while `kept` still depends on it
-    return int(kept.bytes()[0]);
-}
-main :: proc() {}
-```
-
-The program compiles in `ecce89f3` and in the later committed snapshot
-`dbebf669`, allowing a read after the arena reset; the parent `f8737e02` reports
-`L0537`. Requiring `a.loaded & ~b.loaded == 0` alongside the existing parameter
-subset check rejects the incompatible conversion with `L0645`. A matching
-`type_of(deep)` contract retains the dependency and reports `L0537`, and a
-matching `Own` substitution remains valid. Apply this check to result and
-written-region bounds, which share the helper.
-
-The separate omission of `Region_Set.loaded` from replay weighting, also
-introduced by `ecce89f3`, is already fixed by `dbf1b4c5`; that correction alone
-still accepts this conversion. Found on 2026-11-06 while reviewing `ecce89f3`
-(P1).
-
-### A result read through a pointer to a temporary keeps the temporary
-
-A [result contract](design.md#procedure-result-contracts) that reads a value stored behind a
-pointer argument substitutes only that value's borrows, at every nesting depth, so
-`name_one(x: ^View) -> string_view { return x^.name; }` gives a result that borrows what the
-`View` holds and not the `View`. Where the `View` is a
-[temporary](design.md#temporaries-and-procedure-boundaries) the caller keeps the temporary's loan
-in the result too, so a later use is rejected as if the result borrowed it:
-
-```loke
-package main;
-import "core:fmt";
-View :: struct { name: string_view }
-name_one :: proc(x: ^View) -> string_view { return x^.name; }
-main :: proc() {
-    text := "kept";
-    s := name_one(&View{text});
-    fmt.println(s); // L0513: used after this temporary has ended; should print "kept"
-}
-```
-
-The same holds for a value a `..^View` pack lends from a temporary. The same call on a named
-`View` local is accepted. The likely cause is that the temporary's root has no local content for
-the result's load to read, so the load stands for the temporary itself. Found on 2026-11-06
-with the compiler built from `dbebf669`, while adding the rule that a lending pack is kept only
-for the call.
