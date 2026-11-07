@@ -162,6 +162,12 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	if bitcode {
 		append(&command, "-flto", "-fuse-ld=lld")
 	}
+	// design.md "Windowed executables": the CRT's own entry still starts the
+	// process and calls the generated `wmain`, so only the subsystem changes. A
+	// test build stays a console program, whose report a terminal shows.
+	if c.build_mode == .Exe && root_subsystem(c) == .Windows {
+		append(&command, "-Xlinker", "/SUBSYSTEM:WINDOWS", "-Xlinker", "/ENTRY:wmainCRTStartup")
+	}
 	append(&command, ..runtime_inputs)
 	append(&command, ..foreign_inputs)
 	// The module's triple differs from clang's default only in the MSVC suffix.

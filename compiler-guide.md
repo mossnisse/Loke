@@ -341,6 +341,26 @@ may use these attributes, so an import cannot change the program's
 process-wide policy, and each may be written once across a multi-file root
 package. An `obj` build selects the same way.
 
+## Windowed programs
+
+A game or other windowed program asks for no console window in source, so
+every build of it gets the same:
+
+```loke
+@(subsystem = "windows")
+package main;
+```
+
+`lokec` then links the executable for the Windows GUI subsystem. Nothing else
+changes: `main`, `os.args` and the exit status work as before. A `-test` build
+of the package is still a console program.
+
+Started from Explorer, the program has no standard output or error. What it
+prints is dropped, and a panic report goes to an attached debugger, which
+Visual Studio's Output window and Sysinternals DebugView show. To keep the
+output instead, redirect it: `.\demo.exe > out.txt 2> err.txt`. See
+[Windowed executables](design.md#windowed-executables).
+
 ## Inspecting a compilation
 
 A run takes at most one of these, or of `-fmt`, `-migrate`, `-api`, and their

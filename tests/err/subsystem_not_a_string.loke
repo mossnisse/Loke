@@ -1,0 +1,5 @@
+// design.md "Windowed executables": the value is a string.
+@(subsystem = windows)
+package main;
+
+main :: proc() {}

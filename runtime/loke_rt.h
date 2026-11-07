@@ -604,6 +604,14 @@ void loke_rt_v1_panic_trace(void);
  * runtime's own records, and the end of every panic once its cleanup has run. */
 LOKE_RT_FAILURE void loke_rt_v1_abort(const char *what);
 
+/* Internal: the runtime's writes to standard error, and `core:fmt`'s. A process
+ * with none, such as a windowed executable started outside a terminal, sends
+ * each line to an attached debugger instead (design.md "Windowed
+ * executables"). `flush` also sends a partial line. */
+void loke_rt_err_write(const char *bytes, size_t count);
+void loke_rt_err_puts(const char *text);
+void loke_rt_err_flush(void);
+
 /* ------------------------------------------------------------ CPU level -- */
 
 /* compiler-guide.md "CPU levels": 0 is x86-64, 1 x86-64-v2, 2 x86-64-v3, the

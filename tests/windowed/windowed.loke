@@ -1,0 +1,17 @@
+// design.md "Windowed executables": linked for the GUI subsystem, so a process
+// started without standard handles has none, and what it writes to standard
+// error reaches a debugger instead. Any argument makes it panic.
+@(subsystem = "windows")
+package main;
+
+import "core:fmt";
+import "core:os";
+
+main :: proc() -> i32 {
+	fmt.println("out", os.args.len());
+	fmt.eprintln("err line");
+	if (os.args.len() > 1) {
+		panic("asked to panic");
+	}
+	return 5;
+}

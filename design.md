@@ -8631,6 +8631,36 @@ after attaching a thread and before using an export. An object build that may
 use instructions beyond the baseline makes the processor check from a static
 constructor, which the host's C runtime runs during its own startup.
 
+#### Windowed executables
+
+On Windows an executable is linked for a **subsystem**: a console program gets
+a console window when started outside a terminal, and a windowed program does
+not. The root package clause chooses with `@(subsystem=<string>)`, which is
+`"console"`, the default, or `"windows"`:
+
+```loke
+@(subsystem = "windows")
+package main;
+```
+
+The program is otherwise unchanged: the same [startup](#executable-startup-abi)
+calls the same `main`, and its arguments and exit status are as above. The
+attribute may occur at most once across the root package, and is rejected on an
+imported package, as a [provider selection](#selecting-a-provider) is. It
+changes only an [executable build](#build-modes): a test build is always a
+console program, so a terminal shows its report, and an object build's host
+links its own. Other targets have no subsystem and ignore the attribute.
+
+A windowed program started from a terminal does not share it, and one started
+from Explorer has no standard handles at all. With no standard output, what the
+program writes there is dropped. With no standard error, what `core:fmt` and the
+runtime write there, such as a [panic](#panics-and-unwinding) report, goes to an
+attached debugger instead, one line at a time (Windows' `OutputDebugString`).
+Neither changes the program's behavior or its exit status. `core:term` writes
+the handles directly, so its writes report an [error](standard-library.md#standard-byte-streams-and-line-input)
+instead. A program started with redirected handles, as `demo.exe 2> log.txt`
+redirects standard error, writes to them as any program does.
+
 ### Test procedures
 
 `@(test)` marks a **test procedure**:
@@ -10659,6 +10689,7 @@ written to its right.
 | `@(intrinsic)` | file-scope procedure and type declarations, and members of an `impl` block, in a bundled package | [describes a name the compiler supplies](#intrinsic) |
 | `@(default_calling_convention=<string>)` | foreign blocks | [the block's default calling convention](#default_calling_conventionstring) |
 | `@(default_allocator=<string>)`, `@(default_logger=<string>)` | the root package clause | [select the program's providers](#default_allocatorstring-and-default_loggerstring) |
+| `@(subsystem=<string>)` | the root package clause | [links a console or windowed executable](#subsystemstring) |
 | `@(zero=<variant>)`, `@(failure=<variant>)` | union types | [designate the zero and failure variants](#zerovariant-and-failurevariant) |
 | `@(initialized=<field>)` | a fixed array field of a struct | [only a counted prefix holds values](#initializedfield) |
 | `@(synchronized)` | struct fields, and file-scope and `static` variables | [its package synchronizes every access](#synchronized) |
@@ -11145,6 +11176,12 @@ omits the attribute, such as a foreign one, crosses threads unchecked.
 On the root package clause, select the program's default allocator and logging
 providers by naming a factory as `"<import path>:<name>"`. Rejected on an
 imported package. See [Selecting a provider](#selecting-a-provider).
+
+#### `@(subsystem=<string>)`
+
+On the root package clause, `"console"` or `"windows"`: whether a Windows
+executable is a console or a windowed program. Rejected on an imported package.
+See [Windowed executables](#windowed-executables).
 
 ### Extension attributes
 

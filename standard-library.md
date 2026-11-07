@@ -3520,7 +3520,9 @@ prompt(label: string_view, allocator := mem.default_allocator(),
 
 `Input` satisfies `io.Reader`; `Output` satisfies `io.Writer`. These lightweight
 values do not own and cannot close the process standard handles. They work when
-the handles are redirected to pipes or files.
+the handles are redirected to pipes or files. A process may have none, as a
+[windowed executable](design.md#windowed-executables) started from Explorer
+does; writing to an absent handle returns an error.
 
 Standard output and standard error carry exactly the bytes a program writes,
 whether through `term`, `core:fmt`, or a panic report: `\n` is never turned

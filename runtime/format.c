@@ -73,10 +73,16 @@ int32_t loke_rt_v1_try_parse_f64(const char *text, double *value) {
 	return *end == 0 ? 0 : LOKE_RT_NUMERIC_REJECTED;
 }
 
+/* Standard output a process has none of is dropped, as the C library drops it;
+ * standard error may still reach a debugger (`loke_rt_err_write`). */
 void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count) {
-	FILE *stream = (uintptr_t)state == LOKE_RT_STDERR ? stderr : stdout;
-	if (count > 0) {
-		fwrite(bytes, 1, (size_t)count, stream);
+	if (count <= 0) {
+		return;
+	}
+	if ((uintptr_t)state == LOKE_RT_STDERR) {
+		loke_rt_err_write((const char *)bytes, (size_t)count);
+	} else {
+		fwrite(bytes, 1, (size_t)count, stdout);
 	}
 }
 

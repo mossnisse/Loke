@@ -57,6 +57,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "default_allocator", "default_logger":
 		// Also read before import discovery by `collect_source_provider_defaults`.
 		return {{.Package_Clause}, .Value_Required, {}}, true
+	case "subsystem":
+		// Where and how often is `validate_subsystem_attributes`'.
+		return {{.Package_Clause}, .Value_Required, {}}, true
 	case "require_results":
 		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, {}}, true
 	case "deprecated":
@@ -265,6 +268,7 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 			}
 		}
 	}
+	validate_subsystem_attributes(k, pkg)
 }
 
 // Imports and `when` blocks, in every branch: neither takes an attribute.

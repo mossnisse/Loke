@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+__declspec(dllimport) void OutputDebugStringA(const char *text);
+
 #pragma clang attribute push(__attribute__((target("arch=x86-64"))), apply_to = function)
 
 /* Each level's name, as `-cpu` and `__builtin_cpu_supports` spell it. */
@@ -70,14 +72,20 @@ void loke_rt_v1_require_cpu(int32_t level) {
 	/* The report and status `loke_rt_v1_abort` gives. A C host may call this
 	 * after writing output of its own, which goes first. */
 	fflush(stdout);
+	char report[128] = "loke: the program was built for a CPU level this runtime does not know\n";
 	if (level >= 0 && level < LEVEL_COUNT) {
-		fputs("loke: this processor does not support ", stderr);
-		fputs(level_names[level], stderr);
-		fputs(", which the program was built for\n", stderr);
-	} else {
-		fputs("loke: the program was built for a CPU level this runtime does not know\n", stderr);
+		strcpy(report, "loke: this processor does not support ");
+		strcat(report, level_names[level]);
+		strcat(report, ", which the program was built for\n");
 	}
-	fflush(stderr);
+	/* `loke_rt_err_write`'s fallback, which this file cannot call: the rest of
+	 * the runtime is built for the level. */
+	if (_fileno(stderr) < 0) {
+		OutputDebugStringA(report);
+	} else {
+		fputs(report, stderr);
+		fflush(stderr);
+	}
 	_Exit(3);
 }
 

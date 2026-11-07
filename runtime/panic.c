@@ -21,6 +21,8 @@ void loke_rt_v1_thread_attach(void) {
 
 void loke_rt_v1_thread_detach(void) {
 	frames = 0;
+	/* A partial line held for the debugger is the thread's own. */
+	loke_rt_err_flush();
 	if (attached) {
 		attached = 0; /* first, so a panic in the cleanup cannot detach again */
 		loke_rt_v1_program_tls_cleanup();
@@ -60,13 +62,13 @@ void loke_rt_v1_panic_begin(const char *message) {
 	panicking = 1;
 
 	fflush(stdout);
-	fputs("loke: panic: ", stderr);
-	fputs(message == 0 ? "runtime failure" : message, stderr);
+	loke_rt_err_puts("loke: panic: ");
+	loke_rt_err_puts(message == 0 ? "runtime failure" : message);
 }
 
 void loke_rt_v1_panic_end(void) {
-	fputc('\n', stderr);
-	fflush(stderr);
+	loke_rt_err_puts("\n");
+	loke_rt_err_flush();
 	loke_rt_v1_panic_trace();
 
 	/* Newest first, as returns would. `-panic=abort` pushes no frames. */

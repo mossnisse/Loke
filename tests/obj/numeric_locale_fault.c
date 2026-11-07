@@ -46,6 +46,12 @@ int64_t loke_rt_encode_rune(uint8_t *out, int32_t value) {
     exit(3);
 }
 
+void loke_rt_err_write(const char *bytes, size_t count) {
+    (void)bytes;
+    (void)count;
+    exit(3);
+}
+
 int main(void) {
     // Any decimal-comma locale shows the fallback; without one a print would
     // still return, which fails the same way.

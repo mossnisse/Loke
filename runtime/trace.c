@@ -124,10 +124,14 @@ static void print_frame(dbghelp_api *api, uint64_t address, int inlined, unsigne
 		}
 	}
 	if (!api->printed) {
-		fputs("loke: stack trace, newest call first:\n", stderr);
+		loke_rt_err_puts("loke: stack trace, newest call first:\n");
 		api->printed = 1;
 	}
-	fprintf(stderr, "    %s at %s:%lu\n", named ? symbol->name : "?", file, line.line_number);
+	char text[600];
+	int length = snprintf(text, sizeof text, "    %s at %s:%lu\n", named ? symbol->name : "?", file, line.line_number);
+	if (length > 0) {
+		loke_rt_err_write(text, length < (int)sizeof text ? (size_t)length : sizeof text - 1);
+	}
 }
 
 /* Only frames with a `.loke` line are printed, which leaves out the runtime,
@@ -177,5 +181,5 @@ void loke_rt_v1_panic_trace(void) {
 		}
 		print_frame(&api, address, 0, 0);
 	}
-	fflush(stderr);
+	loke_rt_err_flush();
 }

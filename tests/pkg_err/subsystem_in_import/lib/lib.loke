@@ -1,0 +1,5 @@
+@(subsystem = "windows")
+package lib;
+
+@(public)
+exported :: proc() {}

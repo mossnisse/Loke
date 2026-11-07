@@ -1,0 +1,8 @@
+package main;
+
+import "lib";
+
+// design.md "Windowed executables": only the root package chooses, so an
+// import cannot make the program windowed by being imported.
+
+main :: proc() { lib.exported(); }

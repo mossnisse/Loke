@@ -761,6 +761,31 @@ Generic callback APIs instead accept a procedure or a record with `call`, checke
 by `interfaces.Callable`. Captures remain typed and can borrow without allocation.
 For one non-generic callback type, use a borrowed callable view.
 
+### The subsystem is chosen in source
+
+Whether an executable is [windowed](design.md#windowed-executables) belongs to
+the program: a game is a windowed program in every build of it. A compiler
+option, Odin's `-subsystem:windows`, would leave every build script, editor task
+and contributor's command line to remember it, and forgetting it brings back
+the console window with no diagnostic. A root package clause attribute,
+like Rust's `#![windows_subsystem]`, is written once beside the program, and it
+follows the [provider selections](#build-selected-services-and-explicit-runtime-state):
+only the root package may write it, so no library makes a program windowed by
+being imported.
+
+The linker's entry stays the C runtime's `wmainCRTStartup`, so the generated
+`wmain` and everything it initializes are the same for both subsystems. A
+`WinMain` entry would change startup for no gain: `os.args` already comes from
+the C runtime, and a windowed program that wants its window's show state asks
+Windows for it.
+
+Where a windowed program's diagnostics go was the real choice. With no standard
+error they would be lost, and a game that panics on a player's machine would
+just vanish. A message box would block an unattended process and change how
+the panic ends. Sending standard error to the debugger costs nothing when none
+is attached, and is where a developer already looks. Standard output is
+the program's own and is not sent anywhere.
+
 ### Capture literals
 
 A [capture literal](design.md#capture-literals) abbreviates an ordinary record,

@@ -1,0 +1,6 @@
+// design.md "Windowed executables": the subsystem is `"console"` or
+// `"windows"`, spelled as the linker's option is.
+@(subsystem = "gui")
+package main;
+
+main :: proc() {}

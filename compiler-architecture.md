@@ -911,7 +911,7 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration including `-define`, and provider selection. |
+| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin`, `subsystem.odin` | CLI presentation, session orchestration, build configuration including `-define`, provider selection, and the executable's Windows subsystem. |
 | `test_runner.odin` | The `-test` driver, which runs a built test executable once per test. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |

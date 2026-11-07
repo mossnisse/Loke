@@ -68,8 +68,14 @@ static char *to_utf8(const uint16_t *wide) {
  * (standard-library.md "Standard byte streams and line input"). */
 void loke_rt_v1_args_init(int32_t argc, const uint16_t **argv) {
 	int32_t index;
-	_setmode(_fileno(stdout), _O_BINARY);
-	_setmode(_fileno(stderr), _O_BINARY);
+	/* A windowed process started outside a terminal has neither: descriptor
+	 * -2 (design.md "Windowed executables"). */
+	if (_fileno(stdout) >= 0) {
+		_setmode(_fileno(stdout), _O_BINARY);
+	}
+	if (_fileno(stderr) >= 0) {
+		_setmode(_fileno(stderr), _O_BINARY);
+	}
 	if (argc < 0) {
 		argc = 0;
 	}
