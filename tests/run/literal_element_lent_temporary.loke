@@ -1,0 +1,37 @@
+// design.md "Temporaries and procedure boundaries": a value temporary lives until its
+// complete expression ends, and `unsafe.raw_data` does not shorten that. An element of
+// a literal that hands one of its temporaries' addresses to a call, as a borrowed
+// receiver, may have it kept, here in a global and through an out parameter, so the
+// next element does not take that temporary's storage even when the element's own type
+// holds no address. Each pair printed the second receiver's byte twice when it did.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Large :: struct { bytes: [5000]u8 }
+
+stashed: [^]u8 = nil;
+
+impl Large {
+	stash :: proc(self: ^) -> int { stashed = unsafe.raw_data(&self.bytes); return int(self.bytes[0]); }
+	peek :: proc(self: ^) -> int { return int(stashed[0]); }
+	stash_into :: proc(self: ^, out: ^mut [^]u8) -> int { out^ = unsafe.raw_data(&self.bytes); return int(self.bytes[0]); }
+	peek_at :: proc(self: ^, data: ^[^]u8) -> int { return int(data^[0]); }
+}
+
+large :: proc(value: u8) -> Large {
+	out: Large = {};
+	out.bytes[0] = value;
+	return out;
+}
+
+show :: proc(values: []int) { fmt.println(values[0], values[1]); }
+show_map :: proc(values: map[int]int) { fmt.println(values[0], values[1]); }
+
+main :: proc() {
+	show([dynamic]int{large(1).stash(), large(2).peek()});
+	show_map(map[int]int{0 = large(3).stash(), 1 = large(4).peek()});
+	kept: [^]u8 = nil;
+	show([dynamic]int{large(5).stash_into(&mut kept), large(6).peek_at(&kept)});
+}

@@ -70,6 +70,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		backend_fail(e, "an unchecked or compile-time call reached emission")
 		return "0"
 	}
+	note_lent_arguments(e, nil, v.bound)
 	switch kind := call_builtin_kind(e, v); kind {
 	case .Assert:
 		cond := emit_expr(e, v.bound[0])
@@ -1046,6 +1047,11 @@ emit_bound_call :: proc(
 	}
 	symbol := symbol_of(e.c, symbol_id)
 	callee := callee
+	if receiver_type == "ptr" {
+		e.lent_to_calls += 1 // an erased receiver is the address of the value it views
+	} else {
+		note_lent_arguments(e, callee_type, bound)
+	}
 	consumed, consuming_body := consumed_element_slot(e, symbol, call_node)
 	if consuming_body {
 		e.consuming_ops[symbol_id] = true

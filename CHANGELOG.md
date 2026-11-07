@@ -1135,6 +1135,14 @@ checklist.
   `L0513`. Upgrade as for `copied()` above. A `reversed()` or `indexed()` that does walk mutably
   and is written under `copied()` still copies its source, and its `L0507` now advises writing
   `copied()` first, as `source.copied().reversed()`, rather than a `foreach` over the call.
+- A value read through a carrier that a record parameter holds is in what the argument's carrier
+  leads to ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  With `Reader :: struct { holder: ^Holder }`, a `read_text(reader: Reader)` returning
+  `reader.holder^.text` was in no region at all, by value, `^mut`, or `inout`, so a reset compiled
+  while the caller's copy of arena text lived on, and read freed memory; it is now `L0537`, as are
+  container elements read that way and an owner built with a handle read that way. Upgrade by
+  ending what holds the copy before the reset, or by copying the text into storage the reset does
+  not end.
 
 ### Added
 
@@ -1724,6 +1732,17 @@ checklist.
 
 ### Fixed
 
+- An owner read through a parameter's carriers is in what the owners there are in, and not in what an
+  allocator handle beside them names
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  `pointer := reader.holder; return pointer^.items;` was `L0537` at a reset of the handle beside
+  `items`, which the direct `return reader.holder^.items` was not.
+- A container literal's element that hands one of its temporaries' addresses to a call keeps that
+  temporary's storage until the literal is built
+  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  `[dynamic]int{large(1).stash(), large(2).peek()}`, where `stash` kept
+  `unsafe.raw_data(&self.bytes)` in a global, printed `1 2`: the second receiver took the first
+  one's storage, as it did through an out parameter, though the element type held no address.
 - A store through a call's result read through more than four loads lands in what those loads
   reach, as a deeper read written in the caller does
   ([Procedure result contracts](design.md#procedure-result-contracts)). With `f` returning

@@ -293,7 +293,7 @@ pop_temporaries :: proc(e: ^Emitter) {
 // (`end_operand_temporaries`).
 @(private)
 Operand_Temporaries :: struct {
-	large, temporaries, scope, held, actions: int,
+	large, temporaries, scope, held, actions, lent: int,
 }
 
 @(private)
@@ -304,21 +304,24 @@ begin_operand_temporaries :: proc(e: ^Emitter) -> Operand_Temporaries {
 		scope       = len(e.cleanups) > 0 ? len(e.cleanups[len(e.cleanups) - 1]) : 0,
 		held        = len(e.held),
 		actions     = unwind_next_action(e),
+		lent        = e.lent_to_calls,
 	}
 }
 
-// design.md "Borrows and lifetimes": a temporary lives until its full expression
-// ends, which nothing tells from an earlier end once no value names it. An
-// operand of types holding no address, consumed whole, and owing no drop at the
-// end of its full expression or its block names none of its temporaries, so its
-// large slots serve the operands after it; each element of a long literal of large
-// calls otherwise kept a slot of its own in the frame. A borrow is not the only
-// address: a `[^]T` from `unsafe.raw_data` names its temporary with no borrow to
-// show it (`type_may_hold_address`). One that owes no
-// drop has also cleared the unwind actions of its temporaries, which the next
-// one takes again (`unwind_rewind`), whatever it borrows; a long map literal's
-// entries each kept their own. A caller ends the reuse once its operands are
-// done (`unwind_stop_reusing`).
+// design.md "Temporaries and procedure boundaries": a temporary lives until its
+// full expression ends, which nothing tells from an earlier end once nothing can
+// name it. An operand consumed whole and owing no drop at the end of its full
+// expression or its block can name its temporaries in two ways only: through its
+// value, unless its types hold no address, and through a call it made that was
+// handed one, which may keep it, by `unsafe` means, in a global or an out
+// parameter (`note_lent_arguments`). With neither, its large slots serve the
+// operands after it; each element of a long literal of large calls otherwise kept
+// a slot of its own in the frame. A borrow is not the only address: a `[^]T` from
+// `unsafe.raw_data` names its temporary with no borrow to show it
+// (`type_may_hold_address`). One that owes no drop has also cleared the unwind
+// actions of its temporaries, which the next one takes again (`unwind_rewind`),
+// whatever it borrows; a long map literal's entries each kept their own. A caller
+// ends the reuse once its operands are done (`unwind_stop_reusing`).
 @(private)
 end_operand_temporaries :: proc(e: ^Emitter, mark: Operand_Temporaries, types: ..Type_Id) {
 	now := begin_operand_temporaries(e)
@@ -326,6 +329,9 @@ end_operand_temporaries :: proc(e: ^Emitter, mark: Operand_Temporaries, types: .
 		return
 	}
 	unwind_rewind(e, mark.actions)
+	if now.lent != mark.lent {
+		return
+	}
 	for type in types {
 		if type_may_hold_address(e.c, type) {
 			return
@@ -333,6 +339,30 @@ end_operand_temporaries :: proc(e: ^Emitter, mark: Operand_Temporaries, types: .
 	}
 	append(&e.large_free, ..e.large_taken[mark.large:])
 	resize(&e.large_taken, mark.large)
+}
+
+// Counts a call handed an address it may keep past its return
+// (`end_operand_temporaries`): an argument passed by reference, as a borrowed
+// receiver, or one whose type may hold an address. A built-in, which has no
+// `callee_type`, keeps only what its `bound` values hold, as `exchange` does. A
+// large value passed by value is the address of a copy only the callee reads,
+// which ends with the call.
+@(private)
+note_lent_arguments :: proc(e: ^Emitter, callee_type: ^Type_Info, bound: []Expr) {
+	lends := false
+	if callee_type != nil {
+		for parameter, index in callee_type.parameters {
+			lends ||= param_mode_is_pointer(param_mode_at(callee_type, index)) || type_may_hold_address(e.c, parameter)
+		}
+	} else {
+		for argument in bound {
+			// An omitted argument, as `make`'s allocator, passes nothing.
+			lends ||= argument != nil && type_may_hold_address(e.c, expr_base(argument).type)
+		}
+	}
+	if lends {
+		e.lent_to_calls += 1
+	}
 }
 
 // Saves the stack pointer for the open full expression before a runtime-sized

@@ -1,6 +1,7 @@
 // design.md "@(allocator_reset)": an owner read through a carrier whose targets the body
 // cannot name is in no region an allocator handle beside it in the pointee names, so a
-// reset of that handle's region leaves it alone.
+// reset of that handle's region leaves it alone. A local copy of the carrier views the
+// same pointee, and what is read through it says the same (`Loaded_Read`).
 package main;
 
 import "core:fmt";
@@ -13,6 +14,10 @@ Deep :: struct { inner: ^Inner }
 
 read_items :: proc(reader: Reader) -> [dynamic]int { return reader.holder^.items; }
 nested_items :: proc(deep: Deep) -> [dynamic]int { return deep.inner^.holder.items; }
+local_items :: proc(reader: Reader) -> [dynamic]int {
+	pointer := reader.holder;
+	return pointer^.items;
+}
 
 run :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	source := Holder{allocator, [dynamic]int{1}};
@@ -28,8 +33,15 @@ nested :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	return copied[0];
 }
 
+through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Holder{allocator, [dynamic]int{3}};
+	copied := local_items(Reader{&source});
+	free_all(allocator);
+	return copied[0];
+}
+
 main :: proc() {
 	buffer := [256]u8{};
 	arena := mem.Arena.from_buffer(&mut buffer[:]);
-	fmt.println(run(arena.allocator()), nested(arena.allocator()));
+	fmt.println(run(arena.allocator()), nested(arena.allocator()), through_local(arena.allocator()));
 }

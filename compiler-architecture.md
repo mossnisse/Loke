@@ -218,7 +218,8 @@ Keep these phase rules:
   holds is built afresh by the round, so a fact added anywhere else would not
   survive to the next round, and one added to `Prov_Facts` must also be copied,
   seeded, and weighed. A flag that only grows, as `Written_Alias.loaded` and
-  `Region_Set.loaded` do, is weighed too, as a round that only sets one is growth.
+  `Region_Set.loaded` and its `Loaded_Read` bits do, is weighed too, as a round that
+  only sets one is growth.
 - **Fact-dependent output is an event operation.** A construction site whose
   output depends on the facts, such as a reset, an escape, a region or key
   escape, allocator use, a received region, or a write published through a
@@ -622,9 +623,14 @@ Keep these contracts:
   argument's carrier there leads (`prov_contents_held_at`). A read below what a
   parameter names has no path in it (`Written_Alias.loaded`), so it takes the parameter's
   region marked as read below (`Region_Set.loaded`), as does a read of a carrier out of
-  the parameter, and a call substitutes that with all its argument's carriers reach
-  (`prov_reached_regions`); the parameter's region unmarked is only what the argument
-  names (`prov_substitute_region`). A swap or sort records a copy of any
+  the parameter, a record parameter's included, and a call substitutes that with all its
+  argument's carriers reach (`prov_reached_regions`); the parameter's region unmarked is
+  only what the argument names (`prov_substitute_region`). The mark also says what was
+  read (`Loaded_Read`): a value holding owners alone takes only what the owners reached
+  are in, not what the handles beside them name. A read of a carrier leaves that open,
+  and a read through the carrier, or through a local copy of it, decides it
+  (`region_read_through`); a decided read never narrows, so an owner the body built
+  with a handle it read still stands for that handle. A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
   so it is no store through a carrier to check.
@@ -1045,7 +1051,9 @@ Preserve these lowering rules:
   through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
   `emit_ret`, and `sret_param`; reuse temporary storage between full
   expressions, and between a container literal's elements once the container
-  holds one that names none of its temporaries (`end_operand_temporaries`). A
+  holds one that names none of its temporaries (`end_operand_temporaries`): its
+  types hold no address, and no call it made was handed one
+  (`note_lent_arguments`), which the callee may keep by `unsafe` means. A
   map entry's address and value wait in slots its literal's entries share
   (`park_map_entry`), as a value used past the block defining it takes a stack
   slot of its own at `-opt=none`; `long_literal_frames_do_not_grow` guards this.

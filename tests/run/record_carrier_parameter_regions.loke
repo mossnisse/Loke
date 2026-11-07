@@ -1,0 +1,95 @@
+// design.md "Allocator regions and region provenance": an owner read through a carrier
+// a record parameter holds is in what the owners the argument's carrier leads to are
+// in, and not in what an allocator handle beside them names. Each `source` keeps the
+// handle being reset beside text from another arena, so each reset leaves the copy
+// alone, read by value, `inout`, through a local copy of the carrier, two loads down,
+// or as a container element. tests/err/record_carrier_parameter_regions rejects the
+// same reads where the text is in the reset arena.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strings";
+
+Holder :: struct { allocator: mem.Allocator, text: string }
+Reader :: struct { holder: ^Holder }
+Outer :: struct { reader: ^Reader }
+Names :: struct { allocator: mem.Allocator, names: [dynamic]string }
+Names_Reader :: struct { holder: ^Names }
+
+read_text :: proc(reader: Reader) -> string { return reader.holder^.text; }
+read_inout :: proc(reader: inout Reader) -> string { return reader.holder^.text; }
+read_local :: proc(reader: Reader) -> string { pointer := reader.holder; return pointer^.text; }
+read_deep :: proc(outer: Outer) -> string { return outer.reader^.holder^.text; }
+read_names :: proc(reader: Names_Reader) -> string { return reader.holder^.names[0]; }
+
+by_value :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("text", other.allocator())};
+		kept = read_text(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+through_inout :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("inout", other.allocator())};
+		reader := Reader{&source};
+		kept = read_inout(inout reader);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("local", other.allocator())};
+		kept = read_local(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("deep", other.allocator())};
+		reader := Reader{&source};
+		kept = read_deep(Outer{&reader});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+element :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		names := make([dynamic]string, 0, other.allocator());
+		names.append(strings.copy("names", other.allocator()));
+		source := Names{allocator, move(names)};
+		kept = read_names(Names_Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+main :: proc() {
+	buffer := [4096]u8{};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	fmt.println(by_value(arena.allocator()), through_inout(arena.allocator()), through_local(arena.allocator()),
+		two_loads(arena.allocator()), element(arena.allocator()));
+}

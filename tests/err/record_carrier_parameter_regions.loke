@@ -1,0 +1,134 @@
+// design.md "Allocator regions and region provenance": a value read through a carrier
+// a record parameter holds is in what the argument's carrier leads to. `Reader` holds
+// only `^Holder`, so it is neither an owner nor a view, and such reads named no region
+// at all: each caller reset its arena while a copy of the arena's text lived on. A read
+// of owners alone takes the owners there and not the handle beside them
+// (tests/run/record_carrier_parameter_regions), but an owner built with a handle read
+// through the parameter is in that handle's region, read directly or through a local.
+package main;
+
+import "core:mem";
+import "core:strings";
+
+Holder :: struct { allocator: mem.Allocator, text: string }
+Reader :: struct { holder: ^Holder }
+Mut_Reader :: struct { holder: ^mut Holder }
+Plain :: struct { text: string }
+Plain_Reader :: struct { holder: ^Plain }
+Strings :: struct { allocator: mem.Allocator, names: [dynamic]string }
+Strings_Reader :: struct { holder: ^Strings }
+Handles :: struct { allocator: mem.Allocator }
+Handle_Reader :: struct { holder: ^Handles }
+Local :: struct { text: string }
+
+read_text :: proc(reader: Reader) -> string { return reader.holder^.text; }
+read_mut :: proc(reader: Mut_Reader) -> string { return reader.holder^.text; }
+read_inout :: proc(reader: inout Reader) -> string { return reader.holder^.text; }
+read_local :: proc(reader: Reader) -> string { pointer := reader.holder; return pointer^.text; }
+read_plain :: proc(reader: Plain_Reader) -> string { return reader.holder^.text; }
+read_names :: proc(reader: Strings_Reader, into: mem.Allocator) -> [dynamic]string { return reader.holder^.names.clone(into); }
+built :: proc(reader: Handle_Reader) -> [dynamic]int { return make([dynamic]int, 1, reader.holder^.allocator); }
+built_through_local :: proc(reader: Handle_Reader) -> [dynamic]int { pointer := reader.holder; return make([dynamic]int, 1, pointer^.allocator); }
+handed_back :: proc(reader: Handle_Reader) -> mem.Allocator { return reader.holder^.allocator; }
+
+built_then_read :: proc(reader: Handle_Reader) -> string {
+	local := Local{strings.copy("built", reader.holder^.allocator)};
+	pointer := &local;
+	return pointer^.text;
+}
+
+text :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		kept = read_text(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+through_mut :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		kept = read_mut(Mut_Reader{&mut source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+through_inout :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		reader := Reader{&source};
+		kept = read_inout(inout reader);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		kept = read_local(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+without_a_handle :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Plain{strings.copy("arena text", allocator)};
+		kept = read_plain(Plain_Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+// The copy's array is in `local`, but its strings share the arena's allocations.
+container_elements :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	local := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := [dynamic]string{};
+	{
+		names := make([dynamic]string, 0, local.allocator());
+		names.append(strings.copy("x", allocator));
+		source := Strings{allocator, move(names)};
+		kept = read_names(Strings_Reader{&source}, local.allocator());
+	}
+	free_all(allocator);
+	return kept.len();
+}
+
+built_with_the_handle :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Handles{allocator};
+	kept := built(Handle_Reader{&source});
+	free_all(allocator);
+	return kept[0];
+}
+
+built_through_a_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Handles{allocator};
+	kept := built_through_local(Handle_Reader{&source});
+	free_all(allocator);
+	return kept[0];
+}
+
+handle_handed_back :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Handles{allocator};
+	kept := make([dynamic]int, 1, handed_back(Handle_Reader{&source}));
+	free_all(allocator);
+	return kept[0];
+}
+
+owner_built_then_read :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Handles{allocator};
+	kept := built_then_read(Handle_Reader{&source});
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+main :: proc() {}

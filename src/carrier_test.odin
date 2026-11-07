@@ -413,3 +413,50 @@ main :: proc() { }`)
 		testing.expect(t, len(path.steps) > 0 && path.steps[0].kind == .Wild, "an alternative is not behind a wildcard")
 	}
 }
+
+// design.md "Allocator regions and region provenance": a loaded parameter's read keeps
+// the widest of what was merged, `Handles` over `Viewed` over `Owners`. A read through
+// a carrier decides only what a carrier's view left open, so one already of a handle
+// still takes the handles its argument's carriers lead to (`region_read_through`).
+@(test)
+loaded_reads_merge_to_the_widest_and_only_views_are_decided :: proc(t: ^testing.T) {
+	read_of :: proc(reads: ..Loaded_Read) -> Loaded_Read {
+		set: Region_Set
+		for read in reads {
+			one: Region_Set
+			region_add_loaded_param(&one, 3, read)
+			region_merge(&set, one)
+		}
+		return region_loaded_read(set, 3)
+	}
+	testing.expect_value(t, read_of(.Owners, .Owners), Loaded_Read.Owners)
+	testing.expect_value(t, read_of(.Owners, .Viewed), Loaded_Read.Viewed)
+	testing.expect_value(t, read_of(.Viewed, .Handles), Loaded_Read.Handles)
+	testing.expect_value(t, read_of(.Owners, .Handles), Loaded_Read.Handles)
+
+	decided: Region_Set
+	region_add_loaded_param(&decided, 0, .Handles)
+	region_add_loaded_param(&decided, 1, .Viewed)
+	region_add_loaded_param(&decided, 2, .Owners)
+	owners := decided
+	region_read_through(&owners, .Owners)
+	testing.expect_value(t, region_loaded_read(owners, 0), Loaded_Read.Handles)
+	testing.expect_value(t, region_loaded_read(owners, 1), Loaded_Read.Owners)
+	testing.expect_value(t, region_loaded_read(owners, 2), Loaded_Read.Owners)
+	handles := decided
+	region_read_through(&handles, .Handles)
+	testing.expect_value(t, region_loaded_read(handles, 1), Loaded_Read.Handles)
+	viewed := decided
+	region_read_through(&viewed, .Viewed)
+	testing.expect_value(t, region_loaded_read(viewed, 1), Loaded_Read.Viewed)
+
+	// A contract whose loaded read was of owners alone does not admit one that takes
+	// the handles too.
+	narrow, wide: Region_Set
+	region_add_loaded_param(&narrow, 0, .Owners)
+	region_add_loaded_param(&wide, 0, .Viewed)
+	testing.expect(t, region_params_within(narrow, wide), "a read of owners alone fits one that takes the handles too")
+	testing.expect(t, !region_params_within(wide, narrow), "a read that takes the handles fits one of owners alone")
+	region_remove_param(&wide, 0)
+	testing.expect(t, wide == Region_Set{}, "removing a loaded parameter leaves what it read behind")
+}

@@ -315,10 +315,21 @@ prov_type_is_view_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // design.md "Allocator regions and region provenance": an owner moved in, a copy
 // of one passed in, and what a carrier passed in views keep the argument's
-// region, which the caller substitutes; so does an allocator handle.
+// region, which the caller substitutes; so does an allocator handle, and what a
+// view carrier inside a record passed in views. An allocator inside one, as an
+// `Option(Allocator)`'s payload, is one the analysis cannot name instead
+// (`prov_add_received_allocator`).
 @(private)
 prov_type_keeps_argument_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_underlying(c, type) == TYPE_ALLOCATOR || type_is_managed(c, type) || prov_type_is_view_carrier(c, type)
+	if type_underlying(c, type) == TYPE_ALLOCATOR || type_is_managed(c, type) || prov_type_is_view_carrier(c, type) {
+		return true
+	}
+	for path in carrier_shape(c, type) {
+		if path.truncated || prov_type_is_view_carrier(c, path.type) {
+			return true
+		}
+	}
+	return false
 }
 
 @(private)

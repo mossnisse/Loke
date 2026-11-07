@@ -184,10 +184,17 @@ prov_error_region_fields :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, res
 prov_reset_fields_region :: proc(graph: ^Flow_Graph, type: Type_Id, fields: []Prov_Region_Content) -> Region_Set {
 	out := Region_Set{}
 	for field in fields {
-		if field.handle && type_underlying(graph.k.c, prov_type_at(graph.k.c, type, field.path)) == TYPE_ALLOCATOR { continue }
+		if region_field_is_allocator(graph.k.c, type, field) { continue }
 		region_merge(&out, field.region)
 	}
 	return out
+}
+
+// Whether `field` of a `type` value's region shape is an allocator handle, whose
+// region is what it names rather than what backs it.
+@(private)
+region_field_is_allocator :: proc(c: ^Compiler, type: Type_Id, field: Prov_Region_Content) -> bool {
+	return field.handle && type_underlying(c, prov_type_at(c, type, field.path)) == TYPE_ALLOCATOR
 }
 
 @(private)
@@ -393,6 +400,7 @@ prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
 @(private = "file")
 region_weight :: proc(set: Region_Set) -> int {
 	return int(bits.count_ones(set.locals)) + int(bits.count_ones(set.params)) + int(bits.count_ones(set.loaded)) +
+		int(bits.count_ones(set.loaded_handles)) + int(bits.count_ones(set.loaded_viewed)) +
 		int(set.default) + int(set.unknown) + int(set.crowded)
 }
 
@@ -479,9 +487,10 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 	if direct, found := graph.region_of[id]; found && reads == nil {
 		direct = prov_received_region(graph, id, direct, read, path)
 		region_merge(&out, direct)
-		// A carrier read out of a parameter leads below what the parameter names.
+		// A carrier read out of a parameter leads below what the parameter names, to
+		// what a read through it decides (`region_read_through`).
 		if prov_root_is_parameter(graph, root) && prov_type_holds_carrier(graph.k.c, prov_parameter_type_at(graph.k.c, symbol_of(graph.k.c, id), path)) {
-			prov_add_loaded_parameter(&out, direct)
+			prov_add_loaded_parameter(&out, direct, .Viewed)
 		}
 	} else if found {
 		// The parameter's own region here is what the argument held at `path`.
@@ -1204,6 +1213,11 @@ prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id, whole := true) -> R
 			viewed = info.element
 		}
 		out, known := prov_carrier_storage_regions(graph, id, nil, viewed, .All)
+		// One a parameter holds, which no write here pointed anywhere, views what its
+		// argument's carriers lead to (`prov_region_content_at`).
+		if root, path, _ := prov_value_place_of(graph, id); !known && root != NO_ROOT && prov_root_is_parameter(graph, root) {
+			region_merge(&out, prov_region_content_at(graph, root, path, .All, id))
+		}
 		return whole ? prov_unnamed_allocator(graph, out, known, viewed) : out
 	}
 	return Region_Set{}
@@ -1217,7 +1231,10 @@ prov_read_storage_regions :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj
 	carrier := prov_place_carrier(graph, id)
 	if carrier == 0 { return {}, false }
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, id), path)
-	return prov_carrier_storage_regions(graph, carrier, below, prov_type_at(graph.k.c, prov_value(graph, id).type, path), query)
+	type := prov_type_at(graph.k.c, prov_value(graph, id).type, path)
+	out, known := prov_carrier_storage_regions(graph, carrier, below, type, query)
+	region_read_through(&out, prov_loaded_read(graph.k.c, type))
+	return out, known
 }
 
 // What `carrier`'s known targets hold at `below`, a value of `type`, and whether every
@@ -1233,12 +1250,25 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 		region_merge(&out, prov_region_content_at(graph, root, prov_concat_path(graph, alias.at, below), query))
 		prov_add_received_allocator(graph, &out, root, type, 0, nil)
 		// Read below what the parameter names, so no path of it says what this holds:
-		// it stands for what the whole argument reaches (`prov_reached_regions`).
+		// it stands for what the whole argument reaches (`prov_reached_regions`), as
+		// the read through `carrier` decides (`region_read_through`).
 		if direct, found := graph.region_of[graph.roots[int(root)].symbol]; found && alias.loaded {
-			prov_add_loaded_parameter(&out, direct)
+			prov_add_loaded_parameter(&out, direct, .Viewed)
 		}
 	}
 	return out, known
+}
+
+// What a read of a `type` value through carriers read, for a parameter's region
+// read at a load below it (`Loaded_Read`): a carrier, whose region is what it views;
+// a value holding an allocator handle; or owners alone.
+@(private = "file")
+prov_loaded_read :: proc(c: ^Compiler, type: Type_Id) -> Loaded_Read {
+	switch {
+	case type == INVALID_TYPE, prov_holds_allocator(c, type): return .Handles
+	case prov_type_holds_carrier(c, type):                    return .Viewed
+	}
+	return .Owners
 }
 
 // Whether a value of `type` is or holds a carrier, so what is read through it is
@@ -1260,13 +1290,13 @@ prov_parameter_type_at :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Step) ->
 }
 
 // The region of a parameter, `direct`, read at a load below what it names
-// (`Region_Set.loaded`).
+// (`Region_Set.loaded`), as `read`.
 @(private = "file")
-prov_add_loaded_parameter :: proc(set: ^Region_Set, direct: Region_Set) {
+prov_add_loaded_parameter :: proc(set: ^Region_Set, direct: Region_Set, read: Loaded_Read) {
 	region_merge(set, direct)
 	params := direct.params
 	for index in next_region_param(&params) {
-		region_add_loaded_param(set, index)
+		region_add_loaded_param(set, index, read)
 	}
 }
 
@@ -1274,30 +1304,48 @@ prov_add_loaded_parameter :: proc(set: ^Region_Set, direct: Region_Set) {
 // load below what it names stands at a call for what its argument's carriers lead to, at
 // every load below, as well as what it names. A parameter of this body reached here
 // with carriers in it is one more load below for this body's callers
-// (`prov_region_content_at`).
+// (`prov_region_content_at`). Unless the read may have been of `handles`, the allocator
+// handles there are left out: what was read holds owners alone, and a handle beside
+// them backs none of them (`Loaded_Read`).
 @(private = "file")
-prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id) -> Region_Set {
-	out := Region_Set{}
-	seen := make(Written_Alias_Visits, graph.alloc)
-	walk :: proc(graph: ^Flow_Graph, target: Storage_Id, at: []Proj_Step, seen: ^Written_Alias_Visits, out: ^Region_Set) {
+prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id, handles: bool) -> Region_Set {
+	Walk :: struct {
+		graph:   ^Flow_Graph,
+		seen:    Written_Alias_Visits,
+		out:     Region_Set,
+		handles: bool,
+	}
+	walk :: proc(w: ^Walk, target: Storage_Id, at: []Proj_Step) {
 		if target == 0 {
 			return
 		}
-		bounded, first := prov_first_alias_visit(graph, seen, target, at, false)
+		graph := w.graph
+		c := graph.k.c
+		bounded, first := prov_first_alias_visit(graph, &w.seen, target, at, false)
 		if !first {
 			return
 		}
-		region_merge(out, prov_region_content_at(graph, prov_root_for_storage(graph, target), bounded, .All))
-		for carrier in carrier_shape(graph.k.c, prov_type_at(graph.k.c, prov_storage(graph, target).type, bounded)) {
+		root := prov_root_for_storage(graph, target)
+		type := prov_type_at(c, prov_storage(graph, target).type, bounded)
+		if w.handles {
+			region_merge(&w.out, prov_region_content_at(graph, root, bounded, .All))
+		} else {
+			for field in region_field_shape(c, type, graph.alloc) {
+				if region_field_is_allocator(c, type, field) { continue }
+				region_merge(&w.out, prov_region_content_at(graph, root, prov_concat_path(graph, bounded, field.path), field.own ? .Own : .All))
+			}
+		}
+		for carrier in carrier_shape(c, type) {
 			for alias in prov_written_aliases_of(graph, target, prov_concat_path(graph, bounded, carrier.steps)) {
-				walk(graph, alias.target, alias.at, seen, out)
+				walk(w, alias.target, alias.at)
 			}
 		}
 	}
+	w := Walk{graph = graph, seen = make(Written_Alias_Visits, graph.alloc), handles = handles}
 	for alias in prov_value_aliases(graph, argument) {
-		walk(graph, alias.target, alias.at, &seen, &out)
+		walk(&w, alias.target, alias.at)
 	}
-	return out
+	return w.out
 }
 
 // design.md "@(allocator_reset)": an allocator read through a carrier of unknown
@@ -1318,6 +1366,7 @@ prov_unnamed_allocator :: proc(graph: ^Flow_Graph, set: Region_Set, known: bool,
 prov_unknown_target_read :: proc(graph: ^Flow_Graph, carrier: Value_Id, found: Region_Set, type: Type_Id) -> Region_Set {
 	out := found
 	region_merge(&out, prov_viewed_region(graph, carrier, whole = false))
+	region_read_through(&out, prov_loaded_read(graph.k.c, type))
 	return prov_unnamed_allocator(graph, out, false, type)
 }
 
@@ -1843,26 +1892,26 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 prov_substitute_region :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, summary: Region_Set) -> Region_Set {
 	out := Region_Set{}
 	bound := prov_bound_values(form)
-	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id, loaded: bool) {
+	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id, loaded, handles: bool) {
 		if argument != 0 {
 			region_merge(out, prov_storage_region(graph, argument))
 			region_merge(out, prov_provider_viewed_by(graph, argument))
 			if loaded {
-				region_merge(out, prov_reached_regions(graph, argument))
+				region_merge(out, prov_reached_regions(graph, argument, handles))
 			}
 		}
 	}
 	params := summary.params
 	for index in next_region_param(&params) {
-		loaded := region_has_loaded_param(summary, index)
+		loaded, handles := region_has_loaded_param(summary, index), region_loaded_read(summary, index) != .Owners
 		// A pack built from separate arguments has no bound value: the parameter's
 		// region is its elements'.
 		if call_packs(form.call, index) {
 			for element in form.pack {
-				merge_argument(graph, &out, element, loaded)
+				merge_argument(graph, &out, element, loaded, handles)
 			}
 		} else if index < len(bound) {
-			merge_argument(graph, &out, bound[index], loaded)
+			merge_argument(graph, &out, bound[index], loaded, handles)
 		}
 	}
 	out.default ||= summary.default
