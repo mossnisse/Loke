@@ -129,9 +129,15 @@ static void print_frame(dbghelp_api *api, uint64_t address, int inlined, unsigne
 	}
 	char text[600];
 	int length = snprintf(text, sizeof text, "    %s at %s:%lu\n", named ? symbol->name : "?", file, line.line_number);
-	if (length > 0) {
-		loke_rt_err_write(text, length < (int)sizeof text ? (size_t)length : sizeof text - 1);
+	if (length <= 0) {
+		return;
 	}
+	/* A cut line still ends, so the next frame is a line of its own. */
+	if (length >= (int)sizeof text) {
+		length = (int)sizeof text - 1;
+		text[length - 1] = '\n';
+	}
+	loke_rt_err_write(text, (size_t)length);
 }
 
 /* Only frames with a `.loke` line are printed, which leaves out the runtime,

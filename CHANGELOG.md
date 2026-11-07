@@ -1116,7 +1116,7 @@ checklist.
 - [`@(subsystem = "windows")`](design.md#windowed-executables) on the root package clause links a
   windowed executable, one that gets no console window, for a game or other GUI program. `main`,
   `os.args` and the exit status are unchanged, and a `-test` build stays a console program. A
-  process with no standard error, as a windowed one started from Explorer has none, sends what
+  process with no standard error, such as a windowed one started from Explorer, sends what
   `core:fmt` and the runtime write there, panic reports included, to an attached debugger a line at
   a time instead of dropping it. The value is `"console"` or `"windows"` (`L0754`), written once
   across the root package (`L0753`) and never on an imported one (`L0613`).

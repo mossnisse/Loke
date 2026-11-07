@@ -72,11 +72,11 @@ void loke_rt_v1_require_cpu(int32_t level) {
 	/* The report and status `loke_rt_v1_abort` gives. A C host may call this
 	 * after writing output of its own, which goes first. */
 	fflush(stdout);
-	char report[128] = "loke: the program was built for a CPU level this runtime does not know\n";
+	char report[128];
 	if (level >= 0 && level < LEVEL_COUNT) {
-		strcpy(report, "loke: this processor does not support ");
-		strcat(report, level_names[level]);
-		strcat(report, ", which the program was built for\n");
+		snprintf(report, sizeof report, "loke: this processor does not support %s, which the program was built for\n", level_names[level]);
+	} else {
+		snprintf(report, sizeof report, "loke: the program was built for a CPU level this runtime does not know\n");
 	}
 	/* `loke_rt_err_write`'s fallback, which this file cannot call: the rest of
 	 * the runtime is built for the level. */

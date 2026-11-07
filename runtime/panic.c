@@ -21,12 +21,13 @@ void loke_rt_v1_thread_attach(void) {
 
 void loke_rt_v1_thread_detach(void) {
 	frames = 0;
-	/* A partial line held for the debugger is the thread's own. */
-	loke_rt_err_flush();
 	if (attached) {
 		attached = 0; /* first, so a panic in the cleanup cannot detach again */
 		loke_rt_v1_program_tls_cleanup();
 	}
+	/* A partial line held for the debugger is the thread's own, and a drop
+	 * above may have written one. */
+	loke_rt_err_end_thread();
 }
 
 void loke_rt_v1_run_task(loke_rt_task_entry_v1 run, void *frame) {

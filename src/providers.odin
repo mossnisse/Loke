@@ -79,13 +79,15 @@ source_provider_slot :: proc(attribute: Attribute) -> (Provider_Slot, bool) {
 	return .Allocator, false
 }
 
-// design.md "Selecting a provider": only the root package picks one.
-validate_provider_attributes :: proc(k: ^Checker, pkg: ^Package, file: ^File) {
+// design.md "Selecting a provider", "Windowed executables": only the root
+// package picks a provider or the subsystem, so an import cannot change either.
+validate_root_only_attributes :: proc(k: ^Checker, pkg: ^Package, file: ^File) {
 	if pkg.id == k.c.root_package {
 		return
 	}
 	for attribute in file.attributes {
-		if _, is_provider := source_provider_slot(attribute); is_provider {
+		_, is_provider := source_provider_slot(attribute)
+		if is_provider || (len(attribute.path) == 1 && attribute.path[0].text == "subsystem") {
 			errorf(
 				k.c, attribute.span, "L0613",
 				"`@(%s=...)` is only allowed on the root package clause",

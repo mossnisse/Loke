@@ -356,8 +356,9 @@ changes: `main`, `os.args` and the exit status work as before. A `-test` build
 of the package is still a console program.
 
 Started from Explorer, the program has no standard output or error. What it
-prints is dropped, and a panic report goes to an attached debugger, which
-Visual Studio's Output window and Sysinternals DebugView show. To keep the
+prints to standard output is dropped. What it writes to standard error, a panic
+report included, goes to an attached debugger, which Visual Studio's Output
+window and Sysinternals DebugView show. To keep the
 output instead, redirect it: `.\demo.exe > out.txt 2> err.txt`. See
 [Windowed executables](design.md#windowed-executables).
 

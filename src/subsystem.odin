@@ -34,19 +34,18 @@ parse_subsystem :: proc(text: string) -> (Subsystem, bool) {
 	return .Console, false
 }
 
-// design.md "Windowed executables": on the root package clause only, as a
-// provider selection is, once across the package's files, and a known value.
-// A malformed value is `validate_attribute_list`'s to report.
+// design.md "Windowed executables": once across the root package's files, and a
+// known value. An imported package is `validate_root_only_attributes`' to
+// reject, and a malformed value `validate_attribute_list`'s.
 validate_subsystem_attributes :: proc(k: ^Checker, pkg: ^Package) {
+	if pkg.id != k.c.root_package {
+		return
+	}
 	first: Span
 	seen := false
 	for file in pkg.files {
 		attribute, written := find_attribute(file.attributes, "subsystem")
 		if !written {
-			continue
-		}
-		if pkg.id != k.c.root_package {
-			errorf(k.c, attribute.span, "L0613", "`@(subsystem=...)` is only allowed on the root package clause")
 			continue
 		}
 		if seen {

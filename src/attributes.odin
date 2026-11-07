@@ -58,7 +58,8 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		// Also read before import discovery by `collect_source_provider_defaults`.
 		return {{.Package_Clause}, .Value_Required, {}}, true
 	case "subsystem":
-		// Where and how often is `validate_subsystem_attributes`'.
+		// Where is `validate_root_only_attributes`', how often
+		// `validate_subsystem_attributes`'.
 		return {{.Package_Clause}, .Value_Required, {}}, true
 	case "require_results":
 		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl, .Struct_Decl, .Union_Decl}, .None, {}}, true
@@ -250,7 +251,7 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
 		validate_attribute_list(k, file.attributes, .Package_Clause)
-		validate_provider_attributes(k, pkg, file)
+		validate_root_only_attributes(k, pkg, file)
 		validate_item_attributes(k, file.items)
 		for item in file.active_items {
 			#partial switch v in item {
