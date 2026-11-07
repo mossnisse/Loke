@@ -898,6 +898,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.reaches_mutable = make(map[Type_Id]bool, c.semantic_allocator)
 	c.provider_carriers = make(map[Type_Id]bool, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
+	c.may_hold_address = make(map[Type_Id]bool, c.semantic_allocator)
 	c.region_shapes = make(map[Type_Id][]Prov_Region_Content, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
 	c.variant_constructors = make(map[Variant_Key]Symbol_Id, c.semantic_allocator)

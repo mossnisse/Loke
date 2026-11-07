@@ -311,10 +311,10 @@ begin_operand_temporaries :: proc(e: ^Emitter) -> Operand_Temporaries {
 // ends, which nothing tells from an earlier end once no value names it. An
 // operand of types holding no address, consumed whole, and owing no drop at the
 // end of its full expression or its block names none of its temporaries, so its
-// large slots serve the operands after it. A borrow is not the only address: a
-// `[^]T` from `unsafe.raw_data` names its temporary with no borrow to show it
-// (`type_may_hold_address`). Each element of a long literal of
-// large calls otherwise kept a slot of its own in the frame. One that owes no
+// large slots serve the operands after it; each element of a long literal of large
+// calls otherwise kept a slot of its own in the frame. A borrow is not the only
+// address: a `[^]T` from `unsafe.raw_data` names its temporary with no borrow to
+// show it (`type_may_hold_address`). One that owes no
 // drop has also cleared the unwind actions of its temporaries, which the next
 // one takes again (`unwind_rewind`), whatever it borrows; a long map literal's
 // entries each kept their own. A caller ends the reuse once its operands are

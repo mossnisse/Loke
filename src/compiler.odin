@@ -198,6 +198,8 @@ Compiler :: struct {
 	reaches_mutable:    map[Type_Id]bool,
 	provider_carriers:  map[Type_Id]bool,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
+	// `type_may_hold_address`, asked of each literal element's type during emission.
+	may_hold_address:   map[Type_Id]bool,
 	// Per type, `region_field_shape` with every region empty.
 	region_shapes:      map[Type_Id][]Prov_Region_Content,
 	// Whether a map type's shape gives constant keys entries of their own.

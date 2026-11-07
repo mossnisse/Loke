@@ -228,11 +228,18 @@ type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // pointer or `rawptr`, or an allocator, procedure, or interface value referring to
 // storage elsewhere, inline or in what the value owns. Provenance follows only
 // checked borrows; `unsafe.raw_data` leaves an address no borrow records, and a
-// value of a type holding none cannot name a temporary at all.
+// value of a type holding none cannot name a temporary at all. Only the queried
+// type is cached, as `type_carries_borrow` caches: a walk answers `false` for a
+// type it is already inside, which is right only for the walk.
 type_may_hold_address :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.may_hold_address[type]; found {
+		return cached
+	}
 	seen: Type_Walk
 	defer delete(seen)
-	return type_may_hold_address_walk(c, type, &seen)
+	holds := type_may_hold_address_walk(c, type, &seen)
+	c.may_hold_address[type] = holds
+	return holds
 }
 
 @(private = "file")
@@ -244,9 +251,10 @@ type_may_hold_address_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) 
 	if info == nil || !type_walk_enter(seen, id, info) {
 		return false
 	}
+	// What `type_is_carrier` leaves out: unchecked pointers, and the values that
+	// refer to code or storage elsewhere without a carrier's provenance.
 	#partial switch info.kind {
-	case .Raw_Pointer, .C_Pointer, .Pointer, .Slice, .String_View, .CString_View,
-	     .Allocator, .Proc, .Interface, .Dyn:
+	case .Raw_Pointer, .C_Pointer, .Proc, .Interface:
 		return true
 	}
 	for part in type_owned_parts(c, info) {
