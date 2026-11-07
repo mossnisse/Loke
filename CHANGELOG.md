@@ -1676,6 +1676,10 @@ checklist.
   A `core:math/repro` call that takes its slow path now uses 1.2 to 5.6 MB
   rather than 4.7 to 24 MB, so one constant can fold eight or more such calls,
   and a compile-time `math.fma` uses about a third of what it did.
+- The specification now documents a foreign import's path forms: `system:name` for a library on
+  the linker's search path, and a relative path resolved from the importing file's directory, as a
+  relative package import is, whatever directory the compiler runs in
+  ([Foreign system](design.md#foreign-system)).
 
 ### Fixed
 

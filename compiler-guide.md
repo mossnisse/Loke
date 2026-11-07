@@ -187,7 +187,8 @@ the repository's `core/` explicitly:
 Custom collections use the same form: `-collection vendor=path\to\packages`
 lets source import `"vendor:package_name"`. Collection paths supplied on the
 command line are relative to the shell's working directory; relative imports
-in source are resolved from the importing file.
+in source, package and [foreign](design.md#foreign-system) imports alike, are
+resolved from the importing file's directory.
 
 ## Projects
 

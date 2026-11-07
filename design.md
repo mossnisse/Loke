@@ -10377,7 +10377,26 @@ run in sequence.
 ## Foreign system
 
 The foreign system lets Loke code call foreign code, such as a C library. A
-foreign import identifies a library or object file for the linker.
+foreign import identifies a library or object file for the linker. Its path
+takes one of three forms:
+
+- `system:name` names a library the linker finds on its own search path, such
+  as the Windows SDK's `kernel32.lib`. The `.lib` or `.a` suffix, in any case,
+  may be left out: `"system:kernel32"` and `"system:kernel32.LIB"` name the same
+  library.
+- A relative path, with no prefix, names a file relative to the directory of
+  the source file that contains the import, as a relative package import does
+  (see [Import statement](#import-statement)). It does not depend on the
+  working directory the compiler runs in. `"square.obj"` names a file beside
+  the importing file, and `"../lib/square.obj"` one in a sibling directory.
+- An absolute path names that file.
+
+A build that links, an executable or a test build, requires each file named by
+a path to exist (`L0631`); a file named twice, in any spelling, is linked once.
+A `.asm` file is assembled with NASM, and a `.s` or `.S` file by Clang, before
+the link. An [object build](#build-modes) links nothing, so its consumer links
+the files its foreign imports name, and it rejects an assembly import
+(`L0603`).
 
 ### Foreign-ABI-safe types
 
