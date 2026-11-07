@@ -1,0 +1,14 @@
+// compiler-guide.md "C runtime": `corpus_test.odin` builds the object imported
+// below from `crt_mismatch.c`, once for each C runtime, and expects L0755 only
+// for the dynamic one.
+package main;
+
+foreign import crt_mismatch "../tmp/crt-mismatch.obj";
+
+foreign crt_mismatch {
+	crt_mismatch_answer :: proc "c" () -> i32 ---;
+}
+
+main :: proc() {
+	_ = crt_mismatch_answer();
+}

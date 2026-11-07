@@ -1113,6 +1113,10 @@ checklist.
 
 ### Added
 
+- An executable links the static C runtime, as `/MT` selects; [C runtime](compiler-guide.md#c-runtime)
+  documents this and which builds of a foreign library match it. A foreign import of an object or
+  static library compiled for another runtime, as `/MD`, `/MDd`, or `/MTd` select, now warns with
+  `L0755` and names the library: the build links both runtimes, and neither linker said so.
 - [`@(subsystem = "windows")`](design.md#windowed-executables) on the root package clause links a
   windowed executable, one that gets no console window, for a game or other GUI program. `main`,
   `os.args` and the exit status are unchanged, and a `-test` build stays a console program. A

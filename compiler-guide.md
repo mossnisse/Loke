@@ -394,6 +394,35 @@ or a failing test under `-test`, and `2` for invalid command-line usage or
 backend/toolchain failure. In PowerShell, inspect `$LASTEXITCODE` immediately
 after the command.
 
+## C runtime
+
+An executable links Microsoft's static C runtime, the one the MSVC compiler's
+`/MT` selects. It needs no DLL beyond the ones Windows itself provides, so it
+runs on a machine without the Visual C++ redistributable.
+
+A foreign library compiled for a different C runtime brings that runtime with
+it, and the program then holds two, each with its own heap, `errno`, and
+standard streams. Neither linker reports this, so choose the build of each
+library that matches:
+
+| A foreign import of | Links |
+| --- | --- |
+| a static library or object compiled with `/MT` | one runtime |
+| a DLL's import library | one runtime here; the DLL keeps its own |
+| a static library or object compiled with `/MD`, `/MDd`, or `/MTd` | two runtimes, with warning `L0755` at the import |
+
+A DLL's runtime stays inside the DLL, so memory a DLL allocates is released
+through that library's own functions, never `free` from the program's side;
+the same goes for a `FILE *` or other C runtime handle. GLFW's prebuilt Windows
+binaries, for example, have `glfw3_mt.lib` compiled with `/MT`, `glfw3.lib`
+with `/MD`, and `glfw3dll.lib` for `glfw3.dll`: import the first or the last.
+
+`lokec` reads the runtime each object asks for from its `/DEFAULTLIB`
+directives. It reads the objects and libraries an import names by path; a
+`system:` library comes from the Windows SDK or the MSVC toolset, which use
+the same runtime, and is not read. An object build links nothing, so the C
+host's link chooses its runtime.
+
 ## Building an object for a C host
 
 ```powershell

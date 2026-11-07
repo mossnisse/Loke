@@ -2224,6 +2224,56 @@ output_returns_a_failed_collection :: proc(t: ^testing.T) {
 	testing.expectf(t, wait_err != nil || run_state.exit_code == 0, "`output` returned the wrong outcome (exit %d)", run_state.exit_code)
 }
 
+// compiler-guide.md "C runtime": an object compiled for the dynamic C runtime
+// draws L0755 at its import, and the build still succeeds; one compiled for
+// the static runtime the executable links draws nothing. clang and link.exe
+// both link the mismatch silently, so without the warning a program would
+// carry two runtimes and need the Visual C++ redistributable.
+@(test)
+a_foreign_object_for_the_dynamic_crt_is_warned_about :: proc(t: ^testing.T) {
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so no foreign object is compiled")
+		return
+	}
+	os.make_directory(TMP)
+	// The path `crt_mismatch.loke` imports.
+	obj := fmt.tprintf("%s/crt-mismatch.obj", TMP)
+	for dynamic_crt in ([]bool{true, false}) {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, clang, "-c", "tests/obj/crt_mismatch.c", "-o", obj)
+		if dynamic_crt {
+			append(&command, "-fms-runtime-lib=dll")
+		}
+		append(&command, ..include_flags)
+		cc_state, _, cc_stderr, cc_err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+		if !testing.expectf(t, cc_err == nil && cc_state.exit_code == 0, "cannot compile the object:\n%s", string(cc_stderr)) {
+			return
+		}
+		exe := fmt.tprintf("%s/crt-mismatch.exe", TMP)
+		state, _, stderr, err := exec(
+			os.Process_Desc{command = []string{compiler_path(), "tests/obj/crt_mismatch.loke", "-o", exe}},
+			context.allocator,
+		)
+		if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+			return
+		}
+		report := string(stderr)
+		testing.expectf(t, state.exit_code == 0, "the build failed (dynamic_crt=%v):\n%s", dynamic_crt, report)
+		if dynamic_crt {
+			testing.expectf(
+				t,
+				strings.contains(report, "L0755") && strings.contains(report, "crt-mismatch.obj") &&
+				strings.contains(report, "`/MD`"),
+				"expected L0755 naming the object and `/MD`, got:\n%s",
+				report,
+			)
+		} else {
+			testing.expectf(t, !strings.contains(report, "L0755"), "a static-runtime object drew L0755:\n%s", report)
+		}
+	}
+}
+
 // standard-library "`core:fmt`" and "`core:strconv`": when the runtime cannot
 // create its "C" numeric locale, reading a float panics instead of using the
 // process locale. `numeric_locale_fault.c` builds its own copy of

@@ -4,6 +4,7 @@
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
@@ -330,9 +331,45 @@ collect_foreign_link_inputs :: proc(
 			}
 			continue
 		}
+		if extension := filepath.ext(resolved); extension != ".s" && extension != ".S" {
+			warn_foreign_crt(c, imp, resolved)
+		}
 		append(&out, resolved)
 	}
 	return out[:], objects[:], ok
+}
+
+// compiler-guide.md "C runtime": an executable links the static C runtime, and
+// neither link.exe nor lld-link says when an input asks for another, so the
+// program would quietly hold two. A `system:` library comes from the SDK or
+// the toolset, which link the same one, and is not read.
+@(private = "file")
+warn_foreign_crt :: proc(c: ^Compiler, imp: ^Item_Foreign_Import, path: string) {
+	// Not the emission arena, which would keep a large archive to the end.
+	data, err := os.read_entire_file(path, runtime.heap_allocator())
+	if err != nil {
+		// The linker names an input it cannot read.
+		return
+	}
+	defer delete(data, runtime.heap_allocator())
+	CRT_NAMES := [Crt_Kind]string {
+		.Static        = "the static C runtime (`/MT`)",
+		.Static_Debug  = "the debug static C runtime (`/MTd`)",
+		.Dynamic       = "the dynamic C runtime (`/MD`)",
+		.Dynamic_Debug = "the debug dynamic C runtime (`/MDd`)",
+	}
+	for kind in coff_requested_crts(data) - {.Static} {
+		warnf(
+			c, imp.span, "L0755",
+			"`%s` was compiled for %s, but the executable links %s, so it would hold two C runtimes",
+			path, CRT_NAMES[kind], CRT_NAMES[.Static],
+		)
+		add_notef(
+			c, NO_SPAN,
+			"link a build of the library compiled with `/MT`, or its DLL through the DLL's import library",
+		)
+		return
+	}
 }
 
 @(private = "file")

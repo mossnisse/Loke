@@ -480,7 +480,13 @@ Implementation order:
    Windows x64 is the only target, since an option that accepts one value
    would fix triple spelling and normalization before a second target forces
    those decisions. Add it with the first additional target; recognizing a
-   triple must not imply support for its ABI or runtime.
+   triple must not imply support for its ABI or runtime. The C runtime is one
+   of these choices: an executable links the static one
+   ([C runtime](compiler-guide.md#c-runtime)), and a static library that ships
+   only for the dynamic one draws `L0755`. A dynamic-runtime option would
+   build the runtime's cached objects for that runtime, keep the static one as
+   the default, and turn the warning around; it can ship before the target
+   boundary once such a library is a real need.
 2. **Supported configurations.** Name the initial Linux and macOS architectures
    and supported host/target pairs. Decide toolchain discovery, SDK/sysroot
    selection, foreign-library resolution, and artifact naming before promising

@@ -1022,6 +1022,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, and foreign inputs. |
 | `emit_llvm_runtime_cache.odin` | The prebuilt runtime objects, and whether a link takes them or the sources. |
+| `emit_llvm_coff.odin` | The C runtime a foreign object or static library asks for, read from its `.drectve` sections. |
 | `emit_llvm_layout_probe.odin` | `-check-layout`: the module that asks LLVM for the checker's layout facts. |
 | `subprocess/subprocess.odin` | Child-process execution without busy-waiting; also used by the test harness. |
 

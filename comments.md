@@ -3644,6 +3644,27 @@ A test cannot choose the processor it runs on, so
 which keeps the linker from taking the library's, and reports no level; the
 runtime's real check then reports a missing `x86-64-v2` on any machine.
 
+### Executables link the static C runtime
+
+The static runtime is clang's default for the MSVC target, and it gives a
+program that runs from its own directory on any Windows 10 or later machine,
+with no Visual C++ redistributable to install: what a game or command-line
+tool handed to someone else needs. The dynamic runtime saves a few hundred
+kilobytes per executable, and lets a static library built only with `/MD` link
+cleanly. A [C runtime](compiler-guide.md#c-runtime) option would serve that
+case, but it doubles the runtime cache and the configurations to test, and
+for now each common library ships a build that matches.
+
+The mismatch gets a check because nothing else reports it. Linking an object
+built with `/MD` into a `/MT` program succeeds under link.exe and lld-link
+alike, and the program quietly gains `VCRUNTIME140.dll` and a second heap.
+`L0755` is a warning, not an error: a library whose runtime use stays inside
+it, never handing memory or a `FILE *` across, still works, and an error would
+leave no way to link one that has no `/MT` build. The runtime is read from each
+object's `/DEFAULTLIB` directives, which is what the linker itself acts on,
+rather than from the executable's imports after the link, so the warning
+can point at the import responsible.
+
 ### The evaluator's memory limit counts what it holds
 
 [Compile-time evaluation](design.md#compile-time-procedure-evaluation) has a
