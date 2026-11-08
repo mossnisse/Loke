@@ -13,3 +13,6 @@ this task may use `arena`'s allocator, which the task this `spawn` started on an
 L0732
 @56:3
 this task may use `parent`'s allocator, which a task started earlier reserves until the join
+L0732
+@76:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join

@@ -561,9 +561,9 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 		}
 		set := prov_visible_region(graph, prov_used_region(graph, argument))
 		region_merge(&set, prov_visible_region(graph, prov_provider_viewed_by(graph, argument)))
-		if region_is_empty(set) {
-			continue
-		}
+		// An argument in no region, as a container still in its allocator-unbound
+		// zero state, is known to be in none: nil regions read as unknown
+		// (design.md "Allocators").
 		if out == nil {
 			out = make([]Region_Set, count, graph.alloc)
 		}

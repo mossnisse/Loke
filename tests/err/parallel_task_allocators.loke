@@ -57,3 +57,22 @@ main :: proc() {
 	}
 	_ = fan_out(mem.default_allocator());
 }
+
+// A helper that grows a local the task built with a given allocator uses that
+// allocator's region, though the task's own body never allocates.
+grow :: proc(values: inout [dynamic]int) { values.append(1); }
+
+grow_given :: proc(allocator: Allocator) -> int {
+	values: [dynamic]int via allocator = {};
+	grow(inout values);
+	return values.len();
+}
+
+fan_out_helpers :: proc() {
+	arena := mem.Arena.init();
+	a, b: int;
+	parallel {
+		spawn a = grow_given(arena.allocator());
+		spawn b = grow_given(arena.allocator());
+	}
+}

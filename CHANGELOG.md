@@ -1771,6 +1771,12 @@ checklist.
 
 ### Fixed
 
+- A task that hands its own zero-valued container to a helper that grows it, through `inout`,
+  `^mut`, a method's `inout` receiver, or a move in and out, reserves no allocator region
+  ([Allocators and tasks](design.md#allocators-and-tasks)): the container binds the default
+  provider when it first needs storage. Two such tasks in one `parallel` block were `L0732`, as
+  sharing a region the compiler could not name; they now compile. A container built `via` another
+  allocator still reserves that allocator's region through the helper.
 - A [map](design.md#maps) spreads keys whose hashes differ only in their high bits. It took a key's
   slot from the low bits of its `hash` alone, and the built-in integer hash carries bits only upward,
   so the bit patterns of small floats, `math.to_bits(f64(i))`, all started in one probe run and made

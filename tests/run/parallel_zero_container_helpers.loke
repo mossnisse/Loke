@@ -1,0 +1,48 @@
+// design.md "Allocators and tasks": a container in its allocator-unbound zero
+// state binds the default provider when it first needs storage (design.md
+// "Allocators"), so a task that hands its own zero-valued local to a helper that
+// grows it, through `inout`, `^mut`, a method's `inout` receiver, or a move in
+// and out, reserves no region, and two such tasks run side by side.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Bag :: struct { items: [dynamic]int }
+
+impl Bag {
+	add :: proc(self: inout, value: int) { self.items.append(value); }
+}
+
+grow :: proc(xs: inout [dynamic]int) { xs.append(1); }
+grow_through :: proc(xs: ^mut [dynamic]int) { xs.append(2); }
+grow_moved :: proc(xs: move [dynamic]int) -> [dynamic]int {
+	ys := move(xs);
+	ys.append(3);
+	return ys;
+}
+
+work :: proc(n: int) -> int {
+	xs: [dynamic]int = {};
+	grow(inout xs);
+	grow_through(&mut xs);
+	xs = grow_moved(move(xs));
+	bag: Bag = {};
+	bag.add(n);
+	return xs.len() + bag.items[0];
+}
+
+main :: proc() {
+	pool := thread.Pool.init(2);
+	a, b: int;
+	parallel (&pool) {
+		spawn a = work(10);
+		spawn b = work(20);
+	}
+	c, d: int;
+	parallel {
+		spawn c = work(30);
+		spawn d = work(40);
+	}
+	fmt.println(a, b, c, d);
+}
