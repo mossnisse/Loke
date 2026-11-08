@@ -32,11 +32,15 @@ main :: proc() {
 	foreach (i in 0 ..< N) {
 		if (Bits{math.to_bits(f64(i))} in floats) { found += 1; }
 	}
-	// A clustered table compares about N*N/2 times; a spread one, a few per key.
-	fmt.println(found, compares < 8*N);
+	// A clustered table compares about N*N/2 times. A spread one averages about
+	// 7*N here, since linear probing inserts at loads up to seven eighths, and
+	// the count varies with the per-table seed: some runs pass 9*N. The bound
+	// leaves that tail room and still sits far below the quadratic count.
+	BOUND :: 64*N;
+	fmt.println(found, compares < BOUND);
 
 	compares = 0;
 	shifted: map[Shifted]int = {};
 	foreach (i in 0 ..< N) { shifted[Shifted{u64(i)}] = i; }
-	fmt.println(shifted.len(), compares < 8*N);
+	fmt.println(shifted.len(), compares < BOUND);
 }
