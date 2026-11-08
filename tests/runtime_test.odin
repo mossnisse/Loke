@@ -319,7 +319,7 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	if includes == "" {
 		discovered := make([dynamic]string, context.temp_allocator)
 		for flag, index in flags {
-			if index > 0 && flags[index - 1] == "-isystem" {
+			if index > 0 && flags[index - 1] == "-idirafter" {
 				append(&discovered, flag)
 			}
 		}

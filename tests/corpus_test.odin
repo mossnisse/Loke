@@ -2460,7 +2460,33 @@ the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 	)
 }
 
-// clang plus the `-isystem`/`-L` flags its Windows target needs outside a
+// compiler-guide.md "Building an object for a C host": the reported flags alone
+// compile and link a C host that includes `windows.h` and uses an `_mm_*`
+// intrinsic. Passed as `-isystem`, MSVC's `immintrin.h` came ahead of clang's
+// and the intrinsic was left undefined at link; without the SDK's `um` and
+// `shared` directories `windows.h` was not found.
+@(test)
+the_reported_flags_compile_a_windows_c_host :: proc(t: ^testing.T) {
+	clang, flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so no C host is compiled")
+		return
+	}
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/sdk-host.exe", TMP)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, clang, "tests/obj/sdk_host.c", "-o", exe)
+	append(&command, ..flags)
+	state, _, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "the reported flags do not build a Windows C host:\n%s", string(stderr)) {
+		return
+	}
+	run_state, _, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(t, run_state.exit_code == 0, "the SDK host reported failure %d (see `sdk_host.c`)", run_state.exit_code)
+}
+
+// clang plus the `-idirafter`/`-L` flags its Windows target needs outside a
 // developer prompt, asked of the compiler instead of worked out again here:
 // `-print-toolchain` reports the discovery `link` performs in
 // `src/emit_llvm_toolchain.odin`, so one set of rules decides what a build and

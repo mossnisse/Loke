@@ -142,7 +142,7 @@ runtime_build_manifest :: proc(runtime_dir: string, commands: [][]string) -> (ma
 		stamp, _ = os.modification_time_by_path(find_on_path(clang))
 	}
 	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
-	// clang reads it when the commands name no `-isystem`.
+	// clang reads it when the commands name no `-idirafter`.
 	fmt.sbprintfln(&b, "INCLUDE %s", os.get_env("INCLUDE", context.temp_allocator))
 	entries, err := os.read_all_directory_by_path(runtime_dir, context.temp_allocator)
 	if err != nil {

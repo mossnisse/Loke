@@ -429,10 +429,13 @@ find_clang :: proc() -> string {
 }
 
 // What `msvc_include_dirs` and `msvc_lib_dir` found, as clang flags.
+// `-idirafter` searches them after clang's own headers, where clang puts
+// INCLUDE's: MSVC's `immintrin.h` ahead of clang's declares the `_mm_*`
+// intrinsics as functions, which then fail to link from a C host.
 @(private)
 append_msvc_flags :: proc(command: ^[dynamic]string, includes: []string, lib: string) {
 	for include in includes {
-		append(command, "-isystem", include)
+		append(command, "-idirafter", include)
 	}
 	if lib != "" {
 		append(command, "-L", lib)
@@ -452,7 +455,10 @@ msvc_lib_dir :: proc() -> (dir: string, complete: bool) {
 	return "", false
 }
 
-// The MSVC and UCRT headers, or none when INCLUDE already supplies them.
+// The MSVC, UCRT, and Windows SDK headers, or none when INCLUDE already
+// supplies them. The runtime needs only the first two; `um` and `shared` are
+// what `windows.h` needs, so a C host compiled with `-print-toolchain`'s flags
+// can include it. Readiness asks only for what a link uses.
 @(private = "file")
 msvc_include_dirs :: proc() -> (dirs: []string, complete: bool) {
 	if os.get_env("INCLUDE", context.allocator) != "" {
@@ -468,7 +474,12 @@ msvc_include_dirs :: proc() -> (dirs: []string, complete: bool) {
 		"ucrt",
 	)
 	if sdk != "" {
-		append(&out, join_path({sdk, "ucrt"}))
+		for child in ([]string{"ucrt", "um", "shared"}) {
+			dir := join_path({sdk, child})
+			if os.is_dir(dir) {
+				append(&out, dir)
+			}
+		}
 	}
 	return out[:], root != "" && sdk != ""
 }
