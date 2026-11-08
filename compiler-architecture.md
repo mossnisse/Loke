@@ -625,15 +625,20 @@ Keep these contracts:
   region marked as read below (`Region_Set.loaded`), as does a read of a carrier out of
   the parameter, a record parameter's included, and a call substitutes that with all its
   argument's carriers reach (`prov_reached_regions`); the parameter's region unmarked is
-  only what the argument names (`prov_substitute_region`). The mark also says what was
-  read (`Loaded_Read`): a value holding owners alone takes only what the owners reached
-  are in, not what the handles beside them name. A read of a carrier leaves that open,
-  as does a record parameter read whole (`prov_region_for_symbol`) and a value holding
-  carriers read through a pointer parameter (`prov_merge_read_through`); a read through
-  the carrier, or through a local copy of it, decides it (`region_read_through`), and
-  so does a call the value is passed to, by what the callee's summary says it read
+  only what the argument names (`prov_substitute_region`). The set also says what was
+  read of each parameter (`Region_Read`), apart for what the argument names
+  (`Region_Set.named`) and what its carriers lead to (`Region_Set.below`): a value
+  holding owners alone takes only what the owners there are in, not what the handles
+  beside them name. A read of a carrier leaves that open, as does a carrier parameter's
+  own region, seeded as what it views (`prov_parameter_read`), a record parameter read
+  whole (`prov_region_for_symbol`), and a value holding carriers read through a pointer
+  parameter (`prov_merge_read_through`); a read through the carrier, or through a local
+  copy of it, decides it (`region_read_through`), and so does a call the value is passed
+  to, by what the callee's summary says it read at each level
   (`prov_substitute_region`). A decided read never narrows, so an owner the body built
-  with a handle it read still stands for that handle. A swap or sort records a copy of any
+  with a handle it read still stands for that handle. What a carrier a call returned
+  views is what its summary's result dependencies take of each argument, as a view,
+  substituted as any region is (`prov_call_viewed_region`). A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
   so it is no store through a carrier to check.

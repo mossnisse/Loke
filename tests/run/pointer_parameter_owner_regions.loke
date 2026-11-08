@@ -1,0 +1,92 @@
+// design.md "Allocator regions and region provenance": an owner read through a pointer
+// parameter is in what the owners the argument points at are in, and not in what an
+// allocator handle beside them names. Each `source` keeps the handle being reset beside
+// text from another arena, so each reset leaves the copy alone, read directly, through
+// a local copy of the pointer, by a callee the pointer is passed on to, or through a
+// carrier a call returned, from the pointer or from a record parameter holding it.
+// tests/err/call_result_carrier_regions rejects the same reads where the text is in the
+// reset arena.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strings";
+
+Holder :: struct { allocator: mem.Allocator, text: string }
+Reader :: struct { holder: ^Holder }
+
+same :: proc(holder: ^Holder) -> ^Holder { return holder; }
+get :: proc(reader: Reader) -> ^Holder { return reader.holder; }
+
+read_direct :: proc(holder: ^Holder) -> string { return holder^.text; }
+read_local :: proc(holder: ^Holder) -> string { pointer := holder; return pointer^.text; }
+read_forwarded :: proc(holder: ^Holder) -> string { return read_direct(holder); }
+read_returned :: proc(holder: ^Holder) -> string { return same(holder)^.text; }
+read_record :: proc(reader: Reader) -> string { return get(reader)^.text; }
+
+direct :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("direct", other.allocator())};
+		kept = read_direct(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("local", other.allocator())};
+		kept = read_local(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("forward", other.allocator())};
+		kept = read_forwarded(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+returned :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("returned", other.allocator())};
+		kept = read_returned(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("held", other.allocator())};
+		kept = read_record(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+main :: proc() {
+	buffer := [4096]u8{};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	fmt.println(direct(arena.allocator()), through_local(arena.allocator()), forwarded(arena.allocator()),
+		returned(arena.allocator()), record(arena.allocator()));
+}

@@ -1,0 +1,80 @@
+// design.md "Allocator regions and region provenance": a value read through a carrier a
+// call returned is in what the carrier views, which the callee's summary says it takes
+// of each argument. Where the argument's targets are a parameter's, which this body
+// cannot name, such reads named no region at all: each caller reset its arena while a
+// copy of the arena's text lived on. A read of owners alone through a pointer parameter
+// takes the owners there and not the handle beside them
+// (tests/run/pointer_parameter_owner_regions), but the text here is in the reset arena,
+// and an owner built with a handle read through the parameter is in that handle's region.
+package main;
+
+import "core:mem";
+import "core:strings";
+
+Holder :: struct { allocator: mem.Allocator, text: string }
+Reader :: struct { holder: ^Holder }
+
+same :: proc(holder: ^Holder) -> ^Holder { return holder; }
+get :: proc(reader: Reader) -> ^Holder { return reader.holder; }
+
+read_direct :: proc(holder: ^Holder) -> string { return holder^.text; }
+read_returned :: proc(holder: ^Holder) -> string { return same(holder)^.text; }
+read_record :: proc(reader: Reader) -> string { return get(reader)^.text; }
+read_value :: proc(holder: ^Holder) -> string { f := same; return f(holder)^.text; }
+built :: proc(holder: ^Holder) -> string { return strings.copy("built", holder^.allocator); }
+built_forwarded :: proc(holder: ^Holder) -> string { return built(holder); }
+
+direct :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("direct", allocator)};
+		kept = read_direct(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+returned :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("returned", allocator)};
+		kept = read_returned(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("held", allocator)};
+		kept = read_record(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+procedure_value :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("value", allocator)};
+		kept = read_value(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+// The text beside the handle is in another arena, but the copy is built with the handle.
+handle :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("text", other.allocator())};
+		kept = built_forwarded(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+main :: proc() {}

@@ -47,6 +47,13 @@ checklist.
   a record, and a call copying one of its carriers' handles to another, had no region at all, so a
   reset while the result was live compiled and read freed memory. These are now `L0537`. Upgrade by
   passing the `Allocator` as a parameter of its own.
+- A value read through a carrier a call returned is in what that carrier views, which the callee's
+  result dependencies say it takes of each argument
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  Where the argument was a parameter, as `same(holder)^.text` or `get(reader)^.text`, or the call was
+  through a procedure value, the read was in no region, so a caller's reset while a copy lived on
+  compiled and read freed memory. These are now `L0537`. Upgrade by ending the copy's use before the
+  reset.
 - A value [`unsafe.take`](design.md#uninitialized-capacity) reads out keeps the
   [allocator regions](design.md#allocator-regions-and-region-provenance) it was in, as one `exchange`
   reads out does. It had none the analysis could name, so returning such a value from an arena of the
@@ -1753,6 +1760,10 @@ checklist.
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
   `pointer := reader.holder; return pointer^.items;` was `L0537` at a reset of the handle beside
   `items`, which the direct `return reader.holder^.items` was not.
+- So is an owner read through a pointer parameter itself, as `holder^.text` with `holder: ^Holder`,
+  directly, through a local copy of the pointer, or by a callee the pointer is passed on to. It was
+  `L0537` at a reset of the `allocator` beside `text`, though the text was in another arena and the
+  same read through a record holding the pointer was accepted.
 - A container literal's element that hands one of its temporaries' addresses to a call keeps that
   temporary's storage until the literal is built
   ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).

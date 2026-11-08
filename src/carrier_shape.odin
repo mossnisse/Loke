@@ -452,11 +452,11 @@ Region_Set :: struct {
 	// these, and only what the argument names for the rest
 	// (`prov_substitute_region`).
 	loaded:  u64,
-	// What each loaded parameter's read was (`Loaded_Read`): of `loaded`, those
-	// read as a value that may be or lead to an allocator handle, and those whose
-	// read a read through a carrier decides. The rest were read as owners alone.
-	loaded_handles: u64,
-	loaded_viewed:  u64,
+	// What each parameter's region was read as (`Region_Read`): `named`, of what
+	// the argument names, for every parameter in `params`; `below`, of what its
+	// carriers lead to, for those in `loaded`.
+	named:   Param_Reads,
+	below:   Param_Reads,
 	default: bool, // the default provider's region
 	unknown: bool,
 	locals:  u64,  // one bit per local `mem.Arena` or `mem.Scratch`
@@ -469,34 +469,73 @@ Region_Set :: struct {
 REGION_LOCAL_LIMIT :: 64
 REGION_PARAM_LIMIT :: 64
 
-region_add_param :: proc(set: ^Region_Set, index: int) {
+// What a set's parameters were read as at one level (`Region_Read`), a bit per
+// parameter: those read as a value that may be or lead to an allocator handle,
+// and those whose read a read through a carrier decides. A parameter in neither
+// was read as owners alone.
+Param_Reads :: struct {
+	handles: u64,
+	viewed:  u64,
+}
+
+// What parameter `index`'s region was read as at one level. Merged reads keep
+// the widest: `Handles` over `Viewed` over `Owners`.
+param_read :: proc(reads: Param_Reads, index: int) -> Region_Read {
+	if index >= REGION_PARAM_LIMIT { return .Handles }
+	bit := u64(1) << uint(index)
+	switch {
+	case reads.handles & bit != 0: return .Handles
+	case reads.viewed & bit != 0:  return .Viewed
+	}
+	return .Owners
+}
+
+@(private = "file")
+param_reads_add :: proc(reads: ^Param_Reads, bit: u64, read: Region_Read) {
+	switch read {
+	case .Owners:
+	case .Viewed:  reads.viewed |= bit
+	case .Handles: reads.handles |= bit
+	}
+}
+
+// The parameters whose region at a call takes the handles their argument names,
+// or its carriers lead to: every read but one of owners alone.
+param_reads_take_handles :: proc(reads: Param_Reads) -> u64 {
+	return reads.handles | reads.viewed
+}
+
+// A parameter's region, read of what its argument names as `read`. A parameter
+// enters a set only here or by a merge, so one no read decided takes the handles
+// its argument names.
+region_add_param :: proc(set: ^Region_Set, index: int, read := Region_Read.Handles) {
 	if index < REGION_PARAM_LIMIT {
-		set.params |= u64(1) << uint(index)
+		bit := u64(1) << uint(index)
+		set.params |= bit
+		param_reads_add(&set.named, bit, read)
 	} else {
 		set.unknown, set.crowded_params = true, true
 	}
 }
 
-// design.md "Allocator regions and region provenance": what a read at a load below
-// a parameter read, which says what its region stands for at a call. A handle
-// beside an owner backs none of it, so a read of owners alone, as a `string`
-// through `reader.holder^.text`, stands for what the owners the argument's carriers
-// lead to are in, and not for what the handles there name. A read of a carrier, as
-// `reader.holder`, is what the carrier views, and only a read through it says what
-// that is (`region_read_through`); until then it counts as `Handles`.
-Loaded_Read :: enum u8 { Owners, Viewed, Handles }
+// design.md "Allocator regions and region provenance": what a read of a
+// parameter's region read, which says what that region stands for at a call. A
+// handle beside an owner backs none of it, so a read of owners alone, as a
+// `string` through `holder^.text` or `reader.holder^.text`, stands for what the
+// owners the argument names, or its carriers lead to, are in, and not for what the
+// handles there name. A read of a carrier, as `reader.holder`, or a carrier
+// parameter's own region, is what the carrier views, and only a read through it
+// says what that is (`region_read_through`); until then it counts as `Handles`.
+Region_Read :: enum u8 { Owners, Viewed, Handles }
 
-// A parameter's region read at a load below what it names (`Region_Set.loaded`).
-region_add_loaded_param :: proc(set: ^Region_Set, index: int, read := Loaded_Read.Handles) {
-	region_add_param(set, index)
+// A parameter's region read at a load below what it names (`Region_Set.loaded`),
+// as `read` there and of what the argument names.
+region_add_loaded_param :: proc(set: ^Region_Set, index: int, read := Region_Read.Handles) {
+	region_add_param(set, index, read)
 	if index < REGION_PARAM_LIMIT {
 		bit := u64(1) << uint(index)
 		set.loaded |= bit
-		switch read {
-		case .Owners:
-		case .Viewed:  set.loaded_viewed |= bit
-		case .Handles: set.loaded_handles |= bit
-		}
+		param_reads_add(&set.below, bit, read)
 	}
 }
 
@@ -505,8 +544,10 @@ region_remove_param :: proc(set: ^Region_Set, index: int) {
 		bit := u64(1) << uint(index)
 		set.params &~= bit
 		set.loaded &~= bit
-		set.loaded_handles &~= bit
-		set.loaded_viewed &~= bit
+		set.named.handles &~= bit
+		set.named.viewed &~= bit
+		set.below.handles &~= bit
+		set.below.viewed &~= bit
 	}
 }
 
@@ -518,46 +559,34 @@ region_has_loaded_param :: proc(set: Region_Set, index: int) -> bool {
 	return index < REGION_PARAM_LIMIT && set.loaded & (u64(1) << uint(index)) != 0
 }
 
-// What loaded parameter `index`'s read was. Merged sets keep the widest read:
-// `Handles` over `Viewed` over `Owners`.
-region_loaded_read :: proc(set: Region_Set, index: int) -> Loaded_Read {
-	if index >= REGION_PARAM_LIMIT { return .Handles }
-	bit := u64(1) << uint(index)
-	switch {
-	case set.loaded_handles & bit != 0: return .Handles
-	case set.loaded_viewed & bit != 0:  return .Viewed
-	}
-	return .Owners
-}
-
-// The loaded parameters whose region at a call takes the handles their
-// argument's carriers lead to: every read but one of owners alone.
-region_loaded_takes_handles :: proc(set: Region_Set) -> u64 {
-	return set.loaded_handles | set.loaded_viewed
-}
-
 // A read through a carrier of what `set`'s carriers view, as a value `read` says
 // holds owners alone or may lead to a handle, decides what those carriers' reads
-// were. A read that is itself of a carrier decides nothing. Reads already decided
-// stay as they were: one of a handle, stored in an owner this body built with it,
-// still stands for the handle when that owner is read.
-region_read_through :: proc(set: ^Region_Set, read: Loaded_Read) {
-	switch read {
-	case .Viewed:
-	case .Owners:  set.loaded_viewed = 0
-	case .Handles: set.loaded_handles |= set.loaded_viewed; set.loaded_viewed = 0
+// were, at either level. A read that is itself of a carrier decides nothing. Reads
+// already decided stay as they were: one of a handle, stored in an owner this body
+// built with it, still stands for the handle when that owner is read.
+region_read_through :: proc(set: ^Region_Set, read: Region_Read) {
+	decide :: proc(reads: ^Param_Reads, read: Region_Read) {
+		switch read {
+		case .Viewed:
+		case .Owners:  reads.viewed = 0
+		case .Handles: reads.handles |= reads.viewed; reads.viewed = 0
+		}
 	}
+	decide(&set.named, read)
+	decide(&set.below, read)
 }
 
 // Whether a call substitutes no more for `a`'s parameters than for `b`'s: each
 // parameter of `a` is in `b`, and each `a` reads through its argument's
-// carriers `b` reads through them too, for handles as well where `a` takes them
-// (`prov_substitute_region`). Comparing `params` alone would let a set that takes
-// what an argument's carriers lead to pass for one that takes only what the
-// argument names.
+// carriers `b` reads through them too, and at either level `b` takes the handles
+// where `a` takes them (`prov_substitute_region`). Comparing `params` alone would
+// let a set that takes what an argument's carriers lead to pass for one that
+// takes only what the argument names, or one that takes handles for one that
+// takes owners alone.
 region_params_within :: proc(a, b: Region_Set) -> bool {
 	return a.params & ~b.params == 0 && a.loaded & ~b.loaded == 0 &&
-		region_loaded_takes_handles(a) & ~region_loaded_takes_handles(b) == 0
+		param_reads_take_handles(a.named) & ~param_reads_take_handles(b.named) == 0 &&
+		param_reads_take_handles(a.below) & ~param_reads_take_handles(b.below) == 0
 }
 
 // Takes the lowest parameter out of `params`, to walk a set's parameters.
@@ -609,8 +638,10 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 	before := into^
 	into.params |= from.params
 	into.loaded |= from.loaded
-	into.loaded_handles |= from.loaded_handles
-	into.loaded_viewed |= from.loaded_viewed
+	into.named.handles |= from.named.handles
+	into.named.viewed |= from.named.viewed
+	into.below.handles |= from.below.handles
+	into.below.viewed |= from.below.viewed
 	into.default ||= from.default
 	into.unknown ||= from.unknown
 	into.locals |= from.locals
@@ -628,6 +659,7 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 merge_allocator_use :: proc(into: ^Region_Set, set: Region_Set) -> bool {
 	before := into^
 	into.params |= set.params
+	into.named.handles |= param_reads_take_handles(set.named)
 	into.default ||= set.default
 	into.unknown ||= set.unknown || set.crowded || set.locals != 0
 	return into^ != before
@@ -1054,13 +1086,12 @@ receiver_dependencies :: proc(c: ^Compiler, from: Result_Dependencies) -> Result
 @(private)
 receiver_region :: proc(from: Region_Set) -> Region_Set {
 	out := from
-	out.params, out.loaded, out.loaded_handles, out.loaded_viewed = 0, 0, 0, 0
+	out.params, out.loaded, out.named, out.below = 0, 0, {}, {}
 	params := from.params
 	for index in next_region_param(&params) {
+		region_add_param(&out, index + 1, param_read(from.named, index))
 		if region_has_loaded_param(from, index) {
-			region_add_loaded_param(&out, index + 1, region_loaded_read(from, index))
-		} else {
-			region_add_param(&out, index + 1)
+			region_add_loaded_param(&out, index + 1, param_read(from.below, index))
 		}
 	}
 	return out

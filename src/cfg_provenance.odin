@@ -2697,12 +2697,15 @@ prov_bind_case_name :: proc(
 
 // design.md "Procedure result contracts": a borrowed parameter starts with one
 // loan of the caller's root.
-// A parameter that keeps its argument's region names it by its position.
+// A parameter that keeps its argument's region names it by its position. One that is or
+// holds view carriers and no allocator handle stands for what those carriers view, which
+// only a read through them says the read of (`Region_Read`).
 @(private = "file")
 prov_seed_parameter_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, index: int) {
-	if prov_type_keeps_argument_region(graph.k.c, sym.type) {
+	c := graph.k.c
+	if prov_type_keeps_argument_region(c, sym.type) {
 		set: Region_Set
-		region_add_param(&set, index)
+		region_add_param(&set, index, prov_parameter_read(c, sym.type))
 		graph.region_of[id] = set
 	}
 }
