@@ -131,4 +131,51 @@ owner_built_then_read :: proc(@(allocator_reset) allocator: mem.Allocator) -> in
 	return int(kept.bytes()[0]);
 }
 
+// The parameter passed on whole, by value or read through a pointer to it, leads where
+// the callee's read of it does.
+forward :: proc(reader: Reader) -> string { return read_text(reader); }
+forward_twice :: proc(reader: Reader) -> string { return forward(reader); }
+forward_pointee :: proc(pointer: ^Reader) -> string { return read_text(pointer^); }
+read_pointee :: proc(pointer: ^Reader) -> string { return pointer^.holder^.text; }
+forward_handle :: proc(reader: Handle_Reader) -> mem.Allocator { return handed_back(reader); }
+
+forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		kept = forward_twice(Reader{&source});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+forwarded_pointee :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		reader := Reader{&source};
+		kept = forward_pointee(&reader);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+read_below_pointee :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("arena text", allocator)};
+		reader := Reader{&source};
+		kept = read_pointee(&reader);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+handle_forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	source := Handles{allocator};
+	kept := make([dynamic]int, 1, forward_handle(Handle_Reader{&source}));
+	free_all(allocator);
+	return kept[0];
+}
+
 main :: proc() {}

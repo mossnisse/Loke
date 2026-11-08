@@ -443,7 +443,14 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 	}
 	carrier := sym != nil && prov_type_is_view_carrier(graph.k.c, sym.type)
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
-		region_merge(&out, prov_received_region(graph, id, direct, read, nil))
+		received := prov_received_region(graph, id, direct, read, nil)
+		region_merge(&out, received)
+		// A record parameter read whole, as `wrap(r: Reader) { read_text(r) }` passes it on,
+		// leads below what it names, as a carrier read out of it does
+		// (`prov_region_content_at`), unless this body overwrote what it received.
+		if sym != nil && sym.kind == .Parameter && !type_is_carrier(graph.k.c, sym.type) && prov_type_holds_carrier(graph.k.c, sym.type) {
+			prov_add_loaded_parameter(&out, received, .Viewed)
+		}
 	}
 	for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
 		region_merge(&out, content.region)
@@ -1180,7 +1187,9 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			return prov_read_region(graph, id)
 		}
 		if form.op == .Caret {
-			return prov_viewed_region(graph, form.operand)
+			out := Region_Set{}
+			prov_merge_read_through(c, &out, prov_viewed_region(graph, form.operand), value.type)
+			return out
 		}
 	case Prov_Form_Call:
 		v := form.call
@@ -1391,9 +1400,23 @@ prov_unnamed_allocator :: proc(graph: ^Flow_Graph, set: Region_Set, known: bool,
 @(private = "file")
 prov_unknown_target_read :: proc(graph: ^Flow_Graph, carrier: Value_Id, found: Region_Set, type: Type_Id) -> Region_Set {
 	out := found
-	region_merge(&out, prov_viewed_region(graph, carrier, whole = false))
-	region_read_through(&out, prov_loaded_read(graph.k.c, type))
+	prov_merge_read_through(graph.k.c, &out, prov_viewed_region(graph, carrier, whole = false), type)
 	return prov_unnamed_allocator(graph, out, false, type)
+}
+
+// Merges into `out` a read of a `type` value through a carrier that views `viewed`.
+// A value holding carriers of its own, as `p^` with `p: ^Reader`, leads below what a
+// parameter in `viewed` names, as a carrier read out of one does
+// (`prov_region_content_at`); what it is decides what earlier reads of carriers
+// viewed (`region_read_through`).
+@(private = "file")
+prov_merge_read_through :: proc(c: ^Compiler, out: ^Region_Set, viewed: Region_Set, type: Type_Id) {
+	region_merge(out, viewed)
+	read := prov_loaded_read(c, type)
+	if prov_type_holds_carrier(c, type) {
+		prov_add_loaded_parameter(out, viewed, read)
+	}
+	region_read_through(out, read)
 }
 
 @(private = "file")
@@ -1918,26 +1941,32 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 prov_substitute_region :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, summary: Region_Set) -> Region_Set {
 	out := Region_Set{}
 	bound := prov_bound_values(form)
-	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id, loaded, handles: bool) {
-		if argument != 0 {
-			region_merge(out, prov_storage_region(graph, argument))
-			region_merge(out, prov_provider_viewed_by(graph, argument))
-			if loaded {
-				region_merge(out, prov_reached_regions(graph, argument, handles))
-			}
+	// A parameter the callee read at a load below takes what the argument's carriers
+	// lead to, and that read decides what this body's carriers there view
+	// (`region_read_through`): `read_text(r)` reading `r.holder^.text` reads owners
+	// alone through the `r` this body was handed.
+	merge_argument := proc(graph: ^Flow_Graph, out: ^Region_Set, argument: Value_Id, loaded: Maybe(Loaded_Read)) {
+		if argument == 0 { return }
+		part := prov_storage_region(graph, argument)
+		region_merge(&part, prov_provider_viewed_by(graph, argument))
+		if read, ok := loaded.?; ok {
+			region_merge(&part, prov_reached_regions(graph, argument, read != .Owners))
+			region_read_through(&part, read)
 		}
+		region_merge(out, part)
 	}
 	params := summary.params
 	for index in next_region_param(&params) {
-		loaded, handles := region_has_loaded_param(summary, index), region_loaded_read(summary, index) != .Owners
+		loaded: Maybe(Loaded_Read)
+		if region_has_loaded_param(summary, index) { loaded = region_loaded_read(summary, index) }
 		// A pack built from separate arguments has no bound value: the parameter's
 		// region is its elements'.
 		if call_packs(form.call, index) {
 			for element in form.pack {
-				merge_argument(graph, &out, element, loaded, handles)
+				merge_argument(graph, &out, element, loaded)
 			}
 		} else if index < len(bound) {
-			merge_argument(graph, &out, bound[index], loaded, handles)
+			merge_argument(graph, &out, bound[index], loaded)
 		}
 	}
 	out.default ||= summary.default

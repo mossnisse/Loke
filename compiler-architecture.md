@@ -628,8 +628,11 @@ Keep these contracts:
   only what the argument names (`prov_substitute_region`). The mark also says what was
   read (`Loaded_Read`): a value holding owners alone takes only what the owners reached
   are in, not what the handles beside them name. A read of a carrier leaves that open,
-  and a read through the carrier, or through a local copy of it, decides it
-  (`region_read_through`); a decided read never narrows, so an owner the body built
+  as does a record parameter read whole (`prov_region_for_symbol`) and a value holding
+  carriers read through a pointer parameter (`prov_merge_read_through`); a read through
+  the carrier, or through a local copy of it, decides it (`region_read_through`), and
+  so does a call the value is passed to, by what the callee's summary says it read
+  (`prov_substitute_region`). A decided read never narrows, so an owner the body built
   with a handle it read still stands for that handle. A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,

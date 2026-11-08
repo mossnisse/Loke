@@ -455,7 +455,7 @@ loaded_reads_merge_to_the_widest_and_only_views_are_decided :: proc(t: ^testing.
 	narrow, wide: Region_Set
 	region_add_loaded_param(&narrow, 0, .Owners)
 	region_add_loaded_param(&wide, 0, .Viewed)
-	testing.expect(t, region_params_within(narrow, wide), "a read of owners alone fits one that takes the handles too")
+	testing.expect(t, region_params_within(narrow, wide), "a read of owners alone does not fit one that takes the handles too")
 	testing.expect(t, !region_params_within(wide, narrow), "a read that takes the handles fits one of owners alone")
 	region_remove_param(&wide, 0)
 	testing.expect(t, wide == Region_Set{}, "removing a loaded parameter leaves what it read behind")

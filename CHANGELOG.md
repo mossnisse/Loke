@@ -1140,7 +1140,10 @@ checklist.
   With `Reader :: struct { holder: ^Holder }`, a `read_text(reader: Reader)` returning
   `reader.holder^.text` was in no region at all, by value, `^mut`, or `inout`, so a reset compiled
   while the caller's copy of arena text lived on, and read freed memory; it is now `L0537`, as are
-  container elements read that way and an owner built with a handle read that way. Upgrade by
+  container elements read that way, an owner built with a handle read that way, and a body that
+  passes such a parameter on whole, as `forward(reader: Reader) { return read_text(reader); }`,
+  or reads one through a pointer to it, as `read_text(pointer^)` or `pointer^.holder^.text` with
+  `pointer: ^Reader`. Upgrade by
   ending what holds the copy before the reset, or by copying the text into storage the reset does
   not end.
 

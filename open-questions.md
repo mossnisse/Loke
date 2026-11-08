@@ -146,6 +146,25 @@ as apart, as for a fresh borrow of the whole array. The
 [store matrix](tests/carrier_store_matrix_test.odin) pins that. Adding it to the wording
 would settle both together.
 
+## Literal elements that lend a temporary to a call
+
+A container literal's element that hands an address to a call keeps its large
+temporaries' slots until the literal is built (`note_lent_arguments` in
+[emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin)), since the callee may keep the
+address by `unsafe` means for the rest of the full expression
+([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+Every `self: ^` method call on a temporary counts, though only a callee that reaches
+`unsafe` can keep its receiver past the call. So a literal of 40 elements
+`large(i).first()`, with a 5000-byte `Large`, takes 83 `Large` slots in the frame, where it
+took 5 before `05e2b195`; one of `first_of(large(i))` by value still takes 4. A long literal
+of such calls can now exhaust the stack.
+
+A procedure summary saying whether a call may keep an argument's address past its
+return, true for any body that reaches `unsafe` or calls through a procedure value,
+would keep the reuse for every other call. Whether that fact pays for itself, or a
+literal of large method calls is rare enough, is open. Found on 2026-11-07 in a review
+of `05e2b195` (P3).
+
 ## A public type's private `format`
 
 Such a type gets the generated default for the `Formattable` slot and prints by

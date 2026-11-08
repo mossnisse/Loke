@@ -7,6 +7,38 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A read through a carrier a call returned names no region
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+says a value read through a carrier is in what the carrier views. Where the call's
+arguments have targets the body cannot name, as a parameter's, the region of what the
+returned carrier views is empty (`prov_viewed_region` in
+[provenance_regions.odin](src/provenance_regions.odin) knows a call's view only for a
+shared handle), so the read is in no region and the caller's reset compiles while the
+copy lives on. The same read through `holder` directly is `L0537`:
+
+```loke
+package main;
+import "core:mem";
+import "core:strings";
+Holder :: struct { allocator: mem.Allocator, text: string }
+same :: proc(holder: ^Holder) -> ^Holder { return holder; }
+read_text :: proc(holder: ^Holder) -> string { return same(holder)^.text; }
+caller :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+    kept: string = "";
+    { source := Holder{allocator, strings.copy("text", allocator)}; kept = read_text(&source); }
+    free_all(allocator); // compiles, though `kept` is the arena's text
+    return int(kept.bytes()[0]);
+}
+main :: proc() {}
+```
+
+This is a soundness gap. A fix gives a call's result the view its summary's result
+dependencies name in the caller's terms, the parameters' regions included, as
+`prov_call_result_aliases` does for targets. Found on 2026-11-07 in a review of the
+record-held carrier fix; the same read through a record parameter's carrier, as
+`get(reader)^.text`, has it too.
+
 ### A pointer parameter's owner read takes a sibling handle's region
 
 [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)

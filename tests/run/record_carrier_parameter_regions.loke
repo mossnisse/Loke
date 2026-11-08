@@ -3,7 +3,8 @@
 // in, and not in what an allocator handle beside them names. Each `source` keeps the
 // handle being reset beside text from another arena, so each reset leaves the copy
 // alone, read by value, `inout`, through a local copy of the carrier, two loads down,
-// or as a container element. tests/err/record_carrier_parameter_regions rejects the
+// as a container element, or by a callee the parameter is passed on to.
+// tests/err/record_carrier_parameter_regions rejects the
 // same reads where the text is in the reset arena.
 package main;
 
@@ -22,6 +23,10 @@ read_inout :: proc(reader: inout Reader) -> string { return reader.holder^.text;
 read_local :: proc(reader: Reader) -> string { pointer := reader.holder; return pointer^.text; }
 read_deep :: proc(outer: Outer) -> string { return outer.reader^.holder^.text; }
 read_names :: proc(reader: Names_Reader) -> string { return reader.holder^.names[0]; }
+Field :: struct { reader: Reader }
+forward :: proc(reader: Reader) -> string { return read_text(reader); }
+forward_field :: proc(field: Field) -> string { return forward(field.reader); }
+forward_pointee :: proc(pointer: ^Reader) -> string { return read_text(pointer^); }
 
 by_value :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
@@ -87,9 +92,37 @@ element :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	return int(kept.bytes()[0]);
 }
 
+// Passed on whole, as a record's field or read through a pointer to it, the parameter
+// still reads owners alone.
+forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("forward", other.allocator())};
+		kept = forward_field(Field{Reader{&source}});
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+forwarded_pointee :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("pointee", other.allocator())};
+		reader := Reader{&source};
+		kept = forward_pointee(&reader);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
 main :: proc() {
 	buffer := [4096]u8{};
 	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	fmt.println(by_value(arena.allocator()), through_inout(arena.allocator()), through_local(arena.allocator()),
-		two_loads(arena.allocator()), element(arena.allocator()));
+		two_loads(arena.allocator()), element(arena.allocator()), forwarded(arena.allocator()),
+		forwarded_pointee(arena.allocator()));
 }
