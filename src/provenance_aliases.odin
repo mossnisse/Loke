@@ -288,11 +288,16 @@ prov_parameter_carrier_path :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Ste
 	return path
 }
 
-// Whether `target` is a writable parameter, which holds no aliases of its own.
+// Whether `target` is a parameter standing for the caller's storage, which holds no
+// aliases of its own: a writable one, or one that is or holds a carrier, whose targets
+// the caller knows. A read-only one is a target too, so a copy of its carrier, held in
+// a record this body builds, still leads to what it views (design.md "Allocator regions
+// and region provenance"); nothing is stored through it.
 @(private = "file")
 prov_target_stands_for_caller :: proc(graph: ^Flow_Graph, target: Storage_Id) -> bool {
-	sym := symbol_of(graph.k.c, prov_storage(graph, target).key.symbol)
-	return sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym)
+	c := graph.k.c
+	sym := symbol_of(c, prov_storage(graph, target).key.symbol)
+	return sym != nil && sym.kind == .Parameter && (param_writes_caller(c, sym) || prov_type_holds_carrier(c, sym.type))
 }
 
 @(private)

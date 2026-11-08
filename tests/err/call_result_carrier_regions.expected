@@ -1,15 +1,24 @@
 L0537
-@33:2
+@39:2
 this reset would end the region backing `kept`, which is still live here
 L0537
-@43:2
+@49:2
 this reset would end the region backing `kept`, which is still live here
 L0537
-@53:2
+@59:2
 this reset would end the region backing `kept`, which is still live here
 L0537
-@63:2
+@69:2
 this reset would end the region backing `kept`, which is still live here
 L0537
-@76:2
+@79:2
+this reset would end the region backing `kept`, which is still live here
+L0537
+@89:2
+this reset would end the region backing `kept`, which is still live here
+L0537
+@99:2
+this reset would end the region backing `kept`, which is still live here
+L0537
+@112:2
 this reset would end the region backing `kept`, which is still live here

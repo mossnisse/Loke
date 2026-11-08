@@ -2,8 +2,9 @@
 // parameter is in what the owners the argument points at are in, and not in what an
 // allocator handle beside them names. Each `source` keeps the handle being reset beside
 // text from another arena, so each reset leaves the copy alone, read directly, through
-// a local copy of the pointer, by a callee the pointer is passed on to, or through a
-// carrier a call returned, from the pointer or from a record parameter holding it.
+// a local copy of the pointer, by a callee the pointer is passed on to, through a
+// carrier a call returned, from the pointer or from a record parameter holding it, or
+// through a record the body builds around the pointer.
 // tests/err/call_result_carrier_regions rejects the same reads where the text is in the
 // reset arena.
 package main;
@@ -23,6 +24,7 @@ read_local :: proc(holder: ^Holder) -> string { pointer := holder; return pointe
 read_forwarded :: proc(holder: ^Holder) -> string { return read_direct(holder); }
 read_returned :: proc(holder: ^Holder) -> string { return same(holder)^.text; }
 read_record :: proc(reader: Reader) -> string { return get(reader)^.text; }
+read_built :: proc(holder: ^Holder) -> string { reader := Reader{holder}; return reader.holder^.text; }
 
 direct :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
@@ -84,9 +86,21 @@ record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	return int(kept.bytes()[0]);
 }
 
+built_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	buffer := [4096]u8{};
+	other := mem.Arena.from_buffer(&mut buffer[:]);
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("built", other.allocator())};
+		kept = read_built(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
 main :: proc() {
 	buffer := [4096]u8{};
 	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	fmt.println(direct(arena.allocator()), through_local(arena.allocator()), forwarded(arena.allocator()),
-		returned(arena.allocator()), record(arena.allocator()));
+		returned(arena.allocator()), record(arena.allocator()), built_record(arena.allocator()));
 }

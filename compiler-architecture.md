@@ -638,7 +638,10 @@ Keep these contracts:
   (`prov_substitute_region`). A decided read never narrows, so an owner the body built
   with a handle it read still stands for that handle. What a carrier a call returned
   views is what its summary's result dependencies take of each argument, as a view,
-  substituted as any region is (`prov_call_viewed_region`). A swap or sort records a copy of any
+  substituted as any region is (`prov_call_viewed_region`). A parameter that is or holds
+  a carrier is a target standing for the caller's storage, read-only or not
+  (`prov_target_stands_for_caller`), so a copy of its carrier held in a record the body
+  builds still leads to what it views; only a writable one is ever stored through. A swap or sort records a copy of any
   element to any element (`prov_store_permuted_region`), and a summary leaves such
   a copy out of its whole-argument union, since it leaves the argument nothing new,
   so it is no store through a carrier to check.

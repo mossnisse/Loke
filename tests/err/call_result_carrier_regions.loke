@@ -6,6 +6,8 @@
 // takes the owners there and not the handle beside them
 // (tests/run/pointer_parameter_owner_regions), but the text here is in the reset arena,
 // and an owner built with a handle read through the parameter is in that handle's region.
+// A record the body builds around the parameter leads to what it views too, read in the
+// body, passed to a callee, or through a carrier a call returned from it.
 package main;
 
 import "core:mem";
@@ -21,6 +23,10 @@ read_direct :: proc(holder: ^Holder) -> string { return holder^.text; }
 read_returned :: proc(holder: ^Holder) -> string { return same(holder)^.text; }
 read_record :: proc(reader: Reader) -> string { return get(reader)^.text; }
 read_value :: proc(holder: ^Holder) -> string { f := same; return f(holder)^.text; }
+read_built :: proc(holder: ^Holder) -> string { reader := Reader{holder}; return reader.holder^.text; }
+read_built_record :: proc(reader: Reader) -> string { return reader.holder^.text; }
+read_passed :: proc(holder: ^Holder) -> string { return read_built_record(Reader{holder}); }
+read_built_returned :: proc(holder: ^Holder) -> string { return get(Reader{holder})^.text; }
 built :: proc(holder: ^Holder) -> string { return strings.copy("built", holder^.allocator); }
 built_forwarded :: proc(holder: ^Holder) -> string { return built(holder); }
 
@@ -59,6 +65,36 @@ procedure_value :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	{
 		source := Holder{allocator, strings.copy("value", allocator)};
 		kept = read_value(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+built_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("built", allocator)};
+		kept = read_built(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+passed_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("passed", allocator)};
+		kept = read_passed(&source);
+	}
+	free_all(allocator);
+	return int(kept.bytes()[0]);
+}
+
+returned_from_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
+	kept: string = "";
+	{
+		source := Holder{allocator, strings.copy("returned", allocator)};
+		kept = read_built_returned(&source);
 	}
 	free_all(allocator);
 	return int(kept.bytes()[0]);

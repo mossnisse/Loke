@@ -52,8 +52,9 @@ checklist.
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
   Where the argument was a parameter, as `same(holder)^.text` or `get(reader)^.text`, or the call was
   through a procedure value, the read was in no region, so a caller's reset while a copy lived on
-  compiled and read freed memory. These are now `L0537`. Upgrade by ending the copy's use before the
-  reset.
+  compiled and read freed memory. So did a read through a record built around a read-only pointer
+  parameter, as `reader := Reader{holder}; reader.holder^.text`, whether in the body or in a callee
+  it is passed to. These are now `L0537`. Upgrade by ending the copy's use before the reset.
 - A value [`unsafe.take`](design.md#uninitialized-capacity) reads out keeps the
   [allocator regions](design.md#allocator-regions-and-region-provenance) it was in, as one `exchange`
   reads out does. It had none the analysis could name, so returning such a value from an arena of the
