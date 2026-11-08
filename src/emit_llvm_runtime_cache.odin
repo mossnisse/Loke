@@ -26,21 +26,23 @@ RUNTIME_CACHE_FAILURE :: "last-failure.txt"
 @(private = "file")
 CPU_CHECK_SOURCE :: "cpu.c"
 
-// What a link of the bundled runtime takes for it, and whether that is bitcode.
-// Only a prebuilt set is: sources the link compiles itself are compiled as an
-// unoptimized build's are, `cpu.c` among them.
+// What a link of the bundled runtime takes for it, whether that is bitcode, and
+// whether it is a prebuilt set rather than the sources. Only a prebuilt set is
+// bitcode: sources the link compiles itself are compiled as an unoptimized
+// build's are, `cpu.c` among them.
 @(private)
 runtime_link_inputs :: proc(
 	clang, runtime_dir: string, sources, toolchain: []string, target: Target_Info, opt_mode: Opt_Mode,
 ) -> (
 	inputs: []string,
 	bitcode: bool,
+	prebuilt: bool,
 ) {
 	bitcode = links_runtime_bitcode(clang, opt_mode)
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, toolchain, target, opt_mode, bitcode); prebuilt != nil {
-		return prebuilt, bitcode
+	if objects := prebuilt_runtime_objects(runtime_dir, sources, toolchain, target, opt_mode, bitcode); objects != nil {
+		return objects, bitcode, true
 	}
-	return sources, false
+	return sources, false, false
 }
 
 // Cached objects; see compiler-architecture.md "Runtime and library boundary".

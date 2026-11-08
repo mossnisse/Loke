@@ -584,6 +584,51 @@ a_partial_seed_runtime_is_not_a_foreign_failure :: proc(t: ^testing.T) {
 	)
 }
 
+// A failed link reports the linker's errors and nothing ahead of them. Linking
+// the bundled runtime's cached objects compiles no C, so a header flag would
+// draw clang's unused-argument warning first.
+@(test)
+a_failed_link_reports_no_unused_arguments :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	source := fmt.tprintf("%s/missing-foreign.loke", TMP)
+	text := `package main;
+
+foreign import kernel32 "system:kernel32.lib";
+
+foreign kernel32 {
+	@(link_name="LokeNoSuchKernelFunction")
+	missing :: proc "c" () -> i32 ---;
+}
+
+main :: proc() {
+	missing();
+}
+`
+	if !testing.expectf(t, os.write_entire_file(source, transmute([]u8)text) == nil, "cannot write %s", source) {
+		return
+	}
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), source, "-o", fmt.tprintf("%s/missing-foreign.exe", TMP)}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	testing.expectf(t, state.exit_code == 2, "a call to a missing foreign function linked")
+	testing.expectf(
+		t,
+		strings.contains(string(stderr), "L0633") && strings.contains(string(stderr), "LokeNoSuchKernelFunction"),
+		"expected L0633 naming the missing function, got:\n%s",
+		string(stderr),
+	)
+	testing.expectf(
+		t,
+		!strings.contains(string(stderr), "unused-command-line-argument"),
+		"the link report carries clang's unused-argument warning:\n%s",
+		string(stderr),
+	)
+}
+
 // The three inputs and outputs a build cannot reach: a source file that is not
 // there, a generated module that cannot be written, and a foreign import whose
 // file is missing. Each is named by path, because a wrong one and a missing

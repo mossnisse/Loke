@@ -143,9 +143,9 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	// A missing header or library is left for clang to name.
 	toolchain, _ := msvc_toolchain_flags()
 	// A custom runtime directory is never written to.
-	runtime_inputs, bitcode := sources, false
+	runtime_inputs, bitcode, prebuilt := sources, false, false
 	if !custom_runtime {
-		runtime_inputs, bitcode = runtime_link_inputs(clang, runtime_dir, sources, toolchain, c.target, c.opt_mode)
+		runtime_inputs, bitcode, prebuilt = runtime_link_inputs(clang, runtime_dir, sources, toolchain, c.target, c.opt_mode)
 	}
 
 	command := make([dynamic]string)
@@ -175,7 +175,11 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	append(&command, "-Wno-override-module")
 	// `f16` conversions need compiler-rt's helpers, which the MSVC CRT lacks.
 	append(&command, "-rtlib=compiler-rt")
-	append(&command, "-I", runtime_dir)
+	// Only the runtime's sources read its headers. Linking prebuilt objects,
+	// clang would warn that `-I` went unused, ahead of a failed link's errors.
+	if !prebuilt {
+		append(&command, "-I", runtime_dir)
+	}
 	append(&command, ..toolchain)
 
 	state, _, stderr, err := subprocess.run(

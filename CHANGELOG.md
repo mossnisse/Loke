@@ -1756,6 +1756,8 @@ checklist.
   `_mm_*` intrinsic no longer fails to link, and headers and libraries come from the same toolset
   even where Clang finds a Visual Studio of its own. A link uses the same flags, and uses `INCLUDE`
   and `LIB` only when both are set.
+- A failed link's report starts with the linker's errors. Linking the bundled runtime's cached objects
+  passed Clang the runtime's header directory, which it warned was unused ahead of them.
 - An owner read through a parameter's carriers is in what the owners there are in, and not in what an
   allocator handle beside them names
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
