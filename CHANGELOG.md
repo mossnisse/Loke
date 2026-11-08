@@ -1508,6 +1508,9 @@ checklist.
 
 ### Changed
 
+- Inserting a new key into a [map](design.md#maps) hashes it once rather than twice when the map
+  does not grow: the lookup that finds the key absent also finds the slot it takes. Inserting a
+  million 48-byte strings fell from 607 ms to 560 ms, and a million integers from 110 ms to 103 ms.
 - `lokec -version` and `loke-lsp -version` name the revision a build comes from, so a build of the
   development tree no longer passes for the release before it: `lokec 0.9.0
   (v0.9.0-14-g01989c09-dirty)`. A release still prints `lokec 0.9.0`, and a build with no recorded

@@ -553,8 +553,21 @@ static uint64_t map_next_seed(const void *block) {
  * patterns do, hash alike in every low bit. The mix brings every bit of the hash
  * into the bits the mask keeps. */
 static uint64_t map_home(
+	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key, uint64_t mask) {
+	return map_mix(ops->key_hash(key, t->seed)) & mask;
+}
+
+/* The first slot from `key`'s home that holds no entry. Only for a table with
+ * no tombstones, as a rebuild is: there that slot is where `key` belongs. */
+static uint64_t map_first_free(
 	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key) {
-	return map_mix(ops->key_hash(key, t->seed)) & ((uint64_t)t->slot_count - 1);
+	uint64_t mask = (uint64_t)t->slot_count - 1;
+	uint64_t index = map_home(t, ops, key, mask);
+	const uint8_t *controls = map_controls(t);
+	while (controls[index] == LOKE_RT_MAP_OCCUPIED) {
+		index = (index + 1) & mask;
+	}
+	return index;
 }
 
 /* Maximum load: seven eighths. Pinned by the runtime tests, not by the
@@ -634,19 +647,11 @@ static void map_free_block(const loke_rt_allocator_v1 *a, loke_rt_map_table_v1 *
  * does not call user clone or drop hooks. */
 static void map_place_moved(
 	loke_rt_map_table_v1 *dst, const loke_rt_container_ops_v1 *ops, const void *key, const void *value) {
-	uint64_t mask = (uint64_t)dst->slot_count - 1;
-	uint64_t index = map_home(dst, ops, key);
-	uint8_t *controls = map_controls(dst);
-	for (;;) {
-		if (controls[index] != LOKE_RT_MAP_OCCUPIED) {
-			memcpy(map_key_at(dst, ops, (int64_t)index), key, (size_t)ops->key_size);
-			memcpy(map_value_at(dst, ops, (int64_t)index), value, (size_t)ops->elem_size);
-			controls[index] = LOKE_RT_MAP_OCCUPIED;
-			dst->occupied += 1;
-			return;
-		}
-		index = (index + 1) & mask;
-	}
+	uint64_t index = map_first_free(dst, ops, key);
+	memcpy(map_key_at(dst, ops, (int64_t)index), key, (size_t)ops->key_size);
+	memcpy(map_value_at(dst, ops, (int64_t)index), value, (size_t)ops->elem_size);
+	map_controls(dst)[index] = LOKE_RT_MAP_OCCUPIED;
+	dst->occupied += 1;
 }
 
 int32_t loke_rt_v1_map_reserve(
@@ -813,22 +818,36 @@ void loke_rt_v1_map_bind(loke_rt_map_v1 *self) {
 
 /* The slot holding `key`, or -1. A probe stops at the first empty control byte:
  * a tombstone is skipped, because an entry inserted after a removal may lie
- * beyond it. */
+ * beyond it. When `key` is absent and `vacant` is not NULL, it receives the slot
+ * an insertion takes: the first tombstone the probe passed, else the empty slot
+ * that ended it, else -1 for a probe that crossed the whole table. */
 static int64_t map_probe(
-	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key) {
+	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key,
+	int64_t *vacant) {
 	uint64_t mask = (uint64_t)t->slot_count - 1;
-	uint64_t index = map_home(t, ops, key);
+	uint64_t index = map_home(t, ops, key, mask);
 	const uint8_t *controls = map_controls(t);
+	int64_t first_free = -1;
 	int64_t probes;
 	for (probes = 0; probes < t->slot_count; probes += 1) {
-		if (controls[index] == LOKE_RT_MAP_EMPTY) {
-			return -1;
+		uint8_t control = controls[index];
+		if (control == LOKE_RT_MAP_EMPTY) {
+			if (first_free < 0) {
+				first_free = (int64_t)index;
+			}
+			break;
 		}
-		if (controls[index] == LOKE_RT_MAP_OCCUPIED &&
-		    ops->key_equal(map_key_at(t, ops, (int64_t)index), key)) {
-			return (int64_t)index;
+		if (control == LOKE_RT_MAP_OCCUPIED) {
+			if (ops->key_equal(map_key_at(t, ops, (int64_t)index), key)) {
+				return (int64_t)index;
+			}
+		} else if (control == LOKE_RT_MAP_TOMBSTONE && first_free < 0) {
+			first_free = (int64_t)index;
 		}
 		index = (index + 1) & mask;
+	}
+	if (vacant != 0) {
+		*vacant = first_free;
 	}
 	return -1;
 }
@@ -840,7 +859,7 @@ void *loke_rt_v1_map_find(
 	if (t == 0 || self->len == 0) {
 		return 0;
 	}
-	slot = map_probe(t, ops, key);
+	slot = map_probe(t, ops, key, 0);
 	return slot < 0 ? 0 : map_value_at(t, ops, slot);
 }
 
@@ -857,24 +876,27 @@ void *loke_rt_v1_map_entry(
 	loke_rt_map_table_v1 *old;
 	loke_rt_map_table_v1 *t;
 	uint8_t *controls;
-	uint64_t mask, index;
-	int64_t slot, first_free, slots;
-	int32_t replacing = 0;
+	uint64_t index;
+	int64_t slot, slots;
+	int64_t vacant = -1;
+	int32_t replacing = 0, reusing;
 
 	*inserted = 0;
 	allocator = self->allocator == 0 ? loke_rt_v1_selected_allocator() : self->allocator;
 	old = (loke_rt_map_table_v1 *)self->table;
 	t = old;
 	if (t != 0) {
-		slot = map_probe(t, ops, key);
+		slot = map_probe(t, ops, key, &vacant);
 		if (slot >= 0) {
 			return map_value_at(t, ops, slot);
 		}
 	}
 	/* A growth is built off to the side. Its entries are representation moves
 	 * that still alias `old`, so failure can release the fresh raw block without
-	 * dropping anything and leave every old header/table byte untouched. */
-	if (t == 0 || self->len + 1 > self->cap ||
+	 * dropping anything and leave every old header/table byte untouched. Below
+	 * the load limit some slot is empty, so the probe found a vacancy; `vacant`
+	 * is checked anyway, since writing at -1 would corrupt memory. */
+	if (t == 0 || vacant < 0 || self->len + 1 > self->cap ||
 	    t->occupied + t->tombstones + 1 > t->slot_count - t->slot_count / 8) {
 		if (!map_slots_for(self->len + 1, &slots)) {
 			return 0;
@@ -916,27 +938,13 @@ void *loke_rt_v1_map_entry(
 		}
 		t = fresh;
 		replacing = 1;
+		/* The fresh table has its own seed, so the key's home moves. */
+		vacant = (int64_t)map_first_free(fresh, ops, key);
 	}
 
 	controls = map_controls(t);
-	mask = (uint64_t)t->slot_count - 1;
-	index = map_home(t, ops, key);
-	first_free = -1;
-	for (;;) {
-		if (controls[index] == LOKE_RT_MAP_OCCUPIED) {
-			index = (index + 1) & mask;
-			continue;
-		}
-		if (controls[index] == LOKE_RT_MAP_TOMBSTONE && first_free < 0) {
-			first_free = (int64_t)index;
-			index = (index + 1) & mask;
-			continue;
-		}
-		break;
-	}
-	if (first_free >= 0) {
-		index = (uint64_t)first_free;
-	}
+	index = (uint64_t)vacant;
+	reusing = controls[index] == LOKE_RT_MAP_TOMBSTONE;
 	/* The stored key is an independent clone: the caller's may be a borrow. */
 	if (ops->key_clone != 0) {
 		if (!ops->key_clone(map_key_at(t, ops, (int64_t)index), key, allocator)) {
@@ -948,7 +956,7 @@ void *loke_rt_v1_map_entry(
 	} else {
 		memcpy(map_key_at(t, ops, (int64_t)index), key, (size_t)ops->key_size);
 	}
-	if (first_free >= 0) {
+	if (reusing) {
 		t->tombstones -= 1;
 	}
 	memset(map_value_at(t, ops, (int64_t)index), 0, (size_t)ops->elem_size);
@@ -981,7 +989,7 @@ int32_t loke_rt_v1_map_remove(
 	if (t == 0 || self->len == 0) {
 		return 0;
 	}
-	slot = map_probe(t, ops, key);
+	slot = map_probe(t, ops, key, 0);
 	if (slot < 0) {
 		return 0;
 	}
