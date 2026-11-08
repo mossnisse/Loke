@@ -570,6 +570,9 @@ typedef struct loke_rt_frame_v1 {
 
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_frame_v1) == 24, frame_record_size);
 
+/* Attaching an attached thread does nothing, and each entry into Loke from
+ * foreign code attaches, so a host need not. Detaching runs the thread's
+ * thread-local drops if it is attached, and a later entry attaches it again. */
 void loke_rt_v1_thread_attach(void);
 void loke_rt_v1_thread_detach(void);
 /* Calls `run(frame)` on this thread. core:thread's pool runs a queued task this

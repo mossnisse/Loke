@@ -11,20 +11,36 @@
 /* Per thread: a panic ends the whole process, so nothing is shared. */
 static __declspec(thread) loke_rt_frame_v1 *frames;
 static __declspec(thread) int32_t panicking;
+/* NOT_ATTACHED before the thread first enters Loke and after it detaches;
+ * DETACHING while detach runs its thread-local drops, so a call into Loke that a
+ * drop makes through C neither attaches the thread again nor detaches it
+ * twice. */
+enum { NOT_ATTACHED, ATTACHED, DETACHING };
 static __declspec(thread) int32_t attached;
 
+/* design.md "Values that outlive every scope": every entry Loke code has from
+ * foreign code calls this, so a thread attaches the first time it enters.
+ * An attached thread may be running Loke frames below the entry, which an
+ * unwind must still reach, so attaching again changes nothing. */
 void loke_rt_v1_thread_attach(void) {
+	if (attached != NOT_ATTACHED) {
+		return;
+	}
 	frames = 0;
 	panicking = 0;
-	attached = 1;
+	attached = ATTACHED;
 }
 
 void loke_rt_v1_thread_detach(void) {
+	if (attached == DETACHING) {
+		return;
+	}
 	frames = 0;
-	if (attached) {
-		attached = 0; /* first, so a panic in the cleanup cannot detach again */
+	if (attached == ATTACHED) {
+		attached = DETACHING;
 		loke_rt_v1_program_tls_cleanup();
 	}
+	attached = NOT_ATTACHED;
 	/* A partial line held for the debugger is the thread's own, and a drop
 	 * above may have written one. */
 	loke_rt_err_end_thread();

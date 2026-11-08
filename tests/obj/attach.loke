@@ -1,0 +1,38 @@
+// design.md "Values that outlive every scope": a thread the runtime did not
+// start attaches as it first enters Loke, and detaching it drops its
+// thread-local values. `attach_host.c` calls these from a thread that never
+// attaches. The drop calls back into Loke through the host while the thread
+// detaches, which must neither attach it again nor have it drop twice.
+package attach;
+
+// The host's: how many drops ran, and what calls back in.
+foreign import host "system:legacy_stdio_definitions.lib";
+foreign host {
+	attach_drops: i32;
+	attach_reenter :: proc "c" () ---;
+}
+
+@(move_only) Tracked :: struct { value: i32 }
+
+impl Tracked {
+	// Only a value the host set counts, so a thread that set none counts
+	// nothing as it detaches.
+	release :: hook(drop) proc(self: inout Tracked) {
+		if (self.value != 0) {
+			attach_drops += 1;
+			attach_reenter();
+		}
+	}
+}
+
+tracked: thread_local Tracked;
+
+@(export)
+attach_track :: proc "c" (value: i32) {
+	tracked.value = value;
+}
+
+@(export)
+attach_read :: proc "c" () -> i32 {
+	return tracked.value;
+}

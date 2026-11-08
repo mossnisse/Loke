@@ -1522,6 +1522,12 @@ checklist.
 
 ### Changed
 
+- A thread the runtime did not start attaches itself the first time it calls a Loke export or a
+  callback Loke handed to C
+  ([Values that outlive every scope](design.md#values-that-outlive-every-scope)), so code on a
+  library's own thread, such as an audio device callback, needs no setup. A C host need not call
+  `loke_rt_v1_thread_attach`, which now does nothing on an attached thread. To have the thread's
+  `thread_local` values dropped, the host calls `loke_rt_v1_thread_detach`, as before.
 - The [printed form](standard-library.md#printed-forms) of a `dyn` view of an interface with a
   `format` slot of `fmt.Formattable`'s shape is documented as the value it views, as the compiler
   already printed it; the table said such a view printed its type's name.

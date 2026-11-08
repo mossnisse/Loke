@@ -173,6 +173,31 @@ borrowed one, where an atomic operation through another read-only loan may be
 writing it. It is an attribute, not a list of types, so `Monitor` and
 `Channel` needed no compiler change.
 
+### Foreign threads attach as they enter
+
+A thread Loke did not start, such as an audio library's device thread, calls
+Loke only through a procedure with a foreign calling convention, and each of
+those already has an entry guard that sets the floating-point environment. The
+guard also attaches the thread, so code on such a thread needs no setup call,
+and an object build's host needs none either.
+
+A public `thread.attach()` for Loke code was the alternative, and it had two
+problems. Attaching cleared the thread's chain of unwind frames, so attaching
+inside a procedure that had already registered a cleanup lost that cleanup,
+as did attaching again in a callback on an attached thread. Detaching drops
+every managed `thread_local`, so a Loke procedure that called it while a borrow
+of one was live would end the value under the borrow, which the borrow checker
+cannot see. Attaching is instead idempotent and automatic. Detaching stays a
+runtime entry for foreign code, which runs outside every Loke call. While
+detach runs the drops, the thread is marked as detaching, so a drop that calls
+back into Loke through C neither attaches it again nor drops twice.
+
+A thread that is never detached keeps its `thread_local` values until the
+process ends, as one ended by `os.exit` does. Detaching automatically at
+thread exit would need a fiber-local storage callback, and Windows runs those
+during thread teardown, where a drop that waits on another thread can
+deadlock.
+
 ### Waiting on a condition, not a signal
 
 A condition variable asks for three things at every use: a loop around the

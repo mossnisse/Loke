@@ -4963,8 +4963,14 @@ teardown is taken out first: `unsafe.forget(exchange(inout value, {}))` leaves
 the binding holding its zero, which the teardown then has nothing to clean up.
 The runtime does not guarantee TLS cleanup after `os.exit`, an aborting panic,
 or termination after panic unwinding. A library-created thread must enter and
-leave through the Loke runtime. A foreign thread must use the documented runtime
-attach and detach API before it calls exported Loke code.
+leave through the Loke runtime. A thread the runtime did not start attaches
+itself the first time it enters a procedure Loke defines with a [foreign
+calling convention](#calling-conventions), such as an [export](#export) or a
+callback handed to C; entering again on an attached thread changes nothing.
+Its managed `thread_local` values are dropped when foreign code, outside every
+Loke call on that thread, detaches it through the documented runtime API. One
+never detached keeps them until the process ends. A detached thread attaches
+again when it next enters.
 
 Do not rely on implicit process cleanup for an operation with an external
 effect: flushing a file, closing a socket, releasing a shared-memory lock. Use
@@ -8668,9 +8674,9 @@ error and exits with status 3 before any of the steps above.
 
 An [object build](#build-configuration) has no entry or argument conversion, so
 `os.args` is empty. Its host owns startup and calls any provider initializer
-after attaching a thread and before using an export. An object build that may
-use instructions beyond the baseline makes the processor check from a static
-constructor, which the host's C runtime runs during its own startup.
+before using an export. An object build that may use instructions beyond the
+baseline makes the processor check from a static constructor, which the host's
+C runtime runs during its own startup.
 
 #### Windowed executables
 
@@ -10630,14 +10636,15 @@ startup.
 `.Test` accepts any root package and emits an executable whose entry runs the
 root package's [test procedures](#test-procedures) in place of `main`.
 
-A [foreign thread](#threads) that calls into an object build must attach and
-detach through the documented runtime API, exactly as any other non-Loke thread
-does.
+A host thread that calls into an object build attaches as it enters and
+detaches through the documented runtime API, as any other thread the runtime
+did not start does ([Values that outlive every
+scope](#values-that-outlive-every-scope)).
 
 An `obj` build that [selects a provider](#build-selected-providers) exports
-`loke_rt_v1_program_init :: proc "c" ()`. The host calls it once, on an attached
-thread, before using exports or starting workers. A build with no selected
-provider uses the fallback providers and exports no initializer.
+`loke_rt_v1_program_init :: proc "c" ()`. The host calls it once, before using
+exports or starting workers. A build with no selected provider uses the
+fallback providers and exports no initializer.
 
 ## Compile-time built-ins
 

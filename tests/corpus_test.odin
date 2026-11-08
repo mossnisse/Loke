@@ -2271,6 +2271,44 @@ foreign_entries_run_in_lokes_environment :: proc(t: ^testing.T) {
 	)
 }
 
+// design.md "Values that outlive every scope": a C thread that never attaches
+// is attached by the first export it calls, so detaching it drops its
+// thread-local value; a call back into Loke from that drop neither attaches it
+// again nor drops twice. `attach_host.c` exits with the number of the first
+// check that failed.
+@(test)
+foreign_threads_attach_as_they_enter :: proc(t: ^testing.T) {
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so no C thread calls into Loke")
+		return
+	}
+	os.make_directory(TMP)
+	obj := fmt.tprintf("%s/attach.obj", TMP)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/obj/attach.loke", "-build-mode=obj", "-o", obj}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "the attach object build failed:\n%s", string(stderr)) {
+		return
+	}
+	exe := fmt.tprintf("%s/attach-host.exe", TMP)
+	link_state, _, link_stderr, link_err := exec(
+		os.Process_Desc{command = c_host_link_command(clang, "tests/obj/attach_host.c", obj, exe, include_flags)},
+		context.allocator,
+	)
+	if !testing.expectf(t, link_err == nil && link_state.exit_code == 0, "the attach host link failed:\n%s", string(link_stderr)) {
+		return
+	}
+	run_state, _, run_stderr, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(
+		t, run_state.exit_code == 0,
+		"a foreign thread did not attach or detach as it should: check %d (see `attach_host.c`)\n%s",
+		run_state.exit_code, string(run_stderr),
+	)
+}
+
 // standard-library "`core:process`": `output` that fails to collect stdout
 // returns the error, rather than joining a stderr reader that the child,
 // blocked writing stdout, never lets finish. One that fails to collect stderr

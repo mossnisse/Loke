@@ -1,8 +1,8 @@
 /* The threaded host for `tests/obj/concurrentlib`.
  *
- * A foreign thread that calls into an object build must attach and detach
- * through the runtime API (design.md "Threads"), which is exactly what each
- * worker thunk does around its one call.
+ * Each worker thunk attaches and detaches explicitly around its one call
+ * (design.md "Values that outlive every scope"); the export it calls would
+ * attach the thread too, and attaching again does nothing.
  *
  * There is no join here, and that is deliberate: waiting would need a platform
  * header this runtime does not use, and the wait it would replace is itself one

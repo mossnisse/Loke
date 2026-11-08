@@ -328,8 +328,9 @@ emit_foreign_entry_guard :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name, body: 
 
 // The externally callable half of a function foreign code enters, a Loke
 // procedure with a foreign calling convention or a generated entry such as
-// `loke_rt_v1_program_init`, under its own name: foreign code may enter it in
-// any environment, so it sets Loke's when the caller's differs, calls `body`
+// `loke_rt_v1_program_init`, under its own name: foreign code may enter it on
+// a thread the runtime did not start, so it attaches the thread, and in any
+// environment, so it sets Loke's when the caller's differs, calls `body`
 // with the same arguments, and restores the caller's control bits on return,
 // keeping the flags raised meanwhile. `body` is `noinline`, so none of its
 // arithmetic can be moved into this function and run before the switch; this
@@ -350,6 +351,9 @@ emit_entry_guard :: proc(e: ^Emitter, llvm_name, ret: string, params: []string, 
 
 	arguments := strings.join(params, ", ")
 	open_function(e, "define %s%s %s(%s)", llvm_linkage(llvm_name), ret, llvm_name, arguments)
+	// design.md "Values that outlive every scope": a thread the runtime did not
+	// start attaches the first time it enters; attaching again does nothing.
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "  %mxcsr = alloca i32, align 4")
 	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.stmxcsr(ptr %mxcsr)")
 	fmt.sbprintln(&e.b, "  %mxcsr.caller = load i32, ptr %mxcsr, align 4")

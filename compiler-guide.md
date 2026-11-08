@@ -516,20 +516,24 @@ of MSVC's. An object built with `-cpu` also needs the runtime compiled for its
 level, and checks the processor before the host's `main`; see
 [CPU levels](#cpu-levels).
 
-Every host thread must attach to the runtime before calling a Loke export and
-detach before the thread exits:
+A host thread attaches to the runtime when it first calls a Loke export or a
+callback Loke handed it, so the host need not attach it. To have the thread's
+`thread_local` values dropped, detach it once it is done calling into Loke,
+outside every such call. A thread that never detaches keeps them until the
+process ends, and one that calls in again after detaching attaches again:
 
 ```c
-void loke_rt_v1_thread_attach(void);
 void loke_rt_v1_thread_detach(void);
 
 int main(void) {
-    loke_rt_v1_thread_attach();
     /* Call Loke exports here. */
     loke_rt_v1_thread_detach();
     return 0;
 }
 ```
+
+`loke_rt_v1_thread_attach()` attaches without calling into Loke, and does
+nothing on an attached thread.
 
 A host may call an export, a callback Loke handed it,
 `loke_rt_v1_program_init`, or `loke_rt_v1_thread_detach` with its own
@@ -541,10 +545,10 @@ function the object calls must return with Loke's environment intact; build
 the object with `-debug` to have each such call checked.
 
 If the object's root package selected a provider, it also exports
-`loke_rt_v1_program_init()`. Call that once on the attached startup thread,
-after `loke_rt_v1_thread_attach()` and before calling any Loke export or
-starting worker threads. Repeated calls after initialization are harmless. An
-object built without a selected provider does not export this initializer.
+`loke_rt_v1_program_init()`. Call that once on the startup thread, before
+calling any Loke export or starting worker threads. Repeated calls after
+initialization are harmless. An object built without a selected provider does
+not export this initializer.
 
 An assembly import (`.asm`, `.s`, or `.S`) cannot be included in this
 single-object build: assemble it separately and link it at the host's final
