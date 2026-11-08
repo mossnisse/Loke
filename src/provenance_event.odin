@@ -548,38 +548,30 @@ prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
 }
 
 // Each argument's region by callee parameter, which a followed callee's
-// allocator use is substituted with; nil when no argument has one.
+// allocator use is substituted with. An argument in no region, as a container
+// still in its allocator-unbound zero state, is known to be in none
+// (design.md "Allocators"); nil, which reads as unknown, when no argument can
+// carry a region.
 @(private)
 prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set {
-	c := graph.k.c
 	form := prov_call_form(graph, v)
 	count := len(form.arguments)
 	out: []Region_Set
 	for argument, index in form.arguments {
-		if argument == 0 || !prov_type_has_region(c, prov_value(graph, argument).type) {
-			continue
+		if set, carries := prov_argument_region(graph, argument); carries {
+			if out == nil {
+				out = make([]Region_Set, count, graph.alloc)
+			}
+			out[index] = set
 		}
-		set := prov_visible_region(graph, prov_used_region(graph, argument))
-		region_merge(&set, prov_visible_region(graph, prov_provider_viewed_by(graph, argument)))
-		// An argument in no region, as a container still in its allocator-unbound
-		// zero state, is known to be in none: nil regions read as unknown
-		// (design.md "Allocators").
-		if out == nil {
-			out = make([]Region_Set, count, graph.alloc)
-		}
-		out[index] = set
 	}
 	// A pack built from separate arguments has no bound value: it is in its
-	// elements' regions, and known to be in none when they have none, so a
-	// callee using it does not read as using an unknown region.
+	// elements' regions.
 	if call_packs(v, v.variadic_slot) && v.variadic_slot < count {
 		pack := Region_Set{}
 		for element in form.pack {
-			if element == 0 || !prov_type_has_region(c, prov_value(graph, element).type) {
-				continue
-			}
-			region_merge(&pack, prov_visible_region(graph, prov_used_region(graph, element)))
-			region_merge(&pack, prov_visible_region(graph, prov_provider_viewed_by(graph, element)))
+			set, _ := prov_argument_region(graph, element)
+			region_merge(&pack, set)
 		}
 		if out == nil {
 			out = make([]Region_Set, count, graph.alloc)
@@ -587,6 +579,18 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 		out[v.variadic_slot] = pack
 	}
 	return out
+}
+
+// The region one argument value is in, with the providers it views; `carries`
+// is false when its type can carry no region.
+@(private = "file")
+prov_argument_region :: proc(graph: ^Flow_Graph, value: Value_Id) -> (set: Region_Set, carries: bool) {
+	if value == 0 || !prov_type_has_region(graph.k.c, prov_value(graph, value).type) {
+		return {}, false
+	}
+	set = prov_visible_region(graph, prov_used_region(graph, value))
+	region_merge(&set, prov_visible_region(graph, prov_provider_viewed_by(graph, value)))
+	return set, true
 }
 
 // The allocator use of a call the summaries do not follow into a body: a

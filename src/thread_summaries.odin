@@ -143,7 +143,7 @@ collect_thread_facts :: proc(k: ^Checker) -> []Thread_Body {
 	return facts
 }
 
-// A call in a runtime handle operation: where no argument has a region of its own,
+// A call in a runtime handle operation: where no argument can carry a region,
 // which reads as unknown, what the callee reaches through one is in the block.
 @(private = "file")
 handle_call_regions :: proc(c: ^Compiler, call: ^Effect_Call) {
