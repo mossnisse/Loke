@@ -51,13 +51,12 @@ foreign kernel32 {
 
 }
 
-// A spawned thread attaches to the runtime's panic state first, and detaching
-// runs its managed `thread_local` drops (design.md "Values that outlive every
-// scope").
+// A spawned thread's entry is `stdcall`, so entering it attaches the thread,
+// and detaching runs its managed `thread_local` drops (design.md "Values that
+// outlive every scope"). An entry detaches from its own body, which holds
+// nothing a drop could end.
 @(private)
 foreign loke_runtime {
-	@(link_name="loke_rt_v1_thread_attach")
-	rt_attach :: proc "c" () ---;
 	@(link_name="loke_rt_v1_thread_detach")
 	rt_detach :: proc "c" () ---;
 	// Calls `run(frame)` here. A joining pool worker runs a task through it,
@@ -136,7 +135,6 @@ impl Start($T) {
 
 @(private)
 thread_main :: proc "stdcall" (raw: rawptr) -> u32 {
-	rt_attach();
 	(^Start_Header)(raw)^.run(raw);
 	rt_detach();
 	return 0;

@@ -210,7 +210,6 @@ run_frame :: proc "stdcall" (frame: rawptr) -> u32 {
 // A worker: runs queued tasks, oldest first, until the pool stops.
 @(private)
 pool_worker :: proc "stdcall" (raw: rawptr) -> u32 {
-	rt_attach();
 	worker_of = raw;
 	state := (^mut Pool_State)(raw);
 	rt_lock(rawptr(&state^.word.value));

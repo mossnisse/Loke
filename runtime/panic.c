@@ -21,14 +21,13 @@ static __declspec(thread) int32_t attached;
 /* design.md "Values that outlive every scope": every entry Loke code has from
  * foreign code calls this, so a thread attaches the first time it enters.
  * An attached thread may be running Loke frames below the entry, which an
- * unwind must still reach, so attaching again changes nothing. */
+ * unwind must still reach, so attaching again changes nothing. A thread that
+ * is not attached has no frames, since it starts with none and detach clears
+ * them, and is not panicking, since a panic ends in an abort. */
 void loke_rt_v1_thread_attach(void) {
-	if (attached != NOT_ATTACHED) {
-		return;
+	if (attached == NOT_ATTACHED) {
+		attached = ATTACHED;
 	}
-	frames = 0;
-	panicking = 0;
-	attached = ATTACHED;
 }
 
 void loke_rt_v1_thread_detach(void) {

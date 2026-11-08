@@ -2188,8 +2188,7 @@ c_host_link_command :: proc(clang, host, obj, exe: string, include_flags: []stri
 
 // design.md "Concurrency and the memory model": the atomic
 // claims under real contention. The threads come from a C host that attaches
-// and detaches each one, exercising the documented way a foreign thread calls
-// into an object build.
+// and detaches each one explicitly, which the exports would also attach.
 //
 // Every assertion inside is an invariant — a count, a publication, a single run
 // — never an interleaving, because an interleaving is the scheduler's answer

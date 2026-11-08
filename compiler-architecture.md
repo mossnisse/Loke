@@ -743,9 +743,9 @@ hook(drop) on Task_Scope                // joins every started thread,
   ends, so the parent sets the result local's ordinary dynamic initialization
   flag right after `start` returns, and the enclosing scope drops the result
   through that flag on every exit. No runtime completion tracking is needed.
-- **Threads.** Each task runs through the existing `thread_main`, which
-  attaches to the runtime's panic state and runs the thread's `thread_local`
-  drops before exit, so waiting for the thread orders its TLS destruction
+- **Threads.** Each task runs through the existing `thread_main`, whose
+  `stdcall` entry attaches the thread and which runs the thread's
+  `thread_local` drops before exit, so waiting for the thread orders its TLS destruction
   before the join returns.
 - **Pools.** `core:thread`'s `Pool` keeps a queue of nodes, each a frame and
   its block's scope, under one SRWLOCK and condition variable. A scope counts
@@ -1019,7 +1019,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm.odin` | Module orchestration, emitter state, procedures, and instruction plumbing. |
 | `emit_llvm_names.odin` | LLVM symbol names: the naming pass, mangling, escaping, and linkage. |
 | `emit_llvm_entry.odin` | Program entry: `wmain` for an executable and a test build, an object's CPU check, and the provider initializer. |
-| `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's floating-point guard and `-debug`'s check after a foreign call. |
+| `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's guard, which attaches the thread and sets the floating-point environment, and `-debug`'s check after a foreign call. |
 | `emit_llvm_union.odin` | Union storage, construction, widening, and tag and payload reads. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
 | `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |

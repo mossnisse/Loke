@@ -358,8 +358,9 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		}
 		return
 	}
-	// design.md "Floating-point operators": foreign code may call it in another
-	// environment, so its name is the guard, and the body is apart.
+	// design.md "Floating-point operators" and "Values that outlive every
+	// scope": foreign code may call it in another environment, and on a thread
+	// the runtime did not start, so its name is the guard, and the body is apart.
 	body := entry_body_name(e, llvm_name)
 	emit_proc_definition(e, symbol_id, literal, body)
 	emit_foreign_entry_guard(e, symbol, llvm_name, body)

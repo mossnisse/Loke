@@ -15,24 +15,26 @@ foreign host {
 @(move_only) Tracked :: struct { value: i32 }
 
 impl Tracked {
-	// Only a value the host set counts, so a thread that set none counts
-	// nothing as it detaches.
+	// Every drop counts, so a detach that drops on a thread that never entered
+	// Loke shows in the count.
 	release :: hook(drop) proc(self: inout Tracked) {
-		if (self.value != 0) {
-			attach_drops += 1;
-			attach_reenter();
-		}
+		attach_drops += 1;
+		attach_reenter();
 	}
 }
 
 tracked: thread_local Tracked;
+// What `attach_read` reports: apart from `tracked`, which its drop holds while
+// the host calls back in.
+seen: thread_local i32;
 
 @(export)
 attach_track :: proc "c" (value: i32) {
 	tracked.value = value;
+	seen = value;
 }
 
 @(export)
 attach_read :: proc "c" () -> i32 {
-	return tracked.value;
+	return seen;
 }

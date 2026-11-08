@@ -14,10 +14,19 @@ int attach_read(void);
 
 int attach_drops;
 static int reentered;
+static int nested;
 
-/* Called by the drop while the thread detaches: it enters Loke again. */
+/* Called by the drop while the thread detaches: it enters Loke again, which
+ * must not attach the thread, so detaching from inside the drop does nothing.
+ * A thread attached again would drop a second time; only the outermost drop
+ * tries, so that shows in the count instead of recursing. */
 void attach_reenter(void) {
 	reentered = attach_read();
+	if (!nested) {
+		nested = 1;
+		loke_rt_v1_thread_detach();
+		nested = 0;
+	}
 }
 
 static int thread_status = 99;
@@ -32,7 +41,7 @@ static int run(void) {
 	if (reentered != 5) {
 		return 2;
 	}
-	/* The entry during the drop did not attach the thread again. */
+	/* Detaching a detached thread drops nothing. */
 	loke_rt_v1_thread_detach();
 	if (attach_drops != 1) {
 		return 3;
@@ -59,10 +68,13 @@ int main(void) {
 	}
 	while (!atomic_load(&finished)) {
 	}
+	if (thread_status != 0) {
+		return thread_status;
+	}
 	/* Detaching a thread that never entered Loke drops nothing. */
 	loke_rt_v1_thread_detach();
 	if (attach_drops != 2) {
 		return 5;
 	}
-	return thread_status;
+	return 0;
 }

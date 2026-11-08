@@ -1,6 +1,6 @@
 /* The C host of an object build that selects providers (design.md "Build
  * modes"). Nothing calls the initializer automatically: this
- * host calls it once, after attaching a thread and before using any export.
+ * host calls it once, before using any export.
  *
  * The second call proves the documented no-op: a host that cannot tell whether
  * it has already initialized may ask again. The first is made rounding upward,
