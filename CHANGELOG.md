@@ -1497,6 +1497,11 @@ checklist.
 
 ### Changed
 
+- `lokec -version` and `loke-lsp -version` name the revision a build comes from, so a build of the
+  development tree no longer passes for the release before it: `lokec 0.9.0
+  (v0.9.0-14-g01989c09-dirty)`. A release still prints `lokec 0.9.0`, and a build with no recorded
+  revision adds `(unstamped)`. `build-stamp.ps1` gives the Odin flag that records it; `test-all.ps1`
+  passes it ([Inspecting a compilation](compiler-guide.md#inspecting-a-compilation)).
 - [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) now states
   which body-local hooks come too late (`L0488`), as the compiler already reported: one under a
   `when` that could not be selected where the record is declared, or in a static `foreach` body,

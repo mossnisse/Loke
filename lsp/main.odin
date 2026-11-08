@@ -45,7 +45,7 @@ main :: proc() {
 			fmt.print(USAGE)
 			os.exit(0)
 		case "-version", "--version":
-			fmt.printfln("%s %s", SERVER_NAME, lokec.LOKE_VERSION_STRING)
+			fmt.printfln("%s %s", SERVER_NAME, lokec.LOKE_VERSION_TEXT)
 			os.exit(0)
 		case:
 			fmt.eprintfln("error: unknown option `%s`", arg)

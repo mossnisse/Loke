@@ -104,12 +104,14 @@ try {
     # but takes about a minute per binary to build, so the full gate, which
     # release.yml runs first, tests that build and the quick one Odin's default.
     $optimization = if ($Full) { '-o:speed' } else { '-o:minimal' }
-    Invoke-Native 'compiler build failed' { odin build src -out:lokec.exe -vet-unused -vet-shadowing $optimization }
+    # Both binaries name the revision they were built from in `-version`.
+    $stamp = & "$repoRoot/build-stamp.ps1"
+    Invoke-Native 'compiler build failed' { odin build src -out:lokec.exe -vet-unused -vet-shadowing $optimization $stamp }
 
     # The language server compiles in the whole compiler, so it is rebuilt with
     # it; the integration harness talks to the binary over real pipes.
     Invoke-Native 'language server unit tests failed' { odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp }
-    Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing $optimization }
+    Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing $optimization $stamp }
 
     # This is also the example gate: every program under examples/ is
     # compiled from its real source here, and the ones with fixed output are

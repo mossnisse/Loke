@@ -273,7 +273,7 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(
 		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}},"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true,"completionProvider":{{"triggerCharacters":["."]}},"signatureHelpProvider":{{"triggerCharacters":["(",","]}},"referencesProvider":true,"renameProvider":%s,"documentFormattingProvider":true,"executeCommandProvider":{{"commands":["%s"]}}}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
-		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, s.prepare_rename ? `{"prepareProvider":true}` : "true", DOCUMENTATION_COMMAND, SERVER_NAME, lokec.LOKE_VERSION_STRING,
+		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, s.prepare_rename ? `{"prepareProvider":true}` : "true", DOCUMENTATION_COMMAND, SERVER_NAME, lokec.LOKE_VERSION_TEXT,
 	)
 	send_result(s, id, strings.to_string(b))
 }

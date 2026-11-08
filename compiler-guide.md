@@ -442,7 +442,13 @@ The parsing modes take a **file**, not a package directory:
 ```
 
 `.\lokec.exe -h` prints the built-in usage summary and `-version` the compiler
-version.
+version. A release prints its version alone, `lokec 0.9.0`. A build from any
+other revision adds the `git describe` output it was built from, such as
+`lokec 0.9.0 (v0.9.0-14-g01989c09-dirty)`: 14 commits past `v0.9.0`, at commit
+`01989c09`, with uncommitted changes. `(unstamped)` marks a build that recorded
+no revision. To build against a development tree, pin a commit and compare it
+with the stamp; a `-dirty` stamp names no revision that can be rebuilt. See
+[Building from source](readme.md#building-from-source) for stamping a build.
 Compiler exit codes are `0` for success, `1` for source/configuration diagnostics
 or a failing test under `-test`, and `2` for invalid command-line usage or
 backend/toolchain failure. In PowerShell, inspect `$LASTEXITCODE` immediately

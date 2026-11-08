@@ -19,7 +19,10 @@ jobs:
       run:
         shell: pwsh
     steps:
+      # With the tags, so build-stamp.ps1 finds this one.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # The release gate: no open divergence from the spec, the tag names the
       # version the compiler reports as LOKE_VERSION, and CHANGELOG.md has its
@@ -44,13 +47,20 @@ jobs:
           $odin.DirectoryName >> $env:GITHUB_PATH
 
       # Built exactly as test-all.ps1 -Full, the test job's gate, builds the
-      # binaries it tests.
+      # binaries it tests. Each must report the release alone: a stamp in its
+      # `-version` means the build is not this tag's clean checkout.
       - name: Build and package
         run: |
-          odin build src -out:lokec.exe -vet-unused -vet-shadowing -o:speed
+          $stamp = .\build-stamp.ps1
+          odin build src -out:lokec.exe -vet-unused -vet-shadowing -o:speed $stamp
           if ($LASTEXITCODE -ne 0) { throw "compiler build failed" }
-          odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing -o:speed
+          odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing -o:speed $stamp
           if ($LASTEXITCODE -ne 0) { throw "language server build failed" }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          foreach ($tool in 'lokec', 'loke-lsp') {
+            $out = & ".\$tool.exe" -version
+            if ($out -ne "$tool $version") { throw "$tool.exe -version printed '$out', not '$tool $version'" }
+          }
           $name = "loke-$env:GITHUB_REF_NAME-windows-amd64"
           $stage = "$env:RUNNER_TEMP\$name"
           New-Item -ItemType Directory $stage | Out-Null

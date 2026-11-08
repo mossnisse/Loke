@@ -93,6 +93,19 @@ That build is quick to make. A release adds `-o:speed` to both commands: the
 build takes about a minute each, and the compiler runs two to three times
 faster.
 
+`lokec -version` reports such a build as `(unstamped)`. Add
+`(.\build-stamp.ps1)` to either command to record the commit it was built
+from, as `test-all.ps1` and the release build do:
+
+```powershell
+odin build src -out:lokec.exe (.\build-stamp.ps1)
+```
+
+When building other projects against a development tree, pin a Loke commit and
+check it against `lokec -version`, as
+[Inspecting a compilation](compiler-guide.md#inspecting-a-compilation)
+describes.
+
 ## Documentation
 
 | To learn about | Read |
