@@ -98,3 +98,11 @@ L0747
 `hook(drop)` is declared here
 @126:2
 this `hook(copy)` does not apply to every instance that `hook(drop)` does; declare it in the drop hook's block, or in a block over every instance
+
+L0747
+@149:1
+`Pair` declares `hook(drop)`, so it must say how it is copied
+@151:2
+`hook(drop)` is declared here
+@154:2
+this `hook(copy)` does not apply to every instance that `hook(drop)` does; declare it in the drop hook's block, or in a block over every instance

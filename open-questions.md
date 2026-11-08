@@ -1266,6 +1266,11 @@ it has been compared this way.
 Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
 none of which they wait on.
 
+- **A neutral name for the shared slice iterator (P3).**
+  `container.Priority_Queue_Iterator(T)` is an alias of `Small_Array_Iterator(T)`,
+  so diagnostics and type names call a queue's iterator by the small array's
+  name. A name for the read-only slice cursor that neither container owns, with
+  both as aliases, would fix that. Found on 2026-11-08 while reviewing `a271b0da`.
 - **A dynamic array's allocator.** `x.allocator` is not a member, which is the only
   reason `Deque` has its own field. An `x.allocator()` query would remove it, and
   would help any library container that replaces its storage. Is the query worth

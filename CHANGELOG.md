@@ -20,8 +20,10 @@ checklist.
   ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)). A copy hook
   written only in `impl Cell(int)` beside a drop hook in `impl Cell($T)` compiled, and gave
   `Cell(string)` the generated copy with no attribute saying so. It is now `L0747`. Upgrade by
-  moving the copy hook to the drop hook's block or a general one, bounded with `where` if some
-  instances cannot copy, or by writing `@(move_only)` or `@(fieldwise_copy)`.
+  adding a `hook(copy)` to the drop hook's block or a general one, bounded with `where` if some
+  instances cannot copy; the specialized hook still overrides it for `Cell(int)`. Where no
+  instance needs its own copy, remove the specialized hook and write `@(move_only)` or
+  `@(fieldwise_copy)` instead, since either beside a `hook(copy)` is an error.
 - [`@(require_results)`](design.md#require_results) and
   [`@(deprecated)`](design.md#deprecatedstring) bind a generic procedure's declaration, so they hold
   for every instance: a bare call of a generic `@(require_results)` procedure, free or a method, is

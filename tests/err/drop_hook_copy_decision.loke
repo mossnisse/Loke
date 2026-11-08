@@ -144,3 +144,14 @@ impl Wide($T) {
 		return .ok(Wide(T){self.value});
 	}
 }
+// A repeated `$` name matches only instances whose arguments are equal, so it is
+// not a block over every instance.
+Pair :: struct($A: type, $B: type) { a: A, b: B }
+impl Pair($A, $B) {
+	close :: hook(drop) proc(self: inout) {}
+}
+impl Pair($T, $T) {
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Pair(T, T), Allocator_Error) where is_copyable(T) {
+		return .ok(Pair(T, T){self.a, self.b});
+	}
+}

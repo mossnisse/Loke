@@ -2,8 +2,6 @@
 // and resource types", "Conversion hooks").
 package lokec
 
-import "core:slice"
-
 resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
 	symbol_id := d.symbols[0]
 	sym := symbol_of(k.c, symbol_id)
@@ -313,14 +311,18 @@ Written_Hooks :: struct {
 @(private = "file")
 template_written_hooks :: proc(k: ^Checker, template: Symbol_Id) -> Written_Hooks {
 	written: Written_Hooks
-	drop_blocks := make([dynamic]^Generic_Impl, context.temp_allocator)
-	copy_blocks := make([dynamic]^Generic_Impl, context.temp_allocator)
+	// A drop hook in a block with no `hook(copy)`, which a copy hook over every
+	// instance still decides for.
+	uncovered_drop: Maybe(Span)
+	copy_everywhere := false
 	// Copied out: a range over the map entry itself faults when it has no blocks.
 	blocks := k.c.generic_impls[template]
 	for block in blocks {
 		if block.item.kind != .Impl {
 			continue
 		}
+		block_drop: Maybe(Span)
+		block_copy := false
 		for member in block.item.members {
 			hook_decl, is_decl := member.(^Decl)
 			if !is_decl {
@@ -329,40 +331,29 @@ template_written_hooks :: proc(k: ^Checker, template: Symbol_Id) -> Written_Hook
 			#partial switch decl_hook_kind(hook_decl) {
 			case .Drop:
 				written.drop_written = true
-				if drop_hook_shaped(hook_decl) {
-					append(&drop_blocks, block)
-					if !written.drop_bound {
-						written.drop_bound = true
-						written.drop_span = hook_decl.names[0].span
-					}
+				if drop_hook_shaped(hook_decl) && block_drop == nil {
+					block_drop = hook_decl.names[0].span
 				}
 			case .Copy:
 				written.copy_written = true
 				written.copy_span = hook_decl.names[0].span
-				append(&copy_blocks, block)
+				block_copy = true
 			}
 		}
-	}
-	if len(copy_blocks) == 0 {
-		return written
-	}
-	for block in copy_blocks {
-		if impl_applies_to_every_instance(block) {
-			return written
-		}
-	}
-	for drop in drop_blocks {
-		if !slice.contains(copy_blocks[:], drop) {
-			written.copy_narrow = true
-			written.drop_span = drop.item.span
-			for member in drop.item.members {
-				if hook_decl, is_decl := member.(^Decl); is_decl && decl_hook_kind(hook_decl) == .Drop {
-					written.drop_span = hook_decl.names[0].span
-					break
-				}
+		if span, dropped := block_drop.?; dropped {
+			if !written.drop_bound {
+				written.drop_bound = true
+				written.drop_span = span
 			}
-			break
+			if !block_copy && uncovered_drop == nil {
+				uncovered_drop = span
+			}
 		}
+		copy_everywhere ||= block_copy && impl_applies_to_every_instance(block)
+	}
+	if span, uncovered := uncovered_drop.?; uncovered && written.copy_written && !copy_everywhere {
+		written.copy_narrow = true
+		written.drop_span = span
 	}
 	return written
 }
@@ -370,13 +361,16 @@ template_written_hooks :: proc(k: ^Checker, template: Symbol_Id) -> Written_Hook
 // `impl Cell($T)` or `impl Table($K, $V)`: distinct `$` names and nothing else.
 @(private = "file")
 impl_applies_to_every_instance :: proc(block: ^Generic_Impl) -> bool {
-	seen := make([dynamic]string, context.temp_allocator)
-	for arg in block.args {
+	for arg, index in block.args {
 		poly, is_poly := arg.(^Type_Poly)
-		if !is_poly || slice.contains(seen[:], poly.name.text) {
+		if !is_poly {
 			return false
 		}
-		append(&seen, poly.name.text)
+		for earlier in block.args[:index] {
+			if earlier.(^Type_Poly).name.text == poly.name.text {
+				return false
+			}
+		}
 	}
 	return true
 }
