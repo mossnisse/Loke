@@ -75,6 +75,13 @@ synth_expr_stmt :: proc(c: ^Compiler, value: Expr, span: Span) -> Stmt {
 	return s
 }
 
+synth_block :: proc(c: ^Compiler, stmts: []Stmt, span: Span) -> ^Block {
+	block := new(Block, c.semantic_allocator)
+	block.span = span
+	block.stmts = stmts
+	return block
+}
+
 // `name := value;`, `name :: value;`, or either with its type written.
 synth_decl :: proc(c: ^Compiler, kind: Decl_Kind, name: string, value: Expr, span: Span, declared_type: Expr = nil) -> ^Decl {
 	d := new(Decl, c.semantic_allocator)

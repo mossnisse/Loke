@@ -137,11 +137,8 @@ check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	}
 	flow := check_scoped_block(k, s.body)
 
-	lowered := new(Block, k.c.semantic_allocator)
-	lowered.span = s.span
 	append(&hidden, s.body)
-	lowered.stmts = hidden[:]
-	s.lowered = lowered
+	s.lowered = synth_block(k.c, hidden[:], s.span)
 	return flow
 }
 
@@ -507,13 +504,10 @@ spawn_run_literal :: proc(k: ^Checker, task: ^Spawn_Task, stmts: []Stmt) -> ^Exp
 	signature := new(Type_Proc, c.semantic_allocator)
 	signature.span = span
 	signature.params = params
-	body := new(Block, c.semantic_allocator)
-	body.span = span
-	body.stmts = stmts
 	literal := new(Expr_Proc, c.semantic_allocator)
 	literal.span = span
 	literal.signature = signature
-	literal.body = body
+	literal.body = synth_block(c, stmts, span)
 	return literal
 }
 

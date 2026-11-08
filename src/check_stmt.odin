@@ -569,11 +569,8 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 // `s` as the block that stands for it.
 @(private = "file")
 check_lowered_block :: proc(k: ^Checker, s: ^Stmt_Assign, stmts: []Stmt) {
-	block := new(Block, k.c.semantic_allocator)
-	block.span = s.span
-	block.stmts = stmts
-	s.lowered = block
-	check_scoped_block(k, block)
+	s.lowered = synth_block(k.c, stmts, s.span)
+	check_scoped_block(k, s.lowered)
 }
 
 // Binds an indexed destination's receiver, by address, and its indices to
