@@ -178,7 +178,7 @@ run :: proc() -> int {
 		fmt.print(USAGE)
 		return 0
 	case .Version:
-		fmt.printfln("lokec %s", LOKE_VERSION_TEXT)
+		fmt.printfln("lokec %s", VERSION_WITH_REVISION)
 		return 0
 	case .Print_Toolchain:
 		return print_toolchain(opts.config.cpu)

@@ -185,10 +185,12 @@ debug_module_trailer :: proc(d: ^Debug_Info, out: ^strings.Builder) {
 	fmt.sbprintln(out, "!llvm.dbg.cu = !{!0}")
 	fmt.sbprintln(out, "!llvm.module.flags = !{!1, !2}")
 	// Loke has no DWARF language code; C's describes its procedures well enough.
+	// The producer is what `lokec -version` reports, so a PDB names the revision
+	// that compiled it.
 	fmt.sbprintfln(
 		out,
 		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug%s%s)`,
-		debug_file(d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized, retained, globals,
+		debug_file(d, package_of(c, c.root_package).files[0].file), VERSION_WITH_REVISION, optimized, retained, globals,
 	)
 	fmt.sbprintln(out, `!1 = !{i32 2, !"Debug Info Version", i32 3}`)
 	// Windows debuggers read CodeView, in a PDB the linker writes.

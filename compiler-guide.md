@@ -445,8 +445,10 @@ The parsing modes take a **file**, not a package directory:
 version. A release prints its version alone, `lokec 0.9.0`. A build from any
 other revision adds the `git describe` output it was built from, such as
 `lokec 0.9.0 (v0.9.0-14-g01989c09-dirty)`: 14 commits past `v0.9.0`, at commit
-`01989c09`, with uncommitted changes. `(unstamped)` marks a build that recorded
-no revision. To build against a development tree, pin a commit and compare it
+`01989c09`, with uncommitted changes, which include new untracked files under
+`src` or `lsp`. A checkout with no release tag, such as a shallow clone, gives
+`g` and the commit alone: `(g01989c09)`. `(unstamped)` marks a build that
+recorded no revision. To build against a development tree, pin a commit and compare it
 with the stamp; a `-dirty` stamp names no revision that can be rebuilt. See
 [Building from source](readme.md#building-from-source) for stamping a build.
 Compiler exit codes are `0` for success, `1` for source/configuration diagnostics

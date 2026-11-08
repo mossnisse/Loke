@@ -92,16 +92,16 @@ OPT_CLANG_FLAGS := [Opt_Mode]string {
 LOKE_VERSION_STRING :: "0.9.0"
 
 // The revision this binary was built from, which `build-stamp.ps1` passes as
-// `-define:LOKE_BUILD=...`: `git describe` output, so `v0.9.0` at the tag and
-// `v0.9.0-14-g01989c09-dirty` past it. A build at its release's own tag reads
-// as the release alone; any other names its stamp, or says it has none, so a
-// development build never passes for a release (compiler-guide.md "Inspecting a
-// compilation"). `LOKE_VERSION` stays the release a program sees.
-LOKE_BUILD :: #config(LOKE_BUILD, "")
-LOKE_VERSION_TEXT ::
-	LOKE_VERSION_STRING when LOKE_BUILD == "v" + LOKE_VERSION_STRING else
-	LOKE_VERSION_STRING + " (unstamped)" when LOKE_BUILD == "" else
-	LOKE_VERSION_STRING + " (" + LOKE_BUILD + ")"
+// `-define:LOKEC_REVISION=...`: `git describe` output, so `v0.9.0` at the tag
+// and `v0.9.0-14-g01989c09-dirty` past it. A build at its release's own tag
+// reads as the release alone; any other names its stamp, or says it has none, so
+// a development build never passes for a release (compiler-guide.md "Inspecting
+// a compilation"). `LOKE_VERSION` stays the release a program sees.
+LOKEC_REVISION :: #config(LOKEC_REVISION, "")
+VERSION_WITH_REVISION ::
+	LOKE_VERSION_STRING when LOKEC_REVISION == "v" + LOKE_VERSION_STRING else
+	LOKE_VERSION_STRING + " (unstamped)" when LOKEC_REVISION == "" else
+	LOKE_VERSION_STRING + " (" + LOKEC_REVISION + ")"
 
 // standard-library.md "Compiled log level". The member names are `core:log`'s own, and
 // `Off` is last so `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled

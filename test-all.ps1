@@ -113,6 +113,16 @@ try {
     Invoke-Native 'language server unit tests failed' { odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp }
     Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing $optimization $stamp }
 
+    # Both report the stamp they were given as compiler-guide.md "Inspecting a
+    # compilation" describes it.
+    $version = [regex]::Match((Get-Content -Raw "$repoRoot/src/build_config.odin"), 'LOKE_VERSION_STRING :: "([^"]+)"').Groups[1].Value
+    $revision = "$stamp" -replace '^-define:LOKEC_REVISION=', ''
+    $expected = if (-not $revision) { "$version (unstamped)" } elseif ($revision -eq "v$version") { $version } else { "$version ($revision)" }
+    foreach ($tool in 'lokec', 'loke-lsp') {
+        $out = & ".\$tool.exe" -version
+        if ($out -ne "$tool $expected") { throw "$tool.exe -version printed '$out', not '$tool $expected'" }
+    }
+
     # This is also the example gate: every program under examples/ is
     # compiled from its real source here, and the ones with fixed output are
     # compared against it. They are the only corpus that doubles as documentation.

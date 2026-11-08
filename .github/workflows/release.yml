@@ -47,8 +47,9 @@ jobs:
           $odin.DirectoryName >> $env:GITHUB_PATH
 
       # Built exactly as test-all.ps1 -Full, the test job's gate, builds the
-      # binaries it tests. Each must report the release alone: a stamp in its
-      # `-version` means the build is not this tag's clean checkout.
+      # binaries it tests. Each must report the release alone; a stamp in its
+      # `-version` means build-stamp.ps1 did not find this tag on the checkout
+      # (the Release gate has already matched the tag to LOKE_VERSION_STRING).
       - name: Build and package
         run: |
           $stamp = .\build-stamp.ps1

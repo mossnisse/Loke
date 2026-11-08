@@ -1154,9 +1154,9 @@ For individual suites:
 
 ```powershell
 odin test src -vet-unused -vet-shadowing -vet-packages:lokec
-odin build src -out:lokec.exe -vet-unused -vet-shadowing
+odin build src -out:lokec.exe -vet-unused -vet-shadowing (.\build-stamp.ps1)
 odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp
-odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing
+odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing (.\build-stamp.ps1)
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
 ```
 
