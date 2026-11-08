@@ -140,11 +140,12 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		return 2
 	}
 
-	includes, _ := msvc_include_dirs()
+	// A missing header or library is left for clang to name.
+	toolchain, _ := msvc_toolchain_flags()
 	// A custom runtime directory is never written to.
 	runtime_inputs, bitcode := sources, false
 	if !custom_runtime {
-		runtime_inputs, bitcode = runtime_link_inputs(clang, runtime_dir, sources, includes, c.target, c.opt_mode)
+		runtime_inputs, bitcode = runtime_link_inputs(clang, runtime_dir, sources, toolchain, c.target, c.opt_mode)
 	}
 
 	command := make([dynamic]string)
@@ -174,10 +175,8 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	append(&command, "-Wno-override-module")
 	// `f16` conversions need compiler-rt's helpers, which the MSVC CRT lacks.
 	append(&command, "-rtlib=compiler-rt")
-	// A missing header or library is left for clang to name.
-	lib, _ := msvc_lib_dir()
 	append(&command, "-I", runtime_dir)
-	append_msvc_flags(&command, includes, lib)
+	append(&command, ..toolchain)
 
 	state, _, stderr, err := subprocess.run(
 		os.Process_Desc{command = command[:]},
@@ -397,16 +396,15 @@ print_toolchain :: proc(cpu: Cpu_Level) -> int {
 	fmt.printfln("msvc=%s", msvc_tools_dir())
 	fmt.printfln("lto=%s", links_runtime_bitcode(clang, .Speed) ? "yes" : "no")
 
-	includes, includes_complete := msvc_include_dirs()
-	lib, lib_complete := msvc_lib_dir()
+	toolchain, complete := msvc_toolchain_flags()
 	flags := make([dynamic]string)
 	append_target_flags(&flags, cpu)
-	append_msvc_flags(&flags, includes, lib)
+	append(&flags, ..toolchain)
 	for flag in flags {
 		fmt.printfln("flag=%s", flag)
 	}
 
-	ready := probe == nil && includes_complete && lib_complete
+	ready := probe == nil && complete
 	fmt.printfln("ready=%s", ready ? "yes" : "no")
 	return 0
 }
@@ -428,60 +426,35 @@ find_clang :: proc() -> string {
 	return "clang"
 }
 
-// What `msvc_include_dirs` and `msvc_lib_dir` found, as clang flags.
-// `-idirafter` searches them after clang's own headers, where clang puts
-// INCLUDE's: MSVC's `immintrin.h` ahead of clang's declares the `_mm_*`
-// intrinsics as functions, which then fail to link from a C host.
-@(private)
-append_msvc_flags :: proc(command: ^[dynamic]string, includes: []string, lib: string) {
-	for include in includes {
-		append(command, "-idirafter", include)
-	}
-	if lib != "" {
-		append(command, "-L", lib)
-	}
-}
-
-// The MSVC toolset's `lib\x64`, or "" when LIB already supplies it (complete)
-// or nothing was found (incomplete).
+// clang's options naming the MSVC toolset and Windows SDK found here, or none
+// in a developer prompt, whose INCLUDE and LIB clang reads itself; complete
+// when a link could find both. Named this way, clang takes headers and
+// libraries from that one toolset and SDK, ignoring INCLUDE, LIB, and any
+// Visual Studio it would find itself, and searches its own headers first:
+// MSVC's `immintrin.h` ahead of clang's declares the `_mm_*` intrinsics as
+// functions, which then fail to link. The SDK headers include `windows.h`, so
+// `-print-toolchain`'s flags also compile a C host.
 @(private = "file")
-msvc_lib_dir :: proc() -> (dir: string, complete: bool) {
-	if os.get_env("LIB", context.allocator) != "" {
-		return "", true
-	}
-	if root := msvc_tools_dir(); root != "" {
-		return join_path({root, "lib", "x64"}), true
-	}
-	return "", false
-}
-
-// The MSVC, UCRT, and Windows SDK headers, or none when INCLUDE already
-// supplies them. The runtime needs only the first two; `um` and `shared` are
-// what `windows.h` needs, so a C host compiled with `-print-toolchain`'s flags
-// can include it. Readiness asks only for what a link uses.
-@(private = "file")
-msvc_include_dirs :: proc() -> (dirs: []string, complete: bool) {
-	if os.get_env("INCLUDE", context.allocator) != "" {
+msvc_toolchain_flags :: proc() -> (flags: []string, complete: bool) {
+	if os.get_env("INCLUDE", context.allocator) != "" && os.get_env("LIB", context.allocator) != "" {
 		return nil, true
 	}
 	out := make([dynamic]string)
-	root := msvc_tools_dir()
-	if root != "" {
-		append(&out, join_path({root, "include"}))
+	tools := msvc_tools_dir()
+	if tools != "" {
+		append(&out, "-Xmicrosoft-visualc-tools-root", tools)
 	}
+	// `...\Windows Kits\10\Include\<version>`. A link needs `um`'s libraries,
+	// kernel32 among them, which install with its headers.
 	sdk := newest_containing(
 		{`C:\Program Files (x86)\Windows Kits\10\Include\*`, `C:\Program Files\Windows Kits\10\Include\*`},
-		"ucrt",
+		"ucrt", "um",
 	)
 	if sdk != "" {
-		for child in ([]string{"ucrt", "um", "shared"}) {
-			dir := join_path({sdk, child})
-			if os.is_dir(dir) {
-				append(&out, dir)
-			}
-		}
+		append(&out, "-Xmicrosoft-windows-sdk-root", path_dir(path_dir(sdk)))
+		append(&out, "-Xmicrosoft-windows-sdk-version", filepath.base(sdk))
 	}
-	return out[:], root != "" && sdk != ""
+	return out[:], tools != "" && sdk != ""
 }
 
 // `...\VC\Tools\MSVC\<version>`. A toolset needs both headers and libraries:

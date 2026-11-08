@@ -31,13 +31,13 @@ CPU_CHECK_SOURCE :: "cpu.c"
 // unoptimized build's are, `cpu.c` among them.
 @(private)
 runtime_link_inputs :: proc(
-	clang, runtime_dir: string, sources, includes: []string, target: Target_Info, opt_mode: Opt_Mode,
+	clang, runtime_dir: string, sources, toolchain: []string, target: Target_Info, opt_mode: Opt_Mode,
 ) -> (
 	inputs: []string,
 	bitcode: bool,
 ) {
 	bitcode = links_runtime_bitcode(clang, opt_mode)
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, includes, target, opt_mode, bitcode); prebuilt != nil {
+	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, toolchain, target, opt_mode, bitcode); prebuilt != nil {
 		return prebuilt, bitcode
 	}
 	return sources, false
@@ -51,12 +51,12 @@ runtime_link_inputs :: proc(
 @(private = "file")
 prebuilt_runtime_objects :: proc(
 	runtime_dir: string,
-	sources, includes: []string,
+	sources, toolchain: []string,
 	target: Target_Info,
 	opt_mode: Opt_Mode,
 	bitcode: bool,
 ) -> []string {
-	commands := runtime_compile_commands(runtime_dir, sources, includes, target, opt_mode, bitcode)
+	commands := runtime_compile_commands(runtime_dir, sources, toolchain, target, opt_mode, bitcode)
 	manifest, identified := runtime_build_manifest(runtime_dir, commands)
 	if !identified {
 		return runtime_cache_failed(runtime_dir, "cannot read the runtime sources in `%s`", runtime_dir)
@@ -142,7 +142,7 @@ runtime_build_manifest :: proc(runtime_dir: string, commands: [][]string) -> (ma
 		stamp, _ = os.modification_time_by_path(find_on_path(clang))
 	}
 	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
-	// clang reads it when the commands name no `-idirafter`.
+	// clang reads it when the commands name no toolset (`msvc_toolchain_flags`).
 	fmt.sbprintfln(&b, "INCLUDE %s", os.get_env("INCLUDE", context.temp_allocator))
 	entries, err := os.read_all_directory_by_path(runtime_dir, context.temp_allocator)
 	if err != nil {
@@ -182,9 +182,9 @@ prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bo
 // it (compiler-guide.md "CPU levels").
 @(private)
 runtime_compile_commands :: proc(
-	runtime_dir: string, sources, includes: []string, target: Target_Info, opt_mode: Opt_Mode, bitcode: bool,
+	runtime_dir: string, sources, toolchain: []string, target: Target_Info, opt_mode: Opt_Mode, bitcode: bool,
 ) -> [][]string {
-	compile :: proc(runtime_dir: string, sources, includes: []string, target: Target_Info, opt_mode: Opt_Mode, lto: bool) -> []string {
+	compile :: proc(runtime_dir: string, sources, toolchain: []string, target: Target_Info, opt_mode: Opt_Mode, lto: bool) -> []string {
 		command := make([dynamic]string, context.temp_allocator)
 		append(&command, find_clang(), "-c")
 		append(&command, ..sources)
@@ -193,7 +193,7 @@ runtime_compile_commands :: proc(
 			append(&command, "-flto")
 		}
 		append(&command, "-I", runtime_dir)
-		append_msvc_flags(&command, includes, "")
+		append(&command, ..toolchain)
 		return command[:]
 	}
 	optimized := make([dynamic]string, context.temp_allocator)
@@ -203,10 +203,10 @@ runtime_compile_commands :: proc(
 	}
 	commands := make([dynamic][]string, context.temp_allocator)
 	if len(optimized) > 0 {
-		append(&commands, compile(runtime_dir, optimized[:], includes, target, opt_mode, true))
+		append(&commands, compile(runtime_dir, optimized[:], toolchain, target, opt_mode, true))
 	}
 	if len(native) > 0 {
-		append(&commands, compile(runtime_dir, native[:], includes, target, opt_mode, false))
+		append(&commands, compile(runtime_dir, native[:], toolchain, target, opt_mode, false))
 	}
 	return commands[:]
 }

@@ -1742,10 +1742,12 @@ checklist.
 ### Fixed
 
 - `lokec -print-toolchain`'s `flag=` lines are enough to compile a C host outside a developer prompt
-  ([Building an object for a C host](compiler-guide.md#building-an-object-for-a-c-host)). They also
-  name the Windows SDK's `um` and `shared` headers, so `windows.h` is found, and they pass every
-  include directory as `-idirafter` instead of `-isystem`, so Clang's `immintrin.h` comes ahead of
-  MSVC's and an `_mm_*` intrinsic no longer fails to link. A link uses the same flags.
+  ([Building an object for a C host](compiler-guide.md#building-an-object-for-a-c-host)). They name
+  the MSVC toolset and Windows SDK with Clang's `-Xmicrosoft-*` options instead of `-isystem` and
+  `-L` directories, so `windows.h` is found, Clang's `immintrin.h` comes ahead of MSVC's and an
+  `_mm_*` intrinsic no longer fails to link, and headers and libraries come from the same toolset
+  even where Clang finds a Visual Studio of its own. A link uses the same flags, and uses `INCLUDE`
+  and `LIB` only when both are set.
 - An owner read through a parameter's carriers is in what the owners there are in, and not in what an
   allocator handle beside them names
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).

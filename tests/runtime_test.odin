@@ -314,18 +314,26 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	testing.expectf(t, run_err == nil && printed == "nope", "an edit that kept the size and time linked the old runtime: printed `%s`; %s", printed, cache_state(root))
 	testing.expectf(t, len(sets(root)) == 3, "the edited runtime did not get a set of its own; %s", cache_state(root))
 
-	// INCLUDE decides which headers clang reads, and is in no command.
+	// In a developer prompt, INCLUDE decides which headers clang reads, and is
+	// in no command. Outside one, the reported toolset and SDK make one.
 	includes := os.get_env("INCLUDE", context.temp_allocator)
-	if includes == "" {
-		discovered := make([dynamic]string, context.temp_allocator)
-		for flag, index in flags {
-			if index > 0 && flags[index - 1] == "-idirafter" {
-				append(&discovered, flag)
+	libs := os.get_env("LIB", context.temp_allocator)
+	if includes == "" || libs == "" {
+		reported :: proc(flags: []string, name: string) -> string {
+			for flag, index in flags {
+				if index > 0 && flags[index - 1] == name {
+					return flag
+				}
 			}
+			return ""
 		}
-		includes = strings.join(discovered[:], ";", context.temp_allocator)
+		tools := reported(flags, "-Xmicrosoft-visualc-tools-root")
+		sdk := reported(flags, "-Xmicrosoft-windows-sdk-root")
+		version := reported(flags, "-Xmicrosoft-windows-sdk-version")
+		includes = fmt.tprintf(`%s\include;%s\Include\%s\ucrt`, tools, sdk, version)
+		libs = fmt.tprintf(`%s\lib\x64;%s\Lib\%s\ucrt\x64;%s\Lib\%s\um\x64`, tools, sdk, version, sdk, version)
 	}
-	with_include := with_env(with_env(inherited, "LOKE_CLANG", clang), "INCLUDE", includes)
+	with_include := with_env(with_env(with_env(inherited, "LOKE_CLANG", clang), "INCLUDE", includes), "LIB", libs)
 	link_all(t, compiler, root, with_include, 1)
 	testing.expectf(t, len(sets(root)) == 4, "the first INCLUDE did not get a set of its own; %s", cache_state(root))
 	with_include = with_env(with_include, "INCLUDE", fmt.tprintf("%s;%s", includes, root))

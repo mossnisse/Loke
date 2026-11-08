@@ -2464,10 +2464,19 @@ the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 // compile and link a C host that includes `windows.h` and uses an `_mm_*`
 // intrinsic. Passed as `-isystem`, MSVC's `immintrin.h` came ahead of clang's
 // and the intrinsic was left undefined at link; without the SDK's `um` and
-// `shared` directories `windows.h` was not found.
+// `shared` directories `windows.h` was not found. With INCLUDE and LIB
+// removed, a developer prompt reports flags too, and they alone are tried.
 @(test)
 the_reported_flags_compile_a_windows_c_host :: proc(t: ^testing.T) {
-	clang, flags, found := host_toolchain()
+	inherited, _ := os.environ(context.temp_allocator)
+	plain := make([dynamic]string, context.temp_allocator)
+	for entry in inherited {
+		upper := strings.to_upper(entry, context.temp_allocator)
+		if !strings.has_prefix(upper, "INCLUDE=") && !strings.has_prefix(upper, "LIB=") {
+			append(&plain, entry)
+		}
+	}
+	clang, flags, found := host_toolchain(plain[:])
 	if !found {
 		skipped_capability(t, "no clang or MSVC toolset, so no C host is compiled")
 		return
@@ -2477,7 +2486,7 @@ the_reported_flags_compile_a_windows_c_host :: proc(t: ^testing.T) {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, clang, "tests/obj/sdk_host.c", "-o", exe)
 	append(&command, ..flags)
-	state, _, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+	state, _, stderr, err := exec(os.Process_Desc{command = command[:], env = plain[:]}, context.allocator)
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "the reported flags do not build a Windows C host:\n%s", string(stderr)) {
 		return
 	}
@@ -2486,8 +2495,9 @@ the_reported_flags_compile_a_windows_c_host :: proc(t: ^testing.T) {
 	testing.expectf(t, run_state.exit_code == 0, "the SDK host reported failure %d (see `sdk_host.c`)", run_state.exit_code)
 }
 
-// clang plus the `-idirafter`/`-L` flags its Windows target needs outside a
-// developer prompt, asked of the compiler instead of worked out again here:
+// clang plus the flags naming the MSVC toolset and Windows SDK its Windows
+// target needs outside a developer prompt, asked of the compiler, under `env`
+// when one is given, instead of worked out again here:
 // `-print-toolchain` reports the discovery `link` performs in
 // `src/emit_llvm_toolchain.odin`, so one set of rules decides what a build and
 // this test both link against. The copy that used to live here drifted looser
@@ -2498,9 +2508,9 @@ the_reported_flags_compile_a_windows_c_host :: proc(t: ^testing.T) {
 // `ready` is the compiler's own answer to whether a link could run at all on
 // this machine. The test skips rather than fails when it says no.
 @(private)
-host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
+host_toolchain :: proc(env: []string = nil) -> (clang: string, flags: []string, ok: bool) {
 	state, stdout, _, err := exec(
-		os.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
+		os.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}, env = env},
 		context.allocator,
 	)
 	if err != nil || state.exit_code != 0 {

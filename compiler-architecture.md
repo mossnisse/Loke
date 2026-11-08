@@ -842,8 +842,8 @@ adds, both through explicit `"target-features"` lists.
 
 `prebuilt_runtime_objects` caches C objects under
 `runtime/prebuilt/<cpu>-<mode>-<hash>/`. The key covers the clang path, flags
-(including the CPU level's `-march`), MSVC/SDK include roots, the value of
-`INCLUDE`, the modification time of the clang the command runs, found on `PATH`
+(including the CPU level's `-march` and the MSVC toolset and Windows SDK they
+name), the value of `INCLUDE`, the modification time of the clang the command runs, found on `PATH`
 for a bare name, and runtime source/header names and contents. Installed sets are immutable for concurrent links; changed inputs
 create a new set. On cache build/install failure, the link compiles sources
 directly and records the reason in `runtime/prebuilt/last-failure.txt`.
