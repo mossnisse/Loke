@@ -2,6 +2,8 @@
 // and resource types", "Conversion hooks").
 package lokec
 
+import "core:slice"
+
 resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
 	symbol_id := d.symbols[0]
 	sym := symbol_of(k.c, symbol_id)
@@ -295,19 +297,24 @@ claim_copy_failure :: proc(k: ^Checker, d: ^Decl, failure: Copy_Failure) -> bool
 	return true
 }
 
-// The hooks a record's declaration writes, whatever their bounds.
+// The hooks a record's declaration writes, whatever their bounds. `copy_narrow`
+// says a generic record's `hook(copy)` applies to fewer instances than a drop hook.
 @(private = "file")
 Written_Hooks :: struct {
-	drop_written, drop_bound, copy_written: bool,
-	drop_span, copy_span:                   Span,
+	drop_written, drop_bound, copy_written, copy_narrow: bool,
+	drop_span, copy_span:                                Span,
 }
 
 // A generic record's are read from its blocks, before any instance's hooks are
 // validated, so a hook counts as bound by its shape, which
-// `check_generic_impl_hooks` reports the rest of.
+// `check_generic_impl_hooks` reports the rest of. A `hook(copy)` decides for the
+// instances a drop hook applies to only from that hook's own block or one that
+// applies to every instance (design.md "Lifecycle hooks and resource types").
 @(private = "file")
 template_written_hooks :: proc(k: ^Checker, template: Symbol_Id) -> Written_Hooks {
 	written: Written_Hooks
+	drop_blocks := make([dynamic]^Generic_Impl, context.temp_allocator)
+	copy_blocks := make([dynamic]^Generic_Impl, context.temp_allocator)
 	// Copied out: a range over the map entry itself faults when it has no blocks.
 	blocks := k.c.generic_impls[template]
 	for block in blocks {
@@ -322,17 +329,56 @@ template_written_hooks :: proc(k: ^Checker, template: Symbol_Id) -> Written_Hook
 			#partial switch decl_hook_kind(hook_decl) {
 			case .Drop:
 				written.drop_written = true
-				if drop_hook_shaped(hook_decl) && !written.drop_bound {
-					written.drop_bound = true
-					written.drop_span = hook_decl.names[0].span
+				if drop_hook_shaped(hook_decl) {
+					append(&drop_blocks, block)
+					if !written.drop_bound {
+						written.drop_bound = true
+						written.drop_span = hook_decl.names[0].span
+					}
 				}
 			case .Copy:
 				written.copy_written = true
 				written.copy_span = hook_decl.names[0].span
+				append(&copy_blocks, block)
 			}
 		}
 	}
+	if len(copy_blocks) == 0 {
+		return written
+	}
+	for block in copy_blocks {
+		if impl_applies_to_every_instance(block) {
+			return written
+		}
+	}
+	for drop in drop_blocks {
+		if !slice.contains(copy_blocks[:], drop) {
+			written.copy_narrow = true
+			written.drop_span = drop.item.span
+			for member in drop.item.members {
+				if hook_decl, is_decl := member.(^Decl); is_decl && decl_hook_kind(hook_decl) == .Drop {
+					written.drop_span = hook_decl.names[0].span
+					break
+				}
+			}
+			break
+		}
+	}
 	return written
+}
+
+// `impl Cell($T)` or `impl Table($K, $V)`: distinct `$` names and nothing else.
+@(private = "file")
+impl_applies_to_every_instance :: proc(block: ^Generic_Impl) -> bool {
+	seen := make([dynamic]string, context.temp_allocator)
+	for arg in block.args {
+		poly, is_poly := arg.(^Type_Poly)
+		if !is_poly || slice.contains(seen[:], poly.name.text) {
+			return false
+		}
+		append(&seen, poly.name.text)
+	}
+	return true
 }
 
 @(private = "file")
@@ -400,11 +446,18 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 		report_fieldwise_copy_misuse(k, d, record, opt_in.span, written, name, subject)
 		return
 	}
-	if record.move_only || !written.drop_bound || written.copy_written || !claim_copy_failure(k, d, .Undecided) {
+	if record.move_only || !written.drop_bound || (written.copy_written && !written.copy_narrow) || !claim_copy_failure(k, d, .Undecided) {
 		return
 	}
 	errorf(k.c, name_span, "L0747", "`%s` declares `hook(drop)`, so it must say how it is copied", name)
 	add_notef(k.c, written.drop_span, "`hook(drop)` is declared here")
+	if written.copy_narrow {
+		add_notef(
+			k.c, written.copy_span,
+			"this `hook(copy)` does not apply to every instance that `hook(drop)` does; declare it in the drop hook's block, or in a block over every instance",
+		)
+		return
+	}
 	if type_clone_disabled(k.c, subject) {
 		add_notef(k.c, NO_SPAN, "`%s` is already move-only through a field; write `@(move_only)` on its declaration to say so", name)
 		return

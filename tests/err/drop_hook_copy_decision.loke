@@ -115,3 +115,32 @@ main :: proc() {
 		close :: hook(drop) proc(self: inout Fine) {}
 	}
 }
+
+// A generic record's `hook(copy)` decides only for the instances its block covers:
+// one in a block of some instances leaves the drop hook's others undecided.
+Narrow :: struct($T: type) { value: T }
+impl Narrow($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+impl Narrow(int) {
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Narrow(int), Allocator_Error) {
+		return .ok(Narrow(int){self.value});
+	}
+}
+// The drop hook's own block, or one over every instance, decides: these report nothing.
+Same :: struct($T: type) { value: T }
+impl Same(int) {
+	close :: hook(drop) proc(self: inout) {}
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Same(int), Allocator_Error) {
+		return .ok(Same(int){self.value});
+	}
+}
+Wide :: struct($T: type) { value: T }
+impl Wide(int) {
+	close :: hook(drop) proc(self: inout) {}
+}
+impl Wide($T) {
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Wide(T), Allocator_Error) where is_copyable(T) {
+		return .ok(Wide(T){self.value});
+	}
+}

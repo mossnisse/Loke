@@ -1161,8 +1161,9 @@ main :: proc() {}`) { return }
 }
 
 // compiler-architecture.md "Normalized provenance input": a replay that only marks an
-// alias as read at a load below a parameter, or a region as read there, grows the facts,
-// so convergence does not stop before them (`prov_fact_weight`).
+// alias as read at a load below a parameter, a region as read there, or an unknown region
+// as standing for a parameter past the region budget, grows the facts, so convergence
+// does not stop before them (`prov_fact_weight`).
 @(test)
 loaded_facts_have_weight :: proc(t: ^testing.T) {
 	aliases := [1]Written_Alias{{target = Storage_Id(1)}}
@@ -1179,7 +1180,17 @@ loaded_facts_have_weight :: proc(t: ^testing.T) {
 	testing.expectf(t, after_alias > before, "a loaded alias has the weight of one that is not: %d", before)
 	region_add_loaded_param(&set, 0)
 	facts.region_of[Symbol_Id(1)] = set
-	testing.expectf(t, prov_fact_weight(&facts) > after_alias, "a loaded region has the weight of one that is not: %d", after_alias)
+	after_loaded := prov_fact_weight(&facts)
+	testing.expectf(t, after_loaded > after_alias, "a loaded region has the weight of one that is not: %d", after_alias)
+	set.unknown = true
+	facts.region_of[Symbol_Id(1)] = set
+	after_unknown := prov_fact_weight(&facts)
+	set.crowded_params = true
+	facts.region_of[Symbol_Id(1)] = set
+	testing.expectf(
+		t, prov_fact_weight(&facts) > after_unknown,
+		"an unknown region past the parameter budget has the weight of one that is not: %d", after_unknown,
+	)
 }
 
 // design.md "Minimum provenance precision": a path asked below the carrier a local holds

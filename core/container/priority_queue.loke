@@ -103,7 +103,7 @@ impl Priority_Queue($T, $C) {
 	view :: proc(self: ^) -> []T { return self.items[:]; }
 
 	/// Reads every element, in unspecified order.
-	iter :: proc(self: ^) -> Priority_Queue_Iterator(T) { return {self.items[:], 0}; }
+	iter :: proc(self: ^) -> Priority_Queue_Iterator(T) { return {self.items[:], 0, false}; }
 
 	// ------------------------------------------------------------ mutation --
 
@@ -245,20 +245,4 @@ top_is_before :: proc(values: []$T, value: T, less: $C) -> bool where interfaces
 	A borrow of the queue's elements. The queue cannot change while this is live.
 	Elements are lent where the queue stores them, so a move-only `T` is read too.
 */
-Priority_Queue_Iterator :: struct($T: type) {
-	@(private) items: []T,
-	@(private) at: int,
-}
-
-impl Priority_Queue_Iterator($T) {
-	Element :: T;
-
-	iter :: proc(self) -> Priority_Queue_Iterator(T) { return self; }
-
-	next :: proc(self: inout) -> Option(^T) {
-		if (self.at >= self.items.len()) { return .none; }
-		index := self.at;
-		self.at += 1;
-		return &self.items[index];
-	}
-}
+Priority_Queue_Iterator :: Small_Array_Iterator($T);

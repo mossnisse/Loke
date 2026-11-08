@@ -579,7 +579,7 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 				}
 				// A carrier copied within the argument leads below what it names.
 				region = {}
-				if prov_type_holds_carrier(c, prov_parameter_type_at(c, symbol_of(c, id), from.path)) {
+				if type_carries_borrow(c, prov_parameter_type_at(c, symbol_of(c, id), from.path)).any {
 					region_add_loaded_param(&region, index)
 				} else {
 					region_add_param(&region, index)

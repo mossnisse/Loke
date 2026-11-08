@@ -428,7 +428,7 @@ param_reads_weight :: proc(reads: Param_Reads) -> int {
 region_weight :: proc(set: Region_Set) -> int {
 	return int(bits.count_ones(set.locals)) + int(bits.count_ones(set.params)) + int(bits.count_ones(set.loaded)) +
 		param_reads_weight(set.named) + param_reads_weight(set.below) +
-		int(set.default) + int(set.unknown) + int(set.crowded)
+		int(set.default) + int(set.unknown) + int(set.crowded) + int(set.crowded_params)
 }
 
 // Every region dependency of a symbol, including its field facts. A carrier's
@@ -453,7 +453,7 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 		// A record parameter read whole, as `wrap(r: Reader) { read_text(r) }` passes it on,
 		// leads below what it names, as a carrier read out of it does
 		// (`prov_region_content_at`), unless this body overwrote what it received.
-		if sym != nil && sym.kind == .Parameter && !type_is_carrier(graph.k.c, sym.type) && prov_type_holds_carrier(graph.k.c, sym.type) {
+		if sym != nil && sym.kind == .Parameter && !type_is_carrier(graph.k.c, sym.type) && type_carries_borrow(graph.k.c, sym.type).any {
 			prov_add_loaded_parameter(&out, received, .Viewed)
 		}
 	}
@@ -523,7 +523,7 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		region_merge(&out, direct)
 		// A carrier read out of a parameter leads below what the parameter names, to
 		// what a read through it decides (`region_read_through`).
-		if prov_root_is_parameter(graph, root) && prov_type_holds_carrier(graph.k.c, prov_parameter_type_at(graph.k.c, symbol_of(graph.k.c, id), path)) {
+		if prov_root_is_parameter(graph, root) && type_carries_borrow(graph.k.c, prov_parameter_type_at(graph.k.c, symbol_of(graph.k.c, id), path)).any {
 			prov_add_loaded_parameter(&out, direct, .Viewed)
 		}
 	} else if found {
@@ -1336,7 +1336,7 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 prov_region_read :: proc(c: ^Compiler, type: Type_Id) -> Region_Read {
 	switch {
 	case type == INVALID_TYPE, prov_holds_allocator(c, type): return .Handles
-	case prov_type_holds_carrier(c, type):                    return .Viewed
+	case type_carries_borrow(c, type).any:                    return .Viewed
 	}
 	return .Owners
 }
@@ -1350,13 +1350,6 @@ prov_parameter_read :: proc(c: ^Compiler, type: Type_Id) -> Region_Read {
 		return .Handles
 	}
 	return .Viewed
-}
-
-// Whether a value of `type` is or holds a carrier, so what is read through it is
-// below where it is.
-@(private)
-prov_type_holds_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type != INVALID_TYPE && (type_is_carrier(c, type) || len(carrier_shape(c, type)) > 0)
 }
 
 // The type at `path` in what parameter `sym` names: a pointer's paths start at
@@ -1467,7 +1460,7 @@ prov_unknown_target_read :: proc(graph: ^Flow_Graph, carrier: Value_Id, found: R
 prov_merge_read_through :: proc(c: ^Compiler, out: ^Region_Set, viewed: Region_Set, type: Type_Id) {
 	region_merge(out, viewed)
 	read := prov_region_read(c, type)
-	if prov_type_holds_carrier(c, type) {
+	if type_carries_borrow(c, type).any {
 		prov_add_loaded_parameter(out, viewed, read)
 	}
 	region_read_through(out, read)

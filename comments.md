@@ -630,6 +630,15 @@ as an error in whichever package first instantiated it. `@(fieldwise_copy)` on a
 record with no hook is an error for the same reason the rule exists: written ahead
 of time, it would decide for a hook nobody has written yet.
 
+A generic record's `hook(copy)` decides only where it applies to every instance a
+drop hook does: in that hook's own block, or in one whose arguments are distinct
+`$` names. Otherwise `impl Cell(int)` with a copy hook would decide for
+`Cell(string)`, which gets the generated copy beside the drop hook with nothing
+written about it. Asking whether one specialized pattern covers another would
+catch more cases, but needs a rule about pattern specificity that blocks do not
+otherwise have; moving a copy hook into the drop hook's block, or into a general
+one bounded with `where`, is an edit the author can always make.
+
 ### A body-local record's hooks come before their block
 
 A [hook belongs to its record wherever its block is
@@ -2650,6 +2659,15 @@ than `1 + 1`. The price is that `(1 if c else 3) / 2` in an `f64` is `0.5` or
 type exists, and the runtime one has to happen at some type. An integer-only
 operator at a float destination is an error rather than a silent `int` computation,
 so the two can never disagree in the other direction.
+
+### An unfixed integer compares with an unfixed float exactly
+
+An unfixed constant is exact, so comparing two of them should give the
+mathematical answer. Rounding the integer to `f64` first made
+`(1 << 53) + 1 == 9007199254740992.0` true, while an integer past every float
+could not be rounded and already compared exactly, so the answer depended on the
+integer's size. One exact rule needs no `f64` value at all; a program that wants
+the rounded comparison converts the integer itself.
 
 ## Standard-library API choices
 

@@ -4145,8 +4145,11 @@ generic record decides once, for all of its instances. A record declared in a
 generic procedure's body is a declaration of each instance of the procedure, with
 that instance's fields and `impl` blocks, so each answers for itself. A hook that
 is itself rejected asks for no decision, and a `hook(copy)` counts as the decision
-even when it is rejected or is written only for some of a generic record's
-instances.
+even when it is rejected. A generic record's `hook(copy)` counts only in the block
+of each `hook(drop)`, or in a block whose subject's arguments are distinct `$`
+names, such as `impl Cell($T)`, which applies to every instance: one written only
+in `impl Cell(int)` beside a drop hook in `impl Cell($T)` leaves `Cell(string)`
+undecided, and is an error.
 
 A `hook(copy)` on a record with no copy to customize is an error: a `@(move_only)`
 one, or one a move-only field makes move-only. On a generic record that depends
@@ -5383,6 +5386,14 @@ e := 1 << k;      // panics: negative shift count
 
 In any comparison, the first operand must be assignable to the type of the
 second, or vice versa.
+
+An unfixed integer constant compared with an unfixed floating constant is
+compared with its exact value, not first rounded to a floating-point type:
+
+```loke
+A :: (1 << 53) + 1 == 9007199254740992.0; // false
+B :: (1 << 2000) > 1.0e300;               // true
+```
 
 The equality operators `==` and `!=` apply to operands that are comparable. The
 ordering operators `<`, `<=`, `>`, and `>=` apply to operands that are ordered.

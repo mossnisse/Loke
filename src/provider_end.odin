@@ -252,7 +252,7 @@ mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 	case ^Expr_Move:
 		graph.aliased_moves[v] = true
 	case ^Expr_Call:
-		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && (sym.builtin == .Exchange || sym.builtin == .Unsafe_Take) {
+		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange {
 			graph.aliased_moves[v] = true
 		} else if payload := boxed_payload(graph.k.c, v); payload != nil {
 			mark_aliased_moves(graph, payload)

@@ -90,3 +90,11 @@ L0747
 if a copy would release what the hook releases a second time, write `@(move_only)` on its declaration
 if a copy must do more than copy each field, declare `hook(copy)`
 if copying each field is right, write `@(fieldwise_copy)` on its declaration
+
+L0747
+@121:1
+`Narrow` declares `hook(drop)`, so it must say how it is copied
+@123:2
+`hook(drop)` is declared here
+@126:2
+this `hook(copy)` does not apply to every instance that `hook(drop)` does; declare it in the drop hook's block, or in a block over every instance

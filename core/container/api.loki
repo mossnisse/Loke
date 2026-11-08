@@ -919,17 +919,7 @@ impl Priority_Queue($T, $C) {
 	A borrow of the queue's elements. The queue cannot change while this is live.
 	Elements are lent where the queue stores them, so a move-only `T` is read too.
 */
-Priority_Queue_Iterator :: struct($T: type) {
-	// and fields private to the package
-}
-
-impl Priority_Queue_Iterator($T) {
-	Element :: T;
-
-	iter :: proc(self) -> Priority_Queue_Iterator(T) ---;
-
-	next :: proc(self: inout) -> Option(^T) ---;
-}
+Priority_Queue_Iterator :: Small_Array_Iterator($T);
 
 // What a `try_` operation reports when the array is full.
 Capacity_Error :: struct {

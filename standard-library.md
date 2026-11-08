@@ -1505,7 +1505,7 @@ A generated method prints:
 | anonymous record | `(x = 1, y = 2)`, or `(1, 2)` when unlabeled |
 | union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses unless it is `Unit` |
 | `Box(T)` | its payload |
-| `dyn fmt.Formattable` | the value it views |
+| `dyn fmt.Formattable`, or a view of another interface with a `format` slot of `fmt.Formattable`'s shape, composed or declared | the value it views |
 | any other `dyn` view | its type's name |
 
 A struct prints its public fields only, as reflection from another package sees

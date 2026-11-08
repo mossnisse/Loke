@@ -10,6 +10,18 @@ checklist.
 
 ### Breaking changes
 
+- An unfixed integer constant compared with an unfixed floating constant is compared exactly
+  ([Comparison operators](design.md#comparison-operators)). One within the float range was rounded
+  to `f64` first, so `(1 << 53) + 1 == 9007199254740992.0` was `true`; it is now `false`, as a
+  comparison of an integer past the float range already was exact. Upgrade by writing the float, or
+  converting the integer with `f64(...)`, where the rounded comparison was meant.
+- A generic record's `hook(copy)` decides how it is copied only in the block of its `hook(drop)`
+  or in one over every instance, such as `impl Cell($T)`
+  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)). A copy hook
+  written only in `impl Cell(int)` beside a drop hook in `impl Cell($T)` compiled, and gave
+  `Cell(string)` the generated copy with no attribute saying so. It is now `L0747`. Upgrade by
+  moving the copy hook to the drop hook's block or a general one, bounded with `where` if some
+  instances cannot copy, or by writing `@(move_only)` or `@(fieldwise_copy)`.
 - [`@(require_results)`](design.md#require_results) and
   [`@(deprecated)`](design.md#deprecatedstring) bind a generic procedure's declaration, so they hold
   for every instance: a bare call of a generic `@(require_results)` procedure, free or a method, is
@@ -1508,6 +1520,11 @@ checklist.
 
 ### Changed
 
+- The [printed form](standard-library.md#printed-forms) of a `dyn` view of an interface with a
+  `format` slot of `fmt.Formattable`'s shape is documented as the value it views, as the compiler
+  already printed it; the table said such a view printed its type's name.
+- `container.Priority_Queue_Iterator(T)` is an alias of `Small_Array_Iterator(T)`, the same
+  read-only cursor over a slice.
 - Inserting a new key into a [map](design.md#maps) hashes it once rather than twice when the map
   does not grow: the lookup that finds the key absent also finds the slot it takes. Inserting a
   million 48-byte strings fell from 607 ms to 560 ms, and a million integers from 110 ms to 103 ms.

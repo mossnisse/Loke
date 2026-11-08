@@ -297,7 +297,7 @@ prov_parameter_carrier_path :: proc(c: ^Compiler, sym: ^Symbol, path: []Proj_Ste
 prov_target_stands_for_caller :: proc(graph: ^Flow_Graph, target: Storage_Id) -> bool {
 	c := graph.k.c
 	sym := symbol_of(c, prov_storage(graph, target).key.symbol)
-	return sym != nil && sym.kind == .Parameter && (param_writes_caller(c, sym) || prov_type_holds_carrier(c, sym.type))
+	return sym != nil && sym.kind == .Parameter && (param_writes_caller(c, sym) || type_carries_borrow(c, sym.type).any)
 }
 
 @(private)

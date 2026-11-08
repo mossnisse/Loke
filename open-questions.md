@@ -39,83 +39,6 @@ the compiler, is the oracle for any of them.
   them would accept more rather than simplify, and a call may also write through
   an argument, which those effects do not cover.
 
-- **Remove the unused `unsafe.take` move marker (P3).** `f1a0cdf1` added
-  `Unsafe_Take` to `mark_aliased_moves` in
-  [src/provider_end.odin](src/provider_end.odin), but the only readers of
-  `graph.aliased_moves` are `provider_move_end` and `provider_exchange_end`.
-  Neither the lifecycle nor the provenance walk calls either for `unsafe.take`.
-  The new map entry therefore changes no decision. Remove that alternative
-  unless a take-specific provider-end check is introduced; keeping it suggests
-  the take path shares a check it never runs. Found on 2026-11-05 while reviewing
-  that commit.
-
-### Reuse the cached carrier-presence query
-
-Optional simplification from the `ecce89f3` review (P3):
-`prov_type_holds_carrier` in [provenance_regions.odin](src/provenance_regions.odin)
-answers the same question as `type_carries_borrow(c, type).any` in
-[carrier_shape.odin](src/carrier_shape.odin). Use that existing cached query at
-its call sites and remove the seven-line helper, which otherwise constructs a
-carrier shape just to ask whether it is empty. The substitution passes the 208
-existing compiler unit tests, the added region-weight probe, the call-copy and
-read-only-copy matrices, and the focused integration and contract cases in an
-isolated copy. Found on 2026-11-06.
-
-### Weigh parameter-overflow precision in replay convergence
-
-The `dbf1b4c5` convergence fix counts `Written_Alias.loaded` and `Region_Set.loaded`,
-but `region_weight` in [provenance_regions.odin](src/provenance_regions.odin) still
-omits `Region_Set.crowded_params`. This flag records a parameter past the 64-bit region
-budget and only grows, as the [replay contract](compiler-architecture.md#normalized-provenance-input)
-requires counted facts to do. An already-unknown set can gain the flag without gaining
-weight:
-
-```odin
-package lokec
-import "core:testing"
-@(test)
-review_precision_flag_has_weight :: proc(t: ^testing.T) {
-    facts := Prov_Facts{region_of = make(map[Symbol_Id]Region_Set)}
-    defer delete(facts.region_of)
-    set := Region_Set{unknown = true}
-    facts.region_of[Symbol_Id(1)] = set
-    before := prov_fact_weight(&facts)
-    set.crowded_params = true
-    facts.region_of[Symbol_Id(1)] = set
-    testing.expect(t, prov_fact_weight(&facts) > before)
-}
-```
-
-A normalization probe with an allocator at parameter index 64 initializes four locals
-from an unnamed allocator, then runs `d = c; c = b; b = a; a = overflow;` in a loop.
-The reviewed implementation stops after one replay with `b`, `c`, and `d` missing the
-overflow flag. Adding `int(set.crowded_params)` to the weight makes both probes pass,
-alongside all 209 existing compiler unit tests. The omission predates the reviewed
-commit and remains in `dbebf669`.
-
-This flag controls precision notes and the diagnostic's possible-dependency wording;
-the set's existing `unknown` flag still conservatively preserves overlap. No externally
-visible missing rejection or incorrect diagnostic was established by these probes.
-Count the precision flag too and retain a regression for metadata-only growth.
-Found on 2026-11-06 while reviewing `dbf1b4c5` (P3).
-
-### Simplify the single analysis timing case
-
-Optional simplification from the `2cd5aade` review (P3):
-[analysis_time_test.odin](tests/analysis_time_test.odin) defines `Analysis_Case`,
-builds one-element case and job arrays, and runs two loops plus `exec_all` for one
-compiler launch. Use the existing `exec` helper's deadline argument directly instead.
-Keep the source fixture, file-write check, 30-second deadline, and the assertion on
-process exit and compiler stderr.
-
-An isolated version reduces the file from 64 to 40 lines, including shorter comments
-that retain the regression's cause. It passes against the reviewed compiler in about
-0.2 seconds, and the parent compiler fails through the same 30-second timeout, so the
-test still detects the original performance problem. The 209 existing compiler unit
-tests, ten carrier matrices, and two focused alias-prefix and visit-identity probes
-also pass for the reviewed implementation. Remove the scaffolding, not the regression
-test. Found on 2026-11-06.
-
 ### What counts as a fresh borrow of a range
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
@@ -923,15 +846,6 @@ copyable, and nothing already in the package changes.
   IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
   caller that shows one, or records the zone beside a time, would need it.
 
-## A copy hook for some of a generic record's instances
-
-[A record with a drop hook says how it is copied](design.md#lifecycle-hooks-and-resource-types),
-and a generic record decides once. A `hook(copy)` written only in a specialized
-block, `impl Cell(int)`, counts as that decision, so `Cell(string)` keeps the
-generated copy beside a drop hook from `impl Cell($T)` with no attribute saying so.
-Requiring the copy hook's block to be at least as general as the drop hook's would
-close this, at the cost of a rule about block specificity.
-
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md
@@ -1347,69 +1261,11 @@ error context survives; and compare the diagnostics after adding, renaming,
 and removing a variant or a label. Document an idiom in a tutorial only after
 it has been compared this way.
 
-## A collapsed region shape in a rejection
-
-A region shape wider than `REGION_SHAPE_WIDTH` (256 entries, against the 64 paths
-[Minimum provenance precision](design.md#minimum-provenance-precision) guarantees) collapses to
-one entry for the whole value. That section says a diagnostic a budget causes must name the
-budget, and a collapsed shape carries no precision reason to name. Records of 300 fields probed
-with resets of one field's region rejected and accepted as they do at 100, so no reproduction
-of a rejection this causes is known. If one turns up, the collapse should record `.Width` in
-what it returns.
-
-## A `dyn` view with a `format` slot of its own
-
-[Printed forms](standard-library.md#printed-forms) lists "any other `dyn` view" under what a
-generated method prints, as its type's name. A view of an interface that composes
-`fmt.Formattable`, or declares its own `format` slot of that shape, has a forwarding `format`
-member, so no method is generated and it prints the value it views, as `dyn fmt.Formattable` does:
-
-```loke
-Composed :: interface($Self: type) { fmt.Formattable(Self); }
-view := (dyn Composed)(&value);
-fmt.println(view); // the value, by its `format`
-```
-
-The compiler keeps this, and a report counts that `format`'s effects
-(tests/err/private_formatter_effects.loke). The table should either name these views or the
-compiler should print their names. Found on 2026-11-04 in the compiler review.
-
-## Comparing an unfixed integer with an unfixed float
-
-[Integer overflow](design.md#integer-overflow) says an unfixed constant is exact, and nothing
-says what happens when the two kinds meet. An integer past the float limit compares exactly, while
-one within it rounds to the float's type first, so `A` here is true and `C` needs exactness:
-
-```loke
-BIG :: 1 << 2000;
-A :: (1 << 53) + 1 == 9007199254740992.0; // true: rounds before comparing
-C :: BIG > 1.0e300;                       // true: compared exactly (tests/run/constant_int_float)
-```
-
-Comparing exactly always is the simpler rule, and it makes `A` false. Either way the spec should say.
-Found on 2026-11-04 in the compiler review.
-
-## A `distinct` clone that ties on typeid order
-
-The order of two `distinct` types declared in place breaks ties by their site and scope. A clone
-re-checked at the same site and scope, as compound-assignment lowering makes, could still tie and
-fall back to the order of requests, so typeids would depend on it. This comes from reading the
-code; no program has shown it. Found on 2026-11-04 in the compiler review.
-
 ## Growable container follow-ups
 
 Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
 none of which they wait on.
 
-- **Share the slice iterator (P3).**
-  [Priority_Queue_Iterator](core/container/priority_queue.loke) duplicates the
-  read-only slice cursor in [Small_Array_Iterator](core/container/small_array.loke).
-  Replacing its record and implementation with
-  `Priority_Queue_Iterator :: Small_Array_Iterator($T);` and initializing the
-  direction to `false` removes 16 lines; a neutral shared name could follow.
-  The queue runtime test, including move-only elements, and its borrow diagnostic
-  codes still pass with this substitution in an isolated copy of `1cefee9c`.
-  Found on 2026-11-05 while reviewing that commit.
 - **A dynamic array's allocator.** `x.allocator` is not a member, which is the only
   reason `Deque` has its own field. An `x.allocator()` query would remove it, and
   would help any library container that replaces its storage. Is the query worth

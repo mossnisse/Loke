@@ -2390,9 +2390,10 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := 
 			operand_mismatch(k, op_span, lt, rt)
 			return INVALID_TYPE, false
 		}
-		// A comparison needs no value of the merged type, so an integer past every
-		// float still orders against one.
-		if comparing && (integer_exceeds_float(k, left) || integer_exceeds_float(k, right)) {
+		// A comparison needs no value of the merged type: an integer constant
+		// compares with a float one exactly, unrounded (design.md "Comparison
+		// operators").
+		if comparing && merged == TYPE_UNTYPED_FLOAT && (left.const_value.kind == .Integer || right.const_value.kind == .Integer) {
 			return merged, true
 		}
 		if !materialize(k, lhs, merged) || !materialize(k, rhs, merged) {
@@ -2419,15 +2420,6 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := 
 		return INVALID_TYPE, false
 	}
 	return joined, true
-}
-
-@(private = "file")
-integer_exceeds_float :: proc(k: ^Checker, base: ^Expr_Base) -> bool {
-	if base.const_value.kind != .Integer {
-		return false
-	}
-	_, fits := bi_to_float(k.c, base.const_value.integer, 64)
-	return !fits
 }
 
 // The type two operands meet at, decided without materialising or reporting,
