@@ -1749,6 +1749,11 @@ checklist.
 
 ### Fixed
 
+- A [map](design.md#maps) spreads keys whose hashes differ only in their high bits. It took a key's
+  slot from the low bits of its `hash` alone, and the built-in integer hash carries bits only upward,
+  so the bit patterns of small floats, `math.to_bits(f64(i))`, all started in one probe run and made
+  insertion quadratic: 16,000 of them took 210 ms where 16,000 small integers took 1 ms. A `hash` of
+  one's own that leaves the low bits alike now spreads too. A key's `hash` returns what it did.
 - `lokec -print-toolchain`'s `flag=` lines are enough to compile a C host outside a developer prompt
   ([Building an object for a C host](compiler-guide.md#building-an-object-for-a-c-host)). They name
   the MSVC toolset and Windows SDK with Clang's `-Xmicrosoft-*` options instead of `-isystem` and

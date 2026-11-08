@@ -1,0 +1,42 @@
+// design.md "Maps": keys whose hashes differ only in their high bits, as the
+// bit patterns of small floats do, still spread over a map's slots. The built-in
+// integer hash is one multiply, which carries bits only upward, so a table that
+// took its slot from the hash's low bits alone put every such key in one probe
+// run and made each insertion and lookup linear.
+package main;
+import "core:fmt";
+import "core:math";
+
+compares: int = 0;
+
+// The built-in `u64` hash, with an `==` that counts the slots a probe compares.
+Bits :: struct { v: u64 }
+impl Bits {
+	same :: operator(==) proc(a, b: Bits) -> bool { compares += 1; return a.v == b.v; }
+	hash :: proc(self, seed: uint) -> uint { return self.v.hash(seed); }
+}
+
+// A user's own hash that leaves the low bits constant.
+Shifted :: struct { v: u64 }
+impl Shifted {
+	same :: operator(==) proc(a, b: Shifted) -> bool { compares += 1; return a.v == b.v; }
+	hash :: proc(self, seed: uint) -> uint { return seed ~ uint(self.v << 40); }
+}
+
+N :: 4000;
+
+main :: proc() {
+	floats: map[Bits]int = {};
+	foreach (i in 0 ..< N) { floats[Bits{math.to_bits(f64(i))}] = i; }
+	found := 0;
+	foreach (i in 0 ..< N) {
+		if (Bits{math.to_bits(f64(i))} in floats) { found += 1; }
+	}
+	// A clustered table compares about N*N/2 times; a spread one, a few per key.
+	fmt.println(found, compares < 8*N);
+
+	compares = 0;
+	shifted: map[Shifted]int = {};
+	foreach (i in 0 ..< N) { shifted[Shifted{u64(i)}] = i; }
+	fmt.println(shifted.len(), compares < 8*N);
+}

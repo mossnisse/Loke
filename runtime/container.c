@@ -522,6 +522,16 @@ static void *map_value_at(const loke_rt_map_table_v1 *t, const loke_rt_container
 	return (char *)t + t->values_offset + (uint64_t)slot * ops->elem_size;
 }
 
+/* SplitMix64's finalizer: every input bit reaches every output bit. */
+static uint64_t map_mix(uint64_t x) {
+	x ^= x >> 30;
+	x *= 0xbf58476d1ce4e5b9u;
+	x ^= x >> 27;
+	x *= 0x94d049bb133111ebu;
+	x ^= x >> 31;
+	return x;
+}
+
 /* m6b-plan decision "Map algorithm and coherence": an opaque per-table seed, so
  * iteration order is unspecified and no program can come to depend on it. The
  * mix is deterministic within one process and derived from the table's own
@@ -532,15 +542,19 @@ static uint64_t map_next_seed(const void *block) {
 	 * counter value atomically; relaxed ordering is sufficient because the value
 	 * is entropy, not synchronization. These are the same clang atomics used by
 	 * the reference-counted text runtime. */
-	uint64_t x = __atomic_fetch_add(
+	return map_mix(__atomic_fetch_add(
 		&counter, 0x9e3779b97f4a7c15u, __ATOMIC_RELAXED
-	) + (uint64_t)(uintptr_t)block;
-	x ^= x >> 30;
-	x *= 0xbf58476d1ce4e5b9u;
-	x ^= x >> 27;
-	x *= 0x94d049bb133111ebu;
-	x ^= x >> 31;
-	return x;
+	) + (uint64_t)(uintptr_t)block);
+}
+
+/* The slot a probe for `key` starts at. A key's `hash` need not spread its bits:
+ * the built-in integer hash is one FNV-1a multiply, which carries bits only
+ * upward, so keys differing only in their high bits, as small floats' bit
+ * patterns do, hash alike in every low bit. The mix brings every bit of the hash
+ * into the bits the mask keeps. */
+static uint64_t map_home(
+	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key) {
+	return map_mix(ops->key_hash(key, t->seed)) & ((uint64_t)t->slot_count - 1);
 }
 
 /* Maximum load: seven eighths. Pinned by the runtime tests, not by the
@@ -621,7 +635,7 @@ static void map_free_block(const loke_rt_allocator_v1 *a, loke_rt_map_table_v1 *
 static void map_place_moved(
 	loke_rt_map_table_v1 *dst, const loke_rt_container_ops_v1 *ops, const void *key, const void *value) {
 	uint64_t mask = (uint64_t)dst->slot_count - 1;
-	uint64_t index = ops->key_hash(key, dst->seed) & mask;
+	uint64_t index = map_home(dst, ops, key);
 	uint8_t *controls = map_controls(dst);
 	for (;;) {
 		if (controls[index] != LOKE_RT_MAP_OCCUPIED) {
@@ -803,7 +817,7 @@ void loke_rt_v1_map_bind(loke_rt_map_v1 *self) {
 static int64_t map_probe(
 	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key) {
 	uint64_t mask = (uint64_t)t->slot_count - 1;
-	uint64_t index = ops->key_hash(key, t->seed) & mask;
+	uint64_t index = map_home(t, ops, key);
 	const uint8_t *controls = map_controls(t);
 	int64_t probes;
 	for (probes = 0; probes < t->slot_count; probes += 1) {
@@ -906,7 +920,7 @@ void *loke_rt_v1_map_entry(
 
 	controls = map_controls(t);
 	mask = (uint64_t)t->slot_count - 1;
-	index = ops->key_hash(key, t->seed) & mask;
+	index = map_home(t, ops, key);
 	first_free = -1;
 	for (;;) {
 		if (controls[index] == LOKE_RT_MAP_OCCUPIED) {
