@@ -387,8 +387,7 @@ emit_diverging_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		emit_alloc_failed(e, allocator)
 	} else {
 		emit_direct_call(e, v)
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
+		emit_unreachable(e)
 	}
 	if as_type == INVALID_TYPE || as_type == TYPE_VOID {
 		return "0"

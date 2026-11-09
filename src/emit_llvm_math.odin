@@ -146,8 +146,7 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	if !emitted_has_fma(e) {
 		declare_intrinsic(e, "llvm.trap", "void", "")
 		fmt.sbprintln(&e.b, "  call void @llvm.trap()")
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
+		emit_unreachable(e)
 		place_label(e, new_label(e, "unreachable"))
 		return "poison"
 	}

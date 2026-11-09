@@ -56,7 +56,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			wrapped = own_yielded(e, payload, handed, item)
 		}
 		emit_ret(e, symbol.result, emit_option_some(e, symbol.result, wrapped))
-		fmt.sbprintfln(&e.b, "%s:", stopped)
+		place_label(e, stopped)
 		emit_ret(e, symbol.result, "zeroinitializer")
 	}
 	fmt.sbprintln(&e.b, "}")

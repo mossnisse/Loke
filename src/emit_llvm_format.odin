@@ -43,8 +43,7 @@ emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fal
 		emit_format_thunk_call(e, expr_base(arg).type, addresses[index], writer, generated_name(e, PANIC_OPTIONS))
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_panic_end()")
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
+	emit_unreachable(e)
 }
 
 // A `fmt.Writer` on standard error, in a slot of its own.

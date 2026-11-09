@@ -2190,7 +2190,8 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	return out
 }
 
-// One arm of a conditional, and the block it ends in, for the phi to name.
+// One arm of a conditional, and, when the arms meet in a phi, the block it ends
+// in, for the phi to name.
 @(private = "file")
 emit_cond_arm :: proc(
 	e: ^Emitter, label, exit_prefix: string, arm: Expr, as_type: Type_Id, clones: bool, joined, done: string,
@@ -2201,8 +2202,9 @@ emit_cond_arm :: proc(
 	end_conditional(e)
 	if joined != "" {
 		store(e, as_type, value, joined)
+	} else {
+		exit = current_block(e, exit_prefix)
 	}
-	exit = current_block(e, exit_prefix)
 	branch(e, done)
 	return value, exit
 }
@@ -2266,8 +2268,7 @@ emit_conditional_exit :: proc(e: ^Emitter, exit: Stmt) {
 	emit_stmt(e, exit)
 	end_conditional(e)
 	if !e.terminated {
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
+		emit_unreachable(e)
 	}
 }
 

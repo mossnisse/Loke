@@ -160,7 +160,9 @@ Function_Emission :: struct {
 Function_State :: struct {
 	// Whether the current block already ends in a terminator.
 	terminated: bool,
-	// The current block's label, which a phi names for the edge leaving it.
+	// The current block's label, which a phi names for the edge leaving it. Only
+	// `place_label` keeps it current, so a label written by hand belongs in a body
+	// of fixed text, which names no block through `current_block`.
 	block:      string,
 	// Set while writing a procedure's copy for `copy_cpu`, whose direct calls
 	// name copies too (compiler-architecture.md "CPU dispatch").
@@ -659,10 +661,17 @@ place_label :: proc(e: ^Emitter, label: string) {
 // what follows is unreachable and goes in a new block, which this opens.
 @(private)
 current_block :: proc(e: ^Emitter, prefix: string) -> string {
-	if e.terminated || e.block == "" {
+	if e.terminated {
 		place_label(e, new_label(e, prefix))
 	}
 	return e.block
+}
+
+// Ends the current block in `unreachable`.
+@(private)
+emit_unreachable :: proc(e: ^Emitter) {
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
 }
 
 @(private)

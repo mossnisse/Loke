@@ -378,8 +378,7 @@ llvm_escape :: proc(text: string) -> string {
 @(private)
 emit_panic :: proc(e: ^Emitter, message: string) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic(ptr %s)", text_literal_global(e, message))
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
+	emit_unreachable(e)
 }
 
 // design.md "Allocation failure": the provider applies its own policy, which does
@@ -387,8 +386,7 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 @(private)
 emit_alloc_failed :: proc(e: ^Emitter, provider: string) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
+	emit_unreachable(e)
 }
 
 // A synthesized body copying a move-only value is dead (L0491), so it aborts

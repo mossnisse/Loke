@@ -113,8 +113,7 @@ emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> strin
 		branch(e, done)
 		place_label(e, next)
 	}
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
+	emit_unreachable(e)
 	place_label(e, done)
 	return load_temporary(e, to, slot)
 }

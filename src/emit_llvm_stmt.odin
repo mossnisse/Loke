@@ -704,8 +704,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 
 	if closed_fallback {
 		place_label(e, fallback)
-		fmt.sbprintfln(&e.b, "  unreachable")
-		e.terminated = true
+		emit_unreachable(e)
 	}
 
 	for entry, index in s.cases {
