@@ -430,5 +430,13 @@ simd_written_fold :: proc(k: ^Checker, written: Expr) -> (Simd_Fold, bool) {
 	}
 	base := expr_base(written)
 	member := symbol_of(k.c, enum_member_by_value(k.c, base.type, base.const_value))
-	return reflect.enum_from_name(Simd_Fold, identifier_text(k.c, member.name))
+	if member != nil {
+		if fold, named := reflect.enum_from_name(Simd_Fold, identifier_text(k.c, member.name)); named {
+			return fold, true
+		}
+	}
+	// A replaced `core:simd` can pass a runtime value, or a member the
+	// compiler has no instruction for.
+	errorf(k.c, expr_span(written), "L0687", "a SIMD fold must be a constant `Add`, `Mul`, `Min`, `Max`, `Any`, or `All`")
+	return .Add, false
 }

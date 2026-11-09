@@ -69,14 +69,14 @@ regression test.
 | # | Site | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | 1 | `src/check.odin:1309-1317`, `:1890-1900` | A variadic `..T` parameter's `@(escape)` and `@(cross_thread)` are checked against `T` in a declaration but against `[]T` in a written procedure type, because `resolve_proc_type` is a drifted copy of `append_signature_group`. `f :: proc(@(escape=none) xs: ..int) {}` is rejected with L0648, but `P :: proc(@(escape=none) xs: ..int);` is accepted. design.md "Variadic parameters" says the escape level bounds the lent values as it does for a `value: T` parameter, so the declaration is right. Fix: one parameter-flattening helper for both (about 35 lines saved). | User-visible | Fixed: one `check_signature_parameter` serves both paths; `tests/err/variadic_attribute_parity.loke` |
-| 2 | `src/interface.odin:373` | A user diagnostic formats an interface argument with `const_key_text`, so users see cache encodings such as `t123` or `f64:3ff0000000000000`. Use `generic_value_text`. | User-visible | Checked |
-| 3 | `src/parallel.odin:194` | L0727 ("`core:thread` declares no `Task_Scope`") is reported at `NO_SPAN`; the L0329 case two lines above uses the `parallel` keyword's span. | Minor | Checked |
+| 2 | `src/interface.odin:373` | A user diagnostic formats an interface argument with `const_key_text`, so users see cache encodings such as `t123` or `f64:3ff0000000000000`. Use `generic_value_text`. | User-visible | Fixed: `generic_value_text`; `tests/err/interface_slot_checks.loke` |
+| 3 | `src/parallel.odin:194` | L0727 ("`core:thread` declares no `Task_Scope`") is reported at `NO_SPAN`; the L0329 case two lines above uses the `parallel` keyword's span. | Minor | Fixed, with the two other `L0727` reports in the file: `tests/pkg_err/parallel_no_task_scope`, `spawn_no_task_start`, `spawn_no_unsafe_builtin` |
 | 4 | `src/emit_llvm_containers.odin:1414-1421` | Hashing a fixed array that is not a large value (up to 4096 bytes) is fully unrolled. A `[4096]u8` key emits about 16k instructions into its hash thunk, while equality loops above `UNROLLED_EQUAL_ELEMENTS`/`UNROLLED_EQUAL_BYTES`. | Code size | Checked |
 | 5 | `src/provenance_retention.odin:537-541` | `prov_parameter_label` formats into `semantic_allocator`, the long-lived arena, on every graph build. Thirteen more provenance allocations use `context.temp_allocator`, which lasts the whole batch compile, instead of the analysis arena that compiler-architecture.md "Normalized provenance input" asks for. | Memory growth | Checked (first site) |
-| 6 | `src/borrow.odin:1691` | `publish_place_settled` compares whole `Proj_Step` structs, including `precision`, `synchronized` and `shifts`, where `same_step` is the place-identity test. A store can lose `one_place` over a flag difference and produce a spurious "may" conflict. | Minor, conservative | Checked |
-| 7 | `src/capture.odin:276-278` | `capture_call_method` resets `k.c.capture_rewrite` to `nil` rather than to the value it replaced, so a capture lowered while another rewrite is active would lose the outer one. | Latent | Checked; reachability not established |
+| 6 | `src/borrow.odin:1691` | `publish_place_settled` compares whole `Proj_Step` structs, including `precision`, `synchronized` and `shifts`, where `same_step` is the place-identity test. A store can lose `one_place` over a flag difference and produce a spurious "may" conflict. | Minor, conservative | Fixed: `same_step`. No probe makes the flags differ, so no test shows a change |
+| 7 | `src/capture.odin:276-278` | `capture_call_method` resets `k.c.capture_rewrite` to `nil` rather than to the value it replaced, so a capture lowered while another rewrite is active would lose the outer one. | Latent | Fixed: restores the outer rewrite; reachability not established |
 | 8 | `src/const_ops.odin:136,156-158,235,323`, `src/const_float.odin:41-49`, `src/eval.odin:1313,3200-3205,3433-3436` | Big-integer temporaries, sort scratch, and a dispatch frame are charged to the compile-time evaluator's memory limit and never released, against the contract of `bi_release`. | Minor | Reported |
-| 9 | `src/simd.odin:431-433` | `simd_written_fold` dereferences the result of `enum_member_by_value` without a nil check; only an edited `core:simd` reaches it. | Latent crash | Reported |
+| 9 | `src/simd.odin:431-433` | `simd_written_fold` dereferences the result of `enum_member_by_value` without a nil check; only an edited `core:simd` reaches it. | Latent crash | Fixed: reported as `L0687`; `tests/pkg_err/simd_unknown_fold` |
 | 10 | `src/eval_memory.odin:103-105` | A zero-size request yields a negative size class that the allocator reads as the heap-block sentinel, then overwrites the large-block link. Probably unreachable through the runtime wrappers. | Latent | Reported |
 | 11 | `src/thread_summaries.odin:192,205,214` | `add_global_effect` keeps the first `Effect_Source`, so "may reach" versus "reaches" in a diagnostic depends on order; `effect_call_reach` intersects precision instead. | Wording | Reported |
 | 12 | `src/provenance_reborrow.odin:211-215` | `prov_reborrow_loaded` takes the last matching reborrow's capability, so the result depends on list order. | Minor | Reported |
@@ -86,7 +86,7 @@ regression test.
 | 16 | `src/parser.odin:2421-2422` | `parse_postfix` counts one more level than it builds, so the nesting limit for postfix chains is stricter than intended. | Minor | Reported |
 | 17 | `src/check_stmt.odin:426-433` | `_ = nil` is accepted silently where `check_decl_value` reports L0310 for the same case; decide which is intended. | Minor | Reported, unverified |
 | 18 | `src/erased.odin:676-677`, `src/doc.odin:491-492` | A missing nil check, and an interface-text edge case for a typed procedure constant; both probably unreachable. | Latent | Reported, unverified |
-| 19 | `src/compiler.odin:159-160` | An orphan comment describes fields that no longer exist. | Documentation | Reported |
+| 19 | `src/compiler.odin:159-160` | An orphan comment describes fields that no longer exist. | Documentation | Fixed: comment removed |
 
 ## Cross-cutting themes
 
@@ -189,7 +189,8 @@ restructuring. Measure performance items before and after.
 
 1. Bug 1 (done): share parameter flattening in `check.odin`, with a regression
    test for the declaration and procedure-type forms.
-2. Bugs 2, 3, 6 and 9: one-line fixes, each with a test.
+2. Bugs 2, 3, 6 and 9 (done): one-line fixes, each with a test where a probe
+   reaches it.
 3. Bug 4: loop hashing above the equality thresholds, with an IR-growth test
    like `fixed_array_clone_ir_grows_linearly`.
 4. Allocation domains (theme 3 and bug 5), then the evaluator accounting (bug 8).

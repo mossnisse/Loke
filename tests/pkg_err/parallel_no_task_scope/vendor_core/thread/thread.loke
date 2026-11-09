@@ -1,0 +1,4 @@
+@(public)
+package thread;
+
+Pool :: struct { n: int }

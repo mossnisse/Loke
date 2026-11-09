@@ -1,0 +1,11 @@
+package main;
+
+import "core:simd";
+
+// design.md "SIMD vectors": a fold selects the instruction, so the intrinsic
+// reports a fold it cannot name rather than crashing the checker.
+
+main :: proc() {
+	v: Simd(i32, 4) = {};
+	_ = simd.sum_xor(v);
+}

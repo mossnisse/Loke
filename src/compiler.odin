@@ -156,8 +156,6 @@ Compiler :: struct {
 	meta_field_type:      Type_Id,
 	meta_enum_value_type: Type_Id,
 	meta_variant_type:    Type_Id,
-	// The two local region providers (`src/region.odin`), created on first use.
-	// `mem.Failure_Policy`, and the `.Panic` its constructors default to.
 	// design.md "Typed fallibility": the `base:runtime` declarations the
 	// compiler bootstraps and binds into the universe. `Unit` is a type; the
 	// others are generic templates instantiated through `src/bootstrap.odin`.

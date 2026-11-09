@@ -1,0 +1,6 @@
+L0687
+@20:29
+a SIMD fold must be a constant `Add`, `Mul`, `Min`, `Max`, `Any`, or `All`
+L0687
+@24:29
+a SIMD fold must be a constant `Add`, `Mul`, `Min`, `Max`, `Any`, or `All`

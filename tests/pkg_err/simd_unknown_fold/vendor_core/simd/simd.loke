@@ -1,0 +1,25 @@
+@(public)
+package simd;
+
+// A replaced `core:simd` whose folds the compiler cannot name: a runtime
+// value, and a member it has no instruction for.
+
+@(private)
+Fold :: enum u8 {
+	Add,
+	Mul,
+	Min,
+	Max,
+	Any,
+	All,
+	Xor,
+}
+
+@(private)
+reduce_with :: proc(vector: Simd(i32, 4), fold: Fold) -> i32 {
+	return simd_reduce(vector, fold);
+}
+
+sum_xor :: proc(vector: Simd(i32, 4)) -> i32 {
+	return simd_reduce(vector, Fold.Xor);
+}

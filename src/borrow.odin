@@ -1688,7 +1688,7 @@ publish_place_settled :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8
 			}
 			for path in loan.paths {
 				for step, at in path[:min(len(path), len(event.place_path))] {
-					if step != event.place_path[at] {
+					if !same_step(step, event.place_path[at]) {
 						settled.path, settled.one_place, settled.place_path = nil, false, nil
 						return settled
 					}

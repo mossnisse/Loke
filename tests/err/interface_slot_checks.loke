@@ -18,7 +18,16 @@ fits :: proc(x: $T, $N: int) -> bool {
 	return Small(T, $N);
 }
 
+// The report shows the value as written, not the encoding that keys the
+// generic cache.
+Whole :: interface($Self: type, $Limit: int) {}
+
+whole :: proc(x: $T, $F: f64) -> bool {
+	return Whole(T, $F);
+}
+
 main :: proc() {
 	_ = fits(1, 3);
 	_ = fits(1, 300);
+	_ = whole(1, 1.5);
 }

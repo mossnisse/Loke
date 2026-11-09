@@ -4,3 +4,7 @@ L0442
 L0443
 @18:18
 `300` is not representable by the interface parameter's type `u8`
+L0443
+@26:18
+`1.5` is not representable by the interface parameter's type `int`
+!f64:

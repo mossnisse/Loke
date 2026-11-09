@@ -1793,6 +1793,12 @@ checklist.
 
 ### Fixed
 
+- `L0443`, a compile-time value an interface parameter's type cannot represent, shows the value as
+  written: `1.5`, where it showed the generic cache's encoding `f64:3ff8000000000000`.
+- `L0727`, a replaced `core:thread` that lacks what a `parallel` block or a `spawn` needs, points at
+  the block's keyword or the spawned call; it had no location.
+- A replaced `core:simd` that passes `simd_reduce` a runtime fold, or a `Fold` member the compiler
+  has no instruction for, is `L0687`; the compiler crashed.
 - A task that hands its own zero-valued container to a helper that grows it, through `inout`,
   `^mut`, a method's `inout` receiver, or a move in and out, reserves no allocator region
   ([Allocators and tasks](design.md#allocators-and-tasks)): the container binds the default

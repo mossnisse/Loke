@@ -370,7 +370,7 @@ constant_interface_argument :: proc(
 			errorf(
 				k.c, arg.span, code,
 				"`%s` is not representable by the interface parameter's type `%s`",
-				const_key_text(k.c, value),
+				generic_value_text(k.c, value),
 				type_name(k.c, wanted),
 			)
 		}

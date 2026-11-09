@@ -1,0 +1,11 @@
+package main;
+
+// compiler-architecture.md "Lowering parallel blocks": a block needs
+// `Task_Scope`, so a replaced `core:thread` without it is reported at the
+// block's keyword.
+
+work :: proc() {}
+
+main :: proc() {
+	parallel { spawn work(); }
+}

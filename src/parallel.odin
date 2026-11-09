@@ -191,7 +191,7 @@ thread_type :: proc(k: ^Checker, keyword: Span, name: string) -> Type_Id {
 	}
 	sym := symbol_of(k.c, package_symbol_named(k.c, pkg, name))
 	if sym == nil || sym.kind != .Type || sym.type == INVALID_TYPE {
-		errorf(k.c, NO_SPAN, "L0727", "`%s` declares no `%s`, which a `parallel` block needs", STD_THREAD, name)
+		errorf(k.c, keyword, "L0727", "`%s` declares no `%s`, which a `parallel` block needs", STD_THREAD, name)
 		return INVALID_TYPE
 	}
 	return sym.type
@@ -344,14 +344,14 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 	scope_info := type_of(c, symbol_of(c, block.scope).type)
 	start := scope_info != nil ? member_named(c, scope_info.members, intern_identifier(c, "start")) : INVALID_SYMBOL
 	if start == INVALID_SYMBOL {
-		errorf(c, NO_SPAN, "L0727", "`%s` declares no `Task_Scope.start`, which a `spawn` needs", STD_THREAD)
+		errorf(c, span, "L0727", "`%s` declares no `Task_Scope.start`, which a `spawn` needs", STD_THREAD)
 		return
 	}
 
 	outer := k.scope
 	k.scope = new_scope(c, outer, .Local)
 	defer k.scope = outer
-	if !bind_unsafe_builtins(k) {
+	if !bind_unsafe_builtins(k, span) {
 		return
 	}
 
@@ -659,12 +659,12 @@ spawn_copy_from_temporary :: proc(k: ^Checker, argument: Expr, type: Type_Id) {
 // them by. `core:thread` imports the package, so its `parallel` dependency
 // loaded it.
 @(private = "file")
-bind_unsafe_builtins :: proc(k: ^Checker) -> bool {
+bind_unsafe_builtins :: proc(k: ^Checker, span: Span) -> bool {
 	pkg := standard_package(k.c, STD_UNSAFE)
 	for name in ([]string{"take", "write", "free"}) {
 		builtin := package_symbol_named(k.c, pkg, name)
 		if builtin == INVALID_SYMBOL {
-			errorf(k.c, NO_SPAN, "L0727", "a `spawn` needs `%s` from `%s`, which `%s` has not loaded", name, STD_UNSAFE, STD_THREAD)
+			errorf(k.c, span, "L0727", "a `spawn` needs `%s` from `%s`, which `%s` has not loaded", name, STD_UNSAFE, STD_THREAD)
 			return false
 		}
 		k.scope.names[intern_identifier(k.c, fmt.tprintf("spawn$%s", name))] = builtin

@@ -1,2 +1,3 @@
 L0727
+@10:19
 a `spawn` needs `take` from `core:unsafe`, which `core:thread` has not loaded
