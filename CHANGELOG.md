@@ -1168,6 +1168,13 @@ checklist.
   `pointer: ^Reader`. Upgrade by
   ending what holds the copy before the reset, or by copying the text into storage the reset does
   not end.
+- A procedure type checks a [variadic parameter](design.md#variadic-parameters)'s
+  `@(escape=...)` and [`@(cross_thread)`](design.md#cross_thread) against the element type, as a
+  declaration with the same parameters does. It checked them against the `[]T` the body receives,
+  so `proc(@(escape=none) values: ..int)` compiled as a type but was `L0648` as a declaration, and
+  `proc(@(cross_thread) entries: ..proc())` was `L0723` as a type but compiled as a declaration.
+  The type form now agrees: the first is `L0648`, and the second compiles. Upgrade by removing
+  `@(escape=...)` from a pack whose element type carries no borrow.
 
 ### Added
 

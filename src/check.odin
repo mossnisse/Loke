@@ -1120,6 +1120,51 @@ variadic_position_ok :: proc(k: ^Checker, params: []Parameter, position, name_in
 	return true
 }
 
+// One name of a parameter group as the signature receives it, and the
+// type-level effects its attributes state.
+@(private = "file")
+Signature_Parameter :: struct {
+	type:           Type_Id,
+	mode:           Param_Mode,
+	split_receiver: bool,
+	escape:         Escape_Level,
+	resets:         bool,
+	crosses:        bool,
+}
+
+// design.md "Variadic parameters": a parameter means the same in a procedure
+// type as in a declaration, so both check each name here. The attributes are
+// checked against the written type: a `..T` pack's escape level bounds what
+// each lent `T` holds, as it does for a `value: T` parameter, not the `[]T`
+// the body receives.
+@(private = "file")
+check_signature_parameter :: proc(
+	k: ^Checker,
+	params: []Parameter,
+	position, name_index: int,
+	written: Type_Id,
+	generic, in_foreign: bool,
+	receiver := INVALID_TYPE,
+) -> (result: Signature_Parameter) {
+	parameter := &params[position]
+	result.type, result.mode, result.split_receiver = normalize_signature_parameter(
+		k.c, parameter^, position, name_index, written, receiver,
+	)
+	// A split receiver's group type belongs to the names after it.
+	written_type := result.split_receiver ? receiver : written
+	result.escape = check_escape_attribute(k, parameter.attributes, written_type, parameter.span, result.mode, generic)
+	marked := has_attribute(parameter.attributes, "allocator_reset") && !result.split_receiver
+	result.resets = allocator_reset_ok(k, marked, written_type, parameter.span)
+	result.crosses = check_cross_thread_attribute(
+		k, parameter.attributes, written_type, result.mode, result.escape, in_foreign, parameter.span,
+	)
+	if result.mode == .Variadic && result.type != INVALID_TYPE &&
+	   !variadic_position_ok(k, params, position, name_index, parameter.span) {
+		result.type, result.mode = written_type, .Value
+	}
+	return
+}
+
 // Marks a generic `impl` member whose first parameter is `self` as a method;
 // its instance checks the receiver's type.
 @(private = "file")
@@ -1301,25 +1346,15 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 		if parameter_name.is_poly && literal.generic_instance {
 			continue
 		}
-		name_type, mode, split_receiver := normalize_signature_parameter(
-			k.c, parameter^, position, name_index, parameter_type, receiver = k.impl_type,
+		checked := check_signature_parameter(
+			k, literal.signature.params, position, name_index, parameter_type,
+			literal.generic_instance || in_generic_signature(k), builder.is_foreign, receiver = k.impl_type,
 		)
+		name_type, mode := checked.type, checked.mode
+		escape, resets, crosses := checked.escape, checked.resets, checked.crosses
+		split_receiver := checked.split_receiver
 		// Group defaults and reset effects belong to the typed parameters.
 		default := split_receiver ? nil : parameter.default
-		written_type := split_receiver ? k.impl_type : parameter_type
-		escape := check_escape_attribute(
-			k, parameter.attributes, written_type, parameter.span, mode, literal.generic_instance || in_generic_signature(k),
-		)
-		resets := has_attribute(parameter.attributes, "allocator_reset") && !split_receiver
-		resets = allocator_reset_ok(k, resets, written_type, parameter.span)
-		crosses := check_cross_thread_attribute(
-			k, parameter.attributes, written_type, mode, escape, builder.is_foreign, parameter.span,
-		)
-		if mode == .Variadic && name_type != INVALID_TYPE {
-			if !variadic_position_ok(k, literal.signature.params, position, name_index, parameter.span) {
-				name_type, mode = written_type, .Value
-			}
-		}
 		reject_reserved_name(k, name_id, name.span)
 		binding := new_binding_symbol(k, name, .Parameter)
 		if bound := symbol_of(k.c, binding); bound != nil {
@@ -1864,8 +1899,6 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 	crosses := make([dynamic]bool, 0, len(value.params), context.temp_allocator)
 	generic := in_generic_signature(k)
 	for parameter, position in value.params {
-		// The reset effect is part of the procedure type.
-		marked := has_attribute(parameter.attributes, "allocator_reset")
 		count := max(len(parameter.names), 1)
 		if parameter.type == nil {
 			// A procedure type has no receiver to take a type from.
@@ -1886,18 +1919,12 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 		}
 		written := resolve_type_reporting(k, parameter.type)
 		for name_index in 0 ..< count {
-			marked = allocator_reset_ok(k, marked, written, parameter.span)
-			resolved, mode, _ := normalize_signature_parameter(k.c, parameter, position, name_index, written)
-			if mode == .Variadic && resolved != INVALID_TYPE &&
-			   !variadic_position_ok(k, value.params, position, name_index, parameter.span) {
-				resolved, mode = written, .Value
-			}
-			append(&params, resolved)
-			append(&modes, mode)
-			append(&resets, marked)
-			escape := check_escape_attribute(k, parameter.attributes, resolved, parameter.span, mode, generic)
-			append(&escapes, escape)
-			append(&crosses, check_cross_thread_attribute(k, parameter.attributes, resolved, mode, escape, false, parameter.span))
+			checked := check_signature_parameter(k, value.params, position, name_index, written, generic, false)
+			append(&params, checked.type)
+			append(&modes, checked.mode)
+			append(&resets, checked.resets)
+			append(&escapes, checked.escape)
+			append(&crosses, checked.crosses)
 		}
 	}
 	result_type, result_inout := resolve_signature_result(k, value.result)

@@ -1,0 +1,25 @@
+// design.md "Variadic parameters": a pack's `@(escape=...)` bounds what each
+// lent value holds, as it does for a `value: T` parameter, and a procedure type
+// checks a parameter as a declaration with the same parameters does. Each case
+// is written once as a declaration and once as a procedure type, which must
+// agree on the diagnostic and, where accepted, on the type.
+package main;
+
+declared_ints :: proc(@(escape=none) values: ..int) {}
+Written_Ints :: proc(@(escape=none) values: ..int);
+
+declared_views :: proc(@(escape=none) views: ..string_view) {}
+Written_Views :: proc(@(escape=none) views: ..string_view);
+
+declared_entries :: proc(@(cross_thread) entries: ..proc()) {}
+Written_Entries :: proc(@(cross_thread) entries: ..proc());
+
+declared_counts :: proc(@(cross_thread) counts: ..int) {}
+Written_Counts :: proc(@(cross_thread) counts: ..int);
+
+main :: proc() {
+	views: Written_Views = declared_views;
+	entries: Written_Entries = declared_entries;
+	_ = views;
+	_ = entries;
+}
