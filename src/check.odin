@@ -1191,7 +1191,7 @@ mark_template_receiver :: proc(k: ^Checker, d: ^Decl) {
 
 @(private = "file")
 allocator_reset_ok :: proc(k: ^Checker, marked: bool, type: Type_Id, span: Span) -> bool {
-	if !marked || type_underlying(k.c, type) == TYPE_ALLOCATOR {
+	if !marked || type_is_allocator(k.c, type) {
 		return marked
 	}
 	errorf(
@@ -2548,7 +2548,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	if allocator == INVALID_TYPE {
 		return false
 	}
-	if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+	if !type_is_allocator(k.c, allocator) {
 		errorf(
 			k.c,
 			expr_span(d.via),

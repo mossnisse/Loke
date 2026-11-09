@@ -417,7 +417,6 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		place_label(e, run)
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", address)
 		emit_replay_action(e, u.actions[index], env)
-		branch(e, skip)
 		place_label(e, skip)
 	}
 	fmt.sbprintln(&e.b, "  ret void")

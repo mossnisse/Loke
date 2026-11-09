@@ -78,6 +78,11 @@ type_is_boolean :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) in Type_Kinds{.Bool, .Untyped_Bool}
 }
 
+// `Allocator`, or a distinct type over it.
+type_is_allocator :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return type_underlying(c, id) == TYPE_ALLOCATOR
+}
+
 type_is_enum :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) == .Enum
 }

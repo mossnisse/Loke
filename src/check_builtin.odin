@@ -265,7 +265,7 @@ check_allocator_argument :: proc(k: ^Checker, e: Expr) -> bool {
 	if allocator == INVALID_TYPE {
 		return false
 	}
-	if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+	if !type_is_allocator(k.c, allocator) {
 		errorf(k.c, expr_span(e), "L0490", "an allocator argument is an `Allocator`, found `%s`", type_name(k.c, allocator))
 		return false
 	}
@@ -651,7 +651,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		if allocator == INVALID_TYPE {
 			return
 		}
-		if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+		if !type_is_allocator(k.c, allocator) {
 			errorf(k.c, expr_span(v.args[0].value), "L0490", "`free_all` names the allocator being reset, found `%s`", type_name(k.c, allocator))
 			return
 		}

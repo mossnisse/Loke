@@ -199,8 +199,8 @@ restructuring. Measure performance items before and after.
 6. Caches for interface satisfaction, generic keys and type predicates
    (theme 1), each measured with `perf.ps1`.
 7. Shared scaffolding (theme 4), smallest first: the redundant `branch` calls,
-   `type_is_allocator`, the identical path predicates, then the replay
-   iterator, the worklist type, and the union `switch` helper.
+   `type_is_allocator`, the identical path predicates (these three done), then
+   the replay iterator, the worklist type, and the union `switch` helper.
 8. File splits (theme 5), each as its own move-only commit.
 
 Open items that are not taken up should move into
@@ -245,6 +245,7 @@ The recurring themes are:
 ### Top recommendations
 
 1. **Make `shown_text` skip the token comparison when it cut no comment**
+   (done; `-api-check` over `core` showed no measurable change)
    (`src/doc.odin:759-798`). Today every call runs `token_texts` twice, and each
    of those runs `lex_text` with a scratch `Compiler`. If nothing was cut, the
    result is exactly `text[lo:hi]`, so the comparison is guaranteed to pass.
@@ -533,7 +534,7 @@ disciplined.
   `:2188`, `:2368`, `:2892`). A `too_deep :: proc(p) -> bool { deepen(p, 1);
   return p.depth > MAX_NEST }` helper saves about 11 lines. The `defer` must
   stay at each call site.
-- **Simplify**, parser.odin:4120-4123: `is_operator_symbol` lists every
+- **Simplify** (done), parser.odin:4120-4123: `is_operator_symbol` lists every
   compound assignment again. Use `compound_operator(kind) != .EOF ||` in front
   of the rest. Saves 4 lines and cannot drift from `lexer.odin:765`.
 - **Structure**, parser.odin as a whole: at 4126 lines it is about 22% of this

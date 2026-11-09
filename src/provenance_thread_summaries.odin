@@ -149,7 +149,7 @@ prov_visible_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
 @(private)
 prov_used_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	set := prov_storage_region(graph, id)
-	if region_is_empty(set) && type_underlying(graph.k.c, prov_value(graph, id).type) == TYPE_ALLOCATOR {
+	if region_is_empty(set) && type_is_allocator(graph.k.c, prov_value(graph, id).type) {
 		return Region_Set{unknown = true}
 	}
 	return set

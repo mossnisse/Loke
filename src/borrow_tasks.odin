@@ -189,7 +189,7 @@ Shared_Hazard :: struct {
 @(private = "file")
 shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> Shared_Hazard {
 	sym := symbol_of(c, global)
-	if sym == nil || sym.synchronized || type_underlying(c, sym.type) == TYPE_ALLOCATOR ||
+	if sym == nil || sym.synchronized || type_is_allocator(c, sym.type) ||
 	   type_is_region_provider(c, sym.type) {
 		return {}
 	}

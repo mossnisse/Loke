@@ -648,7 +648,6 @@ emit_store_entry :: proc(e: ^Emitter, element: Type_Id, slots: Map_Entry_Slots, 
 	branch_if(e, is_new, done_label, replaced_label)
 	place_label(e, replaced_label)
 	emit_drop_place(e, element, slots.old)
-	branch(e, done_label)
 	place_label(e, done_label)
 }
 
@@ -979,7 +978,6 @@ emit_synth_append :: proc(e: ^Emitter, body: Container_Body) -> string {
 		branch_if(e, flagged, drop_owned, dropped)
 		place_label(e, drop_owned)
 		emit_drop_elements_reversed(e, body.element, data, count, "%owned")
-		branch(e, dropped)
 		place_label(e, dropped)
 		rejoin(e, kept)
 		return status
@@ -1015,7 +1013,6 @@ emit_synth_map_lookup_value :: proc(e: ^Emitter, body: Container_Body) {
 		stored = emit_clone_value(e, element, stored)
 	}
 	store(e, element, stored, out)
-	branch(e, done_label)
 	place_label(e, done_label)
 
 	value := load_temporary(e, element, out)
@@ -1133,7 +1130,6 @@ branch_on_failure :: proc(e: ^Emitter, status: string) -> string {
 
 @(private = "file")
 rejoin :: proc(e: ^Emitter, kept_label: string) {
-	branch(e, kept_label)
 	place_label(e, kept_label)
 }
 

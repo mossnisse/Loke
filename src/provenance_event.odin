@@ -638,7 +638,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(value.origin):
 			prov_note_allocator_use(graph, Region_Set{}, span, owned = true)
 		case followed:
-		case type_underlying(c, type) == TYPE_ALLOCATOR:
+		case type_is_allocator(c, type):
 			set := prov_used_region(graph, argument)
 			region_merge(&allocators, set)
 			prov_note_allocator_use(graph, set, span)

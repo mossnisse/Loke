@@ -1102,7 +1102,6 @@ emit_code_point_bound_check :: proc(e: ^Emitter, data, bound, length: string) {
 	fmt.sbprintfln(&e.b, "  %s = and i8 %s, -64", masked, lead)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i8 %s, -128", continuation, masked)
 	panic_if(e, continuation, "slice.utf8", "string slice bounds split a code point")
-	branch(e, checked_label)
 	place_label(e, checked_label)
 }
 
@@ -2156,7 +2155,6 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 
 	// The phi needs a named incoming edge, and the left operand may have opened
 	// blocks of its own.
-	branch(e, entry_label)
 	place_label(e, entry_label)
 	if v.op == .And_And {
 		branch_if(e, lhs, rhs_label, done_label)
@@ -2169,7 +2167,6 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	rhs := emit_expr(e, v.rhs)
 	end_conditional(e)
 	rhs_exit := new_label(e, "sc.rhs.exit")
-	branch(e, rhs_exit)
 	place_label(e, rhs_exit)
 	branch(e, done_label)
 
@@ -2197,7 +2194,6 @@ emit_cond_arm :: proc(
 		store(e, as_type, value, joined)
 	}
 	exit = new_label(e, exit_prefix)
-	branch(e, exit)
 	place_label(e, exit)
 	branch(e, done)
 	return value, exit
@@ -2600,7 +2596,6 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		zero := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq i8 %s, 0", zero, load(e, "i8", gep_at(e, "i8", data, last)))
 		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", zero, terminated)
-		branch(e, done)
 		place_label(e, done)
 		ok, kept := load(e, "i1", terminated), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept, ok, data)

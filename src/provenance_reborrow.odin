@@ -310,7 +310,7 @@ prov_type_is_read_only_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // A carrier that views storage, as a provider or an allocator handle does not.
 @(private)
 prov_type_is_view_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_is_carrier(c, type) && !type_is_region_provider(c, type) && type_underlying(c, type) != TYPE_ALLOCATOR
+	return type_is_carrier(c, type) && !type_is_region_provider(c, type) && !type_is_allocator(c, type)
 }
 
 // design.md "Allocator regions and region provenance": an owner moved in, a copy
@@ -321,7 +321,7 @@ prov_type_is_view_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // (`prov_add_received_allocator`).
 @(private)
 prov_type_keeps_argument_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if type_underlying(c, type) == TYPE_ALLOCATOR || type_is_managed(c, type) || prov_type_is_view_carrier(c, type) {
+	if type_is_allocator(c, type) || type_is_managed(c, type) || prov_type_is_view_carrier(c, type) {
 		return true
 	}
 	for path in carrier_shape(c, type) {

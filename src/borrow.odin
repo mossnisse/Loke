@@ -272,18 +272,6 @@ path_is_indistinct :: proc(path: []Proj_Step) -> bool {
 	return false
 }
 
-// Whether `path` selects one place: fields and single constant elements,
-// none merged.
-@(private)
-prov_path_names_one_place :: proc(path: []Proj_Step) -> bool {
-	for step in path {
-		if step.kind != .Field && !(step.kind == .Range && step.hi == step.lo + 1) || step.precision != {} {
-			return false
-		}
-	}
-	return true
-}
-
 @(private)
 path_has_exact_prefix :: proc(path, prefix: []Proj_Step) -> bool {
 	if len(prefix) > len(path) {
@@ -2443,8 +2431,8 @@ stored_carrier_at :: proc(c: ^Compiler, stored: Type_Id, below: []Proj_Step, typ
 	return false
 }
 
-// Whether `path` names one place: no wildcard, range of several elements, or
-// merged step.
+// Whether `path` names one place: fields and single constant elements, none
+// merged.
 @(private)
 path_is_exact :: proc(path: []Proj_Step) -> bool {
 	for step in path {

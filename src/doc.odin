@@ -760,6 +760,7 @@ shown_text :: proc(b: ^Api_Builder, source: ^Source, lo, hi: u32) -> string {
 	text := source.text
 	out := strings.builder_make()
 	at := lo
+	cut := false
 	for comment in source.comments[first_comment_after(source, lo):] {
 		if comment.hi > hi {
 			break
@@ -788,10 +789,12 @@ shown_text :: proc(b: ^Api_Builder, source: ^Source, lo, hi: u32) -> string {
 		strings.write_string(&out, text[at:cut_lo])
 		strings.write_string(&out, separator)
 		at = cut_hi
+		cut = true
 	}
 	strings.write_string(&out, text[at:hi])
 	shown := strings.to_string(out)
-	if !slice.equal(token_texts(text[lo:hi]), token_texts(shown)) {
+	// Text with nothing cut is the source itself, which lexes as it did.
+	if cut && !slice.equal(token_texts(text[lo:hi]), token_texts(shown)) {
 		b.a.damaged = true
 	}
 	return strings.trim_space(shown)

@@ -130,7 +130,6 @@ emit_pack_release :: proc(e: ^Emitter, element: Type_Id, record: string) {
 	bytes := load(e, "i64", gep_field(e, PACK_RELEASE_TYPE, record, 2))
 	emit_rt_free_sized(e, allocator, block, bytes, type_align(e.c, element))
 	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", gep_field(e, PACK_RELEASE_TYPE, record, 1))
-	branch(e, done)
 	place_label(e, done)
 }
 
@@ -245,7 +244,6 @@ drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 	finish_temporary_drop(e, entry)
 	emit_drop_place(e, entry.type, entry.place)
 	if skip != "" {
-		branch(e, skip)
 		place_label(e, skip)
 	}
 }
@@ -284,7 +282,6 @@ pop_temporaries :: proc(e: ^Emitter) {
 		place_label(e, restore)
 		fmt.sbprintfln(&e.b, "  call void @llvm.stackrestore.p0(ptr %s)", pointer)
 		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", saved)
-		branch(e, done)
 		place_label(e, done)
 	}
 }
@@ -535,7 +532,6 @@ run_cleanups :: proc(e: ^Emitter, down_to: int, failed := "") {
 			// A conditional temporary's flag is set again only if it is made again.
 			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
 			run_one_cleanup(e, entry)
-			branch(e, skip)
 			place_label(e, skip)
 		}
 	}

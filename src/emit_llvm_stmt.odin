@@ -522,7 +522,6 @@ drop_displaced :: proc(e: ^Emitter, displaced: Displaced) {
 	branch_if(e, displaced.live, run, skip)
 	place_label(e, run)
 	emit_drop_place(e, displaced.type, displaced.aside)
-	branch(e, skip)
 	place_label(e, skip)
 }
 

@@ -194,7 +194,7 @@ prov_reset_fields_region :: proc(graph: ^Flow_Graph, type: Type_Id, fields: []Pr
 // region is what it names rather than what backs it.
 @(private)
 region_field_is_allocator :: proc(c: ^Compiler, type: Type_Id, field: Prov_Region_Content) -> bool {
-	return field.handle && type_underlying(c, prov_type_at(c, type, field.path)) == TYPE_ALLOCATOR
+	return field.handle && type_is_allocator(c, prov_type_at(c, type, field.path))
 }
 
 @(private)
@@ -1065,7 +1065,7 @@ prov_type_or_wrapped :: proc(
 @(private = "file")
 prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return prov_type_or_wrapped(c, type, proc(c: ^Compiler, type: Type_Id) -> bool {
-		return type_underlying(c, type) == TYPE_ALLOCATOR
+		return type_is_allocator(c, type)
 	})
 }
 
@@ -1111,7 +1111,7 @@ prov_type_has_region :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 	if depth > REGION_SHAPE_DEPTH {
 		return true
 	}
-	if type_is_managed(c, type) || type_is_carrier(c, type) || type_underlying(c, type) == TYPE_ALLOCATOR {
+	if type_is_managed(c, type) || type_is_carrier(c, type) || type_is_allocator(c, type) {
 		return true
 	}
 	info := underlying_info(c, type)
@@ -1147,7 +1147,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		return Region_Set{}
 	}
 	// design.md "Allocators": the zero `Allocator` is the default provider.
-	if base := expr_base(e); base.const_value.kind == .Nil && type_underlying(c, value.type) == TYPE_ALLOCATOR {
+	if base := expr_base(e); base.const_value.kind == .Nil && type_is_allocator(c, value.type) {
 		return Region_Set{default = true}
 	}
 	if transfer := prov_value_transfer(graph, id); transfer != nil {
@@ -1165,7 +1165,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		if root, path, ok := prov_value_place_of(graph, id); ok {
 			set := prov_region_content_at(graph, root, path, read = id)
 			// An allocator no write named is one the analysis cannot name.
-			if region_is_empty(set) && type_underlying(c, value.type) == TYPE_ALLOCATOR {
+			if region_is_empty(set) && type_is_allocator(c, value.type) {
 				set.unknown = true
 			}
 			prov_add_received_allocator(graph, &set, root, value.type, id, path)
@@ -1822,7 +1822,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 			continue
 		}
 		moved := param_mode_at(info, index) == .Move
-		if moved || type_underlying(c, prov_value(graph, argument).type) == TYPE_ALLOCATOR {
+		if moved || type_is_allocator(c, prov_value(graph, argument).type) {
 			// design.md "Allocator regions and region provenance": without a body
 			// to follow, an owner built with an allocator argument takes its
 			// region. A direct call's summary already names the allocators its
@@ -1947,7 +1947,7 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 		region_merge(&out, source.allocator)
 		return out
 	}
-	if type_underlying(c, type) == TYPE_STRING || type_underlying(c, type) == TYPE_ALLOCATOR || type_is_shared_handle(c, type) || type_is_carrier(c, type) {
+	if type_underlying(c, type) == TYPE_STRING || type_is_allocator(c, type) || type_is_shared_handle(c, type) || type_is_carrier(c, type) {
 		return prov_copy_source_region_at(graph, source, path, query)
 	}
 	if hook := lifecycle_of(c, type).custom_try_clone; hook != INVALID_SYMBOL {

@@ -607,7 +607,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, fallible: bool) {
 		if check_single_expr(k, argument, hint) == INVALID_TYPE {
 			return
 		}
-		is_allocator := type_underlying(k.c, expr_base(argument).type) == TYPE_ALLOCATOR
+		is_allocator := type_is_allocator(k.c, expr_base(argument).type)
 		if named || is_allocator {
 			if !last {
 				errorf(k.c, expr_span(argument), "L0579", "the allocator is `make`'s last argument")

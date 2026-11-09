@@ -241,7 +241,7 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Value_Id, value: Valu
 	// An owner, an allocator handle, or a record holding either.
 	c := graph.k.c
 	type := prov_value(graph, value).type
-	if !type_is_managed(c, type) && type_underlying(c, type) != TYPE_ALLOCATOR &&
+	if !type_is_managed(c, type) && !type_is_allocator(c, type) &&
 	   (type_is_carrier(c, type) || !prov_type_has_region(c, type)) {
 		return
 	}
@@ -630,7 +630,7 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
 				continue
 			}
 			moved := param_mode_at(info, index) == .Move
-			if moved || type_underlying(c, info.parameters[index]) == TYPE_ALLOCATOR {
+			if moved || type_is_allocator(c, info.parameters[index]) {
 				region_merge(&everything, prov_region_of(graph, argument))
 			}
 		}

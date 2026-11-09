@@ -218,7 +218,6 @@ emit_program_init_body :: proc(e: ^Emitter, name: string) {
 		}
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_provider_init_end()")
-	branch(e, done)
 	place_label(e, done)
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")

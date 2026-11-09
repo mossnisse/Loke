@@ -391,7 +391,6 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		branch(e, done)
 		place_label(e, next)
 	}
-	branch(e, done)
 	place_label(e, done)
 }
 
@@ -411,7 +410,6 @@ emit_format_type_name :: proc(e: ^Emitter, id: string) {
 
 	place_label(e, numeric)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_u64(ptr %%w, i64 %s, ptr %%o)", id)
-	branch(e, done)
 	place_label(e, done)
 }
 
@@ -441,7 +439,6 @@ emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	}
 	// An unnamed value prints as its number.
 	emit_format_integer(e, under, value)
-	branch(e, done)
 	place_label(e, done)
 }
 
@@ -465,7 +462,6 @@ emit_format_separator :: proc(e: ^Emitter, index: string) {
 	branch_if(e, first, element, separator)
 	place_label(e, separator)
 	emit_format_literal(e, ", ")
-	branch(e, element)
 	place_label(e, element)
 }
 

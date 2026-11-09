@@ -157,7 +157,6 @@ box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 			emit_drop_place(e, payload, box_payload_at(e, payload, block))
 			finish_temporary_drop(e, release)
 			emit_box_release(e, payload, block)
-			branch(e, done_label)
 			place_label(e, done_label)
 			emit_unwind_pop(e)
 			fmt.sbprintln(&e.b, "  ret void")

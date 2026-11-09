@@ -4120,16 +4120,16 @@ parse_operator_symbol :: proc(p: ^Parser) -> (string, Span) {
 
 @(private = "file")
 is_operator_symbol :: proc(kind: Token_Kind) -> bool {
+	// Every compound assignment, as the lexer pairs it with its operator.
+	if compound_operator(kind) != .EOF {
+		return true
+	}
 	#partial switch kind {
 	case .Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent:
 		return true
 	case .Pipe, .Tilde, .Amp, .Amp_Tilde, .Shl, .Shr:
 		return true
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq, .Not, .In:
-		return true
-	case .Plus_Eq, .Minus_Eq, .Star_Eq, .Plus_Wrap_Eq, .Minus_Wrap_Eq, .Star_Wrap_Eq, .Slash_Eq, .Percent_Eq:
-		return true
-	case .Pipe_Eq, .Tilde_Eq, .Amp_Eq, .Amp_Tilde_Eq, .Shl_Eq, .Shr_Eq:
 		return true
 	}
 	return false

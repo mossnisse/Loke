@@ -248,7 +248,7 @@ carried_types :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator) -> 
 	}
 	list := make([dynamic]Type_Id, 0, 2, allocator)
 	add :: proc(c: ^Compiler, list: ^[dynamic]Type_Id, type: Type_Id) {
-		if !type_is_region_provider(c, type) && type_underlying(c, type) != TYPE_ALLOCATOR && !slice.contains(list[:], type) {
+		if !type_is_region_provider(c, type) && !type_is_allocator(c, type) && !slice.contains(list[:], type) {
 			append(list, type)
 		}
 	}

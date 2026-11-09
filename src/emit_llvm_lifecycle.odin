@@ -51,7 +51,6 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 	branch(e, done_label)
 	place_label(e, fail_label)
 	emit_restore_refusal(e, allocator, error)
-	branch(e, done_label)
 	place_label(e, done_label)
 	return ok
 }
@@ -305,7 +304,6 @@ emit_drop_elements_reversed :: proc(e: ^Emitter, element: Type_Id, items, count:
 	}
 	head := new_label(e, "elements.drop.head")
 	body, done := new_label(e, "elements.drop.body"), new_label(e, "elements.drop.done")
-	branch(e, head)
 	place_label(e, head)
 	remaining := load(e, "i64", cursor)
 	more := temp(e)
@@ -606,7 +604,6 @@ emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: s
 		branch(e, done)
 		place_label(e, next)
 	}
-	branch(e, done)
 	place_label(e, done)
 	store(e, type, "zeroinitializer", address)
 }

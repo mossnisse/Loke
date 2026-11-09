@@ -352,7 +352,6 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		count_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, count_slot)
 	}
-	branch(e, done_label)
 	place_label(e, done_label)
 
 	built := temp(e)
@@ -706,7 +705,6 @@ emit_refusable_pack_copy :: proc(
 	branch(e, done)
 	place_label(e, copied_label)
 	store(e, element, emit_union_widen(e, cloned, from, element), slot)
-	branch(e, done)
 	place_label(e, done)
 	owned = temp(e)
 	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", owned, failed)
@@ -1072,7 +1070,6 @@ emit_bound_call :: proc(
 		if !sret {
 			store(e, callee_type.result, result, joined_slot)
 		}
-		branch(e, joined)
 		place_label(e, joined)
 		if !sret {
 			result = load_temporary(e, callee_type.result, joined_slot)
@@ -1317,7 +1314,6 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 		}
 	}
 	store(e, as_type, emit_option_some(e, as_type, payload), slot)
-	branch(e, done_label)
 	place_label(e, done_label)
 	return load_place(e, as_type, slot)
 }

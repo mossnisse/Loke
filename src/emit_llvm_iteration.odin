@@ -112,7 +112,6 @@ begin_step :: proc(e: ^Emitter, loop: Loop_Labels) {
 finish_step :: proc(e: ^Emitter, s: ^Stmt_Foreach, loop: Loop_Labels) {
 	emit_scoped_block(e, s.body)
 	pop_scope(e)
-	branch(e, loop.post)
 	place_label(e, loop.post)
 	// The step to the next element is the header's.
 	debug_mark_location(e, s.span)

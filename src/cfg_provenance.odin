@@ -943,7 +943,7 @@ prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Value_
 	if underlying_kind(graph.k.c, subject_type) == .Union && len(variants) == 1 {
 		path := prov_extend(graph, nil, proj_field(variants[0]))
 		if slot >= 0 { path = prov_extend(graph, path, proj_field(slot)) }
-		if type_is_carrier(graph.k.c, sym.type) || type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR ||
+		if type_is_carrier(graph.k.c, sym.type) || type_is_allocator(graph.k.c, sym.type) ||
 		   type_is_region_provider(graph.k.c, sym.type) {
 			prov_merge_region_of(graph, id, prov_result_region_at(graph, subject, path))
 		} else {
@@ -2842,7 +2842,7 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 			at := pointee[loan.pointee - 1]
 			below, pointers := carrier_below(c, at.type, loan.depth - 1)
 			holder = below
-			one = underlying_kind(c, type) == .Pointer && prov_path_names_one_place(at.steps) && pointers
+			one = underlying_kind(c, type) == .Pointer && path_is_exact(at.steps) && pointers
 		case !loan.content:
 			holder = type
 			one = underlying_kind(c, type) == .Pointer
@@ -2852,7 +2852,7 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 					holder = path.type
 				}
 			}
-			one = holder != INVALID_TYPE && prov_path_names_one_place(loan.path) && underlying_kind(c, holder) == .Pointer
+			one = holder != INVALID_TYPE && path_is_exact(loan.path) && underlying_kind(c, holder) == .Pointer
 		case loan.depth < len(descriptor.content_loans):
 			below, pointers := carrier_below(c, type, loan.depth)
 			holder = below
@@ -3109,7 +3109,7 @@ prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_I
 		return {}, false
 	}
 	below := prov_place_hops(graph, target)[0].path
-	if !prov_path_names_one_place(below) {
+	if !path_is_exact(below) {
 		return {}, false
 	}
 	return element, true
@@ -4548,8 +4548,8 @@ prov_publish_store :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, target: Expr, so
 	// (`publish_into_loan`); a prefix places were merged into is not one.
 	offsets, found, merged := prov_value_offset(graph, through)
 	paths := prov_offset_paths(graph, offsets) if found && !merged else nil
-	if len(paths) == 1 && prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(paths[0]) {
-		if prov_path_names_one_place(below) {
+	if len(paths) == 1 && prov_offsets_agree(graph, through, offsets) && path_is_exact(paths[0]) {
+		if path_is_exact(below) {
 			publish.path, publish.one_place, publish.place_path = prov_concat_path(graph, paths[0], below), true, paths[0]
 			graph.has_replacing_store = true
 		} else if lands == nil && publish.linked {
@@ -4568,7 +4568,7 @@ prov_publish_store :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, target: Expr, so
 // what it points at.
 @(private = "file")
 prov_store_keeps_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_is_managed(c, type) || type_underlying(c, type) == TYPE_ALLOCATOR ||
+	return type_is_managed(c, type) || type_is_allocator(c, type) ||
 		prov_type_has_region(c, type) && !type_is_carrier(c, type)
 }
 

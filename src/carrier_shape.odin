@@ -17,7 +17,7 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	if type_is_region_provider(c, type) || type_underlying(c, type) == TYPE_ALLOCATOR {
+	if type_is_region_provider(c, type) || type_is_allocator(c, type) {
 		return true
 	}
 	if info := underlying_info(c, type); info != nil && info.is_view {
