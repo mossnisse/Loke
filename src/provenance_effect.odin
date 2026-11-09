@@ -95,6 +95,9 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		prov_replay_fact_operations(graph, program)
 		assert(len(k.c.diagnostics) == replayed_diagnostics, "fact replay reported a diagnostic")
 		current_weight := prov_fact_weight(&graph.facts)
+		// Facts only grow from what seeded them, which is what makes an equal
+		// weight a fixed point and bounds the passes.
+		assert(current_weight >= seeded, "fact replay shrank the facts that seeded it")
 		settled := current_weight == seeded
 		if !settled {
 			scratch_arena_reset(carry_arena)

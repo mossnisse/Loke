@@ -485,6 +485,25 @@ bigint_evaluator_storage_keeps_only_results :: proc(t: ^testing.T) {
 	testing.expect(t, storage.bytes == before, "an integer operation keeps more than its result")
 }
 
+// An empty request is a small block like any other: it is served from the
+// arena and its release puts it on a free list, at every alignment.
+@(test)
+evaluator_storage_serves_empty_requests :: proc(t: ^testing.T) {
+	storage: Eval_Storage
+	defer eval_storage_destroy(&storage)
+	alloc := mem.Allocator{eval_allocator_proc, &storage}
+	for alignment in ([]int{1, 16, 32, 64}) {
+		for _ in 0 ..< 2 {
+			// Directly: `mem.alloc_bytes` answers an empty request itself.
+			block, err := alloc.procedure(alloc.data, .Alloc, 0, alignment, nil, 0)
+			testing.expectf(t, err == nil && raw_data(block) != nil, "an empty request at alignment %d failed", alignment)
+			testing.expectf(t, storage.large == nil, "an empty request at alignment %d went to the heap", alignment)
+			mem.free(raw_data(block), alloc)
+			testing.expectf(t, storage.bytes == 0, "an empty block at alignment %d stayed charged", alignment)
+		}
+	}
+}
+
 // `exact_fma`, the compile-time value of `core:math`'s FMA instruction, at the
 // boundaries where rounding once differs from rounding twice or from the
 // host's arithmetic: a product that is itself a tie, results below the normal

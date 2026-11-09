@@ -89,7 +89,10 @@ eval_allocator_proc :: proc(
 
 // The header of the block that serves a request.
 @(private = "file")
-eval_shape :: proc(size, alignment: int) -> Eval_Block {
+eval_shape :: proc(request, alignment: int) -> Eval_Block {
+	// An empty request takes the smallest class: none would be a negative
+	// class, which marks a heap block.
+	size := max(request, 1)
 	align := max(alignment, 16)
 	if size > EVAL_SMALL_LIMIT || align > 64 {
 		return Eval_Block{

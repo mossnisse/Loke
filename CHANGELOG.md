@@ -1797,6 +1797,12 @@ checklist.
   written: `1.5`, where it showed the generic cache's encoding `f64:3ff8000000000000`.
 - `L0727`, a replaced `core:thread` that lacks what a `parallel` block or a `spawn` needs, points at
   the block's keyword or the spawned call; it had no location.
+- A map key that is a fixed array of more than 8 elements or 64 bytes hashes in a loop, as its `==`
+  already compared. One under 4,096 bytes was unrolled, so a `[4096]u8` key emitted about 16,000
+  instructions into its hash.
+- A postfix chain, such as `a.b[0]^`, counts one nesting level per postfix toward `L0222`'s limit,
+  as a binary operator does. It counted one more, so a binary operator built on it had one level
+  less room.
 - A replaced `core:simd` that passes `simd_reduce` a runtime fold, or a `Fold` member the compiler
   has no instruction for, is `L0687`; the compiler crashed.
 - A task that hands its own zero-valued container to a helper that grows it, through `inout`,

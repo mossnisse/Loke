@@ -1980,16 +1980,21 @@ emit_own_equal :: proc(e: ^Emitter, equal: Symbol_Id, type: Type_Id, lhs, rhs: s
 	return out
 }
 
-// An array bigger than either limit compares in a loop, since unrolling takes
-// about four instructions per element.
+// An array bigger than either limit compares and hashes in a loop, since
+// unrolling takes about four instructions per element.
 @(private = "file")
 UNROLLED_EQUAL_ELEMENTS :: 8
 @(private = "file")
 UNROLLED_EQUAL_BYTES :: 64
 
+@(private)
+array_walks_in_loop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
+	return info.count > UNROLLED_EQUAL_ELEMENTS || type_size(e.c, type) > UNROLLED_EQUAL_BYTES
+}
+
 @(private = "file")
 emit_array_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
-	if info.count > UNROLLED_EQUAL_ELEMENTS || type_size(e.c, type) > UNROLLED_EQUAL_BYTES {
+	if array_walks_in_loop(e, type, info) {
 		left, right := spill_equal_operands(e, type, lhs, rhs)
 		return emit_elements_equal(e, info.element, left, right, fmt.tprintf("%d", info.count))
 	}

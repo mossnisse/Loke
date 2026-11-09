@@ -1729,6 +1729,49 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 	}
 }
 
+// A postfix and a binary operator each add one level to the spine they extend,
+// so on the same operand both reach the nesting limit at the same length. A
+// postfix chain counted one level past its last node, which left a binary
+// operator built on it one level less room.
+@(test)
+postfix_and_binary_spines_count_alike :: proc(t: ^testing.T) {
+	longest := proc(operand, step: string) -> int {
+		fits := proc(operand, step: string, count: int) -> bool {
+			text := strings.concatenate(
+				{
+					"package main;\n\nmain :: proc() {\n\t_ = ",
+					operand,
+					strings.repeat(step, count, context.temp_allocator),
+					";\n}\n",
+				},
+				context.temp_allocator,
+			)
+			c := test_compiler(text)
+			defer destroy_compilation(&c)
+			tokens := lex(&c, 0)
+			defer delete(tokens)
+			f := parse(&c, 0, tokens)
+			defer destroy_ast(&f)
+			return c.error_count == 0
+		}
+		lo, hi := 1, 10_000
+		for lo < hi {
+			middle := (lo + hi + 1) / 2
+			if fits(operand, step, middle) { lo = middle } else { hi = middle - 1 }
+		}
+		return lo
+	}
+	segment := strings.concatenate({"(x", strings.repeat(".a", 100, context.temp_allocator), ")"}, context.temp_allocator)
+	for operand, index in ([]string{"x", segment}) {
+		postfix, binary := longest(operand, ".a"), longest(operand, " + x")
+		testing.expectf(
+			t, postfix == binary,
+			"on %s, a postfix chain reaches %d levels and a binary one %d",
+			index == 0 ? "a name" : "a parenthesized chain", postfix, binary,
+		)
+	}
+}
+
 // Every frame of this recursion is fat with nesting, so the stack runs out well
 // before the call-depth limit; that must be a diagnostic, not a dead process.
 @(test)

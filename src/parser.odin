@@ -2418,10 +2418,22 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 			}
 			return e
 		}
+		t := current(p)
+		#partial switch t.kind {
+		case .Period, .Lparen, .Lbracket, .Caret, .Or_Return:
+		case .Lbrace:
+			// Calls are composite types only when their callee names a type.
+			if p.no_composite || !is_composite_type(e) {
+				break chain
+			}
+		case:
+			break chain
+		}
+		// A level counts once a postfix follows, as `parse_binary` counts one
+		// once an operator does, so a chain's height is the nodes it builds.
 		spine += 1
 		deepen(p, 1)
 
-		t := current(p)
 		#partial switch t.kind {
 		case .Period:
 			advance(p)
@@ -2469,15 +2481,8 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 			e = n
 
 		case .Lbrace:
-			// Calls are composite types only when their callee names a type.
-			if p.no_composite || !is_composite_type(e) {
-				break chain
-			}
 			e = parse_composite_body(p, e, lo)
 			direct_type_is_expression = true
-
-		case:
-			break chain
 		}
 	}
 

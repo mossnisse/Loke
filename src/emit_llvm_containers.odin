@@ -1398,14 +1398,20 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		place_label(e, done)
 		return load(e, "i64", state)
 	}
-	if info != nil && info.kind == .Array && is_large_value(e, under) {
-		// A large array is an address, so its elements are hashed in place, in a
-		// loop rather than unrolled.
+	if info != nil && info.kind == .Array && array_walks_in_loop(e, under, info) {
+		// Hashed in a loop where equality compares in one, element by element in
+		// place; a large array is already an address, and a smaller one is
+		// spilled to one.
+		address := value
+		if !is_large_value(e, under) {
+			address = alloca(e, llvm_type(e, under))
+			store(e, under, value, address)
+		}
 		element_llvm := llvm_type(e, info.element)
 		state := alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
-		loop := open_counted_loop(e, new_counter(e), "hash.large", fmt.aprintf("%d", info.count))
-		element := load_temporary(e, info.element, gep_at(e, element_llvm, value, loop.index))
+		loop := open_counted_loop(e, new_counter(e), "hash.array", fmt.aprintf("%d", info.count))
+		element := load_temporary(e, info.element, gep_at(e, element_llvm, address, loop.index))
 		next := emit_hash_value(e, info.element, element, load(e, "i64", state))
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
 		close_counted_loop(e, loop)
