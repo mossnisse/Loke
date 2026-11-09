@@ -2825,24 +2825,41 @@ report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Valu
 // marks it for review. `base:` packages are the language's own runtime, which
 // cannot import `core:`; a span in no source file is compiler-synthesized.
 require_unsafe_import :: proc(k: ^Checker, span: Span, what: string) -> bool {
+	// Usually a file of the package being checked, so that is asked first.
+	if pkg := package_of(k.c, k.pkg); pkg != nil && package_holds_file(pkg, span.file) {
+		return file_imports_unsafe(k, pkg, span, what)
+	}
 	for pkg in k.c.packages {
-		for f in pkg.files {
-			if f.file != span.file {
-				continue
-			}
-			if strings.has_prefix(pkg.key, "base:") {
-				return true
-			}
-			for edge in pkg.imports {
-				if target := package_of(k.c, edge.target); edge.span.file == span.file && target != nil && target.key == STD_UNSAFE {
-					return true
-				}
-			}
-			errorf(k.c, span, "L0706", "%s is unchecked, so this file must import `core:unsafe`", what)
-			return false
+		if pkg != nil && package_holds_file(pkg, span.file) {
+			return file_imports_unsafe(k, pkg, span, what)
 		}
 	}
 	return true
+}
+
+@(private = "file")
+package_holds_file :: proc(pkg: ^Package, file: u32) -> bool {
+	for f in pkg.files {
+		if f.file == file {
+			return true
+		}
+	}
+	return false
+}
+
+// `require_unsafe_import` for a file of `pkg`.
+@(private = "file")
+file_imports_unsafe :: proc(k: ^Checker, pkg: ^Package, span: Span, what: string) -> bool {
+	if strings.has_prefix(pkg.key, "base:") {
+		return true
+	}
+	for edge in pkg.imports {
+		if target := package_of(k.c, edge.target); edge.span.file == span.file && target != nil && target.key == STD_UNSAFE {
+			return true
+		}
+	}
+	errorf(k.c, span, "L0706", "%s is unchecked, so this file must import `core:unsafe`", what)
+	return false
 }
 
 // ------------------------------------------------------------- diagnostics --

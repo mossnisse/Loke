@@ -280,12 +280,15 @@ package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 	for entry in entries {
 		if is_source_file(entry) {
 			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
-			seen[dir_key(canonical_dir(entry.fullpath))] = true
+			// Only an overlay can name a listed file again.
+			if len(overlays) > 0 {
+				seen[dir_key(canonical_dir(entry.fullpath))] = true
+			}
 		}
 	}
-	key := dir_key(canonical_dir(dir))
+	key := len(overlays) > 0 ? dir_key(canonical_dir(dir)) : ""
 	for path, overlay in overlays {
-		if !seen[path] && dir_key(canonical_dir(path_dir(overlay.path, context.temp_allocator))) == key {
+		if !seen[path] && overlay.dir == key {
 			append(&paths, strings.clone(overlay.path, c.semantic_allocator))
 		}
 	}

@@ -254,6 +254,8 @@ The recurring themes are:
    lexes per declaration, attribute, field, and impl head in `-api`, `-doc`,
    and the language server's documentation command.
 2. **Stop canonicalizing paths that need no canonicalizing in package loading**
+   (done for `package_sources`; `is_source_directory` canonicalizes once per call
+   and is unchanged)
    (`src/packages.odin:283`, `:288`).
    - `package_sources` calls `canonical_dir(entry.fullpath)` for every
      directory entry of every package, even when there are no overlays, which
@@ -266,7 +268,7 @@ The recurring themes are:
    - The same stored key would make `is_source_directory`
      (`src/overlays.odin:59-66`) cheaper.
 3. **Use `expr_children` for the plain-recursion cases in
-   `index_query_expr`** (`src/query_index.odin:265-338`). Cases such as
+   `index_query_expr`** (done) (`src/query_index.odin:265-338`). Cases such as
    `^Expr_Index`, `^Expr_Slice`, `^Expr_Postfix`, `^Expr_Unary`, `^Expr_Binary`,
    `^Expr_Range`, `^Expr_Or_Else`, `^Expr_Cond`, `^Expr_Move`, `^Expr_Operator`,
    the pointer, slice, array, and map types, `^Type_Distinct`, `^Type_Dyn`, and
@@ -796,7 +798,9 @@ There are also a few small accounting leaks: evaluator temporaries that the
    (`src/const_ops.odin:323,235`) leave integers charged to the evaluation's
    memory limit, against the contract `bi_release` states. Today the charge is up
    to about 8 times what such a call holds.
-6. **Stop re-checking the same things on every checked statement.**
+6. **Stop re-checking the same things on every checked statement.** (Done for
+   `require_unsafe_import`, which asks the package being checked first;
+   `place_setters` is not.)
    - `place_setters` (`src/check_stmt.odin:823`) probe-checks a clone of the
      operand of every indexed assignment, two or three times per target.
    - `require_unsafe_import` (`src/check_expr.odin:2816`) scans every package's

@@ -255,6 +255,14 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	}
 	switch v in expr {
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Propagated_Error, ^Expr_Proc_Group, ^Type_Type, ^Type_Poly:
+	// Forms whose children are all that hold names.
+	case ^Expr_Index, ^Expr_Slice, ^Expr_Postfix, ^Expr_Unary, ^Expr_Binary, ^Expr_Range, ^Expr_Or_Else, ^Expr_Cond,
+	     ^Expr_Move, ^Expr_Operator, ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Distinct,
+	     ^Type_Array, ^Type_Map, ^Type_Dyn, ^Type_Anon_Union:
+		expr_children(expr, index, proc(data: rawptr, child: Expr) -> bool {
+			index_query_expr((^Query_Index)(data), child)
+			return false
+		})
 	case ^Expr_Ident:
 		symbol := v.resolution.symbol != INVALID_SYMBOL ? v.resolution.symbol : v.symbol
 		index_query_name(index, v.span, v.name, symbol, type)
@@ -262,13 +270,6 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_name(index, v.name.span, v.name.text, v.resolution.symbol, type, v.denoted_type != INVALID_TYPE)
 		index_query_operand(index, v)
 		index_query_expr(index, v.operand)
-	case ^Expr_Index:
-		index_query_expr(index, v.operand)
-		for value in v.indices { index_query_expr(index, value) }
-	case ^Expr_Slice:
-		index_query_expr(index, v.operand)
-		index_query_expr(index, v.lo)
-		index_query_expr(index, v.hi)
 	case ^Expr_Call:
 		// design.md "Union argument expansion": each variant's call resolved the
 		// written callee; their arguments are the expansion's own.
@@ -286,25 +287,6 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			if argument.name.text != "" && callee != nil { index_query_bound_name(index, argument.name, callee.param_symbols) }
 			index_query_expr(index, argument.value)
 		}
-	case ^Expr_Postfix:
-		index_query_expr(index, v.operand)
-		index_query_expr(index, v.failure)
-	case ^Expr_Unary: index_query_expr(index, v.operand)
-	case ^Expr_Binary:
-		index_query_expr(index, v.lhs)
-		index_query_expr(index, v.rhs)
-	case ^Expr_Range:
-		index_query_expr(index, v.lo)
-		index_query_expr(index, v.hi)
-	case ^Expr_Or_Else:
-		index_query_expr(index, v.value)
-		index_query_expr(index, v.fallback)
-		index_query_expr(index, or_else_exit_value(v))
-	case ^Expr_Cond:
-		index_query_expr(index, v.cond)
-		index_query_expr(index, v.then)
-		index_query_expr(index, v.otherwise)
-	case ^Expr_Move: index_query_expr(index, v.value)
 	case ^Expr_Composite:
 		index_query_expr(index, v.type_expr)
 		index_query_expr(index, v.via)
@@ -323,19 +305,6 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_expr(index, v.signature)
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		index_query_stmt(index, v.body)
-	case ^Expr_Operator: index_query_expr(index, v.value)
-	case ^Type_Pointer: index_query_expr(index, v.elem)
-	case ^Type_C_Pointer: index_query_expr(index, v.elem)
-	case ^Type_Slice: index_query_expr(index, v.elem)
-	case ^Type_Dynamic_Array: index_query_expr(index, v.elem)
-	case ^Type_Distinct: index_query_expr(index, v.elem)
-	case ^Type_Array:
-		index_query_expr(index, v.length)
-		index_query_expr(index, v.elem)
-	case ^Type_Map:
-		index_query_expr(index, v.key)
-		index_query_expr(index, v.value)
-	case ^Type_Dyn: index_query_expr(index, v.interface_expr)
 	case ^Type_Proc:
 		for parameter in v.params {
 			for symbol in parameter.symbols { index_query_binding(index, symbol, parameter.span) }
@@ -358,8 +327,6 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			for symbol in field.symbols { index_query_binding(index, symbol, field.span) }
 			index_query_expr(index, field.type)
 		}
-	case ^Type_Anon_Union:
-		for variant in v.variants { index_query_expr(index, variant.type) }
 	case ^Type_Enum:
 		index_query_expr(index, v.backing)
 		for field in v.fields {

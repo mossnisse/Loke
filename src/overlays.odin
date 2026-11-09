@@ -9,6 +9,7 @@ import "core:strings"
 Source_Overlay :: struct {
 	path: string, // absolute, cleaned path
 	text: string,
+	dir:  string, // the key of the directory holding it, as `package_sources` compares
 }
 
 @(private)
@@ -16,6 +17,7 @@ delete_overlay :: proc(key: string, overlay: Source_Overlay) {
 	delete(key)
 	delete(overlay.path)
 	delete(overlay.text)
+	delete(overlay.dir)
 }
 
 // Empty text is an overlay, not an absent file. Paths have the same case-insensitive, cleaned identity as packages on Windows.
@@ -25,10 +27,15 @@ set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool
 	canonical := canonical_dir(path)
 	key := dir_key(canonical)
 	// Copy first: either argument may be borrowed from the old snapshot/overlay.
-	overlay := Source_Overlay{path = strings.clone(canonical), text = strings.clone(text)}
+	overlay := Source_Overlay {
+		path = strings.clone(canonical),
+		text = strings.clone(text),
+		dir  = dir_key(canonical_dir(path_dir(canonical, context.temp_allocator)), context.allocator),
+	}
 	if stored, found := &s.overlays[key]; found {
 		delete(stored.path)
 		delete(stored.text)
+		delete(stored.dir)
 		stored^ = overlay
 	} else {
 		s.overlays[strings.clone(key)] = overlay
