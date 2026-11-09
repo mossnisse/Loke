@@ -1343,11 +1343,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	// design.md "Maps": a part with its own `==` hashes by its own `hash`, which
 	// is the coherent partner of the `==` structural equality calls for it.
 	if own := part_own_hash(e.c, type); own != INVALID_SYMBOL {
-		address := value
-		if !is_large_value(e, type) {
-			address = alloca(e, llvm_type(e, type))
-			store(e, type, value, address)
-		}
+		address := value_address(e, type, value)
 		out := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i64 %s(%s, i64 %s)",
@@ -1398,26 +1394,21 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		place_label(e, done)
 		return load(e, "i64", state)
 	}
-	if info != nil && info.kind == .Array && array_walks_in_loop(e, under, info) {
-		// Hashed in a loop where equality compares in one, element by element in
-		// place; a large array is already an address, and a smaller one is
-		// spilled to one.
-		address := value
-		if !is_large_value(e, under) {
-			address = alloca(e, llvm_type(e, under))
-			store(e, under, value, address)
-		}
-		element_llvm := llvm_type(e, info.element)
-		state := alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
-		loop := open_counted_loop(e, new_counter(e), "hash.array", fmt.aprintf("%d", info.count))
-		element := load_temporary(e, info.element, gep_at(e, element_llvm, address, loop.index))
-		next := emit_hash_value(e, info.element, element, load(e, "i64", state))
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
-		close_counted_loop(e, loop)
-		return load(e, "i64", state)
-	}
 	if info != nil && info.kind == .Array {
+		// Hashed in a loop where equality compares in one, element by element in
+		// memory.
+		if array_walks_in_loop(e, under, info) {
+			address := value_address(e, under, value)
+			element_llvm := llvm_type(e, info.element)
+			state := alloca(e, "i64")
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
+			loop := open_counted_loop(e, new_counter(e), "hash.array", fmt.aprintf("%d", info.count))
+			element := load_temporary(e, info.element, gep_at(e, element_llvm, address, loop.index))
+			next := emit_hash_value(e, info.element, element, load(e, "i64", state))
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
+			close_counted_loop(e, loop)
+			return load(e, "i64", state)
+		}
 		current := seed
 		for index in 0 ..< int(info.count) {
 			element := extract(e, llvm_type(e, under), value, index)

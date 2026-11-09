@@ -668,6 +668,18 @@ load_temporary :: proc(e: ^Emitter, type: Type_Id, slot: string) -> string {
 	return is_large_value(e, type) ? slot : load_place(e, type, slot)
 }
 
+// The inverse: a value in memory. A large value is already an address, and a
+// small one is spilled to a slot of its own.
+@(private)
+value_address :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
+	if is_large_value(e, type) {
+		return value
+	}
+	slot := alloca(e, llvm_type(e, type))
+	store(e, type, value, slot)
+	return slot
+}
+
 // One field of a record value. A large record is an address, read in place, and
 // a large field stays one.
 @(private)
@@ -1959,13 +1971,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 // is spilled.
 @(private = "file")
 spill_equal_operands :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> (left, right: string) {
-	if is_large_value(e, type) {
-		return lhs, rhs
-	}
-	left, right = alloca(e, llvm_type(e, type)), alloca(e, llvm_type(e, type))
-	store(e, type, lhs, left)
-	store(e, type, rhs, right)
-	return left, right
+	return value_address(e, type, lhs), value_address(e, type, rhs)
 }
 
 // design.md "Comparison operators": a part with its own `==` is compared by it.
@@ -1983,13 +1989,13 @@ emit_own_equal :: proc(e: ^Emitter, equal: Symbol_Id, type: Type_Id, lhs, rhs: s
 // An array bigger than either limit compares and hashes in a loop, since
 // unrolling takes about four instructions per element.
 @(private = "file")
-UNROLLED_EQUAL_ELEMENTS :: 8
+UNROLLED_ARRAY_ELEMENTS :: 8
 @(private = "file")
-UNROLLED_EQUAL_BYTES :: 64
+UNROLLED_ARRAY_BYTES :: 64
 
 @(private)
 array_walks_in_loop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
-	return info.count > UNROLLED_EQUAL_ELEMENTS || type_size(e.c, type) > UNROLLED_EQUAL_BYTES
+	return info.count > UNROLLED_ARRAY_ELEMENTS || type_size(e.c, type) > UNROLLED_ARRAY_BYTES
 }
 
 @(private = "file")

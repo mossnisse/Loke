@@ -565,10 +565,10 @@ main :: proc() { items := [ARRAY_COUNT]Value{Value{1}}; }
 	testing.expectf(t, sizes[1] < 3 * sizes[0], "doubling an array grew its IR from %d to %d bytes", sizes[0], sizes[1])
 }
 
-// A map key's hash loops where its equality does: an array under the
-// large-value size was unrolled, one mix per element.
+// A map key's hash loops where its equality does, so its IR does not grow with
+// the array: one of up to the large-value size was unrolled, one mix per element.
 @(test)
-fixed_array_hash_ir_grows_linearly :: proc(t: ^testing.T) {
+fixed_array_hash_ir_stays_flat :: proc(t: ^testing.T) {
 	sizes: [2]int
 	counts := [2]int{1024, 2048}
 	for count, index in counts {

@@ -2483,6 +2483,11 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 		case .Lbrace:
 			e = parse_composite_body(p, e, lo)
 			direct_type_is_expression = true
+
+		case:
+			// The switch above admits only the tokens this one consumes; a token
+			// it lets through unconsumed would loop here forever.
+			unreachable()
 		}
 	}
 
