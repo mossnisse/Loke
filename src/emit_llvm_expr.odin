@@ -2072,8 +2072,7 @@ emit_prefix_equal :: proc(
 @(private = "file")
 emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> string {
 	info := type_of(e.c, union_type)
-	shape := union_layout(e.c, union_type)
-	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	tag_llvm := union_tag_llvm(e, union_type)
 
 	left_tag := emit_union_tag(e, union_type, lhs)
 	right_tag := emit_union_tag(e, union_type, rhs)
@@ -2090,25 +2089,20 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	done, payloads := new_label(e, "unioneq.done"), new_label(e, "unioneq.payloads")
 	branch_if(e, same_tag, payloads, done)
 	place_label(e, payloads)
+	hits := variant_labels(e, info, "unioneq.hit", payload_only = true)
+	emit_union_switch(e, union_type, left_tag, hits, done)
 
 	for variant, index in info.variants {
-		if variant == TYPE_VOID {
+		if hits[index] == "" {
 			continue
 		}
-		active := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, left_tag, index)
-		hit, next := new_label(e, "unioneq.hit"), new_label(e, "unioneq.next")
-		branch_if(e, active, hit, next)
-
-		place_label(e, hit)
+		place_label(e, hits[index])
 		left := emit_union_payload(e, union_type, variant, left_slot)
 		right := emit_union_payload(e, union_type, variant, right_slot)
 		// The comparison may open blocks, so the store goes wherever it ends.
 		equal := emit_equal(e, variant, left, right)
 		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", equal, answer)
 		branch(e, done)
-
-		place_label(e, next)
 	}
 	place_label(e, done)
 	return load(e, "i1", answer)

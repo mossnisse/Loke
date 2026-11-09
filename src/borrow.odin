@@ -887,49 +887,42 @@ settle_result_summaries :: proc(k: ^Checker) {
 			_ = visit(k, &clock, grew_at, visited_at, body.literal)
 		}
 	}
-	queue := make([dynamic]^Expr_Proc, 0, len(k.c.checked_bodies), context.temp_allocator)
-	queued := make([]bool, len(k.c.symbols), context.temp_allocator)
-	callers := make(map[Symbol_Id][dynamic]^Expr_Proc, context.temp_allocator)
+	// Bodies by their index in `checked_bodies`.
+	queue := worklist_make(len(k.c.checked_bodies), context.temp_allocator)
+	callers := make(map[Symbol_Id][dynamic]int, context.temp_allocator)
 	// How many of each body's dependencies `callers` has: a resolved callback
 	// adds more on a later round, appended after them.
 	registered := make([]int, len(k.c.symbols), context.temp_allocator)
-	register :: proc(c: ^Compiler, callers: ^map[Symbol_Id][dynamic]^Expr_Proc, registered: []int, literal: ^Expr_Proc) {
+	register :: proc(c: ^Compiler, callers: ^map[Symbol_Id][dynamic]int, registered: []int, literal: ^Expr_Proc, body: int) {
 		dependencies := c.result_summary_dependencies[literal.symbol]
 		for callee in dependencies[registered[int(literal.symbol)]:] {
 			if callee not_in callers^ {
-				callers^[callee] = make([dynamic]^Expr_Proc, 0, 4, context.temp_allocator)
+				callers^[callee] = make([dynamic]int, 0, 4, context.temp_allocator)
 			}
-			append(&callers^[callee], literal)
+			append(&callers^[callee], body)
 		}
 		registered[int(literal.symbol)] = len(dependencies)
 	}
-	for body in k.c.checked_bodies {
-		if !body.clean {
-			continue
+	for body, index in k.c.checked_bodies {
+		if body.clean {
+			worklist_wake(&queue, index)
+			register(k.c, &callers, registered, body.literal, index)
 		}
-		append(&queue, body.literal)
-		queued[int(body.literal.symbol)] = true
-		register(k.c, &callers, registered, body.literal)
 	}
-	for head := 0; head < len(queue); head += 1 {
-		literal := queue[head]
-		queued[int(literal.symbol)] = false
+	for index in worklist_pop(&queue) {
+		literal := k.c.checked_bodies[index].literal
 		if !stale(k.c, grew_at, visited_at, literal) {
 			continue
 		}
 		grew := visit(k, &clock, grew_at, visited_at, literal)
-		register(k.c, &callers, registered, literal)
+		register(k.c, &callers, registered, literal, index)
 		if !grew {
 			continue
 		}
 		// Bound to a local first: iterating the map index directly miscompiles.
 		affected := callers[literal.symbol]
 		for caller in affected {
-			index := int(caller.symbol)
-			if !queued[index] {
-				append(&queue, caller)
-				queued[index] = true
-			}
+			worklist_wake(&queue, caller)
 		}
 	}
 }
@@ -1215,7 +1208,7 @@ link_landed_stores :: proc(state: ^Prov_Solve) {
 solve_reaching :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	queue := block_queue_from_entry(graph)
-	for id in block_queue_pop(&queue) {
+	for id in worklist_pop(&queue) {
 		block := graph.blocks[id]
 		first := join_block_entry(state, block, id)
 		reach_settle(state)
@@ -1300,7 +1293,7 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 	loaded_below_make(state)
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	queue := block_queue_from_entry(graph)
-	for id in block_queue_pop(&queue) {
+	for id in worklist_pop(&queue) {
 		block := graph.blocks[id]
 		mem.zero_slice(state.links_held)
 		first, first_below: [][]u32
@@ -2264,7 +2257,7 @@ publish_replaced_slots :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u
 solve_loan_liveness :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	queue := block_queue_last_first(graph)
-	for id in block_queue_pop(&queue) {
+	for id in worklist_pop(&queue) {
 		block := graph.blocks[id]
 		mem.zero_slice(state.live)
 		slice.fill(state.uses, NO_SPAN)

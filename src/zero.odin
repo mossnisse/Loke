@@ -152,11 +152,18 @@ const_element_count :: proc(c: ^Compiler, type: Type_Id) -> u64 {
 // is answered, and an aggregate comes back as an empty `.Aggregate`; with it,
 // an aggregate past `MAX_CONST_ELEMENTS` is not built and reports false.
 zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, bool) {
-	info := underlying_info(c, type)
-	if info == nil {
+	if build && const_element_count(c, type) > MAX_CONST_ELEMENTS {
 		return Const_Value{}, false
 	}
-	if build && const_element_count(c, type) > MAX_CONST_ELEMENTS {
+	return zero_value(c, type, build)
+}
+
+// `zero_const` below its size check. A component counts no more elements than
+// the type holding it, so the check made at the top covers every level.
+@(private = "file")
+zero_value :: proc(c: ^Compiler, type: Type_Id, build: bool) -> (Const_Value, bool) {
+	info := underlying_info(c, type)
+	if info == nil {
 		return Const_Value{}, false
 	}
 	#partial switch info.kind {
@@ -190,7 +197,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		payload := Const_Value{}
 		if info.variants[0] != TYPE_VOID {
 			ok: bool
-			payload, ok = zero_const(c, info.variants[0], build)
+			payload, ok = zero_value(c, info.variants[0], build)
 			if !ok {
 				return Const_Value{}, false
 			}
@@ -205,7 +212,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		element := Const_Value{}
 		if info.count > 0 {
 			ok: bool
-			element, ok = zero_const(c, info.element, build)
+			element, ok = zero_value(c, info.element, build)
 			if !ok {
 				return Const_Value{}, false
 			}
@@ -240,7 +247,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 				}
 				continue
 			}
-			element, ok := zero_const(c, symbol.type, build)
+			element, ok := zero_value(c, symbol.type, build)
 			if !ok {
 				return Const_Value{}, false
 			}

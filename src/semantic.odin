@@ -1300,6 +1300,50 @@ set_add :: proc(set: ^[]$T, item: T, allocator: mem.Allocator) -> bool {
 	return true
 }
 
+// The items `0 ..< count` a fixed point has yet to visit, each listed once.
+// `worklist_pop` takes them in the order they were woken, `worklist_pop_last`
+// the latest first.
+@(private)
+Worklist :: struct {
+	queued:  []bool,
+	pending: [dynamic]int,
+	head:    int,
+}
+
+@(private)
+worklist_make :: proc(count: int, allocator: mem.Allocator) -> Worklist {
+	return Worklist{queued = make([]bool, count, allocator), pending = make([dynamic]int, 0, count, allocator)}
+}
+
+@(private)
+worklist_wake :: proc(list: ^Worklist, item: int) {
+	if !list.queued[item] {
+		list.queued[item] = true
+		append(&list.pending, item)
+	}
+}
+
+@(private)
+worklist_pop :: proc(list: ^Worklist) -> (item: int, ok: bool) {
+	if list.head >= len(list.pending) {
+		return 0, false
+	}
+	item = list.pending[list.head]
+	list.head += 1
+	list.queued[item] = false
+	return item, true
+}
+
+@(private)
+worklist_pop_last :: proc(list: ^Worklist) -> (item: int, ok: bool) {
+	if list.head >= len(list.pending) {
+		return 0, false
+	}
+	item = pop(&list.pending)
+	list.queued[item] = false
+	return item, true
+}
+
 // Adds a newly interned type to the bucket its hash selects.
 @(private = "file")
 bucket_append :: proc(c: ^Compiler, buckets: ^map[u64][]Type_Id, hash: u64, id: Type_Id) {

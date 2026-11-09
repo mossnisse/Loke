@@ -23,33 +23,32 @@ solve_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 	if !graph.has_window_event {
 		return entry
 	}
-	reached := flow_reachable(graph)
 	width := (len(graph.task_sites) + 7) / 8
 	exit := make([][]u8, len(graph.blocks), graph.alloc)
 	for id in 0 ..< len(graph.blocks) {
 		entry[id] = make([]u8, width, graph.alloc)
 		exit[id] = make([]u8, width, graph.alloc)
 	}
+	// A block not visited yet adds nothing to its successors' entry.
+	visited := make([]bool, len(graph.blocks), graph.alloc)
 	mask := make([]u8, width, graph.alloc)
-	for changed := true; changed; {
-		changed = false
-		for block, id in graph.blocks {
-			if !reached[id] {
-				continue
-			}
-			mem.zero_slice(mask)
-			for predecessor in block.preds {
-				bytes_or(mask, exit[int(predecessor)])
-			}
-			copy(entry[id], mask)
-			for event in block.prov {
-				window_step(graph, mask, event)
-			}
-			if !slice.equal(mask, exit[id]) {
-				copy(exit[id], mask)
-				changed = true
-			}
+	queue := block_queue_from_entry(graph)
+	for id in worklist_pop(&queue) {
+		block := graph.blocks[id]
+		mem.zero_slice(mask)
+		for predecessor in block.preds {
+			bytes_or(mask, exit[int(predecessor)])
 		}
+		copy(entry[id], mask)
+		for event in block.prov {
+			window_step(graph, mask, event)
+		}
+		if visited[id] && slice.equal(mask, exit[id]) {
+			continue
+		}
+		visited[id] = true
+		copy(exit[id], mask)
+		block_queue_wake(&queue, block.succs[:])
 	}
 	return entry
 }

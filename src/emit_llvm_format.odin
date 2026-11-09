@@ -368,18 +368,14 @@ emit_format_integer :: proc(e: ^Emitter, under: Type_Id, value: string) {
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
-	shape := union_layout(e.c, under)
-	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
 	value := load_place(e, under, address)
 	tag := emit_union_tag(e, under, value)
 	slot := emit_union_spill(e, under, value)
 	done := new_label(e, "fmt.union.done")
+	hits := variant_labels(e, info, "fmt.union.hit")
+	emit_union_switch(e, under, tag, hits, done)
 	for variant, index in info.variants {
-		matched := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", matched, tag_llvm, tag, index)
-		hit, next := new_label(e, "fmt.union.hit"), new_label(e, "fmt.union.next")
-		branch_if(e, matched, hit, next)
-		place_label(e, hit)
+		place_label(e, hits[index])
 		emit_format_literal(e, fmt.aprintf(".%s", identifier_text(e.c, info.variant_names[index])))
 		if variant != TYPE_VOID && variant != e.c.unit_type {
 			emit_format_literal(e, "(")
@@ -388,7 +384,6 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 			emit_format_literal(e, ")")
 		}
 		branch(e, done)
-		place_label(e, next)
 	}
 	place_label(e, done)
 }

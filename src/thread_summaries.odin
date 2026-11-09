@@ -180,7 +180,7 @@ settle_thread_facts :: proc(c: ^Compiler, facts: []Thread_Body) {
 	}
 	readers := part_readers(parts, closing)
 	queue := body_queue_make(len(facts))
-	for index in body_queue_pop(&queue) {
+	for index in worklist_pop_last(&queue) {
 		body := &facts[index]
 		grew := false
 		for call, position in body.calls {

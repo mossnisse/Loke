@@ -366,7 +366,7 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	queue := block_queue_from_entry(graph)
 	row := make([]u8, width, graph.alloc)
-	for id in block_queue_pop(&queue) {
+	for id in worklist_pop(&queue) {
 		block := graph.blocks[id]
 		mem.zero_slice(row)
 		for predecessor in block.preds {

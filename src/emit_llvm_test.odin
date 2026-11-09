@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "core:thread"
@@ -1058,6 +1059,53 @@ main :: proc() { _ = pick(1, 2); }
 		}
 	}
 	testing.expect_value(t, phis, 5)
+}
+
+// Dispatch on a union's tag is one `switch` per union, never a chain of tag
+// comparisons: in a type switch, `==`, a drop and a widening alike.
+@(test)
+union_dispatch_is_one_switch :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+Shape :: union { none, circle: int, square: int, label: string }
+Narrow :: (circle: int | square: int);
+Wide :: (circle: int | square: int | other:);
+area :: proc(s: Shape) -> int {
+    switch (s) {
+    case .circle(r): return r * 3;
+    case .square(w): return w * w;
+    case .none, .label: return 0;
+    }
+}
+same :: proc(a, b: Shape) -> bool { return a == b; }
+widen :: proc(n: Narrow) -> Wide { return n; }
+main :: proc() {
+    s := Shape.label("x".copy());
+    _ = area(s);
+    _ = same(Shape.circle(1), Shape.square(1));
+    _ = widen(Narrow.circle(2));
+}
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	for name in ([]string{"@loke.p.area(", "@loke.p.same(", "@loke.p.widen("}) {
+		start := strings.index(module, name)
+		if !testing.expectf(t, start >= 0, "`%s` was not emitted", name) { continue }
+		body := module[start:]
+		body = body[:strings.index(body, "\n}")]
+		testing.expectf(t, strings.count(body, "  switch i8 ") == 1, "%s does not dispatch with one switch", name)
+		// Only `==` compares two tags; none is compared with a variant's number.
+		for line in strings.split_lines(body, context.temp_allocator) {
+			if strings.contains(line, "= icmp eq i8 ") {
+				_, numbered := strconv.parse_int(line[strings.last_index(line, " ") + 1:])
+				testing.expectf(t, !numbered, "%s compares tags one by one: %s", name, line)
+			}
+		}
+	}
+	testing.expect(t, strings.contains(module, "uniondrop.hit"), "the union's drop was not emitted")
 }
 
 // Every use of the same large constant copies from one private global, as every

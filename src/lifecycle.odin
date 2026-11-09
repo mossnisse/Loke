@@ -332,7 +332,7 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 
 	queue := block_queue_from_entry(graph)
 	state := make([]Liveness, tracked, graph.alloc)
-	for id in block_queue_pop(&queue) {
+	for id in worklist_pop(&queue) {
 		block := graph.blocks[id]
 		if id == 0 {
 			// An ordinary parameter is a borrow and a local is dead until its

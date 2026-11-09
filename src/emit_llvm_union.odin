@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 // The widest head spelled as an integer. The target layout aligns no integer
@@ -97,23 +98,18 @@ emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> strin
 	store(e, to, "zeroinitializer", slot)
 	spilled := emit_union_spill(e, from, value)
 	tag := emit_union_tag(e, from, value)
-	width := union_layout(e.c, from).tag_bytes * 8
 	done := new_label(e, "widen.done")
+	hits := variant_labels(e, source, "widen.hit")
+	emit_union_switch(e, from, tag, hits, "")
 	for payload, index in source.variants {
-		matched := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, width, tag, index)
-		hit, next := new_label(e, "widen.hit"), new_label(e, "widen.next")
-		branch_if(e, matched, hit, next)
-		place_label(e, hit)
+		place_label(e, hits[index])
 		operand := ""
 		if payload != TYPE_VOID {
 			operand = emit_union_payload(e, from, payload, spilled)
 		}
 		emit_union_write_variant(e, to, slot, widened_variant(e.c, from, to, index), operand)
 		branch(e, done)
-		place_label(e, next)
 	}
-	emit_unreachable(e)
 	place_label(e, done)
 	return load_temporary(e, to, slot)
 }
@@ -171,7 +167,7 @@ emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag
 		return
 	}
 	address := gep_field(e, llvm, slot, union_tag_member(e, union_type))
-	fmt.sbprintfln(&e.b, "  store i%d %d, ptr %s", shape.tag_bytes * 8, tag, address)
+	fmt.sbprintfln(&e.b, "  store %s %d, ptr %s", union_tag_llvm(e, union_type), tag, address)
 }
 
 // The tag of a union *value*, which is what every extraction and type switch
@@ -194,7 +190,7 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i8 %d, i8 %d", out, present, some, 1 - some)
 		return out
 	}
-	return read_member(e, union_type, value, union_tag_member(e, union_type), fmt.aprintf("i%d", shape.tag_bytes * 8))
+	return read_member(e, union_type, value, union_tag_member(e, union_type), union_tag_llvm(e, union_type))
 }
 
 // Whether a union value's tag is `index`.
@@ -202,8 +198,61 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 emit_union_tag_is :: proc(e: ^Emitter, union_type: Type_Id, value: string, index: int) -> string {
 	tag := emit_union_tag(e, union_type, value)
 	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", out, union_layout(e.c, union_type).tag_bytes * 8, tag, index)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", out, union_tag_llvm(e, union_type), tag, index)
 	return out
+}
+
+// The LLVM integer type of a union's tag, as `emit_union_tag` computes it.
+@(private)
+union_tag_llvm :: proc(e: ^Emitter, union_type: Type_Id) -> string {
+	switch union_layout(e.c, union_type).tag_bytes {
+	case 1:
+		return "i8"
+	case 2:
+		return "i16"
+	}
+	return "i32"
+}
+
+// A label for each variant of a union, by variant index; with `payload_only`,
+// "" for a variant that has no payload.
+@(private)
+variant_labels :: proc(e: ^Emitter, info: ^Type_Info, prefix: string, payload_only := false) -> []string {
+	labels := make([]string, len(info.variants))
+	for variant, index in info.variants {
+		if !payload_only || variant != TYPE_VOID {
+			labels[index] = new_label(e, prefix)
+		}
+	}
+	return labels
+}
+
+// Dispatches on a union's `tag` with one LLVM `switch`: variant `index` goes to
+// `targets[index]`, and a variant whose target is "" goes to `rest`. With `rest`
+// "" as well, such a tag is unreachable. The caller places each target.
+@(private)
+emit_union_switch :: proc(e: ^Emitter, union_type: Type_Id, tag: string, targets: []string, rest: string) {
+	if e.terminated {
+		return
+	}
+	if rest != "" && slice.all_of(targets, "") {
+		branch(e, rest)
+		return
+	}
+	width := union_tag_llvm(e, union_type)
+	otherwise := rest != "" ? rest : new_label(e, "union.none")
+	fmt.sbprintf(&e.b, "  switch %s %s, label %%%s [", width, tag, otherwise)
+	for target, index in targets {
+		if target != "" {
+			fmt.sbprintf(&e.b, " %s %d, label %%%s", width, index, target)
+		}
+	}
+	strings.write_string(&e.b, " ]\n")
+	e.terminated = true
+	if rest == "" {
+		place_label(e, otherwise)
+		emit_unreachable(e)
+	}
 }
 
 @(private)

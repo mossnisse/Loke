@@ -201,7 +201,8 @@ restructuring. Measure performance items before and after.
    group 4 are done.
 7. Shared scaffolding (theme 4), smallest first: the redundant `branch` calls,
    `type_is_allocator`, the identical path predicates (these three done), then
-   the replay iterator, the worklist type, and the union `switch` helper.
+   the replay iterator, the worklist type, and the union `switch` helper (the
+   last two done).
 8. File splits (theme 5), each as its own move-only commit.
 
 Open items that are not taken up should move into
@@ -784,8 +785,9 @@ There are also a few small accounting leaks: evaluator temporaries that the
      calls `inherent_self_operator` twice per node on every comparison and switch.
 
    Measure with `perf.ps1` before and after.
-4. **Share zero values when a literal is folded.** (Done for `fold_aggregate`;
-   the recount in `zero_const` is not.) `fold_aggregate`
+4. **Share zero values when a literal is folded.** (Done: `fold_aggregate`
+   shares one zero, and `zero_const` counts once, at the type it was asked
+   for, since a component never counts more elements than its whole.) `fold_aggregate`
    (`src/check_composite.odin:530-548`) calls `zero_const` once per unwritten slot,
    so `[1000][100]int{}` builds 1000 identical rows, where `zero_const` itself
    builds one row and shares it. Separately, `zero_const` re-counts
@@ -2001,7 +2003,11 @@ There are four main themes:
    - Proposal: `Body_Summary{writes, reads, reach, use}` held twice per body (`own`, `whole`) in one slice indexed like `effect_program.bodies`, and `part_summary(c, part) -> ^Body_Summary`.
    - Saves about 40 lines and four map lookups per part.
    - It also lets `settle_body_effects` (`global_effects.odin:1506`) and `settle_thread_facts` (`thread_summaries.odin:166`) share the parts/closing/readers/queue scaffolding they currently duplicate, about 25 more lines.
-3. **Use one worklist type.**
+3. **Use one worklist type.** (Done: `Worklist` in `semantic.odin`. Block
+   problems still take items in wake order and body problems the latest first.
+   `settle_result_summaries` keeps its order too. `solve_window` moves from
+   round-robin passes to the block queue; its transfer is monotone, so it
+   reaches the same fixed point. `perf.ps1` showed no change beyond the noise.)
    - Today there are four:
      - `Block_Queue` (FIFO, `cfg.odin:372-423`).
      - `Body_Queue` (LIFO, near-identical, `global_effects.odin:1078-1112`).
@@ -2247,7 +2253,9 @@ The backend is careful and well commented. Ownership, unwind registration, large
 
 ### Top recommendations
 
-1. **Add one tag-dispatch helper built on LLVM `switch`, and use it at all 7 union-variant chains**: `emit_union_widen` (union.odin:102), `emit_union_drop` (lifecycle.odin:596), `emit_union_try_clone_body` (lifecycle.odin:626), `emit_union_equal` (expr.odin:2066), the union arm of `emit_hash_value` (containers.odin:1383), `emit_format_union` (format.odin:378), and the type switch's tests (stmt.odin:787). Each site repeats about 6 lines (`temp`, `icmp eq i%d`, two `new_label`s, `branch_if`, `place_label hit`, … `place_label next`), and the tag width is re-derived in 9 places with `fmt.aprintf("i%d", shape.tag_bytes*8)`. One switch per union is shorter IR and gives faster `-opt=none` code. Saves about 50 lines. `emit_format_enum` (format.odin:425) could use the same helper.
+1. (Done: `emit_union_switch` and `union_tag_llvm`, at all seven sites;
+   `union_dispatch_is_one_switch`. `emit_format_enum` still compares one member
+   at a time.) **Add one tag-dispatch helper built on LLVM `switch`, and use it at all 7 union-variant chains**: `emit_union_widen` (union.odin:102), `emit_union_drop` (lifecycle.odin:596), `emit_union_try_clone_body` (lifecycle.odin:626), `emit_union_equal` (expr.odin:2066), the union arm of `emit_hash_value` (containers.odin:1383), `emit_format_union` (format.odin:378), and the type switch's tests (stmt.odin:787). Each site repeats about 6 lines (`temp`, `icmp eq i%d`, two `new_label`s, `branch_if`, `place_label hit`, … `place_label next`), and the tag width is re-derived in 9 places with `fmt.aprintf("i%d", shape.tag_bytes*8)`. One switch per union is shorter IR and gives faster `-opt=none` code. Saves about 50 lines. `emit_format_enum` (format.odin:425) could use the same helper.
 2. **Make hashing of fixed arrays loop instead of unrolling** (containers.odin:1414-1421). A non-large array (up to 4096 bytes) is fully unrolled: a `[4096]u8` key emits about 16k instructions into its hash thunk. `emit_array_equal` (expr.odin:1985-1995) already switches to a loop above `UNROLLED_EQUAL_ELEMENTS`/`UNROLLED_EQUAL_BYTES`. Use the same thresholds for hashing, and merge the large-array branch (1401-1413) into that loop. This is a code-size defect, and it also makes hashing and equality lower the same shapes differently. Add a regression test that bounds the IR growth, in the style of `fixed_array_clone_ir_grows_linearly`.
 3. **Declare runtime entries from one table instead of ~85 `fmt.sbprintln("declare ...")` lines**: runtime.odin:58-120 and 172-190, containers.odin:15-41, atomics.odin:31-41, plus the declaration in format.odin:570. A `[]struct{name, signature, attrs}` table would:
    - remove about 70 lines;

@@ -741,16 +741,6 @@ switch_labels :: proc(
 	return
 }
 
-@(private = "file")
-or_match :: proc(e: ^Emitter, matched, test: string) -> string {
-	if matched == "" {
-		return test
-	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", out, matched, test)
-	return out
-}
-
 // A type switch dispatches on a union's tag. A case binds at the variant's
 // type, or at the subject's type for several or default.
 // A union argument expansion's switch also yields the value of the arm that ran,
@@ -767,28 +757,24 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 		place = emit_address(e, s.subject)
 	}
 	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
-	tag_llvm := fmt.aprintf("i%d", union_layout(e.c, union_type).tag_bytes * 8)
 	slot := emit_union_spill(e, union_type, value)
 	tag := emit_union_tag(e, union_type, value)
 	// A produced subject is the switch's to drop; a named place is borrowed.
 	consumes := !expression_is_borrowed_place(s.subject)
 	joined := result != TYPE_VOID && result != INVALID_TYPE ? temporary_slot(e, result) : ""
 	done := new_label(e, "typeswitch.done")
-	bodies, tests, order, fallback := switch_labels(e, s, "typecase", done)
+	bodies, _, order, fallback := switch_labels(e, s, "typecase", done)
 
-	branch(e, len(order) > 0 ? tests[order[0]] : fallback)
-	for case_index, position in order {
-		place_label(e, tests[case_index])
-		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
-		matched := ""
-		entry := s.cases[case_index]
-		for discriminant in entry.variant_indices {
-			test := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", test, tag_llvm, tag, discriminant)
-			matched = or_match(e, matched, test)
+	// Each variant goes to the first case that names it.
+	targets := make([]string, len(underlying_info(e.c, union_type).variants))
+	for case_index in order {
+		for discriminant in s.cases[case_index].variant_indices {
+			if targets[discriminant] == "" {
+				targets[discriminant] = bodies[case_index]
+			}
 		}
-		branch_if(e, matched, bodies[case_index], next)
 	}
+	emit_union_switch(e, union_type, tag, targets, fallback)
 
 	for entry, index in s.cases {
 		place_label(e, bodies[index])

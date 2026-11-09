@@ -1011,7 +1011,7 @@ settle_called_parameters :: proc(c: ^Compiler, bodies: []Body_Effects) -> [][dyn
 		}
 	}
 	queue := body_queue_make(len(bodies))
-	for index in body_queue_pop(&queue) {
+	for index in worklist_pop_last(&queue) {
 		grew := false
 		for call in bodies[index].calls {
 			args, values, followed := call_values(c, bodies[index].symbol, call)
@@ -1063,41 +1063,21 @@ proc_parameter_type :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Typ
 	return info.parameters[index]
 }
 
-// The bodies a fixed point has yet to visit, each listed once.
-@(private)
-Body_Queue :: struct {
-	queued:  []bool,
-	pending: [dynamic]int,
-}
-
+// A body fixed point visits the latest woken body first (`worklist_pop_last`).
 // Every body is queued, to be visited first to last.
 @(private)
-body_queue_make :: proc(count: int) -> Body_Queue {
-	queue := Body_Queue{make([]bool, count, context.temp_allocator), make([dynamic]int, 0, count, context.temp_allocator)}
+body_queue_make :: proc(count: int) -> Worklist {
+	queue := worklist_make(count, context.temp_allocator)
 	for index := count - 1; index >= 0; index -= 1 {
-		append(&queue.pending, index)
-		queue.queued[index] = true
+		worklist_wake(&queue, index)
 	}
 	return queue
 }
 
 @(private)
-body_queue_pop :: proc(queue: ^Body_Queue) -> (index: int, ok: bool) {
-	if len(queue.pending) == 0 {
-		return 0, false
-	}
-	index = pop(&queue.pending)
-	queue.queued[index] = false
-	return index, true
-}
-
-@(private)
-body_queue_wake :: proc(queue: ^Body_Queue, bodies: []int) {
+body_queue_wake :: proc(queue: ^Worklist, bodies: []int) {
 	for body in bodies {
-		if !queue.queued[body] {
-			queue.queued[body] = true
-			append(&queue.pending, body)
-		}
+		worklist_wake(queue, body)
 	}
 }
 
@@ -1509,7 +1489,7 @@ settle_body_effects :: proc(c: ^Compiler, bodies: []Body_Effects) {
 	readers := part_readers(parts, closing)
 	numbers := number_body_globals(c, bodies)
 	queue := body_queue_make(len(bodies))
-	for index in body_queue_pop(&queue) {
+	for index in worklist_pop_last(&queue) {
 		body := &bodies[index]
 		grew := false
 		for part in parts[index] {

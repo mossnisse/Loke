@@ -1355,30 +1355,25 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	// A union mixes its tag, then the active payload, so two variants with one
 	// payload type hash apart.
 	if info != nil && info.kind == .Union {
-		shape := union_layout(e.c, under)
-		tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
 		tag := emit_union_tag(e, under, value)
 		widened := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, tag_llvm, tag)
+		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, union_tag_llvm(e, under), tag)
 		tagged := emit_hash_mix(e, seed, widened)
 		slot := emit_union_spill(e, under, value)
 		state := alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", tagged, state)
 		done := new_label(e, "unionhash.done")
+		hits := variant_labels(e, info, "unionhash.hit", payload_only = true)
+		emit_union_switch(e, under, tag, hits, done)
 		for variant, index in info.variants {
-			if variant == TYPE_VOID {
+			if hits[index] == "" {
 				continue
 			}
-			active := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, tag, index)
-			hit, next := new_label(e, "unionhash.hit"), new_label(e, "unionhash.next")
-			branch_if(e, active, hit, next)
-			place_label(e, hit)
+			place_label(e, hits[index])
 			payload := emit_union_payload(e, under, variant, slot)
 			payload_hash := emit_hash_value(e, variant, payload, tagged)
 			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", payload_hash, state)
 			branch(e, done)
-			place_label(e, next)
 		}
 		place_label(e, done)
 		return load(e, "i64", state)

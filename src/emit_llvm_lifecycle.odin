@@ -587,22 +587,17 @@ emit_drop_hook :: proc(e: ^Emitter, hook: Symbol_Id, address: string) {
 // second drop is a no-op.
 @(private = "file")
 emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: string) {
-	shape := union_layout(e.c, type)
 	value := load_place(e, type, address)
 	tag := emit_union_tag(e, type, value)
 	done := new_label(e, "uniondrop.done")
+	hits := managed_variant_labels(e, info, "uniondrop.hit")
+	emit_union_switch(e, type, tag, hits, done)
 	for variant, index in info.variants {
-		if variant == TYPE_VOID || !emit_lifecycle(e, variant).managed {
-			continue
+		if hits[index] != "" {
+			place_label(e, hits[index])
+			emit_drop_place(e, variant, gep_field(e, llvm_type(e, type), address, 0))
+			branch(e, done)
 		}
-		matched := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, shape.tag_bytes * 8, tag, index)
-		hit, next := new_label(e, "uniondrop.hit"), new_label(e, "uniondrop.next")
-		branch_if(e, matched, hit, next)
-		place_label(e, hit)
-		emit_drop_place(e, variant, gep_field(e, llvm_type(e, type), address, 0))
-		branch(e, done)
-		place_label(e, next)
 	}
 	place_label(e, done)
 	store(e, type, "zeroinitializer", address)
@@ -615,21 +610,18 @@ emit_union_try_clone_body :: proc(
 	e: ^Emitter, subject: Type_Id, info: ^Type_Info, result: Type_Id, value_type: string,
 	subject_value: string,
 ) {
-	shape := union_layout(e.c, subject)
 	self := alloca(e, value_type)
 	store(e, subject, subject_value, self)
 	tag := emit_union_tag(e, subject, subject_value)
+	copied := new_label(e, "unionclone.copied")
+	hits := managed_variant_labels(e, info, "unionclone.hit")
+	emit_union_switch(e, subject, tag, hits, copied)
 
 	for variant, index in info.variants {
-		if variant == TYPE_VOID || !emit_lifecycle(e, variant).managed {
+		if hits[index] == "" {
 			continue
 		}
-		matched := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, shape.tag_bytes * 8, tag, index)
-		hit, next := new_label(e, "unionclone.hit"), new_label(e, "unionclone.next")
-		branch_if(e, matched, hit, next)
-
-		place_label(e, hit)
+		place_label(e, hits[index])
 		source := gep_field(e, value_type, self, 0)
 		cloned := ""
 		if !emit_lifecycle(e, variant).clone_fallible {
@@ -645,9 +637,22 @@ emit_union_try_clone_body :: proc(
 		}
 		built := emit_union_value(e, subject, index, cloned)
 		emit_ret(e, result, emit_alloc_result(e, result, "false", built))
-		place_label(e, next)
 	}
 
 	// Every remaining tag holds a payload the representation already copies.
+	place_label(e, copied)
 	emit_ret(e, result, emit_alloc_result(e, result, "false", subject_value))
+}
+
+// A label for each variant with a managed payload, by variant index, and ""
+// for the rest.
+@(private = "file")
+managed_variant_labels :: proc(e: ^Emitter, info: ^Type_Info, prefix: string) -> []string {
+	labels := make([]string, len(info.variants))
+	for variant, index in info.variants {
+		if variant != TYPE_VOID && emit_lifecycle(e, variant).managed {
+			labels[index] = new_label(e, prefix)
+		}
+	}
+	return labels
 }

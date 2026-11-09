@@ -6,7 +6,7 @@ define internal %struct.Vec
 getelementptr inbounds %union.Outcome.
 extractvalue %union.Outcome.
 select i1
-typecase.test
+switch i8 
 typecase.body
 orreturn.fail
 orreturn.ok
