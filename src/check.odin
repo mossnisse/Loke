@@ -1143,7 +1143,8 @@ check_signature_parameter :: proc(
 	params: []Parameter,
 	position, name_index: int,
 	written: Type_Id,
-	generic, in_foreign: bool,
+	generic: bool,
+	in_foreign := false,
 	receiver := INVALID_TYPE,
 ) -> (result: Signature_Parameter) {
 	parameter := &params[position]
@@ -1351,10 +1352,8 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 			literal.generic_instance || in_generic_signature(k), builder.is_foreign, receiver = k.impl_type,
 		)
 		name_type, mode := checked.type, checked.mode
-		escape, resets, crosses := checked.escape, checked.resets, checked.crosses
-		split_receiver := checked.split_receiver
 		// Group defaults and reset effects belong to the typed parameters.
-		default := split_receiver ? nil : parameter.default
+		default := checked.split_receiver ? nil : parameter.default
 		reject_reserved_name(k, name_id, name.span)
 		binding := new_binding_symbol(k, name, .Parameter)
 		if bound := symbol_of(k.c, binding); bound != nil {
@@ -1368,9 +1367,9 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 			// design.md "Parameter semantics and ABI lowering".
 			bound.immutable = bound.mode == .Value
 			bound.owner_proc = literal
-			bound.allocator_reset = resets
-			bound.cross_thread = crosses
-			bound.escape = escape
+			bound.allocator_reset = checked.resets
+			bound.cross_thread = checked.crosses
+			bound.escape = checked.escape
 		}
 		if position == 0 && name_index == 0 && k.impl_type != INVALID_TYPE && name.text == "self" && name_type == k.impl_type {
 			builder.has_receiver = true
@@ -1379,13 +1378,13 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 		append(&bindings, binding)
 		append(&builder.params, name_type)
 		append(&builder.modes, mode)
-		append(&builder.resets, resets)
-		append(&builder.escapes, escape)
-		append(&builder.crosses, crosses)
+		append(&builder.resets, checked.resets)
+		append(&builder.escapes, checked.escape)
+		append(&builder.crosses, checked.crosses)
 		append(&builder.by_ptr, is_by_ptr)
 		append(&builder.param_symbols, binding)
 		append(&builder.defaults, default)
-		if split_receiver && inferred {
+		if checked.split_receiver && inferred {
 			parameter.symbols = bindings[:]
 			parameter_type = infer_param_default_type(k, literal, position)
 		}
@@ -1919,7 +1918,7 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 		}
 		written := resolve_type_reporting(k, parameter.type)
 		for name_index in 0 ..< count {
-			checked := check_signature_parameter(k, value.params, position, name_index, written, generic, false)
+			checked := check_signature_parameter(k, value.params, position, name_index, written, generic)
 			append(&params, checked.type)
 			append(&modes, checked.mode)
 			append(&resets, checked.resets)
