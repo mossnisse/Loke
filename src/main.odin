@@ -1,10 +1,12 @@
 // Driver: CLI, presentation, exit codes. Compilation lives in session.odin.
 package lokec
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:reflect"
 import "core:strconv"
 import "core:strings"
 
@@ -291,6 +293,19 @@ choice :: proc(flag, value: string, names: ..string) -> (int, bool) {
 	return 0, false
 }
 
+// A flag naming a member of `E` in lower case, so the spellings the flag
+// accepts follow the enum.
+@(private = "file")
+enum_choice :: proc($E: typeid, flag, value: string) -> (E, bool) where intrinsics.type_is_enum(E) {
+	names := reflect.enum_field_names(E)
+	lowered := make([]string, len(names), context.temp_allocator)
+	for name, index in names {
+		lowered[index] = strings.to_lower(name, context.temp_allocator)
+	}
+	index, ok := choice(flag, value, ..lowered)
+	return E(index), ok
+}
+
 @(private = "file")
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	opts.config = DEFAULT_COMPILATION_CONFIG
@@ -340,7 +355,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		case strings.has_prefix(arg, "-panic="):
 			opts.config.panic_unwind = (choice("-panic", arg[len("-panic="):], "unwind", "abort") or_return) == 0
 		case strings.has_prefix(arg, "-opt="):
-			opts.config.opt_mode = Opt_Mode(choice("-opt", arg[len("-opt="):], "none", "minimal", "size", "speed", "aggressive") or_return)
+			opts.config.opt_mode = enum_choice(Opt_Mode, "-opt", arg[len("-opt="):]) or_return
 		case strings.has_prefix(arg, "-cpu="):
 			cpu, known := parse_cpu_level(arg[len("-cpu="):])
 			if !known {
@@ -349,9 +364,9 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			}
 			opts.config.cpu = cpu
 		case strings.has_prefix(arg, "-log-level="):
-			opts.config.log_level = Log_Level(choice("-log-level", arg[len("-log-level="):], "debug", "info", "warning", "error", "off") or_return)
+			opts.config.log_level = enum_choice(Log_Level, "-log-level", arg[len("-log-level="):]) or_return
 		case strings.has_prefix(arg, "-build-mode="):
-			opts.config.build_mode = Build_Mode(choice("-build-mode", arg[len("-build-mode="):], "exe", "obj", "test") or_return)
+			opts.config.build_mode = enum_choice(Build_Mode, "-build-mode", arg[len("-build-mode="):]) or_return
 			build_mode_written = true
 		case strings.has_prefix(arg, "-runtime="):
 			opts.emission.runtime_dir = arg[len("-runtime="):]

@@ -197,7 +197,8 @@ restructuring. Measure performance items before and after.
    bugs 5 and 8 are done where a graph or a clear owner exists.
 5. The per-slot reborrow index and the amortized region-content tables (theme 2).
 6. Caches for interface satisfaction, generic keys and type predicates
-   (theme 1), each measured with `perf.ps1`.
+   (theme 1), each measured with `perf.ps1`. The three region predicates of
+   group 4 are done.
 7. Shared scaffolding (theme 4), smallest first: the redundant `branch` calls,
    `type_is_allocator`, the identical path predicates (these three done), then
    the replay iterator, the worklist type, and the union `switch` helper.
@@ -305,7 +306,8 @@ The recurring themes are:
    - The function is 170 lines with four nesting levels. Split the per-root
      checks (diagnostics, bundled uses, member conflicts, per-file token scan)
      into helpers.
-8. **Derive the CLI's choice lists from the enums**
+8. **Derive the CLI's choice lists from the enums** (done; lower-cased, so the
+   accepted spellings are unchanged)
    (`src/main.odin:341-354`). `-opt=`, `-log-level=`, and `-build-mode=` spell
    out lower-cased copies of `Opt_Mode`, `Log_Level`, and `Build_Mode`.
    `build_config.odin:133-136` already uses `reflect.enum_field_names` "so the
@@ -781,7 +783,8 @@ There are also a few small accounting leaks: evaluator temporaries that the
      calls `inherent_self_operator` twice per node on every comparison and switch.
 
    Measure with `perf.ps1` before and after.
-4. **Share zero values when a literal is folded.** `fold_aggregate`
+4. **Share zero values when a literal is folded.** (Done for `fold_aggregate`;
+   the recount in `zero_const` is not.) `fold_aggregate`
    (`src/check_composite.odin:530-548`) calls `zero_const` once per unwritten slot,
    so `[1000][100]int{}` builds 1000 identical rows, where `zero_const` itself
    builds one row and shares it. Separately, `zero_const` re-counts
@@ -1729,7 +1732,7 @@ The code is careful and thoroughly commented. The normalized-input/replay split 
    - `prov_parameter_label` provenance_retention.odin:537–541 formats into `graph.k.c.semantic_allocator`, which is the long-lived arena, on every graph build. The result is only an event `verb`. Use `graph.alloc`, as every other `fmt.aprintf` here does (e.g. provenance_escape.odin:201, cfg_provenance.odin:1232).
    - Thirteen allocations use `context.temp_allocator`. During a batch compile that is one scratch arena for the whole compilation (session.odin:75), so per-body scratch accumulates instead of being reclaimed at the analysis-arena reset. The sites are provenance_reborrow.odin:235, provenance_retention.odin:15,158–159,199,234–235,240,432–433, provenance_results.odin:204,216, and provenance_regions.odin:1651,1744. Use `graph.alloc` where a graph is at hand. compiler-architecture.md "Normalized provenance input" asks for this ("Materialization allocates in the analysis arena").
 5. **Make the region-content and written-alias tables grow in amortized O(1)** (Data structure). `prov_define_region_content` (provenance_regions.odin:732–742), `prov_define_copied_content` (provenance_escape.odin:362–373) and `prov_add_written_alias` (provenance_aliases.odin:415–433) each do a linear dedup scan, then allocate `len+1` and copy the whole slice for every new entry. That is quadratic per storage, and every round replays it. Store `[dynamic]` values in `Prov_Facts.region_content`/`written_aliases`. The carry and seed already deep-copy. Then add one helper, `prov_region_content_add(graph, storage, entry, merge: bool)`, used by both region writers. The written-alias version is the same shape. Saves ~25 lines and the quadratic copies.
-6. **Cache the uncached recursive type predicates** (Data structure). `prov_type_has_region` (provenance_regions.odin:1110) has 20 callers. Callers include `prov_input_call` per argument, `prov_region_of` per value, and `region_field_shape_into` per node, which makes that walk quadratic. `prov_holds_allocator` (:1075) and `prov_view_reaches_provider` (:1650, which also allocates a temp map per call) walk the type tree on every call. A DAG-shaped record walk is up to fields^8 at `REGION_SHAPE_DEPTH`. Their siblings `type_carries_borrow`, `prov_type_reaches_destination` and `prov_type_reaches_mutable` are already memoized in `Compiler` maps (carrier_shape.odin:110–149). Add `c.has_region`, `c.holds_allocator` and `c.view_reaches_provider` the same way, about 15 lines.
+6. **Cache the uncached recursive type predicates** (Data structure; done, the queried type only. `perf.ps1` front-end times fell by a median of about 4%, within the run-to-run noise.) `prov_type_has_region` (provenance_regions.odin:1110) has 20 callers. Callers include `prov_input_call` per argument, `prov_region_of` per value, and `region_field_shape_into` per node, which makes that walk quadratic. `prov_holds_allocator` (:1075) and `prov_view_reaches_provider` (:1650, which also allocates a temp map per call) walk the type tree on every call. A DAG-shaped record walk is up to fields^8 at `REGION_SHAPE_DEPTH`. Their siblings `type_carries_borrow`, `prov_type_reaches_destination` and `prov_type_reaches_mutable` are already memoized in `Compiler` maps (carrier_shape.odin:110–149). Add `c.has_region`, `c.holds_allocator` and `c.view_reaches_provider` the same way, about 15 lines.
 7. **Factor the four alias-reachability walks into one** (Duplication). These walks repeat the same frame: `prov_first_alias_visit` → `carrier_shape(prov_type_at(...))` → `prov_written_aliases_of(storage, bounded ++ carrier.steps)` → recurse.
    - `prov_store_reachable_regions` provenance_escape.odin:539–551
    - `prov_forget_storage_aliases` provenance_aliases.odin:546–569

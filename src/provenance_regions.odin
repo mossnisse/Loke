@@ -1070,9 +1070,20 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 // Whether a value of `type` holds an allocator handle anywhere in it, a record's
-// fields included, not behind a carrier.
+// fields included, not behind a carrier. Only the queried type is cached: an
+// intermediate one is answered at its depth.
 @(private = "file")
-prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.holds_allocator[type]; found {
+		return cached
+	}
+	holds := holds_allocator_walk(c, type, 0)
+	c.holds_allocator[type] = holds
+	return holds
+}
+
+@(private = "file")
+holds_allocator_walk :: proc(c: ^Compiler, type: Type_Id, depth: int) -> bool {
 	if depth > REGION_SHAPE_DEPTH {
 		return true
 	}
@@ -1086,18 +1097,18 @@ prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 	#partial switch info.kind {
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && prov_holds_allocator(c, sym.type, depth + 1) {
+			if sym := symbol_of(c, field); sym != nil && holds_allocator_walk(c, sym.type, depth + 1) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if variant != TYPE_VOID && prov_holds_allocator(c, variant, depth + 1) {
+			if variant != TYPE_VOID && holds_allocator_walk(c, variant, depth + 1) {
 				return true
 			}
 		}
 	case .Array:
-		return prov_holds_allocator(c, info.element, depth + 1)
+		return holds_allocator_walk(c, info.element, depth + 1)
 	}
 	return false
 }
@@ -1105,9 +1116,20 @@ prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 // Whether a value of `type` can depend on an allocator region: somewhere in it
 // is an owner, a view, an `Allocator`, or a provider (design.md "Allocator
 // regions and region provenance"). An `int` read out of a region-backed
-// container has no region.
+// container has no region. Only the queried type is cached, as for
+// `prov_holds_allocator`.
 @(private)
-prov_type_has_region :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+prov_type_has_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.has_region[type]; found {
+		return cached
+	}
+	has := has_region_walk(c, type, 0)
+	c.has_region[type] = has
+	return has
+}
+
+@(private = "file")
+has_region_walk :: proc(c: ^Compiler, type: Type_Id, depth: int) -> bool {
 	if depth > REGION_SHAPE_DEPTH {
 		return true
 	}
@@ -1121,18 +1143,18 @@ prov_type_has_region :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 	#partial switch info.kind {
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && prov_type_has_region(c, sym.type, depth + 1) {
+			if sym := symbol_of(c, field); sym != nil && has_region_walk(c, sym.type, depth + 1) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if variant != TYPE_VOID && prov_type_has_region(c, variant, depth + 1) {
+			if variant != TYPE_VOID && has_region_walk(c, variant, depth + 1) {
 				return true
 			}
 		}
 	case .Array:
-		return prov_type_has_region(c, info.element, depth + 1)
+		return has_region_walk(c, info.element, depth + 1)
 	}
 	return false
 }
@@ -1648,8 +1670,13 @@ prov_provider_viewed_by :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set 
 // views, at any place there. A shape cut short may hold anything, so it may reach one.
 @(private = "file")
 prov_view_reaches_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.view_reaches_provider[type]; found {
+		return cached
+	}
 	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
-	return prov_view_reach_walk(c, type, &visited)
+	reaches := prov_view_reach_walk(c, type, &visited)
+	c.view_reaches_provider[type] = reaches
+	return reaches
 }
 
 @(private = "file")

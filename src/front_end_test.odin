@@ -2427,3 +2427,20 @@ nested_procedure_literal_arguments_parse_linearly :: proc(t: ^testing.T) {
 	testing.expect_value(t, p.c.error_count, 0)
 	testing.expect(t, p.f.arena.total_used < 1 << 20)
 }
+
+// A folded array literal's unwritten elements share one zero value, as
+// `zero_const`'s elements do, rather than each building its own.
+@(test)
+unwritten_array_elements_share_one_zero :: proc(t: ^testing.T) {
+	p: Checked
+	check_source(&p, "package shared_zero;\nROWS :: [4][3]int{{1, 2, 3}};\n")
+	defer destroy_checked(&p)
+	testing.expect_value(t, len(p.c.diagnostics), 0)
+	value := symbol_of(&p.c, symbol_named(t, &p, "ROWS", .Const)).const_value
+	if !testing.expect_value(t, value.kind, Const_Kind.Aggregate) {
+		return
+	}
+	rows := value.aggregate.elements
+	testing.expect(t, rows[1].aggregate == rows[2].aggregate && rows[2].aggregate == rows[3].aggregate, "unwritten rows were each built")
+	testing.expect(t, rows[0].aggregate != rows[1].aggregate, "the written row was shared")
+}

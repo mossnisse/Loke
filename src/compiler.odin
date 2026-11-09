@@ -195,6 +195,10 @@ Compiler :: struct {
 	reaches_destination: map[Type_Id]bool,
 	reaches_mutable:    map[Type_Id]bool,
 	provider_carriers:  map[Type_Id]bool,
+	// The recursive region predicates of `src/provenance_regions.odin`.
+	has_region:         map[Type_Id]bool,
+	holds_allocator:    map[Type_Id]bool,
+	view_reaches_provider: map[Type_Id]bool,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
 	// `type_may_hold_address`, asked of each literal element's type during emission.
 	may_hold_address:   map[Type_Id]bool,

@@ -527,6 +527,8 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields:
 			written[slot] = true
 		}
 	}
+	// An array's unwritten elements share one zero, as `zero_const`'s do.
+	array_zero: Maybe(Const_Value)
 	for &element, index in elements {
 		if written[index] {
 			continue
@@ -539,12 +541,18 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields:
 				element = capacity_const(k.c, element_type)
 				continue
 			}
+		} else if zero, built := array_zero.?; built {
+			element = zero
+			continue
 		}
 		zero, ok := zero_const(k.c, element_type)
 		if !ok {
 			return
 		}
 		element = zero
+		if fields == nil {
+			array_zero = zero
+		}
 	}
 	v.const_value = aggregate_const(k.c, target, elements)
 }
