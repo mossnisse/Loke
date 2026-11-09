@@ -232,7 +232,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 // the reborrow holds no loan of it, which the overlap check sees.
 @(private)
 prov_settle_pending_reborrows :: proc(graph: ^Flow_Graph) {
-	reborrows_mutable := make([]bool, len(graph.prov_slots), context.temp_allocator)
+	reborrows_mutable := make([]bool, len(graph.prov_slots), graph.alloc)
 	for changed := true; changed; {
 		changed = false
 		for &reborrow in graph.reborrows {

@@ -1330,7 +1330,7 @@ effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) ->
 		next: for reached in part_reach(c, part) {
 			for &known in out {
 				if known.global == reached.global {
-					known.source.precision |= reached.source.precision
+					merge_effect_source(&known.source, reached.source)
 					continue next
 				}
 			}

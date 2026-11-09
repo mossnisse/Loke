@@ -201,7 +201,7 @@ prov_call_result :: proc(
 // callback is that body's own, its stand-in.
 @(private = "file")
 prov_callback_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_Id, result_type: Type_Id) -> []int {
-	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	consulted := make([dynamic]Symbol_Id, 0, 4, graph.alloc)
 	reads := call_callback_reads(graph.k.c, v, callee, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	return prov_callback_loans(graph, v, reads, consulted[:], result_type)
 }
@@ -213,7 +213,7 @@ prov_callback_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_I
 // received, the one its caller passes (`call_callback_returns`).
 @(private = "file")
 prov_callback_returned :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id) -> []int {
-	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	consulted := make([dynamic]Symbol_Id, 0, 4, graph.alloc)
 	returned := call_callback_returns(graph.k.c, v, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	return prov_callback_loans(graph, v, returned, consulted[:], result_type)
 }

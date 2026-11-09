@@ -64,3 +64,6 @@ L0443
 L0432
 @48:13
 `nil` is not representable by the generic parameter's type `Allocator_Error`
+L0310
+@52:6
+`nil` has no type to infer here

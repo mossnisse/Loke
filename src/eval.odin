@@ -1314,6 +1314,8 @@ eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending
 	if err != nil {
 		return false
 	}
+	// The sorted run ends up in `elements`, so the scratch holds nothing after.
+	defer delete(scratch, ev.alloc)
 	from, to := elements, scratch
 	for width := 1; width < len(elements); width *= 2 {
 		for lo := 0; lo < len(elements); lo += 2 * width {
@@ -3185,12 +3187,17 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 		eval_fail(ev, expr_span(s.iterable), "L0341", "this range has no compile-time meaning")
 		return .Fail
 	}
+	one := bi_from_i64(ev.alloc, 1)
 	span := bi_sub(ev.alloc, hi.integer, lo.integer)
 	if closed {
-		span = bi_add(ev.alloc, span, bi_from_i64(ev.alloc, 1))
+		open_span := span
+		span = bi_add(ev.alloc, open_span, one)
+		bi_release(open_span)
 	}
-	last := bi_sub(ev.alloc, span, bi_from_i64(ev.alloc, 1))
+	last := bi_sub(ev.alloc, span, one)
 	count, fits := bi_to_i64(ev.alloc, span)
+	bi_release(one, span)
+	defer bi_release(last)
 	if !fits {
 		// A high endpoint far below the low one yields nothing; the step limit
 		// ends a very long range first.
@@ -3199,10 +3206,15 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	for index in 0 ..< int(min(count, i64(max(int)))) {
 		offset := bi_from_i64(ev.alloc, i64(index))
 		if s.reversed {
-			offset = bi_sub(ev.alloc, last, offset)
+			forward := offset
+			offset = bi_sub(ev.alloc, last, forward)
+			bi_release(forward)
 		}
 		value := lo
+		// The loop variable holds the sum, which the body may keep; the offset
+		// is only this step's.
 		value.integer = bi_add(ev.alloc, lo.integer, offset)
+		bi_release(offset)
 		flow := eval_foreach_step(ev, s, &value, index)
 		if flow != .Normal {
 			return flow == .Break ? .Normal : flow

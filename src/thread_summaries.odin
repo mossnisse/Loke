@@ -305,13 +305,27 @@ collect_thread_exit_drops :: proc(c: ^Compiler) {
 	c.thread_exit_drops = drops[:]
 }
 
-@(private = "file")
+@(private)
 add_global_effect :: proc(list: ^[dynamic]Global_Effect, global: Symbol_Id, source: Effect_Source) -> bool {
-	for existing in list {
+	for &existing in list {
 		if existing.global == global {
-			return false
+			return merge_effect_source(&existing.source, source)
 		}
 	}
 	append(list, Global_Effect{global = global, source = source})
 	return true
+}
+
+// One effect reached by two routes is reported from an exact one where either
+// is, since then it certainly happens, and otherwise names both routes'
+// precision limits; either way the wording does not depend on which came first.
+merge_effect_source :: proc(into: ^Effect_Source, from: Effect_Source) -> bool {
+	if into.precision == {} {
+		return false
+	}
+	if from.precision == {} {
+		into^ = from
+		return true
+	}
+	return merge_precision(&into.precision, from.precision)
 }

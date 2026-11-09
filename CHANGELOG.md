@@ -1797,6 +1797,14 @@ checklist.
   written: `1.5`, where it showed the generic cache's encoding `f64:3ff8000000000000`.
 - `L0727`, a replaced `core:thread` that lacks what a `parallel` block or a `spawn` needs, points at
   the block's keyword or the spawned call; it had no location.
+- `_ = nil` is `L0310`, as `x := nil` is: a discard gives `nil` no type. It passed the checker and
+  stopped the backend with the internal error `L0405`.
+- `L0731` says a task or procedure certainly reaches through a global where any route to it does.
+  With one route past a [provenance precision limit](design.md#minimum-provenance-precision) and
+  another exact, it said "may reach" or "reaches" depending on which the compiler met first.
+- Compile-time rotations, `next_power_of_two`, wrapping integer operators, `fma`, sorting, and
+  `foreach` over a range release their temporaries, so only what an evaluation keeps counts
+  against its memory limit.
 - A map key that is a fixed array of more than 8 elements or 64 bytes hashes in a loop, as its `==`
   already compared. One of up to 4,096 bytes was unrolled, so a `[4096]u8` key emitted about 16,000
   instructions into its hash.

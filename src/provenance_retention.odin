@@ -12,7 +12,7 @@ import "core:fmt"
 @(private)
 prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op: Container_Op, actuals: [][]int) {
 	c := graph.k.c
-	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	consulted := make([dynamic]Symbol_Id, 0, 4, graph.alloc)
 	moves := call_carrier_moves(c, v, graph.literal.symbol, len(actuals), &consulted, graph.alloc)
 	prov_note_summary_dependencies(graph, consulted[:])
 	if .Moves_Elements in CONTAINER_OP_EFFECTS[container_op] && len(actuals) > 0 {
@@ -196,7 +196,7 @@ prov_argument_span :: proc(call: ^Expr_Call, index: int) -> (Span, bool) {
 @(private)
 prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	c := graph.k.c
-	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	consulted := make([dynamic]Symbol_Id, 0, 4, graph.alloc)
 	lefts := call_thread_local_left(c, v, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	prov_note_summary_dependencies(graph, consulted[:])
 	spawned := v == graph.spawning
@@ -231,13 +231,13 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 	c := graph.k.c
 	chain := walking
 	if chain == nil {
-		chain = new(map[Type_Id]bool, context.temp_allocator)
-		chain^ = make(map[Type_Id]bool, context.temp_allocator)
+		chain = new(map[Type_Id]bool, graph.alloc)
+		chain^ = make(map[Type_Id]bool, graph.alloc)
 	}
 	out: []int
 	for path in carrier_shape(c, type) {
 		if path.truncated && !path.mutable {
-			visited := make(map[Type_Id]bool, context.temp_allocator)
+			visited := make(map[Type_Id]bool, graph.alloc)
 			if !truncated_reaches_destination(c, path, &visited) {
 				continue
 			}
@@ -429,8 +429,8 @@ prov_retain_through :: proc(graph: ^Flow_Graph, held: []int, type: Type_Id, sour
 @(private)
 prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov_Store_Retained, landed: []int) {
 	c := graph.k.c
-	linked := make([dynamic]int, 0, len(event.sources), context.temp_allocator)
-	pending := make([dynamic]int, 0, len(event.sources), context.temp_allocator)
+	linked := make([dynamic]int, 0, len(event.sources), graph.alloc)
+	pending := make([dynamic]int, 0, len(event.sources), graph.alloc)
 	append(&pending, ..event.sources)
 	for len(pending) > 0 {
 		source := pop(&pending)
@@ -538,7 +538,7 @@ prov_parameter_label :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> s
 				"`%s`, which `%s` may keep",
 				identifier_text(graph.k.c, bound.name),
 				identifier_text(graph.k.c, sym.name),
-				allocator = graph.k.c.semantic_allocator,
+				allocator = graph.alloc,
 			)
 		}
 	}

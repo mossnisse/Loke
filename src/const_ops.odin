@@ -133,9 +133,11 @@ bit_value_const :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, builtin: Bu
 	case .Math_Is_Power_Of_Two:
 		return bool_const(bi_sign(value) > 0 && intrinsics.count_ones(x) == 1), true
 	}
-	if bi_cmp(value, bi_from_i64(storage, 1)) <= 0 {
-		return integer_const(bi_from_i64(storage, 1)), true
+	one := bi_from_i64(storage, 1)
+	if bi_cmp(value, one) <= 0 {
+		return integer_const(one), true
 	}
+	bi_release(one)
 	// `value` is above 1 here, so its pattern is its value.
 	exponent := 128 - int(intrinsics.count_leading_zeros(x - 1))
 	return integer_const(bi_pow2(storage, exponent)), exponent < bits - (signed ? 1 : 0)
@@ -154,8 +156,13 @@ rotate_const :: proc(c: ^Compiler, value, count: Big_Int, type: Type_Id, builtin
 		left = (bits - left) % bits
 	}
 	pattern := bi_wrap(storage, value, bits, false)
-	rotated := bi_or(storage, bi_shl(storage, pattern, left), bi_shr(storage, pattern, bits - left))
-	return bi_wrap(storage, rotated, bits, type_signed(c, type))
+	high, low := bi_shl(storage, pattern, left), bi_shr(storage, pattern, bits - left)
+	rotated := bi_or(storage, high, low)
+	bi_release(high, low)
+	bi_release_unless(pattern, value)
+	result := bi_wrap(storage, rotated, bits, type_signed(c, type))
+	bi_release_unless(rotated, result)
+	return result
 }
 
 value_allocator :: proc(c: ^Compiler, requested: mem.Allocator) -> mem.Allocator {
@@ -232,7 +239,9 @@ fold_unary :: proc(
 			report_integer_overflow(c, op_span, folded.integer, type, storage)
 			return {}, false
 		}
-		folded.integer = wrap_to_type(c, folded.integer, type, storage)
+		wrapped := wrap_to_type(c, folded.integer, type, storage)
+		bi_release_unless(folded.integer, wrapped, value.integer)
+		folded.integer = wrapped
 	}
 	return folded, true
 }
@@ -320,7 +329,9 @@ fold_integer :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int,
 			return result, false
 		}
 	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Shl:
-		result = wrap_to_type(c, result, type, storage)
+		wrapped := wrap_to_type(c, result, type, storage)
+		bi_release_unless(result, wrapped, x, y)
+		result = wrapped
 	}
 	return result, true
 }

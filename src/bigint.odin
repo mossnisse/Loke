@@ -46,6 +46,17 @@ bi_release :: proc(values: ..Big_Int) {
 	}
 }
 
+// Releases `built` unless it is one of `kept`: an operation such as `bi_wrap`
+// may return its operand rather than build a new integer.
+bi_release_unless :: proc(built: Big_Int, kept: ..Big_Int) {
+	for value in kept {
+		if raw_data(value.digit) == raw_data(built.digit) {
+			return
+		}
+	}
+	bi_release(built)
+}
+
 bi_zero :: proc(c: Value_Storage) -> Big_Int {
 	return bi_from_i64(c, 0)
 }

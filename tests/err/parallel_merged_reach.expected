@@ -12,3 +12,13 @@ L0731
 @32:3
 `reaching` may reach through `shared` while this `parallel` block's tasks may be running
 provenance precision limit: fixed arrays longer than 8 elements merge element borrows
+
+L0731
+@61:13
+`own_routes` reaches through `shared`, which every task and the parent share
+!`own_routes` may reach
+
+L0731
+@62:13
+`merged_first` reaches through `shared`, which every task and the parent share
+!`merged_first` may reach

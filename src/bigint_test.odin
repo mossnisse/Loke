@@ -485,6 +485,50 @@ bigint_evaluator_storage_keeps_only_results :: proc(t: ^testing.T) {
 	testing.expect(t, storage.bytes == before, "an integer operation keeps more than its result")
 }
 
+// Constant folds the evaluator runs leave only their result charged to it, so a
+// long compile-time loop is bounded by what it keeps, not by what it computed.
+@(test)
+evaluator_folds_keep_only_results :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	build_universe(&c)
+	storage: Eval_Storage
+	defer eval_storage_destroy(&storage)
+	alloc := mem.Allocator{eval_allocator_proc, &storage}
+
+	high := bi_from_u64(alloc, 0x8000_0003)
+	three := bi_from_i64(alloc, 3)
+	large := bi_from_i64(alloc, 100)
+	zero := bi_zero(alloc)
+	before := storage.bytes
+	kept := proc(t: ^testing.T, storage: ^Eval_Storage, before: int, result: Big_Int, what: string) {
+		bi_release(result)
+		testing.expectf(t, storage.bytes == before, "%s keeps a temporary", what)
+	}
+
+	for builtin in ([]Builtin_Kind{.Math_Rotate_Left, .Math_Rotate_Right}) {
+		kept(t, &storage, before, rotate_const(&c, high, three, TYPE_U32, builtin, alloc), "a rotation")
+		kept(t, &storage, before, rotate_const(&c, high, three, TYPE_I32, builtin, alloc), "a signed rotation")
+	}
+	for value in ([]Big_Int{three, large}) {
+		power, _ := bit_value_const(&c, value, TYPE_U32, .Math_Next_Power_Of_Two, alloc)
+		kept(t, &storage, before, power.integer, "next_power_of_two")
+	}
+	one, _ := bit_value_const(&c, zero, TYPE_U32, .Math_Next_Power_Of_Two, alloc)
+	kept(t, &storage, before, one.integer, "next_power_of_two of zero")
+
+	wrapped, _ := fold_arithmetic(&c, .Star_Wrap, {}, integer_const(high), integer_const(large), TYPE_U32, alloc)
+	kept(t, &storage, before, wrapped.integer, "a wrapping product")
+	negated, _ := fold_unary(&c, .Tilde, {}, integer_const(three), TYPE_U32, alloc)
+	kept(t, &storage, before, negated.integer, "a complement")
+	same, _ := fold_unary(&c, .Plus, {}, integer_const(three), TYPE_U32, alloc)
+	testing.expect(t, bi_eq_i64(&c, same.integer, 3) && storage.bytes == before, "unary plus changed its operand or kept a temporary")
+
+	exact_fma(alloc, -1.5, 3.25, 0.125, 64)
+	exact_fma(alloc, 0h0010_0000_0000_0001, -0.5, 1e-300, 32)
+	testing.expect(t, storage.bytes == before, "exact_fma keeps a temporary")
+}
+
 // An empty request is a small block like any other: it is served from the
 // arena and its release puts it on a free list, at every alignment.
 @(test)

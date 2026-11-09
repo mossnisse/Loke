@@ -41,11 +41,10 @@ exact_fma :: proc(storage: Value_Storage, a, b, c: f64, bits: u16) -> f64 {
 	x, y, z := dyadic_of(storage, a), dyadic_of(storage, b), dyadic_of(storage, c)
 	product := Dyadic{bi_mul(storage, x.significand, y.significand), x.exponent + y.exponent}
 	exponent := min(product.exponent, z.exponent)
-	sum := bi_add(
-		storage,
-		bi_shl(storage, product.significand, product.exponent - exponent),
-		bi_shl(storage, z.significand, z.exponent - exponent),
-	)
+	product_part := bi_shl(storage, product.significand, product.exponent - exponent)
+	addend_part := bi_shl(storage, z.significand, z.exponent - exponent)
+	sum := bi_add(storage, product_part, addend_part)
+	defer bi_release(x.significand, y.significand, z.significand, product.significand, product_part, addend_part, sum)
 	return dyadic_to_float(storage, sum, exponent, bits)
 }
 
@@ -221,7 +220,9 @@ dyadic_of :: proc(storage: Value_Storage, value: f64) -> Dyadic {
 	}
 	result.significand = bi_from_u64(storage, fraction)
 	if value < 0 {
-		result.significand = bi_neg(storage, result.significand)
+		magnitude := result.significand
+		result.significand = bi_neg(storage, magnitude)
+		bi_release(magnitude)
 	}
 	return result
 }

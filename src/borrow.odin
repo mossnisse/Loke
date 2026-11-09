@@ -1115,12 +1115,7 @@ add_reached_global :: proc(c: ^Compiler, out: ^[dynamic]Global_Effect, global: S
 	   !type_carries_borrow(c, sym.type).any {
 		return
 	}
-	for existing in out {
-		if existing.global == global {
-			return
-		}
-	}
-	append(out, Global_Effect{global = global, source = source})
+	add_global_effect(out, global, source)
 }
 
 @(private)

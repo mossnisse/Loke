@@ -33,8 +33,38 @@ parent :: proc() {
 	}
 }
 
+// One global reached both past the limit and exactly is certainly reached,
+// whichever route comes first.
+exact :: proc() {
+	work(shared);
+}
+
+merged :: proc() {
+	values: [9][]int = {};
+	values[8] = shared;
+	work(values[0]);
+}
+
+own_routes :: proc() {
+	values: [9][]int = {};
+	values[8] = shared;
+	work(values[0]);
+	work(shared);
+}
+
+merged_first :: proc() {
+	merged();
+	exact();
+}
+
+routes :: proc() {
+	parallel { spawn own_routes(); }
+	parallel { spawn merged_first(); }
+}
+
 main :: proc() {
 	given();
 	spawned();
 	parent();
+	routes();
 }

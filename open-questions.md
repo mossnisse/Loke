@@ -1371,3 +1371,36 @@ Still to decide:
   be reserved too, or only a loan the argument forms itself?
 
 Found on 2026-11-07.
+
+## Compiler review findings not yet acted on (2026-11-09)
+
+The [compiler code review](compiler-code-review-2026-11-09.md#bugs) found these,
+and none has a probe program that shows a wrong result. Each needs a decision or
+a reproduction before a change.
+
+- **Which reborrow's capability a loaded copy takes** (bug 12).
+  `prov_reborrow_loaded` takes the capability of the last reborrow whose source
+  is the loaded slot, so with several the result follows list order. Taking the
+  most recent store may be the intent; mutable if any is mutable would be the
+  conservative choice, and could report conflicts that are accepted today.
+- **A check with a side effect** (bug 14). `at_once_reaches` in
+  `borrow_report.odin` writes solver rows while it answers a question; the
+  replay after it overwrites them, which is all that keeps the answer pure.
+- **Materialized views in the construction graph** (bug 15). Publishing a
+  materialized view in `cfg_provenance.odin` records definitions into the
+  construction graph, which a comment there says it does not. It widens bit
+  rows and appears harmless.
+- **Two unreachable edge cases** (bug 18). `callable_witness_slots` in
+  `erased.odin` reads the `dyn` view's first member without a nil check, and
+  `proc_interface_text` in `doc.odin` finds the procedure literal by the first
+  `::`, which a typed constant `f : proc() : proc() {...}` lacks. A literal's
+  source offset is no fix there, since the text it searches may have had
+  comments cut.
+- **Evaluator frames stay charged** (rest of bug 8). A `switch` arm's own
+  frame and a call's frame are popped, not released. A pointer the program
+  keeps into a popped frame would make releasing it unsafe; see
+  [comments.md](comments.md#the-evaluators-memory-limit-counts-what-it-holds).
+- **Temporary storage in provenance helpers without a graph** (rest of bug 5).
+  `report_thread_local_writes` and the type predicates in
+  `provenance_regions.odin` allocate in `context.temp_allocator`, which lasts
+  the whole batch; the graph-local sites now use the analysis arena.

@@ -46,4 +46,8 @@ main :: proc() {
 	_ = Taker(nil);
 	static_assert(Gate(int, nil));
 	_ = Holder(nil){3};
+
+	// A discard gives `nil` no type to take, as a declaration without one does
+	// not; it reached the backend as an untyped `nil`.
+	_ = nil;
 }
