@@ -497,9 +497,21 @@ const_operand :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string 
 	if !large && !const_needs_image(e, value, type) {
 		return image
 	}
-	name := claim_name(e, fmt.aprintf("@.image.%d", len(e.globals)))
-	append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s%s\n", name, image_type, image, align))
+	name := private_constant(e, "@.image.", fmt.aprintf("%s %s%s", image_type, image, align))
 	return large ? name : load(e, llvm_type(e, type), name)
+}
+
+// A private constant global of `definition`, its type and initializer, which
+// every use of the same one shares, as `text_literal_global` shares a text.
+@(private)
+private_constant :: proc(e: ^Emitter, prefix, definition: string) -> string {
+	if name, found := e.constants[definition]; found {
+		return name
+	}
+	name := claim_name(e, fmt.aprintf("%s%d", prefix, len(e.globals)))
+	append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s\n", name, definition))
+	e.constants[definition] = name
+	return name
 }
 
 // The address of a large zero, which takes no space in the file. `store` writes
@@ -541,8 +553,9 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 	return transmute(u64)f64(transmute(f32)pattern)
 }
 
-// The global backing array of a file-scope slice literal. Never shared: a
-// write through one `[]mut T` literal must not show up in another.
+// The global backing array of a file-scope slice literal. A `[]mut T` literal's
+// is never shared, since a write through one must not show up in another; a
+// read-only one's is shared with every literal of the same elements.
 @(private)
 slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
 	count := len(value.aggregate.elements)
@@ -575,11 +588,12 @@ slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info)
 		strings.write_string(&b, " ]")
 		contents = strings.to_string(b)
 	}
+	// Only a mutable literal's elements need storage of their own.
+	if !info.mutable {
+		return private_constant(e, "@.slice.", fmt.aprintf("%s%s", contents, align))
+	}
 	name := claim_name(e, fmt.aprintf("@.slice.%d", len(e.globals)))
-	append(&e.globals, fmt.aprintf(
-		"%s = private %s %s%s\n",
-		name, info.mutable ? "global" : "unnamed_addr constant", contents, align,
-	))
+	append(&e.globals, fmt.aprintf("%s = private global %s%s\n", name, contents, align))
 	return name
 }
 
@@ -731,8 +745,7 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 		}
 		from := value
 		if value[0] != '%' && value[0] != '@' {
-			from = claim_name(e, fmt.aprintf("@.aggregate.%d", len(e.globals)))
-			append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s\n", from, llvm_type(e, type), value))
+			from = private_constant(e, "@.aggregate.", fmt.aprintf("%s %s", llvm_type(e, type), value))
 		}
 		copy_bytes(e, address, from, size)
 		return
@@ -2149,13 +2162,10 @@ combine_and :: proc(e: ^Emitter, a, b: string) -> string {
 @(private = "file")
 emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	lhs := emit_expr(e, v.lhs)
+	// The left operand may have opened blocks of its own; the phi names the last.
+	entry_label := current_block(e, "sc.entry")
 	rhs_label := new_label(e, "sc.rhs")
 	done_label := new_label(e, "sc.done")
-	entry_label := new_label(e, "sc.entry")
-
-	// The phi needs a named incoming edge, and the left operand may have opened
-	// blocks of its own.
-	place_label(e, entry_label)
 	if v.op == .And_And {
 		branch_if(e, lhs, rhs_label, done_label)
 	} else {
@@ -2166,8 +2176,7 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	begin_conditional(e)
 	rhs := emit_expr(e, v.rhs)
 	end_conditional(e)
-	rhs_exit := new_label(e, "sc.rhs.exit")
-	place_label(e, rhs_exit)
+	rhs_exit := current_block(e, "sc.rhs.exit")
 	branch(e, done_label)
 
 	place_label(e, done_label)
@@ -2181,7 +2190,7 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	return out
 }
 
-// One arm of a conditional, ending in a block of its own for the phi to name.
+// One arm of a conditional, and the block it ends in, for the phi to name.
 @(private = "file")
 emit_cond_arm :: proc(
 	e: ^Emitter, label, exit_prefix: string, arm: Expr, as_type: Type_Id, clones: bool, joined, done: string,
@@ -2193,8 +2202,7 @@ emit_cond_arm :: proc(
 	if joined != "" {
 		store(e, as_type, value, joined)
 	}
-	exit = new_label(e, exit_prefix)
-	place_label(e, exit)
+	exit = current_block(e, exit_prefix)
 	branch(e, done)
 	return value, exit
 }

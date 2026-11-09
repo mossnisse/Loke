@@ -57,6 +57,8 @@ Emitter :: struct {
 	consuming_ops: map[Symbol_Id]bool,
 	container_thunks: map[string]bool,
 	literals: map[string]string,
+	// Private constant globals by type and initializer (`private_constant`).
+	constants: map[string]string,
 	// The LLVM intrinsics a call has declared, by name.
 	intrinsics: map[string]bool,
 	globals:  [dynamic]string,
@@ -158,6 +160,8 @@ Function_Emission :: struct {
 Function_State :: struct {
 	// Whether the current block already ends in a terminator.
 	terminated: bool,
+	// The current block's label, which a phi names for the edge leaving it.
+	block:      string,
 	// Set while writing a procedure's copy for `copy_cpu`, whose direct calls
 	// name copies too (compiler-architecture.md "CPU dispatch").
 	copying:    bool,
@@ -216,6 +220,7 @@ open_function :: proc(e: ^Emitter, format: string, args: ..any) {
 	fmt.sbprintf(&e.b, format, ..args)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
+	e.block = "entry"
 }
 
 // A synthesized member's header: its receiver at `%arg0`, after any `%sret`.
@@ -425,6 +430,7 @@ emit_proc_definition :: proc(
 	}
 	debug_mark_proc(e, symbol_id)
 	fmt.sbprintln(&e.b, "entry:")
+	e.block = "entry"
 	header := begin_generated_frame(e, llvm_name)
 
 	bind_parameters(e, symbol)
@@ -646,6 +652,17 @@ place_label :: proc(e: ^Emitter, label: string) {
 	branch(e, label)
 	fmt.sbprintfln(&e.b, "%s:", label)
 	e.terminated = false
+	e.block = label
+}
+
+// The current block, for a phi to name the edge leaving it. After a terminator,
+// what follows is unreachable and goes in a new block, which this opens.
+@(private)
+current_block :: proc(e: ^Emitter, prefix: string) -> string {
+	if e.terminated || e.block == "" {
+		place_label(e, new_label(e, prefix))
+	}
+	return e.block
 }
 
 @(private)

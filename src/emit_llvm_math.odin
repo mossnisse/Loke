@@ -147,7 +147,8 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		declare_intrinsic(e, "llvm.trap", "void", "")
 		fmt.sbprintln(&e.b, "  call void @llvm.trap()")
 		fmt.sbprintln(&e.b, "  unreachable")
-		fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
+		e.terminated = true
+		place_label(e, new_label(e, "unreachable"))
 		return "poison"
 	}
 	key := fmt.aprintf("llvm.fma.%s", intrinsic_type_suffix(llvm))

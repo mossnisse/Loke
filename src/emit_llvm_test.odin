@@ -1026,3 +1026,65 @@ long_literal_frames_do_not_grow :: proc(t: ^testing.T) {
 		testing.expectf(t, small == large, "%s: 20 entries left %v in the frame, 200 left %v", literal.open, small, large)
 	}
 }
+
+// A phi after `&&`, `||` or a conditional names the block each value leaves,
+// so no block is opened only to be named: none holds just a branch.
+@(test)
+short_circuit_phis_name_their_own_blocks :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+pick :: proc(a, b: int) -> int {
+    both := a > 0 && b > 0;
+    either := a > 0 || (b > 0 && a < b);
+    return (a if either else b) if both else b;
+}
+main :: proc() { _ = pick(1, 2); }
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	start := strings.index(module, "@loke.p.pick(")
+	if !testing.expect(t, start >= 0, "`pick` was not emitted") { return }
+	body := module[start:]
+	body = body[:strings.index(body, "\n}")]
+	lines := strings.split_lines(body, context.temp_allocator)
+	phis := 0
+	for line, index in lines {
+		phis += strings.contains(line, " = phi ") ? 1 : 0
+		if strings.has_suffix(line, ":") && index + 1 < len(lines) && strings.has_prefix(lines[index + 1], "  br label %") {
+			testing.expectf(t, false, "block `%s` only branches", line)
+		}
+	}
+	testing.expect_value(t, phis, 5)
+}
+
+// Every use of the same large constant copies from one private global, as every
+// use of the same text reads one literal.
+@(test)
+equal_constants_share_one_global :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+TABLE :: [1024]int{1, 2, 3, 4};
+VIEW := []int{5, 6, 7};
+OTHER := []int{5, 6, 7};
+main :: proc() {
+    first := TABLE;
+    second := TABLE;
+    _ = first[1] + second[2] + VIEW[0] + OTHER[0];
+}
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	tables, views := 0, 0
+	for line in strings.split_lines(module, context.temp_allocator) {
+		if strings.contains(line, "= private unnamed_addr constant [1024 x i64]") { tables += 1 }
+		if strings.contains(line, "= private unnamed_addr constant [3 x i64]") { views += 1 }
+	}
+	testing.expectf(t, tables == 1, "%d globals hold `TABLE`", tables)
+	testing.expectf(t, views == 1, "%d globals hold the read-only slice literals", views)
+}

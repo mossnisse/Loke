@@ -393,8 +393,7 @@ emit_diverging_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	if as_type == INVALID_TYPE || as_type == TYPE_VOID {
 		return "0"
 	}
-	fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
-	e.terminated = false
+	place_label(e, new_label(e, "unreachable"))
 	return "undef"
 }
 
