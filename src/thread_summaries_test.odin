@@ -21,17 +21,6 @@ summarized :: proc(t: ^testing.T, p: ^Checked, body: string) -> bool {
 	return testing.expectf(t, p.c.error_count == 0, "provenance rejected the program: %v", p.c.diagnostics[:])
 }
 
-@(private = "file")
-symbol_named :: proc(t: ^testing.T, p: ^Checked, name: string, kind: Symbol_Kind) -> Symbol_Id {
-	for sym, index in p.c.symbols {
-		if sym != nil && sym.kind == kind && identifier_text(&p.c, sym.name) == name {
-			return Symbol_Id(index)
-		}
-	}
-	testing.expectf(t, false, "`%s` was not found", name)
-	return INVALID_SYMBOL
-}
-
 // Where `procedure`'s reach effect has `global`, if it does.
 @(private = "file")
 reach_of :: proc(t: ^testing.T, p: ^Checked, procedure, global: string) -> (Effect_Source, bool) {

@@ -221,10 +221,7 @@ main :: proc() { assert(value() == 78); }
 	// Swap the written keys; both consumers must keep the checked slots.
 	literal.elements[0].key.(^Expr_Ident).name = "first"
 	literal.elements[1].key.(^Expr_Ident).name = "second"
-	call: Expr_Call
-	call.type = TYPE_INT
-	call.resolution = Resolution{kind = .Call, symbol = value_decl.symbols[0]}
-	call.operation = Call_Procedure{}
+	call := int_call_of(value_decl.symbols[0])
 	checker := Checker{c = c}
 	value, evaluated := require_const(&checker, &call, "test result")
 	testing.expect(t, evaluated && bi_eq_i64(c, value.integer, 78), "CTFE repeated field lookup")
@@ -519,16 +516,7 @@ main :: proc() { assert(lookup() == 7); }
 		}
 		type_of(c, key).members = members[:]
 	}
-	lookup: Symbol_Id
-	for symbol, index in c.symbols {
-		if symbol.kind == .Proc && identifier_text(c, symbol.name) == "lookup" {
-			lookup = Symbol_Id(index)
-		}
-	}
-	call: Expr_Call
-	call.type = TYPE_INT
-	call.resolution = Resolution{kind = .Call, symbol = lookup}
-	call.operation = Call_Procedure{}
+	call := int_call_of(symbol_named(t, &p, "lookup", .Proc))
 	checker := Checker{c = c}
 	value, evaluated := require_const(&checker, &call, "test result")
 	testing.expect(t, evaluated && bi_eq_i64(c, value.integer, 7), "CTFE repeated member lookup")

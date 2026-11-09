@@ -123,6 +123,27 @@ destroy_checked :: proc(p: ^Checked) {
 	destroy_compilation(&p.c)
 }
 
+// The `kind` symbol `name` in a checked program; a missing one fails `t`.
+symbol_named :: proc(t: ^testing.T, p: ^Checked, name: string, kind: Symbol_Kind) -> Symbol_Id {
+	for sym, index in p.c.symbols {
+		if sym != nil && sym.kind == kind && identifier_text(&p.c, sym.name) == name {
+			return Symbol_Id(index)
+		}
+	}
+	testing.expectf(t, false, "`%s` was not found", name)
+	return INVALID_SYMBOL
+}
+
+// A checked call of `procedure`, which takes nothing and returns an `int`, for
+// evaluating it directly.
+int_call_of :: proc(procedure: Symbol_Id) -> Expr_Call {
+	call: Expr_Call
+	call.type = TYPE_INT
+	call.resolution = Resolution{kind = .Call, symbol = procedure}
+	call.operation = Call_Procedure{}
+	return call
+}
+
 test_compiler :: proc(text: string) -> Compiler {
 	c: Compiler
 	add_source(&c, "<test>", text)
