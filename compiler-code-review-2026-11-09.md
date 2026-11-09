@@ -2261,6 +2261,11 @@ The backend is careful and well commented. Ownership, unwind registration, large
 7. **Track the current block label in `Function_State`.** (Done: `current_block`; `short_circuit_phis_name_their_own_blocks`.) The phis in `emit_short_circuit` (expr.odin:2142-2163) and `emit_cond_arm` (expr.odin:2188-2191) could then name their incoming block directly, instead of opening an empty `sc.entry`/`sc.rhs.exit`/`cond.*.exit` block just to have a name. That is about 2 to 3 empty blocks per `&&`, `||`, or `?:`, which survive at `-opt=none`. Saves about 10 lines and a lot of IR.
 8. **Intern private constant globals.** (Done: `private_constant`, for the three constant sites; `equal_constants_share_one_global`.) `const_operand` (expr.odin:500), `store`'s `@.aggregate.N` (expr.odin:722), and `slice_literal_storage` (only its immutable form) create a new global at every use of the same large or imaged constant. `text_literal_global` already interns by text through `e.literals`. Keying a map on `type + initializer text` (or `type + value_type`) shrinks the IR and the `-opt=none` output; `unnamed_addr` only lets the optimizer merge them later. Folding all four sites into one `private_constant(e, prefix, type_text, init, align) -> name` also removes about 12 duplicated lines.
 
+   Left after the review of `6b54a4d1`:
+   - `private_constant` takes one `definition` string that each caller formats, and the callers disagree: `const_operand`'s includes the alignment and `store`'s `@.aggregate.` one does not, so the same constant reached both ways gets two globals. Its name takes the prefix of whichever site asked first, so a slice literal can come back as `@.image.N`. The signature above fixes both.
+   - The mutable branch of `slice_literal_storage` and `large_zero` still write their own `claim_name` and `append`. `large_zeros` lives in `Function_State`, so every function that needs a large zero writes its own global, while `constants` is module-wide; moved to `Emitter`, one global per type would serve the module.
+   - No test checks that two `[]mut T` literals of the same elements keep separate storage, the one sharing interning must not do. A phi whose arm diverges is covered only by `tests/run/diverging.loke`, not by an IR test.
+
 ### Per-file findings
 
 #### src/emission_contract.odin
