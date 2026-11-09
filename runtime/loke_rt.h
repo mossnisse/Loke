@@ -609,8 +609,8 @@ LOKE_RT_FAILURE void loke_rt_v1_abort(const char *what);
 
 /* Internal: the runtime's writes to standard error, and `core:fmt`'s. A process
  * with none, such as a windowed executable started outside a terminal, sends
- * each line to an attached debugger instead (design.md "Windowed
- * executables"). `flush` also sends a partial line, and `end_thread` sends
+ * each line to an attached debugger instead (compiler-guide.md
+ * "Windowed programs"). `flush` also sends a partial line, and `end_thread` sends
  * only that, for a detaching thread. */
 void loke_rt_err_write(const char *bytes, size_t count);
 void loke_rt_err_puts(const char *text);

@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "Copy-cost diagnostics": at the default threshold, a copy that may
+// compiler-guide.md "Copy-cost diagnostics": at the default threshold, a copy that may
 // allocate reports as a clone whatever its inline size, in every copying
 // context. A copy last-use transfer makes a move is not one, a written
 // `clone()` is the intended copy, and a `string` copy retains its storage.

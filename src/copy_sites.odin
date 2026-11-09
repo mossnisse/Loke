@@ -233,7 +233,7 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
 
 // ------------------------------------------------------- copy-cost report --
 
-// A point that duplicates a value instead of moving or borrowing it (design.md "Copy-cost diagnostics").
+// A point that duplicates a value instead of moving or borrowing it (compiler-guide.md "Copy-cost diagnostics").
 Copy_Site :: enum {
 	Argument,
 	Binding,
@@ -425,7 +425,7 @@ held_copy_is_made :: proc(held: Held_Copy_Report) -> bool {
 
 // design.md "Iteration adapters": an adapter over a mutable view keeps its own copy of the
 // source, which its call makes unless `foreach` peels it, and which is costed as any copy
-// is (design.md "Copy-cost diagnostics").
+// is (compiler-guide.md "Copy-cost diagnostics").
 record_adapter_copy :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 	if chosen == nil || chosen.synth != .Adapter_View || len(v.bound) != 1 || !committing(k.c) {
 		return

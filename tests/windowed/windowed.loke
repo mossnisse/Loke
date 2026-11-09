@@ -1,4 +1,4 @@
-// design.md "Windowed executables": linked for the GUI subsystem, so a process
+// compiler-guide.md "Windowed programs": linked for the GUI subsystem, so a process
 // started without standard handles has none, and what it writes to standard
 // error reaches a debugger instead. The argument picks how the program ends.
 @(subsystem = "windows")

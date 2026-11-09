@@ -10,7 +10,7 @@ import "core:fmt"
 @(private = "file")
 BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"`
 
-// design.md "Executable startup ABI": `wmain` initializes the arguments, the
+// compiler-guide.md "C runtime": `wmain` initializes the arguments, the
 // thread, and the providers, in that order, then calls `main`.
 //
 // compiler-guide.md "CPU levels": above baseline, `wmain` itself is baseline

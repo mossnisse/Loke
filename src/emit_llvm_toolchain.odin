@@ -163,7 +163,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	if bitcode {
 		append(&command, "-flto", "-fuse-ld=lld")
 	}
-	// design.md "Windowed executables": the CRT's own entry still starts the
+	// compiler-guide.md "Windowed programs": the CRT's own entry still starts the
 	// process and calls the generated `wmain`, so only the subsystem changes. A
 	// test build stays a console program, whose report a terminal shows.
 	if c.build_mode == .Exe && root_subsystem(c) == .Windows {

@@ -1,5 +1,5 @@
-// The Windows subsystem an executable is linked for: design.md "Windowed
-// executables".
+// The Windows subsystem an executable is linked for: design.md
+// "@(subsystem=<string>)".
 package lokec
 
 Subsystem :: enum {
@@ -34,7 +34,7 @@ parse_subsystem :: proc(text: string) -> (Subsystem, bool) {
 	return .Console, false
 }
 
-// design.md "Windowed executables": once across the root package's files, and a
+// design.md "@(subsystem=<string>)": once across the root package's files, and a
 // known value. An imported package is `validate_root_only_attributes`' to
 // reject, and a malformed value `validate_attribute_list`'s.
 validate_subsystem_attributes :: proc(k: ^Checker, pkg: ^Package) {

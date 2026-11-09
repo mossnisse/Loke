@@ -1,4 +1,4 @@
-// design.md "Windowed executables": one choice for the program, so the root
+// design.md "@(subsystem=<string>)": one choice for the program, so the root
 // package writes it on one file only, even when both files agree.
 @(subsystem = "windows")
 package main;

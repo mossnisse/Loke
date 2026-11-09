@@ -1,4 +1,4 @@
-// design.md "Windowed executables": the value is a string.
+// design.md "@(subsystem=<string>)": the value is a string.
 @(subsystem = windows)
 package main;
 

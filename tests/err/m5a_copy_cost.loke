@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "Copy-cost diagnostics" (m5a-plan step 5). "A copy site is a point
+// compiler-guide.md "Copy-cost diagnostics" (m5a-plan step 5). "A copy site is a point
 // that duplicates a value instead of moving or borrowing it": a trivial
 // aggregate copied into a `value: T` parameter, a binding, an assignment, the
 // return of a borrowed managed owner by value, a place operand of `or_else` or

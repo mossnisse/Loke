@@ -886,7 +886,55 @@ owes nothing at its end rewinds there (`unwind_rewind`), and the next element's
 drops take the same actions in order (`unwind_reuse`). Any other reservation
 ends the reuse.
 
+### CPU dispatch
+
+A procedure marked [`@(cpu_dispatch)`](design.md#cpu_dispatchstring), in a
+build below the named level, is emitted twice: once for the build's level, and
+once for the named level, and that copy's direct calls, including a
+`foreach`'s `iter` and `next` and the `hook(drop)` at a scope's end, reach
+copies of their callees for the same level, made the same way. A call to the
+procedure, direct or through a procedure value, asks once per process whether
+the processor has the level and runs one copy or the other. A call a copy makes
+through a procedure value or a `dyn` value reaches the procedure as written, and
+so does one in code shared between levels, such as a generated copy of a value,
+a container's drop of its elements, or a task's start.
+
+A procedure that is also [`@(cold)`](design.md#cold) is cold in both of its
+copies, and so is the dispatch between them. A callee that a copy takes with it
+is cold only if it is marked itself.
+
 ### Intrinsic declarations
+
+A few names in the bundled packages are the compiler's own: a type the region
+checker has to recognize, such as `mem.Arena`, one that must be the same type as
+a predeclared name, such as `mem.Allocator`, or an operation no signature can
+type, such as `unsafe.transmute`. [`@(intrinsic)`](design.md#intrinsic)
+declares such a name in its package's source without defining it, so that its
+signature and doc comment are written once, beside the package's other
+declarations, and appear in [`-doc` and the interface
+file](compiler-guide.md#interface-files):
+
+```loke
+/// What a region does when one of its own allocations fails.
+@(intrinsic)
+Failure_Policy :: enum { Panic, Trap }
+
+/// A local bump region, provider-backed or laid over a caller's buffer.
+@(intrinsic)
+Arena :: ---;
+
+impl Arena {
+	@(intrinsic)
+	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+}
+```
+
+The declaration describes what the compiler supplies and adds nothing: importers
+and the package's own code see the name exactly as the compiler defines it. A
+procedure ends with `---`, as a foreign one does. A type is written `---`, or
+spelled out as an `enum` with its members and no values, or as a `struct` with
+its public fields. Members the compiler supplies to such a type are declared in
+an `impl` block of the type that holds only `@(intrinsic)` members.
 
 What a declaration states is checked against what it describes (`L0736`). Its
 visibility must be the supplied name's, since it is what `-doc` shows. A

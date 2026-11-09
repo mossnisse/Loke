@@ -69,6 +69,23 @@ as apart, as for a fresh borrow of the whole array. The
 [store matrix](tests/carrier_store_matrix_test.odin) pins that. Adding it to the wording
 would settle both together.
 
+### Carrier and region tracking as principles
+
+A review of design.md on 2026-11-09 found that [Carrier
+tracking](design.md#carrier-tracking) and [Region
+tracking](design.md#region-tracking), about 95 lines, list cases one by one
+(nested carriers, box payloads, map keys and values, literal container elements,
+`inout` and variadic arguments, `or_else` and `or_return` payloads, widening,
+unboxing, shared payloads) where a few general rules might cover them: every
+copy, projection, wrap, and unwrap keeps the value's carrier paths and region
+dependencies, a write replaces only the storage it is known to reach, and an
+unresolved target keeps its uncertainty. Each case was likely added beside a
+fix, so a rewrite must show that the general rules imply every listed case, and
+reject nothing they now accept, before it replaces them. The two sections are
+normative, so this is a careful restatement, not a cut; the
+[borrow matrix](tests/borrow_matrix_test.odin) and the
+[store matrix](tests/carrier_store_matrix_test.odin) are the checks for it.
+
 ## Literal elements that lend a temporary to a call
 
 A container literal's element that hands an address to a call keeps its large

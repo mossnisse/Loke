@@ -219,7 +219,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return FLOWS
 
 	case ^Decl:
-		// design.md "`@(intrinsic)`": a local one describes nothing, and a type
+		// compiler-architecture.md "Intrinsic declarations": a local one describes nothing, and a type
 		// written `---` has no value to check.
 		if attribute, found := find_attribute(s.attributes, "intrinsic"); found {
 			report_misplaced_intrinsic(k, attribute.span)

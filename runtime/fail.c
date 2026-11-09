@@ -17,7 +17,7 @@ __declspec(dllimport) int MultiByteToWideChar(
 
 #define CP_UTF8 65001u
 
-/* design.md "Windowed executables": a process started without a standard
+/* compiler-guide.md "Windowed programs": a process started without a standard
  * error, as a windowed one is from Explorer, has none to write to: the C
  * library gives it descriptor -2 and drops what is written. Its text goes to an
  * attached debugger instead, a line at a time, since each `OutputDebugStringW`

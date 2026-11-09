@@ -3574,7 +3574,7 @@ prompt(label: string_view, allocator := mem.default_allocator(),
 `Input` satisfies `io.Reader`; `Output` satisfies `io.Writer`. These lightweight
 values do not own and cannot close the process standard handles. They work when
 the handles are redirected to pipes or files. A process may have none, as a
-[windowed executable](design.md#windowed-executables) started from Explorer
+[windowed program](compiler-guide.md#windowed-programs) started from Explorer
 does; writing to an absent handle returns an error.
 
 Standard output and standard error carry exactly the bytes a program writes,
@@ -3722,7 +3722,11 @@ process-lifetime argument vector. Its zero value denotes the whole vector.
 | `os.view_at(i)` | the same borrow by index; an index out of range panics |
 
 Indexing copies an owning string; iteration borrows runtime-owned bytes valid
-for the process lifetime. For immediate termination without cleanup, see
+for the process lifetime. The executable's startup converts the native
+arguments to UTF-8 before `main` runs; on Windows, an unpaired UTF-16 surrogate
+becomes U+FFFD. An [object build](compiler-guide.md#building-an-object-for-a-c-host)
+has no startup of its own, so its `os.args` is empty. For immediate termination
+without cleanup, see
 [`os.exit`](design.md#program-entry-and-exit).
 
 ## `core:process`
@@ -4380,7 +4384,7 @@ made with. `zeros`, `filled`, `identity`, `from_view`, `from_column_major`,
 program's. `rows()`, `columns()`, `m[r, c]`, and `m[r, c] = x` read and write
 it, `to_fixed(R, C)` copies it to a `linalg.Matrix`, and `format` prints it by
 rows as `linalg` does. A copy clones the storage, which the
-[copy-cost diagnostic](design.md#copy-cost-diagnostics) reports; `clone(allocator)`
+[copy-cost diagnostic](compiler-guide.md#copy-cost-diagnostics) reports; `clone(allocator)`
 chooses where. There are no operators: each result of `a * b + c` would be
 allocated from an allocator the expression cannot name.
 

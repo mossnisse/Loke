@@ -79,7 +79,7 @@ source_provider_slot :: proc(attribute: Attribute) -> (Provider_Slot, bool) {
 	return .Allocator, false
 }
 
-// design.md "Selecting a provider", "Windowed executables": only the root
+// design.md "Selecting a provider", "@(subsystem=<string>)": only the root
 // package picks a provider or the subsystem, so an import cannot change either.
 validate_root_only_attributes :: proc(k: ^Checker, pkg: ^Package, file: ^File) {
 	if pkg.id == k.c.root_package {

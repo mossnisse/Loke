@@ -69,7 +69,7 @@ static char *to_utf8(const uint16_t *wide) {
 void loke_rt_v1_args_init(int32_t argc, const uint16_t **argv) {
 	int32_t index;
 	/* A windowed process started outside a terminal has neither: descriptor
-	 * -2 (design.md "Windowed executables"). */
+	 * -2 (compiler-guide.md "Windowed programs"). */
 	if (_fileno(stdout) >= 0) {
 		_setmode(_fileno(stdout), _O_BINARY);
 	}

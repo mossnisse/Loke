@@ -1185,7 +1185,7 @@ checklist.
   documents this and which builds of a foreign library match it. A foreign import of an object or
   static library compiled for another runtime, as `/MD`, `/MDd`, or `/MTd` select, now warns with
   `L0755` and names the library: the build links both runtimes, and neither linker said so.
-- [`@(subsystem = "windows")`](design.md#windowed-executables) on the root package clause links a
+- [`@(subsystem = "windows")`](design.md#subsystemstring) on the root package clause links a
   windowed executable, one that gets no console window, for a game or other GUI program. `main`,
   `os.args` and the exit status are unchanged, and a `-test` build stays a console program. A
   process with no standard error, such as a windowed one started from Explorer, sends what
@@ -1522,6 +1522,15 @@ checklist.
 
 ### Changed
 
+- The specification no longer describes this compiler's own behavior. Copy-cost warnings, the
+  executable's entry and runtime symbol names, what a windowed program's standard handles are,
+  the assemblers, and the `-debug` foreign-call check moved to
+  [compiler-guide.md](compiler-guide.md#copy-cost-diagnostics); its diagnostic codes were
+  dropped from design.md, which names what each diagnostic reports; and how `@(cpu_dispatch)` copies
+  callees and how `@(intrinsic)` declarations are written to
+  [compiler-architecture.md](compiler-architecture.md#cpu-dispatch). Nothing a program means
+  changed. [`unsafe.transmute`](design.md#unsafetransmute) no longer calls a union's tag encoding
+  unspecified, since [Representation](design.md#representation) specifies it.
 - A thread the runtime did not start attaches itself the first time it calls a Loke export or a
   callback Loke handed to C
   ([Values that outlive every scope](design.md#values-that-outlive-every-scope)), so code on a
@@ -2214,7 +2223,7 @@ checklist.
   could run on a value already dropped, and the replacement could leak.
 - `-copy-cost` no longer warns of a copy of a move-only type, beside the error that it cannot be
   copied, or by size of a `string` or `Shared(T)`, whose copy only retains
-  ([Copy-cost diagnostics](design.md#copy-cost-diagnostics)).
+  ([Copy-cost diagnostics](compiler-guide.md#copy-cost-diagnostics)).
 - A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
   by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
 - `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`

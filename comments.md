@@ -806,7 +806,7 @@ For one non-generic callback type, use a borrowed callable view.
 
 ### The subsystem is chosen in source
 
-Whether an executable is [windowed](design.md#windowed-executables) belongs to
+Whether an executable is [windowed](design.md#subsystemstring) belongs to
 the program: a game is a windowed program in every build of it. A compiler
 option, Odin's `-subsystem:windows`, would leave every build script, editor task
 and contributor's command line to remember it, and forgetting it brings back

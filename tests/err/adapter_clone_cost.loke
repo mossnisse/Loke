@@ -1,5 +1,5 @@
 // design.md "Iteration adapters": an adapter's view keeps its own copy of a mutable view,
-// which is reported as any other copy is (design.md "Copy-cost diagnostics"): a clone that
+// which is reported as any other copy is (compiler-guide.md "Copy-cost diagnostics"): a clone that
 // may allocate whatever its size, and any other by its bytes. A loop that takes the adapter
 // apart makes no view, and copies nothing. `copied()` borrows its source, so it copies
 // nothing however it is used.

@@ -75,7 +75,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
 | `-collection name=path` | Map an import prefix to a directory; `-collection:name=path` is the same. Repeat for different prefixes. |
-| `-copy-cost=N` | Warn about copies that may allocate, and about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable both. |
+| `-copy-cost=N` | Warn about copies that may allocate, and about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable both. See [Copy-cost diagnostics](#copy-cost-diagnostics). |
 | `-build-mode=exe\|obj\|test` | Produce an executable (default), one relocatable object, or a test executable without running it. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
@@ -84,7 +84,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment is a `///` line or a `/** */` block; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
 | `-api`, `-api-check` | Write the [interface file](#interface-files) `api.loki` in the directory of the root package and of each package of the project it imports, and stop; `-api-check` writes nothing, lists the interface files `-api` would change, and exits 1 if there are any. The input must be a directory. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value a `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
-| `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
+| `-debug` | Set `LOKE_DEBUG` to `true`, and check each call to a foreign procedure, or through a procedure value with a foreign calling convention: one that returns with the [floating-point environment](design.md#floating-point-operators) changed panics, naming the procedure. It does not imply `-g`, and `-g` does not imply it. |
 
 Under `-g`, 128-bit integers and enums are shown as two unsigned 64-bit fields,
 `low` and `high`. Signed values use two's complement; this avoids CodeView's
@@ -95,6 +95,35 @@ For an optimized executable:
 ```powershell
 .\lokec.exe examples\word_frequency.loke -opt=speed -o word_frequency.exe
 ```
+
+## Copy-cost diagnostics
+
+`-copy-cost` warns about costly copies of aggregates and managed owners. The
+warnings are not part of the language: a program means the same with them on
+or off. They cover every copy [the ownership
+rule](design.md#value-semantics-and-the-ownership-rule) makes: bindings,
+assignments, argument copies, returns, place operands and fallbacks of
+[`or_else` or `or_return`](design.md#operator-ownership), [aggregate
+literal](design.md#struct-literals) elements, [variant](design.md#unions)
+payloads, [container insertion](design.md#container-insertion), variadic pack
+elements, and [`copied()`](design.md#iteration-adapters) calls.
+
+A warning names what a copy costs. A copy that may allocate (of a container, of
+a record with a [`hook(copy)`](design.md#lifecycle-hooks-and-resource-types), or
+of anything holding one) reports as a clone whatever its inline size, since its
+inline bytes say nothing of what it duplicates. A copy that retains storage, of
+a [`string`](design.md#string-type) or [`Shared(T)`](design.md#shared-ownership),
+is not costly. Any other copy is measured by the inline bytes it duplicates. A
+copy that [last-use transfer](design.md#last-use-transfer) makes a move is not
+reported, and neither is a written `clone()`, which states the copy is
+intended.
+
+Converting an operand to a destination type is not itself a copy:
+`fmt.print(count)` views an `int` as a borrowing `dyn fmt.Formattable`,
+duplicating nothing. Ordinary `value: T` parameters borrow managed owners for
+the call and are not copies either. Nor is an [iteration
+adapter](design.md#iteration-adapters)'s copy of its source when a `foreach` is
+written directly over the adapter.
 
 ## CPU levels
 
@@ -405,16 +434,23 @@ every build of it gets the same:
 package main;
 ```
 
-`lokec` then links the executable for the Windows GUI subsystem. Nothing else
-changes: `main`, `os.args` and the exit status work as before. A `-test` build
-of the package is still a console program.
+`lokec` then links the executable for the Windows GUI subsystem, rather than the
+console subsystem `"console"`, the default, selects. Nothing else changes:
+`main`, `os.args` and the exit status work as before. A `-test` build of the
+package is still a console program, so a terminal shows its report, and an
+object build's host links its own. The attribute's rules are in
+[`@(subsystem)`](design.md#subsystemstring).
 
-Started from Explorer, the program has no standard output or error. What it
-prints to standard output is dropped. What it writes to standard error, a panic
-report included, goes to an attached debugger, which Visual Studio's Output
-window and Sysinternals DebugView show. To keep the
-output instead, redirect it: `.\demo.exe > out.txt 2> err.txt`. See
-[Windowed executables](design.md#windowed-executables).
+A windowed program started from a terminal does not share it, and one started
+from Explorer has no standard output or error. What it prints to standard
+output is dropped. What `core:fmt` and the runtime write to standard error, a
+panic report included, goes to an attached debugger instead, one line at a time
+(through `OutputDebugString`), which Visual Studio's Output window and
+Sysinternals DebugView show. Neither changes the program's behavior or its exit
+status. [`core:term`](standard-library.md#standard-byte-streams-and-line-input)
+writes the handles directly, so its writes report an error instead. To keep the
+output, redirect it: `.\demo.exe > out.txt 2> err.txt`; a program started with
+redirected handles writes to them as any program does.
 
 ## Inspecting a compilation
 
@@ -461,6 +497,12 @@ after the command.
 An executable links Microsoft's static C runtime, the one the MSVC compiler's
 `/MT` selects. It needs no DLL beyond the ones Windows itself provides, so it
 runs on a machine without the Visual C++ redistributable.
+
+The Loke runtime's symbols all begin with `loke_rt_`, and an executable's entry
+is `wmain`, which converts the arguments, attaches the initial thread,
+initializes the providers, and calls `main`. An
+[`@(export)`](design.md#export) may not use the `loke_rt_` prefix, and an
+executable or test build may not export `wmain`.
 
 A foreign library compiled for a different C runtime brings that runtime with
 it, and the program then holds two, each with its own heap, `errno`, and

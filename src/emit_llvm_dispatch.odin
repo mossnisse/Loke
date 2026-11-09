@@ -1,4 +1,4 @@
-// design.md "@(cpu_dispatch=<string>)": a procedure marked for a level above the
+// compiler-architecture.md "CPU dispatch": a procedure marked for a level above the
 // build's is written twice, once as usual and once for that level, together
 // with every procedure the level's copy calls directly. Its own name becomes a
 // dispatcher at the build's level, which asks the runtime once whether the
@@ -90,7 +90,7 @@ emit_dispatched_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_P
 	inout := result_inout_of(e, symbol.proc_type)
 	result := llvm_result_type(e, symbol.result, inout)
 	arguments := loke_param_list(e, symbol, inout)
-	// design.md "@(cold)": a call to a cold procedure is a call to its dispatcher.
+	// compiler-architecture.md "CPU dispatch": a call to a cold procedure is a call to its dispatcher.
 	open_function(e, "define %s%s %s(%s)%s", llvm_linkage(llvm_name), result, llvm_name, arguments, cold_attributes(symbol))
 	fmt.sbprintfln(&e.b, "  %%has = call i1 %s()", check)
 	fmt.sbprintln(&e.b, "  br i1 %has, label %copy, label %plain")

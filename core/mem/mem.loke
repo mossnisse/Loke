@@ -14,7 +14,7 @@
 @(public)
 package mem;
 
-// design.md "`@(intrinsic)`": the compiler supplies every name below
+// compiler-architecture.md "Intrinsic declarations": the compiler supplies every name below
 // (`src/stdlib.odin`) and checks what each declaration states. `Arena` and
 // `Scratch` are compiler-owned because the region lattice has to *recognise*
 // them, not merely call them: a region created here is one this body may reset

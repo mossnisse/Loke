@@ -1,4 +1,4 @@
-// design.md "Windowed executables": what `@(subsystem="windows")` links, and
+// compiler-guide.md "Windowed programs": what `@(subsystem="windows")` links, and
 // where a windowed process's standard error goes when it has none.
 package tests
 

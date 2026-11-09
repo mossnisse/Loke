@@ -7,7 +7,7 @@ import "core:mem/virtual"
 // session's configuration.
 Compilation_Settings :: struct {
 	// An option rather than a rule, because it is target-specific and not part of
-	// the language (design.md "Copy-cost diagnostics"). A copy site reports when it
+	// the language (compiler-guide.md "Copy-cost diagnostics"). A copy site reports when it
 	// duplicates at least this many inline bytes, or when its clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,

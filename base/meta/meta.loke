@@ -13,7 +13,7 @@
 package meta;
 
 // The compiler contributes all three (`src/stdlib.odin`), and checks each
-// declaration below against its public fields (design.md "`@(intrinsic)`").
+// declaration below against its public fields (compiler-architecture.md "Intrinsic declarations").
 
 /**
 	A record field, as `fields_of` produces it: its name, its declared type,

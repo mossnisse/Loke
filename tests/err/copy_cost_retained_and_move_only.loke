@@ -1,4 +1,4 @@
-// design.md "Copy-cost diagnostics": a copy that retains storage, of a `string` or
+// compiler-guide.md "Copy-cost diagnostics": a copy that retains storage, of a `string` or
 // a `Shared(T)`, is not costly, however low the threshold. A move-only type has no
 // copy to cost, so the error that it cannot be copied is the whole report, even
 // where it holds a container.

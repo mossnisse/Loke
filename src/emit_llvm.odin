@@ -60,7 +60,7 @@ Emitter :: struct {
 	// The LLVM intrinsics a call has declared, by name.
 	intrinsics: map[string]bool,
 	globals:  [dynamic]string,
-	// design.md "@(cpu_dispatch=<string>)": every procedure body by symbol, the
+	// compiler-architecture.md "CPU dispatch": every procedure body by symbol, the
 	// copies for a higher level by name, those still to write, and each level's
 	// processor check (`src/emit_llvm_dispatch.odin`).
 	bodies:           map[Symbol_Id]^Expr_Proc,
@@ -159,7 +159,7 @@ Function_State :: struct {
 	// Whether the current block already ends in a terminator.
 	terminated: bool,
 	// Set while writing a procedure's copy for `copy_cpu`, whose direct calls
-	// name copies too (design.md "@(cpu_dispatch=<string>)").
+	// name copies too (compiler-architecture.md "CPU dispatch").
 	copying:    bool,
 	copy_cpu:   Cpu_Level,
 	// INVALID_TYPE, with an empty `result_slot`, when there is no result.

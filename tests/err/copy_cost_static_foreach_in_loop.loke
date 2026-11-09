@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Copy-cost diagnostics": a copy in a static `foreach` expansion
+// compiler-guide.md "Copy-cost diagnostics": a copy in a static `foreach` expansion
 // inside a runtime loop runs on every iteration of that loop, so its report
 // says so. The expansion is still no loop for `break` and `continue`, even
 // inside a runtime one.

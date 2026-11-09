@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Copy-cost diagnostics": a container operation's `value: T` parameter
+// compiler-guide.md "Copy-cost diagnostics": a container operation's `value: T` parameter
 // is a copy site like any other; only the inserted element reports as the insertion
 // it is, once.
 

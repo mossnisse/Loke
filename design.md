@@ -1932,9 +1932,9 @@ low, high := geom.bounds();     // fine: `bounds` returns `(low: int, high: int)
 Ownership follows the operand's category, exactly as every other binding does:
 
 - A **place** clones. `x, y := point` copy-initializes each binding and `point`
-  stays live and drops normally. Each retained field must be copyable, and the
-  copy-cost diagnostic applies per cloned field. This projects fields; it does
-  not call the containing record's copy hook.
+  stays live and drops normally. Each retained field must be copyable, and each
+  is a copy of its own. This projects fields; it does not call the containing
+  record's copy hook.
 - A **temporary** or `move(...)` consumes. Retained fields transfer without
   cloning. The containing record must have neither a custom `hook(copy)` nor a
   custom `hook(drop)`: decomposing a value whose hooks own its lifecycle is
@@ -1960,7 +1960,7 @@ untouched.
 // The temporary is consumed: nothing is cloned.
 name, bytes := read_document(path) or_return;
 
-// The place is cloned, and the copy-cost diagnostic reports it.
+// The place is cloned.
 doc := read_document(path) or_return;
 doc_name, doc_bytes := doc;
 ```
@@ -3802,10 +3802,10 @@ view it can walk mutably, each is a mutable view, holding a copy of its source;
 `reversed()` walks one mutably only through its `iter_mut_reverse`. Over a
 container, or a mutable view it cannot walk mutably or that cannot be copied, each
 is a read-only view that borrows its source. Such a copy of a source
-is a [copy site](#copy-cost-diagnostics), costed as any other copy, unless a `foreach`
-is written directly over the adapter, which makes none. `copied()` is a read-only
+is an ordinary copy, unless a `foreach` is written directly over the adapter,
+which makes none. `copied()` is a read-only
 view over every source and borrows a mutable view, another adapter's included, as
-it does a container, so it makes no copy site. `copied()` turns a borrowed leaf into an owned one, cloning
+it does a container, so it copies no source. `copied()` turns a borrowed leaf into an owned one, cloning
 it with the element's own copy hook, allocator selection, and failure behavior;
 a loop never copies an element on its own. An already-owned leaf passes through
 uncloned. It rejects a non-copyable borrowed leaf and an `&mut` leaf.
@@ -4904,8 +4904,7 @@ which must be copyable, and is handed a temporary or `move(x)`.
 Whether a place is copied or a temporary transferred changes what an expression
 costs, never what it computes, provided the type's copy hook preserves its
 source's value as [Lifecycle hooks and resource
-types](#lifecycle-hooks-and-resource-types) requires. Optional [copy-cost
-diagnostics](#copy-cost-diagnostics) can report costly copies.
+types](#lifecycle-hooks-and-resource-types) requires.
 
 #### Last-use transfer
 
@@ -5786,15 +5785,12 @@ convention](#calling-conventions), such as an [export](#export) or a callback
 handed to C, may be called from foreign code in another environment: it then
 establishes Loke's for its body and restores its caller's rounding mode,
 treatment of subnormals, and exception handling when it returns. So do the
-entries a build provides its host, `loke_rt_v1_program_init` and the
-thread-local cleanup `loke_rt_v1_thread_detach` runs. Which
+entries a build provides its host: the provider initializer, and the
+thread-local cleanup a thread detach runs. Which
 exception flags are raised afterwards is unspecified. Foreign code that Loke
 calls and that changes any of these must restore them before it returns to
 Loke; floating-point results computed in another environment are
-unspecified. With [`-debug`](compiler-guide.md#common-options), a call to a
-foreign procedure, or through a procedure value with a foreign calling
-convention, that returns with the environment changed panics, naming the
-procedure.
+unspecified.
 
 Floating-point operations are not contracted or reassociated. Each operation the
 source writes is evaluated and rounded on its own, so `a*b + c` is a
@@ -6247,7 +6243,7 @@ runs, not when registered; it is equivalent to
 `errdefer` is a `defer` that runs only when the procedure leaves with its
 failure variant, whether by `or_return` or by a `return` whose value has the
 failure tag, so `return .err(e)` and `return saved_outcome` behave alike. It
-requires a result that is a [fallible union](#typed-fallibility) (`L0720`) and
+requires a result that is a [fallible union](#typed-fallibility) and
 takes `defer`'s restrictions. It is registered and ordered as a `defer` is; a
 scope left any other way (its end, `break`, `continue`, or a `return` of the
 success variant) discards it. It undoes incomplete work, which needs no flag:
@@ -6270,12 +6266,12 @@ run it. The error is not bound: the deferred statement reads locals like any
 other.
 
 Under `unwind`, a statement that may panic is a path to every pending `defer` and
-`errdefer`, so what they read must be live there as well as at each exit (`L0500`):
+`errdefer`, so what they read must be live there as well as at each exit:
 
 ```loke
 x: int;
 defer fmt.println(x);
-x = next();             // L0500: a panic in `next` runs the `defer` before `x` has a value
+x = next();             // ERROR: a panic in `next` runs the `defer` before `x` has a value
 ```
 
 A deferred operation that returns a `Result` must handle that result within the
@@ -6677,33 +6673,6 @@ lifetimes](#borrows-and-lifetimes).
 
 Machine-level argument passing does not grant extra ownership, mutation, or
 lifetime rights. A foreign procedure follows its declared foreign ABI.
-
-#### Copy-cost diagnostics
-
-Tools may warn about costly copies of aggregates and managed owners. These
-warnings are optional and may use a cost threshold. When enabled, the warning
-policy applies to all copy contexts under [the ownership
-rule](#value-semantics-and-the-ownership-rule): bindings, assignments, argument
-copies, returns, place operands and fallbacks of [`or_else` or
-`or_return`](#operator-ownership), [aggregate literal](#struct-literals)
-elements, [variant](#unions) payloads, [container
-insertion](#container-insertion), variadic pack elements, and explicit `clone`
-or [`copied()`](#iteration-adapters) calls.
-
-A warning names what a copy costs. A copy that may allocate (of a container, of
-a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or of
-anything holding one) reports as a clone whatever its inline size, since its
-inline bytes say nothing of what it duplicates. A copy that retains storage, of
-a [`string`](#string-type) or [`Shared(T)`](#shared-ownership), is not costly.
-Any other copy is measured by the inline bytes it duplicates. A copy that
-[last-use transfer](#last-use-transfer) makes a move is not reported, and
-neither is a written `clone()`, which states the copy is intended.
-
-Converting an operand to a destination type is not itself a copy:
-`fmt.print(count)` views an `int` as a borrowing `dyn fmt.Formattable`,
-duplicating nothing. Ordinary
-`value: T` parameters borrow managed owners for the call and are not copy sites
-either.
 
 #### Local copies of parameters
 
@@ -8448,9 +8417,9 @@ one.
 storage byte by byte, little-endian, so a constant of any shape the checks admit
 (a scalar of any width, an array, a SIMD vector, or a struct of them) converts.
 Padding between or after fields holds no value, and a result that would read it
-is a compile-time error. A union, whose tag encoding is unspecified, and a
-record with an [`initialized`](#uninitialized-capacity) field, whose capacity
-holds no value, have no compile-time meaning on either side. Neither does a
+is a compile-time error. A union, though its [layout](#representation) is
+specified, and a record with an [`initialized`](#uninitialized-capacity) field,
+whose capacity holds no value, have no compile-time meaning on either side. Neither does a
 source that is or contains a `typeid_of(T)` constant, which has no number until
 the program's types are numbered ([`type` and `typeid`](#type-and-typeid)); a
 `typeid` built from a bit pattern converts both ways.
@@ -8628,9 +8597,12 @@ status; it is [`-> !`](#diverging-procedures).
 
 Program startup has this order:
 
-1. Runtime initialization, including the build-selected allocator and logging
-   providers.
+1. Runtime initialization: the command-line arguments, the initial thread, and
+   the build-selected allocator and logging providers.
 2. `main`.
+
+An [object build](#build-modes) has no startup of its own; its host owns
+startup, and `os.args` is empty.
 
 Importing a package does not run package code. A package that needs runtime
 initialization must expose a procedure, and the application must call it
@@ -8659,54 +8631,6 @@ main :: proc() -> i32 {
 	}
 }
 ```
-
-#### Executable startup ABI
-
-The runtime entry is separate from Loke's `main`. It converts native arguments
-to process-lifetime UTF-8, attaches the initial thread, initializes providers,
-and then calls `main`, in that order. On Windows, unpaired UTF-16 surrogates
-become U+FFFD.
-
-A build that may use instructions beyond its target's baseline, such as one
-for a higher [CPU level](compiler-guide.md#cpu-levels), first checks that the
-processor has them. On one that does not, the entry reports it on standard
-error and exits with status 3 before any of the steps above.
-
-An [object build](#build-configuration) has no entry or argument conversion, so
-`os.args` is empty. Its host owns startup and calls any provider initializer
-before using an export. An object build that may use instructions beyond the
-baseline makes the processor check from a static constructor, which the host's
-C runtime runs during its own startup.
-
-#### Windowed executables
-
-On Windows an executable is linked for a **subsystem**: a console program gets
-a console window when started outside a terminal, and a windowed program does
-not. The root package clause chooses with `@(subsystem=<string>)`, which is
-`"console"`, the default, or `"windows"`:
-
-```loke
-@(subsystem = "windows")
-package main;
-```
-
-The program is otherwise unchanged: the same [startup](#executable-startup-abi)
-calls the same `main`, and its arguments and exit status are as above. The
-attribute may occur at most once across the root package, and is rejected on an
-imported package, as a [provider selection](#selecting-a-provider) is. It
-changes only an [executable build](#build-modes): a test build is always a
-console program, so a terminal shows its report, and an object build's host
-links its own. Other targets have no subsystem and ignore the attribute.
-
-A windowed program started from a terminal does not share it, and one started
-from Explorer has no standard handles at all. With no standard output, what the
-program writes there is dropped. With no standard error, what `core:fmt` and the
-runtime write there, such as a [panic](#panics-and-unwinding) report, goes to an
-attached debugger instead, one line at a time (Windows' `OutputDebugString`).
-Neither changes the program's behavior or its exit status. `core:term` writes
-the handles directly, so its writes report an [error](standard-library.md#standard-byte-streams-and-line-input)
-instead. A program started with redirected handles, as `demo.exe 2> log.txt`
-redirects standard error, writes to them as any program does.
 
 ### Test procedures
 
@@ -8828,7 +8752,7 @@ fields. Positional aggregate construction does not bypass this rule: an
 initializer that supplies an inaccessible field is rejected. The file-level
 default chooses a field's visibility but does not create file-private access.
 
-**A `package main` cannot be imported** (`L0719`): it is an executable's root,
+**A `package main` cannot be imported**: it is an executable's root,
 and code two programs share belongs in a package of its own. With no importer,
 nothing outside it reads its fields but reflection and printing, so **its fields
 are public by default**, and `fmt.println(point)` shows them. Its other
@@ -8842,7 +8766,7 @@ field another path hides.
 #### Private names in public declarations
 
 A public declaration may name a private declaration of its package, but where an
-importer would have to name it too, the compiler warns (`L0740`). An importer
+importer would have to name it too, the compiler warns. An importer
 can call a procedure that returns a private type but cannot declare a variable
 of that type or pass it through its own procedures, and it cannot read or meet
 a `where` clause written in private terms. The warning applies to:
@@ -9182,8 +9106,8 @@ port := settings.lookup_value("port") or_else return .err(.Missing_Port);
 A `return` value extends to the end of the expression, as any fallback does.
 The rules of the statement apply: `break` and `continue` need an enclosing loop,
 and none of the three may leave a deferred statement. A loop's header, a
-`for` header or a `foreach` iterable, cannot `break` or `continue` this way
-(`L0718`), since it is not inside the loop it would leave; test the value in
+`for` header or a `foreach` iterable, cannot `break` or `continue` this way,
+since it is not inside the loop it would leave; test the value in
 the body. An exit after a call's earlier arguments, or anything else an
 operation already holds, drops those values on its way out, as `or_return`
 does.
@@ -10439,7 +10363,7 @@ takes one of three forms:
 - An absolute path names that file.
 
 An empty path, or `system:` with no library name such as `"system:"` or
-`"system:.lib"`, names nothing and is an error (`L0756`) in every build mode.
+`"system:.lib"`, names nothing and is an error in every build mode.
 A foreign import that should link nothing is left out: a foreign block's name
 labels its declarations without selecting a library, since every foreign
 import is linked into the whole program, so a block needs no foreign import
@@ -10447,11 +10371,11 @@ when another input of the link, such as the runtime, already defines what it
 declares.
 
 A build that links, an executable or a test build, requires each file named by
-a path to exist (`L0631`); a file named twice, in any spelling, is linked once.
-A `.asm` file is assembled with NASM, and a `.s` or `.S` file by Clang, before
-the link. An [object build](#build-modes) links nothing, so its consumer links
-the files its foreign imports name, and it rejects an assembly import
-(`L0603`).
+a path to exist; a file named twice, in any spelling, is linked once. An
+assembly file (`.asm`, `.s`, or `.S`) is assembled before the link; [Toolchain
+troubleshooting](compiler-guide.md#toolchain-troubleshooting) names the
+assemblers. An [object build](#build-modes) links nothing, so its consumer links
+the files its foreign imports name, and it rejects an assembly import.
 
 ### Foreign-ABI-safe types
 
@@ -10626,8 +10550,8 @@ Configuration values are immutable constants.
 
 `LOKE_BUILD_MODE` names the requested output kind.
 
-`.Exe` requires a package named `main` and emits the [executable
-entry](#executable-startup-abi).
+`.Exe` requires a package named `main` and emits an executable whose entry
+runs the [program's startup](#program-entry-and-exit).
 
 `.Obj` accepts any root package, requires no `main`, and emits no executable
 entry. Its consumer supplies the runtime, foreign libraries, and process
@@ -10641,10 +10565,12 @@ detaches through the documented runtime API, as any other thread the runtime
 did not start does ([Values that outlive every
 scope](#values-that-outlive-every-scope)).
 
-An `obj` build that [selects a provider](#build-selected-providers) exports
-`loke_rt_v1_program_init :: proc "c" ()`. The host calls it once, before using
-exports or starting workers. A build with no selected provider uses the
-fallback providers and exports no initializer.
+An `obj` build that [selects a provider](#build-selected-providers) exports an
+initializer with the `c` calling convention. The host calls it once, before
+using exports or starting workers. A build with no selected provider uses the
+fallback providers and exports no initializer. [Building an object for a C
+host](compiler-guide.md#building-an-object-for-a-c-host) names the runtime's
+entries for these.
 
 ## Compile-time built-ins
 
@@ -10792,15 +10718,10 @@ marks a procedure declaration with a body: at file scope, in an `impl` block,
 or in a body, generic or not, with any calling convention. A foreign
 declaration has no body to mark.
 
-A cold procedure is never inlined into its callers, so they do not take on its
-locals and their frames stay small, and the compiler lays out the code leading
-to a call to it as unlikely to run. The attribute changes no result, and has no
-effect on [compile-time evaluation](#compile-time-procedure-evaluation), where
-a cold procedure runs like any other.
-
-A procedure that also has [`@(cpu_dispatch)`](#cpu_dispatchstring) is cold in
-both of its copies, and so is the dispatch between them. A callee that a copy
-takes with it is cold only if it is marked itself.
+A cold procedure is not inlined into its callers, and a call to it is taken to
+be unlikely. The attribute changes no result, and has no effect on
+[compile-time evaluation](#compile-time-procedure-evaluation), where a cold
+procedure runs like any other.
 
 ```loke
 reciprocal_sqrt :: proc(x: f64) -> f64 {
@@ -10823,18 +10744,13 @@ instructions on a processor that has them. The value names a level above
 `x86-64`: `"x86-64-v2"` or `"x86-64-v3"`. The procedure is declared at file
 scope with a body, is not generic, and has the Loke calling convention.
 
-When the build's level is below the named one, the procedure is emitted twice:
-once for the build's level, and once for the named level, and that copy's
-direct calls, including a `foreach`'s `iter` and `next` and the `hook(drop)` at a
-scope's end, reach copies of their callees for the same level, made the same
-way. A call to the procedure, direct or through a procedure value, asks once
-per process whether the processor has the level and runs one copy or the other.
-A call a copy makes through a procedure value or a `dyn` value reaches the
-procedure as written, and so does one in code the compiler shares between
-levels, such as a generated copy of a value, a container's drop of its elements,
-or a task's start. The copies are one procedure: one procedure value, and
-one of each of its `static` variables. At the named level or above, the
-attribute has no effect.
+When the build's level is below the named one, a call to the procedure, direct
+or through a procedure value, runs a copy compiled for the named level where the
+processor has it, and one for the build's level elsewhere. The copies are one
+procedure: one procedure value, and one of each of its `static` variables. At
+the named level or above, the attribute has no effect. Which callees also run
+at the named level is the implementation's choice; [CPU
+dispatch](compiler-architecture.md#cpu-dispatch) describes this compiler's.
 
 Both copies compute the same results, since a CPU level selects instructions
 and never changes arithmetic ([Floating-point
@@ -10901,49 +10817,22 @@ exported.
 
 The exported name is the declaration's name or its
 [`@(link_name)`](#link_namestring). Names are program-wide: duplicates produce a
-compile-time error identifying both declarations. The `loke_rt_` prefix is
-reserved for the runtime, and an [executable or test
-build](#build-configuration) cannot export `wmain`, its [startup
-entry](#executable-startup-abi). A declaration in a [foreign block](#foreign-system)
+compile-time error identifying both declarations. The names an implementation
+gives its runtime and its executable's entry are reserved, and cannot be
+exported; [C runtime](compiler-guide.md#c-runtime) lists this compiler's. A
+declaration in a [foreign block](#foreign-system)
 may bind an exported name; it then refers to the exported definition and must
 declare the same kind and type, as two foreign declarations of one symbol must.
 
 #### `@(intrinsic)`
 
-A few names in the bundled packages are the compiler's own: a type the region
-checker has to recognize, such as `mem.Arena`, one that must be the same type as
-a predeclared name, such as `mem.Allocator`, or an operation no signature can
-type, such as `unsafe.transmute`. `@(intrinsic)` declares such a name in its
-package's source without defining it, so that its signature and doc comment are
-written once, beside the package's other declarations, and appear in [`-doc` and
-the interface file](compiler-guide.md#interface-files):
-
-```loke
-/// What a region does when one of its own allocations fails.
-@(intrinsic)
-Failure_Policy :: enum { Panic, Trap }
-
-/// A local bump region, provider-backed or laid over a caller's buffer.
-@(intrinsic)
-Arena :: ---;
-
-impl Arena {
-	@(intrinsic)
-	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
-}
-```
-
-The declaration describes what the compiler supplies and adds nothing: importers
-and the package's own code see the name exactly as the compiler defines it. A
-procedure ends with `---`, as a foreign one does. A type is written `---`, or
-spelled out as an `enum` with its members and no values, or as a `struct` with
-its public fields. Members the compiler supplies to such a type are declared in
-an `impl` block of the type that holds only `@(intrinsic)` members.
-
-What a declaration states is checked against what it describes (`L0736`), and the
-attribute is valid only in a package the compiler supplies names to (`L0734`);
-[Intrinsic declarations](compiler-architecture.md#intrinsic-declarations) has the
-rules.
+`@(intrinsic)` declares, without defining it, a name in a bundled package that
+the implementation supplies, such as `mem.Arena` or `unsafe.transmute`, so that
+its signature and doc comment are written in the package's source. The
+declaration adds nothing to what is supplied. A procedure ends with `---`, and a
+type may be written `Name :: ---;`. The attribute is an error outside a package
+the implementation supplies names to; [Intrinsic
+declarations](compiler-architecture.md#intrinsic-declarations) has the rules.
 
 #### `@(link_name=<string>)`
 
@@ -11254,9 +11143,23 @@ imported package. See [Selecting a provider](#selecting-a-provider).
 
 #### `@(subsystem=<string>)`
 
-On the root package clause, `"console"` or `"windows"`: whether a Windows
-executable is a console or a windowed program. Rejected on an imported package.
-See [Windowed executables](#windowed-executables).
+On the root package clause, `"console"`, the default, or `"windows"`: whether a
+Windows executable is a console program, which gets a console window when
+started outside a terminal, or a windowed program, which does not. The program
+is otherwise unchanged: the same startup calls the same `main`, with the same
+arguments and exit status.
+
+```loke
+@(subsystem = "windows")
+package main;
+```
+
+The attribute may occur at most once across the root package, and is rejected
+on an imported package, as a [provider selection](#selecting-a-provider) is. It
+changes only an [executable build](#build-modes); a test build is always a
+console program. Other targets have no subsystem and ignore the attribute.
+[Windowed programs](compiler-guide.md#windowed-programs) describes what such a
+program's standard handles are.
 
 ### Extension attributes
 
@@ -11557,9 +11460,10 @@ collects those requirements for conformance checking; omitting one is a defect.
 | A value kept past a join may hold up a task | the kept value, the storage it and a task may share, and the joining block ([§](#releasing-before-the-join)) |
 
 [`@(require_results)`](#require_results) also requires a diagnostic for a result
-that is neither read nor explicitly discarded. [Copy-cost
-diagnostics](#copy-cost-diagnostics) are optional; when enabled, their warning
-policy applies to all applicable copy contexts.
+that is neither read nor explicitly discarded. Warnings beyond these, such as
+the compiler's [copy-cost
+diagnostics](compiler-guide.md#copy-cost-diagnostics), are not part of the
+language.
 
 ## Glossary
 

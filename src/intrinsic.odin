@@ -1,4 +1,4 @@
-// design.md "`@(intrinsic)`": a bundled package declares each name the compiler
+// compiler-architecture.md "Intrinsic declarations": a bundled package declares each name the compiler
 // contributes to it (`src/stdlib.odin`), so the name's signature and doc
 // comment are written once, beside the package's other declarations, where
 // `-doc` and the interface file show them.
