@@ -660,7 +660,6 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	if expression_is_borrowed_place(expr) {
 		return
 	}
-	slot := alloca(e, llvm_type(e, base.type))
-	store(e, base.type, value, slot)
+	slot := spill(e, base.type, value)
 	emit_drop_place(e, base.type, slot)
 }

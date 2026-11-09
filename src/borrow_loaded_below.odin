@@ -66,7 +66,7 @@ loaded_below_make :: proc(state: ^Prov_Solve) {
 				continue
 			}
 			if event.load != .Deep {
-				add_link(&below.links, slot_carrier_type(graph, event.slot))
+				append_unique(&below.links, slot_carrier_type(graph, event.slot))
 				continue
 			}
 			// A deep load reads every carrier below the ones it goes through, at any depth.
@@ -74,13 +74,6 @@ loaded_below_make :: proc(state: ^Prov_Solve) {
 				add_links_below(graph.k.c, &below.links, &explored, slot_carrier_type(graph, carrier))
 			}
 		}
-	}
-}
-
-@(private = "file")
-add_link :: proc(links: ^[dynamic]Type_Id, type: Type_Id) {
-	if !slice.contains(links[:], type) {
-		append(links, type)
 	}
 }
 
@@ -94,15 +87,15 @@ add_links_below :: proc(c: ^Compiler, links, explored: ^[dynamic]Type_Id, type: 
 	append(explored, type)
 	kind := underlying_kind(c, type)
 	if type == INVALID_TYPE || (kind != .Pointer && kind != .Slice) {
-		add_link(links, INVALID_TYPE) // what it reads is not known
+		append_unique(links, INVALID_TYPE) // what it reads is not known
 		return
 	}
 	for path in carrier_pointee_shape(c, type) {
 		if path.truncated {
-			add_link(links, INVALID_TYPE)
+			append_unique(links, INVALID_TYPE)
 			continue
 		}
-		add_link(links, path.type)
+		append_unique(links, path.type)
 		if below := underlying_kind(c, path.type); below == .Pointer || below == .Slice {
 			add_links_below(c, links, explored, path.type)
 		}

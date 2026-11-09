@@ -251,8 +251,7 @@ bind_foreach_field :: proc(e: ^Emitter, symbol: Symbol_Id, field: Foreach_Field)
 			if type_align(e.c, field.type) > 1 {
 				e.place_align[field.address] = 1
 			}
-			slot := alloca(e, llvm_type(e, field.type))
-			store(e, field.type, load_place(e, field.type, field.address), slot)
+			slot := spill(e, field.type, load_place(e, field.type, field.address))
 			bind_foreach_place(e, symbol, slot)
 			return
 		}
@@ -260,8 +259,7 @@ bind_foreach_field :: proc(e: ^Emitter, symbol: Symbol_Id, field: Foreach_Field)
 		return
 	}
 	// Otherwise the binding is the step's own copy, disposed of even if ignored.
-	slot := alloca(e, llvm_type(e, field.type))
-	store(e, field.type, owned_field_value(e, field), slot)
+	slot := spill(e, field.type, owned_field_value(e, field))
 	own_foreach_slot(e, symbol, field.type, slot)
 }
 
@@ -626,8 +624,7 @@ spill_foreach_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> 
 		return emit_address_at(e, expr, as_type)
 	}
 	value := emit_expr_at(e, expr, as_type)
-	slot := alloca(e, llvm_type(e, as_type))
-	store(e, as_type, value, slot)
+	slot := spill(e, as_type, value)
 	if !base_is_const(base) {
 		register_scope_place(e, as_type, slot)
 	}

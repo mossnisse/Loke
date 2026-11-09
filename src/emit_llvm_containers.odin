@@ -805,7 +805,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		status = emit_synth_append(e, body)
 
 	case .Insert:
-		slot := value_storage(e, element, "%arg2")
+		slot := spill(e, element, "%arg2")
 		guard := moves ? guard_built_element(e, element, slot) : Deferred{}
 		status = temp(e)
 		fmt.sbprintfln(
@@ -922,13 +922,6 @@ Container_Body :: struct {
 	moves, masked, fallible: bool,
 }
 
-@(private = "file")
-value_storage :: proc(e: ^Emitter, element: Type_Id, argument: string) -> string {
-	slot := alloca(e, llvm_type(e, element))
-	store(e, element, argument, slot)
-	return slot
-}
-
 // A lookup borrows its key; a `string_view` is spilled as an unowned header.
 @(private = "file")
 key_probe_slot :: proc(e: ^Emitter, symbol: ^Symbol, container: Type_Id) -> string {
@@ -936,7 +929,7 @@ key_probe_slot :: proc(e: ^Emitter, symbol: ^Symbol, container: Type_Id) -> stri
 	if key_is_borrowed_view(key, symbol.params[1]) {
 		return emit_borrowed_key_slot(e, "%arg1")
 	}
-	return value_storage(e, key, "%arg1")
+	return spill(e, key, "%arg1")
 }
 
 // The header address the C probe reads. An immutable receiver arrives as the
@@ -1025,7 +1018,7 @@ emit_synth_map_lookup_value :: proc(e: ^Emitter, body: Container_Body) {
 emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 	symbol, element, ops, result := body.symbol, body.element, body.ops, body.result
 	moves, fallible := body.moves, body.fallible
-	key_slot := value_storage(e, container_key(e.c, body.container), "%arg1")
+	key_slot := spill(e, container_key(e.c, body.container), "%arg1")
 	staged := alloca(e, body.element_llvm)
 	guard := Deferred{}
 	if moves {
@@ -1047,7 +1040,7 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 	cloned := "true"
 	if !moves && body.lifecycle.managed {
 		cloned = emit_try_clone_into(
-			e, element, staged, value_storage(e, element, "%arg2"), emit_map_allocator(e, "%arg0"),
+			e, element, staged, spill(e, element, "%arg2"), emit_map_allocator(e, "%arg0"),
 		)
 	} else if !moves {
 		store(e, element, "%arg2", staged)
@@ -1088,7 +1081,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 		store(e, element, "%arg2", staged)
 	} else {
 		allocator := emit_map_allocator(e, "%arg0")
-		cloned = emit_try_clone_into(e, element, staged, value_storage(e, element, "%arg2"), allocator)
+		cloned = emit_try_clone_into(e, element, staged, spill(e, element, "%arg2"), allocator)
 	}
 	clone_ready, clone_failed := new_label(e, "mins.cloned"), new_label(e, "mins.clone_failed")
 	branch_if(e, cloned, clone_ready, clone_failed)
@@ -1099,7 +1092,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	// The staged value is this body's until it is stored, across the key's
 	// hooks and the old value's drop.
 	guard := guard_built_element(e, element, staged)
-	key_slot := value_storage(e, container_key(e.c, body.container), "%arg1")
+	key_slot := spill(e, container_key(e.c, body.container), "%arg1")
 	slots := make_map_entry_slots(e, element)
 	place := emit_map_entry(e, body.ops, "%arg0", key_slot, slots.inserted)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)

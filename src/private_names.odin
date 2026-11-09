@@ -893,7 +893,7 @@ member_is_type :: proc(k: ^Checker, stand_ins: ^Scope, d: ^Decl) -> (is_type: bo
 }
 
 // A speculative check of a copy of `e`, and whether any lookup reached a stand-in.
-@(private = "file")
+@(private)
 check_against_stand_ins :: proc(k: ^Checker, stand_ins: ^Scope, e: Expr, as_type: bool) -> (type: Type_Id, reached: bool) {
 	probe := begin_probe(k.c)
 	saved := k.scope
@@ -919,7 +919,7 @@ applies_generic_type :: proc(k: ^Checker, value: Expr) -> bool {
 	if !is_call {
 		return false
 	}
-	return generic_template_of_callee(k, call.callee, .Record) != nil || generic_template_of_callee(k, call.callee, .Alias) != nil
+	return generic_type_template_of_callee(k, call.callee) != nil
 }
 
 // design.md "Private names in public declarations": a generic `impl`'s

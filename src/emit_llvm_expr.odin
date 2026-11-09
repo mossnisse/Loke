@@ -689,6 +689,12 @@ value_address :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	if is_large_value(e, type) {
 		return value
 	}
+	return spill(e, type, value)
+}
+
+// A copy of `value` in a stack slot of its own, large or not.
+@(private)
+spill :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	slot := alloca(e, llvm_type(e, type))
 	store(e, type, value, slot)
 	return slot
@@ -1228,8 +1234,7 @@ spill_viewed_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return emit_lent_address(e, expr, as_type)
 	}
 	value := emit_expr_at(e, expr, as_type)
-	slot := alloca(e, llvm_type(e, as_type))
-	store(e, as_type, value, slot)
+	slot := spill(e, as_type, value)
 	if !base_is_const(base) {
 		hold_addressed_temporary(e, expr, as_type, slot)
 	}

@@ -2155,7 +2155,7 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 	}
 	// A generic rejected at its declaration was reported there, and an
 	// application of a known one reported its own arguments.
-	if generic_template_of_callee(k, call.callee, .Record) != nil || generic_template_of_callee(k, call.callee, .Alias) != nil {
+	if generic_type_template_of_callee(k, call.callee) != nil {
 		return
 	}
 	if callee := symbol_of(k.c, named_callee_symbol(k, call.callee)); callee != nil && callee.kind == .Proc {

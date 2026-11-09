@@ -1209,6 +1209,16 @@ merge_result_dependencies :: proc(into: ^Result_Dependencies, from: Result_Depen
 	}
 }
 
+// Appends `item` unless `list` holds it already; whether it did.
+@(private)
+append_unique :: proc(list: ^[dynamic]$T, item: T) -> bool {
+	if slice.contains(list[:], item) {
+		return false
+	}
+	append(list, item)
+	return true
+}
+
 // Adds `item` to a set kept as a slice; returns whether the set grew.
 @(private)
 set_add :: proc(set: ^[]$T, item: T, allocator: mem.Allocator) -> bool {

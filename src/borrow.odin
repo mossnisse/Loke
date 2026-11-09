@@ -2059,8 +2059,8 @@ load_through_loan :: proc(
 
 @(private = "file")
 note_read :: proc(reads: ^[dynamic]int, slot: int) {
-	if reads != nil && !slice.contains(reads[:], slot) {
-		append(reads, slot)
+	if reads != nil {
+		append_unique(reads, slot)
 	}
 }
 

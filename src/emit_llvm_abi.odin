@@ -512,9 +512,7 @@ emit_foreign_return :: proc(e: ^Emitter) {
 // A value spilled to a slot, as the `ptr <slot>` operand that crosses for it.
 @(private = "file")
 foreign_spill_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
-	slot := alloca(e, llvm_type(e, type))
-	store(e, type, operand, slot)
-	return fmt.aprintf("ptr %s", slot)
+	return fmt.aprintf("ptr %s", spill(e, type, operand))
 }
 
 // A by-value argument under the ordinary classification, as a `<type> <value>`

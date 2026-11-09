@@ -905,8 +905,7 @@ emit_call_operands :: proc(
 				// The result may borrow the argument, as `arena.allocator()` borrows
 				// its provider, so the temporary lives through the complete
 				// expression (design.md "Temporaries and procedure boundaries").
-				held := alloca(e, llvm_type(e, parameter))
-				store(e, parameter, operands[index], held)
+				held := spill(e, parameter, operands[index])
 				register_temporary_place(e, parameter, held)
 			}
 		}
@@ -1298,8 +1297,7 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 	value := emit_borrowed_operand(e, v.bound[0])
 	matched := emit_union_tag_is(e, subject, value, index)
 
-	slot := alloca(e, llvm_type(e, as_type))
-	store(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "none"), ""), slot)
+	slot := spill(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "none"), ""))
 	then_label, done_label := new_label(e, "unionas.match"), new_label(e, "unionas.done")
 	branch_if(e, matched, then_label, done_label)
 	place_label(e, then_label)

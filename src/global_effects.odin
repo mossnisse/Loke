@@ -135,7 +135,7 @@ prov_note_static_write :: proc(graph: ^Flow_Graph, root: Root_Id, span: Span) {
 	}
 	prov_note_shared_effect(graph, global, .Write, span)
 	if !graph.k.c.global_writes_ready {
-		add_global_symbol(&graph.effect_writes, global)
+		append_unique(&graph.effect_writes, global)
 	}
 }
 
@@ -146,7 +146,7 @@ prov_note_static_read :: proc(graph: ^Flow_Graph, root: Root_Id) {
 		return
 	}
 	if global := prov_root_global(graph, root); global != INVALID_SYMBOL {
-		add_global_symbol(&graph.effect_reads, global)
+		append_unique(&graph.effect_reads, global)
 	}
 }
 
@@ -441,7 +441,7 @@ collect_variable_values :: proc(
 	visited^[variable] = true
 	declared := false
 	if sym := symbol_of(c, variable); sym != nil && sym.kind == .Parameter {
-		add_effect_value(out, Effect_Arg{kind = .Parameter, parameter = int(sym.index)})
+		append_unique(out, Effect_Arg{kind = .Parameter, parameter = int(sym.index)})
 		declared = true
 	}
 	for store in stores {
@@ -454,11 +454,11 @@ collect_variable_values :: proc(
 			collect_variable_values(c, stores, store.value.symbol, out, visited)
 		case .Nil:
 		case:
-			add_effect_value(out, store.value)
+			append_unique(out, store.value)
 		}
 	}
 	if !declared {
-		add_effect_value(out, Effect_Arg{})
+		append_unique(out, Effect_Arg{})
 	}
 }
 
@@ -468,26 +468,16 @@ effect_resolved_args :: proc(c: ^Compiler, stores: []Effect_Store, args: []Effec
 	out := make([dynamic]Effect_Arg, 0, len(args), context.temp_allocator)
 	for arg in args {
 		if arg.kind != .Variable {
-			add_effect_value(&out, arg)
+			append_unique(&out, arg)
 			continue
 		}
 		for value in effect_variable_values(c, stores, arg.symbol) {
 			bound := value
 			bound.binding = arg.binding
-			add_effect_value(&out, bound)
+			append_unique(&out, bound)
 		}
 	}
 	return out[:]
-}
-
-@(private = "file")
-add_effect_value :: proc(list: ^[dynamic]Effect_Arg, value: Effect_Arg) {
-	for existing in list {
-		if existing == value {
-			return
-		}
-	}
-	append(list, value)
 }
 
 // A member the compiler supplies that calls a type's own `hash`, `==`, or `<`: a
@@ -629,7 +619,7 @@ prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	c := graph.k.c
 	for hook in type_copy_hooks(c, type) {
 		if !c.global_writes_ready {
-			add_global_symbol(&graph.effect_copy_hooks, hook)
+			append_unique(&graph.effect_copy_hooks, hook)
 			continue
 		}
 		reads := c.global_reads[hook]
@@ -1379,7 +1369,7 @@ effect_call_globals :: proc(
 		globals := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 		for reached in effect_targets(c, target) {
 			for global in whole[c.effect_program.bodies[reached].symbol] {
-				add_global_symbol(&globals, global)
+				append_unique(&globals, global)
 			}
 		}
 		settled := slice.clone(globals[:], c.semantic_allocator)
@@ -1672,17 +1662,6 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, seen: ^map[Effect_Key]bo
 	return out[:]
 }
 
-@(private = "file")
-add_global_symbol :: proc(globals: ^[dynamic]Symbol_Id, global: Symbol_Id) -> bool {
-	for existing in globals {
-		if existing == global {
-			return false
-		}
-	}
-	append(globals, global)
-	return true
-}
-
 // What one part of a call adds: a bare block's task's `thread_local` storage
 // is its own thread's, not the caller's.
 @(private = "file")
@@ -1690,7 +1669,7 @@ add_part_globals :: proc(c: ^Compiler, into: ^[dynamic]Symbol_Id, from: []Symbol
 	grew := false
 	for global in from {
 		if !part.elsewhere || !global_is_thread_local(c, global) {
-			grew |= add_global_symbol(into, global)
+			grew |= append_unique(into, global)
 		}
 	}
 	return grew

@@ -274,14 +274,7 @@ reject_generic_parameter_type :: proc(k: ^Checker, stand_ins: ^Scope, name: Name
 	}
 	// From before the probe: a declaration it settled may have said why already.
 	reported := k.c.error_count
-	probe := begin_probe(k.c)
-	saved := k.scope
-	k.scope = stand_ins
-	stand_ins.reached = false
-	_ = resolve_type_syntax(k, clone_expr(k.c, type_syntax))
-	k.scope = saved
-	end_probe(k.c, probe)
-	if stand_ins.reached {
+	if _, reached := check_against_stand_ins(k, stand_ins, type_syntax, as_type = true); reached {
 		return false
 	}
 	type := resolve_type_syntax(k, clone_expr(k.c, type_syntax))
@@ -872,6 +865,13 @@ named_callee_symbol :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 generic_template_of_callee :: proc(k: ^Checker, callee: Expr, kind: Generic_Kind) -> ^Generic_Template {
 	template := generic_template_for(k, named_callee_symbol(k, callee))
 	return template != nil && template.kind == kind ? template : nil
+}
+
+// The generic record or parametric alias `callee` names, whose application
+// names a type, or nil.
+generic_type_template_of_callee :: proc(k: ^Checker, callee: Expr) -> ^Generic_Template {
+	template := generic_template_for(k, named_callee_symbol(k, callee))
+	return template != nil && (template.kind == .Record || template.kind == .Alias) ? template : nil
 }
 
 // -------------------------------------------------------------- cache key --

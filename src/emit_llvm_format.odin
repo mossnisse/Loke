@@ -593,7 +593,7 @@ entry:
 @(private)
 emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
 	if kind == .Fmt_Write_Bytes {
-		writer := spill_value(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[0]))
+		writer := spill(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[0]))
 		data, length := emit_text_parts(e, v.bound[1])
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %s)", writer, data, length)
 		return "0"
@@ -606,13 +606,6 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 load_pair :: proc(e: ^Emitter, storage, address: string, first, second: int) -> (string, string) {
 	value := load(e, storage, address)
 	return extract(e, storage, value, first), extract(e, storage, value, second)
-}
-
-@(private = "file")
-spill_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
-	slot := alloca(e, llvm_type(e, type))
-	store(e, type, value, slot)
-	return slot
 }
 
 @(private)
