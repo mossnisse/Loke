@@ -1277,6 +1277,29 @@ equal_padded :: proc(a, b: []$T, default: T) -> bool {
 	return true
 }
 
+// Appends `item` unless `list` holds it already; whether it did.
+@(private)
+append_unique :: proc(list: ^[dynamic]$T, item: T) -> bool {
+	if slice.contains(list[:], item) {
+		return false
+	}
+	append(list, item)
+	return true
+}
+
+// Adds `item` to a set kept as a slice; returns whether the set grew.
+@(private)
+set_add :: proc(set: ^[]$T, item: T, allocator: mem.Allocator) -> bool {
+	if slice.contains(set^, item) {
+		return false
+	}
+	grown := make([]T, len(set^) + 1, allocator)
+	copy(grown, set^)
+	grown[len(set^)] = item
+	set^ = grown
+	return true
+}
+
 // Adds a newly interned type to the bucket its hash selects.
 @(private = "file")
 bucket_append :: proc(c: ^Compiler, buckets: ^map[u64][]Type_Id, hash: u64, id: Type_Id) {

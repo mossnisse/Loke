@@ -418,7 +418,7 @@ success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success:
 			return depends
 		}
 	case ^Expr_Call:
-		template := generic_type_template_of_callee(k, v.callee)
+		template := generic_template_of_callee(k, v.callee, TYPE_GENERICS)
 		if template == nil || len(v.args) != len(template.params) {
 			return true
 		}

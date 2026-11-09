@@ -18,14 +18,14 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	}
 	// A block on a generic type waits for an instantiation to install it on.
 	if call, is_call := item.type.(^Expr_Call); is_call {
-		if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
+		if template := generic_template_of_callee(k, call.callee, {.Record}); template != nil {
 			register_generic_impl(k, item, template.symbol, call.args)
 			return
 		}
 		// design.md "Parametric aliases": a block over every application of an
 		// alias would bind names in two packages' scopes at once; one over a
 		// single application, `impl Io_Result(int)`, is a block on that type.
-		if template := generic_template_of_callee(k, call.callee, .Alias); template != nil && type_syntax_has_poly(item.type) {
+		if template := generic_template_of_callee(k, call.callee, {.Alias}); template != nil && type_syntax_has_poly(item.type) {
 			item.declared = true
 			errorf(
 				k.c, expr_span(item.type), "L0746",
@@ -507,7 +507,7 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 		// A generic block's members are checked per instance, but a public
 		// constant's type may be the same in all of them.
 		if call, is_call := item.type.(^Expr_Call); is_call {
-			if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
+			if template := generic_template_of_callee(k, call.callee, {.Record}); template != nil {
 				read_generic_impl_constants(k, item, call, template)
 				check_generic_impl_hooks(k, item, template)
 			}

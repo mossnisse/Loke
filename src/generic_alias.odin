@@ -107,7 +107,7 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 // constructor, rather than a procedure that computes one.
 @(private = "file")
 alias_constructor_callee :: proc(k: ^Checker, callee: Expr) -> bool {
-	return generic_type_template_of_callee(k, callee) != nil || predeclared_callee(k, callee, "Simd", "Box", "Range")
+	return generic_template_of_callee(k, callee, TYPE_GENERICS) != nil || predeclared_callee(k, callee, "Simd", "Box", "Range")
 }
 
 // The parameters an application's arguments bind, with the scope their types
@@ -577,7 +577,7 @@ alias_view :: proc(k: ^Checker, scope: ^Scope, pattern: Expr) -> Expr {
 
 // The view of one application of an alias, or nil when `v` applies none.
 alias_view_of_application :: proc(k: ^Checker, v: ^Expr_Call) -> Expr {
-	template := generic_template_of_callee(k, v.callee, .Alias)
+	template := generic_template_of_callee(k, v.callee, {.Alias})
 	if template == nil || template.rejected || template.expanding || len(v.args) != len(template.params) {
 		return nil
 	}

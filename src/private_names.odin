@@ -919,7 +919,7 @@ applies_generic_type :: proc(k: ^Checker, value: Expr) -> bool {
 	if !is_call {
 		return false
 	}
-	return generic_type_template_of_callee(k, call.callee) != nil
+	return generic_template_of_callee(k, call.callee, TYPE_GENERICS) != nil
 }
 
 // design.md "Private names in public declarations": a generic `impl`'s

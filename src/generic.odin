@@ -862,16 +862,13 @@ named_callee_symbol :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return INVALID_SYMBOL
 }
 
-generic_template_of_callee :: proc(k: ^Checker, callee: Expr, kind: Generic_Kind) -> ^Generic_Template {
-	template := generic_template_for(k, named_callee_symbol(k, callee))
-	return template != nil && template.kind == kind ? template : nil
-}
+// The generics whose application names a type: a record or a parametric alias.
+TYPE_GENERICS :: bit_set[Generic_Kind]{.Record, .Alias}
 
-// The generic record or parametric alias `callee` names, whose application
-// names a type, or nil.
-generic_type_template_of_callee :: proc(k: ^Checker, callee: Expr) -> ^Generic_Template {
+// The generic of one of `kinds` that `callee` names, or nil.
+generic_template_of_callee :: proc(k: ^Checker, callee: Expr, kinds: bit_set[Generic_Kind]) -> ^Generic_Template {
 	template := generic_template_for(k, named_callee_symbol(k, callee))
-	return template != nil && (template.kind == .Record || template.kind == .Alias) ? template : nil
+	return template != nil && template.kind in kinds ? template : nil
 }
 
 // -------------------------------------------------------------- cache key --
@@ -1265,7 +1262,7 @@ match_type_pattern :: proc(
 			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
 		// design.md "Specialization": `Status($E)` matches what its body does.
-		if template := generic_template_of_callee(k, v.callee, .Alias); template != nil {
+		if template := generic_template_of_callee(k, v.callee, {.Alias}); template != nil {
 			return match_alias_pattern(k, v, template, actual, scope, out)
 		}
 		// `Table($K, $V)`: an instance of that template supplies the parts.

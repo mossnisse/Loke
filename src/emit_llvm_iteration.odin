@@ -201,8 +201,7 @@ foreach_field_children :: proc(e: ^Emitter, logical: Type_Id, source: Foreach_Fi
 	fields := make([]Foreach_Field, len(info.fields), context.temp_allocator)
 	address := source.address
 	if address == "" {
-		address = alloca(e, llvm_type(e, logical))
-		store(e, logical, source.value, address)
+		address = spill(e, logical, source.value)
 	}
 	for field_id, index in info.fields {
 		field := symbol_of(e.c, field_id)

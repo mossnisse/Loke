@@ -1973,18 +1973,18 @@ resolve_call_type :: proc(k: ^Checker, value: ^Expr_Call) -> Type_Id {
 			return INVALID_TYPE
 		}
 	}
-	if (callee != nil && callee.kind == .Proc) || generic_template_of_callee(k, value.callee, .Procedure) != nil {
+	if (callee != nil && callee.kind == .Proc) || generic_template_of_callee(k, value.callee, {.Procedure}) != nil {
 		if value.denoted_type == INVALID_TYPE {
 			check_expr(k, value)
 		}
 		return value.denoted_type
 	}
 	// design.md "Parametric aliases": `Status(int)` denotes its body's type.
-	if alias := generic_template_of_callee(k, value.callee, .Alias); alias != nil {
+	if alias := generic_template_of_callee(k, value.callee, {.Alias}); alias != nil {
 		return resolve_alias_application(k, value, alias, report = true)
 	}
 	// `Table(string, int)`: a generic application in type position.
-	template := generic_template_of_callee(k, value.callee, .Record)
+	template := generic_template_of_callee(k, value.callee, {.Record})
 	if template == nil {
 		return INVALID_TYPE
 	}
@@ -2155,7 +2155,7 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 	}
 	// A generic rejected at its declaration was reported there, and an
 	// application of a known one reported its own arguments.
-	if generic_type_template_of_callee(k, call.callee) != nil {
+	if generic_template_of_callee(k, call.callee, TYPE_GENERICS) != nil {
 		return
 	}
 	if callee := symbol_of(k.c, named_callee_symbol(k, call.callee)); callee != nil && callee.kind == .Proc {

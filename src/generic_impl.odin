@@ -109,7 +109,7 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 			reject_reserved_name(k, name_identifier(k.c, name), name.span)
 		}
 	}
-	template := generic_template_of_callee(k, call.callee, .Record)
+	template := generic_template_of_callee(k, call.callee, {.Record})
 	if template == nil {
 		return
 	}

@@ -344,11 +344,6 @@ path_waker :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
 // sibling fields of one type from looking like a cycle.
 @(private)
 collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id, inside: ^[dynamic]Type_Id) -> bool {
-	add :: proc(objects: ^[dynamic]Type_Id, type: Type_Id) {
-		if !slice.contains(objects[:], type) {
-			append(objects, type)
-		}
-	}
 	info := type_of(c, type)
 	if info == nil || slice.contains(inside[:], type) {
 		return false
@@ -361,12 +356,12 @@ collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id
 	case .Distinct, .Array, .Simd:
 		return collect_pointees(c, info.element, objects, inside)
 	case .Pointer, .Slice, .Dynamic_Array, .Box:
-		add(objects, info.element)
+		append_unique(objects, info.element)
 	case .Map:
-		add(objects, info.key)
-		add(objects, info.element)
+		append_unique(objects, info.key)
+		append_unique(objects, info.element)
 	case .String, .String_View, .CString_View:
-		add(objects, TYPE_U8)
+		append_unique(objects, TYPE_U8)
 	case .Struct:
 		for field in info.fields {
 			if sym := symbol_of(c, field); sym != nil && !collect_pointees(c, sym.type, objects, inside) {

@@ -105,7 +105,7 @@ check_receiver :: proc(k: ^Checker, sel: ^Expr_Selector) -> Type_Id {
 // What a selector's operand names, if a type. A generic procedure's call must be
 // checked to say, which makes it the receiver's one check.
 receiver_denoted_type :: proc(k: ^Checker, sel: ^Expr_Selector) -> Type_Id {
-	if call, is_call := sel.operand.(^Expr_Call); is_call && generic_template_of_callee(k, call.callee, .Procedure) != nil {
+	if call, is_call := sel.operand.(^Expr_Call); is_call && generic_template_of_callee(k, call.callee, {.Procedure}) != nil {
 		check_receiver(k, sel)
 		return call.value_category == .Type ? call.denoted_type : INVALID_TYPE
 	}

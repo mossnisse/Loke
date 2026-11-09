@@ -1209,29 +1209,6 @@ merge_result_dependencies :: proc(into: ^Result_Dependencies, from: Result_Depen
 	}
 }
 
-// Appends `item` unless `list` holds it already; whether it did.
-@(private)
-append_unique :: proc(list: ^[dynamic]$T, item: T) -> bool {
-	if slice.contains(list[:], item) {
-		return false
-	}
-	append(list, item)
-	return true
-}
-
-// Adds `item` to a set kept as a slice; returns whether the set grew.
-@(private)
-set_add :: proc(set: ^[]$T, item: T, allocator: mem.Allocator) -> bool {
-	if slice.contains(set^, item) {
-		return false
-	}
-	grown := make([]T, len(set^) + 1, allocator)
-	copy(grown, set^)
-	grown[len(set^)] = item
-	set^ = grown
-	return true
-}
-
 // Joins the non-parameter components; returns whether `into` grew.
 @(private)
 merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies, allocator: mem.Allocator) -> bool {
