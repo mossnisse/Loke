@@ -1143,8 +1143,7 @@ check_signature_parameter :: proc(
 	params: []Parameter,
 	position, name_index: int,
 	written: Type_Id,
-	generic: bool,
-	in_foreign := false,
+	generic, in_foreign: bool,
 	receiver := INVALID_TYPE,
 ) -> (result: Signature_Parameter) {
 	parameter := &params[position]
@@ -1206,7 +1205,8 @@ allocator_reset_ok :: proc(k: ^Checker, marked: bool, type: Type_Id, span: Span)
 }
 
 // What `resolve_proc_signature` flattens a written parameter list into, one entry
-// per parameter name: `proc(a, b: int)` has two.
+// per parameter name: `proc(a, b: int)` has two. `resolve_proc_type` fills only
+// what `append_signature_parameter` appends.
 @(private = "file")
 Signature_Builder :: struct {
 	params:        [dynamic]Type_Id,
@@ -1221,6 +1221,17 @@ Signature_Builder :: struct {
 	has_receiver:  bool,
 	receiver_mode: Param_Mode,
 	is_foreign:    bool,
+}
+
+// The parts of a checked name a procedure type keeps, in a declaration's
+// signature and in a procedure type alike.
+@(private = "file")
+append_signature_parameter :: proc(builder: ^Signature_Builder, checked: Signature_Parameter) {
+	append(&builder.params, checked.type)
+	append(&builder.modes, checked.mode)
+	append(&builder.resets, checked.resets)
+	append(&builder.escapes, checked.escape)
+	append(&builder.crosses, checked.crosses)
 }
 
 // Builds the flattened signature a call site binds against and interns its
@@ -1349,20 +1360,17 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 		}
 		checked := check_signature_parameter(
 			k, literal.signature.params, position, name_index, parameter_type,
-			literal.generic_instance || in_generic_signature(k), builder.is_foreign, receiver = k.impl_type,
+			literal.generic_instance || in_generic_signature(k), in_foreign = builder.is_foreign, receiver = k.impl_type,
 		)
-		name_type, mode := checked.type, checked.mode
-		// Group defaults and reset effects belong to the typed parameters.
-		default := checked.split_receiver ? nil : parameter.default
 		reject_reserved_name(k, name_id, name.span)
 		binding := new_binding_symbol(k, name, .Parameter)
 		if bound := symbol_of(k.c, binding); bound != nil {
-			bound.type = name_type
+			bound.type = checked.type
 			bound.index = u32(len(builder.params))
-			bound.mode = mode
+			bound.mode = checked.mode
 			// `self: ^Self` binds the pointer itself, an ordinary value.
-			if mode == .Borrow {
-				bound.type, bound.mode = pointer_to(k.c, name_type, false), .Value
+			if checked.mode == .Borrow {
+				bound.type, bound.mode = pointer_to(k.c, checked.type, false), .Value
 			}
 			// design.md "Parameter semantics and ABI lowering".
 			bound.immutable = bound.mode == .Value
@@ -1371,19 +1379,16 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 			bound.cross_thread = checked.crosses
 			bound.escape = checked.escape
 		}
-		if position == 0 && name_index == 0 && k.impl_type != INVALID_TYPE && name.text == "self" && name_type == k.impl_type {
+		if position == 0 && name_index == 0 && k.impl_type != INVALID_TYPE && name.text == "self" && checked.type == k.impl_type {
 			builder.has_receiver = true
-			builder.receiver_mode = mode
+			builder.receiver_mode = checked.mode
 		}
 		append(&bindings, binding)
-		append(&builder.params, name_type)
-		append(&builder.modes, mode)
-		append(&builder.resets, checked.resets)
-		append(&builder.escapes, checked.escape)
-		append(&builder.crosses, checked.crosses)
+		append_signature_parameter(builder, checked)
 		append(&builder.by_ptr, is_by_ptr)
 		append(&builder.param_symbols, binding)
-		append(&builder.defaults, default)
+		// A group's default belongs to its typed names, not a split receiver.
+		append(&builder.defaults, checked.split_receiver ? nil : parameter.default)
 		if checked.split_receiver && inferred {
 			parameter.symbols = bindings[:]
 			parameter_type = infer_param_default_type(k, literal, position)
@@ -1891,11 +1896,13 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 	}
 	reported := k.c.error_count
 	validate_param_attributes(k, value.params)
-	params := make([dynamic]Type_Id, 0, len(value.params), context.temp_allocator)
-	modes := make([dynamic]Param_Mode, 0, len(value.params), context.temp_allocator)
-	resets := make([dynamic]bool, 0, len(value.params), context.temp_allocator)
-	escapes := make([dynamic]Escape_Level, 0, len(value.params), context.temp_allocator)
-	crosses := make([dynamic]bool, 0, len(value.params), context.temp_allocator)
+	builder := Signature_Builder {
+		params  = make([dynamic]Type_Id, 0, len(value.params), context.temp_allocator),
+		modes   = make([dynamic]Param_Mode, 0, len(value.params), context.temp_allocator),
+		resets  = make([dynamic]bool, 0, len(value.params), context.temp_allocator),
+		escapes = make([dynamic]Escape_Level, 0, len(value.params), context.temp_allocator),
+		crosses = make([dynamic]bool, 0, len(value.params), context.temp_allocator),
+	}
 	generic := in_generic_signature(k)
 	for parameter, position in value.params {
 		count := max(len(parameter.names), 1)
@@ -1918,20 +1925,20 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 		}
 		written := resolve_type_reporting(k, parameter.type)
 		for name_index in 0 ..< count {
-			checked := check_signature_parameter(k, value.params, position, name_index, written, generic)
-			append(&params, checked.type)
-			append(&modes, checked.mode)
-			append(&resets, checked.resets)
-			append(&escapes, checked.escape)
-			append(&crosses, checked.crosses)
+			checked := check_signature_parameter(
+				k, value.params, position, name_index, written, generic, in_foreign = false,
+			)
+			append_signature_parameter(&builder, checked)
 		}
 	}
 	result_type, result_inout := resolve_signature_result(k, value.result)
-	check_signature_convention(k, value.convention, params[:], modes[:], nil, result_type, result_inout, value.span)
+	check_signature_convention(
+		k, value.convention, builder.params[:], builder.modes[:], nil, result_type, result_inout, value.span,
+	)
 	type := intern_proc_type(
-		k.c, params[:], modes[:], result_type, result_inout, value.convention, resets[:],
-		param_escapes = escapes[:],
-		param_cross_thread = crosses[:],
+		k.c, builder.params[:], builder.modes[:], result_type, result_inout, value.convention, builder.resets[:],
+		param_escapes = builder.escapes[:],
+		param_cross_thread = builder.crosses[:],
 	)
 	if k.c.error_count == reported {
 		value.denoted_type = type
