@@ -2441,6 +2441,9 @@ unwritten_array_elements_share_one_zero :: proc(t: ^testing.T) {
 		return
 	}
 	rows := value.aggregate.elements
+	if !testing.expect_value(t, len(rows), 4) {
+		return
+	}
 	testing.expect(t, rows[1].aggregate == rows[2].aggregate && rows[2].aggregate == rows[3].aggregate, "unwritten rows were each built")
 	testing.expect(t, rows[0].aggregate != rows[1].aggregate, "the written row was shared")
 }

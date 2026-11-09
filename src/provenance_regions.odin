@@ -1070,70 +1070,48 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 // Whether a value of `type` holds an allocator handle anywhere in it, a record's
-// fields included, not behind a carrier. Only the queried type is cached: an
-// intermediate one is answered at its depth.
+// fields and a union's payloads included, not behind a carrier.
 @(private = "file")
 prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if cached, found := c.holds_allocator[type]; found {
-		return cached
-	}
-	holds := holds_allocator_walk(c, type, 0)
-	c.holds_allocator[type] = holds
-	return holds
-}
-
-@(private = "file")
-holds_allocator_walk :: proc(c: ^Compiler, type: Type_Id, depth: int) -> bool {
-	if depth > REGION_SHAPE_DEPTH {
-		return true
-	}
-	if prov_carries_allocator(c, type) {
-		return true
-	}
-	info := underlying_info(c, type)
-	if info == nil {
-		return false
-	}
-	#partial switch info.kind {
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && holds_allocator_walk(c, sym.type, depth + 1) {
-				return true
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if variant != TYPE_VOID && holds_allocator_walk(c, variant, depth + 1) {
-				return true
-			}
-		}
-	case .Array:
-		return holds_allocator_walk(c, info.element, depth + 1)
-	}
-	return false
+	return prov_record_holds(c, &c.holds_allocator, type, type_is_allocator)
 }
 
 // Whether a value of `type` can depend on an allocator region: somewhere in it
 // is an owner, a view, an `Allocator`, or a provider (design.md "Allocator
 // regions and region provenance"). An `int` read out of a region-backed
-// container has no region. Only the queried type is cached, as for
-// `prov_holds_allocator`.
+// container has no region.
 @(private)
 prov_type_has_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if cached, found := c.has_region[type]; found {
+	return prov_record_holds(c, &c.has_region, type, proc(c: ^Compiler, type: Type_Id) -> bool {
+		return type_is_managed(c, type) || type_is_carrier(c, type) || type_is_allocator(c, type)
+	})
+}
+
+// Whether a `leaf` type is anywhere in a value of `type`, through record
+// fields, union payloads and array elements; a shape deeper than
+// `REGION_SHAPE_DEPTH` may hold one. Only the queried type is cached in `cache`:
+// an intermediate one is answered at its depth.
+@(private = "file")
+prov_record_holds :: proc(
+	c: ^Compiler,
+	cache: ^map[Type_Id]bool,
+	type: Type_Id,
+	leaf: proc(c: ^Compiler, type: Type_Id) -> bool,
+) -> bool {
+	if cached, found := cache[type]; found {
 		return cached
 	}
-	has := has_region_walk(c, type, 0)
-	c.has_region[type] = has
-	return has
+	holds := record_holds_walk(c, type, leaf, 0)
+	cache[type] = holds
+	return holds
 }
 
 @(private = "file")
-has_region_walk :: proc(c: ^Compiler, type: Type_Id, depth: int) -> bool {
+record_holds_walk :: proc(c: ^Compiler, type: Type_Id, leaf: proc(c: ^Compiler, type: Type_Id) -> bool, depth: int) -> bool {
 	if depth > REGION_SHAPE_DEPTH {
 		return true
 	}
-	if type_is_managed(c, type) || type_is_carrier(c, type) || type_is_allocator(c, type) {
+	if leaf(c, type) {
 		return true
 	}
 	info := underlying_info(c, type)
@@ -1143,18 +1121,18 @@ has_region_walk :: proc(c: ^Compiler, type: Type_Id, depth: int) -> bool {
 	#partial switch info.kind {
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && has_region_walk(c, sym.type, depth + 1) {
+			if sym := symbol_of(c, field); sym != nil && record_holds_walk(c, sym.type, leaf, depth + 1) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if variant != TYPE_VOID && has_region_walk(c, variant, depth + 1) {
+			if variant != TYPE_VOID && record_holds_walk(c, variant, leaf, depth + 1) {
 				return true
 			}
 		}
 	case .Array:
-		return has_region_walk(c, info.element, depth + 1)
+		return record_holds_walk(c, info.element, leaf, depth + 1)
 	}
 	return false
 }

@@ -527,31 +527,36 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields:
 			written[slot] = true
 		}
 	}
-	// An array's unwritten elements share one zero, as `zero_const`'s do.
-	array_zero: Maybe(Const_Value)
-	for &element, index in elements {
-		if written[index] {
-			continue
-		}
-		element_type := info.element
-		if fields != nil {
-			field := symbol_of(k.c, fields[index])
-			element_type = field.type
-			if field.initialized_by != INVALID_SYMBOL {
-				element = capacity_const(k.c, element_type)
+	if fields == nil {
+		// An array's unwritten elements share one zero, as `zero_const`'s do.
+		zero: Maybe(Const_Value)
+		for &element, index in elements {
+			if written[index] {
 				continue
 			}
-		} else if zero, built := array_zero.?; built {
-			element = zero
-			continue
+			if zero == nil {
+				built, ok := zero_const(k.c, info.element)
+				if !ok {
+					return
+				}
+				zero = built
+			}
+			element = zero.?
 		}
-		zero, ok := zero_const(k.c, element_type)
-		if !ok {
-			return
-		}
-		element = zero
-		if fields == nil {
-			array_zero = zero
+	} else {
+		for &element, index in elements {
+			if written[index] {
+				continue
+			}
+			field := symbol_of(k.c, fields[index])
+			if field.initialized_by != INVALID_SYMBOL {
+				element = capacity_const(k.c, field.type)
+				continue
+			}
+			ok: bool
+			if element, ok = zero_const(k.c, field.type); !ok {
+				return
+			}
 		}
 	}
 	v.const_value = aggregate_const(k.c, target, elements)
