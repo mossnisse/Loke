@@ -254,9 +254,8 @@ The recurring themes are:
    lexes per declaration, attribute, field, and impl head in `-api`, `-doc`,
    and the language server's documentation command.
 2. **Stop canonicalizing paths that need no canonicalizing in package loading**
-   (done for `package_sources`; `is_source_directory` canonicalizes once per call
-   and is unchanged)
-   (`src/packages.odin:283`, `:288`).
+   (`src/packages.odin:283`, `:288`; done for `package_sources`,
+   while `is_source_directory` canonicalizes once per call and is unchanged).
    - `package_sources` calls `canonical_dir(entry.fullpath)` for every
      directory entry of every package, even when there are no overlays, which
      is always the case for the command line. Guard that bookkeeping with

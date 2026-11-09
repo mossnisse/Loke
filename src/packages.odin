@@ -276,20 +276,22 @@ package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 		return nil
 	}
 	paths := make([dynamic]string, 0, len(entries), c.semantic_allocator)
-	seen := make(map[string]bool, context.temp_allocator)
 	for entry in entries {
 		if is_source_file(entry) {
 			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
-			// Only an overlay can name a listed file again.
-			if len(overlays) > 0 {
-				seen[dir_key(canonical_dir(entry.fullpath))] = true
-			}
 		}
 	}
-	key := len(overlays) > 0 ? dir_key(canonical_dir(dir)) : ""
-	for path, overlay in overlays {
-		if !seen[path] && overlay.dir == key {
-			append(&paths, strings.clone(overlay.path, c.semantic_allocator))
+	if len(overlays) > 0 {
+		// An overlay of a listed file replaces its text; it adds no second path.
+		seen := make(map[string]bool, context.temp_allocator)
+		for path in paths {
+			seen[dir_key(canonical_dir(path))] = true
+		}
+		key := dir_key(canonical_dir(dir))
+		for path, overlay in overlays {
+			if !seen[path] && overlay.dir == key {
+				append(&paths, strings.clone(overlay.path, c.semantic_allocator))
+			}
 		}
 	}
 	// By name: listed paths end `\name` on Windows, unsaved ones `/name`, and
