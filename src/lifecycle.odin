@@ -362,7 +362,7 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		}
 		copy(block.exit_state, state)
 		block.visited = true
-		block_queue_wake(&queue, block.succs[:])
+		worklist_wake_all(&queue, block.succs[:])
 	}
 
 	// A second walk with the fixed point in hand: this is where the events that

@@ -40,7 +40,7 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	} else if shape.align > shape.tag_bytes {
 		fmt.sbprintf(&b, "[0 x %s], ", union_head_type(shape.align))
 	}
-	fmt.sbprintf(&b, "i%d", shape.tag_bytes * 8)
+	strings.write_string(&b, union_tag_llvm(shape))
 	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
 		fmt.sbprintf(&b, ", [%d x i8]", tail)
 	}
@@ -167,7 +167,7 @@ emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag
 		return
 	}
 	address := gep_field(e, llvm, slot, union_tag_member(e, union_type))
-	fmt.sbprintfln(&e.b, "  store %s %d, ptr %s", union_tag_llvm(e, union_type), tag, address)
+	fmt.sbprintfln(&e.b, "  store %s %d, ptr %s", union_tag_llvm(shape), tag, address)
 }
 
 // The tag of a union *value*, which is what every extraction and type switch
@@ -190,7 +190,7 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i8 %d, i8 %d", out, present, some, 1 - some)
 		return out
 	}
-	return read_member(e, union_type, value, union_tag_member(e, union_type), union_tag_llvm(e, union_type))
+	return read_member(e, union_type, value, union_tag_member(e, union_type), union_tag_llvm(shape))
 }
 
 // Whether a union value's tag is `index`.
@@ -198,14 +198,15 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 emit_union_tag_is :: proc(e: ^Emitter, union_type: Type_Id, value: string, index: int) -> string {
 	tag := emit_union_tag(e, union_type, value)
 	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", out, union_tag_llvm(e, union_type), tag, index)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", out, union_tag_llvm(union_layout(e.c, union_type)), tag, index)
 	return out
 }
 
-// The LLVM integer type of a union's tag, as `emit_union_tag` computes it.
+// The LLVM integer type of a union's tag, as stored and as `emit_union_tag`
+// computes it.
 @(private)
-union_tag_llvm :: proc(e: ^Emitter, union_type: Type_Id) -> string {
-	switch union_layout(e.c, union_type).tag_bytes {
+union_tag_llvm :: proc(shape: Union_Layout) -> string {
+	switch shape.tag_bytes {
 	case 1:
 		return "i8"
 	case 2:
@@ -214,13 +215,32 @@ union_tag_llvm :: proc(e: ^Emitter, union_type: Type_Id) -> string {
 	return "i32"
 }
 
-// A label for each variant of a union, by variant index; with `payload_only`,
-// "" for a variant that has no payload.
+// Which variants of a union `variant_labels` gives a label.
 @(private)
-variant_labels :: proc(e: ^Emitter, info: ^Type_Info, prefix: string, payload_only := false) -> []string {
+Labeled_Variants :: enum {
+	All,
+	// Those with a payload.
+	Payload,
+	// Those whose payload a drop or clone must visit.
+	Managed,
+}
+
+// A label for each variant of a union that `which` selects, by variant index,
+// and "" for the rest.
+@(private)
+variant_labels :: proc(e: ^Emitter, info: ^Type_Info, prefix: string, which := Labeled_Variants.All) -> []string {
 	labels := make([]string, len(info.variants))
 	for variant, index in info.variants {
-		if !payload_only || variant != TYPE_VOID {
+		selected: bool
+		switch which {
+		case .All:
+			selected = true
+		case .Payload:
+			selected = variant != TYPE_VOID
+		case .Managed:
+			selected = variant != TYPE_VOID && emit_lifecycle(e, variant).managed
+		}
+		if selected {
 			labels[index] = new_label(e, prefix)
 		}
 	}
@@ -239,7 +259,7 @@ emit_union_switch :: proc(e: ^Emitter, union_type: Type_Id, tag: string, targets
 		branch(e, rest)
 		return
 	}
-	width := union_tag_llvm(e, union_type)
+	width := union_tag_llvm(union_layout(e.c, union_type))
 	otherwise := rest != "" ? rest : new_label(e, "union.none")
 	fmt.sbprintf(&e.b, "  switch %s %s, label %%%s [", width, tag, otherwise)
 	for target, index in targets {

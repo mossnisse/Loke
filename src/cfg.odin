@@ -366,8 +366,8 @@ link :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 	append(&graph.blocks[from].succs, to)
 }
 
-// A block fixed point visits blocks in the order they were woken
-// (`worklist_pop`). A forward problem starts where the procedure does.
+// A block fixed point visits blocks in the order they were woken. A forward
+// problem starts where the procedure does.
 @(private)
 block_queue_from_entry :: proc(graph: ^Flow_Graph) -> Worklist {
 	queue := worklist_make(len(graph.blocks), graph.alloc)
@@ -383,13 +383,6 @@ block_queue_last_first :: proc(graph: ^Flow_Graph) -> Worklist {
 		worklist_wake(&queue, index)
 	}
 	return queue
-}
-
-@(private)
-block_queue_wake :: proc(queue: ^Worklist, blocks: []Block_Id) {
-	for block in blocks {
-		worklist_wake(queue, int(block))
-	}
 }
 
 @(private)

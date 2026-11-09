@@ -1061,8 +1061,9 @@ main :: proc() { _ = pick(1, 2); }
 	testing.expect_value(t, phis, 5)
 }
 
-// Dispatch on a union's tag is one `switch` per union, never a chain of tag
-// comparisons: in a type switch, `==`, a drop and a widening alike.
+// Dispatch on a union's tag is one `switch`, never a chain of tag comparisons:
+// in a type switch, `==`, a widening, a drop, a clone and hashing alike.
+// `tests/ll/union_format_switch.loke` checks formatting, which needs `core:fmt`.
 @(test)
 union_dispatch_is_one_switch :: proc(t: ^testing.T) {
 	p: Checked
@@ -1084,6 +1085,8 @@ main :: proc() {
     _ = area(s);
     _ = same(Shape.circle(1), Shape.square(1));
     _ = widen(Narrow.circle(2));
+    seen := map[Shape]int{};
+    seen[s.clone()] = 1;
 }
 `)
 	defer destroy_checked(&p)
@@ -1091,21 +1094,37 @@ main :: proc() {
 	finalize_semantics(&p.c)
 	module, emitted := emit_llvm_module(&p.c)
 	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
-	for name in ([]string{"@loke.p.area(", "@loke.p.same(", "@loke.p.widen("}) {
-		start := strings.index(module, name)
-		if !testing.expectf(t, start >= 0, "`%s` was not emitted", name) { continue }
-		body := module[start:]
-		body = body[:strings.index(body, "\n}")]
-		testing.expectf(t, strings.count(body, "  switch i8 ") == 1, "%s does not dispatch with one switch", name)
-		// Only `==` compares two tags; none is compared with a variant's number.
+	// Each dispatch by the label its `switch` goes to: a user procedure's own,
+	// or the first switch to a label only that dispatch makes.
+	Dispatch :: struct { what, procedure, target: string }
+	dispatches := []Dispatch {
+		{"a type switch", "@loke.p.area(", "label %typecase.body."},
+		{"`==`", "@loke.p.same(", "label %unioneq.hit."},
+		{"a widening", "@loke.p.widen(", "label %widen.hit."},
+		{"a drop", "", "label %uniondrop.hit."},
+		{"a clone", "", "label %unionclone.hit."},
+		{"hashing", "", "label %unionhash.hit."},
+	}
+	for dispatch in dispatches {
+		at := strings.index(module, dispatch.procedure != "" ? dispatch.procedure : dispatch.target)
+		if !testing.expectf(t, at >= 0, "%s was not emitted", dispatch.what) { continue }
+		begin := strings.last_index(module[:at], "\ndefine ")
+		length := strings.index(module[at:], "\n}")
+		if !testing.expectf(t, begin >= 0 && length >= 0, "%s is not inside a definition", dispatch.what) { continue }
+		body := module[begin:at + length]
+		switches := 0
 		for line in strings.split_lines(body, context.temp_allocator) {
+			if strings.has_prefix(line, "  switch i8 ") && strings.contains(line, dispatch.target) {
+				switches += 1
+			}
+			// Only `==` compares two tags; none is compared with a variant's number.
 			if strings.contains(line, "= icmp eq i8 ") {
 				_, numbered := strconv.parse_int(line[strings.last_index(line, " ") + 1:])
-				testing.expectf(t, !numbered, "%s compares tags one by one: %s", name, line)
+				testing.expectf(t, !numbered, "%s compares tags one by one: %s", dispatch.what, line)
 			}
 		}
+		testing.expectf(t, switches >= 1, "%s does not dispatch with a switch", dispatch.what)
 	}
-	testing.expect(t, strings.contains(module, "uniondrop.hit"), "the union's drop was not emitted")
 }
 
 // Every use of the same large constant copies from one private global, as every

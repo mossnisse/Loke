@@ -48,7 +48,7 @@ solve_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 		}
 		visited[id] = true
 		copy(exit[id], mask)
-		block_queue_wake(&queue, block.succs[:])
+		worklist_wake_all(&queue, block.succs[:])
 	}
 	return entry
 }

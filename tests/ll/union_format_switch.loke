@@ -1,0 +1,13 @@
+package main;
+
+// Formatting a union dispatches on its tag with one `switch`, as every other
+// union dispatch does (`union_dispatch_is_one_switch` checks those); it never
+// tests the variants one at a time.
+
+import "core:fmt";
+
+Shape :: union { none, circle: int, label: string }
+
+main :: proc() {
+	fmt.println(Shape.circle(2));
+}

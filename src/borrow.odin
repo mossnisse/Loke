@@ -1229,7 +1229,7 @@ solve_reaching :: proc(state: ^Prov_Solve) {
 		block_table_take(&block.precision_exit, state.precision, block.precision_entry, graph.alloc)
 		block_table_take(&block.ended_exit, state.ended, block.ended_entry, graph.alloc)
 		block.prov_visited = true
-		block_queue_wake(&queue, block.succs[:])
+		worklist_wake_all(&queue, block.succs[:])
 	}
 }
 
@@ -1321,7 +1321,7 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 		visited[id] = true
 		block_table_take(&block.links_exit, state.links_held, block.links_entry, graph.alloc)
 		block_table_take(&block.below_exit, state.below.held, block.below_entry, graph.alloc)
-		block_queue_wake(&queue, block.succs[:])
+		worklist_wake_all(&queue, block.succs[:])
 	}
 }
 
@@ -2288,7 +2288,7 @@ solve_loan_liveness :: proc(state: ^Prov_Solve) {
 		}
 		block_table_take(&block.live_entry, state.live, block.live_exit, graph.alloc)
 		block_table_take(&block.use_entry, state.uses, block.use_exit, graph.alloc)
-		block_queue_wake(&queue, block.preds[:])
+		worklist_wake_all(&queue, block.preds[:])
 	}
 }
 

@@ -1,0 +1,2 @@
+switch i8 *label %fmt.union.hit.
+not fmt.union.next

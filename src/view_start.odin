@@ -390,7 +390,7 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 		}
 		copy(exit[id], row)
 		visited[id] = true
-		block_queue_wake(&queue, block.succs[:])
+		worklist_wake_all(&queue, block.succs[:])
 	}
 	for block, id in graph.blocks {
 		if !visited[id] {

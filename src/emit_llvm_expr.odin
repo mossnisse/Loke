@@ -49,7 +49,7 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	} else if shape.align > shape.tag_bytes {
 		fmt.sbprintf(&b, "[0 x %s] zeroinitializer, ", union_head_type(shape.align))
 	}
-	fmt.sbprintf(&b, "i%d %d", shape.tag_bytes * 8, index)
+	fmt.sbprintf(&b, "%s %d", union_tag_llvm(shape), index)
 	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
 		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", tail)
 	}
@@ -2072,7 +2072,7 @@ emit_prefix_equal :: proc(
 @(private = "file")
 emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> string {
 	info := type_of(e.c, union_type)
-	tag_llvm := union_tag_llvm(e, union_type)
+	tag_llvm := union_tag_llvm(union_layout(e.c, union_type))
 
 	left_tag := emit_union_tag(e, union_type, lhs)
 	right_tag := emit_union_tag(e, union_type, rhs)
@@ -2089,7 +2089,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	done, payloads := new_label(e, "unioneq.done"), new_label(e, "unioneq.payloads")
 	branch_if(e, same_tag, payloads, done)
 	place_label(e, payloads)
-	hits := variant_labels(e, info, "unioneq.hit", payload_only = true)
+	hits := variant_labels(e, info, "unioneq.hit", .Payload)
 	emit_union_switch(e, union_type, left_tag, hits, done)
 
 	for variant, index in info.variants {

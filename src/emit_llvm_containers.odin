@@ -1357,13 +1357,13 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	if info != nil && info.kind == .Union {
 		tag := emit_union_tag(e, under, value)
 		widened := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, union_tag_llvm(e, under), tag)
+		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, union_tag_llvm(union_layout(e.c, under)), tag)
 		tagged := emit_hash_mix(e, seed, widened)
 		slot := emit_union_spill(e, under, value)
 		state := alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", tagged, state)
 		done := new_label(e, "unionhash.done")
-		hits := variant_labels(e, info, "unionhash.hit", payload_only = true)
+		hits := variant_labels(e, info, "unionhash.hit", .Payload)
 		emit_union_switch(e, under, tag, hits, done)
 		for variant, index in info.variants {
 			if hits[index] == "" {

@@ -180,7 +180,7 @@ settle_thread_facts :: proc(c: ^Compiler, facts: []Thread_Body) {
 	}
 	readers := part_readers(parts, closing)
 	queue := body_queue_make(len(facts))
-	for index in worklist_pop_last(&queue) {
+	for index in worklist_pop(&queue) {
 		body := &facts[index]
 		grew := false
 		for call, position in body.calls {
@@ -217,7 +217,7 @@ settle_thread_facts :: proc(c: ^Compiler, facts: []Thread_Body) {
 			grew |= merge_allocator_use(&body.whole_use, substituted_region(facts[part.body].whole_use, given, direct = false))
 		}
 		if grew {
-			body_queue_wake(&queue, readers[index][:])
+			worklist_wake_all(&queue, readers[index][:])
 		}
 	}
 }

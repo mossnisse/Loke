@@ -675,7 +675,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	// until the statement ends.
 	subject := emit_borrowed_operand(e, s.subject)
 	done := new_label(e, "switch.done")
-	bodies, tests, order, fallback := switch_labels(e, s, "case", done)
+	bodies, tests, order, fallback := switch_labels(e, s, done)
 	closed_fallback := fallback == done && s.exhaustive
 	if closed_fallback {
 		fallback = new_label(e, "switch.invalid")
@@ -724,14 +724,14 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 // wherever it was written, or to `done`.
 @(private = "file")
 switch_labels :: proc(
-	e: ^Emitter, s: ^Stmt_Switch, prefix, done: string,
+	e: ^Emitter, s: ^Stmt_Switch, done: string,
 ) -> (bodies, tests: []string, order: [dynamic]int, fallback: string) {
 	bodies = make([]string, len(s.cases))
 	tests = make([]string, len(s.cases))
 	fallback = done
 	for entry, index in s.cases {
-		bodies[index] = new_label(e, fmt.aprintf("%s.body", prefix))
-		tests[index] = new_label(e, fmt.aprintf("%s.test", prefix))
+		bodies[index] = new_label(e, "case.body")
+		tests[index] = new_label(e, "case.test")
 		if len(entry.values) == 0 {
 			fallback = bodies[index]
 		} else {
@@ -763,15 +763,18 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 	consumes := !expression_is_borrowed_place(s.subject)
 	joined := result != TYPE_VOID && result != INVALID_TYPE ? temporary_slot(e, result) : ""
 	done := new_label(e, "typeswitch.done")
-	bodies, _, order, fallback := switch_labels(e, s, "typecase", done)
-
-	// Each variant goes to the first case that names it.
+	// The checker names each variant in at most one case, and a default case
+	// names none: a variant no case names goes to the default, or to `done`.
+	bodies := make([]string, len(s.cases))
 	targets := make([]string, len(underlying_info(e.c, union_type).variants))
-	for case_index in order {
-		for discriminant in s.cases[case_index].variant_indices {
-			if targets[discriminant] == "" {
-				targets[discriminant] = bodies[case_index]
-			}
+	fallback := done
+	for entry, index in s.cases {
+		bodies[index] = new_label(e, "typecase.body")
+		if len(entry.values) == 0 {
+			fallback = bodies[index]
+		}
+		for discriminant in entry.variant_indices {
+			targets[discriminant] = bodies[index]
 		}
 	}
 	emit_union_switch(e, union_type, tag, targets, fallback)

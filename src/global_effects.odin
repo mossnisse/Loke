@@ -1011,7 +1011,7 @@ settle_called_parameters :: proc(c: ^Compiler, bodies: []Body_Effects) -> [][dyn
 		}
 	}
 	queue := body_queue_make(len(bodies))
-	for index in worklist_pop_last(&queue) {
+	for index in worklist_pop(&queue) {
 		grew := false
 		for call in bodies[index].calls {
 			args, values, followed := call_values(c, bodies[index].symbol, call)
@@ -1032,7 +1032,7 @@ settle_called_parameters :: proc(c: ^Compiler, bodies: []Body_Effects) -> [][dyn
 			}
 		}
 		if grew {
-			body_queue_wake(&queue, callers[index][:])
+			worklist_wake_all(&queue, callers[index][:])
 		}
 	}
 	return called
@@ -1063,22 +1063,15 @@ proc_parameter_type :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Typ
 	return info.parameters[index]
 }
 
-// A body fixed point visits the latest woken body first (`worklist_pop_last`).
-// Every body is queued, to be visited first to last.
+// A body fixed point visits the latest woken body first. Every body is
+// queued, to be visited first to last.
 @(private)
 body_queue_make :: proc(count: int) -> Worklist {
-	queue := worklist_make(count, context.temp_allocator)
+	queue := worklist_make(count, context.temp_allocator, latest_first = true)
 	for index := count - 1; index >= 0; index -= 1 {
 		worklist_wake(&queue, index)
 	}
 	return queue
-}
-
-@(private)
-body_queue_wake :: proc(queue: ^Worklist, bodies: []int) {
-	for body in bodies {
-		worklist_wake(queue, body)
-	}
 }
 
 // Which bodies read each body's summaries, through the parts of its calls and
@@ -1489,7 +1482,7 @@ settle_body_effects :: proc(c: ^Compiler, bodies: []Body_Effects) {
 	readers := part_readers(parts, closing)
 	numbers := number_body_globals(c, bodies)
 	queue := body_queue_make(len(bodies))
-	for index in worklist_pop_last(&queue) {
+	for index in worklist_pop(&queue) {
 		body := &bodies[index]
 		grew := false
 		for part in parts[index] {
@@ -1504,7 +1497,7 @@ settle_body_effects :: proc(c: ^Compiler, bodies: []Body_Effects) {
 			grew |= add_part_to_set(c, numbers, &body.reads, bodies[part.body].reads, part)
 		}
 		if grew {
-			body_queue_wake(&queue, readers[index][:])
+			worklist_wake_all(&queue, readers[index][:])
 		}
 	}
 }
