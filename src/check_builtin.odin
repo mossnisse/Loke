@@ -286,9 +286,11 @@ check_defaulted_operand :: proc(k: ^Checker, e: Expr, expected := INVALID_TYPE) 
 	if type == INVALID_TYPE {
 		return INVALID_TYPE, false
 	}
-	typed := expected != INVALID_TYPE && type_is_untyped(k.c, type) ? expected : default_type(k.c, type)
+	typed := expected
+	if expected == INVALID_TYPE || !type_is_untyped(k.c, type) {
+		typed = inferred_type(k, e, type)
+	}
 	if typed == INVALID_TYPE {
-		errorf(k.c, expr_span(e), "L0310", "`nil` has no type to infer here")
 		return INVALID_TYPE, false
 	}
 	if !materialize(k, e, typed) {

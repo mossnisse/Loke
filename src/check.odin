@@ -1471,9 +1471,8 @@ infer_param_default_type :: proc(k: ^Checker, literal: ^Expr_Proc, position: int
 	if type == INVALID_TYPE {
 		return INVALID_TYPE
 	}
-	final := default_type(k.c, type)
+	final := inferred_type(k, parameter.default, type)
 	if final == INVALID_TYPE {
-		errorf(k.c, expr_span(parameter.default), "L0310", "`nil` has no type to infer here")
 		return INVALID_TYPE
 	}
 	materialize(k, parameter.default, final)
@@ -2447,9 +2446,8 @@ check_decl_value :: proc(k: ^Checker, d: ^Decl, value: Expr, declared: Type_Id, 
 		// An untyped constant stays untyped (design.md "Unfixed constants").
 		final = type
 	} else {
-		final = default_type(k.c, type)
+		final = inferred_type(k, value, type)
 		if final == INVALID_TYPE {
-			errorf(k.c, expr_span(value), "L0310", "`nil` has no type to infer here")
 			return
 		}
 		materialize(k, value, final)

@@ -84,9 +84,8 @@ check_capture_values :: proc(k: ^Checker, v: ^Expr_Composite) -> (types: []Type_
 			checked = false
 			continue
 		}
-		types[index] = default_type(k.c, type)
+		types[index] = inferred_type(k, value, type)
 		if types[index] == INVALID_TYPE {
-			errorf(k.c, expr_span(value), "L0310", "`nil` has no type to infer here")
 			checked = false
 		}
 	}

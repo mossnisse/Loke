@@ -133,11 +133,9 @@ bit_value_const :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, builtin: Bu
 	case .Math_Is_Power_Of_Two:
 		return bool_const(bi_sign(value) > 0 && intrinsics.count_ones(x) == 1), true
 	}
-	one := bi_from_i64(storage, 1)
-	if bi_cmp(value, one) <= 0 {
-		return integer_const(one), true
+	if bi_sign(value) <= 0 || bi_magnitude_bits(value) == 1 {
+		return integer_const(bi_from_i64(storage, 1)), true
 	}
-	bi_release(one)
 	// `value` is above 1 here, so its pattern is its value.
 	exponent := 128 - int(intrinsics.count_leading_zeros(x - 1))
 	return integer_const(bi_pow2(storage, exponent)), exponent < bits - (signed ? 1 : 0)
@@ -155,14 +153,14 @@ rotate_const :: proc(c: ^Compiler, value, count: Big_Int, type: Type_Id, builtin
 	if builtin == .Math_Rotate_Right {
 		left = (bits - left) % bits
 	}
-	pattern := bi_wrap(storage, value, bits, false)
-	high, low := bi_shl(storage, pattern, left), bi_shr(storage, pattern, bits - left)
-	rotated := bi_or(storage, high, low)
-	bi_release(high, low)
-	bi_release_unless(pattern, value)
-	result := bi_wrap(storage, rotated, bits, type_signed(c, type))
-	bi_release_unless(rotated, result)
-	return result
+	rotated := bi_pattern(value, bits)
+	if left != 0 {
+		rotated = rotated << uint(left) | rotated >> uint(bits - left)
+		if bits < 128 {
+			rotated &= u128(1) << uint(bits) - 1
+		}
+	}
+	return bi_from_pattern(storage, rotated, bits, type_signed(c, type))
 }
 
 value_allocator :: proc(c: ^Compiler, requested: mem.Allocator) -> mem.Allocator {
@@ -239,9 +237,12 @@ fold_unary :: proc(
 			report_integer_overflow(c, op_span, folded.integer, type, storage)
 			return {}, false
 		}
-		wrapped := wrap_to_type(c, folded.integer, type, storage)
-		bi_release_unless(folded.integer, wrapped, value.integer)
-		folded.integer = wrapped
+		if op == .Plus {
+			// Unary plus built nothing: its result is the operand.
+			folded.integer = wrap_to_type(c, folded.integer, type, storage)
+		} else {
+			folded.integer = wrap_built_to_type(c, folded.integer, type, storage)
+		}
 	}
 	return folded, true
 }
@@ -329,9 +330,7 @@ fold_integer :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int,
 			return result, false
 		}
 	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Shl:
-		wrapped := wrap_to_type(c, result, type, storage)
-		bi_release_unless(result, wrapped, x, y)
-		result = wrapped
+		result = wrap_built_to_type(c, result, type, storage)
 	}
 	return result, true
 }
@@ -391,6 +390,17 @@ wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem
 		return value
 	}
 	return bi_wrap(value_allocator(c, allocator), value, bits, type_signed(c, type))
+}
+
+// `wrap_to_type` of an integer the caller built and holds nowhere else: it is
+// released when the wrap builds another, and is the result when it already
+// fits, since `bi_wrap` then returns it rather than a copy.
+wrap_built_to_type :: proc(c: ^Compiler, built: Big_Int, type: Type_Id, storage: mem.Allocator) -> Big_Int {
+	wrapped := wrap_to_type(c, built, type, storage)
+	if raw_data(wrapped.digit) != raw_data(built.digit) {
+		bi_release(built)
+	}
+	return wrapped
 }
 
 fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocator: mem.Allocator = {}) -> (bool, bool) {

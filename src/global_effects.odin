@@ -1327,14 +1327,8 @@ effect_call_description :: proc(c: ^Compiler, target: Effect_Call, verb, dropped
 effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Global_Effect {
 	out := make([dynamic]Global_Effect, 0, 2, context.temp_allocator)
 	for part in call_parts(c, body, target, open = true) {
-		next: for reached in part_reach(c, part) {
-			for &known in out {
-				if known.global == reached.global {
-					merge_effect_source(&known.source, reached.source)
-					continue next
-				}
-			}
-			append(&out, reached)
+		for reached in part_reach(c, part) {
+			add_global_effect(&out, reached.global, reached.source)
 		}
 	}
 	return out[:]

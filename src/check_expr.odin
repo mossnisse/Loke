@@ -2577,6 +2577,17 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 
 // -------------------------------------------------------------- materialise --
 
+// The type `e`, of type `type`, takes when nothing selects one: its default
+// type. An untyped `nil` has none, which this reports. An invalid `type` was
+// already reported.
+inferred_type :: proc(k: ^Checker, e: Expr, type: Type_Id) -> Type_Id {
+	final := default_type(k.c, type)
+	if final == INVALID_TYPE && type != INVALID_TYPE {
+		errorf(k.c, expr_span(e), "L0310", "`nil` has no type to infer here")
+	}
+	return final
+}
+
 // Records the implicit conversion of `e` to `target` for the emitter and the
 // provenance walker: an untyped constant folded at the target's width, a typed
 // view, an erasure, or a splat. Reports a representability failure itself and

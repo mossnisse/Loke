@@ -318,7 +318,10 @@ add_global_effect :: proc(list: ^[dynamic]Global_Effect, global: Symbol_Id, sour
 
 // One effect reached by two routes is reported from an exact one where either
 // is, since then it certainly happens, and otherwise names both routes'
-// precision limits; either way the wording does not depend on which came first.
+// precision limits, so whether it "reaches" or "may reach" does not depend on
+// which came first. The route the notes follow (`via`, `span`) is still the
+// first met of the kind kept.
+@(private = "file")
 merge_effect_source :: proc(into: ^Effect_Source, from: Effect_Source) -> bool {
 	if into.precision == {} {
 		return false

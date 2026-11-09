@@ -498,35 +498,120 @@ evaluator_folds_keep_only_results :: proc(t: ^testing.T) {
 
 	high := bi_from_u64(alloc, 0x8000_0003)
 	three := bi_from_i64(alloc, 3)
+	minus_three := bi_from_i64(alloc, -3)
 	large := bi_from_i64(alloc, 100)
 	zero := bi_zero(alloc)
 	before := storage.bytes
-	kept := proc(t: ^testing.T, storage: ^Eval_Storage, before: int, result: Big_Int, what: string) {
+	expect_only_result := proc(t: ^testing.T, storage: ^Eval_Storage, before: int, result: Big_Int, what: string) {
 		bi_release(result)
 		testing.expectf(t, storage.bytes == before, "%s keeps a temporary", what)
 	}
 
-	for builtin in ([]Builtin_Kind{.Math_Rotate_Left, .Math_Rotate_Right}) {
-		kept(t, &storage, before, rotate_const(&c, high, three, TYPE_U32, builtin, alloc), "a rotation")
-		kept(t, &storage, before, rotate_const(&c, high, three, TYPE_I32, builtin, alloc), "a signed rotation")
+	// Each by 3: a top bit turned out of the pattern, a signed result the
+	// rotation makes negative, and negative operands at three widths.
+	rotations := []struct {
+		value:    Big_Int,
+		type:     Type_Id,
+		builtin:  Builtin_Kind,
+		expected: i64,
+	}{
+		{high, TYPE_U32, .Math_Rotate_Left, 0x1c},
+		{high, TYPE_U32, .Math_Rotate_Right, 0x7000_0000},
+		{bi_from_i64(alloc, -0x7fff_fffd), TYPE_I32, .Math_Rotate_Left, 0x1c},
+		{bi_from_i64(alloc, 0x4000_0007), TYPE_I32, .Math_Rotate_Right, -0x1800_0000},
+		{minus_three, TYPE_I32, .Math_Rotate_Left, -17},
+		{minus_three, TYPE_I8, .Math_Rotate_Right, -65},
+		{minus_three, TYPE_I128, .Math_Rotate_Left, -17},
 	}
+	before = storage.bytes
+	for rotation in rotations {
+		rotated := rotate_const(&c, rotation.value, three, rotation.type, rotation.builtin, alloc)
+		testing.expectf(t, bi_eq_i64(&c, rotated, rotation.expected), "%v of %s is %s, not %d",
+		                rotation.builtin, bi_text(&c, rotation.value), bi_text(&c, rotated), rotation.expected)
+		expect_only_result(t, &storage, before, rotated, "a rotation")
+	}
+	unturned := rotate_const(&c, minus_three, zero, TYPE_I128, .Math_Rotate_Left, alloc)
+	testing.expect(t, bi_eq_i64(&c, unturned, -3), "a rotation by 0 changed its value")
+	expect_only_result(t, &storage, before, unturned, "a rotation by 0")
 	for value in ([]Big_Int{three, large}) {
 		power, _ := bit_value_const(&c, value, TYPE_U32, .Math_Next_Power_Of_Two, alloc)
-		kept(t, &storage, before, power.integer, "next_power_of_two")
+		expect_only_result(t, &storage, before, power.integer, "next_power_of_two")
 	}
-	one, _ := bit_value_const(&c, zero, TYPE_U32, .Math_Next_Power_Of_Two, alloc)
-	kept(t, &storage, before, one.integer, "next_power_of_two of zero")
+	for value in ([]Big_Int{zero, bi_from_i64(alloc, 1), minus_three}) {
+		before = storage.bytes
+		one, _ := bit_value_const(&c, value, TYPE_I32, .Math_Next_Power_Of_Two, alloc)
+		testing.expectf(t, bi_eq_i64(&c, one.integer, 1), "next_power_of_two(%s) is not 1", bi_text(&c, value))
+		expect_only_result(t, &storage, before, one.integer, "next_power_of_two of a value up to 1")
+	}
 
 	wrapped, _ := fold_arithmetic(&c, .Star_Wrap, {}, integer_const(high), integer_const(large), TYPE_U32, alloc)
-	kept(t, &storage, before, wrapped.integer, "a wrapping product")
+	expect_only_result(t, &storage, before, wrapped.integer, "a wrapping product")
 	negated, _ := fold_unary(&c, .Tilde, {}, integer_const(three), TYPE_U32, alloc)
-	kept(t, &storage, before, negated.integer, "a complement")
+	expect_only_result(t, &storage, before, negated.integer, "a complement")
 	same, _ := fold_unary(&c, .Plus, {}, integer_const(three), TYPE_U32, alloc)
 	testing.expect(t, bi_eq_i64(&c, same.integer, 3) && storage.bytes == before, "unary plus changed its operand or kept a temporary")
 
 	exact_fma(alloc, -1.5, 3.25, 0.125, 64)
 	exact_fma(alloc, 0h0010_0000_0000_0001, -0.5, 1e-300, 32)
 	testing.expect(t, storage.bytes == before, "exact_fma keeps a temporary")
+}
+
+// A compile-time sort's scratch and a range `foreach`'s offsets are released:
+// sorting eight times holds what sorting once does, and a step over a range,
+// counting up or reversed, keeps only its value and binding.
+@(test)
+evaluator_sort_and_range_keep_only_results :: proc(t: ^testing.T) {
+	p: Checked
+	check_source(&p, `package main;
+sorts :: proc(times: int) -> int {
+	values := [64]int{};
+	view := &mut values[:];
+	foreach (round in 0..<8) {
+		if (round < times) { view.sort(); }
+	}
+	return values[0];
+}
+sort_once :: proc() -> int { return sorts(1); }
+sort_eight :: proc() -> int { return sorts(8); }
+up_16 :: proc() -> int { foreach (_ in 0..<16) {} return 0; }
+up_32 :: proc() -> int { foreach (_ in 0..<32) {} return 0; }
+down_16 :: proc() -> int { foreach (_ in (0..=15).reversed()) {} return 0; }
+down_32 :: proc() -> int { foreach (_ in (0..=31).reversed()) {} return 0; }
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	held := proc(t: ^testing.T, p: ^Checked, name: string) -> int {
+		procedure := INVALID_SYMBOL
+		for sym, index in p.c.symbols {
+			if sym != nil && sym.kind == .Proc && identifier_text(&p.c, sym.name) == name {
+				procedure = Symbol_Id(index)
+			}
+		}
+		call: Expr_Call
+		call.type = TYPE_INT
+		call.resolution = Resolution{kind = .Call, symbol = procedure}
+		call.operation = Call_Procedure{}
+		k := Checker{c = &p.c}
+		bytes, ok := eval_held_bytes(&k, &call)
+		testing.expectf(t, ok, "`%s` did not evaluate", name)
+		return bytes
+	}
+	once, eight := held(t, &p, "sort_once"), held(t, &p, "sort_eight")
+	testing.expectf(t, eight == once, "sorting eight times holds %d bytes, once %d", eight, once)
+	up := held(t, &p, "up_32") - held(t, &p, "up_16")
+	down := held(t, &p, "down_32") - held(t, &p, "down_16")
+	testing.expectf(t, down == up, "16 reversed steps hold %d bytes, 16 steps up %d", down, up)
+	// A step keeps the value it builds and the binding's slot, which the body
+	// may hold on to; its offsets go.
+	storage: Eval_Storage
+	defer eval_storage_destroy(&storage)
+	alloc := mem.Allocator{eval_allocator_proc, &storage}
+	low, offset := bi_zero(alloc), bi_from_i64(alloc, 31)
+	before := storage.bytes
+	_ = bi_add(alloc, low, offset)
+	_ = new(Eval_Value, alloc)
+	step := storage.bytes - before
+	testing.expectf(t, up == 16 * step, "16 steps over a range hold %d bytes, not %d", up, 16 * step)
 }
 
 // An empty request is a small block like any other: it is served from the

@@ -218,12 +218,8 @@ dyadic_of :: proc(storage: Value_Storage, value: f64) -> Dyadic {
 		fraction |= 1 << 52
 		result.exponent = biased - 1075
 	}
-	result.significand = bi_from_u64(storage, fraction)
-	if value < 0 {
-		magnitude := result.significand
-		result.significand = bi_neg(storage, magnitude)
-		bi_release(magnitude)
-	}
+	// The significand has at most 53 bits, so its signed value is an `i64`.
+	result.significand = bi_from_i64(storage, value < 0 ? -i64(fraction) : i64(fraction))
 	return result
 }
 

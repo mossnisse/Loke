@@ -428,13 +428,14 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			ident.type = check_single_expr(k, s.rhs[index])
 			ident.immutable = .Discard
 			if type_is_untyped(k.c, ident.type) {
-				// A discard gives `nil` no type, as `x := nil` does not.
-				if default_type(k.c, ident.type) == INVALID_TYPE {
-					errorf(k.c, expr_span(s.rhs[index]), "L0310", "`nil` has no type to infer here")
+				// An untyped value takes its default type, as in `x := value`, so
+				// `_ = nil` is an error as `x := nil` is.
+				final := inferred_type(k, s.rhs[index], ident.type)
+				if final == INVALID_TYPE {
 					ident.type = INVALID_TYPE
 					continue
 				}
-				materialize(k, s.rhs[index], default_type(k.c, ident.type))
+				materialize(k, s.rhs[index], final)
 				ident.type = expr_base(s.rhs[index]).type
 			}
 			continue

@@ -122,6 +122,16 @@ eval_root :: proc(ev: ^Evaluator, e: Expr, code, format: string) -> (Eval_Value,
 	return value, true
 }
 
+// What evaluating `e` still charges to its storage when it ends: the unit
+// tests' view of what an evaluation releases.
+@(private)
+eval_held_bytes :: proc(k: ^Checker, e: Expr) -> (held: int, ok: bool) {
+	ev := Evaluator{k = k, origin = expr_span(e), what = "a measured value"}
+	defer eval_storage_destroy(&ev.storage)
+	_, ok = eval_root(&ev, e, "L0340", "%s must be a compile-time constant")
+	return ev.storage.bytes, ok
+}
+
 // Checks a procedure on demand, so a constant may call one not reached yet.
 @(private = "file")
 ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
@@ -3194,15 +3204,19 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 		span = bi_add(ev.alloc, open_span, one)
 		bi_release(open_span)
 	}
-	last := bi_sub(ev.alloc, span, one)
-	count, fits := bi_to_i64(ev.alloc, span)
-	bi_release(one, span)
+	// Only a reversed range counts down from its last offset.
+	last: Big_Int
+	if s.reversed {
+		last = bi_sub(ev.alloc, span, one)
+	}
 	defer bi_release(last)
+	count, fits := bi_to_i64(ev.alloc, span)
 	if !fits {
 		// A high endpoint far below the low one yields nothing; the step limit
 		// ends a very long range first.
 		count = bi_sign(span) < 0 ? 0 : max(i64)
 	}
+	bi_release(one, span)
 	for index in 0 ..< int(min(count, i64(max(int)))) {
 		offset := bi_from_i64(ev.alloc, i64(index))
 		if s.reversed {
