@@ -1,0 +1,61 @@
+// design.md "Allocators and tasks": an `Allocator` read from a global is of
+// unknown provenance, so a task building with one reserves a region that may be
+// any other. The result of a call through a procedure value is in what any
+// procedure of its type the program uses as a value returns its result in
+// (design.md "Allocator regions and region provenance"), `from_global` among
+// them, whichever procedure a call passes.
+package main;
+
+shared_allocator: Allocator;
+
+listed :: proc(item: int) -> [dynamic]int {
+	result: [dynamic]int = {};
+	result.append(item);
+	return result;
+}
+
+from_global :: proc(item: int) -> [dynamic]int {
+	result: [dynamic]int via shared_allocator = {};
+	result.append(item);
+	return result;
+}
+
+keep :: proc(items: []int, work: proc(item: int) -> [dynamic]int) -> [dynamic][dynamic]int {
+	out: [dynamic][dynamic]int = {};
+	foreach (item in items) { out.append(work(item)); }
+	return out;
+}
+
+named :: proc() -> int {
+	a, b: [dynamic]int;
+	parallel {
+		spawn a = from_global(1);
+		spawn b = from_global(2);
+	}
+	return a.len() + b.len();
+}
+
+through_value :: proc(work: proc(item: int) -> [dynamic]int) -> int {
+	a, b: [dynamic]int;
+	parallel {
+		spawn a = work(1);
+		spawn b = work(2);
+	}
+	return a.len() + b.len();
+}
+
+kept_results :: proc(items: []int) -> int {
+	a, b: [dynamic][dynamic]int;
+	parallel {
+		spawn a = keep(items, listed);
+		spawn b = keep(items, listed);
+	}
+	return a.len() + b.len();
+}
+
+main :: proc() {
+	items: [2]int = {1, 2};
+	_ = named();
+	_ = through_value(from_global);
+	_ = kept_results(items[:]);
+}

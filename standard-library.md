@@ -2366,9 +2366,12 @@ the view or any chunk is in use, `xs` is suspended. Unlike an element of a
 and stays usable after the loop advances and after it ends, since no two chunks
 overlap. A copy of a chunk is an ordinary reborrow of it, so a chunk binding is
 suspended by its copies for the rest of its step, and the next step binds a new
-chunk. A chunk taken by calling `next` directly is a reborrow of the view, so it
-ends before the view advances. A `chunks_mut` view has no compile-time meaning
-yet.
+chunk. A borrow of a place in a chunk, such as `&mut rows[0]`, is a reborrow of
+that chunk in the same way: it stays usable after the loop advances, keeps the
+view and `xs` suspended while it is in use, and does not suspend the chunk a
+later step binds. A chunk taken by calling `next` directly is a reborrow of the
+view, so it ends before the view advances. A `chunks_mut` view has no
+compile-time meaning yet.
 
 ### Sorting slices
 

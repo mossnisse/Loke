@@ -36,6 +36,9 @@ Prov_State :: struct {
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
+	// Per chunk binding's slot, a slot holding the place loans taken through the
+	// chunk it is bound to now, which each step empties (`prov_bind_chunk`).
+	chunk_loans:    map[int]int,
 	// The `&mut` loop bindings, and where a store through each lands
 	// (`prov_note_traversal`).
 	traversals:     map[Symbol_Id]Prov_Traversal,
@@ -271,6 +274,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.task_holds = make(map[Symbol_Id][]int, allocator)
 	state.pool_tasks = make(map[Symbol_Id][]Pool_Task, allocator)
 	state.spawn_holds = make(map[^Stmt_Spawn]int, allocator)
+	state.chunk_loans = make(map[int]int, allocator)
 	state.parallel_scopes = make([dynamic]Symbol_Id, allocator)
 	state.task_sites = make([dynamic]Task_Site, allocator)
 	return state

@@ -899,7 +899,13 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	}
 	#partial switch form in value.form {
 	case Prov_Form_Symbol:
-		return prov_symbol_region(graph, form.symbol, value.type, id)
+		set := prov_symbol_region(graph, form.symbol, value.type, id)
+		// An `Allocator` read from a global is one the analysis cannot name, as one
+		// read from a field no write named is below.
+		if sym := symbol_of(c, form.symbol); region_is_empty(set) && type_is_allocator(c, value.type) && sym != nil && symbol_outlives_bodies(sym) {
+			set.unknown = true
+		}
+		return set
 	case Prov_Form_Error:
 		return prov_error_region_at(graph, form, nil, .All)
 	case Prov_Form_Selector, Prov_Form_Index:
@@ -1250,7 +1256,13 @@ prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Va
 	if sym == nil || !(type_is_managed(graph.k.c, sym.type) || type_is_carrier(graph.k.c, sym.type)) {
 		return
 	}
-	if set := prov_storage_region(graph, iterable); !region_is_empty(set) {
+	set := prov_storage_region(graph, iterable)
+	// An iterator that hands out views, as `chunks_mut`'s does, is a record and
+	// no view itself: what it yields views what its own carriers do.
+	if prov_type_is_view_carrier(graph.k.c, sym.type) && !type_is_carrier(graph.k.c, prov_value(graph, iterable).type) {
+		region_merge(&set, prov_viewed_region(graph, iterable))
+	}
+	if !region_is_empty(set) {
 		prov_merge_region_of(graph, id, set)
 	}
 }
@@ -1583,6 +1595,18 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 			// borrowed inputs, even when a destination allocator is also supplied.
 			region_merge(&out, prov_storage_region(graph, argument))
 		}
+	}
+	// A procedure value is one of the procedures the program uses as a value, so
+	// its result is in what any of them returns theirs in (design.md "Allocator
+	// regions and region provenance").
+	if targets, known := procedure_value_targets(c, v); known {
+		for target in targets {
+			prov_note_summary_dependency(graph, target)
+			if summary, found := result_summary(c, target); found {
+				region_merge(&out, prov_substitute_region(graph, form, summary.region))
+			}
+		}
+		return out
 	}
 	out.unknown ||= region_is_empty(out)
 	return out

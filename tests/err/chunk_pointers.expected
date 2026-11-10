@@ -1,0 +1,27 @@
+L0641
+@14:3
+`rows` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@21:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@28:20
+`view` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@35:20
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@43:21
+this write of `values` is not compatible with the mutable slice of it that is still in use
+L0641
+@51:4
+`rows` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@58:21
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@65:20
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@65:54
+`rows` cannot be used here: a mutable reborrow of it is still in use

@@ -1,0 +1,102 @@
+// design.md "Allocators and tasks": a chunk views the storage the sliced view
+// does, so it is in that storage's regions (design.md "Allocator regions and
+// region provenance"). Slots the default provider backs reserve nothing, so each
+// task of a batch fills, replaces, or grows the owner in a slot of its own.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Mesh :: struct { verts: [dynamic]f32, indices: [dynamic]int, name: string }
+
+fill :: proc(n: int, slot: []mut Option([dynamic]int)) {
+	values: [dynamic]int = {};
+	values.append(n * 10);
+	slot[0] = .some(move(values));
+}
+
+build :: proc(n: int, slot: []mut Option(Mesh)) {
+	mesh: Mesh = {};
+	mesh.verts.append(1.5);
+	mesh.indices.append(n);
+	mesh.name = "mesh";
+	slot[0] = .some(move(mesh));
+}
+
+grow :: proc(n: int, slot: []mut [dynamic]int) {
+	slot[0].append(n);
+	slot[0].append(n + 1);
+}
+
+total :: proc(slots: []Option([dynamic]int)) -> int {
+	sum := 0;
+	foreach (slot in slots) {
+		switch (slot) {
+		case .some(values):
+			foreach (value in values) { sum += value; }
+		case .none:
+		}
+	}
+	return sum;
+}
+
+main :: proc() {
+	pool := thread.Pool.init(2);
+
+	slots: [dynamic]Option([dynamic]int) = {};
+	foreach (_ in 0 ..< 4) { slots.append(.none); }
+	{
+		all := &mut slots[:];
+		parallel (&pool) {
+			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i, slot); }
+		}
+	}
+	fmt.println(total(slots[:]));
+
+	// Each task drops the owner the last batch left in its slot.
+	{
+		all := &mut slots[:];
+		parallel {
+			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i + 1, slot); }
+		}
+	}
+	fmt.println(total(slots[:]));
+
+	{
+		all := &mut slots[:];
+		halves := all.split_at_mut(2);
+		parallel (&pool) {
+			spawn fill(5, halves.left);
+			spawn fill(6, halves.right);
+		}
+	}
+	fmt.println(total(slots[:]));
+
+	meshes: [dynamic]Option(Mesh) = {};
+	foreach (_ in 0 ..< 3) { meshes.append(.none); }
+	{
+		all := &mut meshes[:];
+		parallel (&pool) {
+			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn build(i, slot); }
+		}
+	}
+	indices := 0;
+	foreach (slot in meshes) {
+		switch (slot) {
+		case .some(mesh):
+			indices += mesh.indices[0] + mesh.verts.len();
+		case .none:
+		}
+	}
+	fmt.println(indices);
+
+	lists: [dynamic][dynamic]int = {};
+	foreach (_ in 0 ..< 3) { lists.append({}); }
+	{
+		all := &mut lists[:];
+		parallel (&pool) {
+			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn grow(i, slot); }
+		}
+	}
+	fmt.println(lists[0].len(), lists[1][0], lists[2][1]);
+}

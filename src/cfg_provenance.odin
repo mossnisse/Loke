@@ -852,8 +852,11 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 // does not suspend the view, so the view advances while earlier chunks are
 // held, and through it the chunk keeps the sliced carrier suspended. Each step
 // binds a value disjoint from the last, so redefining the binding ends the
-// reborrows taken from the chunk before. False when the binding is not a
-// carrier slot.
+// reborrows taken from the chunk before. A borrow of a place in the chunk, as
+// `&mut rows[0]`, is of that chunk too, so the step empties the slot holding
+// the place loans taken through the binding (`Flow_Graph.chunk_loans`): one
+// taken on an earlier step is of storage the new chunk does not reach. False
+// when the binding is not a carrier slot.
 @(private)
 prov_bind_chunk :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span: Span) -> bool {
 	slot, is_carrier := prov_slot_for_symbol(graph, id)
@@ -864,6 +867,12 @@ prov_bind_chunk :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 		prov_add_reborrow(graph, Prov_Reborrow{source = source, derived = slot, span = span, mutable = true, passes_on = true})
 	}
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
+	taken, found := graph.chunk_loans[slot]
+	if !found {
+		taken = prov_temp_slot(graph)
+		graph.chunk_loans[slot] = taken
+	}
+	prov_emit(graph, Prov_Event{kind = .Def, slot = taken, loan = NO_LOAN, span = span})
 	return true
 }
 
@@ -1618,6 +1627,9 @@ walk_foreach_binding_provenance :: proc(
 		// without reborrowing the view, so the view advances while earlier
 		// chunks are held. The chunks are disjoint by construction.
 		if foreach_yields_chunks(graph.k.c, s) && prov_bind_chunk(graph, binding.symbol, loans, expr_span(s.iterable)) {
+			// A chunk views the storage the sliced view does, so it is in that
+			// storage's regions (design.md "Allocator regions and region provenance").
+			prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable))
 			continue
 		}
 		// A lent element is the stored carrier, not a copy of it, so it does not

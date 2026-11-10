@@ -8029,9 +8029,13 @@ At a call through a plain procedure type, a returned pointer, slice, view, or
 argument the type does not exclude with `@(escape=none)`, and from whatever
 those arguments' storage holds (unknown root provenance if there is none). An
 owning result retains the region provenance of every moved owner and allocator
-argument (unknown if none), and so does every argument the call may write.
-Foreign results likewise begin with unknown provenance unless a wrapper
-establishes an owned resource.
+argument, and so does every argument the call may write. A result through a
+procedure value also has the region provenance of the result of every procedure
+of its type that the program uses as a value, as under [Inferred
+effects](#inferred-effects). Where none of these gives one, as through a `dyn`
+slot with no such argument or a value no procedure of the program can be, its
+region provenance is unknown. Foreign results likewise begin with unknown
+provenance unless a wrapper establishes an owned resource.
 
 Allocator-wide invalidation is the one effect propagated through arbitrary
 ordinary procedure wrappers. A parameter marked
@@ -9506,7 +9510,9 @@ region provenance. Result provenance follows these rules:
   provenance from that argument. A call whose body the checker follows is backed
   by exactly the allocators that body builds the result with, so an allocator
   argument the body never uses backs nothing. A call it cannot follow, through a
-  procedure value or a `dyn` slot, is backed by every allocator argument. When
+  procedure value or a `dyn` slot, is backed by every allocator argument, and
+  one through a procedure value by what backs the result of any procedure it
+  may be (see [Procedure result contracts](#procedure-result-contracts)). When
   the result can retain shared storage or borrows, it also conservatively keeps
   the regions of borrowed inputs whose storage it could retain; supplying a
   destination allocator does not remove those dependencies. Reaching a
@@ -10303,9 +10309,37 @@ owners, and the parent's cleanup before the join. A local region's provider is
 reserved with it, since two arenas over one parent provider share that
 provider's state. A use that cannot be narrowed reserves every region the call
 can reach through its handles and owners, and a region of unknown provenance may
-be any region. Reading existing elements through a view operates on no
-allocator; the lifetime rules still forbid resetting a region while it is
+be any region. An `Allocator` read from a global names such a region, since the
+global may hold any handle. Reading existing elements through a view operates
+on no allocator; the lifetime rules still forbid resetting a region while it is
 borrowed.
+
+Replacing or dropping an owner through a view operates on the region backing
+that owner, a region of the storage the view was taken from. A chunk of a
+[`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) view, a half of a
+[`split_at_mut`](standard-library.md#splitting-a-mutable-slice), and a view an
+iterator hands out are in the regions of the storage they view. Tasks that each
+fill one slot of a results array therefore reserve nothing when the default
+provider backs every slot:
+
+```loke
+fill :: proc(n: int, slot: []mut Option([dynamic]int)) {
+	values: [dynamic]int = {};
+	values.append(n);
+	slot[0] = .some(move(values));       // drops what the slot held
+}
+
+slots: [dynamic]Option([dynamic]int) = {};
+foreach (_ in 0 ..< 4) { slots.append(.none); }
+all := &mut slots[:];
+parallel {
+	foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i, slot); }
+}
+```
+
+When an arena backs an owner in the slots, every such task reserves that arena,
+and slots received through a parameter may be in any region, so either batch is
+rejected.
 
 The default provider accepts concurrent allocation and freeing from any thread,
 so its region is never reserved. `Arena` and `Scratch` accept use from one

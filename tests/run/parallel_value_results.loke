@@ -1,0 +1,59 @@
+// design.md "Allocator regions and region provenance": the result of a call
+// through a procedure value is in the regions the procedures of its type that
+// the program uses as a value return theirs in. Here each builds its result with
+// the default provider, so tasks that keep such results reserve nothing
+// (design.md "Allocators and tasks"), and a batch takes its work as a value.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+scaled :: proc(factor: ^int, item: int) -> [dynamic]int {
+	result: [dynamic]int = {};
+	result.append(item * factor^);
+	return result;
+}
+
+shifted :: proc(offset: ^int, item: int) -> [dynamic]int {
+	result: [dynamic]int = {};
+	result.append(item + offset^);
+	result.append(item);
+	return result;
+}
+
+Work :: proc(shared: ^int, item: int) -> [dynamic]int;
+
+batch :: proc(pool: ^thread.Pool, shared: ^int, items: []int, work: Work) -> [dynamic][dynamic]int {
+	if (items.len() <= 1) {
+		one: [dynamic][dynamic]int = {};
+		foreach (item in items) { one.append(work(shared, item)); }
+		return one;
+	}
+	mid := items.len() / 2;
+	low: [dynamic][dynamic]int;
+	high: [dynamic][dynamic]int;
+	parallel (pool) {
+		spawn low = batch(pool, shared, items[:mid], work);
+		spawn high = batch(pool, shared, items[mid:], work);
+	}
+	foreach (i in 0 ..< high.len()) { low.append(high[i].clone()); }
+	return low;
+}
+
+total :: proc(lists: [][dynamic]int) -> int {
+	sum := 0;
+	foreach (list in lists) {
+		foreach (value in list) { sum += value; }
+	}
+	return sum;
+}
+
+main :: proc() {
+	pool := thread.Pool.init(2);
+	factor := 3;
+	items: [5]int = {1, 2, 3, 4, 5};
+	tripled := batch(&pool, &factor, items[:], scaled);
+	fmt.println(tripled.len(), total(tripled[:]));
+	moved := batch(&pool, &factor, items[:], shifted);
+	fmt.println(moved.len(), total(moved[:]));
+}

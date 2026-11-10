@@ -885,6 +885,34 @@ indirect_call_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> ([]Symbol_Id, bool
 	return effect_target_symbols(c, target), true
 }
 
+// design.md "Allocator regions and region provenance": the bodies a call through
+// a procedure value may run, when their summaries say every region its result
+// may be in: each procedure of its type the program uses as a value has a body
+// the effects settled over. False for any other call, before the effects
+// settle, and when no procedure is such a value, as one foreign code hands over.
+procedure_value_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> ([]Symbol_Id, bool) {
+	if !c.global_writes_ready {
+		return nil, false
+	}
+	target, ok := call_effect(c, v)
+	if !ok || target.callee != INVALID_SYMBOL || target.held != INVALID_SYMBOL || target.dyn_interface != INVALID_SYMBOL ||
+	   underlying_kind(c, target.type) != .Proc {
+		return nil, false
+	}
+	target.type = erase_proc_contract(c, type_underlying(c, target.type))
+	program := &c.effect_program
+	for symbol in program.used_as_value {
+		if symbol in program.index_of {
+			continue
+		}
+		if sym := symbol_of(c, symbol); sym == nil || assignable(c, sym.proc_type, target.type) {
+			return nil, false
+		}
+	}
+	targets := effect_target_symbols(c, target)
+	return targets, len(targets) > 0
+}
+
 // What brings `global` into a call's writes, or its reach, besides its
 // callee's own part: a procedure value, a callback, or a union member, and for
 // a callback, the callee that calls it and the parameter it was passed for.

@@ -1,0 +1,88 @@
+// design.md "Allocators and tasks": a task that replaces the owner in a slot
+// frees in the region backing the old one. A chunk is in the regions of the
+// storage the sliced view views (design.md "Allocator regions and region
+// provenance"), so tasks over chunks of slots one arena backs, or of slots a
+// parameter names, which may be in any region, reserve the same region.
+package main;
+
+import "core:mem";
+
+Slot :: Option([dynamic]int);
+
+fill :: proc(n: int, slot: []mut Slot) {
+	values: [dynamic]int = {};
+	values.append(n);
+	slot[0] = .some(move(values));
+}
+
+fill_one :: proc(n: int, slot: ^mut Slot) {
+	values: [dynamic]int = {};
+	values.append(n);
+	slot^ = .some(move(values));
+}
+
+arena_slots :: proc() {
+	arena := mem.Arena.init();
+	slots: [dynamic]Slot = {};
+	foreach (_ in 0 ..< 4) {
+		old: [dynamic]int via arena.allocator() = {};
+		slots.append(.some(move(old)));
+	}
+	all := &mut slots[:];
+	parallel {
+		foreach (slot in all.chunks_mut(1)) { spawn fill(0, slot); }
+	}
+	again := &mut slots[:];
+	parallel {
+		foreach (slot, i in again.chunks_mut(1).indexed()) { spawn fill(i, slot); }
+	}
+	halves := (&mut slots[:]).split_at_mut(2);
+	parallel {
+		spawn fill(0, halves.left);
+		spawn fill(1, halves.right);
+	}
+}
+
+received_slots :: proc(out: []mut Slot) {
+	parallel {
+		foreach (slot, i in out.chunks_mut(1).indexed()) { spawn fill(i, slot); }
+	}
+}
+
+// A user's iterator hands out pointers into what it views, so the parent
+// replacing a slot through one frees in the arena a running task reserves.
+Cursor :: struct { cells: []mut Slot, at: int }
+
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(^mut Slot) {
+		if (self.at >= self.cells.len()) { return .none; }
+		value := &mut self.cells[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+Cells :: struct { values: []mut Slot }
+
+impl Cells {
+	Element :: ^mut Slot;
+	Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {self.values, 0}; }
+}
+
+allocate_work :: proc(allocator: Allocator) {
+	values: [dynamic]int via allocator = {};
+	values.append(1);
+}
+
+cursor_slots :: proc() {
+	arena := mem.Arena.init();
+	slots: [dynamic]Slot = {};
+	old: [dynamic]int via arena.allocator() = {};
+	slots.append(.some(move(old)));
+	cells := Cells{&mut slots[:]};
+	parallel {
+		spawn allocate_work(arena.allocator());
+		foreach (slot in cells) { fill_one(0, slot); }
+	}
+}

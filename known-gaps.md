@@ -63,3 +63,39 @@ main :: proc() {
 whether a pack may carry the attribute; either the spec says it may and both
 checks walk the pack's operands, as `prov_spawn_transfers` does with
 `call_pack_next`, or it says it may not and the attribute is L0723 on a pack.
+
+### A place in one half of a split is held against the other half
+
+[standard-library.md "Splitting a mutable slice"](standard-library.md#splitting-a-mutable-slice):
+"The halves never overlap, so writing through one never conflicts with the
+other." Each half passed whole to a task is accepted, but a borrow of a place in
+one half, held by a task, is taken to conflict with a place in the other:
+
+```loke
+package main;
+
+set :: proc(slot: ^mut int) { slot^ = 1; }
+
+direct :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	parallel {
+		spawn set(&mut halves.left[0]);
+		spawn set(&mut halves.right[0]); // L0641 on `halves`, should compile
+	}
+}
+
+chunked :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	parallel {
+		foreach (rows in halves.left.chunks_mut(1)) { spawn set(&mut rows[0]); }
+		foreach (rows in halves.right.chunks_mut(1)) { spawn set(&mut rows[0]); } // L0641 on `rows`, should compile
+	}
+}
+
+main :: proc() {}
+```
+
+Both halves hold the split's one reborrow, and nothing says a place reached
+through one is apart from a place reached through the other, as
+`taken_from_earlier_chunk` in `src/borrow_report.odin` says of two chunks of
+one traversal. Passing each half, or each chunk, whole is the way around it.

@@ -388,6 +388,11 @@ Prov_Place_Loan :: struct {
 	element: Prov_View_At,
 	// The slots of the view parameter's element the place is in (`carriers_element`).
 	in_element: Prov_Element_Slots,
+	// One more than the slot of the chunk binding the place was reached through, or 0,
+	// and the slot holding the place loans taken through the chunk that binding holds
+	// now (`prov_bind_chunk`).
+	chunk:       int,
+	chunk_loans: int,
 }
 
 // ---------------------------------------------------- retention targets --

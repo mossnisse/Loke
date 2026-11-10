@@ -351,7 +351,8 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 		bit := place_bit(state, index)
 		for carrier in event.into {
 			if !prov_slots_overlap(state, loan.slot, carrier) || bit_get(reach_row(state, state.reach, carrier), bit) ||
-			   accessed_beside(state, index, carrier) || view_elements_apart(state, loan.element, loan.slot, event.element, carrier) {
+			   accessed_beside(state, index, carrier) || view_elements_apart(state, loan.element, loan.slot, event.element, carrier) ||
+			   taken_from_earlier_chunk(state, loan, bit, carrier) {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[loan.slot] | state.precision[carrier] | event.precision
@@ -371,6 +372,16 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 			return
 		}
 	}
+}
+
+// standard-library.md "Chunks of a mutable slice": no two chunks of one traversal
+// overlap, so a place loan taken through a chunk binding on an earlier step, which
+// the binding's `chunk_loans` no longer holds, is of storage the chunk bound to
+// `carrier` now does not reach. A second traversal of the same storage uses the
+// view or its source, which what the first lent still suspends.
+@(private = "file")
+taken_from_earlier_chunk :: proc(state: ^Prov_Solve, loan: Prov_Place_Loan, bit: int, carrier: int) -> bool {
+	return loan.chunk == carrier + 1 && !bit_get(reach_row(state, state.reach, loan.chunk_loans), bit)
 }
 
 // Whether `carrier` was read out through another place loan of the storage

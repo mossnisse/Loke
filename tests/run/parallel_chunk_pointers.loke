@@ -1,0 +1,56 @@
+// standard-library.md "Chunks of a mutable slice": a borrow of a place in a chunk is
+// of that chunk, and no two chunks of one traversal overlap, so one kept from an
+// earlier step, by a task until the join or in a container, does not suspend
+// the chunk the next step binds (design.md "Task borrows and the join").
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Cell :: struct { total: int, hits: [dynamic]int }
+
+set_one :: proc(slot: ^mut int, value: int) { slot^ = value; }
+
+record :: proc(cell: ^mut Cell, value: int) {
+	cell.total += value;
+	cell.hits.append(value);
+}
+
+main :: proc() {
+	pool := thread.Pool.init(2);
+
+	cells: [6]int = {};
+	view := &mut cells[:];
+	parallel (&pool) {
+		foreach (rows, i in view.chunks_mut(2).indexed()) { spawn set_one(&mut rows[1], i + 1); }
+	}
+	fmt.println(cells[1], cells[3], cells[5]);
+
+	// The block runs again on each frame, over the same storage.
+	foreach (frame in 0 ..< 3) {
+		again := &mut cells[:];
+		parallel {
+			foreach (rows in again.chunks_mut(3)) { spawn set_one(&mut rows[0], frame + 10); }
+		}
+	}
+	fmt.println(cells[0], cells[3]);
+
+	records: [dynamic]Cell = {};
+	foreach (_ in 0 ..< 3) { records.append({}); }
+	{
+		all := &mut records[:];
+		parallel (&pool) {
+			foreach (rows, i in all.chunks_mut(1).indexed()) { spawn record(&mut rows[0], i + 5); }
+		}
+	}
+	fmt.println(records[0].total, records[2].hits[0]);
+
+	// Pointers into earlier chunks stay usable beside the current one.
+	kept: [dynamic]^mut int = {};
+	foreach (rows in (&mut cells[:]).chunks_mut(2)) {
+		rows[1] = 7;
+		kept.append(&mut rows[0]);
+	}
+	foreach (p in kept) { p^ += 1; }
+	fmt.println(cells[0], cells[1], cells[2], cells[4]);
+}

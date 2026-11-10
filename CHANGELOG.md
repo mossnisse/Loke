@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- An `Allocator` read from a global is a region of unknown provenance wherever it is used
+  ([Allocators and tasks](design.md#allocators-and-tasks)). An owner built `via` one counted as
+  the default provider's, so two tasks of a `parallel` block that each built or grew such an owner
+  compiled, and could use one arena at once. They are now `L0732`. Upgrade by passing each task an
+  allocator of its own, or by building with the default provider.
 - A [tree input](compiler-guide.md#testing-a-tree) skips a directory whose name begins with `_`,
   as it skips one beginning with `.`, so a project can keep packages meant not to compile there and
   still test its whole tree. A package under such a directory was tested and is now passed over.
@@ -1834,6 +1839,29 @@ checklist.
   provider when it first needs storage. Two such tasks in one `parallel` block were `L0732`, as
   sharing a region the compiler could not name; they now compile. A container built `via` another
   allocator still reserves that allocator's region through the helper.
+- A chunk a `foreach` over [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) binds, and
+  a view a user's iterator hands out, is in the
+  [allocator regions](design.md#allocator-regions-and-region-provenance) of the storage it views.
+  It was in a region the compiler could not name, so a batch whose tasks each fill one slot of a
+  results array with an owned value, as
+  `foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i, slot); }` does, was `L0732`
+  ([Allocators and tasks](design.md#allocators-and-tasks)); it now compiles when the default
+  provider backs every slot. Slots an arena backs, or ones a parameter names, are still `L0732`,
+  which now names the region.
+- A borrow of a place in a chunk, such as `&mut rows[0]` in a `foreach` over
+  [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice), no longer suspends the chunk a
+  later step binds, as a copy of the chunk does not. A task given one, as
+  `foreach (rows in view.chunks_mut(1)) { spawn set(&mut rows[0]); }` starts, and one kept in a
+  container across steps, was `L0641` on the next step. The borrow still suspends its own chunk,
+  the view, and the view's source while it is in use.
+- The result of a call through a procedure value is in the
+  [allocator regions](design.md#allocator-regions-and-region-provenance) that the procedures of its
+  type the program uses as a value return their results in
+  ([Procedure result contracts](design.md#procedure-result-contracts)). It was in an unknown
+  region unless the call passed an allocator, so two tasks that each kept such a result, as a batch
+  taking its per-item work as a `proc` parameter does, were `L0732`
+  ([Allocators and tasks](design.md#allocators-and-tasks)); they now compile when every such
+  procedure builds its result with the default provider or an allocator it is passed.
 - A [map](design.md#maps) spreads keys whose hashes differ only in their high bits. It took a key's
   slot from the low bits of its `hash` alone, and the built-in integer hash carries bits only upward,
   so the bit patterns of small floats, `math.to_bits(f64(i))`, all started in one probe run and made

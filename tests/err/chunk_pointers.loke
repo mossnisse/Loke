@@ -1,0 +1,69 @@
+package main;
+
+// standard-library.md "Chunks of a mutable slice": a borrow of a place in a chunk
+// suspends that chunk while it is held, and what the chunk reborrows with it:
+// the view and its source. Only a later chunk of the same traversal is free of
+// it.
+
+set_one :: proc(slot: ^mut int) { slot^ = 1; }
+
+current_chunk :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (rows in xs.chunks_mut(2)) {
+		kept.append(&mut rows[0]);
+		rows[0] = 1;
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+source_after :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (rows in xs.chunks_mut(2)) { kept.append(&mut rows[0]); }
+	xs[0] = 1;
+	foreach (p in kept) { p^ = 4; }
+}
+view_again :: proc(xs: []mut int) {
+	view := xs.chunks_mut(2);
+	kept: [dynamic]^mut int = {};
+	foreach (o in 0 ..< 2) {
+		foreach (rows in view) { kept.append(&mut rows[0]); }
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+source_again :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (o in 0 ..< 2) {
+		foreach (rows in xs.chunks_mut(2)) { kept.append(&mut rows[0]); }
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+owner_again :: proc() {
+	values := [dynamic]int{1, 2, 3, 4};
+	kept: [dynamic]^mut int = {};
+	foreach (o in 0 ..< 2) {
+		foreach (rows in (&mut values[:]).chunks_mut(2)) { kept.append(&mut rows[0]); }
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+task_and_parent :: proc(xs: []mut int) {
+	parallel {
+		foreach (rows in xs.chunks_mut(1)) {
+			spawn set_one(&mut rows[0]);
+			rows[0] = 2;
+		}
+	}
+}
+tasks_again :: proc(xs: []mut int) {
+	parallel {
+		foreach (o in 0 ..< 2) {
+			foreach (rows in xs.chunks_mut(1)) { spawn set_one(&mut rows[0]); }
+		}
+	}
+}
+tasks_twice :: proc(xs: []mut int) {
+	parallel {
+		foreach (rows in xs.chunks_mut(1)) { spawn set_one(&mut rows[0]); }
+		foreach (rows in xs.chunks_mut(1)) { spawn set_one(&mut rows[0]); }
+	}
+}
+
+main :: proc() {}
