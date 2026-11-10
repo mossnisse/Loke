@@ -3,6 +3,7 @@
 // positions counted in the negotiated encoding.
 package lsp
 
+import "core:fmt"
 import "core:strings"
 import "core:unicode/utf8"
 
@@ -63,6 +64,38 @@ path_to_uri :: proc(path: string, allocator := context.allocator) -> string {
 // compared case-insensitively.
 path_key :: proc(path: string, allocator := context.allocator) -> string {
 	return lokec.dir_key(lokec.canonical_dir(path), allocator)
+}
+
+// A snapshot location as a canonical path and a client range. Its key is
+// `lokec.dir_key(path)`; `path_key` would canonicalize it again.
+place :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, location: lokec.Query_Location, allocator := context.allocator) -> (path: string, range: Range, ok: bool) {
+	if location.span.file == lokec.NO_FILE { return }
+	source := lokec.query_source(session, snapshot, location.span.file) or_return
+	range.start = offset_to_position(source.text, source.line_starts, location.span.lo, s.utf8_positions)
+	range.end = offset_to_position(source.text, source.line_starts, max(location.span.hi, location.span.lo), s.utf8_positions)
+	return strings.clone(lokec.canonical_dir(source.path), allocator), range, true
+}
+
+// The client's own spelling for a document it opened; otherwise one built
+// from the path.
+uri_for :: proc(s: ^Server, key, path: string) -> string {
+	if doc := s.documents[key]; doc != nil { return doc.uri }
+	return path_to_uri(path, context.temp_allocator)
+}
+
+write_location :: proc(s: ^Server, b: ^strings.Builder, path: string, range: Range) {
+	strings.write_string(b, `{"uri":`)
+	write_json_string(b, uri_for(s, path_key(path, context.temp_allocator), path))
+	strings.write_string(b, `,"range":`)
+	write_range(b, range)
+	strings.write_byte(b, '}')
+}
+
+write_range :: proc(b: ^strings.Builder, range: Range) {
+	fmt.sbprintf(
+		b, `{{"start":{{"line":%d,"character":%d}},"end":{{"line":%d,"character":%d}}}}`,
+		range.start.line, range.start.character, range.end.line, range.end.character,
+	)
 }
 
 // `offset` as a position in `text`, whose lines begin at `line_starts`. UTF-16

@@ -1548,7 +1548,7 @@ The server never duplicates the front end: every result comes from the
 | `editing.odin` | Completion and signature help, from the compiler's tokens and the queries above. |
 | `rename.odin` | References and rename across roots, and rename's refusals. |
 | `tools.odin` | Formatting and the documentation command, through `-fmt` and `-api`. |
-| `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
+| `paths.odin` | `file:` URIs, path keys, UTF-8/UTF-16 positions, and a snapshot location as a protocol location and range. |
 
 A reader thread frames stdin into an inbox. The main thread runs checks, so it
 has the compiler's [stack reservation](#driver-and-phase-order). It applies

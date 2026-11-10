@@ -324,16 +324,6 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 	}
 }
 
-// A snapshot location as a canonical path and a client range. Its key is
-// `lokec.dir_key(path)`; `path_key` would canonicalize it again.
-place :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, location: lokec.Query_Location, allocator := context.allocator) -> (path: string, range: Range, ok: bool) {
-	if location.span.file == lokec.NO_FILE { return }
-	source := lokec.query_source(session, snapshot, location.span.file) or_return
-	range.start = offset_to_position(source.text, source.line_starts, location.span.lo, s.utf8_positions)
-	range.end = offset_to_position(source.text, source.line_starts, max(location.span.hi, location.span.lo), s.utf8_positions)
-	return strings.clone(lokec.canonical_dir(source.path), allocator), range, true
-}
-
 // Sends each file whose diagnostics differ from what the client last received,
 // and an empty list for each file that no longer has any. A file's list is the
 // union over all roots, since an imported package is checked by every root
@@ -433,13 +423,6 @@ forget_published :: proc(s: ^Server, key: string) {
 	}
 }
 
-// The client's own spelling for a document it opened; otherwise one built
-// from the path.
-uri_for :: proc(s: ^Server, key, path: string) -> string {
-	if doc := s.documents[key]; doc != nil { return doc.uri }
-	return path_to_uri(path, context.temp_allocator)
-}
-
 @(private = "file")
 send_diagnostics :: proc(s: ^Server, uri: string, doc: ^Document, diagnostics: []^Lsp_Diagnostic) {
 	send_notification(s, "textDocument/publishDiagnostics", diagnostics_params(s, uri, doc, diagnostics))
@@ -480,11 +463,4 @@ diagnostics_params :: proc(s: ^Server, uri: string, doc: ^Document, diagnostics:
 	}
 	strings.write_string(&b, "]}")
 	return strings.to_string(b)
-}
-
-write_range :: proc(b: ^strings.Builder, range: Range) {
-	fmt.sbprintf(
-		b, `{{"start":{{"line":%d,"character":%d}},"end":{{"line":%d,"character":%d}}}}`,
-		range.start.line, range.start.character, range.end.line, range.end.character,
-	)
 }

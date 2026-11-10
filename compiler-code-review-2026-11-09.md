@@ -711,7 +711,7 @@ Root assignment is subtle but well explained.
   `filepath.abs`, on paths that `place` (`roots.odin:335`) already
   canonicalized. Use `lokec.dir_key(path)` for those, which avoids a system
   call per reference, related note, and edit.
-- **Structure**, `place`, `write_range`, and `uri_for` (roots.odin) and
+- **Structure** (done: all four are in `paths.odin`), `place`, `write_range`, and `uri_for` (roots.odin) and
   `write_location` (requests.odin) are protocol-encoding helpers that
   requests, rename, and tools all use. They belong with `paths.odin` or
   `jsonrpc.odin`.

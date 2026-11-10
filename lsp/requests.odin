@@ -425,11 +425,3 @@ write_symbol_information :: proc(s: ^Server, b: ^strings.Builder, entries: []Out
 		write_symbol_information(s, b, entries, entry.children[:], doc, entry.symbol.name, first)
 	}
 }
-
-write_location :: proc(s: ^Server, b: ^strings.Builder, path: string, range: Range) {
-	strings.write_string(b, `{"uri":`)
-	write_json_string(b, uri_for(s, path_key(path, context.temp_allocator), path))
-	strings.write_string(b, `,"range":`)
-	write_range(b, range)
-	strings.write_byte(b, '}')
-}
