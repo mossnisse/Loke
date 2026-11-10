@@ -105,6 +105,11 @@ type_is_pointer :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) in Type_Kinds{.Pointer, .Raw_Pointer, .Proc}
 }
 
+pointer_to_element :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	info := type_of(c, type)
+	return info != nil && info.kind == .Pointer ? info.element : INVALID_TYPE
+}
+
 // Integer-like for the purposes of arithmetic: an enum is deliberately absent
 // (design.md "Arithmetic operators").
 type_is_numeric :: proc(c: ^Compiler, id: Type_Id) -> bool {

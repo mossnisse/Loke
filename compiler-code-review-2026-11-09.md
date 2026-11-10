@@ -1460,7 +1460,7 @@ building and repeated syntax walks.
 - **Simplify** (done) `src/generic.odin:1474`: `intern_identifier(k.c, entry.name.text)` where
   `name_identifier(k.c, entry.name)` is available (same at `src/interface.odin:1380`,
   `1413`, `src/erased.odin:714`).
-- **Structure** `src/generic.odin:773-803` (`success_parameters`) is only meaningful with
+- **Structure** (done: see optional.odin) `src/generic.odin:773-803` (`success_parameters`) is only meaningful with
   `success_names_generic` in `src/optional.odin:390-442`; see optional.odin.
 
 #### src/generic_impl.odin
@@ -1684,7 +1684,10 @@ Verdict: clean.
 
 #### src/optional.odin
 Verdict: correct; one section belongs with generics.
-- **Structure** `src/optional.odin:362-541` (`success_needs_no_value`,
+- **Structure** (done: `success_names_generic`, `type_syntax_names_generic`
+  and the local-alias lookup they use moved to generic.odin, beside
+  `success_parameters`; `success_needs_no_value` stays, as the rule for success
+  returns) `src/optional.odin:362-541` (`success_needs_no_value`,
   `success_names_generic`, `type_syntax_names_generic`, `local_alias_target`,
   `Generic_Lookup`) is "does this syntax depend on a generic binding" logic, paired with
   `success_parameters` in `src/generic.odin:773-803`. Move them together (generic.odin or
@@ -1696,7 +1699,7 @@ Verdict: fine; mirrors erased.odin's pack path (see erased.odin).
 
 #### src/slice.odin
 Verdict: fine.
-- **Structure** `src/slice.odin:46-49`: `pointer_to_element` is a pointer helper; it belongs
+- **Structure** (done) `src/slice.odin:46-49`: `pointer_to_element` is a pointer helper; it belongs
   with the other type queries in `types.odin`.
 
 #### src/synth.odin
