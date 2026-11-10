@@ -1,6 +1,6 @@
 // Where a borrow can be inside a value: the vocabulary the provenance solver in
-// `borrow.odin` shares with `check.odin`, `lifecycle.odin` and the emitter, which
-// needs no solver state. The region lattice is in `region.odin`, and result
+// `borrow.odin` shares with `check.odin`, `ownership_forms.odin` and the emitter,
+// which needs no solver state. The region lattice is in `region.odin`, and result
 // summaries in `result_summary.odin`.
 package lokec
 

@@ -1031,7 +1031,7 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `hooks.odin`, `hook_validation.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks and the checks of their declarations, move/drop checking, liveness, and cleanup slots. |
+| `hooks.odin`, `hook_validation.odin`, `ownership_forms.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks and the checks of their declarations, the `move`/`drop`/`forget`/`exchange` special forms and argument ownership, liveness, and cleanup slots. |
 | `copy_sites.odin` | Which expressions copy or transfer, and the copy-cost warnings. |
 | `extended_temporaries.odin` | Which temporaries a statement extends to its block's end. |
 | `transfer_facts.odin` | What a value takes to another thread, and what its storage holds or points to. |
