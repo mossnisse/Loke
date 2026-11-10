@@ -1495,6 +1495,73 @@ read_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8
 	return loss
 }
 
+// Whether a carrier of `source` may have been stored where one of `destination`
+// is: it is the same carrier, perhaps weakened, or `destination` erases what it
+// holds. An unshaped slot stands for every carrier below it.
+@(private)
+carrier_may_land_in :: proc(c: ^Compiler, destination, source: Type_Id) -> bool {
+	if destination == source || destination == INVALID_TYPE || source == INVALID_TYPE {
+		return true
+	}
+	into, from := underlying_info(c, destination), underlying_info(c, source)
+	if into == nil || from == nil {
+		return true
+	}
+	#partial switch into.kind {
+	case .Pointer, .Slice, .String_View, .CString_View:
+		return into.kind == from.kind && into.element == from.element
+	}
+	return true
+}
+
+// The carrier type a slot holds, or INVALID_TYPE for one standing for every
+// carrier below its path.
+@(private)
+slot_carrier_type :: proc(graph: ^Flow_Graph, index: int) -> Type_Id {
+	slot := graph.prov_slots[index]
+	if slot.content_truncated || slot.content_type != INVALID_TYPE {
+		return slot.content_type
+	}
+	if bare, exists := graph.slot_by_symbol[slot.symbol]; exists && bare == index {
+		return symbol_of(graph.k.c, slot.symbol).type
+	}
+	return INVALID_TYPE
+}
+
+// design.md "Values that contain borrows": a call moves carriers among the
+// storage its argument's mutable carriers lead to, so each there of a type the
+// call moves may now hold what any there of a type it may have come from held.
+@(private)
+rearrange_carriers :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
+	clear(&state.rearranged)
+	land_load(state, event, reach, read_writable_content(state, event, reach, &state.rearranged))
+	reads := state.rearranged
+	join :: proc(state: ^Prov_Solve, reach: []u8, reads: []int, type: Type_Id, every: bool) {
+		graph := state.graph
+		mem.zero_slice(state.merged)
+		loss: Precision_Loss
+		for index in reads {
+			if every || carrier_may_land_in(graph.k.c, type, slot_carrier_type(graph, index)) {
+				bytes_or(state.merged, reach_row(state, reach, index))
+				loss |= state.precision[index]
+			}
+		}
+		for index in reads {
+			if every || slot_carrier_type(graph, index) == type || slot_carrier_type(graph, index) == INVALID_TYPE {
+				bytes_or(reach_row_written(state, reach, index), state.merged)
+				state.precision[index] |= loss
+			}
+		}
+	}
+	if event.rearranged.any {
+		join(state, reach, reads[:], INVALID_TYPE, true)
+		return
+	}
+	for type in event.rearranged.types {
+		join(state, reach, reads[:], type, false)
+	}
+}
+
 // The carriers in the storage one loan names, as `load_through_loan` finds
 // them: a mutable one's loans join `state.merged`, and those of any carrier a
 // write may go on through become `pending`. Storage with no local content

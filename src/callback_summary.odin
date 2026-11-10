@@ -1,8 +1,12 @@
 // What a call may leave in its arguments or return of `thread_local` storage,
-// with each callback its callee calls substituted by the one the call passes. It
-// reads the summaries through `Compiler`, and pairs with `indirect_call_targets`
-// and `callable_type_targets` in `global_effects.odin`.
+// with each callback its callee calls substituted by the one the call passes, and
+// what it may move among or leave in the storage its arguments name, read from its
+// callee's summaries (`borrow_summaries.odin`). It reads the summaries through
+// `Compiler`, and pairs with `indirect_call_targets` and `callable_type_targets` in
+// `global_effects.odin`.
 package lokec
+
+import "core:mem"
 
 // design.md "Borrows crossing between tasks": a body that calls a callback it
 // received may leave in its parameter `into` what that callback leaves in its
@@ -465,4 +469,110 @@ parameter_may_hold_written_borrow :: proc(c: ^Compiler, info: ^Type_Info, index:
 	type := info.parameters[index]
 	return param_mode_at(info, index) == .Inout || carrier_is_mutable(c, type) ||
 		prov_type_reaches_destination(c, type)
+}
+
+// What a call may do to each of its `count` arguments' carriers, by argument,
+// from the summary of every body it may run; `consulted` collects those. A
+// foreign procedure may do anything with what it can reach.
+call_carrier_moves :: proc(
+	c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, count: int, consulted: ^[dynamic]Symbol_Id, allocator: mem.Allocator,
+) -> []Carrier_Move {
+	if !c.global_writes_ready || !call_writes_caller(c, call) {
+		return nil
+	}
+	targets, _ := call_summary_targets(c, call, body, forward = false)
+	out := make([]Carrier_Move, count, allocator)
+	for index := 0; index < len(targets); index += 1 {
+		target := targets[index]
+		if original, shifted := c.receiver_contract_of[target]; shifted {
+			target = original
+		}
+		if is_contract_join(c, target) {
+			append(&targets, ..symbol_of(c, target).members)
+			continue
+		}
+		sym := symbol_of(c, target)
+		if sym == nil {
+			continue
+		}
+		append(consulted, target)
+		if sym.is_foreign {
+			for &move in out { move.any = true }
+			continue
+		}
+		shift := count - len(sym.param_symbols)
+		for row, position in c.carrier_moves[target] {
+			if at := position + shift; at >= 0 && at < count {
+				out[at].any ||= row.any
+				out[at].copied ||= row.copied
+				set_join(&out[at].types, row.types, allocator)
+			}
+		}
+	}
+	return out
+}
+
+// The path-indexed written content of a call's declaration, or not found for a
+// contract join, whose members a call takes together as whole regions.
+written_content_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([][]Prov_Region_Content, bool) {
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		rows, found := written_content_summary(c, original)
+		if !found {
+			return nil, false
+		}
+		out := make([][]Prov_Region_Content, len(rows) + 1, context.temp_allocator)
+		for row, index in rows {
+			shifted_row := make([]Prov_Region_Content, len(row), context.temp_allocator)
+			for entry, position in row {
+				shifted_row[position] = entry
+				shifted_row[position].region = receiver_region(entry.region)
+			}
+			out[index + 1] = shifted_row
+		}
+		return out, true
+	}
+	if is_contract_join(c, declaration) {
+		return nil, false
+	}
+	summary, found := c.written_summaries[declaration]
+	return summary.content, found
+}
+
+// The written regions of a call's declaration; a join's members are unioned.
+// `owners` asks only for the regions backing owners left there, without an
+// allocator handle's.
+written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id, owners := false) -> ([]Region_Set, bool) {
+	// A view's own row is empty: a plain receiver is not written.
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		written, found := written_region_summary(c, original, owners)
+		if !found {
+			return nil, false
+		}
+		out := make([]Region_Set, len(written) + 1, context.temp_allocator)
+		for set, index in written {
+			out[index + 1] = receiver_region(set)
+		}
+		return out, true
+	}
+	if !is_contract_join(c, declaration) {
+		summary, found := c.written_summaries[declaration]
+		return owners ? summary.owners : summary.regions, found
+	}
+	out: []Region_Set
+	for member in symbol_of(c, declaration).members {
+		summary, found := c.written_summaries[member]
+		if !found {
+			continue
+		}
+		written := owners ? summary.owners : summary.regions
+		if out == nil {
+			out = make([]Region_Set, len(written), context.temp_allocator)
+		}
+		for set, index in written {
+			if index < len(out) {
+				region_merge(&out[index], set)
+			}
+		}
+	}
+	return out, out != nil
 }

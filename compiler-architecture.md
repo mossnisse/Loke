@@ -404,7 +404,7 @@ behavioral controls for all of it.
 | What a block keeps of the solver's tables, in pages shared with its neighbors, and each row of reaching loans or reborrows once | `block_table_take`, `reach_row_written`, `reach_settle`, `reach_load`, `Interned_Rows` in `borrow_tables.odin` |
 | What a load reads below the storage its carriers name, where one points below the whole of it | `prov_load_places`, `Prov_Event.load_places`, `load_pointee_content` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `provenance_reborrow.odin`; `prov_link_retained` in `provenance_retention.odin` |
-| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `settle_carrier_moves`, `copies_outlast_body`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in` in `borrow_summaries.odin`; `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `settle_carrier_moves`, `copies_outlast_body` in `borrow_summaries.odin`; `call_carrier_moves` in `callback_summary.odin`; `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
 | Written-argument regions, by parameter and by path, and by which carrier of a record passed by value | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content`, `prov_parameter_carrier_path`, `prov_contents_held_at` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -1055,7 +1055,7 @@ be file-private. Paths below are relative to `src/`.
 | `borrow_loaded_below.odin` | Which carriers each slot's value was loaded at or below on every path, which tells a read below a stepped cursor from a second copy of what it was copied out of. |
 | `borrow_report.odin` | Root and region diagnostics: each block's events replayed against the settled facts, reporting conflicts, outlived storage, escapes, region resets, and retention. |
 | `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
-| `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
+| `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted, and the carriers it moves and regions it leaves there, read from its callee's summaries. |
 | `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
 | `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
 | `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; what one call takes in from those and the thread summaries, and what a `parallel` block's parent does with them while its tasks run. |
