@@ -1398,3 +1398,12 @@ a reproduction before a change.
   `report_thread_local_writes` and the type predicates in
   `provenance_regions.odin` allocate in `context.temp_allocator`, which lasts
   the whole batch; the graph-local sites now use the analysis arena.
+- **Member lookup by name** (group 2, top recommendation 3).
+  `member_candidates`, `find_member` and `add_operator_members` scan a type's
+  whole member table, and the package's extension table, for each lookup. On
+  the examples that is 1-2 ms a program, but it is quadratic across calls: one
+  type with 2,000 methods called 4,000 times spends about 70 ms of a 360 ms
+  front end there. An index by name would have to follow `add_members`, the
+  in-place `replace_impl_member`, the extension tables and session
+  checkpoints, and would cost more than a scan for the usual small table; it
+  waits for a program that needs it.

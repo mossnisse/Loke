@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:slice"
 
 synth_name :: proc(c: ^Compiler, text: string, span: Span) -> Name {
 	return Name{text = text, span = span, id = intern_identifier(c, text)}
@@ -85,6 +86,16 @@ synth_decl :: proc(c: ^Compiler, kind: Decl_Kind, name: string, value: Expr, spa
 	d.values = make([]Expr, 1, c.semantic_allocator)
 	d.values[0] = value
 	return d
+}
+
+// `lhs = rhs;`: each value stored to the destination at its position.
+synth_assign :: proc(c: ^Compiler, lhs, rhs: []Expr, op_span, span: Span) -> ^Stmt_Assign {
+	assign := new(Stmt_Assign, c.semantic_allocator)
+	assign.span = span
+	assign.op, assign.op_span = .Assign, op_span
+	assign.lhs = slice.clone(lhs, c.semantic_allocator)
+	assign.rhs = slice.clone(rhs, c.semantic_allocator)
+	return assign
 }
 
 // A record field whose type is bound to a name only the current scope has.

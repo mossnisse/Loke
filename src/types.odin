@@ -450,44 +450,53 @@ record_finished :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 	return sym == nil || sym.decl == nil || sym.decl.sig_state == .Checked
 }
 
+// How a predeclared type prints, and whether the universe binds that text as its
+// name (`build_universe`).
+Predeclared_Name :: struct {
+	text:     string,
+	universe: bool,
+}
+
 // Indexed by `Type_Id`, so a new predeclared type is added here beside its
-// constant instead of in a third switch that has to be kept in step.
-// `TYPE_ALLOCATOR` and `TYPE_ALLOCATOR_ERROR` are deliberately absent: they
-// print under the nominal name `build_universe` gives them.
-@(private = "file")
-PREDECLARED_NAMES := [int(FIRST_DYNAMIC_TYPE)]string {
-	INVALID_TYPE         = "<invalid>",
-	TYPE_VOID            = "()",
-	TYPE_BOOL            = "bool",
-	TYPE_I8              = "i8",
-	TYPE_I16             = "i16",
-	TYPE_I32             = "i32",
-	TYPE_I64             = "i64",
-	TYPE_I128            = "i128",
-	TYPE_U8              = "u8",
-	TYPE_U16             = "u16",
-	TYPE_U32             = "u32",
-	TYPE_U64             = "u64",
-	TYPE_U128            = "u128",
-	TYPE_INT             = "int",
-	TYPE_UINT            = "uint",
-	TYPE_UINTPTR         = "uintptr",
-	TYPE_F16             = "f16",
-	TYPE_F32             = "f32",
-	TYPE_F64             = "f64",
-	TYPE_RUNE            = "rune",
-	TYPE_RAWPTR          = "rawptr",
-	TYPE_TYPE            = "type",
-	TYPE_STRING          = "string",
-	TYPE_TYPEID          = "typeid",
-	TYPE_UNTYPED_INT     = "untyped int",
-	TYPE_UNTYPED_FLOAT   = "untyped float",
-	TYPE_UNTYPED_BOOL    = "untyped bool",
-	TYPE_UNTYPED_RUNE    = "untyped rune",
-	TYPE_UNTYPED_NIL     = "untyped nil",
-	TYPE_UNTYPED_STRING  = "untyped string",
-	TYPE_STRING_VIEW     = "string_view",
-	TYPE_CSTRING_VIEW    = "cstring_view",
+// constant, and its `Type_Info` in `init_semantic_stores`, instead of in a
+// third table that has to be kept in step.
+PREDECLARED_NAMES := [int(FIRST_DYNAMIC_TYPE)]Predeclared_Name {
+	INVALID_TYPE         = {"<invalid>", false},
+	TYPE_VOID            = {"()", false},
+	TYPE_BOOL            = {"bool", true},
+	TYPE_I8              = {"i8", true},
+	TYPE_I16             = {"i16", true},
+	TYPE_I32             = {"i32", true},
+	TYPE_I64             = {"i64", true},
+	TYPE_I128            = {"i128", true},
+	TYPE_U8              = {"u8", true},
+	TYPE_U16             = {"u16", true},
+	TYPE_U32             = {"u32", true},
+	TYPE_U64             = {"u64", true},
+	TYPE_U128            = {"u128", true},
+	TYPE_INT             = {"int", true},
+	TYPE_UINT            = {"uint", true},
+	TYPE_UINTPTR         = {"uintptr", true},
+	TYPE_F16             = {"f16", true},
+	TYPE_F32             = {"f32", true},
+	TYPE_F64             = {"f64", true},
+	TYPE_RUNE            = {"rune", true},
+	TYPE_RAWPTR          = {"rawptr", true},
+	TYPE_TYPE            = {"type", false},
+	TYPE_STRING          = {"string", true},
+	TYPE_TYPEID          = {"typeid", true},
+	TYPE_UNTYPED_INT     = {"untyped int", false},
+	TYPE_UNTYPED_FLOAT   = {"untyped float", false},
+	TYPE_UNTYPED_BOOL    = {"untyped bool", false},
+	TYPE_UNTYPED_RUNE    = {"untyped rune", false},
+	TYPE_UNTYPED_NIL     = {"untyped nil", false},
+	TYPE_UNTYPED_STRING  = {"untyped string", false},
+	TYPE_STRING_VIEW     = {"string_view", true},
+	// Also exported by `core:mem` and `base:runtime`, but the lifecycle
+	// signatures spell them unqualified.
+	TYPE_ALLOCATOR       = {"Allocator", true},
+	TYPE_ALLOCATOR_ERROR = {"Allocator_Error", true},
+	TYPE_CSTRING_VIEW    = {"cstring_view", true},
 }
 
 type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
@@ -550,8 +559,8 @@ write_type_name :: proc(w: ^Type_Name_Writer, id: Type_Id) {
 		return
 	}
 	c := w.c
-	if int(id) < len(PREDECLARED_NAMES) && PREDECLARED_NAMES[id] != "" {
-		type_name_text(w, PREDECLARED_NAMES[id])
+	if int(id) < len(PREDECLARED_NAMES) && PREDECLARED_NAMES[id].text != "" {
+		type_name_text(w, PREDECLARED_NAMES[id].text)
 		return
 	}
 	info := type_of(c, id)

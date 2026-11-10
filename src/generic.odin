@@ -1723,7 +1723,7 @@ infer_variadic_pack :: proc(k: ^Checker, walk: ^Inference_Walk, element: Expr, l
 unclaimed_argument_reason :: proc(k: ^Checker, args: []Arg_Info, index, count: int) -> string {
 	name := args[index].name
 	if name == INVALID_IDENTIFIER {
-		return arity_reason(k.c, count, len(args))
+		return arity_reason(count, len(args))
 	}
 	for earlier in args[:index] {
 		if earlier.name == name {
