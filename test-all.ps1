@@ -82,15 +82,15 @@ try {
     }
 
     # Whether a check's findings belong to the program is one question,
-    # `committing` in source.odin; a raw depth test elsewhere is how an
+    # `committing` in speculation.odin; a raw depth test elsewhere is how an
     # enrollment used to slip through a probe (compiler-architecture.md
     # "Checking and overload resolution"). compiler.odin only declares it.
     $depth = Get-ChildItem src/*.odin |
-        Where-Object { $_.Name -notlike '*_test.odin' -and $_.Name -notin 'source.odin', 'compiler.odin' } |
+        Where-Object { $_.Name -notlike '*_test.odin' -and $_.Name -notin 'speculation.odin', 'compiler.odin' } |
         Select-String -Pattern '\bspeculation_depth\b' -CaseSensitive
     if ($depth) {
         $depth | ForEach-Object { Write-Host "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
-        throw "speculation_depth is read outside source.odin; ask committing(c)"
+        throw "speculation_depth is read outside speculation.odin; ask committing(c)"
     }
 
     # Memory tracking stays on here: the unit tests are where a leak in the

@@ -304,7 +304,7 @@ The recurring themes are:
    the comment that does describe them starts on line 161. Delete the two
    lines, or restore the fields they describe.
 6. **Move the probe, commit, and settling machinery out of `source.odin`**
-   (`src/source.odin:325-442`). `Emission_Registries` makes the "source manager
+   (done: `speculation.odin`) (`src/source.odin:325-442`). `Emission_Registries` makes the "source manager
    and diagnostics engine" depend on witnesses, materialized constants, spawn
    tasks, and instances. Move `Probe`, `begin_probe`/`end_probe`,
    `begin_commit`/`end_commit`, `Settling`, `errors_since`, and
@@ -466,7 +466,9 @@ The program-level fixed point is clear.
 - **Structure** (done), packages.odin:173: the comment "`written` is only for
   diagnostics; directory identity supplies the key." belongs to
   `load_package_dir` (`:197`), but sits above `package_symbol_named`.
-- **Structure**, packages.odin:176-195: `package_symbol_named` and
+- **Structure** (not done: the scope helpers are in group 2's `semantic.odin`
+  and `check.odin`, whose split of type-syntax resolution would move them
+  again; left to that work), packages.odin:176-195: `package_symbol_named` and
   `package_type_named` are name lookups in the checker. `package_type_named`
   needs a `^Checker`. They are called from 13 places in other files. They
   belong with the scope and lookup helpers, not in "package discovery".
@@ -522,7 +524,7 @@ Thorough. It is the subtlest file in the group and reads well.
 
 #### src/source.odin
 Solid diagnostics engine.
-- **Structure**, source.odin:325-442: see Top 6.
+- **Structure** (done: Top 6), source.odin:325-442: see Top 6.
 - **Data structure/algorithm** (not done: one call per rendered location,
   beside the several writes to stderr that render it; passing the directory
   in would add a parameter to each caller), source.odin:116-126: `display_path` calls
@@ -769,13 +771,13 @@ Fine.
 | Pattern | Sites | Proposal |
 | --- | --- | --- |
 | Scratch `Compiler` to lex or parse free-standing text | src/lexer.odin:167 (`lex_text`), src/doc.odin:119, lsp/editing.odin:337 (`parsed_tokens`), lsp/tools.odin:27 | A lexer that runs without a `Compiler`, plus `parse_text_tokens` in `lokec` (Top 4) (done; formatting keeps its `Compiler`) |
-| Hand-written recursion that `expr_children` already provides | src/query_index.odin:265-338, src/doc_comments.odin:213-227. Already using it: doc.odin:646, select.odin:514, ast.odin:1477 | Fall back to `expr_children` for the trivial cases (Top 3) |
+| Hand-written recursion that `expr_children` already provides | src/query_index.odin:265-338, src/doc_comments.odin:213-227. Already using it: doc.odin:646, select.odin:514, ast.odin:1477 | Fall back to `expr_children` for the trivial cases (Top 3) (done in both) |
 | Bracket-depth scanners over tokens | src/parser.odin:383, :481, :927, :977, :1934, :3054; lsp/roots.odin:187; lsp/editing.odin:194, :211, :281; lsp/rename.odin:219 | One `Bracket_Depth` step helper in `lokec`, used by both the parser and the server (not done: see parser.odin) |
 | Statement walkers (one `switch` over `Stmt` each) | select.odin:796, query_index.odin:137, ast_dump.odin, plus check_stmt, cfg, eval, expand, ast_clone, emit_llvm_stmt outside this group | A `stmt_children` analogue of `expr_children` would serve at least select.odin and query_index.odin. The others need per-node behavior. Low priority (not done: those two also bind names or record scopes in most statement kinds) |
 | Reporting `Import_Resolution` failures | src/packages.odin:357-380, src/providers.odin:136-152 | One reporting helper (not done: the two report different codes and messages, so a helper would take both as parameters) |
 | `line_starts` computation | src/source.odin:136-142, lsp/tools.odin:71-73 (and lsp/server_test.odin:1380) | `line_starts_of(text, allocator)` (done) |
 | Enum-to-string switches | build_config.odin:33 (`cpu_level_name`), providers.odin:23 (`provider_slot_name`), ast.odin:695 (`hook_name`), subsystem.odin:29 (`parse_subsystem`) | `[Enum]string` arrays (done), as `OPT_CLANG_FLAGS` and `ast_dump.odin`'s tag tables already are |
-| CLI names that repeat enum members | main.odin:341, :343, :352, :354 | Derive from `reflect.enum_field_names` (Top 8) |
+| CLI names that repeat enum members | main.odin:341, :343, :352, :354 | Derive from `reflect.enum_field_names` (Top 8) (done) |
 | `kind == .Proc ? proc_type : type` | queries.odin:354, :523, query_index.odin:71 | `symbol_value_type` helper (done) |
 | Bundled-collection test | project.odin:54, :105; packages.odin:513; queries.odin:107; check_expr.odin:2822 | `is_bundled_collection(name)` and `is_bundled_key(key)` helpers (done; check_expr.odin tests `base:` alone and stays) |
 | "Any root dirty" loop | lsp/roots.odin:46, lsp/requests.odin:127-130 | Use one helper (done) |

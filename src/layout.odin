@@ -69,7 +69,7 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 	if info == nil || info.layout_state != .Unchecked {
 		return
 	}
-	// source.odin `committing`: a probe may roll back the diagnostic this answer
+	// speculation.odin `committing`: a probe may roll back the diagnostic this answer
 	// cost, so it is not kept, here or in a record measured over this one.
 	errors := c.error_count
 	defer if !committing(c) && c.error_count > errors {

@@ -318,7 +318,7 @@ modules supply candidates and their special constraints.
 `begin_probe` raises `speculation_depth` and marks diagnostics; `end_probe`
 discards them before lowering the depth. Probes may annotate cloned syntax but
 must not enroll final-program artifacts. All such decisions ask `committing(c)`
-in `source.odin`; `test-all.ps1` forbids reading the depth elsewhere.
+in `speculation.odin`; `test-all.ps1` forbids reading the depth elsewhere.
 
 Gate registry enrollment, report-once caches, and last-use annotations on that
 same decision. Otherwise a rolled-back diagnostic can leave a cache suppressing
@@ -983,7 +983,7 @@ be file-private. Paths below are relative to `src/`.
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |
 | `install.odin`, `packages.odin`, `paths.odin`, `project.odin`, `select.odin` | Installation-relative roots, `-collection` entries and `loke.project` dependencies, package loading/import graph, dependency order, path utilities, and `when` selection. |
 | `compiler.odin` | The `Compiler` record and the `Compilation_Settings` it shares with a session's configuration; destruction lives in `semantic.odin`. |
-| `source.odin` | Sources, spans, diagnostics, and probes. |
+| `source.odin` | Sources, spans, and diagnostics. |
 | `lexer.odin` | Tokens, lexical scanning, and decoding a string or rune literal's spelling. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions and their child walk (`expr_children`), error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
@@ -997,6 +997,7 @@ be file-private. Paths below are relative to `src/`.
 | Files | Responsibility |
 | --- | --- |
 | `check.odin`, `check_stmt.odin`, `switch.odin`, `check_expr.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/signatures/type syntax, statements, value and union switches, expression dispatch/materialization/folding, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
+| `speculation.odin` | Probes, whose diagnostics roll back, the one sanctioned commit from inside a probe, settling a declaration once for the program, and diagnostics held aside meanwhile. |
 | `bigint.odin`, `const_ops.odin`, `const_float.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, exact float operations and encodings, zero-value rules and constants, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates and comparability, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
