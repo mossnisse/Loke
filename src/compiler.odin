@@ -199,6 +199,9 @@ Compiler :: struct {
 	region_shapes:      map[Type_Id][]Prov_Region_Content,
 	// Whether a map type's shape gives constant keys entries of their own.
 	map_keyed:          map[Type_Id]bool,
+	// `transfer_facts` by type and whether views are followed, asked only by the
+	// provenance walks, once the witnesses a view may hold are known.
+	transfer_facts_of:  map[Transfer_Key]Transfer_Facts,
 	synth_procs:        [dynamic]Symbol_Id,
 	// One constructor procedure per union variant used as a value.
 	variant_constructors: map[Variant_Key]Symbol_Id,
@@ -312,11 +315,10 @@ Compiler :: struct {
 	// Direct summary dependencies, discovered while building each body's first
 	// provenance graph. The solver schedules only callers of a changed callee.
 	result_summary_dependencies: map[Symbol_Id][]Symbol_Id,
-	// design.md "Global write effects": the globals each body may write or read,
-	// and what an indirect call may reach, settled before provenance runs.
-	global_writes:       map[Symbol_Id][]Symbol_Id,
+	// design.md "Global write effects": the globals an indirect call may write
+	// or read, settled before provenance runs; each body's are in its
+	// `Effect_Program` summary.
 	indirect_writes:     map[Effect_Key][]Symbol_Id,
-	global_reads:        map[Symbol_Id][]Symbol_Id,
 	indirect_reads:      map[Effect_Key][]Symbol_Id,
 	// Per body that calls a procedure value it received, its summaries apart
 	// from that value, which each call substitutes; and the bodies an indirect
@@ -325,17 +327,17 @@ Compiler :: struct {
 	effect_unions:       map[Effect_Key][]int,
 	global_writes_ready: bool,
 	thread_spawns:       [dynamic]Thread_Spawn,
-	// The bodies the write effects settled over, for the summaries after them.
+	// The bodies the write effects settled over, with each one's summaries, for
+	// the summaries after them.
 	effect_program:      Effect_Program,
 	// design.md "Globals while tasks run": per body, the globals whose stored
-	// carriers it may reach and the allocator regions it may use; and what
-	// every thread runs when it exits, a `thread_local` owner's drop. Settled
-	// after the result summaries, while `thread_facts_pending`, and only when
-	// `thread_summaries_wanted`: the pass costs a graph per body, so only a
-	// program that a check reads them for pays for it.
+	// carriers it may reach and the allocator regions it may use (in
+	// `effect_program`); and what every thread runs when it exits, a
+	// `thread_local` owner's drop. Settled after the result summaries, while
+	// `thread_facts_pending`, and only when `thread_summaries_wanted`: the pass
+	// costs a graph per body, so only a program that a check reads them for
+	// pays for it.
 	thread_summaries_wanted: bool,
-	reach_effects:        map[Symbol_Id][]Global_Effect,
-	allocator_uses:       map[Symbol_Id]Region_Set,
 	thread_exit_drops:    []Thread_Exit_Drop,
 	thread_facts_pending: bool,
 

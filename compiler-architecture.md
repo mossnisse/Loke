@@ -406,18 +406,18 @@ behavioral controls for all of it.
 | What a block keeps of the solver's tables, in pages shared with its neighbors, and each row of reaching loans or reborrows once | `block_table_take`, `reach_row_written`, `reach_settle`, `reach_load`, `Interned_Rows` in `borrow_tables.odin` |
 | What a load reads below the storage its carriers name, where one points below the whole of it | `prov_load_places`, `Prov_Event.load_places`, `load_pointee_content` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads`, `link_landed_stores` in `borrow.odin`; `prov_link_landed` in `provenance_reborrow.odin`; `prov_link_retained` in `provenance_retention.odin` |
-| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `copies_outlast_body`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in` in `borrow_summaries.odin`; `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `settle_carrier_moves`, `copies_outlast_body` in `borrow_summaries.odin`; `call_carrier_moves` in `callback_summary.odin`; `rearrange_carriers`, `carrier_may_land_in`, `link_landed_stores` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `provenance_retention.odin` |
 | Written-argument regions, by parameter and by path, and by which carrier of a record passed by value | `param_writes_caller`, `Compiler.written_summaries`, `Written_Summary`, `Prov_Region_Content`, `prov_parameter_carrier_path`, `prov_contents_held_at` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
 | Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Flow_Graph.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
 | Written aliases: what a local's carriers may reach | `Written_Alias`, `written_aliases`, `prov_written_targets`, `prov_call_written_aliases`, `WRITTEN_ALIAS_DEPTH` |
-| Which paths a result's loads through a parameter go along: the first load's, and below each of those the last's where each load between reads one carrier, and the routes a caller loads along | `Load_Paths`, `carrier_below`, `last_load_shape`, `result_load_routes` in `carrier_shape.odin`; `Prov_Loan.last`, `merge_param_load_paths` |
+| Which paths a result's loads through a parameter go along: the first load's, and below each of those the last's where each load between reads one carrier, and the routes a caller loads along | `Load_Paths`, `carrier_below`, `last_load_shape`, `result_load_routes` in `result_summary.odin`; `Prov_Loan.last`, `merge_param_load_paths` |
 | What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
-| Global write and read effects and the callbacks a call passes | `compute_global_writes`, `Compiler.global_reads`, `prov_copy_effects`, `Expr_Base.copied_as`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |
-| Thread summaries for `parallel` blocks | `compute_thread_summaries` in `thread_summaries.odin`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
+| Global write and read effects and the callbacks a call passes | `compute_global_writes`, `Body_Summary`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin`; `prov_copy_effects`, `prov_effect_call` in `provenance_global_effects.odin`; `Expr_Base.copied_as` |
+| Thread summaries for `parallel` blocks | `compute_thread_summaries`, `body_global_reach` in `thread_summaries.odin`; `Body_Summary.reach` and `use`, `Compiler.thread_facts_pending`, `thread_summaries_wanted` |
 | Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `PROV_OFFSET_LIMIT`, `PROV_OFFSET_TOTAL`, `L0641`, `L0646`, `L0647`, `L0730` |
 
 Keep these contracts:
@@ -775,7 +775,7 @@ The checks run on the `Prov_Diagnose` graph:
   window solver in `borrow_tasks.odin` is a may-analysis over blocks with one
   bit per spawn site, so a branch that has not spawned is outside the window
   and a spawn in a loop holds it open around the back edge. Writes and reaches inside a block are
-  `Shared_Effect` events in `global_effects.odin`, the parent's allocator use
+  `Shared_Effect` events in `provenance_global_effects.odin`, the parent's allocator use
   `Region_Use` events, and the solver reports both against the tasks that may
   be running. The emission contract validates each recorded spawn.
 - **`thread_local` effects depend on the executor.** A spawned call's effects
@@ -1034,7 +1034,7 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `hooks.odin`, `hook_validation.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks and the checks of their declarations, move/drop checking, liveness, and cleanup slots. |
+| `hooks.odin`, `hook_validation.odin`, `ownership_forms.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks and the checks of their declarations, the `move`/`drop`/`forget`/`exchange` special forms and argument ownership, liveness, and cleanup slots. |
 | `copy_sites.odin` | Which expressions copy or transfer, and the copy-cost warnings. |
 | `extended_temporaries.odin` | Which temporaries a statement extends to its block's end. |
 | `transfer_facts.odin` | What a value takes to another thread, and what its storage holds or points to. |
@@ -1050,17 +1050,22 @@ be file-private. Paths below are relative to `src/`.
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |
 | `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
-| `borrow.odin` | The provenance solver: roots, loans, and slots; solving each body and its declared escape contracts; reaching loans, publication, and liveness. |
+| `prov_paths.odin` | Projection paths, the steps from a root's storage to a place in it, and how two paths compare. |
+| `borrow_program.odin` | The whole program's provenance: result summaries settled over a worklist of callers, declared escape contracts, then each body's diagnostics. |
+| `borrow.odin` | The provenance solver: roots, loans, and slots; reaching loans, links, publication, and liveness in one body. |
+| `borrow_tables.odin` | What the solver keeps at block boundaries, in pages shared between neighbors and interned rows, and the bit-row primitives and joins over them. |
 | `borrow_summaries.odin` | What a body leaves for its callers' summaries: the carriers it moves, its `thread_local` writes, the regions it leaves in written arguments, and what may escape. |
 | `borrow_loaded_below.odin` | Which carriers each slot's value was loaded at or below on every path, which tells a read below a stepped cursor from a second copy of what it was copied out of. |
 | `borrow_report.odin` | Root and region diagnostics: each block's events replayed against the settled facts, reporting conflicts, outlived storage, escapes, region resets, and retention. |
-| `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
-| `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted. |
+| `carrier_shape.odin` | Carrier shapes, which need no solver state. |
+| `result_summary.odin` | Result summaries: what a procedure's result may depend on, region shapes, and how a call substitutes, shifts, or joins them. |
+| `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted, and the carriers it moves and regions it leaves there, read from its callee's summaries. |
 | `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
 | `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
-| `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; what one call takes in from those and the thread summaries, and what a `parallel` block's parent does with them while its tasks run. |
-| `thread_summaries.odin` | The reach and allocator-use effects and thread-exit drops, settled over the calls the write effects resolved. |
-| `region.odin` | `Arena`/`Scratch` semantic types. |
+| `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; each body's settled summaries, and what one call takes in from them. |
+| `provenance_global_effects.odin` | What the walk records of global effects: a body's own static accesses, the procedure values it stores and calls, and, once the effects are settled, the accesses each call, hook, drop, and pooled join makes, and what a `parallel` block's parent does with them while its tasks run. |
+| `thread_summaries.odin` | The reach and allocator-use effects, from the globals each body reaches, and thread-exit drops, settled over the calls the write effects resolved. |
+| `region.odin` | `Arena`/`Scratch` semantic types, and the region lattice: `Region_Set`, what each parameter's region was read as, and how sets merge and substitute. |
 
 ### LLVM and toolchain
 

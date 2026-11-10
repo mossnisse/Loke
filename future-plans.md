@@ -63,6 +63,14 @@ Implementation order:
    including its requirement for no open specification divergences. Explain
    material performance regressions before a release.
 
+The compile-time evaluator's values are one candidate for that measurement:
+every scalar is a `core:math/big` integer inside a whole constant
+(`Eval_Value` in [src/eval.odin](src/eval.odin)), so loops and arithmetic set
+both its time and what it charges against its memory limit. A small-integer
+fast path (`i64`, promoted to a big integer on overflow) with a tagged scalar
+representation would cut both; it needs a `bench/` workload of compile-time
+loops first.
+
 **Completion check:** every shipped milestone has its regression evidence and
 updated documentation; every release has comparable conformance, robustness,
 and performance evidence. This work continues throughout the roadmap.

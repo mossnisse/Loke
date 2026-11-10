@@ -14,7 +14,7 @@ report_provenance :: proc(state: ^Prov_Solve) {
 	// One expression gets one borrow diagnostic: a receiver and the call it
 	// starts, or two rules meeting the same mistake, report once.
 	reported := make(map[[2]u32]bool, graph.alloc)
-	window_entry := solve_window(state)
+	window_entry := task_window(state)
 	window := make([]u8, (len(graph.task_sites) + 7) / 8, graph.alloc)
 	shared := Shared_Reports{
 		seen   = make(map[Shared_Report]bool, graph.alloc),
@@ -133,8 +133,9 @@ check_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Use
 	case .Live, .Load:
 		// A reborrow suspends its source until its own last use, and the last use
 		// of whatever was reborrowed from it in turn.
+		holders_listed := false
 		for source in event.sources {
-			if reborrow, derived, found := live_reborrow_of(state, source, live, event); found {
+			if reborrow, derived, found := live_reborrow_of(state, source, live, event, &holders_listed); found {
 				state.diagnostic_precision |= state.precision[derived]
 				report_suspended_reborrow(state, event, reborrow, event.span if event.load == .At_Once else uses[derived])
 				return
@@ -211,22 +212,24 @@ check_region_escape :: proc(state: ^Prov_Solve, event: Prov_Event) {
 }
 
 // design.md "Weakening and reborrows": the first reborrow of `source` that a live slot still
-// holds a value derived through (`solve_links_held`), and that live slot.
+// holds a value derived through (`solve_links_held`), and that live slot. The slots that
+// may, the same for every source of `use`, are listed in `state.link_holders` once
+// `listed^`.
 @(private)
-live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use: Prov_Event) -> (Prov_Reborrow, int, bool) {
+live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use: Prov_Event, listed: ^bool) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
 	links := reborrows_of(state, source)
 	if len(links) == 0 {
 		return {}, -1, false
 	}
 	at_once := use.load == .At_Once
-	candidates := make([dynamic]int, 0, 8, context.temp_allocator)
-	for row, slot in state.links_held {
-		if row == 0 {
-			continue
-		}
-		if at_once ? slice.contains(use.sources, slot) : slot != source && live[slot] == .Used {
-			append(&candidates, slot)
+	if !listed^ {
+		listed^ = true
+		clear(&state.link_holders)
+		for row, slot in state.links_held {
+			if row != 0 && (at_once ? slice.contains(use.sources, slot) : live[slot] == .Used) {
+				append(&state.link_holders, slot)
+			}
 		}
 	}
 	for index in links {
@@ -241,8 +244,8 @@ live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use:
 		if reborrow.from_store > 0 && graph.prov_slots[source].kind == .Temporary {
 			continue
 		}
-		for slot in candidates {
-			if !bit_get(state.link_rows.rows[state.links_held[slot]], index) {
+		for slot in state.link_holders {
+			if !at_once && slot == source || !bit_get(state.link_rows.rows[state.links_held[slot]], index) {
 				continue
 			}
 			// A slot standing for many places holds the copy too, whichever it is.
@@ -315,7 +318,7 @@ at_once_reaches :: proc(state: ^Prov_Solve, use: Prov_Event, source: int) -> boo
 		mem.zero_slice(row)
 	}
 	reads := make([dynamic]int, 0, 8, context.temp_allocator)
-	load_pointee_content(state, use, state.reach, &reads)
+	_ = read_pointee_content(state, use, state.reach, &reads)
 	for slot, at in derived[1:] {
 		copy(reach_row(state, state.reach, slot), saved[at * state.row_bytes:][:state.row_bytes])
 	}

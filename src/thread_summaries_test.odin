@@ -25,7 +25,7 @@ summarized :: proc(t: ^testing.T, p: ^Checked, body: string) -> bool {
 @(private = "file")
 reach_of :: proc(t: ^testing.T, p: ^Checked, procedure, global: string) -> (Effect_Source, bool) {
 	wanted := symbol_named(t, p, global, .Var)
-	for reached in p.c.reach_effects[symbol_named(t, p, procedure, .Proc)] {
+	for reached in body_summary(&p.c, symbol_named(t, p, procedure, .Proc)).reach {
 		if reached.global == wanted {
 			return reached.source, true
 		}
@@ -53,7 +53,7 @@ expect_no_reach :: proc(t: ^testing.T, p: ^Checked, procedure, global: string, l
 
 @(private = "file")
 use_of :: proc(t: ^testing.T, p: ^Checked, procedure: string) -> Region_Set {
-	return p.c.allocator_uses[symbol_named(t, p, procedure, .Proc)]
+	return body_summary(&p.c, symbol_named(t, p, procedure, .Proc)).use
 }
 
 @(private = "file")

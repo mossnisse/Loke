@@ -15,11 +15,20 @@ import "core:slice"
 // The spawns whose tasks may be running on entry to each block, one bit per
 // spawn site (`task_sites`): a spawn sets its own, and a join clears those of
 // its block. A path through a loop that spawns returns to the head with the
-// bit set.
+// bit set. Solved once per graph: the events `settle_pool_joins` drops are a
+// join's accesses, never a spawn or a join, so they leave the window as it was.
 @(private)
+task_window :: proc(state: ^Prov_Solve) -> [][]u8 {
+	if state.window_entry == nil {
+		state.window_entry = solve_window(state)
+	}
+	return state.window_entry
+}
+
+@(private = "file")
 solve_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 	graph := state.graph
-	entry := make([][]u8, len(graph.blocks), graph.alloc)
+	entry := make([][]u8, max(len(graph.blocks), 1), graph.alloc)
 	if !graph.has_window_event {
 		return entry
 	}
@@ -65,7 +74,7 @@ settle_pool_joins :: proc(state: ^Prov_Solve) {
 	if len(graph.pool_tasks) == 0 {
 		return
 	}
-	window_entry := solve_window(state)
+	window_entry := task_window(state)
 	mask := make([]u8, (len(graph.task_sites) + 7) / 8, graph.alloc)
 	for block, id in graph.blocks {
 		copy(mask, window_entry[id])
@@ -166,11 +175,11 @@ check_shared_event :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8, 
 		if !window_is_open(window) {
 			return
 		}
-		reached := make([dynamic]Global_Effect, 0, 2, state.graph.alloc)
+		reached := effect_list_make(state.graph.alloc)
 		for slot in event.sources {
 			note_reached_globals(state, slot, event.span, &reached)
 		}
-		for global in reached {
+		for global in reached.list {
 			report_shared_reach(state, global.global, event.span, window, shared, precision = global.source.precision)
 		}
 	}
@@ -648,7 +657,8 @@ note_value_targets :: proc(state: ^Prov_Solve, call: ^Expr_Call, global: Symbol_
 check_task_globals :: proc(state: ^Prov_Solve, event: Prov_Event, shared: ^Shared_Reports) {
 	c := state.k.c
 	call := state.graph.task_sites[event.slot].call
-	for global in c.global_writes[event.symbol] {
+	summary := body_summary(c, event.symbol)
+	for global in summary.writes {
 		sym := symbol_of(c, global)
 		if sym == nil || sym.duration == .Thread_Local || sym.synchronized || !first_report(shared, event.span, global) {
 			continue
@@ -661,7 +671,7 @@ check_task_globals :: proc(state: ^Prov_Solve, event: Prov_Event, shared: ^Share
 		add_notef(c, sym.span, "declared here; return what the task computes, or make it an `Atomic` or a `thread.Mutex`")
 		note_value_targets(state, call, global, true)
 	}
-	for reached in c.reach_effects[event.symbol] {
+	for reached in summary.reach {
 		hazard := shared_carrier_hazard(c, reached.global)
 		if hazard.type == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
 			continue
@@ -676,11 +686,11 @@ check_task_globals :: proc(state: ^Prov_Solve, event: Prov_Event, shared: ^Share
 		note_value_targets(state, call, reached.global, false)
 		add_precision_notes(c, event.span, reached.source.precision)
 	}
-	given := make([dynamic]Global_Effect, 0, 2, state.graph.alloc)
+	given := effect_list_make(state.graph.alloc)
 	for slot in event.sources {
 		note_reached_globals(state, slot, event.span, &given)
 	}
-	for reached in given {
+	for reached in given.list {
 		hazard := shared_carrier_hazard(c, reached.global)
 		if hazard.type == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
 			continue
@@ -765,7 +775,7 @@ note_reach_chain :: proc(c: ^Compiler, reached: Global_Effect) {
 			add_notef(c, source.span, "through `%s`", identifier_text(c, via.name))
 		}
 		next, found := Effect_Source{}, false
-		for entry in c.reach_effects[source.via] {
+		for entry in body_summary(c, source.via).reach {
 			if entry.global == reached.global {
 				next, found = entry.source, true
 				break

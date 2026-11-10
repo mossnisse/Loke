@@ -186,10 +186,22 @@ view_chain_text :: proc(c: ^Compiler, reached: Type_Id, via: Transfer_Via) -> st
 	)
 }
 
+// `transfer_facts`, kept per type and per whether views are followed.
+Transfer_Key :: struct {
+	type:          Type_Id,
+	through_views: bool,
+}
+
 // With `through_views`, a `dyn` view is followed into every type the program
 // converts to its interface application instead of counting as erased (design.md
-// "Globals while tasks run", "Sharing with tasks").
+// "Globals while tasks run", "Sharing with tasks"). Only the provenance walks ask,
+// after every body is checked, so the witnesses a view may hold are known and the
+// answer is kept; a printing view's, which a later pass adds to, are never read.
 transfer_facts :: proc(c: ^Compiler, type: Type_Id, through_views := false) -> Transfer_Facts {
+	key := Transfer_Key{type, through_views}
+	if cached, found := c.transfer_facts_of[key]; found {
+		return cached
+	}
 	none := Transfer_Via{INVALID_TYPE, INVALID_TYPE}
 	facts := Transfer_Facts {
 		affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE, viewed = INVALID_TYPE,
@@ -197,6 +209,7 @@ transfer_facts :: proc(c: ^Compiler, type: Type_Id, through_views := false) -> T
 	}
 	visited := make(map[Transfer_Visit]bool, 8, context.temp_allocator)
 	transfer_facts_walk(c, type, &facts, &visited, through_views, none)
+	c.transfer_facts_of[key] = facts
 	return facts
 }
 

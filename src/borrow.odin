@@ -160,155 +160,6 @@ loan_own_slots :: proc(graph: ^Flow_Graph, loan: Prov_Loan, root: Prov_Root) -> 
 	return root_own_slots(graph, root)
 }
 
-// ---------------------------------------------------------- projections --
-
-Proj_Kind :: enum u8 {
-	Field,
-	Range, // half-open constant element range; an index `i` is [i, i+1)
-	Wild,  // anything not statically distinct; overlaps every sibling
-}
-
-Proj_Step :: struct {
-	precision: Precision_Loss,
-	kind:      Proj_Kind,
-	// design.md "@(synchronized)": the step selects a synchronized field from
-	// outside its package, so reaching the place is exclusive access.
-	synchronized: bool,
-	// An element of a dynamic array, which an operation may move to another
-	// index. Carrier slots see that happen (`rearrange_carriers`); region facts,
-	// being flow-insensitive, do not (`prov_region_path`).
-	shifts:    bool,
-	lo:        i64,
-	hi:        i64,
-}
-
-path_is_synchronized :: proc(path: []Proj_Step) -> bool {
-	for step in path {
-		if step.synchronized {
-			return true
-		}
-	}
-	return false
-}
-
-proj_field :: proc(index: int) -> Proj_Step {
-	return Proj_Step{kind = .Field, lo = i64(index)}
-}
-
-proj_range :: proc(lo, hi: i64) -> Proj_Step {
-	return Proj_Step{kind = .Range, lo = lo, hi = hi}
-}
-
-proj_wild :: proc() -> Proj_Step {
-	return Proj_Step{kind = .Wild}
-}
-
-// Element `index` of a dynamic array, one by itself up to the budget.
-proj_dynamic_element :: proc(index: i64) -> Proj_Step {
-	return Proj_Step{kind = .Range, lo = index, hi = index + 1, shifts = true}
-}
-
-// A new path, one step below `path`.
-path_extend :: proc(path: []Proj_Step, step: Proj_Step, allocator: mem.Allocator) -> []Proj_Step {
-	out := make([]Proj_Step, len(path) + 1, allocator)
-	copy(out, path)
-	out[len(path)] = step
-	return out
-}
-
-// `path` below `prefix`, which is one of the two when the other is empty.
-path_concat :: proc(prefix, path: []Proj_Step, allocator: mem.Allocator) -> []Proj_Step {
-	if len(prefix) == 0 {
-		return path
-	}
-	if len(path) == 0 {
-		return prefix
-	}
-	out := make([]Proj_Step, len(prefix) + len(path), allocator)
-	copy(out, prefix)
-	copy(out[len(prefix):], path)
-	return out
-}
-
-// Whether two steps name one place, whatever else each records of how it was
-// reached.
-same_step :: proc(a, b: Proj_Step) -> bool {
-	return a.kind == b.kind && a.lo == b.lo && a.hi == b.hi
-}
-
-// Two paths into one root overlap unless some step proves them disjoint, so a
-// prefix overlaps everything below it.
-paths_overlap :: proc(a, b: []Proj_Step) -> bool {
-	shared := min(len(a), len(b))
-	for index in 0 ..< shared {
-		if !steps_overlap(a[index], b[index]) {
-			return false
-		}
-	}
-	return true
-}
-
-@(private)
-steps_overlap :: proc(a, b: Proj_Step) -> bool {
-	if a.kind != b.kind {
-		return true // nothing was proven distinct
-	}
-	#partial switch a.kind {
-	case .Field:
-		return a.lo == b.lo
-	case .Range:
-		return a.lo < b.hi && b.lo < a.hi
-	}
-	return true
-}
-
-@(private)
-path_is_indistinct :: proc(path: []Proj_Step) -> bool {
-	for step in path {
-		if step.kind == .Wild || step.kind == .Range && step.hi - step.lo > 1 {
-			return true
-		}
-	}
-	return false
-}
-
-// Whether `path` names one place: fields and single constant elements, none
-// merged.
-@(private)
-path_is_exact :: proc(path: []Proj_Step) -> bool {
-	for step in path {
-		if step.kind == .Wild || step.kind == .Range && step.hi != step.lo + 1 || step.precision != {} {
-			return false
-		}
-	}
-	return true
-}
-
-@(private)
-path_has_exact_prefix :: proc(path, prefix: []Proj_Step) -> bool {
-	if len(prefix) > len(path) {
-		return false
-	}
-	for step, index in prefix {
-		if !same_step(step, path[index]) {
-			return false
-		}
-	}
-	return true
-}
-
-// Whether the place `path` names may be the one `tail` names inside a value
-// stored at some place: whether its last steps may overlap `tail`.
-@(private)
-prov_path_may_end_in :: proc(path, tail: []Proj_Step) -> bool {
-	return len(path) >= len(tail) && paths_overlap(path[len(path) - len(tail):], tail)
-}
-
-@(private)
-prov_same_path :: proc(a, b: []Proj_Step) -> bool {
-	return len(a) == len(b) && path_has_exact_prefix(a, b)
-}
-
 // ---------------------------------------------------------------- loans --
 
 // One borrow. A `mutable` one excludes every competing access; an immutable one
@@ -681,14 +532,18 @@ Prov_Solve :: struct {
 	// Scratch: the loans one event ends, and their indices.
 	released: []bool,
 	released_indices: [dynamic]int,
-	// Scratch: the slots `live_place_bits` gathered.
-	live_slots: [dynamic]int,
+	// Scratch: the slots `live_place_bits` gathered, and the live slots holding a
+	// link (`live_reborrow_of`).
+	live_slots:   [dynamic]int,
+	link_holders: [dynamic]int,
 	// Scratch: the loans a load has gone on through, and those it has yet to.
 	load_expanded: []bool,
 	load_pending:  []u8,
 	live:    []Slot_Use,
 	uses:    []Span,
 	merged:  []u8,
+	// The spawns whose tasks may be running on entry to each block (`task_window`).
+	window_entry: [][]u8,
 }
 
 @(private)
@@ -744,11 +599,6 @@ live_place_bits :: proc(state: ^Prov_Solve, live: []Slot_Use, read: bool) -> Liv
 		}
 	}
 	return {state.live_slots[:], state.merged}
-}
-
-@(private)
-bit_get :: proc(row: []u8, index: int) -> bool {
-	return row[index >> 3] & (1 << u8(index & 7)) != 0
 }
 
 // Iterates every still-valid loan held by some slots, as (slot, loan index):
@@ -819,301 +669,6 @@ enter_block_tables :: proc(state: ^Prov_Solve, reach: [][]u32, precision: [][]Pr
 }
 
 @(private)
-bit_mark :: proc(row: []u8, index: int) {
-	row[index >> 3] |= 1 << u8(index & 7)
-}
-
-@(private)
-bit_clear :: proc(row: []u8, index: int) {
-	row[index >> 3] &~= 1 << u8(index & 7)
-}
-
-@(private)
-bytes_or :: proc(into: []u8, from: []u8) {
-	for value, index in from {
-		into[index] |= value
-	}
-}
-
-// A body whose checking failed is skipped, so provenance adds no noise to it.
-Checked_Body :: struct {
-	literal: ^Expr_Proc,
-	clean:   bool,
-}
-
-// The whole program's provenance, after every body is checked. Summaries settle
-// first, over a worklist of direct callers, then each body's diagnostics run.
-// One graph is built and released at a time.
-analyze_program_provenance :: proc(k: ^Checker) {
-	compute_global_writes(k)
-	settle_result_summaries(k)
-	check_proc_contracts(k)
-	if k.c.thread_summaries_wanted {
-		compute_thread_summaries(k)
-	}
-	// Summaries are settled, so a body's declared escape is checked with it;
-	// `report` sorts diagnostics by position.
-	for body in k.c.checked_bodies {
-		if body.clean {
-			analyze_provenance(k, body.literal)
-			check_declared_escape(k, body.literal)
-		}
-	}
-}
-
-// A caller may precede its callee, so every body is queued again; one is revisited
-// only if a summary it read grew since its last visit (`clock` stamps `grew_at`
-// and `visited_at`).
-@(private = "file")
-settle_result_summaries :: proc(k: ^Checker) {
-	clock := 0
-	grew_at := make([]int, len(k.c.symbols), context.temp_allocator)
-	visited_at := make([]int, len(k.c.symbols), context.temp_allocator)
-	visit :: proc(k: ^Checker, clock: ^int, grew_at, visited_at: []int, literal: ^Expr_Proc) -> bool {
-		visited_at[int(literal.symbol)] = clock^
-		grew := summarize_body(k, literal)
-		if grew {
-			clock^ += 1
-			grew_at[int(literal.symbol)] = clock^
-		}
-		return grew
-	}
-	stale :: proc(c: ^Compiler, grew_at, visited_at: []int, literal: ^Expr_Proc) -> bool {
-		for callee in c.result_summary_dependencies[literal.symbol] {
-			if grew_at[int(callee)] > visited_at[int(literal.symbol)] { return true }
-		}
-		return false
-	}
-	for body in k.c.checked_bodies {
-		if body.clean {
-			_ = visit(k, &clock, grew_at, visited_at, body.literal)
-		}
-	}
-	// Bodies by their index in `checked_bodies`.
-	queue := worklist_make(len(k.c.checked_bodies), context.temp_allocator)
-	callers := make(map[Symbol_Id][dynamic]int, context.temp_allocator)
-	// How many of each body's dependencies `callers` has: a resolved callback
-	// adds more on a later round, appended after them.
-	registered := make([]int, len(k.c.symbols), context.temp_allocator)
-	register :: proc(c: ^Compiler, callers: ^map[Symbol_Id][dynamic]int, registered: []int, literal: ^Expr_Proc, body: int) {
-		dependencies := c.result_summary_dependencies[literal.symbol]
-		for callee in dependencies[registered[int(literal.symbol)]:] {
-			if callee not_in callers^ {
-				callers^[callee] = make([dynamic]int, 0, 4, context.temp_allocator)
-			}
-			append(&callers^[callee], body)
-		}
-		registered[int(literal.symbol)] = len(dependencies)
-	}
-	for body, index in k.c.checked_bodies {
-		if body.clean {
-			worklist_wake(&queue, index)
-			register(k.c, &callers, registered, body.literal, index)
-		}
-	}
-	for index in worklist_pop(&queue) {
-		literal := k.c.checked_bodies[index].literal
-		if !stale(k.c, grew_at, visited_at, literal) {
-			continue
-		}
-		grew := visit(k, &clock, grew_at, visited_at, literal)
-		register(k.c, &callers, registered, literal, index)
-		if !grew {
-			continue
-		}
-		// Bound to a local first: iterating the map index directly miscompiles.
-		affected := callers[literal.symbol]
-		for caller in affected {
-			worklist_wake(&queue, caller)
-		}
-	}
-}
-
-// `@(escape=none)` contradicted by the body's own result summary.
-@(private = "file")
-check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
-	sym := symbol_of(k.c, literal.symbol)
-	if sym == nil {
-		return
-	}
-	summary, found := k.c.result_summaries[literal.symbol]
-	if !found {
-		return
-	}
-	for id, index in sym.param_symbols {
-		bound := symbol_of(k.c, id)
-		// design.md "Variadic parameters": a `..^T` pack's values are lent for the
-		// call, so the result may hold only what they hold.
-		if param_symbol_lends(k.c, bound) && index < len(summary.params) && (summary.params[index] || summary.param_loads[index] & 1 != 0) {
-			errorf(
-				k.c, bound.span, "L0644",
-				"`%s` lends its values only for the call, but the result of `%s` may borrow one",
-				identifier_text(k.c, bound.name), identifier_text(k.c, sym.name),
-			)
-			add_precision_notes(k.c, bound.span, summary.precision)
-			continue
-		}
-		if bound == nil || bound.escape != .None {
-			continue
-		}
-		if result_uses_param(summary^, index) {
-			errorf(
-				k.c,
-				bound.span,
-				"L0644",
-				"`%s` is written `@(escape=none)`, but the result of `%s` may borrow it",
-				identifier_text(k.c, bound.name),
-				identifier_text(k.c, sym.name),
-			)
-			add_precision_notes(k.c, bound.span, summary.precision)
-		}
-	}
-}
-
-// One round of one body's result equations; returns whether its summary grew.
-@(private)
-summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
-	sym := symbol_of(k.c, literal.symbol)
-	if sym == nil {
-		return false
-	}
-	writes := proc_may_write_owners(k.c, sym)
-	returns := sym.result != INVALID_TYPE
-	if !returns && !writes {
-		return false
-	}
-	defer free_all(k.c.analysis_allocator)
-	graph := build_flow_graph(k, literal, .Prov_Summary)
-	if graph == nil {
-		return false
-	}
-	changed := writes && collect_written_regions(k.c, graph, literal.symbol, sym)
-	record_summary_dependencies(k.c, literal.symbol, graph.summary_callees[:])
-	// What a body stores in caller storage needs solving only when it borrows
-	// `thread_local` storage at all, or may store what an argument held.
-	stores_thread_local := writes && graph_borrows_thread_local(graph)
-	moves_carriers := writes && graph_may_move_carriers(graph)
-	summary: ^Result_Provenance
-	if returns {
-		found: bool
-		if summary, found = k.c.result_summaries[literal.symbol]; !found {
-			summary = new(Result_Provenance, k.c.semantic_allocator)
-			summary^ = new_result_provenance(k.c, len(sym.param_symbols), sym.result, true, k.c.semantic_allocator)
-			k.c.result_summaries[literal.symbol] = summary
-		}
-	}
-	if !returns && !stores_thread_local && !moves_carriers {
-		return changed
-	}
-	state := Prov_Solve{graph = graph, k = k}
-	if !prepare_state(&state) {
-		return changed
-	}
-	solve_reaching(&state)
-	if stores_thread_local {
-		changed = collect_thread_local_writes(&state, literal.symbol) || changed
-	}
-	if returns {
-		changed = collect_escape_provenance(&state, literal.symbol, summary) || changed
-	}
-	// Last, as whether a copy outlasts the body takes solving the links, which settles
-	// the graph's loads and stores for the checks.
-	if moves_carriers {
-		changed = collect_carrier_moves(&state, literal.symbol) || changed
-	}
-	return changed
-}
-
-// One concrete body's root and region diagnostics.
-analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
-	defer free_all(k.c.analysis_allocator)
-	first := len(k.c.diagnostics)
-	defer note_instance_sites(k, literal, first)
-	graph := build_flow_graph(k, literal, .Prov_Diagnose)
-	if graph == nil {
-		return
-	}
-	solve_provenance(k, graph)
-}
-
-// An error in a generic instance's body names the call that selected it, as
-// the checker's do, which run before this pass: the body may be a library's,
-// and the call the caller's.
-@(private)
-note_instance_sites :: proc(k: ^Checker, literal: ^Expr_Proc, first: int) {
-	instance := k.c.procedure_instances[literal.symbol]
-	if instance == nil || instance.selected_at.file == NO_FILE {
-		return
-	}
-	append(&k.c.instantiation_stack, Instantiation_Frame {
-		symbol   = instance.template,
-		bindings = instance.bindings,
-		span     = instance.selected_at,
-	})
-	defer pop(&k.c.instantiation_stack)
-	note_instantiation_stack(k, first)
-}
-
-// design.md "Globals while tasks run": the globals whose
-// stored carriers the body itself reaches, from each `Reach` event and from
-// what it returns or stores where another body may reach through it. A
-// global's stored carrier is a loan of its existing content, a loan of the
-// global's own storage when that holds carriers, or the global's own slot,
-// which another call may have refilled. A `@(synchronized)` variable's package
-// vouches for every access through it.
-body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^[dynamic]Global_Effect) {
-	state := Prov_Solve{graph = graph, k = k}
-	if !prepare_state(&state) {
-		return
-	}
-	solve_reaching(&state)
-	for block in graph.blocks {
-		if !solve_enter_block(&state, block) {
-			continue
-		}
-		for event in block.prov {
-			#partial switch event.kind {
-			case .Reach, .Escape, .Retain, .Publish:
-				for slot in event.sources {
-					note_reached_globals(&state, slot, event.span, out)
-				}
-			}
-			run_prov_event(&state, event, state.reach, state.ended)
-		}
-	}
-}
-
-@(private)
-note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^[dynamic]Global_Effect) {
-	graph := state.graph
-	c := state.k.c
-	source := Effect_Source{span = span, precision = state.precision[slot]}
-	add_reached_global(c, out, graph.prov_slots[slot].symbol, source)
-	row := reach_row(state, state.reach, slot)
-	for index in 0 ..< state.loans {
-		if !bit_get(row, index) {
-			continue
-		}
-		root := graph.roots[int(graph.loans[index].root)]
-		if root.origin != INVALID_SYMBOL {
-			add_reached_global(c, out, root.origin, source)
-		} else if root.kind == .Static || root.kind == .Thread_Local {
-			add_reached_global(c, out, root.symbol, source)
-		}
-	}
-}
-
-@(private = "file")
-add_reached_global :: proc(c: ^Compiler, out: ^[dynamic]Global_Effect, global: Symbol_Id, source: Effect_Source) {
-	sym := symbol_of(c, global)
-	if sym == nil || sym.kind != .Var || !symbol_outlives_bodies(sym) || sym.synchronized ||
-	   !type_carries_borrow(c, sym.type).any {
-		return
-	}
-	add_global_effect(out, global, source)
-}
-
-@(private)
 solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	state := Prov_Solve{graph = graph, k = k}
 	if !prepare_state(&state) {
@@ -1126,7 +681,7 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 }
 
 // Sizes the per-block lattice storage; false when there is nothing to solve.
-@(private = "file")
+@(private)
 prepare_state :: proc(state: ^Prov_Solve) -> bool {
 	graph := state.graph
 	state.slots = len(graph.prov_slots)
@@ -1148,6 +703,7 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 	state.released = make([]bool, state.loans, graph.alloc)
 	state.released_indices = make([dynamic]int, graph.alloc)
 	state.live_slots = make([dynamic]int, graph.alloc)
+	state.link_holders = make([dynamic]int, graph.alloc)
 	state.load_expanded = make([]bool, state.loans, graph.alloc)
 	state.load_pending = make([]u8, state.row_bytes, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
@@ -1212,7 +768,7 @@ link_landed_stores :: proc(state: ^Prov_Solve) {
 
 // Forward: which loans each carrier slot may hold, and which loans an earlier
 // invalidation already ended.
-@(private = "file")
+@(private)
 solve_reaching :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	queue := block_queue_from_entry(graph)
@@ -1267,12 +823,8 @@ join_block_entry :: proc(state: ^Prov_Solve, block: ^Flow_Block, id: int) -> ^Fl
 			continue
 		}
 		reach_join(state, source.reach_exit)
-		for page, at in source.precision_exit {
-			for loss, index in page { state.precision[at * BLOCK_TABLE_PAGE + index] |= loss }
-		}
-		for page, at in source.ended_exit {
-			for value, index in page { state.ended[at * BLOCK_TABLE_PAGE + index] &&= value }
-		}
+		block_table_or(source.precision_exit, state.precision)
+		block_table_and(source.ended_exit, state.ended)
 	}
 	if first == nil {
 		enter_block_tables(state, nil, nil, nil)
@@ -1320,7 +872,7 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 		for predecessor in block.preds {
 			if visited[int(predecessor)] {
 				from := graph.blocks[predecessor]
-				join_links_held(state, from.links_exit)
+				interned_join(&state.link_rows, state.links_held, from.links_exit, state.link_row_edit, every = false)
 				join_loaded_below(state, from.below_exit, !joined)
 				if !joined { first, first_below = from.links_exit, from.below_exit }
 				joined = true
@@ -1377,26 +929,6 @@ index_links :: proc(state: ^Prov_Solve) {
 					state.link_is_named[index] = true
 				}
 			}
-		}
-	}
-}
-
-@(private = "file")
-join_links_held :: proc(state: ^Prov_Solve, from: [][]u32) {
-	for page, at in from {
-		for row, index in page {
-			slot := at * BLOCK_TABLE_PAGE + index
-			held := state.links_held[slot]
-			if row == held || row == 0 {
-				continue
-			}
-			if held == 0 {
-				state.links_held[slot] = row
-				continue
-			}
-			copy(state.link_row_edit, state.link_rows.rows[held])
-			bytes_or(state.link_row_edit, state.link_rows.rows[row])
-			state.links_held[slot] = intern_row(&state.link_rows, state.link_row_edit)
 		}
 	}
 }
@@ -1849,10 +1381,16 @@ root_loans :: proc(state: ^Prov_Solve, root: Root_Id) -> []int {
 // deep load goes on through what it read until nothing new turns up.
 @(private)
 load_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) {
+	land_load(state, event, reach, read_pointee_content(state, event, reach, reads))
+}
+
+// What a load reads, left in `state.merged` without landing in its slot, and the
+// precision that loses.
+@(private)
+read_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) -> Precision_Loss {
 	graph := state.graph
 	if event.load == .Writable {
-		load_writable_content(state, event, reach, reads)
-		return
+		return read_writable_content(state, event, reach, reads)
 	}
 	mem.zero_slice(state.merged)
 	loss := graph.prov_slots[event.slot].precision | path_precision(event.path)
@@ -1900,6 +1438,13 @@ load_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 			}
 		}
 	}
+	return loss
+}
+
+// Makes a load's slot hold what it read, `state.merged`, and carry the place bits of
+// what it was read through.
+@(private)
+land_load :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, loss: Precision_Loss) {
 	carry_place_bits(state, event, reach)
 	copy(reach_row_written(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
@@ -1926,7 +1471,7 @@ carry_place_bits :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
 // pointee reaches a destination (`prov_load_writable`). What `into` names is
 // only read through, as `prov_mutable_reach` already kept the mutable ones.
 @(private)
-load_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int) {
+read_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int) -> Precision_Loss {
 	graph := state.graph
 	mem.zero_slice(state.merged)
 	loss := graph.prov_slots[event.slot].precision
@@ -1947,9 +1492,74 @@ load_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8
 			}
 		}
 	}
-	carry_place_bits(state, event, reach)
-	copy(reach_row_written(state, reach, event.slot), state.merged)
-	state.precision[event.slot] = loss
+	return loss
+}
+
+// Whether a carrier of `source` may have been stored where one of `destination`
+// is: it is the same carrier, perhaps weakened, or `destination` erases what it
+// holds. An unshaped slot stands for every carrier below it.
+@(private)
+carrier_may_land_in :: proc(c: ^Compiler, destination, source: Type_Id) -> bool {
+	if destination == source || destination == INVALID_TYPE || source == INVALID_TYPE {
+		return true
+	}
+	into, from := underlying_info(c, destination), underlying_info(c, source)
+	if into == nil || from == nil {
+		return true
+	}
+	#partial switch into.kind {
+	case .Pointer, .Slice, .String_View, .CString_View:
+		return into.kind == from.kind && into.element == from.element
+	}
+	return true
+}
+
+// The carrier type a slot holds, or INVALID_TYPE for one standing for every
+// carrier below its path.
+@(private)
+slot_carrier_type :: proc(graph: ^Flow_Graph, index: int) -> Type_Id {
+	slot := graph.prov_slots[index]
+	if slot.content_truncated || slot.content_type != INVALID_TYPE {
+		return slot.content_type
+	}
+	if bare, exists := graph.slot_by_symbol[slot.symbol]; exists && bare == index {
+		return symbol_of(graph.k.c, slot.symbol).type
+	}
+	return INVALID_TYPE
+}
+
+// design.md "Values that contain borrows": a call moves carriers among the
+// storage its argument's mutable carriers lead to, so each there of a type the
+// call moves may now hold what any there of a type it may have come from held.
+@(private)
+rearrange_carriers :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
+	clear(&state.rearranged)
+	land_load(state, event, reach, read_writable_content(state, event, reach, &state.rearranged))
+	reads := state.rearranged
+	join :: proc(state: ^Prov_Solve, reach: []u8, reads: []int, type: Type_Id, every: bool) {
+		graph := state.graph
+		mem.zero_slice(state.merged)
+		loss: Precision_Loss
+		for index in reads {
+			if every || carrier_may_land_in(graph.k.c, type, slot_carrier_type(graph, index)) {
+				bytes_or(state.merged, reach_row(state, reach, index))
+				loss |= state.precision[index]
+			}
+		}
+		for index in reads {
+			if every || slot_carrier_type(graph, index) == type || slot_carrier_type(graph, index) == INVALID_TYPE {
+				bytes_or(reach_row_written(state, reach, index), state.merged)
+				state.precision[index] |= loss
+			}
+		}
+	}
+	if event.rearranged.any {
+		join(state, reach, reads[:], INVALID_TYPE, true)
+		return
+	}
+	for type in event.rearranged.types {
+		join(state, reach, reads[:], type, false)
+	}
 }
 
 // The carriers in the storage one loan names, as `load_through_loan` finds
