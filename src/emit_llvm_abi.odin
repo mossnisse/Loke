@@ -31,14 +31,8 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 			seen[name] = true
 		}
 	}
-	// Only `emit_preamble`'s declarations have been written so far.
-	written := strings.to_string(e.b)
-	for line in strings.split_lines_iterator(&written) {
-		if strings.has_prefix(line, "declare ") {
-			name := line[strings.index_byte(line, '@'):strings.index_byte(line, '(')]
-			seen[strings.clone(name, context.temp_allocator)] = true
-		}
-	}
+	// `e.declared` holds what `emit_preamble` declared; these are declared or
+	// defined only after this.
 	seen["@loke_rt_v1_program_tls_cleanup"] = true
 	seen["@loke_rt_v1_sink_write"] = true
 	seen["@loke_rt_v1_write_std"] = true
@@ -50,7 +44,7 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	}
 	for id in e.foreign_symbols {
 		sym := symbol_of(e.c, id)
-		if name := foreign_llvm_name(sym); !seen[name] {
+		if name := foreign_llvm_name(sym); !seen[name] && !e.declared[name] {
 			seen[name] = true
 			emit_foreign_declare(e, sym)
 		}

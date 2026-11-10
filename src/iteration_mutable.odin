@@ -78,7 +78,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 			return FLOWS
 		}
 	}
-	next, yield, item, usable := foreach_next_member(k, s, iterator, element, .Mutable)
+	next, yield, item, usable := protocol_next(k, iterator, element, .Mutable, expr_span(s.iterable))
 	if !usable { return FLOWS }
 	if !gate_type(k, element, expr_span(s.iterable)) { return FLOWS }
 	logical, projected, handed := foreach_numbered(k.c, s, element, item, yield)
@@ -86,10 +86,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	if yield.kind == .Record {
 		s.item_type = projected
 	}
-	s.kind, s.element_type, s.iterator_type = .Protocol, logical, iterator
-	s.iter_symbol, s.next_symbol = iter, next
-	enroll_synth(k.c, iter)
-	enroll_synth(k.c, next)
+	bind_protocol_loop(k, s, logical, iterator, iter, next)
 	return check_foreach_pattern_and_block(k, s, s.item_type, handed)
 }
 

@@ -61,6 +61,9 @@ Emitter :: struct {
 	constants: map[string]string,
 	// The LLVM intrinsics a call has declared, by name.
 	intrinsics: map[string]bool,
+	// The runtime entries and intrinsics `declare_runtime_entry` declared, by
+	// LLVM name with its `@`.
+	declared: map[string]bool,
 	globals:  [dynamic]string,
 	// compiler-architecture.md "CPU dispatch": every procedure body by symbol, the
 	// copies for a higher level by name, those still to write, and each level's

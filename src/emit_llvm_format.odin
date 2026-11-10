@@ -557,7 +557,7 @@ SINK_STDERR :: 2
 
 @(private)
 emit_sink_bridge :: proc(e: ^Emitter) {
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_write_std(ptr, ptr, i64)")
+	declare_runtime_entry(e, {"void", "loke_rt_v1_write_std", "ptr, ptr, i64", ""})
 	fmt.sbprintln(&e.b, `define void @loke_rt_v1_sink_write(ptr %w, ptr %bytes, i64 %count) {
 entry:
   %data = load ptr, ptr %w

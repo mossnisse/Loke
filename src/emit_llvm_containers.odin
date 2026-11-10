@@ -13,31 +13,36 @@ CONTAINER_OPS_TYPE :: "%loke.container_ops"
 
 @(private)
 emit_container_declarations :: proc(e: ^Emitter) {
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_reserve(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_bind(ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_append(ptr, ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_append_owned(ptr, ptr, ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_insert(ptr, ptr, i64, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_pop(ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_remove(ptr, ptr, i64, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_clear(ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_resize(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_shrink(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_clone(ptr, ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_drop(ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_reserve(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_clone(ptr, ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_drop(ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_hash_bytes(ptr, i64, i64)")
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_map_scan(ptr, ptr, i64, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_bind(ptr)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_map_find(ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_map_entry(ptr, ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_remove(ptr, ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_clear(ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_shrink(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_sort(ptr, i64, i64, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_sort_by(ptr, i64, i64, ptr, ptr)")
+	declare_runtime(e, CONTAINER_DECLARATIONS[:])
+}
+
+@(private = "file", rodata)
+CONTAINER_DECLARATIONS := [?]Runtime_Declaration {
+	{"i32", "loke_rt_v1_dyn_reserve", "ptr, ptr, i64", ""},
+	{"void", "loke_rt_v1_dyn_bind", "ptr", ""},
+	{"i32", "loke_rt_v1_dyn_append", "ptr, ptr, ptr, i64", ""},
+	{"i32", "loke_rt_v1_dyn_append_owned", "ptr, ptr, ptr, ptr, i64", ""},
+	{"i32", "loke_rt_v1_dyn_insert", "ptr, ptr, i64, ptr, i64", ""},
+	{"i32", "loke_rt_v1_dyn_pop", "ptr, ptr, ptr", ""},
+	{"void", "loke_rt_v1_dyn_remove", "ptr, ptr, i64, ptr, i32", ""},
+	{"void", "loke_rt_v1_dyn_clear", "ptr, ptr", ""},
+	{"i32", "loke_rt_v1_dyn_resize", "ptr, ptr, i64", ""},
+	{"i32", "loke_rt_v1_dyn_shrink", "ptr, ptr, i64", ""},
+	{"i32", "loke_rt_v1_dyn_clone", "ptr, ptr, ptr, ptr", ""},
+	{"void", "loke_rt_v1_dyn_drop", "ptr, ptr", ""},
+	{"i32", "loke_rt_v1_map_reserve", "ptr, ptr, i64", ""},
+	{"i32", "loke_rt_v1_map_clone", "ptr, ptr, ptr, ptr", ""},
+	{"void", "loke_rt_v1_map_drop", "ptr, ptr", ""},
+	{"i64", "loke_rt_v1_hash_bytes", "ptr, i64, i64", ""},
+	{"i64", "loke_rt_v1_map_scan", "ptr, ptr, i64, ptr, ptr", ""},
+	{"void", "loke_rt_v1_map_bind", "ptr", ""},
+	{"ptr", "loke_rt_v1_map_find", "ptr, ptr, ptr", ""},
+	{"ptr", "loke_rt_v1_map_entry", "ptr, ptr, ptr, ptr", ""},
+	{"i32", "loke_rt_v1_map_remove", "ptr, ptr, ptr, ptr", ""},
+	{"void", "loke_rt_v1_map_clear", "ptr, ptr", ""},
+	{"i32", "loke_rt_v1_map_shrink", "ptr, ptr, i64", ""},
+	{"void", "loke_rt_v1_sort", "ptr, i64, i64, ptr, i32", ""},
+	{"void", "loke_rt_v1_sort_by", "ptr, i64, i64, ptr, ptr", ""},
 }
 
 // The operation table for one concrete container type, made once along with

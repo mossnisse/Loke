@@ -54,65 +54,111 @@ emit_rt_free_sized :: proc(e: ^Emitter, allocator, block, size: string, align: u
 @(private = "file")
 FAILURE_ATTRIBUTES :: "cold noreturn"
 
-@(private = "file")
-emit_runtime_declarations :: proc(e: ^Emitter) {
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_alloc(ptr, i64, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_free(ptr, ptr, i64, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_reset(ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_alloc_failed(ptr) " + FAILURE_ATTRIBUTES)
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_take_refusal()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_restore_refusal(ptr, i64)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_selected_allocator()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_publish_allocator(ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_provider_init_begin()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_provider_init_end()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic(ptr) " + FAILURE_ATTRIBUTES)
+// One runtime entry or LLVM intrinsic a module declares:
+// `declare result @name(params) attributes`.
+Runtime_Declaration :: struct {
+	result, name, params, attributes: string,
+}
+
+// Writes `table`'s declarations, in order.
+@(private)
+declare_runtime :: proc(e: ^Emitter, table: []Runtime_Declaration) {
+	for declaration in table {
+		declare_runtime_entry(e, declaration)
+	}
+}
+
+// Writes one declaration and records its name, so a foreign symbol bound to the
+// same name refers to it (`emit_foreign_declarations`).
+@(private)
+declare_runtime_entry :: proc(e: ^Emitter, declaration: Runtime_Declaration) {
+	fmt.sbprintf(&e.b, "declare %s @%s(%s)", declaration.result, declaration.name, declaration.params)
+	if declaration.attributes != "" {
+		fmt.sbprintf(&e.b, " %s", declaration.attributes)
+	}
+	fmt.sbprintln(&e.b)
+	e.declared[strings.concatenate({"@", declaration.name})] = true
+}
+
+@(private = "file", rodata)
+RUNTIME_DECLARATIONS := [?]Runtime_Declaration {
+	{"ptr", "loke_rt_v1_alloc", "ptr, i64, i64", ""},
+	{"void", "loke_rt_v1_free", "ptr, ptr, i64, i64", ""},
+	{"void", "loke_rt_v1_reset", "ptr", ""},
+	{"void", "loke_rt_v1_alloc_failed", "ptr", FAILURE_ATTRIBUTES},
+	{"i64", "loke_rt_v1_take_refusal", "", ""},
+	{"void", "loke_rt_v1_restore_refusal", "ptr, i64", ""},
+	{"ptr", "loke_rt_v1_selected_allocator", "", ""},
+	{"void", "loke_rt_v1_publish_allocator", "ptr", ""},
+	{"i32", "loke_rt_v1_provider_init_begin", "", ""},
+	{"void", "loke_rt_v1_provider_init_end", "", ""},
+	{"void", "loke_rt_v1_panic", "ptr", FAILURE_ATTRIBUTES},
 	// It returns, to let the report's arguments be formatted, but only on the
 	// way to `panic_end`.
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic_begin(ptr) cold")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic_end() " + FAILURE_ATTRIBUTES)
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_enable_panic_trace()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr) " + FAILURE_ATTRIBUTES)
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_flush_stdout()")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_cpu_dispatch(i32)")
+	{"void", "loke_rt_v1_panic_begin", "ptr", "cold"},
+	{"void", "loke_rt_v1_panic_end", "", FAILURE_ATTRIBUTES},
+	{"void", "loke_rt_v1_enable_panic_trace", "", ""},
+	{"void", "loke_rt_v1_abort", "ptr", FAILURE_ATTRIBUTES},
+	{"void", "loke_rt_v1_thread_attach", "", ""},
+	{"void", "loke_rt_v1_thread_detach", "", ""},
+	{"void", "loke_rt_v1_flush_stdout", "", ""},
+	{"i32", "loke_rt_v1_cpu_dispatch", "i32", ""},
+}
+
+@(private = "file", rodata)
+ENTRY_DECLARATIONS := [?]Runtime_Declaration {
+	{"void", "loke_rt_v1_args_init", "i32, ptr", ""},
+	{"i64", "loke_rt_v1_test_select", "ptr, i64", ""},
+	{"void", "loke_rt_v1_frame_push", "ptr, ptr, ptr", ""},
+	{"void", "loke_rt_v1_frame_pop", "ptr", ""},
+	{"void", "llvm.memset.p0.i64", "ptr, i8, i64, i1", ""},
+	{"void", "llvm.memcpy.p0.p0.i64", "ptr, ptr, i64, i1", ""},
+	{"ptr", "llvm.stacksave.p0", "", ""},
+	{"void", "llvm.stackrestore.p0", "ptr", ""},
+	// A foreign entry's guard and `-debug`'s check after a foreign call
+	// (design.md "Floating-point operators").
+	{"void", "llvm.x86.sse.stmxcsr", "ptr", ""},
+	{"void", "llvm.x86.sse.ldmxcsr", "ptr", ""},
+}
+
+@(private = "file", rodata)
+FORMAT_DECLARATIONS := [?]Runtime_Declaration {
+	{"void", "loke_rt_v1_fmt_bytes", "ptr, ptr, i64", ""},
+	{"void", "loke_rt_v1_fmt_i64", "ptr, i64, ptr", ""},
+	{"void", "loke_rt_v1_fmt_u64", "ptr, i64, ptr", ""},
+	{"void", "loke_rt_v1_fmt_i128", "ptr, i64, i64, ptr", ""},
+	{"void", "loke_rt_v1_fmt_u128", "ptr, i64, i64, ptr", ""},
+	{"void", "loke_rt_v1_fmt_f64", "ptr, double", ""},
+	{"void", "loke_rt_v1_fmt_f32", "ptr, float", ""},
+	{"void", "loke_rt_v1_fmt_f16", "ptr, float", ""},
+	{"void", "loke_rt_v1_fmt_bool", "ptr, i32", ""},
+	{"void", "loke_rt_v1_fmt_rune", "ptr, i32", ""},
+	{"void", "loke_rt_v1_fmt_quoted", "ptr, ptr, i64", ""},
+	{"void", "loke_rt_v1_fmt_quoted_rune", "ptr, i32", ""},
+	{"void", "loke_rt_v1_fmt_ptr", "ptr, ptr", ""},
+}
+
+@(private = "file")
+emit_runtime_declarations :: proc(e: ^Emitter) {
+	declare_runtime(e, RUNTIME_DECLARATIONS[:])
 	// Only where the entry or an object's constructor calls it, so a baseline
 	// program's own binding is its only declaration; above baseline,
 	// `emit_foreign_declarations` skips that binding.
 	if e.c.target.cpu != .X86_64 {
-		fmt.sbprintln(&e.b, "declare void @loke_rt_v1_require_cpu(i32)")
+		declare_runtime_entry(e, {"void", "loke_rt_v1_require_cpu", "i32", ""})
 	}
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_test_select(ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
-	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
-	fmt.sbprintln(&e.b, "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)")
-	fmt.sbprintln(&e.b, "declare ptr @llvm.stacksave.p0()")
-	fmt.sbprintln(&e.b, "declare void @llvm.stackrestore.p0(ptr)")
-	// A foreign entry's guard and `-debug`'s check after a foreign call
-	// (design.md "Floating-point operators").
-	fmt.sbprintln(&e.b, "declare void @llvm.x86.sse.stmxcsr(ptr)")
-	fmt.sbprintln(&e.b, "declare void @llvm.x86.sse.ldmxcsr(ptr)")
+	declare_runtime(e, ENTRY_DECLARATIONS[:])
 	for bits in ([]int{8, 16, 32, 64, 128}) {
 		for operation in ([]string{"sadd", "ssub", "smul", "uadd", "usub", "umul"}) {
-			fmt.sbprintfln(&e.b, "declare {{ i%d, i1 }} @llvm.%s.with.overflow.i%d(i%d, i%d)", bits, operation, bits, bits, bits)
+			declare_runtime_entry(e, {
+				fmt.tprintf("{{ i%d, i1 }}", bits),
+				fmt.tprintf("llvm.%s.with.overflow.i%d", operation, bits),
+				fmt.tprintf("i%d, i%d", bits, bits),
+				"",
+			})
 		}
 	}
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i64(ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u64(ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i128(ptr, i64, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u128(ptr, i64, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f64(ptr, double)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f32(ptr, float)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f16(ptr, float)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bool(ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_rune(ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_quoted(ptr, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_quoted_rune(ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_ptr(ptr, ptr)")
+	declare_runtime(e, FORMAT_DECLARATIONS[:])
 	emit_carrier_types(e)
 	emit_text_declarations(e)
 	emit_container_declarations(e)
@@ -170,23 +216,28 @@ emit_carrier_types :: proc(e: ^Emitter) {
 
 @(private = "file")
 emit_text_declarations :: proc(e: ^Emitter) {
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_bytes(ptr, ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_concat(ptr, ptr, i64, ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_clone(ptr, ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_runes(ptr, ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_to_runes(ptr, ptr, ptr, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_open(ptr)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_open_fixed(ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_arena_set_failure(ptr, i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_arena_drop(ptr)")
-	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_allocator(ptr)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_retain(i64)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_release(i64)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_utf8_valid(ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_rune_count(ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_rune_at(ptr, i64, i64, ptr)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_bytes_compare(ptr, i64, ptr, i64)")
-	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_cstring_len(ptr)")
+	declare_runtime(e, TEXT_DECLARATIONS[:])
+}
+
+@(private = "file", rodata)
+TEXT_DECLARATIONS := [?]Runtime_Declaration {
+	{"i32", "loke_rt_v1_string_from_bytes", "ptr, ptr, i64, ptr", ""},
+	{"i32", "loke_rt_v1_string_concat", "ptr, ptr, i64, ptr, i64, ptr", ""},
+	{"i32", "loke_rt_v1_string_clone", "ptr, ptr, i64, ptr", ""},
+	{"i32", "loke_rt_v1_string_from_runes", "ptr, ptr, i64, ptr", ""},
+	{"i32", "loke_rt_v1_string_to_runes", "ptr, ptr, ptr, i64, ptr", ""},
+	{"ptr", "loke_rt_v1_arena_open", "ptr", ""},
+	{"ptr", "loke_rt_v1_arena_open_fixed", "ptr, i64", ""},
+	{"void", "loke_rt_v1_arena_set_failure", "ptr, i64", ""},
+	{"void", "loke_rt_v1_arena_drop", "ptr", ""},
+	{"ptr", "loke_rt_v1_arena_allocator", "ptr", ""},
+	{"void", "loke_rt_v1_string_retain", "i64", ""},
+	{"void", "loke_rt_v1_string_release", "i64", ""},
+	{"i32", "loke_rt_v1_utf8_valid", "ptr, i64", ""},
+	{"i64", "loke_rt_v1_rune_count", "ptr, i64", ""},
+	{"i64", "loke_rt_v1_rune_at", "ptr, i64, i64, ptr", ""},
+	{"i32", "loke_rt_v1_bytes_compare", "ptr, i64, ptr, i64", ""},
+	{"i64", "loke_rt_v1_cstring_len", "ptr", ""},
 }
 
 // ---------------------------------------------------------------- globals --

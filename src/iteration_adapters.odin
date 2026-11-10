@@ -68,12 +68,10 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	}
 	key := Adapter_Key{source, kind, lookup_package(k)}
 	if existing, found := k.c.adapter_members[key]; found { return existing }
-	element := associated_type_of(k, source, "Element")
-	iterator := associated_type_of(k, source, "Iterator")
-	iter := iteration_member(k, source, "iter")
-	if !iteration_proc_matches(k, symbol_of(k.c, iter), source, .Borrow, iterator) ||
-	   element == INVALID_TYPE || iterator == INVALID_TYPE { return INVALID_SYMBOL }
-	next, source_yield, item, usable := adapter_source_next(k, iterator, element, .Owned)
+	protocol, found := read_protocol(k, source)
+	if !found { return INVALID_SYMBOL }
+	element, iterator, iter := protocol.element, protocol.iterator, protocol.iter
+	next, source_yield, item, usable := protocol_next(k, iterator, element, .Owned)
 	if !usable || (kind == .Copied && !yield_borrowed_parts_copyable(k.c, element, source_yield)) {
 		return INVALID_SYMBOL
 	}
@@ -138,17 +136,6 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	return member
 }
 
-// The iterator's `next`, how it yields against `element`, and what it hands back,
-// when it is a `next` the protocol can call.
-@(private = "file")
-adapter_source_next :: proc(k: ^Checker, iterator, element: Type_Id, fallback: Yield_Kind) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
-	next = iteration_member(k, iterator, "next")
-	yield = iterator_yield(k, iterator, element, fallback)
-	item = iterator_item_type(k, iterator, element, yield, NO_SPAN, report = false)
-	ok = item != INVALID_TYPE && iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item))
-	return
-}
-
 // The iterator `indexed()` or `copied()` wraps around its source's, named for the
 // view it serves. `indexed()` adds the counter.
 @(private = "file")
@@ -211,7 +198,7 @@ mutable_adapter_walk :: proc(k: ^Checker, source: Type_Id, kind: Adapter_Kind) -
 	found: bool
 	walk.protocol, found = mutable_protocol(k, source)
 	if !found || walk.protocol.receiver == .Inout { return }
-	walk.next, _, walk.item, ok = adapter_source_next(k, walk.protocol.iterator, walk.protocol.element, .Mutable)
+	walk.next, _, walk.item, ok = protocol_next(k, walk.protocol.iterator, walk.protocol.element, .Mutable)
 	if !ok || kind != .Reversed { return }
 	walk.reverse = iteration_member(k, source, "iter_mut_reverse")
 	_, ok = mutable_iteration_receiver(k, walk.reverse, source, walk.protocol.iterator)

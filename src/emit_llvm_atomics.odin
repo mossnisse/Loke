@@ -29,15 +29,20 @@ atomic_rmw_opcode :: proc(kind: Builtin_Kind) -> string {
 }
 
 emit_atomic_declarations :: proc(e: ^Emitter) {
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_load(ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_store(ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_exchange(ptr, ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_atomic128_compare_exchange(ptr, ptr, ptr, i32, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_add(ptr, ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_sub(ptr, ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_and(ptr, ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_or(ptr, ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_xor(ptr, ptr, ptr, i32)")
+	declare_runtime(e, ATOMIC_DECLARATIONS[:])
+}
+
+@(private = "file", rodata)
+ATOMIC_DECLARATIONS := [?]Runtime_Declaration {
+	{"void", "loke_rt_v1_atomic128_load", "ptr, ptr, i32", ""},
+	{"void", "loke_rt_v1_atomic128_store", "ptr, ptr, i32", ""},
+	{"void", "loke_rt_v1_atomic128_exchange", "ptr, ptr, ptr, i32", ""},
+	{"i32", "loke_rt_v1_atomic128_compare_exchange", "ptr, ptr, ptr, i32, i32", ""},
+	{"void", "loke_rt_v1_atomic128_add", "ptr, ptr, ptr, i32", ""},
+	{"void", "loke_rt_v1_atomic128_sub", "ptr, ptr, ptr, i32", ""},
+	{"void", "loke_rt_v1_atomic128_and", "ptr, ptr, ptr, i32", ""},
+	{"void", "loke_rt_v1_atomic128_or", "ptr, ptr, ptr, i32", ""},
+	{"void", "loke_rt_v1_atomic128_xor", "ptr, ptr, ptr, i32", ""},
 }
 
 emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {

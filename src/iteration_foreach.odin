@@ -179,12 +179,8 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 @(private = "file")
 check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
 	if foreach_is_place_loop(s) { return check_mutable_protocol_foreach(k, s, subject) }
-	element := associated_type_of(k, subject, "Element")
-	iterator := associated_type_of(k, subject, "Iterator")
-	iter := iteration_member(k, subject, "iter")
-	iter_sym := symbol_of(k.c, iter)
-	if element == INVALID_TYPE || iterator == INVALID_TYPE ||
-	   !iteration_proc_matches(k, iter_sym, subject, .Borrow, iterator) {
+	protocol, found := read_protocol(k, subject)
+	if !found {
 		errorf(
 			k.c,
 			expr_span(s.iterable),
@@ -194,6 +190,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		)
 		return FLOWS
 	}
+	element, iterator, iter := protocol.element, protocol.iterator, protocol.iter
 	// Only `reversed()` selects `iter_reverse`.
 	if s.reversed {
 		reverse := iteration_member(k, subject, "iter_reverse")
@@ -210,7 +207,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		}
 		iter = reverse
 	}
-	next, yield, item, usable := foreach_next_member(k, s, iterator, element, .Owned)
+	next, yield, item, usable := protocol_next(k, iterator, element, .Owned, expr_span(s.iterable))
 	if !usable {
 		return FLOWS
 	}
@@ -220,31 +217,53 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		s.borrows = true
 		s.item_type = item
 	}
-
-	s.kind = .Protocol
-	s.element_type = element
-	s.iterator_type = iterator
-	s.iter_symbol = iter
-	s.next_symbol = next
-	enroll_synth(k.c, iter)
-	enroll_synth(k.c, next)
+	bind_protocol_loop(k, s, element, iterator, iter, next)
 	return check_foreach_body(k, s, yield)
 }
 
+// What a type's read-only traversal is made of.
+Read_Protocol :: struct {
+	element, iterator: Type_Id,
+	iter:              Symbol_Id,
+}
+
+// False when the type has no well-formed read-only traversal.
+read_protocol :: proc(k: ^Checker, type: Type_Id) -> (protocol: Read_Protocol, ok: bool) {
+	protocol.element = associated_type_of(k, type, "Element")
+	protocol.iterator = associated_type_of(k, type, "Iterator")
+	protocol.iter = iteration_member(k, type, "iter")
+	ok = protocol.element != INVALID_TYPE && protocol.iterator != INVALID_TYPE &&
+	     iteration_proc_matches(k, symbol_of(k.c, protocol.iter), type, .Borrow, protocol.iterator)
+	return
+}
+
+// A protocol loop's traversal, and the members it calls.
+bind_protocol_loop :: proc(k: ^Checker, s: ^Stmt_Foreach, element, iterator: Type_Id, iter, next: Symbol_Id) {
+	s.kind, s.element_type, s.iterator_type = .Protocol, element, iterator
+	s.iter_symbol, s.next_symbol = iter, next
+	enroll_synth(k.c, iter)
+	enroll_synth(k.c, next)
+}
+
 // The iterator's `next`, how it yields against `element`, and what it hands back,
-// reporting a `next` the protocol cannot call.
-foreach_next_member :: proc(k: ^Checker, s: ^Stmt_Foreach, iterator, element: Type_Id, fallback: Yield_Kind) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
+// when it is a `next` the protocol can call. With a `span`, one it cannot call is
+// reported there.
+protocol_next :: proc(k: ^Checker, iterator, element: Type_Id, fallback: Yield_Kind, span := NO_SPAN) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
+	report := span != NO_SPAN
 	// `next`'s `Item` says how the element is handed over.
 	yield = iterator_yield(k, iterator, element, fallback)
-	item = iterator_item_type(k, iterator, element, yield, expr_span(s.iterable))
+	item = iterator_item_type(k, iterator, element, yield, span, report)
 	if item == INVALID_TYPE {
 		return
 	}
 	next = iteration_member(k, iterator, "next")
 	if !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
+		if !report {
+			return
+		}
 		errorf(
 			k.c,
-			expr_span(s.iterable),
+			span,
 			"L0456",
 			"`%s` needs `next :: proc(self: inout %s) -> Option(%s)`",
 			type_name(k.c, iterator),
