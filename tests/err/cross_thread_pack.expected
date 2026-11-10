@@ -1,0 +1,10 @@
+L0723
+@19:16
+marks a `move` parameter or one of procedure type
+warning[L0707]: `bump` writes `counter`
+@22:2
+warning[L0707]: `bump` writes `counter`
+@23:2
+warning[L0707]: `poke` writes `other`
+@24:2
+!`quiet` writes

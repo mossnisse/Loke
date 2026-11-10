@@ -1,0 +1,27 @@
+// design.md "Variadic parameters": every pack is a temporary of the call, so
+// neither the result nor storage that outlives the call may borrow it, at any
+// escape level, while what its elements hold is bounded by the level as for a
+// `value: T` parameter. A pack takes no escape level for its own storage.
+package main;
+import "core:fmt";
+
+give :: proc(values: ..int) -> []int { return values; }
+elem :: proc(values: ..int) -> ^int { return &values[0]; }
+saved: []int;
+store :: proc(values: ..int) { saved = values; }
+Shelf :: struct { all: [][]int, one: []int }
+stash :: proc(shelf: inout Shelf, @(escape=stored) lists: ..[]int) { shelf.all = lists; }
+point :: proc(shelf: inout Shelf, @(escape=stored) lists: ..[]int) { shelf.one = lists[0]; }
+head :: proc(lists: ..[]int) -> []int { return lists[0]; }
+
+main :: proc() {
+	x := give(3, 4);
+	a := []int{1, 2};
+	lists := [][]int{a};
+	shelf := Shelf{};
+	point(inout shelf, a, a);
+	point(inout shelf, ..lists);
+	h := head(a, a);
+	g := head(..lists);
+	fmt.println(x[0], shelf.one[0], h[0], g[0]);
+}

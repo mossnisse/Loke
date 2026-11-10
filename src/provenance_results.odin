@@ -78,14 +78,11 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if graph.mode != .Prov_Diagnose || !committing(c) {
 		return
 	}
-	proc_type := call_proc_type(c, v)
-	info := underlying_info(c, proc_type)
-	if info == nil || len(info.param_cross_thread) == 0 {
-		return
-	}
-	for argument, index in v.bound {
-		if argument == nil || index >= len(info.parameters) || !proc_param_crosses_thread(c, proc_type, index) ||
-		   underlying_kind(c, info.parameters[index]) == .Proc {
+	// A procedure value carries no state, so only its writes are checked
+	// (`note_thread_spawn`).
+	cursor: Cross_Thread_Cursor
+	for argument, of_proc in call_cross_thread_next(c, v, &cursor) {
+		if of_proc {
 			continue
 		}
 		base := expr_base(argument)

@@ -84,28 +84,68 @@ prov_pack_spread_type :: proc(c: ^Compiler, spread, pack: Type_Id) -> Type_Id {
 	return lends ? slice_element(c, pack) : pack
 }
 
-// design.md "Variadic parameters": the `T` of a `..^T` pack at parameter `index`
-// of `proc_type`, which lends its values only for the call.
-proc_param_lent_type :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> (Type_Id, bool) {
+// design.md "Variadic parameters": what of a pack parameter is a temporary of the
+// call, which neither its result nor storage that outlives the call may borrow at
+// any escape level. Every pack's own storage is; a `..^T` pack's pointers also
+// name values lent for the call, one load further. Only what `held` holds, below
+// that, is bounded by the parameter's escape level.
+Pack_Lending :: struct {
+	// The type whose borrows a call may keep: a `..T` pack's `T`, and a `..^T`
+	// pack's `T` too.
+	held:  Type_Id,
+	// The deepest content loan of the parameter that names lent storage: 0 when
+	// only the pack's own storage is, its non-content loan, and 1 for `..^T`.
+	depth: int,
+}
+
+// The lending of a pack the body receives as `pack`, a `[]T` or `[]^T`.
+pack_lending :: proc(c: ^Compiler, pack: Type_Id) -> Pack_Lending {
+	element := slice_element(c, pack)
+	if pointee, lends := variadic_lent_pointee(c, element); lends {
+		return Pack_Lending{held = pointee, depth = 1}
+	}
+	return Pack_Lending{held = element, depth = 0}
+}
+
+// The lending of parameter `index` of `proc_type`, if it is a pack.
+proc_param_pack_lending :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> (Pack_Lending, bool) {
 	info := underlying_info(c, proc_type)
 	if info == nil || index >= len(info.parameters) || param_mode_at(info, index) != .Variadic {
-		return INVALID_TYPE, false
+		return {}, false
 	}
-	return variadic_lent_pointee(c, slice_element(c, info.parameters[index]))
+	return pack_lending(c, info.parameters[index]), true
 }
 
-// Whether parameter symbol `sym` is a `..^T` pack.
-param_symbol_lends :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
+// The lending of parameter symbol `sym`, if it is a pack.
+param_symbol_pack_lending :: proc(c: ^Compiler, sym: ^Symbol) -> (Pack_Lending, bool) {
 	if sym == nil || sym.kind != .Parameter || sym.mode != .Variadic {
+		return {}, false
+	}
+	return pack_lending(c, sym.type), true
+}
+
+// Whether a loan of a pack parameter names its own storage or, of a `..^T` pack,
+// what one of its pointers names.
+loan_names_lent_value :: proc(loan: Prov_Loan, lending: Pack_Lending) -> bool {
+	return !loan.content || loan.depth <= lending.depth
+}
+
+// Whether a result that depends on pack parameter `index` as `dependencies` say may
+// borrow what `lending` says the pack lends: the pack itself, or a value one of its
+// pointers names (bit `depth - 1` of `param_loads` is a load `depth` deep).
+result_borrows_lent :: proc(dependencies: Result_Dependencies, index: int, lending: Pack_Lending) -> bool {
+	if index >= len(dependencies.params) {
 		return false
 	}
-	_, lends := variadic_lent_pointee(c, slice_element(c, sym.type))
-	return lends
+	lent := (u8(1) << u8(lending.depth)) - 1
+	return dependencies.params[index] || dependencies.param_loads[index] & lent != 0
 }
 
-// Whether a loan of a `..^T` pack names its own storage or what one of its pointers
-// names, which a call may not keep at any escape level: only what the lent values
-// hold, one load further, is bounded by the level.
-loan_names_lent_value :: proc(loan: Prov_Loan) -> bool {
-	return !loan.content || loan.depth <= 1
+// The phrases of a diagnostic about a pack reaching what outlives the call, for
+// `lending`: what the pack lends, then what may not reach there.
+pack_lent_phrases :: proc(lending: Pack_Lending) -> (lends, reaches: string) {
+	if lending.depth > 0 {
+		return "lends its values only for the call", "neither it nor a pointer in it can reach"
+	}
+	return "is a pack that lives only for the call", "it cannot reach"
 }

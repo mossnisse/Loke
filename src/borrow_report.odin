@@ -843,11 +843,13 @@ report_retention :: proc(
 			continue
 		}
 		if root.kind == .Param {
-			if sym := symbol_of(state.k.c, root.symbol); param_symbol_lends(state.k.c, sym) && loan_names_lent_value(loan) {
+			sym := symbol_of(state.k.c, root.symbol)
+			if lending, packs := param_symbol_pack_lending(state.k.c, sym); packs && loan_names_lent_value(loan, lending) {
+				lends, reaches := pack_lent_phrases(lending)
 				errorf(
 					state.k.c, event.span, "L0646",
-					"`%s` lends its values only for the call, so neither it nor a pointer in it can reach %s%s",
-					identifier_text(state.k.c, sym.name), retain_destination(event, destination), stored,
+					"`%s` %s, so %s %s%s",
+					identifier_text(state.k.c, sym.name), lends, reaches, retain_destination(event, destination), stored,
 				)
 				state.diagnostic_precision |= destination_loss
 				add_root_notes(state, root, loan)

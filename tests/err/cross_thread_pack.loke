@@ -1,0 +1,28 @@
+// design.md "@(cross_thread)", "Global write effects": a `..proc()` pack may
+// carry the attribute, and each named procedure passed in it gets the race
+// warning the same procedure gets through a single parameter. A spread passes
+// a slice of procedure values, none of them named. A pack of any other type
+// may not carry the attribute.
+package main;
+
+counter: int;
+other: int;
+bump :: proc() { counter += 1; }
+poke :: proc() { other += 1; }
+quiet :: proc() {}
+
+direct :: proc(@(cross_thread) entry: proc()) { entry(); }
+packed :: proc(@(cross_thread) entries: ..proc()) {
+	foreach (entry in entries) { entry(); }
+}
+Entry :: proc();
+counts :: proc(@(cross_thread) values: ..int) {}
+
+main :: proc() {
+	direct(bump);
+	packed(bump);
+	packed(quiet, poke, quiet);
+	list := []Entry{quiet};
+	packed(..list);
+	packed();
+}

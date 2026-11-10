@@ -1358,6 +1358,19 @@ the copy lives.
 
 A callee that wants to keep a value itself takes a `..T` pack, which copies it in.
 
+### A pack never outlives its call
+
+Any [pack](design.md#variadic-parameters) is a temporary built for one call, so
+no escape level can let it outlive the call, and a pack's level bounds only what
+its elements hold. `@(escape=static)` on a `..int` pack is therefore an error, as
+on any parameter whose type reaches no borrow, and the error for keeping such a
+pack names the pack's lifetime rather than suggesting a level.
+
+A result that may borrow the pack is an error at the parameter, as it is for a
+`..^T` pack's lent values, rather than at each call. The caller wrote only the
+operands, not the pack, so an error there would point at code that cannot fix
+it; the fix is in the callee, which takes a slice when it means to hand one back.
+
 ### Distinct types
 
 A `distinct` type inherits comparisons but no other operators by default.

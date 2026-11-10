@@ -1343,6 +1343,48 @@ call_packs :: proc(call: ^Expr_Call, index: int) -> bool {
 	return call.is_variadic && !call.variadic_forwards && index == call.variadic_slot
 }
 
+// How far a walk of the operands a call passes to its `@(cross_thread)` parameters
+// has come: the parameter, and within a pack, its operand.
+Cross_Thread_Cursor :: struct {
+	index: int,
+	pack:  Call_Pack_Cursor,
+}
+
+// design.md "@(cross_thread)": the next operand `call` passes to a `@(cross_thread)`
+// parameter, in parameter order, and whether the parameter is of procedure type.
+// Each operand of a pack crosses as the one argument of a parameter of its element
+// type would; a forwarded spread is the slice its procedures are in.
+call_cross_thread_next :: proc(c: ^Compiler, call: ^Expr_Call, cursor: ^Cross_Thread_Cursor) -> (operand: Expr, of_proc: bool, more: bool) {
+	proc_type := call_proc_type(c, call)
+	info := underlying_info(c, proc_type)
+	if info == nil || len(info.param_cross_thread) == 0 {
+		return nil, false, false
+	}
+	for ; cursor.index < len(call.bound) && cursor.index < len(info.parameters); cursor.index += 1 {
+		index := cursor.index
+		if !proc_param_crosses_thread(c, proc_type, index) {
+			continue
+		}
+		// The attribute is checked against the written type, a pack's element.
+		written := info.parameters[index]
+		if param_mode_at(info, index) == .Variadic {
+			written = slice_element(c, written)
+		}
+		of_proc = underlying_kind(c, written) == .Proc
+		if call_packs(call, index) {
+			if element, _, next := call_pack_next(call, &cursor.pack); next {
+				return element, of_proc, true
+			}
+			continue
+		}
+		if call.bound[index] != nil {
+			cursor.index += 1
+			return call.bound[index], of_proc, true
+		}
+	}
+	return nil, false, false
+}
+
 // A `..` spread of a move-only element, whose pack would have to copy it.
 report_move_only_spread :: proc(k: ^Checker, spread: Expr, element: Type_Id) {
 	errorf(

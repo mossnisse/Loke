@@ -674,18 +674,14 @@ prov_scope_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 }
 
 // design.md "Global write effects": a named procedure passed for a
-// `@(cross_thread)` parameter runs on another thread, as an entry or as the
-// value an entry calls, so it is kept until the effects settle.
+// `@(cross_thread)` parameter, or in such a pack, runs on another thread, as an
+// entry or as the value an entry calls, so it is kept until the effects settle.
 @(private = "file")
 note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
-	proc_type := call_proc_type(c, v)
-	info := underlying_info(c, proc_type)
-	if info == nil || len(info.param_cross_thread) == 0 {
-		return
-	}
-	for argument, index in v.bound {
-		if argument == nil || !proc_param_crosses_thread(c, proc_type, index) {
+	cursor: Cross_Thread_Cursor
+	for argument, of_proc in call_cross_thread_next(c, v, &cursor) {
+		if !of_proc {
 			continue
 		}
 		if _, literal := argument.(^Expr_Proc); literal {

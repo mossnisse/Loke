@@ -6714,7 +6714,18 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 ```
 
 The pack is a temporary of the complete call expression, as is anything an
-argument creates for it, so neither outlives that expression.
+argument creates for it, so neither outlives that expression. At any escape
+level, neither the pack nor a borrow of an element in it may reach the result or
+storage that outlives the call: keeping one is an error where it is kept, and a
+result that may borrow one is an error at the parameter. What the elements hold
+is bounded by the parameter's [escape level](#escape-levels), as for a
+`value: T` parameter, so a pack takes `@(escape=<level>)` only when its element
+type reaches a borrow.
+
+```loke
+first :: proc(lists: ..[]int) -> []int { return lists[0]; } // what an element holds: allowed
+all :: proc(nums: ..int) -> []int { return nums; } // error: the pack lives only for the call
+```
 
 A pack lives on the stack, except a large `..^T` one (below). A lone spread
 passes its own slice and copies nothing, so `sum(..odds)` has no limit. A spread
@@ -6764,13 +6775,11 @@ the default provider instead of the stack and released when the call returns,
 so, as with a lone spread into a `..T` pack, a spread has no limit. The callee receives the pack as a `[]^T`, and the borrows follow the rules of
 any pointer, and one of a temporary ends with the call's statement.
 
-The pack lends its values only for the call, at any escape level: neither the
-pack nor a pointer in it, nor a borrow of a value it lends, may reach the result
-or storage that outlives the call. Keeping one is an error where it is kept, and
-a result that may borrow one is an error at the parameter. The parameter's
-[escape level](#escape-levels) bounds what the lent values hold, as it does for a
-`value: T` parameter, so a call that may keep a copy of a value, and what the
-copy borrows, declares the pack `@(escape=stored)`. A generic `..^$T` infers `T`
+The pack lends its values only for the call, at any escape level: as for the
+pack itself, neither a pointer in it nor a borrow of a value it lends may reach
+the result or storage that outlives the call. The parameter's escape level
+bounds what the lent values hold, so a call that may keep a copy of a value, and
+what the copy borrows, declares the pack `@(escape=stored)`. A generic `..^$T` infers `T`
 only from arguments already a `^T`.
 
 ```loke
@@ -10735,7 +10744,7 @@ written to its right.
 | `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
 | `@(wakes_on_drop)` | struct and union types | [a drop may wake threads waiting on what the value borrows](#wakes_on_drop) |
 | `@(fieldwise_copy)` | struct types with a `hook(drop)` | [keeps the generated field-wise copy beside the hook](#fieldwise_copy) |
-| `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters of procedure type | [the argument goes to another thread](#cross_thread) |
+| `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters and `..` packs of procedure type | [the argument goes to another thread](#cross_thread) |
 | `@(packed)`, `@(align=N)` | struct types; `align` also union types | [record layout](#packed) |
 | `@(allocator_reset)` | `Allocator` parameters | [a call may reset the region](#allocator_reset) |
 | `@(escape=<level>)` | parameters whose type reaches a borrow | [bounds what a call may keep](#escapelevel) |
@@ -11154,7 +11163,8 @@ calls check more, but not to one that marks fewer.
 - On a parameter of procedure type, it says that the procedure runs on another
   thread, and a named procedure passed there whose effect writes shared storage
   gets the race warning under [Global write effects](#global-write-effects). A
-  procedure value carries no state, so nothing else is checked.
+  procedure value carries no state, so nothing else is checked. On a `..` pack
+  of procedure type, it applies to each procedure written in the pack.
 - On any other parameter, or on a foreign procedure's parameter, it is an error:
   what foreign code hands to a thread is not checked.
 

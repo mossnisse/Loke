@@ -99,7 +99,8 @@ prov_names_inout_result :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
 	return call != nil && prov_result_is_inout(graph, call)
 }
 
-// The loans of every argument not marked `@(escape=none)`.
+// The loans of every argument not marked `@(escape=none)`, as far as a callee may
+// hand them back (`prov_argument_kept`).
 @(private)
 prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
 	proc_type := call_proc_type(graph.k.c, v)
@@ -108,9 +109,29 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 		if proc_param_escape(graph.k.c, proc_type, index) == .None {
 			continue
 		}
-		out = prov_join(graph, out, prov_with_content(graph, slots, v.span))
+		out = prov_join(graph, out, prov_argument_kept(graph, v, proc_type, index, slots))
 	}
 	return out
+}
+
+// What a callee may hand back or keep of argument `index`, whose loans are `held`:
+// the argument and what it reaches, or of a pack only what lies below what it lends
+// for the call (design.md "Variadic parameters"). A pack's written operands are its
+// elements, a forwarded spread the pack itself, one load above them; a spread among
+// other operands is taken as an element, which keeps more than it may. Values that
+// hold no borrow leave nothing, where a load into storage with no carriers would
+// stand for the storage itself.
+@(private)
+prov_argument_kept :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Type_Id, index: int, held: []int) -> []int {
+	lending, packs := proc_param_pack_lending(graph.k.c, proc_type, index)
+	if !packs {
+		return prov_with_content(graph, held, v.span)
+	}
+	if !type_carries_borrow(graph.k.c, lending.held).any {
+		return nil
+	}
+	from := lending.depth + (call_packs(v, index) ? 0 : 1)
+	return from == 0 ? prov_with_content(graph, held, v.span) : prov_load_deep(graph, held, v.span, from = from)
 }
 
 // What is stored behind `carriers`, `from` loads down and at every depth below:

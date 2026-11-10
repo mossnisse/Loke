@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- No [variadic pack](design.md#variadic-parameters) outlives its call, as a `..^T` pack's lent
+  values already did not. `give :: proc(values: ..int) -> []int { return values; }` compiled and
+  left the caller a view of the ended pack; it is now `L0644` at the parameter, and keeping the
+  pack, or a borrow of an element in it, in storage that outlives the call is `L0646` at any escape
+  level. That `L0646` said the pack was not written `@(escape=static)`, which `L0648` then rejects
+  on a `..int`; it now says the pack lives only for the call. What the elements hold is still
+  bounded by the escape level. Upgrade by taking a slice, `values: []int`, where the result or the
+  kept storage is meant to view the caller's values.
 - A slice read out of a place, as `halves.left` or `p^.rest`, is suspended while what
   [`split_at_mut`](standard-library.md#splitting-a-mutable-slice) or
   [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) made of it is in use, as a named
@@ -1814,6 +1822,9 @@ checklist.
 
 ### Fixed
 
+- A named procedure passed in a `@(cross_thread)` `..proc()` pack gets the `L0707` race warning
+  for the shared storage it writes, as it does through a single `@(cross_thread)` parameter
+  ([`@(cross_thread)`](design.md#cross_thread)); the checks looked at the pack as one argument.
 - `L0260` no longer warns about a doc comment on a field of a type written in an array's length,
   a parameter's default, a literal's element, a `when` condition, or any other expression outside
   a procedure body ([Doc comments](design.md#doc-comments)).

@@ -1,0 +1,13 @@
+L0644
+@8:14
+`values` is a pack that lives only for the call, but the result of `give` may borrow it
+L0644
+@9:14
+`values` is a pack that lives only for the call, but the result of `elem` may borrow it
+L0646
+@11:32
+`values` is a pack that lives only for the call, so it cannot reach `saved`
+!not written `@(escape=static)`
+L0646
+@13:70
+`lists` is a pack that lives only for the call, so it cannot reach `shelf`
