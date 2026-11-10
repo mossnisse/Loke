@@ -1150,6 +1150,11 @@ symbol_of :: proc(c: ^Compiler, id: Symbol_Id) -> ^Symbol {
 	return c.symbols[index]
 }
 
+// The type of the value a symbol names: a procedure's is its procedure type.
+symbol_value_type :: proc(symbol: ^Symbol) -> Type_Id {
+	return symbol.kind == .Proc ? symbol.proc_type : symbol.type
+}
+
 // Static, thread-local, or file-scope storage: it outlives every procedure body.
 symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
 	return sym.duration != .None || (sym.decl != nil && sym.decl.top_level)

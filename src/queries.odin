@@ -351,7 +351,7 @@ list_member :: proc(m: ^Member_List, id: Symbol_Id, methods: bool) {
 	name := identifier_text(c, symbol.name)
 	if m.seen[name] || !identifier_spelling(name) { return }
 	m.seen[name] = true
-	type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
+	type := symbol_value_type(symbol)
 	append(&m.out, Query_Member{name = name, symbol = Symbol_Handle{m.s.snapshot, id}, type = Type_Handle{m.s.snapshot, type}})
 }
 
@@ -520,7 +520,7 @@ build_query_symbols :: proc(s: ^Compilation_Session) {
 			if existing, found := bindings[key]; found { id = existing } else { bindings[key] = id }
 		}
 		q.canonical[index] = id
-		type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
+		type := symbol_value_type(symbol)
 		q.symbols[index] = Query_Symbol{
 			handle = Symbol_Handle{s.snapshot, Symbol_Id(index)}, name = identifier_text(c, symbol.name), kind = symbol.kind,
 			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, written ? symbol.span : NO_SPAN},
@@ -586,7 +586,7 @@ build_query_signatures :: proc(s: ^Compilation_Session) {
 		q.signatures[index] = signature
 	}
 	for symbol, index in c.symbols {
-		if symbol == nil || symbol.kind != .Proc_Group { continue }
+		if symbol.kind != .Proc_Group { continue }
 		count := 0
 		for member in symbol.members { count += len(q.signatures[member]) }
 		signatures := make([dynamic]Query_Signature, 0, count)

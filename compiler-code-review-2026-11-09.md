@@ -332,18 +332,18 @@ Clean, compact CLI. One drift risk.
 
 #### src/session.odin
 Clear session contract.
-- **Simplify**, session.odin:45-52: the two copy loops for `defines` and
+- **Simplify** (done; `lsp/server.odin` builds its lists from JSON and rewrites paths, so it keeps its loop), session.odin:45-52: the two copy loops for `defines` and
   `collections` are the same. Replace them with a helper,
   `clone_strings(src: []string, allocator) -> []string`, which saves about 4
   lines. `lsp/server.odin:288-300` builds the same kind of cloned list.
-- **Simplify**, session.odin:142-155: `finish_session_check` tests
+- **Simplify** (done), session.odin:142-155: `finish_session_check` tests
   `c.error_count` three times. It can return early with `if c.error_count > 0
   { return false }` and end with `return documentation || s.ready`. Saves about
   3 lines.
 
 #### src/build_config.odin
 Fine.
-- **Simplify**, build_config.odin:33-40: `cpu_level_name` is a switch that
+- **Simplify** (done, for all four), build_config.odin:33-40: `cpu_level_name` is a switch that
   could be a `[Cpu_Level]string` enumerated array, like `OPT_CLANG_FLAGS` at
   `:84`. `parse_cpu_level` would then loop over the array. Saves about 5
   lines. The same applies to `provider_slot_name` (providers.odin:23-29),
@@ -386,10 +386,10 @@ Well structured. The snapshot validation is uniform.
   file's whole occurrence list on each `query_at`. `rename.odin:234` calls it
   for every matching identifier token. Sorting `occurrences[file]` by
   `span.lo` once would let the scan stop early. Low priority.
-- **Simplify**, queries.odin:589: `symbol == nil` never holds. Slot 0 is a
+- **Simplify** (done, both), queries.odin:589: `symbol == nil` never holds. Slot 0 is a
   real placeholder (`semantic.odin:987`), and the first loop at `:564` already
   assumes no nils. The same applies to query_index.odin:25. Delete both checks.
-- **Duplication**, queries.odin:354, :523, and query_index.odin:71 each spell
+- **Duplication** (done), queries.odin:354, :523, and query_index.odin:71 each spell
   `symbol.kind == .Proc ? symbol.proc_type : symbol.type`. Add one
   `symbol_value_type(symbol)` helper.
 
@@ -434,11 +434,11 @@ The program-level fixed point is clear.
   the arena that checkpoint images then copy. Instead, keep `best_name` and
   `best_rest`, and allocate once after the loop. Canonical collection roots
   could also be computed once per compilation.
-- **Simplify**, packages.odin:314-316: `syntax` is set conditionally, and the
+- **Simplify** (done), packages.odin:314-316: `syntax` is set conditionally, and the
   same condition is then tested again for `new`. Write `file := new(File,
   syntax if syntax.procedure != nil else context.allocator)` or similar.
   Saves 1 line and removes the doubled condition.
-- **Structure**, packages.odin:173: the comment "`written` is only for
+- **Structure** (done), packages.odin:173: the comment "`written` is only for
   diagnostics; directory identity supplies the key." belongs to
   `load_package_dir` (`:197`), but sits above `package_symbol_named`.
 - **Structure**, packages.odin:176-195: `package_symbol_named` and
@@ -535,7 +535,7 @@ disciplined.
   share one `Bracket_Depth` step helper. More siblings are in the server:
   `lsp/roots.odin:187-199`, `lsp/editing.odin:194-221` and `:281-298`, and
   `lsp/rename.odin:219-225`.
-- **Simplify**, 11 copies of `deepen(p, 1); defer p.depth -= 1; if p.depth >
+- **Simplify** (done, at the eight sites of that exact shape), 11 copies of `deepen(p, 1); defer p.depth -= 1; if p.depth >
   MAX_NEST {...}` (for example `:842`, `:1364`, `:1631`, `:1705`, `:1829`,
   `:2188`, `:2368`, `:2892`). A `too_deep :: proc(p) -> bool { deepen(p, 1);
   return p.depth > MAX_NEST }` helper saves about 11 lines. The `defer` must
@@ -552,7 +552,7 @@ disciplined.
 
 #### src/ast.odin
 Clean node definitions with exhaustive `*_base` switches.
-- **Simplify**, ast.odin:695-703: `hook_name` could be a `[Hook_Kind]string`
+- **Simplify** (done), ast.odin:695-703: `hook_name` could be a `[Hook_Kind]string`
   array (see build_config.odin).
 - **Structure**, ast.odin:1401-1480: `type_syntax_any_name`,
   `bind_poly_names`, `bind_signature`, and `Name_Walk` are generic-checking
@@ -704,13 +704,13 @@ Fine.
 | Statement walkers (one `switch` over `Stmt` each) | select.odin:796, query_index.odin:137, ast_dump.odin, plus check_stmt, cfg, eval, expand, ast_clone, emit_llvm_stmt outside this group | A `stmt_children` analogue of `expr_children` would serve at least select.odin and query_index.odin. The others need per-node behavior. Low priority |
 | Reporting `Import_Resolution` failures | src/packages.odin:357-380, src/providers.odin:136-152 | One reporting helper |
 | `line_starts` computation | src/source.odin:136-142, lsp/tools.odin:71-73 (and lsp/server_test.odin:1380) | `line_starts_of(text, allocator)` |
-| Enum-to-string switches | build_config.odin:33 (`cpu_level_name`), providers.odin:23 (`provider_slot_name`), ast.odin:695 (`hook_name`), subsystem.odin:29 (`parse_subsystem`) | `[Enum]string` arrays, as `OPT_CLANG_FLAGS` and `ast_dump.odin`'s tag tables already are |
+| Enum-to-string switches | build_config.odin:33 (`cpu_level_name`), providers.odin:23 (`provider_slot_name`), ast.odin:695 (`hook_name`), subsystem.odin:29 (`parse_subsystem`) | `[Enum]string` arrays (done), as `OPT_CLANG_FLAGS` and `ast_dump.odin`'s tag tables already are |
 | CLI names that repeat enum members | main.odin:341, :343, :352, :354 | Derive from `reflect.enum_field_names` (Top 8) |
-| `kind == .Proc ? proc_type : type` | queries.odin:354, :523, query_index.odin:71 | `symbol_value_type` helper |
+| `kind == .Proc ? proc_type : type` | queries.odin:354, :523, query_index.odin:71 | `symbol_value_type` helper (done) |
 | Bundled-collection test | project.odin:54, :105; packages.odin:513; queries.odin:107; check_expr.odin:2822 | `is_bundled_collection(name)` and `is_bundled_key(key)` helpers |
 | "Any root dirty" loop | lsp/roots.odin:46, lsp/requests.odin:127-130 | Use one helper |
 | Client capability kind fallback | lsp/requests.odin:283 and :361, lsp/editing.odin:23 and :126 | Shared helper with a fallback table |
-| Copying a list of strings | src/session.odin:45-52, lsp/server.odin:288-300 | `clone_strings` |
+| Copying a list of strings | src/session.odin:45-52, lsp/server.odin:288-300 | `clone_strings` (done for the session) |
 | `path_key` on a path that is already canonical | lsp/roots.odin:319, :471; lsp/requests.odin:442; lsp/rename.odin:81, :278 | `lokec.dir_key` directly |
 | Bound-name lists checked with `slice.contains` | select.odin:459, :575; doc.odin:577, :672; ast.odin:1420-1450 | Consistent and fine at today's sizes. Change only if profiling shows a cost |
 

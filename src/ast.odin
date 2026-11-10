@@ -693,13 +693,15 @@ composite_element_slots :: proc(v: ^Expr_Composite, index: int) -> (lo, hi: int)
 }
 
 hook_name :: proc(kind: Hook_Kind) -> string {
-	switch kind {
-	case .Convert: return "convert"
-	case .Copy:    return "copy"
-	case .Drop:    return "drop"
-	case .None:    return ""
-	}
-	return ""
+	return HOOK_NAMES[kind]
+}
+
+@(private = "file", rodata)
+HOOK_NAMES := [Hook_Kind]string {
+	.None    = "",
+	.Convert = "convert",
+	.Copy    = "copy",
+	.Drop    = "drop",
 }
 
 // The value a `return` exit of an `or_else` carries, or nil.

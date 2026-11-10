@@ -22,7 +22,6 @@ index_query_syntax :: proc(c: ^Compiler, q: ^Snapshot_Queries) -> []Span {
 	index := Query_Index{c = c, q = q, visited = make(map[rawptr]bool, allocator = context.temp_allocator), regions = make([dynamic]Span, context.temp_allocator)}
 	for file in c.parsed_files { for item in file.items { index_query_item(&index, item) } }
 	for symbol in c.symbols {
-		if symbol == nil { continue }
 		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
 		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
 	}
@@ -68,7 +67,7 @@ index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: 
 index_query_bound_name :: proc(index: ^Query_Index, name: Name, candidates: []Symbol_Id) {
 	for candidate in candidates {
 		if bound := symbol_of(index.c, candidate); bound != nil && identifier_text(index.c, bound.name) == name.text {
-			index_query_name(index, name.span, name.text, candidate, bound.kind == .Proc ? bound.proc_type : bound.type)
+			index_query_name(index, name.span, name.text, candidate, symbol_value_type(bound))
 		}
 	}
 }

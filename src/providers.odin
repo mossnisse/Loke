@@ -21,11 +21,13 @@ Provider_Selection :: struct {
 
 @(private = "file")
 provider_slot_name :: proc(slot: Provider_Slot) -> string {
-	switch slot {
-	case .Allocator: return "allocator"
-	case .Logger:    return "logger"
-	}
-	return "?"
+	return PROVIDER_SLOT_NAMES[slot]
+}
+
+@(private = "file", rodata)
+PROVIDER_SLOT_NAMES := [Provider_Slot]string {
+	.Allocator = "allocator",
+	.Logger    = "logger",
 }
 
 any_provider_selected :: proc(c: ^Compiler) -> bool {

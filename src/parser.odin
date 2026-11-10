@@ -342,6 +342,14 @@ deepen :: proc(p: ^Parser, by: int) {
 	p.peak = max(p.peak, p.depth)
 }
 
+// One level deeper, and whether that passes `MAX_NEST`. The caller undoes the
+// level with `defer p.depth -= 1`.
+@(private = "file")
+too_deep :: proc(p: ^Parser) -> bool {
+	deepen(p, 1)
+	return p.depth > MAX_NEST
+}
+
 // How much deeper than its start the subtree `parse` built goes. Once that
 // subtree returns, `depth` is back at the start, so a spine built on it, as
 // `(a.b.c).d.e` builds one, starts from this height instead.
@@ -839,9 +847,8 @@ parse_delegate :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Ite
 
 @(private = "file")
 parse_top_level_when :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		depth_exceeded(p)
 		t := current(p)
 		sync_to_item(p)
@@ -1361,9 +1368,8 @@ statement_too_deep :: proc(p: ^Parser) -> Stmt {
 @(private = "file")
 parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 	p.suppress = false
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		return statement_too_deep(p), true
 	}
 
@@ -1628,9 +1634,8 @@ parse_else :: proc(p: ^Parser, keyword: Token_Kind, chain: proc(p: ^Parser) -> S
 
 @(private = "file")
 parse_if :: proc(p: ^Parser) -> Stmt {
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		return statement_too_deep(p)
 	}
 
@@ -1702,9 +1707,8 @@ case_switch :: proc(p: ^Parser, start: Token, pattern, subject: Expr, matched: ^
 
 @(private = "file")
 parse_when :: proc(p: ^Parser) -> Stmt {
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		return statement_too_deep(p)
 	}
 
@@ -1826,9 +1830,8 @@ reject_bare_in :: proc(p: ^Parser, cond: Expr) {
 // A binding is a leaf or a parenthesized group; `$` and `&` apply to leaves.
 @(private = "file")
 parse_foreach_binding :: proc(p: ^Parser) -> Foreach_Binding {
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		t := current(p)
 		depth_exceeded(p)
 		sync_to_statement(p, true)
@@ -2185,9 +2188,8 @@ parse_switch_case :: proc(p: ^Parser) -> Switch_Case {
 // `or_else` and conditionals are right-associative.
 @(private = "file")
 parse_expr :: proc(p: ^Parser) -> Expr {
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		return depth_exceeded(p)
 	}
 	outer_signature_only := p.signature_only
@@ -2365,9 +2367,8 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 	t := current(p)
 	#partial switch t.kind {
 	case .Plus, .Minus, .Not, .Tilde, .Amp:
-		deepen(p, 1)
 		defer p.depth -= 1
-		if p.depth > MAX_NEST {
+		if too_deep(p) {
 			return depth_exceeded(p)
 		}
 		advance(p)
@@ -2899,9 +2900,8 @@ parse_type_or_literal :: proc(p: ^Parser) -> Expr {
 		return e
 	}
 
-	deepen(p, 1)
 	defer p.depth -= 1
-	if p.depth > MAX_NEST {
+	if too_deep(p) {
 		return depth_exceeded(p)
 	}
 

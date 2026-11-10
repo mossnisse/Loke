@@ -170,7 +170,6 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	return id, true
 }
 
-// `written` is only for diagnostics; directory identity supplies the key.
 // What `pkg` declares by `name`. A package that is absent or not yet scoped
 // declares nothing.
 package_symbol_named :: proc(c: ^Compiler, pkg: ^Package, name: string) -> Symbol_Id {
@@ -194,6 +193,7 @@ package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id
 	return named, named != INVALID_TYPE
 }
 
+// `written` is only for diagnostics; directory identity supplies the key.
 load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -> (Package_Id, bool) {
 	canonical := canonical_dir(dir)
 	if existing, found := c.package_by_dir[dir_key(canonical)]; found {
@@ -318,7 +318,7 @@ parse_loaded_source :: proc(c: ^Compiler, index: u32) -> ^File {
 	// Incremental syntax joins the checkpointed arena; batch files own theirs.
 	syntax: mem.Allocator
 	if c.package_cache != nil { syntax = c.semantic_allocator }
-	file := new(File, syntax if c.package_cache != nil else context.allocator)
+	file := new(File, syntax if syntax.procedure != nil else context.allocator)
 	file^ = parse(c, index, tokens, syntax)
 	return file
 }

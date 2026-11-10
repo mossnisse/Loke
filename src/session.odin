@@ -42,14 +42,8 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 	s.snapshot = next_snapshot_id()
 	s.config = config
 	allocator := virtual.arena_allocator(&s.configuration_arena)
-	s.config.defines = make([]string, len(config.defines), allocator)
-	for entry, index in config.defines {
-		s.config.defines[index] = strings.clone(entry, allocator)
-	}
-	s.config.collections = make([]string, len(config.collections), allocator)
-	for entry, index in config.collections {
-		s.config.collections[index] = strings.clone(entry, allocator)
-	}
+	s.config.defines = clone_strings(config.defines, allocator)
+	s.config.collections = clone_strings(config.collections, allocator)
 	configure_session(s)
 	s.configured = s.compiler.error_count == 0
 	return s.configured
@@ -147,11 +141,20 @@ finish_session_check :: proc(s: ^Compilation_Session, documentation: bool) -> bo
 		check_exports(c, defines_entry = c.build_mode != .Obj && !documentation)
 	}
 	if c.error_count > 0 { return false }
-	if !documentation {
-		finalize_semantics(c)
-		s.ready = c.error_count == 0
+	if documentation { return true }
+	finalize_semantics(c)
+	s.ready = c.error_count == 0
+	return s.ready
+}
+
+// Each of `values`, and the slice holding them, in `allocator`.
+@(private = "file")
+clone_strings :: proc(values: []string, allocator: mem.Allocator) -> []string {
+	out := make([]string, len(values), allocator)
+	for entry, index in values {
+		out[index] = strings.clone(entry, allocator)
 	}
-	return c.error_count == 0
+	return out
 }
 
 // Rejects an unchecked, failed or documentation session.

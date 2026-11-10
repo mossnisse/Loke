@@ -31,17 +31,19 @@ Cpu_Level :: enum u8 {
 
 // The `-cpu` spelling, which is also clang's `-march` name.
 cpu_level_name :: proc(cpu: Cpu_Level) -> string {
-	switch cpu {
-	case .X86_64:    return "x86-64"
-	case .X86_64_V2: return "x86-64-v2"
-	case .X86_64_V3: return "x86-64-v3"
-	}
-	return "x86-64"
+	return CPU_LEVEL_NAMES[cpu]
+}
+
+@(private = "file", rodata)
+CPU_LEVEL_NAMES := [Cpu_Level]string {
+	.X86_64    = "x86-64",
+	.X86_64_V2 = "x86-64-v2",
+	.X86_64_V3 = "x86-64-v3",
 }
 
 parse_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
-	for cpu in Cpu_Level {
-		if text == cpu_level_name(cpu) {
+	for name, cpu in CPU_LEVEL_NAMES {
+		if text == name {
 			return cpu, true
 		}
 	}

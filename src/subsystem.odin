@@ -27,11 +27,19 @@ root_subsystem :: proc(c: ^Compiler) -> Subsystem {
 
 @(private = "file")
 parse_subsystem :: proc(text: string) -> (Subsystem, bool) {
-	switch text {
-	case "console": return .Console, true
-	case "windows": return .Windows, true
+	for name, subsystem in SUBSYSTEM_NAMES {
+		if text == name {
+			return subsystem, true
+		}
 	}
 	return .Console, false
+}
+
+// The `@(subsystem)` spellings.
+@(private = "file", rodata)
+SUBSYSTEM_NAMES := [Subsystem]string {
+	.Console = "console",
+	.Windows = "windows",
 }
 
 // design.md "@(subsystem=<string>)": once across the root package's files, and a
