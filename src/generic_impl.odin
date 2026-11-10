@@ -555,10 +555,9 @@ register_instance_extension_name :: proc(k: ^Checker, block: ^Generic_Impl, name
 	if sym == nil || sym.kind != .Proc_Group || sym.instance_of != block.template {
 		return
 	}
-	members, found := &k.c.extension_groups[group]
-	if !found {
-		k.c.extension_groups[group] = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-		members = &k.c.extension_groups[group]
+	_, members, inserted, _ := map_entry(&k.c.extension_groups, group)
+	if inserted {
+		members^ = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	}
 	append(members, member)
 	sym.members = members[:]

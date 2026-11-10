@@ -366,11 +366,7 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 	for id in graph.restored { carry.restored[id] = true }
 	carry.written_aliases = make(map[Storage_Id][dynamic]Written_Alias, len(graph.written_aliases), allocator)
 	for id, aliases in graph.written_aliases {
-		copied := make([dynamic]Written_Alias, len(aliases), allocator)
-		for alias, index in aliases {
-			copied[index] = prov_clone_written_alias(alias, allocator)
-		}
-		carry.written_aliases[id] = copied
+		carry.written_aliases[id] = prov_clone_written_aliases(aliases[:], allocator)
 	}
 	carry.region_content = make(map[Storage_Id][dynamic]Prov_Region_Content, len(graph.region_content), allocator)
 	for id, content in graph.region_content {
@@ -449,8 +445,7 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 			prov_add_loaded_parameter(&out, received, .Viewed)
 		}
 	}
-	contents := graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})]
-	for content in contents {
+	for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})][:] {
 		region_merge(&out, content.region)
 	}
 	if viewed {
@@ -485,8 +480,7 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 			region_merge(&whole, direct)
 			region_merge(&owned, direct)
 		}
-		contents := graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})]
-		for content in contents {
+		for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})][:] {
 			add(&out, index, content, written = true)
 		}
 	}
@@ -530,8 +524,7 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 			append(&reads.sources, Prov_Region_Source{slice.clone(path, graph.alloc), query})
 		}
 	}
-	contents := graph.region_content[storage]
-	for content in contents {
+	for content in graph.region_content[storage][:] {
 		// Own backing facts stay at their value's path. In particular, a
 		// container's allocation does not back its elements, and an element's
 		// allocation does not back the container (design.md "Allocator regions
@@ -730,10 +723,9 @@ prov_define_region_content :: proc(
 // as `entry` at its path, or adds a copy of `entry` holding `region`.
 @(private)
 prov_add_region_content :: proc(graph: ^Flow_Graph, storage: Storage_Id, entry: Prov_Region_Content, region: Region_Set) {
-	content, found := &graph.region_content[storage]
-	if !found {
-		graph.region_content[storage] = make([dynamic]Prov_Region_Content, 0, 2, graph.alloc)
-		content = &graph.region_content[storage]
+	_, content, inserted, _ := map_entry(&graph.region_content, storage)
+	if inserted {
+		content^ = make([dynamic]Prov_Region_Content, 0, 2, graph.alloc)
 	}
 	for &known in content {
 		if prov_same_region_content(known, entry) {

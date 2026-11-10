@@ -324,8 +324,7 @@ prov_parameter_restored :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int, p
 		return true
 	}
 	storage := graph.input.storage_ids[Written_Storage{symbol = id}]
-	contents := graph.region_content[storage]
-	for content in contents {
+	for content in graph.region_content[storage][:] {
 		if !paths_overlap(content.path, path) {
 			continue
 		}

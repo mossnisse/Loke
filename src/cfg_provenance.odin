@@ -168,8 +168,8 @@ Prov_State :: struct {
 // one at its final value. A round rebuilds everything else it holds from the
 // frozen input and the construction graph's topology (`prov_fact_graph`).
 //
-// Read a `[dynamic]` row into a local before ranging over it: `for x in
-// m[key]` ranges through the slot's address, which is nil for a missing key.
+// Range over a `[dynamic]` row as `m[key][:]`: `for x in m[key]` ranges
+// through the slot's address, which is nil for a missing key.
 Prov_Facts :: struct {
 	// Each local's allocator regions, and the path-indexed regions of storage.
 	region_of:        map[Symbol_Id]Region_Set,

@@ -111,8 +111,7 @@ main :: proc() {}`) { return }
 		                "the payload lost its array-element and variant projections: %v", path)
 	}
 	initial, stored := false, false
-	contents := graph.region_content[storage]
-	for content in contents {
+	for content in graph.region_content[storage][:] {
 		if content.handle { continue }
 		initial ||= region_has_param(content.region, 0)
 		stored ||= region_has_param(content.region, 1)
@@ -196,8 +195,7 @@ main :: proc() {}`) { return }
 	pointer := normalization_symbol(t, &p, "pointer")
 	destination := normalization_symbol(t, &p, "destination")
 	known, unknown := false, false
-	pointer_aliases := graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = pointer})]
-	for alias in pointer_aliases {
+	for alias in graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = pointer})][:] {
 		known ||= prov_storage(graph, alias.target).key.symbol == destination
 		unknown ||= alias.target == 0
 	}

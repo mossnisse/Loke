@@ -315,8 +315,7 @@ prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj
 			append(&out, ..prov_written_aliases_of(graph, prov_storage_for_root(graph, alias.root), prov_concat_path(graph, alias.path, path)))
 		}
 	}
-	written := graph.written_aliases[id]
-	for alias in written {
+	for alias in graph.written_aliases[id][:] {
 		if !paths_overlap(alias.path, path) {
 			continue
 		}
@@ -414,10 +413,9 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 			path^[WRITTEN_ALIAS_DEPTH - 1].precision += {.Depth}
 		}
 	}
-	existing, found := &graph.written_aliases[local]
-	if !found {
-		graph.written_aliases[local] = make([dynamic]Written_Alias, 0, 2, graph.alloc)
-		existing = &graph.written_aliases[local]
+	_, existing, inserted, _ := map_entry(&graph.written_aliases, local)
+	if inserted {
+		existing^ = make([dynamic]Written_Alias, 0, 2, graph.alloc)
 	}
 	for &known in existing {
 		if known.target == alias.target && prov_same_path(known.at, alias.at) && prov_same_path(known.path, alias.path) {
@@ -436,6 +434,16 @@ prov_clone_written_alias :: proc(alias: Written_Alias, allocator: mem.Allocator)
 	out := alias
 	out.at = slice.clone(alias.at, allocator)
 	out.path = slice.clone(alias.path, allocator)
+	return out
+}
+
+// Deep copies of `aliases`, in `allocator`.
+@(private)
+prov_clone_written_aliases :: proc(aliases: []Written_Alias, allocator: mem.Allocator) -> [dynamic]Written_Alias {
+	out := make([dynamic]Written_Alias, len(aliases), allocator)
+	for alias, index in aliases {
+		out[index] = prov_clone_written_alias(alias, allocator)
+	}
 	return out
 }
 
