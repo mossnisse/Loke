@@ -1853,7 +1853,8 @@ checklist.
   later step binds, as a copy of the chunk does not. A task given one, as
   `foreach (rows in view.chunks_mut(1)) { spawn set(&mut rows[0]); }` starts, and one kept in a
   container across steps, was `L0641` on the next step. The borrow still suspends its own chunk,
-  the view, and the view's source while it is in use.
+  the view, and the view's source while it is in use. Chunking the source again while it does is
+  reported once, where the second traversal uses the source, not again at each place it lends.
 - The result of a call through a procedure value is in the
   [allocator regions](design.md#allocator-regions-and-region-provenance) that the procedures of its
   type the program uses as a value return their results in

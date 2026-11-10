@@ -546,6 +546,8 @@ Prov_Solve :: struct {
 	merged:  []u8,
 	// The spawns whose tasks may be running on entry to each block (`task_window`).
 	window_entry: [][]u8,
+	// Where `report_provenance` has reported a borrow diagnostic, by file and start.
+	reported: map[[2]u32]bool,
 }
 
 @(private)

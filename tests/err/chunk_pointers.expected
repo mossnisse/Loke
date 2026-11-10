@@ -22,6 +22,3 @@ L0641
 L0641
 @65:20
 `xs` cannot be used here: a mutable reborrow of it is still in use
-L0641
-@65:54
-`rows` cannot be used here: a mutable reborrow of it is still in use

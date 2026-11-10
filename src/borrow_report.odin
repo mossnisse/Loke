@@ -13,7 +13,8 @@ report_provenance :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	// One expression gets one borrow diagnostic: a receiver and the call it
 	// starts, or two rules meeting the same mistake, report once.
-	reported := make(map[[2]u32]bool, graph.alloc)
+	state.reported = make(map[[2]u32]bool, graph.alloc)
+	reported := &state.reported
 	window_entry := task_window(state)
 	window := make([]u8, (len(graph.task_sites) + 7) / 8, graph.alloc)
 	shared := Shared_Reports{
@@ -52,14 +53,14 @@ report_provenance :: proc(state: ^Prov_Solve) {
 			// A temporary's end has no span of its own and is never merged.
 			at := [2]u32{event.span.file, event.span.lo}
 			placed := event.span != Span{}
-			if !placed || !reported[at] {
+			if !placed || !reported^[at] {
 				before := len(state.k.c.diagnostics)
-				already := event.repeats_inner && reported_within(reported, event.span)
+				already := event.repeats_inner && reported_within(reported^, event.span)
 				if !already {
 					check_prov_event(state, event, state.live, state.uses)
 				}
 				if placed && (already || len(state.k.c.diagnostics) > before) {
-					reported[at] = true
+					reported^[at] = true
 				}
 			}
 			check_shared_event(state, event, window, &shared)
@@ -352,7 +353,7 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 		for carrier in event.into {
 			if !prov_slots_overlap(state, loan.slot, carrier) || bit_get(reach_row(state, state.reach, carrier), bit) ||
 			   accessed_beside(state, index, carrier) || view_elements_apart(state, loan.element, loan.slot, event.element, carrier) ||
-			   taken_from_earlier_chunk(state, loan, bit, carrier) {
+			   taken_from_earlier_chunk(state, loan, bit, carrier) || taken_where_reported(state, carrier) {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[loan.slot] | state.precision[carrier] | event.precision
@@ -382,6 +383,28 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 @(private = "file")
 taken_from_earlier_chunk :: proc(state: ^Prov_Solve, loan: Prov_Place_Loan, bit: int, carrier: int) -> bool {
 	return loan.chunk == carrier + 1 && !bit_get(reach_row(state, state.reach, loan.chunk_loans), bit)
+}
+
+// Whether `carrier` is in a chunk whose traversal was reported where it starts,
+// as `xs.chunks_mut(1)` is while a task still holds a place in `xs`: each place
+// the traversal lends conflicts with what that diagnostic names, so one report
+// covers them all. Follows the first reborrow into each slot, as `carrier_name`
+// does.
+@(private = "file")
+taken_where_reported :: proc(state: ^Prov_Solve, carrier: int) -> bool {
+	graph := state.graph
+	at := carrier
+	for _ in 0 ..< len(graph.reborrows) + 1 {
+		if at >= len(state.links_into) || len(state.links_into[at]) == 0 {
+			return false
+		}
+		link := graph.reborrows[state.links_into[at][0]]
+		if link.derived in graph.chunk_loans {
+			return state.reported[{link.span.file, link.span.lo}]
+		}
+		at = link.source
+	}
+	return false
 }
 
 // Whether `carrier` was read out through another place loan of the storage
