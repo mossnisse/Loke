@@ -16,9 +16,12 @@ proposal. Line numbers are at `fd381d23`.
 Where this summary marks a finding as **reproduced** or **checked**, the
 claim was confirmed against a probe program or the source after the review.
 Every other finding is as its reviewer reported it, and a reviewer's
-"(unverified)" marks a claim the reviewer could not confirm. The authoritative
-documents are unchanged: [known-gaps.md](known-gaps.md) and
-[open-questions.md](open-questions.md) do not yet record these findings.
+"(unverified)" marks a claim the reviewer could not confirm.
+
+The marks were checked against the code after `54f5411e`. A finding marked
+"done" is fixed, "done in part" says what is left, "not done" or "no change
+needed" says why it stays, and an unmarked finding is still open. Bugs not yet
+acted on are in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09).
 
 ## Contents
 
@@ -75,7 +78,7 @@ regression test.
 | 5 | `src/provenance_retention.odin:537-541` | `prov_parameter_label` formats into `semantic_allocator`, the long-lived arena, on every graph build. Thirteen more provenance allocations use `context.temp_allocator`, which lasts the whole batch compile, instead of the analysis arena that compiler-architecture.md "Normalized provenance input" asks for. | Memory growth | Fixed: the label and the ten graph-local sites use `graph.alloc`; the rest is in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
 | 6 | `src/borrow.odin:1691` | `publish_place_settled` compares whole `Proj_Step` structs, including `precision`, `synchronized` and `shifts`, where `same_step` is the place-identity test. A store can lose `one_place` over a flag difference and produce a spurious "may" conflict. | Minor, conservative | Fixed: `same_step`. No probe makes the flags differ, so no test shows a change |
 | 7 | `src/capture.odin:276-278` | `capture_call_method` resets `k.c.capture_rewrite` to `nil` rather than to the value it replaced, so a capture lowered while another rewrite is active would lose the outer one. | Latent | Fixed: restores the outer rewrite; reachability not established |
-| 8 | `src/const_ops.odin:136,156-158,235,323`, `src/const_float.odin:41-49`, `src/eval.odin:1313,3200-3205,3433-3436` | Big-integer temporaries, sort scratch, and a dispatch frame are charged to the compile-time evaluator's memory limit and never released, against the contract of `bi_release`. | Minor | Fixed for the integer and float folds, sorting and range `foreach` (`evaluator_folds_keep_only_results`); frames are in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
+| 8 | `src/const_ops.odin:136,156-158,235,323`, `src/const_float.odin:41-49`, `src/eval.odin:1313,3200-3205,3433-3436` | Big-integer temporaries, sort scratch, and a dispatch frame are charged to the compile-time evaluator's memory limit and never released, against the contract of `bi_release`. | Minor | Fixed for the integer and float folds, sorting and range `foreach` (`evaluator_folds_keep_only_results`); a returned call's frame releases its table and record, and since `0118aa25` so does the frame `eval_dispatch` pushes; their slots stay |
 | 9 | `src/simd.odin:431-433` | `simd_written_fold` dereferences the result of `enum_member_by_value` without a nil check; only an edited `core:simd` reaches it. | Latent crash | Fixed: reported as `L0687`; `tests/pkg_err/simd_unknown_fold` |
 | 10 | `src/eval_memory.odin:103-105` | A zero-size request yields a negative size class that the allocator reads as the heap-block sentinel, then overwrites the large-block link. Probably unreachable through the runtime wrappers. | Latent | Fixed: an empty request takes the smallest class; `evaluator_storage_serves_empty_requests` |
 | 11 | `src/thread_summaries.odin:192,205,214` | `add_global_effect` keeps the first `Effect_Source`, so "may reach" versus "reaches" in a diagnostic depends on order; `effect_call_reach` intersects precision instead. | Wording | Fixed: all three sites use `merge_effect_source`, where an exact route wins; `tests/err/parallel_merged_reach.loke` |
@@ -324,7 +327,7 @@ The recurring themes are:
 
 #### src/main.odin
 Clean, compact CLI. One drift risk.
-- **Duplication**, main.odin:341-354: the literal name lists repeat the enum
+- **Duplication** (done: `enum_choice`, Top 8), main.odin:341-354: the literal name lists repeat the enum
   members (see Top 8). They could be replaced by a generic `enum_choice`,
   which keeps the existing `choice` error message.
 - **Simplify** (done, with `@(require)`), main.odin:142: `_ :: mem` exists only so that `import
@@ -396,7 +399,7 @@ Well structured. The snapshot validation is uniform.
 
 #### src/query_index.odin
 Correct and readable.
-- **Duplication/Simplify**, query_index.odin:265-338: see Top 3. This saves
+- **Duplication/Simplify** (done: Top 3), query_index.odin:265-338: see Top 3. This saves
   about 25 lines.
 - **Data structure/algorithm**, query_index.odin:9, :54-58: `visited:
   map[rawptr]bool` hashes every expression node in the program. A file walk
@@ -424,7 +427,7 @@ Fine. No findings.
 
 #### src/packages.odin
 The program-level fixed point is clear.
-- **Data structure/algorithm**, packages.odin:283, :288: see Top 2. A
+- **Data structure/algorithm** (done: Top 2), packages.odin:283, :288: see Top 2. A
   `GetFullPathNameW` call and three temporary allocations happen per source
   file and per overlay on every package load. They also happen again for every
   package in `incremental.odin:153`, through `package_sources`.
@@ -478,7 +481,7 @@ Thorough. It is the subtlest file in the group and reads well.
   loops over different element types. Small.
 
 #### src/compiler.odin
-- **Bug (documentation)**, compiler.odin:159-160: an orphan comment describes
+- **Bug (documentation)** (done: removed in `ad42446c`, bug 19), compiler.odin:159-160: an orphan comment describes
   fields that do not exist (Top 5).
 - **Structure**, compiler.odin:39-407: `Compiler` has about 150 fields in
   one flat record, covering the front end, generics, the provenance solver,
@@ -587,7 +590,7 @@ Fine. The edits are checked by comparing AST dumps.
 
 #### src/doc.odin
 One model drives both `-doc` and `-api`, which is a good design.
-- **Data structure/algorithm**, doc.odin:794: see Top 1. Each call costs two
+- **Data structure/algorithm** (done: Top 1), doc.odin:794: see Top 1. Each call costs two
   `lex_text` calls, each with a scratch `Compiler`, even when no comment was
   removed.
 - **Bug (edge, unverified)** (not done: `text` has comments cut by
@@ -624,7 +627,7 @@ Robust. Job objects, inheritable-handle lists, and quoting are all handled.
   reads or `WaitForMultipleObjects` on the process and pipe events would
   remove the polling. This is a deliberate trade-off, so it only matters if
   parallel builds show CPU cost (unverified).
-- **Simplify**, subprocess.odin:328-337: `environment_block_of` is quadratic
+- **Simplify** (no change needed, as the finding says), subprocess.odin:328-337: `environment_block_of` is quadratic
   in the number of environment entries. That is fine at about 100 entries; no
   change is needed.
 
@@ -812,7 +815,7 @@ There are also a few small accounting leaks: evaluator temporaries that the
    so `[1000][100]int{}` builds 1000 identical rows, where `zero_const` itself
    builds one row and shares it. Separately, `zero_const` re-counts
    `const_element_count` at every level of recursion (`src/zero.odin:159`).
-5. **Release evaluator temporaries in the constant helpers the evaluator calls.**
+5. **Release evaluator temporaries in the constant helpers the evaluator calls.** (Done: bug 8, in `21759e66` and `ae120d14`)
    `exact_fma` (`src/const_float.odin:41-49`), `rotate_const`
    (`src/const_ops.odin:156-158`), `bit_value_const` (`src/const_ops.odin:136`),
    and the unwrapped result in `fold_integer` / `fold_unary`
@@ -872,7 +875,7 @@ correctness bug.
     (type, mode, reset, escape, cross) and checks attributes against the written
     element type. Add a regression test for each attribute. Unverified by a run;
     reproduce first.
-- **Duplication:** apart from the bug, `resolve_proc_type` (`src/check.odin:1866-1902`)
+- **Duplication:** (done with bug 1: `check_signature_parameter` and `append_signature_parameter`) apart from the bug, `resolve_proc_type` (`src/check.odin:1866-1902`)
   is a cut-down copy of the per-name loop in `append_signature_group`
   (`src/check.odin:1287-1357`): `allocator_reset_ok`,
   `normalize_signature_parameter`, `variadic_position_ok`, escape, cross-thread.
@@ -929,7 +932,7 @@ duplicated and one check is repeated on every statement.
   `Stmt_Defer`, recurse into `Stmt_When.selected`, select `^Decl`. Extract one
   `for_each_sequence_decl(stmts, visit)`. `src/impl.odin:432`
   (`hoist_hooks_in_stmt`) is a wider relative. About 15 lines.
-- **Data structure/algorithm: repeated probe checks on every indexed assignment.**
+- **Data structure/algorithm: repeated probe checks on every indexed assignment.** (not done: see Top 6)
   `place_setters` (823) probe-checks a clone of the operand of every indexed
   assignment (`a[i] = v`, `a[i] += v`):
   - `check_assign` → `check_place_setter` (438)
@@ -948,7 +951,7 @@ duplicated and one check is repeated on every statement.
   ("`synth.odin`: builders for the syntax lowerings"), `lowered_assign` belongs in
   `synth.odin` as `synth_assign`. Today the only other `new(Stmt_Assign` is at
   check_stmt.odin:697, so `lower_destructuring_setter_assign` could use it too.
-- **Bug (unverified, minor):** the discard path in `check_assign` (426-433)
+- **Bug (unverified, minor):** (done: bug 17, now L0310) the discard path in `check_assign` (426-433)
   handles `_ = nil` silently. `default_type(TYPE_UNTYPED_NIL)` is `INVALID_TYPE`,
   so `materialize` returns false without a diagnostic and the discard keeps type
   `untyped nil`. `check_decl_value` and `infer_param_default_type` report L0310
@@ -981,7 +984,7 @@ switches deliberately avoid one.
 Verdict: the core dispatch and `materialize` are solid. The file is too large
 and has allocation and lookup costs on hot paths.
 
-- **Data structure/algorithm:** `require_unsafe_import` (2816-2835) loops over
+- **Data structure/algorithm:** (done: Top 6) `require_unsafe_import` (2816-2835) loops over
   every package and every file to find the one holding `span.file`, then scans its
   imports. That is O(total files) per C-pointer index, slice or unsafe conversion
   (5 call sites). Nearly always `span.file == k.file`, so fast-path through
@@ -1023,7 +1026,7 @@ and has allocation and lookup costs on hot paths.
 Verdict: clean and compact. Folding is wasteful for large zero-filled
 literals.
 
-- **Data structure/algorithm:** `fold_aggregate` (530-548) calls
+- **Data structure/algorithm:** (done: Top 4) `fold_aggregate` (530-548) calls
   `zero_const(k.c, element_type)` once per unwritten slot. For an array, every
   slot has the same `info.element`, so `[1000][100]int{}` builds 1000 separate
   100-element rows, about 11 MB of `Const_Value`s in the semantic arena, where one
@@ -1117,7 +1120,7 @@ Verdict: good. The workarounds for `core:math/big` bugs are documented, and
 Verdict: correct folding and transmute logic. A few intermediates escape
 `bi_release`.
 
-- **Bug (memory accounting):** the evaluator calls these helpers with `ev.alloc`
+- **Bug (memory accounting):** (done: bug 8) the evaluator calls these helpers with `ev.alloc`
   (`src/eval.odin:855,900,2609,2625`), where every integer is charged until it is
   released (`src/eval_memory.odin` header; `bi_release` in bigint.odin:38). These
   intermediates are never released:
@@ -1131,7 +1134,7 @@ Verdict: correct folding and transmute logic. A few intermediates escape
 
   `dyadic_to_float` and `decimal_to_float` show the intended pattern. Release
   whenever the wrapped value's digits differ from the input's.
-- **Simplify:** `bit_value_const` line 136,
+- **Simplify:** (done with bug 8: decided without building a 1) `bit_value_const` line 136,
   `bi_cmp(value, bi_from_i64(storage, 1)) <= 0`, can be
   `bi_sign(value) <= 0 || bi_magnitude_bits(value) <= 1`. That allocates nothing
   and builds nothing to leak.
@@ -1141,7 +1144,7 @@ Verdict: correct folding and transmute logic. A few intermediates escape
 Verdict: high quality. The exact `sqrt`, `mod` and `fma` and the decimal rounding
 are carefully argued. One leak.
 
-- **Bug (memory accounting):** `exact_fma` (41-49) builds about 8 integers in
+- **Bug (memory accounting):** (done: bug 8) `exact_fma` (41-49) builds about 8 integers in
   evaluator storage and releases none of them: three `dyadic_of` significands, the
   product, two shifted terms and the sum. It is called from `src/eval.odin:2590`
   with `ev.alloc`. Add `bi_release` as `dyadic_to_float` (244, 255, 262) does.
@@ -1150,7 +1153,7 @@ are carefully argued. One leak.
 
 Verdict: fine. The element-count guard is recomputed redundantly.
 
-- **Data structure/algorithm:** `zero_const(build = true)` calls
+- **Data structure/algorithm:** (done: Top 4) `zero_const(build = true)` calls
   `const_element_count(c, type)` (159) at every level of its recursion, and
   `const_element_count` walks the whole subtree, so a nested aggregate costs
   O(size × depth). Check once in a public wrapper, then recurse in a file-private
@@ -1349,7 +1352,7 @@ generic-success logic lives in `optional.odin`.
    the lookup package's extensions are complete would remove most of this. It would
    also stop the unbounded `pending_private_reads` growth: each successful check appends
    one entry (`src/interface.odin:582-585`).
-3. **Fix the diagnostic that prints a cache key.** `src/interface.odin:373` formats a
+3. **Fix the diagnostic that prints a cache key.** (Done: bug 2, `generic_value_text`) `src/interface.odin:373` formats a
    non-representable interface argument with `const_key_text` (gives `t123`,
    `f64:3ff0000000000000`, or a string without quotes), against the rule in
    compiler-architecture.md "Compile-time execution and generics" that human-readable
@@ -1411,7 +1414,7 @@ building and repeated syntax walks.
 - **Simplify** `src/generic.odin:206-207` with `310`: `reject_uninstantiated_generic` calls
   `check_independent_poly_defaults`, which builds its own `signature_stand_ins`, then builds
   a second one. Pass one scope; saves an allocation and 2 lines.
-- **Duplication** `src/generic.odin:277-286`, `320-327`: two copies of the "probe against
+- **Duplication** (done: Top 7; the poly-default probe keeps its own) `src/generic.odin:277-286`, `320-327`: two copies of the "probe against
   stand-ins, see whether `reached`" pattern; a third is `src/private_names.odin:897-907`.
   Move `check_against_stand_ins` here and use it in all three (~12 lines).
 - **Duplication** `src/generic.odin:627-669` vs `545-595`: `type_pattern_parts` appends one
@@ -1428,7 +1431,7 @@ building and repeated syntax walks.
   `[]Generic_Param_Decl` from `generic_params` groups identically; `738-743` and
   `src/interface.odin:62-67` share the `def_scope`-or-package-scope fallback. One helper
   each (~10 lines).
-- **Duplication** `src/generic.odin:979-997` (`generic_instance_name`) and
+- **Duplication** (done in part: the interface text is built with one builder; the two printers stay separate) `src/generic.odin:979-997` (`generic_instance_name`) and
   `src/interface.odin:512-525` (`interface_application_text`) both print `Name(a, b)` from
   `generic_argument_text`; the interface one builds it by repeated `concat` into the
   semantic arena. One `application_text(c, prefix, name, args)` builder.
@@ -1440,7 +1443,7 @@ building and repeated syntax walks.
 
 #### src/generic_impl.odin
 Verdict: clear two-phase install/settle logic; one quadratic structure and some thin wrappers.
-- **Data structure/algorithm** `src/generic_impl.odin:548-561`: O(n²) member slice regrowth
+- **Data structure/algorithm** (done: Top 8) `src/generic_impl.odin:548-561`: O(n²) member slice regrowth
   per instance (Top 8).
 - **Data structure/algorithm** `src/generic_impl.odin:190-200`: every new instance clones and
   stable-sorts all blocks of its template by specificity. Insert blocks sorted in
@@ -1457,7 +1460,7 @@ Verdict: clear two-phase install/settle logic; one quadratic structure and some 
 
 #### src/generic_alias.odin
 Verdict: solid; the logic is dense but each procedure has one job.
-- **Duplication** `src/generic_alias.odin:110-112`: Record-or-Alias callee test (Top 7).
+- **Duplication** (done: Top 7) `src/generic_alias.odin:110-112`: Record-or-Alias callee test (Top 7).
 - **Duplication** (done, as `new_param_scope`) `src/generic_alias.odin:192`: `new_scope(..., scope == nil ?
   build_universe(k.c) : scope, .Local)` also at `src/interface.odin:407` and inside
   `new_instance_scope` (`src/generic.odin:1064-1070`). One `new_param_scope(k, parent)`.
@@ -1467,7 +1470,7 @@ Verdict: solid; the logic is dense but each procedure has one job.
 #### src/interface.odin
 Verdict: correct and well documented, but the most expensive file in the group because
 nothing is cached.
-- **Bug** `src/interface.odin:373`: cache encoding in a user diagnostic (Top 3).
+- **Bug** (done: bug 2) `src/interface.odin:373`: cache encoding in a user diagnostic (Top 3).
 - **Data structure/algorithm** `src/interface.odin:450-467`, `548-587`, `1281-1330`: no
   memoization of satisfaction or of a bound's flattened slots (Top 2).
 - **Data structure/algorithm** `src/interface.odin:582-585`: one `Pending_Private_Read` per
@@ -1534,14 +1537,14 @@ Verdict: clear; the type builders are near-copies (Top 5).
 
 #### src/iteration_foreach.odin
 Verdict: good binder; protocol validation duplicated (Top 4).
-- **Duplication** `src/iteration_foreach.odin:180-232`, `236-259`: see Top 4.
+- **Duplication** (done: Top 4) `src/iteration_foreach.odin:180-232`, `236-259`: see Top 4.
 - **Duplication** (done, as `reject_type_iterable`) `src/iteration_foreach.odin:25-33` and `src/expand.odin:278-288`: the same
   "`X` is a type, so it is not iterable; write `.values()`" report with different codes
   (L0456/L0454). One helper taking the code (~10 lines).
 
 #### src/iteration_adapters.odin
 Verdict: compact but dense; reuse would shorten it.
-- **Duplication** `src/iteration_adapters.odin:71-82`, `144-150`: Top 4.
+- **Duplication** (done: Top 4) `src/iteration_adapters.odin:71-82`, `144-150`: Top 4.
 - **Duplication** `src/iteration_adapters.odin:107-115`, `155-168`: Top 5. Backend labels
   here use raw type ids (`"%s.%d.%d"`), elsewhere type names.
 
@@ -1550,7 +1553,7 @@ Verdict: fine, but half of it is a copy.
 - **Duplication** `src/iteration_mutable.odin:41-49`: `array_iterator_type` with a mutable
   slice and the data field renamed `items` (same `ITER_ARRAY_*` positions). Parameterize
   `array_iterator_type` (label, mutability, cache map) instead (~10 lines).
-- **Duplication** `src/iteration_mutable.odin:63-94`: tail shared with
+- **Duplication** (done: Top 4) `src/iteration_mutable.odin:63-94`: tail shared with
   `check_protocol_foreach` (Top 4).
 - **Structure** (done) the file has no header comment, unlike its siblings.
 
@@ -1587,7 +1590,7 @@ Verdict: fine.
 
 #### src/simd.odin
 Verdict: fine; one robustness hole.
-- **Bug** `src/simd.odin:431-433`: `simd_written_fold` dereferences `member.name` without
+- **Bug** (done: bug 9) `src/simd.odin:431-433`: `simd_written_fold` dereferences `member.name` without
   checking that `enum_member_by_value` found a member; a non-constant or out-of-range
   `Fold` argument (only reachable from an edited `core:simd`) crashes the compiler instead
   of reporting, unlike the atomics path (L0666). Check for nil and report.
@@ -1646,7 +1649,7 @@ Verdict: correct; one section belongs with generics.
   `Generic_Lookup`) is "does this syntax depend on a generic binding" logic, paired with
   `success_parameters` in `src/generic.odin:773-803`. Move them together (generic.odin or
   generic_alias.odin), leaving optional.odin with the failure protocol.
-- **Duplication** `src/optional.odin:421-424`: Record-or-Alias callee (Top 7).
+- **Duplication** (done: Top 7) `src/optional.odin:421-424`: Record-or-Alias callee (Top 7).
 
 #### src/variadic_lend.odin
 Verdict: fine; mirrors erased.odin's pack path (see erased.odin).
@@ -1661,7 +1664,7 @@ Verdict: good, small builders; nothing notable.
 
 #### src/capture.odin
 Verdict: fine apart from the clone side channel.
-- **Bug (latent)** `src/capture.odin:276-278`: sets `k.c.capture_rewrite = nil` after the
+- **Bug (latent)** (done: bug 7) `src/capture.odin:276-278`: sets `k.c.capture_rewrite = nil` after the
   clone instead of restoring the previous value; correct only while capture lowering is
   never re-entered during a clone. `saved := ...; defer k.c.capture_rewrite = saved`, or
   Top 6.
@@ -1676,8 +1679,8 @@ Verdict: fine.
 #### src/private_names.odin
 Verdict: large but coherent: a by-name syntax walk is the right model for an interface-file
 check.
-- **Duplication** `src/private_names.odin:897-907`: stand-in probe (Top 7).
-- **Duplication** `src/private_names.odin:917-923`: `applies_generic_type` is the same
+- **Duplication** (done: Top 7) `src/private_names.odin:897-907`: stand-in probe (Top 7).
+- **Duplication** (done: Top 7) `src/private_names.odin:917-923`: `applies_generic_type` is the same
   expression as `src/check.odin:2126` (Top 7).
 - **Data structure/algorithm** (done, with a map: the walk is seeded with
   bound types of any kind, which a `Type_Walk` would not record)
@@ -1687,7 +1690,7 @@ check.
 
 #### src/parallel.odin
 Verdict: well structured lowering.
-- **Bug** `src/parallel.odin:194`: L0727 "`core:thread` declares no `Task_Scope`" is reported
+- **Bug** (done: bug 3) `src/parallel.odin:194`: L0727 "`core:thread` declares no `Task_Scope`" is reported
   at `NO_SPAN` although `keyword` is passed in for exactly this; use `keyword`.
 
 #### src/box.odin
@@ -1707,7 +1710,7 @@ Verdict: fine; two ways to find the same types.
 
 #### src/expand.odin
 Verdict: good.
-- **Duplication** `src/expand.odin:278-288`: see iteration_foreach.odin.
+- **Duplication** (done, as `reject_type_iterable`) `src/expand.odin:278-288`: see iteration_foreach.odin.
 
 #### src/reflect.odin
 Verdict: fine.
@@ -1838,7 +1841,7 @@ Verdict: correct-looking but far too large. It is the hub of the quadratic scans
 - **Simplify** (done; the empty-set check stays, so no empty `provider_parents` entry is made): `prov_declare_provider` (:4228–4235) nests `if initialized { if !region_is_empty(...) {…} }`. `prov_merge_parent` with an empty set is harmless, so collapse it to one line.
 - **Structure**: `prov_assign` (:4286–4411) is 125 lines with three interleaved destination kinds: local ident, rooted place, through carrier. Split it into `prov_assign_local` and `prov_assign_place`, keeping the shared preamble. In the same function, `clones` (:4299) is loop-invariant; hoist it. (Hoisting done; the split is still open.)
 - **Data structure/algorithm**: `prov_place_hops` allocates afresh on every call, and the same place's hops are recomputed by `prov_read_through_carrier` and then again by callers (e.g. `prov_view_element_store` :3111, `prov_constant_view_element` :3070, `prov_view_parts_through_carrier` :3254). Cache the hops on `Prov_Value` (input is frozen per value), or pass them through.
-- **Bug (unverified)**: in `prov_materialize_view_publish` (:2037–2053), the settled publication emits its `Def`s directly into the construction graph `output`, whose `materialized` is nil. `prov_note_view` therefore appends fresh entries to `output.view_defs` (and `prov_note_offset` records `reach.defined`) after the walk. That contradicts the comment at :1042–1044 that materialized events record no definitions. The construction-time entries become orphans that widen `solve_view_defs`'s bit rows (view_start.odin:332). This looks harmless to correctness. Either set a flag so `prov_note_view`/`prov_note_offset` skip during materialization, or fix the comment.
+- **Bug (unverified)** (not done: recorded in open-questions.md as bug 15): in `prov_materialize_view_publish` (:2037–2053), the settled publication emits its `Def`s directly into the construction graph `output`, whose `materialized` is nil. `prov_note_view` therefore appends fresh entries to `output.view_defs` (and `prov_note_offset` records `reach.defined`) after the walk. That contradicts the comment at :1042–1044 that materialized events record no definitions. The construction-time entries become orphans that widen `solve_view_defs`'s bit rows (view_start.odin:332). This looks harmless to correctness. Either set a flag so `prov_note_view`/`prov_note_offset` skip during materialization, or fix the comment.
 
 #### src/provenance_reborrow.odin
 
@@ -1846,14 +1849,14 @@ Verdict: the logic is clear, but it is the centre of the O(R) scans.
 
 - **Data structure/algorithm**: `prov_slot_is_reborrow` (:364–371), `prov_slot_is_pending` (:290–297), the "weaken earlier reborrows of this slot" loop (:76–80), `prov_reborrow_loaded`'s capability lookup (:211–215) and the per-slot `graph.place_loans` scan (:25–29) are all linear over global arrays. They are called per slot per store or argument. See Top recommendation 1.
 - **Bug (minor)** (not done: whether the latest store's capability or any mutable one should win is a design question that needs a reproducing program first): `prov_reborrow_loaded` (:211–215) takes the *last* matching reborrow's capability (`mutable = reborrow.mutable && …` overwritten in the loop). If several reborrows derive from `event.slot`, the result depends on list order. Use `||` (any mutable), or document why the last one wins.
-- **Simplify**: `prov_settle_pending_reborrows` (:235) allocates from `context.temp_allocator`; use `graph.alloc` (Top recommendation 4). The fixpoint is a round-robin over all reborrows. With the derived-index from Top recommendation 1, a worklist of newly marked slots would be O(R).
+- **Simplify** (done in part: `graph.alloc`, bug 5; the round-robin waits for the index of Top recommendation 1): `prov_settle_pending_reborrows` (:235) allocates from `context.temp_allocator`; use `graph.alloc` (Top recommendation 4). The fixpoint is a round-robin over all reborrows. With the derived-index from Top recommendation 1, a worklist of newly marked slots would be O(R).
 - **Duplication**: `prov_reborrow_traversal` (:347–360) and `prov_reborrow_read_only` (cfg_provenance.odin:3554) are near-copies; see cfg_provenance.
 
 #### src/provenance_escape.odin
 
 Verdict: coherent ("what a store or call lets escape"), with one copy of the quadratic-append pattern and one of the four alias walks.
 
-- **Data structure/algorithm / Duplication**: `prov_define_copied_content` (:359–374) is the same "dedup scan, then copy into `len+1`" as `prov_define_region_content` (provenance_regions.odin:705–743). Merge them (Top recommendation 5).
+- **Data structure/algorithm / Duplication** (done: Top recommendation 5): `prov_define_copied_content` (:359–374) is the same "dedup scan, then copy into `len+1`" as `prov_define_region_content` (provenance_regions.odin:705–743). Merge them (Top recommendation 5).
 - **Duplication**: `prov_store_reachable_regions` (:539–551) is one of the four alias-reachability walks (Top recommendation 7).
 - **Simplify** (not done: the one-element slice would make the whole-value case copy `at` through `prov_concat_path`, which the current branch avoids): `prov_store_region_through` (:476–484) has a `landed != nil` branch that only differs by iterating rows. Write `for content in landed or {whole}` with a one-element slice built from `at`, saving 4 lines.
 - **Structure**: `prov_call_written_regions` (:605–680) and `prov_call_moved_owner` (:744–768) are call effects. They sit better in `provenance_retention.odin`, which already owns "what a call may leave behind" and calls both from `prov_call_retention`. `prov_type_at`/`prov_type_along` (:113–163) are pure type queries used by six files; they belong in carrier_shape.odin next to `carrier_shape`.
@@ -1870,13 +1873,13 @@ Verdict: good. `prov_call` reads as a clear script of a call's phases.
 
 Verdict: the heaviest query logic, well commented. Its main issues are uncached type walks, quadratic content growth, and two copies of the carry/seed clone.
 
-- **Data structure/algorithm**: `prov_type_has_region` (:1110), `prov_holds_allocator` (:1075) and `prov_view_reaches_provider` (:1650) are uncached; see Top recommendation 6.
-- **Data structure/algorithm**: in `prov_define_region_content` (:732–742), the full slice copy per new entry is quadratic; see Top recommendation 5.
-- **Duplication**: the deep clone of `region_content` is written twice, in `prov_seed_regions` (:332–338) and `prov_carry_facts` (:380–386). The `Written_Alias` clone at :375 duplicates the field-by-field copy in `prov_add_written_alias` (provenance_aliases.odin:426–432). Add `clone_region_contents(content, allocator)` and `clone_written_alias(alias, allocator)`, saving ~12 lines.
+- **Data structure/algorithm** (done in part: Top recommendation 6): `prov_type_has_region` (:1110), `prov_holds_allocator` (:1075) and `prov_view_reaches_provider` (:1650) are uncached; see Top recommendation 6.
+- **Data structure/algorithm** (done: Top recommendation 5): in `prov_define_region_content` (:732–742), the full slice copy per new entry is quadratic; see Top recommendation 5.
+- **Duplication** (done: `prov_clone_region_contents` and `prov_clone_written_alias`): the deep clone of `region_content` is written twice, in `prov_seed_regions` (:332–338) and `prov_carry_facts` (:380–386). The `Written_Alias` clone at :375 duplicates the field-by-field copy in `prov_add_written_alias` (provenance_aliases.odin:426–432). Add `clone_region_contents(content, allocator)` and `clone_written_alias(alias, allocator)`, saving ~12 lines.
 - **Duplication**: one of the alias walks is `Walk.walk` inside `prov_reached_regions` (:1395–1421); see Top recommendation 7.
 - **Simplify**: the `region_aliases` fan-out "for alias in aliases { recurse(alias.root, alias.path ++ path) } if prov_aliases_settle(aliases) { return }" appears in `prov_merge_region_of` (:265–271), `prov_region_for_symbol` (:440–448), `prov_region_content_at` (:513–518), `prov_define_region_content` (:722–727) and `prov_written_parameter_content` (:484–488). It also appears in provenance_aliases.odin:310–316, 553–558 and provenance_escape.odin:169–175. An iterator `prov_region_alias_targets(graph, id, path) -> ([]Prov_Region_Alias, settled: bool)` would make the "settled, so skip the local snapshot" rule explicit in one place.
 - **Data structure/algorithm**: region queries (`prov_result_region_at` with `.Owners` :37–56, `prov_copied_type_region` :1941–1985) recurse per field and allocate a new path at every step with `prov_concat_path`/`prov_extend`. The same (value, path) is queried repeatedly in one round, for example by escape checks and resets re-reading `prov_result_region_fields`. A per-round memo is unsafe while facts grow within a round. Consider a memo valid only during `prov_materialize_events`, where facts are settled (unverified gain; profile with `bench/provenance_profile`).
-- **Simplify**: `prov_carries_allocator`, `prov_holds_allocator` and `prov_type_has_region` are three near-identical recursive walks over struct fields, union variants and array elements with a depth bound (:1066–1138). One `type_any_part(c, type, leaf, depth)` walker with a leaf predicate would serve all three, plus the cache from Top recommendation 6. Saves ~35 lines.
+- **Simplify** (done in part: `prov_holds_allocator` and `prov_type_has_region` share `record_holds_walk`; `prov_carries_allocator` keeps its own): `prov_carries_allocator`, `prov_holds_allocator` and `prov_type_has_region` are three near-identical recursive walks over struct fields, union variants and array elements with a depth bound (:1066–1138). One `type_any_part(c, type, leaf, depth)` walker with a leaf predicate would serve all three, plus the cache from Top recommendation 6. Saves ~35 lines.
 - **Structure**: `prov_reset` (:2070–2105), `prov_hold_owner` and `prov_lend_copied_place` (:2110–2131) are walk-side event recorders, not region queries. Move `prov_reset` next to `prov_materialize_reset` (provenance_event.odin), and the other two to the call/argument files. The provider-token machinery (:756–1015, ~260 lines: `Provider_Path`, tokens, moved providers) is a coherent sub-unit that could be `provenance_providers.odin`.
 
 #### src/provenance_thread_summaries.odin
@@ -1890,8 +1893,8 @@ Verdict: small and focused.
 
 Verdict: clean, self-contained, well-argued meet logic. Nothing significant.
 
-- **Simplify**: `prov_param_index` (:300–302) is `slice.linear_search` over `param_symbols`, called from `prov_note_restored` on every `prov_merge_region_of` with params set. That is small in practice. If parameters ever grow, keep a `map[Symbol_Id]int`.
-- **Simplify**: `prov_link_overwrites` (:154–165) builds the meet with `slice.contains` per element, O(n²). Fine at the realistic sizes; note it only if overwrite sets grow.
+- **Simplify** (no change needed, as the finding says): `prov_param_index` (:300–302) is `slice.linear_search` over `param_symbols`, called from `prov_note_restored` on every `prov_merge_region_of` with params set. That is small in practice. If parameters ever grow, keep a `map[Symbol_Id]int`.
+- **Simplify** (no change needed, as the finding says): `prov_link_overwrites` (:154–165) builds the meet with `slice.contains` per element, O(n²). Fine at the realistic sizes; note it only if overwrite sets grow.
 
 #### src/provenance_arguments.odin
 
@@ -1918,8 +1921,8 @@ Verdict: fine.
 
 Verdict: correct in outline. It holds one real allocation bug and two copies of the candidate filter.
 
-- **Bug**: `prov_parameter_label` (:537–541) allocates in `semantic_allocator`; see Top recommendation 4.
-- **Bug (memory)**: there are nine `context.temp_allocator` allocations (:15, :158–159, :199, :234–235, :240, :432–433). `prov_mutable_reach` allocates a fresh temp map per truncated path per call (:240). Use `graph.alloc` (Top recommendation 4). `report_thread_local_writes` has no graph; give it `c.analysis_allocator`.
+- **Bug** (done: bug 5): `prov_parameter_label` (:537–541) allocates in `semantic_allocator`; see Top recommendation 4.
+- **Bug (memory)** (done: bug 5 for the graph-local sites; `report_thread_local_writes` is in open-questions.md): there are nine `context.temp_allocator` allocations (:15, :158–159, :199, :234–235, :240, :432–433). `prov_mutable_reach` allocates a fresh temp map per truncated path per call (:240). Use `graph.alloc` (Top recommendation 4). `report_thread_local_writes` has no graph; give it `c.analysis_allocator`.
 - **Simplify** (done: the bool is now `settles_later`. `linked` keeps `slice.contains`, since the worklist holds a few slots): in `prov_link_retained` (:433 vs :459), `pending` is a `[dynamic]int` worklist and is then shadowed inside the loop by `pending := !mutable_source && …` (a bool). It works because the shadow is declared after the last use of the outer name in that iteration, but it is a trap and fails `-vet-shadowing`. Rename the bool `pending_link`.
 - **Data structure/algorithm**: `prov_link_retained` (:446–450) scans all reborrows per temporary source, which the index fixes (Top recommendation 1). `linked` uses `slice.contains` (:437), O(n²) on the worklist; use a `map[int]bool` or a bitset over slots.
 - **Duplication**: the candidate filter in `prov_link_copied_carriers` (:76–84) and the `link` closure in `prov_link_retained` (:465–480) skip the same things: an immutable parameter's own slot, temporaries, non-carriers and region providers. Extract `prov_slot_may_take_link(graph, slot) -> (type, ok)`.
@@ -1938,7 +1941,7 @@ Verdict: fine.
 
 - **Data structure/algorithm**: `prov_spawn_reborrows` (:154–165) is a nested loop over held slots × all reborrows; the index fixes it (Top recommendation 1).
 - **Simplify**: the lazy map/array initialisation (`if graph.task_slots == nil { make… }` :92–96, :105–107, :113–115, `parallel_scopes` :184–186, `task_sites` provenance_tasks.odin:48–50) is inconsistent with `new_prov_state`, which eagerly makes ~45 containers. `make(map, allocator)` does not allocate until the first insert, so eagerly making these too removes ~12 lines of nil checks. Alternatively make everything lazy; either is fine, but pick one.
-- **Data structure/algorithm** (minor): `prov_window_bit` (:178–189) is a linear search over `parallel_scopes`. It is fine because there are few blocks, but it is called per join and per pool event.
+- **Data structure/algorithm** (no change needed, as the finding says) (minor): `prov_window_bit` (:178–189) is a linear search over `parallel_scopes`. It is fine because there are few blocks, but it is called per join and per pool event.
 
 #### src/provenance_offsets.odin
 
@@ -1952,9 +1955,9 @@ Verdict: a careful, bounded algorithm (Tarjan-style SCC walk with epoch invalida
 
 Verdict: subtle and well commented. It holds two of the four alias walks and the third copy of the append-by-copy pattern.
 
-- **Data structure/algorithm**: `prov_add_written_alias` (:415–433) copies the slice per insert; see Top recommendation 5. `prov_written_targets` (:53–62) dedups by an O(n²) scan.
+- **Data structure/algorithm** (done in part: Top recommendation 5; `prov_written_targets` still dedups by scan): `prov_add_written_alias` (:415–433) copies the slice per insert; see Top recommendation 5. `prov_written_targets` (:53–62) dedups by an O(n²) scan.
 - **Duplication**: `prov_forget_storage_aliases` (:546–569) and `prov_load_aliases_below` (:187–205) are reachability walks; see Top recommendation 7. The `region_aliases` fan-out in `prov_written_aliases_of` (:310–316) is another copy of the pattern noted under provenance_regions.
-- **Duplication**: the `1 ..= 8` load-depth loop (:173); see provenance_results.
+- **Duplication** (done: `next_load_depth`): the `1 ..= 8` load-depth loop (:173); see provenance_results.
 - **Simplify** (done): in `prov_add_written_alias` (:408–414), the `paths := [2]^[]Proj_Step{…}` loop over two pointers is clever but obscures a two-line truncation. Write a `truncate_alias_path(path)` helper and call it twice.
 
 #### src/provenance_input.odin
@@ -1962,7 +1965,7 @@ Verdict: subtle and well commented. It holds two of the four alias walks and the
 Verdict: a clean boundary module; the identity rules are clear.
 
 - **Data structure/algorithm**: `prov_map_entry_step` (:397–432) formats a string key with `fmt.aprintf` on *every* call, including hits, just to look it up in `map_key_entries: map[string]int`. It is called per map index and per literal key. Key the map by a small struct (`kind`, `i64`, `string`) and allocate only on insert.
-- **Simplify**: `prov_repr` (:194–202) scans `converting` from the top. Fine; the stack is shallow.
+- **Simplify** (no change needed, as the finding says): `prov_repr` (:194–202) scans `converting` from the top. Fine; the stack is shallow.
 
 #### src/provenance_form.odin
 
@@ -1990,7 +1993,7 @@ Verdict: good. Classifying arguments into an enum keeps `prov_call_argument` rea
 
 Verdict: compact and clear replay driver.
 
-- **Bug (latent)**: the weight-equality termination needs a guard; see Top recommendation 8 (:98).
+- **Bug (latent)** (done: bug 13): the weight-equality termination needs a guard; see Top recommendation 8 (:98).
 - **Duplication**: the replay of `.Result` duplicates `prov_store_call_results`'s region part (:219–220); see provenance_results.
 - **Simplify**: the recording idiom (`recorded := prov_effect_active(graph) && …; if recorded { prov_effect_begin(graph, Op{…}) }; defer prov_effect_end(graph, recorded)`) is repeated 16 times. Odin's `@(deferred_out=prov_effect_end)` on a `prov_effect_scope :: proc(graph, recorded: bool, op) -> (^Flow_Graph, bool)` turns each into one line. Make `prov_effect_path` return nil when inactive so the eager op construction stays cheap. Saves ~32 lines.
 
@@ -2098,7 +2101,7 @@ Verdict: the solver core is sound and well tuned, but it holds too much (types, 
 - **Data structure/algorithm** `borrow.odin:1591-1604` (`.Rebind`) scans every loan and then every slot for each matching loan, which is O(loans·slots) per event. `end_loans` (`:1800-1820`) scans all loans per `Access`, `Root_End` and `Reset` event. Build `loans_by_root: [][]int` once in `prepare_state`; `Rebind`, `Root_End` and the invalidation then touch only that root's loans. For `Rebind`, OR those loans into one mask and clear it per slot row in a single pass.
 - **Duplication** (done: `solve_links`, whose steps are now private to borrow.odin) `borrow.odin:1133-1137` and `borrow_summaries.odin:84-87` run the same four-step link solve: `link_landed_stores`, `resolve_content_reads`, `prov_settle_pending_reborrows`, `solve_links_held`. Extract `solve_links(state)`. Saves about 5 lines, and the ordering constraint then has one owner.
 - **Duplication** `borrow.odin:1274-1279`, `:1378-1395`, `:2283-2291` and `borrow_loaded_below.odin:160-177` each hand-walk `[][]T` block-table pages with `at * BLOCK_TABLE_PAGE + index`. `borrow_tables.odin` should own `block_table_or`, `block_table_and` and an interned-row join, `interned_join(rows, a, b, op) -> u32`. The OR join (`join_links_held`) and the AND join (`join_loaded_below`) are the same code with a different byte operator. Saves about 25 lines.
-- **Simplify** `settle_result_summaries` (`borrow.odin:866-935`) hand-rolls a FIFO with `queued[]`, a `map[Symbol_Id][dynamic]^Expr_Proc` of callers, and a `registered[]` high-water mark. The `stale` test already decides revisits, so a body-indexed reader list plus the shared worklist (top recommendation 3) gives the same result in about half the code. It also removes the map-iteration miscompile workaround at `:925`.
+- **Simplify** (done: top recommendation 3) `settle_result_summaries` (`borrow.odin:866-935`) hand-rolls a FIFO with `queued[]`, a `map[Symbol_Id][dynamic]^Expr_Proc` of callers, and a `registered[]` high-water mark. The `stale` test already decides revisits, so a body-indexed reader list plus the shared worklist (top recommendation 3) gives the same result in about half the code. It also removes the map-iteration miscompile workaround at `:925`.
 - **Structure** Lines 163-310 (the `Proj_Step` algebra: `path_extend`, `path_concat`, `paths_overlap`, `steps_overlap`, and so on) are used by `carrier_shape.odin`, `cfg_provenance.odin` and `view_start.odin`, and need no solver. Move them to a `prov_paths.odin`, or to the top of `carrier_shape.odin`, which says it "needs no solver state". Also move:
   - `analyze_program_provenance`, `settle_result_summaries`, `summarize_body`, `check_declared_escape` and `note_instance_sites` (`:840-1060`), which are the program driver, into `borrow_summaries.odin` or a driver file.
   - `body_global_reach`, `note_reached_globals` and `add_reached_global` (`:1069-1124`), which are thread-summary collection, into `provenance_thread_summaries.odin`.
@@ -2125,7 +2128,7 @@ Verdict: clean and well documented; small simplifications only.
 Verdict: clear diagnostics replay; some per-event scans and repeated wording logic.
 
 - **Data structure/algorithm** `live_reborrow_of` (`:216-231`) rebuilds a `candidates` list by scanning every slot's `links_held`, in `context.temp_allocator`, for every source of every `Live`/`Load` event. That is O(events·sources·slots) plus temporary allocation that grows across the whole report pass. Compute the candidate list once per event, since it does not depend on `source` for the non-`At_Once` case, and reuse a scratch `[dynamic]` in `Prov_Solve`. (unverified hotspot; measure with `perf.ps1`)
-- **Bug (fragile, unverified)** `at_once_reaches` (`:293-323`) zeroes and restores derived rows in `state.reach` without `reach_row_written`, then calls `load_pointee_content`. That writes `use.slot`'s row and precision as a side effect, before the report loop's own `run_prov_event` for that event. It is harmless today because the `.Load` replay overwrites both, but it couples correctness to event order. Prefer a scratch `merged` with no write-back: add a `dry` flag to `load_pointee_content`.
+- **Bug (fragile, unverified)** (not done: recorded in open-questions.md as bug 14) `at_once_reaches` (`:293-323`) zeroes and restores derived rows in `state.reach` without `reach_row_written`, then calls `load_pointee_content`. That writes `use.slot`'s row and precision as a side effect, before the report loop's own `run_prov_event` for that event. It is harmless today because the `.Load` replay overwrites both, but it couples correctness to event order. Prefer a scratch `merged` with no write-back: add a `dry` flag to `load_pointee_content`.
 - **Duplication** `reported_within` (`:76-83`) and `reach_reported_within` (`borrow_tasks.odin:566-573`) both scan a whole map for a report inside a span. A per-file sorted list of report offsets, or a single shared helper, would serve both.
 - **Duplication** (not done: each site tests a different condition, the diagnostic's precision, a crowded region, a source's precision or a merged loan, so `hedge` would only rename the conditional) The "precision lost, so say may" choice is open-coded at `:189-191`, `:386`, `:581`, `:599`, `:635`, and in `borrow_tasks.odin:598`, `:686` and `:789-797`. A helper `hedge(state, sure, unsure: string) -> string` removes about 15 lines and keeps the wording rule in one place (design.md "Minimum provenance precision").
 - **Simplify** `carrier_name` (`:608-627`) scans all reborrows per hop. `state.links_into[at]` (`borrow.odin:661`) already indexes reborrows by derived slot. It only runs on the error path, so it is cheap to fix.
@@ -2161,7 +2164,7 @@ Verdict: a solid least-fixed-point design. One fragile cache key.
 #### src/borrow_tasks.odin
 Verdict: correct; a few avoidable recomputations and per-event allocations.
 
-- **Data structure/algorithm** `solve_window` (`:20-55`) is a round-robin `for changed` loop over every reachable block, while every other block solver uses `block_queue_from_entry`. It is also computed twice per diagnosed body, in `settle_pool_joins` (`:69`, through `prepare_state`) and in `report_provenance` (`borrow_report.odin:17`). The events that `settle_pool_joins` removes carry `joins` and are never `Task_Start` or `Task_Join`, so the window is unchanged and can be cached on the graph. (unverified that no removed event is a window event)
+- **Data structure/algorithm** (done in part: the block worklist of top recommendation 3; the window is still computed twice per diagnosed body) `solve_window` (`:20-55`) is a round-robin `for changed` loop over every reachable block, while every other block solver uses `block_queue_from_entry`. It is also computed twice per diagnosed body, in `settle_pool_joins` (`:69`, through `prepare_state`) and in `report_provenance` (`borrow_report.odin:17`). The events that `settle_pool_joins` removes carry `joins` and are never `Task_Start` or `Task_Join`, so the window is unchanged and can be cached on the graph. (unverified that no removed event is a window event)
 - **Simplify** (done: `next_running_site`) `running_sites` (`:121-129`) allocates a list in `graph.alloc` on every `block_running`, `check_task_reservation`, `check_parent_allocator_use` and `window_block_span` call. Iterate the mask bits inline with a small iterator; saves the allocations and about 8 lines.
 - **Data structure/algorithm** `shared_carrier_hazard` (`:190-207`) calls the uncached `transfer_facts` per global per reach event. Cache it per global. See top recommendation 4.
 - **Simplify** (done: `REACH_CHAIN_NOTES`) `note_reach_chain` (`:746`) hard-codes 8 steps. Name the constant, or bound it by the chain's visited set.
@@ -2173,14 +2176,14 @@ Verdict: the largest structural problem in the group. About 700 lines of CFG-wal
 - **Duplication** `part_writes`, `part_reads`, `part_reach` and `part_allocator_use` (`:1261-1294`) are four copies of one lookup. See top recommendation 2.
 - **Data structure/algorithm** `effect_call_globals` (`:1395-1399`) and `add_part_globals` (`:1695`) merge globals through `add_global_symbol`'s linear scan. That runs per call site per body, for both reads and writes, which is O(parts·globals²) for a call near `main`. `Global_Set` with `number_body_globals` (`:1551`) already provides a bitset. Keep the numbering on `effect_program` and reuse it here.
 - **Duplication** `settle_body_effects` (`:1506-1546`) and `settle_thread_facts` (`thread_summaries.odin:166-223`) share the build-parts, closing-parts, `part_readers`, `body_queue_make` and `grew` scaffolding. Extract `settle_over_parts(c, parts, closing, visit)`. Saves about 25 lines.
-- **Duplication** `Body_Queue` (`:1078-1112`) duplicates `Block_Queue` (`cfg.odin:372-423`). See top recommendation 3.
+- **Duplication** (done: top recommendation 3) `Body_Queue` (`:1078-1112`) duplicates `Block_Queue` (`cfg.odin:372-423`). See top recommendation 3.
 - **Simplify** (done: `prov_copy_effects` answers whether a hook runs) `prov_copy_of_held_effects` (`:651-656`) calls `prov_copy_effects`, which calls `type_copy_hooks`, then calls `type_copy_hooks` again. Pass the hooks through or cache them.
 
 #### src/thread_summaries.odin
 Verdict: small and correct. It shares its scaffolding and set representation with `global_effects.odin`, but less efficiently.
 
 - **Data structure/algorithm** `add_global_effect` (`:309-317`) is a linear scan, so `whole_reach` merging is quadratic in reached globals, the same case `Global_Set` was built for.
-- **Bug (minor, wording)** `add_global_effect` keeps the first `Effect_Source` and ignores later ones (`:192`, `:205`, `:214`). A global first reached through a merged dependency keeps its precision loss, so the diagnostic says "may reach" even when a later path reaches it exactly. The opposite order says "reaches". The result is order dependent. `effect_call_reach` (`global_effects.odin:1331-1335`) does intersect precision. Decide which is intended, and merge `precision` the same way in both, intersecting if any exact path should win.
+- **Bug (minor, wording)** (done: bug 11, `merge_effect_source`) `add_global_effect` keeps the first `Effect_Source` and ignores later ones (`:192`, `:205`, `:214`). A global first reached through a merged dependency keeps its precision loss, so the diagnostic says "may reach" even when a later path reaches it exactly. The opposite order says "reaches". The result is order dependent. `effect_call_reach` (`global_effects.odin:1331-1335`) does intersect precision. Decide which is intended, and merge `precision` the same way in both, intersecting if any exact path should win.
 - **Duplication** The settle loop mirrors `settle_body_effects` (see above).
 
 #### src/eval.odin
@@ -2351,7 +2354,7 @@ Verdict: correct as far as I could check, but too large (see Top recommendation 
 - **Simplify** (expr.odin:491-503): `const_operand` calls `global_initializer` (which runs `const_needs_image`) and then calls `const_needs_image` again at 497. Return the "needs image" flag from `global_initializer`. A large zero also builds its whole initializer before being discarded at 494.
 - **Duplication** (expr.odin:35-57 vs union.odin:25-48 and 52-62): `union_constant`, `union_storage_definition`, and `union_tag_member` each re-derive the same member layout (head, padding, niche, tag, tail). Have one `union_members(shape) -> []member` drive the type text, the constant text, and the tag index. Saves about 20 lines and removes a three-way agreement that is currently only implicit.
 - **Data structure** (expr.odin:144-170): byte arrays (`[N]u8`/`[N]i8`) are spelled element by element (`i8 1, i8 2, …`), roughly 6 bytes of IR per byte. `write_byte_array_constant` (103) already emits `c"\XX…"`. Use it for non-mask `i8` arrays.
-- **Simplify** (expr.odin:2048, 2071): the union tag type is re-spelled locally; part of Top recommendation 1.
+- **Simplify** (done: `union_tag_llvm`, Top recommendation 1) (expr.odin:2048, 2071): the union tag type is re-spelled locally; part of Top recommendation 1.
 - **Structure** (expr.odin:2489-2523): `emit_alloc_check`, `emit_text_call_slot`, `emit_text_allocating_call`, and `emit_text_optional_ok` are generic "runtime call writing an out-slot, status `i32`" helpers that containers re-implements (`branch_on_failure`/`emit_container_policy_failure`, containers.odin:657-667, 1125-1138). Move one status helper to runtime.odin.
 
 #### src/emit_llvm_calls.odin
@@ -2360,19 +2363,19 @@ Verdict: the argument binding is intricate but coherent. Conversions and union c
 - **Simplify** (calls.odin:1206, 1282): `predicate := lanes ? fmt.aprintf("<%d x i1>", …) : "i1"` is computed twice; `Int_Form.mask` (expr.odin:1716-1721) already carries it. Build the conversion guards on `Int_Form` (`scalar_int_form`/`lane_int_form`) and use `form_any` instead of the hand-written `if lanes { simd_any_lane }`. Saves about 8 lines.
 - **Simplify** (done) (calls.odin:358-359): a hand-written `load` duplicates `load(e, CONTAINER_TYPE, header)`.
 - **Structure / robustness** (done: `backend_fail` when a foreign call owes argument or pack drops) (calls.odin:1063-1065): `emit_bound_call` returns before `emit_refusal_branch` and `emit_after_call` for a foreign convention, so any `argument_cleanups` would never be dropped and their entries would stay in `e.held`. Today this is safe only because design.md rules managed types out of foreign signatures. Add an assertion (`backend_fail` if `len(call.argument_cleanups) > 0 || call.pack_cleanup.kind != .None`) so a later relaxation of the foreign-ABI-safe list fails loudly.
-- **Simplify** (calls.odin:973-979): spilling a large non-`%` operand is a special case of `store`'s own constant handling plus `temporary_slot`. Fine as is; noted only because `operand[0]` would panic on an empty operand string (no producer of `""` found, so not a bug).
+- **Simplify** (no change needed, as the finding says) (calls.odin:973-979): spilling a large non-`%` operand is a special case of `store`'s own constant handling plus `temporary_slot`. Fine as is; noted only because `operand[0]` would panic on an empty operand string (no producer of `""` found, so not a bug).
 
 #### src/emit_llvm_stmt.odin
 Verdict: clear. The two switch lowerings share their skeleton well through `switch_labels`.
-- **Duplication** (stmt.odin:747-754): `or_match` duplicates the OR fold (see emit_llvm.odin finding).
+- **Duplication** (done: `or_match` went with the union `switch` of Top recommendation 1) (stmt.odin:747-754): `or_match` duplicates the OR fold (see emit_llvm.odin finding).
 - **Simplify** (done; `symbol_place` is package-private now) (stmt.odin:153, 157): `e.names[task.result]` and `e.names[task.scope]` are indexed directly, so a missing entry silently writes `ptr ` with an empty operand. Use `symbol_place` (expr.odin:815, currently file-private), which fails the contract instead.
 - **Simplify** (stmt.odin:920-922): use `combine_and`.
 
 #### src/emit_llvm_cleanup.odin
 Verdict: sound design. Two hot-path inefficiencies.
 - **Data structure** (done in part: `temporaries_owed` returns early when nothing is owed; when something is, the list is still cloned) (cleanup.odin:392-416): `drain_temporaries` runs at every `pop_temporaries`, which is every statement and condition. Each time it allocates `owed` and `slice.clone(e.held)` in the temp allocator, sorts, then clears and re-appends `held`, even when nothing is owed. Return early when `len(e.held) == first_held` and every frame from `frame` up is empty. Clone `held` only if something is actually dropped.
-- **Simplify** (cleanup.odin:212-219, 659-670): `hold_temporary_value` and `emit_discarded_temporary` copy a large value into a new alloca although a large value is already a private address. Use the `spill` helper from Top recommendation 5.
-- **Data structure** (cleanup.odin:187-197): `release_held` scans linearly by `order`. Fine for current sizes; leave it.
+- **Simplify** (not done: see Top recommendation 5; a large value may be a read-only constant global) (cleanup.odin:212-219, 659-670): `hold_temporary_value` and `emit_discarded_temporary` copy a large value into a new alloca although a large value is already a private address. Use the `spill` helper from Top recommendation 5.
+- **Data structure** (no change needed, as the finding says) (cleanup.odin:187-197): `release_held` scans linearly by `order`. Fine for current sizes; leave it.
 
 #### src/emit_llvm_unwind.odin
 Verdict: inventive and well documented. The state swap in the thunk is fragile.
@@ -2383,13 +2386,13 @@ Verdict: inventive and well documented. The state swap in the thunk is fragile.
 #### src/emit_llvm_lifecycle.odin
 Verdict: thorough, with two near-copies and hand-rolled headers.
 - **Duplication** (lifecycle.odin:133-136 and 484-487): `emit_synth_try_clone` and `emit_synth_clone` spell their `define` line by hand, and `open_synth_function(e, symbol, name)` (emit_llvm.odin:230) produces the same text (receiver plus a `ptr %arg1` allocator parameter, with sret). The same applies to `emit_synth_iter` (iteration.odin:647-650). Saves about 9 lines.
-- **Duplication** (lifecycle.odin:596-611, 626-655): two of the 7 tag-dispatch chains (Top recommendation 1).
+- **Duplication** (done: Top recommendation 1) (lifecycle.odin:596-611, 626-655): two of the 7 tag-dispatch chains (Top recommendation 1).
 - **Duplication** (lifecycle.odin:461-468 vs 14-28 and 72-83): "alloca destination, `emit_try_clone_into`, invert ok" appears in `emit_part_clone`, in `emit_clone_value`'s container branch, and again in `emit_synth_try_clone`'s intrinsic branch (160-166). Add `try_clone_value(e, type, value_or_src, allocator) -> (cloned, failed)`. Saves about 15 lines.
 - **Duplication** (lifecycle.odin:278-292, 383-388, 406-416, and format.odin:541-547): reading and range-checking an `@(initialized)` count is spelled again in `emit_format_struct`, without `emit_prefix_count`'s helper because that one is file-private. Make `emit_prefix_count` package-private and reuse it.
 
 #### src/emit_llvm_containers.odin
 Verdict: a large file of mixed concerns; individual bodies are correct.
-- **Bug (code size)** (containers.odin:1414-1421): fixed arrays are unrolled whenever hashed; see Top recommendation 2.
+- **Bug (code size)** (done: bug 4) (containers.odin:1414-1421): fixed arrays are unrolled whenever hashed; see Top recommendation 2.
 - **Structure** (containers.odin:336-392): `Thunk_Emission`, `begin_thunk`, `end_thunk`, and `container_thunk` are the backend's generic memoised private-function helper. Box uses it for drop and clone (box.odin:140, 180), and sort_by reimplements its prelude (273-290). Move them to emit_llvm.odin as `memo_thunk`, and rename `e.container_thunks` to match.
 - **Structure** (containers.odin:1342-1471): hashing belongs next to equality (Top recommendation 4).
 - **Structure** (containers.odin:669-740): the `mem.Arena`/`mem.Scratch` provider bodies have nothing to do with containers. Move them to a small `emit_llvm_provider.odin`, or into runtime.odin next to the provider initializer.
@@ -2411,28 +2414,28 @@ Verdict: small and fine, but missing the file header comment every sibling has, 
 
 #### src/emit_llvm_abi.odin
 Verdict: the Win64 classification is careful. Declaration discovery parses text.
-- **Structure** (abi.odin:34-50): `emit_foreign_declarations` re-reads `e.b` for `declare` lines and hard-codes 3 to 5 names that are declared or defined elsewhere (`program_tls_cleanup`, `sink_write`, `write_std`, `program_init`, `wmain`). A table of declared runtime names (Top recommendation 3) plus a set filled by `open_function`/entry emitters would replace this, about 15 lines.
+- **Structure** (done: the declared-name set of Top recommendation 3; the four names the compiler defines afterward stay listed) (abi.odin:34-50): `emit_foreign_declarations` re-reads `e.b` for `declare` lines and hard-codes 3 to 5 names that are declared or defined elsewhere (`program_tls_cleanup`, `sink_write`, `write_std`, `program_init`, `wmain`). A table of declared runtime names (Top recommendation 3) plus a set filled by `open_function`/entry emitters would replace this, about 15 lines.
 - **Simplify** (abi.odin:625-645): `foreign_call_result`'s `.Indirect` case calls `load_place` on a fresh private `sret` alloca, which copies a large result into another slot. Use `load_temporary(e, result, sret)`.
 - **Duplication** (abi.odin:528-533 vs 637-642, 471-475 vs 502-505): the register-integer store/load round trip is written four times (parameter, return, argument, result). Add `reg_int_reinterpret(e, type, value, to_int: bool)`. Saves about 10 lines.
 
 #### src/emit_llvm_union.odin
 Verdict: compact and correct.
 - **Duplication** (union.odin:25-62 vs expr.odin:35-57): see the expr finding; one member walker for type, constant, and tag index.
-- **Duplication** (union.odin:102-115): the widening tag chain (Top recommendation 1). It already ends in `unreachable`, which is exactly a `switch` with an unreachable default.
+- **Duplication** (done: Top recommendation 1) (union.odin:102-115): the widening tag chain (Top recommendation 1). It already ends in `unreachable`, which is exactly a `switch` with an unreachable default.
 
 #### src/emit_llvm_runtime.odin
 Verdict: a reasonable home for runtime declarations and metadata. Its declaration lists should be data.
-- **Simplify** (runtime.odin:58-120, 172-190): Top recommendation 3.
+- **Simplify** (done: Top recommendation 3) (runtime.odin:58-120, 172-190): Top recommendation 3.
 - **Data structure** (runtime.odin:259-265): `thread_local_owners` scans `pkg.files` for every thread-local symbol to find its file index, O(symbols × files). Compute a per-package `map[file]int` once. Minor.
-- **Duplication** (runtime.odin:150-155, 567-569, expr.odin:500-501, 514-515, 578-582, 722-723): six "claim `@.<prefix>.<len(e.globals)>`, append a private global" sites. Fold them into `private_global(e, prefix, linkage, type, init, align)` (Top recommendation 8).
+- **Duplication** (done in part: `private_constant`; Top recommendation 8 lists what is left) (runtime.odin:150-155, 567-569, expr.odin:500-501, 514-515, 578-582, 722-723): six "claim `@.<prefix>.<len(e.globals)>`, append a private global" sites. Fold them into `private_global(e, prefix, linkage, type, init, align)` (Top recommendation 8).
 - **Simplify** (done: a `#partial switch`. No `#assert` was added: each kind picks its own constant, so nothing relies on the three being equal) (runtime.odin:717-718): the nested ternary choosing the length field would read more plainly as a `#partial switch`, and it is the only place that relies on `CONTAINER_LEN == STRING_LEN == SLICE_LEN` without asserting it. Add the `#assert`.
 
 #### src/emit_llvm_format.odin
 Verdict: good. It uses chains where `switch` fits.
-- **Duplication** (format.odin:370-396 and 419-446): the union and enum formatting chains (Top recommendation 1). An enum's `switch` also handles non-contiguous members, which the comment at 418 cites as the reason for the chain.
-- **Duplication** (format.odin:617-621): `spill_value` is one of the spill copies (Top recommendation 5).
+- **Duplication** (done in part: Top recommendation 1 for unions; `emit_format_enum` still compares one member at a time) (format.odin:370-396 and 419-446): the union and enum formatting chains (Top recommendation 1). An enum's `switch` also handles non-contiguous members, which the comment at 418 cites as the reason for the chain.
+- **Duplication** (done: `spill`) (format.odin:617-621): `spill_value` is one of the spill copies (Top recommendation 5).
 - **Simplify** (format.odin:531-539): re-copying an under-aligned field duplicates `emit_viewed_address`'s check (expr.odin:1221-1225). Extract `aligned_copy_if_needed(e, type, address)`.
-- **Structure** (format.odin:570-595): `emit_sink_bridge` writes its own `declare` of `@loke_rt_v1_write_std`, which `emit_foreign_declarations` then has to know about through a hard-coded `seen` entry. Keep it in the runtime declaration table.
+- **Structure** (done in `c92d8811`: declared with the runtime entries) (format.odin:570-595): `emit_sink_bridge` writes its own `declare` of `@loke_rt_v1_write_std`, which `emit_foreign_declarations` then has to know about through a hard-coded `seen` entry. Keep it in the runtime declaration table.
 
 #### src/emit_llvm_debug.odin
 Verdict: a self-contained marker post-pass; works, with one fragile seam.

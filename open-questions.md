@@ -1394,10 +1394,6 @@ a reproduction before a change.
   `doc.odin` finds the procedure literal by the first `::`, which a typed
   constant `f : proc() : proc() {...}` lacks. A literal's source offset is no
   fix there, since the text it searches may have had comments cut.
-- **Evaluator frames stay charged** (rest of bug 8). A `switch` arm's own
-  frame and a call's frame are popped, not released. A pointer the program
-  keeps into a popped frame would make releasing it unsafe; see
-  [comments.md](comments.md#the-evaluators-memory-limit-counts-what-it-holds).
 - **Temporary storage in provenance helpers without a graph** (rest of bug 5).
   `report_thread_local_writes` and the type predicates in
   `provenance_regions.odin` allocate in `context.temp_allocator`, which lasts
