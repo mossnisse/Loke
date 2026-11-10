@@ -856,7 +856,8 @@ There are also a few small accounting leaks: evaluator temporaries that the
    - (Not done; see the cross-file table.) One group-flattening iterator replaces seven loops.
    - (Done.) One allocator-operand check replaces three copies, plus a
      `type_is_allocator` predicate.
-8. **Split the two biggest files.** Move type-syntax resolution, finite size and
+8. **Split the two biggest files.** (Done, move-only: `check_types.odin` and
+   `check_index.odin`.) Move type-syntax resolution, finite size and
    unresolved-type diagnostics out of `check.odin` (about 680 lines), and indexing
    and slicing out of `check_expr.odin` (about 650 lines).
 
@@ -943,7 +944,8 @@ correctness bug.
   - type-syntax resolution and unresolved-type diagnostics (1634-2175);
   - declaration and procedure checking (2176-2723).
 
-  Moving type syntax and finite size into a `check_types.odin` would leave
+  (Done: `check_types.odin`, a move-only commit; the destructuring helpers
+  stay with the signatures that use them.) Moving type syntax and finite size into a `check_types.odin` would leave
   `check.odin` to declarations and signatures. That also matches the "type syntax"
   responsibility compiler-architecture.md already names separately.
 
@@ -1050,7 +1052,9 @@ and has allocation and lookup costs on hot paths.
   `types.odin`.
 - **Simplify** (done): the file header (line 3) says "`check.odin` owns declarations and
   statements", but statements are in `check_stmt.odin`.
-- **Structure:** at 2908 lines, indexing and slicing (1119-1775:
+- **Structure** (done for indexing and slicing, with the packed-field walk,
+  as `check_index.odin`; the general helpers stay, since each serves
+  expression checking): at 2908 lines, indexing and slicing (1119-1775:
   `check_index`, `check_slice`, `index_arguments`, `packed_field_reached`) is a
   self-contained unit for a `check_index.odin`. General helpers that are not
   expression checking also live here: `require_unsafe_import`, `struct_field`,
@@ -1276,7 +1280,9 @@ documented. It has near-copies and one uncached hot predicate.
   check. Cache it like `type_may_hold_address` (`src/types.odin:234`). Only cache
   once `type_records_finished` holds, and invalidate where inherent members are
   added.
-- **Structure:** the comparability and ordering predicates (1015-1262) are type
+- **Structure** (not done: comparability is decided by a type's own `==` and
+  `<` members, which `inherent_self_operator` here finds, so the predicates
+  stay beside that lookup, where the source map already places them): the comparability and ordering predicates (1015-1262) are type
   queries, not operator declarations. They fit `types.odin`, or a `comparison.odin`
   that `hash.odin` and map-key policy could share. Low priority, since the source
   map documents the current placement.

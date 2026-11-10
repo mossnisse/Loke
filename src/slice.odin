@@ -3,7 +3,7 @@
 // design.md "Slices": both capabilities share one `{ ptr data, int len }`, so
 // mutability never reaches the ABI.
 //
-// Layout: `src/layout.odin`. Indexing and slicing: `src/check_expr.odin`.
+// Layout: `src/layout.odin`. Indexing and slicing: `src/check_index.odin`.
 // Members: `src/container.odin`. Borrow root: `prov_slice`.
 package lokec
 

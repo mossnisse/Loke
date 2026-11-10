@@ -303,9 +303,11 @@ universe instead of synthesizing duplicate types. These include `Unit`,
 
 ### Checking and overload resolution
 
-`check.odin` handles declarations, signatures, and type syntax;
-`check_stmt.odin` handles statements, and `switch.odin` the `switch` statement. `check_expr.odin` handles contextual typing, implicit conversion to a
-destination, places, and folding; `check_composite.odin` handles composite
+`check.odin` handles declarations and signatures, and `check_types.odin` type
+syntax and finite size; `check_stmt.odin` handles statements, and `switch.odin`
+the `switch` statement. `check_expr.odin` handles contextual typing, implicit
+conversion to a destination, places, and folding; `check_index.odin` handles
+indexing and slicing; `check_composite.odin` handles composite
 literals; `conversions.odin` says which types convert to which;
 `check_calls.odin` handles call forms and argument binding. Expected types guide
 untyped constants, implicit enum members, `nil`, and typeless literals.
@@ -996,7 +998,7 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `check.odin`, `check_stmt.odin`, `switch.odin`, `check_expr.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/signatures/type syntax, statements, value and union switches, expression dispatch/materialization/folding, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
+| `check.odin`, `check_types.odin`, `check_stmt.odin`, `switch.odin`, `check_expr.odin`, `check_index.odin`, `check_composite.odin`, `conversions.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/signatures, type syntax and finite size, statements, value and union switches, expression dispatch/materialization/folding, indexing and slicing, composite literals, the assignable and convertible relations, call checking/argument binding, and compiler-owned primitive call contracts. |
 | `bigint.odin`, `const_ops.odin`, `const_float.odin`, `zero.odin` | Exact integer constants, shared constant operations and conversions, exact float operations and encodings, zero-value rules and constants, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates and comparability, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
