@@ -723,7 +723,7 @@ type_has_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> boo
 	}
 	underlying := type_underlying(c, type)
 	if type_is_enum(c, underlying) {
-		return enum_member(c, underlying, name) != INVALID_SYMBOL
+		return field_named(c, underlying, name) != INVALID_SYMBOL
 	}
 	return union_variant_index(c, type, name) >= 0
 }

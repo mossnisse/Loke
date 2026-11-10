@@ -1,7 +1,7 @@
 // Expressions and their implicit conversion to a destination.
 //
-// `check.odin` owns declarations and statements; everything that produces a
-// value is dispatched here. Call checking and binding live in `check_calls.odin`,
+// `check.odin` owns declarations and `check_stmt.odin` statements; everything
+// that produces a value is dispatched here. Call checking and binding live in `check_calls.odin`,
 // composite literals in `check_composite.odin`, and which types convert to which
 // in `conversions.odin`.
 // Expression checking is contextual: an expected type flows down so that an
@@ -608,7 +608,7 @@ check_implicit_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_I
 		}
 		return
 	}
-	member := enum_member(k.c, enum_type, v.name.id)
+	member := field_named(k.c, enum_type, v.name.id)
 	if member == INVALID_SYMBOL {
 		errorf(k.c, v.span, "L0363", "`%s` has no member `%s`", type_name(k.c, expected), v.name.text)
 		return
@@ -641,7 +641,7 @@ check_type_selector :: proc(k: ^Checker, v: ^Expr_Selector, subject: Type_Id, ca
 	// A named enum type selects its own member: `Colour.Red`.
 	enum_type := type_underlying(k.c, subject)
 	if type_is_enum(k.c, enum_type) {
-		if member := enum_member(k.c, enum_type, v.name.id); member != INVALID_SYMBOL {
+		if member := field_named(k.c, enum_type, v.name.id); member != INVALID_SYMBOL {
 			select_enum_member(k, v, member, subject)
 			return
 		}
@@ -768,7 +768,7 @@ select_call_method :: proc(k: ^Checker, v: ^Expr_Selector, operand: Type_Id) -> 
 	if type_is_untyped(k.c, operand) {
 		materialized := unfixed_receiver_type(k.c, operand)
 		if materialized == operand || materialized == INVALID_TYPE ||
-		   len(method_candidates(k, materialized, v.name.id)) == 0 {
+		   first_method(k, materialized, v.name.id) == INVALID_SYMBOL {
 			return false
 		}
 		return materialize(k, v.operand, materialized) && select_method(k, v, materialized, true)
@@ -919,7 +919,7 @@ promoted_field_walk :: proc(
 	if info == nil || info.kind != .Struct {
 		return false, false
 	}
-	if direct := struct_field(c, record, name); direct != INVALID_SYMBOL {
+	if direct := field_named(c, record, name); direct != INVALID_SYMBOL {
 		append(path, direct)
 		return true, false
 	}
@@ -2903,23 +2903,6 @@ pointee_of :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 		return INVALID_TYPE
 	}
 	return info.element
-}
-
-struct_field :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	info := underlying_info(c, type)
-	if info == nil || name == INVALID_IDENTIFIER {
-		return INVALID_SYMBOL
-	}
-	for field in info.fields {
-		if symbol := symbol_of(c, field); symbol != nil && symbol.name == name {
-			return field
-		}
-	}
-	return INVALID_SYMBOL
-}
-
-enum_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	return struct_field(c, type, name)
 }
 
 is_const_expr :: proc(e: Expr) -> bool {

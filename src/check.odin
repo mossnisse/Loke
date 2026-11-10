@@ -492,8 +492,6 @@ entry_failure_type :: proc(c: ^Compiler, result: Type_Id) -> (Type_Id, bool) {
 	return shape.failure_type == TYPE_VOID ? result : shape.failure_type, true
 }
 
-// Creates the symbols for one declaration, rejecting a shadowed local. Also
-// used for a foreign block's members.
 // The checks every name gets on its way into `scope` (design.md "Variable
 // declarations"), reported. False when it binds nothing: the discard `_`, or a name
 // that cannot be declared.
@@ -521,6 +519,8 @@ check_new_local :: proc(k: ^Checker, name: Name, scope: ^Scope) -> bool {
 	return true
 }
 
+// Creates the symbols for one declaration, rejecting a shadowed local. Also
+// used for a foreign block's members.
 declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 	if len(d.symbols) > 0 {
 		return // already collected in an earlier phase
@@ -814,6 +814,9 @@ resolve_distinct_element :: proc(k: ^Checker, value: ^Type_Distinct) -> Type_Id 
 
 resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	members := make([dynamic]Symbol_Id, 0, len(value.fields), k.c.semantic_allocator)
+	// The names `members` holds, so a generated record with hundreds of fields
+	// does not search them once per field.
+	named := make(map[Identifier_Id]struct{}, len(value.fields), context.temp_allocator)
 	for &field in value.fields {
 		field_type := resolve_type_reporting(k, field.type)
 		// design.md "`type` and `typeid`": a record is runtime storage.
@@ -824,7 +827,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		// design.md "Compile-time reflection": fields have visibility too.
 		public := field_is_public(k, &field)
 		for name in field.names {
-			if name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, name)) != INVALID_SYMBOL {
+			if name.text != "_" && name_identifier(k.c, name) in named {
 				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
 				append(&bindings, INVALID_SYMBOL)
 				continue
@@ -847,6 +850,9 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 			append(&bindings, binding)
 			if binding != INVALID_SYMBOL {
 				append(&members, binding)
+				if !padding {
+					named[name_identifier(k.c, name)] = {}
+				}
 			}
 		}
 		field.symbols = bindings[:]
@@ -2544,18 +2550,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 		)
 		return false
 	}
-	allocator := check_single_expr(k, d.via, TYPE_ALLOCATOR)
-	if allocator == INVALID_TYPE {
-		return false
-	}
-	if !type_is_allocator(k.c, allocator) {
-		errorf(
-			k.c,
-			expr_span(d.via),
-			"L0578",
-			"a `via` policy names an `Allocator`, found `%s`",
-			type_name(k.c, allocator),
-		)
+	if !check_allocator_argument(k, d.via, "L0578", "a `via` policy names an `Allocator`") {
 		return false
 	}
 	// A copy into this destination clones.

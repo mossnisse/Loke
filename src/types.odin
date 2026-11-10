@@ -87,6 +87,16 @@ type_is_enum :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) == .Enum
 }
 
+// The field of a record, or the member of an enum, named `name`. Fields share
+// the namespace members are declared into, so `impl` blocks ask this too.
+field_named :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	info := underlying_info(c, type)
+	if info == nil || name == INVALID_IDENTIFIER {
+		return INVALID_SYMBOL
+	}
+	return member_named(c, info.fields, name)
+}
+
 type_is_box :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) == .Box
 }

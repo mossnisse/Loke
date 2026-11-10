@@ -292,7 +292,7 @@ impl_member_clash :: proc(k: ^Checker, subject: Type_Id, name: string, name_id: 
 	case member_named(k.c, added, name_id) != INVALID_SYMBOL:
 		return "member"
 	// `c.v` selects the field, so a member of that name could never be reached.
-	case subject_field_named(k, subject, name_id) != INVALID_SYMBOL:
+	case field_named(k.c, subject, name_id) != INVALID_SYMBOL:
 		return "field"
 	case (type_is_enum(k.c, subject) && enum_builtin_member(name)) || (type_is_union(k.c, subject) && name == "as"):
 		return "built-in member"
@@ -375,12 +375,6 @@ replace_impl_member :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_p
 			return
 		}
 	}
-}
-
-// Fields share the namespace members are declared into.
-subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	info := underlying_info(k.c, subject)
-	return info == nil ? INVALID_SYMBOL : member_named(k.c, info.fields, name)
 }
 
 member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {

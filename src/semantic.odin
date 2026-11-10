@@ -133,7 +133,6 @@ Contribution :: enum u8 {
 	// design.md "Dynamic arrays" and "Maps": the operation set that makes
 	// `xs.append(1)` an ordinary method call.
 	Container,
-	// The constructors and handle of a local region provider (`src/region.odin`).
 }
 
 // What tells apart two types that are alike in everything else: where one is
@@ -1274,13 +1273,18 @@ clone_unless_default :: proc(values: []$T, default: T, allocator: mem.Allocator)
 @(private = "file")
 equal_padded :: proc(a, b: []$T, default: T) -> bool {
 	for index in 0 ..< max(len(a), len(b)) {
-		left := index < len(a) ? a[index] : default
-		right := index < len(b) ? b[index] : default
-		if left != right {
+		if padded_at(a, index, default) != padded_at(b, index, default) {
 			return false
 		}
 	}
 	return true
+}
+
+// `values[index]`, or `default` past its end: a slice that stops early records
+// the default for the rest.
+@(private = "file")
+padded_at :: proc(values: []$T, index: int, default: T) -> T {
+	return index < len(values) ? values[index] : default
 }
 
 // Appends `item` unless `list` holds it already; whether it did.
@@ -1421,10 +1425,10 @@ proc_type_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	for index in 0 ..< len(a.parameters) {
 		// design.md "@(cross_thread)": calls through the destination may check an
 		// argument the procedure does not need checked, never skip one it does.
-		if proc_param_crosses_thread(c, from, index) && !proc_param_crosses_thread(c, to, index) {
+		if padded_at(a.param_cross_thread, index, false) && !padded_at(b.param_cross_thread, index, false) {
 			return false
 		}
-		have, want := proc_param_escape(c, from, index), proc_param_escape(c, to, index)
+		have, want := padded_at(a.param_escapes, index, Escape_Level.Result), padded_at(b.param_escapes, index, Escape_Level.Result)
 		// An inferred contract may meet a written `none`; `check_proc_contracts`
 		// checks it once inference settles.
 		if have > want && !(have == .Result && want == .None && a.proc_contract != INVALID_SYMBOL) {

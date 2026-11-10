@@ -832,9 +832,9 @@ There are also a few small accounting leaks: evaluator temporaries that the
    when `span.file == k.file`.
 7. **Merge near-identical helpers** (each is detailed under Cross-file duplication):
    - Three predeclared-type tables become one.
-   - `struct_field`, `subject_field_named` and `enum_member` become `member_named`.
+   - (Done.) `struct_field`, `subject_field_named` and `enum_member` become `member_named`.
    - One group-flattening iterator replaces seven loops.
-   - One allocator-operand check replaces three copies, plus a
+   - (Done.) One allocator-operand check replaces three copies, plus a
      `type_is_allocator` predicate.
 8. **Split the two biggest files.** Move type-syntax resolution, finite size and
    unresolved-type diagnostics out of `check.odin` (about 680 lines), and indexing
@@ -890,7 +890,9 @@ correctness bug.
   `infer_param_default_type` (1420-1424) and `check_proc_body` (2678-2683).
   Extract an `enter_procedure_body(k, literal, result, inout)` that returns the
   saved scope and body. About 10 lines.
-- **Data structure/algorithm:** duplicate-name checks are quadratic.
+- **Data structure/algorithm** (done for struct fields, through a temporary
+  map; group members and anonymous record fields are written by hand, so they
+  keep the scan): duplicate-name checks are quadratic.
   `resolve_struct_fields` calls `member_named(members[:])` for every field (827),
   `resolve_anon_record` uses `slice.contains(names)` (950), and
   `resolve_group_members` uses `slice.contains(members)` (781). Generated
@@ -901,7 +903,7 @@ correctness bug.
   compilation suppresses it. Callers such as `check_composite`
   (`src/check_composite.odin:21,40`) call it without an error mark. Pass the mark
   instead.
-- **Simplify:** two doc comments are stacked on `check_new_local` (495-499). The
+- **Simplify** (done): two doc comments are stacked on `check_new_local` (495-499). The
   first ("Creates the symbols for one declaration ... foreign block's members")
   belongs on `declare_all`.
 - **Structure:** at 2723 lines the file holds:
@@ -958,14 +960,16 @@ duplicated and one check is repeated on every statement.
 Verdict: good. Union switches use a quadratic data structure where value
 switches deliberately avoid one.
 
-- **Data structure/algorithm:** a union switch tracks the variants it has seen in
+- **Data structure/algorithm** (done): a union switch tracks the variants it has seen in
   a `[dynamic]int` searched with `slice.contains` (308, 343). Then
   `report_uncovered_variants` searches it again for every variant (500). That is
   O(V²). The value switch beside it uses `Integer_Set` precisely because "a
   generated switch can have thousands" (112-120). Use a `[]bool` of
   `variant_count(subject)` (the index is the tag), which gives the same line count
   and O(V).
-- **Duplication:** the "collect own equalities, then require them visible" pair at
+- **Duplication** (not done: the comparison in check_expr.odin reads the
+  collected list again to decide whether to fold, so it keeps collecting it):
+  the "collect own equalities, then require them visible" pair at
   54-57 also appears in `src/check_expr.odin:2323-2328`. Fold it into
   `own_equalities_visible(k, type, span)`, which collects them itself.
 - **Simplify:** the per-case scope push and pop (78-81, 313-322) is the
@@ -986,7 +990,9 @@ and has allocation and lookup costs on hot paths.
 - **Data structure/algorithm (allocation):**
   - `method_candidates` (1063), `select_slicers` (1552) and `select_by_place`
     (1666) allocate their result in `k.c.semantic_allocator` on every call.
-  - `select_call_method` builds a whole candidate list only to test whether it is
+    (Not done for `method_candidates`: a method call keeps its list as
+    `overload_members` on the typed AST.)
+  - (Done.) `select_call_method` builds a whole candidate list only to test whether it is
     empty: `len(method_candidates(...)) == 0` (771). Use
     `first_method(...) == INVALID_SYMBOL`, which already exists (1052).
   - Lists that do not outlive the call belong in `context.temp_allocator`.
@@ -994,15 +1000,17 @@ and has allocation and lookup costs on hot paths.
   `check_value_selector` (670-738): own type, then box payload, then pointee, then
   an untyped receiver's default type. One `select_method_through(k, v, operand,
   callee) -> bool` serves both. About 15 lines.
-- **Simplify:** for a boxed operand, `check_value_selector` computes
+- **Simplify** (not done: the second lookup is on the payload's underlying
+  type, or its pointee when the payload is a pointer, so the two can differ):
+  for a boxed operand, `check_value_selector` computes
   `promoted_field_path` for `boxed.element` (677), then computes it again for the
   same record on 700 after the deref. Keep the first result.
-- **Duplication:** `struct_field` (2880-2891) is
+- **Duplication** (done, as `field_named` in types.odin): `struct_field` (2880-2891) is
   `member_named(c, underlying_info(...).fields, name)`. It is also the same as
   `subject_field_named` (`src/impl.odin:381`), and `enum_member` (2893) is an
   alias of it. Keep one, `member_named` plus a `field_named(c, type, name)`, in
   `types.odin`.
-- **Simplify:** the file header (line 3) says "`check.odin` owns declarations and
+- **Simplify** (done): the file header (line 3) says "`check.odin` owns declarations and
   statements", but statements are in `check_stmt.odin`.
 - **Structure:** at 2908 lines, indexing and slicing (1119-1775:
   `check_index`, `check_slice`, `index_arguments`, `packed_field_reached`) is a
@@ -1022,7 +1030,8 @@ literals.
   shared row is enough. Compute the zero once when `fields == nil`. Also, when
   `len(v.elements) == 0` for an array or struct, `zero_const(target)` gives the
   whole result directly and already shares the element (`src/zero.odin:216-219`).
-- **Simplify:** `check_omitted_fields` builds the "the omitted field `x`" text with
+- **Simplify** (not done: the text is already built in temporary memory):
+  `check_omitted_fields` builds the "the omitted field `x`" text with
   `strings.concatenate` for every omitted field (272), though
   `require_type_has_zero` reads it only when it reports. Build it only on failure,
   or let `require_type_has_zero` take a format and argument.
@@ -1055,7 +1064,9 @@ variants.
   - That removes most of `bind_arguments`, about 80 lines. Diagnostic wording
     differs ("missing an argument for `x`", L0371 for a procedure value), so
     either keep those reports or update the tests.
-- **Data structure/algorithm (allocation):** `check_method_call` (425),
+- **Data structure/algorithm (allocation)** (done, with `fmt.tprintf`; the
+  conversion description also names its type in temporary memory):
+  `check_method_call` (425),
   `check_group_call` (474) and `check_conversion_hook_call` (1126) build
   `description` with `concat` in the semantic arena on every call. Only a failed
   resolution reads it. `resolve_operator_set` already uses `fmt.tprintf`
@@ -1065,7 +1076,7 @@ variants.
 
 Verdict: systematic and exhaustive by construction. Small near-copies.
 
-- **Duplication:** the allocator-operand check is written three times:
+- **Duplication** (done): the allocator-operand check is written three times:
   - `check_allocator_argument` (263-273)
   - the `.Free_All` branch (651-658)
   - `check_via_policy` (`src/check.odin:2516-2529`)
@@ -1073,7 +1084,9 @@ Verdict: systematic and exhaustive by construction. Small near-copies.
   Each does `check_single_expr(e, TYPE_ALLOCATOR)` and then
   `type_underlying == TYPE_ALLOCATOR`, else L0490/L0578 with a different message.
   Give `check_allocator_argument` a message or code parameter. About 12 lines.
-- **Duplication:** argument-count reports are hand-written, with near-identical
+- **Duplication** (done, with a file-private `argument_count_is`;
+  `builtin_argument_count_ok` keeps its numeric wording): argument-count
+  reports are hand-written, with near-identical
   text, in:
   - `check_typed_builtin_args` (118-124)
   - `check_transmute_builtin` (706-713)
@@ -1088,10 +1101,12 @@ Verdict: good. The workarounds for `core:math/big` bugs are documented, and
 `Integer_Set` fits its job.
 
 - **Simplify:**
-  - `bi_from_i64` and `bi_from_u64` (62-76) are identical except for the parameter
+  - (Done.) `bi_from_i64` and `bi_from_u64` (62-76) are identical except for the parameter
     type, so one polymorphic `bi_from_int(c, v: $T)` replaces both. Keep the old
     names as one-line wrappers if call-site churn matters.
-  - `bi_shl` (228) and `bi_shr_logical` (253) repeat the setup that `bi_unary` /
+  - (Not done: `bi_shr_logical` also clamps, and passing `core:math/big`
+    procedures needs their exact signatures, defaults included.) `bi_shl`
+    (228) and `bi_shr_logical` (253) repeat the setup that `bi_unary` /
     `bi_binary` already factor out (arena, copy, op, settle). Give the shifts a
     `bi_shift(c, a, count, op)` helper.
 
@@ -1141,7 +1156,7 @@ Verdict: fine. The element-count guard is recomputed redundantly.
   O(size × depth). Check once in a public wrapper, then recurse in a file-private
   `zero_const_walk` without the check. `fold_aggregate` adds another full count
   per slot (see check_composite above).
-- **Simplify:** `capacity_const` (105-109) dereferences `info.count` without
+- **Simplify** (done): `capacity_const` (105-109) dereferences `info.count` without
   checking for nil, unlike every sibling. A one-line guard keeps it consistent.
 
 #### src/overload.odin
@@ -1182,7 +1197,9 @@ lookup data structure is the weak point.
   `perf.ps1` first.
 - **Duplication:** group flattening in `expand_visible_members` (649-656). See
   Cross-file duplication.
-- **Simplify:** the `ponytail:` note at 673 records a user-visible limit:
+- **Simplify** (not reproduced: a probe with two bounds that each require a
+  `put` slot resolves `T.put(x, 2)` as `x.put(2)` does, so no known-gaps entry
+  was written): the `ponytail:` note at 673 records a user-visible limit:
   `T.m(x)` finds nothing for a bound-reached group with more than one member,
   while `x.m()` resolves. Per AGENTS.md, a divergence like this belongs in
   `known-gaps.md` with a reproduction. I found no entry.
@@ -1235,10 +1252,10 @@ in three tables.
   `PREDECLARED_NAMES`, and `build_universe` loops over the same table. About 35
   lines. Check the effect on `typeid` sort keys and emitter labels, which read
   `info.name` (`src/typeid.odin:367`, `src/emit_llvm_abi.odin:182`).
-- **Simplify:** the `Contribution` enum ends with a comment that has no member
+- **Simplify** (done): the `Contribution` enum ends with a comment that has no member
   (136: "The constructors and handle of a local region provider"). Remove it, or
   restore the member it described.
-- **Simplify:** `proc_type_weakens_to` (1339-1350) calls
+- **Simplify** (done): `proc_type_weakens_to` (1339-1350) calls
   `proc_param_crosses_thread` and `proc_param_escape`, which run `underlying_info`
   again for `from` and `to` on every parameter, though `a` and `b` are already
   known to be `.Proc` infos. Index `a.param_escapes` and `a.param_cross_thread`
@@ -1272,14 +1289,14 @@ Verdict: fine; see the three-table finding under semantic.odin.
 | --- | --- | --- |
 | Expand a `.Proc_Group` into its members while scanning a member table | `src/check_calls.odin:1093`, `src/impl.odin:650`, `src/interface.odin:856,911`, `src/operators.odin:283,364,409` | One iterator, `for_each_flat_member(c, members, filter, visit)`, or a function returning the flattened slice in temp storage. About 25 lines. |
 | `type_underlying(c, t) == TYPE_ALLOCATOR` (or `!=`) | 20 occurrences in 13 files, among them `src/check.odin:1149,2520`, `src/check_builtin.odin:268,655`, `src/container.odin:610`, `src/carrier_shape.odin:20` and the `provenance_*.odin` files | A `type_is_allocator(c, t)` predicate in `types.odin`, beside `type_is_box` and the rest. |
-| Look up a field or member by name in a `[]Symbol_Id` | `member_named` (`src/impl.odin:386`), `struct_field` (`src/check_expr.odin:2880`), `enum_member` (`src/check_expr.odin:2893`), `subject_field_named` (`src/impl.odin:381`), and similar `parameter_slot_named` (`src/check_calls.odin:671`) | Keep `member_named` plus one `field_named(c, type, name)` in `types.odin`. |
+| Look up a field or member by name in a `[]Symbol_Id` | `member_named` (`src/impl.odin:386`), `struct_field` (`src/check_expr.odin:2880`), `enum_member` (`src/check_expr.odin:2893`), `subject_field_named` (`src/impl.odin:381`), and similar `parameter_slot_named` (`src/check_calls.odin:671`) | Keep `member_named` plus one `field_named(c, type, name)` in `types.odin` (done). |
 | Filter candidates into a new semantic-arena slice | `method_candidates` (`src/check_expr.odin:1063`), `select_slicers` (1552), `select_by_place` (1666), `operator_candidates_for_receiver` (`src/operators.odin:297`), `delegation_neighbours` (831), `operator_overloads_mentioning` (844) | One `filter_symbols(k, all, pred, allocator)` with a temp default; most of these lists do not outlive the call. |
 | For each file, set the location, then for each active item | `src/check.odin:167,193,277,308,331,360`, `src/operators.odin:620` | `for_each_package_item(k, pkg, visit)`. |
-| Allocator operand check (`check_single_expr(.., TYPE_ALLOCATOR)` plus an underlying test) | `src/check_builtin.odin:263,651`, `src/check.odin:2516` | `check_allocator_argument` with a message parameter. |
+| Allocator operand check (`check_single_expr(.., TYPE_ALLOCATOR)` plus an underlying test) | `src/check_builtin.odin:263,651`, `src/check.odin:2516` | `check_allocator_argument` with a message parameter (done). |
 | Statement walk that unwraps `defer` and descends into the selected `when` | `src/check_stmt.odin:30,74`; wider in `src/impl.odin:432` | `for_each_sequence_decl(stmts, visit)`. |
-| Collect own equalities, then require them visible | `src/switch.odin:54-57`, `src/check_expr.odin:2323-2328` | Let `own_equalities_visible` collect them itself. |
+| Collect own equalities, then require them visible | `src/switch.odin:54-57`, `src/check_expr.odin:2323-2328` | Let `own_equalities_visible` collect them itself (not done; see switch.odin). |
 | Predeclared type tables | `src/semantic.odin:947`, `src/types.odin:443`, `src/universe.odin:16` | One `Type_Id`-indexed table (see semantic.odin). |
-| Diagnostic text built before anything fails | `src/check_calls.odin:425,474,1126`, `src/check_composite.odin:272`, `src/overload.odin:372,475-488` | Format at the report site, or into `context.temp_allocator`. |
+| Diagnostic text built before anything fails | `src/check_calls.odin:425,474,1126`, `src/check_composite.odin:272`, `src/overload.odin:372,475-488` | Format at the report site, or into `context.temp_allocator` (done for check_calls.odin; the rest are open). |
 | Parameter flattening (attribute checks per parameter name) | `src/check.odin:1287-1357` and `1866-1902` | One helper; this also fixes the variadic attribute bug. |
 | `seen: Type_Walk; defer delete(seen); return x_walk(...)` wrappers | 16 sites in 8 files (`types.odin`, `zero.odin`, `operators.odin`, `check_expr.odin`, `hash.odin`, `format.odin`, `reflect.odin`, `test_procedures.odin`) | Acceptable as written. If any becomes hot, back `Type_Walk` with `context.temp_allocator` rather than the default heap. |
 

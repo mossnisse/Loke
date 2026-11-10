@@ -4,6 +4,7 @@
 // returns a value already in range.
 package lokec
 
+import "base:intrinsics"
 import "core:math"
 import big "core:math/big"
 import "core:mem"
@@ -59,15 +60,11 @@ bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
 	return result
 }
 
-bi_from_i64 :: proc(c: Value_Storage, v: i64) -> Big_Int {
-	context.allocator = arena(c)
-	r: Big_Int
-	big.int_set_from_integer(&r, v)
-	bi_settle(c, &r)
-	return r
-}
+bi_from_i64 :: proc(c: Value_Storage, v: i64) -> Big_Int { return bi_from_int(c, v) }
+bi_from_u64 :: proc(c: Value_Storage, v: u64) -> Big_Int { return bi_from_int(c, v) }
 
-bi_from_u64 :: proc(c: Value_Storage, v: u64) -> Big_Int {
+@(private = "file")
+bi_from_int :: proc(c: Value_Storage, v: $T) -> Big_Int where intrinsics.type_is_integer(T) {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.int_set_from_integer(&r, v)

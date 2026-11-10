@@ -2,7 +2,6 @@
 // whose cases name variants and bind their payloads.
 package lokec
 
-import "core:slice"
 import "core:strings"
 
 // --------------------------------------------------------- value switches --
@@ -305,11 +304,13 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		return Flow_Info{}
 	}
 
-	seen_variants := make([dynamic]int, 0, 8, context.temp_allocator)
+	// Indexed by tag, as a generated union can have many variants.
+	covered := make([]bool, variant_count(k.c, subject), context.temp_allocator)
+	covered_count := 0
 	has_default := check_default_cases(k, s)
 	flow := Flow_Info{}
 	for &entry in s.cases {
-		entry.variant_indices = case_variants(k, subject, entry.values, &seen_variants)
+		entry.variant_indices = case_variants(k, subject, entry.values, covered, &covered_count)
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
 		before := len(k.c.diagnostics)
@@ -323,24 +324,25 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		flow_either(&flow, case_flow)
 	}
 
-	s.exhaustive = has_default || variant_count(k.c, subject) == len(seen_variants)
+	s.exhaustive = has_default || covered_count == len(covered)
 	if !s.exhaustive {
-		report_uncovered_variants(k, s, subject, seen_variants[:])
+		report_uncovered_variants(k, s, subject, covered)
 	}
 	flow.can_fall_through ||= !s.exhaustive
 	return flow
 }
 
-// The variants a case names that no earlier case covers, each added to `seen`.
+// The variants a case names that no earlier case covers, each marked in
+// `covered` and counted.
 @(private = "file")
-case_variants :: proc(k: ^Checker, subject: Type_Id, values: []Expr, seen: ^[dynamic]int) -> []int {
+case_variants :: proc(k: ^Checker, subject: Type_Id, values: []Expr, covered: []bool, covered_count: ^int) -> []int {
 	indices := make([dynamic]int, 0, len(values), k.c.semantic_allocator)
 	for value in values {
 		index := case_variant_index(k, subject, value)
 		if index < 0 {
 			continue
 		}
-		if slice.contains(seen[:], index) {
+		if covered[index] {
 			errorf(
 				k.c, expr_span(value), "L0367",
 				"`.%s` is already covered by an earlier case", union_variant_name(k.c, subject, index),
@@ -348,7 +350,8 @@ case_variants :: proc(k: ^Checker, subject: Type_Id, values: []Expr, seen: ^[dyn
 			continue
 		}
 		append(&indices, index)
-		append(seen, index)
+		covered[index] = true
+		covered_count^ += 1
 	}
 	return indices[:]
 }
@@ -494,10 +497,10 @@ case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
 }
 
 @(private = "file")
-report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: []int) {
+report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: []bool) {
 	missing := make([dynamic]string, context.temp_allocator)
-	for _, index in underlying_info(k.c, subject).variants {
-		if !slice.contains(covered, index) {
+	for is_covered, index in covered {
+		if !is_covered {
 			append(&missing, concat(k.c, ".", union_variant_name(k.c, subject, index)))
 		}
 	}

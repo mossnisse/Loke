@@ -176,7 +176,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 				continue
 			}
 			named = true
-			field = struct_field(k.c, target, identifier_of(k.c, key))
+			field = field_named(k.c, target, identifier_of(k.c, key))
 			if field == INVALID_SYMBOL {
 				errorf(k.c, element.span, "L0363", "`%s` has no field `%s`", type_name(k.c, target), key.name)
 				ok = false

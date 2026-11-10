@@ -3,6 +3,8 @@
 // symbol, annotated like any other call.
 package lokec
 
+import "core:fmt"
+
 check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbol_id: Symbol_Id, expected: Type_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	ident.symbol = symbol_id
@@ -115,14 +117,7 @@ check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 check_typed_builtin_args :: proc(
 	k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, code, wanted: string, targets: []Type_Id,
 ) -> bool {
-	if len(v.args) != len(targets) {
-		errorf(
-			k.c, v.span, code, "`%s` takes %s, found %d argument%s",
-			ident.name, wanted, len(v.args), len(v.args) == 1 ? "" : "s",
-		)
-		return false
-	}
-	if !builtin_arguments_ok(k, v) {
+	if !argument_count_is(k, v, len(targets), code, ident.name, wanted) || !builtin_arguments_ok(k, v) {
 		return false
 	}
 	return bind_typed_arguments(k, v, targets)
@@ -152,7 +147,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		return
 	}
 	arity := kind == .Unsafe_String_View ? 2 : 1
-	if !builtin_argument_count_ok(k, v, concat(k.c, "unsafe.", ident.name), "L0569", arity) {
+	if !builtin_argument_count_ok(k, v, fmt.tprintf("unsafe.%s", ident.name), "L0569", arity) {
 		return
 	}
 	bound := make([]Expr, arity, k.c.semantic_allocator)
@@ -260,16 +255,33 @@ builtin_argument_count_ok :: proc(k: ^Checker, v: ^Expr_Call, name, code: string
 }
 
 // An allocator argument, which the caller binds so the backend never re-derives it.
-check_allocator_argument :: proc(k: ^Checker, e: Expr) -> bool {
+// Another type is reported as `expected`, then what was found.
+check_allocator_argument :: proc(
+	k: ^Checker, e: Expr, code := "L0490", expected := "an allocator argument is an `Allocator`",
+) -> bool {
 	allocator := check_single_expr(k, e, TYPE_ALLOCATOR)
 	if allocator == INVALID_TYPE {
 		return false
 	}
 	if !type_is_allocator(k.c, allocator) {
-		errorf(k.c, expr_span(e), "L0490", "an allocator argument is an `Allocator`, found `%s`", type_name(k.c, allocator))
+		errorf(k.c, expr_span(e), code, "%s, found `%s`", expected, type_name(k.c, allocator))
 		return false
 	}
 	return true
+}
+
+// Whether the call passes `count` arguments; if not, reports that `name` takes
+// `wanted`.
+@(private = "file")
+argument_count_is :: proc(k: ^Checker, v: ^Expr_Call, count: int, code, name, wanted: string) -> bool {
+	if len(v.args) == count {
+		return true
+	}
+	errorf(
+		k.c, v.span, code, "`%s` takes %s, found %d argument%s",
+		name, wanted, len(v.args), len(v.args) == 1 ? "" : "s",
+	)
+	return false
 }
 
 // A call's operands, in the order the backend reads them.
@@ -545,7 +557,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 			errorf(k.c, expr_span(v.args[1].value), "L0386", "`offset_of` needs a field name")
 			return
 		}
-		field := struct_field(k.c, operand, intern_identifier(k.c, name.name))
+		field := field_named(k.c, operand, intern_identifier(k.c, name.name))
 		if field == INVALID_SYMBOL {
 			errorf(k.c, name.span, "L0363", "`%s` has no field `%s`", type_name(k.c, operand), name.name)
 			return
@@ -647,12 +659,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 
 	case .Free_All:
 		// Whether the reset is allowed is region provenance (`src/borrow.odin`).
-		allocator := check_single_expr(k, v.args[0].value, TYPE_ALLOCATOR)
-		if allocator == INVALID_TYPE {
-			return
-		}
-		if !type_is_allocator(k.c, allocator) {
-			errorf(k.c, expr_span(v.args[0].value), "L0490", "`free_all` names the allocator being reset, found `%s`", type_name(k.c, allocator))
+		if !check_allocator_argument(k, v.args[0].value, expected = "`free_all` names the allocator being reset") {
 			return
 		}
 	}
@@ -702,15 +709,8 @@ check_destination_type :: proc(k: ^Checker, e: Expr, code, builtin: string) -> T
 // size and trivial lifecycles are checked; the meaning is the caller's.
 @(private = "file")
 check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
-	if len(v.args) != 2 {
-		errorf(
-			k.c, v.span, "L0688",
-			"`unsafe.%s` takes a destination type and a value, found %d argument%s",
-			ident.name, len(v.args), len(v.args) == 1 ? "" : "s",
-		)
-		return
-	}
-	if !builtin_arguments_ok(k, v) {
+	name := fmt.tprintf("unsafe.%s", ident.name)
+	if !argument_count_is(k, v, 2, "L0688", name, "a destination type and a value") || !builtin_arguments_ok(k, v) {
 		return
 	}
 	target := check_destination_type(k, v.args[0].value, "L0688", "unsafe.transmute")
@@ -799,15 +799,7 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 // types, or between integer vectors of one lane count, keeping the low bits.
 @(private = "file")
 check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
-	if len(v.args) != 2 {
-		errorf(
-			k.c, v.span, "L0712",
-			"`math.wrap` takes a destination type and a value, found %d argument%s",
-			len(v.args), len(v.args) == 1 ? "" : "s",
-		)
-		return
-	}
-	if !builtin_arguments_ok(k, v) {
+	if !argument_count_is(k, v, 2, "L0712", "math.wrap", "a destination type and a value") || !builtin_arguments_ok(k, v) {
 		return
 	}
 	target := check_destination_type(k, v.args[0].value, "L0712", "math.wrap")

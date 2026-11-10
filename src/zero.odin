@@ -104,6 +104,9 @@ type_requires_results_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk
 // the backend writes their inert representation as `zeroinitializer`.
 capacity_const :: proc(c: ^Compiler, type: Type_Id) -> Const_Value {
 	info := underlying_info(c, type)
+	if info == nil {
+		return {}
+	}
 	elements := make([]Const_Value, info.count, c.semantic_allocator)
 	return aggregate_const(c, type, elements)
 }

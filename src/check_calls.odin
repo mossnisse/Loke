@@ -3,6 +3,7 @@
 // ranking, and feature checkers retain their specialized call contracts.
 package lokec
 
+import "core:fmt"
 import "core:slice"
 
 // ------------------------------------------------------- calls and casts --
@@ -193,7 +194,7 @@ report_not_callable :: proc(k: ^Checker, v: ^Expr_Call, callee_type: Type_Id) {
 		return
 	}
 	errorf(k.c, expr_span(v.callee), "L0320", "`%s` is not callable", type_name(k.c, callee_type))
-	if field := symbol_of(k.c, subject_field_named(k, callee_type, intern_identifier(k.c, "call"))); field != nil {
+	if field := symbol_of(k.c, field_named(k.c, callee_type, intern_identifier(k.c, "call"))); field != nil {
 		add_notef(k.c, field.span, "this `call` is a field; only a `call` method makes a value callable")
 	}
 }
@@ -422,7 +423,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	args[0].is_receiver = true
 	copy(args[1:], written)
 
-	description := concat(k.c, "method `", sel.name.text, "`")
+	description := fmt.tprintf("method `%s`", sel.name.text)
 	cand, resolved := resolve_overload(k, v.span, description, candidates, args)
 	if !resolved {
 		return
@@ -471,7 +472,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	resolve_symbol_signature_in_place(k, group)
 	sym := symbol_of(k.c, group)
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
-	description := concat(k.c, "`", identifier_text(k.c, sym.name), "`")
+	description := fmt.tprintf("`%s`", identifier_text(k.c, sym.name))
 	args, args_ok := collect_call_arguments(k, v.args, members, live_group = group)
 	if !args_ok {
 		return
@@ -1032,7 +1033,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		return false
 	}
 	if typed && unchecked_pointer_conversion(k.c, source, target) &&
-	   !require_unsafe_import(k, v.span, concat(k.c, "converting to `", type_name(k.c, target), "`")) {
+	   !require_unsafe_import(k, v.span, fmt.tprintf("converting to `%s`", type_name_alloc(k.c, target, context.temp_allocator))) {
 		return true
 	}
 	// A named constant array is viewed in its read-only storage, not folded.
@@ -1123,7 +1124,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) 
 		}
 		return
 	}
-	description := concat(k.c, "conversion to `", type_name(k.c, target), "`")
+	description := fmt.tprintf("conversion to `%s`", type_name_alloc(k.c, target, context.temp_allocator))
 	args := []Arg_Info{arg_from_expr(v.args[0].value)}
 	cand, resolved := resolve_overload(k, v.span, description, usable, args)
 	if !resolved {
