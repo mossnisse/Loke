@@ -99,3 +99,86 @@ Both halves hold the split's one reborrow, and nothing says a place reached
 through one is apart from a place reached through the other, as
 `taken_from_earlier_chunk` in `src/borrow_report.odin` says of two chunks of
 one traversal. Passing each half, or each chunk, whole is the way around it.
+
+### A place in a copy of a chunk is held against later chunks
+
+[standard-library.md "Chunks of a mutable slice"](standard-library.md#chunks-of-a-mutable-slice):
+a chunk "stays usable after the loop advances and after it ends, since no two
+chunks overlap", and "a borrow of a place in a chunk, such as `&mut rows[0]`
+[...] does not suspend the chunk a later step binds". A borrow of a place in a
+copy of the chunk, held by a task or kept in a container, still suspends the
+chunk the next step binds:
+
+```loke
+package main;
+
+set :: proc(slot: ^mut int) { slot^ = 1; }
+
+tasks :: proc(xs: []mut int) {
+	parallel {
+		foreach (rows in xs.chunks_mut(1)) {
+			chunk := rows;           // L0641 on `rows`, should compile
+			spawn set(&mut chunk[0]); // L0641 on `chunk`, should compile
+		}
+	}
+}
+
+kept :: proc(xs: []mut int) {
+	pointers: [dynamic]^mut int = {};
+	foreach (rows in xs.chunks_mut(1)) {
+		chunk := rows;                    // L0641 on `rows`, should compile
+		pointers.append(&mut chunk[0]); // L0641 on `chunk`, should compile
+	}
+	foreach (p in pointers) { p^ = 2; }
+}
+
+main :: proc() {}
+```
+
+`prov_place_loan` in `src/provenance_places.odin` marks a place loan as taken
+through a chunk only when its one carrier is the chunk binding itself, so
+`taken_from_earlier_chunk` never exempts a loan reached through a copy. Taking
+the place through the chunk binding, as `&mut rows[0]`, is the way around it.
+
+### A place in one inner traversal is held against another's chunks
+
+The same rule, with chunks of chunks: a borrow of a place in a chunk of one
+inner traversal, held by a task, is taken to conflict with the chunks a
+different inner traversal binds on a later step of the outer loop, although the
+outer chunks never overlap. Each element below is written once:
+
+```loke
+package main;
+
+set :: proc(slot: ^mut int) { slot^ = 1; }
+
+alternating :: proc(xs: []mut int) {
+	parallel {
+		foreach (rows, i in xs.chunks_mut(2).indexed()) {
+			if (i % 2 == 0) {
+				foreach (even in rows.chunks_mut(1)) { spawn set(&mut even[0]); } // L0641 on `even`, should compile
+			} else {
+				foreach (odd in rows.chunks_mut(1)) { spawn set(&mut odd[0]); } // L0641 on `odd`, should compile
+			}
+		}
+	}
+}
+
+nested :: proc(xs: []mut int) {
+	parallel {
+		foreach (rows in xs.chunks_mut(2)) {
+			foreach (one in rows.chunks_mut(1)) { spawn set(&mut one[0]); } // compiles
+		}
+	}
+}
+
+main :: proc() {}
+```
+
+`taken_from_earlier_chunk` exempts a loan only from the binding it was taken
+through, on a later step of that binding's own traversal. `nested` compiles
+because every inner traversal binds `one`, not because the outer chunks are
+apart; a loan taken through `odd` is checked against `even` and kept. Tracking
+which traversal and which outer chunk a place loan comes from, rather than one
+binding, would close this gap and the one above. Using one inner traversal
+for every outer step is the way around it.
