@@ -43,11 +43,12 @@ ensure_container_fields :: proc(c: ^Compiler, type: Type_Id, storage: string) {
 	if len(info.fields) > 0 {
 		return
 	}
-	info.fields = make([]Symbol_Id, 4, c.semantic_allocator)
-	info.fields[CONTAINER_STORAGE] = new_field(c, storage, TYPE_RAWPTR, CONTAINER_STORAGE)
-	info.fields[CONTAINER_LEN] = new_field(c, "len", TYPE_INT, CONTAINER_LEN)
-	info.fields[CONTAINER_CAP] = new_field(c, "cap", TYPE_INT, CONTAINER_CAP)
-	info.fields[CONTAINER_ALLOC] = new_field(c, "allocator", TYPE_ALLOCATOR, CONTAINER_ALLOC)
+	info.fields = owned_fields(c, {
+		CONTAINER_STORAGE = {storage, TYPE_RAWPTR, false},
+		CONTAINER_LEN = {"len", TYPE_INT, false},
+		CONTAINER_CAP = {"cap", TYPE_INT, false},
+		CONTAINER_ALLOC = {"allocator", TYPE_ALLOCATOR, false},
+	})
 }
 
 type_is_dynamic_array :: proc(c: ^Compiler, id: Type_Id) -> bool {
@@ -291,15 +292,10 @@ CHUNKS_SIZE :: 1
 @(private = "file")
 chunks_mut_type :: proc(k: ^Checker, slice: Type_Id) -> Type_Id {
 	c := k.c
-	name := intern_identifier(c, fmt.tprintf("Chunks_Mut(%s)", type_name(c, slice)))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = slice})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[CHUNKS_REST] = new_field(c, "rest", slice, CHUNKS_REST)
-	fields[CHUNKS_SIZE] = new_field(c, "size", TYPE_INT, CHUNKS_SIZE)
-	info := type_of(c, type)
-	info.fields = fields
-	info.backend_label = fmt.aprintf("Chunks_Mut.%d", slice, allocator = c.semantic_allocator)
-	info.contributed += {.Iteration}
+	type := new_owned_record(c, "Chunks_Mut", slice, {
+		CHUNKS_REST = {"rest", slice, false},
+		CHUNKS_SIZE = {"size", TYPE_INT, false},
+	}, {element = slice, contributed = {.Iteration}})
 	add_members(c, type, []Symbol_Id{
 		new_associated_type(c, "Element", slice, type),
 		new_associated_type(c, "Iterator", type, type),
@@ -428,12 +424,11 @@ append_fallible_members :: proc(
 
 // -------------------------------------------------------------- ordering --
 
-// How an element type answers `<`, settled once during checking so every
-// package sorts it the same way. `Unordered` means already reported.
-Order_Policy_Kind :: enum { Unresolved, Builtin, Inherent, Unordered }
-
+// How an element type answers `<`, so every package sorts it the same way.
+// Resolving one asks nothing about sorting, so unlike a map key's policy it
+// needs no guard against being asked again meanwhile.
 Order_Policy :: struct {
-	kind: Order_Policy_Kind,
+	kind: Policy_Kind,
 	less: Symbol_Id,
 }
 
@@ -466,7 +461,7 @@ require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
 	#partial switch resolved_element_order_policy(k.c, element).kind {
 	case .Builtin, .Inherent:
 		return
-	case .Unordered:
+	case .Rejected:
 		return // already reported, once, at this element
 	}
 	policy, reason := resolve_element_order_policy(k.c, element)
@@ -475,7 +470,7 @@ require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
 		return
 	}
 	if committing(k.c) {
-		k.c.order_policies[element] = Order_Policy{kind = .Unordered}
+		k.c.order_policies[element] = Order_Policy{kind = .Rejected}
 	}
 	errorf(
 		k.c, span, "L0651",

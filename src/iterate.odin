@@ -56,15 +56,11 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	if existing, found := c.range_types[element]; found {
 		return existing
 	}
-	fields := make([]Symbol_Id, 3, c.semantic_allocator)
-	fields[RANGE_LOW] = new_field(c, "low", element, RANGE_LOW, public = true)
-	fields[RANGE_HIGH] = new_field(c, "high", element, RANGE_HIGH, public = true)
-	fields[RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, RANGE_CLOSED, public = true)
-	type := new_type(c, Type_Info{
-		kind = .Struct, element = element, is_range = true, fields = fields,
-		name = intern_identifier(c, fmt.tprintf("Range(%s)", type_name(c, element))),
-		backend_label = fmt.aprintf("Range.%s", type_name(c, element), allocator = c.semantic_allocator),
-	})
+	type := new_owned_record(c, "Range", element, {
+		RANGE_LOW = {"low", element, true},
+		RANGE_HIGH = {"high", element, true},
+		RANGE_CLOSED = {"closed", TYPE_BOOL, true},
+	}, {element = element, is_range = true})
 	c.range_types[element] = type
 	return type
 }
@@ -184,24 +180,63 @@ rune_offset_type :: proc(c: ^Compiler) -> Type_Id {
 
 // ------------------------------------------------------- iterator types --
 
+// A field of a compiler-made record, at its position in the list.
+Owned_Field :: struct {
+	name:   string,
+	type:   Type_Id,
+	public: bool,
+}
+
+// The field symbols of a compiler-made record, numbered by position.
+owned_fields :: proc(c: ^Compiler, fields: []Owned_Field) -> []Symbol_Id {
+	ids := make([]Symbol_Id, len(fields), c.semantic_allocator)
+	for field, index in fields {
+		ids[index] = new_field(c, field.name, field.type, index, field.public)
+	}
+	return ids
+}
+
+// A compiler-made record of `fields`, with what `base` says besides. It is
+// `label(over)` to a reader and `label.over` to the backend, spelled from names
+// rather than ids, or plain `label` when it is made over no type.
+new_owned_record :: proc(c: ^Compiler, label: string, over: Type_Id, fields: []Owned_Field, base: Type_Info = {}) -> Type_Id {
+	info := base
+	info.kind = .Struct
+	info.fields = owned_fields(c, fields)
+	if over == INVALID_TYPE {
+		info.name = intern_identifier(c, label)
+		info.backend_label = label
+	} else {
+		over_name := type_name(c, over)
+		info.name = intern_identifier(c, fmt.tprintf("%s(%s)", label, over_name))
+		info.backend_label = fmt.aprintf("%s.%s", label, over_name, allocator = c.semantic_allocator)
+	}
+	return new_type(c, info)
+}
+
 @(private = "file")
 range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	if existing, found := c.iterator_types[range]; found {
 		return existing
 	}
 	element := type_of(c, range).element
-	fields := make([]Symbol_Id, 4, c.semantic_allocator)
-	fields[ITER_RANGE_CURRENT] = new_field(c, "current", element, ITER_RANGE_CURRENT)
-	fields[ITER_RANGE_HIGH] = new_field(c, "high", element, ITER_RANGE_HIGH)
-	fields[ITER_RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED)
-	fields[ITER_RANGE_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_RANGE_REVERSED)
-	type := new_type(c, Type_Info{
-		kind = .Struct, element = element, fields = fields,
-		name = intern_identifier(c, fmt.tprintf("Range_Iterator(%s)", type_name(c, element))),
-		backend_label = fmt.aprintf("Range_Iterator.%s", type_name(c, element), allocator = c.semantic_allocator),
-	})
+	type := new_owned_record(c, "Range_Iterator", element, {
+		ITER_RANGE_CURRENT = {"current", element, false},
+		ITER_RANGE_HIGH = {"high", element, false},
+		ITER_RANGE_CLOSED = {"closed", TYPE_BOOL, false},
+		ITER_RANGE_REVERSED = {"reversed", TYPE_BOOL, false},
+	}, {element = element})
 	c.iterator_types[range] = type
 	return type
+}
+
+// The iterator of a sequence `subject`, holding `data` under the name `data_name`.
+array_iterator_record :: proc(c: ^Compiler, label: string, subject, data: Type_Id, data_name: string, base: Type_Info) -> Type_Id {
+	return new_owned_record(c, label, subject, {
+		ITER_ARRAY_DATA = {data_name, data, false},
+		ITER_ARRAY_INDEX = {"index", TYPE_INT, false},
+		ITER_ARRAY_REVERSED = {"reversed", TYPE_BOOL, false},
+	}, base)
 }
 
 // `holds` is what the iterator stores: a slice for runtime arrays, otherwise
@@ -212,15 +247,8 @@ array_iterator_type :: proc(c: ^Compiler, array, holds: Type_Id) -> Type_Id {
 		return existing
 	}
 	element := type_of(c, array).element
-	fields := make([]Symbol_Id, 3, c.semantic_allocator)
-	fields[ITER_ARRAY_DATA] = new_field(c, "data", holds, ITER_ARRAY_DATA)
-	fields[ITER_ARRAY_INDEX] = new_field(c, "index", TYPE_INT, ITER_ARRAY_INDEX)
-	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED)
-	type := new_type(c, Type_Info{
-		kind = .Struct, element = element, fields = fields,
-		name = intern_identifier(c, fmt.tprintf("Array_Iterator(%s)", type_name(c, array))),
-		backend_label = fmt.aprintf("Array_Iterator.%s", type_name(c, array), allocator = c.semantic_allocator),
-		descriptor = type_is_compile_time_only(c, element),
+	type := array_iterator_record(c, "Array_Iterator", array, holds, "data", {
+		element = element, descriptor = type_is_compile_time_only(c, element),
 	})
 	c.iterator_types[array] = type
 	return type
@@ -241,14 +269,10 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 // `{ table, cursor }` over `subject`, named `label`. `key` is there because `next`
 // needs the map's operation table.
 new_map_cursor_type :: proc(c: ^Compiler, subject, element: Type_Id, label: string) -> Type_Id {
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
-	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
-	return new_type(c, Type_Info{
-		kind = .Struct, element = element, key = subject, is_view = true, fields = fields,
-		name = intern_identifier(c, fmt.tprintf("%s(%s)", label, type_name(c, subject))),
-		backend_label = fmt.aprintf("%s.%s", label, type_name(c, subject), allocator = c.semantic_allocator),
-	})
+	return new_owned_record(c, label, subject, {
+		ITER_MAP_TABLE = {"table", TYPE_RAWPTR, false},
+		ITER_MAP_CURSOR = {"cursor", TYPE_INT, false},
+	}, {element = element, key = subject, is_view = true})
 }
 
 // --------------------------------------------------------- container views --
@@ -272,15 +296,9 @@ container_view_type :: proc(c: ^Compiler, source: Type_Id, kind: View_Kind) -> T
 		label, held, element = "Rune_Offsets", TYPE_STRING_VIEW, rune_offset_type(c)
 	}
 	// One rune-offset view serves every text type; a map view names its map.
-	text := kind == .Rune_Offsets
-	spelling := text ? label : fmt.tprintf("%s(%s)", label, type_name(c, source))
-	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[VIEW_SOURCE] = new_field(c, "source", held, VIEW_SOURCE)
-	type := new_type(c, Type_Info{
-		kind = .Struct, element = element, is_view = true, view_kind = kind, fields = fields,
-		name = intern_identifier(c, spelling),
-		key = text ? INVALID_TYPE : source,
-		backend_label = text ? label : fmt.aprintf("%s.%s", label, type_name(c, source), allocator = c.semantic_allocator),
+	over := kind == .Rune_Offsets ? INVALID_TYPE : source
+	type := new_owned_record(c, label, over, {VIEW_SOURCE = {"source", held, false}}, {
+		element = element, is_view = true, view_kind = kind, key = over,
 	})
 	c.view_types[key] = type
 	return type
@@ -305,13 +323,10 @@ text_iterator_type :: proc(c: ^Compiler, cache_key: Type_Id, element: Type_Id, l
 	if existing, found := c.iterator_types[cache_key]; found {
 		return existing
 	}
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_TEXT_VIEW] = new_field(c, "view", TYPE_STRING_VIEW, ITER_TEXT_VIEW)
-	fields[ITER_TEXT_OFFSET] = new_field(c, "offset", TYPE_INT, ITER_TEXT_OFFSET)
-	type := new_type(c, Type_Info{
-		kind = .Struct, element = element, is_view = true, fields = fields,
-		name = intern_identifier(c, label), backend_label = label,
-	})
+	type := new_owned_record(c, label, INVALID_TYPE, {
+		ITER_TEXT_VIEW = {"view", TYPE_STRING_VIEW, false},
+		ITER_TEXT_OFFSET = {"offset", TYPE_INT, false},
+	}, {element = element, is_view = true})
 	c.iterator_types[cache_key] = type
 	return type
 }

@@ -569,14 +569,15 @@ alias_view :: proc(k: ^Checker, scope: ^Scope, pattern: Expr) -> Expr {
 	if pattern == nil {
 		return nil
 	}
-	saved_scope, saved_view := k.scope, k.c.alias_view
-	k.scope, k.c.alias_view = scope, k
-	defer k.scope, k.c.alias_view = saved_scope, saved_view
-	return clone_expr(k.c, pattern)
+	saved_scope := k.scope
+	k.scope = scope
+	defer k.scope = saved_scope
+	return clone_expr(k.c, pattern, {alias_view = k})
 }
 
-// The view of one application of an alias, or nil when `v` applies none.
-alias_view_of_application :: proc(k: ^Checker, v: ^Expr_Call) -> Expr {
+// The view of one application of an alias, or nil when `v` applies none. Its
+// arguments are cloned under `rewrite`, the clone that met it.
+alias_view_of_application :: proc(k: ^Checker, v: ^Expr_Call, rewrite: Clone_Rewrite) -> Expr {
 	template := generic_template_of_callee(k, v.callee, {.Alias})
 	if template == nil || template.rejected || template.expanding || len(v.args) != len(template.params) {
 		return nil
@@ -584,14 +585,16 @@ alias_view_of_application :: proc(k: ^Checker, v: ^Expr_Call) -> Expr {
 	// The arguments first, in the scope that wrote them.
 	substitution := make(map[Identifier_Id]Expr, len(template.params), context.temp_allocator)
 	for parameter, index in template.params {
-		substitution[parameter.name] = clone_expr(k.c, v.args[index].value)
+		substitution[parameter.name] = clone_expr(k.c, v.args[index].value, rewrite)
 	}
-	saved_scope, saved_substitution := k.scope, k.c.poly_substitution
-	k.scope, k.c.poly_substitution = template.scope, &substitution
+	saved_scope := k.scope
+	k.scope = template.scope
 	template.expanding = true
 	defer {
-		k.scope, k.c.poly_substitution = saved_scope, saved_substitution
+		k.scope = saved_scope
 		template.expanding = false
 	}
-	return clone_expr(k.c, template.decl.values[0])
+	body := rewrite
+	body.substitution = &substitution
+	return clone_expr(k.c, template.decl.values[0], body)
 }

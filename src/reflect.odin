@@ -35,13 +35,12 @@ descriptor_type :: proc(c: ^Compiler, slot: ^Type_Id, name, payload_name: string
 	if slot^ != INVALID_TYPE {
 		return slot^
 	}
-	slot^ = new_type(c, Type_Info{kind = .Struct, name = intern_identifier(c, name), descriptor = true})
-	members := make([]Symbol_Id, 4, c.semantic_allocator)
-	members[META_NAME] = new_field(c, "name", TYPE_STRING_VIEW, META_NAME, public = true)
-	members[META_PAYLOAD] = new_field(c, payload_name, payload, META_PAYLOAD, public = true)
-	members[META_INDEX] = new_field(c, "index", TYPE_INT, META_INDEX, public = true)
-	members[META_OWNER] = new_field(c, "owner", TYPE_TYPE, META_OWNER)
-	type_of(c, slot^).fields = members
+	slot^ = new_owned_record(c, name, INVALID_TYPE, {
+		META_NAME = {"name", TYPE_STRING_VIEW, true},
+		META_PAYLOAD = {payload_name, payload, true},
+		META_INDEX = {"index", TYPE_INT, true},
+		META_OWNER = {"owner", TYPE_TYPE, false},
+	}, {descriptor = true})
 	return slot^
 }
 

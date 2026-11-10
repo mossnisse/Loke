@@ -55,18 +55,6 @@ Compiler :: struct {
 	// (`release_held_diagnostics`).
 	held_diagnostics: [dynamic]Diagnostic,
 
-	// While a capture literal's body is cloned into its record's `call`: the
-	// captured names, which the clone rewrites to the receiver's fields
-	// (`ast_clone.odin`). Nil for every other clone.
-	capture_rewrite: ^Capture_Rewrite,
-	// While a parametric alias's body is cloned into a view: each parameter's
-	// written argument, which the clone puts where its `$` name was; and the
-	// checker whose scope tells which applications in the clone are aliases to
-	// expand the same way (`alias_view` in generic.odin). Nil for every other
-	// clone.
-	poly_substitution: ^map[Identifier_Id]Expr,
-	alias_view:        ^Checker,
-
 	// Hypothetical checks (overload bounds and interface requirements) may use
 	// the ordinary checker, but must not enroll backend artifacts in the final
 	// module. Nested checks share this counter so every registry has one gate.

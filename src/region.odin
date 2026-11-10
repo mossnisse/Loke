@@ -57,9 +57,7 @@ contribute_provider_types :: proc(k: ^Checker, pkg: ^Package) {
 
 @(private = "file")
 new_provider_type :: proc(c: ^Compiler, name: string) -> Type_Id {
-	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[PROVIDER_CONTROL] = new_field(c, "control", TYPE_RAWPTR, PROVIDER_CONTROL)
-	return new_type(c, Type_Info{kind = .Struct, name = intern_identifier(c, name), provider = true, fields = fields, backend_label = name})
+	return new_owned_record(c, name, INVALID_TYPE, {PROVIDER_CONTROL = {"control", TYPE_RAWPTR, false}}, {provider = true})
 }
 
 // Whether this type is one of the two local region providers, through a

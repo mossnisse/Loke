@@ -24,10 +24,7 @@ Interface_Slot :: struct {
 Interface_Info :: struct {
 	symbol:    Symbol_Id,
 	node:      ^Type_Interface,
-	scope:     ^Scope,
-	pkg:       Package_Id,
-	file:      u32,
-	file_node: ^File,
+	using location: Generic_Location,
 	params:    []Generic_Param_Decl,
 	checked:   bool,
 	// Computed once per declaration, with the rule that disqualified it.
@@ -57,21 +54,10 @@ interface_info_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Interface_Info
 	info := new(Interface_Info, k.c.semantic_allocator)
 	info.symbol = symbol_id
 	info.node = node
-	info.pkg = sym.pkg
-	info.file, info.file_node = sym.def_file, sym.def_file_node
-	info.scope = sym.def_scope
-	if info.scope == nil {
-		if pkg := package_of(k.c, sym.pkg); pkg != nil {
-			info.scope = pkg.scope
-		}
-	}
-	params := make([dynamic]Generic_Param_Decl, 0, 4, k.c.semantic_allocator)
-	for group in node.generic_params {
-		for name in group.names {
-			append(&params, Generic_Param_Decl{name = name_identifier(k.c, name), span = name.span, type_syntax = group.type})
-		}
-	}
-	info.params = params[:]
+	info.location = declaration_location(k.c, sym)
+	// Requirements are read in the interface's own package, with no `impl`.
+	info.lookup_pkg, info.impl_type = info.pkg, INVALID_TYPE
+	info.params = written_generic_params(k.c, node.generic_params)
 	k.c.interfaces[symbol_id] = info
 	return info
 }
@@ -584,10 +570,7 @@ interface_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg)
 	}
 	// design.md "Private names in public declarations": what the requirements
 	// select, this application says.
-	append(&k.c.pending_private_reads, Pending_Private_Read {
-		decl = symbol_of(k.c, info.symbol).decl,
-		location = {scope = scope, pkg = info.pkg, lookup_pkg = info.pkg, impl_type = INVALID_TYPE, file = info.file, file_node = info.file_node},
-	})
+	pend_private_read(k, symbol_of(k.c, info.symbol).decl, info.location, scope)
 	return {}, true
 }
 

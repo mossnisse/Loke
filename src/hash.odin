@@ -157,14 +157,17 @@ first_unhashable_part :: proc(c: ^Compiler, type: Type_Id) -> (string, Type_Id) 
 	return "", INVALID_TYPE
 }
 
-// design.md "Maps": the compiler supplies a key's `==`/`hash` pair, or the key
-// type declares both inherently; extensions never count. `Rejected` means already
-// reported.
-Key_Policy_Kind :: enum { Unresolved, Builtin, Inherent, Rejected }
+// How a type answers what a container asks of it, a map key's `==`/`hash` or a
+// sort element's `<`: by the compiler's own operation or by the type's inherent
+// one. Settled once during checking, so every package agrees; `Rejected` means
+// already reported.
+Policy_Kind :: enum { Unresolved, Builtin, Inherent, Rejected }
 
-// Chosen during checking and read by CTFE and the backend.
+// design.md "Maps": the compiler supplies a key's `==`/`hash` pair, or the key
+// type declares both inherently; extensions never count. Chosen during checking
+// and read by CTFE and the backend.
 Key_Policy :: struct {
-	kind:      Key_Policy_Kind,
+	kind:      Policy_Kind,
 	hash:      Symbol_Id,
 	equal:     Symbol_Id,
 }
@@ -242,6 +245,8 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return false // already reported, once, at this key
 	}
 	// A speculative probe's diagnostics are rolled back, so it must not cache one.
+	// Stored first: a signature the parts' hashes resolve may name a map keyed
+	// by this type again.
 	if committing(k.c) {
 		k.c.map_key_policies[key] = Key_Policy{kind = .Rejected}
 	}

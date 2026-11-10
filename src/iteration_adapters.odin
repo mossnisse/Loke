@@ -1,8 +1,6 @@
 // Fallback iterable adapters used when the source has no matching member.
 package lokec
 
-import "core:fmt"
-
 Adapter_Kind :: enum { None, Indexed, Reversed, Copied }
 Adapter_Key :: struct { source: Type_Id, kind: Adapter_Kind, pkg: Package_Id }
 
@@ -102,14 +100,10 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	} else {
 		by_value ||= source_info.is_view
 	}
-	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[ADAPTER_SOURCE] = new_field(c, "source", by_value ? source : TYPE_RAWPTR, ADAPTER_SOURCE, public = false)
-	view := new_type(c, Type_Info{
-		kind = .Struct, name = intern_identifier(c, fmt.tprintf("%s(%s)", label, type_name(c, source))),
+	view := new_owned_record(c, label, source, {ADAPTER_SOURCE = {"source", by_value ? source : TYPE_RAWPTR, false}}, {
 		key = source, element = element, is_view = true, adapter_kind = kind,
-		fields = fields, adapter_by_value = by_value, descriptor = type_is_compile_time_only(c, source),
+		adapter_by_value = by_value, descriptor = type_is_compile_time_only(c, source),
 		contributed = {.Iteration}, site = Type_Site{pkg = key.pkg},
-		backend_label = fmt.aprintf("%s.%d.%d", label, source, key.pkg, allocator = c.semantic_allocator),
 	})
 	result_iterator := iterator
 	if kind == .Indexed {
@@ -139,18 +133,12 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 // The iterator `indexed()` or `copied()` wraps around its source's, named for the
 // view it serves. `indexed()` adds the counter.
 @(private = "file")
-new_adapter_iterator :: proc(k: ^Checker, backend_label: string, kind: Adapter_Kind, source, iterator, element, view: Type_Id) -> Type_Id {
-	c := k.c
-	fields := make([]Symbol_Id, kind == .Indexed ? 2 : 1, c.semantic_allocator)
-	fields[ITER_ADAPTER_INNER] = new_field(c, "iterator", iterator, ITER_ADAPTER_INNER, public = false)
-	if kind == .Indexed { fields[ITER_ADAPTER_INDEX] = new_field(c, "index", TYPE_INT, ITER_ADAPTER_INDEX, public = false) }
-	return new_type(c, Type_Info{
-		kind = .Struct,
-		name = intern_identifier(c, fmt.tprintf("%s_Iterator(%s)", kind == .Indexed ? "Indexed" : "Copied", type_name(c, iterator))),
-		key = iterator, element = element, adapter_kind = kind, fields = fields,
-		descriptor = type_is_compile_time_only(c, source), contributed = {.Iteration},
-		site = type_of(c, view).site,
-		backend_label = fmt.aprintf("%s.%d", backend_label, view, allocator = c.semantic_allocator),
+new_adapter_iterator :: proc(k: ^Checker, kind: Adapter_Kind, source, iterator, element, view: Type_Id) -> Type_Id {
+	fields := []Owned_Field{ITER_ADAPTER_INNER = {"iterator", iterator, false}, ITER_ADAPTER_INDEX = {"index", TYPE_INT, false}}
+	return new_owned_record(k.c, kind == .Indexed ? "Indexed_Iterator" : "Copied_Iterator", iterator, fields[:kind == .Indexed ? 2 : 1], {
+		key = iterator, element = element, adapter_kind = kind,
+		descriptor = type_is_compile_time_only(k.c, source), contributed = {.Iteration},
+		site = type_of(k.c, view).site,
 	})
 }
 
@@ -160,7 +148,7 @@ new_adapter_iterator :: proc(k: ^Checker, backend_label: string, kind: Adapter_K
 new_wrapping_iterator :: proc(k: ^Checker, kind: Adapter_Kind, source, iterator, element, item: Type_Id, next: Symbol_Id, view: Type_Id) -> Type_Id {
 	c := k.c
 	indexed := kind == .Indexed
-	wrapper := new_adapter_iterator(k, indexed ? "Indexed_Iterator" : "Copied_Iterator", kind, source, iterator, element, view)
+	wrapper := new_adapter_iterator(k, kind, source, iterator, element, view)
 	yielded := indexed ? item : element
 	add_members(c, wrapper, []Symbol_Id{
 		new_associated_type(c, "Element", element, wrapper),
@@ -221,7 +209,7 @@ add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Ad
 		type_of(c, view).mutable = true
 		return
 	}
-	walker := new_adapter_iterator(k, "Indexed_Mut_Iterator", .Indexed, source, iterator, indexed_element_type(c, element), view)
+	walker := new_adapter_iterator(k, .Indexed, source, iterator, indexed_element_type(c, element), view)
 	add_members(c, walker, []Symbol_Id{
 		synth_self_member(k.c, "next", .Indexed_Next, walker, .Inout, option_type(k, indexed_element_type(c, item)), next),
 	})

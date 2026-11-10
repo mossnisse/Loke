@@ -135,14 +135,6 @@ Instantiation_Frame :: struct {
 	silent:   bool,
 }
 
-// An instance whose declaration is yet to be read for private names
-// (`check_generic_private_names`): an instance can appear inside a probe, which
-// would roll back a warning about it.
-Pending_Private_Read :: struct {
-	decl: ^Decl,
-	using location: Generic_Location,
-}
-
 // A procedure instance waiting to be named and emitted with its defining
 // package's items: a template's instance, or with no `template` a member of an
 // instantiated `impl` block.
@@ -692,7 +684,10 @@ pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: 
 	return specificity, has_poly
 }
 
-// The `$` names a pattern binds, in written order, repeats included.
+// The `$` names a pattern binds, in written order, repeats included. Only
+// pattern positions count: not a value, an inline definition, or a default,
+// which `bind_poly_names` and `bind_signature` in ast.odin also walk, since
+// their readers ask which names written syntax can see, not what a match binds.
 pattern_names :: proc(e: Expr) -> []Name {
 	names := make([dynamic]Name, context.temp_allocator)
 	pattern_shape(e, &names)
@@ -715,6 +710,36 @@ signature_poly_names :: proc(literal: ^Expr_Proc) -> []Name {
 	return names[:]
 }
 
+// Where `sym`'s declaration is read: its own lexical scope, or its package's
+// when it has none.
+declaration_location :: proc(c: ^Compiler, sym: ^Symbol) -> Generic_Location {
+	location := Generic_Location {
+		scope      = sym.def_scope,
+		pkg        = sym.pkg,
+		lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg,
+		impl_type  = sym.owner_type,
+		file       = sym.def_file,
+		file_node  = sym.def_file_node,
+	}
+	if location.scope == nil {
+		if pkg := package_of(c, sym.pkg); pkg != nil {
+			location.scope = pkg.scope
+		}
+	}
+	return location
+}
+
+// One parameter per written name, in declaration order.
+written_generic_params :: proc(c: ^Compiler, groups: []Generic_Param) -> []Generic_Param_Decl {
+	params := make([dynamic]Generic_Param_Decl, 0, len(groups), c.semantic_allocator)
+	for group in groups {
+		for name in group.names {
+			append(&params, Generic_Param_Decl{name = name_identifier(c, name), span = name.span, type_syntax = group.type})
+		}
+	}
+	return params[:]
+}
+
 @(private = "file")
 register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, kind: Generic_Kind) -> ^Generic_Template {
 	sym := symbol_of(k.c, symbol_id)
@@ -722,29 +747,12 @@ register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, k
 	template.symbol = symbol_id
 	template.decl = d
 	template.kind = kind
-	template.pkg = sym.pkg
-	template.lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg
-	template.impl_type = sym.owner_type
-	template.file = sym.def_file
-	template.file_node = sym.def_file_node
-	template.scope = sym.def_scope
-	if template.scope == nil {
-		if pkg := package_of(k.c, sym.pkg); pkg != nil {
-			template.scope = pkg.scope
-		}
-	}
+	template.location = declaration_location(k.c, sym)
 
 	switch kind {
 	case .Record:
 		template.instances = make([dynamic]^Instance, 0, 2, k.c.semantic_allocator)
-		record := d.values[0].(^Type_Record)
-		params := make([dynamic]Generic_Param_Decl, 0, 4, k.c.semantic_allocator)
-		for group in record.generic_params {
-			for name in group.names {
-				append(&params, Generic_Param_Decl{name = name_identifier(k.c, name), span = name.span, type_syntax = group.type})
-			}
-		}
-		template.params = params[:]
+		template.params = written_generic_params(k.c, d.values[0].(^Type_Record).generic_params)
 	case .Alias:
 		template.params = alias_parameters(k, d.values[0])
 	case .Procedure:
@@ -792,6 +800,159 @@ success_parameters :: proc(k: ^Checker, template: ^Generic_Template, success: in
 	}
 	mark_named_parameters(k, template.params, record.variants[success].type, marks)
 	return marks
+}
+
+// Whether the success payload of a written fallible result depends on a
+// generic argument bound in `scope`. `Result(Unit, E)` does not, though `E` is
+// one; `Result(T, E)` and a bare `R` do.
+success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success: int) -> bool {
+	if !type_syntax_names_generic(k, scope, syntax) {
+		return false
+	}
+	read_alias :: proc(k: ^Checker, id: Symbol_Id, success: int) -> (depends, is_alias: bool) {
+		target, target_scope := local_alias_target(k, id)
+		if target == nil {
+			return false, false
+		}
+		saved := k.scope
+		k.scope = target_scope
+		defer k.scope = saved
+		return success_names_generic(k, target_scope, target, success), true
+	}
+	#partial switch v in syntax {
+	case ^Expr_Ident:
+		// An alias means what it names, so `Outcome :: Result(Unit, E)` leaves the
+		// success as `Unit` as written, and `Outcome :: Result(T, E)` does not.
+		if depends, is_alias := read_alias(k, lookup_symbol(scope, identifier_of(k.c, v)), success); is_alias {
+			return depends
+		}
+	case ^Expr_Selector:
+		// `Local.Outcome` reads the same way. `T.Outcome` and `Box(T).Outcome` do
+		// not, since which member they select depends on the argument.
+		if type_syntax_names_generic(k, scope, v.operand) {
+			return true
+		}
+		if depends, is_alias := read_alias(k, v.resolution.symbol, success); is_alias {
+			return depends
+		}
+	case ^Expr_Call:
+		template := generic_template_of_callee(k, v.callee, TYPE_GENERICS)
+		if template == nil || len(v.args) != len(template.params) {
+			return true
+		}
+		depends := success_parameters(k, template, success)
+		for arg, i in v.args {
+			if depends[i] && type_syntax_names_generic(k, scope, arg.value) {
+				return true
+			}
+		}
+		return false
+	case ^Type_Record:
+		if success < len(v.variants) {
+			payload := v.variants[success].type
+			return payload != nil && type_syntax_names_generic(k, scope, payload)
+		}
+	}
+	return true
+}
+
+// Whether type syntax names a generic argument bound in `scope`, as
+// `Result(T, Error)`, `Result($T, Error)`, or `[N + 1]int` does in an instance
+// generic over `T` or `N`. Outside an instance nothing is bound, so nothing is
+// walked.
+type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
+	if !scope_in_instance(scope) {
+		return false
+	}
+	lookup := Generic_Lookup{k = k, scope = scope, from = scope, followed = make([dynamic]Symbol_Id, context.temp_allocator)}
+	return type_syntax_any_name(e, &lookup, names_generic_binding)
+}
+
+@(private = "file")
+scope_in_instance :: proc(scope: ^Scope) -> bool {
+	for enclosing := scope; enclosing != nil; enclosing = enclosing.parent {
+		if enclosing.instance != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// What a constant declared in a generic body stands for wherever it is named,
+// and the scope that reads it: `Result(T, E)` for `Outcome :: Result(T, E)`, or
+// `N * 2` for `Twice :: N * 2`. A package-scope constant cannot name a binding,
+// and a declaration that defines something, such as `Local :: struct { x: T }`,
+// is one type in each instance rather than a spelling of its arguments.
+@(private = "file")
+local_alias_target :: proc(k: ^Checker, id: Symbol_Id) -> (target: Expr, scope: ^Scope) {
+	symbol := symbol_of(k.c, id)
+	if symbol == nil || symbol.generic || symbol.decl == nil || symbol.decl.kind != .Const || !scope_in_instance(symbol.def_scope) {
+		return nil, nil
+	}
+	// grammar.md "Declarations": a constant binds one name, and an incomplete
+	// declaration may have no initializer.
+	if len(symbol.decl.symbols) != 1 || symbol.decl.symbols[0] != id || len(symbol.decl.values) == 0 {
+		return nil, nil
+	}
+	#partial switch _ in symbol.decl.values[0] {
+	case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator:
+		return nil, nil
+	}
+	return symbol.decl.values[0], symbol.def_scope
+}
+
+@(private = "file")
+Generic_Lookup :: struct {
+	k:        ^Checker,
+	scope:    ^Scope,
+	// Where the syntax is written. A selected member can name a binding this
+	// scope does not bind: `B.Outcome` for `B :: Box(Unit)` reads `Box`'s own `$U`,
+	// which is not a generic argument here.
+	from:     ^Scope,
+	// The aliases already read, since each answers once and a cyclic one, which
+	// its declaration reports, must not be read forever.
+	followed: [dynamic]Symbol_Id,
+}
+
+// A `$` name is a generic argument, and a local alias, named or selected from a
+// type, depends on one through what it names (design.md "Success returns").
+@(private = "file")
+names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
+	lookup := (^Generic_Lookup)(data)
+	#partial switch v in node {
+	case ^Expr_Ident:
+		id := lookup_symbol(lookup.scope, identifier_of(lookup.k.c, v))
+		symbol := symbol_of(lookup.k.c, id)
+		if symbol == nil {
+			return false
+		}
+		if symbol.generic_binding {
+			return lookup_symbol(lookup.from, symbol.name) == id
+		}
+		return alias_names_generic(lookup, id)
+	case ^Expr_Selector:
+		return alias_names_generic(lookup, v.resolution.symbol)
+	case ^Type_Poly:
+		return true
+	case ^Expr_Proc:
+		return type_syntax_any_name(v.signature, data, names_generic_binding)
+	}
+	// A declaration defines its own type; its contents name no argument here.
+	return false
+}
+
+// Whether the local alias `id`, if it is one, names a generic argument.
+@(private = "file")
+alias_names_generic :: proc(lookup: ^Generic_Lookup, id: Symbol_Id) -> bool {
+	target, target_scope := local_alias_target(lookup.k, id)
+	if target == nil || slice.contains(lookup.followed[:], id) {
+		return false
+	}
+	append(&lookup.followed, id)
+	saved := lookup.scope
+	lookup.scope = target_scope
+	defer lookup.scope = saved
+	return type_syntax_any_name(target, lookup, names_generic_binding)
 }
 
 // What a `Name_Match` reads of a node: a name written there, none for a selector
