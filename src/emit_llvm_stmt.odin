@@ -903,10 +903,7 @@ emit_case_test :: proc(e: ^Emitter, subject: string, subject_type: Type_Id, valu
 		hi := emit_borrowed_operand(e, range.hi)
 		low_ok := emit_compare(e, .Gt_Eq, subject_type, subject, lo)
 		high_op := range.op == .Range_Excl ? Token_Kind.Lt : Token_Kind.Lt_Eq
-		high_ok := emit_compare(e, high_op, subject_type, subject, hi)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, low_ok, high_ok)
-		return out
+		return combine_and(e, low_ok, emit_compare(e, high_op, subject_type, subject, hi))
 	}
 	return emit_equal(e, subject_type, subject, emit_borrowed_operand(e, value))
 }

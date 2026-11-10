@@ -1749,7 +1749,7 @@ Int_Form :: struct {
 	lanes:      ^Type_Info,
 }
 
-@(private = "file")
+@(private)
 scalar_int_form :: proc(e: ^Emitter, type: Type_Id) -> Int_Form {
 	return Int_Form {
 		llvm = llvm_type(e, type),
@@ -1759,7 +1759,7 @@ scalar_int_form :: proc(e: ^Emitter, type: Type_Id) -> Int_Form {
 	}
 }
 
-@(private = "file")
+@(private)
 form_const :: proc(e: ^Emitter, form: Int_Form, value: string) -> string {
 	return form.lanes == nil ? value : simd_repeated(e, form.lanes, value)
 }
@@ -1770,7 +1770,7 @@ form_zero :: proc(form: Int_Form) -> string {
 }
 
 // The `i1` a `panic_if` tests: whether any lane of `mask` is set.
-@(private = "file")
+@(private)
 form_any :: proc(e: ^Emitter, form: Int_Form, mask: string) -> string {
 	return form.lanes == nil ? mask : simd_any_lane(e, form.lanes, mask)
 }
@@ -2146,7 +2146,7 @@ emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_In
 	return emit_fields_equal(e, type, info, left, right, byte_member_part)
 }
 
-@(private = "file")
+@(private)
 combine_and :: proc(e: ^Emitter, a, b: string) -> string {
 	if a == "true" {
 		return b

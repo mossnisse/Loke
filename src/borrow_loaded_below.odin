@@ -21,9 +21,9 @@ Loaded_Below :: struct {
 	// Each slot's anchor bit, or -1. Only a slot holding a reborrow is asked about, as the
 	// cursor a load may be below.
 	anchor:  []int,
-	// Whether a row may hold each anchor, so a new value of a carrier nothing was loaded
-	// below ends nothing.
-	used:    []bool,
+	// The anchors a row may hold, one bit each, so a new value of a carrier nothing was
+	// loaded below ends nothing.
+	used:    []u8,
 	// Scratch rows.
 	value, edit: []u8,
 	// An interned row without one anchor, by `u64(row) << 32 | u64(anchor)`.
@@ -51,7 +51,7 @@ loaded_below_make :: proc(state: ^Prov_Solve) {
 	below.row_bytes = (anchors + 7) / 8
 	below.held = make([]u32, state.slots, graph.alloc)
 	below.rows = interned_rows_make(below.row_bytes, graph.alloc)
-	below.used = make([]bool, anchors, graph.alloc)
+	below.used = make([]u8, below.row_bytes, graph.alloc)
 	below.value = make([]u8, below.row_bytes, graph.alloc)
 	below.edit = make([]u8, below.row_bytes, graph.alloc)
 	below.cleared = make(map[u64]u32, 16, graph.alloc)
@@ -200,16 +200,7 @@ run_loaded_below_event :: proc(state: ^Prov_Solve, event: Prov_Event) {
 			bit_clear(value, bit)
 		}
 		below.held[event.slot] = intern_row(&below.rows, value)
-		for byte, at in value {
-			if byte == 0 {
-				continue
-			}
-			for bit in 0 ..< 8 {
-				if byte & (1 << uint(bit)) != 0 {
-					below.used[at * 8 + bit] = true
-				}
-			}
-		}
+		bytes_or(below.used, value)
 	case .Publish, .Rearrange:
 		if event.kind == .Publish && len(event.sources) == 0 {
 			for slot in event.replaces {
@@ -235,7 +226,7 @@ run_loaded_below_event :: proc(state: ^Prov_Solve, event: Prov_Event) {
 end_loaded_below :: proc(state: ^Prov_Solve, slot: int) {
 	below := &state.below
 	bit := below.anchor[slot]
-	if bit < 0 || !below.used[bit] {
+	if bit < 0 || !bit_get(below.used, bit) {
 		return
 	}
 	for &row in below.held {

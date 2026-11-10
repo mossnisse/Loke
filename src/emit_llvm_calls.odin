@@ -1202,36 +1202,29 @@ guard_integer_conversion :: proc(e: ^Emitter, value: string, from, to: Type_Id) 
 	if !test_high && !test_low {
 		return
 	}
-	llvm := llvm_type(e, from)
-	predicate := lanes ? fmt.aprintf("<%d x i1>", info.count) : "i1"
-	bound :: proc(e: ^Emitter, info: ^Type_Info, lanes: bool, value: Big_Int) -> string {
-		text := bi_text(e.c, value)
-		return lanes ? simd_repeated(e, info, text) : text
-	}
+	form := lanes ? lane_int_form(e, info, llvm_type(e, from)) : scalar_int_form(e, from)
 	bad := ""
 	if test_high {
 		to_max := bi_sub(e.c, bi_pow2(e.c, to_value_bits), bi_from_i64(e.c, 1))
 		bad = temp(e)
 		fmt.sbprintfln(
-			&e.b, "  %s = icmp %s %s %s, %s", bad, from_signed ? "sgt" : "ugt", llvm, value, bound(e, info, lanes, to_max),
+			&e.b, "  %s = icmp %s %s %s, %s", bad, from_signed ? "sgt" : "ugt", form.llvm, value,
+			form_const(e, form, bi_text(e.c, to_max)),
 		)
 	}
 	if test_low {
 		to_min := to_signed ? bi_neg(e.c, bi_pow2(e.c, to_bits - 1)) : bi_zero(e.c)
 		under := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, %s", under, llvm, value, bound(e, info, lanes, to_min))
+		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, %s", under, form.llvm, value, form_const(e, form, bi_text(e.c, to_min)))
 		if bad == "" {
 			bad = under
 		} else {
 			joined := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = or %s %s, %s", joined, predicate, bad, under)
+			fmt.sbprintfln(&e.b, "  %s = or %s %s, %s", joined, form.mask, bad, under)
 			bad = joined
 		}
 	}
-	if lanes {
-		bad = simd_any_lane(e, info, bad)
-	}
-	panic_if(e, bad, "cast.int", "an integer outside the destination type's range; `math.wrap` keeps the low bits")
+	panic_if(e, form_any(e, form, bad), "cast.int", "an integer outside the destination type's range; `math.wrap` keeps the low bits")
 }
 
 // design.md "The `unsafe` package": an unchecked address becomes a reference

@@ -123,10 +123,10 @@ Compiler :: struct {
 	pending_impl_instances: [dynamic]Pending_Impl,
 	// The blocks of each subject whose `delegate` items have yet to run
 	// (`settle_delegates`).
-	pending_delegates:     map[Type_Id][dynamic]Pending_Delegate,
+	pending_delegates:     map[Type_Id][dynamic]Pending_Block,
 	// The blocks of the package being declared, and its operators whose signatures have
 	// yet to resolve (`settle_pending_operators`), with the first of each not yet taken.
-	pending_operator_blocks:     [dynamic]Pending_Operator_Block,
+	pending_operator_blocks:     [dynamic]Pending_Block,
 	next_pending_operator_block: int,
 	pending_operators:           [dynamic]Pending_Operator,
 	next_pending_operator:       int,

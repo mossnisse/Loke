@@ -624,7 +624,7 @@ resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
 			case ^Decl:
 				defer_if_operator(k, v)
 			case ^Item_Impl:
-				append(&k.c.pending_operator_blocks, Pending_Operator_Block{v, k.location})
+				append(&k.c.pending_operator_blocks, Pending_Block{v, k.location})
 			}
 		}
 	}
@@ -637,8 +637,9 @@ Pending_Operator :: struct {
 	location: Checker_Location,
 }
 
-// A block yet to be declared, and where it is written.
-Pending_Operator_Block :: struct {
+// A block yet to be declared, or a declared one whose `delegate` items have yet
+// to run, and where it is written.
+Pending_Block :: struct {
 	item:     ^Item_Impl,
 	location: Checker_Location,
 }
@@ -690,12 +691,6 @@ settle_pending_operators :: proc(k: ^Checker) {
 
 // ----------------------------------------------------------------- delegate --
 
-// A declared block whose `delegate` items have yet to run, and where it is written.
-Pending_Delegate :: struct {
-	item:     ^Item_Impl,
-	location: Checker_Location,
-}
-
 @(private)
 defer_delegates :: proc(k: ^Checker, item: ^Item_Impl) {
 	for member in item.members {
@@ -703,9 +698,9 @@ defer_delegates :: proc(k: ^Checker, item: ^Item_Impl) {
 			pending, found := &k.c.pending_delegates[item.subject]
 			if !found {
 				_, pending, _, _ = map_entry(&k.c.pending_delegates, item.subject)
-				pending^ = make([dynamic]Pending_Delegate, 0, 1, k.c.semantic_allocator)
+				pending^ = make([dynamic]Pending_Block, 0, 1, k.c.semantic_allocator)
 			}
-			append(pending, Pending_Delegate{item, k.location})
+			append(pending, Pending_Block{item, k.location})
 			return
 		}
 	}

@@ -1217,7 +1217,9 @@ documented. It has near-copies and one uncached hot predicate.
   scan `members` for `sym.operator == symbol`, expand a `.Proc_Group` into its
   members and test a predicate. One `for_each_flat_member(c, members, symbol,
   visit)` covers them. About 20 lines.
-- **Duplication:** `Pending_Operator`, `Pending_Operator_Block` and
+- **Duplication:** (done in part: `Pending_Operator_Block` and `Pending_Delegate`
+  are now one `Pending_Block`; `Pending_Operator` holds a `^Decl`, and a
+  generic struct would rename its field) `Pending_Operator`, `Pending_Operator_Block` and
   `Pending_Delegate` (635-697) are the same `{node, location: Checker_Location}`
   pair. One generic `Pending(T)` struct removes two declarations.
 - **Data structure/algorithm:** `type_is_comparable` (1019) is not cached. It
@@ -1531,7 +1533,8 @@ Verdict: mechanical and complete; the semantic rewriting modes don't belong in i
 Verdict: clear; the type builders are near-copies (Top 5).
 - **Duplication** `src/iterate.odin:48-63`, `181-198`, `203-220`, `236-245`, `251-280`,
   `297-310`: six hand-built compiler records (Top 5).
-- **Simplify** `src/iterate.odin:453-474`: `iteration_member` interns its `name` string on
+- **Simplify** (not done: interning is one map lookup, small beside the
+  `find_member` it feeds) `src/iterate.odin:453-474`: `iteration_member` interns its `name` string on
   every call; protocol names (`iter`, `next`, `Element`, `Iterator`, `iter_mut`, ...) are
   fixed and could be interned once.
 
@@ -2122,7 +2125,7 @@ Verdict: correct, but it carries a solver transfer function and call-side querie
 Verdict: clean and well documented; small simplifications only.
 
 - **Duplication** `join_loaded_below` (`:150-178`) and `join_links_held` (`borrow.odin:1378`) are the same interned-row join with AND versus OR. `end_loaded_below` (`:241-263`) and `end_links_of_value` with `row_holds_reborrow_of` (`borrow.odin:1400-1461`) both memoize "row minus some bits" in their own `map[u64]`. One `interned_without(rows, row, mask_or_bit, memo)` in `borrow_tables.odin` serves both. Saves about 30 lines.
-- **Simplify** `:210-219` decodes `value` bit by bit to set `below.used[...]`. Keep `used` as a `[]u8` row and `bytes_or(below.used_row, value)`. Saves 8 lines and the inner loop.
+- **Simplify** (done) `:210-219` decodes `value` bit by bit to set `below.used[...]`. Keep `used` as a `[]u8` row and `bytes_or(below.used_row, value)`. Saves 8 lines and the inner loop.
 
 #### src/borrow_report.odin
 Verdict: clear diagnostics replay; some per-event scans and repeated wording logic.
@@ -2131,7 +2134,7 @@ Verdict: clear diagnostics replay; some per-event scans and repeated wording log
 - **Bug (fragile, unverified)** (not done: recorded in open-questions.md as bug 14) `at_once_reaches` (`:293-323`) zeroes and restores derived rows in `state.reach` without `reach_row_written`, then calls `load_pointee_content`. That writes `use.slot`'s row and precision as a side effect, before the report loop's own `run_prov_event` for that event. It is harmless today because the `.Load` replay overwrites both, but it couples correctness to event order. Prefer a scratch `merged` with no write-back: add a `dry` flag to `load_pointee_content`.
 - **Duplication** `reported_within` (`:76-83`) and `reach_reported_within` (`borrow_tasks.odin:566-573`) both scan a whole map for a report inside a span. A per-file sorted list of report offsets, or a single shared helper, would serve both.
 - **Duplication** (not done: each site tests a different condition, the diagnostic's precision, a crowded region, a source's precision or a merged loan, so `hedge` would only rename the conditional) The "precision lost, so say may" choice is open-coded at `:189-191`, `:386`, `:581`, `:599`, `:635`, and in `borrow_tasks.odin:598`, `:686` and `:789-797`. A helper `hedge(state, sure, unsure: string) -> string` removes about 15 lines and keeps the wording rule in one place (design.md "Minimum provenance precision").
-- **Simplify** `carrier_name` (`:608-627`) scans all reborrows per hop. `state.links_into[at]` (`borrow.odin:661`) already indexes reborrows by derived slot. It only runs on the error path, so it is cheap to fix.
+- **Simplify** (done) `carrier_name` (`:608-627`) scans all reborrows per hop. `state.links_into[at]` (`borrow.odin:661`) already indexes reborrows by derived slot. It only runs on the error path, so it is cheap to fix.
 
 #### src/borrow_tables.odin
 Verdict: good data structure. Page sharing plus interned rows fit the problem well.
@@ -2237,7 +2240,9 @@ Verdict: correct three-point liveness. The file holds two unrelated concerns.
 Verdict: clear. The move-only rejection is written three times.
 
 - **Duplication** (not done: the three sites report different codes and wordings, one per field; the shared part is two lines) The sequence "if `type_clone_disabled`, report L0502/L0503 and stop; else `contribute_lifecycle_members`" appears in `classify_return_value :29-40`, `classify_copy :89-100` and `classify_destructure :220-228`. Extract `require_copyable(k, span, type, what) -> bool`. Saves about 15 lines.
-- **Simplify** `record_copy` (`:306-308`) sets `copied_as`, and `classify_copy :101` sets it again for the same expression in `classify_declaration_copies` and `classify_assignment_copies`. One owner suffices.
+- **Simplify** (not done: `classify_copy` also runs without `record_copy` for
+  boxes, variadic elements and insertions, and `record_copy` also marks unmanaged
+  copies, so each needs its own write) `record_copy` (`:306-308`) sets `copied_as`, and `classify_copy :101` sets it again for the same expression in `classify_declaration_copies` and `classify_assignment_copies`. One owner suffices.
 - **Simplify** (done) `report_inline_copy :363-364` and `report_allocating_copy :399-402` format diagnostic fragments with `aprintf` into `semantic_allocator`, which is permanent. Use `tprintf`.
 
 #### src/extended_temporaries.odin
@@ -2360,7 +2365,8 @@ Verdict: correct as far as I could check, but too large (see Top recommendation 
 #### src/emit_llvm_calls.odin
 Verdict: the argument binding is intricate but coherent. Conversions and union construction are mixed in with calls.
 - **Structure** (calls.odin:1114-1323): `emit_value_conversion`, `guard_integer_conversion`, `guard_null_reference`, `guard_float_to_int`, `emit_union_construct`, and `emit_union_as` are about 210 lines of conversions, not calls. They would sit better with expr's implicit conversions, or in a small `emit_llvm_convert.odin`.
-- **Simplify** (calls.odin:1206, 1282): `predicate := lanes ? fmt.aprintf("<%d x i1>", …) : "i1"` is computed twice; `Int_Form.mask` (expr.odin:1716-1721) already carries it. Build the conversion guards on `Int_Form` (`scalar_int_form`/`lane_int_form`) and use `form_any` instead of the hand-written `if lanes { simd_any_lane }`. Saves about 8 lines.
+- **Simplify** (done for `guard_integer_conversion`; `guard_float_to_int` tests a
+  float source, which `Int_Form` does not describe) (calls.odin:1206, 1282): `predicate := lanes ? fmt.aprintf("<%d x i1>", …) : "i1"` is computed twice; `Int_Form.mask` (expr.odin:1716-1721) already carries it. Build the conversion guards on `Int_Form` (`scalar_int_form`/`lane_int_form`) and use `form_any` instead of the hand-written `if lanes { simd_any_lane }`. Saves about 8 lines.
 - **Simplify** (done) (calls.odin:358-359): a hand-written `load` duplicates `load(e, CONTAINER_TYPE, header)`.
 - **Structure / robustness** (done: `backend_fail` when a foreign call owes argument or pack drops) (calls.odin:1063-1065): `emit_bound_call` returns before `emit_refusal_branch` and `emit_after_call` for a foreign convention, so any `argument_cleanups` would never be dropped and their entries would stay in `e.held`. Today this is safe only because design.md rules managed types out of foreign signatures. Add an assertion (`backend_fail` if `len(call.argument_cleanups) > 0 || call.pack_cleanup.kind != .None`) so a later relaxation of the foreign-ABI-safe list fails loudly.
 - **Simplify** (no change needed, as the finding says) (calls.odin:973-979): spilling a large non-`%` operand is a special case of `store`'s own constant handling plus `temporary_slot`. Fine as is; noted only because `operand[0]` would panic on an empty operand string (no producer of `""` found, so not a bug).
@@ -2369,7 +2375,7 @@ Verdict: the argument binding is intricate but coherent. Conversions and union c
 Verdict: clear. The two switch lowerings share their skeleton well through `switch_labels`.
 - **Duplication** (done: `or_match` went with the union `switch` of Top recommendation 1) (stmt.odin:747-754): `or_match` duplicates the OR fold (see emit_llvm.odin finding).
 - **Simplify** (done; `symbol_place` is package-private now) (stmt.odin:153, 157): `e.names[task.result]` and `e.names[task.scope]` are indexed directly, so a missing entry silently writes `ptr ` with an empty operand. Use `symbol_place` (expr.odin:815, currently file-private), which fails the contract instead.
-- **Simplify** (stmt.odin:920-922): use `combine_and`.
+- **Simplify** (done) (stmt.odin:920-922): use `combine_and`.
 
 #### src/emit_llvm_cleanup.odin
 Verdict: sound design. Two hot-path inefficiencies.
@@ -2409,13 +2415,15 @@ Verdict: clean. The in-place `foreach` lowerings and the synthesized `next` bodi
 #### src/emit_llvm_adapters.odin
 Verdict: small and fine, but missing the file header comment every sibling has, and it uses magic field indices.
 - **Simplify** (done: `ADAPTER_SOURCE`, `ITER_ADAPTER_INNER` and `ITER_ADAPTER_INDEX`, used where the checker builds the records too; the file has a header now) (adapters.odin:20, 40, 51): the adapter record's fields are read as raw `0`/`1`, whereas iterate.odin names every other iterator layout (`ITER_ARRAY_DATA`, …). Add `ADAPTER_SOURCE`/`ADAPTER_INDEX` beside them.
-- **Duplication** (adapters.odin:59-60): writes the stop label and `emit_ret(zeroinitializer)` by hand, which is `close_synth_next` (iteration.odin:714) minus the brace. Use it and drop the `}` at 62.
+- **Duplication** (not done: the closing `}` is shared with the other three
+  synthesized bodies in the switch, so using `close_synth_next` would need a
+  return from inside the switch for one line saved) (adapters.odin:59-60): writes the stop label and `emit_ret(zeroinitializer)` by hand, which is `close_synth_next` (iteration.odin:714) minus the brace. Use it and drop the `}` at 62.
 - **Structure**: the architecture document already lists this file together with iteration. At 86 lines it can be merged into `emit_llvm_iteration.odin`.
 
 #### src/emit_llvm_abi.odin
 Verdict: the Win64 classification is careful. Declaration discovery parses text.
 - **Structure** (done: the declared-name set of Top recommendation 3; the four names the compiler defines afterward stay listed) (abi.odin:34-50): `emit_foreign_declarations` re-reads `e.b` for `declare` lines and hard-codes 3 to 5 names that are declared or defined elsewhere (`program_tls_cleanup`, `sink_write`, `write_std`, `program_init`, `wmain`). A table of declared runtime names (Top recommendation 3) plus a set filled by `open_function`/entry emitters would replace this, about 15 lines.
-- **Simplify** (abi.odin:625-645): `foreign_call_result`'s `.Indirect` case calls `load_place` on a fresh private `sret` alloca, which copies a large result into another slot. Use `load_temporary(e, result, sret)`.
+- **Simplify** (done) (abi.odin:625-645): `foreign_call_result`'s `.Indirect` case calls `load_place` on a fresh private `sret` alloca, which copies a large result into another slot. Use `load_temporary(e, result, sret)`.
 - **Duplication** (abi.odin:528-533 vs 637-642, 471-475 vs 502-505): the register-integer store/load round trip is written four times (parameter, return, argument, result). Add `reg_int_reinterpret(e, type, value, to_int: bool)`. Saves about 10 lines.
 
 #### src/emit_llvm_union.odin

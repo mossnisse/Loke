@@ -593,7 +593,7 @@ report_suspended_reborrow :: proc(
 @(private = "file")
 report_place_borrowed :: proc(state: ^Prov_Solve, event: Prov_Event, loan: Prov_Place_Loan, carrier: int, later: Span) {
 	k := state.k
-	name := event.name if event.name != "" else carrier_name(state.graph, carrier)
+	name := event.name if event.name != "" else carrier_name(state, carrier)
 	capability := loan.mutable ? "mutable" : "read-only"
 	// As in `report_borrow_conflict`.
 	covers := state.diagnostic_precision != {} ? " that may cover this place" : ""
@@ -605,23 +605,18 @@ report_place_borrowed :: proc(state: ^Prov_Solve, event: Prov_Event, loan: Prov_
 // A carrier's name, or for a temporary reborrowed from one, as the read-only
 // reborrow of `p^` that `p^^[1]` reads through, the name of what it reborrows.
 @(private = "file")
-carrier_name :: proc(graph: ^Flow_Graph, carrier: int) -> string {
+carrier_name :: proc(state: ^Prov_Solve, carrier: int) -> string {
+	graph := state.graph
 	at := carrier
 	for _ in 0 ..< len(graph.reborrows) + 1 {
 		if graph.prov_slots[at].name != "" {
 			return graph.prov_slots[at].name
 		}
-		source := -1
-		for reborrow in graph.reborrows {
-			if reborrow.derived == at {
-				source = reborrow.source
-				break
-			}
-		}
-		if source < 0 {
+		// `links_into` lists reborrows in order, so its first is the first into `at`.
+		if at >= len(state.links_into) || len(state.links_into[at]) == 0 {
 			break
 		}
-		at = source
+		at = graph.reborrows[state.links_into[at][0]].source
 	}
 	return ""
 }

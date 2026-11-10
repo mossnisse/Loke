@@ -90,7 +90,7 @@ emit_simd_compare :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, l
 	return out
 }
 
-@(private = "file")
+@(private)
 lane_int_form :: proc(e: ^Emitter, info: ^Type_Info, llvm: string) -> Int_Form {
 	return Int_Form {
 		llvm = llvm,

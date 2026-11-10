@@ -623,7 +623,8 @@ foreign_call_result :: proc(e: ^Emitter, callee_type: ^Type_Info, call, sret: st
 	}
 	#partial switch abi_pass(e.c, result) {
 	case .Indirect:
-		return load_place(e, result, sret)
+		// Only the call writes `sret`, so a large result goes on naming it.
+		return load_temporary(e, result, sret)
 	case .Reg_Int:
 		slot, v := temp(e), temp(e)
 		align := type_align(e.c, result)
