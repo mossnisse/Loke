@@ -1227,12 +1227,16 @@ walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
 	walk_flow_block(graph, s.then)
 	link(graph, graph.current, merge)
 
-	graph.current = new_flow_block(graph)
-	link(graph, entry, graph.current)
-	if s.otherwise != nil {
+	// Without an `else`, the false edge goes straight to the merge: an empty block
+	// would still cost the solvers their tables for it.
+	if s.otherwise == nil {
+		link(graph, entry, merge)
+	} else {
+		graph.current = new_flow_block(graph)
+		link(graph, entry, graph.current)
 		walk_flow_stmt(graph, s.otherwise)
+		link(graph, graph.current, merge)
 	}
-	link(graph, graph.current, merge)
 
 	graph.current = merge
 }
@@ -1590,6 +1594,14 @@ track_case_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, consumes: bool
 
 // ------------------------------------------------------------ expressions --
 
+// Walks each of `exprs` for its events alone, as an absent argument's nil.
+@(private)
+walk_flow_each :: proc(graph: ^Flow_Graph, exprs: []Expr) {
+	for e in exprs {
+		walk_flow_expr(graph, e)
+	}
+}
+
 // Walks an expression (nil is a no-op) in evaluation order and returns the
 // carrier slots holding the loans its value carries.
 @(private)
@@ -1941,9 +1953,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 		return nil
 	case .Unsafe_Take, .Unsafe_Write:
-		for bound in v.bound {
-			walk_flow_expr(graph, bound)
-		}
+		walk_flow_each(graph, v.bound)
 		return nil
 	case .Drop:
 		if len(v.bound) == 1 {

@@ -5,9 +5,10 @@ package lokec
 @(private)
 prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
 	type := prov_type(graph, v)
-	recorded := prov_effect_active(graph) && prov_type_has_region(graph.k.c, type)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Call{prov_input_value(graph, v), .Result}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph) && prov_type_has_region(graph.k.c, type),
+		Prov_Effect_Call{prov_input_value(graph, v), .Result},
+	)
 	// A diverging call's value is never produced (design.md "Diverging
 	// procedures"), so it contributes no sources.
 	if type == TYPE_VOID || type == INVALID_TYPE || call_diverges(graph.k.c, v) {
@@ -448,4 +449,28 @@ prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, type: Ty
 		}
 	}
 	return false
+}
+
+prov_has_direct_body :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	if is_contract_join(c, id) {
+		for member in symbol_of(c, id).members {
+			if !prov_has_direct_body(c, member) {
+				return false
+			}
+		}
+		return true
+	}
+	sym := symbol_of(c, id)
+	if sym == nil || sym.kind != .Proc {
+		return false
+	}
+	if sym.proc_literal != nil {
+		return sym.proc_literal.body != nil
+	}
+	if literal := sym.decl != nil ? decl_proc(sym.decl) : nil; literal != nil {
+		return literal.body != nil
+	}
+	// A hook member's declaration is not a procedure declaration; the
+	// checked-body registry is authoritative for it.
+	return c.checked_body_symbols[id]
 }

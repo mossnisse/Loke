@@ -42,11 +42,7 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 	if payload, fallible := shared_constructor_payload(c, v); payload != nil {
 		loans := walk_flow_expr(graph, payload)
 		prov_hold_owner(graph, payload)
-		for argument in v.bound[1:] {
-			if argument != nil {
-				walk_flow_expr(graph, argument)
-			}
-		}
+		walk_flow_each(graph, v.bound[1:])
 		return prov_boxed_content(graph, v, loans, prov_type(graph, payload), fallible), true
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
@@ -102,9 +98,7 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 			return prov_synthetic_borrow(graph, v, .Static, TYPE_ALLOCATOR), true
 		case .Unsafe_Free:
 			// design.md "What is not checked": the operands are only read.
-			for bound in v.bound {
-				walk_flow_expr(graph, bound)
-			}
+			walk_flow_each(graph, v.bound)
 			return nil, true
 		case .Free_All:
 			if len(v.bound) >= 1 {
@@ -138,11 +132,7 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 			// An atomic returns the stored value, not a borrow of its address, or an
 			// `Atomic(^T)` could never load.
-			for argument in v.bound {
-				if argument != nil {
-					walk_flow_expr(graph, argument)
-				}
-			}
+			walk_flow_each(graph, v.bound)
 			return nil, true
 		case .Unsafe_Take:
 			// design.md "The `unsafe` package": the value is read out, and keeps

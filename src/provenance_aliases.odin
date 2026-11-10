@@ -376,9 +376,10 @@ prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Exp
 @(private)
 prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Value_Id, prefix: []Proj_Step, source: []Proj_Step = nil) {
 	type := prov_value(graph, value).type
-	recorded := prov_effect_active(graph) && value != 0 && type_carries_borrow(graph.k.c, type).any
-	if recorded { prov_effect_begin(graph, Prov_Effect_Targets{local, value, prov_effect_path(graph, prefix), prov_effect_path(graph, source)}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph) && value != 0 && type_carries_borrow(graph.k.c, type).any,
+		Prov_Effect_Targets{local, value, prov_effect_copy(graph, prefix), prov_effect_copy(graph, source)},
+	)
 	if value == 0 { return }
 	for alias in prov_value_aliases(graph, value) {
 		if !paths_overlap(alias.path, source) { continue }
@@ -459,9 +460,10 @@ prov_clone_written_aliases :: proc(aliases: []Written_Alias, allocator: mem.Allo
 prov_call_written_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) {
 	form := prov_value(graph, id).form.(Prov_Form_Call)
 	call := form.call
-	recorded := prov_effect_active(graph) && prov_input_call(graph, call).writes_facts
-	if recorded { prov_effect_begin(graph, Prov_Effect_Call{id, .Invalidate}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph) && prov_input_call(graph, call).writes_facts,
+		Prov_Effect_Call{id, .Invalidate},
+	)
 	c := graph.k.c
 	info := underlying_info(c, call_proc_type(c, call))
 	if info == nil { return }

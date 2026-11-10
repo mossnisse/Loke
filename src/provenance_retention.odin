@@ -84,8 +84,8 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, event: Prov_Event, rearran
 		if may_hold(c, type, event.rearranged) {
 			// Only a mutable one suspends a read of it.
 			mutable := copies_mutable && (type == INVALID_TYPE || carrier_is_mutable(c, type))
-			append(&graph.reborrows, Prov_Reborrow{source = candidate, derived = hub, span = event.span, mutable = mutable})
-			append(&graph.reborrows, Prov_Reborrow{source = hub, derived = candidate, span = event.span, mutable = true})
+			prov_add_reborrow(graph, Prov_Reborrow{source = candidate, derived = hub, span = event.span, mutable = mutable})
+			prov_add_reborrow(graph, Prov_Reborrow{source = hub, derived = candidate, span = event.span, mutable = true})
 		}
 	}
 }
@@ -442,10 +442,9 @@ prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov
 			continue
 		}
 		if entry.kind == .Temporary && !entry.loaded {
-			for reborrow in graph.reborrows {
-				if reborrow.derived == source {
-					append(&pending, reborrow.source)
-				}
+			deriving := prov_reborrows_deriving(graph, source)
+			for reborrow in prov_next_reborrow(graph, &deriving) {
+				append(&pending, reborrow.source)
 			}
 			continue
 		}
@@ -478,7 +477,7 @@ prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov
 				return
 			}
 			held := type == INVALID_TYPE ? candidate.caller_mutable : carrier_is_mutable(c, type)
-			append(&graph.reborrows, Prov_Reborrow {
+			prov_add_reborrow(graph, Prov_Reborrow {
 				source = source, derived = into, span = span, mutable = mutable && held, passes_on = passes_on, pending = pending,
 			})
 		}
@@ -566,4 +565,113 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 		return proj_wild()
 	}
 	return prov_map_entry_step(graph, prov_type(graph, v.bound[0]), v.bound[1])
+}
+
+// design.md "Allocator regions and region provenance": a call leaves in each
+// argument it may write the owners its body leaves there, with the regions of
+// the arguments they came from. With no body to summarize, every allocator or
+// moved-owner argument may land in every such argument.
+@(private)
+prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
+	form := prov_value(graph, id).form.(Prov_Form_Call)
+	v, bound := form.call, prov_bound_values(form)
+	prov_effect_scope(graph, prov_effect_active(graph) && prov_input_call(graph, v).writes_facts, Prov_Effect_Call{id, .Write})
+	c := graph.k.c
+	proc_type := call_proc_type(c, v)
+	info := underlying_info(c, proc_type)
+	if info == nil {
+		return
+	}
+	callee := call_contract_declaration(c, v)
+	direct := prov_has_direct_body(c, callee)
+	prov_note_summary_dependency(graph, callee)
+	written, found := written_region_summary(c, callee)
+	if !found && direct {
+		return // no parameter it writes can hold an owner
+	}
+	// What backs an owner left there, as opposed to an allocator handle.
+	owners, _ := written_region_summary(c, callee, owners = true)
+	everything := Region_Set{}
+	if !found {
+		for argument, index in bound {
+			if argument == 0 || index >= len(info.parameters) {
+				continue
+			}
+			moved := param_mode_at(info, index) == .Move
+			if moved || type_is_allocator(c, info.parameters[index]) {
+				region_merge(&everything, prov_region_of(graph, argument))
+			}
+		}
+	}
+	// Where the summary keeps paths, what it leaves lands at them, so a field
+	// the callee never wrote keeps its own regions.
+	rows, has_rows := written_content_summary(c, callee)
+	for destination, index in bound {
+		packed := call_packs(v, index)
+		if (destination == 0 && !packed) || index >= len(info.parameters) {
+			continue
+		}
+		region, owned := everything, everything
+		contents: []Prov_Region_Content
+		if found {
+			if index >= len(written) {
+				continue
+			}
+			region = prov_substitute_region(graph, form, written[index])
+			owned = Region_Set{}
+			if index < len(owners) {
+				owned = prov_substitute_region(graph, form, owners[index])
+			}
+			if has_rows && !packed && index < len(rows) {
+				contents = make([]Prov_Region_Content, len(rows[index]), graph.alloc)
+				for entry, position in rows[index] {
+					contents[position] = entry
+					contents[position].region = prov_substitute_region(graph, form, entry.region)
+				}
+			}
+		} else if packed || !prov_argument_is_place(graph, v, index) {
+			type := info.parameters[index]
+			if !carrier_is_mutable(c, type) && !prov_type_reaches_mutable(c, type) {
+				continue
+			}
+		}
+		if packed {
+			for element in form.pack { prov_leave_region(graph, element, region, owned) }
+		} else if prov_argument_is_place(graph, v, index) {
+			prov_leave_in_place(graph, destination, region, owned, contents)
+		} else if prov_parameter_is_record_by_value(c, param_mode_at(info, index), info.parameters[index]) {
+			prov_store_region_through(graph, destination, region, owned, CALL_LEFT_OWNER, contents = contents, by_carrier = contents != nil)
+		} else {
+			prov_leave_region(graph, destination, region, owned, contents)
+		}
+	}
+}
+
+// The caller's half: a moved owner the call may keep takes its region into each
+// argument it may be written to, or into static storage.
+@(private)
+prov_call_moved_owner :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, level: Escape_Level) {
+	value := v.bound[index]
+	info := underlying_info(graph.k.c, call_proc_type(graph.k.c, v))
+	if value == nil || info == nil {
+		return
+	}
+	if level == .Static {
+		prov_event(graph, Prov_Event_Static_Escape{prov_input_value(graph, value), expr_span(value), prov_owner_name(graph, value)})
+	}
+	for destination, target in v.bound {
+		if target == index || destination == nil || target >= len(info.parameters) {
+			continue
+		}
+		place := destination
+		if !prov_argument_is_place(graph, v, target) {
+			if !carrier_is_mutable(graph.k.c, info.parameters[target]) {
+				continue
+			}
+			if unary, is_unary := destination.(^Expr_Unary); is_unary && unary.op == .Amp {
+				place = unary.operand
+			}
+		}
+		prov_store_region(graph, prov_input_value(graph, place), prov_input_value(graph, value))
+	}
 }
