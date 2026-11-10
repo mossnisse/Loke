@@ -21,31 +21,30 @@ foreign_llvm_name :: proc(sym: ^Symbol) -> string {
 }
 
 // Emit each foreign symbol once, unless this module already declares the name
-// or goes on to declare or define it: the binding then refers to that one.
+// or defines it: the binding then refers to that one. Each is recorded in
+// `e.declared`, so an intrinsic declared later on first use is not declared again.
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
-	seen := make(map[string]bool, context.temp_allocator)
+	defined := make(map[string]bool, context.temp_allocator)
 	for symbol_id, name in e.names {
 		if sym := symbol_of(e.c, symbol_id);
 		   sym != nil && !sym.is_foreign && (sym.kind == .Proc || sym.kind == .Var) {
-			seen[name] = true
+			defined[name] = true
 		}
 	}
-	// `e.declared` holds what `emit_preamble` declared; these are declared or
-	// defined only after this.
-	seen["@loke_rt_v1_program_tls_cleanup"] = true
-	seen["@loke_rt_v1_sink_write"] = true
-	seen["@loke_rt_v1_write_std"] = true
+	// What the compiler defines after this point.
+	defined["@loke_rt_v1_program_tls_cleanup"] = true
+	defined["@loke_rt_v1_sink_write"] = true
 	if any_provider_selected(e.c) {
-		seen["@loke_rt_v1_program_init"] = true
+		defined["@loke_rt_v1_program_init"] = true
 	}
 	if e.c.build_mode != .Obj {
-		seen["@wmain"] = true
+		defined["@wmain"] = true
 	}
 	for id in e.foreign_symbols {
 		sym := symbol_of(e.c, id)
-		if name := foreign_llvm_name(sym); !seen[name] && !e.declared[name] {
-			seen[name] = true
+		if name := foreign_llvm_name(sym); !defined[name] && name not_in e.declared {
+			e.declared[name] = true
 			emit_foreign_declare(e, sym)
 		}
 	}

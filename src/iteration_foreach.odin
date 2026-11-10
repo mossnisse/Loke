@@ -246,10 +246,9 @@ bind_protocol_loop :: proc(k: ^Checker, s: ^Stmt_Foreach, element, iterator: Typ
 }
 
 // The iterator's `next`, how it yields against `element`, and what it hands back,
-// when it is a `next` the protocol can call. With a `span`, one it cannot call is
-// reported there.
-protocol_next :: proc(k: ^Checker, iterator, element: Type_Id, fallback: Yield_Kind, span := NO_SPAN) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
-	report := span != NO_SPAN
+// when it is a `next` the protocol can call. With `report`, one it cannot call is
+// reported at `span`.
+protocol_next :: proc(k: ^Checker, iterator, element: Type_Id, fallback: Yield_Kind, span: Span, report := true) -> (next: Symbol_Id, yield: Yield_Desc, item: Type_Id, ok: bool) {
 	// `next`'s `Item` says how the element is handed over.
 	yield = iterator_yield(k, iterator, element, fallback)
 	item = iterator_item_type(k, iterator, element, yield, span, report)

@@ -68,8 +68,10 @@ declare_runtime :: proc(e: ^Emitter, table: []Runtime_Declaration) {
 	}
 }
 
-// Writes one declaration and records its name, so a foreign symbol bound to the
-// same name refers to it (`emit_foreign_declarations`).
+// Writes one declaration and records its name in `e.declared`, so a foreign
+// symbol bound to the same name refers to it (`emit_foreign_declarations`) and
+// `declare_intrinsic` does not declare it again. Only the preamble and the
+// layout probe call it, both ahead of the foreign declarations.
 @(private)
 declare_runtime_entry :: proc(e: ^Emitter, declaration: Runtime_Declaration) {
 	fmt.sbprintf(&e.b, "declare %s @%s(%s)", declaration.result, declaration.name, declaration.params)
@@ -159,6 +161,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 		}
 	}
 	declare_runtime(e, FORMAT_DECLARATIONS[:])
+	declare_runtime_entry(e, WRITE_STD_DECLARATION)
 	emit_carrier_types(e)
 	emit_text_declarations(e)
 	emit_container_declarations(e)

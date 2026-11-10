@@ -71,7 +71,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	protocol, found := read_protocol(k, source)
 	if !found { return INVALID_SYMBOL }
 	element, iterator, iter := protocol.element, protocol.iterator, protocol.iter
-	next, source_yield, item, usable := protocol_next(k, iterator, element, .Owned)
+	next, source_yield, item, usable := protocol_next(k, iterator, element, .Owned, NO_SPAN, report = false)
 	if !usable || (kind == .Copied && !yield_borrowed_parts_copyable(k.c, element, source_yield)) {
 		return INVALID_SYMBOL
 	}
@@ -198,7 +198,7 @@ mutable_adapter_walk :: proc(k: ^Checker, source: Type_Id, kind: Adapter_Kind) -
 	found: bool
 	walk.protocol, found = mutable_protocol(k, source)
 	if !found || walk.protocol.receiver == .Inout { return }
-	walk.next, _, walk.item, ok = protocol_next(k, walk.protocol.iterator, walk.protocol.element, .Mutable)
+	walk.next, _, walk.item, ok = protocol_next(k, walk.protocol.iterator, walk.protocol.element, .Mutable, NO_SPAN, report = false)
 	if !ok || kind != .Reversed { return }
 	walk.reverse = iteration_member(k, source, "iter_mut_reverse")
 	_, ok = mutable_iteration_receiver(k, walk.reverse, source, walk.protocol.iterator)

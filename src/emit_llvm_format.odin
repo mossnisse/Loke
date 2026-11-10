@@ -555,9 +555,13 @@ SINK_STD_WITNESS :: "@loke.fmt.std_sink"
 SINK_STDOUT :: 1
 SINK_STDERR :: 2
 
+// The runtime's standard-stream writer, which `emit_sink_bridge` calls; a module
+// declares it with its runtime entries.
+@(private)
+WRITE_STD_DECLARATION :: Runtime_Declaration{"void", "loke_rt_v1_write_std", "ptr, ptr, i64", ""}
+
 @(private)
 emit_sink_bridge :: proc(e: ^Emitter) {
-	declare_runtime_entry(e, {"void", "loke_rt_v1_write_std", "ptr, ptr, i64", ""})
 	fmt.sbprintln(&e.b, `define void @loke_rt_v1_sink_write(ptr %w, ptr %bytes, i64 %count) {
 entry:
   %data = load ptr, ptr %w

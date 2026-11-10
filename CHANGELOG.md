@@ -1793,6 +1793,9 @@ checklist.
 
 ### Fixed
 
+- A [foreign binding](design.md#foreign-system) whose `@(link_name)` names an LLVM intrinsic the
+  program also reaches through a built-in, such as `llvm.ctpop.i64` beside `math.count_ones` on an
+  `i64`, builds: the module declared the intrinsic twice, and clang rejected it.
 - `L0443`, a compile-time value an interface parameter's type cannot represent, shows the value as
   written: `1.5`, where it showed the generic cache's encoding `f64:3ff8000000000000`.
 - `L0727`, a replaced `core:thread` that lacks what a `parallel` block or a `spawn` needs, points at

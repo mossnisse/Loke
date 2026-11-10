@@ -179,9 +179,9 @@ data-structure problem (group 4, top recommendation 3).
 
 The backend re-parses the module text it has already written:
 `emit_foreign_declarations` scans `declare` lines (done: it consults
-`Emitter.declared`), and `attach_debug_info` counts witnesses (group 6 overview). Free-standing source text is lexed through
-a full scratch `Compiler` (group 1). Both should consult the structured state
-directly.
+`Emitter.declared`), and `attach_debug_info` counts witnesses (group 6
+overview). Free-standing source text is lexed through a full scratch `Compiler`
+(group 1). Both should consult the structured state directly.
 
 ## Recommended order
 
@@ -2264,7 +2264,7 @@ The backend is careful and well commented. Ownership, unwind registration, large
    `union_dispatch_is_one_switch` and `tests/ll/union_format_switch.loke`.
    `emit_format_enum` still compares one member at a time.): `emit_union_widen` (union.odin:102), `emit_union_drop` (lifecycle.odin:596), `emit_union_try_clone_body` (lifecycle.odin:626), `emit_union_equal` (expr.odin:2066), the union arm of `emit_hash_value` (containers.odin:1383), `emit_format_union` (format.odin:378), and the type switch's tests (stmt.odin:787). Each site repeats about 6 lines (`temp`, `icmp eq i%d`, two `new_label`s, `branch_if`, `place_label hit`, … `place_label next`), and the tag width is re-derived in 9 places with `fmt.aprintf("i%d", shape.tag_bytes*8)`. One switch per union is shorter IR and gives faster `-opt=none` code. Saves about 50 lines. `emit_format_enum` (format.odin:425) could use the same helper.
 2. **Make hashing of fixed arrays loop instead of unrolling** (containers.odin:1414-1421). A non-large array (up to 4096 bytes) is fully unrolled: a `[4096]u8` key emits about 16k instructions into its hash thunk. `emit_array_equal` (expr.odin:1985-1995) already switches to a loop above `UNROLLED_EQUAL_ELEMENTS`/`UNROLLED_EQUAL_BYTES`. Use the same thresholds for hashing, and merge the large-array branch (1401-1413) into that loop. This is a code-size defect, and it also makes hashing and equality lower the same shapes differently. Add a regression test that bounds the IR growth, in the style of `fixed_array_clone_ir_grows_linearly`.
-3. **Declare runtime entries from one table instead of ~85 `fmt.sbprintln("declare ...")` lines** (done for the tables and the declared-name set, with the module text unchanged; the 30 `*.with.overflow` declarations are still unconditional): runtime.odin:58-120 and 172-190, containers.odin:15-41, atomics.odin:31-41, plus the declaration in format.odin:570. A `[]struct{name, signature, attrs}` table would:
+3. **Declare runtime entries from one table instead of ~85 `fmt.sbprintln("declare ...")` lines** (done for the tables and the declared-name set, with the module text unchanged. `Emitter.declared` is the one set of declared names: foreign bindings and `declare_intrinsic` record into it too, which fixed an intrinsic declared twice when a foreign binding named it (`tests/run/foreign_intrinsic_binding.loke`). Still hard-coded in `emit_foreign_declarations`: the four names the compiler defines after it. Still unconditional: the 30 `*.with.overflow` declarations. The tables did not shorten the code; they added about 65 lines.): runtime.odin:58-120 and 172-190, containers.odin:15-41, atomics.odin:31-41, plus the declaration in format.odin:570. A `[]struct{name, signature, attrs}` table would:
    - remove about 70 lines;
    - let `emit_foreign_declarations` (abi.odin:34-50) consult a set instead of re-parsing the `declare ...(` lines already written and keeping hard-coded `seen[...]` entries;
    - make it possible to declare entries lazily through the existing `declare_intrinsic`. This also covers the 30 `*.with.overflow` declarations that are emitted unconditionally (runtime.odin:98-102), while the vector forms already go through `declare_intrinsic` (simd.odin:78).

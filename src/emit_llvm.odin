@@ -59,10 +59,10 @@ Emitter :: struct {
 	literals: map[string]string,
 	// Private constant globals by type and initializer (`private_constant`).
 	constants: map[string]string,
-	// The LLVM intrinsics a call has declared, by name.
-	intrinsics: map[string]bool,
-	// The runtime entries and intrinsics `declare_runtime_entry` declared, by
-	// LLVM name with its `@`.
+	// Every function or global this module declares, by LLVM name with its `@`:
+	// runtime entries (`declare_runtime_entry`), foreign bindings
+	// (`emit_foreign_declarations`), and intrinsics on first use
+	// (`declare_intrinsic`). Each is declared once.
 	declared: map[string]bool,
 	globals:  [dynamic]string,
 	// compiler-architecture.md "CPU dispatch": every procedure body by symbol, the
@@ -538,12 +538,13 @@ temp :: proc(e: ^Emitter) -> string {
 	return numbered_name("%t", "", next_id(e))
 }
 
-// The LLVM intrinsic `key`, declared on its first use.
+// The LLVM intrinsic `key`, declared on its first use unless the module already
+// declares the name, as a foreign binding to it does.
 @(private)
 declare_intrinsic :: proc(e: ^Emitter, key, result, parameters: string) {
-	if key not_in e.intrinsics {
-		e.intrinsics[key] = true
-		append(&e.globals, fmt.aprintf("declare %s @%s(%s)\n", result, key, parameters))
+	if name := strings.concatenate({"@", key}); name not_in e.declared {
+		e.declared[name] = true
+		append(&e.globals, fmt.aprintf("declare %s %s(%s)\n", result, name, parameters))
 	}
 }
 
