@@ -104,6 +104,9 @@ Compiler :: struct {
 	// vector); the stack and unique-entry count enforce the documented ceiling.
 	generic_templates:     map[Symbol_Id]^Generic_Template,
 	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
+	// Each generic `extend` block's public procedure group, by group symbol: the
+	// members its instances added, which the group's `members` views.
+	extension_groups:      map[Symbol_Id][dynamic]Symbol_Id,
 	instances:             map[string]^Instance,
 	procedure_instances:   map[Symbol_Id]^Instance,
 	// design.md "Parametric aliases": the type each application denotes, by the

@@ -359,17 +359,10 @@ prov_define_copied_region :: proc(graph: ^Flow_Graph, root: Root_Id, at, from: [
 prov_define_copied_content :: proc(graph: ^Flow_Graph, root: Root_Id, contents: []Prov_Region_Content) {
 	storage := prov_storage_for_root(graph, root)
 	if storage == 0 { return }
-	next: for copied in contents {
+	for copied in contents {
 		content := copied
 		content.path = prov_region_path(graph, content.path)
-		existing := graph.region_content[storage]
-		for entry in existing {
-			if prov_same_region_content(entry, content) { continue next }
-		}
-		grown := make([]Prov_Region_Content, len(existing) + 1, graph.alloc)
-		copy(grown, existing)
-		grown[len(existing)] = prov_clone_region_content(content, Region_Set{}, graph.alloc)
-		graph.region_content[storage] = grown
+		prov_add_region_content(graph, storage, content, Region_Set{})
 	}
 }
 

@@ -122,8 +122,9 @@ describes.
 - Region-content and written-alias tables copy their whole slice on every
   insert (`src/provenance_regions.odin:732-742`,
   `src/provenance_escape.odin:362-373`, `src/provenance_aliases.odin:415-433`).
+  (Done: both tables hold `[dynamic]` rows.)
 - A generic `extend` block reallocates its group's member slice for every
-  instance (`src/generic_impl.odin:548-561`).
+  instance (`src/generic_impl.odin:548-561`). (Done.)
 - Ten "append if not present" set helpers scan linearly
   (group 5, top recommendation 7); `Global_Set` already uses a bitset in one
   place.
@@ -196,6 +197,7 @@ restructuring. Measure performance items before and after.
 4. Allocation domains (theme 3 and bug 5), then the evaluator accounting (bug 8);
    bugs 5 and 8 are done where a graph or a clear owner exists.
 5. The per-slot reborrow index and the amortized region-content tables (theme 2).
+   The tables and the `extend` group growth are done.
 6. Caches for interface satisfaction, generic keys and type predicates
    (theme 1), each measured with `perf.ps1`. The three region predicates of
    group 4 are done.
@@ -1353,7 +1355,7 @@ generic-success logic lives in `optional.odin`.
    written four times (`src/check.odin:2126`, `src/private_names.odin:922`,
    `src/generic_alias.odin:110-111`, `src/optional.odin:421-424`), each doing two
    callee lookups. ~25 lines.
-8. **Remove the quadratic extension-group growth.** `register_instance_extension_name`
+8. **Remove the quadratic extension-group growth.** (Done: `Compiler.extension_groups`.) `register_instance_extension_name`
    (`src/generic_impl.odin:548-561`) reallocates the group's member slice, copying all
    earlier instances, for every instance of a generic `extend` block: O(n²) arena memory
    (up to `MAX_INSTANTIATIONS` = 4096). Keep a `[dynamic]Symbol_Id` per group.
@@ -1740,7 +1742,7 @@ The code is careful and thoroughly commented. The normalized-input/replay split 
 4. **Stop allocating outside the analysis arena** (Bug: memory growth).
    - `prov_parameter_label` provenance_retention.odin:537–541 formats into `graph.k.c.semantic_allocator`, which is the long-lived arena, on every graph build. The result is only an event `verb`. Use `graph.alloc`, as every other `fmt.aprintf` here does (e.g. provenance_escape.odin:201, cfg_provenance.odin:1232).
    - Thirteen allocations use `context.temp_allocator`. During a batch compile that is one scratch arena for the whole compilation (session.odin:75), so per-body scratch accumulates instead of being reclaimed at the analysis-arena reset. The sites are provenance_reborrow.odin:235, provenance_retention.odin:15,158–159,199,234–235,240,432–433, provenance_results.odin:204,216, and provenance_regions.odin:1651,1744. Use `graph.alloc` where a graph is at hand. compiler-architecture.md "Normalized provenance input" asks for this ("Materialization allocates in the analysis arena").
-5. **Make the region-content and written-alias tables grow in amortized O(1)** (Data structure). `prov_define_region_content` (provenance_regions.odin:732–742), `prov_define_copied_content` (provenance_escape.odin:362–373) and `prov_add_written_alias` (provenance_aliases.odin:415–433) each do a linear dedup scan, then allocate `len+1` and copy the whole slice for every new entry. That is quadratic per storage, and every round replays it. Store `[dynamic]` values in `Prov_Facts.region_content`/`written_aliases`. The carry and seed already deep-copy. Then add one helper, `prov_region_content_add(graph, storage, entry, merge: bool)`, used by both region writers. The written-alias version is the same shape. Saves ~25 lines and the quadratic copies.
+5. **Make the region-content and written-alias tables grow in amortized O(1)** (Data structure; done, with `prov_add_region_content`, `prov_clone_region_contents` and `prov_clone_written_alias`. The dedup scan per insert is still linear.) `prov_define_region_content` (provenance_regions.odin:732–742), `prov_define_copied_content` (provenance_escape.odin:362–373) and `prov_add_written_alias` (provenance_aliases.odin:415–433) each do a linear dedup scan, then allocate `len+1` and copy the whole slice for every new entry. That is quadratic per storage, and every round replays it. Store `[dynamic]` values in `Prov_Facts.region_content`/`written_aliases`. The carry and seed already deep-copy. Then add one helper, `prov_region_content_add(graph, storage, entry, merge: bool)`, used by both region writers. The written-alias version is the same shape. Saves ~25 lines and the quadratic copies.
 6. **Cache the uncached recursive type predicates** (Data structure; done, the queried type only. `perf.ps1` front-end times fell by a median of about 4%, within the run-to-run noise. Still open: the first query of each type, and every intermediate type in it, still walks the whole record, so the fields^8 worst case remains. A cached `false` cannot answer an intermediate type, which a deeper start cuts off sooner. Caching every intermediate answer needs the walk to report whether it reached `REGION_SHAPE_DEPTH`.) `prov_type_has_region` (provenance_regions.odin:1110) has 20 callers. Callers include `prov_input_call` per argument, `prov_region_of` per value, and `region_field_shape_into` per node, which makes that walk quadratic. `prov_holds_allocator` (:1075) and `prov_view_reaches_provider` (:1650, which also allocates a temp map per call) walk the type tree on every call. A DAG-shaped record walk is up to fields^8 at `REGION_SHAPE_DEPTH`. Their siblings `type_carries_borrow`, `prov_type_reaches_destination` and `prov_type_reaches_mutable` are already memoized in `Compiler` maps (carrier_shape.odin:110–149). Add `c.has_region`, `c.holds_allocator` and `c.view_reaches_provider` the same way, about 15 lines.
 7. **Factor the four alias-reachability walks into one** (Duplication). These walks repeat the same frame: `prov_first_alias_visit` → `carrier_shape(prov_type_at(...))` → `prov_written_aliases_of(storage, bounded ++ carrier.steps)` → recurse.
    - `prov_store_reachable_regions` provenance_escape.odin:539–551

@@ -868,6 +868,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.packages = make([dynamic]^Package, 0, 8, c.semantic_allocator)
 	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
 	c.generic_impls = make(map[Symbol_Id][dynamic]^Generic_Impl, c.semantic_allocator)
+	c.extension_groups = make(map[Symbol_Id][dynamic]Symbol_Id, c.semantic_allocator)
 	c.instances = make(map[string]^Instance, c.semantic_allocator)
 	c.procedure_instances = make(map[Symbol_Id]^Instance, c.semantic_allocator)
 	c.alias_expansions = make(map[string]Type_Id, c.semantic_allocator)

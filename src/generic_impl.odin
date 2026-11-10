@@ -550,14 +550,18 @@ register_instance_extension_name :: proc(k: ^Checker, block: ^Generic_Impl, name
 	if pkg == nil || pkg.scope == nil {
 		return
 	}
-	sym := symbol_of(k.c, pkg.scope.names[name])
+	group := pkg.scope.names[name]
+	sym := symbol_of(k.c, group)
 	if sym == nil || sym.kind != .Proc_Group || sym.instance_of != block.template {
 		return
 	}
-	members := make([]Symbol_Id, len(sym.members) + 1, k.c.semantic_allocator)
-	copy(members, sym.members)
-	members[len(sym.members)] = member
-	sym.members = members
+	members, found := &k.c.extension_groups[group]
+	if !found {
+		k.c.extension_groups[group] = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+		members = &k.c.extension_groups[group]
+	}
+	append(members, member)
+	sym.members = members[:]
 }
 
 // Positions the checker in the instantiated block that declares `sym`, as

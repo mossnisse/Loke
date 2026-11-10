@@ -330,11 +330,7 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 		}
 	}
 	for id, content in seed.region_content {
-		copied := make([]Prov_Region_Content, len(content), graph.alloc)
-		for entry, index in content {
-			copied[index] = prov_clone_region_content(entry, entry.region, graph.alloc)
-		}
-		graph.region_content[id] = copied
+		graph.region_content[id] = prov_clone_region_contents(content[:], graph.alloc)
 	}
 	for id, merged in seed.merged_regions {
 		prov_note_merged_region(graph, id, merged.region, merged.precision)
@@ -368,21 +364,17 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 	for id in graph.lent_locals { carry.lent_locals[id] = true }
 	carry.restored = make(map[Symbol_Id]bool, len(graph.restored), allocator)
 	for id in graph.restored { carry.restored[id] = true }
-	carry.written_aliases = make(map[Storage_Id][]Written_Alias, len(graph.written_aliases), allocator)
+	carry.written_aliases = make(map[Storage_Id][dynamic]Written_Alias, len(graph.written_aliases), allocator)
 	for id, aliases in graph.written_aliases {
-		copied := make([]Written_Alias, len(aliases), allocator)
+		copied := make([dynamic]Written_Alias, len(aliases), allocator)
 		for alias, index in aliases {
-			copied[index] = Written_Alias{target = alias.target, at = slice.clone(alias.at, allocator), path = slice.clone(alias.path, allocator), loaded = alias.loaded, precision = alias.precision}
+			copied[index] = prov_clone_written_alias(alias, allocator)
 		}
 		carry.written_aliases[id] = copied
 	}
-	carry.region_content = make(map[Storage_Id][]Prov_Region_Content, len(graph.region_content), allocator)
+	carry.region_content = make(map[Storage_Id][dynamic]Prov_Region_Content, len(graph.region_content), allocator)
 	for id, content in graph.region_content {
-		copied := make([]Prov_Region_Content, len(content), allocator)
-		for entry, index in content {
-			copied[index] = prov_clone_region_content(entry, entry.region, allocator)
-		}
-		carry.region_content[id] = copied
+		carry.region_content[id] = prov_clone_region_contents(content[:], allocator)
 	}
 	carry.merged_regions = make(map[Storage_Id]Prov_Merged_Region, len(graph.merged_regions), allocator)
 	for id, merged in graph.merged_regions { carry.merged_regions[id] = merged }
@@ -457,7 +449,8 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 			prov_add_loaded_parameter(&out, received, .Viewed)
 		}
 	}
-	for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
+	contents := graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})]
+	for content in contents {
 		region_merge(&out, content.region)
 	}
 	if viewed {
@@ -492,7 +485,8 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 			region_merge(&whole, direct)
 			region_merge(&owned, direct)
 		}
-		for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
+		contents := graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})]
+		for content in contents {
 			add(&out, index, content, written = true)
 		}
 	}
@@ -536,7 +530,8 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 			append(&reads.sources, Prov_Region_Source{slice.clone(path, graph.alloc), query})
 		}
 	}
-	for content in graph.region_content[storage] {
+	contents := graph.region_content[storage]
+	for content in contents {
 		// Own backing facts stay at their value's path. In particular, a
 		// container's allocation does not back its elements, and an element's
 		// allocation does not back the container (design.md "Allocator regions
@@ -728,18 +723,35 @@ prov_define_region_content :: proc(
 	// A handle's entry stays apart from an owner's at the same path, so what
 	// backs an owner is still told from it (design.md "Allocator regions and
 	// region provenance").
-	added := Prov_Region_Content{path = path, region = region, handle = handle, own = own}
-	content := graph.region_content[storage]
-	for &entry in content {
-		if prov_same_region_content(entry, added) {
-			region_merge(&entry.region, region)
+	prov_add_region_content(graph, storage, Prov_Region_Content{path = path, handle = handle, own = own}, region)
+}
+
+// Merges `region` into the entry of `storage` that records the same kind of fact
+// as `entry` at its path, or adds a copy of `entry` holding `region`.
+@(private)
+prov_add_region_content :: proc(graph: ^Flow_Graph, storage: Storage_Id, entry: Prov_Region_Content, region: Region_Set) {
+	content, found := &graph.region_content[storage]
+	if !found {
+		graph.region_content[storage] = make([dynamic]Prov_Region_Content, 0, 2, graph.alloc)
+		content = &graph.region_content[storage]
+	}
+	for &known in content {
+		if prov_same_region_content(known, entry) {
+			region_merge(&known.region, region)
 			return
 		}
 	}
-	grown := make([]Prov_Region_Content, len(content) + 1, graph.alloc)
-	copy(grown, content)
-	grown[len(content)] = prov_clone_region_content(added, region, graph.alloc)
-	graph.region_content[storage] = grown
+	append(content, prov_clone_region_content(entry, region, graph.alloc))
+}
+
+// Deep copies of `content`'s entries, in `allocator`.
+@(private)
+prov_clone_region_contents :: proc(content: []Prov_Region_Content, allocator: mem.Allocator) -> [dynamic]Prov_Region_Content {
+	out := make([dynamic]Prov_Region_Content, len(content), allocator)
+	for entry, index in content {
+		out[index] = prov_clone_region_content(entry, entry.region, allocator)
+	}
+	return out
 }
 
 // Records a stored value's regions at a path: `owned`, the part backing an

@@ -493,7 +493,7 @@ prov_reset_temporary :: proc(graph: ^Flow_Graph, root: Root_Id, event: ^Prov_Eve
 	// actual cleanup, just as its initial owners are (design.md
 	// "Allocator regions and region provenance").
 	if storage := prov_storage(graph, temporary.storage); storage.key.temporary != nil && type_is_managed(graph.k.c, storage.type) {
-		join(graph, &region, storage.type, graph.region_content[temporary.storage], event.provider_end)
+		join(graph, &region, storage.type, graph.region_content[temporary.storage][:], event.provider_end)
 	}
 	if region_is_empty(region) || !regions_may_overlap(region, event.region) { return false }
 	event.verb, event.owner_span = temporary.name, temporary.span

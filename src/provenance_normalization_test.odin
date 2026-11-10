@@ -111,7 +111,8 @@ main :: proc() {}`) { return }
 		                "the payload lost its array-element and variant projections: %v", path)
 	}
 	initial, stored := false, false
-	for content in graph.region_content[storage] {
+	contents := graph.region_content[storage]
+	for content in contents {
 		if content.handle { continue }
 		initial ||= region_has_param(content.region, 0)
 		stored ||= region_has_param(content.region, 1)
@@ -195,7 +196,8 @@ main :: proc() {}`) { return }
 	pointer := normalization_symbol(t, &p, "pointer")
 	destination := normalization_symbol(t, &p, "destination")
 	known, unknown := false, false
-	for alias in graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = pointer})] {
+	pointer_aliases := graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = pointer})]
+	for alias in pointer_aliases {
 		known ||= prov_storage(graph, alias.target).key.symbol == destination
 		unknown ||= alias.target == 0
 	}
@@ -1166,11 +1168,13 @@ main :: proc() {}`) { return }
 // does not stop before them (`prov_fact_weight`).
 @(test)
 loaded_facts_have_weight :: proc(t: ^testing.T) {
-	aliases := [1]Written_Alias{{target = Storage_Id(1)}}
-	facts := Prov_Facts{written_aliases = make(map[Storage_Id][]Written_Alias), region_of = make(map[Symbol_Id]Region_Set)}
+	aliases := make([dynamic]Written_Alias)
+	defer delete(aliases)
+	append(&aliases, Written_Alias{target = Storage_Id(1)})
+	facts := Prov_Facts{written_aliases = make(map[Storage_Id][dynamic]Written_Alias), region_of = make(map[Symbol_Id]Region_Set)}
 	defer delete(facts.written_aliases)
 	defer delete(facts.region_of)
-	facts.written_aliases[Storage_Id(1)] = aliases[:]
+	facts.written_aliases[Storage_Id(1)] = aliases
 	set: Region_Set
 	region_add_param(&set, 0)
 	facts.region_of[Symbol_Id(1)] = set
@@ -1227,8 +1231,9 @@ main :: proc() {}`) { return }
 		{cut, false},
 	}
 	for c in cases {
-		aliases := [1]Written_Alias{{target = target, path = c.path}}
-		graph.written_aliases[local] = aliases[:]
+		aliases := make([dynamic]Written_Alias, graph.alloc)
+		append(&aliases, Written_Alias{target = target, path = c.path})
+		graph.written_aliases[local] = aliases
 		found := prov_written_aliases_of(graph, local, asked)
 		if !testing.expect_value(t, len(found), 1) { continue }
 		if c.extends {
@@ -1244,11 +1249,13 @@ main :: proc() {}`) { return }
 // the budget that merged it in, and a merged store, grow the facts (`prov_fact_weight`).
 @(test)
 merged_facts_have_weight :: proc(t: ^testing.T) {
-	aliases := [1]Written_Alias{{target = Storage_Id(1), precision = {.Depth}}}
-	facts := Prov_Facts{written_aliases = make(map[Storage_Id][]Written_Alias), merged_regions = make(map[Storage_Id]Prov_Merged_Region)}
+	aliases := make([dynamic]Written_Alias)
+	defer delete(aliases)
+	append(&aliases, Written_Alias{target = Storage_Id(1), precision = {.Depth}})
+	facts := Prov_Facts{written_aliases = make(map[Storage_Id][dynamic]Written_Alias), merged_regions = make(map[Storage_Id]Prov_Merged_Region)}
 	defer delete(facts.written_aliases)
 	defer delete(facts.merged_regions)
-	facts.written_aliases[Storage_Id(1)] = aliases[:]
+	facts.written_aliases[Storage_Id(1)] = aliases
 	before := prov_fact_weight(&facts)
 	aliases[0].precision = {}
 	cleared := prov_fact_weight(&facts)

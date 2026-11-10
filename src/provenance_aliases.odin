@@ -2,6 +2,7 @@
 // lands in that storage (design.md "Allocator regions and region provenance").
 package lokec
 
+import "core:mem"
 import "core:slice"
 
 // What a local's carriers may reach: a writable parameter's storage, or a
@@ -314,7 +315,8 @@ prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj
 			append(&out, ..prov_written_aliases_of(graph, prov_storage_for_root(graph, alias.root), prov_concat_path(graph, alias.path, path)))
 		}
 	}
-	for alias in graph.written_aliases[id] {
+	written := graph.written_aliases[id]
+	for alias in written {
 		if !paths_overlap(alias.path, path) {
 			continue
 		}
@@ -412,7 +414,11 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 			path^[WRITTEN_ALIAS_DEPTH - 1].precision += {.Depth}
 		}
 	}
-	existing := graph.written_aliases[local]
+	existing, found := &graph.written_aliases[local]
+	if !found {
+		graph.written_aliases[local] = make([dynamic]Written_Alias, 0, 2, graph.alloc)
+		existing = &graph.written_aliases[local]
+	}
 	for &known in existing {
 		if known.target == alias.target && prov_same_path(known.at, alias.at) && prov_same_path(known.path, alias.path) {
 			known.loaded ||= alias.loaded
@@ -421,16 +427,16 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 			return
 		}
 	}
-	grown := make([]Written_Alias, len(existing) + 1, graph.alloc)
-	copy(grown, existing)
-	grown[len(existing)] = Written_Alias {
-		target    = alias.target,
-		at        = slice.clone(alias.at, graph.alloc),
-		path      = slice.clone(alias.path, graph.alloc),
-		loaded    = alias.loaded,
-		precision = alias.precision,
-	}
-	graph.written_aliases[local] = grown
+	append(existing, prov_clone_written_alias(alias, graph.alloc))
+}
+
+// `alias` with its paths in `allocator`.
+@(private)
+prov_clone_written_alias :: proc(alias: Written_Alias, allocator: mem.Allocator) -> Written_Alias {
+	out := alias
+	out.at = slice.clone(alias.at, allocator)
+	out.path = slice.clone(alias.path, allocator)
+	return out
 }
 
 // A call may replace writable carrier storage without a source expression in

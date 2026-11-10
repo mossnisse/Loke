@@ -167,10 +167,13 @@ Prov_State :: struct {
 // grow, and their weight (`prov_fact_weight`) tells when a round read every
 // one at its final value. A round rebuilds everything else it holds from the
 // frozen input and the construction graph's topology (`prov_fact_graph`).
+//
+// Read a `[dynamic]` row into a local before ranging over it: `for x in
+// m[key]` ranges through the slot's address, which is nil for a missing key.
 Prov_Facts :: struct {
 	// Each local's allocator regions, and the path-indexed regions of storage.
 	region_of:        map[Symbol_Id]Region_Set,
-	region_content:   map[Storage_Id][]Prov_Region_Content,
+	region_content:   map[Storage_Id][dynamic]Prov_Region_Content,
 	// The parent allocator a provider depends on until it is dropped.
 	provider_parents: map[Symbol_Id]Region_Set,
 	// Locals a mutable loan was ever taken of: only these can be reached through
@@ -180,7 +183,7 @@ Prov_Facts :: struct {
 	// holding them: a writable parameter's storage, so a write through it is a
 	// write the caller learns of, or a variable's place `&mut place` lent, so a
 	// reset sees an owner written there and static storage rejects one.
-	written_aliases:  map[Storage_Id][]Written_Alias,
+	written_aliases:  map[Storage_Id][dynamic]Written_Alias,
 	// The parameters a write put their own region back into (`prov_note_restored`).
 	restored:         map[Symbol_Id]bool,
 	// What stores left in storage only through a target an analysis budget merged
@@ -239,7 +242,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.effect_stores = make([dynamic]Effect_Store, allocator)
 	state.thread_spawns = make([dynamic]Thread_Spawn, allocator)
 	state.region_of = make(map[Symbol_Id]Region_Set, allocator)
-	state.region_content = make(map[Storage_Id][]Prov_Region_Content, allocator)
+	state.region_content = make(map[Storage_Id][dynamic]Prov_Region_Content, allocator)
 	state.region_aliases = make(map[Symbol_Id][]Prov_Region_Alias, allocator)
 	state.provider_parents = make(map[Symbol_Id]Region_Set, allocator)
 	state.provider_bits = make(map[Symbol_Id]u64, allocator)
@@ -251,7 +254,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.temp_providers = make([dynamic]Temp_Provider, allocator)
 	state.lent_locals = make(map[Symbol_Id]bool, allocator)
 	state.restored = make(map[Symbol_Id]bool, allocator)
-	state.written_aliases = make(map[Storage_Id][]Written_Alias, allocator)
+	state.written_aliases = make(map[Storage_Id][dynamic]Written_Alias, allocator)
 	state.merged_regions = make(map[Storage_Id]Prov_Merged_Region, allocator)
 	state.scope_drops = make(map[Span]bool, allocator)
 	return state
