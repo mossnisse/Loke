@@ -191,8 +191,17 @@ prov_effect_end :: proc(graph: ^Flow_Graph, recorded: bool) {
 	site.count = prov_next_event(graph) - site.first
 }
 
-prov_effect_path :: proc(graph: ^Flow_Graph, path: []Proj_Step) -> []Proj_Step {
-	return slice.clone(path, graph.alloc)
+// Records `operation` as the fact operation the calling procedure performs, when
+// `recorded`, until that procedure's scope ends. Build it with `prov_effect_copy`,
+// which copies nothing while no operation is being recorded.
+@(deferred_out = prov_effect_end)
+prov_effect_scope :: proc(graph: ^Flow_Graph, recorded: bool, operation: Prov_Fact_Operation) -> (^Flow_Graph, bool) {
+	if recorded { prov_effect_begin(graph, operation) }
+	return graph, recorded
+}
+
+prov_effect_copy :: proc(graph: ^Flow_Graph, items: $S/[]$T) -> S {
+	return slice.clone(items, graph.alloc) if prov_effect_active(graph) else nil
 }
 
 prov_replay_fact_operations :: proc(graph: ^Flow_Graph, program: ^Prov_Effect_Program) {

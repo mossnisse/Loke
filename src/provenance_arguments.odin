@@ -118,15 +118,7 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		cursor: Call_Pack_Cursor
 		for operand, is_spread in call_pack_next(v, &cursor) {
 			type := is_spread ? prov_pack_spread_type(c, prov_type(graph, operand), param_type) : element
-			lent := walk_flow_expr(graph, operand)
-			prov_reborrow(graph, lent, type)
-			if type_carries_borrow(c, type).mutable {
-				lent = prov_lend_carrier(graph, lent, borrowed^, expr_span(operand))
-			} else if type_is_carrier(c, type) {
-				lent = prov_reborrow_traversal(graph, lent, expr_span(operand), false)
-			}
-			borrowed^ = prov_join(graph, borrowed^, lent)
-			actual = prov_join(graph, actual, lent)
+			actual = prov_join(graph, actual, prov_lend_argument(graph, walk_flow_expr(graph, operand), type, borrowed, expr_span(operand)))
 		}
 		return actual
 	case .Moved_Receiver:
@@ -251,21 +243,29 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		}
 	}
 	prov_use_reached_in_record(graph, v, index, argument, actual, param_type)
-	prov_reborrow(graph, actual, param_type)
-	// A mutable carrier passed on as one is reborrowed until the call and what
-	// it returns are done with it, so no other argument may use it meanwhile.
-	// A record holding one is lent as its carriers are (design.md "Values that
-	// contain borrows").
-	if type_carries_borrow(c, param_type).mutable && !is_receiver {
-		actual = prov_lend_carrier(graph, actual, borrowed^, expr_span(argument))
-	} else if type_is_carrier(c, param_type) && !is_receiver {
+	return prov_lend_argument(graph, actual, param_type, borrowed, expr_span(argument), is_receiver)
+}
+
+// What `actual`, passed as a parameter of `type`, lends the call, which joins
+// `borrowed`. A mutable carrier passed on as one is reborrowed until the call and
+// what it returns are done with it, so no other argument may use it meanwhile. A
+// record holding one is lent as its carriers are (design.md "Values that contain
+// borrows"). A receiver is the place the call borrows instead.
+@(private = "file")
+prov_lend_argument :: proc(graph: ^Flow_Graph, actual: []int, type: Type_Id, borrowed: ^[]int, span: Span, is_receiver := false) -> (lent: []int) {
+	c := graph.k.c
+	prov_reborrow(graph, actual, type)
+	lent = actual
+	if type_carries_borrow(c, type).mutable && !is_receiver {
+		lent = prov_lend_carrier(graph, actual, borrowed^, span)
+	} else if type_is_carrier(c, type) && !is_receiver {
 		// design.md "Weakening and reborrows": an existing mutable carrier
 		// weakened to a read-only parameter is reborrowed for the call, which
 		// suspends it while later arguments are evaluated.
-		actual = prov_reborrow_traversal(graph, actual, expr_span(argument), false)
+		lent = prov_reborrow_traversal(graph, actual, span, false)
 	}
-	borrowed^ = prov_join(graph, borrowed^, actual)
-	return actual
+	borrowed^ = prov_join(graph, borrowed^, lent)
+	return lent
 }
 
 // design.md "Weakening and reborrows": a carrier handed to a call lets the
@@ -463,7 +463,7 @@ prov_lend_split_receiver :: proc(graph: ^Flow_Graph, receiver, read: []int, span
 	out := prov_snapshot(graph, read, span)
 	for slot, index in out {
 		if prov_slot_is_mutable_carrier(graph, receiver[index]) {
-			append(&graph.reborrows, Prov_Reborrow{source = receiver[index], derived = slot, span = span, mutable = true})
+			prov_add_reborrow(graph, Prov_Reborrow{source = receiver[index], derived = slot, span = span, mutable = true})
 		}
 	}
 	return out

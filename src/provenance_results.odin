@@ -5,9 +5,10 @@ package lokec
 @(private)
 prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
 	type := prov_type(graph, v)
-	recorded := prov_effect_active(graph) && prov_type_has_region(graph.k.c, type)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Call{prov_input_value(graph, v), .Result}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph) && prov_type_has_region(graph.k.c, type),
+		Prov_Effect_Call{prov_input_value(graph, v), .Result},
+	)
 	// A diverging call's value is never produced (design.md "Diverging
 	// procedures"), so it contributes no sources.
 	if type == TYPE_VOID || type == INVALID_TYPE || call_diverges(graph.k.c, v) {

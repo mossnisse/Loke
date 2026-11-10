@@ -126,9 +126,7 @@ prov_spawn_lends_loaded :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, a
 		if !graph.prov_slots[slot].loaded {
 			continue
 		}
-		derived := prov_temp_slot(graph)
-		prov_def_copy(graph, derived, slot, v.span)
-		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = derived, span = v.span, mutable = mutable})
+		derived := prov_reborrow_into_temp(graph, slot, v.span, mutable)
 		graph.spawn_held = prov_join(graph, graph.spawn_held, prov_one(graph, derived))
 	}
 }
@@ -142,19 +140,18 @@ prov_spawn_reborrows :: proc(graph: ^Flow_Graph, hold: int, held: []int, span, j
 	reborrows := false
 	existing := len(graph.reborrows)
 	for lent in held {
-		for index in 0 ..< existing {
-			reborrow := graph.reborrows[index]
-			if reborrow.derived != lent {
-				continue
-			}
+		deriving := prov_reborrows_deriving(graph, lent)
+		deriving.before = existing
+		for taken in prov_next_reborrow(graph, &deriving) {
+			reborrow := taken^
 			reborrows = true
-			append(&graph.reborrows, Prov_Reborrow {
+			prov_add_reborrow(graph, Prov_Reborrow {
 				source = reborrow.source, derived = hold, span = span, mutable = reborrow.mutable, passes_on = reborrow.passes_on, pending = reborrow.pending,
 			})
 		}
 		if prov_slot_may_come_to_reborrow(graph, lent) {
 			reborrows = true
-			append(&graph.reborrows, Prov_Reborrow{source = lent, derived = hold, span = span, passes_on = true, pending = true})
+			prov_add_reborrow(graph, Prov_Reborrow{source = lent, derived = hold, span = span, passes_on = true, pending = true})
 		}
 	}
 	if reborrows {

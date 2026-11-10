@@ -1398,3 +1398,13 @@ a reproduction before a change.
   `report_thread_local_writes` and the type predicates in
   `provenance_regions.odin` allocate in `context.temp_allocator`, which lasts
   the whole batch; the graph-local sites now use the analysis arena.
+- **Which type a slot holds** (group 4). Four places fall back differently
+  when a carrier slot records no content type: `slot_carrier_type` in
+  `borrow_summaries.odin` takes the symbol's type only for the bare slot of a
+  symbol, `prov_define_one_content` for any slot of an unshaped symbol,
+  `prov_slot_is_mutable_carrier` for any named slot, and the link filter in
+  `prov_link_retained` for one at the symbol's root. The two link filters in
+  `provenance_retention.odin` also differ for a named slot of unknown type:
+  `prov_link_copied_carriers` keeps it and `prov_link_retained` skips it. One
+  rule would remove the differences, but each is a precision choice that needs
+  a probe program before it changes.

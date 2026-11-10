@@ -288,9 +288,10 @@ prov_merge_parent :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
 // on, since a provider's own region stays its token.
 @(private)
 prov_merge_value_region :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage, provider: bool) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Merge_Value{symbol, value, prov_effect_path(graph, source), storage, provider}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph),
+		Prov_Effect_Merge_Value{symbol, value, prov_effect_copy(graph, source), storage, provider},
+	)
 	region := storage ? prov_storage_region(graph, value) : prov_result_region_at(graph, value, source)
 	if provider {
 		prov_merge_parent(graph, symbol, region)
@@ -302,9 +303,7 @@ prov_merge_value_region :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: Va
 // Borrowed bindings are rebound independently for each case/defer expansion.
 @(private)
 prov_forget_region_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Forget_Binding{symbol}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph), Prov_Effect_Forget_Binding{symbol})
 	delete_key(&graph.region_aliases, symbol)
 }
 
@@ -571,9 +570,10 @@ prov_define_value_regions :: proc(
 	graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, value: Value_Id, source: []Proj_Step = nil,
 	copies := false, allocated_by := INVALID_SYMBOL,
 ) {
-	recorded := prov_effect_active(graph) && value != 0 && prov_type_has_region(graph.k.c, prov_value(graph, value).type)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_path(graph, path), value, prov_effect_path(graph, source), copies, allocated_by}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph) && value != 0 && prov_type_has_region(graph.k.c, prov_value(graph, value).type),
+		Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_copy(graph, path), value, prov_effect_copy(graph, source), copies, allocated_by},
+	)
 	allocator := prov_destination_allocator(graph, allocated_by)
 	type := prov_value(graph, value).type
 	reads := prov_self_reads_begin(graph, root)
@@ -962,9 +962,7 @@ prov_rekey_providers :: proc(graph: ^Flow_Graph, moved: []Provider_Path, prefix:
 // local's tokens there.
 @(private)
 prov_merge_moved_providers :: proc(graph: ^Flow_Graph, root: Symbol_Id, value: Value_Id, path: []Proj_Step = nil) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Move_Provider{root, value, prov_effect_path(graph, path)}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph), Prov_Effect_Move_Provider{root, value, prov_effect_copy(graph, path)})
 	moved := prov_moved_providers(graph, value)
 	if len(moved) == 0 {
 		return
@@ -1497,9 +1495,10 @@ prov_read_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 // regions and region provenance"), as for a borrowed case binding.
 @(private)
 prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Value_Id, element: []Proj_Step = nil, traversed := false) {
-	recorded := prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Element{id, iterable, prov_effect_path(graph, element), traversed}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(
+		graph, prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id),
+		Prov_Effect_Element{id, iterable, prov_effect_copy(graph, element), traversed},
+	)
 	sym := symbol_of(graph.k.c, id)
 	if sym != nil && traversed && prov_type_has_region(graph.k.c, sym.type) {
 		prov_bind_traversal_aliases(graph, id, iterable, element)

@@ -70,11 +70,8 @@ prov_note_borrowed_owner :: proc(graph: ^Flow_Graph, id: Value_Id) {
 	borrow, ok := prov_value_transfer(graph, id).(Prov_Transfer_Borrow)
 	if !ok || !borrow.materialized { return }
 	recorded := prov_effect_active(graph) && !graph.effect_program.borrowed_owners[id]
-	if recorded {
-		graph.effect_program.borrowed_owners[id] = true
-		prov_effect_begin(graph, Prov_Effect_Borrow_Owner{id})
-	}
-	defer prov_effect_end(graph, recorded)
+	if recorded { graph.effect_program.borrowed_owners[id] = true }
+	prov_effect_scope(graph, recorded, Prov_Effect_Borrow_Owner{id})
 	for alias in prov_value_aliases(graph, borrow.owner) { prov_add_written_alias(graph, borrow.storage, alias) }
 }
 

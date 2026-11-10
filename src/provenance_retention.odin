@@ -84,8 +84,8 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, event: Prov_Event, rearran
 		if may_hold(c, type, event.rearranged) {
 			// Only a mutable one suspends a read of it.
 			mutable := copies_mutable && (type == INVALID_TYPE || carrier_is_mutable(c, type))
-			append(&graph.reborrows, Prov_Reborrow{source = candidate, derived = hub, span = event.span, mutable = mutable})
-			append(&graph.reborrows, Prov_Reborrow{source = hub, derived = candidate, span = event.span, mutable = true})
+			prov_add_reborrow(graph, Prov_Reborrow{source = candidate, derived = hub, span = event.span, mutable = mutable})
+			prov_add_reborrow(graph, Prov_Reborrow{source = hub, derived = candidate, span = event.span, mutable = true})
 		}
 	}
 }
@@ -442,10 +442,9 @@ prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov
 			continue
 		}
 		if entry.kind == .Temporary && !entry.loaded {
-			for reborrow in graph.reborrows {
-				if reborrow.derived == source {
-					append(&pending, reborrow.source)
-				}
+			deriving := prov_reborrows_deriving(graph, source)
+			for reborrow in prov_next_reborrow(graph, &deriving) {
+				append(&pending, reborrow.source)
 			}
 			continue
 		}
@@ -478,7 +477,7 @@ prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov
 				return
 			}
 			held := type == INVALID_TYPE ? candidate.caller_mutable : carrier_is_mutable(c, type)
-			append(&graph.reborrows, Prov_Reborrow {
+			prov_add_reborrow(graph, Prov_Reborrow {
 				source = source, derived = into, span = span, mutable = mutable && held, passes_on = passes_on, pending = pending,
 			})
 		}

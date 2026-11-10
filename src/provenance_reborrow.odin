@@ -3,6 +3,112 @@
 // the destination is live (design.md "Weakening and reborrows").
 package lokec
 
+import "core:mem"
+
+// `graph.reborrows` chained by the slot each derives and by the slot each is taken
+// from, in the order made, so a slot's reborrows cost what it has rather than every
+// reborrow of the body. Each entry is one more than a reborrow's index, 0 for none:
+// per slot the first and last of its chain, per reborrow the next in each chain.
+Prov_Reborrow_Chains :: struct {
+	derived_first, derived_last, source_first, source_last: [dynamic]int,
+	derived_next, source_next: [dynamic]int,
+}
+
+// A walk along one chain (`prov_next_reborrow`). `before` stops it at the reborrows
+// that existed when it started, so one appended meanwhile is not met.
+Prov_Reborrow_Cursor :: struct {
+	next:      int,
+	by_source: bool,
+	before:    int,
+}
+
+@(private)
+new_prov_reborrow_chains :: proc(allocator: mem.Allocator) -> Prov_Reborrow_Chains {
+	return Prov_Reborrow_Chains {
+		derived_first = make([dynamic]int, allocator),
+		derived_last  = make([dynamic]int, allocator),
+		source_first  = make([dynamic]int, allocator),
+		source_last   = make([dynamic]int, allocator),
+		derived_next  = make([dynamic]int, allocator),
+		source_next   = make([dynamic]int, allocator),
+	}
+}
+
+// The one way a reborrow is made, which chains it by its slots.
+@(private)
+prov_add_reborrow :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) {
+	append(&graph.reborrows, reborrow)
+	prov_chain_reborrow(graph, len(graph.reborrows) - 1)
+}
+
+@(private = "file")
+prov_chain_reborrow :: proc(graph: ^Flow_Graph, index: int) {
+	chains := &graph.reborrow_chains
+	reborrow := graph.reborrows[index]
+	assert(reborrow.source >= 0 && reborrow.derived >= 0, "a reborrow names two slots")
+	if slots := len(graph.prov_slots); len(chains.derived_first) < slots {
+		// Doubled, as `resize` alone would copy every table each time a slot is added.
+		for table in ([4]^[dynamic]int{&chains.derived_first, &chains.derived_last, &chains.source_first, &chains.source_last}) {
+			if cap(table) < slots {
+				reserve(table, max(slots, 2 * cap(table)))
+			}
+			resize(table, slots)
+		}
+	}
+	append(&chains.derived_next, 0)
+	append(&chains.source_next, 0)
+	link :: proc(first, last, next: []int, slot, index: int) {
+		if last[slot] == 0 {
+			first[slot] = index + 1
+		} else {
+			next[last[slot] - 1] = index + 1
+		}
+		last[slot] = index + 1
+	}
+	link(chains.derived_first[:], chains.derived_last[:], chains.derived_next[:], reborrow.derived, index)
+	link(chains.source_first[:], chains.source_last[:], chains.source_next[:], reborrow.source, index)
+}
+
+// Chains `graph.reborrows` again after the list was compacted.
+@(private = "file")
+prov_rechain_reborrows :: proc(graph: ^Flow_Graph) {
+	chains := &graph.reborrow_chains
+	for table in ([4]^[dynamic]int{&chains.derived_first, &chains.derived_last, &chains.source_first, &chains.source_last}) {
+		mem.zero_slice(table[:])
+	}
+	clear(&chains.derived_next)
+	clear(&chains.source_next)
+	for index in 0 ..< len(graph.reborrows) {
+		prov_chain_reborrow(graph, index)
+	}
+}
+
+// The reborrows deriving `slot`, and those taken from it, made so far.
+@(private)
+prov_reborrows_deriving :: proc(graph: ^Flow_Graph, slot: int) -> Prov_Reborrow_Cursor {
+	first := graph.reborrow_chains.derived_first
+	return {next = slot < len(first) ? first[slot] : 0, before = len(graph.reborrows)}
+}
+
+@(private)
+prov_reborrows_from :: proc(graph: ^Flow_Graph, slot: int) -> Prov_Reborrow_Cursor {
+	first := graph.reborrow_chains.source_first
+	return {next = slot < len(first) ? first[slot] : 0, by_source = true, before = len(graph.reborrows)}
+}
+
+// The next reborrow along `cursor`'s chain, and its index in `graph.reborrows`. The
+// pointer is good until the next reborrow is made.
+@(private)
+prov_next_reborrow :: proc(graph: ^Flow_Graph, cursor: ^Prov_Reborrow_Cursor) -> (reborrow: ^Prov_Reborrow, index: int, ok: bool) {
+	if cursor.next == 0 || cursor.next > cursor.before {
+		return nil, -1, false
+	}
+	index = cursor.next - 1
+	chains := &graph.reborrow_chains
+	cursor.next = cursor.by_source ? chains.source_next[index] : chains.derived_next[index]
+	return &graph.reborrows[index], index, true
+}
+
 // design.md "Weakening and reborrows": a carrier stored into `into` from `slots`.
 // A fresh mutable loan weakens to a read-only destination; an existing mutable
 // carrier is reborrowed and suspended while `into` is live. `into` is -1 for a call
@@ -22,10 +128,8 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		entry := graph.prov_slots[slot]
 		// A borrow weakened to a read-only destination is taken read-only.
 		if weakens {
-			for &loan in graph.place_loans {
-				if loan.borrows && loan.slot == slot {
-					loan.mutable = false
-				}
+			if at, is_snapshot := graph.place_loan_of[slot]; is_snapshot && graph.place_loans[at].borrows {
+				graph.place_loans[at].mutable = false
 			}
 		}
 		switch borrow in entry.borrow {
@@ -73,16 +177,15 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		// only this destination, so it takes the destination's capability as a
 		// fresh loan does.
 		if weakens && !prov_slot_is_stored(graph.prov_slots[slot]) {
-			for &earlier in graph.reborrows {
-				if earlier.derived == slot {
-					earlier.mutable = false
-				}
+			earlier := prov_reborrows_deriving(graph, slot)
+			for reborrow in prov_next_reborrow(graph, &earlier) {
+				reborrow.mutable = false
 			}
 		}
 		// A named read-only reborrow is not itself suspended by its copies, nor
 		// is a read-only carrier loaded out through a pointer.
 		passes_on := !mutable_source && (prov_slot_is_stored(graph.prov_slots[slot]) || prov_slot_is_loaded_read_only(graph, slot))
-		append(&graph.reborrows, Prov_Reborrow {
+		prov_add_reborrow(graph, Prov_Reborrow {
 			source = slot, derived = into, span = span, mutable = !weakens, passes_on = passes_on, pending = pending,
 		})
 	}
@@ -196,7 +299,7 @@ prov_slot_fresh_loan :: proc(graph: ^Flow_Graph, slot: int) -> Loan_Id {
 prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	if prov_slot_is_loaded_read_only(graph, event.slot) {
 		for source in event.sources {
-			append(&graph.reborrows, Prov_Reborrow {
+			prov_add_reborrow(graph, Prov_Reborrow {
 				source = source, derived = event.slot, span = event.span, passes_on = true,
 				pending = true,
 			})
@@ -208,15 +311,14 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	}
 	// Its capability is the one the copy is stored with, or none for a read.
 	mutable := !event.reads_only
-	for reborrow in graph.reborrows {
-		if reborrow.source == event.slot {
-			mutable = reborrow.mutable && !event.reads_only
-		}
+	taken := prov_reborrows_from(graph, event.slot)
+	for reborrow in prov_next_reborrow(graph, &taken) {
+		mutable = reborrow.mutable && !event.reads_only
 	}
 	passes_on := graph.prov_slots[event.slot].viewed
 	for source in event.sources {
 		if prov_slot_is_mutable_carrier(graph, source) || graph.prov_slots[source].caller_mutable {
-			append(&graph.reborrows, Prov_Reborrow {
+			prov_add_reborrow(graph, Prov_Reborrow {
 				source = source, derived = event.slot, span = event.span, mutable = mutable, passes_on = passes_on,
 				moved = graph.prov_slots[event.slot].moved_out, names_element = graph.prov_slots[event.slot].names_element,
 			})
@@ -232,26 +334,25 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 // the reborrow holds no loan of it, which the overlap check sees.
 @(private)
 prov_settle_pending_reborrows :: proc(graph: ^Flow_Graph) {
+	// Each slot that comes to reborrow a mutable carrier, found from those that
+	// reborrow one directly along the reborrows taken from it.
 	reborrows_mutable := make([]bool, len(graph.prov_slots), graph.alloc)
-	for changed := true; changed; {
-		changed = false
-		for &reborrow in graph.reborrows {
-			if reborrow.pending {
-				if reborrows_mutable[reborrow.source] {
-					reborrow.pending = false
-					reborrows_mutable[reborrow.derived] = true
-					changed = true
-				}
-				continue
-			}
-			if reborrows_mutable[reborrow.derived] {
-				continue
-			}
-			source := reborrow.source
-			if reborrows_mutable[source] || prov_slot_is_mutable_carrier(graph, source) || prov_slot_is_loaded_mutable(graph, source) ||
-			   graph.prov_slots[source].caller_mutable {
+	found := make([dynamic]int, graph.alloc)
+	for reborrow in graph.reborrows {
+		source := reborrow.source
+		if !reborrow.pending && !reborrows_mutable[reborrow.derived] &&
+		   (prov_slot_is_mutable_carrier(graph, source) || prov_slot_is_loaded_mutable(graph, source) || graph.prov_slots[source].caller_mutable) {
+			reborrows_mutable[reborrow.derived] = true
+			append(&found, reborrow.derived)
+		}
+	}
+	for len(found) > 0 {
+		taken := prov_reborrows_from(graph, pop(&found))
+		for reborrow in prov_next_reborrow(graph, &taken) {
+			reborrow.pending = false
+			if !reborrows_mutable[reborrow.derived] {
 				reborrows_mutable[reborrow.derived] = true
-				changed = true
+				append(&found, reborrow.derived)
 			}
 		}
 	}
@@ -262,7 +363,10 @@ prov_settle_pending_reborrows :: proc(graph: ^Flow_Graph) {
 			kept += 1
 		}
 	}
-	resize(&graph.reborrows, kept)
+	if kept < len(graph.reborrows) {
+		resize(&graph.reborrows, kept)
+		prov_rechain_reborrows(graph)
+	}
 }
 
 // Whether a read-only carrier may come to hold a reborrow of a mutable one, whatever the
@@ -288,8 +392,9 @@ prov_slot_may_take_store :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 // `Prov_Reborrow.pending`
 @(private)
 prov_slot_is_pending :: proc(graph: ^Flow_Graph, slot: int) -> bool {
-	for reborrow in graph.reborrows {
-		if reborrow.derived == slot && reborrow.pending {
+	deriving := prov_reborrows_deriving(graph, slot)
+	for reborrow in prov_next_reborrow(graph, &deriving) {
+		if reborrow.pending {
 			return true
 		}
 	}
@@ -345,25 +450,35 @@ prov_slot_is_loaded_mutable :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 // local source is by its loop loan.
 @(private)
 prov_reborrow_traversal :: proc(graph: ^Flow_Graph, sources: []int, span: Span, mutable: bool) -> []int {
+	return prov_reborrow_each(graph, sources, span, mutable, prov_slot_is_mutable_carrier)
+}
+
+// Each slot of `sources` that `reborrowed` holds of replaced by a temporary
+// reborrowing it, with `mutable` its capability.
+@(private)
+prov_reborrow_each :: proc(graph: ^Flow_Graph, sources: []int, span: Span, mutable: bool, reborrowed: proc(graph: ^Flow_Graph, slot: int) -> bool) -> []int {
 	out := make([dynamic]int, 0, len(sources), graph.alloc)
 	for slot in sources {
-		if !prov_slot_is_mutable_carrier(graph, slot) {
-			append(&out, slot)
-			continue
-		}
-		derived := prov_temp_slot(graph)
-		prov_def_copy(graph, derived, slot, span)
-		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = derived, span = span, mutable = mutable})
-		append(&out, derived)
+		append(&out, prov_reborrow_into_temp(graph, slot, span, mutable) if reborrowed(graph, slot) else slot)
 	}
 	return out[:]
+}
+
+// A temporary holding what `slot` holds, as a reborrow of it.
+@(private)
+prov_reborrow_into_temp :: proc(graph: ^Flow_Graph, slot: int, span: Span, mutable: bool) -> int {
+	derived := prov_temp_slot(graph)
+	prov_def_copy(graph, derived, slot, span)
+	prov_add_reborrow(graph, Prov_Reborrow{source = slot, derived = derived, span = span, mutable = mutable})
+	return derived
 }
 
 // A reborrow of a carrier, named or a traversal's, whose copies extend it.
 @(private)
 prov_slot_is_reborrow :: proc(graph: ^Flow_Graph, slot: int, mutable_only := false) -> bool {
-	for reborrow in graph.reborrows {
-		if reborrow.derived == slot && !reborrow.pending && (reborrow.mutable || !mutable_only) {
+	deriving := prov_reborrows_deriving(graph, slot)
+	for reborrow in prov_next_reborrow(graph, &deriving) {
+		if !reborrow.pending && (reborrow.mutable || !mutable_only) {
 			return true
 		}
 	}

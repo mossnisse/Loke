@@ -232,9 +232,7 @@ prov_store_loans :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span:
 // written through one. `element` stores into a container's elements.
 @(private)
 prov_store_region :: proc(graph: ^Flow_Graph, destination: Value_Id, value: Value_Id, element := false) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Store{destination, value, element}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph), Prov_Effect_Store{destination, value, element})
 	if value == 0 {
 		return
 	}
@@ -491,9 +489,7 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 
 @(private)
 prov_store_spread_region :: proc(graph: ^Flow_Graph, destination, value: Value_Id) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Spread{destination, value}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph), Prov_Effect_Spread{destination, value})
 	region := prov_storage_region(graph, value)
 	prov_store_region_set(graph, destination, region, region, prov_owner_name(graph, prov_value(graph, value).origin), element = true)
 }
@@ -504,9 +500,7 @@ prov_store_spread_region :: proc(graph: ^Flow_Graph, destination, value: Value_I
 // copy of any element to any element, which its caller resolves in turn.
 @(private)
 prov_store_permuted_region :: proc(graph: ^Flow_Graph, receiver: Value_Id) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Permute{receiver}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph), Prov_Effect_Permute{receiver})
 	nothing := Region_Set{}
 	element := slice.clone([]Proj_Step{proj_wild()}, graph.alloc)
 	contents := make([]Prov_Region_Content, 2, graph.alloc)
@@ -517,9 +511,7 @@ prov_store_permuted_region :: proc(graph: ^Flow_Graph, receiver: Value_Id) {
 
 @(private)
 prov_store_map_key_region :: proc(graph: ^Flow_Graph, destination, value: Value_Id) {
-	recorded := prov_effect_active(graph)
-	if recorded { prov_effect_begin(graph, Prov_Effect_Map_Key{destination, value}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph), Prov_Effect_Map_Key{destination, value})
 	region := prov_result_region(graph, value)
 	owned := prov_result_region_at(graph, value, nil, .Owners)
 	prov_store_region_through(graph, destination, region, owned, prov_owner_name(graph, prov_value(graph, value).origin), {proj_wild(), proj_field(PROJ_MAP_KEY)})
@@ -598,9 +590,7 @@ prov_root_for_storage :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Root_I
 prov_call_written_regions :: proc(graph: ^Flow_Graph, id: Value_Id) {
 	form := prov_value(graph, id).form.(Prov_Form_Call)
 	v, bound := form.call, prov_bound_values(form)
-	recorded := prov_effect_active(graph) && prov_input_call(graph, v).writes_facts
-	if recorded { prov_effect_begin(graph, Prov_Effect_Call{id, .Write}) }
-	defer prov_effect_end(graph, recorded)
+	prov_effect_scope(graph, prov_effect_active(graph) && prov_input_call(graph, v).writes_facts, Prov_Effect_Call{id, .Write})
 	c := graph.k.c
 	proc_type := call_proc_type(c, v)
 	info := underlying_info(c, proc_type)
