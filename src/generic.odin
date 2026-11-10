@@ -850,7 +850,7 @@ named_callee_symbol :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 		if target == nil || target.scope == nil {
 			return INVALID_SYMBOL
 		}
-		member, found := target.scope.names[intern_identifier(k.c, v.name.text)]
+		member, found := target.scope.names[name_identifier(k.c, v.name)]
 		if !found {
 			return INVALID_SYMBOL
 		}
@@ -908,7 +908,9 @@ write_generic_arg_key :: proc(c: ^Compiler, b: ^strings.Builder, arg: Generic_Ar
 	}
 }
 
-// In the temp allocator: every caller reads it at once.
+// In the temp allocator: every caller reads it at once. `write_value_key` in
+// typeid.odin follows the same aggregate encoding, but spells a type by its
+// canonical key rather than by its `Type_Id`; a change to one may need the other.
 const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 	#partial switch value.kind {
 	case .Integer, .Rune:
@@ -1059,11 +1061,13 @@ short_instantiation_name :: proc(c: ^Compiler, name: string) -> string {
 // per bound generic name: a `Type` symbol for a type argument and a `Const` for
 // a value argument, so ordinary name resolution finds both.
 new_instance_scope :: proc(k: ^Checker, template: ^Generic_Template) -> ^Scope {
-	parent := template.scope
-	if parent == nil {
-		parent = build_universe(k.c)
-	}
-	return new_scope(k.c, parent, .Local)
+	return new_param_scope(k, template.scope)
+}
+
+// A local scope for binding generic parameters, inside `parent`, or the
+// universe for a template declared without one.
+new_param_scope :: proc(k: ^Checker, parent: ^Scope) -> ^Scope {
+	return new_scope(k.c, parent if parent != nil else build_universe(k.c), .Local)
 }
 
 // An instance scope for arguments bound without one (`bind_pattern_name`).
@@ -1468,7 +1472,7 @@ generic_parameter_written :: proc(
 		for entry in parameter.names {
 			selected := current == position || (parameter.mode == .Variadic && current <= position)
 			if name != INVALID_IDENTIFIER {
-				selected = intern_identifier(k.c, entry.name.text) == name
+				selected = name_identifier(k.c, entry.name) == name
 			}
 			if selected {
 				return parameter.type, entry.is_poly

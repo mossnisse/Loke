@@ -102,18 +102,17 @@ clone_capture :: proc(c: ^Compiler, v: ^Capture_Literal) -> ^Capture_Literal {
 	return n
 }
 
+// The list cloners copy each entry whole, so a field added later is kept, and
+// clear only what the checker fills in: a clone declares its own symbols.
 @(private = "file")
 clone_params :: proc(c: ^Compiler, list: []Parameter) -> []Parameter {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Parameter {
-			span       = entry.span,
-			attributes = clone_attributes(c, entry.attributes),
-			names      = entry.names,
-			mode       = entry.mode,
-			type       = clone_expr(c, entry.type),
-			default    = clone_expr(c, entry.default),
-		}
+		out[index] = entry
+		out[index].attributes = clone_attributes(c, entry.attributes)
+		out[index].type = clone_expr(c, entry.type)
+		out[index].default = clone_expr(c, entry.default)
+		out[index].symbols = nil
 	}
 	return out
 }
@@ -133,13 +132,10 @@ clone_result :: proc(c: ^Compiler, result: ^Result) -> ^Result {
 clone_fields :: proc(c: ^Compiler, list: []Field) -> []Field {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Field {
-			span       = entry.span,
-			attributes = clone_attributes(c, entry.attributes),
-			is_using   = entry.is_using,
-			names      = entry.names,
-			type       = clone_expr(c, entry.type),
-		}
+		out[index] = entry
+		out[index].attributes = clone_attributes(c, entry.attributes)
+		out[index].type = clone_expr(c, entry.type)
+		out[index].symbols = nil
 	}
 	return out
 }
@@ -158,11 +154,9 @@ clone_variants :: proc(c: ^Compiler, list: []Variant) -> []Variant {
 clone_enum_fields :: proc(c: ^Compiler, list: []Enum_Field) -> []Enum_Field {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Enum_Field {
-			span  = entry.span,
-			name  = entry.name,
-			value = clone_expr(c, entry.value),
-		}
+		out[index] = entry
+		out[index].value = clone_expr(c, entry.value)
+		out[index].symbol = INVALID_SYMBOL
 	}
 	return out
 }
@@ -171,11 +165,9 @@ clone_enum_fields :: proc(c: ^Compiler, list: []Enum_Field) -> []Enum_Field {
 clone_generic_params :: proc(c: ^Compiler, list: []Generic_Param) -> []Generic_Param {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Generic_Param {
-			span  = entry.span,
-			names = entry.names,
-			type  = clone_expr(c, entry.type),
-		}
+		out[index] = entry
+		out[index].type = clone_expr(c, entry.type)
+		out[index].symbols = nil
 	}
 	return out
 }
@@ -184,12 +176,9 @@ clone_generic_params :: proc(c: ^Compiler, list: []Generic_Param) -> []Generic_P
 clone_bindings :: proc(c: ^Compiler, list: []Binding_Group) -> []Binding_Group {
 	out := clone_slice(c, list)
 	for entry, index in list {
-		out[index] = Binding_Group {
-			span     = entry.span,
-			names    = entry.names,
-			is_inout = entry.is_inout,
-			type     = clone_expr(c, entry.type),
-		}
+		out[index] = entry
+		out[index].type = clone_expr(c, entry.type)
+		out[index].symbols = nil
 	}
 	return out
 }

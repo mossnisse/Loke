@@ -75,18 +75,17 @@ type_carries_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if cached, found := c.provider_carriers[type]; found {
 		return cached
 	}
-	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
+	visited := make(Type_Walk, 8, context.temp_allocator)
 	carries := provider_reach_walk(c, type, &visited)
 	c.provider_carriers[type] = carries
 	return carries
 }
 
 @(private = "file")
-provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> bool {
-	if type == INVALID_TYPE || visited[type] {
+provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^Type_Walk) -> bool {
+	if own := type_of(c, type); type == INVALID_TYPE || own == nil || !type_walk_enter(visited, type, own) {
 		return false
 	}
-	visited[type] = true
 	if type_is_region_provider(c, type) {
 		return true
 	}

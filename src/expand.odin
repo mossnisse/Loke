@@ -275,15 +275,7 @@ report_expr_branches :: proc(k: ^Checker, e: Expr) {
 
 @(private = "file")
 fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Type_Id, bool) {
-	if named := resolve_type_syntax(k, iterable); named != INVALID_TYPE {
-		errorf(
-			k.c,
-			expr_span(iterable),
-			"L0454",
-			"`%s` is a type, so it is not iterable%s",
-			type_name(k.c, named),
-			type_is_enum(k.c, named) ? "; write `.values()` for its members" : "",
-		)
+	if reject_type_iterable(k, iterable, "L0454") {
 		return nil, INVALID_TYPE, false
 	}
 

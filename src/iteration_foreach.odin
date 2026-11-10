@@ -21,14 +21,7 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	}
 	peel_resolved_adapter(k, s)
 
-	// A type is never iterable; an enum name probably meant `.values()`.
-	if named := resolve_type_syntax(k, s.iterable); named != INVALID_TYPE {
-		errorf(
-			k.c, expr_span(s.iterable), "L0456",
-			"`%s` is a type, so it is not iterable%s",
-			type_name(k.c, named),
-			type_is_enum(k.c, named) ? "; write `.values()` for its members" : "",
-		)
+	if reject_type_iterable(k, s.iterable, "L0456") {
 		return FLOWS
 	}
 
@@ -482,4 +475,20 @@ bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, bor
 	})
 	k.scope.names[id] = symbol
 	return symbol
+}
+
+// A type is never iterable; an enum name probably meant `.values()`. Whether
+// `iterable` names a type, reported as `code`.
+reject_type_iterable :: proc(k: ^Checker, iterable: Expr, code: string) -> bool {
+	named := resolve_type_syntax(k, iterable)
+	if named == INVALID_TYPE {
+		return false
+	}
+	errorf(
+		k.c, expr_span(iterable), code,
+		"`%s` is a type, so it is not iterable%s",
+		type_name(k.c, named),
+		type_is_enum(k.c, named) ? "; write `.values()` for its members" : "",
+	)
+	return true
 }

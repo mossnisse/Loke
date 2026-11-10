@@ -404,7 +404,7 @@ interface_application :: proc(c: ^Compiler, info: ^Interface_Info, subject: Type
 
 // A scope binding the interface's parameters to one application's arguments.
 interface_scope :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> ^Scope {
-	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
+	scope := new_param_scope(k, info.scope)
 	for parameter, index in info.params {
 		if index < len(args) {
 			bind_generic_name(k, scope, Generic_Binding{name = parameter.name, span = parameter.span, arg = args[index]})
@@ -514,14 +514,19 @@ interface_application_text :: proc(c: ^Compiler, info: ^Interface_Info, args: []
 	if len(args) == 0 {
 		return text
 	}
-	text = concat(c, text, "(")
+	// One builder, as `generic_instance_name` writes `Name(a, b)`, rather than a
+	// copy of the whole text per argument.
+	b := strings.builder_make(c.semantic_allocator)
+	strings.write_string(&b, text)
+	strings.write_byte(&b, '(')
 	for arg, index in args {
 		if index > 0 {
-			text = concat(c, text, ", ")
+			strings.write_string(&b, ", ")
 		}
-		text = concat(c, text, generic_argument_text(c, arg))
+		strings.write_string(&b, generic_argument_text(c, arg))
 	}
-	return concat(c, text, ")")
+	strings.write_byte(&b, ')')
+	return strings.to_string(b)
 }
 
 // What stops an interface whose composition names itself, however it does: how
@@ -1377,7 +1382,7 @@ composition_names_constant :: proc(k: ^Checker, info: ^Interface_Info, name: Ide
 			continue
 		}
 		if selector, is_selector := requirement.expr.(^Expr_Selector); is_selector && requirement.result != nil {
-			if intern_identifier(k.c, selector.name.text) == name {
+			if name_identifier(k.c, selector.name) == name {
 				return true
 			}
 			continue
@@ -1410,7 +1415,7 @@ application_constant :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic
 			continue
 		}
 		selector, is_selector := requirement.expr.(^Expr_Selector)
-		if !is_selector || intern_identifier(k.c, selector.name.text) != name {
+		if !is_selector || name_identifier(k.c, selector.name) != name {
 			continue
 		}
 		if resolve_type_syntax(k, clone_expr(k.c, selector.operand)) != type {

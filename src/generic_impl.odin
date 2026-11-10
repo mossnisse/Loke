@@ -49,13 +49,6 @@ Impl_Conflict :: struct {
 	late:  bool,
 }
 
-// Orders `impl` blocks for installation: every written layer counts; `$T` none.
-@(private = "file")
-pattern_specificity :: proc(e: Expr) -> int {
-	specificity, _ := pattern_shape(e)
-	return specificity
-}
-
 // `impl Table($K, $V)` or `impl Table(string, int)`, kept until an instance
 // exists to install it on.
 register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id, args: []Argument) {
@@ -70,7 +63,10 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 	specificity := 0
 	for arg, index in args {
 		written[index] = arg.value
-		specificity += pattern_specificity(arg.value)
+		// Orders `impl` blocks for installation: every written layer counts;
+		// `$T` none.
+		layers, _ := pattern_shape(arg.value)
+		specificity += layers
 	}
 	block := new(Generic_Impl, k.c.semantic_allocator)
 	block.item = item
@@ -456,7 +452,7 @@ admit_impl_candidate :: proc(
 ) -> bool {
 	dominates_all := true
 	for candidate in candidates {
-		switch impl_block_relation(candidate.block, block) {
+		switch pattern_relations(candidate.block.args, block.args) {
 		case .Left:
 			return false
 		case .Equal:
@@ -486,7 +482,7 @@ settle_impl_candidates :: proc(k: ^Checker, instance: ^Instance, key: Impl_Membe
 	survivors := make([dynamic]Impl_Candidate, 0, 2, k.c.semantic_allocator)
 	previous, _ := instance.impl_candidates[key]
 	for other in previous {
-		if impl_block_relation(candidate.block, other.block) == .Left {
+		if pattern_relations(candidate.block.args, other.block.args) == .Left {
 			// Never checked or emitted for this instance.
 			symbol_of(k.c, other.symbol).superseded = true
 			continue
@@ -532,12 +528,6 @@ impl_block_member_name :: proc(k: ^Checker, block: ^Generic_Impl, name: Identifi
 		}
 	}
 	return nil
-}
-
-// `.Left` when `a` is the more specialized block, `.Right` when `b` is.
-@(private = "file")
-impl_block_relation :: proc(a, b: ^Generic_Impl) -> Pattern_Relation {
-	return pattern_relations(a.args, b.args)
 }
 
 // The package-qualified name of a public procedure of an instantiated `extend`

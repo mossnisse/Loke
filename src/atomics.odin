@@ -194,8 +194,11 @@ check_atomic_order :: proc(
 	if !evaluated {
 		return .Relaxed, false
 	}
-	raw, fits := bi_to_i64(k.c, folded.integer)
-	if folded.kind != .Integer || !fits || raw < 0 || raw > i64(max(Memory_Order)) {
+	raw, fits := i64(0), false
+	if folded.kind == .Integer {
+		raw, fits = bi_to_i64(k.c, folded.integer)
+	}
+	if !fits || raw < 0 || raw > i64(max(Memory_Order)) {
 		errorf(k.c, expr_span(argument), "L0666", "this value names no `Memory_Order` member")
 		return .Relaxed, false
 	}

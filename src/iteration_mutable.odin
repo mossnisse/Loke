@@ -1,3 +1,6 @@
+// By-reference iteration (design.md "By-reference iteration"): the `iter_mut`
+// members and `Mut_Iterator` types the compiler contributes to arrays, slices and
+// maps, and the checking of a `foreach` that binds its elements mutably.
 package lokec
 
 import "core:fmt"

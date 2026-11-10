@@ -85,7 +85,7 @@ regression test.
 | 15 | `src/cfg_provenance.odin:2037-2053` | Materialized view publication records definitions into the construction graph, contradicting the comment at `:1042-1044`; it widens bit rows but appears harmless. | Minor | Recorded in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
 | 16 | `src/parser.odin:2421-2422` | `parse_postfix` counts one more level than it builds, so the nesting limit for postfix chains is stricter than intended. | Minor | Fixed: counted once a postfix follows; `postfix_and_binary_spines_count_alike` |
 | 17 | `src/check_stmt.odin:426-433` | `_ = nil` is accepted silently where `check_decl_value` reports L0310 for the same case; decide which is intended. | User-visible | Fixed: `_ = nil` reached the backend as `L0405`; it is now `L0310`. `tests/err/nil_values.loke` |
-| 18 | `src/erased.odin:676-677`, `src/doc.odin:491-492` | A missing nil check, and an interface-text edge case for a typed procedure constant; both probably unreachable. | Latent | Recorded in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
+| 18 | `src/erased.odin:676-677`, `src/doc.odin:491-492` | A missing nil check, and an interface-text edge case for a typed procedure constant; both probably unreachable. | Latent | The nil check is added; the interface-text case is recorded in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
 | 19 | `src/compiler.odin:159-160` | An orphan comment describes fields that no longer exist. | Documentation | Fixed: comment removed |
 
 ## Cross-cutting themes
@@ -1432,7 +1432,7 @@ building and repeated syntax walks.
   `src/interface.odin:512-525` (`interface_application_text`) both print `Name(a, b)` from
   `generic_argument_text`; the interface one builds it by repeated `concat` into the
   semantic arena. One `application_text(c, prefix, name, args)` builder.
-- **Simplify** `src/generic.odin:1474`: `intern_identifier(k.c, entry.name.text)` where
+- **Simplify** (done) `src/generic.odin:1474`: `intern_identifier(k.c, entry.name.text)` where
   `name_identifier(k.c, entry.name)` is available (same at `src/interface.odin:1380`,
   `1413`, `src/erased.odin:714`).
 - **Structure** `src/generic.odin:773-803` (`success_parameters`) is only meaningful with
@@ -1445,7 +1445,7 @@ Verdict: clear two-phase install/settle logic; one quadratic structure and some 
 - **Data structure/algorithm** `src/generic_impl.odin:190-200`: every new instance clones and
   stable-sorts all blocks of its template by specificity. Insert blocks sorted in
   `register_generic_impl` (`61-97`) instead; saves the per-instance sort and ~5 lines.
-- **Simplify** `src/generic_impl.odin:52-57`, `537-541`: `pattern_specificity` and
+- **Simplify** (done) `src/generic_impl.odin:52-57`, `537-541`: `pattern_specificity` and
   `impl_block_relation` are one-line wrappers used once/twice; inline (~8 lines).
 - **Simplify** `src/generic_impl.odin:305-321`: for a bare `$T` argument the matcher has
   already bound it, yet the code still resolves `written` in a probe and compares; `continue`
@@ -1458,7 +1458,7 @@ Verdict: clear two-phase install/settle logic; one quadratic structure and some 
 #### src/generic_alias.odin
 Verdict: solid; the logic is dense but each procedure has one job.
 - **Duplication** `src/generic_alias.odin:110-112`: Record-or-Alias callee test (Top 7).
-- **Duplication** `src/generic_alias.odin:192`: `new_scope(..., scope == nil ?
+- **Duplication** (done, as `new_param_scope`) `src/generic_alias.odin:192`: `new_scope(..., scope == nil ?
   build_universe(k.c) : scope, .Local)` also at `src/interface.odin:407` and inside
   `new_instance_scope` (`src/generic.odin:1064-1070`). One `new_param_scope(k, parent)`.
 - **Simplify** `src/generic_alias.odin:556-562`: the nested loop over params × inner bindings
@@ -1477,9 +1477,13 @@ nothing is cached.
   `scope/pkg/file/file_node` separately and `enter_interface` re-implements
   `enter_generic_location`; line 584 builds a `Generic_Location` by hand from those fields.
   Embed `using location: Generic_Location` as `Generic_Template` does.
-- **Simplify** `src/interface.odin:512-525`: `concat` chain → `strings.Builder` (and share
-  with `generic_instance_name`, see generic.odin).
-- **Simplify** `src/interface.odin:1115`, `1126`, `1177`: `intern_identifier(k.c, "call")`
+- **Simplify** (done for the builder; `generic_instance_name` reads its arguments
+  from bindings, so the two still write their own lists) `src/interface.odin:512-525`:
+  `concat` chain → `strings.Builder` (and share with `generic_instance_name`, see
+  generic.odin).
+- **Simplify** (not done: each is one map lookup, and pre-interned ids on
+  `Compiler` would have to survive checkpoints) `src/interface.odin:1115`,
+  `1126`, `1177`: `intern_identifier(k.c, "call")`
   three times here and at `src/erased.odin:284`, `672`, `src/container.odin:701`,
   `src/check_calls.odin:196`; a predeclared identifier id on `Compiler` would do.
 
@@ -1494,10 +1498,12 @@ Verdict: good; key building and one argument binder duplicate other code.
   `materialize_argument`", untyped materialize). A shared front half saves ~12 lines.
 - **Simplify** `src/erased.odin:937`: `order` is allocated in the semantic arena even when no
   argument is named and it is dropped; build it in temp and clone only when kept.
-- **Bug (unverified)** `src/erased.odin:676-677`: `callable_witness_slots` indexes
+- **Bug (unverified)** (done: checked) `src/erased.odin:676-677`: `callable_witness_slots` indexes
   `k.c.dyn_types[dyn_key(...)]` and dereferences `view.members[0]` without checking that the
   view exists; I could not find a path where it is missing, but a nil check costs nothing.
-- **Simplify** `src/erased.odin:153-171`: `dyn_type` for a `mutable` view first runs
+- **Simplify** (not done: L0463 names the view that failed, and building the
+  read-only view first would name `dyn I` where `dyn mut I` was written)
+  `src/erased.odin:153-171`: `dyn_type` for a `mutable` view first runs
   `interface_predicates_check`, then recursively builds the read-only view, which runs it
   again; build the read-only view first and return early on its failure.
 
@@ -1505,7 +1511,7 @@ Verdict: good; key building and one argument binder duplicate other code.
 Verdict: mechanical and complete; the semantic rewriting modes don't belong in it.
 - **Structure** `src/ast_clone.odin:80-86`, `228-232`, `258-262`, `333-335`, `403-410`,
   `582-585`: three rewriting modes read from `Compiler` fields (Top 6).
-- **Simplify** `src/ast_clone.odin:106-213`: `clone_params`, `clone_fields`,
+- **Simplify** (done; each clears the checker-filled `symbols`) `src/ast_clone.odin:106-213`: `clone_params`, `clone_fields`,
   `clone_generic_params`, `clone_bindings`, `clone_enum_fields` each rebuild a struct
   literal field-by-field; `out[i] = entry; out[i].type = clone_expr(...)` (the style
   `clone_variants` already uses) is shorter and cannot silently drop a newly added field
@@ -1529,7 +1535,7 @@ Verdict: clear; the type builders are near-copies (Top 5).
 #### src/iteration_foreach.odin
 Verdict: good binder; protocol validation duplicated (Top 4).
 - **Duplication** `src/iteration_foreach.odin:180-232`, `236-259`: see Top 4.
-- **Duplication** `src/iteration_foreach.odin:25-33` and `src/expand.odin:278-288`: the same
+- **Duplication** (done, as `reject_type_iterable`) `src/iteration_foreach.odin:25-33` and `src/expand.odin:278-288`: the same
   "`X` is a type, so it is not iterable; write `.values()`" report with different codes
   (L0456/L0454). One helper taking the code (~10 lines).
 
@@ -1546,13 +1552,15 @@ Verdict: fine, but half of it is a copy.
   `array_iterator_type` (label, mutability, cache map) instead (~10 lines).
 - **Duplication** `src/iteration_mutable.odin:63-94`: tail shared with
   `check_protocol_foreach` (Top 4).
-- **Structure** the file has no header comment, unlike its siblings.
+- **Structure** (done) the file has no header comment, unlike its siblings.
 
 #### src/iteration_yield.odin
 Verdict: tidy.
-- **Simplify** `src/iteration_yield.odin:6`: `Derived_Key.member: string` hashes a string
+- **Simplify** (done) `src/iteration_yield.odin:6`: `Derived_Key.member: string` hashes a string
   for one of three fixed names; an enum is cheaper and self-documenting.
-- **Data structure/algorithm** `src/iteration_yield.odin:52`: `yield_of` allocates the
+- **Data structure/algorithm** (not done: the descriptions nest, so keeping a
+  temporary one would need a deep copy on success) `src/iteration_yield.odin:52`:
+  `yield_of` allocates the
   `fields` slice in the semantic arena before knowing it will succeed; called per
   `iterator_yield`. Use temp and clone on success.
 
@@ -1566,14 +1574,14 @@ Verdict: the effect table is exemplary; the policy cache is a near-copy of hash.
   flow, but differ in one detail: the map-key path pre-stores `Rejected` as a cycle guard
   (`src/hash.odin:245-247`), the sort path does not. Share one `Policy_Kind` and one
   settle helper, and decide the cycle guard once.
-- **Simplify** `src/container.odin:209-212`: `container_member_is_try` re-derives the
+- **Simplify** (done, with `strings.has_prefix`) `src/container.odin:209-212`: `container_member_is_try` re-derives the
   `try_` form from the name text; set a flag when `append_fallible_members` creates it, or
   at least use `strings.has_prefix`.
 - **Duplication** `src/container.odin:291-301`: hand-built record (Top 5).
 
 #### src/text.odin
 Verdict: fine.
-- **Simplify** `src/text.odin:103-124`: `text_op_named` could be an `@(rodata)`
+- **Simplify** (done) `src/text.odin:103-124`: `text_op_named` could be an `@(rodata)`
   `[Text_Op]string` table searched once, which also gives the inverse for diagnostics;
   marginal.
 
@@ -1589,12 +1597,12 @@ Verdict: fine; one robustness hole.
 
 #### src/atomics.odin
 Verdict: clean.
-- **Simplify** `src/atomics.odin:197-198`: reads `folded.integer` via `bi_to_i64` before
+- **Simplify** (done) `src/atomics.odin:197-198`: reads `folded.integer` via `bi_to_i64` before
   checking `folded.kind == .Integer`; check the kind first.
 
 #### src/attributes.odin
 Verdict: the table-driven validator is good; the file has absorbed unrelated rules.
-- **Simplify** `src/attributes.odin:121-152`: `attr_pos_name`/`attr_scope_name` switches →
+- **Simplify** (done) `src/attributes.odin:121-152`: `attr_pos_name`/`attr_scope_name` switches →
   `@(rodata)` enumerated arrays `[Attr_Pos]string`, which are exhaustive by construction
   (~20 lines).
 - **Structure** `src/attributes.odin:518-606`: seven visibility predicates
@@ -1607,8 +1615,9 @@ Verdict: the table-driven validator is good; the file has absorbed unrelated rul
 
 #### src/abi.odin
 Verdict: clear and exhaustive.
-- **Simplify** `src/abi.odin:142-145` with `250`: `.Invalid` returns early, so it is dead in
-  the final arm.
+- **Simplify** (not done: the switch is exhaustive on purpose, so every kind,
+  `.Invalid` included, must be named) `src/abi.odin:142-145` with `250`:
+  `.Invalid` returns early, so it is dead in the final arm.
 
 #### src/foreign.odin
 Verdict: fine; nothing notable.
@@ -1625,7 +1634,8 @@ Verdict: fine.
 
 #### src/union.odin
 Verdict: clean.
-- **Simplify** `src/union.odin:326-328`: `option_payload` interns `"some"` on every call and
+- **Simplify** (not done; see the interning row under Cross-file duplication)
+  `src/union.odin:326-328`: `option_payload` interns `"some"` on every call and
   it sits on iteration hot paths; cache the identifier (or the index, which is fixed by
   `base:runtime`'s `Option`).
 
@@ -1669,7 +1679,9 @@ check.
 - **Duplication** `src/private_names.odin:897-907`: stand-in probe (Top 7).
 - **Duplication** `src/private_names.odin:917-923`: `applies_generic_type` is the same
   expression as `src/check.odin:2126` (Top 7).
-- **Data structure/algorithm** `src/private_names.odin:791-841`: `private_type_reached` uses
+- **Data structure/algorithm** (done, with a map: the walk is seeded with
+  bound types of any kind, which a `Type_Walk` would not record)
+  `src/private_names.odin:791-841`: `private_type_reached` uses
   a `[dynamic]Type_Id` with `slice.contains` as its visited set (O(n²) on deep types);
   use `Type_Walk` (`src/types.odin:276`) as the other walks do.
 
@@ -1699,7 +1711,7 @@ Verdict: good.
 
 #### src/reflect.odin
 Verdict: fine.
-- **Duplication** `src/reflect.odin:162-169` and `183-189`: the two enum-member descriptor
+- **Duplication** (done) `src/reflect.odin:162-169` and `183-189`: the two enum-member descriptor
   loops differ only in the payload; one helper (~8 lines).
 - **Duplication** `src/reflect.odin:34-46`: hand-built record (Top 5).
 
@@ -1712,15 +1724,18 @@ Verdict: careful canonical keys.
 - **Duplication** `src/typeid.odin:165-189`: re-implements `const_key_text`'s aggregate
   encoding (variant first, comma-separated) with a different element encoding; intentional
   (types by canonical key), but worth a cross-reference comment at `const_key_text`.
+  (Done: the comment.)
 
 #### src/materialize.odin
 Verdict: fine.
-- **Duplication** `src/materialize.odin:117-149`: ad-hoc `map[Type_Id]bool` visited set
+- **Duplication** (done, with region.odin) `src/materialize.odin:117-149`: ad-hoc `map[Type_Id]bool` visited set
   where `Type_Walk` exists (also `src/region.odin:85`).
 
 #### src/bootstrap.odin
 Verdict: fine.
-- **Data structure/algorithm** `src/bootstrap.odin:169-180`: `memory_order_type` caches only
+- **Data structure/algorithm** (not done: a miss before `base:runtime` is
+  checked must not be cached, and a mismatch needs an edited runtime)
+  `src/bootstrap.odin:169-180`: `memory_order_type` caches only
   success, so a missing or mismatched `Memory_Order` repeats the package scan and lookup on
   every atomic call. Cache the failure too, as `runtime_type_named` does.
 
@@ -1738,7 +1753,7 @@ Verdict: fine.
 
 #### src/region.odin
 Verdict: fine.
-- **Duplication** `src/region.odin:85-109`: own `map[Type_Id]bool` walk (see materialize.odin).
+- **Duplication** (done) `src/region.odin:85-109`: own `map[Type_Id]bool` walk (see materialize.odin).
 
 ### Cross-file duplication
 
@@ -1750,16 +1765,16 @@ Verdict: fine.
 | Probe against stand-ins | `src/generic.odin:277-286`, `320-327`, `src/private_names.odin:897-907` | One helper. |
 | Record-or-Alias template of callee | `src/check.odin:2126`, `src/private_names.odin:922`, `src/generic_alias.odin:110-111`, `src/optional.odin:421-424` | `type_template_of_callee`. |
 | `Generic_Param_Decl` from groups; scope fallback | `src/generic.odin:738-755`, `src/interface.odin:62-74` | Shared helpers; `Interface_Info` embeds `Generic_Location`. |
-| `new_scope(parent or universe)` | `src/generic.odin:1064-1070`, `src/generic_alias.odin:192`, `src/interface.odin:407` | One helper. |
+| `new_scope(parent or universe)` | `src/generic.odin:1064-1070`, `src/generic_alias.odin:192`, `src/interface.odin:407` | One helper (done). |
 | `$`-name collectors | `src/generic.odin:673-724` vs `src/ast.odin:1420-1449` | Document the coverage difference or unify. |
 | Read-only vs mutable protocol | `src/iteration_foreach.odin:180-259`, `src/iteration_adapters.odin:71-82`, `144-150`, `src/iteration_mutable.odin:63-111` | `Read_Protocol` + shared next/tail (Top 4). |
 | Compiler-owned record builders | `src/iterate.odin:48-310`, `src/iteration_mutable.odin:41-49`, `src/iteration_adapters.odin:107-168`, `src/container.odin:291-301`, `src/reflect.odin:34-46` | `new_owned_record` (Top 5). |
 | Policy caches | `src/container.odin:432-484`, `src/hash.odin:163-278` | One `Policy_Kind` + settle helper. |
-| "type is not iterable" | `src/iteration_foreach.odin:25-33`, `src/expand.odin:278-288` | One reporter. |
+| "type is not iterable" | `src/iteration_foreach.odin:25-33`, `src/expand.odin:278-288` | One reporter (done). |
 | Variadic pack element passing | `src/erased.odin:33-44`, `87-131`, `src/variadic_lend.odin:20-74` | Shared front half. |
 | Named/positional argument binding | `src/erased.odin:921-971`, `src/check_calls.odin:751`, `1225`, `src/overload.odin:491`, `src/generic.odin:1566-1573` | Reuse the general binder for dyn slots. |
-| Visited sets over types | `Type_Walk` users (`src/hash.odin`, `src/format.odin`, `src/test_procedures.odin`) vs ad-hoc `map[Type_Id]bool` (`src/region.odin:85`, `src/materialize.odin:123`, `src/hooks.odin:562`, `src/carrier_shape.odin:154`, `src/provenance_regions.odin:1656`) and `[dynamic]` + `slice.contains` (`src/private_names.odin:798`) | Use `Type_Walk` where the semantics are "visited" (abi.odin's open/closed map is a genuine variant). |
-| Lazy `if cap(x) == 0 { make(..., semantic) }` | `src/attributes.odin:638-640`, `src/union.odin:129-131` | Initialize these Checker arrays where the Checker is made. |
+| Visited sets over types | `Type_Walk` users (`src/hash.odin`, `src/format.odin`, `src/test_procedures.odin`) vs ad-hoc `map[Type_Id]bool` (`src/region.odin:85`, `src/materialize.odin:123`, `src/hooks.odin:562`, `src/carrier_shape.odin:154`, `src/provenance_regions.odin:1656`) and `[dynamic]` + `slice.contains` (`src/private_names.odin:798`) | Use `Type_Walk` where the semantics are "visited" (abi.odin's open/closed map is a genuine variant). Done for region.odin, materialize.odin and private_names.odin (a map there); hooks, carrier_shape and provenance_regions are open. |
+| Lazy `if cap(x) == 0 { make(..., semantic) }` | `src/attributes.odin:638-640`, `src/union.odin:129-131` | Initialize these Checker arrays where the Checker is made. (Not done: Checkers are made in many places, tests included.) |
 | Interning fixed names per call | `intern_identifier(k.c, "call")` ×7 (see interface.odin), `"some"` (`src/union.odin:327`), protocol names (`src/iterate.odin:454`), `"format"` text compares (`src/format.odin:112`, `127`) | Pre-interned identifier ids on `Compiler`. |
 
 ## Group 4: control-flow graphs and provenance

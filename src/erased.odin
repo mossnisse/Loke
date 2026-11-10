@@ -673,8 +673,12 @@ callable_witness_slots :: proc(k: ^Checker, info: ^Interface_Info, concrete: Typ
 		target = callable_call_method(k, info, concrete, args[0].type),
 	}
 	if method := symbol_of(k.c, slots[0].target); method != nil {
+		// The view is built before its witness; checked anyway, as a missing one
+		// would otherwise crash rather than skip a contract check.
 		view := type_of(k.c, k.c.dyn_types[dyn_key(k.c, info.symbol, args, false)])
-		record_call_contract_check(k.c, method.proc_type, symbol_of(k.c, view.members[0]).proc_type, span)
+		if view != nil && len(view.members) > 0 {
+			record_call_contract_check(k.c, method.proc_type, symbol_of(k.c, view.members[0]).proc_type, span)
+		}
 	}
 	return slots
 }
@@ -711,7 +715,7 @@ slot_parameter_names :: proc(k: ^Checker, entry: Interface_Slot) -> []Identifier
 			append(&names, INVALID_IDENTIFIER)
 		}
 		for written in parameter.names {
-			append(&names, intern_identifier(k.c, written.name.text))
+			append(&names, name_identifier(k.c, written.name))
 		}
 	}
 	return names[:]

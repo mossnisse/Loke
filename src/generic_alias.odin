@@ -187,7 +187,7 @@ alias_dependent_type :: proc(
 // Leaves `k.scope` wherever the last step left it.
 @(private)
 applied_parameter_type :: proc(k: ^Checker, args: []Argument, applied: Applied_Parameters, at: int, scope: ^Scope, report: bool) -> Type_Id {
-	inner := new_scope(k.c, applied.scope == nil ? build_universe(k.c) : applied.scope, .Local)
+	inner := new_param_scope(k, applied.scope)
 	if applied.first > 0 {
 		subject := applied.params[0]
 		bind_generic_name(k, inner, Generic_Binding{name = subject.name, span = subject.span, arg = Generic_Arg{is_type = true, type = TYPE_RAWPTR}})

@@ -789,18 +789,21 @@ report_private_constant :: proc(c: ^Compiler, name: Name, owner: string, symbol:
 // the parameter means, not a name the declaration writes.
 @(private = "file")
 private_type_in :: proc(c: ^Compiler, scope: ^Scope, type: Type_Id, bound: []Type_Id) -> ^Symbol {
-	seen := make([dynamic]Type_Id, 0, len(bound) + 8, context.temp_allocator)
-	append(&seen, ..bound)
+	// Every kind is recorded, unlike a `Type_Walk`, since `bound` holds any kind.
+	seen := make(map[Type_Id]struct{}, len(bound) + 8, context.temp_allocator)
+	for part in bound {
+		seen[part] = {}
+	}
 	return private_type_reached(c, scope, type, &seen)
 }
 
 @(private = "file")
-private_type_reached :: proc(c: ^Compiler, scope: ^Scope, type: Type_Id, seen: ^[dynamic]Type_Id) -> ^Symbol {
+private_type_reached :: proc(c: ^Compiler, scope: ^Scope, type: Type_Id, seen: ^map[Type_Id]struct{}) -> ^Symbol {
 	info := type_of(c, type)
-	if info == nil || slice.contains(seen[:], type) {
+	if info == nil || type in seen {
 		return nil
 	}
-	append(seen, type)
+	seen[type] = {}
 	for id in ([]Symbol_Id{info.symbol, info.instance_of}) {
 		symbol := symbol_of(c, id)
 		if symbol != nil && symbol_names_type(c, symbol) && !symbol.public && symbol.decl != nil {

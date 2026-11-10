@@ -100,25 +100,26 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	return true
 }
 
+// The member each operation is written as.
+@(private = "file", rodata)
+TEXT_OP_NAMES := [Text_Op]string {
+	.None         = "",
+	.Byte_Len     = "byte_len",
+	.Rune_Count   = "rune_count",
+	.Bytes        = "bytes",
+	.Runes        = "runes",
+	.Rune_Offsets = "rune_offsets",
+	.Copy         = "copy",
+	.To_C_View    = "to_c_view",
+	.To_Runes     = "to_runes",
+}
+
 @(private = "file")
 text_op_named :: proc(name: string) -> Text_Op {
-	switch name {
-	case "byte_len":
-		return .Byte_Len
-	case "rune_count":
-		return .Rune_Count
-	case "bytes":
-		return .Bytes
-	case "runes":
-		return .Runes
-	case "rune_offsets":
-		return .Rune_Offsets
-	case "copy":
-		return .Copy
-	case "to_c_view":
-		return .To_C_View
-	case "to_runes":
-		return .To_Runes
+	for op_name, op in TEXT_OP_NAMES {
+		if op != .None && op_name == name {
+			return op
+		}
 	}
 	return .None
 }

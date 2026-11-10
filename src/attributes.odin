@@ -118,37 +118,33 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	return {}, false
 }
 
-attr_pos_name :: proc(pos: Attr_Pos) -> string {
-	switch pos {
-	case .Package_Clause: return "a package clause"
-	case .Import:         return "an import"
-	case .Proc_Decl:      return "a procedure declaration"
-	case .Proc_Group:     return "a procedure group"
-	case .Var_Decl:       return "a variable declaration"
-	case .Const_Decl:     return "a constant declaration"
-	case .Type_Decl:      return "a type declaration"
-	case .Struct_Field:   return "a struct field"
-	case .Parameter:      return "a parameter"
-	case .Struct_Decl:    return "a struct declaration"
-	case .Union_Decl:     return "a union declaration"
-	case .Foreign_Block:  return "a foreign block"
-	case .Static_Assert:  return "a `static_assert`"
-	case .Delegate:       return "a `delegate`"
-	case .Impl:           return "an `impl` block"
-	case .Statement:      return "a statement"
-	}
-	return "here"
+// How a diagnostic names each position and scope.
+@(private = "file", rodata)
+ATTR_POS_NAMES := [Attr_Pos]string {
+	.Package_Clause = "a package clause",
+	.Import         = "an import",
+	.Proc_Decl      = "a procedure declaration",
+	.Proc_Group     = "a procedure group",
+	.Var_Decl       = "a variable declaration",
+	.Const_Decl     = "a constant declaration",
+	.Type_Decl      = "a type declaration",
+	.Struct_Field   = "a struct field",
+	.Parameter      = "a parameter",
+	.Struct_Decl    = "a struct declaration",
+	.Union_Decl     = "a union declaration",
+	.Foreign_Block  = "a foreign block",
+	.Static_Assert  = "a `static_assert`",
+	.Delegate       = "a `delegate`",
+	.Impl           = "an `impl` block",
+	.Statement      = "a statement",
 }
 
-@(private = "file")
-attr_scope_name :: proc(scope: Attr_Scope) -> string {
-	switch scope {
-	case .Global:  return "a file-scope declaration"
-	case .Local:   return "a local declaration"
-	case .Foreign: return "a foreign declaration"
-	case .Member:  return "an `impl` member"
-	}
-	return "here"
+@(private = "file", rodata)
+ATTR_SCOPE_NAMES := [Attr_Scope]string {
+	.Global  = "a file-scope declaration",
+	.Local   = "a local declaration",
+	.Foreign = "a foreign declaration",
+	.Member  = "an `impl` member",
 }
 
 // Reports each misuse in one attribute list, once per written list: generic
@@ -204,11 +200,11 @@ validate_attribute_list :: proc(
 			continue
 		}
 		if pos not_in spec.positions {
-			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, attr_pos_name(pos))
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, ATTR_POS_NAMES[pos])
 			continue
 		}
 		if scope in spec.barred_scopes {
-			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, attr_scope_name(scope))
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, ATTR_SCOPE_NAMES[scope])
 			continue
 		}
 		switch spec.shape {
@@ -454,7 +450,7 @@ validate_instance_member_position :: proc(k: ^Checker, d: ^Decl) {
 			continue
 		}
 		if spec, known := attribute_spec(attribute.path[0].text); known && position not_in spec.positions {
-			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", attribute.path[0].text, attr_pos_name(position))
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", attribute.path[0].text, ATTR_POS_NAMES[position])
 		}
 	}
 }

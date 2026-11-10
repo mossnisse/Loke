@@ -2,8 +2,18 @@
 // the associated types that follow from protocol signatures.
 package lokec
 
-// One associated type derived in one package: `Item`, `Iterator`, or `Mut_Iterator`.
-Derived_Key :: struct { type: Type_Id, pkg: Package_Id, member: string }
+// The associated types a protocol signature derives.
+Derived_Member :: enum u8 { Item, Iterator, Mut_Iterator }
+
+@(private = "file", rodata)
+DERIVED_MEMBER_NAMES := [Derived_Member]string {
+	.Item         = "Item",
+	.Iterator     = "Iterator",
+	.Mut_Iterator = "Mut_Iterator",
+}
+
+// One associated type derived in one package.
+Derived_Key :: struct { type: Type_Id, pkg: Package_Id, member: Derived_Member }
 
 Yield_Kind :: enum {
 	Owned,
@@ -166,14 +176,15 @@ yield_borrowed_parts_copyable :: proc(c: ^Compiler, element: Type_Id, desc: Yiel
 // agree (design.md "Iteration protocol").
 ensure_derived_members :: proc(k: ^Checker, type: Type_Id) {
 	if type_of(k.c, type) == nil { return }
-	derive_member(k, type, "Item", "next")
-	derive_member(k, type, "Iterator", "iter")
-	derive_member(k, type, "Mut_Iterator", "iter_mut")
+	derive_member(k, type, .Item, "next")
+	derive_member(k, type, .Iterator, "iter")
+	derive_member(k, type, .Mut_Iterator, "iter_mut")
 }
 
 @(private = "file")
-derive_member :: proc(k: ^Checker, type: Type_Id, associated, entry: string) {
-	key := Derived_Key{type, lookup_package(k), associated}
+derive_member :: proc(k: ^Checker, type: Type_Id, which: Derived_Member, entry: string) {
+	associated := DERIVED_MEMBER_NAMES[which]
+	key := Derived_Key{type, lookup_package(k), which}
 	if key in k.c.derived_members { return }
 	k.c.derived_members[key] = {}
 
@@ -192,7 +203,7 @@ derive_member :: proc(k: ^Checker, type: Type_Id, associated, entry: string) {
 		return
 	}
 	if start.kind != .Proc || !start.has_receiver || len(start.params) != 1 { return }
-	derived := associated == "Item" ? option_payload(k.c, start.result) : start.result
+	derived := which == .Item ? option_payload(k.c, start.result) : start.result
 	if derived == INVALID_TYPE { return }
 	declared := iteration_member(k, type, associated)
 	if declared == INVALID_SYMBOL {

@@ -115,18 +115,14 @@ materialization_of :: proc(c: ^Compiler, e: Expr) -> ^Materialized {
 // `^`.
 @(private = "file")
 synchronized_field_within :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
-	seen := make(map[Type_Id]bool, context.temp_allocator)
+	seen := make(Type_Walk, context.temp_allocator)
 	return synchronized_field_walk(c, type, &seen)
 }
 
 @(private = "file")
-synchronized_field_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> ^Symbol {
-	if type == INVALID_TYPE || seen[type] {
-		return nil
-	}
-	seen[type] = true
+synchronized_field_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk) -> ^Symbol {
 	info := type_of(c, type)
-	if info == nil {
+	if type == INVALID_TYPE || info == nil || !type_walk_enter(seen, type, info) {
 		return nil
 	}
 	#partial switch info.kind {

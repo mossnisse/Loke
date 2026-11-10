@@ -156,15 +156,21 @@ enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id,
 		return INVALID_TYPE, Const_Value{}, false
 	}
 	descriptor := meta_enum_value_type(k.c)
+	return descriptor_array(k.c, descriptor, enum_member_descriptors(k, info, subject, descriptor, own_values = true))
+}
+
+// One `descriptor` per member of the enum `info`, holding the member's value,
+// or `Unit` for a `meta.Variant`.
+@(private = "file")
+enum_member_descriptors :: proc(k: ^Checker, info: ^Type_Info, subject, descriptor: Type_Id, own_values: bool) -> []Const_Value {
 	elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
 	for member in info.fields {
-		sym := symbol_of(k.c, member)
-		if sym == nil {
-			continue
+		if sym := symbol_of(k.c, member); sym != nil {
+			value := own_values ? sym.const_value : type_const(k.c.unit_type)
+			append(&elements, descriptor_const(k.c, descriptor, identifier_text(k.c, sym.name), value, int(sym.index), subject))
 		}
-		append(&elements, descriptor_const(k.c, descriptor, identifier_text(k.c, sym.name), sym.const_value, int(sym.index), subject))
 	}
-	return descriptor_array(k.c, descriptor, elements[:])
+	return elements[:]
 }
 
 // Every member and variant is listed (design.md "Compile-time reflection"); an
@@ -177,13 +183,7 @@ variants_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Co
 	}
 	descriptor := meta_variant_type(k.c)
 	if info.kind == .Enum {
-		elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
-		for member in info.fields {
-			if sym := symbol_of(k.c, member); sym != nil {
-				append(&elements, descriptor_const(k.c, descriptor, identifier_text(k.c, sym.name), type_const(k.c.unit_type), int(sym.index), subject))
-			}
-		}
-		return descriptor_array(k.c, descriptor, elements[:])
+		return descriptor_array(k.c, descriptor, enum_member_descriptors(k, info, subject, descriptor, own_values = false))
 	}
 	elements := make([]Const_Value, len(info.variants), k.c.semantic_allocator)
 	for _, index in info.variants {

@@ -1390,12 +1390,10 @@ a reproduction before a change.
   materialized view in `cfg_provenance.odin` records definitions into the
   construction graph, which a comment there says it does not. It widens bit
   rows and appears harmless.
-- **Two unreachable edge cases** (bug 18). `callable_witness_slots` in
-  `erased.odin` reads the `dyn` view's first member without a nil check, and
-  `proc_interface_text` in `doc.odin` finds the procedure literal by the first
-  `::`, which a typed constant `f : proc() : proc() {...}` lacks. A literal's
-  source offset is no fix there, since the text it searches may have had
-  comments cut.
+- **An unreachable edge case** (rest of bug 18). `proc_interface_text` in
+  `doc.odin` finds the procedure literal by the first `::`, which a typed
+  constant `f : proc() : proc() {...}` lacks. A literal's source offset is no
+  fix there, since the text it searches may have had comments cut.
 - **Evaluator frames stay charged** (rest of bug 8). A `switch` arm's own
   frame and a call's frame are popped, not released. A pointer the program
   keeps into a popped frame would make releasing it unsafe; see
