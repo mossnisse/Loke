@@ -150,24 +150,7 @@ join_loaded_below :: proc(state: ^Prov_Solve, from: [][]u32, first: bool) {
 		mem.zero_slice(below.held)
 		return
 	}
-	for page, at in from {
-		for row, index in page {
-			slot := at * BLOCK_TABLE_PAGE + index
-			held := below.held[slot]
-			if row == held || held == 0 {
-				continue
-			}
-			if row == 0 {
-				below.held[slot] = 0
-				continue
-			}
-			copy(below.edit, below.rows.rows[held])
-			for &byte, offset in below.edit {
-				byte &= below.rows.rows[row][offset]
-			}
-			below.held[slot] = intern_row(&below.rows, below.edit)
-		}
-	}
+	interned_join(&below.rows, below.held, from, below.edit, every = true)
 }
 
 @(private)

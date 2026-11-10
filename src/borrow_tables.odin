@@ -88,6 +88,26 @@ block_table_at :: #force_inline proc(table: [][]$T, index: int) -> T {
 	return table[index / BLOCK_TABLE_PAGE][index % BLOCK_TABLE_PAGE]
 }
 
+// Joins `table` into `flat` element by element: a union of bits, as of precision lost.
+@(private)
+block_table_or :: proc(table: [][]$T, flat: []T) {
+	for page, at in table {
+		for value, index in page {
+			flat[at * BLOCK_TABLE_PAGE + index] |= value
+		}
+	}
+}
+
+// Joins `table` into `flat` element by element: what holds on every path.
+@(private)
+block_table_and :: proc(table: [][]bool, flat: []bool) {
+	for page, at in table {
+		for value, index in page {
+			flat[at * BLOCK_TABLE_PAGE + index] &&= value
+		}
+	}
+}
+
 // Distinct rows of bits, each kept once, whatever number of slots and blocks holds it.
 // Handle 0 is the row of no bits.
 @(private)
@@ -117,6 +137,41 @@ intern_row :: proc(interned: ^Interned_Rows, row: []u8) -> u32 {
 	append(&interned.rows, kept)
 	interned.ids[string(kept)] = id
 	return id
+}
+
+// Joins the rows of `table` into the handles `held`, slot by slot: their union, or with
+// `every`, their intersection, a must-fact's join. `edit` is scratch of a row's width.
+@(private)
+interned_join :: proc(rows: ^Interned_Rows, held: []u32, table: [][]u32, edit: []u8, every: bool) {
+	for page, at in table {
+		mine := flat_page(held, at)
+		if same_page(page, mine) {
+			continue
+		}
+		for row, index in page {
+			if row == mine[index] {
+				continue
+			}
+			// The empty row is the union's identity and the intersection's zero.
+			if row == 0 || mine[index] == 0 {
+				mine[index] = 0 if every else row | mine[index]
+				continue
+			}
+			copy(edit, rows.rows[mine[index]])
+			other := rows.rows[row]
+			if every {
+				for &byte, offset in edit {
+					byte &= other[offset]
+				}
+			} else {
+				bytes_or(edit, other)
+			}
+			// A join that changed nothing keeps its handle without hashing the row again.
+			if !same_page(edit, rows.rows[mine[index]]) {
+				mine[index] = intern_row(rows, edit)
+			}
+		}
+	}
 }
 
 // `reach_handles[slot]` of a row written since it was last interned.

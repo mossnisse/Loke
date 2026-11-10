@@ -91,6 +91,40 @@ Effect_Program :: struct {
 	bodies:        []Effect_Body,
 	index_of:      map[Symbol_Id]int,
 	used_as_value: map[Symbol_Id]bool,
+	// Per body, as `bodies`: all it does, and its own part apart from the
+	// procedure values it received and calls (`Callback_Summary`), which is all
+	// of it for a body that calls none.
+	whole:         []Body_Summary,
+	own:           []Body_Summary,
+}
+
+// design.md "Global write effects", "Globals while tasks run": the globals a
+// body may write or read, those whose stored carriers it may reach, and the
+// allocator regions it may use. The last two come from the thread summaries,
+// settled after the rest, and stay empty when no check reads them.
+Body_Summary :: struct {
+	writes: []Symbol_Id,
+	reads:  []Symbol_Id,
+	reach:  []Global_Effect,
+	use:    Region_Set,
+}
+
+// The whole summary of `body`, or an empty one for a body the effects did not
+// settle over.
+body_summary :: proc(c: ^Compiler, body: Symbol_Id) -> Body_Summary {
+	program := &c.effect_program
+	if index, found := program.index_of[body]; found && index < len(program.whole) {
+		return program.whole[index]
+	}
+	return {}
+}
+
+// What one part of a call contributes: the whole summary of a body, or a
+// direct callee's own part apart from its callbacks.
+@(private = "file")
+part_summary :: proc(c: ^Compiler, part: Call_Part) -> ^Body_Summary {
+	program := &c.effect_program
+	return &program.whole[part.body] if part.whole else &program.own[part.body]
 }
 
 // Globals in the order found, which diagnostics show, with a bit for each by its
@@ -337,15 +371,28 @@ named_value_symbol :: proc(e: Expr) -> Symbol_Id {
 	return INVALID_SYMBOL
 }
 
+// The signature a value of `type` is called by: a procedure type's own, or a
+// `dyn proc` view's, with the view's interface; not `ok` for any other type.
+callable_signature :: proc(c: ^Compiler, type: Type_Id) -> (signature: Type_Id, view: Symbol_Id, ok: bool) {
+	if underlying_kind(c, type) == .Proc {
+		return type_underlying(c, type), INVALID_SYMBOL, true
+	}
+	if signature = dyn_proc_signature(c, type); signature != INVALID_TYPE {
+		return signature, underlying_info(c, type).dyn_interface, true
+	}
+	return INVALID_TYPE, INVALID_SYMBOL, false
+}
+
 // A parameter, or a local, whose procedure value or `dyn proc` view is
 // followed through the body.
 @(private = "file")
 effect_variable :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 	sym := symbol_of(c, id)
-	if sym == nil || underlying_kind(c, sym.type) != .Proc && dyn_proc_signature(c, sym.type) == INVALID_TYPE {
+	if sym == nil {
 		return false
 	}
-	return sym.kind == .Parameter || (sym.kind == .Var && sym.duration == .None)
+	_, _, callable := callable_signature(c, sym.type)
+	return callable && (sym.kind == .Parameter || (sym.kind == .Var && sym.duration == .None))
 }
 
 // What a procedure-valued expression, or a `dyn proc` view, may be. A view
@@ -361,12 +408,14 @@ effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
 	if base == nil {
 		return {}
 	}
-	if dyn_proc_signature(c, base.type) != INVALID_TYPE {
+	_, view, callable := callable_signature(c, base.type)
+	if !callable {
+		return {}
+	}
+	if view != INVALID_SYMBOL {
 		if converted, found := converted_view_call(c, value, 0); found {
 			return Effect_Arg{kind = .Procedure, symbol = converted.held if converted.held != INVALID_SYMBOL else converted.callee}
 		}
-	} else if underlying_kind(c, base.type) != .Proc {
-		return {}
 	}
 	id := named_value_symbol(value)
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
@@ -623,7 +672,7 @@ prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) -> (run
 			append_unique(&graph.effect_copy_hooks, hook)
 			continue
 		}
-		reads := c.global_reads[hook]
+		reads := body_summary(c, hook).reads
 		if len(reads) == 0 {
 			continue
 		}
@@ -825,18 +874,13 @@ Called_Parameter :: struct {
 	span:      Span,
 }
 
-// What a body that calls a procedure value it received does apart from that
-// value, so each call of the body takes in what its caller passes instead of
-// every procedure of the parameter's type. The whole summaries
-// (`Compiler.global_writes`, `global_reads`, `reach_effects`, `allocator_uses`)
-// add that union.
-// `regions` is, per `called`, the regions of what the body passes the callback.
+// The procedure values a body received and calls, so each call of the body
+// takes in what its caller passes there instead of every procedure of the
+// parameter's type: its own part (`Effect_Program.own`) leaves them out, and
+// its whole summary adds that union. `regions` is, per `called`, the regions of
+// what the body passes the callback.
 Callback_Summary :: struct {
 	called:  []Called_Parameter,
-	writes:  []Symbol_Id,
-	reads:   []Symbol_Id,
-	reach:   []Global_Effect,
-	use:     Region_Set,
 	regions: []Region_Set,
 }
 
@@ -966,8 +1010,8 @@ value_parts :: proc(c: ^Compiler, out: ^[dynamic]Call_Part, value: Effect_Arg, a
 // whatever a `dyn proc` view of its signature may run.
 @(private = "file")
 any_value_call :: proc(c: ^Compiler, type: Type_Id) -> Effect_Call {
-	if signature := dyn_proc_signature(c, type); signature != INVALID_TYPE {
-		return Effect_Call{dyn_interface = underlying_info(c, type).dyn_interface, type = signature}
+	if signature, view, _ := callable_signature(c, type); view != INVALID_SYMBOL {
+		return Effect_Call{dyn_interface = view, type = signature}
 	}
 	return Effect_Call{type = type}
 }
@@ -1075,15 +1119,26 @@ body_queue_make :: proc(count: int) -> Worklist {
 	return queue
 }
 
-// Which bodies read each body's summaries, through the parts of its calls and
-// of its whole summary, so a fixed point revisits only those.
+// A fixed point over each body's call parts `parts`, as the write effects and the
+// thread summaries settle: `closing` is what each whole summary adds to its own
+// part (`closing_parts`), and a body that grew wakes only the bodies that read
+// its summaries, through the parts of their calls or of their whole summaries.
 @(private)
-part_readers :: proc(parts: [][]Call_Part, closing: [][]Call_Part) -> [][dynamic]int {
+Part_Fixpoint :: struct {
+	closing: [][]Call_Part,
+	readers: [][dynamic]int,
+	queue:   Worklist,
+}
+
+@(private)
+part_fixpoint_make :: proc(c: ^Compiler, parts: [][]Call_Part) -> Part_Fixpoint {
+	closing := make([][]Call_Part, len(parts), context.temp_allocator)
 	readers := make([][dynamic]int, len(parts), context.temp_allocator)
 	for &list in readers {
 		list = make([dynamic]int, context.temp_allocator)
 	}
 	for index in 0 ..< len(parts) {
+		closing[index] = closing_parts(c, index)
 		for part in parts[index] {
 			append(&readers[part.body], index)
 		}
@@ -1091,7 +1146,12 @@ part_readers :: proc(parts: [][]Call_Part, closing: [][]Call_Part) -> [][dynamic
 			append(&readers[part.body], index)
 		}
 	}
-	return readers
+	return {closing, readers, body_queue_make(len(parts))}
+}
+
+@(private)
+part_fixpoint_grew :: proc(settle: ^Part_Fixpoint, index: int) {
+	worklist_wake_all(&settle.queue, settle.readers[index][:])
 }
 
 // `regions_of` or `dropped_region` gives the regions the target's parameters
@@ -1209,7 +1269,7 @@ prov_window_effect_use :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Sp
 		return
 	}
 	for part in call_parts(c, graph.literal.symbol, target, open = true) {
-		from := part_allocator_use(c, part)
+		from := part_summary(c, part).use
 		if part.callback >= 0 {
 			from = callback_allocator_use(from, callback_region(c, part), target.regions)
 		} else {
@@ -1217,44 +1277,6 @@ prov_window_effect_use :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Sp
 		}
 		prov_note_window_allocator_use(graph, from, span)
 	}
-}
-
-// What one part of a call contributes: the whole summary of a body, or a
-// direct callee's own part apart from its callbacks.
-@(private = "file")
-part_writes :: proc(c: ^Compiler, part: Call_Part) -> []Symbol_Id {
-	symbol := c.effect_program.bodies[part.body].symbol
-	if summary := c.callback_summaries[symbol]; summary != nil && !part.whole {
-		return summary.writes
-	}
-	return c.global_writes[symbol]
-}
-
-@(private = "file")
-part_reads :: proc(c: ^Compiler, part: Call_Part) -> []Symbol_Id {
-	symbol := c.effect_program.bodies[part.body].symbol
-	if summary := c.callback_summaries[symbol]; summary != nil && !part.whole {
-		return summary.reads
-	}
-	return c.global_reads[symbol]
-}
-
-@(private = "file")
-part_reach :: proc(c: ^Compiler, part: Call_Part) -> []Global_Effect {
-	symbol := c.effect_program.bodies[part.body].symbol
-	if summary := c.callback_summaries[symbol]; summary != nil && !part.whole {
-		return summary.reach
-	}
-	return c.reach_effects[symbol]
-}
-
-@(private = "file")
-part_allocator_use :: proc(c: ^Compiler, part: Call_Part) -> Region_Set {
-	symbol := c.effect_program.bodies[part.body].symbol
-	if summary := c.callback_summaries[symbol]; summary != nil && !part.whole {
-		return summary.use
-	}
-	return c.allocator_uses[symbol]
 }
 
 // The regions a callback is given, in its callee's terms; unknown until the
@@ -1289,13 +1311,13 @@ effect_call_description :: proc(c: ^Compiler, target: Effect_Call, verb, dropped
 // summaries, with its callbacks resolved as its writes are.
 @(private = "file")
 effect_call_reach :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Global_Effect {
-	out := make([dynamic]Global_Effect, 0, 2, context.temp_allocator)
+	out := effect_list_make(context.temp_allocator)
 	for part in call_parts(c, body, target, open = true) {
-		for reached in part_reach(c, part) {
+		for reached in part_summary(c, part).reach {
 			add_global_effect(&out, reached.global, reached.source)
 		}
 	}
-	return out[:]
+	return out.list[:]
 }
 
 // design.md "Globals while tasks run": inside a `parallel` block, a write of a
@@ -1317,44 +1339,71 @@ prov_note_shared_effect :: proc(graph: ^Flow_Graph, global: Symbol_Id, access: A
 // The settled writes of one call. A union is settled once per key.
 @(private = "file")
 effect_call_writes :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Symbol_Id {
-	return effect_call_globals(c, body, target, c.global_writes, &c.indirect_writes, part_writes)
+	return effect_call_globals(c, body, target, writes = true)
 }
 
 @(private = "file")
 effect_call_reads :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call) -> []Symbol_Id {
-	return effect_call_globals(c, body, target, c.global_reads, &c.indirect_reads, part_reads)
+	return effect_call_globals(c, body, target, writes = false)
 }
 
 @(private = "file")
-effect_call_globals :: proc(
-	c: ^Compiler, body: Symbol_Id, target: Effect_Call, whole: map[Symbol_Id][]Symbol_Id, indirect: ^map[Effect_Key][]Symbol_Id,
-	part_globals: proc(c: ^Compiler, part: Call_Part) -> []Symbol_Id,
-) -> []Symbol_Id {
+effect_call_globals :: proc(c: ^Compiler, body: Symbol_Id, target: Effect_Call, writes: bool) -> []Symbol_Id {
+	globals_of :: proc(summary: Body_Summary, writes: bool) -> []Symbol_Id {
+		return summary.writes if writes else summary.reads
+	}
 	switch {
 	case target.callee != INVALID_SYMBOL:
 		if c.callback_summaries[target.callee] == nil {
-			return whole[target.callee]
+			return globals_of(body_summary(c, target.callee), writes)
 		}
 	case target.held == INVALID_SYMBOL && target.variable == INVALID_SYMBOL:
+		indirect := &c.indirect_writes if writes else &c.indirect_reads
 		key := effect_key(target)
 		if globals, found := indirect[key]; found {
 			return globals
 		}
-		globals := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+		globals := global_list_make()
 		for reached in effect_targets(c, target) {
-			for global in whole[c.effect_program.bodies[reached].symbol] {
-				append_unique(&globals, global)
+			for global in globals_of(c.effect_program.whole[reached], writes) {
+				global_list_add(&globals, global)
 			}
 		}
-		settled := slice.clone(globals[:], c.semantic_allocator)
+		settled := slice.clone(globals.list[:], c.semantic_allocator)
 		indirect[key] = settled
 		return settled
 	}
-	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	out := global_list_make()
 	for part in call_parts(c, body, target, open = true) {
-		add_part_globals(c, &out, part_globals(c, part), part)
+		for global in globals_of(part_summary(c, part)^, writes) {
+			// A bare block's task's `thread_local` storage is its own thread's,
+			// not the caller's.
+			if !part.elsewhere || !global_is_thread_local(c, global) {
+				global_list_add(&out, global)
+			}
+		}
 	}
-	return out[:]
+	return out.list[:]
+}
+
+// Globals in the order found, each once, however many a call takes in.
+@(private = "file")
+Global_List :: struct {
+	list: [dynamic]Symbol_Id,
+	seen: map[Symbol_Id]bool,
+}
+
+@(private = "file")
+global_list_make :: proc() -> Global_List {
+	return {make([dynamic]Symbol_Id, 0, 4, context.temp_allocator), make(map[Symbol_Id]bool, context.temp_allocator)}
+}
+
+@(private = "file")
+global_list_add :: proc(globals: ^Global_List, global: Symbol_Id) {
+	if !globals.seen[global] {
+		globals.seen[global] = true
+		append(&globals.list, global)
+	}
 }
 
 // An indirect target's key: a `dyn` slot, or a procedure type.
@@ -1373,9 +1422,7 @@ effect_key :: proc(target: Effect_Call) -> Effect_Key {
 // call takes in.
 compute_global_writes :: proc(k: ^Checker) {
 	c := k.c
-	c.global_writes = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.indirect_writes = make(map[Effect_Key][]Symbol_Id, c.semantic_allocator)
-	c.global_reads = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.indirect_reads = make(map[Effect_Key][]Symbol_Id, c.semantic_allocator)
 	c.callback_summaries = make(map[Symbol_Id]^Callback_Summary, c.semantic_allocator)
 	c.thread_spawns = make([dynamic]Thread_Spawn, c.semantic_allocator)
@@ -1397,16 +1444,16 @@ compute_global_writes :: proc(k: ^Checker) {
 		}
 	}
 	settle_body_effects(c, bodies)
-	for body in bodies {
-		if len(body.writes.list) > 0 {
-			c.global_writes[body.symbol] = slice.clone(body.writes.list[:], c.semantic_allocator)
-		}
-		if len(body.reads.list) > 0 {
-			c.global_reads[body.symbol] = slice.clone(body.reads.list[:], c.semantic_allocator)
-		}
-		if summary := c.callback_summaries[body.symbol]; summary != nil {
-			summary.writes = slice.clone(body.own.list[:], c.semantic_allocator)
-			summary.reads = slice.clone(body.own_reads.list[:], c.semantic_allocator)
+	program.whole = make([]Body_Summary, len(bodies), c.semantic_allocator)
+	program.own = make([]Body_Summary, len(bodies), c.semantic_allocator)
+	for body, index in bodies {
+		whole := &program.whole[index]
+		whole.writes = slice.clone(body.writes.list[:], c.semantic_allocator)
+		whole.reads = slice.clone(body.reads.list[:], c.semantic_allocator)
+		program.own[index] = whole^
+		if c.callback_summaries[body.symbol] != nil {
+			program.own[index].writes = slice.clone(body.own.list[:], c.semantic_allocator)
+			program.own[index].reads = slice.clone(body.own_reads.list[:], c.semantic_allocator)
 		}
 	}
 	c.global_writes_ready = true
@@ -1464,7 +1511,6 @@ collect_body_effects :: proc(k: ^Checker) -> []Body_Effects {
 settle_body_effects :: proc(c: ^Compiler, bodies: []Body_Effects) {
 	program := &c.effect_program
 	parts := make([][]Call_Part, len(bodies), context.temp_allocator)
-	closing := make([][]Call_Part, len(bodies), context.temp_allocator)
 	for body, index in bodies {
 		list := make([dynamic]Call_Part, 0, len(body.calls), context.temp_allocator)
 		for call in body.calls {
@@ -1476,14 +1522,10 @@ settle_body_effects :: proc(c: ^Compiler, bodies: []Body_Effects) {
 			}
 		}
 		parts[index] = list[:]
-		closing[index] = closing_parts(c, index)
 	}
-	// A body's sets grow only when one it reads does, so only its readers are
-	// visited again.
-	readers := part_readers(parts, closing)
 	numbers := number_body_globals(c, bodies)
-	queue := body_queue_make(len(bodies))
-	for index in worklist_pop(&queue) {
+	settle := part_fixpoint_make(c, parts)
+	for index in worklist_pop(&settle.queue) {
 		body := &bodies[index]
 		grew := false
 		for part in parts[index] {
@@ -1493,12 +1535,12 @@ settle_body_effects :: proc(c: ^Compiler, bodies: []Body_Effects) {
 		}
 		grew |= add_part_to_set(c, numbers, &body.writes, body.own, {})
 		grew |= add_part_to_set(c, numbers, &body.reads, body.own_reads, {})
-		for part in closing[index] {
+		for part in settle.closing[index] {
 			grew |= add_part_to_set(c, numbers, &body.writes, bodies[part.body].writes, part)
 			grew |= add_part_to_set(c, numbers, &body.reads, bodies[part.body].reads, part)
 		}
 		if grew {
-			worklist_wake_all(&queue, readers[index][:])
+			part_fixpoint_grew(&settle, index)
 		}
 	}
 }
@@ -1551,7 +1593,7 @@ reject_copy_hook_writes :: proc(c: ^Compiler) {
 	reported := make(map[Span]bool, context.temp_allocator)
 	for body in c.checked_bodies {
 		sym := symbol_of(c, body.literal.symbol)
-		writes := c.global_writes[body.literal.symbol]
+		writes := body_summary(c, body.literal.symbol).writes
 		if sym == nil || sym.hook != .Copy || len(writes) == 0 || reported[sym.span] {
 			continue
 		}
@@ -1636,19 +1678,6 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, seen: ^map[Effect_Key]bo
 	return out[:]
 }
 
-// What one part of a call adds: a bare block's task's `thread_local` storage
-// is its own thread's, not the caller's.
-@(private = "file")
-add_part_globals :: proc(c: ^Compiler, into: ^[dynamic]Symbol_Id, from: []Symbol_Id, part: Call_Part) -> bool {
-	grew := false
-	for global in from {
-		if !part.elsewhere || !global_is_thread_local(c, global) {
-			grew |= append_unique(into, global)
-		}
-	}
-	return grew
-}
-
 // Whether a call's effects come from bodies the effects settle over: a direct
 // callee with a body, or any call through a value or a `dyn` slot.
 call_follows_bodies :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
@@ -1708,9 +1737,9 @@ call_effect_origins :: proc(c: ^Compiler, body: Symbol_Id, call: ^Expr_Call, glo
 		}
 		found := false
 		if writes {
-			found = slice.contains(part_writes(c, part), global)
+			found = slice.contains(part_summary(c, part).writes, global)
 		} else {
-			for reached in part_reach(c, part) {
+			for reached in part_summary(c, part).reach {
 				found ||= reached.global == global
 			}
 		}
@@ -1731,15 +1760,14 @@ call_effect_origins :: proc(c: ^Compiler, body: Symbol_Id, call: ^Expr_Call, glo
 
 // The bodies a value of a procedure type or a `dyn proc` view may run.
 callable_type_targets :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
-	if underlying_kind(c, type) == .Proc {
-		return effect_target_symbols(c, Effect_Call{type = erase_proc_contract(c, type_underlying(c, type))})
-	}
-	signature := dyn_proc_signature(c, type)
-	if signature == INVALID_TYPE {
+	signature, view, callable := callable_signature(c, type)
+	if !callable {
 		return nil
 	}
-	view := underlying_info(c, type)
-	return effect_target_symbols(c, Effect_Call{dyn_interface = view.dyn_interface, type = signature})
+	if view == INVALID_SYMBOL {
+		signature = erase_proc_contract(c, signature)
+	}
+	return effect_target_symbols(c, Effect_Call{dyn_interface = view, type = signature})
 }
 
 @(private = "file")

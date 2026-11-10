@@ -80,7 +80,9 @@ Prov_View_Start :: struct {
 	present, known: bool,
 }
 
-// What `view_start_of` is asked.
+// What `view_start_of` is asked. `reaching` is keyed by its array: the answers
+// and every such list are the graph's, released together, so a key never names a
+// list that is gone, and an equal list in another array only misses the cache.
 Prov_View_Query :: struct {
 	slot, loan: int,
 	range:      i64,

@@ -2,6 +2,7 @@
 // resolved, for a `parallel` block's window (design.md "Globals while tasks run").
 package lokec
 
+import "core:mem"
 import "core:slice"
 
 // compiler-architecture.md "Ownership, lifecycle, and provenance": where one
@@ -25,6 +26,17 @@ Global_Effect :: struct {
 	source: Effect_Source,
 }
 
+// Reach effects in the order found, one per global, with where each is: a body
+// near `main` may reach most of a program's globals.
+Effect_List :: struct {
+	list: [dynamic]Global_Effect,
+	at:   map[Symbol_Id]int,
+}
+
+effect_list_make :: proc(allocator: mem.Allocator) -> Effect_List {
+	return {make([dynamic]Global_Effect, allocator), make(map[Symbol_Id]int, allocator)}
+}
+
 // A `thread_local` owner every thread drops when it exits, and one of its hooks,
 // with what that does. Every task carries all of them, in its reservation as well
 // (design.md "Globals while tasks run"). The owner's own release is in the default
@@ -42,9 +54,9 @@ Thread_Exit_Drop :: struct {
 // and what each of its calls takes in.
 @(private = "file")
 Thread_Body :: struct {
-	reach:       [dynamic]Global_Effect,
+	reach:       Effect_List,
 	use:         Region_Set,
-	whole_reach: [dynamic]Global_Effect,
+	whole_reach: Effect_List,
 	whole_use:   Region_Set,
 	regions:     []Region_Set,
 	calls:       []Effect_Call,
@@ -80,21 +92,17 @@ unknown_as_receiver :: proc(set: ^Region_Set) {
 // where its caller passes it and given the regions its callee passes it.
 compute_thread_summaries :: proc(k: ^Checker) {
 	c := k.c
-	c.reach_effects = make(map[Symbol_Id][]Global_Effect, c.semantic_allocator)
-	c.allocator_uses = make(map[Symbol_Id]Region_Set, c.semantic_allocator)
+	program := &c.effect_program
 	facts := collect_thread_facts(k)
 	settle_thread_facts(c, facts)
 	for body, index in facts {
-		symbol := c.effect_program.bodies[index].symbol
-		if len(body.whole_reach) > 0 {
-			c.reach_effects[symbol] = slice.clone(body.whole_reach[:], c.semantic_allocator)
-		}
-		if !region_is_empty(body.whole_use) {
-			c.allocator_uses[symbol] = body.whole_use
-		}
-		if summary := c.callback_summaries[symbol]; summary != nil {
-			summary.reach = slice.clone(body.reach[:], c.semantic_allocator)
-			summary.use = body.use
+		whole, own := &program.whole[index], &program.own[index]
+		whole.reach = slice.clone(body.whole_reach.list[:], c.semantic_allocator)
+		whole.use = body.whole_use
+		own.reach, own.use = whole.reach, whole.use
+		if summary := c.callback_summaries[program.bodies[index].symbol]; summary != nil {
+			own.reach = slice.clone(body.reach.list[:], c.semantic_allocator)
+			own.use = body.use
 			summary.regions = clone_regions(body.regions, c.semantic_allocator)
 		}
 	}
@@ -107,8 +115,8 @@ collect_thread_facts :: proc(k: ^Checker) -> []Thread_Body {
 	program := &c.effect_program
 	facts := make([]Thread_Body, len(program.bodies), context.temp_allocator)
 	for &body in facts {
-		body.reach = make([dynamic]Global_Effect, context.temp_allocator)
-		body.whole_reach = make([dynamic]Global_Effect, context.temp_allocator)
+		body.reach = effect_list_make(context.temp_allocator)
+		body.whole_reach = effect_list_make(context.temp_allocator)
 	}
 	c.thread_facts_pending = true
 	for body in c.checked_bodies {
@@ -166,28 +174,25 @@ handle_call_regions :: proc(c: ^Compiler, call: ^Effect_Call) {
 settle_thread_facts :: proc(c: ^Compiler, facts: []Thread_Body) {
 	program := &c.effect_program
 	parts := make([][]Call_Part, len(facts), context.temp_allocator)
-	closing := make([][]Call_Part, len(facts), context.temp_allocator)
 	for &body, index in facts {
 		list := make([dynamic]Call_Part, 0, len(body.calls), context.temp_allocator)
 		for each in body.parts {
 			append(&list, ..each)
 		}
 		parts[index] = list[:]
-		closing[index] = closing_parts(c, index)
 		if summary := c.callback_summaries[program.bodies[index].symbol]; summary != nil {
 			body.regions = make([]Region_Set, len(summary.called), context.temp_allocator)
 		}
 	}
-	readers := part_readers(parts, closing)
-	queue := body_queue_make(len(facts))
-	for index in worklist_pop(&queue) {
+	settle := part_fixpoint_make(c, parts)
+	for index in worklist_pop(&settle.queue) {
 		body := &facts[index]
 		grew := false
 		for call, position in body.calls {
 			for part in body.parts[position] {
 				reached := &facts[part.body]
 				via := program.bodies[part.body].symbol
-				for effect in (reached.whole_reach if part.whole else reached.reach) {
+				for effect in (reached.whole_reach.list if part.whole else reached.reach.list) {
 					source := Effect_Source{via = via, span = call.span, precision = effect.source.precision}
 					grew |= add_global_effect(&body.reach, effect.global, source)
 				}
@@ -201,15 +206,15 @@ settle_thread_facts :: proc(c: ^Compiler, facts: []Thread_Body) {
 			}
 			grew |= note_callback_regions(c, facts, index, call)
 		}
-		for reached in body.reach {
+		for reached in body.reach.list {
 			grew |= add_global_effect(&body.whole_reach, reached.global, reached.source)
 		}
 		grew |= merge_allocator_use(&body.whole_use, body.use)
 		summary := c.callback_summaries[program.bodies[index].symbol]
-		for part in closing[index] {
+		for part in settle.closing[index] {
 			via := program.bodies[part.body].symbol
 			span := summary.called[part.callback].span
-			for reached in facts[part.body].whole_reach {
+			for reached in facts[part.body].whole_reach.list {
 				source := Effect_Source{via = via, span = span, precision = reached.source.precision}
 				grew |= add_global_effect(&body.whole_reach, reached.global, source)
 			}
@@ -217,7 +222,7 @@ settle_thread_facts :: proc(c: ^Compiler, facts: []Thread_Body) {
 			grew |= merge_allocator_use(&body.whole_use, substituted_region(facts[part.body].whole_use, given, direct = false))
 		}
 		if grew {
-			worklist_wake_all(&queue, readers[index][:])
+			part_fixpoint_grew(&settle, index)
 		}
 	}
 }
@@ -289,16 +294,17 @@ collect_thread_exit_drops :: proc(c: ^Compiler) {
 			continue
 		}
 		for hook in type_drop_hooks(c, sym.type) {
-			reach := make([dynamic]Global_Effect, 0, len(c.reach_effects[hook]), c.semantic_allocator)
-			for reached in c.reach_effects[hook] {
-				append(&reach, Global_Effect{global = reached.global, source = Effect_Source{via = hook, span = sym.span}})
+			summary := body_summary(c, hook)
+			reach := make([]Global_Effect, len(summary.reach), c.semantic_allocator)
+			for reached, at in summary.reach {
+				reach[at] = Global_Effect{global = reached.global, source = Effect_Source{via = hook, span = sym.span}}
 			}
 			append(&drops, Thread_Exit_Drop {
 				variable = Symbol_Id(index),
 				hook     = hook,
-				writes   = c.global_writes[hook],
-				reach    = reach[:],
-				use      = substituted_region(c.allocator_uses[hook], owner),
+				writes   = summary.writes,
+				reach    = reach,
+				use      = substituted_region(summary.use, owner),
 			})
 		}
 	}
@@ -306,13 +312,12 @@ collect_thread_exit_drops :: proc(c: ^Compiler) {
 }
 
 @(private)
-add_global_effect :: proc(list: ^[dynamic]Global_Effect, global: Symbol_Id, source: Effect_Source) -> bool {
-	for &existing in list {
-		if existing.global == global {
-			return merge_effect_source(&existing.source, source)
-		}
+add_global_effect :: proc(effects: ^Effect_List, global: Symbol_Id, source: Effect_Source) -> bool {
+	if at, found := effects.at[global]; found {
+		return merge_effect_source(&effects.list[at].source, source)
 	}
-	append(list, Global_Effect{global = global, source = source})
+	effects.at[global] = len(effects.list)
+	append(&effects.list, Global_Effect{global = global, source = source})
 	return true
 }
 

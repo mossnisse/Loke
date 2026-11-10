@@ -375,7 +375,7 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		}
 		return zero_const(ev.k.c, v.type)
 	}
-	cv := const_of(v)
+	cv := v.constant
 	// A bit-cast `typeid` keeps its number there too (`typeid_number_const`).
 	if v.kind == .Integer || v.kind == .Rune || (v.kind == .Type && !bi_is_zero(v.integer)) {
 		cv.integer = bi_clone(storage, v.integer)
@@ -411,11 +411,6 @@ eval_release_tables :: proc(ev: ^Evaluator, value: Const_Value) {
 	}
 	delete(value.aggregate.elements, ev.alloc)
 	free(value.aggregate, ev.alloc)
-}
-
-@(private = "file")
-const_of :: proc(v: Eval_Value) -> Const_Value {
-	return v.constant
 }
 
 @(private = "file")
@@ -849,7 +844,7 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (out: Eval_Value, success:
 	if type_is_simd(ev.k.c, v.type) {
 		return eval_simd_unary(ev, v.op, v.op_span, v.type, operand)
 	}
-	return eval_unary_value(ev, v.op, v.op_span, const_of(operand), v.type)
+	return eval_unary_value(ev, v.op, v.op_span, operand.constant, v.type)
 }
 
 // A scalar unary operation on a folded operand of `type`; a delegated operator
@@ -897,7 +892,7 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (out: Eval_Value, succes
 	left := eval_expr(ev, v.lhs) or_return
 	right := eval_expr(ev, v.rhs) or_return
 
-	// design.md "SIMD vectors": lane-wise, since `const_of` carries no lanes.
+	// design.md "SIMD vectors": lane-wise, since `constant` carries no lanes.
 	if type_is_simd(ev.k.c, v.type) {
 		return eval_simd_binary_values(ev, v.op, v.op_span, v.type, left, right)
 	}
@@ -907,7 +902,7 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (out: Eval_Value, succes
 		return scalar(bool_const(result), v.type), true
 	}
 
-	folded, ok := fold_arithmetic(ev.k.c, v.op, v.op_span, const_of(left), const_of(right), v.type, ev.alloc)
+	folded, ok := fold_arithmetic(ev.k.c, v.op, v.op_span, left.constant, right.constant, v.type, ev.alloc)
 	if !ok {
 		eval_fold_failed(ev)
 		return Eval_Value{}, false
@@ -929,7 +924,7 @@ eval_simd_unary :: proc(
 	}
 	elements := eval_elements(ev, int(info.count)) or_return
 	for index in 0 ..< int(info.count) {
-		lane := const_of(eval_simd_lane(operand, index))
+		lane := eval_simd_lane(operand, index).constant
 		elements[index] = eval_unary_value(ev, op, op_span, lane, info.element) or_return
 	}
 	return Eval_Value{kind = .Aggregate, type = type, elements = elements}, true
@@ -960,7 +955,7 @@ eval_simd_binary_values :: proc(
 			continue
 		}
 		folded, ok := fold_arithmetic(
-			ev.k.c, op, op_span, const_of(a), const_of(b), source.element, ev.alloc,
+			ev.k.c, op, op_span, a.constant, b.constant, source.element, ev.alloc,
 		)
 		if !ok {
 			eval_fold_failed(ev)
@@ -998,7 +993,7 @@ eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, suc
 			result.boolean = result.boolean && lane.boolean
 		case .Add, .Mul:
 			folded, folded_ok := fold_arithmetic(
-				ev.k.c, fold == .Add ? .Plus : .Star, v.span, const_of(result), const_of(lane), info.element, ev.alloc,
+				ev.k.c, fold == .Add ? .Plus : .Star, v.span, result.constant, lane.constant, info.element, ev.alloc,
 			)
 			if !folded_ok {
 				eval_fold_failed(ev)
@@ -1112,7 +1107,7 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (out: 
 		}
 		return op == .Eq_Eq, known
 	}
-	return fold_comparison(ev.k.c, op, const_of(a), const_of(b), ev.alloc)
+	return fold_comparison(ev.k.c, op, a.constant, b.constant, ev.alloc)
 }
 
 // Whether two parts can still be equal. As in `aggregate_equal`, a part with no
@@ -2357,8 +2352,8 @@ eval_operator_call :: proc(
 		return eval_simd_binary_values(ev, op, site, symbol.result, operands[0], operands[1])
 	}
 	if count == 1 {
-		applied := eval_unary_value(ev, op, site, const_of(operands[0]), symbol.delegate_underlying) or_return
-		return scalar(const_of(applied), symbol.result), true
+		applied := eval_unary_value(ev, op, site, operands[0].constant, symbol.delegate_underlying) or_return
+		return scalar(applied.constant, symbol.result), true
 	}
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
@@ -2366,7 +2361,7 @@ eval_operator_call :: proc(
 		return scalar(bool_const(result), symbol.result), true
 	}
 	folded, ok := fold_arithmetic(
-		ev.k.c, op, site, const_of(operands[0]), const_of(operands[1]), symbol.delegate_underlying, ev.alloc,
+		ev.k.c, op, site, operands[0].constant, operands[1].constant, symbol.delegate_underlying, ev.alloc,
 	)
 	if !ok {
 		eval_fold_failed(ev)
@@ -2423,7 +2418,7 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, succ
 		return Eval_Value{}, false
 	}
 	// An aggregate is frozen so the shared conversion sees its lanes.
-	operand := const_of(source)
+	operand := source.constant
 	if source.kind == .Aggregate {
 		frozen := freeze(ev, source, ev.alloc) or_return
 		operand = frozen
@@ -2573,7 +2568,7 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if info := underlying_info(ev.k.c, v.type); info != nil && info.kind == .Simd {
 			elements := eval_elements(ev, int(info.count)) or_return
 			for index in 0 ..< int(info.count) {
-				lane := const_of(eval_simd_lane(operand, index))
+				lane := eval_simd_lane(operand, index).constant
 				lane.integer = wrap_to_type(ev.k.c, lane.integer, info.element, ev.alloc)
 				elements[index] = scalar(lane, info.element)
 			}
@@ -2583,7 +2578,7 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			eval_fail(ev, v.span, "L0341", "this conversion has no compile-time value")
 			return Eval_Value{}, false
 		}
-		wrapped := const_of(operand)
+		wrapped := operand.constant
 		wrapped.kind = type_is_rune(ev.k.c, v.type) ? .Rune : .Integer
 		wrapped.integer = wrap_to_type(ev.k.c, wrapped.integer, v.type, ev.alloc)
 		return scalar(wrapped, v.type), true
@@ -2604,16 +2599,16 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 
 	case .Math_Sqrt_Instruction:
 		operand := eval_expr(ev, v.bound[0]) or_return
-		return scalar(exact_sqrt(const_of(operand)), v.type), true
+		return scalar(exact_sqrt(operand.constant), v.type), true
 
 	case .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction:
 		operand := eval_expr(ev, v.bound[0]) or_return
-		return scalar(exact_integral(const_of(operand), symbol.builtin), v.type), true
+		return scalar(exact_integral(operand.constant, symbol.builtin), v.type), true
 
 	case .Math_Mod_Instruction:
 		operands: [2]Eval_Value
 		eval_operands(ev, v.bound, operands[:]) or_return
-		return scalar(exact_mod(const_of(operands[0]), const_of(operands[1])), v.type), true
+		return scalar(exact_mod(operands[0].constant, operands[1].constant), v.type), true
 
 	case .Math_Rotate_Left, .Math_Rotate_Right:
 		operands: [2]Eval_Value
@@ -2688,7 +2683,7 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	for arg in v.bound[index + 1:] {
 		text := "<value>"
 		if value, ok := eval_expr(ev, arg); ok {
-			text = const_display_text(ev.k.c, const_of(value))
+			text = const_display_text(ev.k.c, value.constant)
 		}
 		strings.write_byte(&b, ' ')
 		strings.write_string(&b, text)
@@ -3063,7 +3058,7 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	op := compound_operator(s.op)
 	type := slot.type
 	// design.md "Evaluation order": the destination is read after the right operand.
-	// SIMD folds lane-wise, since `const_of` carries no lanes.
+	// SIMD folds lane-wise, since `constant` carries no lanes.
 	if type_is_simd(ev.k.c, type) {
 		result, lanes_ok := eval_simd_binary_values(ev, op, s.op_span, type, slot^, operand)
 		if !lanes_ok {
@@ -3072,7 +3067,7 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		slot^ = result
 		return .Normal
 	}
-	folded, folded_ok := fold_arithmetic(ev.k.c, op, s.op_span, const_of(slot^), const_of(operand), type, ev.alloc)
+	folded, folded_ok := fold_arithmetic(ev.k.c, op, s.op_span, slot^.constant, operand.constant, type, ev.alloc)
 	if !folded_ok {
 		eval_fold_failed(ev)
 		return .Fail

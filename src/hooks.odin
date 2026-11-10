@@ -2,6 +2,8 @@
 // "Lifecycle hooks and resource types").
 package lokec
 
+import "core:slice"
+
 // What a type's lifecycle is, cached per underlying type. Resolved lazily because
 // a record's fields may be checked after the `impl` block that gives it a hook.
 Lifecycle :: struct {
@@ -25,6 +27,11 @@ Lifecycle :: struct {
 	// supplies both.
 	boxed:            bool,
 	state:            Size_State,
+	// The hand-written hooks a drop or a copy of the type may run (`type_hooks`),
+	// kept by role once the entry is `.Finite`, when what it owns has its hooks for good.
+	drop_hooks:       []Symbol_Id,
+	copy_hooks:       []Symbol_Id,
+	hooks_listed:     bit_set[Hook_Kind],
 }
 
 // Emission reads a finalized value snapshot, not the checker's lazy cache.
@@ -248,9 +255,18 @@ type_hooks :: proc(c: ^Compiler, type: Type_Id, role: Hook_Kind) -> []Symbol_Id 
 	if !type_is_managed(c, type) {
 		return nil
 	}
+	entry := lifecycle_of(c, type)
+	kept := role == .Drop ? &entry.drop_hooks : &entry.copy_hooks
+	if role in entry.hooks_listed {
+		return kept^
+	}
 	hooks := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
 	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
 	type_hooks_walk(c, type, role, &visiting, &hooks)
+	if entry.state == .Finite {
+		kept^ = slice.clone(hooks[:], c.semantic_allocator)
+		entry.hooks_listed += {role}
+	}
 	return hooks[:]
 }
 

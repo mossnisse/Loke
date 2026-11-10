@@ -285,12 +285,9 @@ callable_view_operand :: proc(c: ^Compiler, callee: Expr) -> Expr {
 // or -1 for any other type.
 @(private = "file")
 callable_arity :: proc(c: ^Compiler, type: Type_Id) -> int {
-	signature := type
-	if underlying_kind(c, type) != .Proc {
-		signature = dyn_proc_signature(c, type)
-	}
+	signature, _, callable := callable_signature(c, type)
 	info := underlying_info(c, signature)
-	if info == nil || info.kind != .Proc {
+	if !callable || info == nil || info.kind != .Proc {
 		return -1
 	}
 	return len(info.parameters)

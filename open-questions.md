@@ -1383,9 +1383,13 @@ a reproduction before a change.
   is the loaded slot, so with several the result follows list order. Taking the
   most recent store may be the intent; mutable if any is mutable would be the
   conservative choice, and could report conflicts that are accepted today.
-- **A check with a side effect** (bug 14). `at_once_reaches` in
-  `borrow_report.odin` writes solver rows while it answers a question; the
-  replay after it overwrites them, which is all that keeps the answer pure.
+- **Uncomparable parts in compile-time equality** (group 5, top
+  recommendation 8). Comparing two aggregates, `part_equal` in `const_ops.odin`
+  counts a pair of parts a constant cannot compare, other than `type` or
+  aggregate parts, as a difference, while `eval_part_equal` in `eval.odin` makes
+  the answer unknown, which fails the evaluation. Parts of one field type
+  rarely differ in kind, and no probe shows the two disagree; deciding which is
+  meant would let them share one rule.
 - **Materialized views in the construction graph** (bug 15). Publishing a
   materialized view in `cfg_provenance.odin` records definitions into the
   construction graph, which a comment there says it does not. It widens bit

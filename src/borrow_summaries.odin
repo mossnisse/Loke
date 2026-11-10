@@ -52,30 +52,58 @@ Noted_Move :: struct {
 	move: Carrier_Move,
 }
 
-// `Carrier_Move` of a body, read off each store that reaches its end of solving. A
-// store that copies counts as one only if the copy outlasts the body, which a later
-// store over the place it was read from ends, as `held := links[0]; links[0] =
-// links[1]; links[1] = held;` does (`copies_outlast_body`).
+// What one replay of a solved body leaves for its callers' summaries: with
+// `stores_thread_local`, the `thread_local` storage it writes
+// (`note_thread_local_write`); with a `summary`, what its result may borrow
+// (`merge_escape_event`); and with `moves_carriers`, the carriers it moves
+// (`settle_carrier_moves`). Returns whether any of them grew.
 @(private)
-collect_carrier_moves :: proc(state: ^Prov_Solve, declaration: Symbol_Id) -> bool {
+collect_body_summaries :: proc(
+	state: ^Prov_Solve, declaration: Symbol_Id, summary: ^Result_Provenance, stores_thread_local, moves_carriers: bool,
+) -> bool {
 	graph := state.graph
+	written := thread_local_writes_of(state.k.c, declaration) if stores_thread_local else nil
 	moves := make([dynamic]Noted_Move, graph.alloc)
+	changed := false
 	for block in graph.blocks {
 		if !solve_enter_block(state, block) {
 			continue
 		}
 		for event in block.prov {
 			#partial switch event.kind {
+			case .Retain:
+				if stores_thread_local {
+					changed = note_thread_local_write(state, event, declaration, written) || changed
+				}
+			case .Escape:
+				if summary != nil {
+					changed = merge_escape_event(state, event, declaration, summary) || changed
+				}
 			case .Publish:
-				note_published_move(state, event, &moves)
+				if moves_carriers { note_published_move(state, event, &moves) }
 			case .Def:
-				note_inout_move(state, event, &moves)
+				if moves_carriers { note_inout_move(state, event, &moves) }
 			case .Rearrange:
-				note_rearranged_move(state, event, &moves)
+				if moves_carriers { note_rearranged_move(state, event, &moves) }
 			}
 			run_prov_event(state, event, state.reach, state.ended)
 		}
 	}
+	// Last, as whether a copy outlasts the body takes solving the links, which settles
+	// the graph's loads and stores for the checks.
+	if moves_carriers {
+		changed = settle_carrier_moves(state, declaration, moves[:]) || changed
+	}
+	return changed
+}
+
+// `Carrier_Move` of a body, read off each store that reaches its end of solving. A
+// store that copies counts as one only if the copy outlasts the body, which a later
+// store over the place it was read from ends, as `held := links[0]; links[0] =
+// links[1]; links[1] = held;` does (`copies_outlast_body`).
+@(private = "file")
+settle_carrier_moves :: proc(state: ^Prov_Solve, declaration: Symbol_Id, moves: []Noted_Move) -> bool {
+	graph := state.graph
 	copies := false
 	for noted in moves {
 		copies ||= noted.move.copied
@@ -120,6 +148,13 @@ copies_outlast_body :: proc(state: ^Prov_Solve, root: Root_Id) -> bool {
 	for slot in root_own_slots(graph, graph.roots[int(root)]) {
 		storage[slot] = true
 	}
+	// The links that leave a copy behind: out of the storage, and not moved.
+	copies := make([]u8, state.link_row_bytes, graph.alloc)
+	for link, index in graph.reborrows {
+		if storage[link.source] && !link.moved {
+			bit_mark(copies, index)
+		}
+	}
 	for block in graph.blocks {
 		if len(block.succs) > 0 || block.unwind {
 			continue
@@ -129,9 +164,8 @@ copies_outlast_body :: proc(state: ^Prov_Solve, root: Root_Id) -> bool {
 			if held == 0 || !storage[slot] {
 				continue
 			}
-			row := state.link_rows.rows[held]
-			for link, index in graph.reborrows {
-				if bit_get(row, index) && storage[link.source] && !link.moved {
+			for byte, at in state.link_rows.rows[held] {
+				if byte & copies[at] != 0 {
 					return true
 				}
 			}
@@ -360,7 +394,7 @@ slot_carrier_type :: proc(graph: ^Flow_Graph, index: int) -> Type_Id {
 @(private)
 rearrange_carriers :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
 	clear(&state.rearranged)
-	load_writable_content(state, event, reach, &state.rearranged)
+	land_load(state, event, reach, read_writable_content(state, event, reach, &state.rearranged))
 	reads := state.rearranged
 	join :: proc(state: ^Prov_Solve, reach: []u8, reads: []int, type: Type_Id, every: bool) {
 		graph := state.graph
@@ -428,10 +462,8 @@ graph_borrows_thread_local :: proc(graph: ^Flow_Graph) -> bool {
 // store there. A call leaves the same borrow in its argument
 // (`prov_call_thread_local_writes`), so a task's call that hands one back to
 // its parent is seen at the spawn.
-@(private)
-collect_thread_local_writes :: proc(state: ^Prov_Solve, declaration: Symbol_Id) -> bool {
-	graph := state.graph
-	c := state.k.c
+@(private = "file")
+thread_local_writes_of :: proc(c: ^Compiler, declaration: Symbol_Id) -> []Symbol_Id {
 	written, found := c.thread_local_writes[declaration]
 	if !found {
 		written = make([]Symbol_Id, len(symbol_of(c, declaration).param_symbols), c.semantic_allocator)
@@ -440,19 +472,7 @@ collect_thread_local_writes :: proc(state: ^Prov_Solve, declaration: Symbol_Id) 
 		}
 		c.thread_local_writes[declaration] = written
 	}
-	changed := false
-	for block in graph.blocks {
-		if !solve_enter_block(state, block) {
-			continue
-		}
-		for event in block.prov {
-			if event.kind == .Retain {
-				changed = note_thread_local_write(state, event, declaration, written) || changed
-			}
-			run_prov_event(state, event, state.reach, state.ended)
-		}
-	}
-	return changed
+	return written
 }
 
 // The first `thread_local` global a stored value borrows, and each callback's
@@ -691,23 +711,6 @@ written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id, owners := f
 }
 
 // Every loan that can reach a `return` becomes a possibility in the summary.
-@(private)
-collect_escape_provenance :: proc(state: ^Prov_Solve, declaration: Symbol_Id, summary: ^Result_Provenance) -> bool {
-	changed := false
-	for block in state.graph.blocks {
-		if !solve_enter_block(state, block) {
-			continue
-		}
-		for event in block.prov {
-			if event.kind == .Escape {
-				changed = merge_escape_event(state, event, declaration, summary) || changed
-			}
-			run_prov_event(state, event, state.reach, state.ended)
-		}
-	}
-	return changed
-}
-
 @(private = "file")
 merge_escape_event :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symbol_Id, into: ^Result_Provenance) -> bool {
 	graph := state.graph

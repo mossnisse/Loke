@@ -681,14 +681,18 @@ Prov_Solve :: struct {
 	// Scratch: the loans one event ends, and their indices.
 	released: []bool,
 	released_indices: [dynamic]int,
-	// Scratch: the slots `live_place_bits` gathered.
-	live_slots: [dynamic]int,
+	// Scratch: the slots `live_place_bits` gathered, and the live slots holding a
+	// link (`live_reborrow_of`).
+	live_slots:   [dynamic]int,
+	link_holders: [dynamic]int,
 	// Scratch: the loans a load has gone on through, and those it has yet to.
 	load_expanded: []bool,
 	load_pending:  []u8,
 	live:    []Slot_Use,
 	uses:    []Span,
 	merged:  []u8,
+	// The spawns whose tasks may be running on entry to each block (`task_window`).
+	window_entry: [][]u8,
 }
 
 @(private)
@@ -1010,18 +1014,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		return changed
 	}
 	solve_reaching(&state)
-	if stores_thread_local {
-		changed = collect_thread_local_writes(&state, literal.symbol) || changed
-	}
-	if returns {
-		changed = collect_escape_provenance(&state, literal.symbol, summary) || changed
-	}
-	// Last, as whether a copy outlasts the body takes solving the links, which settles
-	// the graph's loads and stores for the checks.
-	if moves_carriers {
-		changed = collect_carrier_moves(&state, literal.symbol) || changed
-	}
-	return changed
+	return collect_body_summaries(&state, literal.symbol, summary, stores_thread_local, moves_carriers) || changed
 }
 
 // One concrete body's root and region diagnostics.
@@ -1061,7 +1054,7 @@ note_instance_sites :: proc(k: ^Checker, literal: ^Expr_Proc, first: int) {
 // global's own storage when that holds carriers, or the global's own slot,
 // which another call may have refilled. A `@(synchronized)` variable's package
 // vouches for every access through it.
-body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^[dynamic]Global_Effect) {
+body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^Effect_List) {
 	state := Prov_Solve{graph = graph, k = k}
 	if !prepare_state(&state) {
 		return
@@ -1084,7 +1077,7 @@ body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^[dynamic]Global
 }
 
 @(private)
-note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^[dynamic]Global_Effect) {
+note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^Effect_List) {
 	graph := state.graph
 	c := state.k.c
 	source := Effect_Source{span = span, precision = state.precision[slot]}
@@ -1104,7 +1097,7 @@ note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^[d
 }
 
 @(private = "file")
-add_reached_global :: proc(c: ^Compiler, out: ^[dynamic]Global_Effect, global: Symbol_Id, source: Effect_Source) {
+add_reached_global :: proc(c: ^Compiler, out: ^Effect_List, global: Symbol_Id, source: Effect_Source) {
 	sym := symbol_of(c, global)
 	if sym == nil || sym.kind != .Var || !symbol_outlives_bodies(sym) || sym.synchronized ||
 	   !type_carries_borrow(c, sym.type).any {
@@ -1148,6 +1141,7 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 	state.released = make([]bool, state.loans, graph.alloc)
 	state.released_indices = make([dynamic]int, graph.alloc)
 	state.live_slots = make([dynamic]int, graph.alloc)
+	state.link_holders = make([dynamic]int, graph.alloc)
 	state.load_expanded = make([]bool, state.loans, graph.alloc)
 	state.load_pending = make([]u8, state.row_bytes, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
@@ -1267,12 +1261,8 @@ join_block_entry :: proc(state: ^Prov_Solve, block: ^Flow_Block, id: int) -> ^Fl
 			continue
 		}
 		reach_join(state, source.reach_exit)
-		for page, at in source.precision_exit {
-			for loss, index in page { state.precision[at * BLOCK_TABLE_PAGE + index] |= loss }
-		}
-		for page, at in source.ended_exit {
-			for value, index in page { state.ended[at * BLOCK_TABLE_PAGE + index] &&= value }
-		}
+		block_table_or(source.precision_exit, state.precision)
+		block_table_and(source.ended_exit, state.ended)
 	}
 	if first == nil {
 		enter_block_tables(state, nil, nil, nil)
@@ -1320,7 +1310,7 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 		for predecessor in block.preds {
 			if visited[int(predecessor)] {
 				from := graph.blocks[predecessor]
-				join_links_held(state, from.links_exit)
+				interned_join(&state.link_rows, state.links_held, from.links_exit, state.link_row_edit, every = false)
 				join_loaded_below(state, from.below_exit, !joined)
 				if !joined { first, first_below = from.links_exit, from.below_exit }
 				joined = true
@@ -1377,26 +1367,6 @@ index_links :: proc(state: ^Prov_Solve) {
 					state.link_is_named[index] = true
 				}
 			}
-		}
-	}
-}
-
-@(private = "file")
-join_links_held :: proc(state: ^Prov_Solve, from: [][]u32) {
-	for page, at in from {
-		for row, index in page {
-			slot := at * BLOCK_TABLE_PAGE + index
-			held := state.links_held[slot]
-			if row == held || row == 0 {
-				continue
-			}
-			if held == 0 {
-				state.links_held[slot] = row
-				continue
-			}
-			copy(state.link_row_edit, state.link_rows.rows[held])
-			bytes_or(state.link_row_edit, state.link_rows.rows[row])
-			state.links_held[slot] = intern_row(&state.link_rows, state.link_row_edit)
 		}
 	}
 }
@@ -1849,10 +1819,16 @@ root_loans :: proc(state: ^Prov_Solve, root: Root_Id) -> []int {
 // deep load goes on through what it read until nothing new turns up.
 @(private)
 load_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) {
+	land_load(state, event, reach, read_pointee_content(state, event, reach, reads))
+}
+
+// What a load reads, left in `state.merged` without landing in its slot, and the
+// precision that loses.
+@(private)
+read_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) -> Precision_Loss {
 	graph := state.graph
 	if event.load == .Writable {
-		load_writable_content(state, event, reach, reads)
-		return
+		return read_writable_content(state, event, reach, reads)
 	}
 	mem.zero_slice(state.merged)
 	loss := graph.prov_slots[event.slot].precision | path_precision(event.path)
@@ -1900,6 +1876,13 @@ load_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 			}
 		}
 	}
+	return loss
+}
+
+// Makes a load's slot hold what it read, `state.merged`, and carry the place bits of
+// what it was read through.
+@(private)
+land_load :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, loss: Precision_Loss) {
 	carry_place_bits(state, event, reach)
 	copy(reach_row_written(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
@@ -1926,7 +1909,7 @@ carry_place_bits :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
 // pointee reaches a destination (`prov_load_writable`). What `into` names is
 // only read through, as `prov_mutable_reach` already kept the mutable ones.
 @(private)
-load_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int) {
+read_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, reads: ^[dynamic]int) -> Precision_Loss {
 	graph := state.graph
 	mem.zero_slice(state.merged)
 	loss := graph.prov_slots[event.slot].precision
@@ -1947,9 +1930,7 @@ load_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8
 			}
 		}
 	}
-	carry_place_bits(state, event, reach)
-	copy(reach_row_written(state, reach, event.slot), state.merged)
-	state.precision[event.slot] = loss
+	return loss
 }
 
 // The carriers in the storage one loan names, as `load_through_loan` finds
