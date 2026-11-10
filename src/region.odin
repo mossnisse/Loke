@@ -1,4 +1,5 @@
-// Local allocator regions: `mem.Arena` and `mem.Scratch`.
+// Local allocator regions: `mem.Arena` and `mem.Scratch`, and the lattice of
+// regions a value may name (`Region_Set`), which the provenance walk and solver share.
 //
 // design.md "Allocators": there is no ambient temporary allocator. Temporary
 // storage has a reset boundary and runtime identity, so code creates a
@@ -17,6 +18,10 @@
 // twice, and there is no meaningful clone of a bump region — so `clone` is
 // disabled in `lifecycle_of` rather than generated and then trapped.
 package lokec
+
+import "core:math/bits"
+import "core:mem"
+import "core:slice"
 
 // Index of the one field, the control-block pointer.
 PROVIDER_CONTROL :: 0
@@ -167,4 +172,280 @@ provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string, policy: Typ
 call_provider_op :: proc(c: ^Compiler, v: ^Expr_Call) -> Provider_Op {
 	sym := symbol_of(c, v.resolution.chosen_overload)
 	return sym != nil ? sym.provider_op : .None
+}
+
+// ---------------------------------------------------------- regions --
+
+// The regions an allocator value may name (design.md "Allocator regions and
+// region provenance"). Values not proven distinct may share a region.
+//
+// ponytail: flow-insensitive, one entry per allocator binding, so a reassigned
+// allocator variable merges both identities. Make it flow-sensitive if that
+// rejects real programs.
+Region_Set :: struct {
+	params:  u64,  // one bit per parameter of the enclosing body
+	// Of `params`, those read at a load below what the parameter names, as
+	// `p^.next^.allocator`: a call takes what its argument's carriers lead to for
+	// these, and only what the argument names for the rest
+	// (`prov_substitute_region`).
+	loaded:  u64,
+	// What each parameter's region was read as (`Region_Read`): `named`, of what
+	// the argument names, for every parameter in `params`; `below`, of what its
+	// carriers lead to, for those in `loaded`.
+	named:   Param_Reads,
+	below:   Param_Reads,
+	default: bool, // the default provider's region
+	unknown: bool,
+	locals:  u64,  // one bit per local `mem.Arena` or `mem.Scratch`
+	crowded: bool, // more local providers than bits: may be any of them
+	// `unknown` stands for a parameter past `REGION_PARAM_LIMIT`.
+	crowded_params: bool,
+}
+
+// The widths of `Region_Set.locals` and `Region_Set.params`.
+REGION_LOCAL_LIMIT :: 64
+REGION_PARAM_LIMIT :: 64
+
+// What a set's parameters were read as at one level (`Region_Read`), a bit per
+// parameter: those read as a value that may be or lead to an allocator handle,
+// and those whose read a read through a carrier decides. A parameter in neither
+// was read as owners alone.
+Param_Reads :: struct {
+	handles: u64,
+	viewed:  u64,
+}
+
+// What parameter `index`'s region was read as at one level. Merged reads keep
+// the widest: `Handles` over `Viewed` over `Owners`.
+param_read :: proc(reads: Param_Reads, index: int) -> Region_Read {
+	if index >= REGION_PARAM_LIMIT { return .Handles }
+	bit := u64(1) << uint(index)
+	switch {
+	case reads.handles & bit != 0: return .Handles
+	case reads.viewed & bit != 0:  return .Viewed
+	}
+	return .Owners
+}
+
+@(private = "file")
+param_reads_add :: proc(reads: ^Param_Reads, bit: u64, read: Region_Read) {
+	switch read {
+	case .Owners:
+	case .Viewed:  reads.viewed |= bit
+	case .Handles: reads.handles |= bit
+	}
+}
+
+// The parameters whose region at a call takes the handles their argument names,
+// or its carriers lead to: every read but one of owners alone.
+param_reads_take_handles :: proc(reads: Param_Reads) -> u64 {
+	return reads.handles | reads.viewed
+}
+
+// A parameter's region, read of what its argument names as `read`. A parameter
+// enters a set only here or by a merge, so one no read decided takes the handles
+// its argument names.
+region_add_param :: proc(set: ^Region_Set, index: int, read := Region_Read.Handles) {
+	if index < REGION_PARAM_LIMIT {
+		bit := u64(1) << uint(index)
+		set.params |= bit
+		param_reads_add(&set.named, bit, read)
+	} else {
+		set.unknown, set.crowded_params = true, true
+	}
+}
+
+// design.md "Allocator regions and region provenance": what a read of a
+// parameter's region read, which says what that region stands for at a call. A
+// handle beside an owner backs none of it, so a read of owners alone, as a
+// `string` through `holder^.text` or `reader.holder^.text`, stands for what the
+// owners the argument names, or its carriers lead to, are in, and not for what the
+// handles there name. A read of a carrier, as `reader.holder`, or a carrier
+// parameter's own region, is what the carrier views, and only a read through it
+// says what that is (`region_read_through`); until then it counts as `Handles`.
+Region_Read :: enum u8 { Owners, Viewed, Handles }
+
+// A parameter's region read at a load below what it names (`Region_Set.loaded`),
+// as `read` there and of what the argument names.
+region_add_loaded_param :: proc(set: ^Region_Set, index: int, read := Region_Read.Handles) {
+	region_add_param(set, index, read)
+	if index < REGION_PARAM_LIMIT {
+		bit := u64(1) << uint(index)
+		set.loaded |= bit
+		param_reads_add(&set.below, bit, read)
+	}
+}
+
+region_remove_param :: proc(set: ^Region_Set, index: int) {
+	if index < REGION_PARAM_LIMIT {
+		bit := u64(1) << uint(index)
+		set.params &~= bit
+		set.loaded &~= bit
+		set.named.handles &~= bit
+		set.named.viewed &~= bit
+		set.below.handles &~= bit
+		set.below.viewed &~= bit
+	}
+}
+
+region_has_param :: proc(set: Region_Set, index: int) -> bool {
+	return index < REGION_PARAM_LIMIT && set.params & (u64(1) << uint(index)) != 0
+}
+
+region_has_loaded_param :: proc(set: Region_Set, index: int) -> bool {
+	return index < REGION_PARAM_LIMIT && set.loaded & (u64(1) << uint(index)) != 0
+}
+
+// A read through a carrier of what `set`'s carriers view, as a value `read` says
+// holds owners alone or may lead to a handle, decides what those carriers' reads
+// were, at either level. A read that is itself of a carrier decides nothing. Reads
+// already decided stay as they were: one of a handle, stored in an owner this body
+// built with it, still stands for the handle when that owner is read.
+region_read_through :: proc(set: ^Region_Set, read: Region_Read) {
+	decide :: proc(reads: ^Param_Reads, read: Region_Read) {
+		switch read {
+		case .Viewed:
+		case .Owners:  reads.viewed = 0
+		case .Handles: reads.handles |= reads.viewed; reads.viewed = 0
+		}
+	}
+	decide(&set.named, read)
+	decide(&set.below, read)
+}
+
+// Whether a call substitutes no more for `a`'s parameters than for `b`'s: each
+// parameter of `a` is in `b`, and each `a` reads through its argument's
+// carriers `b` reads through them too, and at either level `b` takes the handles
+// where `a` takes them (`prov_substitute_region`). Comparing `params` alone would
+// let a set that takes what an argument's carriers lead to pass for one that
+// takes only what the argument names, or one that takes handles for one that
+// takes owners alone.
+region_params_within :: proc(a, b: Region_Set) -> bool {
+	return a.params & ~b.params == 0 && a.loaded & ~b.loaded == 0 &&
+		param_reads_take_handles(a.named) & ~param_reads_take_handles(b.named) == 0 &&
+		param_reads_take_handles(a.below) & ~param_reads_take_handles(b.below) == 0
+}
+
+// Takes the lowest parameter out of `params`, to walk a set's parameters.
+next_region_param :: proc(params: ^u64) -> (index: int, ok: bool) {
+	if params^ == 0 {
+		return 0, false
+	}
+	index = int(bits.count_trailing_zeros(params^))
+	params^ &= params^ - 1
+	return index, true
+}
+
+// Takes the shallowest depth out of `depths`, a parameter's `param_loads`
+// bits, to walk the depths a result loads at: bit 0 is depth 1.
+next_load_depth :: proc(depths: ^u8) -> (depth: int, ok: bool) {
+	if depths^ == 0 {
+		return 0, false
+	}
+	depth = int(bits.count_trailing_zeros(depths^)) + 1
+	depths^ &= depths^ - 1
+	return depth, true
+}
+
+// Whether the set may name a region created in this procedure.
+region_has_local :: proc(set: Region_Set) -> bool {
+	return set.locals != 0 || set.crowded
+}
+
+// A region this body created and nothing outside it can name, which it may
+// reset freely.
+region_is_local_only :: proc(set: Region_Set) -> bool {
+	return region_has_local(set) && !set.default && !set.unknown && !region_is_parameter_backed(set)
+}
+
+// Whether two sets may name the same region.
+regions_may_overlap :: proc(a, b: Region_Set) -> bool {
+	if a.unknown || b.unknown || a.crowded || b.crowded {
+		return true
+	}
+	// Any two parameters may be the same handle, and a parameter may be the
+	// default. A local region did not exist at entry, so it is distinct from both.
+	a_parameter := region_is_parameter_backed(a)
+	b_parameter := region_is_parameter_backed(b)
+	if (a_parameter && (b_parameter || b.default)) || (b_parameter && a.default) {
+		return true
+	}
+	return (a.default && b.default) || a.locals & b.locals != 0
+}
+
+region_is_parameter_backed :: proc(set: Region_Set) -> bool {
+	return set.params != 0
+}
+
+region_is_empty :: proc(set: Region_Set) -> bool {
+	return !set.default && !set.unknown && !region_has_local(set) && !region_is_parameter_backed(set)
+}
+
+// Merges `from` into `into`, reporting whether `into` gained anything.
+region_merge :: proc(into: ^Region_Set, from: Region_Set) -> bool {
+	before := into^
+	into.params |= from.params
+	into.loaded |= from.loaded
+	into.named.handles |= from.named.handles
+	into.named.viewed |= from.named.viewed
+	into.below.handles |= from.below.handles
+	into.below.viewed |= from.below.viewed
+	into.default ||= from.default
+	into.unknown ||= from.unknown
+	into.locals |= from.locals
+	into.crowded ||= from.crowded
+	into.crowded_params ||= from.crowded_params
+	return into^ != before
+}
+
+// design.md "Allocators and tasks": a procedure's allocator use is the regions it
+// may allocate from, resize or free in, reset, or destroy. A parameter's is
+// whatever each caller passes, and the call substitutes it; a region the body
+// creates is its own, and only its provider's parent, where the provider draws and
+// returns blocks, is a caller's concern (`prov_caller_region`). So a use never
+// names a local: one in `set` is unknown here.
+merge_allocator_use :: proc(into: ^Region_Set, set: Region_Set) -> bool {
+	before := into^
+	into.params |= set.params
+	into.named.handles |= param_reads_take_handles(set.named)
+	into.default ||= set.default
+	into.unknown ||= set.unknown || set.crowded || set.locals != 0
+	return into^ != before
+}
+
+// `set`, in a callee's terms, in its caller's: each parameter region as the region
+// of the argument the call binds there, or an unknown one when the call's regions
+// are not known. A call that is not `direct`, through a value or a `dyn` slot, may
+// bind any argument to any parameter of the target. The callee's own local regions
+// are unknown to its caller.
+substituted_region :: proc(set: Region_Set, regions: []Region_Set, direct := true) -> Region_Set {
+	out := Region_Set{default = set.default, unknown = set.unknown || set.crowded || set.locals != 0}
+	params := set.params
+	for parameter in next_region_param(&params) {
+		switch {
+		case regions == nil:
+			out.unknown = true
+		case !direct:
+			for region in regions {
+				region_merge(&out, region)
+			}
+		case parameter < len(regions):
+			region_merge(&out, regions[parameter])
+		}
+	}
+	return out
+}
+
+// A callback's allocator use at a call that passes it: every argument it is given
+// is in `given`, the regions its callee passes it, in that callee's terms.
+callback_allocator_use :: proc(use, given: Region_Set, regions: []Region_Set) -> Region_Set {
+	return substituted_region(use, []Region_Set{substituted_region(given, regions)}, direct = false)
+}
+
+// `nil` is a call's regions not being known, which a clone keeps.
+clone_regions :: proc(regions: []Region_Set, allocator: mem.Allocator) -> []Region_Set {
+	if regions == nil {
+		return nil
+	}
+	return slice.clone(regions, allocator)
 }

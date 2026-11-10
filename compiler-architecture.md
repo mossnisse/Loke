@@ -411,7 +411,7 @@ behavioral controls for all of it.
 | Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
 | Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Flow_Graph.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
 | Written aliases: what a local's carriers may reach | `Written_Alias`, `written_aliases`, `prov_written_targets`, `prov_call_written_aliases`, `WRITTEN_ALIAS_DEPTH` |
-| Which paths a result's loads through a parameter go along: the first load's, and below each of those the last's where each load between reads one carrier, and the routes a caller loads along | `Load_Paths`, `carrier_below`, `last_load_shape`, `result_load_routes` in `carrier_shape.odin`; `Prov_Loan.last`, `merge_param_load_paths` |
+| Which paths a result's loads through a parameter go along: the first load's, and below each of those the last's where each load between reads one carrier, and the routes a caller loads along | `Load_Paths`, `carrier_below`, `last_load_shape`, `result_load_routes` in `result_summary.odin`; `Prov_Loan.last`, `merge_param_load_paths` |
 | What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
 | Global write and read effects and the callbacks a call passes | `compute_global_writes`, `Body_Summary`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin`; `prov_copy_effects`, `prov_effect_call` in `provenance_global_effects.odin`; `Expr_Base.copied_as` |
@@ -1054,14 +1054,15 @@ be file-private. Paths below are relative to `src/`.
 | `borrow_summaries.odin` | What a body leaves for its callers' summaries: the carriers it moves, its `thread_local` writes, the regions it leaves in written arguments, and what may escape. |
 | `borrow_loaded_below.odin` | Which carriers each slot's value was loaded at or below on every path, which tells a read below a stepped cursor from a second copy of what it was copied out of. |
 | `borrow_report.odin` | Root and region diagnostics: each block's events replayed against the settled facts, reporting conflicts, outlived storage, escapes, region resets, and retention. |
-| `carrier_shape.odin` | Carrier shapes, the region lattice and shapes, and result summaries, which need no solver state. |
+| `carrier_shape.odin` | Carrier shapes, which need no solver state. |
+| `result_summary.odin` | Result summaries: what a procedure's result may depend on, region shapes, and how a call substitutes, shifts, or joins them. |
 | `callback_summary.odin` | What a call leaves in its arguments and `thread_local` storage, with its callbacks substituted, and the carriers it moves and regions it leaves there, read from its callee's summaries. |
 | `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
 | `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
 | `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; each body's settled summaries, and what one call takes in from them. |
 | `provenance_global_effects.odin` | What the walk records of global effects: a body's own static accesses, the procedure values it stores and calls, and, once the effects are settled, the accesses each call, hook, drop, and pooled join makes, and what a `parallel` block's parent does with them while its tasks run. |
 | `thread_summaries.odin` | The reach and allocator-use effects, from the globals each body reaches, and thread-exit drops, settled over the calls the write effects resolved. |
-| `region.odin` | `Arena`/`Scratch` semantic types. |
+| `region.odin` | `Arena`/`Scratch` semantic types, and the region lattice: `Region_Set`, what each parameter's region was read as, and how sets merge and substitute. |
 
 ### LLVM and toolchain
 
