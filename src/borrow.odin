@@ -509,9 +509,11 @@ Prov_Solve :: struct {
 	// Each distinct row, with one bit per reborrow.
 	link_rows:      Interned_Rows,
 	link_row_bytes: int,
-	// Scratch: a value being defined, and a row being changed.
+	// Scratch: a value being defined, a row being changed, and the reborrows of one
+	// slot (`end_links_of_value`).
 	link_row_value: []u8,
 	link_row_edit:  []u8,
+	slot_links:     [dynamic]int,
 	// The reborrows into each slot, and those each `store_id` makes.
 	links_into:     [][dynamic]int,
 	// A bit per reborrow that is `names_element`.
@@ -524,11 +526,6 @@ Prov_Solve :: struct {
 	// Whether a definition of a reborrow's derived slot names its source. One that none
 	// does, as a capture's copy of what its source derives from, is made by each of them.
 	link_is_named:  []bool,
-	// The reborrows of each source slot, by index in `graph.reborrows` and in
-	// its order (`reborrows_of`), as of `reborrows_indexed` of them.
-	reborrow_starts:    []int,
-	reborrow_indices:   []int,
-	reborrows_indexed:  int,
 	// Scratch: the loans one event ends, and their indices.
 	released: []bool,
 	released_indices: [dynamic]int,
@@ -859,6 +856,7 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 	state.links_held = make([]u32, state.slots, graph.alloc)
 	state.link_row_value = make([]u8, state.link_row_bytes, graph.alloc)
 	state.link_row_edit = make([]u8, state.link_row_bytes, graph.alloc)
+	state.slot_links = make([dynamic]int, graph.alloc)
 	state.link_rows = interned_rows_make(state.link_row_bytes, graph.alloc)
 	index_links(state)
 	loaded_below_make(state)
@@ -937,11 +935,16 @@ index_links :: proc(state: ^Prov_Solve) {
 // as then the old value goes on being held, as `cur = copy_of_cur` does.
 @(private)
 end_links_of_value :: proc(state: ^Prov_Solve, held: []u32, slot: int, value: []u8) {
-	links := reborrows_of(state, slot)
-	for index in links {
+	graph := state.graph
+	// Gathered once, as every row below may ask about all of them.
+	links := &state.slot_links
+	clear(links)
+	taken := prov_reborrows_from(graph, slot)
+	for _, index in prov_next_reborrow(graph, &taken) {
 		if bit_get(value, index) {
 			return
 		}
+		append(links, index)
 	}
 	if len(links) == 0 {
 		return
@@ -950,7 +953,7 @@ end_links_of_value :: proc(state: ^Prov_Solve, held: []u32, slot: int, value: []
 	// links: a row may be as wide as the body has reborrows.
 	edit := state.link_row_edit
 	for &row in held {
-		if row == 0 || !row_holds_reborrow_of(state, row, slot, links) {
+		if row == 0 || !row_holds_reborrow_of(state, row, slot, links[:]) {
 			continue
 		}
 		copy(edit, state.link_rows.rows[row])
@@ -980,9 +983,9 @@ row_holds_reborrow_of :: proc(state: ^Prov_Solve, row: u32, slot: int, links: []
 		}
 		return false
 	}
-	if state.row_holds == nil || state.row_holds_indexed != state.reborrows_indexed {
+	if reborrows := len(state.graph.reborrows); state.row_holds == nil || state.row_holds_indexed != reborrows {
 		state.row_holds = make(map[u64]bool, 64, state.graph.alloc)
-		state.row_holds_indexed = state.reborrows_indexed
+		state.row_holds_indexed = reborrows
 	}
 	key := u64(row) << 32 | u64(slot)
 	if holds, found := state.row_holds[key]; found {

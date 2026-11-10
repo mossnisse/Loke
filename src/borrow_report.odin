@@ -218,8 +218,8 @@ check_region_escape :: proc(state: ^Prov_Solve, event: Prov_Event) {
 @(private)
 live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use: Prov_Event, listed: ^bool) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
-	links := reborrows_of(state, source)
-	if len(links) == 0 {
+	links := prov_reborrows_from(graph, source)
+	if links.next == 0 {
 		return {}, -1, false
 	}
 	at_once := use.load == .At_Once
@@ -232,8 +232,9 @@ live_reborrow_of :: proc(state: ^Prov_Solve, source: int, live: []Slot_Use, use:
 			}
 		}
 	}
-	for index in links {
-		reborrow := graph.reborrows[index]
+	for taken, index in prov_next_reborrow(graph, &links) {
+		// A copy: the pointer lasts only until a reborrow is made.
+		reborrow := taken^
 		// Only a mutable reborrow excludes a read; what is derived from a
 		// read-only one is read-only too.
 		if reborrow.passes_on || reborrow.moved || (use.reads_only && !reborrow.mutable) {
@@ -299,12 +300,13 @@ at_once_reaches :: proc(state: ^Prov_Solve, use: Prov_Event, source: int) -> boo
 	}
 	derived := make([dynamic]int, 0, 8, context.temp_allocator)
 	append(&derived, source)
-	links := reborrows_of(state, source)
+	graph := state.graph
 	for held, slot in state.links_held {
 		if slot == source || held == 0 {
 			continue
 		}
-		for index in links {
+		links := prov_reborrows_from(graph, source)
+		for _, index in prov_next_reborrow(graph, &links) {
 			if bit_get(state.link_rows.rows[held], index) {
 				append(&derived, slot)
 				break
@@ -323,31 +325,6 @@ at_once_reaches :: proc(state: ^Prov_Solve, use: Prov_Event, source: int) -> boo
 		copy(reach_row(state, state.reach, slot), saved[at * state.row_bytes:][:state.row_bytes])
 	}
 	return slice.contains(reads[:], source)
-}
-
-// The index is rebuilt once materialization has added reborrows since, so a search
-// through a long chain of reborrows reads only each slot's own.
-@(private)
-reborrows_of :: proc(state: ^Prov_Solve, slot: int) -> []int {
-	graph := state.graph
-	if state.reborrow_starts == nil || state.reborrows_indexed != len(graph.reborrows) {
-		slots := len(graph.prov_slots)
-		starts := make([]int, slots + 1, graph.alloc)
-		for reborrow in graph.reborrows {
-			starts[reborrow.source + 1] += 1
-		}
-		for index in 0 ..< slots {
-			starts[index + 1] += starts[index]
-		}
-		indices := make([]int, len(graph.reborrows), graph.alloc)
-		filled := make([]int, slots, context.temp_allocator)
-		for reborrow, index in graph.reborrows {
-			indices[starts[reborrow.source] + filled[reborrow.source]] = index
-			filled[reborrow.source] += 1
-		}
-		state.reborrow_starts, state.reborrow_indices, state.reborrows_indexed = starts, indices, len(graph.reborrows)
-	}
-	return state.reborrow_indices[state.reborrow_starts[slot]:state.reborrow_starts[slot + 1]]
 }
 
 // An access through carriers that name storage a live place loan names, at
