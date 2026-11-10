@@ -1,7 +1,7 @@
 // What a body's provenance leaves for the summaries its callers read, collected by
-// `summarize_body` in `borrow.odin`: the carriers a call moves among what its arguments
-// hold, the `thread_local` storage it writes, the regions it leaves in what it may
-// write, and what its borrows and regions may escape into.
+// `summarize_body` in `borrow_program.odin`: the carriers a call moves among what its
+// arguments hold, the `thread_local` storage it writes, the regions it leaves in what
+// it may write, and what its borrows and regions may escape into.
 package lokec
 
 import "core:mem"

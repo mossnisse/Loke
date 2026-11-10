@@ -1047,7 +1047,10 @@ be file-private. Paths below are relative to `src/`.
 | `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |
 | `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
-| `borrow.odin` | The provenance solver: roots, loans, and slots; solving each body and its declared escape contracts; reaching loans, publication, and liveness. |
+| `prov_paths.odin` | Projection paths, the steps from a root's storage to a place in it, and how two paths compare. |
+| `borrow_program.odin` | The whole program's provenance: result summaries settled over a worklist of callers, declared escape contracts, then each body's diagnostics. |
+| `borrow.odin` | The provenance solver: roots, loans, and slots; reaching loans, links, publication, and liveness in one body. |
+| `borrow_tables.odin` | What the solver keeps at block boundaries, in pages shared between neighbors and interned rows, and the bit-row primitives and joins over them. |
 | `borrow_summaries.odin` | What a body leaves for its callers' summaries: the carriers it moves, its `thread_local` writes, the regions it leaves in written arguments, and what may escape. |
 | `borrow_loaded_below.odin` | Which carriers each slot's value was loaded at or below on every path, which tells a read below a stepped cursor from a second copy of what it was copied out of. |
 | `borrow_report.odin` | Root and region diagnostics: each block's events replayed against the settled facts, reporting conflicts, outlived storage, escapes, region resets, and retention. |
@@ -1056,7 +1059,7 @@ be file-private. Paths below are relative to `src/`.
 | `view_start.odin` | Where a local view starts in the range a loan lends, and which of its definitions reach a use. |
 | `borrow_tasks.odin` | The task window, shared hazards, join retention, task reservations, task globals, and borrows crossing between tasks. |
 | `global_effects.odin` | Whole-program global writes and reads, and the writes' copy-hook and thread-entry diagnostics; what one call takes in from those and the thread summaries, and what a `parallel` block's parent does with them while its tasks run. |
-| `thread_summaries.odin` | The reach and allocator-use effects and thread-exit drops, settled over the calls the write effects resolved. |
+| `thread_summaries.odin` | The reach and allocator-use effects, from the globals each body reaches, and thread-exit drops, settled over the calls the write effects resolved. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain

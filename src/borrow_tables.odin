@@ -4,7 +4,8 @@
 // of an edge, so a block shares pages of its tables with its neighbors, and a row of
 // reaching loans, wider than everything else in the body, is kept once however many slots
 // and blocks hold it. A body's tables then grow with what changes between blocks, not with
-// blocks times slots times loans.
+// blocks times slots times loans. The bit-row primitives every solver pass uses are
+// here too.
 package lokec
 
 import "base:runtime"
@@ -239,5 +240,28 @@ reach_join :: proc(state: ^Prov_Solve, table: [][]u32) {
 				bytes_or(reach_row_written(state, state.reach, index * BLOCK_TABLE_PAGE + at), state.reach_rows.rows[handle])
 			}
 		}
+	}
+}
+
+// Bit `index` of a row of bits, one per loan, link, or anchor.
+@(private)
+bit_get :: proc(row: []u8, index: int) -> bool {
+	return row[index >> 3] & (1 << u8(index & 7)) != 0
+}
+
+@(private)
+bit_mark :: proc(row: []u8, index: int) {
+	row[index >> 3] |= 1 << u8(index & 7)
+}
+
+@(private)
+bit_clear :: proc(row: []u8, index: int) {
+	row[index >> 3] &~= 1 << u8(index & 7)
+}
+
+@(private)
+bytes_or :: proc(into: []u8, from: []u8) {
+	for value, index in from {
+		into[index] |= value
 	}
 }

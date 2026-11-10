@@ -151,6 +151,65 @@ collect_thread_facts :: proc(k: ^Checker) -> []Thread_Body {
 	return facts
 }
 
+// design.md "Globals while tasks run": the globals whose
+// stored carriers the body itself reaches, from each `Reach` event and from
+// what it returns or stores where another body may reach through it. A
+// global's stored carrier is a loan of its existing content, a loan of the
+// global's own storage when that holds carriers, or the global's own slot,
+// which another call may have refilled. A `@(synchronized)` variable's package
+// vouches for every access through it.
+body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^Effect_List) {
+	state := Prov_Solve{graph = graph, k = k}
+	if !prepare_state(&state) {
+		return
+	}
+	solve_reaching(&state)
+	for block in graph.blocks {
+		if !solve_enter_block(&state, block) {
+			continue
+		}
+		for event in block.prov {
+			#partial switch event.kind {
+			case .Reach, .Escape, .Retain, .Publish:
+				for slot in event.sources {
+					note_reached_globals(&state, slot, event.span, out)
+				}
+			}
+			run_prov_event(&state, event, state.reach, state.ended)
+		}
+	}
+}
+
+@(private)
+note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^Effect_List) {
+	graph := state.graph
+	c := state.k.c
+	source := Effect_Source{span = span, precision = state.precision[slot]}
+	add_reached_global(c, out, graph.prov_slots[slot].symbol, source)
+	row := reach_row(state, state.reach, slot)
+	for index in 0 ..< state.loans {
+		if !bit_get(row, index) {
+			continue
+		}
+		root := graph.roots[int(graph.loans[index].root)]
+		if root.origin != INVALID_SYMBOL {
+			add_reached_global(c, out, root.origin, source)
+		} else if root.kind == .Static || root.kind == .Thread_Local {
+			add_reached_global(c, out, root.symbol, source)
+		}
+	}
+}
+
+@(private = "file")
+add_reached_global :: proc(c: ^Compiler, out: ^Effect_List, global: Symbol_Id, source: Effect_Source) {
+	sym := symbol_of(c, global)
+	if sym == nil || sym.kind != .Var || !symbol_outlives_bodies(sym) || sym.synchronized ||
+	   !type_carries_borrow(c, sym.type).any {
+		return
+	}
+	add_global_effect(out, global, source)
+}
+
 // A call in a runtime handle operation: where no argument can carry a region,
 // which reads as unknown, what the callee reaches through one is in the block.
 @(private = "file")
