@@ -18,7 +18,8 @@ claim was confirmed against a probe program or the source after the review.
 Every other finding is as its reviewer reported it, and a reviewer's
 "(unverified)" marks a claim the reviewer could not confirm.
 
-The marks were checked against the code after `54f5411e`. A finding marked
+The marks were checked against the code after `54f5411e`, and a final round
+marked every finding that was still open. A finding marked
 "done" is fixed, "done in part" says what is left, "not done" or "no change
 needed" says why it stays, and an unmarked finding is still open. Bugs not yet
 acted on are in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09).
@@ -84,7 +85,7 @@ regression test.
 | 11 | `src/thread_summaries.odin:192,205,214` | `add_global_effect` keeps the first `Effect_Source`, so "may reach" versus "reaches" in a diagnostic depends on order; `effect_call_reach` intersects precision instead. | Wording | Fixed: all three sites use `merge_effect_source`, where an exact route wins; `tests/err/parallel_merged_reach.loke` |
 | 12 | `src/provenance_reborrow.odin:211-215` | `prov_reborrow_loaded` takes the last matching reborrow's capability, so the result depends on list order. | Minor | Recorded in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
 | 13 | `src/provenance_effect.odin:98` | Replay termination relies on fact weight never shrinking; a non-monotone change would loop silently. Add an assert. | Latent | Fixed: asserted |
-| 14 | `src/borrow_report.odin:293-323` | `at_once_reaches` writes solver rows as a side effect of a check; harmless today only because the following replay overwrites them. | Fragile | Recorded in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
+| 14 | `src/borrow_report.odin:293-323` | `at_once_reaches` writes solver rows as a side effect of a check; harmless today only because the following replay overwrites them. | Fragile | Fixed: `read_pointee_content` reads a load without landing it, so `at_once_reaches` writes nothing; no probe shows a change |
 | 15 | `src/cfg_provenance.odin:2037-2053` | Materialized view publication records definitions into the construction graph, contradicting the comment at `:1042-1044`; it widens bit rows but appears harmless. | Minor | Recorded in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09) |
 | 16 | `src/parser.odin:2421-2422` | `parse_postfix` counts one more level than it builds, so the nesting limit for postfix chains is stricter than intended. | Minor | Fixed: counted once a postfix follows; `postfix_and_binary_spines_count_alike` |
 | 17 | `src/check_stmt.odin:426-433` | `_ = nil` is accepted silently where `check_decl_value` reports L0310 for the same case; decide which is intended. | User-visible | Fixed: `_ = nil` reached the backend as `L0405`; it is now `L0310`. `tests/err/nil_values.loke` |
@@ -100,9 +101,11 @@ The same weaknesses appear in several groups, so each is best fixed once.
 - Generic instance, `dyn` and witness caches build an `fmt` string on every
   lookup, and `generic_arg_equal` allocates two strings per comparison
   (`src/generic.odin:881-963`, `src/erased.odin:392-406,683-688`). Group 3
-  proposes one hashed key type for all three.
+  proposes one hashed key type for all three. (Not done: measured at under
+  0.5% of front-end time; group 3, top 1.)
 - Interface satisfaction is never memoized (`src/interface.odin:548-587`,
   `:1281-1330`), and each success appends to `pending_private_reads`.
+  (Not done: about 2% on `bench/geometry` and 0.1% elsewhere; group 3, top 2.)
 - Type predicates walk the type every time: `type_is_comparable`
   (`src/operators.odin:1019`), `prov_type_has_region`, `prov_holds_allocator`
   and `prov_view_reaches_provider` (`src/provenance_regions.odin:1075-1650`),
@@ -110,8 +113,15 @@ The same weaknesses appear in several groups, so each is best fixed once.
   (`src/hooks.odin:246`). Their siblings `type_carries_borrow` and
   `prov_type_reaches_mutable` are already cached in `Compiler` maps
   (`src/carrier_shape.odin:110-149`); the same pattern fits the rest.
+  (Done: `transfer_facts` and `type_hooks` are cached (group 5), and so are the
+  three region predicates for the queried type (group 4); an intermediate
+  type's answer depends on the depth it is met at, so it is not cached.
+  `type_is_comparable` is measured at 0.1-0.2 ms and not cached, since an
+  `impl` block can still add an `==` member after a cached answer.)
 - Member, field and operator lookup scan flat member slices on every selector
-  and call (`src/impl.odin:567`, `src/check_expr.odin:2880`).
+  and call (`src/impl.odin:567`, `src/check_expr.odin:2880`). (Not done:
+  measured at 1-2 ms a program; the quadratic case is in
+  [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09).)
 
 Measure each change with `perf.ps1`, as
 [Testing and verification](compiler-architecture.md#testing-and-verification)
@@ -122,6 +132,8 @@ describes.
 - About ten provenance construction sites scan all of `graph.reborrows` per
   slot (group 4, top recommendation 1). One `prov_add_reborrow` with a
   per-slot index fixes them; the solver's scans in `borrow*.odin` can share it.
+  (Done for construction: `prov_add_reborrow` keeps per-slot chains. The
+  solver's own indexes and scans in `borrow*.odin` remain.)
 - Region-content and written-alias tables copy their whole slice on every
   insert (`src/provenance_regions.odin:732-742`,
   `src/provenance_escape.odin:362-373`, `src/provenance_aliases.odin:415-433`).
@@ -130,7 +142,8 @@ describes.
   instance (`src/generic_impl.odin:548-561`). (Done.)
 - Ten "append if not present" set helpers scan linearly
   (group 5, top recommendation 7); `Global_Set` already uses a bitset in one
-  place.
+  place. (Done in part: `add_global_effect` and the per-call global merges no
+  longer scan; `set_add` and `add_unique` keep a few entries each.)
 
 ### 3. Allocation domains
 
@@ -138,53 +151,59 @@ Short-lived data goes into long-lived arenas: overload candidate lists, rank
 vectors and eagerly formatted diagnostic descriptions in the checker
 (group 2, top recommendation 2), and provenance labels and scratch maps
 (bug 5). [Allocation domains](compiler-architecture.md#allocation-domains)
-already states the rule; these sites predate or bypass it.
+already states the rule; these sites predate or bypass it. (Done: the
+checker's candidate lists, rank vectors, argument arrays and rejection reasons
+are temporary (group 2, top 2), and the provenance labels are in the analysis
+arena (bug 5).)
 
 ### 4. Repeated scaffolding
 
 | Pattern | Copies | Where it is described |
 | --- | --- | --- |
-| Replay of settled facts (enter block, visit event, `run_prov_event`) | 7 | Group 5, top 1 |
-| Worklist or fixpoint queue | 4 | Group 5, top 3 |
-| Union-tag compare-and-branch chain in IR | 7 | Group 6, top 1 |
-| Spill a value to a stack slot in IR | ~15 | Group 6, top 5 |
+| Replay of settled facts (enter block, visit event, `run_prov_event`) | 7 | Group 5, top 1 (done in part: one fused summary replay; no iterator) |
+| Worklist or fixpoint queue | 4 | Group 5, top 3 (done) |
+| Union-tag compare-and-branch chain in IR | 7 | Group 6, top 1 (done, and the enum format too) |
+| Spill a value to a stack slot in IR | ~15 | Group 6, top 5 (done in part: `spill` at twelve copies) |
 | Hand-written runtime `declare` lines | ~85 lines | Group 6, top 3 (done) |
-| `branch` immediately before `place_label`, which already branches | 27 | Group 6, top 6 |
-| Alias-reachability walks | 4 | Group 4, top 7 |
-| Compiler-owned record builders | ~8 | Group 3, top 5 |
+| `branch` immediately before `place_label`, which already branches | 27 | Group 6, top 6 (done) |
+| Alias-reachability walks | 4 | Group 4, top 7 (not done: the walks share only a short loop) |
+| Compiler-owned record builders | ~8 | Group 3, top 5 (done) |
 | Read-only and mutable iteration-protocol checks | 3 | Group 3, top 4 (done) |
-| Parameter flattening for signatures | 2, drifted (bug 1) | Group 2, top 1 |
-| Scratch `Compiler` to lex free-standing text | 4 | Group 1, top 4 |
-| Bracket-depth token scanners | 11 | Group 1, cross-file table |
-| Hand-written recursion that `expr_children` provides | 2 walkers | Group 1, top 3 |
-| `type_underlying(c, t) == TYPE_ALLOCATOR` | 20 in 13 files | Group 2, cross-file table |
-| Identical path predicates `prov_path_names_one_place` and `path_is_exact` (`src/borrow.odin:278`, `:2454`) | 2 (checked) | Group 5, top 5 |
+| Parameter flattening for signatures | 2, drifted (bug 1) | Group 2, top 1 (done) |
+| Scratch `Compiler` to lex free-standing text | 4 | Group 1, top 4 (done for lexing and the server's token parse; formatting keeps its `Compiler`) |
+| Bracket-depth token scanners | 11 | Group 1, cross-file table (not done: each has its own rule for unbalanced input) |
+| Hand-written recursion that `expr_children` provides | 2 walkers | Group 1, top 3 (done) |
+| `type_underlying(c, t) == TYPE_ALLOCATOR` | 20 in 13 files | Group 2, cross-file table (done) |
+| Identical path predicates `prov_path_names_one_place` and `path_is_exact` (`src/borrow.odin:278`, `:2454`) | 2 (checked) | Group 5, top 5 (done) |
 
 ### 5. Files that hold several subsystems
 
 | File | Lines | Proposed split |
 | --- | --- | --- |
-| `cfg_provenance.odin` | 4671 | State and event vocabulary, parameters, views, places, and assignment into five `provenance_*` files; about 1.3k lines stay |
-| `emit_llvm_expr.odin` | 2726 | Constants, equality with hashing, and text operations into `emit_llvm_const`, `emit_llvm_equality`, `emit_llvm_text` |
-| `check.odin` / `check_expr.odin` | 2723 / 2908 | Type-syntax resolution (~680 lines) and indexing/slicing (~650 lines) |
-| `borrow.odin` | 2527 | The `Proj_Step` path algebra and the program driver |
-| `global_effects.odin` | 1806 | The `prov_note_*` walk hooks (lines 119-800) into the provenance walk family |
-| `carrier_shape.odin` | 1237 | The region lattice into `region.odin` |
-| `source.odin` | 571 | Probe, commit and settling machinery into a checker-side file |
-| `lifecycle.odin` | 569 | Checker special forms (lines 9-286) away from liveness |
+| `cfg_provenance.odin` | 4671 | State and event vocabulary, parameters, views, places, and assignment into five `provenance_*` files; about 1.3k lines stay (done: `provenance_state`, `_views`, `_parameters`, `_places`, `_assign`; about 2.1k lines stay) |
+| `emit_llvm_expr.odin` | 2726 | Constants, equality with hashing, and text operations into `emit_llvm_const`, `emit_llvm_equality`, `emit_llvm_text` (done; conversions went to `emit_llvm_convert`) |
+| `check.odin` / `check_expr.odin` | 2723 / 2908 | Type-syntax resolution (~680 lines) and indexing/slicing (~650 lines) (done: `check_types.odin`, `check_index.odin`) |
+| `borrow.odin` | 2527 | The `Proj_Step` path algebra and the program driver (done: `prov_paths.odin`, `borrow_program.odin`) |
+| `global_effects.odin` | 1806 | The `prov_note_*` walk hooks (lines 119-800) into the provenance walk family (done: `provenance_global_effects.odin`) |
+| `carrier_shape.odin` | 1237 | The region lattice into `region.odin` (done, with `result_summary.odin`) |
+| `source.odin` | 571 | Probe, commit and settling machinery into a checker-side file (done: `speculation.odin`) |
+| `lifecycle.odin` | 569 | Checker special forms (lines 9-286) away from liveness (done: `ownership_forms.odin`) |
 
 Each split must update the table in
 [Source-code map](compiler-architecture.md#source-code-map) in the same commit.
 `Prov_Event`, at about 45 fields with most used by one kind, is the matching
-data-structure problem (group 4, top recommendation 3).
+data-structure problem (group 4, top recommendation 3); its fields are
+reordered to 512 bytes, and the per-kind payload is not done.
 
 ### 6. Text treated as a data structure
 
 The backend re-parses the module text it has already written:
 `emit_foreign_declarations` scans `declare` lines (done: it consults
 `Emitter.declared`), and `attach_debug_info` counts witnesses (group 6
-overview). Free-standing source text is lexed through a full scratch `Compiler`
-(group 1). Both should consult the structured state directly.
+overview; done: a `;dbg.witness N` marker). Free-standing source text is lexed
+through a full scratch `Compiler` (group 1; done: the lexer runs without one,
+and only formatting still parses through a `Compiler`). Both should consult
+the structured state directly.
 
 ## Recommended order
 
@@ -198,17 +217,22 @@ restructuring. Measure performance items before and after.
 3. Bug 4 (done): loop hashing above the equality thresholds, with an IR-growth test
    like `fixed_array_clone_ir_grows_linearly`.
 4. Allocation domains (theme 3 and bug 5), then the evaluator accounting (bug 8);
-   bugs 5 and 8 are done where a graph or a clear owner exists.
+   bugs 5 and 8 are done where a graph or a clear owner exists, and so are
+   group 2's checker allocations.
 5. The per-slot reborrow index and the amortized region-content tables (theme 2).
-   The tables and the `extend` group growth are done.
+   The per-slot reborrow index for construction, the tables and the `extend`
+   group growth are done; the solver's scans remain.
 6. Caches for interface satisfaction, generic keys and type predicates
    (theme 1), each measured with `perf.ps1`. The three region predicates of
-   group 4 are done.
+   group 4 and group 5's transfer facts and hook lists are done. Interface
+   satisfaction, generic keys, member lookup and `type_is_comparable` were
+   measured and left as they are.
 7. Shared scaffolding (theme 4), smallest first: the redundant `branch` calls,
    `type_is_allocator`, the identical path predicates (these three done), then
    the replay iterator, the worklist type, and the union `switch` helper (the
-   last two done).
-8. File splits (theme 5), each as its own move-only commit.
+   last two done; the iterator is not, since after one fused summary replay a
+   single site would use it).
+8. File splits (theme 5), each as its own move-only commit (all eight done).
 
 Open items that are not taken up should move into
 [known-gaps.md](known-gaps.md) (for divergences from the specification such as
