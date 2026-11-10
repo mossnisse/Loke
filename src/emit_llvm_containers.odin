@@ -1,5 +1,5 @@
-// Container operation tables, construction, synthesized runtime bodies, the
-// `[]mut T` members, and the contributed `mem.Arena`/`mem.Scratch` bodies.
+// Container operation tables, construction, synthesized runtime bodies, and the
+// `[]mut T` members.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
@@ -297,7 +297,7 @@ emit_ret_flag :: proc(e: ^Emitter, flag: string) {
 // One comparison per element type, using the `<` policy settled during checking.
 @(private = "file")
 container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.cless.%d", int(element))), element,
 		"i32", "ptr %a, ptr %b",
 		proc(e: ^Emitter, element: Type_Id) {
@@ -330,64 +330,6 @@ hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, a
 	return fmt.aprintf("%s %s", param_llvm(e, type, mode), load_temporary(e, type, address))
 }
 
-// A memoised private function being written, between `begin_thunk` and `end_thunk`.
-@(private = "file")
-Thunk_Emission :: struct {
-	frame: Function_Emission,
-	synth_bodies: bool,
-}
-
-// `fresh` is false when `name` is already written, and nothing has begun.
-@(private = "file")
-begin_thunk :: proc(e: ^Emitter, name: string) -> (thunk: Thunk_Emission, fresh: bool) {
-	if e.container_thunks[name] {
-		return
-	}
-	e.container_thunks[name] = true
-	// Shared with user code, so it never inherits a dead body's licence to abort.
-	thunk.synth_bodies = e.synth_bodies
-	e.synth_bodies = false
-	thunk.frame = begin_function_emission(e)
-	return thunk, true
-}
-
-// Parks the thunk, once its closing brace is written, in `e.pending_thunks`.
-@(private = "file")
-end_thunk :: proc(e: ^Emitter, thunk: Thunk_Emission) {
-	fmt.sbprintln(&e.b, "")
-	finish_pending_thunk(e, thunk.frame)
-	e.synth_bodies = thunk.synth_bodies
-}
-
-// A memoised private function with one entry block. Each body writes its own
-// `ret`.
-@(private)
-container_thunk :: proc(
-	e: ^Emitter,
-	name: string,
-	part: Type_Id,
-	result, params: string,
-	body: proc(e: ^Emitter, part: Type_Id),
-	framed := false,
-) -> string {
-	thunk, fresh := begin_thunk(e, name)
-	if !fresh {
-		return name
-	}
-	open_function(e, "define private %s %s(%s)", result, name, params)
-	header: strings.Builder
-	if framed {
-		header = begin_generated_frame(e, name)
-	}
-	body(e, part)
-	fmt.sbprintln(&e.b, "}")
-	if framed {
-		end_generated_frame(e, header)
-	}
-	end_thunk(e, thunk)
-	return name
-}
-
 // NULL means the part is trivially destroyed, so the C loop is skipped.
 @(private = "file")
 container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
@@ -396,7 +338,7 @@ container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	}
 	// design.md "What the unwind runs, and what it does not": the element's own
 	// drop registers what it has not dropped yet, as a procedure's would.
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part)))), part,
 		"void", "ptr %p",
 		proc(e: ^Emitter, part: Type_Id) {
@@ -414,7 +356,7 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	if !emit_lifecycle(e, part).managed {
 		return "null"
 	}
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part)))), part,
 		"i32", "ptr %out, ptr %src, ptr %a",
 		proc(e: ^Emitter, part: Type_Id) {
@@ -428,7 +370,7 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 // its own pair.
 @(private = "file")
 container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.chash.%d", int(key))), key,
 		"i64", "ptr %p, i64 %seed",
 		proc(e: ^Emitter, key: Type_Id) {
@@ -449,7 +391,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 
 @(private = "file")
 container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.cequal.%d", int(key))), key,
 		"i32", "ptr %a, ptr %b",
 		proc(e: ^Emitter, key: Type_Id) {
@@ -659,76 +601,6 @@ emit_container_policy_failure :: proc(e: ^Emitter, header, status: string) {
 	kept := branch_on_failure(e, status)
 	emit_alloc_failure(e, header)
 	rejoin(e, kept)
-}
-
-// ------------------------------------------------------- provider bodies --
-
-// One contributed `mem.Arena`/`mem.Scratch` operation. The value is one pointer
-// to an address-stable control block.
-@(private)
-emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	// `try_arena` returns `Result(Arena, Allocator_Error)`; the provider is `.ok`.
-	produced := symbol.result
-	if symbol.provider_op == .Try_Open {
-		produced = union_variant_payload(e.c, produced, union_index_of(e.c, produced, "ok"))
-	}
-	provider := llvm_type(e, produced == TYPE_ALLOCATOR ? symbol.params[0] : produced)
-	result := llvm_result_type(e, symbol.result, symbol.result_inout)
-	open_synth_function(e, symbol, name)
-
-	switch symbol.provider_op {
-	case .None:
-	case .Open:
-		opened := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
-		emit_provider_open_check(e, opened, "%arg0")
-		emit_provider_policy(e, opened)
-		out := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
-		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
-
-	case .Open_Fixed:
-		// Fixed storage cannot run out; a too-small buffer is a runtime fault.
-		buffer := llvm_type(e, symbol.params[0])
-		data, length := ptr_len_parts(e, buffer, "%arg0")
-		opened := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", opened, data, length,
-		)
-		emit_provider_policy(e, opened)
-		out := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
-		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
-
-	case .Try_Open:
-		opened := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
-		emit_provider_policy(e, opened)
-		value := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
-		failed := is_null(e, opened)
-		fmt.sbprintfln(
-			&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed, value),
-		)
-
-	case .Handle:
-		control := extract(e, provider, "%arg0", PROVIDER_CONTROL)
-		handle := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_allocator(ptr %s)", handle, control)
-		fmt.sbprintfln(&e.b, "  ret ptr %s", handle)
-	}
-	fmt.sbprintln(&e.b, "}")
-}
-
-// The constructor's `policy`, its second parameter. A failed `try_` open has no
-// control block, which the runtime ignores.
-@(private = "file")
-emit_provider_policy :: proc(e: ^Emitter, control: string) {
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_set_failure(ptr %s, i64 %%arg1)", control)
-}
-
-@(private = "file")
-emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
-	alloc_failed_if(e, is_null(e, control), allocator, "arena.failed")
 }
 
 // ------------------------------------------------------ container bodies --

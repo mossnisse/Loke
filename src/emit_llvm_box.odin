@@ -134,7 +134,7 @@ emit_box_try_clone_into :: proc(e: ^Emitter, box_type: Type_Id, out, src, alloca
 
 @(private = "file")
 box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.boxdrop.%d", int(type_underlying(e.c, box_type)))), box_type,
 		"void", "ptr %p",
 		proc(e: ^Emitter, box_type: Type_Id) {
@@ -172,7 +172,7 @@ emit_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) {
 // so a copy hook that panics leaves no unpublished block behind.
 @(private = "file")
 box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
-	return container_thunk(
+	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.boxclone.%d", int(type_underlying(e.c, box_type)))), box_type,
 		"i1", "ptr %out, ptr %src, ptr %a",
 		proc(e: ^Emitter, box_type: Type_Id) {

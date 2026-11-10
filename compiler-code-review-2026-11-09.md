@@ -2371,7 +2371,7 @@ Verdict: correct as far as I could check, but too large (see Top recommendation 
 
 #### src/emit_llvm_calls.odin
 Verdict: the argument binding is intricate but coherent. Conversions and union construction are mixed in with calls.
-- **Structure** (calls.odin:1114-1323): `emit_value_conversion`, `guard_integer_conversion`, `guard_null_reference`, `guard_float_to_int`, `emit_union_construct`, and `emit_union_as` are about 210 lines of conversions, not calls. They would sit better with expr's implicit conversions, or in a small `emit_llvm_convert.odin`.
+- **Structure** (done: `emit_llvm_convert.odin`) (calls.odin:1114-1323): `emit_value_conversion`, `guard_integer_conversion`, `guard_null_reference`, `guard_float_to_int`, `emit_union_construct`, and `emit_union_as` are about 210 lines of conversions, not calls. They would sit better with expr's implicit conversions, or in a small `emit_llvm_convert.odin`.
 - **Simplify** (done for `guard_integer_conversion`; `guard_float_to_int` tests a
   float source, which `Int_Form` does not describe) (calls.odin:1206, 1282): `predicate := lanes ? fmt.aprintf("<%d x i1>", …) : "i1"` is computed twice; `Int_Form.mask` (expr.odin:1716-1721) already carries it. Build the conversion guards on `Int_Form` (`scalar_int_form`/`lane_int_form`) and use `form_any` instead of the hand-written `if lanes { simd_any_lane }`. Saves about 8 lines.
 - **Simplify** (done) (calls.odin:358-359): a hand-written `load` duplicates `load(e, CONTAINER_TYPE, header)`.
@@ -2408,9 +2408,9 @@ Verdict: thorough, with two near-copies and hand-rolled headers.
 #### src/emit_llvm_containers.odin
 Verdict: a large file of mixed concerns; individual bodies are correct.
 - **Bug (code size)** (done: bug 4) (containers.odin:1414-1421): fixed arrays are unrolled whenever hashed; see Top recommendation 2.
-- **Structure** (containers.odin:336-392): `Thunk_Emission`, `begin_thunk`, `end_thunk`, and `container_thunk` are the backend's generic memoised private-function helper. Box uses it for drop and clone (box.odin:140, 180), and sort_by reimplements its prelude (273-290). Move them to emit_llvm.odin as `memo_thunk`, and rename `e.container_thunks` to match.
+- **Structure** (done: in emit_llvm.odin, with `memo_thunk` and `Emitter.memo_thunks`. `sort_by_thunk` does not reimplement the prelude: it calls `begin_thunk` and `end_thunk` itself, since its body takes a method beside the element) (containers.odin:336-392): `Thunk_Emission`, `begin_thunk`, `end_thunk`, and `container_thunk` are the backend's generic memoised private-function helper. Box uses it for drop and clone (box.odin:140, 180), and sort_by reimplements its prelude (273-290). Move them to emit_llvm.odin as `memo_thunk`, and rename `e.container_thunks` to match.
 - **Structure** (containers.odin:1342-1471): hashing belongs next to equality (Top recommendation 4).
-- **Structure** (containers.odin:669-740): the `mem.Arena`/`mem.Scratch` provider bodies have nothing to do with containers. Move them to a small `emit_llvm_provider.odin`, or into runtime.odin next to the provider initializer.
+- **Structure** (done: `emit_llvm_provider.odin`) (containers.odin:669-740): the `mem.Arena`/`mem.Scratch` provider bodies have nothing to do with containers. Move them to a small `emit_llvm_provider.odin`, or into runtime.odin next to the provider initializer.
 - **Duplication** (done: `emit_bounds_check`) (containers.odin:148-152, 179-181 vs expr.odin:970-975): "icmp uge/ugt index, count; `panic_if` bounds" appears three times. Add a shared `emit_bounds_check(e, index, count, inclusive, message)`.
 - **Duplication** (done with `is_null` and `not_null`, one call at each site. Returning the flag from `emit_map_find` would move the test ahead of the drops three callers emit between the call and the test) (containers.odin:1038-1039, 1067-1069, 1109-1110, 1156-1158, 1279-1281): every `map_find`/`map_entry` call is followed by "icmp eq/ne ptr, null". Return the presence `i1` from `emit_map_find` and `emit_map_entry`.
 - **Duplication** (done) (containers.odin:1197-1217): `emit_map_slot_result` and `emit_map_slot_failure` emit `ret` by hand with their own `emit_unwind_pop`, duplicating `emit_ret` (calls.odin:1355), which already pops. Use `emit_ret(e, result_type, …)`.
@@ -2427,7 +2427,7 @@ Verdict: small and fine, but missing the file header comment every sibling has, 
 - **Duplication** (not done: the closing `}` is shared with the other three
   synthesized bodies in the switch, so using `close_synth_next` would need a
   return from inside the switch for one line saved) (adapters.odin:59-60): writes the stop label and `emit_ret(zeroinitializer)` by hand, which is `close_synth_next` (iteration.odin:714) minus the brace. Use it and drop the `}` at 62.
-- **Structure**: the architecture document already lists this file together with iteration. At 86 lines it can be merged into `emit_llvm_iteration.odin`.
+- **Structure** (done: merged into `emit_llvm_iteration.odin`): the architecture document already lists this file together with iteration. At 86 lines it can be merged into `emit_llvm_iteration.odin`.
 
 #### src/emit_llvm_abi.odin
 Verdict: the Win64 classification is careful. Declaration discovery parses text.
@@ -2520,7 +2520,7 @@ Verdict: fine.
 | Status `i32` → failure branch (done in part: `icmp_zero`) | expr.odin:2492-2496, 2550-2551; calls.odin:339-342; containers.odin:904-905, 1125-1132 | One `status_failed`/`branch_on_failure` in runtime.odin |
 | Bounds checks (uge/ugt + `panic_if`) (done) | expr.odin:970-975, 1023-1027, 1113-1117, 2720-2722; containers.odin:148-152, 179-181 | `emit_bounds_check` |
 | Register-int ABI round trip (done for the argument and the result) | abi.odin:471-475, 502-505, 528-533, 637-642 | `reg_int_reinterpret` |
-| Memoised thunk prelude | containers.odin:336-392 (used by box.odin:140, 180), containers.odin:273-290 (sort_by, re-implemented) | Move to emit_llvm.odin as `memo_thunk` |
+| Memoised thunk prelude (done) | containers.odin:336-392 (used by box.odin:140, 180), containers.odin:273-290 (sort_by, re-implemented) | Move to emit_llvm.odin as `memo_thunk` |
 | `@(initialized)` count read + check (done) | lifecycle.odin:278-292; format.odin:541-545; expr.odin:2029-2032 | Package-private `emit_prefix_count` |
 | Subprocess run + error mapping (not done) | toolchain.odin:98-106, 185-211; layout_probe.odin:280-287; runtime_cache.odin:233-243 | `run_tool` |
 | Redundant `branch` before `place_label` (done) | 27 sites (listed in Top recommendation 6) | Delete |

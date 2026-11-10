@@ -54,7 +54,8 @@ Emitter :: struct {
 	// Insertion members also called with an owned element, which get a
 	// consuming body besides the cloning one.
 	consuming_ops: map[Symbol_Id]bool,
-	container_thunks: map[string]bool,
+	// The memoised private functions written so far (`memo_thunk`), by name.
+	memo_thunks: map[string]bool,
 	literals: map[string]string,
 	// Private constant globals by type and initializer (`private_constant`).
 	constants: map[string]string,
@@ -768,3 +769,60 @@ branch_if_unlikely :: proc(e: ^Emitter, cond: string, then_label, else_label: st
 	e.terminated = true
 }
 
+// A memoised private function being written, between `begin_thunk` and `end_thunk`.
+@(private)
+Thunk_Emission :: struct {
+	frame: Function_Emission,
+	synth_bodies: bool,
+}
+
+// `fresh` is false when `name` is already written, and nothing has begun.
+@(private)
+begin_thunk :: proc(e: ^Emitter, name: string) -> (thunk: Thunk_Emission, fresh: bool) {
+	if e.memo_thunks[name] {
+		return
+	}
+	e.memo_thunks[name] = true
+	// Shared with user code, so it never inherits a dead body's licence to abort.
+	thunk.synth_bodies = e.synth_bodies
+	e.synth_bodies = false
+	thunk.frame = begin_function_emission(e)
+	return thunk, true
+}
+
+// Parks the thunk, once its closing brace is written, in `e.pending_thunks`.
+@(private)
+end_thunk :: proc(e: ^Emitter, thunk: Thunk_Emission) {
+	fmt.sbprintln(&e.b, "")
+	finish_pending_thunk(e, thunk.frame)
+	e.synth_bodies = thunk.synth_bodies
+}
+
+// A memoised private function with one entry block. Each body writes its own
+// `ret`.
+@(private)
+memo_thunk :: proc(
+	e: ^Emitter,
+	name: string,
+	part: Type_Id,
+	result, params: string,
+	body: proc(e: ^Emitter, part: Type_Id),
+	framed := false,
+) -> string {
+	thunk, fresh := begin_thunk(e, name)
+	if !fresh {
+		return name
+	}
+	open_function(e, "define private %s %s(%s)", result, name, params)
+	header: strings.Builder
+	if framed {
+		header = begin_generated_frame(e, name)
+	}
+	body(e, part)
+	fmt.sbprintln(&e.b, "}")
+	if framed {
+		end_generated_frame(e, header)
+	}
+	end_thunk(e, thunk)
+	return name
+}
