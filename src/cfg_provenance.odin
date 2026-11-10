@@ -44,6 +44,9 @@ Prov_State :: struct {
 	// Per view parameter's own loan and constant index, the caller slots
 	// standing for that one element (`prov_view_element`).
 	view_elements:  map[Prov_View_Element][]int,
+	// Per view parameter, its root and own loan once `prov_view_parameter_loan`
+	// has found them; roots and loans only grow, so a found pair stays first.
+	view_parameter_loans: map[Symbol_Id]Prov_View_Parameter_Loan,
 	// Per named slot, how each of its definitions relates its view to a fresh
 	// borrow, and the reslice the definition being emitted makes, if any
 	// (`prov_note_view`).
@@ -218,6 +221,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.traversals = make(map[Symbol_Id]Prov_Traversal, allocator)
 	state.caller_slots = make(map[Loan_Id][dynamic]int, allocator)
 	state.view_elements = make(map[Prov_View_Element][]int, allocator)
+	state.view_parameter_loans = make(map[Symbol_Id]Prov_View_Parameter_Loan, allocator)
 	state.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
 	state.receiver_content = make(map[^Expr_Call][]int, allocator)
 	state.offset_reach = Prov_Reach {
@@ -3083,6 +3087,9 @@ prov_constant_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (Symbol_I
 // and its own loan, the first not standing for content; NO_LOAN otherwise.
 @(private = "file")
 prov_view_parameter_loan :: proc(graph: ^Flow_Graph, view: Symbol_Id) -> (Root_Id, Loan_Id) {
+	if found, cached := graph.view_parameter_loans[view]; cached {
+		return found.root, found.own
+	}
 	sym := symbol_of(graph.k.c, view)
 	if sym == nil || sym.kind != .Parameter || !sym.immutable {
 		return NO_ROOT, NO_LOAN
@@ -3094,12 +3101,21 @@ prov_view_parameter_loan :: proc(graph: ^Flow_Graph, view: Symbol_Id) -> (Root_I
 			break
 		}
 	}
+	if root == NO_ROOT {
+		return NO_ROOT, NO_LOAN
+	}
 	for loan, at in graph.loans {
-		if root != NO_ROOT && loan.root == root && !loan.content {
+		if loan.root == root && !loan.content {
+			graph.view_parameter_loans[view] = {root, Loan_Id(at)}
 			return root, Loan_Id(at)
 		}
 	}
 	return NO_ROOT, NO_LOAN
+}
+
+Prov_View_Parameter_Loan :: struct {
+	root: Root_Id,
+	own:  Loan_Id,
 }
 
 // `prov_view_element` for a store of `stored` at `target`, whose copies reborrow

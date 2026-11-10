@@ -37,14 +37,21 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 			prov_store_spread_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, spread))
 		}
 	}
-	stored_values: []Expr
+	// The first argument the operation stores, or 0 when it stores none. A map
+	// insert stores its key there and its value after it.
+	first := 0
 	#partial switch op {
-	case .Append:
-		stored_values = v.is_variadic ? v.variadic_elements : v.bound[1:]
+	case .Append, .Map_Try_Insert, .Map_Find_Or_Insert:
+		first = 1
 	case .Insert:
-		stored_values = v.bound[min(2, len(v.bound)):]
-	case .Map_Try_Insert, .Map_Find_Or_Insert:
-		stored_values = v.bound[1:]
+		first = 2
+	}
+	map_op := op == .Map_Try_Insert || op == .Map_Find_Or_Insert
+	stored_values: []Expr
+	if op == .Append && v.is_variadic {
+		stored_values = v.variadic_elements
+	} else if first > 0 {
+		stored_values = v.bound[min(first, len(v.bound)):]
 	}
 	for value in stored_values {
 		prov_store_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, value), element = true)
@@ -63,7 +70,6 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 		type:   Type_Id,
 		step:   Proj_Step,
 	}
-	map_op := op == .Map_Try_Insert || op == .Map_Find_Or_Insert
 	parts: [2]Contained
 	count := 0
 	add :: proc(parts: ^[2]Contained, count: ^int, actuals: [][]int, index: int, type: Type_Id, step: Proj_Step) {
@@ -72,14 +78,11 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 			count^ += 1
 		}
 	}
-	#partial switch op {
-	case .Append:
-		add(&parts, &count, actuals, 1, info.element, proj_wild())
-	case .Insert:
-		add(&parts, &count, actuals, 2, info.element, proj_wild())
-	case .Map_Try_Insert, .Map_Find_Or_Insert:
-		add(&parts, &count, actuals, 1, info.key, proj_field(PROJ_MAP_KEY))
-		add(&parts, &count, actuals, 2, info.element, proj_field(PROJ_MAP_VALUE))
+	if map_op {
+		add(&parts, &count, actuals, first, info.key, proj_field(PROJ_MAP_KEY))
+		add(&parts, &count, actuals, first + 1, info.element, proj_field(PROJ_MAP_VALUE))
+	} else if first > 0 {
+		add(&parts, &count, actuals, first, info.element, proj_wild())
 	}
 	stored: []int
 	for part in parts[:count] {

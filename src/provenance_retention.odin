@@ -2,7 +2,6 @@
 // `@(escape=...)` lets it keep (design.md "Retaining a borrow").
 package lokec
 
-import "core:slice"
 import "core:fmt"
 
 // design.md "Values that contain borrows": what a call may do to the carriers its
@@ -429,15 +428,15 @@ prov_retain_through :: proc(graph: ^Flow_Graph, held: []int, type: Type_Id, sour
 @(private)
 prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov_Store_Retained, landed: []int) {
 	c := graph.k.c
-	linked := make([dynamic]int, 0, len(event.sources), graph.alloc)
+	linked := make(map[int]struct{}, graph.alloc)
 	pending := make([dynamic]int, 0, len(event.sources), graph.alloc)
 	append(&pending, ..event.sources)
 	for len(pending) > 0 {
 		source := pop(&pending)
-		if slice.contains(linked[:], source) {
+		if source in linked {
 			continue
 		}
-		append(&linked, source)
+		linked[source] = {}
 		entry := graph.prov_slots[source]
 		if entry.borrow != nil {
 			continue

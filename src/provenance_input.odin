@@ -2,7 +2,6 @@
 // This boundary has no target sets, loans, or allocator-region facts.
 package lokec
 
-import "core:fmt"
 import "core:mem"
 
 // Body-local identities in `Prov_Input`; zero is unresolved storage or no value.
@@ -98,7 +97,15 @@ Prov_Input :: struct {
 	synthetic_calls: map[Prov_Synthetic_Call_Key]^Expr_Call,
 	// A constant map key's entry slot, at most `MAP_KEY_SLOTS` of them; cached
 	// paths name these.
-	map_key_entries: map[string]int,
+	map_key_entries: map[Prov_Map_Key]int,
+}
+
+// A constant map key: its kind with the integer, rune or boolean value as
+// `number`, or the string's text.
+Prov_Map_Key :: struct {
+	kind:   Const_Kind,
+	number: i64,
+	text:   string,
 }
 
 // Replay and event materialization have a fixed vocabulary: every input they
@@ -117,7 +124,7 @@ new_prov_input :: proc(allocator: mem.Allocator) -> ^Prov_Input {
 	input.calls = make(map[Prov_Call_Key]Prov_Call_Input, allocator)
 	input.captures = make(map[Prov_Call_Key]Value_Id, allocator)
 	input.synthetic_calls = make(map[Prov_Synthetic_Call_Key]^Expr_Call, allocator)
-	input.map_key_entries = make(map[string]int, allocator)
+	input.map_key_entries = make(map[Prov_Map_Key]int, allocator)
 	append(&input.storages, Prov_Storage{})
 	append(&input.values, Prov_Value{})
 	return input
@@ -402,22 +409,22 @@ prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) ->
 	if base == nil || !base_is_const(base) {
 		return proj_wild()
 	}
-	name: string
+	key := Prov_Map_Key{kind = base.const_value.kind}
 	#partial switch base.const_value.kind {
 	case .String:
-		name = fmt.aprintf("s:%s", base.const_value.text, allocator = graph.alloc)
+		key.text = base.const_value.text
 	case .Integer, .Rune:
 		value, ok := bi_to_i64(graph.k.c, base.const_value.integer)
 		if !ok {
 			return proj_wild()
 		}
-		name = fmt.aprintf("%s:%d", base.const_value.kind == .Integer ? "i" : "r", value, allocator = graph.alloc)
+		key.number = value
 	case .Boolean:
-		name = fmt.aprintf("b:%v", base.const_value.boolean, allocator = graph.alloc)
+		key.number = i64(base.const_value.boolean)
 	case:
 		return proj_wild()
 	}
-	if entry, found := graph.input.map_key_entries[name]; found {
+	if entry, found := graph.input.map_key_entries[key]; found {
 		return proj_range(i64(entry), i64(entry) + 1)
 	}
 	entry := len(graph.input.map_key_entries)
@@ -427,6 +434,6 @@ prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) ->
 		return step
 	}
 	prov_writable_input(graph)
-	graph.input.map_key_entries[name] = entry
+	graph.input.map_key_entries[key] = entry
 	return proj_range(i64(entry), i64(entry) + 1)
 }

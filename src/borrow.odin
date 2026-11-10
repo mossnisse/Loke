@@ -644,6 +644,10 @@ Prov_Solve :: struct {
 	// A loan ended on every path to here. Checks skip only these, so an
 	// invalidation that reaches its own loop head still meets the loan it ends.
 	ended:   []bool,
+	// The loans of each root, by index in `graph.loans`, and scratch for a row
+	// of their bits (`Rebind`).
+	loans_of_root: [][dynamic]int,
+	root_mask:     []u8,
 	// The slots the last `Rearrange` reached.
 	rearranged: [dynamic]int,
 	// Per slot, which links its value may have come through, as a handle of
@@ -847,13 +851,11 @@ analyze_program_provenance :: proc(k: ^Checker) {
 	if k.c.thread_summaries_wanted {
 		compute_thread_summaries(k)
 	}
+	// Summaries are settled, so a body's declared escape is checked with it;
+	// `report` sorts diagnostics by position.
 	for body in k.c.checked_bodies {
 		if body.clean {
 			analyze_provenance(k, body.literal)
-		}
-	}
-	for body in k.c.checked_bodies {
-		if body.clean {
 			check_declared_escape(k, body.literal)
 		}
 	}
@@ -1153,6 +1155,16 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 	state.live = make([]Slot_Use, state.slots, graph.alloc)
 	state.uses = make([]Span, state.slots, graph.alloc)
 	state.merged = make([]u8, state.row_bytes, graph.alloc)
+	state.loans_of_root = make([][dynamic]int, len(graph.roots), graph.alloc)
+	for loan, index in graph.loans {
+		if loan.root != NO_ROOT {
+			if state.loans_of_root[int(loan.root)] == nil {
+				state.loans_of_root[int(loan.root)] = make([dynamic]int, graph.alloc)
+			}
+			append(&state.loans_of_root[int(loan.root)], index)
+		}
+	}
+	state.root_mask = make([]u8, state.row_bytes, graph.alloc)
 	settle_pool_joins(state)
 	solve_view_defs(graph)
 	return true
@@ -1584,16 +1596,24 @@ run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended
 	case .Rearrange:
 		rearrange_carriers(state, event, reach)
 	case .Rebind:
-		for loan, index in graph.loans {
-			if loan.root != event.root {
-				continue
-			}
-			for slot in 0 ..< state.slots {
-				row := reach_row(state, reach, slot)
-				if bit_get(row, index) || bit_get(row, state.loans + index) {
+		// Every slot drops the root's loans, with whether they ended.
+		loans := root_loans(state, event.root)
+		if len(loans) == 0 {
+			break
+		}
+		mask := state.root_mask
+		mem.zero_slice(mask)
+		for index in loans {
+			bit_mark(mask, index)
+			bit_mark(mask, state.loans + index)
+		}
+		next_slot: for slot in 0 ..< state.slots {
+			row := reach_row(state, reach, slot)
+			for value, at in mask {
+				if row[at] & value != 0 {
 					row = reach_row_written(state, reach, slot)
-					bit_clear(row, index)
-					bit_clear(row, state.loans + index)
+					for bits, clear_at in mask { row[clear_at] &~= bits }
+					continue next_slot
 				}
 			}
 		}
@@ -1796,24 +1816,32 @@ end_loans :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended: []b
 		if event.access != .Invalidate {
 			break
 		}
-		for loan, index in graph.loans {
-			if loan.root == event.root && paths_overlap(loan.path, event.path) {
+		for index in root_loans(state, event.root) {
+			if paths_overlap(graph.loans[index].path, event.path) {
 				ended[index] = true
 			}
 		}
 	case .Root_End:
-		for loan, index in graph.loans {
-			if loan.root == event.root {
-				ended[index] = true
-			}
+		for index in root_loans(state, event.root) {
+			ended[index] = true
 		}
 	case .Reset:
-		for loan, index in graph.loans {
-			if reset_ends_root(graph.roots[int(loan.root)], event) {
+		for root, at in graph.roots {
+			if !reset_ends_root(root, event) { continue }
+			for index in root_loans(state, Root_Id(at)) {
 				ended[index] = true
 			}
 		}
 	}
+}
+
+// The loans of `root`, by index in `graph.loans`.
+@(private = "file")
+root_loans :: proc(state: ^Prov_Solve, root: Root_Id) -> []int {
+	if root == NO_ROOT || int(root) >= len(state.loans_of_root) {
+		return nil
+	}
+	return state.loans_of_root[int(root)][:]
 }
 
 // A load reads the slots at the pointee path through the addressing loans and
