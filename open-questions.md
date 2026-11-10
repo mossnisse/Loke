@@ -1319,9 +1319,10 @@ Found on 2026-11-07.
 
 ## Compiler review findings not yet acted on (2026-11-09)
 
-The [compiler code review](compiler-code-review-2026-11-09.md#bugs) found these,
-and none has a probe program that shows a wrong result. Each needs a decision or
-a reproduction before a change.
+The 2026-11-09 compiler code review found these (its report,
+`compiler-code-review-2026-11-09.md`, is now only in git history), and none has
+a probe program that shows a wrong result. Each needs a decision or a
+reproduction before a change.
 
 - **Which reborrow's capability a loaded copy takes** (bug 12).
   `prov_reborrow_loaded` takes the capability of the last reborrow whose source
