@@ -28,28 +28,36 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 // instance's, so one instance's answer says nothing about another's.
 @(private = "file")
 report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
+	for_each_sequence_decl(k, stmts, proc(k: ^Checker, d: ^Decl) {
+		if d.kind != .Const || len(d.values) != 1 {
+			return
+		}
+		if _, is_record := d.values[0].(^Type_Record); is_record {
+			check_copy_decision(k, d)
+		}
+	})
+}
+
+// Each declaration of a sequence, in source order: one written in it, one a
+// `defer` wraps directly, which is checked here and stays visible to the
+// sequence whatever runs it later (design.md "defer statement"), and one in a
+// selected `when` branch, which has no scope of its own (design.md "when
+// statement").
+@(private = "file")
+for_each_sequence_decl :: proc(k: ^Checker, stmts: []Stmt, visit: proc(k: ^Checker, d: ^Decl)) {
 	for stmt in stmts {
-		// design.md "defer statement": what a `defer` wraps directly is checked here
-		// and stays visible to this sequence, whatever runs it later.
 		inner := stmt
 		if deferred, is_deferred := stmt.(^Stmt_Defer); is_deferred {
 			inner = deferred.stmt
 		}
-		// design.md "when statement": the selected branch has no scope of its own.
-		if w, is_when := inner.(^Stmt_When); is_when {
-			if w.selected != nil {
-				report_local_copy_decisions(k, w.selected.stmts)
+		#partial switch v in inner {
+		case ^Stmt_When:
+			if v.selected != nil {
+				for_each_sequence_decl(k, v.selected.stmts, visit)
 			}
-			continue
+		case ^Decl:
+			visit(k, v)
 		}
-		d, is_decl := inner.(^Decl)
-		if !is_decl || d.kind != .Const || len(d.values) != 1 {
-			continue
-		}
-		if _, is_record := d.values[0].(^Type_Record); !is_record {
-			continue
-		}
-		check_copy_decision(k, d)
 	}
 }
 
@@ -72,62 +80,56 @@ check_stmt_sequence :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 // design.md "@(require_results)": a required result bound and never read.
 // Asked after the whole sequence is checked, in source order.
 report_unread_required_results :: proc(k: ^Checker, stmts: []Stmt) {
-	for stmt in stmts {
-		// design.md "defer statement": what a `defer` wraps directly stays visible
-		// to this sequence.
-		inner := stmt
-		if deferred, is_deferred := stmt.(^Stmt_Defer); is_deferred {
-			inner = deferred.stmt
-		}
-		// design.md "when statement": the selected branch has no scope of its own.
-		if w, is_when := inner.(^Stmt_When); is_when {
-			if w.selected != nil {
-				report_unread_required_results(k, w.selected.stmts)
-			}
+	for_each_sequence_decl(k, stmts, report_unread_required_bindings)
+}
+
+@(private = "file")
+report_unread_required_bindings :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind != .Var {
+		return
+	}
+	for id, index in d.symbols {
+		sym := symbol_of(k.c, id)
+		if sym == nil || sym.named || sym.kind != .Var {
 			continue
 		}
-		d, is_decl := inner.(^Decl)
-		if !is_decl || d.kind != .Var {
+		required := type_requires_results(k.c, sym.type)
+		source := ""
+		if !required && index < len(d.values) {
+			if call, is_call := d.values[index].(^Expr_Call); is_call && call.type != INVALID_TYPE {
+				source, required = required_result_of_call(k, call)
+			}
+		}
+		if !required {
 			continue
 		}
-		for id, index in d.symbols {
-			sym := symbol_of(k.c, id)
-			if sym == nil || sym.named || sym.kind != .Var {
-				continue
-			}
-			required := type_requires_results(k.c, sym.type)
-			source := ""
-			if !required && index < len(d.values) {
-				if call, is_call := d.values[index].(^Expr_Call); is_call && call.type != INVALID_TYPE {
-					source, required = required_result_of_call(k, call)
-				}
-			}
-			if !required {
-				continue
-			}
-			span := index < len(d.names) ? d.names[index].span : d.span
-			if source != "" {
-				errorf(
-					k.c, span, "L0698",
-					"`%s` holds the result of `%s`, which is never used: inspect it, or discard it with `_ = ...`",
-					identifier_text(k.c, sym.name), source,
-				)
-				continue
-			}
+		span := index < len(d.names) ? d.names[index].span : d.span
+		if source != "" {
 			errorf(
 				k.c, span, "L0698",
-				"`%s` holds a `%s` that is never used: inspect it, or discard it with `_ = ...`",
-				identifier_text(k.c, sym.name), type_name(k.c, sym.type),
+				"`%s` holds the result of `%s`, which is never used: inspect it, or discard it with `_ = ...`",
+				identifier_text(k.c, sym.name), source,
 			)
+			continue
 		}
+		errorf(
+			k.c, span, "L0698",
+			"`%s` holds a `%s` that is never used: inspect it, or discard it with `_ = ...`",
+			identifier_text(k.c, sym.name), type_name(k.c, sym.type),
+		)
 	}
 }
 
 check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
+	return check_scoped_stmts(k, b.stmts if b != nil else nil)
+}
+
+// A statement sequence in a local scope of its own: a block, or a case.
+check_scoped_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
-	return check_block(k, b)
+	return check_stmts(k, stmts)
 }
 
 // The backend emits only file-level procedures, so a local one (or a local
@@ -559,7 +561,7 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	combined.op_span = s.op_span
 	combined.lhs = read
 	combined.rhs = value
-	append(&stmts, lowered_assign(k, lowered_index(k, target, index_names, receiver, span), combined, s.op_span, span))
+	append(&stmts, synth_assign(k.c, {lowered_index(k, target, index_names, receiver, span)}, {combined}, s.op_span, span))
 	check_lowered_block(k, s, stmts[:])
 	return true
 }
@@ -629,10 +631,10 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	}
 	span := s.span
 	stmts := make([dynamic]Stmt, 0, 3 * len(s.lhs), k.c.semantic_allocator)
-	values := make([]Expr, len(s.rhs), k.c.semantic_allocator)
+	values := make([]Expr, len(s.rhs), context.temp_allocator)
 	for value, position in s.rhs {
 		if is_discard(s.lhs[position]) {
-			append(&stmts, lowered_assign(k, clone_expr(k.c, s.lhs[position]), clone_expr(k.c, value), s.op_span, span))
+			append(&stmts, synth_assign(k.c, {clone_expr(k.c, s.lhs[position])}, {clone_expr(k.c, value)}, s.op_span, span))
 			continue
 		}
 		// A constant has no effect to order and keeps its unfixed type for
@@ -645,7 +647,7 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 		append(&stmts, synth_decl(k.c, .Var, name, clone_expr(k.c, value), span))
 		values[position] = synth_ident(k.c, name, span)
 	}
-	destinations := make([]Expr, len(s.lhs), k.c.semantic_allocator)
+	destinations := make([]Expr, len(s.lhs), context.temp_allocator)
 	for target, position in s.lhs {
 		if is_discard(target) {
 			continue
@@ -664,7 +666,7 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	}
 	for destination, position in destinations {
 		if destination != nil {
-			append(&stmts, lowered_assign(k, destination, values[position], s.op_span, span))
+			append(&stmts, synth_assign(k.c, {destination}, {values[position]}, s.op_span, span))
 		}
 	}
 	check_lowered_block(k, s, stmts[:])
@@ -701,12 +703,8 @@ lower_destructuring_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool 
 	take.names = make([]Name, len(s.lhs), k.c.semantic_allocator)
 	take.values = make([]Expr, 1, k.c.semantic_allocator)
 	take.values[0] = clone_expr(k.c, s.rhs[0])
-	store := new(Stmt_Assign, k.c.semantic_allocator)
-	store.span = span
-	store.op = .Assign
-	store.op_span = s.op_span
-	destinations := make([dynamic]Expr, 0, len(s.lhs), k.c.semantic_allocator)
-	values := make([dynamic]Expr, 0, len(s.lhs), k.c.semantic_allocator)
+	destinations := make([dynamic]Expr, 0, len(s.lhs), context.temp_allocator)
+	values := make([dynamic]Expr, 0, len(s.lhs), context.temp_allocator)
 	for target, position in s.lhs {
 		if is_discard(target) {
 			take.names[position] = Name{text = "_", span = span}
@@ -718,9 +716,8 @@ lower_destructuring_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool 
 		append(&destinations, clone_expr(k.c, target))
 		append(&values, synth_ident(k.c, name, span))
 	}
-	store.lhs, store.rhs = destinations[:], values[:]
 	stmts := make([]Stmt, 2, k.c.semantic_allocator)
-	stmts[0], stmts[1] = take, store
+	stmts[0], stmts[1] = take, synth_assign(k.c, destinations[:], values[:], s.op_span, span)
 	check_lowered_block(k, s, stmts)
 	return true
 }
@@ -775,19 +772,6 @@ lowered_position_name :: proc(k: ^Checker, prefix: string, position: int, suffix
 @(private = "file")
 lowered_address :: proc(k: ^Checker, place: Expr, span: Span) -> Expr {
 	return synth_address(k.c, clone_expr(k.c, place), true, span)
-}
-
-@(private = "file")
-lowered_assign :: proc(k: ^Checker, target, value: Expr, op_span, span: Span) -> Stmt {
-	assign := new(Stmt_Assign, k.c.semantic_allocator)
-	assign.span = span
-	assign.op = .Assign
-	assign.op_span = op_span
-	assign.lhs = make([]Expr, 1, k.c.semantic_allocator)
-	assign.lhs[0] = target
-	assign.rhs = make([]Expr, 1, k.c.semantic_allocator)
-	assign.rhs[0] = value
-	return assign
 }
 
 @(private = "file")
@@ -928,7 +912,7 @@ check_user_compound :: proc(
 	operands := []Type_Id{type, rhs_type}
 
 	compound := operator_spelling(s.op)
-	direct_args := make([]Arg_Info, 2, k.c.semantic_allocator)
+	direct_args := make([]Arg_Info, 2, context.temp_allocator)
 	direct_args[0] = arg_from_expr(s.lhs[0], .Inout)
 	direct_args[1] = arg_from_expr(s.rhs[0])
 	direct := form_operator_set(k, compound, operands, direct_args)
@@ -943,7 +927,7 @@ check_user_compound :: proc(
 	}
 
 	binary := operator_text(op)
-	args := make([]Arg_Info, 2, k.c.semantic_allocator)
+	args := make([]Arg_Info, 2, context.temp_allocator)
 	args[0] = arg_from_expr(s.lhs[0])
 	args[1] = arg_from_expr(s.rhs[0])
 	set := form_operator_set(k, binary, operands, args)

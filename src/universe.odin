@@ -13,39 +13,14 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	universe := new_scope(c, nil, .Universe)
 	c.universe = universe
 
-	types := []struct{name: string, id: Type_Id} {
-		{"bool", TYPE_BOOL},
-		{"i8", TYPE_I8},
-		{"i16", TYPE_I16},
-		{"i32", TYPE_I32},
-		{"i64", TYPE_I64},
-		{"i128", TYPE_I128},
-		{"u8", TYPE_U8},
-		{"u16", TYPE_U16},
-		{"u32", TYPE_U32},
-		{"u64", TYPE_U64},
-		{"u128", TYPE_U128},
-		{"int", TYPE_INT},
-		{"uint", TYPE_UINT},
-		{"uintptr", TYPE_UINTPTR},
-		{"f16", TYPE_F16},
-		{"f32", TYPE_F32},
-		{"f64", TYPE_F64},
-		{"rune", TYPE_RUNE},
-		{"rawptr", TYPE_RAWPTR},
-		{"typeid", TYPE_TYPEID},
-		{"string", TYPE_STRING},
-		{"string_view", TYPE_STRING_VIEW},
-		{"cstring_view", TYPE_CSTRING_VIEW},
-		// Also exported by `core:mem` and `base:runtime`, but the lifecycle
-		// signatures spell them unqualified.
-		{"Allocator", TYPE_ALLOCATOR},
-		{"Allocator_Error", TYPE_ALLOCATOR_ERROR},
-	}
-	for entry in types {
-		define_universe(c, entry.name, Symbol{kind = .Type, type = entry.id})
-		// The typeid sort key reads this name, and `Allocator` prints by it.
-		type_of(c, entry.id).name = intern_identifier(c, entry.name)
+	for entry, index in PREDECLARED_NAMES {
+		if !entry.universe {
+			continue
+		}
+		id := Type_Id(index)
+		define_universe(c, entry.text, Symbol{kind = .Type, type = id})
+		// The typeid sort key reads this name.
+		type_of(c, id).name = intern_identifier(c, entry.text)
 	}
 	define_universe(c, "byte", Symbol{kind = .Type, type = TYPE_U8})
 

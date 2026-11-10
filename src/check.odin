@@ -164,18 +164,15 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	k.lookup_pkg = package_id
 	k.scope = pkg.scope
 
-	for file in pkg.files {
-		k.file, k.file_node = file.file, file
-		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				declare_all(k, v, top_level = true)
-			case ^Item_Foreign_Block:
-				// Foreign members are ordinary symbols (design.md "Foreign system").
-				declare_foreign_block(k, v)
-			}
+	for_each_package_item(k, pkg, proc(k: ^Checker, item: Item) {
+		#partial switch v in item {
+		case ^Decl:
+			declare_all(k, v, top_level = true)
+		case ^Item_Foreign_Block:
+			// Foreign members are ordinary symbols (design.md "Foreign system").
+			declare_foreign_block(k, v)
 		}
-	}
+	})
 	for_each_package_decl(k, pkg, create_nominal_type_shell)
 	// design.md "Typed fallibility": the bootstrap declarations join the universe
 	// once `base:runtime`'s names exist, before any other package is prepared.
@@ -274,19 +271,16 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	resolve_package_operators(k, pkg)
 
 	// Fields and callable signatures.
-	for file in pkg.files {
-		k.file, k.file_node, k.scope = file.file, file, pkg.scope
-		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				resolve_declaration_signature(k, v)
-			case ^Item_Impl:
-				resolve_impl_signatures(k, v)
-			case ^Item_Foreign_Block:
-				check_foreign_block(k, v)
-			}
+	for_each_package_item(k, pkg, proc(k: ^Checker, item: Item) {
+		#partial switch v in item {
+		case ^Decl:
+			resolve_declaration_signature(k, v)
+		case ^Item_Impl:
+			resolve_impl_signatures(k, v)
+		case ^Item_Foreign_Block:
+			check_foreign_block(k, v)
 		}
-	}
+	})
 
 	// design.md "Attributes": after signatures, so a procedure group's symbol
 	// kind is known.
@@ -295,9 +289,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	check_intrinsic_declarations(k, pkg)
 
 	// Every record has its fields now.
-	check_deferred_foreign_parts(k)
-	check_deferred_escape_parts(k)
-	check_deferred_union_zeros(k)
+	check_deferred_parts(k)
 
 	// Reject a type that contains itself by value, a layout past the maximum, and
 	// a union's designated zero with no zero value: each needs every record's
@@ -305,22 +297,19 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	for_each_package_decl(k, pkg, check_declaration_size)
 
 	// Type checking and constant folding.
-	for file in pkg.files {
-		k.file, k.file_node, k.scope = file.file, file, pkg.scope
-		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				check_decl(k, v)
-			case ^Item_Impl:
-				check_impl_block(k, v)
-			case ^Item_Foreign_Import:
-				check_foreign_import(k, v)
-			case ^Item_Import, ^Item_Foreign_Block, ^Item_Error, ^Item_Static_Assert:
-			case:
-				unsupported_construct(k, item_span(item))
-			}
+	for_each_package_item(k, pkg, proc(k: ^Checker, item: Item) {
+		#partial switch v in item {
+		case ^Decl:
+			check_decl(k, v)
+		case ^Item_Impl:
+			check_impl_block(k, v)
+		case ^Item_Foreign_Import:
+			check_foreign_import(k, v)
+		case ^Item_Import, ^Item_Foreign_Block, ^Item_Error, ^Item_Static_Assert:
+		case:
+			unsupported_construct(k, item_span(item))
 		}
-	}
+	})
 
 	// Every inherent hook is validated, so each record's copy decision can be read
 	// (design.md "Lifecycle hooks and resource types").
@@ -328,18 +317,9 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 
 	// File-scope assertions, after every declaration, so they do not depend on
 	// declaration order.
-	for file in pkg.files {
-		k.file, k.file_node, k.scope = file.file, file, pkg.scope
-		for item in file.active_items {
-			if v, ok := item.(^Item_Static_Assert); ok {
-				check_file_scope_static_assert(k, v)
-			}
-		}
-	}
+	for_each_package_item(k, pkg, check_file_scope_static_assert)
 	// And any a body's own procedure type deferred.
-	check_deferred_foreign_parts(k)
-	check_deferred_escape_parts(k)
-	check_deferred_union_zeros(k)
+	check_deferred_parts(k)
 
 	// Every symbol has its kind and its constant its type.
 	check_private_names(k, package_id)
@@ -351,6 +331,16 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 			if type, exists := package_type_named(k, pkg, name); exists {
 				k.c.runtime_types[name] = type
 			}
+		}
+	}
+}
+
+// Each active item of a package, located in its file and the package's scope.
+for_each_package_item :: proc(k: ^Checker, pkg: ^Package, visit: proc(k: ^Checker, item: Item)) {
+	for file in pkg.files {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
+			visit(k, item)
 		}
 	}
 }
@@ -368,8 +358,20 @@ for_each_package_decl :: proc(k: ^Checker, pkg: ^Package, visit: proc(k: ^Checke
 	}
 }
 
+// The parts of declarations that waited for every record's fields.
 @(private = "file")
-check_file_scope_static_assert :: proc(k: ^Checker, item: ^Item_Static_Assert) {
+check_deferred_parts :: proc(k: ^Checker) {
+	check_deferred_foreign_parts(k)
+	check_deferred_escape_parts(k)
+	check_deferred_union_zeros(k)
+}
+
+@(private = "file")
+check_file_scope_static_assert :: proc(k: ^Checker, any_item: Item) {
+	item, is_assert := any_item.(^Item_Static_Assert)
+	if !is_assert {
+		return
+	}
 	call, is_call := item.call.(^Expr_Call)
 	if !is_call {
 		return // the parser already rejected the malformed item shape
@@ -1424,13 +1426,10 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 	if !written {
 		return
 	}
-	symbol := symbol_of(k.c, symbol_id)
 	outer_scope, outer_body := k.scope, k.body
 	defer k.scope, k.body = outer_scope, outer_body
 	// The body's context, so `source_location()` reports this procedure.
-	k.scope = new_scope(k.c, outer_scope, .Procedure)
-	k.scope.owner_proc = literal
-	k.body = {proc_literal = literal, result_type = symbol.result, result_inout = symbol.result_inout}
+	enter_procedure_body(k, literal, symbol_of(k.c, symbol_id))
 	for parameter, position in literal.signature.params {
 		// A `$` default is checked at its declaration and bound per call
 		// (`bind_default_compile_time_argument`), never in an instance's copy.
@@ -1464,9 +1463,7 @@ infer_param_default_type :: proc(k: ^Checker, literal: ^Expr_Proc, position: int
 	parameter := literal.signature.params[position]
 	outer_scope, outer_body := k.scope, k.body
 	defer k.scope, k.body = outer_scope, outer_body
-	k.scope = new_scope(k.c, outer_scope, .Procedure)
-	k.scope.owner_proc = literal
-	k.body = {proc_literal = literal}
+	enter_procedure_body(k, literal)
 	for earlier in literal.signature.params[:position] {
 		install_symbols(k.scope, k.c, earlier.symbols)
 	}
@@ -2121,7 +2118,9 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 				return
 			}
 			// The element resolves, so the length failed, and the constant it reads
-			// said why.
+			// said why, perhaps when its declaration was settled, before the caller
+			// began, so a mark the caller took would not see it. With no error
+			// anywhere, nothing did.
 			if k.c.error_count > 0 {
 				return
 			}
@@ -2704,9 +2703,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	outer_scope, outer_body := k.scope, k.body
 	defer k.scope, k.body = outer_scope, outer_body
 
-	k.scope = new_scope(k.c, outer_scope, .Procedure)
-	k.scope.owner_proc = literal
-	k.body = {proc_literal = literal, result_type = symbol.result, result_inout = symbol.result_inout}
+	enter_procedure_body(k, literal, symbol)
 	if result := literal.signature.result; result != nil {
 		k.body.result_generic = type_syntax_names_generic(k, outer_scope, result.type)
 	}
@@ -2737,6 +2734,19 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 	if symbol.diverges && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0710", "this procedure is declared `-> !` but can reach its end")
+	}
+}
+
+// A procedure body's context inside the current scope: a scope the literal owns
+// and a fresh `k.body`, with the result `symbol` declares when it is known. The
+// caller saves and restores `k.scope` and `k.body`.
+@(private = "file")
+enter_procedure_body :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol = nil) {
+	k.scope = new_scope(k.c, k.scope, .Procedure)
+	k.scope.owner_proc = literal
+	k.body = {proc_literal = literal}
+	if symbol != nil {
+		k.body.result_type, k.body.result_inout = symbol.result, symbol.result_inout
 	}
 }
 

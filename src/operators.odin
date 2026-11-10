@@ -218,7 +218,7 @@ arity_text :: proc(shape: Operator_Shape) -> string {
 
 // Inherent operators plus file-scope and extension operators in this package.
 operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	settle_pending_operators(k)
 	for operand in operands {
 		settle_delegates(k, operand)
@@ -296,7 +296,7 @@ add_operator_members :: proc(k: ^Checker, members: []Symbol_Id, symbol: string, 
 // while an index type is still to be inferred.
 operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: Type_Id) -> []Symbol_Id {
 	all := operator_candidates(k, symbol, []Type_Id{receiver})
-	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, len(all), context.temp_allocator)
 	for candidate in all {
 		sym := symbol_of(k.c, candidate)
 		if sym == nil {
@@ -331,7 +331,7 @@ template_overload_for_receiver :: proc(k: ^Checker, id: Symbol_Id, receiver: Typ
 // position when that is negative, and the rest waiting for what those bind.
 @(private = "file")
 template_arguments :: proc(k: ^Checker, template: ^Generic_Template, type: Type_Id, position: int) -> []Arg_Info {
-	args := make([]Arg_Info, template_parameter_count(decl_proc_literal(template.decl)), k.c.semantic_allocator)
+	args := make([]Arg_Info, template_parameter_count(decl_proc_literal(template.decl)), context.temp_allocator)
 	for &arg, index in args {
 		arg.name = INVALID_IDENTIFIER
 		if position < 0 || index == position {
@@ -617,17 +617,14 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 resolve_package_operators :: proc(k: ^Checker, pkg: ^Package) {
 	saved := k.location
 	defer k.location = saved
-	for file in pkg.files {
-		k.file, k.file_node, k.scope = file.file, file, pkg.scope
-		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				defer_if_operator(k, v)
-			case ^Item_Impl:
-				append(&k.c.pending_operator_blocks, Pending_Block{v, k.location})
-			}
+	for_each_package_item(k, pkg, proc(k: ^Checker, item: Item) {
+		#partial switch v in item {
+		case ^Decl:
+			defer_if_operator(k, v)
+		case ^Item_Impl:
+			append(&k.c.pending_operator_blocks, Pending_Block{v, k.location})
 		}
-	}
+	})
 	settle_pending_operators(k)
 }
 
@@ -824,7 +821,7 @@ delegate_one :: proc(d: Delegation) {
 // The concrete overloads lookup finds for the distinct type.
 @(private = "file")
 delegation_neighbours :: proc(d: Delegation) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, 4, d.k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	for candidate in operator_candidates(d.k, d.symbol, []Type_Id{d.subject}) {
 		if sym := symbol_of(d.k.c, candidate); sym != nil && !sym.generic {
 			append(&out, candidate)
@@ -838,7 +835,7 @@ delegation_neighbours :: proc(d: Delegation) -> []Symbol_Id {
 @(private = "file")
 operator_overloads_mentioning :: proc(d: Delegation) -> []Symbol_Id {
 	k := d.k
-	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	for candidate in operator_candidates(k, d.symbol, []Type_Id{d.underlying}) {
 		id := candidate
 		sym := symbol_of(k.c, id)

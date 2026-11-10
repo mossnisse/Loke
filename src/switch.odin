@@ -74,11 +74,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		for value in entry.values {
 			check_case_value(k, value, subject, &cases)
 		}
-		case_scope := k.scope
-		k.scope = new_scope(k.c, case_scope, .Local)
-		case_flow := check_stmts(k, entry.stmts)
-		k.scope = case_scope
-		flow_either(&flow, case_flow)
+		flow_either(&flow, check_scoped_stmts(k, entry.stmts))
 	}
 
 	s.exhaustive = has_default || check_exhaustive(k, s, subject, cases.covered)
@@ -309,19 +305,19 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	covered_count := 0
 	has_default := check_default_cases(k, s)
 	flow := Flow_Info{}
+	outer := k.scope
 	for &entry in s.cases {
 		entry.variant_indices = case_variants(k, subject, entry.values, covered, &covered_count)
-		case_scope := k.scope
-		k.scope = new_scope(k.c, case_scope, .Local)
+		// The payload binding is in the case's scope, so the case opens it here.
+		k.scope = new_scope(k.c, outer, .Local)
 		before := len(k.c.diagnostics)
 		bind_case(k, &entry, subject, borrows, packed_subject)
-		case_flow := check_stmts(k, entry.stmts)
+		flow_either(&flow, check_stmts(k, entry.stmts))
 		if entry.arm != nil {
 			check_expr(k, entry.arm, s.arm_expected)
 		}
 		note_expanded_case(k, entry, before)
-		k.scope = case_scope
-		flow_either(&flow, case_flow)
+		k.scope = outer
 	}
 
 	s.exhaustive = has_default || covered_count == len(covered)

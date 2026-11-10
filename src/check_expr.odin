@@ -1059,13 +1059,13 @@ first_method :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -> Sym
 }
 
 // The members named `name` that method-call syntax can reach: those with a
-// receiver.
+// receiver. The list is in temporary memory, as `member_candidates`'s is.
 method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	all := member_candidates(k, receiver, name)
 	if len(all) == 0 {
 		return nil
 	}
-	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, len(all), context.temp_allocator)
 	for candidate in all {
 		if sym := symbol_of(k.c, candidate); sym != nil && sym.has_receiver {
 			append(&out, candidate)
@@ -1550,7 +1550,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 // selects nothing.
 @(private = "file")
 select_slicers :: proc(k: ^Checker, all: []Symbol_Id, mutable: bool) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, len(all), context.temp_allocator)
 	for candidate in all {
 		if sym := symbol_of(k.c, candidate); sym != nil && slice_is_mutable(k.c, sym.result) == mutable {
 			append(&out, candidate)
@@ -1664,7 +1664,7 @@ check_slice_endpoint :: proc(k: ^Checker, e: Expr) -> bool {
 // to `inout` ones when there is nothing else.
 @(private = "file")
 select_by_place :: proc(k: ^Checker, all: []Symbol_Id, place: bool) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, len(all), context.temp_allocator)
 	for candidate in all {
 		if operator_result_is_place(k, candidate) == place {
 			append(&out, candidate)
@@ -1683,7 +1683,7 @@ index_arguments :: proc(
 	indices: []Expr,
 	candidates: []Symbol_Id,
 ) -> ([]Arg_Info, bool) {
-	args := make([]Arg_Info, len(indices) + 1, k.c.semantic_allocator)
+	args := make([]Arg_Info, len(indices) + 1, context.temp_allocator)
 	args[0] = arg_from_expr(receiver)
 	args[0].is_receiver = true
 	ok := true
@@ -1875,7 +1875,7 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) -> bool 
 	if !operator_exists(k, members, operands) {
 		return false
 	}
-	args := make([]Arg_Info, 1, k.c.semantic_allocator)
+	args := make([]Arg_Info, 1, context.temp_allocator)
 	args[0] = arg_from_expr(v.operand)
 	chosen, bound := resolve_operator(k, v.op_span, symbol, members, args)
 	if chosen == INVALID_SYMBOL {
@@ -1935,7 +1935,7 @@ annotate_user_operator :: proc(k: ^Checker, v: ^Expr_Base, chosen: Symbol_Id) ->
 check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bool {
 	symbol := operator_text(v.op)
 	operands := []Type_Id{lhs, rhs}
-	args := make([]Arg_Info, 2, k.c.semantic_allocator)
+	args := make([]Arg_Info, 2, context.temp_allocator)
 	args[0] = arg_from_expr(v.lhs)
 	args[1] = arg_from_expr(v.rhs)
 	negate := false

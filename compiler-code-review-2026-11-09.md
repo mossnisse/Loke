@@ -778,7 +778,8 @@ There are also a few small accounting leaks: evaluator temporaries that the
 ### Top recommendations
 
 1. **Share one parameter-flattening helper between `append_signature_group`
-   (`src/check.odin:1262`) and `resolve_proc_type` (`src/check.odin:1854`).** This
+   (`src/check.odin:1262`) and `resolve_proc_type` (`src/check.odin:1854`).**
+   (Done: bug 1, `check_signature_parameter`.) This
    fixes a real divergence:
    - A variadic `..T` parameter's `@(escape)` and `@(cross_thread)` are checked
      against `T` in a declaration but against `[]T` in a written procedure type.
@@ -788,6 +789,11 @@ There are also a few small accounting leaks: evaluator temporaries that the
 
    Saves about 35 lines.
 2. **Stop putting short-lived lookup and overload data in `c.semantic_allocator`.**
+   (Done: every list named here, the delegation and conversion-hook lists, and
+   the `Arg_Info` arrays a resolution reads are in temporary memory; a method
+   call copies its candidates only when it keeps them as `overload_members`. A
+   rejection by name or by a C-variadic argument is worded in `rejection_text`,
+   and the other reasons with `fmt.tprintf`.)
    - Candidate lists: `member_candidates` (`src/impl.odin:567`),
      `method_candidates`, `select_slicers`, `select_by_place`,
      `operator_candidates` and `operator_candidates_for_receiver`.
@@ -807,7 +813,16 @@ There are also a few small accounting leaks: evaluator temporaries that the
      and generic instances still add while bodies are checked, so a cached
      `false` could go stale. A cache needs a point after which members are final.)
 
-   Measure with `perf.ps1` before and after.
+   Measure with `perf.ps1` before and after. (Not done, measured: on the
+   examples and `bench/workspace`, `member_candidates` and `find_member`
+   together take 1.2-2.4 ms of a 150-1000 ms front end, `operator_candidates`
+   0.05 ms and `type_is_comparable` 0.1-0.2 ms, timed by instrumenting a
+   `-o:speed` build. The scan is quadratic in a type's member count only
+   across many calls: one type with 2,000 methods called 4,000 times spends
+   about 70 ms of 360 ms in it. An index would have to follow
+   `add_members`, the in-place `replace_impl_member`, each package's
+   extension tables and session checkpoints, so it is left as an open
+   question in [open-questions.md](open-questions.md#compiler-review-findings-not-yet-acted-on-2026-11-09).)
 4. **Share zero values when a literal is folded.** (Done: `fold_aggregate`
    shares one zero, and `zero_const` counts once, at the type it was asked
    for, since a component never counts more elements than its whole.) `fold_aggregate`
@@ -834,9 +849,11 @@ There are also a few small accounting leaks: evaluator temporaries that the
    Add a cheap pre-filter for both: "is any `[]=` declared at all?", and a fast path
    when `span.file == k.file`.
 7. **Merge near-identical helpers** (each is detailed under Cross-file duplication):
-   - Three predeclared-type tables become one.
+   - (Done in part.) Three predeclared-type tables become one: the universe
+     binds the names `PREDECLARED_NAMES` marks; the `Type_Info` array stays,
+     since its sizes come from the target.
    - (Done.) `struct_field`, `subject_field_named` and `enum_member` become `member_named`.
-   - One group-flattening iterator replaces seven loops.
+   - (Not done; see the cross-file table.) One group-flattening iterator replaces seven loops.
    - (Done.) One allocator-operand check replaces three copies, plus a
      `type_is_allocator` predicate.
 8. **Split the two biggest files.** Move type-syntax resolution, finite size and
@@ -851,7 +868,7 @@ Verdict: sound, but it mixes five subsystems and holds the group's one
 correctness bug.
 
 - **Bug: `@(escape)` and `@(cross_thread)` on a variadic parameter are checked
-  against different types in a declaration and in a procedure type.**
+  against different types in a declaration and in a procedure type.** (Done: bug 1.)
   - In a declaration, `append_signature_group` passes
     `written_type = parameter_type`, the element `T` of `..T`, to
     `check_escape_attribute` and `check_cross_thread_attribute`
@@ -881,13 +898,17 @@ correctness bug.
   `normalize_signature_parameter`, `variadic_position_ok`, escape, cross-thread.
   Sharing them saves about 35 lines.
 - **Simplify: the "for each file, set the location, for each active item" loop is
-  repeated.** It appears at `src/check.odin:167,193,277,308,331`, in
+  repeated.** (Done: `for_each_package_item` and `check_deferred_parts`; the loop
+  that declares `impl` blocks in `prepare_package` keeps its own, since it
+  shares a map across items.) It appears at `src/check.odin:167,193,277,308,331`, in
   `for_each_package_decl` (360), and again in `src/operators.odin:620`. Generalise
   `for_each_package_decl` to `for_each_package_item(k, pkg, visit: proc(^Checker, Item))`.
   Also wrap the `check_deferred_foreign_parts/escape_parts/union_zeros` trio, which
   is called twice (298-300 and 340-342), in a `check_deferred_parts(k)`. About 25
   lines.
-- **Duplication:** the body-context setup is written three times: a new
+- **Duplication** (done, as `enter_procedure_body`; the callers still save
+  and restore, since a `defer` in the helper would run as it returns): the
+  body-context setup is written three times: a new
   `.Procedure` scope, `owner_proc = literal`, and
   `k.body = {proc_literal = literal, ...}`. See `check_param_defaults` (1383-1388),
   `infer_param_default_type` (1420-1424) and `check_proc_body` (2678-2683).
@@ -901,7 +922,11 @@ correctness bug.
   `resolve_group_members` uses `slice.contains(members)` (781). Generated
   bindings, such as C structs with hundreds of fields, pay O(n²). A temp
   `map[Identifier_Id]struct{}` is the same amount of code.
-- **Simplify:** `report_unresolved_type` (2087) suppresses `unsupported_construct`
+- **Simplify** (not done: the constant a length reads may have said why when
+  its declaration was settled, before the caller took any mark, as
+  `length_that_failed` in `tests/err/declaration_settled_in_probe.loke` shows;
+  the count only keeps the defect report for a compilation with no error at
+  all, and its comment now says so): `report_unresolved_type` (2087) suppresses `unsupported_construct`
   whenever `k.c.error_count > 0`, so any unrelated earlier error anywhere in the
   compilation suppresses it. Callers such as `check_composite`
   (`src/check_composite.odin:21,40`) call it without an error mark. Pass the mark
@@ -927,7 +952,7 @@ correctness bug.
 Verdict: clear. The `operator([]=)` lowerings are well explained. One walk is
 duplicated and one check is repeated on every statement.
 
-- **Duplication:** `report_local_copy_decisions` (30-54) and
+- **Duplication** (done, as `for_each_sequence_decl`): `report_local_copy_decisions` (30-54) and
   `report_unread_required_results` (74-124) repeat the same walk: unwrap
   `Stmt_Defer`, recurse into `Stmt_When.selected`, select `^Decl`. Extract one
   `for_each_sequence_decl(stmts, visit)`. `src/impl.odin:432`
@@ -946,7 +971,10 @@ duplicated and one check is repeated on every statement.
   declared (`join_package_operators`, `install_impl_members` with
   `operator == "[]="`) and skip the probe when it is clear. Or memoise the answer
   on the `Expr_Index` node.
-- **Structure:** `lowered_assign` (774), `lowered_address` (769) and
+- **Structure** (done: `synth_assign` in `synth.odin` takes the destination
+  and value lists, so the destructuring setter lowering uses it too;
+  `lowered_address` and `check_lowered_block` stay, since one clones its
+  operand and the other checks): `lowered_assign` (774), `lowered_address` (769) and
   `check_lowered_block` (562) are syntax builders. Per compiler-architecture.md
   ("`synth.odin`: builders for the syntax lowerings"), `lowered_assign` belongs in
   `synth.odin` as `synth_assign`. Today the only other `new(Stmt_Assign` is at
@@ -975,7 +1003,10 @@ switches deliberately avoid one.
   the "collect own equalities, then require them visible" pair at
   54-57 also appears in `src/check_expr.odin:2323-2328`. Fold it into
   `own_equalities_visible(k, type, span)`, which collects them itself.
-- **Simplify:** the per-case scope push and pop (78-81, 313-322) is the
+- **Simplify** (done for the value switch, through `check_scoped_stmts`,
+  which `check_scoped_block` now calls; a union case binds its payload in the
+  case's scope before its statements, so it opens the scope itself, from one
+  saved outer scope): the per-case scope push and pop (78-81, 313-322) is the
   `check_scoped_block` pattern written out twice. A small `with_local_scope` helper,
   or `defer`, would remove the manual restore.
 
@@ -990,16 +1021,20 @@ and has allocation and lookup costs on hot paths.
   (5 call sites). Nearly always `span.file == k.file`, so fast-path through
   `package_of(k.c, k.pkg)`. Better: record "imports `core:unsafe`" on `File` when
   imports bind.
-- **Data structure/algorithm (allocation):**
+- **Data structure/algorithm (allocation):** (done: Top 2)
   - `method_candidates` (1063), `select_slicers` (1552) and `select_by_place`
     (1666) allocate their result in `k.c.semantic_allocator` on every call.
-    (Not done for `method_candidates`: a method call keeps its list as
-    `overload_members` on the typed AST.)
+    (`method_candidates` too: a method call copies its list into the semantic
+    arena only when it keeps it as `overload_members`.)
   - (Done.) `select_call_method` builds a whole candidate list only to test whether it is
     empty: `len(method_candidates(...)) == 0` (771). Use
     `first_method(...) == INVALID_SYMBOL`, which already exists (1052).
   - Lists that do not outlive the call belong in `context.temp_allocator`.
-- **Duplication:** `select_call_method` (749-777) repeats the receiver walk of
+- **Duplication** (not done: the walks differ at each step: a box's payload
+  fields are looked up before its deref and before its own methods, a field
+  wins over a method on the pointee, and only the selector materializes an
+  unfixed receiver that has no such method, so one walk would need a flag for
+  each difference): `select_call_method` (749-777) repeats the receiver walk of
   `check_value_selector` (670-738): own type, then box payload, then pointee, then
   an untyped receiver's default type. One `select_method_through(k, v, operand,
   callee) -> bool` serves both. About 15 lines.
@@ -1049,7 +1084,8 @@ read like the spec.
 Verdict: correct and well commented. Argument binding exists in three
 variants.
 
-- **Duplication:** filling defaults is written twice:
+- **Duplication** (done, as `fill_defaults`; a variadic call still reports a
+  missing fixed argument by count): filling defaults is written twice:
   - `bind_arguments` (766-789)
   - `bind_variadic_arguments` (1229-1244)
 
@@ -1057,7 +1093,12 @@ variants.
   report a missing argument, `substitute_caller_location`, then append to the order.
   Extract `fill_defaults(k, v, declared, bound, from, to, &order) -> (defaulted, ok)`.
   About 20 lines.
-- **Duplication / Structure (unverified):**
+- **Duplication / Structure (unverified)** (not done: a direct call reports
+  each bad argument where it is written: a missing name, `..` with no pack,
+  `L0371` for a procedure value, a missing parameter by name. A `Candidate`
+  turns those into one rejection under "no overload applies", so sharing
+  `bind_chosen_call` would reword them; `fill_defaults` takes the part the
+  binders shared):
   - The three binders all build `bound` plus `bound_order` with the same rules:
     `bind_arguments`, `bind_variadic_arguments`, and
     `bind_chosen_call`/`bind_candidate_slots`.
@@ -1167,14 +1208,16 @@ Verdict: fine. The element-count guard is recomputed redundantly.
 Verdict: well structured; ranking and tie-breakers read like the spec. It
 allocates in the wrong place.
 
-- **Data structure/algorithm (allocation):** `build_candidate` allocates `ranks`,
+- **Data structure/algorithm (allocation)** (done: Top 2; no `Candidate`
+  outlives its resolution, and `bind_chosen_call` copies the slots it keeps): `build_candidate` allocates `ranks`,
   `slots` (441-443) and `filled` (460) in `k.c.semantic_allocator` for every
   member of every resolution, inside probes too. `form_candidates` already keeps
   the `Candidate`s themselves in `context.temp_allocator` (694).
   `bind_chosen_call` copies what it keeps (`order`, `bound`), so temp storage
   should be enough (unverified: confirm no `Candidate` is cached on an
   `Instance`).
-- **Simplify:** the header comment (28-29) says reasons are "worded only if the
+- **Simplify** (done: `Rejected_Name` and `Rejected_C_Vararg`, worded in
+  `rejection_text`): the header comment (28-29) says reasons are "worded only if the
   call fails". But `build_candidate` formats named-argument rejections with
   `fmt.aprintf` into the semantic arena (475-488), and so does
   `c_vararg_rejection` (372), even when another candidate wins. Add a
@@ -1186,7 +1229,8 @@ allocates in the wrong place.
 Verdict: the logic is careful (quiet declaration, local hooks, visibility). The
 lookup data structure is the weak point.
 
-- **Data structure/algorithm:** every member lookup:
+- **Data structure/algorithm** (`out` is in temporary memory, Top 2; the
+  index is not done, measured under Top 3): every member lookup:
   - runs the 9 `ensure_*` contributors (551-561);
   - allocates `out` in the semantic arena (567);
   - scans all of `info.members` and the package's extension slice, comparing names
@@ -1198,7 +1242,7 @@ lookup data structure is the weak point.
   lazily built `map[Identifier_Id][]Symbol_Id` on `Type_Info`, rebuilt in
   `add_members` and `install_impl_members`, makes it O(1) per name. Measure with
   `perf.ps1` first.
-- **Duplication:** group flattening in `expand_visible_members` (649-656). See
+- **Duplication** (not done; see the cross-file table): group flattening in `expand_visible_members` (649-656). See
   Cross-file duplication.
 - **Simplify** (not reproduced: a probe with two bounds that each require a
   `put` slot resolves `T.put(x, 2)` as `x.put(2)` does, so no known-gaps entry
@@ -1212,7 +1256,7 @@ lookup data structure is the weak point.
 Verdict: the delegation and pending-operator machinery is intricate but well
 documented. It has near-copies and one uncached hot predicate.
 
-- **Duplication:** `hidden_inherent_operator` (347-372),
+- **Duplication** (not done; see the cross-file table): `hidden_inherent_operator` (347-372),
   `inherent_self_operator` (393-416) and `add_operator_members` (276-290) each
   scan `members` for `sym.operator == symbol`, expand a `.Proc_Group` into its
   members and test a predicate. One `for_each_flat_member(c, members, symbol,
@@ -1222,7 +1266,9 @@ documented. It has near-copies and one uncached hot predicate.
   generic struct would rename its field) `Pending_Operator`, `Pending_Operator_Block` and
   `Pending_Delegate` (635-697) are the same `{node, location: Checker_Location}`
   pair. One generic `Pending(T)` struct removes two declarations.
-- **Data structure/algorithm:** `type_is_comparable` (1019) is not cached. It
+- **Data structure/algorithm** (not done: measured at 0.1-0.2 ms a program,
+  under Top 3, and a cached answer could go stale while members are still
+  added): `type_is_comparable` (1019) is not cached. It
   walks the whole type with a fresh `Type_Walk` map, and at every node calls
   `type_own_equality` → `inherent_self_operator` twice, once for the type and once
   for its underlying type, each a linear member scan with string compares. It runs
@@ -1244,7 +1290,11 @@ Verdict: clean; nothing notable.
 Verdict: the stores and interning are sound. The predeclared types are defined
 in three tables.
 
-- **Duplication / Structure:** the predeclared types are described in three
+- **Duplication / Structure** (done in part: `build_universe` binds the
+  entries `PREDECLARED_NAMES` marks `universe`, so the universe table is gone
+  and the LLVM IR of the examples and benchmarks is unchanged; the `Type_Info`
+  array stays apart, since its sizes come from the target, and its `assert`
+  still guards its length): the predeclared types are described in three
   places that must stay in step:
   - the positional `Type_Info` array (947-982), guarded only by an `assert` on its
     length;
@@ -1266,7 +1316,12 @@ in three tables.
   known to be `.Proc` infos. Index `a.param_escapes` and `a.param_cross_thread`
   through a small `padded_at(slice, index, default)`, which is also what
   `equal_padded` encodes.
-- **Data structure/algorithm (minor):**
+- **Data structure/algorithm (minor)** (not done: a bucket holds the types
+  whose hashes collide, nearly always one, so a `[dynamic]` would only make
+  each entry larger; `Type_Info.members` is read as a slice everywhere and grows
+  a block at a time; and lazy maps would need `context.allocator` set to the
+  semantic arena at every insert, which is easier to get wrong than the one
+  list):
   - `bucket_append` (1279-1285) copies the whole bucket on every insert, and
     `add_members` (1039) copies the whole member slice. Both are fine at today's
     sizes; `map[u64][dynamic]Type_Id` would be simpler.
@@ -1292,18 +1347,18 @@ Verdict: fine; see the three-table finding under semantic.odin.
 
 | Pattern | Sites | Proposal |
 | --- | --- | --- |
-| Expand a `.Proc_Group` into its members while scanning a member table | `src/check_calls.odin:1093`, `src/impl.odin:650`, `src/interface.odin:856,911`, `src/operators.odin:283,364,409` | One iterator, `for_each_flat_member(c, members, filter, visit)`, or a function returning the flattened slice in temp storage. About 25 lines. |
-| `type_underlying(c, t) == TYPE_ALLOCATOR` (or `!=`) | 20 occurrences in 13 files, among them `src/check.odin:1149,2520`, `src/check_builtin.odin:268,655`, `src/container.odin:610`, `src/carrier_shape.odin:20` and the `provenance_*.odin` files | A `type_is_allocator(c, t)` predicate in `types.odin`, beside `type_is_box` and the rest. |
+| Expand a `.Proc_Group` into its members while scanning a member table | `src/check_calls.odin:1093`, `src/impl.odin:650`, `src/interface.odin:856,911`, `src/operators.odin:283,364,409` | One iterator, `for_each_flat_member(c, members, filter, visit)`, or a function returning the flattened slice in temp storage. About 25 lines. (Not done: each site filters the group and its members differently, visibility and `member_with_signature` on the group, `bound_excluded`, a signature or `append_unique` on each member, and three return the group beside the member, so an iterator with those parameters saves about as many lines as it adds.) |
+| `type_underlying(c, t) == TYPE_ALLOCATOR` (or `!=`) | 20 occurrences in 13 files, among them `src/check.odin:1149,2520`, `src/check_builtin.odin:268,655`, `src/container.odin:610`, `src/carrier_shape.odin:20` and the `provenance_*.odin` files | A `type_is_allocator(c, t)` predicate in `types.odin`, beside `type_is_box` and the rest (done). |
 | Look up a field or member by name in a `[]Symbol_Id` | `member_named` (`src/impl.odin:386`), `struct_field` (`src/check_expr.odin:2880`), `enum_member` (`src/check_expr.odin:2893`), `subject_field_named` (`src/impl.odin:381`), and similar `parameter_slot_named` (`src/check_calls.odin:671`) | Keep `member_named` plus one `field_named(c, type, name)` in `types.odin` (done). |
-| Filter candidates into a new semantic-arena slice | `method_candidates` (`src/check_expr.odin:1063`), `select_slicers` (1552), `select_by_place` (1666), `operator_candidates_for_receiver` (`src/operators.odin:297`), `delegation_neighbours` (831), `operator_overloads_mentioning` (844) | One `filter_symbols(k, all, pred, allocator)` with a temp default; most of these lists do not outlive the call. |
-| For each file, set the location, then for each active item | `src/check.odin:167,193,277,308,331,360`, `src/operators.odin:620` | `for_each_package_item(k, pkg, visit)`. |
+| Filter candidates into a new semantic-arena slice | `method_candidates` (`src/check_expr.odin:1063`), `select_slicers` (1552), `select_by_place` (1666), `operator_candidates_for_receiver` (`src/operators.odin:297`), `delegation_neighbours` (831), `operator_overloads_mentioning` (844) | One `filter_symbols(k, all, pred, allocator)` with a temp default; most of these lists do not outlive the call. (Done in part: every list is in temporary memory. Not shared: each predicate needs its own extra argument, a receiver, `mutable` or `place`, and Odin procedures capture nothing, so a shared filter would be longer than the loops.) |
+| For each file, set the location, then for each active item | `src/check.odin:167,193,277,308,331,360`, `src/operators.odin:620` | `for_each_package_item(k, pkg, visit)` (done, but for the `impl` loop at 193, which shares a map across items). |
 | Allocator operand check (`check_single_expr(.., TYPE_ALLOCATOR)` plus an underlying test) | `src/check_builtin.odin:263,651`, `src/check.odin:2516` | `check_allocator_argument` with a message parameter (done). |
-| Statement walk that unwraps `defer` and descends into the selected `when` | `src/check_stmt.odin:30,74`; wider in `src/impl.odin:432` | `for_each_sequence_decl(stmts, visit)`. |
+| Statement walk that unwraps `defer` and descends into the selected `when` | `src/check_stmt.odin:30,74`; wider in `src/impl.odin:432` | `for_each_sequence_decl(stmts, visit)` (done for check_stmt.odin; `hoist_hooks_in_stmt` walks every nested block, not one sequence, so it keeps its own). |
 | Collect own equalities, then require them visible | `src/switch.odin:54-57`, `src/check_expr.odin:2323-2328` | Let `own_equalities_visible` collect them itself (not done; see switch.odin). |
-| Predeclared type tables | `src/semantic.odin:947`, `src/types.odin:443`, `src/universe.odin:16` | One `Type_Id`-indexed table (see semantic.odin). |
-| Diagnostic text built before anything fails | `src/check_calls.odin:425,474,1126`, `src/check_composite.odin:272`, `src/overload.odin:372,475-488` | Format at the report site, or into `context.temp_allocator` (done for check_calls.odin; the rest are open). |
-| Parameter flattening (attribute checks per parameter name) | `src/check.odin:1287-1357` and `1866-1902` | One helper; this also fixes the variadic attribute bug. |
-| `seen: Type_Walk; defer delete(seen); return x_walk(...)` wrappers | 16 sites in 8 files (`types.odin`, `zero.odin`, `operators.odin`, `check_expr.odin`, `hash.odin`, `format.odin`, `reflect.odin`, `test_procedures.odin`) | Acceptable as written. If any becomes hot, back `Type_Walk` with `context.temp_allocator` rather than the default heap. |
+| Predeclared type tables | `src/semantic.odin:947`, `src/types.odin:443`, `src/universe.odin:16` | One `Type_Id`-indexed table (see semantic.odin; done in part). |
+| Diagnostic text built before anything fails | `src/check_calls.odin:425,474,1126`, `src/check_composite.odin:272`, `src/overload.odin:372,475-488` | Format at the report site, or into `context.temp_allocator` (done for check_calls.odin and overload.odin; check_composite.odin is not done, see there). |
+| Parameter flattening (attribute checks per parameter name) | `src/check.odin:1287-1357` and `1866-1902` | One helper; this also fixes the variadic attribute bug (done: bug 1). |
+| `seen: Type_Walk; defer delete(seen); return x_walk(...)` wrappers | 16 sites in 8 files (`types.odin`, `zero.odin`, `operators.odin`, `check_expr.odin`, `hash.odin`, `format.odin`, `reflect.odin`, `test_procedures.odin`) | Acceptable as written. If any becomes hot, back `Type_Walk` with `context.temp_allocator` rather than the default heap. (No change needed: `type_is_comparable`, the most frequent, takes about 0.1-0.2 ms a program, measured on the examples.) |
 
 ## Group 3: language features, generics, and bootstrap
 

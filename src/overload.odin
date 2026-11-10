@@ -31,10 +31,25 @@ Rejection :: union {
 	string,
 	Rejected_Arity,
 	Rejected_Argument,
+	Rejected_Name,
+	Rejected_C_Vararg,
 }
 
 Rejected_Arity :: struct {
 	count, supplied: int,
+}
+
+// A named argument the candidate has no parameter for, or one given `twice`.
+Rejected_Name :: struct {
+	name:  Identifier_Id,
+	twice: bool,
+}
+
+// design.md "`@(c_vararg)`": an argument, by its index, that cannot be passed
+// past the fixed parameters, and why.
+Rejected_C_Vararg :: struct {
+	index: int,
+	why:   string,
 }
 
 // An argument, by its index in the candidate's `args`, that ranked `RANK_NONE`.
@@ -84,7 +99,7 @@ collect_call_arguments :: proc(
 	offset := 0,
 	live_group: Symbol_Id = INVALID_SYMBOL,
 ) -> ([]Arg_Info, bool) {
-	out := make([]Arg_Info, len(args), k.c.semantic_allocator)
+	out := make([]Arg_Info, len(args), context.temp_allocator)
 	ok := true
 	for arg, index in args {
 		info := Arg_Info {
@@ -336,50 +351,37 @@ variadic_lend_rank :: proc(k: ^Checker, arg: Arg_Info, element, want: Type_Id) -
 
 // ----------------------------------------------------------------- candidates --
 
-arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
-	return fmt.aprintf(
-		"it takes %d argument%s, found %d",
-		count,
-		count == 1 ? "" : "s",
-		supplied,
-		allocator = c.semantic_allocator,
-	)
+arity_reason :: proc(count: int, supplied: int) -> string {
+	return fmt.tprintf("it takes %d argument%s, found %d", count, count == 1 ? "" : "s", supplied)
 }
 
 // design.md "`@(c_vararg)`": why an argument past the fixed parameters cannot be
 // passed, or "" when it can.
 @(private = "file")
-c_vararg_rejection :: proc(k: ^Checker, arg: Arg_Info, position: int) -> string {
-	reason := ""
+c_vararg_rejection :: proc(k: ^Checker, arg: Arg_Info) -> string {
 	switch {
 	case arg.mode == .Spread:
-		reason = "a C-variadic call cannot spread"
+		return "a C-variadic call cannot spread"
 	case arg.mode == .Inout:
-		reason = "a C-variadic argument is passed by value, so it cannot be `inout`"
+		return "a C-variadic argument is passed by value, so it cannot be `inout`"
 	case arg.waiting:
-		reason = "a C-variadic argument needs a concrete type"
-	case:
-		concrete := type_is_untyped(k.c, arg.type) ? default_type(k.c, arg.type) : arg.type
-		if concrete == INVALID_TYPE {
-			reason = "a C-variadic argument needs a concrete type"
-		} else if safe, why := foreign_abi_safe(k.c, concrete); !safe {
-			reason = why
-		}
+		return "a C-variadic argument needs a concrete type"
 	}
-	if reason == "" {
-		return ""
+	concrete := type_is_untyped(k.c, arg.type) ? default_type(k.c, arg.type) : arg.type
+	if concrete == INVALID_TYPE {
+		return "a C-variadic argument needs a concrete type"
 	}
-	return fmt.aprintf("argument %d: %s", position + 1, reason, allocator = k.c.semantic_allocator)
+	_, why := foreign_abi_safe(k.c, concrete)
+	return why
 }
 
 @(private = "file")
 argument_mismatch_reason :: proc(c: ^Compiler, index: int, found, want: Type_Id) -> string {
-	return fmt.aprintf(
+	return fmt.tprintf(
 		"argument %d is `%s` where `%s` is wanted",
 		index + 1,
-		type_name(c, found),
-		type_name(c, want),
-		allocator = c.semantic_allocator,
+		type_name_alloc(c, found, context.temp_allocator),
+		type_name_alloc(c, want, context.temp_allocator),
 	)
 }
 
@@ -391,7 +393,7 @@ rejection_reason :: proc(k: ^Checker, arg: Arg_Info, index: int, want: Type_Id, 
 		if mode == .Inout {
 			format = arg.waiting ? "it takes argument %d by `inout`, which needs a place" : "it takes argument %d by `inout`; write `inout` at the call site"
 		}
-		return fmt.aprintf(format, index + 1, allocator = k.c.semantic_allocator)
+		return fmt.tprintf(format, index + 1)
 	}
 	if _, moved := arg.expr.(^Expr_Move); moved && arg.is_receiver && mode != .Move {
 		return "it borrows its receiver, so `move(...)` gives away more than it takes"
@@ -407,11 +409,7 @@ rejection_reason :: proc(k: ^Checker, arg: Arg_Info, index: int, want: Type_Id, 
 		if arg.is_receiver {
 			return "it consumes its receiver, which is written `move(...)`"
 		}
-		return fmt.aprintf(
-			"it takes argument %d by `move`, which is written `move(...)`",
-			index + 1,
-			allocator = k.c.semantic_allocator,
-		)
+		return fmt.tprintf("it takes argument %d by `move`, which is written `move(...)`", index + 1)
 	}
 	return argument_mismatch_reason(k.c, index, arg.type, want)
 }
@@ -422,9 +420,14 @@ rejection_text :: proc(k: ^Checker, cand: Candidate) -> string {
 	case string:
 		return why
 	case Rejected_Arity:
-		return arity_reason(k.c, why.count, why.supplied)
+		return arity_reason(why.count, why.supplied)
 	case Rejected_Argument:
 		return rejection_reason(k, cand.args[why.index], why.index, why.want, why.mode)
+	case Rejected_Name:
+		format := why.twice ? "`%s` is given twice" : "it has no parameter named `%s`"
+		return fmt.tprintf(format, identifier_text(k.c, why.name))
+	case Rejected_C_Vararg:
+		return fmt.tprintf("argument %d: %s", why.index + 1, why.why)
 	}
 	return "it is not viable here"
 }
@@ -438,8 +441,8 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 	cand := Candidate {
 		symbol = symbol_id,
 		args   = args,
-		ranks  = make([]int, len(args), k.c.semantic_allocator),
-		slots  = make([]int, len(args), k.c.semantic_allocator),
+		ranks  = make([]int, len(args), context.temp_allocator),
+		slots  = make([]int, len(args), context.temp_allocator),
 	}
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {
@@ -457,7 +460,7 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 	}
 
 	count := len(sym.params)
-	cand.filled = make([]bool, count, k.c.semantic_allocator)
+	cand.filled = make([]bool, count, context.temp_allocator)
 	// Trailing values rank against the pack element; spreads rank against the pack.
 	pack := variadic_parameter_index(info)
 	element := INVALID_TYPE
@@ -471,20 +474,8 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		if arg.name != INVALID_IDENTIFIER {
 			named = true
 			slot = parameter_slot_named(k.c, sym, arg.name)
-			if slot < 0 {
-				cand.reason = fmt.aprintf(
-					"it has no parameter named `%s`",
-					identifier_text(k.c, arg.name),
-					allocator = k.c.semantic_allocator,
-				)
-				return cand
-			}
-			if cand.filled[slot] {
-				cand.reason = fmt.aprintf(
-					"`%s` is given twice",
-					identifier_text(k.c, arg.name),
-					allocator = k.c.semantic_allocator,
-				)
+			if slot < 0 || cand.filled[slot] {
+				cand.reason = Rejected_Name{arg.name, slot >= 0}
 				return cand
 			}
 		} else if named {
@@ -493,8 +484,8 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		} else if pack >= 0 && slot >= pack {
 			slot = pack
 		} else if info.c_vararg && slot >= count {
-			if rejection := c_vararg_rejection(k, arg, index); rejection != "" {
-				cand.reason = rejection
+			if why := c_vararg_rejection(k, arg); why != "" {
+				cand.reason = Rejected_C_Vararg{index, why}
 				return cand
 			}
 			cand.slots[index] = -1
@@ -589,7 +580,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	}
 	cand := build_candidate(k, instance.symbol, inference.runtime_args)
 	if cand.viable {
-		ordering := make([]int, len(args), k.c.semantic_allocator)
+		ordering := make([]int, len(args), context.temp_allocator)
 		runtime_index := 0
 		for arg, index in args {
 			if inference.compile_time[index] {

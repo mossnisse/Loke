@@ -418,7 +418,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 		)
 		return
 	}
-	args := make([]Arg_Info, len(written) + 1, k.c.semantic_allocator)
+	args := make([]Arg_Info, len(written) + 1, context.temp_allocator)
 	args[0] = arg_from_expr(receiver)
 	args[0].is_receiver = true
 	copy(args[1:], written)
@@ -429,7 +429,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 		return
 	}
 	if len(candidates) > 1 {
-		v.overload_members = candidates
+		v.overload_members = slice.clone(candidates, k.c.semantic_allocator)
 	}
 	group := find_member(k, receiver_base.type, method_name)
 	if named := symbol_of(k.c, group); named != nil && named.kind == .Proc_Group {
@@ -712,6 +712,42 @@ report_argument_count :: proc(k: ^Checker, span: Span, expected, found: int, at_
 	)
 }
 
+// Fills each slot of `bound` from `from` that no written argument took with its
+// default, appending the slot to `order`, since defaults run after what is
+// written (design.md "Evaluation order"). `written_ok` is false when a written
+// argument failed, which already explains an empty slot. A missing argument is
+// reported by its parameter's name, or by the count a variadic call needs.
+@(private = "file")
+fill_defaults :: proc(
+	k: ^Checker, v: ^Expr_Call, declared: ^Symbol, bound: []Expr, from: int, written_ok: bool, order: ^[dynamic]int,
+	written: int, variadic := false,
+) -> (defaulted, ok: bool) {
+	for index in from ..< len(bound) {
+		if bound[index] != nil {
+			continue
+		}
+		if !written_ok {
+			return defaulted, false
+		}
+		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
+			parameter: ^Symbol
+			if !variadic && declared != nil && index < len(declared.param_symbols) {
+				parameter = symbol_of(k.c, declared.param_symbols[index])
+			}
+			if parameter != nil {
+				errorf(k.c, v.span, "L0322", "missing an argument for `%s`", identifier_text(k.c, parameter.name))
+			} else {
+				report_argument_count(k, v.span, len(bound) - from, written, at_least = variadic)
+			}
+			return defaulted, false
+		}
+		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
+		append(order, index)
+		defaulted = true
+	}
+	return defaulted, true
+}
+
 // The binder for a call with no candidates: a single named procedure or a
 // procedure value.
 @(private = "file")
@@ -764,29 +800,8 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		ok = ok && passed
 	}
 
-	for index in 0 ..< count {
-		if bound[index] != nil {
-			continue
-		}
-		// A failed argument's slot is not a second mistake.
-		if !ok {
-			return false
-		}
-		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
-			if declared != nil && index < len(declared.param_symbols) {
-				if parameter := symbol_of(k.c, declared.param_symbols[index]); parameter != nil {
-					errorf(
-						k.c, v.span, "L0322", "missing an argument for `%s`",
-						identifier_text(k.c, parameter.name),
-					)
-					return false
-				}
-			}
-			report_argument_count(k, v.span, count, len(v.args))
-			return false
-		}
-		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
-		append(&order, index)
+	if _, filled := fill_defaults(k, v, declared, bound, 0, ok, &order, len(v.args)); !filled {
+		return false
 	}
 
 	v.bound = bound
@@ -1087,7 +1102,7 @@ conversion_hooks :: proc(k: ^Checker, target: Type_Id) -> []Symbol_Id {
 	if info == nil {
 		return nil
 	}
-	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	for member in info.members {
 		sym := symbol_of(k.c, member)
 		if sym != nil && sym.kind == .Proc_Group {
@@ -1183,7 +1198,6 @@ bind_variadic_arguments :: proc(
 	// disagree, because a name reorders the fixed parameters or an omitted
 	// default must wait for the pack.
 	slot_order := make([dynamic]int, 0, pack + 1, k.c.semantic_allocator)
-	defaulted := false
 	first := 0
 	if receiver != nil {
 		bound[0] = receiver
@@ -1227,21 +1241,9 @@ bind_variadic_arguments :: proc(
 		return false
 	}
 	append(&slot_order, pack)
-	for index in first ..< pack {
-		if bound[index] != nil {
-			continue
-		}
-		if !ok {
-			// The failed argument already explains the empty slot.
-			return false
-		}
-		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
-			report_argument_count(k, v.span, pack - first, len(args), at_least = true)
-			return false
-		}
-		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
-		append(&slot_order, index)
-		defaulted = true
+	defaulted, filled := fill_defaults(k, v, declared, bound[:pack], first, ok, &slot_order, len(args), variadic = true)
+	if !filled {
+		return false
 	}
 	if named > 0 || defaulted {
 		v.bound_order = slot_order[:]

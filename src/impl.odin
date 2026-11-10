@@ -555,10 +555,10 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 }
 
 // Every visible member of `type` named `name`, with groups expanded for the
-// overload engine.
+// overload engine, in temporary memory: a caller that keeps the list copies it.
 member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	ensure_contributed_members(k, type, name)
-	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	out := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	pkg := lookup_package(k)
 	expand_visible_members(k, type, impl_member_table(k, .Impl, type, pkg), name, &out)
 	expand_visible_members(k, type, impl_member_table(k, .Extend, type, pkg), name, &out)
