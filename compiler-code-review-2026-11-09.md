@@ -2328,7 +2328,7 @@ The backend is careful and well commented. Ownership, unwind registration, large
    - remove about 70 lines;
    - let `emit_foreign_declarations` (abi.odin:34-50) consult a set instead of re-parsing the `declare ...(` lines already written and keeping hard-coded `seen[...]` entries;
    - make it possible to declare entries lazily through the existing `declare_intrinsic`. This also covers the 30 `*.with.overflow` declarations that are emitted unconditionally (runtime.odin:98-102), while the vector forms already go through `declare_intrinsic` (simd.odin:78).
-4. **Split `emit_llvm_expr.odin` (2726 lines) along its own section rulers:**
+4. **Split `emit_llvm_expr.odin` (2726 lines) along its own section rulers:** (Done: `emit_llvm_const.odin`, `emit_llvm_equality.odin` with the key hashing from containers, and `emit_llvm_text.odin`; expr keeps about 1580 lines of places, expressions, branching expressions and unsafe operations. The conversions went to `emit_llvm_convert.odin` in the commit before.)
    - lines 11-612 (constants, byte images, private globals) become `emit_llvm_const.odin`;
    - lines 1837-2135 (comparison and equality), together with `emit_hash_value`/`emit_hash_mix`/`emit_hash_bits` from containers.odin:1342-1471 (whose design note requires coherence with `==`), become `emit_llvm_equality.odin`;
    - lines 2379-2611 (text operations and conversions) become `emit_llvm_text.odin`.
@@ -2409,7 +2409,7 @@ Verdict: thorough, with two near-copies and hand-rolled headers.
 Verdict: a large file of mixed concerns; individual bodies are correct.
 - **Bug (code size)** (done: bug 4) (containers.odin:1414-1421): fixed arrays are unrolled whenever hashed; see Top recommendation 2.
 - **Structure** (done: in emit_llvm.odin, with `memo_thunk` and `Emitter.memo_thunks`. `sort_by_thunk` does not reimplement the prelude: it calls `begin_thunk` and `end_thunk` itself, since its body takes a method beside the element) (containers.odin:336-392): `Thunk_Emission`, `begin_thunk`, `end_thunk`, and `container_thunk` are the backend's generic memoised private-function helper. Box uses it for drop and clone (box.odin:140, 180), and sort_by reimplements its prelude (273-290). Move them to emit_llvm.odin as `memo_thunk`, and rename `e.container_thunks` to match.
-- **Structure** (containers.odin:1342-1471): hashing belongs next to equality (Top recommendation 4).
+- **Structure** (done: `emit_llvm_equality.odin`) (containers.odin:1342-1471): hashing belongs next to equality (Top recommendation 4).
 - **Structure** (done: `emit_llvm_provider.odin`) (containers.odin:669-740): the `mem.Arena`/`mem.Scratch` provider bodies have nothing to do with containers. Move them to a small `emit_llvm_provider.odin`, or into runtime.odin next to the provider initializer.
 - **Duplication** (done: `emit_bounds_check`) (containers.odin:148-152, 179-181 vs expr.odin:970-975): "icmp uge/ugt index, count; `panic_if` bounds" appears three times. Add a shared `emit_bounds_check(e, index, count, inclusive, message)`.
 - **Duplication** (done with `is_null` and `not_null`, one call at each site. Returning the flag from `emit_map_find` would move the test ahead of the drops three callers emit between the call and the test) (containers.odin:1038-1039, 1067-1069, 1109-1110, 1156-1158, 1279-1281): every `map_find`/`map_entry` call is followed by "icmp eq/ne ptr, null". Return the presence `i1` from `emit_map_find` and `emit_map_entry`.
@@ -2438,7 +2438,7 @@ Verdict: the Win64 classification is careful. Declaration discovery parses text.
 
 #### src/emit_llvm_union.odin
 Verdict: compact and correct.
-- **Duplication** (union.odin:25-62 vs expr.odin:35-57): see the expr finding; one member walker for type, constant, and tag index.
+- **Duplication** (done: `union_members`) (union.odin:25-62 vs expr.odin:35-57): see the expr finding; one member walker for type, constant, and tag index.
 - **Duplication** (done: Top recommendation 1) (union.odin:102-115): the widening tag chain (Top recommendation 1). It already ends in `unreachable`, which is exactly a `switch` with an unreachable default.
 
 #### src/emit_llvm_runtime.odin
