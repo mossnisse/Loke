@@ -938,7 +938,8 @@ bind_dyn_slot_arguments :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector,
 		return false
 	}
 	bound := make([]Expr, count, k.c.semantic_allocator)
-	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
+	// Kept only when an argument is named.
+	order := make([dynamic]int, 0, count, context.temp_allocator)
 	bound[0] = sel.operand
 	append(&order, 0)
 	named := false
@@ -969,7 +970,7 @@ bind_dyn_slot_arguments :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector,
 	}
 	v.bound = bound
 	if named {
-		v.bound_order = order[:]
+		v.bound_order = slice.clone(order[:], k.c.semantic_allocator)
 	}
 	return true
 }

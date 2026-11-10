@@ -334,8 +334,7 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	type := type_underlying(e.c, expr_base(s.iterable).type)
 	storage := llvm_type(e, type)
 	value := load_place(e, type, spill_foreach_iterable(e, s.iterable))
-	data := extract(e, storage, value, STRING_DATA)
-	length := extract(e, storage, value, STRING_LEN)
+	data, length := string_parts(e, storage, value)
 	offset := new_counter(e)
 	decoded := alloca(e, "i32")
 
@@ -681,9 +680,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if underlying_info(e.c, symbol.params[0]).kind == .Struct {
 			view = extract(e, source, self, VIEW_SOURCE)
 		} else {
-			data := extract(e, source, self, STRING_DATA)
-			length := extract(e, source, self, STRING_LEN)
-			view = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+			view = string_as_view(e, source, self)
 		}
 		first := insert(e, iterator, "undef", STRING_VIEW_TYPE, view, ITER_TEXT_VIEW)
 		out = insert(e, iterator, first, "i64", "0", ITER_TEXT_OFFSET)

@@ -203,8 +203,8 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	}
 	rejected := false
 	if literal != nil && literal.signature != nil {
-		check_independent_poly_defaults(k, literal.signature.params)
 		stand_ins := signature_stand_ins(k, literal.signature.params)
+		check_independent_poly_defaults(k, literal.signature.params, stand_ins)
 		for parameter in literal.signature.params {
 			for entry in parameter.names {
 				if entry.is_poly {
@@ -299,8 +299,7 @@ reject_generic_parameter_type :: proc(k: ^Checker, stand_ins: ^Scope, name: Name
 // checked here; one naming a parameter waits for the call. A speculative check
 // against stand-ins for every parameter name tells them apart.
 @(private = "file")
-check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
-	stand_ins := signature_stand_ins(k, params)
+check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter, stand_ins: ^Scope) {
 	for parameter in params {
 		poly := false
 		for entry in parameter.names {

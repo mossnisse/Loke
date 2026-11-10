@@ -129,10 +129,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	operations := emit_lifecycle(e, subject)
 	value_type := llvm_type(e, subject)
 	result := symbol.result
-	open_function(
-		e, "define %s%s %s(%s%s %%arg0, ptr %%arg1)",
-		llvm_linkage(name), llvm_result_type(e, result), name, sret_param(e, result), synth_param_llvm(e, symbol, 0),
-	)
+	open_synth_function(e, symbol, name)
 	subject_value := synth_receiver_value(e, symbol)
 	info := underlying_info(e.c, subject)
 	framed := false
@@ -479,10 +476,7 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
-	open_function(
-		e, "define %s%s %s(%s%s %%arg0, ptr %%arg1)",
-		llvm_linkage(name), llvm_result_type(e, subject), name, sret_param(e, subject), synth_param_llvm(e, symbol, 0),
-	)
+	open_synth_function(e, symbol, name)
 	cloned := emit_clone_with_policy(e, subject, synth_receiver_value(e, symbol), "%arg1")
 	emit_ret(e, subject, cloned)
 	fmt.sbprintln(&e.b, "}")

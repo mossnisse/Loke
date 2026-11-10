@@ -1405,8 +1405,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	// partner of the byte-wise `==` they already have.
 	if type_is_utf8_text(e.c, under) {
 		storage := llvm_type(e, under)
-		data := extract(e, storage, value, STRING_DATA)
-		length := extract(e, storage, value, STRING_LEN)
+		data, length := string_parts(e, storage, value)
 		out := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)",

@@ -1300,10 +1300,7 @@ emit_implicit_conversion :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> (
 			// A `string` borrowed as a `string_view`: the owning word is dropped, and
 			// addressing the source keeps an owned temporary alive. A packed field's
 			// header may be byte-aligned (design.md "@(packed)").
-			value := load_place(e, from, emit_lent_address(e, expr, from))
-			data := extract(e, STRING_TYPE, value, STRING_DATA)
-			length := extract(e, STRING_TYPE, value, STRING_LEN)
-			return emit_ptr_len(e, STRING_VIEW_TYPE, data, length), true
+			return string_as_view(e, STRING_TYPE, load_place(e, from, emit_lent_address(e, expr, from))), true
 		case .Pointer:
 			// A `Box(T)` lent as the `^T` of its payload.
 			if underlying_kind(e.c, from) == .Box {
@@ -1636,11 +1633,9 @@ emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 @(private)
 emit_text_concat_values :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	storage := llvm_type(e, type)
-	return emit_text_concat_parts(
-		e,
-		extract(e, storage, lhs, STRING_DATA), extract(e, storage, lhs, STRING_LEN),
-		extract(e, storage, rhs, STRING_DATA), extract(e, storage, rhs, STRING_LEN),
-	)
+	left_data, left_len := string_parts(e, storage, lhs)
+	right_data, right_len := string_parts(e, storage, rhs)
+	return emit_text_concat_parts(e, left_data, left_len, right_data, right_len)
 }
 
 @(private = "file")
@@ -1897,10 +1892,8 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 	// Text is ordered byte-wise; one runtime call answers all six operators.
 	if type_is_utf8_text(e.c, type) {
 		storage := llvm_type(e, type_underlying(e.c, type))
-		left_data := extract(e, storage, lhs, STRING_DATA)
-		left_len := extract(e, storage, lhs, STRING_LEN)
-		right_data := extract(e, storage, rhs, STRING_DATA)
-		right_len := extract(e, storage, rhs, STRING_LEN)
+		left_data, left_len := string_parts(e, storage, lhs)
+		right_data, right_len := string_parts(e, storage, rhs)
 		order := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
@@ -2246,9 +2239,7 @@ emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id)
 		return value
 	}
 	if underlying_kind(e.c, from) == .String && underlying_kind(e.c, into) == .String_View {
-		data := extract(e, STRING_TYPE, value, STRING_DATA)
-		length := extract(e, STRING_TYPE, value, STRING_LEN)
-		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+		return string_as_view(e, STRING_TYPE, value)
 	}
 	// design.md "Widening by label": a smaller error set propagates into a
 	// larger one.
@@ -2400,6 +2391,19 @@ emit_ptr_len :: proc(e: ^Emitter, storage, data, length: string) -> string {
 	return out
 }
 
+// A `string` or `string_view`'s data pointer and byte length.
+@(private)
+string_parts :: proc(e: ^Emitter, storage, value: string) -> (data: string, length: string) {
+	return extract(e, storage, value, STRING_DATA), extract(e, storage, value, STRING_LEN)
+}
+
+// A `string` borrowed as a `string_view`: the owning word is dropped.
+@(private)
+string_as_view :: proc(e: ^Emitter, storage, value: string) -> string {
+	data, length := string_parts(e, storage, value)
+	return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+}
+
 @(private)
 ptr_len_parts :: proc(e: ^Emitter, storage, value: string) -> (data: string, length: string) {
 	return extract(e, storage, value, SLICE_DATA), extract(e, storage, value, SLICE_LEN)
@@ -2428,8 +2432,7 @@ emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: st
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
 		return value, length
 	}
-	storage := llvm_type(e, type)
-	return extract(e, storage, value, STRING_DATA), extract(e, storage, value, STRING_LEN)
+	return string_parts(e, llvm_type(e, type), value)
 }
 
 @(private)

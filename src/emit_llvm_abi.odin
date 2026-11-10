@@ -502,6 +502,19 @@ emit_foreign_return :: proc(e: ^Emitter) {
 	}
 }
 
+// A register-sized aggregate read back byte-exact as the integer that crosses for
+// it, or that integer read back as the aggregate, through a slot of its own.
+@(private = "file")
+reg_int_reinterpret :: proc(e: ^Emitter, type: Type_Id, value: string, to_int: bool) -> string {
+	slot, out := temp(e), temp(e)
+	align := type_align(e.c, type)
+	whole, word := llvm_type(e, type), fmt.aprintf("i%d", abi_reg_bits(e.c, type))
+	alloca_named(e, slot, whole)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", to_int ? whole : word, value, slot, align)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", out, to_int ? word : whole, slot, align)
+	return out
+}
+
 // A value spilled to a slot, as the `ptr <slot>` operand that crosses for it.
 @(private = "file")
 foreign_spill_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
@@ -516,12 +529,7 @@ foreign_value_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 	case .Bool_I1:
 		return fmt.aprintf("i1 zeroext %s", operand)
 	case .Reg_Int:
-		slot, loaded := temp(e), temp(e)
-		bits, align := abi_reg_bits(e.c, type), type_align(e.c, type)
-		alloca_named(e, slot, llvm_type(e, type))
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, type), operand, slot, align)
-		fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
-		return fmt.aprintf("i%d %s", bits, loaded)
+		return fmt.aprintf("i%d %s", abi_reg_bits(e.c, type), reg_int_reinterpret(e, type, operand, to_int = true))
 	case .Indirect:
 		return foreign_spill_operand(e, type, operand)
 	case .Direct:
@@ -626,12 +634,7 @@ foreign_call_result :: proc(e: ^Emitter, callee_type: ^Type_Info, call, sret: st
 		// Only the call writes `sret`, so a large result goes on naming it.
 		return load_temporary(e, result, sret)
 	case .Reg_Int:
-		slot, v := temp(e), temp(e)
-		align := type_align(e.c, result)
-		alloca_named(e, slot, llvm_type(e, result))
-		fmt.sbprintfln(&e.b, "  store i%d %s, ptr %s, align %d", abi_reg_bits(e.c, result), call, slot, align)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", v, llvm_type(e, result), slot, align)
-		return v
+		return reg_int_reinterpret(e, result, call, to_int = false)
 	}
 	return call
 }

@@ -1413,7 +1413,7 @@ building and repeated syntax walks.
   every recursion level, so matching is O(depth²) per pattern. Patterns are small; low
   priority. Either compute "has poly" once per node bottom-up, or have the recursive call
   return "bound nothing" and skip the precheck.
-- **Simplify** `src/generic.odin:206-207` with `310`: `reject_uninstantiated_generic` calls
+- **Simplify** (done) `src/generic.odin:206-207` with `310`: `reject_uninstantiated_generic` calls
   `check_independent_poly_defaults`, which builds its own `signature_stand_ins`, then builds
   a second one. Pass one scope; saves an allocation and 2 lines.
 - **Duplication** (done: Top 7; the poly-default probe keeps its own) `src/generic.odin:277-286`, `320-327`: two copies of the "probe against
@@ -1501,7 +1501,7 @@ Verdict: good; key building and one argument binder duplicate other code.
 - **Duplication** `src/erased.odin:87-131` vs `src/variadic_lend.odin:49-74`: the two pack
   element passers share their skeleton (precheck, nil base, "accepts else
   `materialize_argument`", untyped materialize). A shared front half saves ~12 lines.
-- **Simplify** `src/erased.odin:937`: `order` is allocated in the semantic arena even when no
+- **Simplify** (done) `src/erased.odin:937`: `order` is allocated in the semantic arena even when no
   argument is named and it is dropped; build it in temp and clone only when kept.
 - **Bug (unverified)** (done: checked) `src/erased.odin:676-677`: `callable_witness_slots` indexes
   `k.c.dyn_types[dyn_key(...)]` and dereferences `view.members[0]` without checking that the
@@ -1597,7 +1597,8 @@ Verdict: fine; one robustness hole.
   checking that `enum_member_by_value` found a member; a non-constant or out-of-range
   `Fold` argument (only reachable from an edited `core:simd`) crashes the compiler instead
   of reporting, unlike the atomics path (L0666). Check for nil and report.
-- **Simplify** `src/simd.odin:103-108`: after `materialize(k, index, TYPE_INT)` succeeds the
+- **Simplify** (not done: the check is live; `v[b]` with `b: f32` reaches it and
+  reports "a lane index must be an integer, found `f32`") `src/simd.odin:103-108`: after `materialize(k, index, TYPE_INT)` succeeds the
   index is `int`, so the `type_is_integer` check is dead (unverified: depends on
   `materialize` rejecting non-integer typed indices).
 
@@ -2005,7 +2006,8 @@ Verdict: compact and clear replay driver.
 Verdict: the record/materialize/splice machinery is sound. The file also hosts reset and allocator-use logic that is not about event operations.
 
 - **Structure**: `prov_materialize_reset` and its helpers `prov_reset_blocker`, `prov_returning_region`, `prov_reset_temporary`, `prov_reset_promise` and `prov_parameter_symbol` (:359–529) form the reset check. Together with `prov_reset` (provenance_regions.odin:2070) they would make a `provenance_resets.odin`. `prov_argument_regions`, `prov_argument_region` and `prov_call_allocator_use` (:556–663) are allocator-use effects and belong in provenance_thread_summaries.odin, next to `prov_note_allocator_use`. That leaves this file with what its header says, about 330 lines.
-- **Duplication**: the `Region_Set | Value_Id` arms of `prov_materialize_reset`'s switch (:362–366) duplicate `prov_use_region` (:61–68). Make `Prov_Reset_Region` a superset that reuses `Prov_Use_Region`, and call `prov_use_region` for the shared arms.
+- **Duplication** (not done: a nested union would make every construction
+  site wrap its region, to share two one-line arms): the `Region_Set | Value_Id` arms of `prov_materialize_reset`'s switch (:362–366) duplicate `prov_use_region` (:61–68). Make `Prov_Reset_Region` a superset that reuses `Prov_Use_Region`, and call `prov_use_region` for the shared arms.
 - **Robustness (unverified)**: `prov_event` (:169–183) materializes a recorded event with `effect_depth` unchanged. A nested `prov_event` or fact operation reached during that materialization is therefore recorded as a site of its own, with a lower sequence number, inside the outer site's event range. Today the only nested fact operation (`Prov_Effect_Borrow_Owner`) emits no events, so `prov_splice_events`' overlap assert (:324) does not fire. A future nested event would cause an assertion failure or a double materialization. Bump `graph.effect_depth` (or a dedicated `event_depth`) around :177 so nested work is inlined, not recorded.
 
 ### Cross-file duplication
@@ -2222,7 +2224,9 @@ Verdict: a neat size-class allocator. One latent edge case.
 Verdict: careful lazy classification. The hook lists are recomputed at every site.
 
 - **Data structure/algorithm** `type_hooks` (`:246-282`) allocates a visited map and walks the type on every call. It is reached from every drop and copy site in every graph build (`prov_drop_effects`, `prov_copy_effects`, `prov_scope_drop_effects`, `drop_cannot_panic`, `type_owns_allocation`). Cache `drop_hooks` and `copy_hooks` per underlying type once `lifecycle_of` returns a `.Finite` entry that was kept (not `open`): add them to `Lifecycle`, or to a side map. `type_drop_runs_hook` (`:229`) then becomes O(1), not "build the list to test `len > 0`".
-- **Simplify** `lifecycle_of` (`:124-141`, `:161-163`) allocates a fresh `Lifecycle` in the permanent `semantic_allocator` on every call while a record is resolving, or while `open`, and discards it. Return a pointer to a package-level "unresolved" entry, or to a temporary-allocator copy, for the first case.
+- **Simplify** (not done: `enroll_lifecycle_members` writes `clone` and
+  `try_clone` into the entry it gets back, so a shared entry could be corrupted,
+  and a temporary one would have to outlive every caller that keeps it) `lifecycle_of` (`:124-141`, `:161-163`) allocates a fresh `Lifecycle` in the permanent `semantic_allocator` on every call while a record is resolving, or while `open`, and discards it. Return a pointer to a package-level "unresolved" entry, or to a temporary-allocator copy, for the first case.
 - **Duplication** (done: the comment) `has_move_only_part` and `type_clone_disabled_walk` (`:294-331`) re-implement `some_lifecycle_part` (`:552`), which cannot be used because it calls `lifecycle_of`. That is legitimate, but say so in a comment to stop "simplification" attempts.
 
 #### src/hook_validation.odin
@@ -2355,7 +2359,9 @@ Verdict: good core plumbing. Function text is copied several times, and the inst
 #### src/emit_llvm_expr.odin
 Verdict: correct as far as I could check, but too large (see Top recommendation 4). Several small lowering patterns are copied within the file.
 - **Duplication** (expr.odin:1055-1059, 1074-1077, 1117-1120): "start = gep(low), count = sub high, low, build slice" appears three times, and the low/high bounds code in `emit_c_pointer_slice` (1104-1117) re-implements `emit_slice_bounds` (1014-1029) with a different upper check. Add `emit_subrange(e, storage, element, data, low, high)` and give `emit_slice_bounds` an optional length. Saves about 12 lines.
-- **Duplication** (expr.odin:1274-1277 vs 2232-2235): converting a `string` to a `string_view` is written twice, and there are 7 more "extract `STRING_DATA` / extract `STRING_LEN`" pairs (1612-1613, 1871-1874, 2417, iteration.odin:341-342, 689-690, containers.odin:1426-1427). `ptr_len_parts` (2389) already does this, since `STRING_DATA == SLICE_DATA` (asserted at runtime.odin:138). Use it everywhere and add `string_as_view(e, value)`. Saves about 15 lines.
+- **Duplication** (done, with `string_parts` for the pairs rather than
+  `ptr_len_parts`, since nothing now asserts that the string and slice indices
+  agree) (expr.odin:1274-1277 vs 2232-2235): converting a `string` to a `string_view` is written twice, and there are 7 more "extract `STRING_DATA` / extract `STRING_LEN`" pairs (1612-1613, 1871-1874, 2417, iteration.odin:341-342, 689-690, containers.odin:1426-1427). `ptr_len_parts` (2389) already does this, since `STRING_DATA == SLICE_DATA` (asserted at runtime.odin:138). Use it everywhere and add `string_as_view(e, value)`. Saves about 15 lines.
 - **Simplify** (expr.odin:491-503): `const_operand` calls `global_initializer` (which runs `const_needs_image`) and then calls `const_needs_image` again at 497. Return the "needs image" flag from `global_initializer`. A large zero also builds its whole initializer before being discarded at 494.
 - **Duplication** (expr.odin:35-57 vs union.odin:25-48 and 52-62): `union_constant`, `union_storage_definition`, and `union_tag_member` each re-derive the same member layout (head, padding, niche, tag, tail). Have one `union_members(shape) -> []member` drive the type text, the constant text, and the tag index. Saves about 20 lines and removes a three-way agreement that is currently only implicit.
 - **Data structure** (expr.odin:144-170): byte arrays (`[N]u8`/`[N]i8`) are spelled element by element (`i8 1, i8 2, …`), roughly 6 bytes of IR per byte. `write_byte_array_constant` (103) already emits `c"\XX…"`. Use it for non-mask `i8` arrays.
@@ -2391,7 +2397,9 @@ Verdict: inventive and well documented. The state swap in the thunk is fragile.
 
 #### src/emit_llvm_lifecycle.odin
 Verdict: thorough, with two near-copies and hand-rolled headers.
-- **Duplication** (lifecycle.odin:133-136 and 484-487): `emit_synth_try_clone` and `emit_synth_clone` spell their `define` line by hand, and `open_synth_function(e, symbol, name)` (emit_llvm.odin:230) produces the same text (receiver plus a `ptr %arg1` allocator parameter, with sret). The same applies to `emit_synth_iter` (iteration.odin:647-650). Saves about 9 lines.
+- **Duplication** (done for the two clone bodies; `emit_synth_iter` returns its
+  iterator by value, where `open_synth_function` would add `sret` for a large
+  one) (lifecycle.odin:133-136 and 484-487): `emit_synth_try_clone` and `emit_synth_clone` spell their `define` line by hand, and `open_synth_function(e, symbol, name)` (emit_llvm.odin:230) produces the same text (receiver plus a `ptr %arg1` allocator parameter, with sret). The same applies to `emit_synth_iter` (iteration.odin:647-650). Saves about 9 lines.
 - **Duplication** (done: Top recommendation 1) (lifecycle.odin:596-611, 626-655): two of the 7 tag-dispatch chains (Top recommendation 1).
 - **Duplication** (lifecycle.odin:461-468 vs 14-28 and 72-83): "alloca destination, `emit_try_clone_into`, invert ok" appears in `emit_part_clone`, in `emit_clone_value`'s container branch, and again in `emit_synth_try_clone`'s intrinsic branch (160-166). Add `try_clone_value(e, type, value_or_src, allocator) -> (cloned, failed)`. Saves about 15 lines.
 - **Duplication** (lifecycle.odin:278-292, 383-388, 406-416, and format.odin:541-547): reading and range-checking an `@(initialized)` count is spelled again in `emit_format_struct`, without `emit_prefix_count`'s helper because that one is file-private. Make `emit_prefix_count` package-private and reuse it.
@@ -2424,7 +2432,8 @@ Verdict: small and fine, but missing the file header comment every sibling has, 
 Verdict: the Win64 classification is careful. Declaration discovery parses text.
 - **Structure** (done: the declared-name set of Top recommendation 3; the four names the compiler defines afterward stay listed) (abi.odin:34-50): `emit_foreign_declarations` re-reads `e.b` for `declare` lines and hard-codes 3 to 5 names that are declared or defined elsewhere (`program_tls_cleanup`, `sink_write`, `write_std`, `program_init`, `wmain`). A table of declared runtime names (Top recommendation 3) plus a set filled by `open_function`/entry emitters would replace this, about 15 lines.
 - **Simplify** (done) (abi.odin:625-645): `foreign_call_result`'s `.Indirect` case calls `load_place` on a fresh private `sret` alloca, which copies a large result into another slot. Use `load_temporary(e, result, sret)`.
-- **Duplication** (abi.odin:528-533 vs 637-642, 471-475 vs 502-505): the register-integer store/load round trip is written four times (parameter, return, argument, result). Add `reg_int_reinterpret(e, type, value, to_int: bool)`. Saves about 10 lines.
+- **Duplication** (done for the argument and the result, the two full round
+  trips; the parameter only stores and the return only loads) (abi.odin:528-533 vs 637-642, 471-475 vs 502-505): the register-integer store/load round trip is written four times (parameter, return, argument, result). Add `reg_int_reinterpret(e, type, value, to_int: bool)`. Saves about 10 lines.
 
 #### src/emit_llvm_union.odin
 Verdict: compact and correct.
