@@ -173,14 +173,7 @@ prov_call_transfer :: proc(graph: ^Flow_Graph, v: ^Expr_Call, type: Type_Id) -> 
 		if _, allocation := v.operation.(Call_Allocation); !allocation { return nil }
 	}
 	builtin := symbol_of(c, v.resolution.symbol)
-	// design.md "Exchange": the destination's previous value is moved out,
-	// keeping its regions and targets.
-	if builtin != nil && builtin.builtin == .Exchange && len(v.bound) == 2 {
-		return prov_parts(graph, prov_component(graph, prov_operand_value(graph, v.bound[0])))
-	}
-	// design.md "Uninitialized capacity": a taken value is the one the place held,
-	// so it keeps that value's regions too.
-	if builtin != nil && builtin.builtin == .Unsafe_Take && len(v.bound) == 1 {
+	if builtin_moves_out_first(builtin, len(v.bound)) {
 		return prov_parts(graph, prov_component(graph, prov_operand_value(graph, v.bound[0])))
 	}
 	allocator := len(v.bound) > 1 ? v.bound[1] : nil
@@ -238,4 +231,16 @@ prov_input_stored_copy :: proc(graph: ^Flow_Graph, id: Value_Id, path, copy_from
 		selected = mapped
 	}
 	return Prov_Component{source = source, from = selected, copy_from = copy_from, copy_type = prov_type_at(c, type, copy_from)}
+}
+
+// Whether a call to `sym` with `count` arguments answers the value its first
+// argument held, moved out with that value's regions and targets. An exchange
+// moves out the destination's previous value (design.md "Exchange"), and a
+// take answers the value the place held (design.md "Uninitialized capacity").
+@(private)
+builtin_moves_out_first :: proc(sym: ^Symbol, count: int) -> bool {
+	if sym == nil {
+		return false
+	}
+	return (sym.builtin == .Exchange && count == 2) || (sym.builtin == .Unsafe_Take && count == 1)
 }

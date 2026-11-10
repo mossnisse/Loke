@@ -1355,6 +1355,11 @@ worklist_pop :: proc(list: ^Worklist) -> (item: int, ok: bool) {
 	} else {
 		item = list.pending[list.head]
 		list.head += 1
+		// Drained: reuse the space, so the list holds at most `count` items.
+		if list.head == len(list.pending) {
+			clear(&list.pending)
+			list.head = 0
+		}
 	}
 	list.queued[item] = false
 	return item, true

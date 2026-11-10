@@ -456,7 +456,7 @@ prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov
 		// read-only carrier loaded out through a pointer, is not itself
 		// suspended by what the call leaves of it: that only extends it.
 		passes_on := !mutable_source && (prov_slot_is_stored(entry) || prov_slot_is_loaded_read_only(graph, source))
-		pending := !mutable_source && !prov_slot_is_reborrow(graph, source)
+		settles_later := !mutable_source && !prov_slot_is_reborrow(graph, source)
 		link := proc(graph: ^Flow_Graph, source, into: int, mutable, passes_on, pending: bool, span: Span) {
 			c := graph.k.c
 			if into == source {
@@ -484,10 +484,10 @@ prov_link_retained :: proc(graph: ^Flow_Graph, event: Prov_Event, retained: Prov
 			})
 		}
 		for into in landed {
-			link(graph, source, into, retained.mutable, passes_on, pending, event.span)
+			link(graph, source, into, retained.mutable, passes_on, settles_later, event.span)
 		}
 		for into in retained.places {
-			link(graph, source, into, retained.mutable, passes_on, pending, event.span)
+			link(graph, source, into, retained.mutable, passes_on, settles_later, event.span)
 		}
 	}
 }

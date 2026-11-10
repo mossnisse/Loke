@@ -264,9 +264,10 @@ prov_unbound_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: []int, spaw
 	}
 	// The reset precedes the boundary use, so the actuals are live at it.
 	prov_call_resets(graph, v)
-	graph.task_effects = spawned
-	prov_call_effects(graph, v)
-	graph.task_effects = false
+	{
+		prov_task_effects_scope(graph, spawned)
+		prov_call_effects(graph, v)
+	}
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span, hands_on = true})
 	}
@@ -307,9 +308,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	// A spawned call runs on its task, whose reach and effects its start checks;
 	// the parent only prepares the arguments, which are copied for the task.
 	spawned := v == graph.spawning && !c.thread_facts_pending
-	graph.task_effects = spawned
-	prov_event(graph, Prov_Event_Call_Allocator_Use{v})
-	graph.task_effects = false
+	{
+		prov_task_effects_scope(graph, spawned)
+		prov_event(graph, Prov_Event_Call_Allocator_Use{v})
+	}
 	#partial switch _ in v.operation {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
@@ -371,10 +373,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_call_resets(graph, v)
 	prov_call_cross_thread(graph, v)
 	prov_call_retention(graph, v, actuals)
-	graph.task_effects = spawned
-	prov_call_effects(graph, v)
-	prov_argument_drop_effects(graph, v)
-	graph.task_effects = false
+	{
+		prov_task_effects_scope(graph, spawned)
+		prov_call_effects(graph, v)
+		prov_argument_drop_effects(graph, v)
+	}
 	prov_use_reached_at_once(graph, v, borrowed)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span, hands_on = true})
@@ -392,4 +395,19 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 	}
 	return prov_store_call_results(graph, v, actuals)
+}
+
+// Until the end of the enclosing scope, what is recorded is the effect of a
+// call spawned on a task when `spawned`, and of the parent's own call otherwise.
+// The outer setting comes back at the end of the scope.
+@(private = "file", deferred_out = prov_end_task_effects)
+prov_task_effects_scope :: proc(graph: ^Flow_Graph, spawned: bool) -> (^Flow_Graph, bool) {
+	outer := graph.task_effects
+	graph.task_effects = spawned
+	return graph, outer
+}
+
+@(private = "file")
+prov_end_task_effects :: proc(graph: ^Flow_Graph, outer: bool) {
+	graph.task_effects = outer
 }

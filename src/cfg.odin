@@ -1299,10 +1299,13 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	// A copied element keeps its own borrows without borrowing the container.
 	elements := iterated
 	// A diagnostic about what a step reads names what the loop traverses.
-	for slot in elements {
-		if entry := &graph.prov_slots[slot]; entry.name == "" {
-			span := expr_span(iterable)
-			entry.name = span_text(graph.k.c, span)
+	// Lifecycle graphs track no provenance slots, so `elements` is empty there.
+	if graph.mode != .Lifecycle {
+		traversed := span_text(graph.k.c, expr_span(iterable))
+		for slot in elements {
+			if entry := &graph.prov_slots[slot]; entry.name == "" {
+				entry.name = traversed
+			}
 		}
 	}
 	through: []int
@@ -1610,11 +1613,12 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	}
 	// design.md "Variadic parameters", "Borrowed callable views": an implicit view
 	// borrows the place it came from.
-	if prov {
-		if expr_base(e) != nil && prov_repr(graph, e).erased_from != INVALID_TYPE {
+	if prov && expr_base(e) != nil {
+		repr := prov_repr(graph, e)
+		if repr.erased_from != INVALID_TYPE {
 			return prov_erase(graph, e)
 		}
-		if expr_base(e) != nil && prov_repr(graph, e).view_from != INVALID_TYPE {
+		if repr.view_from != INVALID_TYPE {
 			return prov_owner_view(graph, e)
 		}
 	}
@@ -2060,9 +2064,7 @@ report_unread_required :: proc(graph: ^Flow_Graph) {
 			continue
 		}
 		event := graph.blocks[write.block].events[write.event]
-		reads_at_exit(graph, rows, write.block, reads)
-		reads_before(graph.blocks[write.block].events[:], write.event + 1, reads)
-		if reads_get(reads, event.slot) || graph.lent[event.slot] {
+		if read_after(graph, rows, write.block, write.event, reads) {
 			continue
 		}
 		what := write.source != "" ? concat(graph.k.c, "the result of `", write.source, "`") : "the result of this call"
@@ -2082,10 +2084,7 @@ transfer_last_uses :: proc(graph: ^Flow_Graph) {
 	reads := make([]u64, rows.words, graph.alloc)
 	kept := make(map[^bool]bool, allocator = graph.alloc)
 	for use in graph.last_uses {
-		event := graph.blocks[use.block].events[use.event]
-		reads_at_exit(graph, rows, use.block, reads)
-		reads_before(graph.blocks[use.block].events[:], use.event + 1, reads)
-		if graph.lent[event.slot] || reads_get(reads, event.slot) {
+		if read_after(graph, rows, use.block, use.event, reads) {
 			kept[use.clone] = true
 		}
 	}
@@ -2127,21 +2126,39 @@ reads_get :: proc(row: []u64, slot: int) -> bool {
 	return row[slot / 64] & (u64(1) << uint(slot % 64)) != 0
 }
 
-// Backward to a fixed point: reads only grow, so this stops.
+// Whether the slot of event `event` in `block` is read after that event, or is
+// lent and so may be read through the borrow. `scratch` holds one row.
+@(private = "file")
+read_after :: proc(graph: ^Flow_Graph, rows: Read_Rows, block: Block_Id, event: int, scratch: []u64) -> bool {
+	events := graph.blocks[block].events[:]
+	slot := events[event].slot
+	if graph.lent[slot] {
+		return true
+	}
+	reads_at_exit(graph, rows, block, scratch)
+	reads_before(events, event + 1, scratch)
+	return reads_get(scratch, slot)
+}
+
+// Backward to a fixed point: reads only grow, so this stops. A block whose
+// reads change wakes its predecessors; the latest woken runs first, so the
+// first pass visits the blocks last to first.
 @(private = "file")
 solve_reads :: proc(graph: ^Flow_Graph, through_unwind: bool) -> Read_Rows {
 	rows := Read_Rows{words = (len(graph.tracked) + 63) / 64, through_unwind = through_unwind}
 	rows.bits = make([]u64, rows.words * len(graph.blocks), graph.alloc)
 	reads := make([]u64, rows.words, graph.alloc)
-	for changed := true; changed; {
-		changed = false
-		for index := len(graph.blocks) - 1; index >= 0; index -= 1 {
-			reads_at_exit(graph, rows, Block_Id(index), reads)
-			reads_before(graph.blocks[index].events[:], 0, reads)
-			if row := read_row(rows, Block_Id(index)); !slice.equal(reads, row) {
-				copy(row, reads)
-				changed = true
-			}
+	list := worklist_make(len(graph.blocks), graph.alloc, latest_first = true)
+	for index in 0 ..< len(graph.blocks) {
+		worklist_wake(&list, index)
+	}
+	for index in worklist_pop(&list) {
+		block := Block_Id(index)
+		reads_at_exit(graph, rows, block, reads)
+		reads_before(graph.blocks[index].events[:], 0, reads)
+		if row := read_row(rows, block); !slice.equal(reads, row) {
+			copy(row, reads)
+			worklist_wake_all(&list, graph.blocks[index].preds[:])
 		}
 	}
 	return rows

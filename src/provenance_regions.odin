@@ -901,9 +901,7 @@ prov_moved_providers :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Provider_Pat
 		source = form.operand
 	case Prov_Form_Call:
 		v, bound := form.call, prov_bound_values(form)
-		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange && len(bound) == 2 {
-			source = bound[0]
-		} else if sym != nil && sym.builtin == .Unsafe_Take && len(bound) == 1 {
+		if builtin_moves_out_first(symbol_of(graph.k.c, v.resolution.symbol), len(bound)) {
 			source = bound[0]
 		} else if boxed_payload(graph.k.c, v) != nil {
 			// A box is one position: its payload's fields are not the local's.

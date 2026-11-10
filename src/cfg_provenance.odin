@@ -1212,8 +1212,7 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	entry := empty_prov_slot(id)
 	entry.name = identifier_text(graph.k.c, sym.name)
 	entry.span = sym.span
-	append(&graph.prov_slots, entry)
-	slot := len(graph.prov_slots) - 1
+	slot := prov_add_slot(graph, entry)
 	graph.slot_by_symbol[id] = slot
 	graph.own_slots[id] = prov_one(graph, slot)
 	if symbol_outlives_bodies(sym) {
@@ -1480,8 +1479,7 @@ prov_content_slots :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> []int {
 		entry := prov_content_entry(id, path, sym.type)
 		entry.name = identifier_text(graph.k.c, sym.name)
 		entry.span = sym.span
-		append(&graph.prov_slots, entry)
-		slots[index] = len(graph.prov_slots) - 1
+		slots[index] = prov_add_slot(graph, entry)
 		if unknown_root != NO_ROOT {
 			loan := prov_new_loan(graph, unknown_root, nil, path.mutable, sym.span, carrier_path_noun(graph.k.c, path))
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slots[index], loan = loan})
@@ -1522,8 +1520,7 @@ prov_temp_content :: proc(graph: ^Flow_Graph, type: Type_Id) -> []int {
 	}
 	slots := make([]int, len(shape), graph.alloc)
 	for path, index in shape {
-		append(&graph.prov_slots, prov_content_entry(INVALID_SYMBOL, path, type))
-		slots[index] = len(graph.prov_slots) - 1
+		slots[index] = prov_add_slot(graph, prov_content_entry(INVALID_SYMBOL, path, type))
 	}
 	return slots
 }
@@ -2244,7 +2241,13 @@ prov_argument_only_read :: proc(graph: ^Flow_Graph, argument: Expr, parameter: T
 
 @(private)
 prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
-	append(&graph.prov_slots, empty_prov_slot(INVALID_SYMBOL))
+	return prov_add_slot(graph, empty_prov_slot(INVALID_SYMBOL))
+}
+
+// Adds a slot and answers its index.
+@(private = "file")
+prov_add_slot :: proc(graph: ^Flow_Graph, entry: Prov_Slot) -> int {
+	append(&graph.prov_slots, entry)
 	return len(graph.prov_slots) - 1
 }
 
@@ -2923,8 +2926,7 @@ prov_caller_slot :: proc(
 	entry.content_truncated = path.truncated
 	entry.caller_mutable = mutable
 	entry.caller_one = one
-	append(&graph.prov_slots, entry)
-	slot := len(graph.prov_slots) - 1
+	slot := prov_add_slot(graph, entry)
 	if loan not_in graph.caller_slots {
 		graph.caller_slots[loan] = make([dynamic]int, 0, 4, graph.alloc)
 	}
@@ -4230,10 +4232,8 @@ prov_declare_region :: proc(
 @(private = "file")
 prov_declare_provider :: proc(graph: ^Flow_Graph, id: Symbol_Id, initialized: bool, initializer_region: Region_Set) {
 	prov_merge_region_of(graph, id, prov_provider_region(graph, id))
-	if initialized {
-		if !region_is_empty(initializer_region) {
-			prov_merge_parent(graph, id, initializer_region)
-		}
+	if initialized && !region_is_empty(initializer_region) {
+		prov_merge_parent(graph, id, initializer_region)
 	}
 }
 
@@ -4298,8 +4298,8 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	}
 	destinations := prov_assign_destinations(graph, s, written)
 	permutes := prov_assign_permutes(graph, s)
+	clones := s.destructure.active ? s.destructure.clones : s.rhs_clones
 	for target, index in s.lhs {
-		clones := s.destructure.active ? s.destructure.clones : s.rhs_clones
 		copies := index < len(clones) && clones[index]
 		source: []Proj_Step
 		if s.destructure.active { source = {proj_field(prov_destructure_index(graph.k.c, &s.destructure, index))} }

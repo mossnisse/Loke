@@ -293,10 +293,8 @@ prov_substitute_result :: proc(
 			return prov_load_deep(graph, through, v.span, depth, route)
 		}
 		shape := prov_parameter_pointee_shape(graph, v, index)
-		for depth in 1 ..= 8 {
-			if depths & (u8(1) << u8(depth - 1)) == 0 {
-				continue
-			}
+		remaining := depths
+		for depth in next_load_depth(&remaining) {
 			// A load narrowed to some of the pointee's paths goes along only
 			// those, and so do the loads below it, the last along its own.
 			for route in result_load_routes(graph.k.c, dependencies, index, depth, shape, graph.alloc) {

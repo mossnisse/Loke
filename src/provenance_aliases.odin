@@ -171,10 +171,8 @@ prov_result_loaded_aliases :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, dep
 			append(out, ..prov_load_aliases_below(graph, loaded))
 		}
 	}
-	for depth in 1 ..= 8 {
-		if dependencies.param_loads[index] & (u8(1) << u8(depth - 1)) == 0 {
-			continue
-		}
+	loads := dependencies.param_loads[index]
+	for depth in next_load_depth(&loads) {
 		for route in result_load_routes(graph.k.c, dependencies, index, depth, shape, graph.alloc) {
 			follow(graph, held, route, depth, &out)
 		}
@@ -400,19 +398,26 @@ prov_alias_source_is_unknown :: proc(c: ^Compiler, type: Type_Id, value: Expr) -
 	return true
 }
 
+// A path at most `WRITTEN_ALIAS_DEPTH` steps long; a longer one is cut there,
+// and its last step stands for whatever lies deeper.
+@(private = "file")
+truncate_alias_path :: proc(graph: ^Flow_Graph, path: []Proj_Step) -> []Proj_Step {
+	if len(path) < WRITTEN_ALIAS_DEPTH {
+		return path
+	}
+	cut := slice.clone(path[:WRITTEN_ALIAS_DEPTH], graph.alloc)
+	cut[WRITTEN_ALIAS_DEPTH - 1].precision += {.Depth}
+	return cut
+}
+
 @(private)
 prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Written_Alias) {
 	alias := alias
 	if alias.target == 0 {
 		alias.at = nil // uncertainty has no storage path to extend
 	}
-	paths := [2]^[]Proj_Step{&alias.at, &alias.path}
-	for path in paths {
-		if len(path^) >= WRITTEN_ALIAS_DEPTH {
-			path^ = slice.clone(path^[:WRITTEN_ALIAS_DEPTH], graph.alloc)
-			path^[WRITTEN_ALIAS_DEPTH - 1].precision += {.Depth}
-		}
-	}
+	alias.at = truncate_alias_path(graph, alias.at)
+	alias.path = truncate_alias_path(graph, alias.path)
 	_, existing, inserted, _ := map_entry(&graph.written_aliases, local)
 	if inserted {
 		existing^ = make([dynamic]Written_Alias, 0, 2, graph.alloc)

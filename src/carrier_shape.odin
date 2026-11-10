@@ -599,6 +599,17 @@ next_region_param :: proc(params: ^u64) -> (index: int, ok: bool) {
 	return index, true
 }
 
+// Takes the shallowest depth out of `depths`, a parameter's `param_loads`
+// bits, to walk the depths a result loads at: bit 0 is depth 1.
+next_load_depth :: proc(depths: ^u8) -> (depth: int, ok: bool) {
+	if depths^ == 0 {
+		return 0, false
+	}
+	depth = int(bits.count_trailing_zeros(depths^)) + 1
+	depths^ &= depths^ - 1
+	return depth, true
+}
+
 // Whether the set may name a region created in this procedure.
 region_has_local :: proc(set: Region_Set) -> bool {
 	return set.locals != 0 || set.crowded
