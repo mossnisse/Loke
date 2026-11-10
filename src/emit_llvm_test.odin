@@ -765,15 +765,20 @@ fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
 	c := test_compiler("package main;")
 	defer destroy_compilation(&c)
 	e := make_emitter(&c)
-	actual := splice_prologue(&e, body, {"  %pair = alloca { i64, i64 }", "  %byte = alloca i8"})
+	entry := len("define void @first(i64 %n) {\nentry:\n")
+	spliced := strings.builder_make()
+	write_function(&e, &spliced, body, entry, {"  %pair = alloca { i64, i64 }", "  %byte = alloca i8"})
+	actual := strings.to_string(spliced)
 	testing.expectf(t, actual == expected, "unexpected prologue splice:\n%s", actual)
 
-	testing.expect(t, splice_prologue(&e, body, nil) == body)
+	unchanged := strings.builder_make()
+	write_function(&e, &unchanged, body, entry, nil)
+	testing.expect(t, strings.to_string(unchanged) == body)
 	testing.expect(t, !e.failed && c.error_count == 0, "an ordinary splice reported a failure")
 
-	// No entry block leaves the text alone but fails the module.
-	orphan := "declare void @outside()\n"
-	testing.expect(t, splice_prologue(&e, orphan, {"  %x = alloca i8"}) == orphan)
+	// No entry block fails the module.
+	orphan := strings.builder_make()
+	write_function(&e, &orphan, "declare void @outside()\n", 0, {"  %x = alloca i8"})
 	testing.expect(t, e.failed && c.error_count == 1, "a dropped prologue was not reported")
 }
 
@@ -1154,4 +1159,96 @@ main :: proc() {
 	}
 	testing.expectf(t, tables == 1, "%d globals hold `TABLE`", tables)
 	testing.expectf(t, views == 1, "%d globals hold the read-only slice literals", views)
+}
+
+// Interning shares read-only storage only: a `[]mut T` literal keeps its own
+// elements, which a write through one must not show in another. A large zero
+// is one global per type for the whole module.
+@(test)
+mutable_slice_literals_keep_their_own_storage :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+FIRST := []mut int{5, 6, 7};
+SECOND := []mut int{5, 6, 7};
+Big :: struct { cells: [1024]int }
+first :: proc() -> Big { return Big{}; }
+second :: proc() -> Big { return Big{}; }
+main :: proc() {
+    FIRST[0] = 1;
+    _ = SECOND[0] + first().cells[0] + second().cells[1];
+}
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	mutable, zeros := 0, 0
+	for line in strings.split_lines(module, context.temp_allocator) {
+		if strings.contains(line, "= private global [3 x i64]") { mutable += 1 }
+		if strings.has_prefix(line, LARGE_ZERO_PREFIX) { zeros += 1 }
+	}
+	testing.expectf(t, mutable == 2, "%d globals hold the two mutable slice literals", mutable)
+	testing.expectf(t, zeros <= 1, "%d globals hold the large zero of one type", zeros)
+}
+
+// A conditional whose arm diverges still meets in a phi that names only blocks
+// that branch to it: each incoming block exists, and its terminator names the
+// phi's block.
+@(test)
+phi_after_a_diverging_arm_names_its_predecessors :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+stop :: proc() -> ! { panic("stop"); }
+pick :: proc(c: bool, n: int) -> int {
+    a: int = n if c else stop();
+    b: int = stop() if n > 3 else n + 1;
+    return a + b;
+}
+main :: proc() { _ = pick(true, 2); }
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	start := strings.index(module, "@loke.p.pick(")
+	if !testing.expect(t, start >= 0, "`pick` was not emitted") { return }
+	body := module[start:]
+	body = body[:strings.index(body, "\n}")]
+	lines := strings.split_lines(body, context.temp_allocator)[1:]
+	// Each block's last line.
+	terminators := make(map[string]string, context.temp_allocator)
+	block, last := "entry", ""
+	for line in lines {
+		if strings.has_suffix(line, ":") && !strings.has_prefix(line, " ") {
+			terminators[block] = last
+			block = line[:len(line) - 1]
+		} else if strings.trim_space(line) != "" {
+			last = line
+		}
+	}
+	terminators[block] = last
+	phis := 0
+	block = "entry"
+	for line in lines {
+		if strings.has_suffix(line, ":") && !strings.has_prefix(line, " ") {
+			block = line[:len(line) - 1]
+			continue
+		}
+		if !strings.contains(line, " = phi ") {
+			continue
+		}
+		phis += 1
+		rest := line
+		for at := strings.index(rest, ", %"); at >= 0; at = strings.index(rest, ", %") {
+			rest = rest[at + len(", %"):]
+			incoming := rest[:strings.index_byte(rest, ' ')]
+			terminator, known := terminators[incoming]
+			testing.expectf(t, known, "a phi in `%s` names `%s`, which is no block", block, incoming)
+			reaches := strings.contains(terminator, fmt.tprintf("%%%s,", block)) || strings.has_suffix(terminator, fmt.tprintf("%%%s", block))
+			testing.expectf(t, reaches, "`%s` ends in `%s`, which does not reach the phi in `%s`", incoming, terminator, block)
+		}
+	}
+	testing.expect(t, phis > 0, "no phi joins the arms")
 }

@@ -135,7 +135,7 @@ The backend guards LLVM division, remainder, shift, overflow, and
 float-to-integer operations before their otherwise poison-producing cases; see
 [emit_llvm_expr.odin](src/emit_llvm_expr.odin),
 [emit_llvm_simd.odin](src/emit_llvm_simd.odin), and
-[emit_llvm_calls.odin](src/emit_llvm_calls.odin). That is a source review, not a
+[emit_llvm_convert.odin](src/emit_llvm_convert.odin). That is a source review, not a
 proof that every generated path is free of backend bugs.
 
 ## Compiler and build reproducibility

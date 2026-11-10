@@ -86,7 +86,8 @@ emit_witnesses :: proc(e: ^Emitter) {
 			emit_witness_thunk(e, witness, slot, index)
 		}
 	}
-	for witness in e.c.witness_order {
+	for witness, order in e.c.witness_order {
+		debug_mark_witness(e, order)
 		fmt.sbprintf(&e.b, "%s = private unnamed_addr constant [%d x ptr] [", e.witness_names[witness], len(witness.slots))
 		for _, index in witness.slots {
 			if index > 0 {

@@ -121,8 +121,7 @@ begin_pack_release :: proc(e: ^Emitter, element: Type_Id, record: string) -> Def
 @(private)
 emit_pack_release :: proc(e: ^Emitter, element: Type_Id, record: string) {
 	block := load(e, "ptr", gep_field(e, PACK_RELEASE_TYPE, record, 1))
-	taken := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", taken, block)
+	taken := not_null(e, block)
 	release, done := new_label(e, "pack.release"), new_label(e, "pack.done")
 	branch_if(e, taken, release, done)
 	place_label(e, release)
@@ -274,9 +273,8 @@ pop_temporaries :: proc(e: ^Emitter) {
 	// Runtime-sized storage, such as a variadic pack's, ends here too, so a loop
 	// does not keep every iteration's. The slot is null on paths that took none.
 	if saved := pop(&e.stack_saves); saved != "" && !e.terminated {
-		pointer, taken := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", pointer, saved)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", taken, pointer)
+		pointer := load(e, "ptr", saved)
+		taken := not_null(e, pointer)
 		restore, done := new_label(e, "stack.restore"), new_label(e, "stack.done")
 		branch_if(e, taken, restore, done)
 		place_label(e, restore)
@@ -375,11 +373,9 @@ save_stack_for_expression :: proc(e: ^Emitter) {
 		alloca_named(e, slot^, "ptr")
 		append(&e.prologue, fmt.aprintf("  store ptr null, ptr %s", slot^))
 	}
-	now, held, empty, kept := temp(e), temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call ptr @llvm.stacksave.p0()", now)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", held, slot^)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", empty, held)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", kept, empty, now, held)
+	now := emit_value(e, "call ptr @llvm.stacksave.p0()")
+	held := load(e, "ptr", slot^)
+	kept := emit_value(e, "select i1 %s, ptr %s, ptr %s", is_null(e, held), now, held)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", kept, slot^)
 }
 
@@ -539,9 +535,7 @@ run_cleanups :: proc(e: ^Emitter, down_to: int, failed := "") {
 			}
 			flag := load(e, "i1", entry.flag)
 			if entry.on_failure {
-				both := temp(e)
-				fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", both, flag, failed)
-				flag = both
+				flag = combine_and(e, flag, failed)
 			}
 			run := new_label(e, "defer.run")
 			skip := new_label(e, "defer.skip")

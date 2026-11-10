@@ -19,6 +19,8 @@ VARIABLE_MARKER :: ";dbg.var "
 OPEN_MARKER :: ";dbg.open"
 @(private = "file")
 CLOSE_MARKER :: ";dbg.close"
+@(private = "file")
+WITNESS_MARKER :: ";dbg.witness "
 
 @(private)
 debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
@@ -48,6 +50,14 @@ debug_mark_end :: proc(e: ^Emitter, span: Span) {
 debug_mark_scope :: proc(e: ^Emitter, open: bool) {
 	if e.c.debug_info {
 		fmt.sbprintln(&e.b, open ? OPEN_MARKER : CLOSE_MARKER)
+	}
+}
+
+// The witness table written next is `witness_order[index]`.
+@(private)
+debug_mark_witness :: proc(e: ^Emitter, index: int) {
+	if e.c.debug_info {
+		fmt.sbprintfln(&e.b, "%s%d", WITNESS_MARKER, index)
 	}
 }
 
@@ -109,8 +119,8 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	strings.write_string(&d.natvis, NATVIS_HEADER)
 	out: strings.Builder
 	current: Maybe(Debug_Proc)
-	// `emit_witnesses` writes the tables in `witness_order`.
-	witnesses := 0
+	// The witness whose table the next line defines, or -1.
+	witness := -1
 	rest := module
 	for line in strings.split_lines_iterator(&rest) {
 		p, inside := &current.?
@@ -152,11 +162,14 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			if inside {
 				debug_declare(&d, &out, p, line[len(VARIABLE_MARKER):])
 			}
+		case strings.has_prefix(line, WITNESS_MARKER):
+			index, _ := strconv.parse_uint(line[len(WITNESS_MARKER):])
+			witness = int(index)
 		case inside && strings.has_prefix(line, "  "):
-			fmt.sbprintfln(&out, "%s, !dbg !%d", line, p.location)
-		case strings.has_prefix(line, "@loke.w."):
-			fmt.sbprintfln(&out, "%s, !dbg !%d", line, debug_witness(&d, witnesses))
-			witnesses += 1
+			write_with_dbg(&out, line, p.location)
+		case witness >= 0:
+			write_with_dbg(&out, line, debug_witness(&d, witness))
+			witness = -1
 		case:
 			if line == "}" {
 				current = nil
@@ -167,6 +180,16 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 
 	debug_module_trailer(&d, &out)
 	return strings.to_string(out)
+}
+
+// `line` with its `!dbg` attachment. Every instruction of a `-g` module passes
+// through here, so this writes without `fmt`'s format parsing.
+@(private = "file")
+write_with_dbg :: proc(out: ^strings.Builder, line: string, metadata: int) {
+	strings.write_string(out, line)
+	strings.write_string(out, ", !dbg !")
+	strings.write_int(out, metadata)
+	strings.write_byte(out, '\n')
 }
 
 // What follows the module's code: the natvis rules, which the compiler keeps, the

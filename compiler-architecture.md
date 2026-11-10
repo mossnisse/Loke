@@ -1074,21 +1074,26 @@ be file-private. Paths below are relative to `src/`.
 | File | Responsibility |
 | --- | --- |
 | `emission_contract.odin` | Read-only validation of the checked-program boundary. |
-| `emit_llvm.odin` | Module orchestration, emitter state, procedures, and instruction plumbing. |
+| `emit_llvm.odin` | Module orchestration, emitter state, procedures, instruction plumbing, and memoised private thunks. |
 | `emit_llvm_names.odin` | LLVM symbol names: the naming pass, mangling, escaping, and linkage. |
 | `emit_llvm_entry.odin` | Program entry: `wmain` for an executable and a test build, an object's CPU check, and the provider initializer. |
 | `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's guard, which attaches the thread and sets the floating-point environment, and `-debug`'s check after a foreign call. |
 | `emit_llvm_union.odin` | Union storage, construction, widening, and tag and payload reads. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
-| `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, text operations, `or_else`, and `or_return`. |
-| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and the Loke calling convention. |
+| `emit_llvm_expr.odin` | Places, scalar expressions, branching expressions with `or_else` and `or_return`, and unsafe operations. |
+| `emit_llvm_const.odin` | Constants: their LLVM spelling, byte images, and the private globals that hold them. |
+| `emit_llvm_equality.odin` | Comparison, structural equality and ordering, and the key hashing that stays coherent with `==`. |
+| `emit_llvm_text.odin` | Pointer-and-length values, text operations, and the validating text conversions. |
+| `emit_llvm_calls.odin` | Resolved calls, argument packing, allocation built-ins, and the Loke calling convention. |
+| `emit_llvm_convert.odin` | Conversions and their checks, and union construction and narrowing written as calls. |
 | `emit_llvm_erased.odin` | Erased views: `dyn` values and slot calls, witness tables and their thunks, and the forwarding bodies of `dyn I` and `dyn proc`. |
 | `emit_llvm_math.odin` | The `core:math` bit and floating-point instruction built-ins. |
 | `emit_llvm_cleanup.odin` | Cleanup registration: scopes, full-expression frames, and held values. |
 | `emit_llvm_unwind.odin` | Panic replay: a procedure's registration state and its generated thunk. |
 | `emit_llvm_lifecycle.odin` | Value clones and drops, and the generated `try_clone` and `clone` members. |
-| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, key hashing, typed-comparator sort adapters, the `[]mut T` members, and the contributed `mem.Arena`/`mem.Scratch` bodies. |
-| `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
+| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, typed-comparator sort adapters, and the `[]mut T` members. |
+| `emit_llvm_provider.odin` | The contributed `mem.Arena`/`mem.Scratch` bodies. |
+| `emit_llvm_iteration.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_box.odin` | Box allocation layout, construction, unboxing, and recursive drop/clone thunks. |
 | `emit_llvm_runtime.odin` | Runtime declarations, static-storage globals, runtime failures, reflection metadata, and the dispatch of compiler-contributed procedures. |

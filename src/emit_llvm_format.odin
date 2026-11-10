@@ -3,6 +3,7 @@
 package lokec
 
 import "core:fmt"
+import "core:strings"
 
 // standard-library.md "Printed forms": each `typeid`'s name, so a `typeid`
 // prints without a `base:runtime` import.
@@ -393,8 +394,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
 	view := gep_at(e, STRING_VIEW_TYPE, generated_name(e, TYPE_NAMES), typeid_index(e, id))
 	data, length := load_pair(e, STRING_VIEW_TYPE, view, VIEW_DATA, VIEW_LEN)
-	missing := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", missing, length)
+	missing := icmp_zero(e, "i64", length)
 	numeric, named, done := new_label(e, "fmt.typeid.number"), new_label(e, "fmt.typeid.named"), new_label(e, "fmt.typeid.done")
 	branch_if(e, missing, numeric, named)
 
@@ -407,31 +407,38 @@ emit_format_type_name :: proc(e: ^Emitter, id: string) {
 	place_label(e, done)
 }
 
-// Enum members need not be contiguous, so this is a chain of comparisons.
+// One `switch` on the value, whose members need not be contiguous but are
+// distinct; a value no member has prints as its number.
 @(private = "file")
 emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
 	llvm := llvm_type(e, under)
 	value := load(e, llvm, address)
-	done := new_label(e, "fmt.enum.done")
+	done, unnamed := new_label(e, "fmt.enum.done"), new_label(e, "fmt.enum.number")
+	Hit :: struct {
+		label, name: string,
+	}
+	hits := make([dynamic]Hit, context.temp_allocator)
+	cases := strings.builder_make(context.temp_allocator)
 	for field in info.fields {
 		sym := symbol_of(e.c, field)
 		if sym == nil || sym.const_value.kind != .Integer {
 			continue
 		}
-		matched := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = icmp eq %s %s, %s",
-			matched, llvm, value, bi_text(e.c, sym.const_value.integer),
-		)
-		hit, next := new_label(e, "fmt.enum.hit"), new_label(e, "fmt.enum.next")
-		branch_if(e, matched, hit, next)
-		place_label(e, hit)
-		emit_format_literal(e, identifier_text(e.c, sym.name))
-		branch(e, done)
-		place_label(e, next)
+		hit := new_label(e, "fmt.enum.hit")
+		fmt.sbprintf(&cases, " %s %s, label %%%s", llvm, bi_text(e.c, sym.const_value.integer), hit)
+		append(&hits, Hit{hit, identifier_text(e.c, sym.name)})
 	}
-	// An unnamed value prints as its number.
+	if !e.terminated {
+		fmt.sbprintfln(&e.b, "  switch %s %s, label %%%s [%s ]", llvm, value, unnamed, strings.to_string(cases))
+		e.terminated = true
+	}
+	for hit in hits {
+		place_label(e, hit.label)
+		emit_format_literal(e, hit.name)
+		branch(e, done)
+	}
+	place_label(e, unnamed)
 	emit_format_integer(e, under, value)
 	place_label(e, done)
 }
@@ -450,8 +457,7 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string)
 // `, ` before every element but the first, whose `index` is zero.
 @(private = "file")
 emit_format_separator :: proc(e: ^Emitter, index: string) {
-	first := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", first, index)
+	first := icmp_zero(e, "i64", index)
 	separator, element := new_label(e, "fmt.sep"), new_label(e, "fmt.element")
 	branch_if(e, first, element, separator)
 	place_label(e, separator)
@@ -467,17 +473,13 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	table := load(e, "ptr", address)
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-	key_out := alloca(e, "ptr")
-	value_out := alloca(e, "ptr")
 	emit_format_literal(e, "[")
 
 	head, body, done := new_label(e, "fmt.map.head"), new_label(e, "fmt.map.body"), new_label(e, "fmt.map.done")
 	place_label(e, head)
 	current := load(e, "i64", cursor)
-	next := emit_map_scan(e, table, ops, current, key_out, value_out, cursor)
-	more := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", more, next)
-	branch_if(e, more, body, done)
+	finished, key_out, value_out := map_scan_step(e, table, ops, current, cursor)
+	branch_if(e, finished, done, body)
 
 	place_label(e, body)
 	emit_format_separator(e, current)
@@ -519,20 +521,12 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 			emit_format_literal(e, " = ")
 		}
 		slot := gep_field(e, llvm_type(e, under), address, index)
-		// A formatter reads its value at the type's alignment, which a packed
-		// field may not have (design.md "@(packed)"), so it reads an aligned copy.
+		// A formatter reads its value at the type's alignment.
 		record_field_align(e, under, address, slot, sym.type)
-		if _, unaligned := e.place_align[slot]; unaligned {
-			aligned := alloca(e, llvm_type(e, sym.type))
-			copy_bytes(e, aligned, slot, type_size(e.c, sym.type))
-			slot = aligned
-		}
+		slot = aligned_copy_if_needed(e, sym.type, slot)
 		// Only the live prefix of an `@(initialized)` array holds values.
 		if counter := symbol_of(e.c, sym.initialized_by); counter != nil {
-			counter_slot := gep_field(e, llvm_type(e, under), address, int(counter.index))
-			record_field_align(e, under, address, counter_slot, counter.type)
-			count := widen_to_i64(e, load_place(e, counter.type, counter_slot), counter.type)
-			emit_prefix_count_check(e, count, sym.type)
+			count := emit_prefix_count(e, under, address, counter, sym.type)
 			element := underlying_info(e.c, sym.type).element
 			emit_format_sequence(e, element, slot, count)
 			continue

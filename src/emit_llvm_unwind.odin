@@ -55,6 +55,27 @@ Unwind_State :: struct {
 	slot_by_defer:  map[int]int,
 	// True while the thunk is emitted, so replayed code registers nothing.
 	replaying: bool,
+	// While replaying, each name the thunk gave a symbol and what the symbol was
+	// named before, restored once the thunk is written (`rebind_name`).
+	shadowed: [dynamic]Shadowed_Name,
+}
+
+@(private)
+Shadowed_Name :: struct {
+	symbol: Symbol_Id,
+	name:   string,
+	bound:  bool,
+}
+
+// Names `symbol` `name`; in the thunk, only until the thunk is written, since the
+// name is one of the thunk's own.
+@(private = "file")
+rebind_name :: proc(e: ^Emitter, symbol: Symbol_Id, name: string) {
+	if e.unwind.replaying {
+		previous, bound := e.names[symbol]
+		append(&e.unwind.shadowed, Shadowed_Name{symbol, previous, bound})
+	}
+	e.names[symbol] = name
 }
 
 // Under `-panic=abort` nothing is registered and no thunk is generated.
@@ -181,7 +202,7 @@ unwind_note_body_line :: proc(e: ^Emitter, start, binding: int) {
 // nothing is registered. The prologue defines the names of those it does.
 @(private)
 bind_local :: proc(e: ^Emitter, symbol_id: Symbol_Id, name: string) {
-	e.names[symbol_id] = name
+	rebind_name(e, symbol_id, name)
 	debug_mark_variable(e, symbol_id, name)
 	if symbol_id == INVALID_SYMBOL || !unwind_enabled(e) {
 		return
@@ -371,16 +392,16 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	if len(u.actions) == 0 {
 		return
 	}
-	// Keeps the parent's function state, whose actions it replays, but starts its
-	// output empty. Runs after the parent's body and before its prologue.
+	// A function state of its own, which keeps only the parent's actions and the
+	// CPU copy being written, with its output empty. Runs after the parent's body
+	// and before its prologue.
 	parent, parent_body := e.fn, e.b
 	e.b = strings.builder_make()
-	e.terminated = false
-	e.cleanups = make([dynamic][dynamic]Deferred)
-	e.temporaries = make([dynamic][dynamic]Deferred)
-	e.prologue = nil
-	e.large_taken, e.large_marks, e.large_free = nil, nil, nil
-	e.stack_saves = nil
+	e.fn = Function_State {
+		unwind   = parent.unwind,
+		copying  = parent.copying,
+		copy_cpu = parent.copy_cpu,
+	}
 	u.replaying = true
 
 	open_function(e, "define private void %s(ptr %%ctx)%s", u.thunk, copy_attributes(e))
@@ -395,7 +416,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	for binding in u.env_bindings {
 		value := temp(e)
 		append(&values, value)
-		e.names[binding.symbol] = value
+		rebind_name(e, binding.symbol, value)
 	}
 
 	// The `%deferN` flags are parent allocas the thunk cannot reach. Each gets a
@@ -435,9 +456,19 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 			fmt.sbprintfln(&loads, "  %s = load ptr, ptr %s", values[index], address)
 		}
 	}
-	text := strings.concatenate({replay[:loads_at], strings.to_string(loads), replay[loads_at:]})
+	text := strings.builder_make()
+	write_function(e, &text, replay[:loads_at], e.entry, e.prologue[:])
+	strings.write_string(&text, strings.to_string(loads))
+	strings.write_string(&text, replay[loads_at:])
+	append(&e.pending_thunks, strings.to_string(text))
 
-	append(&e.pending_thunks, splice_prologue(e, text, e.prologue[:]))
+	#reverse for shadowed in u.shadowed {
+		if shadowed.bound {
+			e.names[shadowed.symbol] = shadowed.name
+		} else {
+			delete_key(&e.names, shadowed.symbol)
+		}
+	}
 	e.fn, e.b = parent, parent_body
 }
 

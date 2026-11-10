@@ -75,7 +75,6 @@ emit_simd_checked :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, l
 	signed := type_signed(e.c, info.element)
 	key := checked_intrinsic(op, signed, fmt.aprintf("v%d%s", info.count, simd_lane_llvm_type(e, info)))
 	flag := fmt.aprintf("<%d x i1>", info.count)
-	declare_intrinsic(e, key, fmt.aprintf("{{ %s, %s }}", llvm, flag), fmt.aprintf("%s, %s", llvm, llvm))
 	wrapped, overflowed := emit_overflow_call(e, key, llvm, flag, left, right)
 	panic_if(e, simd_any_lane(e, info, overflowed), "int.overflow", overflow_message(signed))
 	return wrapped

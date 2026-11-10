@@ -128,9 +128,8 @@ emit_test_entry :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, -1", every, selected)
 	failed := new_label(e, "test.failed")
 	for runner, index in runners {
-		picked, run := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", picked, selected, index)
-		fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", run, every, picked)
+		picked := emit_value(e, "icmp eq i64 %s, %d", selected, index)
+		run := combine_or(e, every, picked)
 		body, next := new_label(e, "test.run"), new_label(e, "test.next")
 		branch_if(e, run, body, next)
 		place_label(e, body)
@@ -138,10 +137,8 @@ emit_test_entry :: proc(e: ^Emitter) {
 			fmt.sbprintfln(&e.b, "  call void %s()%s", runner, entry_call_attributes(e))
 			branch(e, next)
 		} else {
-			status, bad := temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = call i32 %s()", status, runner)
-			fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", bad, status)
-			branch_if(e, bad, failed, next)
+			status := emit_value(e, "call i32 %s()", runner)
+			branch_if(e, icmp_zero(e, "i32", status, equal = false), failed, next)
 		}
 		place_label(e, next)
 	}
@@ -189,9 +186,8 @@ emit_program_init_body :: proc(e: ^Emitter, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	open_function(e, "define internal void %s() noinline", name)
-	go, run := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_provider_init_begin()", go)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", run, go)
+	go := emit_value(e, "call i32 @loke_rt_v1_provider_init_begin()")
+	run := icmp_zero(e, "i32", go, equal = false)
 	body, done := new_label(e, "init.run"), new_label(e, "init.done")
 	branch_if(e, run, body, done)
 	place_label(e, body)

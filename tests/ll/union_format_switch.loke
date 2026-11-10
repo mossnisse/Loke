@@ -2,12 +2,16 @@ package main;
 
 // Formatting a union dispatches on its tag with one `switch`, as every other
 // union dispatch does (`union_dispatch_is_one_switch` checks those); it never
-// tests the variants one at a time.
+// tests the variants one at a time. An enum's value is one `switch` too, though
+// its members are not contiguous.
 
 import "core:fmt";
 
 Shape :: union { none, circle: int, label: string }
 
+Level :: enum { low = 1, high = 10 }
+
 main :: proc() {
 	fmt.println(Shape.circle(2));
+	fmt.println(Level.high);
 }

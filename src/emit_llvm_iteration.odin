@@ -1,4 +1,4 @@
-// Iteration lowering and synthesized iterator bodies.
+// Iteration lowering, synthesized iterator bodies, and iteration adapters.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
@@ -32,11 +32,8 @@ emit_range_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	above := emit_compare(e, .Lt_Eq, element, low, x)
 	below := emit_compare(e, .Lt, element, x, high)
 	at := emit_compare(e, .Eq_Eq, element, x, high)
-	at_closed, within, out := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", at_closed, closed, at)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", within, below, at_closed)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, above, within)
-	return out
+	within := combine_or(e, below, combine_and(e, closed, at))
+	return combine_and(e, above, within)
 }
 
 @(private)
@@ -308,9 +305,7 @@ emit_decode_rune :: proc(e: ^Emitter, data, length, offset, decoded: string) -> 
 		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
 		used, data, length, offset, decoded,
 	)
-	stalled := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", stalled, used)
-	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
+	panic_if(e, icmp_zero(e, "i64", used), "text.invalid", "invalid UTF-8 in a string")
 	return used
 }
 
@@ -341,19 +336,28 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
 	current := load(e, "i64", offset)
-	at_end := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp sge i64 %s, %s", at_end, current, length)
-	branch_if(e, at_end, loop.done, loop.body)
+	branch_if(e, text_at_end(e, current, length), loop.done, loop.body)
 
 	begin_step(e, loop)
 	used := emit_decode_rune(e, data, length, current, decoded)
 	bind_foreach_element(e, s, loop, Foreach_Field{type = TYPE_RUNE, address = decoded})
 	finish_step(e, s, loop)
 
-	advanced := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, current, used)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, offset)
+	advance_text(e, offset, current, used)
 	close_loop(e, loop)
+}
+
+// Whether a text walk at byte `offset` has passed the text's last code point.
+@(private = "file")
+text_at_end :: proc(e: ^Emitter, offset, length: string) -> string {
+	return emit_value(e, "icmp sge i64 %s, %s", offset, length)
+}
+
+// Moves a text walk at `offset`, kept in `slot`, past the `used` bytes of the
+// code point there.
+@(private = "file")
+advance_text :: proc(e: ^Emitter, slot, offset, used: string) {
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_value(e, "add i64 %s, %s", offset, used), slot)
 }
 
 // A slot walk over a map in unspecified order (design.md "Maps"), with the
@@ -365,14 +369,10 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	header := load_place(e, container, spill_foreach_iterable(e, s.iterable))
 	table := extract(e, llvm_type(e, container), header, CONTAINER_STORAGE)
 	cursor := new_counter(e)
-	key_out := alloca(e, "ptr")
-	value_out := alloca(e, "ptr")
 
 	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
-	next := emit_map_scan(e, table, ops, load(e, "i64", cursor), key_out, value_out, cursor)
-	finished := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
+	finished, key_out, value_out := map_scan_step(e, table, ops, load(e, "i64", cursor), cursor)
 	branch_if(e, finished, loop.done, loop.body)
 
 	begin_step(e, loop)
@@ -435,9 +435,8 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	// A closed range ending at the type's maximum cannot represent high+1, so
 	// it finishes right after yielding high.
-	at_high, finished := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", at_high, element, current, high)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", finished, closed, at_high)
+	at_high := emit_value(e, "icmp eq %s %s, %s", element, current, high)
+	finished := combine_and(e, closed, at_high)
 	step := new_label(e, "foreach.step")
 	branch_if(e, finished, loop.done, step)
 	place_label(e, step)
@@ -445,16 +444,17 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	close_loop(e, loop)
 }
 
-// The next occupied slot after `current`, 0 at the end, kept in `cursor`.
+// One step of a map's slot walk from `current`, which keeps the next position
+// in `cursor`: whether the walk is finished, and the slots that then hold the
+// addresses of the key and the value it found.
 @(private)
-emit_map_scan :: proc(e: ^Emitter, table, ops, current, key_out, value_out, cursor: string) -> string {
-	next := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
-		next, table, ops, current, key_out, value_out,
+map_scan_step :: proc(e: ^Emitter, table, ops, current, cursor: string) -> (finished, key_out, value_out: string) {
+	key_out, value_out = alloca(e, "ptr"), alloca(e, "ptr")
+	next := emit_value(
+		e, "call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)", table, ops, current, key_out, value_out,
 	)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
-	return next
+	return icmp_zero(e, "i64", next), key_out, value_out
 }
 
 @(private)
@@ -572,10 +572,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	loop := open_loop(e, s.indexed)
 	place_label(e, loop.head)
-	option := symbol_of(e.c, s.next_symbol).result
-	produced := emit_call_result(e, option, callee_name(e, s.next_symbol), fmt.aprintf("ptr %s", iterator))
-	ok := emit_union_tag_is(e, option, produced, union_index_of(e.c, option, "some"))
-	slot := emit_union_spill(e, option, produced)
+	option, ok, slot := emit_next_call(e, s.next_symbol, iterator)
 	branch_if(e, ok, loop.body, loop.done)
 
 	begin_step(e, loop)
@@ -584,6 +581,17 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	bind_foreach_element(e, s, loop, element)
 	finish_step(e, s, loop)
 	close_loop(e, loop)
+}
+
+// Calls the `next` member at `next` on the iterator at `iterator`: the option it
+// returns, whether that holds a value, and the option in memory, where its
+// payload is read.
+@(private)
+emit_next_call :: proc(e: ^Emitter, next: Symbol_Id, iterator: string) -> (option: Type_Id, some, slot: string) {
+	option = symbol_of(e.c, next).result
+	produced := emit_call_result(e, option, callee_name(e, next), fmt.aprintf("ptr %s", iterator))
+	some = emit_union_tag_is(e, option, produced, union_index_of(e.c, option, "some"))
+	return option, some, emit_union_spill(e, option, produced)
 }
 
 // What `next` hands over: an owned `Element` or part is the value, which the step
@@ -739,13 +747,11 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	// Yielding a closed range's high clears `closed` instead of stepping past it.
 	place_label(e, yield_label)
-	stepped, at_high, last := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add %s %s, 1", stepped, element, current)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", at_high, element, current, high)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", last, closed, at_high)
-	next_current, next_closed := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", next_current, last, element, current, element, stepped)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 false, i1 %s", next_closed, last, closed)
+	stepped := emit_value(e, "add %s %s, 1", element, current)
+	at_high := emit_value(e, "icmp eq %s %s, %s", element, current, high)
+	last := combine_and(e, closed, at_high)
+	next_current := emit_value(e, "select i1 %s, %s %s, %s %s", last, element, current, element, stepped)
+	next_closed := emit_value(e, "select i1 %s, i1 false, i1 %s", last, closed)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, next_current, current_ptr)
 	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", next_closed, closed_ptr)
 	emit_ret(e, option, emit_option_some(e, option, current))
@@ -823,11 +829,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	table := load(e, "ptr", table_ptr)
 	cursor_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_CURSOR)
 	cursor := load(e, "i64", cursor_ptr)
-	key_out := alloca(e, "ptr")
-	value_out := alloca(e, "ptr")
-	next := emit_map_scan(e, table, ops, cursor, key_out, value_out, cursor_ptr)
-	finished := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
+	finished, key_out, value_out := map_scan_step(e, table, ops, cursor, cursor_ptr)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
 	branch_if(e, finished, stop_label, yield_label)
 
@@ -862,17 +864,14 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	data, length := ptr_len_parts(e, STRING_VIEW_TYPE, view)
 	offset_ptr := gep_field(e, iterator, "%arg0", ITER_TEXT_OFFSET)
 	offset := load(e, "i64", offset_ptr)
-	at_end := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp sge i64 %s, %s", at_end, offset, length)
+	at_end := text_at_end(e, offset, length)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
 	branch_if(e, at_end, stop_label, yield_label)
 
 	place_label(e, yield_label)
 	decoded := alloca(e, "i32")
 	used := emit_decode_rune(e, data, length, offset, decoded)
-	advanced := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, offset, used)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, offset_ptr)
+	advance_text(e, offset_ptr, offset, used)
 	value := load(e, "i32", decoded)
 	if symbol.synth == .Rune_Offsets_Next {
 		record := llvm_type(e, yielded)
@@ -882,4 +881,89 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	emit_ret(e, option, emit_option_some(e, option, value))
 
 	close_synth_next(e, option, stop_label)
+}
+
+// ------------------------------------------------------ iteration adapters --
+
+// The bodies the compiler synthesizes for iteration adapters: a view's
+// construction and `iter`, and the `next` of the iterators `indexed()` and
+// `copied()` wrap. design.md "Iteration adapters".
+emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	source := symbol.params[0]
+	info := type_of(e.c, source)
+	open_synth_receiver(e, name, symbol.result)
+	#partial switch symbol.synth {
+	case .Adapter_View:
+		held := "%arg0"
+		if type_of(e.c, symbol.result).adapter_by_value {
+			held = load_place(e, source, "%arg0")
+			if emit_lifecycle(e, source).managed { held = emit_clone_value(e, source, held) }
+		}
+		emit_ret(e, symbol.result, build_record(e, symbol.result, held))
+	case .Adapter_Iter:
+		address := gep_field(e, llvm_type(e, source), "%arg0", ADAPTER_SOURCE)
+		if !info.adapter_by_value { address = load(e, "ptr", address) }
+		target := symbol_of(e.c, symbol.iteration_target)
+		// A value `self` takes the source itself.
+		mode := symbol_param_mode(e.c, target, 0)
+		source_arg := param_mode_is_pointer(mode) ? address : load_place(e, target.params[0], address)
+		arguments := fmt.aprintf("%s %s", param_llvm(e, target.params[0], mode), source_arg)
+		value := emit_call_result(e, target.result, symbol_name(e, symbol.iteration_target), arguments)
+		#partial switch info.adapter_kind {
+		case .Indexed: value = build_record(e, symbol.result, value, "0")
+		case .Copied:  value = build_record(e, symbol.result, value)
+		}
+		emit_ret(e, symbol.result, value)
+	case .Iterator_Copy:
+		value := load_place(e, symbol.result, "%arg0")
+		if emit_lifecycle(e, source).managed { value = emit_clone_value(e, source, value) }
+		emit_ret(e, symbol.result, value)
+	case .Indexed_Next, .Copied_Next:
+		iterator := gep_field(e, llvm_type(e, source), "%arg0", ITER_ADAPTER_INNER)
+		inner_option, ok, slot := emit_next_call(e, symbol.iteration_target, iterator)
+		yielded, stopped := new_label(e, "adapter.yield"), new_label(e, "adapter.stop")
+		branch_if(e, ok, yielded, stopped)
+		place_label(e, yielded)
+		handed := option_payload(e.c, inner_option)
+		payload := emit_union_payload(e, inner_option, handed, slot)
+		item := option_payload(e.c, symbol.result)
+		wrapped: string
+		if symbol.synth == .Indexed_Next {
+			counter := gep_field(e, llvm_type(e, source), "%arg0", ITER_ADAPTER_INDEX)
+			index := load(e, "i64", counter)
+			step_counter(e, counter, "i64")
+			wrapped = build_record(e, item, payload, index)
+		} else {
+			wrapped = own_yielded(e, payload, handed, item)
+		}
+		emit_ret(e, symbol.result, emit_option_some(e, symbol.result, wrapped))
+		place_label(e, stopped)
+		emit_ret(e, symbol.result, "zeroinitializer")
+	}
+	fmt.sbprintln(&e.b, "}")
+}
+
+// Copy borrowed leaves and preserve already-owned ones.
+@(private = "file")
+own_yielded :: proc(e: ^Emitter, payload: string, handed, wanted: Type_Id) -> string {
+	if handed == wanted {
+		return payload
+	}
+	if type_is_pointer(e.c, handed) {
+		value := load_place(e, wanted, payload)
+		if emit_lifecycle(e, wanted).managed {
+			return emit_clone_value(e, wanted, value)
+		}
+		return value
+	}
+	held := underlying_info(e.c, handed)
+	target := underlying_info(e.c, wanted)
+	parts := make([]string, len(target.fields))
+	for id, index in target.fields {
+		part := record_part(e, handed, payload, index)
+		parts[index] = own_yielded(e, part, symbol_of(e.c, held.fields[index]).type, symbol_of(e.c, id).type)
+	}
+	return build_record(e, wanted, ..parts)
 }

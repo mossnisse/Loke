@@ -32,11 +32,8 @@ emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (bloc
 // As `emit_rt_alloc`, for a size known only at run time.
 @(private)
 emit_rt_alloc_sized :: proc(e: ^Emitter, allocator, size: string, align: u64) -> (block, failed: string) {
-	block = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %s, i64 %d)", block, allocator, size, align)
-	failed = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, block)
-	return
+	block = emit_value(e, "call ptr @loke_rt_v1_alloc(ptr %s, i64 %s, i64 %d)", allocator, size, align)
+	return block, is_null(e, block)
 }
 
 @(private)
@@ -150,16 +147,6 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 		declare_runtime_entry(e, {"void", "loke_rt_v1_require_cpu", "i32", ""})
 	}
 	declare_runtime(e, ENTRY_DECLARATIONS[:])
-	for bits in ([]int{8, 16, 32, 64, 128}) {
-		for operation in ([]string{"sadd", "ssub", "smul", "uadd", "usub", "umul"}) {
-			declare_runtime_entry(e, {
-				fmt.tprintf("{{ i%d, i1 }}", bits),
-				fmt.tprintf("llvm.%s.with.overflow.i%d", operation, bits),
-				fmt.tprintf("i%d, i%d", bits, bits),
-				"",
-			})
-		}
-	}
 	declare_runtime(e, FORMAT_DECLARATIONS[:])
 	declare_runtime_entry(e, WRITE_STD_DECLARATION)
 	emit_carrier_types(e)
@@ -363,7 +350,7 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 emit_var_global :: proc(e: ^Emitter, name: string, sym: ^Symbol, d: ^Decl, position: int) {
 	value_type, value, align := llvm_type(e, sym.type), "", ""
 	if initial, constant := binding_initial_const(e.c, d, position); constant {
-		value_type, value, align = global_initializer(e, initial, sym.type)
+		value_type, value, align, _ = global_initializer(e, initial, sym.type)
 	} else {
 		zero, ok := llvm_zero(e, sym.type)
 		if !ok {
@@ -382,7 +369,7 @@ emit_materialized_constants :: proc(e: ^Emitter) {
 		return
 	}
 	for entry in e.c.materialized_order {
-		value_type, value, align := global_initializer(e, entry.value, entry.type)
+		value_type, value, align, _ := global_initializer(e, entry.value, entry.type)
 		fmt.sbprintfln(&e.b, "%s = private constant %s %s%s", entry.name, value_type, value, align)
 	}
 	fmt.sbprintln(&e.b, "")
@@ -454,6 +441,14 @@ emit_dead_move_only_copy :: proc(e: ^Emitter, type: Type_Id) -> bool {
 		&e.b, "  call void @loke_rt_v1_abort(ptr %s)", text_literal_global(e, "a move-only value was copied"),
 	)
 	return true
+}
+
+// Panics with `message` unless the i64 `index` is below `count`, or with
+// `inclusive`, at most `count`. Unsigned, so a negative index fails the same
+// comparison as an oversized one.
+@(private)
+emit_bounds_check :: proc(e: ^Emitter, index, count, message: string, inclusive := false) {
+	panic_if(e, emit_value(e, "icmp %s i64 %s, %s", inclusive ? "ugt" : "uge", index, count), "bounds", message)
 }
 
 @(private)

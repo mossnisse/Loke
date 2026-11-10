@@ -42,9 +42,6 @@ Emitter :: struct {
 	propagated_errors: map[^Expr_Postfix]Mapper_Error,
 	// Under `-g`, the span the last location marker named.
 	debug_span:   Span,
-	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
-	// below the pointee's natural one.
-	place_align:  map[string]u64,
 	// The function being written; saved and cleared around a nested thunk.
 	using fn: Function_State,
 	// Thunks and panic-cleanup replays generated mid-body, flushed at the end of
@@ -57,10 +54,13 @@ Emitter :: struct {
 	// Insertion members also called with an owned element, which get a
 	// consuming body besides the cloning one.
 	consuming_ops: map[Symbol_Id]bool,
-	container_thunks: map[string]bool,
+	// The memoised private functions written so far (`memo_thunk`), by name.
+	memo_thunks: map[string]bool,
 	literals: map[string]string,
 	// Private constant globals by type and initializer (`private_constant`).
 	constants: map[string]string,
+	// One zeroed global per large type that has a zero constant (`large_zero`).
+	large_zeros: map[Type_Id]string,
 	// Every function or global this module declares, by LLVM name with its `@`:
 	// runtime entries (`declare_runtime_entry`), foreign bindings
 	// (`emit_foreign_declarations`), and intrinsics on first use
@@ -159,8 +159,9 @@ Function_Emission :: struct {
 	saved:  Function_State,
 }
 
-// The per-function half of `Emitter`. `emit_unwind_thunk` swaps only the fields
-// it owns, so a field a replay must not share needs adding there too.
+// The per-function half of `Emitter`. `emit_unwind_thunk` starts its replay from
+// an empty one and copies in the few fields it shares, so a field a replay must
+// share needs adding there too.
 @(private)
 Function_State :: struct {
 	// Whether the current block already ends in a terminator.
@@ -169,6 +170,9 @@ Function_State :: struct {
 	// `place_label` keeps it current, so a label written by hand belongs in a body
 	// of fixed text, which names no block through `current_block`.
 	block:      string,
+	// Where the entry block's first instruction goes in `b`, which is where the
+	// prologue goes (`write_function`); 0 until `open_entry_block`.
+	entry:      int,
 	// Set while writing a procedure's copy for `copy_cpu`, whose direct calls
 	// name copies too (compiler-architecture.md "CPU dispatch").
 	copying:    bool,
@@ -201,11 +205,12 @@ Function_State :: struct {
 	unwind: Unwind_State,
 	// Fixed-size allocas, spliced into the entry block so a loop can't grow the stack.
 	prologue: [dynamic]string,
+	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
+	// below the pointee's natural one.
+	place_align: map[string]u64,
 	// Large temporaries, shared by the full expressions that need one: taken ones
 	// in order, a mark per open full expression, and the free ones.
 	large_taken: [dynamic]Large_Slot,
-	// One zeroed global per large type that has a zero constant (`large_zero`).
-	large_zeros: map[Type_Id]string,
 	large_marks: [dynamic]int,
 	large_free:  [dynamic]Large_Slot,
 	// How many calls so far were handed an address, which they may keep past
@@ -226,8 +231,15 @@ Large_Slot :: struct {
 open_function :: proc(e: ^Emitter, format: string, args: ..any) {
 	fmt.sbprintf(&e.b, format, ..args)
 	fmt.sbprintln(&e.b, " {")
+	open_entry_block(e)
+}
+
+// The entry label, after the line that opens the function.
+@(private)
+open_entry_block :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "entry:")
 	e.block = "entry"
+	e.entry = len(e.b.buf)
 }
 
 // A synthesized member's header: its receiver at `%arg0`, after any `%sret`.
@@ -261,44 +273,35 @@ begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 	return state
 }
 
-// The finished function's text, for the caller to place.
-@(private)
-end_function_emission :: proc(e: ^Emitter, state: Function_Emission) -> string {
-	text := splice_prologue(e, strings.to_string(e.b), e.prologue[:])
-	e.b = state.parent
-	e.fn = state.saved
-	return text
-}
-
+// Writes the finished function into the enclosing one's buffer.
 @(private)
 finish_function_emission :: proc(e: ^Emitter, state: Function_Emission) {
-	strings.write_string(&e.b, end_function_emission(e, state))
+	text, entry, prologue := strings.to_string(e.b), e.entry, e.prologue[:]
+	e.b, e.fn = state.parent, state.saved
+	write_function(e, &e.b, text, entry, prologue)
 }
 
 // A thunk made mid-body waits for the end of the module.
 @(private)
 finish_pending_thunk :: proc(e: ^Emitter, state: Function_Emission) {
-	append(&e.pending_thunks, end_function_emission(e, state))
+	out := strings.builder_make()
+	write_function(e, &out, strings.to_string(e.b), e.entry, e.prologue[:])
+	e.b, e.fn = state.parent, state.saved
+	append(&e.pending_thunks, strings.to_string(out))
 }
 
+// A function's `text` with the `prologue` allocas opening its entry block, which
+// starts at `entry`.
 @(private)
-splice_prologue :: proc(e: ^Emitter, body: string, prologue: []string) -> string {
-	if len(prologue) == 0 {
-		return body
-	}
-	ENTRY :: "\nentry:\n"
-	at := strings.index(body, ENTRY)
-	if at < 0 {
+write_function :: proc(e: ^Emitter, out: ^strings.Builder, text: string, entry: int, prologue: []string) {
+	if entry == 0 && len(prologue) > 0 {
 		backend_fail(e, "a function has no entry block to hold its storage")
-		return body
 	}
-	out := strings.builder_make()
-	strings.write_string(&out, body[:at + len(ENTRY)])
+	strings.write_string(out, text[:entry])
 	for line in prologue {
-		fmt.sbprintln(&out, line)
+		fmt.sbprintln(out, line)
 	}
-	strings.write_string(&out, body[at + len(ENTRY):])
-	return strings.to_string(out)
+	strings.write_string(out, text[entry:])
 }
 
 @(private)
@@ -436,8 +439,7 @@ emit_proc_definition :: proc(
 		emit_loke_signature(e, symbol, llvm_name)
 	}
 	debug_mark_proc(e, symbol_id)
-	fmt.sbprintln(&e.b, "entry:")
-	e.block = "entry"
+	open_entry_block(e)
 	header := begin_generated_frame(e, llvm_name)
 
 	bind_parameters(e, symbol)
@@ -655,6 +657,60 @@ gep_at :: proc(e: ^Emitter, element: string, address: string, index: string) -> 
 	return out
 }
 
+// The instruction `format` spells, its result named by a new temporary.
+@(private)
+emit_value :: proc(e: ^Emitter, format: string, args: ..any) -> string {
+	out := temp(e)
+	fmt.sbprintf(&e.b, "  %s = ", out)
+	fmt.sbprintfln(&e.b, format, ..args)
+	return out
+}
+
+// Whether `value`, an integer of LLVM `type`, is zero, or with `equal` false,
+// whether it is not.
+@(private)
+icmp_zero :: proc(e: ^Emitter, type, value: string, equal := true) -> string {
+	return emit_value(e, "icmp %s %s %s, 0", equal ? "eq" : "ne", type, value)
+}
+
+@(private)
+is_null :: proc(e: ^Emitter, pointer: string) -> string {
+	return emit_value(e, "icmp eq ptr %s, null", pointer)
+}
+
+@(private)
+not_null :: proc(e: ^Emitter, pointer: string) -> string {
+	return emit_value(e, "icmp ne ptr %s, null", pointer)
+}
+
+// The negation of the `i1` `flag`.
+@(private)
+not_i1 :: proc(e: ^Emitter, flag: string) -> string {
+	return emit_value(e, "xor i1 %s, true", flag)
+}
+
+// `a && b` over `i1`s, where `a` may be the literal `true` a fold starts from.
+@(private)
+combine_and :: proc(e: ^Emitter, a, b: string) -> string {
+	return a == "true" ? b : emit_value(e, "and i1 %s, %s", a, b)
+}
+
+// `a || b` over `i1`s, where `a` may be the literal `false` a fold starts from.
+@(private)
+combine_or :: proc(e: ^Emitter, a, b: string) -> string {
+	return a == "false" ? b : emit_value(e, "or i1 %s, %s", a, b)
+}
+
+// An integer `value` of `from` bits as one of `to` bits: truncated, or extended
+// by its sign when `signed`.
+@(private)
+resize_int :: proc(e: ^Emitter, value: string, from, to: int, signed: bool) -> string {
+	if from == to {
+		return value
+	}
+	return emit_value(e, "%s i%d %s to i%d", from > to ? "trunc" : signed ? "sext" : "zext", from, value, to)
+}
+
 @(private)
 place_label :: proc(e: ^Emitter, label: string) {
 	branch(e, label)
@@ -713,3 +769,60 @@ branch_if_unlikely :: proc(e: ^Emitter, cond: string, then_label, else_label: st
 	e.terminated = true
 }
 
+// A memoised private function being written, between `begin_thunk` and `end_thunk`.
+@(private)
+Thunk_Emission :: struct {
+	frame: Function_Emission,
+	synth_bodies: bool,
+}
+
+// `fresh` is false when `name` is already written, and nothing has begun.
+@(private)
+begin_thunk :: proc(e: ^Emitter, name: string) -> (thunk: Thunk_Emission, fresh: bool) {
+	if e.memo_thunks[name] {
+		return
+	}
+	e.memo_thunks[name] = true
+	// Shared with user code, so it never inherits a dead body's licence to abort.
+	thunk.synth_bodies = e.synth_bodies
+	e.synth_bodies = false
+	thunk.frame = begin_function_emission(e)
+	return thunk, true
+}
+
+// Parks the thunk, once its closing brace is written, in `e.pending_thunks`.
+@(private)
+end_thunk :: proc(e: ^Emitter, thunk: Thunk_Emission) {
+	fmt.sbprintln(&e.b, "")
+	finish_pending_thunk(e, thunk.frame)
+	e.synth_bodies = thunk.synth_bodies
+}
+
+// A memoised private function with one entry block. Each body writes its own
+// `ret`.
+@(private)
+memo_thunk :: proc(
+	e: ^Emitter,
+	name: string,
+	part: Type_Id,
+	result, params: string,
+	body: proc(e: ^Emitter, part: Type_Id),
+	framed := false,
+) -> string {
+	thunk, fresh := begin_thunk(e, name)
+	if !fresh {
+		return name
+	}
+	open_function(e, "define private %s %s(%s)", result, name, params)
+	header: strings.Builder
+	if framed {
+		header = begin_generated_frame(e, name)
+	}
+	body(e, part)
+	fmt.sbprintln(&e.b, "}")
+	if framed {
+		end_generated_frame(e, header)
+	}
+	end_thunk(e, thunk)
+	return name
+}
