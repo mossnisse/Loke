@@ -766,8 +766,13 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 		if info.kind == .Array || info.kind == .Simd {
 			fmt.sbprintfln(&e.b, "  ret %s %d", result, info.count)
 		} else {
-			field := info.kind == .Dynamic_Array || info.kind == .Map ? CONTAINER_LEN :
-			         info.kind == .String || info.kind == .String_View ? STRING_LEN : SLICE_LEN
+			field := SLICE_LEN
+			#partial switch info.kind {
+			case .Dynamic_Array, .Map:
+				field = CONTAINER_LEN
+			case .String, .String_View:
+				field = STRING_LEN
+			}
 			length := extract(e, llvm_type(e, symbol.params[0]), synth_receiver_value(e, symbol), field)
 			fmt.sbprintfln(&e.b, "  ret %s %s", result, length)
 		}

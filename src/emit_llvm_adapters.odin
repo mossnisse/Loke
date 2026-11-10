@@ -1,3 +1,6 @@
+// The bodies the compiler synthesizes for iteration adapters: a view's
+// construction and `iter`, and the `next` of the iterators `indexed()` and
+// `copied()` wrap. design.md "Iteration adapters".
 package lokec
 
 import "core:fmt"
@@ -17,7 +20,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		}
 		emit_ret(e, symbol.result, build_record(e, symbol.result, held))
 	case .Adapter_Iter:
-		address := gep_field(e, llvm_type(e, source), "%arg0", 0)
+		address := gep_field(e, llvm_type(e, source), "%arg0", ADAPTER_SOURCE)
 		if !info.adapter_by_value { address = load(e, "ptr", address) }
 		target := symbol_of(e.c, symbol.iteration_target)
 		// A value `self` takes the source itself.
@@ -37,7 +40,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	case .Indexed_Next, .Copied_Next:
 		target := symbol_of(e.c, symbol.iteration_target)
 		inner_option := target.result
-		iterator := gep_field(e, llvm_type(e, source), "%arg0", 0)
+		iterator := gep_field(e, llvm_type(e, source), "%arg0", ITER_ADAPTER_INNER)
 		produced := emit_call_result(e, inner_option, symbol_name(e, symbol.iteration_target), fmt.aprintf("ptr %s", iterator))
 		ok := emit_union_tag_is(e, inner_option, produced, union_index_of(e.c, inner_option, "some"))
 		yielded, stopped := new_label(e, "adapter.yield"), new_label(e, "adapter.stop")
@@ -48,7 +51,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		item := option_payload(e.c, symbol.result)
 		wrapped: string
 		if symbol.synth == .Indexed_Next {
-			counter := gep_field(e, llvm_type(e, source), "%arg0", 1)
+			counter := gep_field(e, llvm_type(e, source), "%arg0", ITER_ADAPTER_INDEX)
 			index := load(e, "i64", counter)
 			step_counter(e, counter, "i64")
 			wrapped = build_record(e, item, payload, index)

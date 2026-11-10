@@ -92,8 +92,11 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	// The probe is not the program, so `-o` keeps what it holds, and it has no
 	// debug information for a PDB to carry.
 	exe_path := replace_ext(opts.output, ".layout.exe")
+	debug_info := c.debug_info
 	c.debug_info = false
-	if code := link(c, ll_path, "", exe_path, opts); code != 0 {
+	code := link(c, ll_path, "", exe_path, opts)
+	c.debug_info = debug_info
+	if code != 0 {
 		return code
 	}
 	defer if !opts.keep_temps {

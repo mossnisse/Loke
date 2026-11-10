@@ -391,6 +391,9 @@ drain_temporaries :: proc(e: ^Emitter, frame, first_held: int) {
 	// up; its other paths still drop those values themselves, so the list
 	// survives. Both kinds are dropped newest first, across the two lists
 	// (design.md "Evaluation order").
+	if !temporaries_owed(e, frame, first_held) {
+		return
+	}
 	owed := make([dynamic]Deferred, context.temp_allocator)
 	held := slice.clone(e.held[:], context.temp_allocator)
 	append(&owed, ..held[first_held:])
@@ -410,6 +413,21 @@ drain_temporaries :: proc(e: ^Emitter, frame, first_held: int) {
 	}
 	clear(&e.held)
 	append(&e.held, ..held)
+}
+
+// Whether `drain_temporaries` has anything to drop, so the common case of
+// nothing held copies nothing.
+@(private = "file")
+temporaries_owed :: proc(e: ^Emitter, frame, first_held: int) -> bool {
+	if len(e.held) > first_held {
+		return true
+	}
+	for depth in frame ..< len(e.temporaries) {
+		if len(e.temporaries[depth]) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 @(private)

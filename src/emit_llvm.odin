@@ -30,6 +30,8 @@ Emitter :: struct {
 	foreign_symbols: [dynamic]Symbol_Id,
 	// Every internal name handed out, across all packages (`claim_name`).
 	taken_names:  map[string]bool,
+	// Per base `claim_name` suffixed, the first suffix not known to be taken.
+	next_suffix:  map[string]int,
 	// What each name asked for at several uses was claimed as (`generated_name`).
 	generated_names: map[string]string,
 	struct_names: map[Type_Id]string,

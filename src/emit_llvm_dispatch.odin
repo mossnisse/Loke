@@ -89,6 +89,8 @@ emit_dispatched_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_P
 	defer finish_function_emission(e, function)
 	inout := result_inout_of(e, symbol.proc_type)
 	result := llvm_result_type(e, symbol.result, inout)
+	// The parameter list, attributes such as `nonnull` included, doubles as the
+	// forwarded call's arguments: a call site accepts parameter attributes.
 	arguments := loke_param_list(e, symbol, inout)
 	// compiler-architecture.md "CPU dispatch": a call to a cold procedure is a call to its dispatcher.
 	open_function(e, "define %s%s %s(%s)%s", llvm_linkage(llvm_name), result, llvm_name, arguments, cold_attributes(symbol))

@@ -150,11 +150,11 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	owned := emit_spawn_arguments(e, task, call, callee_type, frame)
 	if task.result != INVALID_SYMBOL {
 		field := spawn_field_address(e, task.frame, frame, spawn_result_field(task))
-		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", e.names[task.result], field)
+		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", symbol_place(e, task.result), field)
 	}
 	fmt.sbprintfln(
 		&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)",
-		symbol_name(e, task.start), e.names[task.scope], symbol_name(e, task.run), frame,
+		symbol_name(e, task.start), symbol_place(e, task.scope), symbol_name(e, task.run), frame,
 	)
 	// The task has the frame now, and what it owns is its to drop.
 	finish_temporary_drop(e, unclaimed)

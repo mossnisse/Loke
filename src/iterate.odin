@@ -23,6 +23,13 @@ ITER_ARRAY_REVERSED :: 2
 ITER_MAP_TABLE :: 0
 ITER_MAP_CURSOR :: 1
 
+// An adapter view holds its source, or a pointer to it. The iterator
+// `indexed()` or `copied()` makes wraps the source's iterator, and `indexed()`
+// adds a counter.
+ADAPTER_SOURCE :: 0
+ITER_ADAPTER_INNER :: 0
+ITER_ADAPTER_INDEX :: 1
+
 // A view holds one thing (a map's table pointer or a `string_view`); its
 // iterator adds a cursor.
 VIEW_SOURCE :: 0

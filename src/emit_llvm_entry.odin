@@ -208,11 +208,8 @@ emit_program_init_body :: proc(e: ^Emitter, name: string) {
 		if factory == nil || !found {
 			backend_fail(e, "the selected logger has no factory or nowhere to be published")
 		} else {
-			handle := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = call %s %s()",
-				handle, llvm_type(e, factory.result), symbol_name(e, logger),
-			)
+			// A large handle comes back through storage, as any call's would.
+			handle := emit_call_result(e, factory.result, symbol_name(e, logger), "")
 			destination := symbol_of(e.c, e.c.providers[.Logger].destination).type
 			store(e, destination, emit_option_some(e, destination, handle), global)
 		}

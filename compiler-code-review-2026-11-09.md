@@ -2310,7 +2310,7 @@ The backend is careful and well commented. Ownership, unwind registration, large
    (Done: `emit_union_switch` and `union_tag_llvm`, at all seven sites;
    `union_dispatch_is_one_switch` and `tests/ll/union_format_switch.loke`.
    `emit_format_enum` still compares one member at a time.): `emit_union_widen` (union.odin:102), `emit_union_drop` (lifecycle.odin:596), `emit_union_try_clone_body` (lifecycle.odin:626), `emit_union_equal` (expr.odin:2066), the union arm of `emit_hash_value` (containers.odin:1383), `emit_format_union` (format.odin:378), and the type switch's tests (stmt.odin:787). Each site repeats about 6 lines (`temp`, `icmp eq i%d`, two `new_label`s, `branch_if`, `place_label hit`, … `place_label next`), and the tag width is re-derived in 9 places with `fmt.aprintf("i%d", shape.tag_bytes*8)`. One switch per union is shorter IR and gives faster `-opt=none` code. Saves about 50 lines. `emit_format_enum` (format.odin:425) could use the same helper.
-2. **Make hashing of fixed arrays loop instead of unrolling** (containers.odin:1414-1421). A non-large array (up to 4096 bytes) is fully unrolled: a `[4096]u8` key emits about 16k instructions into its hash thunk. `emit_array_equal` (expr.odin:1985-1995) already switches to a loop above `UNROLLED_EQUAL_ELEMENTS`/`UNROLLED_EQUAL_BYTES`. Use the same thresholds for hashing, and merge the large-array branch (1401-1413) into that loop. This is a code-size defect, and it also makes hashing and equality lower the same shapes differently. Add a regression test that bounds the IR growth, in the style of `fixed_array_clone_ir_grows_linearly`.
+2. **Make hashing of fixed arrays loop instead of unrolling** (containers.odin:1414-1421). (Done in an earlier round: hashing loops wherever `array_walks_in_loop` says equality does.) A non-large array (up to 4096 bytes) is fully unrolled: a `[4096]u8` key emits about 16k instructions into its hash thunk. `emit_array_equal` (expr.odin:1985-1995) already switches to a loop above `UNROLLED_EQUAL_ELEMENTS`/`UNROLLED_EQUAL_BYTES`. Use the same thresholds for hashing, and merge the large-array branch (1401-1413) into that loop. This is a code-size defect, and it also makes hashing and equality lower the same shapes differently. Add a regression test that bounds the IR growth, in the style of `fixed_array_clone_ir_grows_linearly`.
 3. **Declare runtime entries from one table instead of ~85 `fmt.sbprintln("declare ...")` lines** (done for the tables and the declared-name set, with the module text unchanged. `Emitter.declared` is the one set of declared names: foreign bindings and `declare_intrinsic` record into it too, which fixed an intrinsic declared twice when a foreign binding named it (`tests/run/foreign_intrinsic_binding.loke`). Still hard-coded in `emit_foreign_declarations`: the four names the compiler defines after it. Still unconditional: the 30 `*.with.overflow` declarations. The tables did not shorten the code; they added about 65 lines.): runtime.odin:58-120 and 172-190, containers.odin:15-41, atomics.odin:31-41, plus the declaration in format.odin:570. A `[]struct{name, signature, attrs}` table would:
    - remove about 70 lines;
    - let `emit_foreign_declarations` (abi.odin:34-50) consult a set instead of re-parsing the `declare ...(` lines already written and keeping hard-coded `seen[...]` entries;
@@ -2322,7 +2322,7 @@ The backend is careful and well commented. Ownership, unwind registration, large
 
    That leaves expr at about 1500 lines of places and expressions. Update the table in compiler-architecture.md "LLVM and toolchain" in the same commit.
 5. **Add one `spill(e, type, value) -> slot` helper (alloca + `store`, passing a large value's address through unchanged) and use it at its ~15 copies** (Done in part: `spill`, at the twelve alloca-and-store copies; `value_storage` and `spill_value` are gone, `emit_union_spill` keeps its shared temporary slot, `simd.odin:144` stores one type into a slot of another, and `spill_equal_operands` already uses `value_address`. `spill` always copies, so the large-value memcpy below remains: a large value may be a read-only constant global (`@.image.N` or `@.zero.N` from `const_operand`), which a drop must not be handed in place.): `value_storage` (containers.odin:927), `spill_value` (format.odin:617), `foreign_spill_operand` (abi.odin:514), `spill_equal_operands` (expr.odin:1961), `emit_discarded_temporary` (cleanup.odin:667), calls.odin:912/1306, expr.odin:1207, iteration.odin:205/255/264/630, simd.odin:144, and the `!is_large_value` branch at containers.odin:1347. For large values this also removes a needless 4 KiB+ memcpy in `emit_discarded_temporary` and `hold_temporary_value` (cleanup.odin:214). Saves about 30 lines.
-6. **Delete the ~27 `branch(e, X)` calls that directly precede `place_label(e, X)`.** `place_label` already branches (emit_llvm.odin:645-649). Sites: box.odin:160; calls.odin:355, 709, 1075, 1320; cleanup.odin:133, 248, 287, 538; containers.odin:651, 982, 1018, 1136; entry.odin:221; expr.odin:1093, 2148, 2161; format.odin:394, 414, 444, 468; iteration.odin:115; lifecycle.odin:54, 308, 609; stmt.odin:525; unwind.odin:420. If explicitness is preferred, rename `place_label` to say that it falls through. Saves about 27 lines.
+6. **Delete the ~27 `branch(e, X)` calls that directly precede `place_label(e, X)`.** (Done in an earlier round; none remain.) `place_label` already branches (emit_llvm.odin:645-649). Sites: box.odin:160; calls.odin:355, 709, 1075, 1320; cleanup.odin:133, 248, 287, 538; containers.odin:651, 982, 1018, 1136; entry.odin:221; expr.odin:1093, 2148, 2161; format.odin:394, 414, 444, 468; iteration.odin:115; lifecycle.odin:54, 308, 609; stmt.odin:525; unwind.odin:420. If explicitness is preferred, rename `place_label` to say that it falls through. Saves about 27 lines.
 7. **Track the current block label in `Function_State`.** (Done: `current_block`; `short_circuit_phis_name_their_own_blocks`.) The phis in `emit_short_circuit` (expr.odin:2142-2163) and `emit_cond_arm` (expr.odin:2188-2191) could then name their incoming block directly, instead of opening an empty `sc.entry`/`sc.rhs.exit`/`cond.*.exit` block just to have a name. That is about 2 to 3 empty blocks per `&&`, `||`, or `?:`, which survive at `-opt=none`. Saves about 10 lines and a lot of IR.
 8. **Intern private constant globals.** (Done: `private_constant`, for the three constant sites; `equal_constants_share_one_global`.) `const_operand` (expr.odin:500), `store`'s `@.aggregate.N` (expr.odin:722), and `slice_literal_storage` (only its immutable form) create a new global at every use of the same large or imaged constant. `text_literal_global` already interns by text through `e.literals`. Keying a map on `type + initializer text` (or `type + value_type`) shrinks the IR and the `-opt=none` output; `unnamed_addr` only lets the optimizer merge them later. Folding all four sites into one `private_constant(e, prefix, type_text, init, align) -> name` also removes about 12 duplicated lines.
 
@@ -2358,19 +2358,19 @@ Verdict: correct as far as I could check, but too large (see Top recommendation 
 Verdict: the argument binding is intricate but coherent. Conversions and union construction are mixed in with calls.
 - **Structure** (calls.odin:1114-1323): `emit_value_conversion`, `guard_integer_conversion`, `guard_null_reference`, `guard_float_to_int`, `emit_union_construct`, and `emit_union_as` are about 210 lines of conversions, not calls. They would sit better with expr's implicit conversions, or in a small `emit_llvm_convert.odin`.
 - **Simplify** (calls.odin:1206, 1282): `predicate := lanes ? fmt.aprintf("<%d x i1>", …) : "i1"` is computed twice; `Int_Form.mask` (expr.odin:1716-1721) already carries it. Build the conversion guards on `Int_Form` (`scalar_int_form`/`lane_int_form`) and use `form_any` instead of the hand-written `if lanes { simd_any_lane }`. Saves about 8 lines.
-- **Simplify** (calls.odin:358-359): a hand-written `load` duplicates `load(e, CONTAINER_TYPE, header)`.
-- **Structure / robustness** (calls.odin:1063-1065): `emit_bound_call` returns before `emit_refusal_branch` and `emit_after_call` for a foreign convention, so any `argument_cleanups` would never be dropped and their entries would stay in `e.held`. Today this is safe only because design.md rules managed types out of foreign signatures. Add an assertion (`backend_fail` if `len(call.argument_cleanups) > 0 || call.pack_cleanup.kind != .None`) so a later relaxation of the foreign-ABI-safe list fails loudly.
+- **Simplify** (done) (calls.odin:358-359): a hand-written `load` duplicates `load(e, CONTAINER_TYPE, header)`.
+- **Structure / robustness** (done: `backend_fail` when a foreign call owes argument or pack drops) (calls.odin:1063-1065): `emit_bound_call` returns before `emit_refusal_branch` and `emit_after_call` for a foreign convention, so any `argument_cleanups` would never be dropped and their entries would stay in `e.held`. Today this is safe only because design.md rules managed types out of foreign signatures. Add an assertion (`backend_fail` if `len(call.argument_cleanups) > 0 || call.pack_cleanup.kind != .None`) so a later relaxation of the foreign-ABI-safe list fails loudly.
 - **Simplify** (calls.odin:973-979): spilling a large non-`%` operand is a special case of `store`'s own constant handling plus `temporary_slot`. Fine as is; noted only because `operand[0]` would panic on an empty operand string (no producer of `""` found, so not a bug).
 
 #### src/emit_llvm_stmt.odin
 Verdict: clear. The two switch lowerings share their skeleton well through `switch_labels`.
 - **Duplication** (stmt.odin:747-754): `or_match` duplicates the OR fold (see emit_llvm.odin finding).
-- **Simplify** (stmt.odin:153, 157): `e.names[task.result]` and `e.names[task.scope]` are indexed directly, so a missing entry silently writes `ptr ` with an empty operand. Use `symbol_place` (expr.odin:815, currently file-private), which fails the contract instead.
+- **Simplify** (done; `symbol_place` is package-private now) (stmt.odin:153, 157): `e.names[task.result]` and `e.names[task.scope]` are indexed directly, so a missing entry silently writes `ptr ` with an empty operand. Use `symbol_place` (expr.odin:815, currently file-private), which fails the contract instead.
 - **Simplify** (stmt.odin:920-922): use `combine_and`.
 
 #### src/emit_llvm_cleanup.odin
 Verdict: sound design. Two hot-path inefficiencies.
-- **Data structure** (cleanup.odin:392-416): `drain_temporaries` runs at every `pop_temporaries`, which is every statement and condition. Each time it allocates `owed` and `slice.clone(e.held)` in the temp allocator, sorts, then clears and re-appends `held`, even when nothing is owed. Return early when `len(e.held) == first_held` and every frame from `frame` up is empty. Clone `held` only if something is actually dropped.
+- **Data structure** (done in part: `temporaries_owed` returns early when nothing is owed; when something is, the list is still cloned) (cleanup.odin:392-416): `drain_temporaries` runs at every `pop_temporaries`, which is every statement and condition. Each time it allocates `owed` and `slice.clone(e.held)` in the temp allocator, sorts, then clears and re-appends `held`, even when nothing is owed. Return early when `len(e.held) == first_held` and every frame from `frame` up is empty. Clone `held` only if something is actually dropped.
 - **Simplify** (cleanup.odin:212-219, 659-670): `hold_temporary_value` and `emit_discarded_temporary` copy a large value into a new alloca although a large value is already a private address. Use the `spill` helper from Top recommendation 5.
 - **Data structure** (cleanup.odin:187-197): `release_held` scans linearly by `order`. Fine for current sizes; leave it.
 
@@ -2395,7 +2395,7 @@ Verdict: a large file of mixed concerns; individual bodies are correct.
 - **Structure** (containers.odin:669-740): the `mem.Arena`/`mem.Scratch` provider bodies have nothing to do with containers. Move them to a small `emit_llvm_provider.odin`, or into runtime.odin next to the provider initializer.
 - **Duplication** (containers.odin:148-152, 179-181 vs expr.odin:970-975): "icmp uge/ugt index, count; `panic_if` bounds" appears three times. Add a shared `emit_bounds_check(e, index, count, inclusive, message)`.
 - **Duplication** (containers.odin:1038-1039, 1067-1069, 1109-1110, 1156-1158, 1279-1281): every `map_find`/`map_entry` call is followed by "icmp eq/ne ptr, null". Return the presence `i1` from `emit_map_find` and `emit_map_entry`.
-- **Duplication** (containers.odin:1197-1217): `emit_map_slot_result` and `emit_map_slot_failure` emit `ret` by hand with their own `emit_unwind_pop`, duplicating `emit_ret` (calls.odin:1355), which already pops. Use `emit_ret(e, result_type, …)`.
+- **Duplication** (done) (containers.odin:1197-1217): `emit_map_slot_result` and `emit_map_slot_failure` emit `ret` by hand with their own `emit_unwind_pop`, duplicating `emit_ret` (calls.odin:1355), which already pops. Use `emit_ret(e, result_type, …)`.
 
 #### src/emit_llvm_iteration.odin
 Verdict: clean. The in-place `foreach` lowerings and the synthesized `next` bodies duplicate each other's stepping.
@@ -2405,7 +2405,7 @@ Verdict: clean. The in-place `foreach` lowerings and the synthesized `next` bodi
 
 #### src/emit_llvm_adapters.odin
 Verdict: small and fine, but missing the file header comment every sibling has, and it uses magic field indices.
-- **Simplify** (adapters.odin:20, 40, 51): the adapter record's fields are read as raw `0`/`1`, whereas iterate.odin names every other iterator layout (`ITER_ARRAY_DATA`, …). Add `ADAPTER_SOURCE`/`ADAPTER_INDEX` beside them.
+- **Simplify** (done: `ADAPTER_SOURCE`, `ITER_ADAPTER_INNER` and `ITER_ADAPTER_INDEX`, used where the checker builds the records too; the file has a header now) (adapters.odin:20, 40, 51): the adapter record's fields are read as raw `0`/`1`, whereas iterate.odin names every other iterator layout (`ITER_ARRAY_DATA`, …). Add `ADAPTER_SOURCE`/`ADAPTER_INDEX` beside them.
 - **Duplication** (adapters.odin:59-60): writes the stop label and `emit_ret(zeroinitializer)` by hand, which is `close_synth_next` (iteration.odin:714) minus the brace. Use it and drop the `}` at 62.
 - **Structure**: the architecture document already lists this file together with iteration. At 86 lines it can be merged into `emit_llvm_iteration.odin`.
 
@@ -2425,7 +2425,7 @@ Verdict: a reasonable home for runtime declarations and metadata. Its declaratio
 - **Simplify** (runtime.odin:58-120, 172-190): Top recommendation 3.
 - **Data structure** (runtime.odin:259-265): `thread_local_owners` scans `pkg.files` for every thread-local symbol to find its file index, O(symbols × files). Compute a per-package `map[file]int` once. Minor.
 - **Duplication** (runtime.odin:150-155, 567-569, expr.odin:500-501, 514-515, 578-582, 722-723): six "claim `@.<prefix>.<len(e.globals)>`, append a private global" sites. Fold them into `private_global(e, prefix, linkage, type, init, align)` (Top recommendation 8).
-- **Simplify** (runtime.odin:717-718): the nested ternary choosing the length field would read more plainly as a `#partial switch`, and it is the only place that relies on `CONTAINER_LEN == STRING_LEN == SLICE_LEN` without asserting it. Add the `#assert`.
+- **Simplify** (done: a `#partial switch`. No `#assert` was added: each kind picks its own constant, so nothing relies on the three being equal) (runtime.odin:717-718): the nested ternary choosing the length field would read more plainly as a `#partial switch`, and it is the only place that relies on `CONTAINER_LEN == STRING_LEN == SLICE_LEN` without asserting it. Add the `#assert`.
 
 #### src/emit_llvm_format.odin
 Verdict: good. It uses chains where `switch` fits.
@@ -2441,11 +2441,11 @@ Verdict: a self-contained marker post-pass; works, with one fragile seam.
 
 #### src/emit_llvm_dispatch.odin
 Verdict: small, clear, correct.
-- **Simplify** (dispatch.odin:91-100): passing `loke_param_list`'s text (with `nonnull` attributes) as call arguments works because call sites accept parameter attributes; a short comment would stop a reader from "fixing" it.
+- **Simplify** (done) (dispatch.odin:91-100): passing `loke_param_list`'s text (with `nonnull` attributes) as call arguments works because call sites accept parameter attributes; a short comment would stop a reader from "fixing" it.
 
 #### src/emit_llvm_entry.odin
 Verdict: fine.
-- **Simplify** (entry.odin:211-215): the logger factory is called with a hand-built `call %s %s()`. Use `emit_call_result(e, factory.result, …)` so a large factory result would still follow the sret ABI.
+- **Simplify** (done) (entry.odin:211-215): the logger factory is called with a hand-built `call %s %s()`. Use `emit_call_result(e, factory.result, …)` so a large factory result would still follow the sret ABI.
 
 #### src/emit_llvm_box.odin
 Verdict: fine.
@@ -2468,11 +2468,11 @@ Verdict: fine.
 
 #### src/emit_llvm_names.odin
 Verdict: fine.
-- **Data structure** (names.odin:107-114): `claim_name` probes `base.1`, `base.2`, … linearly, which is quadratic for a frequently repeated base such as `@loke.entry` (from quoted exports). Keep a `map[string]int` of the next suffix per base. Minor.
+- **Data structure** (done: `Emitter.next_suffix`) (names.odin:107-114): `claim_name` probes `base.1`, `base.2`, … linearly, which is quadratic for a frequently repeated base such as `@loke.entry` (from quoted exports). Keep a `map[string]int` of the next suffix per base. Minor.
 
 #### src/emit_llvm_toolchain.odin
 Verdict: fine.
-- **Duplication** (toolchain.odin:98-106 vs 185-211, layout_probe.odin:280-287, runtime_cache.odin:233-243): four subprocess runs each map `err` to "cannot run" and `exit_code` to "failed: stderr". Add `run_tool(c, command, what) -> (stdout, stderr, ok)`. Saves about 12 lines.
+- **Duplication** (not done: each run reports its own code and wording, L0402/L0403, L0633, L0632 or an unreported reason, so `run_tool` would share only the two-way test) (toolchain.odin:98-106 vs 185-211, layout_probe.odin:280-287, runtime_cache.odin:233-243): four subprocess runs each map `err` to "cannot run" and `exit_code` to "failed: stderr". Add `run_tool(c, command, what) -> (stdout, stderr, ok)`. Saves about 12 lines.
 
 #### src/emit_llvm_runtime_cache.odin
 Verdict: fine; the concurrency and manifest handling are careful.
@@ -2482,7 +2482,7 @@ Verdict: fine; a defensive, bounded parser.
 
 #### src/emit_llvm_layout_probe.odin
 Verdict: fine.
-- **Structure** (layout_probe.odin:271): `c.debug_info = false` mutates compiler state as a side effect of `-check-layout`. Pass it as a parameter to `link` instead.
+- **Structure** (done: the probe restores the setting after its link; `-check-layout` ends the run anyway) (layout_probe.odin:271): `c.debug_info = false` mutates compiler state as a side effect of `-check-layout`. Pass it as a parameter to `link` instead.
 
 ### Cross-file duplication
 
@@ -2501,7 +2501,7 @@ Verdict: fine.
 | Register-int ABI round trip | abi.odin:471-475, 502-505, 528-533, 637-642 | `reg_int_reinterpret` |
 | Memoised thunk prelude | containers.odin:336-392 (used by box.odin:140, 180), containers.odin:273-290 (sort_by, re-implemented) | Move to emit_llvm.odin as `memo_thunk` |
 | `@(initialized)` count read + check | lifecycle.odin:278-292; format.odin:541-545; expr.odin:2029-2032 | Package-private `emit_prefix_count` |
-| Subprocess run + error mapping | toolchain.odin:98-106, 185-211; layout_probe.odin:280-287; runtime_cache.odin:233-243 | `run_tool` |
-| Redundant `branch` before `place_label` | 27 sites (listed in Top recommendation 6) | Delete |
+| Subprocess run + error mapping (not done) | toolchain.odin:98-106, 185-211; layout_probe.odin:280-287; runtime_cache.odin:233-243 | `run_tool` |
+| Redundant `branch` before `place_label` (done) | 27 sites (listed in Top recommendation 6) | Delete |
 
 Estimated total saving if all proposals are applied: roughly 450 to 550 lines (about 3%), plus smaller IR at `-opt=none` from recommendations 1, 2, 7, and 8.

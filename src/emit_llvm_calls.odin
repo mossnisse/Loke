@@ -354,8 +354,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	}
 	place_label(e, done_label)
 
-	built := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", built, CONTAINER_TYPE, header)
+	built := load(e, CONTAINER_TYPE, header)
 	return emit_alloc_outcome(e, v, as_type, failed, built, allocator)
 }
 
@@ -1056,6 +1055,13 @@ emit_bound_call :: proc(
 	defer delete(call.argument_cleanups)
 
 	if convention_is_foreign(callee_type.convention) {
+		// A foreign signature takes no managed value, so its call owes no drop
+		// afterward. The foreign lowering runs no `emit_after_call`, so fail
+		// loudly if that ever changes.
+		owed := call.pack_cleanup.kind == .Array || call.pack_cleanup.kind == .Pack_Release
+		if owed || len(call.argument_cleanups) > 0 {
+			backend_fail(e, "a foreign call owes drops its lowering would skip")
+		}
 		return emit_foreign_call(e, callee, callee_type, call.operands, symbol, bound)
 	}
 

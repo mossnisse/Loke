@@ -1021,7 +1021,7 @@ emit_synth_map_lookup_value :: proc(e: ^Emitter, body: Container_Body) {
 // clones it or moved in; a move-only element is dropped on a hit.
 @(private = "file")
 emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
-	symbol, element, ops, result := body.symbol, body.element, body.ops, body.result
+	symbol, element, ops := body.symbol, body.element, body.ops
 	moves, fallible := body.moves, body.fallible
 	key_slot := spill(e, container_key(e.c, body.container), "%arg1")
 	staged := alloca(e, body.element_llvm)
@@ -1039,7 +1039,7 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 		finish_temporary_drop(e, guard)
 		emit_drop_place(e, element, staged)
 	}
-	emit_map_slot_result(e, symbol.result, result, found, fallible)
+	emit_map_slot_result(e, symbol.result, found, fallible)
 
 	place_label(e, miss_label)
 	cloned := "true"
@@ -1053,7 +1053,7 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 	clone_ready, clone_failed := new_label(e, "mfoi.cloned"), new_label(e, "mfoi.clone_failed")
 	branch_if(e, cloned, clone_ready, clone_failed)
 	place_label(e, clone_failed)
-	emit_map_slot_failure(e, symbol.result, result, "%arg0", fallible)
+	emit_map_slot_failure(e, symbol.result, "%arg0", fallible)
 
 	place_label(e, clone_ready)
 	if !moves {
@@ -1067,12 +1067,12 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 	branch_if(e, missing, entry_failed, entry_ok)
 	place_label(e, entry_failed)
 	emit_drop_place(e, element, staged)
-	emit_map_slot_failure(e, symbol.result, result, "%arg0", fallible)
+	emit_map_slot_failure(e, symbol.result, "%arg0", fallible)
 
 	place_label(e, entry_ok)
 	// The key was absent a moment ago, so the slot is new and inert.
 	store(e, element, load_temporary(e, element, staged), place)
-	emit_map_slot_result(e, symbol.result, result, place, fallible)
+	emit_map_slot_result(e, symbol.result, place, fallible)
 }
 
 // The value is staged before insertion, so a failed clone neither touches an
@@ -1188,23 +1188,19 @@ emit_map_allocator :: proc(e: ^Emitter, header: string) -> string {
 
 // `find_or_insert` answers the slot; `try_find_or_insert` answers it as `.ok`.
 @(private = "file")
-emit_map_slot_result :: proc(e: ^Emitter, result_type: Type_Id, result, slot: string, fallible: bool) {
-	emit_unwind_pop(e)
+emit_map_slot_result :: proc(e: ^Emitter, result_type: Type_Id, slot: string, fallible: bool) {
+	value := slot
 	if fallible {
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, result_type, "false", slot))
-	} else {
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, slot)
+		value = emit_alloc_result(e, result_type, "false", slot)
 	}
-	e.terminated = true
+	emit_ret(e, result_type, value)
 }
 
 // The error for the `try_` spelling, and the provider's policy otherwise.
 @(private = "file")
-emit_map_slot_failure :: proc(e: ^Emitter, result_type: Type_Id, result, header: string, fallible: bool) {
+emit_map_slot_failure :: proc(e: ^Emitter, result_type: Type_Id, header: string, fallible: bool) {
 	if fallible {
-		emit_unwind_pop(e)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, result_type, "true", "null"))
-		e.terminated = true
+		emit_ret(e, result_type, emit_alloc_result(e, result_type, "true", "null"))
 		return
 	}
 	emit_alloc_failure(e, header)

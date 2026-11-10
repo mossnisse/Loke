@@ -103,7 +103,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		by_value ||= source_info.is_view
 	}
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
-	fields[0] = new_field(c, "source", by_value ? source : TYPE_RAWPTR, 0, public = false)
+	fields[ADAPTER_SOURCE] = new_field(c, "source", by_value ? source : TYPE_RAWPTR, ADAPTER_SOURCE, public = false)
 	view := new_type(c, Type_Info{
 		kind = .Struct, name = intern_identifier(c, fmt.tprintf("%s(%s)", label, type_name(c, source))),
 		key = source, element = element, is_view = true, adapter_kind = kind,
@@ -142,8 +142,8 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 new_adapter_iterator :: proc(k: ^Checker, backend_label: string, kind: Adapter_Kind, source, iterator, element, view: Type_Id) -> Type_Id {
 	c := k.c
 	fields := make([]Symbol_Id, kind == .Indexed ? 2 : 1, c.semantic_allocator)
-	fields[0] = new_field(c, "iterator", iterator, 0, public = false)
-	if kind == .Indexed { fields[1] = new_field(c, "index", TYPE_INT, 1, public = false) }
+	fields[ITER_ADAPTER_INNER] = new_field(c, "iterator", iterator, ITER_ADAPTER_INNER, public = false)
+	if kind == .Indexed { fields[ITER_ADAPTER_INDEX] = new_field(c, "index", TYPE_INT, ITER_ADAPTER_INDEX, public = false) }
 	return new_type(c, Type_Info{
 		kind = .Struct,
 		name = intern_identifier(c, fmt.tprintf("%s_Iterator(%s)", kind == .Indexed ? "Indexed" : "Copied", type_name(c, iterator))),

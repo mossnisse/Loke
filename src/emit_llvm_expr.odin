@@ -842,7 +842,7 @@ temporary_slot_for :: proc(e: ^Emitter, expr: Expr, type: Type_Id) -> string {
 }
 
 // The storage of `symbol`, which a resolved place has.
-@(private = "file")
+@(private)
 symbol_place :: proc(e: ^Emitter, symbol: Symbol_Id) -> string {
 	if name, ok := e.names[symbol]; ok {
 		return name

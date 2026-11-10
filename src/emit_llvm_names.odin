@@ -106,8 +106,14 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 @(private)
 claim_name :: proc(e: ^Emitter, base: string) -> string {
 	name := base
-	for n := 1; e.taken_names[name]; n += 1 {
+	// Names are never released, so the suffixes below the one recorded stay taken.
+	n := max(e.next_suffix[base], 1)
+	for e.taken_names[name] {
 		name = fmt.aprintf("%s.%d", base, n)
+		n += 1
+	}
+	if name != base {
+		e.next_suffix[base] = n
 	}
 	e.taken_names[name] = true
 	return name
