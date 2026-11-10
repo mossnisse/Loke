@@ -255,7 +255,7 @@ require_argument_ownership :: proc(
 		name := "this parameter"
 		if sym != nil && slot < len(sym.param_symbols) {
 			if parameter := symbol_of(k.c, sym.param_symbols[slot]); parameter != nil {
-				name = fmt.aprintf("`%s`", identifier_text(k.c, parameter.name), allocator = k.c.semantic_allocator)
+				name = fmt.tprintf("`%s`", identifier_text(k.c, parameter.name))
 			}
 		}
 		errorf(

@@ -614,10 +614,11 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 // design.md "Global write effects": a copy may run the `hook(copy)` of what it
 // copies, whose writes are rejected, so what remains is what it reads. How many
 // copies run is unspecified, so each copy site counts, and a copy last-use
-// transfer turns into a move counts as well.
-prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
+// transfer turns into a move counts as well. Answers whether a copy runs a hook.
+prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) -> (runs_hooks: bool) {
 	c := graph.k.c
-	for hook in type_copy_hooks(c, type) {
+	hooks := type_copy_hooks(c, type)
+	for hook in hooks {
 		if !c.global_writes_ready {
 			append_unique(&graph.effect_copy_hooks, hook)
 			continue
@@ -633,14 +634,14 @@ prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 			}
 		}
 	}
+	return len(hooks) > 0
 }
 
 // `prov_copy_effects` for a copy of a value holding `loans`. Its hook is handed that
 // value, so what it holds is in use across the hook's reads, whether or not the value
 // or the copy is used again.
 prov_copy_of_held_effects :: proc(graph: ^Flow_Graph, type: Type_Id, loans: []int, span: Span) {
-	prov_copy_effects(graph, type, span)
-	if len(loans) > 0 && len(type_copy_hooks(graph.k.c, type)) > 0 {
+	if prov_copy_effects(graph, type, span) && len(loans) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = loans, span = span})
 	}
 }

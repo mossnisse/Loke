@@ -2072,7 +2072,7 @@ There are four main themes:
    - `transfer_facts` (`transfer_facts.odin:192`) allocates a temporary map and walks the type on every call. It is reached per global per reach event (`borrow_tasks.odin:196`), per argument, and per slot via `type_reaches_waker`.
    - `type_hooks` (`hooks.odin:246`) is the same. It is called at every drop and copy site, and twice per copy in `prov_copy_of_held_effects` (`global_effects.odin:652-653`).
    - Both can be cached per underlying type once `lifecycle_of` reports `.Finite` and witnesses are complete, as `type_carries_borrow` already is.
-5. **Delete the duplicate path predicates, and use `same_step` where it was meant.**
+5. **Delete the duplicate path predicates, and use `same_step` where it was meant.** (Done in an earlier round: `path_is_exact` is the one predicate, and `publish_place_settled` uses `same_step`.)
    - `prov_path_names_one_place` (`borrow.odin:278`) is identical to `path_is_exact` (`borrow.odin:2454`). Keep one; saves 11 lines.
    - `publish_place_settled` compares steps with full struct equality (`borrow.odin:1691`, `step != event.place_path[at]`). That compares `precision`, `synchronized` and `shifts` too, where `same_step` is the place-identity test. It is conservative, but it can discard a one-place store for a flag difference.
 6. **Split the files that mix subsystems.** These are moves, not rewrites:
@@ -2093,10 +2093,10 @@ There are four main themes:
 #### src/borrow.odin
 Verdict: the solver core is sound and well tuned, but it holds too much (types, path algebra, program driver, solver, publish/load), and several per-event loops scan every loan.
 
-- **Duplication** `borrow.odin:278` `prov_path_names_one_place` and `:2454` `path_is_exact` are the same predicate: Field, or a single-element Range, with no precision. Delete one and rename its callers in `cfg_provenance.odin:2845,2855,3112,4551-4552`. Saves 11 lines. `path_is_indistinct` (`:266`) is the same loop without the precision test and can be written as its negation plus a precision check.
-- **Bug (minor, conservative)** `borrow.odin:1690-1696`: `step != event.place_path[at]` compares whole `Proj_Step` structs, including `precision`, `synchronized` and `shifts`. A loan path that reaches the same place through a step whose flags differ loses `one_place`, and the store then joins instead of replacing. That can produce a spurious "may" conflict. Use `!same_step(step, event.place_path[at])`, as `path_has_exact_prefix` does.
+- **Duplication** (done earlier) `borrow.odin:278` `prov_path_names_one_place` and `:2454` `path_is_exact` are the same predicate: Field, or a single-element Range, with no precision. Delete one and rename its callers in `cfg_provenance.odin:2845,2855,3112,4551-4552`. Saves 11 lines. `path_is_indistinct` (`:266`) is the same loop without the precision test and can be written as its negation plus a precision check.
+- **Bug (minor, conservative)** (done earlier) `borrow.odin:1690-1696`: `step != event.place_path[at]` compares whole `Proj_Step` structs, including `precision`, `synchronized` and `shifts`. A loan path that reaches the same place through a step whose flags differ loses `one_place`, and the store then joins instead of replacing. That can produce a spurious "may" conflict. Use `!same_step(step, event.place_path[at])`, as `path_has_exact_prefix` does.
 - **Data structure/algorithm** `borrow.odin:1591-1604` (`.Rebind`) scans every loan and then every slot for each matching loan, which is O(loans·slots) per event. `end_loans` (`:1800-1820`) scans all loans per `Access`, `Root_End` and `Reset` event. Build `loans_by_root: [][]int` once in `prepare_state`; `Rebind`, `Root_End` and the invalidation then touch only that root's loans. For `Rebind`, OR those loans into one mask and clear it per slot row in a single pass.
-- **Duplication** `borrow.odin:1133-1137` and `borrow_summaries.odin:84-87` run the same four-step link solve: `link_landed_stores`, `resolve_content_reads`, `prov_settle_pending_reborrows`, `solve_links_held`. Extract `solve_links(state)`. Saves about 5 lines, and the ordering constraint then has one owner.
+- **Duplication** (done: `solve_links`, whose steps are now private to borrow.odin) `borrow.odin:1133-1137` and `borrow_summaries.odin:84-87` run the same four-step link solve: `link_landed_stores`, `resolve_content_reads`, `prov_settle_pending_reborrows`, `solve_links_held`. Extract `solve_links(state)`. Saves about 5 lines, and the ordering constraint then has one owner.
 - **Duplication** `borrow.odin:1274-1279`, `:1378-1395`, `:2283-2291` and `borrow_loaded_below.odin:160-177` each hand-walk `[][]T` block-table pages with `at * BLOCK_TABLE_PAGE + index`. `borrow_tables.odin` should own `block_table_or`, `block_table_and` and an interned-row join, `interned_join(rows, a, b, op) -> u32`. The OR join (`join_links_held`) and the AND join (`join_loaded_below`) are the same code with a different byte operator. Saves about 25 lines.
 - **Simplify** `settle_result_summaries` (`borrow.odin:866-935`) hand-rolls a FIFO with `queued[]`, a `map[Symbol_Id][dynamic]^Expr_Proc` of callers, and a `registered[]` high-water mark. The `stale` test already decides revisits, so a body-indexed reader list plus the shared worklist (top recommendation 3) gives the same result in about half the code. It also removes the map-iteration miscompile workaround at `:925`.
 - **Structure** Lines 163-310 (the `Proj_Step` algebra: `path_extend`, `path_concat`, `paths_overlap`, `steps_overlap`, and so on) are used by `carrier_shape.odin`, `cfg_provenance.odin` and `view_start.odin`, and need no solver. Move them to a `prov_paths.odin`, or to the top of `carrier_shape.odin`, which says it "needs no solver state". Also move:
@@ -2113,7 +2113,7 @@ Verdict: correct, but it carries a solver transfer function and call-side querie
 - **Simplify** Three collectors (`collect_carrier_moves :60`, `collect_thread_local_writes :439`, `collect_escape_provenance :695`) each replay the whole body. See top recommendation 1. Saves about 20 lines.
 - **Data structure/algorithm** `merge_written_content` (`:619-622`) grows `row^` by one element per new entry, copying into `semantic_allocator`. That is quadratic, and every old row is permanent arena garbage across fixpoint rounds. `set_add` (`carrier_shape.odin:1214`, used by `merge_carrier_move :283`) does the same. Use a `[dynamic]` in the semantic allocator, or rebuild once per round.
 - **Data structure/algorithm** `copies_outlast_body` (`:126-142`) tests every reborrow against every held slot at each exit block. Iterating only the set bits of each row, or precomputing a `storage` mask over reborrow sources, avoids O(slots·reborrows) per exit.
-- **Simplify** `merge_loan_provenance :761` builds `u8(1) << u8(loan.depth - 1)`. That is correct only because `CARRIER_DEPTH == 4 <= 8`. Add `#assert(CARRIER_DEPTH <= 8)` next to `Result_Dependencies.param_loads` (`carrier_shape.odin:719`) so a budget change cannot silently make `changed` always true and stop the fixpoint from settling.
+- **Simplify** (done, next to `CARRIER_DEPTH`) `merge_loan_provenance :761` builds `u8(1) << u8(loan.depth - 1)`. That is correct only because `CARRIER_DEPTH == 4 <= 8`. Add `#assert(CARRIER_DEPTH <= 8)` next to `Result_Dependencies.param_loads` (`carrier_shape.odin:719`) so a budget change cannot silently make `changed` always true and stop the fixpoint from settling.
 
 #### src/borrow_loaded_below.odin
 Verdict: clean and well documented; small simplifications only.
@@ -2127,7 +2127,7 @@ Verdict: clear diagnostics replay; some per-event scans and repeated wording log
 - **Data structure/algorithm** `live_reborrow_of` (`:216-231`) rebuilds a `candidates` list by scanning every slot's `links_held`, in `context.temp_allocator`, for every source of every `Live`/`Load` event. That is O(events·sources·slots) plus temporary allocation that grows across the whole report pass. Compute the candidate list once per event, since it does not depend on `source` for the non-`At_Once` case, and reuse a scratch `[dynamic]` in `Prov_Solve`. (unverified hotspot; measure with `perf.ps1`)
 - **Bug (fragile, unverified)** `at_once_reaches` (`:293-323`) zeroes and restores derived rows in `state.reach` without `reach_row_written`, then calls `load_pointee_content`. That writes `use.slot`'s row and precision as a side effect, before the report loop's own `run_prov_event` for that event. It is harmless today because the `.Load` replay overwrites both, but it couples correctness to event order. Prefer a scratch `merged` with no write-back: add a `dry` flag to `load_pointee_content`.
 - **Duplication** `reported_within` (`:76-83`) and `reach_reported_within` (`borrow_tasks.odin:566-573`) both scan a whole map for a report inside a span. A per-file sorted list of report offsets, or a single shared helper, would serve both.
-- **Duplication** The "precision lost, so say may" choice is open-coded at `:189-191`, `:386`, `:581`, `:599`, `:635`, and in `borrow_tasks.odin:598`, `:686` and `:789-797`. A helper `hedge(state, sure, unsure: string) -> string` removes about 15 lines and keeps the wording rule in one place (design.md "Minimum provenance precision").
+- **Duplication** (not done: each site tests a different condition, the diagnostic's precision, a crowded region, a source's precision or a merged loan, so `hedge` would only rename the conditional) The "precision lost, so say may" choice is open-coded at `:189-191`, `:386`, `:581`, `:599`, `:635`, and in `borrow_tasks.odin:598`, `:686` and `:789-797`. A helper `hedge(state, sure, unsure: string) -> string` removes about 15 lines and keeps the wording rule in one place (design.md "Minimum provenance precision").
 - **Simplify** `carrier_name` (`:608-627`) scans all reborrows per hop. `state.links_into[at]` (`borrow.odin:661`) already indexes reborrows by derived slot. It only runs on the error path, so it is cheap to fix.
 
 #### src/borrow_tables.odin
@@ -2162,19 +2162,19 @@ Verdict: a solid least-fixed-point design. One fragile cache key.
 Verdict: correct; a few avoidable recomputations and per-event allocations.
 
 - **Data structure/algorithm** `solve_window` (`:20-55`) is a round-robin `for changed` loop over every reachable block, while every other block solver uses `block_queue_from_entry`. It is also computed twice per diagnosed body, in `settle_pool_joins` (`:69`, through `prepare_state`) and in `report_provenance` (`borrow_report.odin:17`). The events that `settle_pool_joins` removes carry `joins` and are never `Task_Start` or `Task_Join`, so the window is unchanged and can be cached on the graph. (unverified that no removed event is a window event)
-- **Simplify** `running_sites` (`:121-129`) allocates a list in `graph.alloc` on every `block_running`, `check_task_reservation`, `check_parent_allocator_use` and `window_block_span` call. Iterate the mask bits inline with a small iterator; saves the allocations and about 8 lines.
+- **Simplify** (done: `next_running_site`) `running_sites` (`:121-129`) allocates a list in `graph.alloc` on every `block_running`, `check_task_reservation`, `check_parent_allocator_use` and `window_block_span` call. Iterate the mask bits inline with a small iterator; saves the allocations and about 8 lines.
 - **Data structure/algorithm** `shared_carrier_hazard` (`:190-207`) calls the uncached `transfer_facts` per global per reach event. Cache it per global. See top recommendation 4.
-- **Simplify** `note_reach_chain` (`:746`) hard-codes 8 steps. Name the constant, or bound it by the chain's visited set.
+- **Simplify** (done: `REACH_CHAIN_NOTES`) `note_reach_chain` (`:746`) hard-codes 8 steps. Name the constant, or bound it by the chain's visited set.
 
 #### src/global_effects.odin
 Verdict: the largest structural problem in the group. About 700 lines of CFG-walk recording hooks sit beside the whole-program solver, and the summary accessors come in fours.
 
-- **Structure** `:119-800` (`prov_note_static_write`, `prov_note_proc_value`, `prov_call_effects`, `prov_note_proc_store`, `prov_*_effects`, `prov_effect_call`, `prov_pool_join_effects`, `prov_window_effect_use`, `prov_note_shared_effect`) are called during graph construction and emit `Prov_Event`s. They belong with `provenance_call_walk.odin` and `provenance_effect.odin`. What remains (`compute_global_writes`, `settle_*`, `call_parts`, `effect_targets`, the per-call queries) is the whole-program solver its architecture-table row describes. The file also lacks the header comment every other file has.
+- **Structure** `:119-800` (`prov_note_static_write`, `prov_note_proc_value`, `prov_call_effects`, `prov_note_proc_store`, `prov_*_effects`, `prov_effect_call`, `prov_pool_join_effects`, `prov_window_effect_use`, `prov_note_shared_effect`) are called during graph construction and emit `Prov_Event`s. They belong with `provenance_call_walk.odin` and `provenance_effect.odin`. What remains (`compute_global_writes`, `settle_*`, `call_parts`, `effect_targets`, the per-call queries) is the whole-program solver its architecture-table row describes. The file also lacks the header comment every other file has. (The header was added in an earlier round; the move is still open.)
 - **Duplication** `part_writes`, `part_reads`, `part_reach` and `part_allocator_use` (`:1261-1294`) are four copies of one lookup. See top recommendation 2.
 - **Data structure/algorithm** `effect_call_globals` (`:1395-1399`) and `add_part_globals` (`:1695`) merge globals through `add_global_symbol`'s linear scan. That runs per call site per body, for both reads and writes, which is O(parts·globals²) for a call near `main`. `Global_Set` with `number_body_globals` (`:1551`) already provides a bitset. Keep the numbering on `effect_program` and reuse it here.
 - **Duplication** `settle_body_effects` (`:1506-1546`) and `settle_thread_facts` (`thread_summaries.odin:166-223`) share the build-parts, closing-parts, `part_readers`, `body_queue_make` and `grew` scaffolding. Extract `settle_over_parts(c, parts, closing, visit)`. Saves about 25 lines.
 - **Duplication** `Body_Queue` (`:1078-1112`) duplicates `Block_Queue` (`cfg.odin:372-423`). See top recommendation 3.
-- **Simplify** `prov_copy_of_held_effects` (`:651-656`) calls `prov_copy_effects`, which calls `type_copy_hooks`, then calls `type_copy_hooks` again. Pass the hooks through or cache them.
+- **Simplify** (done: `prov_copy_effects` answers whether a hook runs) `prov_copy_of_held_effects` (`:651-656`) calls `prov_copy_effects`, which calls `type_copy_hooks`, then calls `type_copy_hooks` again. Pass the hooks through or cache them.
 
 #### src/thread_summaries.odin
 Verdict: small and correct. It shares its scaffolding and set representation with `global_effects.odin`, but less efficiently.
@@ -2188,13 +2188,13 @@ Verdict: a clear tree-walker with careful limits. It is the largest file in the 
 
 - **Duplication** `eval_compare` (`:1045-1104`) mirrors `aggregate_equal` and `aggregate_order` (`const_ops.odin:436-512`), including `common_live_count` handling and the union-variant shortcut. The handling of uncomparable parts differs (see top recommendation 8; (unverified) whether intended). `eval_hash` (`:2116-2164`) mirrors `emit_hash_value` and `hash_const` by comment only. A shared walker parameterized by element access would stop them drifting.
 - **Data structure/algorithm** `Eval_Value` (`:32-43`) embeds a whole `Const_Value`: kind, bool, `float_bits`, `type_value`, a `big.Int` header, the float, `float_raw`, `text`, and an `aggregate` that must stay nil. On top of that come `type`, `variant`, `elements`, `capacity`, `target` and `proc_value`, so roughly 150 bytes per value (unverified exact size). Every integer is a `core:math/big` allocation. Loops and arithmetic dominate compile-time work, so a small-integer fast path (`i64` with overflow promotion to `Big_Int`) and a tagged scalar representation would cut both memory charged against `EVAL_MAX_MEMORY` and time. This is a design change; record it in `future-plans.md` if wanted.
-- **Bug (minor leak against the limit)** These allocations are charged to the evaluator and never released:
+- **Bug (minor leak against the limit)** (done: the sort scratch and the range temporaries in an earlier round, and now the frame `eval_dispatch` pushes for a constant initializer) These allocations are charged to the evaluator and never released:
   - `eval_sort` (`:1313`) never releases `scratch`.
   - `eval_dispatch` (`:3433-3436`) pushes its own frame but only pops it, never calling `eval_release_frame`.
   - `eval_range_foreach` (`:3200-3205`) allocates the integer temporaries `offset`, and its reversed difference, every iteration and never releases them, although they are pure temporaries. `bi_release` exists for this (`bigint.odin:40`).
   - Over a long `foreach` at the 1M-step limit these temporaries add up to tens of MB against the 64 MB limit.
   - Add `defer delete(scratch, ev.alloc)`, `eval_release_frame`, and `bi_release(offset)`.
-- **Simplify** `eval_message` (`:2672`) builds its text in `k.c.semantic_allocator` (permanent) for a diagnostic. Use `context.temp_allocator`, as `errorf` formats anyway.
+- **Simplify** (done) `eval_message` (`:2672`) builds its text in `k.c.semantic_allocator` (permanent) for a diagnostic. Use `context.temp_allocator`, as `errorf` formats anyway.
 - **Structure** Splitting along the existing sections gives smaller files:
   - expressions (`:542-1130`)
   - containers and maps (`:1167-1640`)
@@ -2207,7 +2207,7 @@ Verdict: a clear tree-walker with careful limits. It is the largest file in the 
 #### src/eval_memory.odin
 Verdict: a neat size-class allocator. One latent edge case.
 
-- **Bug (latent, unverified reachability)** `eval_shape(0, align)` (`:103-105`) computes `count = 0`, so `class = -1`. After the alignment shift the class is `-3`, `-2` or `-1`, all negative, which the allocator reads as the heap-block sentinel. `pad` stays `align` (16), smaller than `size_of(Eval_Large) + size_of(Eval_Block)` (32). So `eval_block_alloc` would write the `Eval_Large` link at the block start, and the header write at `payload - 16` would then overwrite that link. `storage.large` becomes corrupt and `eval_storage_destroy` walks a garbage pointer.
+- **Bug (latent, unverified reachability)** (done: the empty request in an earlier round, and now the nil guards, tested by `eval_allocator_handles_nil_and_empty_requests`) `eval_shape(0, align)` (`:103-105`) computes `count = 0`, so `class = -1`. After the alignment shift the class is `-3`, `-2` or `-1`, all negative, which the allocator reads as the heap-block sentinel. `pad` stays `align` (16), smaller than `size_of(Eval_Large) + size_of(Eval_Block)` (32). So `eval_block_alloc` would write the `Eval_Large` link at the block start, and the header write at `payload - 16` would then overwrite that link. `storage.large` becomes corrupt and `eval_storage_destroy` walks a garbage pointer.
   - The runtime's `mem_alloc`/`mem_resize` wrappers return early for size 0, so normal `make`/`append` never reach it. Any direct `allocator.procedure` call with size 0 would.
   - The procedure also does not handle `.Resize` with `old_memory == nil`, or `.Free(nil)`, which the Odin allocator contract permits.
   - Fix: `count := max((size + 15) / 16, 1)`, plus nil guards in `eval_allocator_proc`. About 4 lines.
@@ -2217,25 +2217,25 @@ Verdict: careful lazy classification. The hook lists are recomputed at every sit
 
 - **Data structure/algorithm** `type_hooks` (`:246-282`) allocates a visited map and walks the type on every call. It is reached from every drop and copy site in every graph build (`prov_drop_effects`, `prov_copy_effects`, `prov_scope_drop_effects`, `drop_cannot_panic`, `type_owns_allocation`). Cache `drop_hooks` and `copy_hooks` per underlying type once `lifecycle_of` returns a `.Finite` entry that was kept (not `open`): add them to `Lifecycle`, or to a side map. `type_drop_runs_hook` (`:229`) then becomes O(1), not "build the list to test `len > 0`".
 - **Simplify** `lifecycle_of` (`:124-141`, `:161-163`) allocates a fresh `Lifecycle` in the permanent `semantic_allocator` on every call while a record is resolving, or while `open`, and discards it. Return a pointer to a package-level "unresolved" entry, or to a temporary-allocator copy, for the first case.
-- **Duplication** `has_move_only_part` and `type_clone_disabled_walk` (`:294-331`) re-implement `some_lifecycle_part` (`:552`), which cannot be used because it calls `lifecycle_of`. That is legitimate, but say so in a comment to stop "simplification" attempts.
+- **Duplication** (done: the comment) `has_move_only_part` and `type_clone_disabled_walk` (`:294-331`) re-implement `some_lifecycle_part` (`:552`), which cannot be used because it calls `lifecycle_of`. That is legitimate, but say so in a comment to stop "simplification" attempts.
 
 #### src/hook_validation.odin
 Verdict: fine. Coherent and readable.
 
-- **Duplication** The drop-signature message is written twice: `check_generic_impl_hooks :216-218` and `require_hook_shape :175-183`. Share the `shape` string constant. Minor.
+- **Duplication** (done: `DROP_HOOK_SHAPE`) The drop-signature message is written twice: `check_generic_impl_hooks :216-218` and `require_hook_shape :175-183`. Share the `shape` string constant. Minor.
 
 #### src/lifecycle.odin
 Verdict: correct three-point liveness. The file holds two unrelated concerns.
 
 - **Structure** `:9-286` are checker special forms (`check_move`, `check_drop_builtin`, `check_forget_builtin`, `check_exchange_builtin`, `check_capacity_builtin`, `require_argument_ownership`, `place_root_symbol`). They run during checking and belong with the builtin checks (`check_builtin.odin`) or with `copy_sites.odin`'s ownership classification. `:288-569` is the liveness solver the architecture doc assigns to `lifecycle.odin`.
-- **Simplify** `require_argument_ownership :258` formats the parameter name with `fmt.aprintf(..., k.c.semantic_allocator)`, which is permanent, for a one-off diagnostic. Use `tprintf`.
+- **Simplify** (done) `require_argument_ownership :258` formats the parameter name with `fmt.aprintf(..., k.c.semantic_allocator)`, which is permanent, for a one-off diagnostic. Use `tprintf`.
 
 #### src/copy_sites.odin
 Verdict: clear. The move-only rejection is written three times.
 
-- **Duplication** The sequence "if `type_clone_disabled`, report L0502/L0503 and stop; else `contribute_lifecycle_members`" appears in `classify_return_value :29-40`, `classify_copy :89-100` and `classify_destructure :220-228`. Extract `require_copyable(k, span, type, what) -> bool`. Saves about 15 lines.
+- **Duplication** (not done: the three sites report different codes and wordings, one per field; the shared part is two lines) The sequence "if `type_clone_disabled`, report L0502/L0503 and stop; else `contribute_lifecycle_members`" appears in `classify_return_value :29-40`, `classify_copy :89-100` and `classify_destructure :220-228`. Extract `require_copyable(k, span, type, what) -> bool`. Saves about 15 lines.
 - **Simplify** `record_copy` (`:306-308`) sets `copied_as`, and `classify_copy :101` sets it again for the same expression in `classify_declaration_copies` and `classify_assignment_copies`. One owner suffices.
-- **Simplify** `report_inline_copy :363-364` and `report_allocating_copy :399-402` format diagnostic fragments with `aprintf` into `semantic_allocator`, which is permanent. Use `tprintf`.
+- **Simplify** (done) `report_inline_copy :363-364` and `report_allocating_copy :399-402` format diagnostic fragments with `aprintf` into `semantic_allocator`, which is permanent. Use `tprintf`.
 
 #### src/extended_temporaries.odin
 Verdict: fine. Small, focused, matches its spec section.
@@ -2259,9 +2259,9 @@ Verdict: fine. Conservative and matches design.md "Panics and unwinding".
 #### src/proc_contracts.odin
 Verdict: fine. Compact.
 
-- **Simplify** `dependency_contract_within :239` loops `for depth in 1 ..= 8`, while the matching loop in `merge_result_dependencies` (`carrier_shape.odin:1193`) uses `CARRIER_DEPTH`. Use the constant, or loop over the set bits.
-- **Data structure/algorithm** `join_callback_types :49-51` scans all `c.contract_joins` with `slice.equal` and does not `break` on a match. Small, but a `map[string]Symbol_Id` keyed by the joined name it already builds would be direct.
-- **Structure** No file header comment, unlike the rest of the group.
+- **Simplify** (done: `next_load_depth`) `dependency_contract_within :239` loops `for depth in 1 ..= 8`, while the matching loop in `merge_result_dependencies` (`carrier_shape.odin:1193`) uses `CARRIER_DEPTH`. Use the constant, or loop over the set bits.
+- **Data structure/algorithm** (done in part: the scan stops at a match; the list holds one entry per distinct join) `join_callback_types :49-51` scans all `c.contract_joins` with `slice.equal` and does not `break` on a match. Small, but a `map[string]Symbol_Id` keyed by the joined name it already builds would be direct.
+- **Structure** (done) No file header comment, unlike the rest of the group.
 
 #### src/precision.odin
 Verdict: fine. A small, focused vocabulary.
@@ -2281,12 +2281,12 @@ Verdict: fine. A small, focused vocabulary.
 | Hand-written Struct/Union/Array/Map type walkers | `carrier_reach_walk`, `carrier_leaves`, `type_reaches_destination`, `carrier_shape_walk`, `region_field_shape_into`, `widen_summary_map_path` (`carrier_shape.odin`); `transfer_facts_walk`, `collect_pointees`, `type_holds_inline`, `path_waker` (`transfer_facts.odin`); `prov_type_has_region` (`provenance_regions.odin:1110`); `own_equalities_walk` (`operators.odin:1125`); `type_hooks_walk` (`hooks.odin:258`) | Use `type_owned_parts`/`Type_Walk` (`types.odin`) where the walk needs no per-kind step; keep bespoke ones only where steps are recorded |
 | Procedure type or `dyn proc` signature | `callable_arity` `callback_summary.odin:287`; `any_value_call` `global_effects.odin:977`; `callable_type_targets` `:1786`; `effect_variable` `:345`; `effect_value` `:364` | `callable_signature(c, type)` |
 | Call-site procedure values | `call_values` `global_effects.odin:870`; `callee_values` and `passed_values` `callback_summary.odin:168,183`; `effect_value` `global_effects.odin:355` | One `call_site_values` |
-| One-place path predicate | `prov_path_names_one_place` `borrow.odin:278` equals `path_is_exact` `borrow.odin:2454` | Delete one |
+| One-place path predicate (done) | `prov_path_names_one_place` `borrow.odin:278` equals `path_is_exact` `borrow.odin:2454` | Delete one |
 | "Reported inside span" scan | `reported_within` `borrow_report.odin:76`; `reach_reported_within` `borrow_tasks.odin:566` | Shared helper |
-| "may" hedge on precision loss | `borrow_report.odin:189,386,581,599,635`; `borrow_tasks.odin:598,686,789-797` | `hedge(state, sure, unsure)` |
+| "may" hedge on precision loss (not done) | `borrow_report.odin:189,386,581,599,635`; `borrow_tasks.odin:598,686,789-797` | `hedge(state, sure, unsure)` |
 | Aggregate equality, ordering and hashing | `eval_compare` `eval.odin:1045-1104` vs `aggregate_equal`/`aggregate_order` `const_ops.odin:436-512`; `eval_hash` `eval.odin:2116` vs `hash_const` (`hash.odin:323`) and `emit_hash_value` | Shared walker over element accessors |
 | Move-only copy rejection | `copy_sites.odin:29-40,89-100,220-228` | `require_copyable` |
-| Same link-solve sequence | `borrow.odin:1134-1137`; `borrow_summaries.odin:84-87` | `solve_links(state)` |
+| Same link-solve sequence (done) | `borrow.odin:1134-1137`; `borrow_summaries.odin:84-87` | `solve_links(state)` |
 | Grow-by-one slice copy into the permanent arena | `set_add` `carrier_shape.odin:1214`; `merge_written_content` `borrow_summaries.odin:619`; `add_unique` `callback_summary.odin:29` | `[dynamic]` or per-round rebuild |
 
 Finding counts (per-file bullets): Bug 5, Simplify 22, Data structure/algorithm 15, Duplication 18, Structure 10.

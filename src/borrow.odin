@@ -1118,11 +1118,7 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		return
 	}
 	solve_reaching(&state)
-	// Links depend on reach, and what each slot holds of them on the links.
-	link_landed_stores(&state)
-	resolve_content_reads(&state)
-	prov_settle_pending_reborrows(graph)
-	solve_links_held(&state)
+	solve_links(&state)
 	solve_loan_liveness(&state)
 	report_provenance(&state)
 }
@@ -1163,7 +1159,7 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 }
 
 // Links each store's copies to the slots it lands in, at the settled reach.
-@(private)
+@(private = "file")
 link_landed_stores :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	if !graph.has_linked_store {
@@ -1272,12 +1268,23 @@ join_block_entry :: proc(state: ^Prov_Solve, block: ^Flow_Block, id: int) -> ^Fl
 	return first
 }
 
+// The links, once reach is solved: links depend on reach, and what each slot
+// holds of them on the links. Stores that landed link first, and content reads
+// resolve, before pending reborrows settle and the held links are solved.
+@(private)
+solve_links :: proc(state: ^Prov_Solve) {
+	link_landed_stores(state)
+	resolve_content_reads(state)
+	prov_settle_pending_reborrows(state.graph)
+	solve_links_held(state)
+}
+
 // design.md "Weakening and reborrows": forward, once every reborrow has settled, which of
 // them each slot's value may have come through. A copy takes what its source held and the
 // link it was copied by, and a new value in a slot ends what was taken from the old, so
 // which definition reaches is in the row: a reborrow of a value no slot holds any more
 // suspends nothing, on the paths where that is so.
-@(private)
+@(private = "file")
 solve_links_held :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	links := len(graph.reborrows)
@@ -2114,7 +2121,7 @@ load_pointee_paths :: proc(state: ^Prov_Solve, root: Prov_Root, path: []Proj_Ste
 
 // Records which slots each indirect read uses before the backward pass, so a
 // mutation before `p^.view` conflicts with the borrow held in the pointee.
-@(private)
+@(private = "file")
 resolve_content_reads :: proc(state: ^Prov_Solve) {
 	content_loans := make([dynamic]int, 0, 2, state.graph.alloc)
 	for loan, index in state.graph.loans {

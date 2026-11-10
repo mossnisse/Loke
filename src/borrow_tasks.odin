@@ -83,7 +83,8 @@ settle_pool_joins :: proc(state: ^Prov_Solve) {
 
 @(private = "file")
 block_running :: proc(graph: ^Flow_Graph, mask: []u8, index: int) -> bool {
-	for site in running_sites(graph, mask) {
+	cursor := 0
+	for site in next_running_site(graph, mask, &cursor) {
 		if graph.task_sites[site].block == index {
 			return true
 		}
@@ -115,16 +116,18 @@ window_is_open :: proc(mask: []u8) -> bool {
 	return false
 }
 
-// The sites whose tasks may be running, by `mask`.
+// Takes the next site, from `from^` on, whose task may be running by `mask`,
+// to walk those sites without listing them.
 @(private = "file")
-running_sites :: proc(graph: ^Flow_Graph, mask: []u8) -> []int {
-	out := make([dynamic]int, 0, 2, graph.alloc)
-	for index in 0 ..< len(graph.task_sites) {
-		if bit_get(mask, index) {
-			append(&out, index)
+next_running_site :: proc(graph: ^Flow_Graph, mask: []u8, from: ^int) -> (site: int, ok: bool) {
+	for from^ < len(graph.task_sites) {
+		site = from^
+		from^ += 1
+		if bit_get(mask, site) {
+			return site, true
 		}
 	}
-	return out[:]
+	return 0, false
 }
 
 @(private)
@@ -420,7 +423,8 @@ report_join_retention :: proc(state: ^Prov_Solve, event: Prov_Event, sym: ^Symbo
 window_block_span :: proc(state: ^Prov_Solve, window: []u8) -> Span {
 	graph := state.graph
 	innermost := -1
-	for site in running_sites(graph, window) {
+	cursor := 0
+	for site in next_running_site(graph, window, &cursor) {
 		innermost = max(innermost, graph.task_sites[site].block)
 	}
 	if innermost >= 0 {
@@ -489,7 +493,8 @@ check_task_reservation :: proc(state: ^Prov_Solve, event: Prov_Event, window: []
 	c := state.k.c
 	site := graph.task_sites[event.slot]
 	reserve := task_reservation(c, site)
-	for other in running_sites(graph, window) {
+	cursor := 0
+	for other in next_running_site(graph, window, &cursor) {
 		reserved := graph.task_sites[other]
 		running := task_reservation(c, reserved)
 		if !reservations_conflict(reserve, running) {
@@ -516,7 +521,8 @@ check_task_reservation :: proc(state: ^Prov_Solve, event: Prov_Event, window: []
 check_parent_allocator_use :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8) {
 	graph := state.graph
 	c := state.k.c
-	for other in running_sites(graph, window) {
+	cursor := 0
+	for other in next_running_site(graph, window, &cursor) {
 		reserved := graph.task_sites[other]
 		running := task_reservation(c, reserved)
 		if !reservations_conflict(event.region, running) {
@@ -736,13 +742,18 @@ check_thread_exit_drops :: proc(state: ^Prov_Solve, event: Prov_Event, shared: ^
 	}
 }
 
+// How many calls of a reach chain the notes show. Recursive calls make the
+// chain a cycle, which this bound also ends.
+@(private = "file")
+REACH_CHAIN_NOTES :: 8
+
 // Where a task's summarized reach comes from: each call on the way, from the
 // spawned procedure's, to the access itself. The run procedure's own call of
 // the spawned one is the spawn, and is not repeated.
 @(private = "file")
 note_reach_chain :: proc(c: ^Compiler, reached: Global_Effect) {
 	source := reached.source
-	for step := 0; step < 8; step += 1 {
+	for step := 0; step < REACH_CHAIN_NOTES; step += 1 {
 		via := symbol_of(c, source.via)
 		if via == nil {
 			if source.span != (Span{}) {

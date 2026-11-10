@@ -1,5 +1,11 @@
 package lokec
 
+// design.md "Procedure result contracts": an inferred callback's procedure
+// type carries the declaration whose contract its result keeps, or the join of
+// several. Where one such type stands in for another, at a conversion or a
+// call, the check is recorded and later run once summaries settle: the
+// contract it stands in with must stay within the contract it stands in for.
+
 import "core:slice"
 import "core:strings"
 
@@ -47,7 +53,10 @@ join_callback_types :: proc(c: ^Compiler, a, b: Type_Id) -> (Type_Id, bool) {
 	unique := slice.unique(members)
 	join := INVALID_SYMBOL
 	for existing in c.contract_joins {
-		if slice.equal(symbol_of(c, existing).members, unique) { join = existing }
+		if slice.equal(symbol_of(c, existing).members, unique) {
+			join = existing
+			break
+		}
 	}
 	if join == INVALID_SYMBOL {
 		names := make([]string, len(unique), context.temp_allocator)

@@ -57,6 +57,8 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // budgets below (design.md "Minimum provenance precision").
 CARRIER_DEPTH :: 4
 CARRIER_WIDTH :: 64
+// `Result_Dependencies.param_loads` keeps a bit per load depth in a `u8`.
+#assert(CARRIER_DEPTH <= 8)
 // A fixed array up to this length gets a path per element.
 CARRIER_ARRAY_ELEMENTS :: 8
 

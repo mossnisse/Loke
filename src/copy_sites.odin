@@ -360,8 +360,7 @@ report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Exp
 		_, is_ident := source.(^Expr_Ident)
 		transferable = is_ident && symbol_is_owned_here(root)
 	}
-	source_text := name == "" ? fmt.aprintf("a `%s`", type_name(k.c, type), allocator = k.c.semantic_allocator) :
-		fmt.aprintf("`%s`", name, allocator = k.c.semantic_allocator)
+	source_text := name == "" ? fmt.tprintf("a `%s`", type_name_alloc(k.c, type, context.temp_allocator)) : fmt.tprintf("`%s`", name)
 	warnf(
 		k.c, span, "L0507",
 		"this %s copies %d bytes from %s",
@@ -396,10 +395,10 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 	if root := symbol_of(k.c, place_root_symbol(source)); root != nil {
 		name := identifier_text(k.c, root.name)
 		if _, is_ident := source.(^Expr_Ident); is_ident {
-			object = fmt.aprintf("`%s`, which may allocate", name, allocator = k.c.semantic_allocator)
-			hint = fmt.aprintf("write `%s.clone()` if the copy is intended", name, allocator = k.c.semantic_allocator)
+			object = fmt.tprintf("`%s`, which may allocate", name)
+			hint = fmt.tprintf("write `%s.clone()` if the copy is intended", name)
 		} else {
-			object = fmt.aprintf("part of `%s`, which may allocate", name, allocator = k.c.semantic_allocator)
+			object = fmt.tprintf("part of `%s`, which may allocate", name)
 		}
 	}
 	if site == .Adapter {

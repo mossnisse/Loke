@@ -79,9 +79,16 @@ eval_allocator_proc :: proc(
 	case .Alloc, .Alloc_Non_Zeroed:
 		return eval_block_alloc(storage, size, alignment, mode == .Alloc)
 	case .Resize, .Resize_Non_Zeroed:
+		// The allocator contract makes resizing nothing an allocation, and
+		// freeing nothing a no-op.
+		if old_memory == nil {
+			return eval_block_alloc(storage, size, alignment, mode == .Resize)
+		}
 		return eval_block_resize(storage, old_memory, old_size, size, alignment, mode == .Resize)
 	case .Free:
-		eval_block_free(storage, old_memory)
+		if old_memory != nil {
+			eval_block_free(storage, old_memory)
+		}
 		return nil, nil
 	}
 	return nil, .Mode_Not_Implemented

@@ -290,6 +290,9 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // Containers count: their clone deep-copies elements. The question is whether a move-only type is reachable, so each type is visited
 // once. What a walk finds holds for the queried type only, so nothing is cached.
+// `lifecycle_of` asks this while it builds the entry, so the walk cannot be
+// `some_lifecycle_part`, which asks `lifecycle_of` of every part; it reads only
+// entries already finished.
 @(private = "file")
 has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
 	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)

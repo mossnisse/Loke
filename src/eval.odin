@@ -2681,7 +2681,8 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	if base == nil || base.const_value.kind != .String {
 		return ""
 	}
-	b := strings.builder_make(ev.k.c.semantic_allocator)
+	// Only the diagnostic keeps the text, and it formats its own copy.
+	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, ": ")
 	strings.write_string(&b, base.const_value.text)
 	for arg in v.bound[index + 1:] {
@@ -3459,7 +3460,10 @@ eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (out: Eval_Value, succ
 		if own_frame {
 			frame = eval_push_frame(ev, INVALID_SYMBOL, s.span) or_return
 		}
-		defer if own_frame { pop(&ev.frames) }
+		defer if own_frame {
+			pop(&ev.frames)
+			eval_release_frame(ev, frame)
+		}
 		eval_bind_case_payload(ev, frame, entry, subject, place) or_return
 		return eval_expr(ev, entry.arm)
 	}

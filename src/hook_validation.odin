@@ -167,12 +167,16 @@ check_hook_role :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) {
 	}
 }
 
+// The signature L0488 shows for a `drop` hook, on a concrete or a generic record.
+@(private = "file")
+DROP_HOOK_SHAPE :: "proc(self: inout T)"
+
 @(private = "file")
 require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) -> bool {
 	ok := sym.has_receiver && len(sym.params) > 0 && sym.params[0] == subject
 	shape: string
 	if sym.hook == .Drop {
-		shape = "proc(self: inout T)"
+		shape = DROP_HOOK_SHAPE
 		ok = ok && sym.receiver == .Inout && len(sym.params) == 1 && sym.result == INVALID_TYPE
 	} else {
 		shape = "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)"
@@ -214,8 +218,8 @@ check_generic_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, template: ^Gener
 			report_extension_hook(k, d.names[0].span, identifier_text(k.c, symbol_of(k.c, template.symbol).name), role)
 		} else if role == .Drop && record.kind == .Struct && !drop_hook_shaped(d) {
 			errorf(
-				k.c, d.names[0].span, "L0488", "`drop` has a fixed signature for `%s`: `proc(self: inout T)`",
-				identifier_text(k.c, symbol_of(k.c, template.symbol).name),
+				k.c, d.names[0].span, "L0488", "`drop` has a fixed signature for `%s`: `%s`",
+				identifier_text(k.c, symbol_of(k.c, template.symbol).name), DROP_HOOK_SHAPE,
 			)
 			k.c.reported_generic_hooks[span_key(d.span)] = true
 		}

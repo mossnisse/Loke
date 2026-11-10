@@ -81,10 +81,7 @@ collect_carrier_moves :: proc(state: ^Prov_Solve, declaration: Symbol_Id) -> boo
 		copies ||= noted.move.copied
 	}
 	if copies {
-		link_landed_stores(state)
-		resolve_content_reads(state)
-		prov_settle_pending_reborrows(graph)
-		solve_links_held(state)
+		solve_links(state)
 	}
 	changed := false
 	outlast := make(map[Root_Id]bool, graph.alloc)
