@@ -24,9 +24,7 @@ slice_of :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 intern_slice :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 	type := intern_type(c, Type_Key{kind = .Slice, element = element, mutable = mutable})
 	if info := type_of(c, type); len(info.fields) == 0 {
-		info.fields = make([]Symbol_Id, 2, c.semantic_allocator)
-		info.fields[SLICE_DATA] = new_field(c, "data", TYPE_RAWPTR, SLICE_DATA)
-		info.fields[SLICE_LEN] = new_field(c, "len", TYPE_INT, SLICE_LEN)
+		info.fields = owned_fields(c, {SLICE_DATA = {"data", TYPE_RAWPTR, false}, SLICE_LEN = {"len", TYPE_INT, false}})
 	}
 	return type
 }

@@ -135,14 +135,6 @@ Instantiation_Frame :: struct {
 	silent:   bool,
 }
 
-// An instance whose declaration is yet to be read for private names
-// (`check_generic_private_names`): an instance can appear inside a probe, which
-// would roll back a warning about it.
-Pending_Private_Read :: struct {
-	decl: ^Decl,
-	using location: Generic_Location,
-}
-
 // A procedure instance waiting to be named and emitted with its defining
 // package's items: a template's instance, or with no `template` a member of an
 // instantiated `impl` block.
@@ -692,7 +684,10 @@ pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: 
 	return specificity, has_poly
 }
 
-// The `$` names a pattern binds, in written order, repeats included.
+// The `$` names a pattern binds, in written order, repeats included. Only
+// pattern positions count: not a value, an inline definition, or a default,
+// which `bind_poly_names` and `bind_signature` in ast.odin also walk, since
+// their readers ask which names written syntax can see, not what a match binds.
 pattern_names :: proc(e: Expr) -> []Name {
 	names := make([dynamic]Name, context.temp_allocator)
 	pattern_shape(e, &names)
@@ -715,6 +710,36 @@ signature_poly_names :: proc(literal: ^Expr_Proc) -> []Name {
 	return names[:]
 }
 
+// Where `sym`'s declaration is read: its own lexical scope, or its package's
+// when it has none.
+declaration_location :: proc(c: ^Compiler, sym: ^Symbol) -> Generic_Location {
+	location := Generic_Location {
+		scope      = sym.def_scope,
+		pkg        = sym.pkg,
+		lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg,
+		impl_type  = sym.owner_type,
+		file       = sym.def_file,
+		file_node  = sym.def_file_node,
+	}
+	if location.scope == nil {
+		if pkg := package_of(c, sym.pkg); pkg != nil {
+			location.scope = pkg.scope
+		}
+	}
+	return location
+}
+
+// One parameter per written name, in declaration order.
+written_generic_params :: proc(c: ^Compiler, groups: []Generic_Param) -> []Generic_Param_Decl {
+	params := make([dynamic]Generic_Param_Decl, 0, len(groups), c.semantic_allocator)
+	for group in groups {
+		for name in group.names {
+			append(&params, Generic_Param_Decl{name = name_identifier(c, name), span = name.span, type_syntax = group.type})
+		}
+	}
+	return params[:]
+}
+
 @(private = "file")
 register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, kind: Generic_Kind) -> ^Generic_Template {
 	sym := symbol_of(k.c, symbol_id)
@@ -722,29 +747,12 @@ register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, k
 	template.symbol = symbol_id
 	template.decl = d
 	template.kind = kind
-	template.pkg = sym.pkg
-	template.lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg
-	template.impl_type = sym.owner_type
-	template.file = sym.def_file
-	template.file_node = sym.def_file_node
-	template.scope = sym.def_scope
-	if template.scope == nil {
-		if pkg := package_of(k.c, sym.pkg); pkg != nil {
-			template.scope = pkg.scope
-		}
-	}
+	template.location = declaration_location(k.c, sym)
 
 	switch kind {
 	case .Record:
 		template.instances = make([dynamic]^Instance, 0, 2, k.c.semantic_allocator)
-		record := d.values[0].(^Type_Record)
-		params := make([dynamic]Generic_Param_Decl, 0, 4, k.c.semantic_allocator)
-		for group in record.generic_params {
-			for name in group.names {
-				append(&params, Generic_Param_Decl{name = name_identifier(k.c, name), span = name.span, type_syntax = group.type})
-			}
-		}
-		template.params = params[:]
+		template.params = written_generic_params(k.c, d.values[0].(^Type_Record).generic_params)
 	case .Alias:
 		template.params = alias_parameters(k, d.values[0])
 	case .Procedure:

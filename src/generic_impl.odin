@@ -303,6 +303,10 @@ declare_generic_impl_block :: proc(k: ^Checker, instance: ^Instance, block: ^Gen
 		if has_poly && !match_generic_arg(k, written, bound, scope, &bindings) {
 			return
 		}
+		// A bare `$T` asks for nothing the matcher has not bound.
+		if _, bare := written.(^Type_Poly); bare {
+			continue
+		}
 		// The matcher binds the `$` names and leaves concrete parts to overload
 		// ranking, which installation never reaches: `[2]$E` must not take `[3]int`,
 		// nor `Pair(int, $T)` take `Pair(bool, int)`.
@@ -563,21 +567,8 @@ enter_instance_impl_member :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	   scope.instance == nil || scope.instance.type != sym.owner_type {
 		return false
 	}
-	enter_generic_location(k, Generic_Location {
-		scope      = scope,
-		pkg        = sym.pkg,
-		lookup_pkg = sym.lookup_pkg,
-		impl_type  = sym.owner_type,
-		file       = sym.def_file,
-		file_node  = sym.def_file_node,
-	})
+	enter_generic_location(k, declaration_location(k.c, sym))
 	return true
-}
-
-pend_template_private_read :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) {
-	location := template.location
-	location.scope = scope
-	append(&k.c.pending_private_reads, Pending_Private_Read{decl = template.decl, location = location})
 }
 
 // The block instances discovered so far are checked after the package that
@@ -594,17 +585,10 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 		check_deferred_union_zeros(k)
 		check_deferred_escape_parts(k)
 
-		if len(k.c.pending_private_reads) == 0 {
+		// What the reads select may instantiate a block.
+		if !check_pending_private_reads(k) {
 			return
 		}
-		for index := 0; index < len(k.c.pending_private_reads); index += 1 {
-			read := k.c.pending_private_reads[index]
-			saved := enter_generic_location(k, read.location)
-			check_generic_private_names(k, read)
-			k.location = saved
-		}
-		clear(&k.c.pending_private_reads)
-		// What those reads selected may have instantiated a block.
 	}
 }
 

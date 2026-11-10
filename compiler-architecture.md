@@ -1016,7 +1016,7 @@ be file-private. Paths below are relative to `src/`.
 
 | Files | Responsibility |
 | --- | --- |
-| `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
+| `ast_clone.odin`, `generic.odin` | Syntax cloning, with the rewrites a capture literal or an alias view asks for (`Clone_Rewrite`), generic inference, specialization, monomorphization, and instance caches. |
 | `generic_alias.odin` | Parametric aliases: the rules on their declarations, and what an application denotes and how a pattern written through one matches. |
 | `generic_impl.odin` | Generic `impl` blocks: installing them on each instance, settling members two blocks supply, and checking their bodies once a package is finished. |
 | `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, slot lookup contexts, composition walks, `Callable`'s built-in rule, and what a bare bound grants. |

@@ -233,8 +233,8 @@ Capture_Field :: struct {
 	field: Name,
 }
 
-rewrite_capture :: proc(c: ^Compiler, v: ^Expr_Ident) -> Expr {
-	field, captured := c.capture_rewrite.captures[identifier_of(c, v)]
+rewrite_capture :: proc(c: ^Compiler, rewrite: ^Capture_Rewrite, v: ^Expr_Ident) -> Expr {
+	field, captured := rewrite.captures[identifier_of(c, v)]
 	if !captured {
 		return nil
 	}
@@ -272,12 +272,7 @@ capture_call_method :: proc(k: ^Checker, capture: ^Capture_Literal, fields: []Ca
 	for entry, index in capture.entries {
 		rewrite.captures[name_identifier(k.c, entry.name)] = fields[index]
 	}
-	// Restored rather than cleared, as `src/ast_clone.odin` does at each nested
-	// literal, so an outer rewrite survives.
-	outer := k.c.capture_rewrite
-	k.c.capture_rewrite = &rewrite
-	body := clone_block(k.c, literal.body)
-	k.c.capture_rewrite = outer
+	body := clone_block(k.c, literal.body, {capture = &rewrite})
 
 	method := new(Expr_Proc, k.c.semantic_allocator)
 	method.span = literal.span

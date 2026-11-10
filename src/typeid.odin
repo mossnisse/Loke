@@ -6,8 +6,10 @@
 // and keeps zero reserved for the nil `typeid`.
 package lokec
 
+import "base:runtime"
 import "core:fmt"
 import "core:hash"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 
@@ -76,6 +78,13 @@ request_typeid :: proc(c: ^Compiler, type: Type_Id) {
 	append(&c.typeid_order, type)
 }
 
+// The keys made so far, and where new ones are made.
+@(private = "file")
+Sort_Keys :: struct {
+	memo:      map[Type_Id]string,
+	allocator: mem.Allocator,
+}
+
 @(private = "file")
 Ranked_Type :: struct {
 	key:  string,
@@ -98,13 +107,14 @@ freeze_typeids :: proc(c: ^Compiler) {
 	}
 	c.typeid_frozen = true
 	// Every type is finished and the check was clean, so one memo can serve all
-	// of them: no key holds the cycle sentinel.
-	memo := make(map[Type_Id]string, context.temp_allocator)
+	// of them: no key holds the cycle sentinel. The keys are needed only to sort.
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	keys := Sort_Keys{memo = make(map[Type_Id]string, context.temp_allocator), allocator = context.temp_allocator}
 	// Sorting key-and-type pairs keeps the comparison non-capturing, which is what
 	// `slice.stable_sort_by` needs; the sort is stable so equal keys keep request order.
-	sorted := make([]Ranked_Type, len(c.typeid_order), c.semantic_allocator)
+	sorted := make([]Ranked_Type, len(c.typeid_order), context.temp_allocator)
 	for type, index in c.typeid_order {
-		sorted[index] = Ranked_Type{typeid_sort_key_walk(c, type, &memo), type}
+		sorted[index] = Ranked_Type{typeid_sort_key_walk(c, type, &keys), type}
 	}
 	slice.stable_sort_by(sorted, proc(a, b: Ranked_Type) -> bool { return a.key < b.key })
 	for entry, index in sorted {
@@ -144,7 +154,7 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 // A symbol's package-qualified identity. A bare identifier is not one: two
 // packages may both declare `Token`.
 @(private = "file")
-symbol_key :: proc(c: ^Compiler, id: Symbol_Id) -> string {
+symbol_key :: proc(c: ^Compiler, id: Symbol_Id, allocator: mem.Allocator) -> string {
 	sym := symbol_of(c, id)
 	if sym == nil {
 		return "<none>"
@@ -153,22 +163,19 @@ symbol_key :: proc(c: ^Compiler, id: Symbol_Id) -> string {
 	if pkg := package_of(c, sym.pkg); pkg != nil {
 		pkg_key = pkg.key
 	}
-	return fmt.aprintf(
-		"%s:%s", pkg_key, identifier_text(c, sym.name),
-		allocator = c.semantic_allocator,
-	)
+	return fmt.aprintf("%s:%s", pkg_key, identifier_text(c, sym.name), allocator = allocator)
 }
 
 // One constant in a value argument. A `typeid_of(T)` inside it keys as `T` does:
 // the `Type_Id` that `const_key_text` spells follows allocation order.
 @(private = "file")
-write_value_key :: proc(c: ^Compiler, b: ^strings.Builder, value: Const_Value, memo: ^map[Type_Id]string) {
+write_value_key :: proc(c: ^Compiler, b: ^strings.Builder, value: Const_Value, keys: ^Sort_Keys) {
 	#partial switch value.kind {
 	case .Type:
 		if number, known := typeid_const_number(c, value); known {
 			fmt.sbprintf(b, "n%d", number)
 		} else {
-			fmt.sbprintf(b, "t{{%s}}", typeid_sort_key_walk(c, value.type_value, memo))
+			fmt.sbprintf(b, "t{{%s}}", typeid_sort_key_walk(c, value.type_value, keys))
 		}
 	case .Aggregate:
 		strings.write_string(b, "{")
@@ -177,7 +184,7 @@ write_value_key :: proc(c: ^Compiler, b: ^strings.Builder, value: Const_Value, m
 			fmt.sbprintf(b, "%d", value.aggregate.variant)
 			for element in value.aggregate.elements {
 				strings.write_string(b, ",")
-				write_value_key(c, b, element, memo)
+				write_value_key(c, b, element, keys)
 			}
 		}
 		strings.write_string(b, "}")
@@ -189,13 +196,13 @@ write_value_key :: proc(c: ^Compiler, b: ^strings.Builder, value: Const_Value, m
 }
 
 @(private = "file")
-write_applied_args :: proc(c: ^Compiler, b: ^strings.Builder, args: []Generic_Arg, memo: ^map[Type_Id]string) {
+write_applied_args :: proc(c: ^Compiler, b: ^strings.Builder, args: []Generic_Arg, keys: ^Sort_Keys) {
 	for arg in args {
 		if arg.is_type {
-			fmt.sbprintf(b, ":t{{%s}}", typeid_sort_key_walk(c, arg.type, memo))
+			fmt.sbprintf(b, ":t{{%s}}", typeid_sort_key_walk(c, arg.type, keys))
 		} else {
 			strings.write_string(b, ":v{")
-			write_value_key(c, b, arg.value, memo)
+			write_value_key(c, b, arg.value, keys)
 			strings.write_string(b, "}")
 		}
 	}
@@ -208,16 +215,16 @@ write_instance_identity :: proc(
 	b: ^strings.Builder,
 	template_symbol: Symbol_Id,
 	args: []Generic_Arg,
-	memo: ^map[Type_Id]string,
+	keys: ^Sort_Keys,
 ) {
-	write_symbol_identity(c, b, template_symbol, memo)
+	write_symbol_identity(c, b, template_symbol, keys)
 	// A template declared in an `impl` block shares its name with the
 	// templates of every other block on the same owner.
 	if template := symbol_of(c, template_symbol);
 	   template != nil && template.owner_type != INVALID_TYPE {
-		fmt.sbprintf(b, ":o{{%s}}", typeid_sort_key_walk(c, template.owner_type, memo))
+		fmt.sbprintf(b, ":o{{%s}}", typeid_sort_key_walk(c, template.owner_type, keys))
 	}
-	write_applied_args(c, b, args, memo)
+	write_applied_args(c, b, args, keys)
 }
 
 // The site's file as its position among the package's files, which are sorted by
@@ -237,12 +244,12 @@ declaring_file_index :: proc(c: ^Compiler, pkg_id: Package_Id, file: u32) -> int
 // Where something is written, and which copy of that text this is: the generic
 // instances and static expansions around it.
 @(private = "file")
-write_site_key :: proc(c: ^Compiler, b: ^strings.Builder, site: Type_Site, memo: ^map[Type_Id]string) {
+write_site_key :: proc(c: ^Compiler, b: ^strings.Builder, site: Type_Site, keys: ^Sort_Keys) {
 	fmt.sbprintf(b, "@%06d:%010d", declaring_file_index(c, site.pkg, site.span.file), site.span.lo)
 	for scope := site.scope; scope != nil; scope = scope.parent {
 		if instance := scope.instance; instance != nil {
 			strings.write_string(b, ":in{")
-			write_instance_identity(c, b, instance.template, generic_args_of(c, instance.bindings), memo)
+			write_instance_identity(c, b, instance.template, generic_args_of(c, instance.bindings), keys)
 			strings.write_string(b, "}")
 		}
 		if scope.expansion != 0 {
@@ -255,10 +262,10 @@ write_site_key :: proc(c: ^Compiler, b: ^strings.Builder, site: Type_Site, memo:
 // procedure's, and with itself in each copy of its text, so it also keys on where
 // it is declared.
 @(private = "file")
-write_symbol_identity :: proc(c: ^Compiler, b: ^strings.Builder, id: Symbol_Id, memo: ^map[Type_Id]string) {
-	strings.write_string(b, symbol_key(c, id))
+write_symbol_identity :: proc(c: ^Compiler, b: ^strings.Builder, id: Symbol_Id, keys: ^Sort_Keys) {
+	strings.write_string(b, symbol_key(c, id, keys.allocator))
 	if sym := symbol_of(c, id); sym != nil && sym.def_scope != nil && sym.def_scope.kind != .Package {
-		write_site_key(c, b, Type_Site{sym.pkg, sym.span, sym.def_scope}, memo)
+		write_site_key(c, b, Type_Site{sym.pkg, sym.span, sym.def_scope}, keys)
 	}
 }
 
@@ -270,8 +277,8 @@ write_symbol_identity :: proc(c: ^Compiler, b: ^strings.Builder, id: Symbol_Id, 
 // type on its complete recursive shape.
 typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
 	// Scratch: only the keys themselves live in the semantic arena.
-	memo := make(map[Type_Id]string, context.temp_allocator)
-	return typeid_sort_key_walk(c, type, &memo)
+	keys := Sort_Keys{memo = make(map[Type_Id]string, context.temp_allocator), allocator = c.semantic_allocator}
+	return typeid_sort_key_walk(c, type, &keys)
 }
 
 // A key past this length is replaced by a digest of it. A key holds its components'
@@ -281,14 +288,14 @@ SORT_KEY_LIMIT :: 1024
 // Stands for `key` in whatever holds it: the same text gives the same digest in every
 // build, and the digest's two seeds and the length keep two long keys apart.
 @(private = "file")
-bounded_sort_key :: proc(c: ^Compiler, key: string) -> string {
+bounded_sort_key :: proc(key: string, allocator: mem.Allocator) -> string {
 	if len(key) <= SORT_KEY_LIMIT {
 		return key
 	}
 	data := transmute([]u8)key
 	return fmt.aprintf(
 		"digest:%d:%x:%x", len(key), hash.fnv64a(data), hash.fnv64a(data, 0x9e3779b97f4a7c15),
-		allocator = c.semantic_allocator,
+		allocator = allocator,
 	)
 }
 
@@ -297,32 +304,32 @@ bounded_sort_key :: proc(c: ^Compiler, key: string) -> string {
 // stable key until the finite-size pass rejects them. A memo that can still meet one
 // is per top-level call, which keeps the sentinel out of an unrelated type's key.
 @(private = "file")
-typeid_sort_key_walk :: proc(c: ^Compiler, type: Type_Id, memo: ^map[Type_Id]string) -> (result: string) {
-	if key, found := memo^[type]; found {
+typeid_sort_key_walk :: proc(c: ^Compiler, type: Type_Id, keys: ^Sort_Keys) -> (result: string) {
+	if key, found := keys.memo[type]; found {
 		return key
 	}
-	memo^[type] = "000:<invalid-recursive-type>"
+	keys.memo[type] = "000:<invalid-recursive-type>"
 	defer {
-		result = bounded_sort_key(c, result)
-		memo^[type] = result
+		result = bounded_sort_key(result, keys.allocator)
+		keys.memo[type] = result
 	}
 
 	// Distinct identities can share a shape (`int`, `i64`), so these key on their name.
 	if type < FIRST_DYNAMIC_TYPE {
-		return fmt.aprintf("predeclared:%s", type_name(c, type), allocator = c.semantic_allocator)
+		return fmt.aprintf("predeclared:%s", type_name_alloc(c, type, keys.allocator), allocator = keys.allocator)
 	}
 	info := type_of(c, type)
 	if info == nil {
 		return "000:<invalid>"
 	}
-	b := strings.builder_make(c.semantic_allocator)
+	b := strings.builder_make(keys.allocator)
 	switch {
 	case info.instance_of != INVALID_SYMBOL:
 		strings.write_string(&b, "instance:")
-		write_instance_identity(c, &b, info.instance_of, info.instance_args, memo)
+		write_instance_identity(c, &b, info.instance_of, info.instance_args, keys)
 	case symbol_of(c, info.symbol) != nil:
 		strings.write_string(&b, "nominal:")
-		write_symbol_identity(c, &b, info.symbol, memo)
+		write_symbol_identity(c, &b, info.symbol, keys)
 	case info.anonymous_record:
 		// The ordered field names plus each field type's own key — the same vector
 		// `anon_record_type` interns on.
@@ -334,7 +341,7 @@ typeid_sort_key_walk :: proc(c: ^Compiler, type: Type_Id, memo: ^map[Type_Id]str
 			}
 			fmt.sbprintf(
 				&b, ":f%s{{%s}}", identifier_text(c, member.name),
-				typeid_sort_key_walk(c, member.type, memo),
+				typeid_sort_key_walk(c, member.type, keys),
 			)
 		}
 	case info.anonymous_union:
@@ -344,17 +351,17 @@ typeid_sort_key_walk :: proc(c: ^Compiler, type: Type_Id, memo: ^map[Type_Id]str
 		for payload, index in info.variants {
 			fmt.sbprintf(&b, ":v%s", identifier_text(c, info.variant_names[index]))
 			if payload != TYPE_VOID {
-				fmt.sbprintf(&b, "{{%s}}", typeid_sort_key_walk(c, payload, memo))
+				fmt.sbprintf(&b, "{{%s}}", typeid_sort_key_walk(c, payload, keys))
 			}
 		}
 	case info.dyn_interface != INVALID_SYMBOL:
 		// A `dyn` type carries no symbol of its own; the erased interface and its
 		// arguments are the identity.
 		fmt.sbprintf(&b, "dyn:%t:", info.mutable)
-		write_symbol_identity(c, &b, info.dyn_interface, memo)
-		write_applied_args(c, &b, info.dyn_args, memo)
+		write_symbol_identity(c, &b, info.dyn_interface, keys)
+		write_applied_args(c, &b, info.dyn_args, keys)
 	case:
-		write_shape_key(c, &b, info, memo)
+		write_shape_key(c, &b, info, keys)
 	}
 	return strings.to_string(b)
 }
@@ -363,7 +370,7 @@ typeid_sort_key_walk :: proc(c: ^Compiler, type: Type_Id, memo: ^map[Type_Id]str
 // `intern_proc_type` intern on. A compiler-made type's name spells the kind of
 // thing it is, but what it was made over is in its components.
 @(private = "file")
-write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, memo: ^map[Type_Id]string) {
+write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, keys: ^Sort_Keys) {
 	if info.name != INVALID_IDENTIFIER {
 		fmt.sbprintf(b, "named:%d:%s", int(info.kind), identifier_text(c, info.name))
 	} else {
@@ -373,14 +380,14 @@ write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, mem
 	if pkg := package_of(c, info.site.pkg); pkg != nil {
 		fmt.sbprintf(b, ":pkg{{%s}}", pkg.key)
 		if info.site.scope != nil {
-			write_site_key(c, b, info.site, memo)
+			write_site_key(c, b, info.site, keys)
 		}
 	}
 	if info.element != INVALID_TYPE {
-		fmt.sbprintf(b, ":e{{%s}}", typeid_sort_key_walk(c, info.element, memo))
+		fmt.sbprintf(b, ":e{{%s}}", typeid_sort_key_walk(c, info.element, keys))
 	}
 	if info.key != INVALID_TYPE {
-		fmt.sbprintf(b, ":k{{%s}}", typeid_sort_key_walk(c, info.key, memo))
+		fmt.sbprintf(b, ":k{{%s}}", typeid_sort_key_walk(c, info.key, keys))
 	}
 	if info.count != 0 {
 		fmt.sbprintf(b, ":n%d", info.count)
@@ -393,13 +400,13 @@ write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, mem
 		crosses := index < len(info.param_cross_thread) && info.param_cross_thread[index]
 		fmt.sbprintf(
 			b, ":p%d:%t:%t:%d:%t{{%s}}", mode, reset, by_ptr, int(escape), crosses,
-			typeid_sort_key_walk(c, parameter, memo),
+			typeid_sort_key_walk(c, parameter, keys),
 		)
 	}
 	if info.result != INVALID_TYPE {
 		fmt.sbprintf(
 			b, ":r%t{{%s}}", info.result_inout,
-			typeid_sort_key_walk(c, info.result, memo),
+			typeid_sort_key_walk(c, info.result, keys),
 		)
 	}
 	if info.convention != "" {
@@ -409,8 +416,8 @@ write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, mem
 		fmt.sbprint(b, ":cvararg")
 	}
 	if sym := symbol_of(c, info.proc_contract); sym != nil {
-		fmt.sbprintf(b, ":contract{{%s", symbol_key(c, info.proc_contract))
-		write_site_key(c, b, Type_Site{sym.pkg, sym.span, sym.def_scope}, memo)
+		fmt.sbprintf(b, ":contract{{%s", symbol_key(c, info.proc_contract, keys.allocator))
+		write_site_key(c, b, Type_Site{sym.pkg, sym.span, sym.def_scope}, keys)
 		strings.write_string(b, "}")
 	}
 }

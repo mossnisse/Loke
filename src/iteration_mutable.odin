@@ -3,8 +3,6 @@
 // maps, and the checking of a `foreach` that binds its elements mutably.
 package lokec
 
-import "core:fmt"
-
 ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 	c := k.c
 	info := type_of(c, subject)
@@ -41,15 +39,7 @@ add_mutable_map_members :: proc(k: ^Checker, subject: Type_Id) {
 add_mutable_sequence_members :: proc(k: ^Checker, subject: Type_Id, info: ^Type_Info) {
 	c := k.c
 	element := info.element
-	fields := make([]Symbol_Id, 3, c.semantic_allocator)
-	fields[ITER_ARRAY_DATA] = new_field(c, "items", slice_of(c, element, true), ITER_ARRAY_DATA)
-	fields[ITER_ARRAY_INDEX] = new_field(c, "index", TYPE_INT, ITER_ARRAY_INDEX)
-	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED)
-	iterator := new_type(c, Type_Info{
-		kind = .Struct, element = element, fields = fields,
-		name = intern_identifier(c, fmt.tprintf("Mutable_Iterator(%s)", type_name(c, subject))),
-		backend_label = fmt.aprintf("Mutable_Iterator.%d", subject, allocator = c.semantic_allocator),
-	})
+	iterator := array_iterator_record(c, "Mutable_Iterator", subject, slice_of(c, element, true), "items", {element = element})
 	next := synth_self_member(c, "next", .Slice_Mut_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))
 	add_members(c, iterator, []Symbol_Id{next})
 	// A view walks as any value; a container needs a mutable place.

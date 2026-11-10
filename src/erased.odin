@@ -91,11 +91,8 @@ pass_variadic_element :: proc(k: ^Checker, e: Expr, element: Type_Id, prechecked
 	if !variadic_view_element(k.c, element) {
 		return pass_argument(k, e, element, prechecked)
 	}
-	if !prechecked && check_single_expr(k, e, element) == INVALID_TYPE {
-		return e, false
-	}
-	base := expr_base(e)
-	if base == nil || base.type == INVALID_TYPE {
+	base := checked_pack_element(k, e, element, prechecked)
+	if base == nil {
 		return e, false
 	}
 	if !variadic_view_accepts(k.c, base.type, element) {
@@ -178,11 +175,8 @@ dyn_type :: proc(
 		dyn_args      = args,
 		dyn_read_only = read_only,
 	})
-	fields := make([]Symbol_Id, 2, k.c.semantic_allocator)
-	fields[DYN_DATA] = new_field(k.c, "data", TYPE_RAWPTR, DYN_DATA)
-	fields[DYN_WITNESS] = new_field(k.c, "witness", TYPE_RAWPTR, DYN_WITNESS)
 	stored := type_of(k.c, type)
-	stored.fields = fields
+	stored.fields = owned_fields(k.c, {DYN_DATA = {"data", TYPE_RAWPTR, false}, DYN_WITNESS = {"witness", TYPE_RAWPTR, false}})
 	stored.backend_label = fmt.aprintf("dyn.%s", identifier_text(k.c, name), allocator = k.c.semantic_allocator)
 	k.c.dyn_types[strings.clone(key, k.c.semantic_allocator)] = type
 	install_dyn_forwarding_slots(k, info, args, type)

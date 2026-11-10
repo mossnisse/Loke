@@ -44,14 +44,21 @@ variadic_spread_type :: proc(c: ^Compiler, from, pack: Type_Id) -> (Type_Id, boo
 	return lent, true
 }
 
+// A pack element's base once it is checked against `expected`, unless ranking
+// already checked it, or nil if it has no type. Shared with `..dyn I` packs.
+checked_pack_element :: proc(k: ^Checker, e: Expr, expected: Type_Id, prechecked: bool) -> ^Expr_Base {
+	if !prechecked && check_single_expr(k, e, expected) == INVALID_TYPE {
+		return nil
+	}
+	base := expr_base(e)
+	return base != nil && base.type != INVALID_TYPE ? base : nil
+}
+
 // One element of a `..^T` pack: a `T` is borrowed, an unfixed constant fixed at
 // `T` first, in a temporary that lives through the call.
 pass_lent_element :: proc(k: ^Checker, e: Expr, element, pointee: Type_Id, prechecked: bool) -> (Expr, bool) {
-	if !prechecked && check_single_expr(k, e, pointee) == INVALID_TYPE {
-		return e, false
-	}
-	base := expr_base(e)
-	if base == nil || base.type == INVALID_TYPE {
+	base := checked_pack_element(k, e, pointee, prechecked)
+	if base == nil {
 		return e, false
 	}
 	if !variadic_lend_accepts(k.c, base.type, element) {

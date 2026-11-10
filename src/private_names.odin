@@ -1020,6 +1020,42 @@ read_instance_declarations :: proc(k: ^Checker, pkg: ^Package, pending: Pending_
 	}
 }
 
+// An instance whose declaration is yet to be read for private names
+// (`check_generic_private_names`): an instance can appear inside a probe, which
+// would roll back a warning about it.
+Pending_Private_Read :: struct {
+	decl: ^Decl,
+	using location: Generic_Location,
+}
+
+// Queues `decl` to be read where `location` says, once no probe can roll the
+// warning back (`check_pending_impl_instances` drains the queue).
+pend_private_read :: proc(k: ^Checker, decl: ^Decl, location: Generic_Location, scope: ^Scope) {
+	read := Pending_Private_Read{decl = decl, location = location}
+	read.scope = scope
+	append(&k.c.pending_private_reads, read)
+}
+
+pend_template_private_read :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) {
+	pend_private_read(k, template.decl, template.location, scope)
+}
+
+// Reads every queued declaration, the ones these reads queue included; false
+// when there was none.
+check_pending_private_reads :: proc(k: ^Checker) -> bool {
+	if len(k.c.pending_private_reads) == 0 {
+		return false
+	}
+	for index := 0; index < len(k.c.pending_private_reads); index += 1 {
+		read := k.c.pending_private_reads[index]
+		saved := enter_generic_location(k, read.location)
+		check_generic_private_names(k, read)
+		k.location = saved
+	}
+	clear(&k.c.pending_private_reads)
+	return true
+}
+
 // design.md "Private names in public declarations": a generic declaration's syntax
 // is read per instance, with the checker in its scope.
 check_generic_private_names :: proc(k: ^Checker, read: Pending_Private_Read) {
