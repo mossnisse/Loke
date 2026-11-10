@@ -35,8 +35,9 @@ path_dir :: proc(path: string, allocator := context.allocator) -> string {
 	return filepath.clean(filepath.dir(path), allocator) or_else "."
 }
 
-replace_ext :: proc(path: string, ext: string) -> string {
-	return strings.concatenate({strings.trim_suffix(path, filepath.ext(path)), ext})
+// `path` with its extension, if any, replaced by `ext`.
+replace_ext :: proc(path: string, ext: string, allocator := context.allocator) -> string {
+	return strings.concatenate({strings.trim_suffix(path, filepath.ext(path)), ext}, allocator)
 }
 
 // The first file PATH holds for a command name, with or without `.exe`, or "".

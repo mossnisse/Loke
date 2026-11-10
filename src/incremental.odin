@@ -215,11 +215,13 @@ reparse_edited_files :: proc(c: ^Compiler, order: []Package_Id, texts: []string)
 	replacements := make([dynamic]Replacement, context.temp_allocator)
 	for id in order {
 		pkg := package_of(c, id)
+		edited := false
 		for file, index in pkg.files {
 			if texts[file.file] == c.sources[file.file].text { continue }
 			append(&replacements, Replacement{pkg, index})
-			unbind_package(pkg)
+			edited = true
 		}
+		if edited { unbind_package(pkg) }
 	}
 	// In loading order (source indices), as a batch reports syntax diagnostics.
 	slice.sort_by(replacements[:], proc(a, b: Replacement) -> bool {

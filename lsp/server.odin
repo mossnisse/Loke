@@ -19,7 +19,13 @@ PARSE_ERROR            :: -32700
 INVALID_REQUEST        :: -32600
 METHOD_NOT_FOUND       :: -32601
 SERVER_NOT_INITIALIZED :: -32002
+INVALID_PARAMS         :: -32602
 REQUEST_CANCELLED      :: -32800
+// The document changed after the request arrived, so its position may no
+// longer mean what the client meant.
+CONTENT_MODIFIED       :: -32801
+// A request that was valid but could not be carried out; the message says why.
+REQUEST_FAILED         :: -32803
 
 // TextDocumentSyncKind.Full: every change carries the whole text.
 SYNC_FULL :: 1
@@ -220,6 +226,20 @@ handle_notification :: proc(s: ^Server, method: string, params: json.Value) {
 	}
 }
 
+// The kinds a client capability's `valueSet` lists, or `1 ..= default_last`
+// when it lists none.
+@(private = "file")
+client_value_set :: proc(capability: json.Value, default_last: int) -> (kinds: bit_set[0 ..< 64]) {
+	if member(capability, "valueSet") == nil {
+		for kind in 1 ..= default_last { kinds += {kind} }
+		return
+	}
+	for kind in member_array(capability, "valueSet") {
+		if value, ok := kind.(json.Integer); ok && value >= 0 && value < 64 { kinds += {int(value)} }
+	}
+	return
+}
+
 @(private = "file")
 initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	capabilities := member(params, "capabilities")
@@ -234,27 +254,13 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	symbols := member(member(capabilities, "textDocument"), "documentSymbol")
 	s.hierarchical_symbols = member_bool(symbols, "hierarchicalDocumentSymbolSupport")
 	// Without a list, a client is only known to show `File` through `Array`.
-	s.symbol_kinds = {}
-	for kind in 1 ..= 18 { s.symbol_kinds += {kind} }
-	if kinds := member(symbols, "symbolKind"); member(kinds, "valueSet") != nil {
-		s.symbol_kinds = {}
-		for kind in member_array(kinds, "valueSet") {
-			if value, ok := kind.(json.Integer); ok && value >= 0 && value < 64 { s.symbol_kinds += {int(value)} }
-		}
-	}
+	s.symbol_kinds = client_value_set(member(symbols, "symbolKind"), 18)
 	completion := member(member(capabilities, "textDocument"), "completion")
 	for format in member_array(member(completion, "completionItem"), "documentationFormat") {
 		if name, ok := format.(json.String); ok && name == "markdown" { s.markdown_completion = true }
 	}
 	// Without a list, `Text` through `Reference`.
-	s.completion_kinds = {}
-	for kind in 1 ..= 18 { s.completion_kinds += {kind} }
-	if kinds := member(completion, "completionItemKind"); member(kinds, "valueSet") != nil {
-		s.completion_kinds = {}
-		for kind in member_array(kinds, "valueSet") {
-			if value, ok := kind.(json.Integer); ok && value >= 0 && value < 64 { s.completion_kinds += {int(value)} }
-		}
-	}
+	s.completion_kinds = client_value_set(member(completion, "completionItemKind"), 18)
 	signature := member(member(member(member(capabilities, "textDocument"), "signatureHelp"), "signatureInformation"), "parameterInformation")
 	s.label_offsets = member_bool(signature, "labelOffsetSupport")
 	s.prepare_rename = member_bool(member(member(capabilities, "textDocument"), "rename"), "prepareSupport")

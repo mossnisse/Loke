@@ -5,7 +5,6 @@ package lokec
 import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
-import "core:strings"
 import "core:sync"
 
 Snapshot_Id :: distinct u64
@@ -104,7 +103,7 @@ query_source :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, fi
 	source := s.compiler.sources[file]
 	bundled := false
 	if pkg := package_of(&s.compiler, s.queries.packages[file]); pkg != nil {
-		bundled = strings.has_prefix(pkg.key, "base:") || strings.has_prefix(pkg.key, "core:")
+		bundled = is_bundled_key(pkg.key)
 	}
 	return Query_Source{source.path, source.text, source.line_starts, bundled}, true
 }

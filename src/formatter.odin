@@ -15,7 +15,8 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 
 // Rewrites every `.loke` file of `input`, a file or a directory's direct files,
 // in place; with `check`, only lists the ones that would change. The exit status
-// is 1 when a file does not parse or, with `check`, would change.
+// is 1 when a file does not parse or, with `check`, would change. Shared by
+// `-fmt` and `-migrate` (`src/migrate.odin`).
 rewrite_files :: proc(c: ^Compiler, input: string, check: bool, rewrite: proc(c: ^Compiler, file: u32) -> (string, bool)) -> int {
 	status := 0
 	for path in input_sources(c, input) {

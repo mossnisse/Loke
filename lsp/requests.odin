@@ -15,10 +15,6 @@ import "core:strings"
 
 import lokec "../src"
 
-// The document changed after the request arrived, so its position may no
-// longer mean what the client meant.
-CONTENT_MODIFIED :: -32801
-
 // Long type declarations are cut to this many lines in a hover.
 HOVER_LINES :: 24
 
@@ -123,7 +119,6 @@ answer_requests :: proc(s: ^Server) {
 	resize(&s.pending, kept)
 }
 
-@(private = "file")
 any_root_dirty :: proc(s: ^Server) -> bool {
 	for _, root in s.roots { if root.dirty { return true } }
 	return false
@@ -208,14 +203,8 @@ hover :: proc(s: ^Server, session: ^lokec.Compilation_Session, at: lokec.Query_P
 	if !found { return "null" }
 	text := declaration_text(session, symbol)
 	documentation, documented := lokec.query_documentation(session, at.symbol, context.temp_allocator)
-	value: string
-	if s.markdown_hover {
-		value = fmt.tprintf("```loke\n%s\n```", text)
-		if documented { value = fmt.tprintf("%s\n\n%s", value, documentation) }
-	} else {
-		value = text
-		if documented { value = fmt.tprintf("%s\n\n%s", value, documentation) }
-	}
+	value := s.markdown_hover ? fmt.tprintf("```loke\n%s\n```", text) : text
+	if documented { value = fmt.tprintf("%s\n\n%s", value, documentation) }
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, `{{"contents":{{"kind":"%s","value":`, s.markdown_hover ? "markdown" : "plaintext")
 	write_json_string(&b, value)

@@ -12,9 +12,6 @@ import "core:strings"
 
 import lokec "../src"
 
-// A request that was valid but could not be carried out; the message says why.
-REQUEST_FAILED :: -32803
-
 // The binding a request names, by where it is written.
 @(private = "file")
 Target :: struct {
@@ -78,7 +75,7 @@ references :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 		for use in uses {
 			path, range, placed := place(s, &root.session, root_snapshot, use, context.temp_allocator)
 			if !placed { continue }
-			key := path_key(path, context.temp_allocator)
+			key := lokec.dir_key(path)
 			identity := fmt.tprintf("%s\x00%d", key, use.span.lo)
 			if seen[identity] { continue }
 			seen[identity] = true
@@ -275,7 +272,7 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 					if seen[identity] { continue }
 					seen[identity] = true
 					path, range, _ := place(s, rs, root_snapshot, at.location, context.temp_allocator)
-					append(&edits, Edit{path_key(path, context.temp_allocator), path, token.lo, range})
+					append(&edits, Edit{lokec.dir_key(path), path, token.lo, range})
 					append(&edited, token.lo)
 				} else if member {
 					if same && index >= 2 && ends_operand(tokens[index - 2].kind) && promotes_target(rs, root_snapshot, source_file, token.lo, target, new_name) {

@@ -98,17 +98,21 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 
 	imports := make([dynamic]Api_Import)
 	for imported in a.imports {
-		if imported.name in a.qualifiers && !slice.contains(imports[:], imported) {
+		if imported.name in a.qualifiers {
 			append(&imports, imported)
 		}
 	}
+	// Sorted on every field, so equal imports are neighbours and `unique`
+	// drops the repeats.
 	slice.sort_by(imports[:], proc(x, y: Api_Import) -> bool {
-		return x.path < y.path || (x.path == y.path && x.alias < y.alias)
+		if x.path != y.path { return x.path < y.path }
+		if x.alias != y.alias { return x.alias < y.alias }
+		return x.name < y.name
 	})
 	if len(imports) > 0 {
 		strings.write_byte(&b, '\n')
 	}
-	for imported in imports {
+	for imported in slice.unique(imports[:]) {
 		fmt.sbprintfln(&b, "%s;", import_text(imported))
 	}
 	write_interface_items(&b, &a, a.items[:])

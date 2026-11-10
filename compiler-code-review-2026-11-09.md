@@ -288,7 +288,8 @@ The recurring themes are:
      a `Compiler`.
    - At minimum, add `parse_text_tokens` beside `lex_text` in `lokec` and
      delete `lsp/editing.odin:parsed_tokens`.
-5. **Fix the stale comment in `Compiler`** (`src/compiler.odin:159-160`). The
+5. **Fix the stale comment in `Compiler`** (done; the two lines were already
+   gone) (`src/compiler.odin:159-160`). The
    comment "The two local region providers (`src/region.odin`), created on
    first use. `mem.Failure_Policy`, and the `.Panic` its constructors default
    to." describes no field. The next fields are `universe` and `unit_type`, and
@@ -326,7 +327,7 @@ Clean, compact CLI. One drift risk.
 - **Duplication**, main.odin:341-354: the literal name lists repeat the enum
   members (see Top 8). They could be replaced by a generic `enum_choice`,
   which keeps the existing `choice` error message.
-- **Simplify**, main.odin:142: `_ :: mem` exists only so that `import
+- **Simplify** (done, with `@(require)`), main.odin:142: `_ :: mem` exists only so that `import
   "core:mem"` is used when `LOKE_TRACK_MEMORY` is false. Use the import only
   inside the `when` block, or write `@(require) import "core:mem"`. Minor.
 
@@ -407,7 +408,7 @@ Correct and readable.
 
 #### src/incremental.odin
 Careful and conservative. The code is small for what it does.
-- **Simplify**, incremental.odin:216-222: `unbind_package(pkg)` runs once for
+- **Simplify** (done), incremental.odin:216-222: `unbind_package(pkg)` runs once for
   every edited file, not once for every edited package. Unbind after the
   loop, once per distinct package. The effect is negligible.
 - **Data structure/algorithm**, incremental.odin:233-235: each replacement does
@@ -427,7 +428,9 @@ The program-level fixed point is clear.
   `GetFullPathNameW` call and three temporary allocations happen per source
   file and per overlay on every package load. They also happen again for every
   package in `incremental.odin:153`, through `package_sources`.
-- **Data structure/algorithm**, packages.odin:507-528: `package_key` sorts all
+- **Data structure/algorithm** (done for the allocation, which also reads the
+  directories of the winning root only; the canonical roots are still computed
+  per package), packages.odin:507-528: `package_key` sorts all
   collection names and calls `canonical_dir` on each collection root for every
   package loaded. It also calls `strings.concatenate` into the
   semantic arena each time a longer root is found, which leaves dead bytes in
@@ -448,13 +451,13 @@ The program-level fixed point is clear.
 
 #### src/paths.odin
 Fine.
-- **Simplify**, paths.odin:38-40: `replace_ext` is the only helper here that
+- **Simplify** (done), paths.odin:38-40: `replace_ext` is the only helper here that
   allocates with `context.allocator` without an `allocator` parameter. Add the
   parameter for consistency with `join_path`, `path_dir`, and `find_on_path`.
 
 #### src/project.odin
 Fine. The manifest walk is a small BFS.
-- **Simplify**, project.odin:29: `join_path(..., c.semantic_allocator)`
+- **Simplify** (done), project.odin:29: `join_path(..., c.semantic_allocator)`
   allocates the manifest path in the semantic arena before `os.exists` has
   confirmed the file. For each missing manifest the bytes are wasted and
   later copied into checkpoint images. Use the temporary allocator, and clone
@@ -495,7 +498,9 @@ Solid diagnostics engine.
   `os.get_working_directory` and allocates for every rendered diagnostic and
   note. `report` and `run_tests` could compute the working directory once
   and pass it in. Minor.
-- **Data structure/algorithm**, source.odin:136-142: `line_starts` grows by
+- **Data structure/algorithm** (done; `line_starts_of` serves `lsp/tools.odin`
+  too, while `lsp/server_test.odin:1380` counts lines of a prefix and stays),
+  source.odin:136-142: `line_starts` grows by
   appending. In incremental mode it lives in the checkpointed semantic arena.
   Counting first (`strings.count(text, "\n") + 1`) gives one exact allocation
   and avoids growth garbage in arena images. That garbage exists only if the
@@ -512,13 +517,16 @@ Clear and robust.
   Low priority.
 - **Data structure/algorithm**, lexer.odin:166-175: `lex_text` builds a full
   scratch `Compiler` (Top 4).
-- **Simplify**, lexer.odin:153: `make([dynamic]Token)` could reserve
+- **Simplify** (not done: the token array is kept for the whole compilation,
+  so a guess that over-reserves costs memory there, while growth copies at
+  most log n times), lexer.odin:153: `make([dynamic]Token)` could reserve
   `len(src)/4` and skip most regrowth. Trivial.
 
 #### src/parser.odin
 A large, consistent recursive-descent parser. Recovery and depth handling are
 disciplined.
-- **Bug (minor, unverified effect)**, parser.odin:2421-2422: `parse_postfix`
+- **Bug (minor, unverified effect)** (done; already fixed: the level now
+  counts only once a postfix follows), parser.odin:2421-2422: `parse_postfix`
   runs `spine += 1; deepen(p, 1)` before it knows the next token is a postfix.
   The final pass of `chain` therefore raises `p.peak` for a node it never
   builds, and `measure_height` reports one more than the real height for
@@ -564,14 +572,16 @@ Straightforward deterministic dumper. No findings.
 
 #### src/formatter.odin
 Careful, and the token-preservation check is good.
-- **Structure**, formatter.odin:19-45: `rewrite_files` is the shared driver
+- **Structure** (done, as a comment), formatter.odin:19-45: `rewrite_files` is the shared driver
   for `-fmt` and `-migrate`. It reads as part of the formatter, but
   `migrate.odin` depends on it. A header comment saying so, or a small
   `rewrite.odin`, would make the dependency explicit. Minor.
 
 #### src/migrate.odin
 Fine. The edits are checked by comparing AST dumps.
-- **Simplify**, migrate.odin:34-36: an unchanged file is cloned only so that
+- **Simplify** (not done: reporting "unchanged" would change the
+  `rewrite_files` contract for `-fmt` too, to save one copy of a file),
+  migrate.odin:34-36: an unchanged file is cloned only so that
   `rewrite_files` can compare it and delete it. If the rewrite procedure could
   report "unchanged", no clone would be needed. Trivial.
 
@@ -580,7 +590,10 @@ One model drives both `-doc` and `-api`, which is a good design.
 - **Data structure/algorithm**, doc.odin:794: see Top 1. Each call costs two
   `lex_text` calls, each with a scratch `Compiler`, even when no comment was
   removed.
-- **Bug (edge, unverified)**, doc.odin:491-492: `proc_interface_text` finds
+- **Bug (edge, unverified)** (not done: `text` has comments cut by
+  `shown_text`, so a source offset such as `expr_span(literal).lo` does not
+  index it directly; the case is probably unreachable), doc.odin:491-492:
+  `proc_interface_text` finds
   the procedure by `strings.index(text, "::") + 2`. A typed constant written
   `f : proc() : proc() { ... }` has no `::`, so `index` returns -1 and the
   search starts at offset 1. The convention would then go after the type's
@@ -588,7 +601,7 @@ One model drives both `-doc` and `-api`, which is a good design.
   foreign block with `default_calling_convention`. Foreign members are
   `name :: proc ... ---`, so this is probably unreachable. Using
   `expr_span(literal).lo` would make it exact.
-- **Simplify**, doc.odin:99-104: the import de-duplication with
+- **Simplify** (done), doc.odin:99-104: the import de-duplication with
   `slice.contains` is quadratic. It is fine at real sizes, but sorting first
   and skipping equal neighbours removes the `contains`. Trivial.
 
@@ -627,23 +640,24 @@ Fine.
 
 #### lsp/server.odin
 Clear dispatch and lifecycle.
-- **Duplication**, server.odin:236-244 and :249-257: the `valueSet` parsing
+- **Duplication** (done), server.odin:236-244 and :249-257: the `valueSet` parsing
   for symbol kinds and completion kinds is the same code. A helper,
   `client_value_set(capability: json.Value, default_last: int) -> bit_set[0..<64]`,
   saves about 8 lines.
-- **Structure**, error codes are defined in four files: server.odin:18-22,
+- **Structure** (done), error codes are defined in four files: server.odin:18-22,
   `CONTENT_MODIFIED` at requests.odin:20, `REQUEST_FAILED` at rename.odin:16,
   and `INVALID_PARAMS` at tools.odin:11. Gather them in server.odin.
 
 #### lsp/roots.odin
 Root assignment is subtle but well explained.
-- **Duplication**, roots.odin:46 and requests.odin:127-130: both contain the
+- **Duplication** (done), roots.odin:46 and requests.odin:127-130: both contain the
   loop "any root dirty". `has_pending_work` should call `any_root_dirty`, after
   making it non-private.
 - **Data structure/algorithm**, roots.odin:122-137: `importing_root` is
   O(roots²) per document, which makes `refresh_roots` O(docs × roots²). It is
   fine for tens of open documents. Note it if workspaces grow.
-- **Data structure/algorithm**, roots.odin:319, :471, requests.odin:442, and
+- **Data structure/algorithm** (done, except in `write_location`, whose
+  callers also pass document paths), roots.odin:319, :471, requests.odin:442, and
   rename.odin:81, :278: `path_key(path)` re-runs `canonical_dir`, and so
   `filepath.abs`, on paths that `place` (`roots.odin:335`) already
   canonicalized. Use `lokec.dir_key(path)` for those, which avoids a system
@@ -655,7 +669,7 @@ Root assignment is subtle but well explained.
 
 #### lsp/requests.odin
 Fine.
-- **Simplify**, requests.odin:211-218: both branches of `if s.markdown_hover`
+- **Simplify** (done), requests.odin:211-218: both branches of `if s.markdown_hover`
   append the documentation the same way. Write `value := s.markdown_hover ?
   fmt.tprintf("```loke\n%s\n```", text) : text` and then a single `if
   documented`. Saves 3 lines.
@@ -685,12 +699,13 @@ The refusal logic is careful and every refusal is explained.
 
 #### lsp/tools.odin
 Fine.
-- **Duplication**, tools.odin:71-73: hand-computed `line_starts` (see
+- **Duplication** (done), tools.odin:71-73: hand-computed `line_starts` (see
   source.odin).
 
 #### lsp/paths.odin
 Fine.
-- **Duplication**, paths.odin:99-106 and :109-117: the UTF-16 unit-counting
+- **Duplication** (not done: the shared part is one expression, so a helper
+  saves no lines), paths.odin:99-106 and :109-117: the UTF-16 unit-counting
   loop appears twice. `position_to_offset` could step with a shared
   `utf16_units(r)`. Trivial.
 
@@ -702,16 +717,16 @@ Fine.
 | Hand-written recursion that `expr_children` already provides | src/query_index.odin:265-338, src/doc_comments.odin:213-227. Already using it: doc.odin:646, select.odin:514, ast.odin:1477 | Fall back to `expr_children` for the trivial cases (Top 3) |
 | Bracket-depth scanners over tokens | src/parser.odin:383, :481, :927, :977, :1934, :3054; lsp/roots.odin:187; lsp/editing.odin:194, :211, :281; lsp/rename.odin:219 | One `Bracket_Depth` step helper in `lokec`, used by both the parser and the server |
 | Statement walkers (one `switch` over `Stmt` each) | select.odin:796, query_index.odin:137, ast_dump.odin, plus check_stmt, cfg, eval, expand, ast_clone, emit_llvm_stmt outside this group | A `stmt_children` analogue of `expr_children` would serve at least select.odin and query_index.odin. The others need per-node behavior. Low priority |
-| Reporting `Import_Resolution` failures | src/packages.odin:357-380, src/providers.odin:136-152 | One reporting helper |
-| `line_starts` computation | src/source.odin:136-142, lsp/tools.odin:71-73 (and lsp/server_test.odin:1380) | `line_starts_of(text, allocator)` |
+| Reporting `Import_Resolution` failures | src/packages.odin:357-380, src/providers.odin:136-152 | One reporting helper (not done: the two report different codes and messages, so a helper would take both as parameters) |
+| `line_starts` computation | src/source.odin:136-142, lsp/tools.odin:71-73 (and lsp/server_test.odin:1380) | `line_starts_of(text, allocator)` (done) |
 | Enum-to-string switches | build_config.odin:33 (`cpu_level_name`), providers.odin:23 (`provider_slot_name`), ast.odin:695 (`hook_name`), subsystem.odin:29 (`parse_subsystem`) | `[Enum]string` arrays (done), as `OPT_CLANG_FLAGS` and `ast_dump.odin`'s tag tables already are |
 | CLI names that repeat enum members | main.odin:341, :343, :352, :354 | Derive from `reflect.enum_field_names` (Top 8) |
 | `kind == .Proc ? proc_type : type` | queries.odin:354, :523, query_index.odin:71 | `symbol_value_type` helper (done) |
-| Bundled-collection test | project.odin:54, :105; packages.odin:513; queries.odin:107; check_expr.odin:2822 | `is_bundled_collection(name)` and `is_bundled_key(key)` helpers |
-| "Any root dirty" loop | lsp/roots.odin:46, lsp/requests.odin:127-130 | Use one helper |
+| Bundled-collection test | project.odin:54, :105; packages.odin:513; queries.odin:107; check_expr.odin:2822 | `is_bundled_collection(name)` and `is_bundled_key(key)` helpers (done; check_expr.odin tests `base:` alone and stays) |
+| "Any root dirty" loop | lsp/roots.odin:46, lsp/requests.odin:127-130 | Use one helper (done) |
 | Client capability kind fallback | lsp/requests.odin:283 and :361, lsp/editing.odin:23 and :126 | Shared helper with a fallback table |
 | Copying a list of strings | src/session.odin:45-52, lsp/server.odin:288-300 | `clone_strings` (done for the session) |
-| `path_key` on a path that is already canonical | lsp/roots.odin:319, :471; lsp/requests.odin:442; lsp/rename.odin:81, :278 | `lokec.dir_key` directly |
+| `path_key` on a path that is already canonical | lsp/roots.odin:319, :471; lsp/requests.odin:442; lsp/rename.odin:81, :278 | `lokec.dir_key` directly (done where the path came from `place`) |
 | Bound-name lists checked with `slice.contains` | select.odin:459, :575; doc.odin:577, :672; ast.odin:1420-1450 | Consistent and fine at today's sizes. Change only if profiling shows a cost |
 
 #### Finding counts

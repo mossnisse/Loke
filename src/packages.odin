@@ -515,22 +515,24 @@ package_key :: proc(c: ^Compiler, canonical: string) -> string {
 		append(&names, name)
 	}
 	slice.sort_by(names[:], proc(a, b: string) -> bool {
-		a_bundled, b_bundled := a == "base" || a == "core", b == "base" || b == "core"
+		a_bundled, b_bundled := is_bundled_collection(a), is_bundled_collection(b)
 		return a_bundled != b_bundled ? a_bundled : a < b
 	})
-	best, best_root := "", -1
+	// Only the winner's case is looked up and its key allocated, so a shorter
+	// root that matched first reads no directories and leaves no dead bytes in
+	// the semantic arena.
+	best_name, best_root, best_rest, found := "", "", "", false
 	for name in names {
 		root := canonical_dir(c.collections[name])
 		rest, under := path_under(root, canonical)
-		if under && len(root) > best_root {
-			best = strings.concatenate({name, ":", stored_case(root, rest)}, c.semantic_allocator)
-			best_root = len(root)
+		if under && (!found || len(root) > len(best_root)) {
+			best_name, best_root, best_rest, found = name, root, rest, true
 		}
 	}
-	if best_root >= 0 {
-		return best
+	if !found {
+		return root_relative_key(c, canonical)
 	}
-	return root_relative_key(c, canonical)
+	return strings.concatenate({best_name, ":", stored_case(best_root, best_rest)}, c.semantic_allocator)
 }
 
 // Returns `sub` relative to canonical `root`, case-insensitively.

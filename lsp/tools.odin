@@ -8,8 +8,6 @@ import "core:strings"
 
 import lokec "../src"
 
-INVALID_PARAMS :: -32602
-
 // The `workspace/executeCommand` command whose result is the interface file
 // `lokec -api` writes for a document's package.
 DOCUMENTATION_COMMAND :: "loke.documentation"
@@ -68,12 +66,10 @@ formatting_edits :: proc(s: ^Server, text, formatted: string) -> string {
 		next := strings.index_byte(text[end:], '\n')
 		suffix = next < 0 ? 0 : suffix - next - 1
 	}
-	starts := make([dynamic]u32, context.temp_allocator)
-	append(&starts, 0)
-	for index in 0 ..< len(text) { if text[index] == '\n' { append(&starts, u32(index + 1)) } }
+	starts := lokec.line_starts_of(text, context.temp_allocator)
 	range := Range{
-		start = offset_to_position(text, starts[:], u32(prefix), s.utf8_positions),
-		end = offset_to_position(text, starts[:], u32(len(text) - suffix), s.utf8_positions),
+		start = offset_to_position(text, starts, u32(prefix), s.utf8_positions),
+		end = offset_to_position(text, starts, u32(len(text) - suffix), s.utf8_positions),
 	}
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `[{"range":`)

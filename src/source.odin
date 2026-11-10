@@ -133,14 +133,22 @@ add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
 
 make_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> Source {
 	context.allocator = c.semantic_allocator if c.package_cache != nil else context.allocator
-	starts := make([dynamic]u32)
-	append(&starts, 0)
-	for i := 0; i < len(text); i += 1 {
+	return Source{path = path, text = text, owned_text = owned, line_starts = line_starts_of(text), comments = make([dynamic]Span)}
+}
+
+// The byte offset of the first character of each line of `text`. Counting
+// first makes one exact allocation, so no growth garbage reaches a checkpointed
+// arena.
+line_starts_of :: proc(text: string, allocator := context.allocator) -> []u32 {
+	starts := make([]u32, strings.count(text, "\n") + 1, allocator)
+	line := 1
+	for i in 0 ..< len(text) {
 		if text[i] == '\n' {
-			append(&starts, u32(i + 1))
+			starts[line] = u32(i + 1)
+			line += 1
 		}
 	}
-	return Source{path = path, text = text, owned_text = owned, line_starts = starts[:], comments = make([dynamic]Span)}
+	return starts
 }
 
 valid_utf8 :: proc(text: string) -> (valid: bool, bad_offset: u32) {

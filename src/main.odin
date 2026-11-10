@@ -3,7 +3,7 @@ package lokec
 
 import "base:intrinsics"
 import "core:fmt"
-import "core:mem"
+@(require) import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:reflect"
@@ -141,7 +141,6 @@ Options :: struct {
 // `-define:LOKE_TRACK_MEMORY=true` reports every allocation `run` did not free,
 // and every bad free, on stderr.
 LOKE_TRACK_MEMORY :: #config(LOKE_TRACK_MEMORY, false)
-_ :: mem
 
 main :: proc() {
 	when LOKE_TRACK_MEMORY {

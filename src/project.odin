@@ -4,6 +4,7 @@
 package lokec
 
 import "core:os"
+import "core:slice"
 import "core:strings"
 
 PROJECT_FILE :: "loke.project"
@@ -26,11 +27,13 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 			continue
 		}
 		visited[dir_key(project)] = true
-		path := join_path({project, PROJECT_FILE}, c.semantic_allocator)
+		// A source keeps its path, so only a manifest that exists is copied to
+		// the semantic arena.
+		path := join_path({project, PROJECT_FILE}, context.temp_allocator)
 		if !os.exists(path) {
 			continue
 		}
-		file, loaded := load_source(c, path)
+		file, loaded := load_source(c, strings.clone(path, c.semantic_allocator))
 		if !loaded {
 			continue
 		}
@@ -51,7 +54,7 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 			}
 			target := canonical_dir(join_path({project, written}, context.temp_allocator))
 			switch {
-			case name == "base" || name == "core":
+			case is_bundled_collection(name):
 				errorf(c, span, "L0399", "`%s` is the library bundled with the compiler; a project cannot require it", name)
 			case name in required_by:
 				if dir_key(c.collections[name]) != dir_key(target) {
@@ -99,10 +102,24 @@ parse_require_line :: proc(line: string) -> (name, written: string, ok: bool) {
 	return name, strings.trim_space(rest[len(name):]), true
 }
 
+// The collections the compiler ships with.
+@(rodata)
+BUNDLED_COLLECTIONS := [?]string{"base", "core"}
+
+is_bundled_collection :: proc(name: string) -> bool {
+	return slice.contains(BUNDLED_COLLECTIONS[:], name)
+}
+
+// Whether a package key names a package in a bundled collection.
+is_bundled_key :: proc(key: string) -> bool {
+	colon := strings.index_byte(key, ':')
+	return colon > 0 && is_bundled_collection(key[:colon])
+}
+
 // Explicit entries replace bundled `base:` and `core:` roots.
 @(private)
 register_collections :: proc(c: ^Compiler, entries: []string) {
-	for name in ([]string{"base", "core"}) {
+	for name in BUNDLED_COLLECTIONS {
 		if bundled := install_component(name); bundled != "" {
 			c.collections[name] = strings.clone(bundled, c.semantic_allocator)
 		}

@@ -42,9 +42,7 @@ Related :: struct { path: string, range: Range, message: string }
 // Work left for `run_pending_work`.
 has_pending_work :: proc(s: ^Server) -> bool {
 	if s.phase != .Running { return false }
-	if s.layout_dirty || s.publish_due || len(s.pending) > 0 { return true }
-	for _, root in s.roots { if root.dirty { return true } }
-	return false
+	return s.layout_dirty || s.publish_due || len(s.pending) > 0 || any_root_dirty(s)
 }
 
 // One step: assign roots and answer the requests they can, then check one
@@ -316,7 +314,7 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 			append(&root.unplaced, out)
 			continue
 		}
-		key := path_key(path, allocator)
+		key := lokec.dir_key(path, allocator)
 		file, found := &root.files[key]
 		if !found {
 			root.files[key] = File_Result{path = path, diagnostics = make([dynamic]Lsp_Diagnostic, allocator)}
@@ -326,7 +324,8 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 	}
 }
 
-// A snapshot location as a canonical path and a client range.
+// A snapshot location as a canonical path and a client range. Its key is
+// `lokec.dir_key(path)`; `path_key` would canonicalize it again.
 place :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, location: lokec.Query_Location, allocator := context.allocator) -> (path: string, range: Range, ok: bool) {
 	if location.span.file == lokec.NO_FILE { return }
 	source := lokec.query_source(session, snapshot, location.span.file) or_return
@@ -419,7 +418,7 @@ diagnostic_identity :: proc(key: string, d: ^Lsp_Diagnostic) -> string {
 		d.range.end.line, d.range.end.character, d.severity, d.code, d.message,
 	)
 	for related in d.related {
-		fmt.sbprintf(&b, "|%s|%d:%d-%d:%d|%s", path_key(related.path, context.temp_allocator), related.range.start.line, related.range.start.character, related.range.end.line, related.range.end.character, related.message)
+		fmt.sbprintf(&b, "|%s|%d:%d-%d:%d|%s", lokec.dir_key(related.path), related.range.start.line, related.range.start.character, related.range.end.line, related.range.end.character, related.message)
 	}
 	return strings.to_string(b)
 }
@@ -468,7 +467,7 @@ diagnostics_params :: proc(s: ^Server, uri: string, doc: ^Document, diagnostics:
 			for note, slot in d.related {
 				if slot > 0 { strings.write_byte(&b, ',') }
 				strings.write_string(&b, `{"location":{"uri":`)
-				write_json_string(&b, uri_for(s, path_key(note.path, context.temp_allocator), note.path))
+				write_json_string(&b, uri_for(s, lokec.dir_key(note.path), note.path))
 				strings.write_string(&b, `,"range":`)
 				write_range(&b, note.range)
 				strings.write_string(&b, `},"message":`)
