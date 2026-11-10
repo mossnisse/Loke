@@ -38,16 +38,13 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if emit_lifecycle(e, source).managed { value = emit_clone_value(e, source, value) }
 		emit_ret(e, symbol.result, value)
 	case .Indexed_Next, .Copied_Next:
-		target := symbol_of(e.c, symbol.iteration_target)
-		inner_option := target.result
 		iterator := gep_field(e, llvm_type(e, source), "%arg0", ITER_ADAPTER_INNER)
-		produced := emit_call_result(e, inner_option, symbol_name(e, symbol.iteration_target), fmt.aprintf("ptr %s", iterator))
-		ok := emit_union_tag_is(e, inner_option, produced, union_index_of(e.c, inner_option, "some"))
+		inner_option, ok, slot := emit_next_call(e, symbol.iteration_target, iterator)
 		yielded, stopped := new_label(e, "adapter.yield"), new_label(e, "adapter.stop")
 		branch_if(e, ok, yielded, stopped)
 		place_label(e, yielded)
 		handed := option_payload(e.c, inner_option)
-		payload := emit_union_payload(e, inner_option, handed, emit_union_spill(e, inner_option, produced))
+		payload := emit_union_payload(e, inner_option, handed, slot)
 		item := option_payload(e.c, symbol.result)
 		wrapped: string
 		if symbol.synth == .Indexed_Next {

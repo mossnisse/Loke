@@ -80,9 +80,7 @@ atomic_to_storage :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 atomic_from_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: string) -> string {
 	kind := underlying_kind(e.c, type)
 	if kind == .Bool {
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i8 %s, 0", out, value)
-		return out
+		return icmp_zero(e, "i8", value, equal = false)
 	}
 	if kind == .Union {
 		return insert(e, llvm_type(e, type), "undef", storage, value, 0)
@@ -173,8 +171,7 @@ emit_fallback_atomic :: proc(
 	}
 
 	if kind == .Atomic_Store {
-		value := alloca(e, storage)
-		store(e, checked.type, emit_expr(e, v.bound[1]), value)
+		value := spill(e, checked.type, emit_expr(e, v.bound[1]))
 		fmt.sbprintfln(
 			&e.b, "  call void @loke_rt_v1_atomic128_store(ptr %s, ptr %s, i32 %d)",
 			address, value, int(checked.order),
@@ -183,25 +180,21 @@ emit_fallback_atomic :: proc(
 	}
 
 	if kind == .Atomic_Compare_Exchange {
-		expected := alloca(e, storage)
-		desired := alloca(e, storage)
-		store(e, checked.type, emit_expr(e, v.bound[1]), expected)
-		store(e, checked.type, emit_expr(e, v.bound[2]), desired)
-		status, swapped := temp(e), temp(e)
+		expected := spill(e, checked.type, emit_expr(e, v.bound[1]))
+		desired := spill(e, checked.type, emit_expr(e, v.bound[2]))
 		// Failure writes the observed value back into `expected`.
-		fmt.sbprintfln(
-			&e.b,
-			"  %s = call i32 @loke_rt_v1_atomic128_compare_exchange(ptr %s, ptr %s, ptr %s, i32 %d, i32 %d)",
-			status, address, expected, desired, int(checked.order), int(checked.failure_order),
+		status := emit_value(
+			e, "call i32 @loke_rt_v1_atomic128_compare_exchange(ptr %s, ptr %s, ptr %s, i32 %d, i32 %d)",
+			address, expected, desired, int(checked.order), int(checked.failure_order),
 		)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", swapped, status)
+		swapped := icmp_zero(e, "i32", status, equal = false)
 		observed := load(e, storage, expected)
 		return emit_atomic_exchange_result(e, checked.type, storage, observed, swapped, as_type)
 	}
 
 	helper := kind == .Atomic_Exchange ? "exchange" : atomic_rmw_opcode(kind)
-	value, out := alloca(e, storage), alloca(e, storage)
-	store(e, checked.type, emit_expr(e, v.bound[1]), value)
+	value := spill(e, checked.type, emit_expr(e, v.bound[1]))
+	out := alloca(e, storage)
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_atomic128_%s(ptr %s, ptr %s, ptr %s, i32 %d)",
 		helper, address, value, out, int(checked.order),
@@ -219,8 +212,7 @@ emit_atomic_exchange_result :: proc(
 	swapped: string,
 	as_type: Type_Id,
 ) -> string {
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, swapped)
+	failed := not_i1(e, swapped)
 	value := atomic_from_storage(e, type, storage, observed)
 	return emit_option_value(e, as_type, failed, value)
 }

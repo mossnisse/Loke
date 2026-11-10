@@ -149,12 +149,8 @@ emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	data, count := synth_sequence_storage(e, symbol)
 
-	// Unsigned, so a negative index fails the same comparison.
-	for argument in 1 ..= 2 {
-		out_of_range := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %%arg%d, %s", out_of_range, argument, count)
-		panic_if(e, out_of_range, "bounds", "index out of range")
-	}
+	emit_bounds_check(e, "%arg1", count, "index out of range")
+	emit_bounds_check(e, "%arg2", count, "index out of range")
 
 	left := gep_at(e, element_llvm, data, "%arg1")
 	right := gep_at(e, element_llvm, data, "%arg2")
@@ -179,15 +175,11 @@ emit_synth_split :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	open_synth_function(e, symbol, name)
 
 	data, count := synth_sequence_storage(e, symbol)
-	// Unsigned, so a negative `mid` fails the same comparison; `mid == len`
-	// leaves `right` empty.
-	out_of_range := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %%arg1, %s", out_of_range, count)
-	panic_if(e, out_of_range, "bounds", "split index out of range")
+	// `mid == len` leaves `right` empty.
+	emit_bounds_check(e, "%arg1", count, "split index out of range", inclusive = true)
 
 	rest := gep_at(e, element_llvm, data, "%arg1")
-	rest_count := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %%arg1", rest_count, count)
+	rest_count := emit_value(e, "sub i64 %s, %%arg1", count)
 	left := emit_ptr_len(e, header, data, "%arg1")
 	right := emit_ptr_len(e, header, rest, rest_count)
 	value := insert(e, halves, "undef", header, left, 0)
@@ -647,8 +639,7 @@ emit_store_entry :: proc(e: ^Emitter, element: Type_Id, slots: Map_Entry_Slots, 
 	if !managed {
 		return
 	}
-	is_new := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, load(e, "i32", slots.inserted))
+	is_new := icmp_zero(e, "i32", load(e, "i32", slots.inserted), equal = false)
 	replaced_label, done_label := new_label(e, "mentry.replaced"), new_label(e, "mentry.stored")
 	branch_if(e, is_new, done_label, replaced_label)
 	place_label(e, replaced_label)
@@ -714,8 +705,7 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
 		emit_provider_policy(e, opened)
 		value := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, opened)
+		failed := is_null(e, opened)
 		fmt.sbprintfln(
 			&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed, value),
 		)
@@ -738,9 +728,7 @@ emit_provider_policy :: proc(e: ^Emitter, control: string) {
 
 @(private = "file")
 emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, control)
-	alloc_failed_if(e, failed, allocator, "arena.failed")
+	alloc_failed_if(e, is_null(e, control), allocator, "arena.failed")
 }
 
 // ------------------------------------------------------ container bodies --
@@ -829,8 +817,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		out := alloca(e, element_llvm)
 		found := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_dyn_pop(ptr %%arg0, ptr %s, ptr %s)", found, ops, out)
-		value, ok := load_temporary(e, element, out), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
+		value := load_temporary(e, element, out)
+		ok := icmp_zero(e, "i32", found, equal = false)
 		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
 
 	case .Remove, .Remove_Unordered:
@@ -858,9 +846,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 	case .Map_Find:
 		found := emit_map_find(e, receiver_header(e, symbol), ops, key_probe_slot(e, symbol, container))
-		ok := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", ok, found)
-		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, found))
+		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, not_null(e, found), found))
 
 	case .Map_Lookup_Value:
 		emit_synth_map_lookup_value(e, body)
@@ -886,8 +872,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			found, ops, key_slot, out,
 		)
 		value := load_temporary(e, element, out)
-		ok := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
+		ok := icmp_zero(e, "i32", found, equal = false)
 		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
 
 	case .Map_Reserve:
@@ -905,9 +890,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	// A case that set no status has already returned.
 	if status != "" {
 		if body.fallible {
-			failed := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
-			emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, failed))
+			emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, icmp_zero(e, "i32", status)))
 		} else {
 			emit_container_policy_failure(e, "%arg0", status)
 			emit_unwind_pop(e)
@@ -999,8 +982,7 @@ emit_synth_map_lookup_value :: proc(e: ^Emitter, body: Container_Body) {
 	symbol, element := body.symbol, body.element
 	header := receiver_header(e, symbol)
 	found := emit_map_find(e, header, body.ops, key_probe_slot(e, symbol, body.container))
-	present := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", present, found)
+	present := not_null(e, found)
 
 	out := alloca(e, body.element_llvm)
 	hit_label, done_label := new_label(e, "mlookup.hit"), new_label(e, "mlookup.done")
@@ -1030,8 +1012,8 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 		store(e, element, "%arg2", staged)
 		guard = guard_built_element(e, element, staged)
 	}
-	found, present := emit_map_find(e, "%arg0", ops, key_slot), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", present, found)
+	found := emit_map_find(e, "%arg0", ops, key_slot)
+	present := not_null(e, found)
 	hit_label, miss_label := new_label(e, "mfoi.hit"), new_label(e, "mfoi.miss")
 	branch_if(e, present, hit_label, miss_label)
 	place_label(e, hit_label)
@@ -1060,8 +1042,7 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 		guard = guard_built_element(e, element, staged)
 	}
 	place := emit_map_entry(e, ops, "%arg0", key_slot, alloca(e, "i32"))
-	missing := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+	missing := is_null(e, place)
 	finish_temporary_drop(e, guard)
 	entry_failed, entry_ok := new_label(e, "mfoi.failed"), new_label(e, "mfoi.ok")
 	branch_if(e, missing, entry_failed, entry_ok)
@@ -1101,8 +1082,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	slots := make_map_entry_slots(e, element)
 	place := emit_map_entry(e, body.ops, "%arg0", key_slot, slots.inserted)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)
-	missing, ok_label, failed_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.failed")
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+	missing, ok_label, failed_label := is_null(e, place), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 	branch_if(e, missing, failed_label, ok_label)
 	place_label(e, failed_label)
 	finish_temporary_drop(e, guard)
@@ -1118,8 +1098,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 // a move-only element that failed to enter the container; `rejoin` closes it.
 @(private = "file")
 branch_on_failure :: proc(e: ^Emitter, status: string) -> string {
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	failed := icmp_zero(e, "i32", status)
 	drop_label, kept_label := new_label(e, "cop.failed"), new_label(e, "cop.kept")
 	branch_if(e, failed, drop_label, kept_label)
 	place_label(e, drop_label)
@@ -1147,10 +1126,9 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	ops := container_ops_global(e, container)
 	key_slot, cleanup := emit_map_key_slot(e, v.lhs, container)
 	header := emit_borrowed_map(e, v.rhs)
-	found, out := emit_map_find(e, header, ops, key_slot), temp(e)
+	found := emit_map_find(e, header, ops, key_slot)
 	drop_temporary_value(e, cleanup)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", out, found)
-	return out
+	return not_null(e, found)
 }
 
 // One probe, no insertion: the entry's value slot, or null.
@@ -1178,8 +1156,7 @@ emit_borrowed_map :: proc(e: ^Emitter, operand: Expr) -> string {
 @(private = "file")
 emit_map_allocator :: proc(e: ^Emitter, header: string) -> string {
 	bound := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
-	unbound, allocator := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", unbound, bound)
+	unbound, allocator := is_null(e, bound), temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = select i1 %s, ptr %s, ptr %s", allocator, unbound, emit_default_allocator(e), bound,
 	)
@@ -1243,8 +1220,7 @@ emit_map_insert_store :: proc(e: ^Emitter, destination: Map_Assignment_Destinati
 	ops := container_ops_global(e, container)
 	place := emit_map_entry(e, ops, header, key_slot, destination.slots.inserted)
 	value_place := park_map_entry(e, element, destination.slots, place, value)
-	missing := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+	missing := is_null(e, place)
 	fail_label, store_label := new_label(e, "mset.fail"), new_label(e, "mset.store")
 	branch_if(e, missing, fail_label, store_label)
 	place_label(e, fail_label)
@@ -1266,9 +1242,7 @@ emit_map_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 
 	found := emit_map_find(e, header, ops, key_slot)
 	drop_temporary_value(e, cleanup)
-	absent := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", absent, found)
-	panic_if(e, absent, "mkey", "map key not found")
+	panic_if(e, is_null(e, found), "mkey", "map key not found")
 	return found
 }
 
@@ -1428,25 +1402,11 @@ emit_hash_mix :: proc(e: ^Emitter, seed, bits: string) -> string {
 // One scalar's 64-bit integer image.
 @(private = "file")
 emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
-	info := type_of(e.c, under)
-	out := temp(e)
-	#partial switch info.kind {
+	#partial switch type_of(e.c, under).kind {
 	case .Bool:
-		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out, value)
+		return resize_int(e, value, 1, 64, signed = false)
 	case .Raw_Pointer, .Pointer, .C_Pointer:
-		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to i64", out, value)
-	case:
-		width := type_bits(e.c, under)
-		switch {
-		case width == 64:
-			return value
-		case width > 64:
-			fmt.sbprintfln(&e.b, "  %s = trunc i%d %s to i64", out, width, value)
-		case type_signed(e.c, under):
-			fmt.sbprintfln(&e.b, "  %s = sext i%d %s to i64", out, width, value)
-		case:
-			fmt.sbprintfln(&e.b, "  %s = zext i%d %s to i64", out, width, value)
-		}
+		return emit_value(e, "ptrtoint ptr %s to i64", value)
 	}
-	return out
+	return widen_to_i64(e, value, under)
 }

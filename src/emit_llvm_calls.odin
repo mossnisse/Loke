@@ -202,13 +202,7 @@ emit_enum_from_int :: proc(e: ^Emitter, v: ^Expr_Call, enum_type, as_type: Type_
 		matches := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %s", matches,
 			bits, value, bi_text(e.c, sym.const_value.integer))
-		if present == "false" {
-			present = matches
-		} else {
-			joined := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", joined, present, matches)
-			present = joined
-		}
+		present = combine_or(e, present, matches)
 	}
 	// A matching value fits both widths, so the resize is exact when it counts.
 	if backing_bits := type_bits(e.c, enum_type); backing_bits != bits {
@@ -336,8 +330,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, i64 %s)",
 		status, helper, header, container_ops_global(e, checked.type), capacity,
 	)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	failed := icmp_zero(e, "i32", status)
 	fill_label, done_label := new_label(e, "make.fill"), new_label(e, "make.done")
 	branch_if(e, failed, done_label, fill_label)
 
@@ -703,8 +696,7 @@ emit_refusable_pack_copy :: proc(
 	place_label(e, copied_label)
 	store(e, element, emit_union_widen(e, cloned, from, element), slot)
 	place_label(e, done)
-	owned = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", owned, failed)
+	owned = not_i1(e, failed)
 	return load_temporary(e, element, slot), owned
 }
 
@@ -1242,9 +1234,7 @@ guard_null_reference :: proc(e: ^Emitter, value: string, from, to: Type_Id) {
 	case:
 		return
 	}
-	is_null := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_null, value)
-	panic_if(e, is_null, "cast.null", "a null address converted to a reference")
+	panic_if(e, is_null(e, value), "cast.null", "a null address converted to a reference")
 }
 
 // Guard LLVM float-to-integer casts from poison on invalid inputs.

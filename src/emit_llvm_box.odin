@@ -80,8 +80,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 
 	place_label(e, release_label)
 	// The drop may allocate, which would replace the refusal just noted.
-	refused := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
+	refused := emit_take_refusal(e)
 	drop_temporary_value(e, guard)
 	emit_restore_refusal(e, allocator, refused)
 	branch(e, done_label)
@@ -99,9 +98,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 
 	place_label(e, done_label)
 	published := load(e, "ptr", block_slot)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, published)
-	return emit_alloc_outcome(e, v, as_type, failed, published, allocator)
+	return emit_alloc_outcome(e, v, as_type, is_null(e, published), published, allocator)
 }
 
 @(private)
@@ -143,8 +140,7 @@ box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 		proc(e: ^Emitter, box_type: Type_Id) {
 			payload := box_element(e.c, box_type)
 			block := load(e, "ptr", "%p")
-			empty := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", empty, block)
+			empty := is_null(e, block)
 			release_label, done_label := new_label(e, "boxdrop.release"), new_label(e, "boxdrop.done")
 			branch_if(e, empty, done_label, release_label)
 			place_label(e, release_label)
@@ -203,8 +199,7 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 			place_label(e, undo_label)
 			if managed {
 				// The drop may allocate, which would replace the refusal just noted.
-				refused := temp(e)
-				fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
+				refused := emit_take_refusal(e)
 				emit_drop_place(e, payload, source)
 				emit_restore_refusal(e, "%a", refused)
 			}

@@ -18,13 +18,10 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 	}
 	if operations.container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_clone" : "loke_rt_v1_dyn_clone"
-		status, ok := temp(e), temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, ptr %s, ptr %s)",
-			status, helper, out, src, container_ops_global(e, type), allocator,
+		status := emit_value(
+			e, "call i32 @%s(ptr %s, ptr %s, ptr %s, ptr %s)", helper, out, src, container_ops_global(e, type), allocator,
 		)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, status)
-		return ok
+		return icmp_zero(e, "i32", status, equal = false)
 	}
 	value := load_place(e, type, src)
 	if !operations.clone_fallible {
@@ -40,8 +37,7 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 		return "false"
 	}
 	cloned, broke, error := emit_clone_call(e, hook, type, value, allocator)
-	ok := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", ok, broke)
+	ok := not_i1(e, broke)
 	// A failed clone returns an inert zero the caller must not count as
 	// initialised, so the value is stored only on success.
 	store_label, fail_label, done_label := new_label(e, "clone.store"), new_label(e, "clone.refused"), new_label(e, "clone.done")
@@ -53,6 +49,19 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 	emit_restore_refusal(e, allocator, error)
 	place_label(e, done_label)
 	return ok
+}
+
+// `try_clone`s the value at `source` into storage of its own, which starts
+// `zeroed` when the caller hands it on even after a failure: the copy, which
+// holds a value only where `ok` is true.
+@(private = "file")
+try_clone_value :: proc(e: ^Emitter, type: Type_Id, source, allocator: string, zeroed := false) -> (cloned, ok: string) {
+	destination := alloca(e, llvm_type(e, type))
+	if zeroed {
+		store(e, type, "zeroinitializer", destination)
+	}
+	ok = emit_try_clone_into(e, type, destination, source, allocator)
+	return load_temporary(e, type, destination), ok
 }
 
 // An implicit copy goes through `clone`, which calls `try_clone` once and
@@ -69,17 +78,13 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	}
 	provider := allocator == "" ? emit_default_allocator(e) : allocator
 	if entry.container || entry.boxed {
-		shape := llvm_type(e, type)
-		source := alloca(e, shape)
-		destination := alloca(e, shape)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", shape, value, source)
-		ok := emit_try_clone_into(e, type, destination, source, provider)
+		cloned, ok := try_clone_value(e, type, spill(e, type, value), provider)
 		fail_label, done_label := new_label(e, "cclone.fail"), new_label(e, "cclone.done")
 		branch_if(e, ok, done_label, fail_label)
 		place_label(e, fail_label)
 		emit_alloc_failed(e, provider)
 		place_label(e, done_label)
-		return load(e, shape, destination)
+		return cloned
 	}
 	// Fixed arrays have a generated `try_clone` but no public `clone` member.
 	if info := underlying_info(e.c, type); info != nil && info.kind == .Array {
@@ -153,14 +158,8 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	} else if operations.intrinsic || operations.boxed {
 		// `string`, `[dynamic]T`, `map[K]V` and `Box(T)` carry a `try_clone` whose
 		// body is the same intrinsic copy the implicit paths use.
-		self, built := alloca(e, value_type), alloca(e, value_type)
-		store(e, subject, subject_value, self)
-		store(e, subject, "zeroinitializer", built)
-		ok := emit_try_clone_into(e, subject, built, self, "%arg1")
-		value := load_temporary(e, subject, built)
-		broke := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", broke, ok)
-		emit_ret(e, result, emit_alloc_result(e, result, broke, value))
+		value, ok := try_clone_value(e, subject, spill(e, subject, subject_value), "%arg1", zeroed = true)
+		emit_ret(e, result, emit_alloc_result(e, result, not_i1(e, ok), value))
 	} else {
 		framed, header = true, begin_generated_frame(e, name)
 		emit_fieldwise_try_clone_body(e, subject, info, result, value_type, subject_value)
@@ -270,7 +269,9 @@ record_prefix_part :: proc(
 	return field, counter, counter != nil
 }
 
-@(private = "file")
+// The count of an `@(initialized)` array's live prefix, held by `counter` in the
+// record at `base`, checked against the array's length.
+@(private)
 emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^Symbol, array: Type_Id) -> string {
 	address := element_address(e, record, base, int(counter.index))
 	count := load_place(e, counter.type, address)
@@ -454,13 +455,8 @@ emit_clone_elements :: proc(
 emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string, string) {
 	operations := emit_lifecycle(e, part)
 	if operations.container || operations.boxed {
-		shape := llvm_type(e, part)
-		destination := alloca(e, shape)
-		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
-		cloned := load(e, shape, destination)
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, ok)
-		return cloned, failed, ""
+		cloned, ok := try_clone_value(e, part, source, "%arg1")
+		return cloned, not_i1(e, ok), ""
 	}
 	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {

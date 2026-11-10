@@ -35,14 +35,7 @@ emit_bit_count :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	count := name == "ctpop" \
 		? emit_unary_intrinsic(e, v, fmt.aprintf("llvm.ctpop.%s", llvm)) \
 		: emit_zero_count(e, name, llvm, emit_expr(e, v.bound[0]))
-	result := llvm_type(e, TYPE_INT)
-	if llvm == result {
-		return count
-	}
-	out := temp(e)
-	widen := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, widen ? "zext" : "trunc", llvm, count, result)
-	return out
+	return resize_int(e, count, type_bits(e.c, source), type_bits(e.c, TYPE_INT), signed = false)
 }
 
 // The width less the leading zeros, which a zero operand makes the width, so
@@ -71,13 +64,10 @@ emit_is_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
 	x := emit_expr(e, v.bound[0])
-	positive, below, rest, single, out := temp(e), temp(e), temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, 0", positive, type_signed(e.c, source) ? "sgt" : "ugt", llvm, x)
-	fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", below, llvm, x)
-	fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", rest, llvm, x, below)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, 0", single, llvm, rest)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, positive, single)
-	return out
+	positive := emit_value(e, "icmp %s %s %s, 0", type_signed(e.c, source) ? "sgt" : "ugt", llvm, x)
+	below := emit_value(e, "sub %s %s, 1", llvm, x)
+	rest := emit_value(e, "and %s %s, %s", llvm, x, below)
+	return combine_and(e, positive, icmp_zero(e, llvm, rest))
 }
 
 // design.md "Integer overflow": `1 << (W - ctlz(x - 1))` for `x > 1`, and 1
@@ -107,11 +97,9 @@ emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, che
 		fmt.sbprintfln(&e.b, "  %s = shl %s 1, %s", out, llvm, exponent)
 		return out
 	}
-	shift, power, present := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 0, %s %s", shift, overflowed, llvm, llvm, exponent)
-	fmt.sbprintfln(&e.b, "  %s = shl %s 1, %s", power, llvm, shift)
-	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", present, overflowed)
-	return emit_option_value(e, as_type, present, power)
+	shift := emit_value(e, "select i1 %s, %s 0, %s %s", overflowed, llvm, llvm, exponent)
+	power := emit_value(e, "shl %s 1, %s", llvm, shift)
+	return emit_option_value(e, as_type, not_i1(e, overflowed), power)
 }
 
 // `llvm.fshl` or `llvm.fshr` (`name`) with the operand as both halves, which
@@ -126,16 +114,8 @@ emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, %s, %s", llvm, llvm, llvm))
 	value := emit_expr(e, v.bound[0])
 	count := emit_expr(e, v.bound[1])
-	count_llvm := llvm_type(e, TYPE_INT)
-	if count_llvm != llvm {
-		narrow := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
-		converted := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", converted, narrow ? "trunc" : "zext", count_llvm, count, llvm)
-		count = converted
-	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s, %s %s)", out, llvm, key, llvm, value, llvm, value, llvm, count)
-	return out
+	count = resize_int(e, count, type_bits(e.c, TYPE_INT), type_bits(e.c, source), signed = false)
+	return emit_value(e, "call %s @%s(%s %s, %s %s, %s %s)", llvm, key, llvm, value, llvm, value, llvm, count)
 }
 
 // `core:math` calls this only behind `fma_is_instruction()`; on a target without

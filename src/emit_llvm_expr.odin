@@ -32,29 +32,29 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 		return "zeroinitializer"
 	}
 
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ")
-	// An all-payloadless union stores its tag and nothing else.
-	if shape.payload_size > 0 {
-		write_union_head_constant(e, &b, payload_bytes[:int(shape.align)])
-		if pad := shape.payload_size - shape.align; pad > 0 {
-			strings.write_string(&b, ", ")
-			write_byte_array_constant(&b, payload_bytes[int(shape.align):int(shape.payload_size)])
-		}
-		if shape.niche {
-			strings.write_string(&b, " }")
-			return strings.to_string(b)
-		}
-		strings.write_string(&b, ", ")
-	} else if shape.align > shape.tag_bytes {
-		fmt.sbprintf(&b, "[0 x %s] zeroinitializer, ", union_head_type(shape.align))
+	// The members of `union_storage_definition`, each with its value.
+	members := union_members(shape)
+	parts := make([dynamic]string, 0, 4, context.temp_allocator)
+	if members.head > 0 {
+		head := strings.builder_make()
+		write_union_head_constant(e, &head, payload_bytes[:members.head])
+		append(&parts, strings.to_string(head))
 	}
-	fmt.sbprintf(&b, "%s %d", union_tag_llvm(shape), index)
-	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
-		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", tail)
+	if members.padding > 0 {
+		padding := strings.builder_make()
+		write_byte_array_constant(&padding, payload_bytes[members.head:shape.payload_size])
+		append(&parts, strings.to_string(padding))
 	}
-	strings.write_string(&b, " }")
-	return strings.to_string(b)
+	if members.aligner {
+		append(&parts, fmt.aprintf("[0 x %s] zeroinitializer", union_head_type(shape.align)))
+	}
+	if members.tag {
+		append(&parts, fmt.aprintf("%s %d", union_tag_llvm(shape), index))
+	}
+	if members.tail > 0 {
+		append(&parts, fmt.aprintf("[%d x i8] zeroinitializer", members.tail))
+	}
+	return strings.concatenate({"{ ", strings.join(parts[:], ", ", context.temp_allocator), " }"})
 }
 
 // The head member of `union_head_type`, typed, holding `head`'s bytes.
@@ -101,7 +101,14 @@ is_zero_constant :: proc(value: string) -> bool {
 
 @(private = "file")
 write_byte_array_constant :: proc(b: ^strings.Builder, bytes: []u8) {
-	fmt.sbprintf(b, "[%d x i8] c\"", len(bytes))
+	fmt.sbprintf(b, "[%d x i8] ", len(bytes))
+	write_byte_string(b, bytes)
+}
+
+// `bytes` as an LLVM string constant, the value of an `[N x i8]`.
+@(private = "file")
+write_byte_string :: proc(b: ^strings.Builder, bytes: []u8) {
+	strings.write_string(b, "c\"")
 	for byte in bytes {
 		fmt.sbprintf(b, "\\%02X", byte)
 	}
@@ -148,6 +155,18 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		vector := info.kind == .Simd
 		lane := simd_lane_llvm_type(e, info)
 		mask := vector && simd_is_mask(e, info)
+		// An array of bytes is one string of them, not a member per byte.
+		if !vector && lane == "i8" {
+			bytes := make([]u8, int(info.count), context.temp_allocator)
+			if write_const_bytes(e, bytes, value, under) {
+				if slice.all_of(bytes, 0) {
+					return "zeroinitializer"
+				}
+				b := strings.builder_make()
+				write_byte_string(&b, bytes)
+				return strings.to_string(b)
+			}
+		}
 		b := strings.builder_make()
 		strings.write_string(&b, vector ? "<" : "[")
 		zero := true
@@ -476,13 +495,14 @@ const_image :: proc(e: ^Emitter, values: []Const_Value, type: Type_Id) -> (strin
 	return strings.to_string(types), strings.to_string(parts)
 }
 
-// A global's value type and initializer, and the alignment an image needs.
-global_initializer :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> (string, string, string) {
+// A global's value type and initializer, the alignment an image needs, and
+// whether it is an image (`const_needs_image`).
+global_initializer :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> (string, string, string, bool) {
 	if const_needs_image(e, value, type) {
 		image_type, image := const_image(e, {value}, type)
-		return image_type, image, fmt.aprintf(", align %d", type_align(e.c, type))
+		return image_type, image, fmt.aprintf(", align %d", type_align(e.c, type)), true
 	}
-	return llvm_type(e, type), llvm_const(e, value, type), ""
+	return llvm_type(e, type), llvm_const(e, value, type), "", false
 }
 
 // A constant operand in a body; an image is loaded from a private global. A large
@@ -490,26 +510,36 @@ global_initializer :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> (s
 @(private = "file")
 const_operand :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	large := is_large_value(e, type)
-	image_type, image, align := global_initializer(e, value, type)
+	image_type, image, align, imaged := global_initializer(e, value, type)
+	if !large && !imaged {
+		return image
+	}
 	if large && image == "zeroinitializer" {
 		return large_zero(e, type)
-	}
-	if !large && !const_needs_image(e, value, type) {
-		return image
 	}
 	name := private_constant(e, "@.image.", fmt.aprintf("%s %s%s", image_type, image, align))
 	return large ? name : load(e, llvm_type(e, type), name)
 }
 
+// A new private global named by `prefix` and the count of globals so far, and
+// `definition`, all that follows its `=`.
+@(private = "file")
+private_global :: proc(e: ^Emitter, prefix, definition: string) -> string {
+	name := claim_name(e, fmt.aprintf("%s%d", prefix, len(e.globals)))
+	append(&e.globals, fmt.aprintf("%s = %s\n", name, definition))
+	return name
+}
+
 // A private constant global of `definition`, its type and initializer, which
-// every use of the same one shares, as `text_literal_global` shares a text.
+// every use of the same one shares, as `text_literal_global` shares a text. The
+// key holds the alignment, so a shared global is never less aligned than a use
+// asks; the name keeps the prefix of the first use.
 @(private)
 private_constant :: proc(e: ^Emitter, prefix, definition: string) -> string {
 	if name, found := e.constants[definition]; found {
 		return name
 	}
-	name := claim_name(e, fmt.aprintf("%s%d", prefix, len(e.globals)))
-	append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s\n", name, definition))
+	name := private_global(e, prefix, fmt.aprintf("private unnamed_addr constant %s", definition))
 	e.constants[definition] = name
 	return name
 }
@@ -523,8 +553,7 @@ large_zero :: proc(e: ^Emitter, type: Type_Id) -> string {
 	if name, known := e.large_zeros[type]; known {
 		return name
 	}
-	name := claim_name(e, fmt.aprintf("%s%d", LARGE_ZERO_PREFIX, len(e.globals)))
-	append(&e.globals, fmt.aprintf("%s = private unnamed_addr global %s zeroinitializer\n", name, llvm_type(e, type)))
+	name := private_global(e, LARGE_ZERO_PREFIX, fmt.aprintf("private unnamed_addr global %s zeroinitializer", llvm_type(e, type)))
 	e.large_zeros[type] = name
 	return name
 }
@@ -592,9 +621,7 @@ slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info)
 	if !info.mutable {
 		return private_constant(e, "@.slice.", fmt.aprintf("%s%s", contents, align))
 	}
-	name := claim_name(e, fmt.aprintf("@.slice.%d", len(e.globals)))
-	append(&e.globals, fmt.aprintf("%s = private global %s%s\n", name, contents, align))
-	return name
+	return private_global(e, "@.slice.", fmt.aprintf("private global %s%s", contents, align))
 }
 
 @(private)
@@ -996,13 +1023,10 @@ emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 }
 
 // The checked i64 index of `v`, which must be below the runtime `length`.
-// Unsigned, so a negative index fails the same comparison as an oversized one.
 @(private = "file")
 emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string {
 	index := checked_index_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
-	out_of_range := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
-	panic_if(e, out_of_range, "bounds", "index out of range")
+	emit_bounds_check(e, index, length, "index out of range")
 	return index
 }
 
@@ -1040,7 +1064,9 @@ emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 }
 
 // `lo` and `hi`, each evaluated once in order, checked as
-// `0 <= lo <= hi <= length` in one trap seam before any address is formed.
+// `0 <= lo <= hi <= length` in one trap seam before any address is formed. With
+// no `length`, as over a C pointer, `hi` is required and only must not be
+// negative.
 @(private = "file")
 emit_slice_bounds :: proc(e: ^Emitter, v: ^Expr_Slice, length, message: string) -> (low, high: string) {
 	low = "0"
@@ -1051,12 +1077,19 @@ emit_slice_bounds :: proc(e: ^Emitter, v: ^Expr_Slice, length, message: string) 
 	if v.hi != nil {
 		high = checked_index_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
 	}
-	reversed, past_end, bad := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past_end, high, length)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, past_end)
-	panic_if(e, bad, "slice.bounds", message)
+	reversed := emit_value(e, "icmp ugt i64 %s, %s", low, high)
+	past_end := length == "" \
+		? emit_value(e, "icmp slt i64 %s, 0", high) \
+		: emit_value(e, "icmp ugt i64 %s, %s", high, length)
+	panic_if(e, combine_or(e, reversed, past_end), "slice.bounds", message)
 	return
+}
+
+// `data[low:high]`, of `element`s, as a pointer and length of LLVM `storage`.
+@(private = "file")
+emit_subrange :: proc(e: ^Emitter, storage, element, data, low, high: string) -> string {
+	start := gep_at(e, element, data, low)
+	return emit_ptr_len(e, storage, start, emit_value(e, "sub i64 %s, %s", high, low))
 }
 
 // `base[lo:hi]` over a fixed array, a slice, or a dynamic array's current
@@ -1084,10 +1117,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> str
 	}
 
 	low, high := emit_slice_bounds(e, v, length, "slice bounds out of range")
-	start := gep_at(e, llvm_type(e, info.element), data, low)
-	count := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
-	return emit_slice_value(e, as_type, start, count)
+	return emit_subrange(e, llvm_type(e, as_type), llvm_type(e, info.element), data, low, high)
 }
 
 // `st[low:high]` is a view over byte offsets, so a range that splits a code
@@ -1102,10 +1132,7 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	if v.hi != nil {
 		emit_code_point_bound_check(e, data, high, length)
 	}
-	start := gep_at(e, "i8", data, low)
-	count := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
-	return emit_ptr_len(e, STRING_VIEW_TYPE, start, count)
+	return emit_subrange(e, STRING_VIEW_TYPE, "i8", data, low, high)
 }
 
 // design.md "String views": a slice bound starts a sequence or is the end of the
@@ -1129,25 +1156,17 @@ emit_code_point_bound_check :: proc(e: ^Emitter, data, bound, length: string) {
 // type conversions").
 @(private = "file")
 emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> string {
-	element := underlying_info(e.c, expr_base(v.operand).type).element
+	element := llvm_type(e, underlying_info(e.c, expr_base(v.operand).type).element)
 	data := emit_expr(e, v.operand)
-	low := "0"
-	if v.lo != nil {
-		low = checked_index_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
-	}
-	start := gep_at(e, llvm_type(e, element), data, low)
 	if v.hi == nil {
-		return start
+		low := "0"
+		if v.lo != nil {
+			low = checked_index_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
+		}
+		return gep_at(e, element, data, low)
 	}
-	high := checked_index_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
-	reversed, negative, bad := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, high)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, negative)
-	panic_if(e, bad, "slice.bounds", "slice bounds out of range")
-	count := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
-	return emit_slice_value(e, as_type, start, count)
+	low, high := emit_slice_bounds(e, v, "", "slice bounds out of range")
+	return emit_subrange(e, llvm_type(e, as_type), element, data, low, high)
 }
 
 // An index, slice bound or length about to be bounds-checked. A value wider than
@@ -1168,17 +1187,7 @@ checked_index_to_i64 :: proc(e: ^Emitter, value: string, type: Type_Id) -> strin
 
 @(private)
 widen_to_i64 :: proc(e: ^Emitter, value: string, type: Type_Id) -> string {
-	bits := type_bits(e.c, type)
-	if bits == 64 {
-		return value
-	}
-	out := temp(e)
-	op := type_signed(e.c, type) ? "sext" : "zext"
-	if bits > 64 {
-		op = "trunc"
-	}
-	fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i64", out, op, bits, value)
-	return out
+	return resize_int(e, value, type_bits(e.c, type), 64, type_signed(e.c, type))
 }
 
 // ------------------------------------------------------------ expressions --
@@ -1242,17 +1251,24 @@ spill_viewed_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 }
 
 // The address an erased view of `expr` holds: the place itself, or a temporary
-// holding the value. A view reads its target at the type's alignment, which a
-// packed place may not have (design.md "@(packed)"), so it views an aligned copy.
+// holding the value. A view reads its target at the type's alignment, so it
+// views an aligned copy of a packed place.
 @(private)
 emit_viewed_address :: proc(e: ^Emitter, expr: Expr, from: Type_Id) -> string {
-	address := spill_viewed_at(e, expr, from)
-	if align, known := e.place_align[address]; known && align < type_align(e.c, from) {
-		aligned := temporary_slot(e, from)
-		copy_bytes(e, aligned, address, type_size(e.c, from))
-		address = aligned
+	return aligned_copy_if_needed(e, from, spill_viewed_at(e, expr, from))
+}
+
+// `address`, or where it is less aligned than `type` asks, as a packed field
+// may be (design.md "@(packed)"), an aligned copy of what it holds, for a
+// reader that reads at the type's alignment.
+@(private)
+aligned_copy_if_needed :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
+	if align, known := e.place_align[address]; !known || align >= type_align(e.c, type) {
+		return address
 	}
-	return address
+	aligned := temporary_slot(e, type)
+	copy_bytes(e, aligned, address, type_size(e.c, type))
+	return aligned
 }
 
 // A fixed array's or vector's `len()` folds to a constant, but its receiver is
@@ -1590,9 +1606,7 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 			return result
 		}
 		// The `!=` fallback: `!(a == b)`.
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, result)
-		return out
+		return not_i1(e, result)
 	}
 	// SIMD is lane-wise, and its comparisons produce a mask, not a `bool`.
 	if type_is_simd(e.c, expr_base(v.lhs).type) || type_is_simd(e.c, expr_base(v.rhs).type) {
@@ -1714,8 +1728,8 @@ emit_checked_integer :: proc(e: ^Emitter, op: Token_Kind, signed: bool, llvm, lh
 // the latter in a `flag` of `i1` or `<N x i1>`.
 emit_overflow_call :: proc(e: ^Emitter, key, llvm, flag, lhs, rhs: string) -> (wrapped, overflowed: string) {
 	pair_type := strings.concatenate({"{ ", llvm, ", ", flag, " }"})
-	pair := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s)", pair, pair_type, key, llvm, lhs, llvm, rhs)
+	declare_intrinsic(e, key, pair_type, strings.concatenate({llvm, ", ", llvm}))
+	pair := emit_value(e, "call %s @%s(%s %s, %s %s)", pair_type, key, llvm, lhs, llvm, rhs)
 	return extract(e, pair_type, pair, 0), extract(e, pair_type, pair, 1)
 }
 
@@ -1908,16 +1922,9 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 	}
 	if type_is_aggregate(e.c, type) || type_is_union(e.c, type) {
 		equal := emit_equal(e, type, lhs, rhs)
-		if op == .Eq_Eq {
-			return equal
-		}
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, equal)
-		return out
+		return op == .Eq_Eq ? equal : not_i1(e, equal)
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, compare_instruction(e, op, type), llvm_type(e, type), lhs, rhs)
-	return out
+	return emit_value(e, "%s %s %s, %s", compare_instruction(e, op, type), llvm_type(e, type), lhs, rhs)
 }
 
 // design.md "Comparison operators": an anonymous record orders by its first
@@ -2137,16 +2144,6 @@ byte_member_part :: proc(e: ^Emitter, record: Type_Id, slot: string, index: int)
 emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
 	left, right := spill_equal_operands(e, type, lhs, rhs)
 	return emit_fields_equal(e, type, info, left, right, byte_member_part)
-}
-
-@(private)
-combine_and :: proc(e: ^Emitter, a, b: string) -> string {
-	if a == "true" {
-		return b
-	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, a, b)
-	return out
 }
 
 // ---------------------------------------------------- branching expressions --
@@ -2481,10 +2478,8 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		// terminator, so the view is the string's own data, borrowed like `bytes()`.
 		// The empty string has no buffer, and C needs a pointer to read.
 		data, _ := emit_text_parts(e, v.bound[0])
-		missing := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, data)
-		out = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", out, missing, text_literal_global(e, ""), data)
+		missing := is_null(e, data)
+		out = emit_value(e, "select i1 %s, ptr %s, ptr %s", missing, text_literal_global(e, ""), data)
 
 	case .To_Runes:
 		// The helper releases its partial buffer before the policy applies.
@@ -2508,9 +2503,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 // applies the provider's own policy (design.md "Allocation failure").
 @(private = "file")
 emit_alloc_check :: proc(e: ^Emitter, status, provider: string) {
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
-	alloc_failed_if(e, failed, provider, "text.failed")
+	alloc_failed_if(e, icmp_zero(e, "i32", status), provider, "text.failed")
 }
 
 // A runtime call that fills a `string` out-parameter and answers 1 on success.
@@ -2535,21 +2528,18 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments, provider: stri
 @(private = "file")
 emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: string) -> string {
 	slot, ok := emit_text_call_slot(e, callee, arguments)
-	value, valid := load(e, STRING_TYPE, slot), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", valid, ok)
-	return emit_option_value(e, option, valid, value)
+	value := load(e, STRING_TYPE, slot)
+	return emit_option_value(e, option, icmp_zero(e, "i32", ok, equal = false), value)
 }
 
 // `Option(string_view)` over bytes that are borrowed, not copied: `.some` only
 // when they are valid UTF-8.
 @(private = "file")
 emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) -> string {
-	valid, ok := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
-	kept_data, kept_len := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
+	valid := emit_value(e, "call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", data, length)
+	ok := icmp_zero(e, "i32", valid, equal = false)
+	kept_data := emit_value(e, "select i1 %s, ptr %s, ptr null", ok, data)
+	kept_len := emit_value(e, "select i1 %s, i64 %s, i64 0", ok, length)
 	view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
 	return emit_option_value(e, option, ok, view)
 }
@@ -2565,9 +2555,7 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> s
 		e, "loke_rt_v1_string_clone", fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, allocator),
 	)
 	copied := load(e, STRING_TYPE, slot)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
-	return emit_alloc_result(e, as_type, failed, copied)
+	return emit_alloc_result(e, as_type, icmp_zero(e, "i32", ok), copied)
 }
 
 @(private = "file")
@@ -2602,10 +2590,8 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		check, done := new_label(e, "cview.check"), new_label(e, "cview.done")
 		branch_if(e, nonempty, check, done)
 		place_label(e, check)
-		last := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", last, length)
-		zero := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i8 %s, 0", zero, load(e, "i8", gep_at(e, "i8", data, last)))
+		last := emit_value(e, "sub i64 %s, 1", length)
+		zero := icmp_zero(e, "i8", load(e, "i8", gep_at(e, "i8", data, last)))
 		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", zero, terminated)
 		place_label(e, done)
 		ok, kept := load(e, "i1", terminated), temp(e)

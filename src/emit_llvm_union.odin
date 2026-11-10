@@ -25,41 +25,59 @@ union_head_type :: proc(align: u64) -> string {
 @(private)
 union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ")
+	members := union_members(shape)
+	parts := make([dynamic]string, 0, 4, context.temp_allocator)
+	if members.head > 0 {
+		append(&parts, union_head_type(members.head))
+	}
+	if members.padding > 0 {
+		append(&parts, fmt.aprintf("[%d x i8]", members.padding))
+	}
+	if members.aligner {
+		append(&parts, fmt.aprintf("[0 x %s]", union_head_type(shape.align)))
+	}
+	if members.tag {
+		append(&parts, union_tag_llvm(shape))
+	}
+	if members.tail > 0 {
+		append(&parts, fmt.aprintf("[%d x i8]", members.tail))
+	}
+	return strings.concatenate({"{ ", strings.join(parts[:], ", ", context.temp_allocator), " }"})
+}
+
+// The members of a union's storage, in order, each a byte count, or 0 when it
+// is absent: the payload's alignment-carrying head and the payload's padding
+// after it; without a payload, an empty member that carries the alignment; the
+// tag, which a niche union has none of; and tail padding. The storage type, a
+// union constant and the tag's member index are all read from it.
+@(private)
+Union_Members :: struct {
+	head, padding: u64,
+	aligner, tag:  bool,
+	tail:          u64,
+}
+
+@(private)
+union_members :: proc(shape: Union_Layout) -> Union_Members {
+	members: Union_Members
 	if shape.payload_size > 0 {
-		strings.write_string(&b, union_head_type(shape.align))
-		if pad := shape.payload_size - shape.align; pad > 0 {
-			fmt.sbprintf(&b, ", [%d x i8]", pad)
-		}
+		members.head, members.padding = shape.align, shape.payload_size - shape.align
 		if shape.niche {
-			strings.write_string(&b, " }")
-			return strings.to_string(b)
+			return members
 		}
-		strings.write_string(&b, ", ")
-	} else if shape.align > shape.tag_bytes {
-		fmt.sbprintf(&b, "[0 x %s], ", union_head_type(shape.align))
+	} else {
+		members.aligner = shape.align > shape.tag_bytes
 	}
-	strings.write_string(&b, union_tag_llvm(shape))
-	if tail := shape.size - shape.payload_size - shape.tag_bytes; tail > 0 {
-		fmt.sbprintf(&b, ", [%d x i8]", tail)
-	}
-	strings.write_string(&b, " }")
-	return strings.to_string(b)
+	members.tag = true
+	members.tail = shape.size - shape.payload_size - shape.tag_bytes
+	return members
 }
 
 // The storage member of `union_storage_definition` that holds the tag.
 @(private = "file")
 union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
-	shape := union_layout(e.c, type)
-	if shape.payload_size == 0 {
-		return shape.align > shape.tag_bytes ? 1 : 0
-	}
-	index := 1
-	if shape.payload_size > shape.align {
-		index += 1
-	}
-	return index
+	members := union_members(union_layout(e.c, type))
+	return int(members.head > 0) + int(members.padding > 0) + int(members.aligner)
 }
 
 // Constructing a variant: zero the storage, write the payload through a typed
@@ -184,10 +202,9 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 	if shape.niche {
 		head := union_head_type(shape.align)
 		word := read_member(e, union_type, value, 0, head)
-		present, out := temp(e), temp(e)
 		some := union_niche_variant(e.c, union_type)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne %s %s, 0", present, head, word)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i8 %d, i8 %d", out, present, some, 1 - some)
+		present := icmp_zero(e, head, word, equal = false)
+		out := emit_value(e, "select i1 %s, i8 %d, i8 %d", present, some, 1 - some)
 		return out
 	}
 	return read_member(e, union_type, value, union_tag_member(e, union_type), union_tag_llvm(shape))
@@ -295,14 +312,21 @@ emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot:
 emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value := "", error := "") -> string {
 	refused := error
 	if refused == "" && failed != "false" {
-		refused = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
+		refused = emit_take_refusal(e)
 	}
 	return emit_union_either(
 		e, result, failed,
 		union_index_of(e.c, result, "err"), refused,
 		union_index_of(e.c, result, "ok"), value,
 	)
+}
+
+// The size the runtime's note holds for the last refused allocation, which it
+// gives up. A drop that may allocate between a refusal and its report takes it
+// first and restores it after.
+@(private)
+emit_take_refusal :: proc(e: ^Emitter) -> string {
+	return emit_value(e, "call i64 @loke_rt_v1_take_refusal()")
 }
 
 // An `Allocator_Error` turning back into a status or a policy call: its size

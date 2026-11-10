@@ -1,2 +1,4 @@
 switch i8 *label %fmt.union.hit.
 not fmt.union.next
+switch i64 *label %fmt.enum.hit.
+not fmt.enum.next
