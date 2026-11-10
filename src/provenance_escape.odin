@@ -705,10 +705,17 @@ prov_owner_name :: proc(graph: ^Flow_Graph, value: Expr) -> string {
 	if moved, is_move := value.(^Expr_Move); is_move {
 		owner = moved.value
 	}
-	if sym := symbol_of(graph.k.c, place_root_symbol(owner)); sym != nil {
-		return fmt.aprintf("`%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc)
+	id := place_root_symbol(owner)
+	if name, found := graph.owner_names[id]; found {
+		return name
 	}
-	return "this value"
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil {
+		return "this value"
+	}
+	name := fmt.aprintf("`%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc)
+	graph.owner_names[id] = name
+	return name
 }
 
 // design.md "Allocator regions and region provenance": an owner received by

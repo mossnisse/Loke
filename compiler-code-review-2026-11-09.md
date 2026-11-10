@@ -1277,7 +1277,7 @@ in three tables.
 
 Verdict: clean, well-named queries; the `Type_Walk` design is good.
 
-- **Data structure/algorithm (minor):** `named_fields` (178-190) allocates a new
+- **Data structure/algorithm (minor)** (not done: only a record with padding allocates, and the result reaches six callers through `destructure_fields`, some of which may keep it): `named_fields` (178-190) allocates a new
   slice in the semantic arena on every call when a record has padding. It is
   called for every struct literal (`src/check_composite.odin:162`) and every
   destructure. Use the temp allocator, or cache it on `Type_Info`.
@@ -1630,7 +1630,7 @@ Verdict: small and correct; nothing notable.
 
 #### src/enums.odin
 Verdict: fine.
-- **Data structure/algorithm** `src/enums.odin:97-112`: `enum_member_by_value` is a linear
+- **Data structure/algorithm** (not done: a cache on `Type_Info` would need invalidating while members are added, for a minor gain) `src/enums.odin:97-112`: `enum_member_by_value` is a linear
   scan with big-int compares, called per `Enum.from_int` evaluation in CTFE loops
   (`src/eval.odin:1964`) and per static-expansion note. A per-type value→member map
   cached on `Type_Info` (built from `enum_members_by_value`) would make it O(1); minor.
@@ -1705,7 +1705,7 @@ Verdict: fine; two ways to find the same types.
   and `Options` with two `standard_package` scans each call, while `format_misdeclared` uses
   `c.runtime_types["Writer"]`/`["Options"]`. Use one source (unverified that
   `runtime_types` is populated at every `ensure_format_member` call).
-- **Simplify** `src/format.odin:112`, `127`: compare `sym.name` to an interned `format` id
+- **Simplify** (done) `src/format.odin:112`, `127`: compare `sym.name` to an interned `format` id
   instead of `identifier_text(...) == "format"` per member.
 
 #### src/expand.odin
@@ -1744,7 +1744,7 @@ Verdict: fine.
 
 #### src/stdlib.odin
 Verdict: clear contribution table.
-- **Data structure/algorithm** `src/stdlib.odin:33-40`: `standard_package` scans all packages
+- **Data structure/algorithm** (done: `new_package` records each key in `package_by_key`) `src/stdlib.odin:33-40`: `standard_package` scans all packages
   by key string; it is called from per-call paths (`src/format.odin:24-25`,
   `src/bootstrap.odin:173`, `src/interface.odin:1088`, `src/parallel.odin:187`). Record the
   standard packages by key in a map (or fixed fields) when loaded.
@@ -1860,7 +1860,7 @@ Verdict: coherent ("what a store or call lets escape"), with one copy of the qua
 - **Duplication**: `prov_store_reachable_regions` (:539–551) is one of the four alias-reachability walks (Top recommendation 7).
 - **Simplify** (not done: the one-element slice would make the whole-value case copy `at` through `prov_concat_path`, which the current branch avoids): `prov_store_region_through` (:476–484) has a `landed != nil` branch that only differs by iterating rows. Write `for content in landed or {whole}` with a one-element slice built from `at`, saving 4 lines.
 - **Structure**: `prov_call_written_regions` (:605–680) and `prov_call_moved_owner` (:744–768) are call effects. They sit better in `provenance_retention.odin`, which already owns "what a call may leave behind" and calls both from `prov_call_retention`. `prov_type_at`/`prov_type_along` (:113–163) are pure type queries used by six files; they belong in carrier_shape.odin next to `carrier_shape`.
-- **Simplify**: `prov_owner_name` (:710–719) formats a fresh string per call. `prov_store_region`, `prov_store_spread_region` and `prov_store_map_key_region` call it on every replay round even when nothing escapes. Compute it lazily at the `Region_Escape` emit.
+- **Simplify** (done in part: the graph keeps each owner's name once formatted, in `owner_names`; the name is still found before anything escapes): `prov_owner_name` (:710–719) formats a fresh string per call. `prov_store_region`, `prov_store_spread_region` and `prov_store_map_key_region` call it on every replay round even when nothing escapes. Compute it lazily at the `Region_Escape` emit.
 
 #### src/provenance_call_walk.odin
 
@@ -1932,7 +1932,7 @@ Verdict: correct in outline. It holds one real allocation bug and two copies of 
 Verdict: fine.
 
 - **Duplication** (done: `next_load_depth` in carrier_shape.odin): `for depth in 1 ..= 8 { if loads & (1 << (depth-1)) == 0 { continue }; for route in result_load_routes(...) }` appears here (:296–305), in provenance_aliases.odin:173–180 and in proc_contracts.odin:239. The magic `8` is the bit width of `param_loads: u8`, not `CARRIER_DEPTH`. Add an iterator `next_load_depth(&bits)` (like `next_region_param`), or at least a named constant.
-- **Duplication**: `prov_store_call_results` (:17–21) and the replay of `Prov_Effect_Call.Result` (provenance_effect.odin:219–220) compute the same `region`/`region_content` pair. Extract `prov_call_result_regions(graph, id, type) -> Prov_Call_Result`.
+- **Duplication** (done: `prov_call_result_regions`): `prov_store_call_results` (:17–21) and the replay of `Prov_Effect_Call.Result` (provenance_effect.odin:219–220) compute the same `region`/`region_content` pair. Extract `prov_call_result_regions(graph, id, type) -> Prov_Call_Result`.
 - **Simplify** (not done: they apply different spec rules, each documented on its own procedure, and differ in their parameters, so one procedure with a flag would merge two comments into one condition): `prov_callback_result` and `prov_callback_returned` (:203–219) differ only in which `call_callback_*` they call. Fold them into one proc taking a `returns: bool`, saving ~6 lines.
 
 #### src/provenance_tasks.odin
@@ -1940,7 +1940,7 @@ Verdict: fine.
 Verdict: fine.
 
 - **Data structure/algorithm**: `prov_spawn_reborrows` (:154–165) is a nested loop over held slots × all reborrows; the index fixes it (Top recommendation 1).
-- **Simplify**: the lazy map/array initialisation (`if graph.task_slots == nil { make… }` :92–96, :105–107, :113–115, `parallel_scopes` :184–186, `task_sites` provenance_tasks.odin:48–50) is inconsistent with `new_prov_state`, which eagerly makes ~45 containers. `make(map, allocator)` does not allocate until the first insert, so eagerly making these too removes ~12 lines of nil checks. Alternatively make everything lazy; either is fine, but pick one.
+- **Simplify** (done: `new_prov_state` makes them eagerly): the lazy map/array initialisation (`if graph.task_slots == nil { make… }` :92–96, :105–107, :113–115, `parallel_scopes` :184–186, `task_sites` provenance_tasks.odin:48–50) is inconsistent with `new_prov_state`, which eagerly makes ~45 containers. `make(map, allocator)` does not allocate until the first insert, so eagerly making these too removes ~12 lines of nil checks. Alternatively make everything lazy; either is fine, but pick one.
 - **Data structure/algorithm** (no change needed, as the finding says) (minor): `prov_window_bit` (:178–189) is a linear search over `parallel_scopes`. It is fine because there are few blocks, but it is called per join and per pool event.
 
 #### src/provenance_offsets.odin
@@ -2106,7 +2106,7 @@ Verdict: the solver core is sound and well tuned, but it holds too much (types, 
   - `analyze_program_provenance`, `settle_result_summaries`, `summarize_body`, `check_declared_escape` and `note_instance_sites` (`:840-1060`), which are the program driver, into `borrow_summaries.odin` or a driver file.
   - `body_global_reach`, `note_reached_globals` and `add_reached_global` (`:1069-1124`), which are thread-summary collection, into `provenance_thread_summaries.odin`.
 - **Structure** `bit_get`, `bit_mark`, `bit_clear` and `bytes_or` (`:746-832`) are general bitset helpers used by `global_effects.odin`, `view_start.odin`, `borrow_tasks.odin` and `borrow_loaded_below.odin`. Move them to `borrow_tables.odin` beside the rows they serve.
-- **Data structure/algorithm** `note_read` (`:2066`) and `with_held_content` (`:2189`) use `slice.contains` on a growing list, which is quadratic in reads. Usually small; a per-call `[]bool` over slots, which `state.load_expanded` already provides in spirit, makes it linear. Low priority.
+- **Data structure/algorithm** (not done: the lists are usually a few slots, shorter than a per-call table over every slot) `note_read` (`:2066`) and `with_held_content` (`:2189`) use `slice.contains` on a growing list, which is quadratic in reads. Usually small; a per-call `[]bool` over slots, which `state.load_expanded` already provides in spirit, makes it linear. Low priority.
 - **Simplify** (done: one loop; `report` sorts diagnostics by position, so their order is unchanged) `analyze_program_provenance` (`:850-859`) walks `checked_bodies` twice, once to analyze and once for `check_declared_escape`. `check_declared_escape` reads only settled summaries and can run in the first loop, unless diagnostic order is deliberate. If it is, say so.
 
 #### src/borrow_summaries.odin
@@ -2114,7 +2114,7 @@ Verdict: correct, but it carries a solver transfer function and call-side querie
 
 - **Structure** `rearrange_carriers` (`:367-396`) is a transfer function of `run_prov_event` (`.Rearrange`) and calls `load_writable_content`. Move it into `borrow.odin` beside `load_writable_content`. Likewise `slot_carrier_type` (`:353`) and `carrier_may_land_in` (`:335`) are solver primitives. `call_carrier_moves`, `written_content_summary` and `written_region_summary` (`:291`, `:630`, `:657`) are call-side queries used by `provenance_*`.
 - **Simplify** Three collectors (`collect_carrier_moves :60`, `collect_thread_local_writes :439`, `collect_escape_provenance :695`) each replay the whole body. See top recommendation 1. Saves about 20 lines.
-- **Data structure/algorithm** `merge_written_content` (`:619-622`) grows `row^` by one element per new entry, copying into `semantic_allocator`. That is quadratic, and every old row is permanent arena garbage across fixpoint rounds. `set_add` (`carrier_shape.odin:1214`, used by `merge_carrier_move :283`) does the same. Use a `[dynamic]` in the semantic allocator, or rebuild once per round.
+- **Data structure/algorithm** (done: a merge grows the row once, and `set_join` grows a set once, for `merge_carrier_move`, `call_carrier_moves` and `merge_provenance`) `merge_written_content` (`:619-622`) grows `row^` by one element per new entry, copying into `semantic_allocator`. That is quadratic, and every old row is permanent arena garbage across fixpoint rounds. `set_add` (`carrier_shape.odin:1214`, used by `merge_carrier_move :283`) does the same. Use a `[dynamic]` in the semantic allocator, or rebuild once per round.
 - **Data structure/algorithm** `copies_outlast_body` (`:126-142`) tests every reborrow against every held slot at each exit block. Iterating only the set bits of each row, or precomputing a `storage` mask over reborrow sources, avoids O(slots·reborrows) per exit.
 - **Simplify** (done, next to `CARRIER_DEPTH`) `merge_loan_provenance :761` builds `u8(1) << u8(loan.depth - 1)`. That is correct only because `CARRIER_DEPTH == 4 <= 8`. Add `#assert(CARRIER_DEPTH <= 8)` next to `Result_Dependencies.param_loads` (`carrier_shape.odin:719`) so a budget change cannot silently make `changed` always true and stop the fixpoint from settling.
 

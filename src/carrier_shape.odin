@@ -1226,9 +1226,7 @@ merge_result_dependencies :: proc(into: ^Result_Dependencies, from: Result_Depen
 @(private)
 merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies, allocator: mem.Allocator) -> bool {
 	changed := false
-	for global in from.globals {
-		changed = set_add(&into.globals, global, allocator) || changed
-	}
+	changed = set_join(&into.globals, from.globals, allocator) || changed
 	if from.static && !into.static   { into.static, changed  = true, true }
 	if from.thread && !into.thread   { into.thread, changed  = true, true }
 	if from.local && !into.local     { into.local, changed   = true, true }

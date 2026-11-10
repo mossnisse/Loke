@@ -276,9 +276,7 @@ merge_carrier_move :: proc(c: ^Compiler, declaration: Symbol_Id, index: int, mov
 	changed := move.any && !row.any || move.copied && !row.copied
 	row.any ||= move.any
 	row.copied ||= move.copied
-	for type in move.types {
-		changed = set_add(&row.types, type, c.semantic_allocator) || changed
-	}
+	changed = set_join(&row.types, move.types, c.semantic_allocator) || changed
 	return changed
 }
 
@@ -316,9 +314,7 @@ call_carrier_moves :: proc(
 			if at := position + shift; at >= 0 && at < count {
 				out[at].any ||= row.any
 				out[at].copied ||= row.copied
-				for type in row.types {
-					set_add(&out[at].types, type, allocator)
-				}
+				set_join(&out[at].types, row.types, allocator)
 			}
 		}
 	}
@@ -599,6 +595,8 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 @(private = "file")
 merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: []Prov_Region_Content) -> bool {
 	changed := false
+	// A new entry goes to `grown`, made once with room for all of `from`.
+	grown: [dynamic]Prov_Region_Content
 	next: for entry in from {
 		entry := entry
 		if len(entry.path) > WRITTEN_ALIAS_DEPTH {
@@ -607,17 +605,22 @@ merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: [
 		if from, copied := entry.from.?; copied && len(from.path) > WRITTEN_ALIAS_DEPTH {
 			entry.from = Prov_Region_Source{from.path[:WRITTEN_ALIAS_DEPTH], .All}
 		}
-		for &existing in row^ {
+		rows := grown != nil ? grown[:] : row^
+		for &existing in rows {
 			if prov_same_region_content(existing, entry) {
 				changed = region_merge(&existing.region, entry.region) || changed
 				continue next
 			}
 		}
-		grown := make([]Prov_Region_Content, len(row^) + 1, c.semantic_allocator)
-		copy(grown, row^)
-		grown[len(row^)] = prov_clone_region_content(entry, entry.region, c.semantic_allocator)
-		row^ = grown
+		if grown == nil {
+			grown = make([dynamic]Prov_Region_Content, 0, len(row^) + len(from), c.semantic_allocator)
+			append(&grown, ..row^)
+		}
+		append(&grown, prov_clone_region_content(entry, entry.region, c.semantic_allocator))
 		changed = true
+	}
+	if grown != nil {
+		row^ = grown[:]
 	}
 	return changed
 }

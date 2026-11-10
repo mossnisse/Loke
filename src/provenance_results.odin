@@ -13,17 +13,21 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 	if type == TYPE_VOID || type == INVALID_TYPE || call_diverges(graph.k.c, v) {
 		return nil
 	}
-	id := prov_input_value(graph, v)
-	result := Prov_Call_Result {
-		loans          = prov_call_result(graph, v, actuals, type),
-		region         = prov_call_region(graph, id, type),
-		region_content = prov_call_region_content(graph, id),
-	}
+	loans := prov_call_result(graph, v, actuals, type)
+	result := prov_call_result_regions(graph, prov_input_value(graph, v), type)
+	result.loans = loans
 	if prov_result_is_inout(graph, v) {
 		result.place = prov_inout_actuals(graph, v, actuals)
 	}
 	graph.call_results[v] = result
 	return result.loans
+}
+
+// The regions a call's result is in and holds, which its fact operation
+// replays.
+@(private)
+prov_call_result_regions :: proc(graph: ^Flow_Graph, id: Value_Id, type: Type_Id) -> Prov_Call_Result {
+	return Prov_Call_Result{region = prov_call_region(graph, id, type), region_content = prov_call_region_content(graph, id)}
 }
 
 // Resets propagate through wrappers and indirect calls (design.md "@(allocator_reset)").

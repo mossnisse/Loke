@@ -45,9 +45,6 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	// tasks run").
 	runs := spawn_runs(graph, s)
 	graph.has_window_event = true
-	if graph.task_sites == nil {
-		graph.task_sites = make([dynamic]Task_Site, 0, 2, graph.alloc)
-	}
 	append(&graph.task_sites, Task_Site{block = prov_window_bit(graph, task.scope), reserve = graph.task_reserve, span = s.span, call = call})
 	prov_emit(graph, Prov_Event{
 		kind = .Task_Start, slot = len(graph.task_sites) - 1, symbol = runs, sources = held, span = s.span,
@@ -89,11 +86,6 @@ prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
 		return
 	}
 	prov_window_bit(graph, s.scope)
-	if graph.task_slots == nil {
-		graph.task_slots = make(map[Symbol_Id]int, graph.alloc)
-		graph.task_holds = make(map[Symbol_Id][]int, graph.alloc)
-		graph.spawn_holds = make(map[^Stmt_Spawn]int, graph.alloc)
-	}
 	graph.task_slots[s.scope] = prov_temp_slot(graph)
 	holds := make([dynamic]int, 0, len(s.spawns), graph.alloc)
 	tasks: [dynamic]Pool_Task
@@ -110,9 +102,6 @@ prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
 	}
 	graph.task_holds[s.scope] = holds[:]
 	if tasks != nil {
-		if graph.pool_tasks == nil {
-			graph.pool_tasks = make(map[Symbol_Id][]Pool_Task, graph.alloc)
-		}
 		graph.pool_tasks[s.scope] = tasks[:]
 	}
 }
@@ -180,9 +169,6 @@ prov_window_bit :: proc(graph: ^Flow_Graph, scope: Symbol_Id) -> int {
 		if existing == scope {
 			return index
 		}
-	}
-	if graph.parallel_scopes == nil {
-		graph.parallel_scopes = make([dynamic]Symbol_Id, 0, 2, graph.alloc)
 	}
 	append(&graph.parallel_scopes, scope)
 	return len(graph.parallel_scopes) - 1

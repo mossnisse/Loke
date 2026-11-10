@@ -47,6 +47,8 @@ Prov_State :: struct {
 	// Per view parameter, its root and own loan once `prov_view_parameter_loan`
 	// has found them; roots and loans only grow, so a found pair stays first.
 	view_parameter_loans: map[Symbol_Id]Prov_View_Parameter_Loan,
+	// Each owner's name as diagnostics quote it (`prov_owner_name`).
+	owner_names:    map[Symbol_Id]string,
 	// Per named slot, how each of its definitions relates its view to a fresh
 	// borrow, and the reslice the definition being emitted makes, if any
 	// (`prov_note_view`).
@@ -222,6 +224,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.caller_slots = make(map[Loan_Id][dynamic]int, allocator)
 	state.view_elements = make(map[Prov_View_Element][]int, allocator)
 	state.view_parameter_loans = make(map[Symbol_Id]Prov_View_Parameter_Loan, allocator)
+	state.owner_names = make(map[Symbol_Id]string, allocator)
 	state.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
 	state.receiver_content = make(map[^Expr_Call][]int, allocator)
 	state.offset_reach = Prov_Reach {
@@ -261,6 +264,12 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.written_aliases = make(map[Storage_Id][dynamic]Written_Alias, allocator)
 	state.merged_regions = make(map[Storage_Id]Prov_Merged_Region, allocator)
 	state.scope_drops = make(map[Span]bool, allocator)
+	state.task_slots = make(map[Symbol_Id]int, allocator)
+	state.task_holds = make(map[Symbol_Id][]int, allocator)
+	state.pool_tasks = make(map[Symbol_Id][]Pool_Task, allocator)
+	state.spawn_holds = make(map[^Stmt_Spawn]int, allocator)
+	state.parallel_scopes = make([dynamic]Symbol_Id, allocator)
+	state.task_sites = make([dynamic]Task_Site, allocator)
 	return state
 }
 

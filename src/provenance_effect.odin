@@ -219,8 +219,7 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 		call := prov_value(graph, operation.value).form.(Prov_Form_Call).call
 		switch operation.kind {
 		case .Result:
-			graph.call_results[call] = Prov_Call_Result{region = prov_call_region(graph, operation.value, prov_value(graph, operation.value).type),
-			                                            region_content = prov_call_region_content(graph, operation.value)}
+			graph.call_results[call] = prov_call_result_regions(graph, operation.value, prov_value(graph, operation.value).type)
 		case .Write: prov_call_written_regions(graph, operation.value)
 		case .Invalidate: prov_call_written_aliases(graph, operation.value)
 		}

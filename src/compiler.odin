@@ -90,6 +90,8 @@ Compiler :: struct {
 	// canonical directory, so an alias never creates a second package instance.
 	collections:    map[string]string,
 	package_by_dir: map[string]Package_Id,
+	// Each package with a key by that key, the first made (`standard_package`).
+	package_by_key: map[string]Package_Id,
 	root_dir:       string,
 	root_package:   Package_Id,
 	// Validated by the session for executable builds; never resolved by emission.

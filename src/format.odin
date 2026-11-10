@@ -107,9 +107,10 @@ prints_through_method_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk
 // an interface composing it do. Any other view prints its type's name.
 @(private = "file")
 dyn_has_format_slot :: proc(c: ^Compiler, view: Type_Id) -> bool {
+	wanted := intern_identifier(c, "format")
 	for member in type_of(c, view).members {
 		sym := symbol_of(c, member)
-		if sym != nil && sym.synth == .Dyn_Forward && identifier_text(c, sym.name) == "format" {
+		if sym != nil && sym.synth == .Dyn_Forward && sym.name == wanted {
 			return true
 		}
 	}
@@ -122,9 +123,10 @@ written_format_member :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
 	if info == nil {
 		return nil
 	}
+	wanted := intern_identifier(c, "format")
 	for member in info.members {
 		sym := symbol_of(c, member)
-		if sym != nil && sym.synth == .None && !sym.bound_excluded && identifier_text(c, sym.name) == "format" {
+		if sym != nil && sym.synth == .None && !sym.bound_excluded && sym.name == wanted {
 			return sym
 		}
 	}

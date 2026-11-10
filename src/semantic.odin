@@ -926,6 +926,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.reset_dead = make(map[Reset_Key]Reset_Liveness, c.semantic_allocator)
 	c.cleanup_reset_dead = make(map[Reset_Key]Reset_Liveness, c.semantic_allocator)
 	c.package_by_dir = make(map[string]Package_Id, c.semantic_allocator)
+	c.package_by_key = make(map[string]Package_Id, c.semantic_allocator)
 	c.map_keyed = make(map[Type_Id]bool, c.semantic_allocator)
 	c.checked_bodies = make([dynamic]Checked_Body, 0, 16, c.semantic_allocator)
 	c.checked_body_symbols = make(map[Symbol_Id]bool, c.semantic_allocator)
@@ -1307,6 +1308,26 @@ set_add :: proc(set: ^[]$T, item: T, allocator: mem.Allocator) -> bool {
 	copy(grown, set^)
 	grown[len(set^)] = item
 	set^ = grown
+	return true
+}
+
+// Adds each of `items` to a set kept as a slice, growing it once; returns
+// whether the set grew.
+@(private)
+set_join :: proc(set: ^[]$T, items: []T, allocator: mem.Allocator) -> bool {
+	added := 0
+	for item in items {
+		if !slice.contains(set^, item) { added += 1 }
+	}
+	if added == 0 {
+		return false
+	}
+	grown := make([dynamic]T, 0, len(set^) + added, allocator)
+	append(&grown, ..set^)
+	for item in items {
+		if !slice.contains(grown[:], item) { append(&grown, item) }
+	}
+	set^ = grown[:]
 	return true
 }
 
@@ -1774,6 +1795,9 @@ new_package :: proc(c: ^Compiler, name: string, key := "") -> Package_Id {
 		hoisted_procs  = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator),
 		instances      = make([dynamic]Instance_Decl, 0, 4, c.semantic_allocator),
 	}, c.semantic_allocator))
+	if key != "" && key not_in c.package_by_key {
+		c.package_by_key[key] = id
+	}
 	return id
 }
 
