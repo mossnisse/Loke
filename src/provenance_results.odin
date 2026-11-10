@@ -450,3 +450,27 @@ prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, type: Ty
 	}
 	return false
 }
+
+prov_has_direct_body :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	if is_contract_join(c, id) {
+		for member in symbol_of(c, id).members {
+			if !prov_has_direct_body(c, member) {
+				return false
+			}
+		}
+		return true
+	}
+	sym := symbol_of(c, id)
+	if sym == nil || sym.kind != .Proc {
+		return false
+	}
+	if sym.proc_literal != nil {
+		return sym.proc_literal.body != nil
+	}
+	if literal := sym.decl != nil ? decl_proc(sym.decl) : nil; literal != nil {
+		return literal.body != nil
+	}
+	// A hook member's declaration is not a procedure declaration; the
+	// checked-body registry is authoritative for it.
+	return c.checked_body_symbols[id]
+}

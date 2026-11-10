@@ -187,3 +187,118 @@ prov_note_fresh_owner :: proc(graph: ^Flow_Graph, e: Expr, via: Expr = nil) {
 	}
 	prov_event(graph, Prov_Event_Allocator_Use{set, expr_span(e), true})
 }
+
+// Each argument's region by callee parameter, which a followed callee's
+// allocator use is substituted with. An argument in no region, as a container
+// still in its allocator-unbound zero state, is known to be in none
+// (design.md "Allocators"); nil, which reads as unknown, when no argument can
+// carry a region.
+@(private)
+prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set {
+	form := prov_call_form(graph, v)
+	count := len(form.arguments)
+	out: []Region_Set
+	for argument, index in form.arguments {
+		if set, carries := prov_argument_region(graph, argument); carries {
+			if out == nil {
+				out = make([]Region_Set, count, graph.alloc)
+			}
+			out[index] = set
+		}
+	}
+	// A pack built from separate arguments has no bound value: it is in its
+	// elements' regions.
+	if call_packs(v, v.variadic_slot) && v.variadic_slot < count {
+		pack := Region_Set{}
+		for element in form.pack {
+			set, _ := prov_argument_region(graph, element)
+			region_merge(&pack, set)
+		}
+		if out == nil {
+			out = make([]Region_Set, count, graph.alloc)
+		}
+		out[v.variadic_slot] = pack
+	}
+	return out
+}
+
+// The region one argument value is in, with the providers it views; `carries`
+// is false when its type can carry no region.
+@(private = "file")
+prov_argument_region :: proc(graph: ^Flow_Graph, value: Value_Id) -> (set: Region_Set, carries: bool) {
+	if value == 0 || !prov_type_has_region(graph.k.c, prov_value(graph, value).type) {
+		return {}, false
+	}
+	set = prov_visible_region(graph, prov_used_region(graph, value))
+	region_merge(&set, prov_visible_region(graph, prov_provider_viewed_by(graph, value)))
+	return set, true
+}
+
+// The allocator use of a call the summaries do not follow into a body: a
+// builtin, a compiler-supplied member, a foreign procedure, or a conversion.
+// A followed call's, direct or through a value, comes from what its callees'
+// summaries settle to. Either way an owner copied from a place may be cloned
+// for the call.
+@(private)
+prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	c := graph.k.c
+	if !prov_tracks_allocator_use(graph) || v.dispatch != nil {
+		return
+	}
+	builtin := Builtin_Kind.None
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil {
+		builtin = sym.builtin
+	}
+	// `drop` and `free_all` note their operand where they are walked.
+	if builtin == .Drop || builtin == .Free_All {
+		return
+	}
+	// A supplied member changes storage only as a growing or shrinking
+	// container operation does, and a conversion, as `rawptr(p)`, never does.
+	member := symbol_of(c, v.resolution.chosen_overload)
+	supplied := member != nil && member.synth != .None
+	_, converts := v.operation.(Call_Conversion)
+	changes_storage := !converts && (!supplied || (member.synth == .Container_Op && .Allocates in CONTAINER_OP_EFFECTS[member.container_op]))
+	followed := call_follows_bodies(c, v)
+	info := underlying_info(c, call_proc_type(c, v))
+	// A text operation borrows its operands rather than copying them.
+	_, text := v.operation.(Call_Text)
+	_, conversion := v.operation.(Call_Text_Conversion)
+	text ||= conversion
+	allocators := Region_Set{}
+	for argument, index in prov_call_form(graph, v).arguments {
+		if argument == 0 {
+			continue
+		}
+		value := prov_value(graph, argument)
+		type := value.type
+		span := expr_span(value.origin)
+		mode := param_mode_at(info, index)
+		owns := type_owns_allocation(c, type)
+		switch {
+		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(value.origin):
+			prov_note_allocator_use(graph, Region_Set{}, span, owned = true)
+		case followed:
+		case type_is_allocator(c, type):
+			set := prov_used_region(graph, argument)
+			region_merge(&allocators, set)
+			prov_note_allocator_use(graph, set, span)
+		case !changes_storage:
+		case owns && (mode == .Inout || mode == .Move):
+			prov_note_allocator_use(graph, prov_storage_region(graph, argument), span, owned = true)
+		case !supplied && carrier_is_mutable(c, type) && !type_is_region_provider(c, type):
+			if set := prov_viewed_region(graph, argument); !region_is_empty(set) {
+				prov_note_allocator_use(graph, set, span)
+			}
+		}
+	}
+	if followed || type_is_region_provider(c, prov_type(graph, v)) {
+		return
+	}
+	// An owner a builtin or a supplied member makes, such as `make`'s, `box`'s,
+	// or a clone, comes from the allocator it is given or the default.
+	allocates := builtin == .Unsafe_New || builtin == .Unsafe_Try_New || builtin == .Unsafe_Free
+	if type_owns_allocation(c, prov_type(graph, v)) || allocates {
+		prov_note_allocator_use(graph, allocators, v.span, owned = true)
+	}
+}

@@ -180,30 +180,6 @@ prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Ty
 	return index < len(input.arguments) ? input.arguments[index].type : INVALID_TYPE
 }
 
-prov_has_direct_body :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
-	if is_contract_join(c, id) {
-		for member in symbol_of(c, id).members {
-			if !prov_has_direct_body(c, member) {
-				return false
-			}
-		}
-		return true
-	}
-	sym := symbol_of(c, id)
-	if sym == nil || sym.kind != .Proc {
-		return false
-	}
-	if sym.proc_literal != nil {
-		return sym.proc_literal.body != nil
-	}
-	if literal := sym.decl != nil ? decl_proc(sym.decl) : nil; literal != nil {
-		return literal.body != nil
-	}
-	// A hook member's declaration is not a procedure declaration; the
-	// checked-body registry is authoritative for it.
-	return c.checked_body_symbols[id]
-}
-
 @(private)
 prov_result_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
 	return prov_input_call(graph, v).result_inout
@@ -410,4 +386,30 @@ prov_task_effects_scope :: proc(graph: ^Flow_Graph, spawned: bool) -> (^Flow_Gra
 @(private = "file")
 prov_end_task_effects :: proc(graph: ^Flow_Graph, outer: bool) {
 	graph.task_effects = outer
+}
+
+// design.md "Evaluation order": an owned value already evaluated is live
+// while later operands run, even when its named source has been moved.
+@(private)
+prov_hold_owner :: proc(graph: ^Flow_Graph, value: Expr) {
+	if value != nil && type_is_managed(graph.k.c, prov_type(graph, value)) && !expression_is_borrowed_place(value) {
+		append(&graph.held_owners, value)
+	}
+}
+
+// design.md "Evaluation order": a managed place given to `box` is read when it is
+// reached but cloned from the allocator evaluated after it, so it stays
+// borrowed until then, as a call's argument does.
+@(private)
+prov_lend_copied_place :: proc(graph: ^Flow_Graph, value: Expr) -> []int {
+	if !type_is_managed(graph.k.c, prov_type(graph, value)) || !expression_is_borrowed_place(value) {
+		return nil
+	}
+	if root, path, named := prov_place_of(graph, value); named && !expression_converts_storage(value) {
+		return prov_borrow(graph, root, path, false, expr_span(value), "borrow")
+	}
+	if carriers, _, through := prov_read_through_carrier(graph, value, reads_only = true); through {
+		return prov_reborrow_traversal(graph, carriers, expr_span(value), false)
+	}
+	return nil
 }
