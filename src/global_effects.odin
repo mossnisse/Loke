@@ -885,11 +885,14 @@ indirect_call_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> ([]Symbol_Id, bool
 	return effect_target_symbols(c, target), true
 }
 
-// design.md "Allocator regions and region provenance": the bodies a call through
-// a procedure value may run, when their summaries say every region its result
-// may be in: each procedure of its type the program uses as a value has a body
-// the effects settled over. False for any other call, before the effects
-// settle, and when no procedure is such a value, as one foreign code hands over.
+// design.md "Allocator regions and region provenance": the procedures a call
+// through a procedure value may run, when their summaries say every region its
+// result may be in: each procedure of its type the program uses as a value has
+// a body the effects settled over, or is a compiler-contributed member, whose
+// summary is written directly (`set_synth_result_summary`). False for any other
+// call, before the effects settle, when such a procedure has no summary, as a
+// foreign one, and when no procedure is such a value, as one foreign code hands
+// over.
 procedure_value_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> ([]Symbol_Id, bool) {
 	if !c.global_writes_ready {
 		return nil, false
@@ -901,16 +904,25 @@ procedure_value_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> ([]Symbol_Id, bo
 	}
 	target.type = erase_proc_contract(c, type_underlying(c, target.type))
 	program := &c.effect_program
+	targets := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	append(&targets, ..effect_target_symbols(c, target))
 	for symbol in program.used_as_value {
 		if symbol in program.index_of {
 			continue
 		}
-		if sym := symbol_of(c, symbol); sym == nil || assignable(c, sym.proc_type, target.type) {
+		sym := symbol_of(c, symbol)
+		if sym == nil {
 			return nil, false
 		}
+		if !assignable(c, sym.proc_type, target.type) {
+			continue
+		}
+		if _, summarized := result_summary(c, symbol); !summarized {
+			return nil, false
+		}
+		append(&targets, symbol)
 	}
-	targets := effect_target_symbols(c, target)
-	return targets, len(targets) > 0
+	return targets[:], len(targets) > 0
 }
 
 // What brings `global` into a call's writes, or its reach, besides its

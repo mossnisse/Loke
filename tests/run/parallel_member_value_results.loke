@@ -1,0 +1,40 @@
+// design.md "Allocator regions and region provenance": a compiler-provided member
+// used as a procedure value is one of the procedures a call through a value of
+// its type may run, and its result is where the member puts it: a map's
+// `lookup_value` copies into the default provider's storage. Tasks that keep
+// such results reserve nothing (design.md "Allocators and tasks").
+package main;
+
+import "core:fmt";
+
+Table :: map[int][dynamic]int;
+Look :: proc(self: ^Table, key: int) -> Option([dynamic]int);
+
+fresh :: proc(self: ^Table, key: int) -> Option([dynamic]int) {
+	result: [dynamic]int = {};
+	result.append(key);
+	return .some(move(result));
+}
+
+keep :: proc(table: ^Table, look: Look, key: int) -> [dynamic]Option([dynamic]int) {
+	out: [dynamic]Option([dynamic]int) = {};
+	out.append(look(table, key));
+	out.append(look(table, key + 1));
+	return out;
+}
+
+run :: proc(table: ^Table, look: Look) -> int {
+	x, y: [dynamic]Option([dynamic]int);
+	parallel {
+		spawn x = keep(table, look, 1);
+		spawn y = keep(table, look, 2);
+	}
+	return x.len() + y.len();
+}
+
+main :: proc() {
+	table: Table = {};
+	table[1] = {};
+	fmt.println(run(&table, fresh));
+	fmt.println(run(&table, Table.lookup_value));
+}

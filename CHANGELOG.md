@@ -1861,7 +1861,9 @@ checklist.
   region unless the call passed an allocator, so two tasks that each kept such a result, as a batch
   taking its per-item work as a `proc` parameter does, were `L0732`
   ([Allocators and tasks](design.md#allocators-and-tasks)); they now compile when every such
-  procedure builds its result with the default provider or an allocator it is passed.
+  procedure builds its result with the default provider or an allocator it is passed. A
+  compiler-provided member used as a value, such as a map's `lookup_value`, counts by where it
+  puts its result.
 - A [map](design.md#maps) spreads keys whose hashes differ only in their high bits. It took a key's
   slot from the low bits of its `hash` alone, and the built-in integer hash carries bits only upward,
   so the bit patterns of small floats, `math.to_bits(f64(i))`, all started in one probe run and made
