@@ -1591,24 +1591,23 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 			// result is built with, so one the body never uses backs nothing.
 			region_merge(&out, prov_region_of(graph, argument))
 		} else if prov_type_shares_region(c, result_type) {
-			// A procedure value has no result summary. Logical copies may retain
-			// borrowed inputs, even when a destination allocator is also supplied.
+			// Without a body to follow, logical copies may retain borrowed inputs,
+			// even when a destination allocator is also supplied.
 			region_merge(&out, prov_storage_region(graph, argument))
 		}
 	}
 	// A procedure value is one of the procedures the program uses as a value, so
 	// its result is in what any of them returns theirs in (design.md "Allocator
-	// regions and region provenance").
-	if targets, known := procedure_value_targets(c, v); known {
-		for target in targets {
-			prov_note_summary_dependency(graph, target)
-			if summary, found := result_summary(c, target); found {
-				region_merge(&out, prov_substitute_region(graph, form, summary.region))
-			}
+	// regions and region provenance"). Any other call is in an unknown region
+	// unless an argument names one.
+	targets, known := procedure_value_targets(c, v)
+	for target in targets {
+		prov_note_summary_dependency(graph, target)
+		if summary, found := result_summary(c, target); found {
+			region_merge(&out, prov_substitute_region(graph, form, summary.region))
 		}
-		return out
 	}
-	out.unknown ||= region_is_empty(out)
+	out.unknown ||= !known && region_is_empty(out)
 	return out
 }
 
