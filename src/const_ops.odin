@@ -481,9 +481,10 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 	return false, false
 }
 
-// Unknown while a `typeid` part awaits its number (`type_consts_equal`), and then
-// only if no other part already differs; and for a count the run-time comparison
-// panics on.
+// Unknown while a part has no compile-time comparison, as a `typeid` awaiting its
+// number (`type_consts_equal`), and then only if no other part already differs;
+// and for a count the run-time comparison panics on. `eval_part_equal` in
+// eval.odin follows the same rule.
 @(private = "file")
 aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.Allocator) -> (equal: bool, known: bool) {
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {
@@ -544,17 +545,16 @@ common_live_count :: proc(storage: Value_Storage, a_count, b_count: Big_Int, a_c
 	return int(min(a, b)), true
 }
 
-// Whether a pair of parts may be equal; a pair awaiting a `typeid` number sets
-// `deferred`. Any other pair a constant cannot compare counts as a difference.
+// Whether a pair of parts may be equal; a pair with no compile-time comparison
+// sets `deferred`, since taking it as a difference could fold `==` wrongly.
 @(private = "file")
 part_equal :: proc(c: ^Compiler, a, b: Const_Value, allocator: mem.Allocator, deferred: ^bool) -> bool {
 	equal, ok := fold_comparison(c, .Eq_Eq, a, b, allocator)
-	// Between two `type` or two aggregate constants, `==` is unknown only then.
-	if !ok && (a.kind == .Type || a.kind == .Aggregate) && a.kind == b.kind {
+	if !ok {
 		deferred^ = true
 		return true
 	}
-	return ok && equal
+	return equal
 }
 
 // design.md "Comparison operators": an anonymous record orders by its first

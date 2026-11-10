@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A [tree input](compiler-guide.md#testing-a-tree) skips a directory whose name begins with `_`,
+  as it skips one beginning with `.`, so a project can keep packages meant not to compile there and
+  still test its whole tree. A package under such a directory was tested and is now passed over.
+  Upgrade by renaming the directory, or by naming it as an input of its own.
 - An unfixed integer constant compared with an unfixed floating constant is compared exactly
   ([Comparison operators](design.md#comparison-operators)). One within the float range was rounded
   to `f64` first, so `(1 << 53) + 1 == 9007199254740992.0` was `true`; it is now `false`, as a
@@ -1551,8 +1555,9 @@ checklist.
 - The [printed form](standard-library.md#printed-forms) of a `dyn` view of an interface with a
   `format` slot of `fmt.Formattable`'s shape is documented as the value it views, as the compiler
   already printed it; the table said such a view printed its type's name.
-- `container.Priority_Queue_Iterator(T)` is an alias of `Small_Array_Iterator(T)`, the same
-  read-only cursor over a slice.
+- `container.Priority_Queue_Iterator(T)` and `Small_Array_Iterator(T)` are aliases of
+  `container.Slice_Iterator(T)`, the read-only cursor over a slice that both containers return, so
+  a diagnostic about a queue's iterator no longer names the small array's.
 - Inserting a new key into a [map](design.md#maps) hashes it once rather than twice when the map
   does not grow: the lookup that finds the key absent also finds the slot it takes. Inserting a
   million 48-byte strings fell from 607 ms to 560 ms, and a million integers from 110 ms to 103 ms.

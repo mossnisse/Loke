@@ -2405,7 +2405,12 @@ Every package of a tree is checked, though only one that declares a test is
 built: a package nothing tests must still compile, which is the other half of
 what a run over a project is for, and checking costs a fraction of building and
 linking. A directory named with a leading `.` holds a tool's state, as `.git`
-does, not packages, so the walk skips it. Packages run one after another, like
+does, not packages, so the walk skips it. One named with a leading `_` is set
+aside by its project, as Go's tools set it aside: packages meant not to compile,
+such as diagnostic cases, can live there without keeping the project from
+running its whole tree. A name is enough for that; an attribute on the package
+clause would have to be parsed before the walk could skip the directory, and a
+list in `loke.project` would serve only a tree that has one. Packages run one after another, like
 tests, so the report is deterministic.
 
 ## Changed syntax
@@ -3697,7 +3702,10 @@ imports, and `-opt`. A faster level must not relax a result, so a level with
 FMA accelerates an explicit `math.fma` and never turns `a*b + c` into one. The
 levels are the standard cumulative x86-64 ones, as GCC and Clang define them,
 rather than a hand-picked approximation such as "v3 means AVX2", and baseline
-stays the default. `x86-64-v4` waits for AVX-512 hardware to test on, and
+stays the default. Moving it to v2 would gain little, since SSE4.2 and POPCNT
+speed few programs, and would make every program refuse to start on an older
+processor whose author never asked for that; a program that wants v2 says so
+with `-cpu`. `x86-64-v4` waits for AVX-512 hardware to test on, and
 `native` for a reason to resolve one machine's features. There is no public
 `-target` while Windows x64 is the only target, since an option accepting one
 value would fix triple spelling before a second target forces it

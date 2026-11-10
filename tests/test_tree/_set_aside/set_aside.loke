@@ -1,0 +1,6 @@
+// A directory named with a leading `_` is skipped, so this never compiles.
+package set_aside;
+
+wrong :: proc() -> int {
+	return "not an int";
+}

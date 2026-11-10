@@ -359,8 +359,9 @@ test until the first failure. `-build-mode=test` builds it without running it.
 
 A directory followed by `/...` or `\...` names a tree of packages: that
 directory and each directory below it that directly holds a `.loke` file. A
-directory whose name begins with `.` is skipped, with everything below it, and
-a link to a directory is not followed. `...` alone names the working
+directory whose name begins with `.` or `_` is skipped, with everything below
+it, so a project can keep packages that are meant not to compile under a `_`
+directory, and a link to a directory is not followed. `...` alone names the working
 directory's tree. `-test` takes each package of the tree in turn, a directory
 before those below it and the directories in one by name, as the root of a
 compilation of its own, as if it had been given alone:

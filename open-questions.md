@@ -655,7 +655,6 @@ dispatch is added only where measured, as
 [`@(cpu_dispatch)`](design.md#cpu_dispatchstring) does for
 `core:math/repro`'s `f64` functions. Open:
 
-- Should the default move to v2, which costs almost nothing?
 - Should v4 and `native` follow? v4 needs AVX-512 hardware to test on, and
   `native` resolves to a feature set of its own rather than a level.
 
@@ -839,14 +838,11 @@ commas read as a list's, since the tokens do not tell a block's `{` from a list'
 
 ## Packages a tree skips
 
-A [tree input](compiler-guide.md#testing-a-tree) checks every package below its
-directory except those under a directory named with a leading `.`. A project
-whose tree holds packages that are meant not to compile, such as this
-repository's `tests/pkg_err` cases, cannot run its whole tree, only subtrees
-that hold none. Go skips directories named `testdata` or beginning with `_`.
-Open: whether Loke should have such a convention, an attribute on a package
-clause, or a list in `loke.project`, and whether `-fmt-check` and `-api-check`
-should take a tree as well.
+A [tree input](compiler-guide.md#testing-a-tree) skips a directory named with a
+leading `.` or `_`. Open: whether `-fmt-check` and `-api-check` should take a
+tree as well, and whether this repository's `tests/pkg_err` cases, packages
+meant not to compile, should move under a `_` directory so `tests/...` can run
+whole.
 
 ## Language design review (2026-10-03)
 
@@ -1247,11 +1243,6 @@ it has been compared this way.
 Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
 none of which they wait on.
 
-- **A neutral name for the shared slice iterator (P3).**
-  `container.Priority_Queue_Iterator(T)` is an alias of `Small_Array_Iterator(T)`,
-  so diagnostics and type names call a queue's iterator by the small array's
-  name. A name for the read-only slice cursor that neither container owns, with
-  both as aliases, would fix that. Found on 2026-11-08 while reviewing `a271b0da`.
 - **A dynamic array's allocator.** `x.allocator` is not a member, which is the only
   reason `Deque` has its own field. An `x.allocator()` query would remove it, and
   would help any library container that replaces its storage. Is the query worth
@@ -1337,13 +1328,6 @@ a reproduction before a change.
   is the loaded slot, so with several the result follows list order. Taking the
   most recent store may be the intent; mutable if any is mutable would be the
   conservative choice, and could report conflicts that are accepted today.
-- **Uncomparable parts in compile-time equality** (group 5, top
-  recommendation 8). Comparing two aggregates, `part_equal` in `const_ops.odin`
-  counts a pair of parts a constant cannot compare, other than `type` or
-  aggregate parts, as a difference, while `eval_part_equal` in `eval.odin` makes
-  the answer unknown, which fails the evaluation. Parts of one field type
-  rarely differ in kind, and no probe shows the two disagree; deciding which is
-  meant would let them share one rule.
 - **Which type a slot holds** (group 4). Four places fall back differently
   when a carrier slot records no content type: `slot_carrier_type` in
   `borrow.odin` takes the symbol's type only for the bare slot of a

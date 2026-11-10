@@ -245,4 +245,4 @@ top_is_before :: proc(values: []$T, value: T, less: $C) -> bool where interfaces
 	A borrow of the queue's elements. The queue cannot change while this is live.
 	Elements are lent where the queue stores them, so a move-only `T` is read too.
 */
-Priority_Queue_Iterator :: Small_Array_Iterator($T);
+Priority_Queue_Iterator :: Slice_Iterator($T);

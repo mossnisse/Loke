@@ -166,8 +166,8 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 }
 
 // `dir` when it directly holds a `.loke` file, then the packages below it, a
-// directory's entries by name. A directory named with a leading `.` is skipped,
-// and a link to one is not followed: it is not a `.Directory` entry. False
+// directory's entries by name. A directory named with a leading `.` or `_` is
+// skipped, and a link to one is not followed: it is not a `.Directory` entry. False
 // after saying which directory could not be read; the walk goes on without it.
 // `packages` borrows `dir` and the temporary paths below it.
 @(private)
@@ -186,7 +186,7 @@ collect_tree_packages :: proc(dir: string, packages: ^[dynamic]string) -> bool {
 	}
 	readable := true
 	for entry in entries {
-		if entry.type == .Directory && !strings.has_prefix(entry.name, ".") {
+		if entry.type == .Directory && !strings.has_prefix(entry.name, ".") && !strings.has_prefix(entry.name, "_") {
 			below, _ := filepath.join({dir, entry.name}, context.temp_allocator)
 			readable = collect_tree_packages(below, packages) && readable
 		}

@@ -353,25 +353,32 @@ impl Small_Array($T, $N) {
 }
 
 /**
-	A borrow of the array's live prefix plus the traversal state. The array it
-	came from cannot be mutated, moved, or dropped while this is live. One
+	A borrow of a small array's live prefix plus the traversal state. The array
+	it came from cannot be mutated, moved, or dropped while this is live. One
 	iterator serves both directions.
+*/
+Small_Array_Iterator :: Slice_Iterator($T);
+
+/**
+	A borrow of a container's elements, held as one slice, plus the traversal
+	state. The container cannot change while this is live. One iterator serves
+	both directions. `Small_Array_Iterator` and `Priority_Queue_Iterator` name it.
 */
 // That is the ordinary borrow rule rather than anything this type arranges.
 // design.md "Iteration protocol": both directions differ only in which end
 // `at` counts from.
-Small_Array_Iterator :: struct($T: type) {
+Slice_Iterator :: struct($T: type) {
 	@(private) items:   []T,
 	@(private) at:      int,
 	@(private) reverse: bool,
 }
 
-impl Small_Array_Iterator($T) {
+impl Slice_Iterator($T) {
 	Element  :: T;
 	// design.md "Borrowing iteration": each element is lent where the array
 	// stores it, so traversal copies nothing and a move-only `T` is read too.
 
-	iter :: proc(self) -> Small_Array_Iterator(T) { return self; }
+	iter :: proc(self) -> Slice_Iterator(T) { return self; }
 
 	next :: proc(self: inout) -> Option(^T) {
 		if (self.at >= self.items.len()) { return .none; }

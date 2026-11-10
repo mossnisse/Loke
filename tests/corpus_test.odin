@@ -1223,6 +1223,7 @@ a_tree_tests_each_package :: proc(t: ^testing.T) {
 	)
 	testing.expectf(t, strings.contains(string(stderr), "c_broken/broken.loke"), "no diagnostic for c_broken\n%s", string(stderr))
 	testing.expectf(t, !strings.contains(string(stderr), "skipped.loke"), "the `.hidden` directory was checked\n%s", string(stderr))
+	testing.expectf(t, !strings.contains(string(stderr), "set_aside.loke"), "the `_set_aside` directory was checked\n%s", string(stderr))
 	Output :: struct {
 		path:  string,
 		built: bool,

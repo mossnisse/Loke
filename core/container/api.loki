@@ -919,7 +919,7 @@ impl Priority_Queue($T, $C) {
 	A borrow of the queue's elements. The queue cannot change while this is live.
 	Elements are lent where the queue stores them, so a move-only `T` is read too.
 */
-Priority_Queue_Iterator :: Small_Array_Iterator($T);
+Priority_Queue_Iterator :: Slice_Iterator($T);
 
 // What a `try_` operation reports when the array is full.
 Capacity_Error :: struct {
@@ -1068,18 +1068,25 @@ impl Small_Array($T, $N) {
 }
 
 /*
-	A borrow of the array's live prefix plus the traversal state. The array it
-	came from cannot be mutated, moved, or dropped while this is live. One
+	A borrow of a small array's live prefix plus the traversal state. The array
+	it came from cannot be mutated, moved, or dropped while this is live. One
 	iterator serves both directions.
 */
-Small_Array_Iterator :: struct($T: type) {
+Small_Array_Iterator :: Slice_Iterator($T);
+
+/*
+	A borrow of a container's elements, held as one slice, plus the traversal
+	state. The container cannot change while this is live. One iterator serves
+	both directions. `Small_Array_Iterator` and `Priority_Queue_Iterator` name it.
+*/
+Slice_Iterator :: struct($T: type) {
 	// and fields private to the package
 }
 
-impl Small_Array_Iterator($T) {
+impl Slice_Iterator($T) {
 	Element  :: T;
 
-	iter :: proc(self) -> Small_Array_Iterator(T) ---;
+	iter :: proc(self) -> Slice_Iterator(T) ---;
 
 	next :: proc(self: inout) -> Option(^T) ---;
 }
