@@ -39,36 +39,6 @@ the compiler, is the oracle for any of them.
   them would accept more rather than simplify, and a call may also write through
   an argument, which those effects do not cover.
 
-### What counts as a fresh borrow of a range
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
-elements of a view that is a fresh borrow of a range. Its wording does not settle
-a view made through another carrier. This rejects a distinct element access:
-
-```loke
-package main;
-Counter :: struct { count: int }
-through_pointer :: proc(a: ^mut [2]Counter) {
-    s := &mut a^[0:2];
-    first := &mut s[0];
-    s[1].count += 1; // L0641
-    first^.count += 1;
-}
-main :: proc() {}
-```
-
-Such a slice reborrows the pointer. `prov_slice` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) makes it a place-loan snapshot
-rather than a fresh range loan, and `prov_note_view` leaves its start unknown.
-Clarify whether that exclusion is intended; this is a question of scope rather
-than a confirmed divergence.
-
-The wording does not name a slice literal either, whose hidden array nothing else can
-reach ([Slice literals](design.md#slice-literals)), and the compiler treats its elements
-as apart, as for a fresh borrow of the whole array. The
-[store matrix](tests/carrier_store_matrix_test.odin) pins that. Adding it to the wording
-would settle both together.
-
 ### Carrier and region tracking as principles
 
 A review of design.md on 2026-11-09 found that [Carrier
@@ -614,13 +584,6 @@ to use SIMD and other hardware features fully: compiler intrinsics, inline
 assembly, or both? `Simd(T, N)` covers lane-wise arithmetic; what it leaves
 out is the target-specific instruction.
 
-## Abstraction over SOA
-
-Is laying data out as a structure of arrays the programmer's responsibility,
-through ordinary records of arrays, or does the language need to help, for
-example with a layout attribute that keeps the field-access syntax of an array
-of structures?
-
 ## LLM optimization
 
 Could the syntax be made token-efficient for language models without making
@@ -1007,8 +970,9 @@ borrowed argument, so the borrow ends with the guard. A channel meets the
 opposite case: an item taken out of its queue through a guard would look like a
 borrow of the guard, though items carry only process-lifetime borrows, so
 `Channel` reaches its queue through a `rawptr` cast (`queue_of`) to drop that
-provenance. A written contract could say both, and replace the `Shared` special
-case.
+provenance. `Deque.slots` goes through a plain procedure type for the same
+reason as `Monitor_Guard.read`. A written contract could say all three, and
+replace the `Shared` special case.
 
 ### Thread transfer needs a visible contract
 
@@ -1292,22 +1256,12 @@ none of which they wait on.
   reason `Deque` has its own field. An `x.allocator()` query would remove it, and
   would help any library container that replaces its storage. Is the query worth
   having for its own sake?
-- **A written borrow contract.** `Deque.slots` goes through a plain procedure type
-  because no declaration can say "this result borrows `self`".
-  [The written result contract](#public-borrow-contracts-should-stand-on-their-own)
-  proposed there would replace the technique here as well as in `Monitor_Guard` and
-  `Shared`.
 - **Inline ring storage.** `@(initialized = count)` describes a live prefix, not a
   wrapped range. A prototype `Small_Deque` works by naming a field that is always
   `0`, so that the generated copy and drop touch nothing and hooks do the rest, but
   that stretches the attribute's promise that the first `count` elements are the
   values. Either bless this as the way to opt out of generated element handling, or
   give it its own spelling before `Small_Deque` is built.
-- **Handing back a refused element.** A failed `try_push(move(x))` drops `x`, as all
-  container insertion does. `Ring.try_send` hands the item back instead, because
-  there a full ring is routine; an out-of-memory queue is not, and `try_reserve`
-  first covers the caller who cares. This stays with the language rule, but a bounded
-  queue, if one is added, should reconsider it.
 
 ## The diverging arrow's spelling
 
@@ -1390,27 +1344,6 @@ a reproduction before a change.
   the answer unknown, which fails the evaluation. Parts of one field type
   rarely differ in kind, and no probe shows the two disagree; deciding which is
   meant would let them share one rule.
-- **Materialized views in the construction graph** (bug 15). Publishing a
-  materialized view in `cfg_provenance.odin` records definitions into the
-  construction graph, which a comment there says it does not. It widens bit
-  rows and appears harmless.
-- **An unreachable edge case** (rest of bug 18). `proc_interface_text` in
-  `doc.odin` finds the procedure literal by the first `::`, which a typed
-  constant `f : proc() : proc() {...}` lacks. A literal's source offset is no
-  fix there, since the text it searches may have had comments cut.
-- **Temporary storage in provenance helpers without a graph** (rest of bug 5).
-  `report_thread_local_writes` and the type predicates in
-  `provenance_regions.odin` allocate in `context.temp_allocator`, which lasts
-  the whole batch; the graph-local sites now use the analysis arena.
-- **Member lookup by name** (group 2, top recommendation 3).
-  `member_candidates`, `find_member` and `add_operator_members` scan a type's
-  whole member table, and the package's extension table, for each lookup. On
-  the examples that is 1-2 ms a program, but it is quadratic across calls: one
-  type with 2,000 methods called 4,000 times spends about 70 ms of a 360 ms
-  front end there. An index by name would have to follow `add_members`, the
-  in-place `replace_impl_member`, the extension tables and session
-  checkpoints, and would cost more than a scan for the usual small table; it
-  waits for a program that needs it.
 - **Which type a slot holds** (group 4). Four places fall back differently
   when a carrier slot records no content type: `slot_carrier_type` in
   `borrow.odin` takes the symbol's type only for the bare slot of a

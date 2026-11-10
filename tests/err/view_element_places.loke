@@ -346,4 +346,21 @@ views_of_each_other_index_past_every_length :: proc(flag: bool) {
 	first^ += 1;
 }
 
+// A slice literal's hidden array is reached by nothing else, so its elements are
+// apart as a fresh range's are. A range sliced through a pointer reborrows the
+// pointer, so where it starts is not known.
+literal_elements :: proc() {
+	s := []mut Counter{{}, {}};
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+through_pointer :: proc(a: ^mut [2]Counter) {
+	s := &mut a^[0:2];
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
 main :: proc() {}

@@ -1538,6 +1538,10 @@ checklist.
   [compiler-architecture.md](compiler-architecture.md#cpu-dispatch). Nothing a program means
   changed. [`unsafe.transmute`](design.md#unsafetransmute) no longer calls a union's tag encoding
   unspecified, since [Representation](design.md#representation) specifies it.
+- [Weakening and reborrows](design.md#weakening-and-reborrows) now says which views keep their
+  constant elements apart as the compiler already did: a slice literal does, as a fresh borrow of
+  a range does, and a range sliced through a pointer, as `&mut p^[0:2]`, does not, since it
+  reborrows the pointer. Nothing a program means changed.
 - A thread the runtime did not start attaches itself the first time it calls a Loke export or a
   callback Loke handed to C
   ([Values that outlive every scope](design.md#values-that-outlive-every-scope)), so code on a

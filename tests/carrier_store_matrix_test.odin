@@ -49,7 +49,7 @@ STORE_PLACES := [?]Store_Place {
 	{"named_record", "", STORE_NAMED_RECORD, "pr.x", "pr.y"},
 	{"pointer_to_named", "", STORE_NAMED_RECORD + " p := &mut pr;", "p^.x", "p^.y"},
 	// A slice literal is a hidden array and a fresh view of all of it (design.md "Slice
-	// literals"; open-questions.md "What counts as a fresh borrow of a range").
+	// literals", "Weakening and reborrows").
 	{"slice_literal", "", "v0 := 1; v1 := 2; s := []mut Link{Link{&mut v0}, Link{&mut v1}};", "s[0]", "s[1]"},
 	{"dynamic_array", "", STORE_DYNAMIC, "d[0]", "d[1]"},
 	{"dynamic_view", "", STORE_DYNAMIC + " view := &mut d[:];", "view[0]", "view[1]"},

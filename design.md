@@ -7666,8 +7666,11 @@ In a view, elements at different constant indices are different places
 wherever it is known where the view starts: in a view parameter, whose binding
 is read-only, and in a local view that is never borrowed itself and whose every
 definition that may reach the access is a fresh borrow of a range, as
-`&mut a[0:4]`, or a constant reslice of such a view, as `s = &mut s[1:]`
-before a loop. A reslice inside a loop keeps the start known only when no
+`&mut a[0:4]`, a [slice literal](#slice-literals), whose hidden array nothing
+else reaches, or a constant reslice of such a view, as `s = &mut s[1:]`
+before a loop. A range sliced through a pointer, as `&mut p^[0:4]`, is not a
+fresh borrow: it reborrows the pointer, and where it starts is not known. A
+reslice inside a loop keeps the start known only when no
 reslice the loop repeats moves it: `s = &mut s[:2]` in a loop does, and
 `s = &mut s[1:]` does not. So `&mut xs[0]` leaves `xs[1]` usable. Through an
 index that is not a constant, or through a copy of the view, the element may be

@@ -88,3 +88,6 @@ L0641
 L0641
 @345:2
 `held` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@362:2
+`s` cannot be used here: a mutable reborrow of it is still in use

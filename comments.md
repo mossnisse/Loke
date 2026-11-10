@@ -80,6 +80,14 @@ for every body, for a case that choosing within one storage, or borrowing each
 storage separately, avoids. As with the other budgets, the rejection names the
 limit and says the borrow *may* cover the place.
 
+For the same reason a range sliced through a pointer, as `&mut p^[0:2]`, is not
+one of the [fresh borrows of a range](design.md#weakening-and-reborrows) whose
+constant elements are apart: it reborrows the pointer, a loan whose storage only
+the solve knows, so the view records no start. Indexing through the pointer,
+`&mut p^[0]` beside `p^[1]`, already keeps the elements apart, since each is a
+place of its own. A slice literal does count as fresh: its hidden array is
+reached by nothing but the slice, as a named array is reached only by its name.
+
 ### Splitting a mutable slice is compiler-known
 
 Two runtime slice ranges conservatively overlap, so after
@@ -2309,6 +2317,9 @@ Fallible insertion uses the same rule. On failure it drops an argument it took;
 an explicitly moved source is already dead. Returning the element inside the
 error would disrupt the shared allocator-error type. A caller needing to retain
 the value on allocation failure can reserve capacity before moving it.
+`Ring.try_send` hands its item back instead, because a full ring is routine
+where an out-of-memory container is not; a bounded queue, if one is added,
+meets the ring's case and should reconsider the rule for itself.
 
 ### `string` borrows as `string_view`
 
