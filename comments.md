@@ -104,11 +104,23 @@ writing through `xs` while they are live is accepted: a use after reallocation
 the checker cannot see. Written with checked slicing, its body needs the two
 simultaneous reborrows it is meant to provide. The compiler's form is one bounds
 check, two slice headers, and a result whose two fields are one mutable
-reborrow of `xs`, so no disjointness relation needs tracking: that reborrow
-keeps `xs` suspended until both halves are finished, and writes through the
-halves do not conflict, since suspension constrains uses of the source and not
+reborrow of `xs`, so the halves themselves need no disjointness relation: that
+reborrow keeps `xs` suspended until both halves are finished, and writes through
+the halves do not conflict, since suspension constrains uses of the source and not
 of its reborrows. [Chunks of a mutable slice](standard-library.md#chunks-of-a-mutable-slice)
 extends this to the data-parallel case.
+
+A borrow of a place inside a half or a chunk, such as `&mut left[0]`, does need
+one. It is checked by place, against every carrier that views the same storage,
+and both halves and every chunk view it. The checker first told such a borrow
+apart only from a later chunk bound to the same loop name, which left a copy of
+a chunk, a chunk of a chunk, and the other half of a split conflicting with it.
+It now records which part a value is in on the value: a half or a chunk is
+marked where it is made, and its copies, the views taken inside it, and the
+borrows of places in it carry the mark. Two values in different parts of one
+split or one traversal are apart whatever names reach them, and nothing is
+known, or assumed, about two splits or two traversals of the same storage,
+which the suspended source rules out.
 
 ### One temporary-lifetime rule
 

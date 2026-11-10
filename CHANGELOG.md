@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A slice read out of a place, as `halves.left` or `p^.rest`, is suspended while what
+  [`split_at_mut`](standard-library.md#splitting-a-mutable-slice) or
+  [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) made of it is in use, as a named
+  slice is. `inner := halves.left.split_at_mut(1); halves.left[0] = 5; inner.left[0] = 1;`
+  compiled, and so did keeping a chunk of `halves.left.chunks_mut(n)` past a write through
+  `halves.left`, which left two mutable views of the same elements. These are now `L0641`. Upgrade
+  by finishing with the halves or chunks before using the slice they were taken from.
 - An `Allocator` read from a global is a region of unknown provenance wherever it is used
   ([Allocators and tasks](design.md#allocators-and-tasks)). An owner built `via` one counted as
   the default provider's, so two tasks of a `parallel` block that each built or grew such an owner
@@ -1848,6 +1855,15 @@ checklist.
   ([Allocators and tasks](design.md#allocators-and-tasks)); it now compiles when the default
   provider backs every slot. Slots an arena backs, or ones a parameter names, are still `L0732`,
   which now names the region.
+- A borrow of a place in one half of a
+  [`split_at_mut`](standard-library.md#splitting-a-mutable-slice) no longer conflicts with a place
+  in the other half. `spawn set(&mut halves.left[0]); spawn set(&mut halves.right[0]);` in one
+  `parallel` block, and a loop over `halves.left.chunks_mut(n)` beside one over
+  `halves.right.chunks_mut(n)`, were `L0641`. A borrow of a place in a chunk of a
+  [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) traversal is likewise free of later
+  chunks when it is taken through a copy of the chunk, as `chunk := rows; spawn set(&mut
+  chunk[0]);`, or through a chunk of the chunk, whichever inner loop bound it. Both were `L0641`
+  on the next step. A borrow still suspends its own half or chunk, and the slice that was divided.
 - A borrow of a place in a chunk, such as `&mut rows[0]` in a `foreach` over
   [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice), no longer suspends the chunk a
   later step binds, as a copy of the chunk does not. A task given one, as

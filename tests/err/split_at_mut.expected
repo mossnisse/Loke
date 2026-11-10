@@ -17,3 +17,9 @@ L0641
 L0363
 @42:12
 `[]int` has no field or member `split_at_mut`
+L0641
+@61:2
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@68:2
+`halves` cannot be used here: a mutable reborrow of it is still in use

@@ -1,0 +1,85 @@
+package main;
+
+// standard-library.md "Splitting a mutable slice": a borrow of a place in a half
+// is free only of the other half. It suspends its own half while it is held,
+// and what the halves reborrow with it: the slice that was split.
+
+set_one :: proc(slot: ^mut int) { slot^ = 1; }
+
+same_half :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	parallel {
+		spawn set_one(&mut halves.left[0]);
+		spawn set_one(&mut halves.left[0]);
+	}
+}
+either_half :: proc(xs: []mut int, pick: bool) {
+	halves := xs.split_at_mut(2);
+	kept: [dynamic]^mut int = {};
+	half := halves.left;
+	if (pick) { half = halves.right; }
+	kept.append(&mut half[0]);
+	halves.left[0] = 1;
+	foreach (p in kept) { p^ = 4; }
+}
+moving_half :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	kept: [dynamic]^mut int = {};
+	half := halves.left;
+	foreach (o in 0 ..< 2) {
+		kept.append(&mut half[0]);
+		half = halves.right;
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+both_halves :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	kept: [dynamic]^mut int = {};
+	kept.append(&mut halves.left[0]);
+	both := halves;
+	both.left[0] = 1;
+	foreach (p in kept) { p^ = 4; }
+}
+half_split_again :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	inner := halves.left.split_at_mut(1);
+	parallel {
+		spawn set_one(&mut inner.left[0]);
+		spawn set_one(&mut halves.left[0]);
+	}
+}
+source_after :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	kept: [dynamic]^mut int = {};
+	kept.append(&mut halves.left[0]);
+	xs[0] = 1;
+	foreach (p in kept) { p^ = 4; }
+}
+// A second split of the same storage makes halves that are no halves of the
+// first.
+source_again :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (o in 0 ..< 2) {
+		halves := xs.split_at_mut(o + 1);
+		kept.append(&mut halves.left[0]);
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+owner_again :: proc() {
+	values := [dynamic]int{1, 2, 3, 4};
+	kept: [dynamic]^mut int = {};
+	foreach (o in 0 ..< 2) {
+		halves := (&mut values[:]).split_at_mut(o + 1);
+		kept.append(&mut halves.left[0]);
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+half_chunks_twice :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	parallel {
+		foreach (rows in halves.left.chunks_mut(1)) { spawn set_one(&mut rows[0]); }
+		foreach (more in halves.left.chunks_mut(1)) { spawn set_one(&mut more[0]); }
+	}
+}
+
+main :: proc() {}

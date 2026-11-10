@@ -1,0 +1,39 @@
+L0641
+@13:17
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@22:2
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@30:15
+`half` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@39:2
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@40:2
+`both` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@48:17
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@48:22
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@63:13
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@64:15
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@72:14
+this write of `values` is not compatible with the mutable slice of it that is still in use
+L0641
+@73:15
+`halves` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@81:20
+`halves` cannot be used here: a mutable reborrow of it is still in use

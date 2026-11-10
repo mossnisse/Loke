@@ -66,4 +66,72 @@ tasks_twice :: proc(xs: []mut int) {
 	}
 }
 
+// A copy of a chunk is in the chunk it copies: a place in it is free only of
+// later chunks, and keeps the view and its source suspended as well.
+copy_current :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (rows in xs.chunks_mut(2)) {
+		chunk := rows;
+		kept.append(&mut chunk[0]);
+		chunk[0] = 1;
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+copy_source_after :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (rows in xs.chunks_mut(2)) { chunk := rows; kept.append(&mut chunk[0]); }
+	xs[0] = 1;
+	foreach (p in kept) { p^ = 4; }
+}
+copy_source_again :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (o in 0 ..< 2) {
+		foreach (rows in xs.chunks_mut(2)) { chunk := rows; kept.append(&mut chunk[0]); }
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+// A name holding the chunk of the step before views a chunk a place was lent
+// out of, and a name that may hold either chunk may view that one.
+previous_chunk :: proc(xs: []mut int, ys: []mut int) {
+	kept: [dynamic]^mut int = {};
+	previous := ys;
+	foreach (rows in xs.chunks_mut(2)) {
+		chunk := rows;
+		kept.append(&mut chunk[0]);
+		previous[0] = 1;
+		previous = chunk;
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+either_chunk :: proc(xs: []mut int, ys: []mut int, pick: bool) {
+	kept: [dynamic]^mut int = {};
+	previous := ys;
+	foreach (rows in xs.chunks_mut(2)) {
+		chunk := rows;
+		if (pick) { chunk = previous; }
+		kept.append(&mut chunk[0]);
+		previous = rows;
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+// One outer chunk chunked twice: the second inner traversal's chunks are no
+// later chunks of the first.
+outer_chunk_twice :: proc(xs: []mut int) {
+	parallel {
+		foreach (rows in xs.chunks_mut(2)) {
+			foreach (first in rows.chunks_mut(1)) { spawn set_one(&mut first[0]); }
+			foreach (second in rows.chunks_mut(1)) { spawn set_one(&mut second[0]); }
+		}
+	}
+}
+outer_chunk_again :: proc(xs: []mut int) {
+	kept: [dynamic]^mut int = {};
+	foreach (rows in xs.chunks_mut(2)) {
+		foreach (o in 0 ..< 2) {
+			foreach (one in rows.chunks_mut(1)) { chunk := one; kept.append(&mut chunk[0]); }
+		}
+	}
+	foreach (p in kept) { p^ = 4; }
+}
+
 main :: proc() {}

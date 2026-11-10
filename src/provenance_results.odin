@@ -15,6 +15,7 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 		return nil
 	}
 	loans := prov_call_result(graph, v, actuals, type)
+	prov_divide_halves(graph, v, actuals, loans)
 	result := prov_call_result_regions(graph, prov_input_value(graph, v), type)
 	result.loans = loans
 	if prov_result_is_inout(graph, v) {
@@ -22,6 +23,35 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 	}
 	graph.call_results[v] = result
 	return result.loans
+}
+
+// standard-library.md "Splitting a mutable slice": the halves `split_at_mut`
+// returns never overlap, so each is a part of a division of its own
+// (`Prov_Division`), marked where the call makes it. Each half reborrows what
+// the call was lent, so that a copy of one, as `halves.left`, extends it
+// (`prov_reborrow`); a receiver that is itself a reborrow has linked them
+// already.
+@(private = "file")
+prov_divide_halves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, halves: []int) {
+	member := symbol_of(graph.k.c, call_contract_declaration(graph.k.c, v))
+	if member == nil || member.synth != .Container_Op || member.container_op != .Split_At_Mut || len(halves) != 2 || len(actuals) == 0 {
+		return
+	}
+	division := len(graph.divisions)
+	append(&graph.divisions, Prov_Division{})
+	left, right := division_marks(division)
+	for half, index in halves {
+		graph.division_of[half] = division
+		if !prov_slot_is_reborrow(graph, half) {
+			for lent in actuals[0] {
+				prov_add_reborrow(graph, Prov_Reborrow{source = lent, derived = half, span = v.span, mutable = true, passes_on = true})
+			}
+		}
+		prov_emit(graph, Prov_Event {
+			kind = .Def, slot = half, loan = NO_LOAN, sources = prov_one(graph, half), span = v.span,
+			division_mark = (index == 0 ? left : right) + 1,
+		})
+	}
 }
 
 // The regions a call's result is in and holds, which its fact operation

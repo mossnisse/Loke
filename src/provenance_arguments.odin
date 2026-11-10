@@ -457,12 +457,14 @@ prov_snapshot :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
 // lent after it, so `xs.split_at_mut(xs.len() / 2)` may still read `xs`. The
 // value read is what is lent, so the halves stay tied to it even if `mid`
 // reassigns `xs`; the reborrow suspends `xs` only while `xs` still views the
-// same storage.
+// same storage. A receiver read out of a place, as `halves.left` or `p^.rest`,
+// is already a reborrow of the carrier stored there, which what is lent extends.
 @(private)
 prov_lend_split_receiver :: proc(graph: ^Flow_Graph, receiver, read: []int, span: Span) -> []int {
 	out := prov_snapshot(graph, read, span)
 	for slot, index in out {
-		if prov_slot_is_mutable_carrier(graph, receiver[index]) {
+		from := receiver[index]
+		if prov_slot_is_mutable_carrier(graph, from) || prov_slot_is_loaded_mutable(graph, from) || prov_slot_is_reborrow(graph, from, mutable_only = true) {
 			prov_add_reborrow(graph, Prov_Reborrow{source = receiver[index], derived = slot, span = span, mutable = true})
 		}
 	}

@@ -1,0 +1,80 @@
+// standard-library.md "Splitting a mutable slice": the halves never overlap, so a
+// borrow of a place in one, held by a task until the join or kept in a
+// container, does not conflict with a place in the other, whether it is reached
+// through the half itself, a copy of it, or a chunk of it.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+set_one :: proc(slot: ^mut int, value: int) { slot^ = value; }
+
+main :: proc() {
+	pool := thread.Pool.init(2);
+	cells: [8]int = {};
+
+	{
+		halves := (&mut cells[:]).split_at_mut(4);
+		parallel (&pool) {
+			spawn set_one(&mut halves.left[0], 1);
+			spawn set_one(&mut halves.right[0], 2);
+		}
+	}
+	fmt.println(cells);
+
+	// Destructured halves, and copies of them.
+	{
+		left, right := (&mut cells[:]).split_at_mut(4);
+		parallel (&pool) {
+			spawn set_one(&mut left[1], 3);
+			spawn set_one(&mut right[1], 4);
+		}
+		l := left;
+		r := right;
+		parallel (&pool) {
+			spawn set_one(&mut l[2], 5);
+			spawn set_one(&mut r[2], 6);
+		}
+	}
+	fmt.println(cells);
+
+	// Each half chunked by a loop of its own.
+	{
+		halves := (&mut cells[:]).split_at_mut(4);
+		parallel (&pool) {
+			foreach (rows in halves.left.chunks_mut(2)) { spawn set_one(&mut rows[1], 7); }
+			foreach (rows in halves.right.chunks_mut(2)) { spawn set_one(&mut rows[1], 8); }
+		}
+	}
+	fmt.println(cells);
+
+	// A half split again, and each chunk of a traversal split.
+	{
+		halves := (&mut cells[:]).split_at_mut(4);
+		inner := halves.left.split_at_mut(2);
+		parallel (&pool) {
+			spawn set_one(&mut inner.left[0], 11);
+			spawn set_one(&mut inner.right[0], 12);
+			spawn set_one(&mut halves.right[0], 13);
+		}
+	}
+	parallel (&pool) {
+		foreach (rows in (&mut cells[:]).chunks_mut(4)) {
+			halves := rows.split_at_mut(2);
+			spawn set_one(&mut halves.left[1], 14);
+			spawn set_one(&mut halves.right[1], 15);
+		}
+	}
+	fmt.println(cells);
+
+	// Pointers into one half stay usable beside the other.
+	kept: [dynamic]^mut int = {};
+	{
+		halves := (&mut cells[:]).split_at_mut(4);
+		kept.append(&mut halves.left[0]);
+		halves.right[0] = 20;
+		kept.append(&mut halves.right[1]);
+		foreach (p in kept) { p^ += 100; }
+	}
+	fmt.println(cells);
+}

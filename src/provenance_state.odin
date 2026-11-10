@@ -36,9 +36,11 @@ Prov_State :: struct {
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
-	// Per chunk binding's slot, a slot holding the place loans taken through the
-	// chunk it is bound to now, which each step empties (`prov_bind_chunk`).
-	chunk_loans:    map[int]int,
+	// The `chunks_mut` traversals and `split_at_mut` calls, and the index of each
+	// by the slots its parts are made in: a traversal's chunk binding
+	// (`prov_bind_chunk`), a split's two halves (`prov_divide_halves`).
+	divisions:      [dynamic]Prov_Division,
+	division_of:    map[int]int,
 	// The `&mut` loop bindings, and where a store through each lands
 	// (`prov_note_traversal`).
 	traversals:     map[Symbol_Id]Prov_Traversal,
@@ -274,7 +276,8 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.task_holds = make(map[Symbol_Id][]int, allocator)
 	state.pool_tasks = make(map[Symbol_Id][]Pool_Task, allocator)
 	state.spawn_holds = make(map[^Stmt_Spawn]int, allocator)
-	state.chunk_loans = make(map[int]int, allocator)
+	state.divisions = make([dynamic]Prov_Division, allocator)
+	state.division_of = make(map[int]int, allocator)
 	state.parallel_scopes = make([dynamic]Symbol_Id, allocator)
 	state.task_sites = make([dynamic]Task_Site, allocator)
 	return state
@@ -318,6 +321,9 @@ Prov_Kind :: enum u8 {
 	// Checked against the loans of places reached through carriers
 	// (`prov_place_loan`).
 	Through,
+	// A `chunks_mut` traversal binds its next chunk, so every value in the chunk
+	// bound until now is in an earlier one (`Prov_Division`).
+	Chunk_Step,
 	// Storage reached through what the carriers in `sources` hold: read or
 	// written through them, or handed to a call that may. Only the thread
 	// summaries' reach effect reads it.
@@ -455,6 +461,10 @@ Prov_Event :: struct {
 	// `Def`: one more than the index of the place loan the slot is the
 	// snapshot of, which its value then carries (`Prov_Place_Loan`), or 0.
 	place_loan:    int,
+	// `Def`: one more than the mark of the part the slot's value is made in
+	// (`Prov_Division`), or 0. `Chunk_Step`: one more than the first mark of the
+	// traversal stepping.
+	division_mark: int,
 	// `Publish`: see `Prov_Store_Target`.
 	store:         Prov_Store_Target,
 	// `Publish`: the type stored, or INVALID_TYPE when not known

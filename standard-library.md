@@ -2338,7 +2338,11 @@ The halves are one mutable [reborrow](design.md#weakening-and-reborrows) of `xs`
 after `mid` is evaluated, so `mid` may read `xs`. While either half is in use,
 `xs` is suspended as it is for any reborrow, and neither half outlives what `xs`
 views. The halves never overlap, so writing through one never conflicts with the
-other.
+other. A borrow of a place in a half, such as `&mut left[0]`, is a reborrow of
+that half: it keeps `xs` suspended while it is in use and does not conflict
+with a place in the other half, whether each is reached through the half, a
+copy of it, or a further split or chunk of it. The receiver may be any place
+holding a `[]mut T`, such as `halves.left`, which is suspended as `xs` is.
 
 No other spelling gives two mutable views of one sequence: `&mut xs[:mid]` and
 `&mut xs[mid:]` are two reborrows of `xs`, which cannot be live at once, and a
@@ -2369,9 +2373,11 @@ suspended by its copies for the rest of its step, and the next step binds a new
 chunk. A borrow of a place in a chunk, such as `&mut rows[0]`, is a reborrow of
 that chunk in the same way: it stays usable after the loop advances, keeps the
 view and `xs` suspended while it is in use, and does not suspend the chunk a
-later step binds. A chunk taken by calling `next` directly is a reborrow of the
-view, so it ends before the view advances. A `chunks_mut` view has no
-compile-time meaning yet.
+later step binds. The same holds of a place in a copy of the chunk, and of a
+place in a chunk taken inside it, as by `rows.chunks_mut(m)`: each is in the
+chunk the step bound, whatever name it is reached through. A chunk taken by
+calling `next` directly is a reborrow of the view, so it ends before the view
+advances. A `chunks_mut` view has no compile-time meaning yet.
 
 ### Sorting slices
 

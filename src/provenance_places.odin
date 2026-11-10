@@ -25,17 +25,10 @@ prov_place_loan :: proc(
 		in_element, _ = prov_view_element(graph, place)
 	}
 	slot := prov_temp_slot(graph)
-	// A place in a loop's chunk, reached through the chunk binding alone.
-	chunk, chunk_loans := 0, 0
-	if len(carriers) == 1 {
-		if taken, bound := graph.chunk_loans[carriers[0]]; bound {
-			chunk, chunk_loans = carriers[0] + 1, taken
-		}
-	}
 	graph.place_loan_of[slot] = len(graph.place_loans)
 	append(&graph.place_loans, Prov_Place_Loan {
 		slot = slot, paths = prov_offset_paths(graph, places), mutable = mutable, borrows = borrows, what = what, span = span,
-		place = span_text(graph.k.c, span), element = element, in_element = in_element, chunk = chunk, chunk_loans = chunk_loans,
+		place = span_text(graph.k.c, span), element = element, in_element = in_element,
 	})
 	graph.prov_slots[slot].element_defs = len(in_element.slots) > 0
 	// design.md "Minimum provenance precision": a loan of places merged past
@@ -46,13 +39,13 @@ prov_place_loan :: proc(
 		kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span, place_loan = len(graph.place_loans),
 		element = element,
 	})
-	// The loan is of the chunk the binding holds now, until the next step. It
-	// reborrows what the chunk does, as a copy of the chunk would, so the view and
-	// its source stay suspended while it is held, without suspending the binding,
-	// which the place loan guards.
-	if chunk > 0 {
-		prov_add_reborrow(graph, Prov_Reborrow{source = carriers[0], derived = slot, span = span, mutable = mutable, passes_on = true})
-		prov_emit(graph, Prov_Event{kind = .Def, slot = chunk_loans, loan = NO_LOAN, sources = prov_join(graph, prov_one(graph, chunk_loans), prov_one(graph, slot)), span = span})
+	// A place in a chunk or a half is lent out of that part, whichever copy of
+	// the part it was reached through (`Prov_Division`). The loan reborrows what
+	// the part does, as a copy of the part would, so what was divided stays
+	// suspended while it is held, without suspending the part itself, which the
+	// place loan guards.
+	for part in prov_parts_reached_through(graph, carriers) {
+		prov_add_reborrow(graph, Prov_Reborrow{source = part, derived = slot, span = span, mutable = mutable, passes_on = true})
 	}
 	// A borrow points at the place it is of (`Prov_Slot.offsets`).
 	if borrows {
@@ -60,6 +53,39 @@ prov_place_loan :: proc(
 		graph.prov_slots[slot].offsets_merged = merged
 	}
 	return prov_one(graph, slot)
+}
+
+// The slots a part of a division is made in (`Flow_Graph.division_of`) that what
+// `carriers` hold may be in: each that is one of them, and each one of them
+// reborrows by the links made so far, as `chunk` does `rows` after `chunk :=
+// rows`, and as the chunks of `rows.chunks_mut(1)` do `rows`, which is itself a
+// chunk of the traversal that bound it.
+@(private = "file")
+prov_parts_reached_through :: proc(graph: ^Flow_Graph, carriers: []int) -> []int {
+	if len(graph.divisions) == 0 {
+		return nil
+	}
+	parts := make([dynamic]int, 0, 2, graph.alloc)
+	seen := make(map[int]bool, graph.alloc)
+	pending := make([dynamic]int, 0, len(carriers), graph.alloc)
+	append(&pending, ..carriers)
+	for len(pending) > 0 {
+		slot := pop(&pending)
+		if seen[slot] {
+			continue
+		}
+		seen[slot] = true
+		if slot in graph.division_of {
+			append(&parts, slot)
+		}
+		deriving := prov_reborrows_deriving(graph, slot)
+		for reborrow in prov_next_reborrow(graph, &deriving) {
+			if !reborrow.pending {
+				append(&pending, reborrow.source)
+			}
+		}
+	}
+	return parts[:]
 }
 
 // A write through `carriers` at `path` below their pointee, which a place

@@ -53,4 +53,33 @@ main :: proc() {
 	}
 	foreach (p in kept) { p^ += 1; }
 	fmt.println(cells[0], cells[1], cells[2], cells[4]);
+
+	// A copy of a chunk is in the chunk it copies, so a place in it is free of
+	// later chunks too, held by a task or kept in a container.
+	parallel (&pool) {
+		foreach (rows, i in (&mut cells[:]).chunks_mut(2).indexed()) {
+			chunk := rows;
+			spawn set_one(&mut chunk[1], i + 20);
+		}
+	}
+	copied: [dynamic]^mut int = {};
+	foreach (rows in (&mut cells[:]).chunks_mut(3)) {
+		chunk := rows;
+		copied.append(&mut chunk[0]);
+	}
+	foreach (p in copied) { p^ += 100; }
+	fmt.println(cells[0], cells[1], cells[3], cells[5]);
+
+	// Chunks of chunks: whichever inner traversal lent a place, it is in an
+	// earlier chunk of the outer one by the time a later step chunks again.
+	parallel (&pool) {
+		foreach (rows, i in (&mut cells[:]).chunks_mut(2).indexed()) {
+			if (i % 2 == 0) {
+				foreach (even in rows.chunks_mut(1)) { spawn set_one(&mut even[0], 30 + i); }
+			} else {
+				foreach (odd in rows.chunks_mut(1)) { spawn set_one(&mut odd[0], 40 + i); }
+			}
+		}
+	}
+	fmt.println(cells);
 }

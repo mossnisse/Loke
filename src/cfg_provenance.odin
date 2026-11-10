@@ -852,27 +852,28 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 // does not suspend the view, so the view advances while earlier chunks are
 // held, and through it the chunk keeps the sliced carrier suspended. Each step
 // binds a value disjoint from the last, so redefining the binding ends the
-// reborrows taken from the chunk before. A borrow of a place in the chunk, as
-// `&mut rows[0]`, is of that chunk too, so the step empties the slot holding
-// the place loans taken through the binding (`Flow_Graph.chunk_loans`): one
-// taken on an earlier step is of storage the new chunk does not reach. False
-// when the binding is not a carrier slot.
+// reborrows taken from the chunk before. What is in the chunk bound until now,
+// a copy of it or a borrow of a place in it as `&mut rows[0]`, is in an earlier
+// chunk once the step binds the next (`Prov_Division`), which the new chunk
+// does not reach. False when the binding is not a carrier slot.
 @(private)
 prov_bind_chunk :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span: Span) -> bool {
 	slot, is_carrier := prov_slot_for_symbol(graph, id)
 	if !is_carrier {
 		return false
 	}
+	division, found := graph.division_of[slot]
+	if !found {
+		division = len(graph.divisions)
+		append(&graph.divisions, Prov_Division{steps = true})
+		graph.division_of[slot] = division
+	}
 	for source in sources {
 		prov_add_reborrow(graph, Prov_Reborrow{source = source, derived = slot, span = span, mutable = true, passes_on = true})
 	}
-	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
-	taken, found := graph.chunk_loans[slot]
-	if !found {
-		taken = prov_temp_slot(graph)
-		graph.chunk_loans[slot] = taken
-	}
-	prov_emit(graph, Prov_Event{kind = .Def, slot = taken, loan = NO_LOAN, span = span})
+	current, _ := division_marks(division)
+	prov_emit(graph, Prov_Event{kind = .Chunk_Step, division_mark = current + 1, span = span})
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, division_mark = current + 1})
 	return true
 }
 

@@ -22,3 +22,33 @@ L0641
 L0641
 @65:20
 `xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@76:3
+`chunk` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@83:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@89:20
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@101:3
+`previous` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@102:3
+`chunk` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@111:15
+`previous` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@112:15
+`chunk` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@113:3
+`rows` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@123:23
+`rows` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@131:20
+`rows` cannot be used here: a mutable reborrow of it is still in use

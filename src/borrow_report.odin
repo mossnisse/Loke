@@ -353,7 +353,7 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 		for carrier in event.into {
 			if !prov_slots_overlap(state, loan.slot, carrier) || bit_get(reach_row(state, state.reach, carrier), bit) ||
 			   accessed_beside(state, index, carrier) || view_elements_apart(state, loan.element, loan.slot, event.element, carrier) ||
-			   taken_from_earlier_chunk(state, loan, bit, carrier) || taken_where_reported(state, carrier) {
+			   in_another_part(state, loan, carrier) || taken_where_reported(state, carrier) {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[loan.slot] | state.precision[carrier] | event.precision
@@ -375,14 +375,50 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 	}
 }
 
-// standard-library.md "Chunks of a mutable slice": no two chunks of one traversal
-// overlap, so a place loan taken through a chunk binding on an earlier step, which
-// the binding's `chunk_loans` no longer holds, is of storage the chunk bound to
-// `carrier` now does not reach. A second traversal of the same storage uses the
-// view or its source, which what the first lent still suspends.
+// standard-library.md "Splitting a mutable slice", "Chunks of a mutable slice": no
+// two parts of a division overlap, so a place lent out of one part is storage a
+// carrier viewing another does not reach (`Prov_Division`). That holds of some
+// division when `carrier` holds one of its marks and the loan's snapshot the
+// other, and neither holds both: each time the loan is taken defines the snapshot
+// from what the place was reached through, so its row says where the places lent
+// are.
+//
+// A traversal's loan is told apart only from the chunk bound now. A step leaves
+// the snapshot saying where the place last lent is, and the places lent on steps
+// before it are in earlier chunks, any of which a carrier holding an earlier
+// chunk may view.
+//
+// The loan must reborrow a part of that division (`prov_place_loan`): dividing
+// the same storage again makes parts that are no parts of the first division, and
+// uses a source that what the first lent then still suspends.
 @(private = "file")
-taken_from_earlier_chunk :: proc(state: ^Prov_Solve, loan: Prov_Place_Loan, bit: int, carrier: int) -> bool {
-	return loan.chunk == carrier + 1 && !bit_get(reach_row(state, state.reach, loan.chunk_loans), bit)
+in_another_part :: proc(state: ^Prov_Solve, loan: Prov_Place_Loan, carrier: int) -> bool {
+	graph := state.graph
+	if len(graph.divisions) == 0 || loan.slot >= len(state.links_into) {
+		return false
+	}
+	lent := reach_row(state, state.reach, loan.slot)
+	used := reach_row(state, state.reach, carrier)
+	only :: proc(row: []u8, mark, other: int) -> bool {
+		return bit_get(row, mark) && !bit_get(row, other)
+	}
+	for division, index in graph.divisions {
+		first, second := division_marks(index)
+		first, second = division_bit(state, first), division_bit(state, second)
+		apart := only(used, first, second) && only(lent, second, first)
+		if !division.steps {
+			apart ||= only(used, second, first) && only(lent, first, second)
+		}
+		if !apart {
+			continue
+		}
+		for link in state.links_into[loan.slot] {
+			if made_in, is_part := graph.division_of[graph.reborrows[link].source]; is_part && made_in == index {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Whether `carrier` is in a chunk whose traversal was reported where it starts,
@@ -399,7 +435,7 @@ taken_where_reported :: proc(state: ^Prov_Solve, carrier: int) -> bool {
 			return false
 		}
 		link := graph.reborrows[state.links_into[at][0]]
-		if link.derived in graph.chunk_loans {
+		if division, is_part := graph.division_of[link.derived]; is_part && graph.divisions[division].steps {
 			return state.reported[{link.span.file, link.span.lo}]
 		}
 		at = link.source

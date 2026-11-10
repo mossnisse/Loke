@@ -402,6 +402,7 @@ behavioral controls for all of it.
 | --- | --- |
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, the reborrow a loaded copy takes, and whether an index may write what it indexes | `prov_read_through_carrier`, `prov_place_hops` in `provenance_places.odin`; `prov_caller_slots`, `prov_view_element` in `provenance_parameters.odin`; `prov_expr_may_write` in `cfg_provenance.odin`; `prov_reborrow_loaded` in `provenance_reborrow.odin` |
 | Place loans, taken by a borrow, slice, traversal, switch, or `inout` receiver of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `place_bit`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `check_place_loans` in `borrow_report.odin`; `prov_place_loan`, `prov_view_at` in `provenance_places.odin` |
+| Divisions: the chunks of a `chunks_mut` traversal and the halves of a `split_at_mut`, the marks saying which part a value is in, and the place loans that are apart for being in different parts | `Prov_Division`, `division_bit`, `Prov_Kind.Chunk_Step` in `borrow.odin`; `in_another_part` in `borrow_report.odin`; `prov_bind_chunk` in `cfg_provenance.odin`; `prov_divide_halves` in `provenance_results.odin`; `prov_parts_reached_through` in `provenance_places.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | What a block keeps of the solver's tables, in pages shared with its neighbors, and each row of reaching loans or reborrows once | `block_table_take`, `reach_row_written`, `reach_settle`, `reach_load`, `Interned_Rows` in `borrow_tables.odin` |
 | What a load reads below the storage its carriers name, where one points below the whole of it | `prov_load_places`, `Prov_Event.load_places`, `load_pointee_content` |
@@ -444,6 +445,27 @@ Keep these contracts:
   range a fresh borrow lends, from the definitions `solve_view_defs` finds
   reaching each access, as for a store (`view_element_in`,
   `view_start_of`).
+- **Parts of a division are told apart by what a value holds, not by its
+  name.** The chunks of one `chunks_mut` traversal never overlap, nor do the
+  halves of one `split_at_mut`, but every part holds the same loans, so a
+  place loan in one would be held against a carrier viewing another. Each
+  division (`Prov_Division`) has two marks, bits of a reach row after the
+  place loans'. A half is marked where the call makes it
+  (`prov_divide_halves`), and a chunk where its loop binds it
+  (`prov_bind_chunk`), after a `Chunk_Step` event has turned every mark of the
+  chunk bound until then into the traversal's mark for an earlier chunk. A
+  definition copies its sources' rows, so a copy of a part, a view taken
+  inside it, and the snapshot of a place loan below it carry the mark on.
+  `check_place_loans` passes over a carrier holding one mark of a division
+  when the loan's snapshot holds only the other (`in_another_part`); a
+  traversal's loan is told apart only from the chunk bound now, as its
+  snapshot says where the place last lent is. Marks say nothing of a second
+  division of the same storage, whose parts are no parts of the first. That
+  is the links' work: a place loan in a part reborrows the part
+  (`prov_parts_reached_through`), so the source stays suspended while the
+  loan is held, and `in_another_part` asks for that reborrow. A new kind of
+  division needs its parts marked where they are made and linked to what
+  they divide, not a new check.
 - **Paths are below the pointee, and bounded.** Slot offsets, place-loan
   paths, written-alias paths, and region content paths all start below where
   the carriers point, so a write lands only where it names. Each offset

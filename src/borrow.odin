@@ -388,11 +388,29 @@ Prov_Place_Loan :: struct {
 	element: Prov_View_At,
 	// The slots of the view parameter's element the place is in (`carriers_element`).
 	in_element: Prov_Element_Slots,
-	// One more than the slot of the chunk binding the place was reached through, or 0,
-	// and the slot holding the place loans taken through the chunk that binding holds
-	// now (`prov_bind_chunk`).
-	chunk:       int,
-	chunk_loans: int,
+}
+
+// Storage divided into parts that never overlap: the chunks of one `chunks_mut`
+// traversal (standard-library.md "Chunks of a mutable slice"), or the halves of one
+// `split_at_mut` (standard-library.md "Splitting a mutable slice"). A division has
+// two marks, each a bit of a row (`division_bit`). A value made in a part carries
+// that part's mark, and so does every copy of it and every borrow of a place in it,
+// so the marks a row holds say which parts its value may be in, whatever name it was
+// reached through: a place in one part is apart from a place in another
+// (`in_another_part`).
+//
+// A split's marks are its halves'. A traversal `steps`: its first mark is of the
+// chunk its loop's binding holds now and its second of every earlier chunk, and a
+// step turns each first mark into the second before it binds the next chunk
+// (`Prov_Kind.Chunk_Step`).
+Prov_Division :: struct {
+	steps: bool,
+}
+
+// The marks of division `index`, as `Prov_Event.division_mark` numbers them.
+@(private)
+division_marks :: proc(index: int) -> (first, second: int) {
+	return 2 * index, 2 * index + 1
 }
 
 // ---------------------------------------------------- retention targets --
@@ -562,6 +580,13 @@ place_bit :: proc(state: ^Prov_Solve, place_loan: int) -> int {
 	return 2 * state.loans + place_loan
 }
 
+// The bit a division's mark sets in a row, after every place loan's
+// (`Prov_Division`). As with a place loan's bit, no loan's check sees it.
+@(private)
+division_bit :: proc(state: ^Prov_Solve, mark: int) -> int {
+	return 2 * state.loans + len(state.graph.place_loans) + mark
+}
+
 // The later use keeping a place loan lent: of its snapshot, or else of a live
 // slot carrying its bit. False when nothing live carries it. `carrying` is what
 // `live_place_bits` gathered for this event.
@@ -693,9 +718,9 @@ prepare_state :: proc(state: ^Prov_Solve) -> bool {
 	if state.loans == 0 && !graph.has_region_event && !graph.has_window_event {
 		return false
 	}
-	// A row holds each loan's bit, whether it was invalidated, and then a bit
-	// per place loan (`place_bit`).
-	state.row_bytes = (2 * state.loans + len(graph.place_loans) + 7) / 8
+	// A row holds each loan's bit, whether it was invalidated, then a bit per
+	// place loan (`place_bit`), and then two per division (`division_bit`).
+	state.row_bytes = (2 * state.loans + len(graph.place_loans) + 2 * len(graph.divisions) + 7) / 8
 	for block in graph.blocks {
 		block.prov_visited = false
 	}
@@ -1131,8 +1156,22 @@ run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended
 		if event.place_loan > 0 {
 			bit_mark(state.merged, place_bit(state, event.place_loan - 1))
 		}
+		if event.division_mark > 0 {
+			bit_mark(state.merged, division_bit(state, event.division_mark - 1))
+		}
 		copy(reach_row_written(state, reach, event.slot), state.merged)
 		state.precision[event.slot] = loss
+	case .Chunk_Step:
+		// Every value in the chunk bound until now is in an earlier one.
+		current := division_bit(state, event.division_mark - 1)
+		earlier := current + 1
+		for slot in 0 ..< state.slots {
+			if bit_get(reach_row(state, reach, slot), current) {
+				row := reach_row_written(state, reach, slot)
+				bit_clear(row, current)
+				bit_mark(row, earlier)
+			}
+		}
 	case .Load:
 		load_pointee_content(state, event, reach)
 	case .Rearrange:

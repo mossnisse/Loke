@@ -53,4 +53,20 @@ fine :: proc(xs: []mut int) -> []mut int {
 	return rest;
 }
 
+// A receiver read out of a place is suspended as a named one is, by a split
+// and by a `chunks_mut` view of it.
+split_field :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	inner := halves.left.split_at_mut(1);
+	halves.left[0] = 5;
+	inner.left[0] = 1;
+}
+chunk_field :: proc(xs: []mut int) {
+	halves := xs.split_at_mut(2);
+	saved := halves.right;
+	foreach (rows in halves.left.chunks_mut(1)) { saved = rows; }
+	halves.left[0] = 5;
+	saved[0] = 1;
+}
+
 main :: proc() {}
