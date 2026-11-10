@@ -735,9 +735,7 @@ unresolved_in_signature :: proc(w: ^When_Walk, v: ^Type_Proc) -> string {
 
 @(private = "file")
 unresolved_in_generics :: proc(w: ^When_Walk, params: []Generic_Param) -> string {
-	for param in params {
-		bind_names(w, param.names)
-	}
+	bind_generic_params(&w.bound, params)
 	for param in params {
 		if missing := unresolved_name(w, param.type); missing != "" {
 			return missing

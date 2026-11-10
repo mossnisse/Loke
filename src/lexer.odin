@@ -134,25 +134,43 @@ Token :: struct {
 	hi:   u32,
 }
 
+// Without a Compiler the lexer is silent: what it would report goes unsaid.
 @(private = "file")
 Lexer :: struct {
-	c:    ^Compiler,
-	file: u32,
-	src:  string,
-	pos:  u32,
+	c:        ^Compiler,
+	file:     u32,
+	src:      string,
+	pos:      u32,
+	comments: ^[dynamic]Span, // where each comment's span goes, if anywhere
 }
 
 lex :: proc(c: ^Compiler, file: u32) -> []Token {
-	l := Lexer {
-		c    = c,
-		file = file,
-		src  = c.sources[file].text,
-	}
 	clear(&c.sources[file].comments)
+	l := Lexer {
+		c        = c,
+		file     = file,
+		src      = c.sources[file].text,
+		comments = &c.sources[file].comments,
+	}
 	reject_lone_carriage_returns(&l)
+	return lex_all(&l)
+}
+
+// The tokens of a text no file holds, comments left out, their spans appended
+// to `comments` when it is given. What the lexer would report goes unsaid.
+lex_text :: proc(text: string, comments: ^[dynamic]Span = nil) -> []Token {
+	l := Lexer {
+		src      = text,
+		comments = comments,
+	}
+	return lex_all(&l)
+}
+
+@(private = "file")
+lex_all :: proc(l: ^Lexer) -> []Token {
 	tokens := make([dynamic]Token)
 	for {
-		t := next_token(&l)
+		t := next_token(l)
 		append(&tokens, t)
 		if t.kind == .EOF {
 			break
@@ -161,17 +179,18 @@ lex :: proc(c: ^Compiler, file: u32) -> []Token {
 	return tokens[:]
 }
 
-// The tokens of a text no file holds, comments left out, their spans appended
-// to `comments` when it is given. What the lexer would report goes unsaid.
-lex_text :: proc(text: string, comments: ^[dynamic]Span = nil) -> []Token {
-	scratch: Compiler
-	defer destroy_compilation(&scratch)
-	append(&scratch.sources, Source{text = text})
-	tokens := lex(&scratch, 0)
-	if comments != nil {
-		append(comments, ..scratch.sources[0].comments[:])
+@(private = "file")
+lex_error :: proc(l: ^Lexer, span: Span, code, format: string, args: ..any) {
+	if l.c != nil {
+		errorf(l.c, span, code, format, ..args)
 	}
-	return tokens
+}
+
+@(private = "file")
+note_comment :: proc(l: ^Lexer, span: Span) {
+	if l.comments != nil {
+		append(l.comments, span)
+	}
 }
 
 // grammar.md "Whitespace and comments": a carriage return only ever begins a
@@ -182,8 +201,8 @@ lex_text :: proc(text: string, comments: ^[dynamic]Span = nil) -> []Token {
 reject_lone_carriage_returns :: proc(l: ^Lexer) {
 	for i := 0; i < len(l.src); i += 1 {
 		if l.src[i] == '\r' && (i + 1 == len(l.src) || l.src[i + 1] != '\n') {
-			errorf(
-				l.c,
+			lex_error(
+				l,
 				Span{file = l.file, lo = u32(i), hi = u32(i + 1)},
 				"L0115",
 				"a carriage return must be followed by a newline",
@@ -276,10 +295,10 @@ skip_trivia :: proc(l: ^Lexer) {
 				if l.src[hi - 1] == '\r' {
 					hi -= 1
 				}
-				append(&l.c.sources[l.file].comments, Span{file = l.file, lo = lo, hi = hi})
+				note_comment(l, Span{file = l.file, lo = lo, hi = hi})
 			} else if peek(l, 1) == '*' {
 				block_comment(l)
-				append(&l.c.sources[l.file].comments, span_from(l, lo))
+				note_comment(l, span_from(l, lo))
 			} else {
 				return
 			}
@@ -309,8 +328,8 @@ block_comment :: proc(l: ^Lexer) {
 			l.pos += 1
 		}
 	}
-	errorf(
-		l.c,
+	lex_error(
+		l,
 		Span{file = l.file, lo = start, hi = start + 2},
 		"L0103",
 		"unterminated block comment",
@@ -320,14 +339,14 @@ block_comment :: proc(l: ^Lexer) {
 // Reports over the text since `lo`, which becomes one bad token.
 @(private = "file")
 error_token :: proc(l: ^Lexer, lo: u32, code, format: string, args: ..any) -> Token {
-	errorf(l.c, span_from(l, lo), code, format, ..args)
+	lex_error(l, span_from(l, lo), code, format, ..args)
 	return Token{kind = .Error, lo = lo, hi = l.pos}
 }
 
 // Reports at the opening quote of what never closes.
 @(private = "file")
 unterminated :: proc(l: ^Lexer, lo: u32, code, what: string) -> Token {
-	errorf(l.c, Span{file = l.file, lo = lo, hi = lo + 1}, code, "unterminated %s", what)
+	lex_error(l, Span{file = l.file, lo = lo, hi = lo + 1}, code, "unterminated %s", what)
 	return Token{kind = .Error, lo = lo, hi = l.pos}
 }
 
@@ -569,17 +588,17 @@ escape :: proc(l: ^Lexer) -> bool {
 	case .None:
 		return true
 	case .Incomplete:
-		errorf(l.c, span_from(l, lo), "L0105", "incomplete escape sequence")
+		lex_error(l, span_from(l, lo), "L0105", "incomplete escape sequence")
 	case .Short_Hex:
 		ch := l.src[lo + 1]
-		errorf(l.c, span_from(l, lo), "L0105", "`\\%c` needs %d hexadecimal digits", ch, hex_escape_digits(ch))
+		lex_error(l, span_from(l, lo), "L0105", "`\\%c` needs %d hexadecimal digits", ch, hex_escape_digits(ch))
 	case .Not_A_Character:
-		errorf(l.c, span_from(l, lo), "L0114", "`%s` is not a Unicode character", l.src[lo:l.pos])
+		lex_error(l, span_from(l, lo), "L0114", "`%s` is not a Unicode character", l.src[lo:l.pos])
 	case .Octal:
 		// C's octal byte escape; Loke has none (comments.md "No octal escapes").
-		errorf(l.c, span_from(l, lo), "L0105", "there are no octal escapes; write a byte as `\\xNN` or a character as `\\uNNNN`")
+		lex_error(l, span_from(l, lo), "L0105", "there are no octal escapes; write a byte as `\\xNN` or a character as `\\uNNNN`")
 	case .Unknown:
-		errorf(l.c, span_from(l, lo), "L0105", "unknown escape sequence")
+		lex_error(l, span_from(l, lo), "L0105", "unknown escape sequence")
 	}
 	return false
 }
@@ -656,8 +675,8 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 		if peek(l) == '\'' {
 			l.pos += 1
 			if valid {
-				errorf(
-					l.c,
+				lex_error(
+					l,
 					span_from(l, lo),
 					"L0107",
 					"a character literal holds exactly one character",

@@ -89,6 +89,20 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 	return result
 }
 
+// The tokens of a text no file holds, as the parser left them: a contextual
+// keyword it read as one carries the keyword's kind, and a reserved word it
+// read as a member name is an identifier (grammar.md "Keywords"). What the
+// parser would report goes unsaid.
+parse_text_tokens :: proc(text: string) -> []Token {
+	scratch: Compiler
+	defer destroy_compilation(&scratch)
+	append(&scratch.sources, Source{text = text})
+	tokens := lex(&scratch, 0)
+	file := parse(&scratch, 0, tokens)
+	destroy_ast(&file)
+	return tokens
+}
+
 @(private = "file")
 parse_items :: proc(p: ^Parser, stop_at_rbrace: bool) -> []Item {
 	items := make([dynamic]Item, 0, 0, p.allocator)

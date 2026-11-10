@@ -116,4 +116,24 @@ Holder :: struct {
 		q: int,
 	),
 }
+/// Documented, with a field in an array's length.
+Measured :: [size_of((
+	/// A field.
+	w: int,
+))]u8;
+
+/// Documented, with a field in a composite literal's element.
+SIZES :: [1]int{size_of((
+	/// A field.
+	e: int,
+))};
+
+when (size_of((
+	/// A field, in a `when` condition.
+	c: int,
+)) == 8) {
+	/// Documented.
+	WIDE :: true;
+}
+
 /// At the end of the file.

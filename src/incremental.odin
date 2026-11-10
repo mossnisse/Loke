@@ -227,14 +227,16 @@ reparse_edited_files :: proc(c: ^Compiler, order: []Package_Id, texts: []string)
 	slice.sort_by(replacements[:], proc(a, b: Replacement) -> bool {
 		return a.pkg.files[a.index].file < b.pkg.files[b.index].file
 	})
+	replaced := make(map[^File]^File, len(replacements), context.temp_allocator)
 	for entry in replacements {
 		file := entry.pkg.files[entry.index]
 		c.sources[file.file] = make_source(c, c.sources[file.file].path, strings.clone(texts[file.file], c.semantic_allocator))
 		replacement := parse_loaded_source(c, file.file)
 		entry.pkg.files[entry.index] = replacement
-		for old, parsed_index in c.parsed_files {
-			if old == file { c.parsed_files[parsed_index] = replacement; break }
-		}
+		replaced[file] = replacement
+	}
+	for &parsed in c.parsed_files {
+		if replacement, found := replaced[parsed]; found { parsed = replacement }
 	}
 	for entry in replacements { rebuild_active_items(c, entry.pkg) }
 }

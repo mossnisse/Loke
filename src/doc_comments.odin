@@ -178,6 +178,7 @@ walk_documented_item :: proc(w: ^Doc_Walk, item: Item) {
 			walk_documented_item(w, member)
 		}
 	case ^Item_When:
+		walk_documented_type(w, v.cond)
 		walk_documented_item(w, v.then)
 		walk_documented_item(w, v.otherwise)
 	}
@@ -210,37 +211,16 @@ walk_documented_type :: proc(w: ^Doc_Walk, e: Expr) {
 			walk_documented_type(w, requirement.result)
 			walk_documented_type(w, requirement.slot_type)
 		}
-	case ^Type_Pointer:
-		walk_documented_type(w, v.elem)
-	case ^Type_C_Pointer:
-		walk_documented_type(w, v.elem)
-	case ^Type_Slice:
-		walk_documented_type(w, v.elem)
-	case ^Type_Dynamic_Array:
-		walk_documented_type(w, v.elem)
-	case ^Type_Distinct:
-		walk_documented_type(w, v.elem)
-	case ^Type_Array:
-		walk_documented_type(w, v.elem)
-	case ^Type_Map:
-		walk_documented_type(w, v.key)
-		walk_documented_type(w, v.value)
-	case ^Type_Proc:
-		for parameter in v.params {
-			walk_documented_type(w, parameter.type)
-		}
-		if v.result != nil {
-			walk_documented_type(w, v.result.type)
-		}
 	case ^Expr_Proc:
 		walk_documented_type(w, v.signature)
-	case ^Expr_Call:
-		// A type applied to types, as `Box((x: int))`.
-		for argument in v.args {
-			walk_documented_type(w, argument.value)
-		}
-	case ^Expr_Composite:
-		walk_documented_type(w, v.type_expr)
+	case:
+		// Anywhere else a type may be written: an element type, a parameter's
+		// type or default, an array's length, or a call's arguments, as in
+		// `Box((x: int))`.
+		expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
+			walk_documented_type((^Doc_Walk)(data), child)
+			return false
+		})
 	}
 }
 

@@ -140,6 +140,27 @@ renameable :: proc(s: ^Server, target: Target) -> string {
 @(private = "file")
 Edit :: struct { key, path: string, lo: u32, range: Range }
 
+// One rename request: what each root's program is checked against, and the
+// edits found so far.
+@(private = "file")
+Renaming :: struct {
+	s:             ^Server,
+	target:        Target,
+	old, new_name: string,
+	// Fields, enum members, and `impl` or `extend` members are reached through
+	// a value or type, so scope cannot capture them; their type's other
+	// members can.
+	member:        bool,
+	edits:         [dynamic]Edit,
+	seen:          map[string]bool,
+	// Each source's tokens by path key, so a package several roots load is
+	// lexed and parsed once.
+	parsed:        map[string]Parsed_Source,
+}
+
+@(private = "file")
+Parsed_Source :: struct { text: string, tokens: []lokec.Token }
+
 // A workspace edit that renames every use of the binding in every program the
 // server checks, or why it would be unsafe.
 rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position, new_name: string) -> (result, failure: string) {
@@ -147,9 +168,6 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	if !found { return "", "There is no binding at this position to rename." }
 	if failure = renameable(s, target); failure != "" { return }
 	old := target.symbol.name
-	// Fields, enum members, and `impl` or `extend` members are reached through
-	// a value or type, so scope cannot capture them; their type's other
-	// members can.
 	member := target.symbol.kind == .Field || target.symbol.kind == .Enum_Member || target.symbol.owner.id != lokec.INVALID_TYPE
 	// grammar.md "Keywords": a reserved word is a member name too.
 	kind, single := single_token(new_name)
@@ -162,135 +180,18 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	if target.symbol.kind == .Parameter && (old == "self" || new_name == "self") {
 		return "", "`self` marks a method's receiver, so a parameter cannot be renamed to or from it."
 	}
-	edits := make([dynamic]Edit, context.temp_allocator)
-	seen := make(map[string]bool, context.temp_allocator)
-	for _, root in s.roots {
-		root_snapshot, handle, loaded, same := binding_in(root, target)
-		if !loaded { continue }
-		rs := &root.session
-		diagnostics, _ := lokec.query_diagnostics(rs, root_snapshot)
-		for diagnostic in diagnostics {
-			if diagnostic.severity != .Error { continue }
-			at := ""
-			if source, placed := lokec.query_source(rs, root_snapshot, diagnostic.location.span.file); placed {
-				at = fmt.tprintf(" (%s:%d)", source.path, offset_to_position(source.text, source.line_starts, diagnostic.location.span.lo, true).line + 1)
-			}
-			return "", fmt.tprintf("Rename needs every program that loads the binding to check without errors first: %s%s", first_line(diagnostic.message), at)
-		}
-		if same {
-			// The bundled library reaches a program's names only through a
-			// generic it instantiates, which records the use.
-			uses, _ := lokec.query_references(rs, handle)
-			defer delete(uses)
-			for use in uses {
-				source, _ := lokec.query_source(rs, root_snapshot, use.span.file)
-				if source.bundled {
-					line := offset_to_position(source.text, source.line_starts, use.span.lo, true).line + 1
-					return "", fmt.tprintf("`%s` is used by the library bundled with the compiler, at %s:%d.", old, source.path, line)
-				}
-			}
-			if member {
-				if conflict := member_conflict(rs, root_snapshot, handle, new_name); conflict != "" { return "", conflict }
-				// A method or associated type the compiler or an interface
-				// reaches by name has uses no reference records, such as
-				// `value()` for `call`. No such lookup finds a field or an enum
-				// member.
-				implicit: []string
-				if target.symbol.kind != .Field && target.symbol.kind != .Enum_Member {
-					implicit, _ = lokec.query_implicit_names(rs, root_snapshot, context.temp_allocator)
-				}
-				for name in implicit {
-					if name == old || name == new_name {
-						return "", fmt.tprintf("`%s` is a member name the compiler or an interface looks up by name, so renaming `%s` could change uses no reference records.", name, old)
-					}
-				}
-			}
-		}
-		for source_file := u32(0); ; source_file += 1 {
-			source := lokec.query_source(rs, root_snapshot, source_file) or_break
-			if source.bundled || !strings.has_suffix(source.path, ".loke") { continue }
-			// Parsed, so a reserved word written as a member name is an
-			// identifier here and one written as syntax stays a keyword.
-			tokens := parsed_tokens(source.text)
-			defer delete(tokens)
-			open := make([dynamic]lokec.Token_Kind, context.temp_allocator)
-			edited := make([dynamic]u32, context.temp_allocator)
-			for token, index in tokens {
-				#partial switch token.kind {
-				case .Lparen, .Lbracket, .Lbrace: append(&open, token.kind)
-				case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
-				}
-				if token.kind != .Ident { continue }
-				word := source.text[token.lo:token.hi]
-				qualified := index > 0 && tokens[index - 1].kind == .Period
-				// A member's new name matters where a selector could reach it.
-				if word != old && (word != new_name || (member && !qualified)) { continue }
-				// A package clause and an import alias name packages, never
-				// a binding the snapshot records.
-				if index > 0 && (tokens[index - 1].kind == .Package || tokens[index - 1].kind == .Import) { continue }
-				at, recorded := lokec.query_at(rs, root_snapshot, source_file, token.lo)
-				resolved := recorded && at.symbol.id != lokec.INVALID_SYMBOL
-				where_written := fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, token.lo, true).line + 1)
-				if word == old {
-					if !resolved {
-						return "", fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
-					}
-					if !same_binding(rs, at.symbol, target) { continue }
-					// `f(old = value)` names the callee's parameter, which the
-					// caller's scope cannot capture.
-					label := target.symbol.kind == .Parameter && index > 0 && index + 1 < len(tokens) && tokens[index + 1].kind == .Assign &&
-						(tokens[index - 1].kind == .Lparen || tokens[index - 1].kind == .Comma) && len(open) > 0 && open[len(open) - 1] == .Lparen
-					// Through a package, a selector reads that package's
-					// declarations, not this scope. A public extension is also
-					// one of its package's names.
-					if (!member && !qualified && !label) || (member && !qualified && reaches(rs, root_snapshot, source_file, token.lo, target, package_only = true)) {
-						if other, visible := visible_named(rs, root_snapshot, source_file, token.lo, new_name); visible {
-							return "", fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
-						}
-					}
-					// design.md "Promoted struct fields": the operand's own
-					// fields, promoted fields, and methods share one lookup.
-					// The operand is the selector's own, not whatever ends at the
-					// token before the `.`: in `(outer).old` that is a `)`. A
-					// `.Member` with no operand takes its type from context.
-					if member && qualified && index >= 2 && ends_operand(tokens[index - 2].kind) {
-						operand, typed := lokec.query_selector_operand(rs, root_snapshot, source_file, token.lo)
-						if !typed {
-							return "", fmt.tprintf("At %s, rename cannot tell what `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
-						}
-						members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator)
-						if !listed {
-							return "", fmt.tprintf("At %s, rename cannot list the members `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
-						}
-						for candidate in members {
-							if candidate.name == new_name {
-								return "", fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
-							}
-						}
-					}
-					identity := fmt.tprintf("%s\x00%d", path_key(source.path, context.temp_allocator), token.lo)
-					if seen[identity] { continue }
-					seen[identity] = true
-					path, range, _ := place(s, rs, root_snapshot, at.location, context.temp_allocator)
-					append(&edits, Edit{lokec.dir_key(path), path, token.lo, range})
-					append(&edited, token.lo)
-				} else if member {
-					if same && index >= 2 && ends_operand(tokens[index - 2].kind) && promotes_target(rs, root_snapshot, source_file, token.lo, target, new_name) {
-						return "", fmt.tprintf("At %s, `.%s` could select the renamed `%s`, which its operand reaches through a `using` field.", where_written, new_name, old)
-					}
-				} else if resolved && same {
-					if conflict := local_conflict(rs, root_snapshot, source_file, at, handle, target); conflict != "" {
-						return "", fmt.tprintf("`%s` is declared at %s, %s.", new_name, where_written, conflict)
-					}
-				}
-			}
-			if at, keyword := reads_as_keyword(source.text, edited[:], old, new_name); keyword {
-				line := offset_to_position(source.text, source.line_starts, at, true).line + 1
-				return "", fmt.tprintf("At %s:%d, `%s` would be read as a keyword there, not as the renamed name.", source.path, line, new_name)
-			}
-		}
+	r := Renaming {
+		s = s, target = target, old = old, new_name = new_name, member = member,
+		edits = make([dynamic]Edit, context.temp_allocator),
+		seen = make(map[string]bool, context.temp_allocator),
+		parsed = make(map[string]Parsed_Source, context.temp_allocator),
 	}
-	slice.sort_by(edits[:], proc(a, b: Edit) -> bool {
+	defer for _, parsed in r.parsed { delete(parsed.tokens) }
+	for _, root in s.roots {
+		if failure = rename_in_root(&r, root); failure != "" { return }
+	}
+	edits := r.edits[:]
+	slice.sort_by(edits, proc(a, b: Edit) -> bool {
 		if a.key != b.key { return a.key < b.key }
 		return a.lo < b.lo
 	})
@@ -315,6 +216,169 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	return strings.to_string(b), ""
 }
 
+// Checks the rename against one root's program and adds the edits its
+// sources need, or says why the rename would be unsafe there.
+@(private = "file")
+rename_in_root :: proc(r: ^Renaming, root: ^Root) -> string {
+	snapshot, handle, loaded, same := binding_in(root, r.target)
+	if !loaded { return "" }
+	rs := &root.session
+	if failure := program_error(rs, snapshot); failure != "" { return failure }
+	if same {
+		if failure := binding_refusal(r, rs, snapshot, handle); failure != "" { return failure }
+	}
+	for source_file := u32(0); ; source_file += 1 {
+		source := lokec.query_source(rs, snapshot, source_file) or_break
+		if source.bundled || !strings.has_suffix(source.path, ".loke") { continue }
+		if failure := rename_in_source(r, rs, snapshot, source_file, source, handle, same); failure != "" { return failure }
+	}
+	return ""
+}
+
+// Rename needs every program that loads the binding to check without errors.
+@(private = "file")
+program_error :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot) -> string {
+	diagnostics, _ := lokec.query_diagnostics(session, snapshot)
+	for diagnostic in diagnostics {
+		if diagnostic.severity != .Error { continue }
+		at := ""
+		if source, placed := lokec.query_source(session, snapshot, diagnostic.location.span.file); placed {
+			at = fmt.tprintf(" (%s:%d)", source.path, offset_to_position(source.text, source.line_starts, diagnostic.location.span.lo, true).line + 1)
+		}
+		return fmt.tprintf("Rename needs every program that loads the binding to check without errors first: %s%s", first_line(diagnostic.message), at)
+	}
+	return ""
+}
+
+// Why a program that records the binding's uses cannot have it renamed: a use
+// in the bundled library, or, for a member, a name its type or a by-name
+// lookup already has.
+@(private = "file")
+binding_refusal :: proc(r: ^Renaming, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, handle: lokec.Symbol_Handle) -> string {
+	// The bundled library reaches a program's names only through a generic it
+	// instantiates, which records the use.
+	uses, _ := lokec.query_references(session, handle)
+	defer delete(uses)
+	for use in uses {
+		source, _ := lokec.query_source(session, snapshot, use.span.file)
+		if source.bundled {
+			line := offset_to_position(source.text, source.line_starts, use.span.lo, true).line + 1
+			return fmt.tprintf("`%s` is used by the library bundled with the compiler, at %s:%d.", r.old, source.path, line)
+		}
+	}
+	if !r.member { return "" }
+	if conflict := member_conflict(session, snapshot, handle, r.new_name); conflict != "" { return conflict }
+	// A method or associated type the compiler or an interface reaches by name
+	// has uses no reference records, such as `value()` for `call`. No such
+	// lookup finds a field or an enum member.
+	if r.target.symbol.kind == .Field || r.target.symbol.kind == .Enum_Member { return "" }
+	implicit, _ := lokec.query_implicit_names(session, snapshot, context.temp_allocator)
+	for name in implicit {
+		if name == r.old || name == r.new_name {
+			return fmt.tprintf("`%s` is a member name the compiler or an interface looks up by name, so renaming `%s` could change uses no reference records.", name, r.old)
+		}
+	}
+	return ""
+}
+
+// The source's tokens as the parser left them, so a reserved word written as a
+// member name is an identifier and one written as syntax stays a keyword.
+// Roots that load the same text share them.
+@(private = "file")
+parsed_source :: proc(r: ^Renaming, key, text: string) -> []lokec.Token {
+	cached, found := r.parsed[key]
+	if found && cached.text == text { return cached.tokens }
+	delete(cached.tokens)
+	tokens := lokec.parse_text_tokens(text)
+	r.parsed[key] = Parsed_Source{text, tokens}
+	return tokens
+}
+
+// Adds an edit for each written use of the binding in one source, or says
+// why renaming it there would be unsafe.
+@(private = "file")
+rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, source_file: u32, source: lokec.Query_Source, handle: lokec.Symbol_Handle, same: bool) -> string {
+	target, old, new_name, member := r.target, r.old, r.new_name, r.member
+	key := path_key(source.path, context.temp_allocator)
+	tokens := parsed_source(r, key, source.text)
+	open := make([dynamic]lokec.Token_Kind, context.temp_allocator)
+	edited := make([dynamic]u32, context.temp_allocator)
+	for token, index in tokens {
+		#partial switch token.kind {
+		case .Lparen, .Lbracket, .Lbrace: append(&open, token.kind)
+		case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
+		}
+		if token.kind != .Ident { continue }
+		word := source.text[token.lo:token.hi]
+		qualified := index > 0 && tokens[index - 1].kind == .Period
+		// A member's new name matters where a selector could reach it.
+		if word != old && (word != new_name || (member && !qualified)) { continue }
+		// A package clause and an import alias name packages, never a binding
+		// the snapshot records.
+		if index > 0 && (tokens[index - 1].kind == .Package || tokens[index - 1].kind == .Import) { continue }
+		at, recorded := lokec.query_at(rs, snapshot, source_file, token.lo)
+		resolved := recorded && at.symbol.id != lokec.INVALID_SYMBOL
+		where_written := fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, token.lo, true).line + 1)
+		if word == old {
+			if !resolved {
+				return fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
+			}
+			if !same_binding(rs, at.symbol, target) { continue }
+			// `f(old = value)` names the callee's parameter, which the caller's
+			// scope cannot capture.
+			label := target.symbol.kind == .Parameter && index > 0 && index + 1 < len(tokens) && tokens[index + 1].kind == .Assign &&
+				(tokens[index - 1].kind == .Lparen || tokens[index - 1].kind == .Comma) && len(open) > 0 && open[len(open) - 1] == .Lparen
+			// Through a package, a selector reads that package's declarations,
+			// not this scope. A public extension is also one of its package's
+			// names.
+			if (!member && !qualified && !label) || (member && !qualified && reaches(rs, snapshot, source_file, token.lo, target, package_only = true)) {
+				if other, visible := visible_named(rs, snapshot, source_file, token.lo, new_name); visible {
+					return fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
+				}
+			}
+			// design.md "Promoted struct fields": the operand's own fields,
+			// promoted fields, and methods share one lookup. The operand is the
+			// selector's own, not whatever ends at the token before the `.`: in
+			// `(outer).old` that is a `)`. A `.Member` with no operand takes its
+			// type from context.
+			if member && qualified && index >= 2 && ends_operand(tokens[index - 2].kind) {
+				operand, typed := lokec.query_selector_operand(rs, snapshot, source_file, token.lo)
+				if !typed {
+					return fmt.tprintf("At %s, rename cannot tell what `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
+				}
+				members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator)
+				if !listed {
+					return fmt.tprintf("At %s, rename cannot list the members `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
+				}
+				for candidate in members {
+					if candidate.name == new_name {
+						return fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
+					}
+				}
+			}
+			identity := fmt.tprintf("%s\x00%d", key, token.lo)
+			if r.seen[identity] { continue }
+			r.seen[identity] = true
+			path, range, _ := place(r.s, rs, snapshot, at.location, context.temp_allocator)
+			append(&r.edits, Edit{lokec.dir_key(path), path, token.lo, range})
+			append(&edited, token.lo)
+		} else if member {
+			if same && index >= 2 && ends_operand(tokens[index - 2].kind) && promotes_target(rs, snapshot, source_file, token.lo, target, new_name) {
+				return fmt.tprintf("At %s, `.%s` could select the renamed `%s`, which its operand reaches through a `using` field.", where_written, new_name, old)
+			}
+		} else if resolved && same {
+			if conflict := local_conflict(rs, snapshot, source_file, at, handle, target); conflict != "" {
+				return fmt.tprintf("`%s` is declared at %s, %s.", new_name, where_written, conflict)
+			}
+		}
+	}
+	if at, keyword := reads_as_keyword(source.text, edited[:], old, new_name); keyword {
+		line := offset_to_position(source.text, source.line_starts, at, true).line + 1
+		return fmt.tprintf("At %s:%d, `%s` would be read as a keyword there, not as the renamed name.", source.path, line, new_name)
+	}
+	return ""
+}
+
 // grammar.md "Keywords": a contextual keyword is a name except in its own
 // position. The first edited offset at which the renamed text parses the new
 // name as the keyword, if any; `edited` is ascending, as the scan finds them.
@@ -329,7 +393,7 @@ reads_as_keyword :: proc(text: string, edited: []u32, old, new_name: string) -> 
 		written = lo + u32(len(old))
 	}
 	strings.write_string(&b, text[written:])
-	tokens := parsed_tokens(strings.to_string(b))
+	tokens := lokec.parse_text_tokens(strings.to_string(b))
 	defer delete(tokens)
 	next := 0
 	for lo, k in edited {

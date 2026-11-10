@@ -1793,6 +1793,9 @@ checklist.
 
 ### Fixed
 
+- `L0260` no longer warns about a doc comment on a field of a type written in an array's length,
+  a parameter's default, a literal's element, a `when` condition, or any other expression outside
+  a procedure body ([Doc comments](design.md#doc-comments)).
 - A [foreign binding](design.md#foreign-system) whose `@(link_name)` names an LLVM intrinsic the
   program also reaches through a built-in, such as `llvm.ctpop.i64` beside `math.count_ones` on an
   `i64`, builds: the module declared the intrinsic twice, and clang rejected it.

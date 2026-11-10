@@ -260,8 +260,9 @@ The recurring themes are:
    lexes per declaration, attribute, field, and impl head in `-api`, `-doc`,
    and the language server's documentation command.
 2. **Stop canonicalizing paths that need no canonicalizing in package loading**
-   (`src/packages.odin:283`, `:288`; done for `package_sources`,
-   while `is_source_directory` canonicalizes once per call and is unchanged).
+   (`src/packages.odin:283`, `:288`; done: `package_sources` compares the
+   directory key `Source_Overlay` stores, and `is_source_directory` returns
+   before canonicalizing when there are no overlays, as on the command line).
    - `package_sources` calls `canonical_dir(entry.fullpath)` for every
      directory entry of every package, even when there are no overlays, which
      is always the case for the command line. Guard that bookkeeping with
@@ -284,7 +285,11 @@ The recurring themes are:
    pattern.
 4. **Give lexing and parsing of free-standing text one lightweight home**
    (`src/lexer.odin:166-175`, `lsp/editing.odin:336-344`, `src/doc.odin:119`,
-   `lsp/tools.odin:27`). Each of these zero-initializes and destroys a whole
+   `lsp/tools.odin:27`; done: `Lexer` takes a comments sink and reports only
+   when it has a `Compiler`, so `lex_text` builds none, and `parse_text_tokens`
+   in `parser.odin` replaces the server's `parsed_tokens`. `format_text` in
+   `doc.odin` and `lsp/tools.odin` keeps its `Compiler`: formatting parses, and
+   the server reports the parser's first error). Each of these zero-initializes and destroys a whole
    `Compiler`, which is a struct of about 150 fields, only to collect comments
    and discard errors. Two options:
    - Let `Lexer` take a comments sink and a "silent" flag, so it works without
@@ -307,7 +312,7 @@ The recurring themes are:
    in the checker section. This also needs a row in compiler-architecture.md
    "Source-code map".
 7. **Avoid repeated work across roots in the server's `rename`**
-   (`lsp/rename.odin:148-319`).
+   (done) (`lsp/rename.odin:148-319`).
    - Each root re-runs `parsed_tokens` on every non-bundled source it loads, so
      a package shared by N roots is lexed and parsed N times. Cache the tokens
      by path key for the duration of the request.
@@ -356,7 +361,8 @@ Fine.
 
 #### src/providers.odin
 Coherent. Collecting, loading, and resolving providers are kept apart by phase.
-- **Duplication**, providers.odin:136-152 and packages.odin:357-380: both
+- **Duplication** (not done: the two report different codes and messages, so a
+  helper would take both as parameters), providers.odin:136-152 and packages.odin:357-380: both
   switch on `Import_Resolution` and report `.No_Collection` and
   `.Outside_Collection` with nearly the same text. A helper,
   `report_resolution(c, span, why, what, path)`, could produce both messages
@@ -372,7 +378,10 @@ findings.
 
 #### src/overlays.odin
 Fine.
-- **Data structure/algorithm**, overlays.odin:59-66: `is_source_directory`
+- **Data structure/algorithm** (done in part: with no overlays it returns before
+  canonicalizing; the scan over the few unsaved files stays, since a set would
+  also have to answer for their parent directories),
+  overlays.odin:59-66: `is_source_directory`
   builds a prefix and scans every overlay key on each call. It runs for each
   `load_package_dir` and each `register_project` dependency. With a stored
   parent-directory key per overlay (Top 2), a lookup becomes a set membership
@@ -380,13 +389,17 @@ Fine.
 
 #### src/queries.odin
 Well structured. The snapshot validation is uniform.
-- **Data structure/algorithm**, queries.odin:160-168: `query_references` scans
+- **Data structure/algorithm** (not done: the index would be built with every
+  snapshot, after each edit, to speed a request made far less often; the scan
+  is linear in the program's occurrences), queries.odin:160-168: `query_references` scans
   every occurrence of every file for each call. The server calls it once per
   root for every references or rename request. A
   `canonical symbol -> [dynamic]Query_Occurrence` index built in
   `build_query_index` would make it linear in the result size. This is only
   worth doing if it shows up in `perf.ps1` (unverified).
-- **Data structure/algorithm**, queries.odin:198-211: `occurrence_at` scans a
+- **Data structure/algorithm** (not done: the sort would run with every
+  snapshot, and `rename` asks only at tokens spelled like the old or new name),
+  queries.odin:198-211: `occurrence_at` scans a
   file's whole occurrence list on each `query_at`. `rename.odin:234` calls it
   for every matching identifier token. Sorting `occurrences[file]` by
   `span.lo` once would let the scan stop early. Low priority.
@@ -401,7 +414,10 @@ Well structured. The snapshot validation is uniform.
 Correct and readable.
 - **Duplication/Simplify** (done: Top 3), query_index.odin:265-338: see Top 3. This saves
   about 25 lines.
-- **Data structure/algorithm**, query_index.odin:9, :54-58: `visited:
+- **Data structure/algorithm** (not done: the walk also reaches lowered syntax
+  and committed clones, so dropping the map needs a proof that no node is
+  reached twice, and a bit on each node would need clearing for every
+  snapshot), query_index.odin:9, :54-58: `visited:
   map[rawptr]bool` hashes every expression node in the program. A file walk
   visits each node once. Repeats come only from `symbol.decl` and
   `symbol.proc_literal` revisiting syntax already walked (`:24-28`). A bit on
@@ -414,7 +430,8 @@ Careful and conservative. The code is small for what it does.
 - **Simplify** (done), incremental.odin:216-222: `unbind_package(pkg)` runs once for
   every edited file, not once for every edited package. Unbind after the
   loop, once per distinct package. The effect is negligible.
-- **Data structure/algorithm**, incremental.odin:233-235: each replacement does
+- **Data structure/algorithm** (done: one pass over `parsed_files` through a
+  map of the replaced files), incremental.odin:233-235: each replacement does
   a linear search of `c.parsed_files`. That is O(edited × files), which is
   fine at today's sizes. Recording each file's index in `parsed_files` would
   remove the search.
@@ -439,7 +456,9 @@ The program-level fixed point is clear.
   semantic arena each time a longer root is found, which leaves dead bytes in
   the arena that checkpoint images then copy. Instead, keep `best_name` and
   `best_rest`, and allocate once after the loop. Canonical collection roots
-  could also be computed once per compilation.
+  could also be computed once per compilation. (The rest is not done: a few
+  `canonical_dir` calls per package load, against a `Compiler` field that
+  `register_project` would have to keep current.)
 - **Simplify** (done), packages.odin:314-316: `syntax` is set conditionally, and the
   same condition is then tested again for `new`. Write `file := new(File,
   syntax if syntax.procedure != nil else context.allocator)` or similar.
@@ -468,22 +487,29 @@ Fine. The manifest walk is a small BFS.
 
 #### src/select.odin
 Thorough. It is the subtlest file in the group and reads well.
-- **Structure**, select.odin:362-893: the `When_Walk` dependency walker is
+- **Structure** (not done: the walker reads three of selection's file-private
+  queries and selection calls `first_unresolved`, so a split widens four
+  helpers to the package for a file of 893 lines), select.odin:362-893: the `When_Walk` dependency walker is
   about 530 lines, beside about 350 lines of selection bookkeeping. Moving it
   to `when_dependencies.odin` would give each file one job. Optional.
-- **Data structure/algorithm**, select.odin:459, :575: `slice.contains(w.bound[:],
+- **Data structure/algorithm** (not done: no program shows a cost; see the
+  cross-file table), select.odin:459, :575: `slice.contains(w.bound[:],
   name)` is a linear scan of names bound while walking bodies that a
   condition reads. It is fine for typical conditions. If deep CTFE bodies make
   it hot, a counted map would replace it. This is the same pattern as
   `doc.odin:672` (unverified that either matters).
-- **Duplication**, select.odin:714-718 (`bind_names`), :737-747, and
+- **Duplication** (done for `unresolved_in_generics`, which calls
+  `bind_generic_params`; `bind_names` takes a `[]Name` and stays),
+  select.odin:714-718 (`bind_names`), :737-747, and
   ast.odin:1429-1435 (`bind_generic_params`) are the same name-collecting
   loops over different element types. Small.
 
 #### src/compiler.odin
 - **Bug (documentation)** (done: removed in `ad42446c`, bug 19), compiler.odin:159-160: an orphan comment describes
   fields that do not exist (Top 5).
-- **Structure**, compiler.odin:39-407: `Compiler` has about 150 fields in
+- **Structure** (not done: it touches every group's files, as the finding
+  says, and is left for work that changes those phases),
+  compiler.odin:39-407: `Compiler` has about 150 fields in
   one flat record, covering the front end, generics, the provenance solver,
   and the emission registries. `restore_checkpoint` copies it whole
   (`incremental.odin:202`), and `emission_registries`
@@ -497,7 +523,9 @@ Thorough. It is the subtlest file in the group and reads well.
 #### src/source.odin
 Solid diagnostics engine.
 - **Structure**, source.odin:325-442: see Top 6.
-- **Data structure/algorithm**, source.odin:116-126: `display_path` calls
+- **Data structure/algorithm** (not done: one call per rendered location,
+  beside the several writes to stderr that render it; passing the directory
+  in would add a parameter to each caller), source.odin:116-126: `display_path` calls
   `os.get_working_directory` and allocates for every rendered diagnostic and
   note. `report` and `run_tests` could compute the working directory once
   and pass it in. Minor.
@@ -513,12 +541,14 @@ Solid diagnostics engine.
 
 #### src/lexer.odin
 Clear and robust.
-- **Data structure/algorithm**, lexer.odin:426-437: `ident_or_keyword`
+- **Data structure/algorithm** (not done: a word of another length fails each
+  comparison at its length, so the loop is 32 integer tests, and lexing is a
+  small share of the front end), lexer.odin:426-437: `ident_or_keyword`
   compares every identifier against up to 32 keywords. A cheap prefilter
   would skip most identifiers: every keyword is 2 to 9 lowercase ASCII
   letters, while type names start uppercase. Another option is a `switch word`.
   Low priority.
-- **Data structure/algorithm**, lexer.odin:166-175: `lex_text` builds a full
+- **Data structure/algorithm** (done: Top 4), lexer.odin:166-175: `lex_text` builds a full
   scratch `Compiler` (Top 4).
 - **Simplify** (not done: the token array is kept for the whole compilation,
   so a guess that over-reserves costs memory there, while growth copies at
@@ -536,7 +566,10 @@ disciplined.
   every postfix chain. `parse_binary` (`:2316-2327`) checks the operator
   first. The limit becomes conservative, not unsafe. Moving the increment
   into the cases that consume a token would make the two consistent.
-- **Duplication**, six bracket-depth scanners over tokens: `resync_list`
+- **Duplication** (not done: each scanner has its own rule for unbalanced
+  input: a stop at a stray close, clamping, one count per bracket kind, or a
+  `where` clause's commas; a shared step would take that rule as a parameter
+  to replace two lines), six bracket-depth scanners over tokens: `resync_list`
   (`:383`), `sync_to_boundary` (`:481`), `scans_nested_pattern` (`:927`),
   `starts_anon_record_type` (`:977`), `matching_offset` (`:1934`), and
   `scans_anon_union` (`:3054`). `scans_anon_union` and the comma part of
@@ -554,7 +587,8 @@ disciplined.
 - **Simplify** (done), parser.odin:4120-4123: `is_operator_symbol` lists every
   compound assignment again. Use `compound_operator(kind) != .EOF ||` in front
   of the rest. Saves 4 lines and cannot drift from `lexer.odin:765`.
-- **Structure**, parser.odin as a whole: at 4126 lines it is about 22% of this
+- **Structure** (not done: the sections share dozens of file-private helpers,
+  which a split would make package-wide), parser.odin as a whole: at 4126 lines it is about 22% of this
   group. It has natural seams: items and declarations (`:589-1310`),
   statements (`:1311-2181`), expressions (`:2183-2845`), and types, records,
   and procedures (`:2846-4126`). Splitting would require turning
@@ -565,7 +599,8 @@ disciplined.
 Clean node definitions with exhaustive `*_base` switches.
 - **Simplify** (done), ast.odin:695-703: `hook_name` could be a `[Hook_Kind]string`
   array (see build_config.odin).
-- **Structure**, ast.odin:1401-1480: `type_syntax_any_name`,
+- **Structure** (not done: seven files use them, and they read syntax only,
+  like `expr_children` beside them), ast.odin:1401-1480: `type_syntax_any_name`,
   `bind_poly_names`, `bind_signature`, and `Name_Walk` are generic-checking
   helpers, not syntax definitions. They fit `generic.odin` better. `ast.odin`
   should keep `expr_children` and the `*_base` accessors. Optional.
@@ -610,7 +645,10 @@ One model drives both `-doc` and `-api`, which is a good design.
 
 #### src/doc_comments.odin
 Fine.
-- **Duplication/Simplify**, doc_comments.odin:213-227: the
+- **Duplication/Simplify** (done, with a `when` condition walked too; the
+  records this reaches now count as documented, as design.md "Doc comments"
+  says of a type "wherever the type is written": `tests/err/doc_comments.loke`),
+  doc_comments.odin:213-227: the
   `^Type_Pointer`/`C_Pointer`/`Slice`/`Dynamic_Array`/`Distinct`/`Array`/`Map`
   cases only recurse. A default `case: expr_children(...)` saves about 14
   lines. It also changes behavior slightly: records nested inside an array
@@ -622,7 +660,9 @@ Carefully reasoned allocator. No findings.
 
 #### src/subprocess/subprocess.odin
 Robust. Job objects, inheritable-handle lists, and quoting are all handled.
-- **Data structure/algorithm**, subprocess.odin:84-98: the read loop still
+- **Data structure/algorithm** (not done: no parallel build shows the cost,
+  and overlapped reads would replace a loop that is simple to follow),
+  subprocess.odin:84-98: the read loop still
   polls every 1 ms, with `timeBeginPeriod(1)` while any child runs. Overlapped
   reads or `WaitForMultipleObjects` on the process and pipe events would
   remove the polling. This is a deliberate trade-off, so it only matters if
@@ -636,7 +676,10 @@ Clean. No findings.
 
 #### lsp/jsonrpc.odin
 Fine.
-- **Data structure/algorithm**, jsonrpc.odin:29: after each `fill`, the header
+- **Data structure/algorithm** (not done: both are bounded by one 4096-byte
+  read, since the header search runs only until the header ends and the bytes
+  `remove_range` shifts are what the last read brought past the message),
+  jsonrpc.odin:29: after each `fill`, the header
   search rescans the whole buffer from the start. `remove_range` (`:49`)
   shifts the rest of the buffer after every message. Both are fine at LSP
   message rates; a read offset would avoid both. Low priority.
@@ -656,7 +699,8 @@ Root assignment is subtle but well explained.
 - **Duplication** (done), roots.odin:46 and requests.odin:127-130: both contain the
   loop "any root dirty". `has_pending_work` should call `any_root_dirty`, after
   making it non-private.
-- **Data structure/algorithm**, roots.odin:122-137: `importing_root` is
+- **Data structure/algorithm** (no change needed, as the finding says),
+  roots.odin:122-137: `importing_root` is
   O(roots²) per document, which makes `refresh_roots` O(docs × roots²). It is
   fine for tens of open documents. Note it if workspaces grow.
 - **Data structure/algorithm** (done, except in `write_location`, whose
@@ -676,7 +720,10 @@ Fine.
   append the documentation the same way. Write `value := s.markdown_hover ?
   fmt.tprintf("```loke\n%s\n```", text) : text` and then a single `if
   documented`. Saves 3 lines.
-- **Duplication**, requests.odin:283-290 (`client_kind`) and
+- **Duplication** (not done: the two map into different protocol
+  enumerations, SymbolKind and CompletionItemKind, which number the kinds
+  differently, so a shared helper needs a table for each),
+  requests.odin:283-290 (`client_kind`) and
   editing.odin:23-30 (`completion_client_kind`): the same "member of the
   client's bit set, else an older equivalent" pattern. Likewise
   `outline_kind` (requests.odin:361-378) and `completion_kind`
@@ -685,20 +732,25 @@ Fine.
 
 #### lsp/editing.odin
 Fine.
-- **Duplication**, editing.odin:336-344: `parsed_tokens` is `lex_text` plus
+- **Duplication** (done: `lokec.parse_text_tokens`), editing.odin:336-344: `parsed_tokens` is `lex_text` plus
   `parse` around a scratch `Compiler` (Top 4). Move it into `lokec` next to
   `lex_text`.
 
 #### lsp/rename.odin
 The refusal logic is careful and every refusal is explained.
-- **Data structure/algorithm**, rename.odin:212-218: per-root re-lex and
+- **Data structure/algorithm** (done: Top 7, for sources whose text the roots
+  share), rename.odin:212-218: per-root re-lex and
   re-parse of shared sources (Top 7).
-- **Data structure/algorithm**, rename.odin:250, :389, :399: `visible_named`
+- **Data structure/algorithm** (not done: what is visible depends on the
+  offset within a scope, since a local is visible after its declaration, so a
+  cache per scope would need the query API to say which declarations an
+  offset follows), rename.odin:250, :389, :399: `visible_named`
   and `reaches` each call `query_visible` for every occurrence. Each call
   sorts the file's locals and walks the package scope plus the universe.
   Renaming a widely used package-level name pays this cost for every use.
   Cache the result per (file, innermost scope span) within the request.
-- **Structure**, rename.odin:148-319: one 170-line function (Top 7).
+- **Structure** (done: `rename_in_root`, `program_error`, `binding_refusal`
+  and `rename_in_source`), rename.odin:148-319: one 170-line function (Top 7).
 
 #### lsp/tools.odin
 Fine.
@@ -716,10 +768,10 @@ Fine.
 
 | Pattern | Sites | Proposal |
 | --- | --- | --- |
-| Scratch `Compiler` to lex or parse free-standing text | src/lexer.odin:167 (`lex_text`), src/doc.odin:119, lsp/editing.odin:337 (`parsed_tokens`), lsp/tools.odin:27 | A lexer that runs without a `Compiler`, plus `parse_text_tokens` in `lokec` (Top 4) |
+| Scratch `Compiler` to lex or parse free-standing text | src/lexer.odin:167 (`lex_text`), src/doc.odin:119, lsp/editing.odin:337 (`parsed_tokens`), lsp/tools.odin:27 | A lexer that runs without a `Compiler`, plus `parse_text_tokens` in `lokec` (Top 4) (done; formatting keeps its `Compiler`) |
 | Hand-written recursion that `expr_children` already provides | src/query_index.odin:265-338, src/doc_comments.odin:213-227. Already using it: doc.odin:646, select.odin:514, ast.odin:1477 | Fall back to `expr_children` for the trivial cases (Top 3) |
-| Bracket-depth scanners over tokens | src/parser.odin:383, :481, :927, :977, :1934, :3054; lsp/roots.odin:187; lsp/editing.odin:194, :211, :281; lsp/rename.odin:219 | One `Bracket_Depth` step helper in `lokec`, used by both the parser and the server |
-| Statement walkers (one `switch` over `Stmt` each) | select.odin:796, query_index.odin:137, ast_dump.odin, plus check_stmt, cfg, eval, expand, ast_clone, emit_llvm_stmt outside this group | A `stmt_children` analogue of `expr_children` would serve at least select.odin and query_index.odin. The others need per-node behavior. Low priority |
+| Bracket-depth scanners over tokens | src/parser.odin:383, :481, :927, :977, :1934, :3054; lsp/roots.odin:187; lsp/editing.odin:194, :211, :281; lsp/rename.odin:219 | One `Bracket_Depth` step helper in `lokec`, used by both the parser and the server (not done: see parser.odin) |
+| Statement walkers (one `switch` over `Stmt` each) | select.odin:796, query_index.odin:137, ast_dump.odin, plus check_stmt, cfg, eval, expand, ast_clone, emit_llvm_stmt outside this group | A `stmt_children` analogue of `expr_children` would serve at least select.odin and query_index.odin. The others need per-node behavior. Low priority (not done: those two also bind names or record scopes in most statement kinds) |
 | Reporting `Import_Resolution` failures | src/packages.odin:357-380, src/providers.odin:136-152 | One reporting helper (not done: the two report different codes and messages, so a helper would take both as parameters) |
 | `line_starts` computation | src/source.odin:136-142, lsp/tools.odin:71-73 (and lsp/server_test.odin:1380) | `line_starts_of(text, allocator)` (done) |
 | Enum-to-string switches | build_config.odin:33 (`cpu_level_name`), providers.odin:23 (`provider_slot_name`), ast.odin:695 (`hook_name`), subsystem.odin:29 (`parse_subsystem`) | `[Enum]string` arrays (done), as `OPT_CLANG_FLAGS` and `ast_dump.odin`'s tag tables already are |
@@ -727,10 +779,10 @@ Fine.
 | `kind == .Proc ? proc_type : type` | queries.odin:354, :523, query_index.odin:71 | `symbol_value_type` helper (done) |
 | Bundled-collection test | project.odin:54, :105; packages.odin:513; queries.odin:107; check_expr.odin:2822 | `is_bundled_collection(name)` and `is_bundled_key(key)` helpers (done; check_expr.odin tests `base:` alone and stays) |
 | "Any root dirty" loop | lsp/roots.odin:46, lsp/requests.odin:127-130 | Use one helper (done) |
-| Client capability kind fallback | lsp/requests.odin:283 and :361, lsp/editing.odin:23 and :126 | Shared helper with a fallback table |
-| Copying a list of strings | src/session.odin:45-52, lsp/server.odin:288-300 | `clone_strings` (done for the session) |
+| Client capability kind fallback | lsp/requests.odin:283 and :361, lsp/editing.odin:23 and :126 | Shared helper with a fallback table (not done: see requests.odin) |
+| Copying a list of strings | src/session.odin:45-52, lsp/server.odin:288-300 | `clone_strings` (done for the session; the server builds its lists from JSON and rewrites paths) |
 | `path_key` on a path that is already canonical | lsp/roots.odin:319, :471; lsp/requests.odin:442; lsp/rename.odin:81, :278 | `lokec.dir_key` directly (done where the path came from `place`) |
-| Bound-name lists checked with `slice.contains` | select.odin:459, :575; doc.odin:577, :672; ast.odin:1420-1450 | Consistent and fine at today's sizes. Change only if profiling shows a cost |
+| Bound-name lists checked with `slice.contains` | select.odin:459, :575; doc.odin:577, :672; ast.odin:1420-1450 | Consistent and fine at today's sizes. Change only if profiling shows a cost (no change needed) |
 
 #### Finding counts
 
