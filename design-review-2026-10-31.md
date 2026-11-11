@@ -69,6 +69,18 @@ standard-library.md at the same time. They are under
 [Adopted proposals](#adopted-proposals), and their sections below say so. Line
 counts in this review are those of the versions it examined.
 
+On 2026-11-11 a third pass re-evaluated every proposal still open against the
+language at `807ca6ab`, with probes run on `lokec` 0.9.0 built at `41c0e2d4`
+([Probes](#probes)). It recounted the inventory, and it asked of each proposal
+that offered only keeping or deleting whether a narrower change removes the
+problem. It found two costs the earlier passes had wrong: deleting success
+returns loses a transfer, not four characters
+([4.4](#44-rules-whose-text-is-longer-than-what-they-save)), and an `Uninit(T)`
+cannot be copyable as bytes ([3.3](#33-initializedcount-and-uninitialized-storage)).
+It found one way to keep most of the alias proposal under the default panic
+strategy ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+Where it changed or added to a section, the paragraph begins **Third pass.**
+
 ## Contents
 
 - [Summary](#summary)
@@ -89,18 +101,38 @@ counts in this review are those of the versions it examined.
 
 Loke's individual decisions are well argued, and comments.md records the
 argument for nearly every one. The problem is the sum. The specification is
-about 12,000 lines; it has three spellings of a sum type, two reflection tiers,
-two mutable-borrow modes, four inferred effect systems, 28 attributes, and a
-list of nineteen implicit conversions. Each was added for a reason. The two
+about 11,600 lines; it has three spellings of a sum type, two reflection tiers,
+two mutable-borrow modes, four inferred effect systems, 30 attributes, and a
+list of twenty implicit conversions. Each was added for a reason. The two
 clearest pairs that expressed one idea twice, `Status` beside
 `Result(Unit, E)` and `any_view` beside `dyn`, are gone
 ([Adopted proposals](#adopted-proposals)). Of the pairs that remain, not every
 one is a duplicate: `via` and construction with an allocator differ in a way
 that matters, and `inout` and `^mut T` may ([2.5](#25-one-capability-axis)).
 
-The remaining recommendation with the best ratio of concepts removed to
-expressiveness lost is to **delete** `using` and, if wanted, the splat of a
-typed scalar into a `Simd` ([5](#5-deletion-candidates)).
+The remaining recommendations, after the third pass, best ratio of concepts
+removed to expressiveness lost first:
+
+1. **Delete** `using` ([3.2](#32-using)).
+2. **Replace** `@(initialized)` with a storage type `Uninit(T)`
+   ([3.3](#33-initializedcount-and-uninitialized-storage)). Three of the
+   attribute's four uses in the library already encode one with a one-element
+   array.
+3. **Shrink** runtime reflection to shape ([3.1](#31-runtime-reflection)).
+4. **Narrow** two conversions instead of deleting them: the splat to lane-wise
+   operators, and the distinct-procedure conversion to procedure constants
+   ([2.4](#24-coercions)).
+5. **Leave union layout unspecified** before a release promises it
+   ([6.2](#62-union-layout)); the niches can follow when measured.
+6. **Respell** mutable slicing as `a[mut lo:hi]`
+   ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)).
+
+Two findings are independent of any proposal: a returned construction clones a
+local that a plain `return` would transfer
+([4.4](#44-rules-whose-text-is-longer-than-what-they-save)), and the library
+attaches provenance to a rebuilt pointer by calling through a plain procedure
+type ([Public borrow contracts should stand on their
+own](#public-borrow-contracts-should-stand-on-their-own)).
 
 Except where a section's **What is lost** says otherwise, none of the deletion
 candidates changes what a Loke program can express.
@@ -108,14 +140,15 @@ candidates changes what a Loke program can express.
 ## 1. The shape of the language today
 
 An inventory, counted from design.md and grammar.md, to show where the weight
-is:
+is. The first four rows and the line count were taken again on 2026-11-11; the
+others are as the review first counted them:
 
 | Area | Count | Where it is |
 | --- | --- | --- |
-| Reserved words | 35 | [Keywords](grammar.md#keywords) |
+| Reserved words | 32 | [Keywords](grammar.md#keywords) |
 | Contextual keywords, each with a disambiguation rule | 17 | [Keywords](grammar.md#keywords) |
-| Attributes | 28 | [Attribute categories](design.md#attribute-categories) |
-| Implicit conversions | 19 | [Implicit type conversions](design.md#implicit-type-conversions) |
+| Attributes | 30 | [Attribute categories](design.md#attribute-categories) |
+| Implicit conversions | 20 | [Implicit type conversions](design.md#implicit-type-conversions) |
 | Spellings of a sum type | 3 | `enum`, `union`, `(a: A \| b: B)`; `Option` and `Result` are library unions, and `Status` is a [parametric alias](design.md#parametric-aliases) of `Result(Unit, E)` |
 | Spellings of a product type | 3 | `struct`, `(a: A, b: B)`, `(A, B)` |
 | Type-erasure mechanisms | 1 | `dyn I`, including `dyn proc` |
@@ -127,7 +160,7 @@ is:
 | Checks a `parallel` block's task passes | 7 | [Structured concurrency](design.md#structured-concurrency) |
 | Receiver forms | 4 | `self`, `self: ^`, `self: inout`, `self: move` |
 | Yield modes | 4 | [Yield modes](design.md#yield-modes) |
-| Lines in design.md | 11,982 | |
+| Lines in design.md | 11,609 | 11,982 when first counted |
 
 Three observations follow from the table.
 
@@ -234,10 +267,19 @@ surface. This review endorses it and adds that the same written form should
 carry a procedure's effect summary, so that an `api.loki` tells a reader what
 a call may touch without the body.
 
+**Third pass.** The endorsement is narrowed under
+[Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own):
+the library cases that motivated a written contract are better served by an
+unchecked operation in the body, which leaves the written form for public
+callback types. The `// inferred:` lines that
+[Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21)
+proposes for `api.loki` give a reader the effect summary without any new
+syntax, and should come before a written one.
+
 ### 2.4 Coercions
 
 [Implicit type conversions](design.md#implicit-type-conversions) lists
-nineteen rules. Each is a subtyping or coercion rule that feeds the four-level
+twenty rules. Each is a subtyping or coercion rule that feeds the four-level
 overload ranking. Most are sound and useful (owner to view, `mut` to
 read-only, `dyn` to a composed base, a value to a `dyn I` view as an element of
 a `..dyn I` parameter, unfixed constants). Two deserve attention:
@@ -258,6 +300,43 @@ a `..dyn I` parameter, unfixed constants). Two deserve attention:
   distinct type. The cost to weigh is that every named procedure or procedure
   literal passed where a distinct procedure type is expected then writes the
   conversion.
+
+**Third pass.** Both have a narrower fix than deletion, and it is the same
+one: the conversion stays for a constant and goes for a typed run-time value.
+
+- **The splat belongs to the operators, not to the conversion list.** The
+  conversion applies in every position: a typed `f32` passed to a
+  `Simd(f32, 4)` parameter, initializing one, or returned as one splats
+  ([Probes](#probes)), and so it also feeds overload ranking. What is worth
+  keeping is `v * scale`, the scalar multiple of a vector, and the lane-wise
+  table already describes it for a shift count. So let a lane-wise binary
+  operator take a scalar of the lane type as either operand and apply it to
+  every lane; let an unfixed constant convert wherever a vector is expected,
+  as it does; and write a typed scalar anywhere else as the explicit
+  conversion `Simd(f32, 4)(x)`, which is unambiguous beside the lane-wise
+  conversion because its operand is a scalar. The entry leaves the list,
+  `v * scale` is not lost, and the sentence under
+  [Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering)
+  that keeps a scalar from binding `inout Simd(T, N)` is no longer needed.
+  What is lost is `take(scale)` and `half: Simd(f32, 4) = scale`.
+- **A procedure constant converts; a procedure value does not.** The
+  conversion is implicit in both directions and for a value held in a
+  variable ([Probes](#probes)), which is what undoes `distinct`. It exists
+  for a narrower case: a named procedure or a procedure literal has the
+  structural type of its signature, so without it only a cast could
+  initialize a distinct procedure type. That is an unfixed constant's
+  position, and an unfixed `3` already initializes a `Meters :: distinct f64`
+  ([Probes](#probes)). State it that way: a named procedure or procedure
+  literal converts to a distinct procedure type over its signature, and a
+  value of either type converts to the other explicitly, as for every other
+  distinct type. `run(twice)` keeps working, and a `Handler` can no longer
+  be passed where a plain `proc(n: int) -> int` is expected without saying
+  so. This removes the cost the first draft named.
+
+The probe for the second also showed that the conversion list is incomplete:
+it sends an unfixed integer to "built-in integer types", and the compiler and
+its tests accept one for a distinct type. That is recorded in
+[known-gaps.md](known-gaps.md#an-unfixed-constant-converts-to-a-distinct-type).
 
 ### 2.5 One capability axis
 
@@ -331,6 +410,24 @@ above understate:
   tests, and the examples changes, and what it buys is a row of one table, a
   column of another, and the receiver sentence.
 
+**Third pass.** The first bullet claims more than `inout` delivers. Method
+syntax supplies the marker, so `counter.bump()` and `values.append(1)` change
+their receiver with nothing written at the call
+([Receiver forms](design.md#receiver-forms)); only an argument shows it. The
+case against the fold rests on the other two bullets, which stand. The pair is
+also less of an asymmetry than [2.5](#25-one-capability-axis) first said:
+read-only has the same two forms, `value: T`, which is the caller's value for
+the call, and `^T`, which is a borrow held as a value. `inout T` and `^mut T`
+are the mutable column of that table, and the explanation now in design.md
+says so. The lean against the fold is unchanged.
+
+One thing is left for the compiler. With `bump :: proc(self: ^mut Counter)`,
+`c.bump()` is reported as ``L0363: `Counter` has no field or member `bump` ``
+([Probes](#probes)), which sends the reader looking for a missing declaration.
+A note that `bump` takes `self: ^mut Counter`, which is not a receiver, and
+that the fix is `self: inout` or `Counter.bump(&mut c)`, would make the
+documented exception a diagnosed one.
+
 **A cheaper fix for the asymmetry (adopted).** If both stay, explain them where the
 reader meets the difference. [Capabilities and the one
 rule](design.md#capabilities-and-the-one-rule) can say that a parameter spells
@@ -384,6 +481,22 @@ needs runtime member tables can build them from `fields_of` in a static
 `foreach`, which is the direction the language already prefers. This review
 records it as a judgment call rather than a deletion.
 
+**Third pass: shrink it.** Deleting `any_view` changed what the table is for.
+No value carries a `typeid` any more, so every `typeid` in a program was
+written as `typeid_of(T)` at a place where `T` was known, and at that place
+`fields_of`, `enum_values_of`, and `variants_of` give the same members with
+their types usable. A member table reached from an id alone serves only code
+that kept the id and discarded the type, a registry, and a registry is filled
+at a registration call that has the type. The table is then a second,
+weaker spelling of compile-time reflection, kept in the runtime ABI, where
+[`type` and `typeid`](design.md#type-and-typeid) fixes its layout and the
+compiler rejects a `base:runtime` that differs. What must stay is what
+printing a `typeid` and sizing erased storage need: `id`, `kind`, `name`,
+`size`, `align`, `element`, `key`, and `count`. `bits` and `signed` go with
+the members, since `kind` and `size` say both for an integer. Going further
+and deleting `type_info_of` is not available: `fmt` prints a `typeid` by its
+name, which only a table by id supplies.
+
 ### 3.2 `using`
 
 [Promoted struct fields](design.md#promoted-struct-fields) is Odin's `using`
@@ -393,6 +506,12 @@ bindings, for the saving of one selector (`entity.x` for
 `entity.position.x`). A general-purpose language can live without it; the
 composition it serves is written as plainly with the field named.
 Recommended for deletion, low urgency.
+
+**Third pass.** The recommendation stands, and the reason is sharper than the
+saved selector. In Odin `using` earns its rules by making the outer struct
+usable where the inner one is expected. Loke kept the rules and dropped that:
+methods are not promoted and nothing converts, so a `using` field differs from
+a plain one only in lookup. No narrower form is left to fall back to.
 
 ### 3.3 `@(initialized=count)` and uninitialized storage
 
@@ -412,6 +531,44 @@ partial copy that fails. That is one type's convenience against an attribute
 every reader of a record must know; this review leans toward the primitive but
 records it as a judgment call.
 
+**Third pass: recommend the primitive, with one correction.** How the
+attribute is used decides it. `Small_Array` is the only declaration that
+counts a prefix. The other three, `Ring_Slot` in `core:thread`, the thread
+`Start` block, and `Shared_Block` in `base:runtime`, each write
+
+```loke
+@(initialized = live) item: [1]T,
+live: int,
+```
+
+a one-element array and a count that is 0 or 1, to say that a slot may hold
+no value. That is `Uninit(T)` spelled through a prefix, at the price of a
+word that a strong count or a pair of ring indices already makes redundant.
+`Deque` could not use the attribute at all, since its live elements wrap, and
+holds them in the capacity of a dynamic array whose length stays zero. So the
+language has one need, storage for a `T` that holds no value, and the
+attribute meets one shape of it natively, a second by encoding, and a third
+not at all. `Uninit(T)` meets all three, and an inline hash set or ring
+besides.
+
+The correction: `Uninit(T)` cannot be "trivially copyable as bytes". A record
+holding `[N]Uninit(string)` and no hooks would then copy its owners bit for
+bit and release them twice. It is copyable only where `T` has a trivial
+lifecycle, as Rust's `MaybeUninit<T>` is `Copy` only where `T` is; for any
+other `T` a record that holds one has no generated copy and says so, by the
+rule that [a record with a drop hook says how it is
+copied](design.md#lifecycle-hooks-and-resource-types). Its drop does nothing.
+It must also carry what `T` borrows and the regions `T` is in, which is why
+`Deque` could not hold a `[^]T`: a stored borrow has to stay tracked.
+
+What it costs beyond the first draft's list: `Small_Array` writes five members
+by hand, `hook(copy)`, `hook(drop)`, `==`, `hash`, and `format`, each a loop
+over a view of the live prefix, with the copy's cleanup in an `errdefer`. What
+it removes: the attribute, its count check in every generated operation, the
+`live` fields, and one of the five unchecked syntax forms of
+[The `unsafe` package](design.md#the-unsafe-package), since `unsafe.write`,
+`unsafe.take`, and a view of initialized slots are named operations on a type.
+
 ## 4. Syntax
 
 ### 4.1 Forms that read badly, and fixes that keep diagnostics precise
@@ -427,6 +584,22 @@ parenthesis of `for ((key in counts))` and the parentheses of
 | --- | --- | --- |
 | `(&mut a[:]).indexed()` | `&mut` applied to a slice suffix is a special grammatical case, and a member of the result needs parentheses | A postfix spelling of mutable slicing, `a.slice_mut()` or `a[mut lo:hi]`, which chains like every other postfix and removes the `&mut`-before-slice rule from grammar.md |
 | `(dyn Drawable)(&circle)` | Conversion of a composite type is C-cast-like | Keep. `T(v)` with a parenthesized composite type is one rule for every conversion, and the alternative (`as`) is a keyword |
+
+**Third pass: `a[mut lo:hi]`.** The problem is larger than the parentheses.
+`&a[0:2]` is rejected, "`&` needs an addressable operand", and so is
+`&mut a[:].len()` ([Probes](#probes)): a slice expression is a value, not a
+place. `&mut a[lo:hi]` is therefore not the address operator applied to
+anything. It is a second slicing form that borrows the operator's spelling,
+and `&mut xs[i]` beside it is the real operator and yields a `^mut T`. Of the
+two spellings the table offers, `a[mut lo:hi]` is the one to take. `mut` is
+reserved, so nothing else can begin there; it puts the capability where the
+type `[]mut T` puts it; it keeps mutation visible at the call, which is what
+comments.md ["Mutable slicing is written
+`&mut a[lo:hi]`"](comments.md#mutable-slicing-is-written-mut-alohi) asks of
+the form; and it selects between `operator([:])` overloads by the written
+form as today. A method `a.slice_mut()` would need a second way to say the
+endpoints. The cost is a mechanical rewrite of every `&mut x[lo:hi]`, which
+`lokec -migrate` can do, since the old form has no other reading.
 
 ### 4.2 Verbosity hotspots
 
@@ -453,6 +626,28 @@ parenthesis of `for ((key in counts))` and the parentheses of
   and the receiver) per method. This is Odin's declaration model and is
   consistent with free procedures; no change recommended, but it is where
   the language's line counts come from.
+
+**Third pass.** Both additions are better as general rules than as the two
+special cases above.
+
+- **`some I` is the static twin of `dyn I`, not a callable sugar.** `dyn
+  proc(...)` is already defined as `dyn Callable(...)`. Define `some I(args)`
+  in a parameter's type as a fresh inferred `$T` with the bare bound
+  `I(T, args)`, and `some proc(...)` follows as `some Callable(...)` with no
+  rule of its own. A reader then learns one pair, erased and dispatched
+  through a witness or specialized per argument type, over one type syntax,
+  and the opaque result that
+  [Returning a capture literal](open-questions.md#returning-a-capture-literal)
+  considers is the same word in the other position. Restricted to callables
+  it would be a keyword bought for one interface.
+- **Predeclare the catalogue by the test this review already applied.**
+  [Withdrawn proposals](#withdrawn-proposals) kept `Allocator`, `Shared`, and
+  `Weak` predeclared because the language's own rules name them. The same
+  test covers the catalogue: `foreach` is defined over `Iterable` and
+  `Iterator`, a `dyn proc` is a `dyn Callable`, a map key must be `Hashable`
+  and `Equatable`, and a copy is `Cloneable`'s slot. Fourteen names join the
+  predeclared scope, all shadowable. A project setting that imports `base:`
+  unqualified would add an import form the language otherwise does not have.
 
 ### 4.3 Parsing decisions worth keeping
 
@@ -483,6 +678,31 @@ makes it so (throws, error unions), not by a syntactic case analysis. This
 review would delete it; it is listed as a judgment call because it was adopted
 recently and deliberately.
 
+**Third pass: keep it until a returned construction transfers.** "Four
+characters per return" is wrong for any value that owns something. `return
+list;` transfers an owned local, and a wrapped return inherits that. `return
+.ok(list);` is a variant construction, whose operand is copied like any
+aggregate element: it clones `list` with warning `L0507`, and for a move-only
+value it is error `L0503` until written `return .ok(move(value));`
+([Probes](#probes)). Deleting the rule as proposed would turn every return of
+an owner into that, or into a silent allocation.
+
+The probe shows the asymmetry is there today, apart from success returns.
+`return .err(list);` and `return Pair{list, 1};` clone a local at its last
+use, where `return list;` moves it, because
+[Last-use transfer](design.md#last-use-transfer) covers a binding or an
+assignment and not an aggregate element. So the failure path and a record
+result already pay what the success path is spared. The smaller rule that
+fixes this is one sentence: an owned local or `move` parameter named as an
+operand of the construction a `return` returns transfers as it would if
+returned itself. That is worth adopting whatever happens to success returns.
+With it, deleting them does cost four characters, and the deletion can be
+judged on what is left: a rule that decides by syntactic form, and the fact
+that `return 5;` wraps where `x: Option(int) = 5;` is an error
+([Probes](#probes)), so the wrapping is a property of one statement and not of
+the type. This review would still delete it then; without the transfer rule
+it should stay.
+
 ## 5. Deletion candidates
 
 For a general-purpose language, whether a feature is used in this repository
@@ -491,13 +711,15 @@ thing. Each row names the replacement and what is lost.
 
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
-| Splat of a typed scalar into a `Simd` | `simd.splat(x)`; constant splats stay ([2.4](#24-coercions)) | `v * scale` for a scalar variable `scale` | Low |
-| Distinct-procedure-type conversions | Alias, or explicit conversion ([2.4](#24-coercions)) | The conversion at each site passing a procedure | Low |
+| The implicit splat of a typed scalar | Lane-wise operators take a scalar operand; `Simd(T, N)(x)` elsewhere; constant splats stay ([2.4](#24-coercions)) | `take(scale)` and `v: Simd(f32, 4) = scale` for a scalar variable; `v * scale` stays | Low |
+| Distinct-procedure-type conversion of a value | Explicit conversion; a named procedure or literal still converts ([2.4](#24-coercions)) | Passing a variable of one procedure type as the other without a conversion | Low |
 | `using` | Named selection ([3.2](#32-using)) | One selector per access | Low |
-| `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.5](#25-one-capability-axis)) | The marker at every call that mutates; carets on scalar and whole-value writes | Judgment call; leaning against |
-| Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Four characters per return | Judgment call |
-| `Option.ok_or` | `or_return .Variant` and a `switch` | An eager form for stored absences | Judgment call; the open question keeps it |
-| `Type_Info.members`, `Member_Info`, `Member_Kind` | `fields_of` and `variants_of` at compile time ([3.1](#31-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types | Judgment call |
+| `@(initialized=count)` | `Uninit(T)` and written hooks ([3.3](#33-initializedcount-and-uninitialized-storage)) | `Small_Array`'s generated prefix-aware copy, drop, `==`, `hash`, and `format` | Recommended |
+| `Type_Info.members`, `Member_Info`, `Member_Kind`, `bits`, `signed` | `fields_of` and `variants_of` at compile time ([3.1](#31-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types; a member table reached from an id alone | Recommended |
+| `&mut a[lo:hi]` | `a[mut lo:hi]` ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)) | The resemblance to `&mut x` | Recommended; needs `-migrate` |
+| `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.5](#25-one-capability-axis)) | The marker on every mutated argument; carets on scalar and whole-value writes | Judgment call; leaning against |
+| Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Today the transfer of an owned local, so `.ok(move(x))`; four characters once a returned construction transfers | Keep until then |
+| `Option.ok_or` | `or_return .Variant` and a `switch` | An eager form for stored absences | Keep: a library method that costs the language no rule |
 
 Not recommended for deletion, though a simplification pass might ask:
 per-variant switch cases and union argument expansion (both are defined as
@@ -583,9 +805,11 @@ into undefined behavior that the optimizer exploits, so they come last:
   until they are closed. When this was written, a call moving carriers between
   elements or fields and a borrow stored through a mutable traversal binding were
   accepted with two live mutable carriers to one place; both have since been
-  fixed, and [known-gaps.md](known-gaps.md#gaps) lists what remains, such as
-  a whole element copied through a view parameter, which was not seen by a call
-  until 2026-11-01.
+  fixed, as was a whole element copied through a view parameter, which a call
+  did not see until 2026-11-01. On 2026-11-11
+  [known-gaps.md](known-gaps.md#gaps) lists no borrow-checker gap; several
+  were found and closed in the ten days before, so "none known" is a weaker
+  statement than "none".
   Accepted programs like those alias as C code would; with `noalias` at
   `-opt=speed` they can miscompile.
 - State an aliasing rule for unchecked code in design.md.
@@ -622,6 +846,43 @@ into undefined behavior that the optimizer exploits, so they come last:
   support only if the gain under `-panic=abort` justifies a second set of
   optimization semantics.
 
+**Third pass: scoped metadata works under `unwind`.** The paragraph above
+mentions `!alias.scope` and `!noalias` metadata as a way to avoid changing the
+calling convention. It is more than that: it is the form of the fact that
+survives the default panic strategy. A `noalias` parameter says that nothing
+else reaches the pointee while the procedure runs, the panic call included,
+and that is the part `unwind` breaks. Metadata on a load and a store says only
+that those two accesses do not overlap. The panic call carries none, so LLVM
+keeps treating it as reading everything, and no store before it is dead.
+
+Two probes with Clang 22 at `-O2` ([Probes](#probes)) bear this out. The
+`fill` program that prints `drop sees 0` with a `noalias` parameter prints
+`drop sees 3` with the same fact written as metadata on its accesses. And in
+a kernel `dst[i] = src[i] +% k^` over a `[]mut int`, a `[]int`, and a `^int`,
+the unannotated loop reloads `k^` after every store and stays scalar, while
+the loop with the store in a scope that the loads exclude loads `k^` once
+and is vectorized.
+
+This changes the proposal's shape:
+
+- Emit the metadata on accesses through checked carriers, under both panic
+  strategies. There is then one set of optimization semantics, not a second
+  one for `-panic=abort`, and the slice convention stays as it is.
+- An access through a `rawptr`, a C pointer, or a pointer of unknown
+  provenance gets no metadata and may alias anything. The rule for unchecked
+  code shrinks to what [What is not checked](design.md#what-is-not-checked)
+  nearly says already: unchecked code may not make two checked carriers that
+  break the one rule. A cast that only drops provenance, as `queue_of` does,
+  needs no audit.
+- What metadata cannot give is what `noalias` gave across a call: a callee
+  that is not passed the pointer is still assumed to reach the pointee. That
+  remainder is the only part left for `-panic=abort`, and it is unlikely to
+  be worth a second mode.
+- The soundness prerequisite is unchanged. An accepted program with two live
+  mutable carriers to one place is miscompiled by either form.
+
+The measurement step stays first, with metadata in place of the attribute.
+
 ### 6.2 Union layout
 
 The open item on compiler-chosen union layout
@@ -629,6 +890,23 @@ The open item on compiler-chosen union layout
 is endorsed: `Result(Option(T), E)` and a `Result(Small, Enum)` should fit
 their niches, with `@(repr=...)` for a stable layout where foreign code or
 serialization needs one.
+
+**Third pass: unspecify first.** The proposal has a cheap half and a costly
+half, and only the cheap one is urgent. [Representation](design.md#representation)
+promises a payload region followed by a tag, and
+[Compile-time reflection](design.md#compile-time-reflection) says a variant's
+`index` "is also its tag". Every program that reads a union's bytes may come
+to depend on both, and each release under
+[releasing.md](releasing.md) makes them harder to take back. Yet checked code
+observes neither, only the size: a union is not
+[foreign-ABI-safe](design.md#foreign-abi-safe-types) apart from the `Option`
+of a non-null reference, whose null niche must stay promised, and
+`unsafe.transmute` already gives a union no compile-time meaning. So the first
+step is a deletion from the specification: a union's size and alignment are
+constants, its layout and tag values are the compiler's, and the null niche is
+the one guarantee. That costs no compiler work and no `@(repr)`, which can
+wait for the first program that needs a stable layout. Choosing better niches
+is then an optimization to measure, on the compiler review's terms.
 
 The [small-value ABI observations](compiler-optimizations-2026-10-31.md#small-values-and-the-existing-abi)
 need no language change and are recorded in the compiler review.
@@ -668,18 +946,40 @@ compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
 The independent compiler work has its own [suggested order](compiler-optimizations-2026-10-31.md#suggested-order).
 
-1. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
-   in this order. First the prerequisites, which are correctness work in their
-   own right: close the borrow-checker gaps 6.1 lists, add a read component to
-   the global effects, and state the aliasing rule for unchecked code in
-   design.md. Then, after the compiler review's
+The order after the third pass puts first what waiting makes harder to
+change, then the cheapest:
+
+1. Specification only: leave union layout and tag values unspecified, keeping
+   the null niche ([6.2](#62-union-layout)), and complete the conversion list
+   for an unfixed constant and a distinct type
+   ([known-gaps.md](known-gaps.md#an-unfixed-constant-converts-to-a-distinct-type)).
+2. A returned construction transfers an owned local operand
+   ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
+   clones the failure path and record results make today, and it is what
+   deleting success returns would wait for.
+3. Delete `using` ([3.2](#32-using)), and narrow the two conversions of
+   [2.4](#24-coercions).
+4. `Uninit(T)` in place of `@(initialized)`
+   ([3.3](#33-initializedcount-and-uninitialized-storage)), moving the four
+   library declarations with it, and shrink `Type_Info`
+   ([3.1](#31-runtime-reflection)).
+5. `a[mut lo:hi]`
+   ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise))
+   and the reserved `static` and `thread_local`
+   ([4.3](#43-parsing-decisions-worth-keeping)), together, since both need
+   `lokec -migrate`.
+6. Predeclare the catalogue, then decide `some I`
+   ([4.2](#42-verbosity-hotspots)); the first shortens every bound, so the
+   second is judged on what remains.
+7. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+   The read effect is in place and no borrow-checker gap is known. After the
+   compiler review's
    [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
-   measure by adding `noalias` by hand to the
-   `bench/` kernels' IR. Only if that pays, emit `noalias` (and
-   `noalias readonly` for `^T`) under `-panic=abort`, starting with `^mut T`,
-   `inout`, and `self: ^mut` parameters. No capture attributes: LLVM infers
-   them for internal procedures.
-2. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
+   measure by adding scoped alias metadata by hand to the `bench/` kernels'
+   IR. If that pays, emit it for accesses through checked carriers under both
+   panic strategies. No `noalias` parameters under `unwind`, and no capture
+   attributes: LLVM infers them for internal procedures.
+8. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
    last: it is the largest surface change, and it needs `lokec -migrate` able to
    rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
@@ -936,7 +1236,7 @@ the repository root, at `5580637f`, emitted IR for this program with
 package main;
 import "core:fmt";
 
-Box :: struct { n: int }
+@(move_only) Box :: struct { n: int }
 
 impl Box {
 	release :: hook(drop) proc(self: inout Box) { fmt.println("drop sees", self.n); }
@@ -966,6 +1266,66 @@ with noalias:   drop sees 0
 In the optimized IR of the second build, the `store i64 3` before the call to
 `loke_rt_v1_panic` is gone. Both builds also show `readonly captures(none)`
 on internal procedures that the emitter wrote without them, inferred by LLVM.
+
+On 2026-11-11 the probe was repeated with Clang 22. The listing above now
+carries the `@(move_only)` that the 2026-11-01 run did not need: a record with
+a drop hook says how it is copied, and is `L0747` otherwise. The two results
+were the same, and a third
+build, with no `noalias` and the fact written as metadata instead, kept the
+store: `!alias.scope` on the load and the store through `b`, and `!noalias`
+naming that scope on the load through `xs`.
+
+```text
+as emitted:            drop sees 3
+with noalias:          drop sees 0
+with scoped metadata:  drop sees 3
+```
+
+**Scoped metadata removes a reload and lets a loop vectorize.** For
+
+```loke
+add_into :: proc(dst: []mut int, src: []int, k: ^int) {
+	foreach (i in 0 ..< dst.len()) { dst[i] = src[i] +% k^; }
+}
+```
+
+the emitted IR was optimized by Clang 22 at `-O2` twice, with `add_into`
+marked `noinline`: as emitted, and with `!alias.scope` on the store to `dst`
+and `!noalias` naming that scope on the loads from `src` and `k`. LLVM
+specialized the one call's length of four in both. As emitted, the body is
+four scalar adds, each after a fresh `load` of `k`. With the metadata it
+loads `k` once and does two `<2 x i64>` adds.
+
+**The third pass's language probes**, all with `lokec` 0.9.0 built at
+`41c0e2d4`:
+
+- *A typed scalar splats in every position.* With `scale: f32`,
+  `take(scale)` for a `Simd(f32, 4)` parameter, `c: Simd(f32, 4) = scale`,
+  and `return x;` from a procedure returning `Simd(f32, 4)` are all accepted
+  and print `[2.0, 2.0, 2.0, 2.0]`.
+- *A distinct procedure type converts both ways, for values too.* With
+  `Handler :: distinct proc(n: int) -> int`, a named `twice`, and
+  `f: proc(n: int) -> int = twice`, all of `h: Handler = twice`,
+  `h2: Handler = f`, `g: proc(n: int) -> int = h`, `run(f)` for a `Handler`
+  parameter, and `plain(h)` for a plain one are accepted.
+- *An unfixed constant initializes a distinct type.* `m: Meters = 3;` with
+  `Meters :: distinct f64` and `i: Id = 7;` with `Id :: distinct int` are
+  accepted.
+- *Only `return` wraps.* `return 5;` in a procedure returning `Option(int)`
+  is accepted; `x: Option(int) = 5;` is ``L0352: 5 is not representable by
+  `Option(int)` ``.
+- *A returned construction clones.* With `list := [dynamic]int{};` as an
+  owned local, `return list;` in a `Result([dynamic]int, E)` procedure is
+  silent, and `return .ok(list);`, `return .err(list);` in a
+  `Result(int, [dynamic]int)` one, and `return Pair{list, 1};` each draw
+  `L0507`, "clones `list`, which may allocate". For a `@(move_only)` record
+  `return .ok(o);` is `L0503`.
+- *`&mut a[lo:hi]` is not the address operator.* For `a: [4]int`,
+  `&a[0:2]` is ``L0357: `&` needs an addressable operand``, and so is
+  `&mut a[:].len()`.
+- *A `self: ^mut` method is reported as missing.* With
+  `bump :: proc(self: ^mut Counter)` in `impl Counter`, `c.bump()` is
+  ``L0363: `Counter` has no field or member `bump` ``.
 
 **A callee reading a global it holds `^mut` to** was accepted by the same
 compiler; the [read effect](design.md#global-write-effects) now rejects it.
@@ -1004,6 +1364,27 @@ access and `[^]mut T` for writing, with an unchecked cast required to
 strengthen capability. It would change every foreign signature in `core`, and
 foreign pointer use would still require lifetime and bounds obligations;
 constness alone does not establish either.
+
+**Third pass (2026-11-11).** Neither half is recommended as written, and each
+has a smaller form.
+
+- *No `unsafe { ... }` block yet.* Its one use that the file import cannot
+  serve is a caller-owed precondition, and no library exports one. What can be
+  done now is to shrink the syntax that the import licenses.
+  [The `unsafe` package](design.md#the-unsafe-package) lists five unchecked
+  forms that are syntax rather than named members. `Uninit(T)`
+  ([3.3](#33-initializedcount-and-uninitialized-storage)) turns the
+  `@(initialized)` field into named operations on a type, leaving the three
+  pointer forms and `x: T = ---`, each of which already shows a C pointer, a
+  `rawptr`, or `---` at its use. A file-wide permission over four forms that
+  are visible where they occur is close to what the block would give.
+- *Constness is mostly expressible already.* `^T` and `^mut T` are
+  foreign-ABI-safe and lower to C pointers, with `Option` for a nullable one
+  ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)), so a binding
+  can spell `const T *` to one object today. What `[^]mut T` would add is a
+  read-only *array* pointer, `const T *` with a length beside it. That is a
+  narrower gain than the proposal implies, against a change to every foreign
+  signature in `core`.
 
 ### Performance opportunities and actual semantic limits
 
@@ -1089,6 +1470,41 @@ borrow of the guard, though items carry only process-lifetime borrows, so
 provenance. `Deque.slots` goes through a plain procedure type for the same
 reason as `Monitor_Guard.read`. A written contract could say all three, and
 replace the `Shared` special case.
+
+**Third pass (2026-11-11): say it in the body, not in the signature.** The
+library cases above are one problem, and it is not a public contract. A
+pointer rebuilt from raw storage has no provenance, and the author knows what
+it borrows. Today the library says so by a trick that appears three times, in
+`Deque.slots`, `Deque.ring_slots`, and `Monitor_Guard.read`:
+
+```loke
+slots :: proc(self: ^) -> []T {
+	reach: proc(self: ^Deque(T)) -> []T = Deque(T).slots_of;
+	return reach(self);
+}
+```
+
+The helper is stored in a local of plain procedure type only so that the call
+through it "conservatively derives from every borrowed argument"
+([Procedure result contracts](design.md#procedure-result-contracts)). The
+conservative fallback is being used as the mechanism, and `Shared(T).get`
+gets the same result from a rule inside the compiler.
+
+A named unchecked operation states it directly: `unsafe.borrowed(view, from)`,
+say, returns `view` with the root and region provenance of `from`, as
+`unsafe.raw_data` discards provenance and a conversion from `rawptr` asserts
+an address. It is a promise like the rest of `core:unsafe`, it adds no syntax
+to signatures, and with it the three helpers lose their indirection and
+`Shared(T).get` can be library code. `Channel`'s `rawptr` cast already states
+its half, dropping provenance, directly.
+
+The written result contract is then left with the case that is truly about a
+public type: a callback whose result borrows one field of an argument or one
+allocator. For that, extend the vocabulary a parameter already has rather
+than design a result-side language. `@(escape=none)` excludes a whole
+argument today; the missing precision is a path, so that a level can be
+written for `list.items` and not for `list`. Whether that case occurs often
+enough to build is still unshown.
 
 ### Thread transfer needs a visible contract
 
