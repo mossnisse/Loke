@@ -30,7 +30,7 @@ checklist.
   the default provider's, so two tasks of a `parallel` block that each built or grew such an owner
   compiled, and could use one arena at once. They are now `L0732`. Upgrade by passing each task an
   allocator of its own, or by building with the default provider.
-- A [tree input](compiler-guide.md#testing-a-tree) skips a directory whose name begins with `_`,
+- A [tree input](compiler-guide.md#trees) skips a directory whose name begins with `_`,
   as it skips one beginning with `.`, so a project can keep packages meant not to compile there and
   still test its whole tree. A package under such a directory was tested and is now passed over.
   Upgrade by renaming the directory, or by naming it as an input of its own.
@@ -1202,6 +1202,16 @@ checklist.
 
 ### Added
 
+- [`@(positional)`](design.md#positional) on a struct's declaration makes its field order part of
+  its public interface, so another package may write its literal positionally and destructure it:
+  `geom.Point{3, 4}` and `x, y := p`, which stay `L0709` and `L0708` for a struct without it.
+  `core:math/linalg` marks `Vector2`, `Vector3`, and `Vector4`, so
+  `linalg.Vector3(f32){1, 2, 3}` is a literal in any package.
+- `-fmt`, `-fmt-check`, `-migrate`, `-migrate-check`, `-api`, and `-api-check` take a
+  [tree](compiler-guide.md#trees), as `-test` does: `lokec ... -fmt-check` lists every unformatted
+  file of a project, and `lokec src/... -api-check` every stale interface file. With a tree, each
+  package writes or compares its own `api.loki` only, so one that several packages import is listed
+  once.
 - `core:log` has [`Writer_Sink`](standard-library.md#writer-sink), a sink that writes the standard
   logger's lines to any `io.Writer` it owns, such as an `fs.File`: `log.writer_sink(move(file))`.
   Each record reaches the writer whole, in one sequence of writes under a lock, and a record the

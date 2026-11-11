@@ -180,6 +180,9 @@ Type_Info :: struct {
 	// design.md "@(packed)": no inter-field padding, natural alignment 1 (an
 	// `@(align=N)` may still raise it).
 	packed:        bool,
+	// design.md "@(positional)": the field order is public, so another package
+	// may write a positional literal and destructure (`record_order_is_foreign`).
+	positional:    bool,
 	// `@(move_only)` suppresses the generated ownership-copy operations.
 	// This bit records an explicit leaf declaration; containing records inherit
 	// it through lifecycle classification.

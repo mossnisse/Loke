@@ -1,7 +1,8 @@
 // standard-library.md "`core:math/linalg`": named records, so a
 // component reads as `p.x`, with the layout of `[N]T`. The three types are the
 // same surface at three lengths, written out, since a record cannot be generic
-// over its field names.
+// over its field names. `x`, `y`, `z`, `w` is the order a vector means, so each
+// is `@(positional)`.
 @(public)
 package linalg;
 
@@ -10,17 +11,17 @@ import "core:fmt";
 import "core:math";
 
 /// A 2-component column vector, laid out as `[2]T`.
-Vector2 :: struct($T: type) where interfaces.Numeric(T) {
+@(positional) Vector2 :: struct($T: type) where interfaces.Numeric(T) {
 	x, y: T,
 }
 
 /// A 3-component column vector, laid out as `[3]T`.
-Vector3 :: struct($T: type) where interfaces.Numeric(T) {
+@(positional) Vector3 :: struct($T: type) where interfaces.Numeric(T) {
 	x, y, z: T,
 }
 
 /// A 4-component column vector, laid out as `[4]T`.
-Vector4 :: struct($T: type) where interfaces.Numeric(T) {
+@(positional) Vector4 :: struct($T: type) where interfaces.Numeric(T) {
 	x, y, z, w: T,
 }
 

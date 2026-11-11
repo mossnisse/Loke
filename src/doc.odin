@@ -44,12 +44,13 @@ document_project :: proc(c: ^Compiler, root: Package_Id) -> string {
 
 // `-api` writes the interface file of each package `-doc` documents, and
 // `-api-check` lists the ones that differ from what `-api` would write. The
-// status is 1 when one differs or cannot be written.
-write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool) -> int {
+// status is 1 when one differs or cannot be written. With `root_only`, only the
+// root package's: a tree names each package itself (`write_tree_interfaces`).
+write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool, root_only := false) -> int {
 	status := 0
 	for id in documented_packages(c, root) {
 		pkg := package_of(c, id)
-		if len(pkg.files) == 0 {
+		if len(pkg.files) == 0 || root_only && id != root {
 			continue
 		}
 		path := join_path({path_dir(c.sources[pkg.files[0].file].path), INTERFACE_FILE})

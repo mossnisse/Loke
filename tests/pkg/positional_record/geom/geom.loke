@@ -1,0 +1,18 @@
+package geom;
+
+// design.md "@(positional)": these records promise their field order to
+// importers.
+@(public, positional)
+Point :: struct {
+	@(public) x: int,
+	@(public) y: int,
+}
+
+@(public, positional)
+Pair :: struct($T: type) {
+	@(public) first: T,
+	@(public) second: T,
+}
+
+@(public)
+origin :: proc() -> Point { return {0, 0}; }

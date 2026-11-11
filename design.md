@@ -1922,7 +1922,8 @@ A nominal record (a struct, or a `distinct` type over one) destructures only in
 the package that declares its fields, since that package may reorder them.
 Elsewhere the value is bound whole and its fields selected by name. An
 [anonymous record](#anonymous-records) destructures anywhere: its field order is
-its type identity.
+its type identity. So does a struct declared [`@(positional)`](#positional),
+which promises its field order.
 
 ```loke
 x, y := geom.origin();          // ERROR: `geom.Point`'s fields are declared in `geom`
@@ -1989,7 +1990,9 @@ A positional element is allowed only in the package that declares the struct's
 fields; elsewhere, as with [destructuring](#destructuring), every element names
 its field, so a reordering in the declaring package cannot silently move a value
 into another field of the same type. `geom.Point{3, 4}` is an error outside
-`geom`, and `geom.Point{x = 3, y = 4}` is the literal.
+`geom`, and `geom.Point{x = 3, y = 4}` is the literal. A struct declared
+[`@(positional)`](#positional) promises its field order, so its literal may be
+positional in any package.
 
 Elements evaluate **in source order**, whatever field each one names, and are
 then placed into field-order storage.
@@ -10744,6 +10747,7 @@ written to its right.
 | `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
 | `@(wakes_on_drop)` | struct and union types | [a drop may wake threads waiting on what the value borrows](#wakes_on_drop) |
 | `@(fieldwise_copy)` | struct types with a `hook(drop)` | [keeps the generated field-wise copy beside the hook](#fieldwise_copy) |
+| `@(positional)` | struct types | [the field order is public, for literals and destructuring in other packages](#positional) |
 | `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters and `..` packs of procedure type | [the argument goes to another thread](#cross_thread) |
 | `@(packed)`, `@(align=N)` | struct types; `align` also union types | [record layout](#packed) |
 | `@(allocator_reset)` | `Allocator` parameters | [a call may reset the region](#allocator_reset) |
@@ -11146,6 +11150,33 @@ needs once. It is an error on a record that has no generated copy to keep: a
 `@(move_only)` one, one with a `hook(copy)`, or a non-generic one with a move-only
 field. It is also an error on a record with no `hook(drop)`, so that adding a hook
 later still asks for a decision.
+
+#### `@(positional)`
+
+Written on a struct's declaration. The order of the struct's fields is part of
+its public interface, as the order of a procedure's parameters is, so another
+package may write its [literal](#struct-literals) positionally and
+[destructure](#destructuring) it. It takes no value. Reordering, adding, or
+removing a field of such a struct can break the packages that use it. A generic
+struct's mark holds for all of its instances, and a `distinct` type over the
+struct has the struct's fields, so it is positional too.
+
+```loke
+// In `geom`.
+@(public, positional) Point :: struct {
+	@(public) x, y: int,
+}
+
+// In another package.
+p := geom.Point{3, 4};
+x, y := p;
+```
+
+The attribute changes nothing else: a field the other package cannot see still
+cannot be supplied or bound there, and in the declaring package every struct is
+positional without it. It is for a record whose order is its meaning, such as
+the `x`, `y`, `z` of a vector. A record whose fields are told apart only by
+their names should stay without it.
 
 #### `@(cross_thread)`
 

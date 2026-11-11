@@ -574,16 +574,19 @@ impl Matrix($T, $R, $C) {
 }
 
 // A 2-component column vector, laid out as `[2]T`.
+@(positional)
 Vector2 :: struct($T: type) where interfaces.Numeric(T) {
 	x, y: T,
 }
 
 // A 3-component column vector, laid out as `[3]T`.
+@(positional)
 Vector3 :: struct($T: type) where interfaces.Numeric(T) {
 	x, y, z: T,
 }
 
 // A 4-component column vector, laid out as `[4]T`.
+@(positional)
 Vector4 :: struct($T: type) where interfaces.Numeric(T) {
 	x, y, z, w: T,
 }

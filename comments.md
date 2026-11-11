@@ -1841,6 +1841,17 @@ value without cleanup. A separate unsafe operation that marks dead storage live
 would mainly let callers bypass conditional drop tracking. It has no demonstrated
 use that justifies pretending unwritten storage contains a value.
 
+### Pinning and self-referential types
+
+Graphs, arenas, and records that view their own storage need tools other than
+disjoint access. A graph or arena uses stable integer or generational handles
+in place of pervasive pointers. A record that owns a buffer and holds views
+into it would need address stability and an internal-borrow contract; non-null
+pointers do not give either. Offsets and handles need no language feature, as
+`json.Document` shows by storing node offsets and computing its views in
+accessors, so they come before general pinning or self-referential types, which
+wait for a program that offsets and handles cannot serve.
+
 ### Hand-written package header files
 
 A public-signature file maintained beside the implementation would duplicate
@@ -2266,12 +2277,32 @@ field reordering silently swap values at outside call sites. Requiring names
 outside the owning package preserves encapsulation. Anonymous records remain
 positional because their field order participates in structural identity.
 
+[`@(positional)`](design.md#positional) lets a declaration give that protection
+up. For a vector the order of `x`, `y`, `z` is the type's meaning and is already
+promised to foreign code as its layout, so naming every field at every literal
+bought nothing, and `from_components` only moved the positional list into a
+call. The promise is the declaring package's to make, so the opt-in is on the
+declaration, not at the use; a use-site escape would let an importer rely on an
+order nobody promised. It is not inferred from a struct's fields all being
+public, since most such records, a configuration or a parsed header, are told
+apart by their names and do get reordered.
+
 ### Diverging procedures belong to the declaration
 
 `-> !` lets calls such as `panic` satisfy any expected result position and lets
 the checker recognize paths that cannot return. Divergence belongs to the
 declaration rather than the procedure-value type: propagating it through values
 would require a subtyping rule without an established use.
+
+`-> !` means only that the procedure never returns normally: `panic`, process
+exit, an endless loop. It does not mean that the procedure returns an error,
+may panic, or succeeds with no payload. `@(noreturn)` would state the same
+fact, but an attribute reads as advice about a declaration, and this one
+changes typing: the call fits any expected result position and ends the path
+it is on. The result position is where a reader looks for what a call gives
+back, so that is where it says nothing comes back. `-> never` would be right
+only beside a real uninhabited type, with its rules for procedure types and
+conversions, which nothing else needs.
 
 ### The allocation built-ins follow the `try_` convention
 
@@ -2437,6 +2468,18 @@ running its whole tree. A name is enough for that; an attribute on the package
 clause would have to be parsed before the walk could skip the directory, and a
 list in `loke.project` would serve only a tree that has one. Packages run one after another, like
 tests, so the report is deterministic.
+
+`-fmt`, `-migrate`, and `-api` take a tree as `-test` does: whether a project
+is formatted, and whether its interface files are current, are questions about
+a tree too. With `-api`, each package answers for its own interface file and
+not, as a single directory does, for those of the project packages it imports.
+The tree already names the packages, and following imports would list one
+shared package's stale file once for every package that imports it. So a
+project needs no list of the packages `-api-check` covers. This repository's
+`tests/pkg_err` cases stay where they are: `tests/` holds corpora, most of them
+one program per file, as `tests/run` and `tests/err` do, which a tree would
+read as one package per directory, so moving one corpus under a `_` directory
+would not make `tests/...` a tree worth running.
 
 ## Changed syntax
 
@@ -2628,6 +2671,18 @@ Foreign bindings keep external symbol names and ABI types, then expose ordinary
 Loke wrappers where useful. Staying close to Odin's declaration model makes
 bindings easier to port, while explicit foreign-string and nullable-pointer
 types keep ownership and representation promises visible.
+
+### Every file names its package
+
+Every file starts with a `package` clause, though the files of one directory
+must all name the same package. The clause is where a file says what is its
+own: `@(public)` on it makes that file's declarations public by default, the
+root package's clause selects the providers and the subsystem, and its doc
+comment is part of the package's overview. A file given alone as the input, as
+`lokec hello.loke`, says what package it is with no directory to say it. A file
+saved into the wrong directory is `L0328`, where an inferred name would make it
+part of that package without a word. One line per file is a small price for
+those.
 
 ### Cold procedures stay out of line
 
@@ -3169,7 +3224,7 @@ boundaries and API shapes follow a few common choices:
   protocol that needs globally unique keys checks for them explicitly.
 - **A JSON document stores offsets, not views.** A record holding a buffer and
   views into it would need address stability and an internal-borrow rule
-  ([Self-referential storage](open-questions.md#self-referential-storage)).
+  ([Pinning and self-referential types](#pinning-and-self-referential-types)).
   Node offsets into the source or the decoded text, with views computed by
   accessors wherever the document now is, need no language feature, and the
   document's input is a union of a borrowed view and an owned string.
@@ -3718,6 +3773,8 @@ each dependency's source, version, immutable commit, and checksum
 ([Packages and dependencies](future-plans.md#packages-and-dependencies)). What
 identity and compatibility boundary that selection works within is open
 ([Package and import versioning](open-questions.md#package-and-import-versioning)).
+Why each file still names its package is under
+[Every file names its package](#every-file-names-its-package).
 
 ### A CPU level changes instructions, not results
 

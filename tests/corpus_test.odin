@@ -1239,7 +1239,8 @@ a_tree_tests_each_package :: proc(t: ^testing.T) {
 		testing.expectf(t, os.exists(path) == output.built, "%s: built is %v", output.path, !output.built)
 	}
 
-	// Only a test build takes a tree, spelled with either separator.
+	// An action that stops at one package refuses a tree, spelled with either
+	// separator.
 	rejected, _, rejected_stderr, rejected_err := exec(
 		os.Process_Desc{command = []string{compiler_path(), "tests\\test_tree\\...", "-doc"}},
 		context.allocator,
@@ -1247,7 +1248,7 @@ a_tree_tests_each_package :: proc(t: ^testing.T) {
 	testing.expect(t, rejected_err == nil, "cannot run the rejected tree")
 	testing.expectf(t, rejected.exit_code == 2, "-doc on a tree exited with %d", rejected.exit_code)
 	testing.expect(
-		t, strings.contains(string(rejected_stderr), "needs -test or -build-mode=test"),
+		t, strings.contains(string(rejected_stderr), "needs -test, -build-mode=test, -fmt, -migrate, or -api"),
 		"missing tree diagnostic",
 	)
 }
@@ -1692,6 +1693,48 @@ formatting_a_directory_reads_its_name_literally :: proc(t: ^testing.T) {
 	testing.expectf(t, strings.contains(string(text), "\tx := 1;"), "-fmt left the file unformatted:\n%s", string(text))
 }
 
+// compiler-guide.md "Trees": `-fmt-check` and `-fmt` take the files of each
+// package of a tree, and of no directory the tree skips.
+@(test)
+a_tree_formats_each_package :: proc(t: ^testing.T) {
+	root := fmt.tprintf("%s/fmt-tree", TMP)
+	remove_tree(root)
+	messy := "package inner;\nhelper :: proc() {\nx := 1;\n_ = x;\n}\n"
+	paths := []string {
+		fmt.tprintf("%s/top.loke", root),
+		fmt.tprintf("%s/below/inner/inner.loke", root),
+		fmt.tprintf("%s/_set_aside/aside.loke", root),
+	}
+	for path in paths {
+		os.make_directory_all(filepath.dir(path))
+		_ = os.write_entire_file(path, transmute([]u8)messy)
+	}
+	tree := fmt.tprintf("%s/...", root)
+
+	checked, stdout, _, err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-fmt-check"}}, context.allocator)
+	testing.expectf(
+		t,
+		err == nil && checked.exit_code == 1 && strings.contains(string(stdout), "top.loke") &&
+		strings.contains(string(stdout), "inner.loke") && !strings.contains(string(stdout), "aside.loke"),
+		"-fmt-check on a tree exited with %d and listed:\n%s", checked.exit_code, string(stdout),
+	)
+	formatted, _, stderr, format_err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-fmt"}}, context.allocator)
+	testing.expectf(t, format_err == nil && formatted.exit_code == 0, "-fmt on a tree failed:\n%s", string(stderr))
+	for path, index in paths {
+		text, _ := os.read_entire_file(path, context.temp_allocator)
+		skipped := index == 2
+		testing.expectf(
+			t, strings.contains(string(text), "\tx := 1;") != skipped,
+			"%s: -fmt on a tree left it as\n%s", path, string(text),
+		)
+	}
+	again, again_out, _, again_err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-fmt-check"}}, context.allocator)
+	testing.expectf(
+		t, again_err == nil && again.exit_code == 0 && len(again_out) == 0,
+		"-fmt-check on the formatted tree exited with %d and listed:\n%s", again.exit_code, string(again_out),
+	)
+}
+
 // A `[]string{...}` literal lives on the stack, and these outlive the caller.
 @(private)
 format_check :: proc(dir: string) -> Exec {
@@ -1811,6 +1854,54 @@ interface_files_match_their_packages :: proc(t: ^testing.T) {
 	testing.expectf(
 		t, file_err == nil && file_input.exit_code == 2 && strings.contains(string(file_stderr), "needs a directory"),
 		"-api accepted a file input (exit %d)\n%s", file_input.exit_code, string(file_stderr),
+	)
+}
+
+// compiler-guide.md "Trees": `-api` and `-api-check` take each package of a
+// tree as a root of its own, and each answers for its own interface file, so
+// one that another package of the tree imports is written and listed once.
+@(test)
+a_tree_writes_each_interface_file :: proc(t: ^testing.T) {
+	copy := fmt.tprintf("%s/api-tree", TMP)
+	remove_tree(copy)
+	goldens := make([dynamic]string, context.temp_allocator)
+	copy_package_sources("tests/api", copy, &goldens)
+	testing.expect(t, len(goldens) > 3, "no interface-file cases found")
+	tree := fmt.tprintf("%s/...", copy)
+
+	// Nothing is written yet, so every package's file is stale.
+	missing, missing_out, _, missing_err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-api-check"}}, context.allocator)
+	testing.expectf(
+		t, missing_err == nil && missing.exit_code == 1 && strings.count(string(missing_out), "api.loki") == len(goldens),
+		"-api-check on a tree without interface files exited with %d and listed:\n%s", missing.exit_code, string(missing_out),
+	)
+	written, _, stderr, write_err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-api"}}, context.allocator)
+	if !testing.expectf(t, write_err == nil && written.exit_code == 0, "-api on a tree failed:\n%s", string(stderr)) {
+		return
+	}
+	for golden in goldens {
+		expected, _ := os.read_entire_file(golden, context.temp_allocator)
+		got, read_err := os.read_entire_file(fmt.tprintf("%s%s", copy, strings.trim_prefix(golden, "tests/api")), context.temp_allocator)
+		testing.expectf(
+			t, read_err == nil && normalise(string(got)) == normalise(string(expected)),
+			"%s: -api on a tree wrote\n%s", golden, string(got),
+		)
+	}
+	current, current_out, _, current_err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-api-check"}}, context.allocator)
+	testing.expectf(
+		t, current_err == nil && current.exit_code == 0 && len(current_out) == 0,
+		"-api-check on the written tree exited with %d and listed:\n%s", current.exit_code, string(current_out),
+	)
+
+	// `geometry` imports `units`: the edited file is still listed once.
+	imported := fmt.tprintf("%s/geometry/units/api.loki", copy)
+	text, _ := os.read_entire_file(imported, context.temp_allocator)
+	_ = os.write_entire_file(imported, transmute([]u8)strings.concatenate({string(text), "\nedited :: 1;\n"}, context.temp_allocator))
+	stale, stale_out, _, stale_err := exec(os.Process_Desc{command = []string{compiler_path(), tree, "-api-check"}}, context.allocator)
+	testing.expectf(
+		t, stale_err == nil && stale.exit_code == 1 && strings.count(string(stale_out), "api.loki") == 1 &&
+		strings.contains(string(stale_out), "units"),
+		"-api-check on a tree with one edited file exited with %d and listed:\n%s", stale.exit_code, string(stale_out),
 	)
 }
 

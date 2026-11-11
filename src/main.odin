@@ -13,8 +13,8 @@ import "core:strings"
 USAGE :: `lokec - the Loke compiler
 
 An input is a .loke file or a directory; a directory compiles every .loke file
-directly in it as one package. A tree, a directory followed by /..., tests
-each package in it and below it as a root of its own.
+directly in it as one package. A tree, a directory followed by /..., names
+each package in it and below it; -test, -fmt, -migrate, and -api take one.
 
 usage:
     lokec <file.loke | directory | directory/...> [options]
@@ -42,15 +42,18 @@ options:
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -doc          print the root package's public API as Markdown and stop
     -api          write api.loki, the interface file, in the directory of the
-                  root package and of each project package, and stop
+                  root package and of each project package, or of each package
+                  of a tree, and stop
     -api-check    list the interface files -api would change, exit 1 if there
                   are any, and stop
-    -fmt          rewrite the input file, or a directory's .loke files, in
-                  the canonical layout, and stop
+    -fmt          rewrite the input file, a directory's .loke files, or
+                  those of each package of a tree, in the canonical layout,
+                  and stop
     -fmt-check    list the files -fmt would change, exit 1 if there are any,
                   and stop
     -migrate      rewrite spellings an earlier release accepted in the input
-                  file, or a directory's .loke files, and stop
+                  file, a directory's .loke files, or those of each package
+                  of a tree, and stop
     -migrate-check
                   list the files -migrate would change, exit 1 if there are
                   any, and stop
@@ -187,6 +190,14 @@ run :: proc() -> int {
 
 	opts.config.defines, opts.config.collections = opts.defines[:], opts.collections[:]
 	if opts.tree != "" {
+		#partial switch opts.action {
+		case .Fmt, .Fmt_Check:
+			return rewrite_tree(opts.tree, opts.config, opts.action == .Fmt_Check, format_files)
+		case .Migrate, .Migrate_Check:
+			return rewrite_tree(opts.tree, opts.config, opts.action == .Migrate_Check, migrate_files)
+		case .Api, .Api_Check:
+			return write_tree_interfaces(opts.tree, opts.config, opts.action == .Api_Check)
+		}
 		return test_tree(opts.tree, opts.config, opts.emission, opts.run_tests && !opts.emission.emit_ll)
 	}
 	s: Compilation_Session
@@ -404,8 +415,14 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		opts.config.build_mode = .Test
 	}
 	if root, is_tree := tree_root(opts.input); is_tree {
-		if opts.action != .Build || opts.config.build_mode != .Test {
-			fmt.eprintfln("error: a tree input `%s` needs -test or -build-mode=test", opts.input)
+		// compiler-guide.md "Trees": the actions that take each package in turn.
+		takes_tree := opts.action == .Build && opts.config.build_mode == .Test
+		#partial switch opts.action {
+		case .Fmt, .Fmt_Check, .Migrate, .Migrate_Check, .Api, .Api_Check:
+			takes_tree = true
+		}
+		if !takes_tree {
+			fmt.eprintfln("error: a tree input `%s` needs -test, -build-mode=test, -fmt, -migrate, or -api", opts.input)
 			return opts, false
 		}
 		opts.tree = root

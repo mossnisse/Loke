@@ -1002,6 +1002,7 @@ be file-private. Paths below are relative to `src/`.
 | --- | --- |
 | `main.odin`, `session.odin`, `build_config.odin`, `providers.odin`, `subsystem.odin` | CLI presentation, session orchestration, build configuration including `-define`, provider selection, and the executable's Windows subsystem. |
 | `test_runner.odin` | The `-test` driver, which runs a built test executable once per test, and the tree driver, which checks, builds and tests each package of a `/...` input. |
+| `tree.odin` | The packages a `/...` input names, and `-fmt`, `-migrate`, and `-api` over each. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | 64 MiB compiler stack reservation and the query for how much is left. |

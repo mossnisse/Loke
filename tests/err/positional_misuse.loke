@@ -1,0 +1,22 @@
+package main;
+
+// design.md "@(positional)": written on a struct's declaration, and nowhere
+// else.
+
+@(positional) Point :: struct { x, y: int }
+
+@(positional) Shape :: union { none, side: int }
+
+@(positional) Alias :: Point;
+
+@(positional) area :: proc(p: Point) -> int { return p.x * p.y; }
+
+Holder :: struct {
+	@(positional) inner: Point,
+}
+
+main :: proc() {
+	h := Holder{inner = Alias{1, 2}};
+	s: Shape = .side(area(h.inner));
+	_ = s;
+}

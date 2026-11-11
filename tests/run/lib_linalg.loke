@@ -431,6 +431,18 @@ FOLDED_INVERSE :: conditioned(f64, 4).inverse();
 // The results, as bit patterns: these lines are the same at every
 // optimization and CPU level, and a folded constant equals its run-time call.
 // A member that reaches `math.sqrt`, a foreign procedure, cannot be folded.
+// design.md "@(positional)": a vector's components are written and bound in
+// order in any package.
+literals :: proc() {
+	v := linalg.Vector3(f32){1, 2, 3};
+	check("a positional literal is `from_components`", v == linalg.Vector3(f32).from_components(1, 2, 3));
+	check("a named literal is the same value", v == linalg.Vector3(f32){z = 3, x = 1, y = 2});
+	x, y, z := v;
+	check("a vector destructures in order", x == 1 && y == 2 && z == 3);
+	a, b, c, d := linalg.Vector4(int){4, 5, 6, 7};
+	check("a temporary vector destructures", a == 4 && b == 5 && c == 6 && d == 7);
+}
+
 determinism :: proc() {
 	one := f64(os.args.len());
 	p := linalg.Matrix(f64, 4, 4).perspective(1.1*one, 1.75, 0.1, 100.0, .Zero_To_One);
@@ -481,6 +493,8 @@ main :: proc() {
 	approximate_equality();
 	fmt.println("-- element types");
 	element_types();
+	fmt.println("-- literals");
+	literals();
 	fmt.println("-- determinism");
 	determinism();
 }

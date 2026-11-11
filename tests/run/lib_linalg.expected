@@ -229,6 +229,11 @@ ok matrices and quaternions
 5.0 0.6
 ok the derivative of rotate is the analytic one
 ok the derivative of normalize
+-- literals
+ok a positional literal is `from_components`
+ok a named literal is the same value
+ok a vector destructures in order
+ok a temporary vector destructures
 -- determinism
 perspective 4606570142457618806 4610024376720946503 13830558963762528321 13830554455654793216 13815249429894109698
 rotation [3200628423, 1063704880, 1044833204, 1040905942, 3189532092, 1064999314, 1063883441, 1053755884, 3179402584]

@@ -24,7 +24,7 @@ import "core:strings";
 	which is what makes a document cheap to reuse. A failed reparse leaves it
 	empty, with that capacity and no input. Drop the document to release it.
 */
-// open-questions.md "Self-referential storage": the document stores offsets
+// comments.md "Pinning and self-referential types": the document stores offsets
 // into its source and its decoded text, never views of its own storage, so an
 // accessor computes each view from wherever the document now is.
 @(move_only) Document :: struct {

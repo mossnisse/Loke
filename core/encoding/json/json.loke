@@ -15,9 +15,9 @@
 // standard-library "`core:encoding/json`".
 //
 // Nothing here is JSON-specific to the language: the document stores offsets
-// rather than views of its own storage (open-questions.md "Self-referential
-// storage"), so ordinary borrow checking keeps a view's document and input
-// alive.
+// rather than views of its own storage (comments.md "Pinning and
+// self-referential types"), so ordinary borrow checking keeps a view's
+// document and input alive.
 @(public)
 package json;
 

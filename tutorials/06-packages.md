@@ -165,6 +165,9 @@ A few more rules keep that promise:
   `geometry.Point{3, 4}`. The package that declares the fields may reorder them.
 - For the same reason, `a, b := value` can take apart only a record from your
   own package.
+- A package that means its field order, as `x`, `y`, `z` of a vector, says so
+  with [`@(positional)`](../design.md#positional) on the struct, and then both
+  are allowed everywhere.
 - A method is public when marked `@(public)`, like any other declaration.
 
 `@(public)` in front of the `package` line makes every declaration in that file

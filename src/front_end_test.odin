@@ -932,7 +932,7 @@ default_output_requires_a_name_for_a_root_directory :: proc(t: ^testing.T) {
 	testing.expectf(t, actual == "", "drive root defaulted to %q", actual)
 }
 
-// compiler-guide.md "Testing a tree": a final `/...` or `\...` names a tree,
+// compiler-guide.md "Trees": a final `/...` or `\...` names a tree,
 // and a root keeps the separator that makes it one.
 @(test)
 tree_root_is_the_directory_before_the_dots :: proc(t: ^testing.T) {
@@ -974,7 +974,7 @@ tree_output_moves_a_package_below_the_output :: proc(t: ^testing.T) {
 	testing.expectf(t, root == "", "a drive root defaulted to %q", root)
 }
 
-// compiler-guide.md "Testing a tree": a directory the walk cannot read is
+// compiler-guide.md "Trees": a directory the walk cannot read is
 // reported, not passed over as if it held no package.
 @(test)
 tree_walk_reports_an_unreadable_directory :: proc(t: ^testing.T) {

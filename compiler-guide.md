@@ -31,9 +31,9 @@ Each invocation accepts one root input:
   `.loke` files beside it are not automatically included in the root package.
 - A **directory** compiles all `.loke` files directly inside it as one package,
   plus its imports. It does not recursively compile every subdirectory.
-- A **tree**, a directory followed by `/...` or `\...`, compiles each package
-  in that directory and below it as a root package of its own. Only a test
-  build takes one; see [Testing a tree](#testing-a-tree).
+- A **tree**, a directory followed by `/...` or `\...`, names each package in
+  that directory and below it. `-test`, `-fmt`, `-migrate`, and `-api` take
+  one; see [Trees](#trees).
 
 Executable builds require a root package named `main` with a `main` procedure
 that takes no parameters. It may return nothing, an `i32` exit status, or a
@@ -64,6 +64,35 @@ Program arguments go to the built executable:
 if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 ```
 
+### Trees
+
+A directory followed by `/...` or `\...` names a tree of packages: that
+directory and each directory below it that directly holds a `.loke` file. A
+directory whose name begins with `.` or `_` is skipped, with everything below
+it, so a project can keep packages that are meant not to compile under a `_`
+directory, and a link to a directory is not followed. `...` alone names the
+working directory's tree. The packages are taken in turn, a directory before
+those below it and the directories in one by name. A tree with no package at
+all is an error. A directory that cannot be read is reported on standard error
+and makes the exit status 1, and the rest of the tree is still taken.
+
+These actions take a tree, and every other takes a file or one directory:
+
+- `-test`, and `-build-mode=test`, build and test each package; see
+  [Testing a tree](#testing-a-tree).
+- `-fmt`, `-fmt-check`, `-migrate`, and `-migrate-check` take the `.loke` files
+  of each package, as they take one directory's.
+- `-api` and `-api-check` check each package as the root of a compilation of
+  its own, and write or compare that package's [interface
+  file](#interface-files) alone. A package that others of the tree import is
+  therefore written, or listed as stale, once. One that does not compile is
+  reported, the exit status is 1, and the rest are still taken.
+
+```powershell
+.\lokec.exe ... -fmt-check
+.\lokec.exe core\... -api-check
+```
+
 ## Common options
 
 | Option | Purpose and default |
@@ -79,10 +108,10 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-build-mode=exe\|obj\|test` | Produce an executable (default), one relocatable object, or a test executable without running it. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
-| `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (see [Formatting](comments.md#formatting)); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
-| `-migrate`, `-migrate-check` | Rewrite spellings an earlier release accepted, in a file or a directory's `.loke` files, leaving everything else as written; `-migrate-check` only lists the files that would change and exits 1 if there are any. It moves a record's attributes to its [declaration](design.md#attributes), and refuses a record that has no declaration or a comment it cannot carry with the attributes. |
+| `-fmt`, `-fmt-check` | Rewrite a file, a directory's `.loke` files, or those of each package of a [tree](#trees), in the canonical layout (see [Formatting](comments.md#formatting)); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
+| `-migrate`, `-migrate-check` | Rewrite spellings an earlier release accepted, in a file, a directory's `.loke` files, or those of each package of a [tree](#trees), leaving everything else as written; `-migrate-check` only lists the files that would change and exits 1 if there are any. It moves a record's attributes to its [declaration](design.md#attributes), and refuses a record that has no declaration or a comment it cannot carry with the attributes. |
 | `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment is a `///` line or a `/** */` block; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
-| `-api`, `-api-check` | Write the [interface file](#interface-files) `api.loki` in the directory of the root package and of each package of the project it imports, and stop; `-api-check` writes nothing, lists the interface files `-api` would change, and exits 1 if there are any. The input must be a directory. |
+| `-api`, `-api-check` | Write the [interface file](#interface-files) `api.loki` in the directory of the root package and of each package of the project it imports, and stop; `-api-check` writes nothing, lists the interface files `-api` would change, and exits 1 if there are any. The input must be a directory, or a [tree](#trees), where each package answers for its own file. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value a `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`, and check each call to a foreign procedure, or through a procedure value with a foreign calling convention: one that returns with the [floating-point environment](design.md#floating-point-operators) changed panics, naming the procedure. It does not imply `-g`, and `-g` does not imply it. |
 
@@ -277,7 +306,8 @@ like any other declaration.
 Every package in `core/` and `base/` has one, and the test suite runs
 `-api-check` on each, so a change to a bundled package's public API shows up
 as a diff of its `api.loki` in the same commit. A project can run
-`-api-check` in its own build the same way.
+`-api-check` in its own build the same way, on a [tree](#trees) to cover every
+package it holds: `lokec src\... -api-check`.
 
 The file holds, in order:
 
@@ -357,13 +387,7 @@ test until the first failure. `-build-mode=test` builds it without running it.
 
 ### Testing a tree
 
-A directory followed by `/...` or `\...` names a tree of packages: that
-directory and each directory below it that directly holds a `.loke` file. A
-directory whose name begins with `.` or `_` is skipped, with everything below
-it, so a project can keep packages that are meant not to compile under a `_`
-directory, and a link to a directory is not followed. `...` alone names the working
-directory's tree. `-test` takes each package of the tree in turn, a directory
-before those below it and the directories in one by name, as the root of a
+`-test` takes each package of a [tree](#trees) in turn as the root of a
 compilation of its own, as if it had been given alone:
 
 ```powershell

@@ -4192,8 +4192,9 @@ column-major in `columns: [C][R]T`; `m[r, c]` reads `m.columns[c][r]`, and
 `column_major`. Vectors are columns: `m * v` transforms `v`, there is no
 `v * m`, and `a * b` applies `b` first. Each element of a product is the dot
 product of a row and a column, summed in index order from the first product.
-A literal outside the package names its fields,
-`linalg.Vector3(f32){x = 1, y = 2, z = 3}`, or uses `from_components`. The
+The vectors are [`@(positional)`](design.md#positional), so a literal in any
+package may list its components, `linalg.Vector3(f32){1, 2, 3}`, or name them,
+and `x, y, z := v` takes one apart; `from_components` builds the same value. The
 package exports no short names; a program's own alias,
 `Vec3 :: linalg.Vector3(f32);`, is the same type.
 

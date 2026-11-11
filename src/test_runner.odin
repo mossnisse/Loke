@@ -1,12 +1,11 @@
 // The `-test` driver: runs a built test executable once per test, and tests each
-// package of a tree.
+// package of a tree (`src/tree.odin`).
 package lokec
 
 import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
-import "core:slice"
 import "core:strings"
 
 import "subprocess"
@@ -55,40 +54,15 @@ print_indented :: proc(text: string) {
 	}
 }
 
-// compiler-guide.md "Testing a tree": the directory before a final `/...` or
-// `\...`, or false for any other input. `...` alone is the working directory's.
-tree_root :: proc(input: string) -> (string, bool) {
-	if input == "..." {
-		return ".", true
-	}
-	if !strings.has_suffix(input, "/...") && !strings.has_suffix(input, "\\...") {
-		return "", false
-	}
-	root := input[:len(input) - len("/...")]
-	// `/...` and `C:\...` keep the separator that makes their directory a root.
-	if root == "" || root == filepath.volume_name(input) {
-		root = input[:len(root) + 1]
-	}
-	return root, true
-}
-
 // compiler-guide.md "Testing a tree": each package of the tree is the root of
 // a compilation of its own. Every one is checked; one that declares a test is
 // built and, when `run`, tested; and the report ends with the tree's totals.
 // `emission.output` is empty, or the directory standing in for the one holding
 // `root`.
 test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_Options, run: bool) -> int {
-	if !os.is_dir(root) {
-		fmt.eprintfln("error: `%s` is not a directory", root)
-		return 1
-	}
 	// The packages and `parent` outlive each package's temporary guard below.
-	packages := make([dynamic]string, context.temp_allocator)
-	readable := collect_tree_packages(root, &packages)
+	packages, readable := tree_packages(root)
 	if len(packages) == 0 {
-		if readable {
-			fmt.eprintfln("error: no package in `%s` or below it", root)
-		}
 		return 1
 	}
 	output := emission.output
@@ -163,35 +137,6 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 	}
 	fmt.println()
 	return code
-}
-
-// `dir` when it directly holds a `.loke` file, then the packages below it, a
-// directory's entries by name. A directory named with a leading `.` or `_` is
-// skipped, and a link to one is not followed: it is not a `.Directory` entry. False
-// after saying which directory could not be read; the walk goes on without it.
-// `packages` borrows `dir` and the temporary paths below it.
-@(private)
-collect_tree_packages :: proc(dir: string, packages: ^[dynamic]string) -> bool {
-	entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
-	if err != nil {
-		fmt.eprintfln("error: cannot read `%s`: %v", display_path(dir), err)
-		return false
-	}
-	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool { return a.name < b.name })
-	for entry in entries {
-		if is_source_file(entry) {
-			append(packages, dir)
-			break
-		}
-	}
-	readable := true
-	for entry in entries {
-		if entry.type == .Directory && !strings.has_prefix(entry.name, ".") && !strings.has_prefix(entry.name, "_") {
-			below, _ := filepath.join({dir, entry.name}, context.temp_allocator)
-			readable = collect_tree_packages(below, packages) && readable
-		}
-	}
-	return readable
 }
 
 // Where `-test` alone would write `dir`'s executable, or, with `output`, that

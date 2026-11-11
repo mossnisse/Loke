@@ -861,6 +861,8 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		info.fields = members[:]
 		// design.md "Record layout attributes".
 		info.packed = has_attribute(value.attributes, "packed")
+		// design.md "@(positional)".
+		info.positional = has_attribute(value.attributes, "positional")
 		info.written_align = record_written_alignment(k, value)
 		info.thread_affine = has_attribute(value.attributes, "thread_affine")
 		info.wakes_on_drop = has_attribute(value.attributes, "wakes_on_drop")
@@ -1024,10 +1026,11 @@ destructure_fields :: proc(
 
 // design.md "Destructuring": a nominal record's field order belongs to the
 // package that declares its fields, which may reorder them. An anonymous
-// record's order is its type identity.
+// record's order is its type identity, and a `@(positional)` one's is public
+// (design.md "@(positional)").
 record_order_is_foreign :: proc(k: ^Checker, record: Type_Id) -> bool {
 	info := underlying_info(k.c, record)
-	if info == nil || info.kind != .Struct || info.anonymous_record || len(info.fields) == 0 {
+	if info == nil || info.kind != .Struct || info.anonymous_record || info.positional || len(info.fields) == 0 {
 		return false
 	}
 	field := symbol_of(k.c, info.fields[0])

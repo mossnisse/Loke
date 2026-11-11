@@ -87,7 +87,7 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "escape":
 		// A bare level identifier, checked by `check_escape_attribute`.
 		return {{.Parameter}, .Deferred, {}}, true
-	case "packed":
+	case "packed", "positional":
 		return {{.Struct_Decl}, .None, {}}, true
 	case "align":
 		return {{.Struct_Decl, .Union_Decl}, .Deferred, {}}, true

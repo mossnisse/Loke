@@ -204,15 +204,14 @@ a demonstrably smaller set of semantic rules.
 
 ## Package and import versioning
 
-Should import paths encode package versions? And should a package declaration
-remain mandatory in every file, when every file in a directory must name the
-same package anyway, or is it ceremony? The current version requires the
-declaration and leaves dependency versions to the build system or package
-manager. A future package design may need reproducible version selection without
-making source imports depend on a particular registry.
+Should import paths encode package versions? The current version leaves
+dependency versions to the build system or package manager. A future package
+design may need reproducible version selection without making source imports
+depend on a particular registry.
 
 What is decided, and why, is in
-[Projects name dependencies, not versions](comments.md#projects-name-dependencies-not-versions).
+[Projects name dependencies, not versions](comments.md#projects-name-dependencies-not-versions)
+and [Every file names its package](comments.md#every-file-names-its-package).
 
 ### Before versioned sources
 
@@ -342,8 +341,8 @@ The steps are in priority order, and each is usable without the next.
   name. Checking more needs a signature form that states such typing, or a
   rule for which written forms an operation's typing must accept.
 - **Interface files outside the repository.** Whether a project's own
-  packages get `api.loki` by default, and whether `loke.project` should name
-  the packages `-api-check` covers.
+  packages get `api.loki` by default. Which packages `-api-check` covers is
+  settled: a [tree](compiler-guide.md#trees) names them.
 
 ## The `op`/`try_op` pair
 
@@ -681,20 +680,6 @@ the compiler (`tests/pkg/real_interface`) before
 These language questions came out of that work, and the libraries cannot
 settle them by themselves.
 
-### Positional literals for vocabulary records
-
-[Struct literals](design.md#struct-literals) allow positional elements only in
-the package that declares the fields, so a reordering cannot silently move a
-value. For a vector that rule turns `Vector3(f32){1, 2, 3}` into
-`linalg.Vector3(f32){x = 1, y = 2, z = 3}` in every program that uses it, or
-into a named constructor such as `Complex`'s `from_components`. The order of
-`x`, `y`, `z` is part of such a type's meaning, its layout is promised to
-foreign code, and it will never be reordered. A declaration-level opt-in,
-an attribute promising the field order as part of the public API, would let
-positional literals cross packages for exactly those records. Without it the
-library offers `from_components` and named literals, and the cost is
-verbosity at every call site.
-
 ### Visibility in slot and expression requirements
 
 A named slot is met by a private inherent method on any type no importer can
@@ -836,14 +821,6 @@ brackets, which `core/` leaves at the bracket's level; and indenting the later
 values of a wrapped multi-value statement (`x, y :=` above `1,` and `2;`), whose
 commas read as a list's, since the tokens do not tell a block's `{` from a list's.
 
-## Packages a tree skips
-
-A [tree input](compiler-guide.md#testing-a-tree) skips a directory named with a
-leading `.` or `_`. Open: whether `-fmt-check` and `-api-check` should take a
-tree as well, and whether this repository's `tests/pkg_err` cases, packages
-meant not to compile, should move under a `_` directory so `tests/...` can run
-whole.
-
 ## Language design review (2026-10-03)
 
 Proposals from a review of the specification, not amendments to it; backward
@@ -875,15 +852,6 @@ access and `[^]mut T` for writing, with an unchecked cast required to
 strengthen capability. It would change every foreign signature in `core`, and
 foreign pointer use would still require lifetime and bounds obligations;
 constness alone does not establish either.
-
-### Self-referential storage
-
-Graphs, arenas, and records that view their own storage need tools other than
-disjoint access. A graph or arena can use stable integer or generational
-handles without pervasive pointers. A record owning a buffer and views into
-itself needs address stability and an internal-borrow contract; non-null
-pointers do not solve it. Prefer offsets and handles before introducing general
-pinning or self-referential types.
 
 ### Performance opportunities and actual semantic limits
 
@@ -1253,16 +1221,6 @@ none of which they wait on.
   that stretches the attribute's promise that the first `count` elements are the
   values. Either bless this as the way to opt out of generated element handling, or
   give it its own spelling before `Small_Deque` is built.
-
-## The diverging arrow's spelling
-
-[`-> !`](design.md#diverging-procedures) means the procedure never returns
-normally: `panic`, process exit, and an endless loop. It does not mean that it
-returns an error, may panic, or succeeds with no payload. The fact belongs to
-the declaration, not to a procedure-value type. `@(noreturn)` would state that
-more literally than punctuation. `-> never` also reads well, but should be
-spelled only if the language adds a real uninhabited type, with its rules for
-procedure types and conversions.
 
 ## Reading a mutable argument in the call's later arguments
 

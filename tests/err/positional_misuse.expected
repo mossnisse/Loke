@@ -1,0 +1,15 @@
+L0607
+`@(positional)` cannot appear on a union declaration
+@8:3
+
+L0607
+`@(positional)` cannot appear on a constant declaration
+@10:3
+
+L0607
+`@(positional)` cannot appear on a procedure declaration
+@12:3
+
+L0607
+`@(positional)` cannot appear on a struct field
+@15:4

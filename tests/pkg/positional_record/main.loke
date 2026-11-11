@@ -1,0 +1,35 @@
+package main; import "core:fmt";
+
+import "./geom";
+
+// design.md "@(positional)": another package writes the record's literal
+// positionally and destructures it, as the declaring package does. The same
+// uses of a record without the attribute are tests/pkg_err/field_order.
+Local :: distinct geom.Point;
+
+main :: proc() {
+	p := geom.Point{1, 2};
+	q: geom.Point = {3, y = 4};
+	x, y := p;
+	fmt.println(x, y);
+	x, y = q;
+	fmt.println(x, y);
+
+	points: [2]geom.Point = {{5, 6}, {7, 8}};
+	foreach (px, py in points) { fmt.println(px, py); }
+	foreach ($sx, $sy in [1]geom.Point{{9, 10}}) { fmt.println(sx, sy); }
+
+	// A `distinct` type over the record has the record's fields, and their order.
+	l := Local(p);
+	lx, ly := l;
+	fmt.println(lx, ly);
+	fmt.println(Local{11, 12}.y);
+
+	// Every instance of a generic record carries the mark.
+	pair := geom.Pair(string){"first", "second"};
+	first, second := pair;
+	fmt.println(first, second);
+
+	ox, oy := geom.origin();
+	fmt.println(ox, oy);
+}
