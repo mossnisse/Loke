@@ -58,6 +58,9 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if type_views_as(c, from, to) {
 		return true
 	}
+	// design.md "Implicit type conversions": the underlying kind decides, here
+	// and for a string above, so a distinct type takes an unfixed constant as
+	// its underlying type does.
 	if type_is_untyped(c, from) {
 		#partial switch underlying_kind(c, to) {
 		case .Float:

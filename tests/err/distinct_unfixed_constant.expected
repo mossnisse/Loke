@@ -1,0 +1,23 @@
+L0310
+@12:14
+cannot initialise `Id` with `int`
+
+L0352
+@13:16
+300 is not representable by `Small`
+
+L0353
+@14:17
+a float does not convert implicitly to `Id`
+
+L0353
+@15:19
+a rune does not convert implicitly to `Meters`
+
+L0310
+@17:19
+cannot initialise `Meters` with `f64`
+
+L0310
+@19:13
+cannot initialise `Id` with `int`

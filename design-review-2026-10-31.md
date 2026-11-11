@@ -334,10 +334,12 @@ one: the conversion stays for a constant and goes for a typed run-time value.
   be passed where a plain `proc(n: int) -> int` is expected without saying
   so. This removes the cost the first draft named.
 
-The probe for the second also showed that the conversion list is incomplete:
-it sends an unfixed integer to "built-in integer types", and the compiler and
-its tests accept one for a distinct type. That is recorded in
-[known-gaps.md](known-gaps.md#an-unfixed-constant-converts-to-a-distinct-type).
+The probe for the second also showed that the conversion list was incomplete:
+it sent an unfixed integer to "built-in integer types", while the compiler and
+its tests accepted one for a distinct type. The list now has the rule
+([Implicit type conversions](design.md#implicit-type-conversions),
+[Distinct types](design.md#distinct-types)), with its reason in comments.md
+["Distinct types"](comments.md#distinct-types).
 
 ### 2.5 One capability axis
 
@@ -973,16 +975,12 @@ compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
 The independent compiler work has its own [suggested order](compiler-optimizations-2026-10-31.md#suggested-order).
 
-The order after the third pass, cheapest first. The two halves of step 1 are
-unrelated and are separate commits:
+The order after the third pass, cheapest first:
 
-1. Specification only. First, complete the conversion list for an unfixed
-   constant and a distinct type
-   ([known-gaps.md](known-gaps.md#an-unfixed-constant-converts-to-a-distinct-type));
-   a listed gap blocks the
-   [release checklist](releasing.md#release-checklist). Then, with no
-   urgency, make design.md and releasing.md agree about union layout
-   ([6.2](#62-union-layout)).
+1. Specification only, with no urgency: make design.md and releasing.md agree
+   about union layout ([6.2](#62-union-layout)). The step's other half, the
+   conversion list for an unfixed constant and a distinct type, is done
+   ([Adopted proposals](#adopted-proposals)).
 2. A returned construction transfers an owned local operand
    ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
    clones the failure path and record results make today, and it is what
@@ -1022,6 +1020,14 @@ CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md. Compiler-only changes are
 listed under [Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations).
 
+- **An unfixed constant converts to a distinct type** (2026-11-11;
+  [Implicit type conversions](design.md#implicit-type-conversions),
+  [Distinct types](design.md#distinct-types), rationale under
+  ["Distinct types"](comments.md#distinct-types)). The compiler already did
+  this and the list did not say so, which the third pass's probe of
+  [2.4](#24-coercions) found; the change is to the specification, with
+  `tests/run/distinct_unfixed_constant.loke` and its `tests/err` counterpart
+  pinning what converts and what does not.
 - **A record's attributes are on its declaration, and `move_only` is one of them**
   (2026-11-02; [Attributes](design.md#attributes), [`@(move_only)`](design.md#move_only),
   rationale under ["A record's attributes are on its

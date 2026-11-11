@@ -1379,6 +1379,16 @@ Comparisons cannot produce a value with the wrong dimension; arithmetic can.
 permit addition without also permitting meaningless multiplication. This costs
 some explicit declarations while keeping representation and meaning separate.
 
+An [unfixed constant](design.md#unfixed-constants) converts to a distinct type
+without a written conversion, and a typed value does not. What `distinct`
+guards against is a value of one meaning used as another, an `f64` of seconds
+passed as `Meters`. A literal has no type and so no meaning to confuse; its
+destination gives it one, as an `int` or an `f32` destination does. Requiring
+`Meters(0)` and `id < Id(10)` at every literal would add a conversion that
+protects nothing, and would make a distinct type worse to use than the type it
+wraps for the one thing they have in common. Go's defined types and Odin's
+distinct types take constants the same way.
+
 ### One pattern grammar, flat declarations
 
 Binding forms use subsets of one pattern grammar: names and `_`, writable

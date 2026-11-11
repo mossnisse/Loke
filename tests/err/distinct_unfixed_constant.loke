@@ -1,0 +1,21 @@
+// design.md "Implicit type conversions", "Distinct types": only an unfixed
+// constant converts to a distinct type, under the checks of the type it is
+// declared over. A typed value converts as written.
+package main;
+
+Meters :: distinct f64;
+Id :: distinct int;
+Small :: distinct u8;
+
+main :: proc() {
+	n := 7;
+	typed: Id = n;
+	wide: Small = 300;
+	fraction: Id = 1.5;
+	letter: Meters = 'a';
+	x := 2.0;
+	length: Meters = x;
+	fixed :: int(3);
+	held: Id = fixed;
+	_ = typed; _ = wide; _ = fraction; _ = letter; _ = length; _ = held;
+}

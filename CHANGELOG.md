@@ -1563,6 +1563,10 @@ checklist.
 
 ### Changed
 
+- [Implicit type conversions](design.md#implicit-type-conversions) now says that an unfixed
+  constant converts to a [distinct type](design.md#distinct-types) as it does to that type's
+  underlying type: `limit: Meters = 3;` and `id < 10` need no written conversion, while a typed
+  value still does. The compiler already accepted this; the list named built-in types only.
 - The specification no longer describes this compiler's own behavior. Copy-cost warnings, the
   executable's entry and runtime symbol names, what a windowed program's standard handles are,
   the assemblers, and the `-debug` foreign-call check moved to

@@ -602,6 +602,9 @@ extensions cannot add conversions.
   rules; see [Owned values](#owned-values)
 - Unfixed strings -> `string`, `string_view`, or `cstring_view` when the
   destination supplies the required lifetime
+- An unfixed constant -> a [distinct type](#distinct-types), exactly as it
+  converts to that type's underlying type, with the same range and rounding
+  checks; a value that already has a type converts only as written
 - A scalar of a vector's lane type -> that `Simd(T, N)`, the
   [splat](#construction-and-conversion) with every lane equal to it
 
@@ -616,6 +619,10 @@ F :: 1.27;    // unfixed float; converts only to a floating type
 S :: "Hello"; // unfixed string; converts to string
 B :: true;    // unfixed boolean; converts to bool
 ```
+
+A [distinct type](#distinct-types) is a compatible type where its underlying
+type is one: with `Meters :: distinct f64`, `limit: Meters = I;` needs no
+written conversion.
 
 A method receiver is not a destination, so an unfixed receiver takes its default
 type, `int` for `I`. An unfixed string receiver is a `string_view` of its static
@@ -1740,13 +1747,25 @@ conversion hooks, interfaces, and formatting. Compared with its underlying type:
 - **Converting** between a distinct type and its underlying type keeps the
   representation, so it follows the ordinary copy rule: a managed operand read
   from a place is cloned, and `move(x)` or a temporary transfers instead. A
-  move-only operand must be moved.
+  move-only operand must be moved. The conversion is written, `My_Int(n)` and
+  `int(m)`, with one exception: an [unfixed constant](#unfixed-constants) has
+  no type yet, so it converts to a distinct type [as it would to the underlying
+  type](#implicit-type-conversions), under that type's range and rounding
+  checks.
 - **Variants** are kept: a distinct type over a union constructs its variants,
   answers `.as(.name)`, and a `switch` over it takes [variant
   cases](#inspecting-a-union) and must cover them. It is still not a union to
   [`is_union`](#built-in-procedures), so [per-variant switch
   cases](#per-variant-switch-cases) and [union argument
   expansion](#union-argument-expansion) reject it until it is converted.
+
+```loke
+n := 7;
+a: My_Int = 3;       // an unfixed constant takes the distinct type
+b := My_Int(n);      // a typed value converts as written
+c: My_Int = n;       // ERROR: `n` is an `int`
+ok := a < 10;        // the constant becomes a `My_Int`, and `<` is inherited
+```
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct: two
 declarations with the same fields are two types.
