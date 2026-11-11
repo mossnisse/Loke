@@ -136,6 +136,17 @@ expression_is_owned_argument :: proc(e: Expr) -> bool {
 	return base != nil && base.value_category == .Value
 }
 
+// What a diagnostic adds after `move(...)` for a place whose owner goes on
+// using it: a copy is a temporary, which a `move` parameter takes unmarked
+// (design.md "Parameter semantics and ABI lowering"). "" for a type with no copy.
+copy_spelling_advice :: proc(c: ^Compiler, place: Expr) -> string {
+	base := expr_base(place)
+	if base == nil || base.type == INVALID_TYPE || type_clone_disabled(c, base.type) {
+		return ""
+	}
+	return ", or `.clone()` for a copy"
+}
+
 classify_copy :: proc(k: ^Checker, value: Expr, destination: Type_Id, site: Copy_Site) -> bool {
 	if !expression_is_borrowed_place(value) {
 		return false

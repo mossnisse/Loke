@@ -16,8 +16,8 @@ import "core:thread";
 fibonacci :: proc(out: move thread.Sender(int), count: int) {
 	a, b := 0, 1;
 	foreach (_ in 0 ..< count) {
-		next := a;   // `send` takes its item by `move`
-		switch (out.send(move(next))) {
+		// `send` takes its item by `move`, and `a` is still needed: send a copy.
+		switch (out.send(a.clone())) {
 		case .ok:
 		case .err(_): return;   // the receiver has gone
 		}

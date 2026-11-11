@@ -1,0 +1,41 @@
+package main;
+import "core:thread";
+
+// design.md "Parameter semantics and ABI lowering": a place passed to a `move`
+// parameter is written `move(...)`, which ends it. A copy is a temporary and
+// needs no marker, so the diagnostic names `.clone()` as well, but only for a
+// type that has a copy.
+
+@(move_only) Res :: struct { id: int }
+
+take_int :: proc(value: move int) {}
+take_res :: proc(value: move Res) {}
+
+Sink :: struct($T: type) { last: T }
+
+impl Sink($T) {
+	put :: proc(self: inout, @(escape=stored) value: move T) { self.last = move(value); }
+}
+
+main :: proc() {
+	// One procedure: the parameter is named.
+	next := 1;
+	take_int(next);
+	held := Res{2};
+	take_res(held);
+
+	// A generic method is matched as an overload.
+	ints := Sink(int){0};
+	ints.put(next);
+	owners := Sink(Res){Res{3}};
+	owners.put(held);
+
+	// The case every first channel loop meets: a counter the loop still needs.
+	numbers := thread.Channel(int).init(4);
+	parallel {
+		send, receive := numbers.split();
+		_ = send.try_send(next);
+		_ = send.send(next);
+		drop(receive);
+	}
+}

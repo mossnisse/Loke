@@ -941,6 +941,10 @@ share the lock; a count that would overflow panics first. `close` before
   returns an item sent to a full, open queue as `.full`. Closure takes
   precedence: if either side has closed, the result is `.closed`. `send` never
   returns `.full`.
+- Both take the item by `move`, as a ring's `try_send` does. A temporary such
+  as `Job{id}` needs no marker, and a place is written `move(job)`, which ends
+  it. A place the sender goes on using, such as a counter, is sent as a copy:
+  `send.send(next.clone())`.
 - `receive` waits while the queue is empty and the sending side is open, then
   takes one item; `.none` is the end of the stream. `try_receive` never waits
   for an item: `.empty` means more may come. Both `try_` operations still take

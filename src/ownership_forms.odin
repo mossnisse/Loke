@@ -261,8 +261,8 @@ require_argument_ownership :: proc(
 			k.c,
 			expr_span(argument),
 			"L0501",
-			"%s is a `move` parameter, so this argument is written `move(...)`",
-			name,
+			"%s is a `move` parameter, so this argument is written `move(...)`%s",
+			name, copy_spelling_advice(k.c, argument),
 		)
 	}
 }

@@ -434,6 +434,22 @@ a participant explicitly rather than changing what a generated `clone` means.
 A spare endpoint can still hide a peer's loss, so the documented setup shape
 and the join check are both needed.
 
+**A send takes its item by `move` only.** [Container
+insertion](#container-insertion-takes-its-element-like-an-initialization)
+pairs a copying member with a consuming one, so that `values.append(count)`
+needs no marker. A send has only the consuming one, and `send.send(count)` is
+an error even for an `int`. The item crosses to another thread, and
+[`@(cross_thread)`](design.md#cross_thread) checks an argument only on a `move`
+parameter: a borrowed parameter cannot carry the value to a thread that
+outlives the call, so a copying member would copy inside the library, where
+the caller's argument is no longer there to check. Letting an unmarked
+copyable place bind a `move` parameter instead would make the type decide
+whether a call ends its argument, against [argument modes written at the call
+site](design.md#parameter-semantics-and-abi-lowering). A sender that still
+needs the place writes its copy, `send.send(count.clone())`: the copy is a
+temporary, which needs no marker, and the diagnostic for the unmarked place
+names both spellings.
+
 **A join check over marked types.** A value the parent keeps past a join can
 hold up a task the join waits for: a guard on the lock a task needs, or a
 sender keeping a draining task's channel open. The check rejects such a value

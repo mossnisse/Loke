@@ -1,0 +1,18 @@
+L0501
+@23:11
+`value` is a `move` parameter, so this argument is written `move(...)`, or `.clone()` for a copy
+L0501
+@25:11
+`value` is a `move` parameter, so this argument is written `move(...)`
+L0392
+@29:2
+`put` does not apply: it takes argument 2 by `move`, which is written `move(...)`, or `.clone()` for a copy
+L0392
+@31:2
+`put` does not apply: it takes argument 2 by `move`, which is written `move(...)`
+L0392
+@37:7
+`try_send` does not apply: it takes argument 2 by `move`, which is written `move(...)`, or `.clone()` for a copy
+L0392
+@38:7
+`send` does not apply: it takes argument 2 by `move`, which is written `move(...)`, or `.clone()` for a copy

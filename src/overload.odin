@@ -411,7 +411,10 @@ rejection_reason :: proc(k: ^Checker, arg: Arg_Info, index: int, want: Type_Id, 
 		if arg.is_receiver {
 			return "it consumes its receiver, which is written `move(...)`"
 		}
-		return fmt.tprintf("it takes argument %d by `move`, which is written `move(...)`", index + 1)
+		return fmt.tprintf(
+			"it takes argument %d by `move`, which is written `move(...)`%s",
+			index + 1, copy_spelling_advice(k.c, arg.expr),
+		)
 	}
 	return argument_mismatch_reason(k.c, index, arg.type, want)
 }

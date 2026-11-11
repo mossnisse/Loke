@@ -16,7 +16,7 @@ L0392
 `moves_string` does not apply: argument 1 is `Bar` where `string` is wanted
 L0392
 @38:6
-`moves_foo` does not apply: it takes argument 1 by `move`, which is written `move(...)`
+`moves_foo` does not apply: it takes argument 1 by `move`, which is written `move(...)`, or `.clone()` for a copy
 `moves_string` does not apply: argument 1 is `Foo` where `string` is wanted
 L0392
 @39:6

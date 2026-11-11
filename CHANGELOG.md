@@ -1606,6 +1606,15 @@ checklist.
 
 ### Changed
 
+- The diagnostic for a place passed unmarked to a `move` parameter names the copy as well as the
+  transfer ([Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering)).
+  `send.try_send(next)` reported only `move(...)`, which ends `next`, so a loop that still needed
+  its counter copied it to a second local first. `L0501`, and the `L0392` note for a rejected
+  member, now add "or `.clone()` for a copy" when the argument's type has one:
+  `send.try_send(next.clone())` sends a temporary and leaves `next` live.
+  [Channels](standard-library.md#channels) and `examples/channels.loke` show that spelling, and
+  ["Channels end by ownership"](comments.md#channels-end-by-ownership) records why a send has no
+  copying member.
 - [Implicit type conversions](design.md#implicit-type-conversions) now says that an unfixed
   constant converts to a [distinct type](design.md#distinct-types) as it does to that type's
   underlying type: `limit: Meters = 3;` and `id < 10` need no written conversion, while a typed
