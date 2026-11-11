@@ -297,7 +297,9 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		return RANK_ADJUST
 	}
 	if !assignable(k.c, arg.type, param) {
-		return RANK_NONE
+		// design.md "Implicit type conversions": a named procedure or a procedure
+		// literal takes a distinct procedure type.
+		return procedure_constant_converts(k.c, arg.expr, param) ? RANK_BUILTIN : RANK_NONE
 	}
 	if type_is_untyped(k.c, arg.type) {
 		if arg.const_value.kind != .Invalid {

@@ -65,7 +65,8 @@ through :: proc(input: []int) -> []int {
 	return g(f(input, scratch[:]), scratch[:]);
 }
 
-// A distinct procedure type converts to and from the type it wraps.
+// A named procedure takes a distinct procedure type; a value of one is viewed
+// as the procedure it wraps, and converts to that type as written.
 Op :: distinct proc(n: int) -> int;
 
 // Each instance's literal is its own type, viewed through its own signature.
@@ -106,7 +107,7 @@ main :: proc() {
 	xs := [1]int{5};
 	fmt.println(through(xs[:])[0]);
 	op: Op = add_one;
-	plain: proc(n: int) -> int = op;
+	plain := (proc(n: int) -> int)(op);
 	wrapped: dyn proc(n: int) -> int = op;
 	fmt.println(op(1), plain(2), wrapped(3));
 	// `$T` binds from what converts to the view.

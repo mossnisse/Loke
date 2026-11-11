@@ -458,7 +458,7 @@ check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 		report_returned_nil(k, e, shape)
 		return false
 	}
-	if !untyped && !assignable(k.c, type, payload) {
+	if !untyped && !expr_assignable(k.c, e, payload) {
 		errorf(
 			k.c, expr_span(e), "L0310",
 			"cannot return `%s` from a procedure that returns `%s`: it is neither the result nor its `.%s` payload `%s`",

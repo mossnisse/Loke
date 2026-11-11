@@ -332,7 +332,8 @@ dyn_proc_signature :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 // where it is written, as any `dyn` view does.
 dyn_proc_accepts :: proc(c: ^Compiler, from, signature: Type_Id) -> bool {
 	if underlying_kind(c, from) == .Proc {
-		return assignable(c, from, signature)
+		// A value of a distinct procedure type is viewed as what it wraps.
+		return assignable(c, type_underlying(c, from), signature)
 	}
 	method, is_capture := c.capture_records[from]
 	return is_capture && call_method_matches(c, symbol_of(c, method.symbol), from, signature)

@@ -1,0 +1,76 @@
+package main;
+import "core:fmt";
+// design.md "Implicit type conversions", "Distinct types": a named procedure or
+// a procedure literal converts to a distinct procedure type wherever a constant
+// converts. A procedure value that already has a type converts as written, and
+// a value of the distinct type is called and viewed as the procedure it wraps.
+Op :: distinct proc(n: int) -> int;
+Fn :: proc(n: int) -> int;
+Holder :: struct { kept: []int }
+Keeper :: distinct proc(destination: inout Holder, @(escape=stored) values: []int);
+
+inc :: proc(n: int) -> int { return n + 1; }
+dec :: proc(n: int) -> int { return n - 1; }
+ignore :: proc(destination: inout Holder, values: []int) {}
+
+Counter :: struct { n: int }
+impl Counter { bump :: proc(n: int) -> int { return n + 10; } }
+impl Op { twice :: proc(self, n: int) -> int { return self(self(n)); } }
+
+Table :: struct { first: Op, second: Op }
+
+pick :: proc() -> Op { return inc; }
+maybe :: proc(flag: bool) -> Option(Op) {
+	if (flag) { return inc; }               // a success return
+	return .none;
+}
+plain :: proc(f: proc(n: int) -> int) -> int { return f(1); }
+view :: proc(f: dyn proc(n: int) -> int) -> int { return f(2); }
+generic_view :: proc(f: dyn proc(x: $T) -> T, v: T) -> T { return f(v); }
+only_op :: proc(o: Op, n: int) -> int { return o(n); }
+many :: proc(ops: ..Op) -> int {
+	total := 0;
+	foreach (op in ops) { total += op(1); }
+	return total;
+}
+keep :: proc(k: Keeper) -> int { return 1; }
+
+// The exact procedure type ranks above the conversion.
+take_op :: proc(o: Op) -> string { return "op"; }
+take_plain :: proc(f: proc(n: int) -> int) -> string { return "plain"; }
+take :: proc{take_op, take_plain};
+
+main :: proc() {
+	t := Table{inc, Counter.bump};          // fields, and `Type.member`
+	ops := [2]Op{inc, dec};                 // elements
+	lit: Op = proc(n: int) -> int { return n * 2; };
+	fmt.println(t.first(3), t.second(1), ops[1](4), pick()(5), lit.twice(3));
+
+	f := inc;                               // a value: `proc(n: int) -> int`
+	fmt.println(take(inc), take(lit), take(f));
+	fmt.println(only_op(inc, 7), only_op(proc(n: int) -> int { return n; }, 8), many(inc, inc, lit));
+
+	// A typed value converts as written, either way.
+	wrapped := Op(f);
+	back := (proc(n: int) -> int)(wrapped);
+	named := Fn(wrapped);
+	flag := true;
+	chosen := Op(inc if flag else dec);
+	fmt.println(wrapped(1), back(1), named(1), plain(Fn(lit)), chosen(1));
+
+	// Called and viewed with no conversion.
+	fmt.println(view(lit), generic_view(lit, 4));
+
+	// A named procedure beside a value of the distinct type takes that type.
+	fmt.println(wrapped == inc, inc == wrapped, wrapped != dec, lit == inc);
+
+	slot: Op = inc;
+	slot = Counter.bump;                    // assignment
+	if (case .some(op) = maybe(true)) { fmt.println(op(1), slot(1)); }
+
+	// One step to a signature that asks more of the caller, written or not.
+	k: Keeper = ignore;
+	value := ignore;
+	k = Keeper(value);
+	fmt.println(keep(ignore), keep(k));
+}

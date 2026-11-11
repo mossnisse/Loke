@@ -1,0 +1,33 @@
+// design.md "Implicit type conversions", "Distinct types": only a named
+// procedure or a procedure literal converts to a distinct procedure type. A
+// procedure value that already has a type converts as written, either way.
+package main;
+
+Op :: distinct proc(n: int) -> int;
+Other :: distinct proc(n: int) -> int;
+
+inc :: proc(n: int) -> int { return n + 1; }
+dec :: proc(n: int) -> int { return n - 1; }
+plain :: proc(f: proc(n: int) -> int) -> int { return f(1); }
+only_op :: proc(o: Op) -> int { return o(1); }
+back :: proc(f: proc(n: int) -> int) -> Op { return f; }
+// A plain procedure type between two distinct ones launders nothing.
+through :: proc(f: proc(n: int) -> int) -> Other { return f; }
+
+main :: proc() {
+	f := inc;
+	op: Op = inc;
+	a: Op = f;
+	b: proc(n: int) -> int = op;
+	plain(op);
+	only_op(f);
+	c: Other = op;
+	stored := proc(n: int) -> int { return n; };
+	d: Op = stored;
+	flag := true;
+	e: Op = inc if flag else dec;
+	same := op == f;
+	slot: Op = inc;
+	slot = f;
+	_ = a; _ = b; _ = c; _ = d; _ = e; _ = same; _ = slot; _ = back; _ = through;
+}

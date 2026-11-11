@@ -86,9 +86,9 @@ found that it joined three independent changes of unequal merit, and split it.
 Deleting `using` loses more than a selector
 ([Adopted proposals](#adopted-proposals)). The narrowed
 distinct-procedure conversion leaves the unwrapping direction, whose target
-type has no name, and narrowing the splat exchanges one rule for another
-rather than deleting one ([2.4](#24-coercions)); the splat moved to the end of
-the order. Probes settled what the two narrowed rules must keep
+type has no name (also there), and narrowing the splat exchanges one rule for
+another rather than deleting one ([2.4](#24-coercions)); the splat moved to
+the end of the order. Probes settled what the two narrowed rules must keep
 ([Probes](#probes)). Where it added to a section, the paragraph begins
 **Review of step 3.**
 
@@ -96,6 +96,13 @@ On 2026-11-11 `using` was deleted, the first of those three changes. Its
 proposal is removed from the text and listed under
 [Adopted proposals](#adopted-proposals), with the section and the steps after
 it renumbered.
+
+The same day the distinct-procedure conversion was narrowed, the second. Probes
+before the change showed what the conversion had cost, and probes of the
+implementation fixed the narrowed rule's edges ([Probes](#probes)). Its
+proposal is removed from the text and listed under
+[Adopted proposals](#adopted-proposals), with the steps after it renumbered.
+The splat is what remains of step 3.
 
 ## Contents
 
@@ -134,16 +141,16 @@ removed to expressiveness lost first:
    attribute's four uses in the library already encode one with a one-element
    array.
 2. **Shrink** runtime reflection to shape ([3.1](#31-runtime-reflection)).
-3. **Narrow** the distinct-procedure conversion to procedure constants
-   instead of deleting it ([2.4](#24-coercions)). The splat can be narrowed to
-   lane-wise operators in the same way, but that exchanges one rule for
-   another and removes nothing harmful, so it is near the end of the
-   [Suggested order](#8-suggested-order).
-4. **Make design.md and releasing.md agree about union layout**
+3. **Make design.md and releasing.md agree about union layout**
    ([6.2](#62-union-layout)): one specifies it and the other says it may
    change. The niches can follow when measured, and their gain is modest.
-5. **Respell** mutable slicing as `a[mut lo:hi]`
+4. **Respell** mutable slicing as `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)).
+
+The splat of a typed scalar can be narrowed to lane-wise operators
+([2.4](#24-coercions)), but that exchanges one rule for another and removes
+nothing harmful, so it is near the end of the
+[Suggested order](#8-suggested-order).
 
 Two findings are independent of any proposal: a returned construction clones a
 local that a plain `return` would transfer
@@ -300,7 +307,10 @@ syntax, and should come before a written one.
 twenty rules. Each is a subtyping or coercion rule that feeds the four-level
 overload ranking. Most are sound and useful (owner to view, `mut` to
 read-only, `dyn` to a composed base, a value to a `dyn I` view as an element of
-a `..dyn I` parameter, unfixed constants). Two deserve attention:
+a `..dyn I` parameter, unfixed constants). One deserves attention. A second,
+the conversion of a distinct procedure type to and from the type it wraps, was
+narrowed to named procedures and procedure literals
+([Adopted proposals](#adopted-proposals)).
 
 - **A scalar to `Simd(T, N)`, the splat.** Two cases share the rule. An unfixed
   constant, as in `lanes * 2.0`, `v << 2`, or `half: Simd(f32, 4) = 0.5`
@@ -311,16 +321,9 @@ a `..dyn I` parameter, unfixed constants). Two deserve attention:
   case goes, its replacement needs a rule of its own: `Simd(f32, 4)(x)` is
   today a lane-wise conversion between vectors of the same lane count, so a
   splat would be `simd.splat(x)` or a new conversion form. Low priority.
-- **A distinct procedure type to and from its underlying procedure type.** It
-  undoes `distinct` for exactly one kind of type. If a distinct procedure type
-  should be freely interchangeable with its base, it is an alias, not a
-  distinct type; if not, the conversion should be explicit as for every other
-  distinct type. The cost to weigh is that every named procedure or procedure
-  literal passed where a distinct procedure type is expected then writes the
-  conversion.
 
-**Third pass.** Both have a narrower fix than deletion, and it is the same
-one: the conversion stays for a constant and goes for a typed run-time value.
+**Third pass.** There is a narrower fix than deletion: the conversion stays
+for a constant and goes for a typed run-time value.
 
 - **The splat belongs to the operators, not to the conversion list.** The
   conversion applies in every position: a typed `f32` passed to a
@@ -337,29 +340,8 @@ one: the conversion stays for a constant and goes for a typed run-time value.
   [Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering)
   that keeps a scalar from binding `inout Simd(T, N)` is no longer needed.
   What is lost is `take(scale)` and `half: Simd(f32, 4) = scale`.
-- **A procedure constant converts; a procedure value does not.** The
-  conversion is implicit in both directions and for a value held in a
-  variable ([Probes](#probes)), which is what undoes `distinct`. It exists
-  for a narrower case: a named procedure or a procedure literal has the
-  structural type of its signature, so without it only a cast could
-  initialize a distinct procedure type. That is an unfixed constant's
-  position, and an unfixed `3` already initializes a `Meters :: distinct f64`
-  ([Probes](#probes)). State it that way: a named procedure or procedure
-  literal converts to a distinct procedure type over its signature, and a
-  value of either type converts to the other explicitly, as for every other
-  distinct type. `run(twice)` keeps working, and a `Handler` can no longer
-  be passed where a plain `proc(n: int) -> int` is expected without saying
-  so. This removes the cost the first draft named.
 
-The probe for the second also showed that the conversion list was incomplete:
-it sent an unfixed integer to "built-in integer types", while the compiler and
-its tests accepted one for a distinct type. The list now has the rule
-([Implicit type conversions](design.md#implicit-type-conversions),
-[Distinct types](design.md#distinct-types)), with its reason in comments.md
-["Distinct types"](comments.md#distinct-types).
-
-**Review of step 3.** The two narrowings are not equally good, and each has a
-cost the third pass did not count.
+**Review of step 3.** The narrowing has a cost the third pass did not count.
 
 - **The splat narrowing is an exchange, not a deletion.** One entry leaves the
   conversion list, and two exceptions go with it: the sentence about
@@ -379,23 +361,7 @@ cost the third pass did not count.
   Against all this the conversion does no harm of its own. It allocates
   nothing, loses no information, and moves no ownership; it is irregular only
   in taking a run-time operand. The concept count comes out about level, so
-  this is the weakest recommendation still open, and it should not ride with
-  the other narrowing.
-- **The procedure narrowing leaves unwrapping worse than for other distinct
-  types.** `f64(m)` names its target. The type a distinct procedure type
-  wraps has no name, so passing a `Handler` where a plain procedure is
-  expected becomes `plain((proc(n: int) -> int)(h))`, with the
-  [parenthesized type](grammar.md#primary-expressions), unless the program
-  declares an alias for the signature. The third pass removed the first
-  draft's cost in the wrapping direction only; this one remains and belongs
-  in **What is lost**. Two things hold today and the narrowed rule must say
-  that they still do ([Probes](#probes)). A value of a distinct procedure
-  type is called directly and converts to a `dyn proc` view of its signature,
-  so most uses never unwrap. And a named procedure converts in one step to a
-  distinct procedure type whose signature asks more of the caller than the
-  procedure needs, as a procedure that retains nothing does to a type with an
-  [`@(escape=stored)`](design.md#escapelevel) parameter; otherwise
-  `run(twice)` would stop working for exactly those types.
+  this is the weakest recommendation still open.
 
 ### 2.5 One capability axis
 
@@ -755,7 +721,6 @@ thing. Each row names the replacement and what is lost.
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
 | The implicit splat of a typed scalar | Lane-wise operators take a scalar operand; `Simd(T, N)(x)` elsewhere; constant splats stay ([2.4](#24-coercions)) | A typed scalar as any vector argument, initializer, or result, so `take(scale)`, `simd.select(mask, v, scale)`, and `v: Simd(f32, 4) = scale`; `v * scale` stays. The lane-wise table gains a scalar operand in exchange | Low; an exchange of rules |
-| Distinct-procedure-type conversion of a value | Explicit conversion; a named procedure or literal still converts ([2.4](#24-coercions)) | Passing a variable of one procedure type as the other without a conversion; unwrapping writes the signature out, `(proc(n: int) -> int)(h)`, or needs an alias for it | Low |
 | `@(initialized=count)` | `Uninit(T)` and written hooks ([3.2](#32-initializedcount-and-uninitialized-storage)) | `Small_Array`'s generated prefix-aware copy, drop, `==`, `hash`, and `format` | Recommended |
 | `Type_Info.members`, `Member_Info`, `Member_Kind`, `bits`, `signed` | `fields_of` and `variants_of` at compile time ([3.1](#31-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types; a member table reached from an id alone | Recommended |
 | `&mut a[lo:hi]` | `a[mut lo:hi]` ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)) | The resemblance to `&mut x` | Recommended; needs `-migrate` |
@@ -1024,23 +989,19 @@ The order after the third pass, cheapest first:
    ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
    clones the failure path and record results make today, and it is what
    deleting success returns would wait for.
-3. Narrow the distinct-procedure conversion to named procedures and procedure
-   literals ([2.4](#24-coercions)), keeping the `dyn proc` view of a distinct
-   procedure value and the one-step conversion to a signature that asks more
-   of the caller.
-4. `Uninit(T)` in place of `@(initialized)`
+3. `Uninit(T)` in place of `@(initialized)`
    ([3.2](#32-initializedcount-and-uninitialized-storage)), moving the four
    library declarations with it, and shrink `Type_Info`
    ([3.1](#31-runtime-reflection)).
-5. `a[mut lo:hi]`
+4. `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise))
    and the reserved `static` and `thread_local`
    ([4.3](#43-parsing-decisions-worth-keeping)), together, since both need
    `lokec -migrate`.
-6. Predeclare the catalogue, then decide `some I`
+5. Predeclare the catalogue, then decide `some I`
    ([4.2](#42-verbosity-hotspots)); the first shortens every bound, so the
    second is judged on what remains.
-7. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+6. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
    The read effect is in place and no borrow-checker gap is known. After the
    compiler review's
    [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
@@ -1048,11 +1009,11 @@ The order after the third pass, cheapest first:
    IR. If that pays, emit it for accesses through checked carriers under both
    panic strategies. No `noalias` parameters under `unwind`, and no capture
    attributes: LLVM infers them for internal procedures.
-8. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
+7. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
    late: it exchanges a conversion for an operator rule and removes nothing
    harmful. It first needs the scalar form of `Simd(T, N)(x)` stated as a
    rule of its own.
-9. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
+8. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
    last: it is the largest surface change, and it needs `lokec -migrate` able
    to rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
@@ -1065,6 +1026,32 @@ CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md. Compiler-only changes are
 listed under [Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations).
 
+- **A procedure value converts to a distinct procedure type as written**
+  (2026-11-11; [Implicit type conversions](design.md#implicit-type-conversions),
+  [Distinct types](design.md#distinct-types), rationale under
+  ["Distinct types"](comments.md#distinct-types)). The conversion was implicit
+  in both directions and for a value held in a variable, which undid
+  `distinct`: with `Less` and `Equal` over one signature, a `Less` reached an
+  `Equal` parameter through any plain procedure type between them, while the
+  direct conversion was `L0310` ([Probes](#probes)). It existed for a narrower
+  case. A named procedure or a procedure literal has the type of its
+  signature, so without it only a written conversion could initialize a
+  distinct procedure type; that is an unfixed constant's position, and the
+  rule is now stated that way. `run(twice)` keeps working, as do fields,
+  array elements, `return`, a success return, and `h == twice`. What is lost
+  is the unwrapping direction: the type a distinct procedure type wraps has
+  no name, so storing a `Handler` as a plain procedure is
+  `(proc(n: int) -> int)(h)`, or shorter through an alias for the signature.
+  Calling it and viewing it as `dyn proc` need no conversion. Three edges
+  came from the implementation's probes. `Type.member` is a named procedure,
+  and there is no other procedure constant: `ALIAS :: inc` is `L0341`, and a
+  procedure group, a generic procedure, and an explicit instance of one are
+  not values. A conditional expression between two named procedures is a
+  value and converts as written. The written conversion crosses in one step
+  to or from a signature that asks more of the caller, as the unwritten one
+  does for a named procedure. `lokec -migrate` does not rewrite the two
+  directions, since it works from the parse alone. `tests/run/dyn_proc.loke`
+  and `tests/err/distinct_procedure_conversion.loke` pin the rule.
 - **`using` is deleted** (2026-11-11; [Structs](design.md#structs), rationale
   under ["Promoted struct fields"](comments.md#promoted-struct-fields)). A
   field no longer promotes its own fields, so the contextual keyword, the
@@ -1443,6 +1430,34 @@ at `267ab0f9`:
   With `Keeper :: distinct proc(destination: inout Holder, @(escape=stored)
   values: []int)` and an `ignore` that declares no escape level, `k: Keeper =
   ignore` and `run(ignore)` for a `Keeper` parameter are accepted.
+
+**The distinct-procedure change's probes**, with `lokec` 0.9.0 built at
+`61b746a3` for the first two and from the changed tree for the rest:
+
+- *A plain procedure type laundered one distinct type into another.* With
+  `Less` and `Equal` both `distinct proc(a, b: int) -> bool` and `l: Less`,
+  `use_equal(l)` for an `Equal` parameter was `L0310`, and `through(l)`, where
+  `through` takes a `proc(a, b: int) -> bool` and passes it to `use_equal`,
+  compiled and ran.
+- *A generic procedure pattern never took a distinct procedure value.* With
+  `op: Op`, `apply(op, 1)` for a parameter `proc(x: $T) -> T` was `L0392`,
+  "`Op` does not match the shape of parameter 1", while the
+  `dyn proc(x: $T) -> T` form accepted it, and still does.
+- *Named procedures and literals are the only procedure constants.*
+  `ALIAS :: inc;` is `L0341`, `a: Op = group;` for a procedure group is
+  `L0396`, `b: Op = identity;` for a generic procedure is `L0431`, and
+  `identity(int)` is not a value. `Table{inc, Counter.bump}` for two `Op`
+  fields is accepted.
+- *The narrowed rule.* With `f := inc` and `op: Op = inc`, each of
+  `a: Op = f`, `b: proc(n: int) -> int = op`, `plain(op)`, `only_op(f)`,
+  `slot = f`, `return f;` from a procedure returning `Op`,
+  `d: Op = stored` for a literal held in a variable, and
+  `e: Op = inc if flag else dec` is `L0310`, and `op == f` is `L0354`.
+  `Op(f)`, `(proc(n: int) -> int)(op)`, `Fn(op)` through an alias,
+  `Op(inc if flag else dec)`, `op == inc`, `return inc;` from a procedure
+  returning `Option(Op)`, and `many(inc, inc, lit)` for a `..Op` pack are
+  accepted. With the `Keeper` of the step 3 review, `Keeper(value)` for a
+  variable holding `ignore` is accepted too.
 
 **A callee reading a global it holds `^mut` to** was accepted by the same
 compiler; the [read effect](design.md#global-write-effects) now rejects it.

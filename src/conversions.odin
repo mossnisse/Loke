@@ -20,7 +20,8 @@ nil_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 
 // Is a value of `from` acceptable where `to` is wanted, with no written
 // conversion? Representability of an untyped constant is settled by
-// `materialize` before this is asked.
+// `materialize` before this is asked. One conversion depends on the expression
+// and is not here: `expr_assignable` adds it.
 assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if from == to {
 		return true
@@ -43,9 +44,6 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	// design.md "Escape levels".
 	if proc_type_weakens_to(c, from, to) {
-		return true
-	}
-	if distinct_proc_converts(c, from, to) {
 		return true
 	}
 	if from == TYPE_UNTYPED_STRING {
@@ -81,17 +79,26 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	return false
 }
 
-// design.md "Implicit type conversions": a distinct procedure type and the
-// procedure type it wraps convert either way, keeping the representation. Two
-// distinct types still meet only through a hook.
-@(private = "file")
-distinct_proc_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	if (type_kind(c, from) == .Distinct) == (type_kind(c, to) == .Distinct) ||
-	   underlying_kind(c, from) != .Proc || underlying_kind(c, to) != .Proc {
+// design.md "Implicit type conversions": a named procedure or a procedure
+// literal takes a distinct procedure type whose signature its own type converts
+// to, as an unfixed constant takes a distinct type. `assignable` sees two types
+// and cannot ask this: a procedure value that already has a type converts only
+// as written, so the expression decides.
+procedure_constant_converts :: proc(c: ^Compiler, e: Expr, to: Type_Id) -> bool {
+	if e == nil || type_kind(c, to) != .Distinct || underlying_kind(c, to) != .Proc {
 		return false
 	}
-	source, dest := type_underlying(c, from), type_underlying(c, to)
-	return source == dest || proc_type_weakens_to(c, source, dest)
+	sym := symbol_of(c, named_value_symbol(e))
+	if sym == nil || sym.kind != .Proc {
+		return false
+	}
+	from, dest := expr_base(e).type, type_underlying(c, to)
+	return type_kind(c, from) == .Proc && (from == dest || proc_type_weakens_to(c, from, dest))
+}
+
+// `assignable` for a value whose expression is known.
+expr_assignable :: proc(c: ^Compiler, e: Expr, to: Type_Id) -> bool {
+	return assignable(c, expr_base(e).type, to) || procedure_constant_converts(c, e, to)
 }
 
 // Is `T(v)` legal? Built-in conversions only.
@@ -107,6 +114,11 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if source == dest {
 		return true // between a distinct type and what it wraps, either way
+	}
+	// design.md "Distinct types": a procedure value crosses in one step with
+	// the weakening its signature allows.
+	if proc_type_weakens_to(c, source, dest) {
+		return true
 	}
 	source_kind, dest_kind := type_kind(c, source), type_kind(c, dest)
 	if dest_kind == .Enum {

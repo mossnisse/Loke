@@ -1,0 +1,44 @@
+L0310
+@13:53
+cannot return `Op` with `proc(int) -> int`
+
+L0310
+@15:59
+cannot return `Other` with `proc(int) -> int`
+a procedure value converts where it is written: `Other(value)`
+
+L0310
+@20:10
+cannot initialise `Op` with `proc(int) -> int`
+only a named procedure or a procedure literal takes a distinct procedure type; a procedure value converts where it is written: `Op(value)`
+
+L0310
+@21:27
+cannot initialise `proc(int) -> int` with `Op`
+`Op` converts to the procedure type it wraps only where the conversion is written
+
+L0310
+@22:8
+cannot pass `proc(int) -> int` with `Op`
+
+L0310
+@23:10
+cannot pass `Op` with `proc(int) -> int`
+
+L0310
+@24:13
+cannot initialise `Other` with `Op`
+
+L0310
+@26:10
+
+L0310
+@28:10
+
+L0354
+@29:13
+mismatched operand types `Op` and `proc(int) -> int`
+
+L0310
+@31:9
+cannot assign `Op` with `proc(int) -> int`

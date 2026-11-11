@@ -245,7 +245,7 @@ materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: stri
 		return false
 	}
 	final := expr_base(e).type
-	if !assignable(k.c, final, target) {
+	if !expr_assignable(k.c, e, target) {
 		errorf(
 			k.c,
 			expr_span(e),
@@ -259,9 +259,32 @@ materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: stri
 		note_union_widening(k, expr_span(e), final, target)
 		note_mutable_slicing(k, e, final, target)
 		note_named_callable(k, e, final, target)
+		note_written_procedure_conversion(k, e, final, target)
 		return false
 	}
 	return true
+}
+
+// design.md "Distinct types": a procedure value that already has a type crosses
+// to or from a distinct procedure type only where the conversion is written.
+@(private = "file")
+note_written_procedure_conversion :: proc(k: ^Checker, e: Expr, found, target: Type_Id) {
+	wraps := type_kind(k.c, target) == .Distinct
+	if wraps == (type_kind(k.c, found) == .Distinct) || !convertible(k.c, found, target) ||
+	   underlying_kind(k.c, found) != .Proc || underlying_kind(k.c, target) != .Proc {
+		return
+	}
+	if wraps {
+		add_notef(
+			k.c, expr_span(e), "only a named procedure or a procedure literal takes a distinct procedure type; a procedure value converts where it is written: `%s(value)`",
+			type_name(k.c, target),
+		)
+	} else {
+		add_notef(
+			k.c, expr_span(e), "`%s` converts to the procedure type it wraps only where the conversion is written",
+			type_name(k.c, found),
+		)
+	}
 }
 
 // design.md "Borrowed callable views": a named callable record has other roles,
@@ -1684,6 +1707,14 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := 
 			return INVALID_TYPE, false
 		}
 		return lt, true
+	}
+	// design.md "Implicit type conversions": a named procedure beside a value of
+	// a distinct procedure type takes that type, as `10` does in `a < 10`.
+	if procedure_constant_converts(k.c, rhs, lt) {
+		return lt, true
+	}
+	if procedure_constant_converts(k.c, lhs, rt) {
+		return rt, true
 	}
 	joined, joins := join_operand_types(k, lt, rt)
 	if !joins {

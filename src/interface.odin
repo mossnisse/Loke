@@ -1091,7 +1091,8 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 		return requirement_failuref(k, at, "its signature `%s` is not a procedure type", type_name(k.c, signature))
 	}
 	if have := underlying_info(k.c, subject); have != nil && have.kind == .Proc {
-		if assignable(k.c, subject, signature) {
+		// A distinct procedure type is called as what it wraps.
+		if assignable(k.c, type_underlying(k.c, subject), signature) {
 			return {}, true
 		}
 		return requirement_failuref(k, at, "`%s` does not convert to `%s`", type_name(k.c, subject), type_name(k.c, signature))

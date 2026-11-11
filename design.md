@@ -578,7 +578,9 @@ extensions cannot add conversions.
 - A procedure, or a capture literal's value, -> a [`dyn proc`
   view](#borrowed-callable-views) of a signature it meets, when a `dyn proc`
   parameter or typed destination is expected
-- A distinct procedure type <-> its underlying procedure type
+- A named procedure or a procedure literal -> a [distinct procedure
+  type](#distinct-types) over a signature the procedure's own type converts to;
+  a procedure value that already has a type converts only as written
 - Unfixed integers -> built-in integer types when in range, and built-in
   floating-point types under the [rounding rule](#number-literals)
 - Unfixed floats -> built-in floating-point types under the same rounding rule;
@@ -1752,6 +1754,17 @@ conversion hooks, interfaces, and formatting. Compared with its underlying type:
   no type yet, so it converts to a distinct type [as it would to the underlying
   type](#implicit-type-conversions), under that type's range and rounding
   checks.
+- **Procedures** follow the same rule. A named procedure, `Type.member`
+  included, or a procedure literal stands where an unfixed constant does: it
+  converts to a distinct procedure type when its own type is the wrapped
+  signature or converts to it, as a procedure that retains nothing does to a
+  signature with an [`@(escape=stored)`](#escapelevel) parameter. A procedure
+  held in a variable, parameter, or field already has a type, and so does a
+  [conditional expression](#conditional-expression) between two procedures;
+  each converts as written, in either direction, in one step with the same
+  weakening. A value of a distinct procedure type is called as the procedure
+  it wraps and converts to a [`dyn proc` view](#borrowed-callable-views) of
+  that signature, so neither needs the conversion.
 - **Variants** are kept: a distinct type over a union constructs its variants,
   answers `.as(.name)`, and a `switch` over it takes [variant
   cases](#inspecting-a-union) and must cover them. It is still not a union to
@@ -1765,6 +1778,19 @@ a: My_Int = 3;       // an unfixed constant takes the distinct type
 b := My_Int(n);      // a typed value converts as written
 c: My_Int = n;       // ERROR: `n` is an `int`
 ok := a < 10;        // the constant becomes a `My_Int`, and `<` is inherited
+```
+
+```loke
+Handler :: distinct proc(n: int) -> int;
+twice :: proc(n: int) -> int { return n * 2; }
+
+h: Handler = twice;                   // a named procedure takes the distinct type
+f := twice;                           // a `proc(n: int) -> int` value
+g := Handler(f);                      // a typed value converts as written
+bad: Handler = f;                     // ERROR: `f` already has a type
+plain := (proc(n: int) -> int)(h);    // and so back; an alias shortens the type
+same := h == twice;                   // `twice` becomes a `Handler`
+view: dyn proc(n: int) -> int = h;    // viewed as the procedure it wraps
 ```
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct: two
@@ -4708,9 +4734,10 @@ visit(nodes, print_node);                          // a procedure converts too
 visit(nodes, (dyn proc(node: ^Node))(&by_depth));  // a named callable record: written
 ```
 
-**Conversion.** A procedure converts when it converts to the view's signature;
-a [capture literal](#capture-literals) converts when its `call` meets that
-signature under `Callable`. Both conversions are implicit for a `dyn proc`
+**Conversion.** A procedure converts when it converts to the view's signature,
+and a value of a [distinct procedure type](#distinct-types) converts as the
+procedure it wraps; a [capture literal](#capture-literals) converts when its
+`call` meets that signature under `Callable`. Both conversions are implicit for a `dyn proc`
 parameter or typed destination. An explicit conversion such as
 `(dyn proc(n: int) -> int)(add_one)` does the same thing.
 

@@ -804,8 +804,10 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, seen: ^map[Effect_Key]bo
 	visited^[key] = true
 	out := make([dynamic]int, 0, 4, context.temp_allocator)
 	if call.dyn_interface == INVALID_SYMBOL {
+		// A distinct procedure type holds what the type it wraps holds.
+		held := type_underlying(c, call.type)
 		for body, index in bodies {
-			if used_as_value[body.symbol] && assignable(c, body.type, call.type) {
+			if used_as_value[body.symbol] && assignable(c, body.type, held) {
 				append(&out, index)
 			}
 		}

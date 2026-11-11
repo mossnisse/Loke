@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A procedure value that already has a type converts to or from a
+  [distinct procedure type](design.md#distinct-types) only where the conversion is written
+  (rationale under ["Distinct types"](comments.md#distinct-types)). With
+  `Handler :: distinct proc(n: int) -> int`, a variable `f: proc(n: int) -> int`, and `h: Handler`,
+  each of `h = f`, `f = h`, and passing either where the other type is expected compiled; they are
+  now `L0310`, with a note naming the conversion. A named procedure or a procedure literal still
+  converts unwritten, as in `h: Handler = twice`, and a `Handler` is still called directly and still
+  converts to a `dyn proc` view. Upgrade by writing `Handler(f)` where the compiler reports a
+  procedure value, and the wrapped type where it reports a `Handler`, as
+  `(proc(n: int) -> int)(h)` or through an alias for that type; `lokec -migrate` does not rewrite
+  these.
 - A struct field no longer promotes its own fields: `using` before a field's name is removed
   ([Structs](design.md#structs), rationale under
   ["Promoted struct fields"](comments.md#promoted-struct-fields)). With `using position: Vec3`,

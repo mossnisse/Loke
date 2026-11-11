@@ -1389,6 +1389,23 @@ protects nothing, and would make a distinct type worse to use than the type it
 wraps for the one thing they have in common. Go's defined types and Odin's
 distinct types take constants the same way.
 
+A named procedure or a procedure literal converts to a distinct procedure type
+for the same reason: it is written where it is used and has no role yet. For a
+while every procedure value converted, in both directions. That let a `Less`
+reach an `Equal` parameter through any plain `proc(a, b: int) -> bool` between
+them, which the direct conversion rejected, so `distinct` named a role and
+guarded nothing. A procedure value that already has a type now converts as
+written, like every other typed value.
+
+What that costs is the unwrapping direction. `f64(m)` names its target, while
+the type a distinct procedure type wraps has no name unless the program declares
+an alias for it, so the conversion spells the signature. It is rare: a value of
+a distinct procedure type is called directly and converts to a `dyn proc` view,
+and the conversion is left for storing it where a plain procedure type is
+declared, which is where its role is dropped. Keeping only that direction
+implicit was the alternative. It closes the same hole, and leaves procedures as
+the one distinct type that forgets what it is without saying so.
+
 ### One pattern grammar, flat declarations
 
 Binding forms use subsets of one pattern grammar: names and `_`, writable
