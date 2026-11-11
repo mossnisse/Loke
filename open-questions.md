@@ -893,7 +893,7 @@ Open points:
   could merge into one alternative, as flattening by hand does. The same label
   with different payload types must be an error.
 - **Order.** Spliced alternatives would take their place in the written order,
-  which is also the tag order.
+  which is also the order reflection reports.
 - **Generic sets.** `(..$E | limit: Limit_Error)` over a set bound by a
   generic would need a `$` that binds a set of alternatives. A
   [structural pattern](design.md#specialization) binds one payload per label,

@@ -1142,9 +1142,9 @@ two alternatives with one payload type apart, which `(read: io.Error |
 log_write: io.Error)` does. The colon is required so that `(a | b)` stays an
 expression.
 
-Identity is ordered for the reason a record's is: the order is the tag order,
-and making two orders one type would need a canonical order that the source no
-longer shows. Converting between orders and between sets of labels is
+Identity is ordered for the reason a record's is: the order is the one
+reflection reports, and making two orders one type would need a canonical order
+that the source no longer shows. Converting between orders and between sets of labels is
 [widening](#widening-by-label).
 
 An anonymous union carries no attributes, so it is never fallible. A failure
@@ -2085,6 +2085,41 @@ no zero value.
 Payloadless union variants use bare names. A type name cannot accidentally become
 a payloadless variant, so Odin-style `union { int, string }` is diagnosed instead
 of silently changing meaning. The older `name:` spelling remains accepted.
+
+### Union layout is the compiler's
+
+design.md once specified a union's bytes: the payload region, then a tag of the
+narrowest width holding the declaration index. releasing.md said at the same
+time that layout outside the C ABI may change in any release, so a program
+asserting `size_of(Option(bool)) == 2` was protected by one document and not by
+the other. [Representation](design.md#representation) now leaves the storage to
+the compiler.
+
+Checked code loses little, because it never saw the layout. Nothing reads a
+tag, a union crosses the foreign boundary only as the null-niche `Option`, and
+`unsafe.transmute` already gave a union no compile-time meaning. What a program
+could observe was the size, and that stays a constant, though not the same one
+in every release.
+
+The other way to make the documents agree was to keep the layout specified and
+exempt it from what may change. Further niches could then still be added, each
+specified as the null niche is, and each a breaking release. The break would be
+silent for the programs it reaches, which are the ones reading bytes through
+`unsafe`. Promising less first costs nothing later: a stable layout can be
+added for the program that needs one, where a promised layout cannot be
+withdrawn quietly. Rust does the same for an enum with no `repr` written.
+
+Three guarantees stay because the language itself depends on them. The size is
+one constant for a release and target, so `size_of` means something. A
+designated zero is all-zero bytes, as every other zero is, so zero filling
+needs no knowledge of the type. And the null niche holds, because foreign
+bindings declare a nullable C pointer as an `Option`.
+
+Nothing in the compiler changed with the rule.
+[compiler-architecture.md](compiler-architecture.md#union-layout) describes the
+layout it chooses. Whether to choose other niches, for `Option(bool)`, an
+`Option` of an enum, or a nested `Result`, is an optimization to measure:
+padding often takes back the byte a niche saves.
 
 ### Integer overflow panics
 

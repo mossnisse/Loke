@@ -24,9 +24,11 @@ These rules apply to every release:
 - The [VS Code extension](editors/vscode/README.md) ships in the bundle but is
   not versioned with it: its `package.json` version stays `0.1.0`, which its
   install commands name.
-- The platform C ABI is preserved. Generated code, non-C-ABI layout, runtime
-  symbols, optimization results, diagnostic wording, and
-  [inspection output](compiler-guide.md#inspecting-a-compilation) may change.
+- The platform C ABI is preserved. Generated code, layout that design.md leaves
+  to the compiler, runtime symbols, optimization results, diagnostic wording,
+  and [inspection output](compiler-guide.md#inspecting-a-compilation) may
+  change. [A union's storage](design.md#representation) is such a layout: its
+  size may differ between releases, and only what that section promises holds.
 - Diagnostic codes retain their meaning and are never reused. A patch never
   turns a warning into an error.
 - Compatibility covers behavior specified by [design.md](design.md) and

@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A union's storage is the compiler's choice ([Representation](design.md#representation),
+  rationale under ["Union layout is the compiler's"](comments.md#union-layout-is-the-compilers)).
+  design.md specified the payload region, the tag's width and position, and its values, while
+  [releasing.md](releasing.md#version-policy) said such layout may change in any release. The
+  specification now promises three things: a size and alignment that are constants of a release
+  and target, an all-zero designated zero, and the null niche that makes `Option(^T)` one address.
+  The compiler's layout is unchanged and is described under
+  [Union layout](compiler-architecture.md#union-layout). Upgrade by removing what depends on the
+  rest: a `static_assert` on the size of a union other than a null-niche one, and unchecked code
+  that reads a tag or builds a union from bytes. Read a variant with `switch`, and build one with
+  its constructor.
 - A procedure value that already has a type converts to or from a
   [distinct procedure type](design.md#distinct-types) only where the conversion is written
   (rationale under ["Distinct types"](comments.md#distinct-types)). With

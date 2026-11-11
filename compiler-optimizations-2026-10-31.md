@@ -8,8 +8,9 @@ for this split.
 
 Alias attributes remain in the [language review](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves)
 because they require an unchecked-code aliasing contract. Compiler-chosen union
-layout also remains [there](design-review-2026-10-31.md#62-union-layout), since
-it changes the specified representation.
+layout is recorded [there](design-review-2026-10-31.md#62-union-layout) too:
+design.md has left the layout to the compiler since 2026-11-11, and choosing
+further niches waits on a measurement.
 
 ## Contents
 

@@ -4,9 +4,11 @@ package main; import "core:fmt";
 // an `i64` payload, an `i128` payload, and an explicitly aligned one — each on
 // its own, nested in a struct, and as a fixed-array element.
 //
-// Then the tag widths. The tag is the narrowest unsigned integer that indexes
-// `0 ..< variant_count`, so 256 variants still fit one byte and 257 need two.
-// An empty union has no variant to index and keeps one byte.
+// Then the tag widths. compiler-architecture.md "Union layout": the tag is the
+// narrowest unsigned integer that indexes `0 ..< variant_count`, so 256
+// variants still fit one byte and 257 need two. An empty union has no variant
+// to index and keeps one byte. design.md "Representation" promises none of
+// these sizes, so the expected output changes with the layout.
 //
 // Every union here designates a zero, because one without `@(zero=)` has no
 // zero value and could not be declared without an initialiser.

@@ -988,6 +988,38 @@ and `mem.Scratch`, has an intrinsic declaration (`L0737`), so none is missing
 from the package's documentation. A constant written `Name :: ---;` without the
 attribute is a syntax error (`L0262`).
 
+### Union layout
+
+[Representation](design.md#representation) leaves a union's storage to the
+compiler and promises three things: a size and alignment that are constants of
+a release and target, an all-zero zero, and the null niche. `union_layout`
+(`src/union.odin`) decides the rest, and every consumer reads its
+`Union_Layout`. What it chooses:
+
+- The payload region comes first, sized to the largest variant and rounded up
+  to the union's alignment. The tag follows, then padding to the alignment.
+- The tag is the narrowest unsigned integer that indexes
+  `0 ..< variant_count`: one byte through 256 variants, two from 257. It holds
+  the variant's declaration index, so the first variant is 0 and there is no
+  nil tag. A union with no variants keeps one tag byte.
+- A tag wider than every payload raises the union's alignment, as
+  `@(align=N)` does.
+- A niche union (`union_niche_variant`) stores no tag and has its payload's
+  size. Its tag is computed from the first word where one is read.
+
+The emitter builds storage from these facts rather than asking LLVM
+(`emit_llvm_union.odin`), and [`-check-layout`](compiler-guide.md#inspecting-a-compilation)
+compares the two; `tests/layout/unions.loke` covers the shapes and the tag
+widths. Constant byte images, structural equality, and debug information read
+the same record.
+
+Another niche changes `union_layout` and the tag reads and writes in
+`emit_llvm_union.odin`, and no specification text. Two constraints hold it. A
+designated zero stays all-zero bytes, because zero filling writes no tag. And a
+layout depends only on the type and the target, never on the optimization
+level or on which package asks, since the size is promised to be one constant
+for a release and target.
+
 ## Source-code map
 
 Files directly in `src/` form the `lokec` package; `src/subprocess/` is a

@@ -2476,22 +2476,30 @@ accept on equal terms with `Option` and `Result`.
 
 #### Representation
 
-A union's storage is its payload region, then the tag, then whatever padding the
-alignment asks for. The tag is the narrowest unsigned integer that indexes
-`0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The
-first declared variant has tag 0, and there is no nil tag. A union with no
-variants keeps one byte. A tag wider than every payload raises the union's
-alignment, as any other member would.
+How a union is stored is the compiler's choice: where it records which variant
+it holds, with what values, and in how many bytes. A program may rely on three
+things.
 
-One exception stores no tag. A union of exactly two variants, one without a
-payload or with a `Unit` payload and the other with a
-[non-null](#types-with-no-zero-value) payload, is the payload alone: that
-payload's first word is a non-null address, so the null first word is the other
-variant. `Option(^T)` is one address, as is `Option` of a procedure value,
-`cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` is its two words, and
-`Result(Unit, ^T)` is one address as `Status(^T)` is. Nothing else changes: the
-variants keep their declaration order, and the all-zero value is still the
-variant without a reference.
+- **Size and alignment.** `size_of` and `align_of` of a union are compile-time
+  constants, and one compiler release gives a union type the same ones on a
+  target wherever it is used. [`@(align=N)`](#alignn) sets the least alignment.
+  Another release may give another size
+  ([Version policy](releasing.md#version-policy)).
+- **The zero.** The zero of a union that [designates one](#zero-values-and-zero)
+  is all-zero bytes.
+- **The null niche.** A union of exactly two variants, one without a payload or
+  with a `Unit` payload and the other with a
+  [non-null](#types-with-no-zero-value) payload, is the payload alone: that
+  payload's first word is a non-null address, so the null first word is the
+  other variant. `Option(^T)` is one address, as is `Option` of a procedure
+  value, `cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` is its two
+  words, and `Result(Unit, ^T)` is one address as `Status(^T)` is. The all-zero
+  value is the variant without a reference, whichever was declared first.
+
+Nothing else about the bytes is promised, so unchecked code that reads or builds
+a union through its storage depends on one compiler release. A variant's
+[declaration index](#compile-time-reflection) names it and is not a stored
+value.
 
 #### Anonymous unions
 
@@ -2524,10 +2532,10 @@ Event :: (
 ```
 
 Its identity is **structural**: the ordered sequence of its labels and payload
-types, which is also its tag order. The same alternatives in the same order are
-one type wherever they are written, in any package; the same alternatives in
-another order are a different type, which a value [widens](#widening-by-label)
-to.
+types, the order [reflection](#compile-time-reflection) reports. The same
+alternatives in the same order are one type wherever they are written, in any
+package; the same alternatives in another order are a different type, which a
+value [widens](#widening-by-label) to.
 
 Otherwise it is an ordinary union. It is built with the contextual
 `.label(payload)` or through an alias, `Either.left(1)`, and `Either.left` is
@@ -2928,9 +2936,9 @@ name is a constant `string_view`, `type` is a compile-time `type` value, and
 every member's value is exact, and `index` is the member's declaration index. A
 `meta.Variant` has `name`, `type`, and `index`: the name is the variant's label,
 `type` is its payload type, or `Unit` for a payloadless variant, and `index` is
-its declaration index, which is also its tag. An enum member's `meta.Variant`
-has `type` `Unit` and the member's declaration index; its value is read with
-`enum_values_of`, so a union's tag numbers stay unreadable through it. An
+its declaration index, which is not how the union [stores](#representation) the
+variant. An enum member's `meta.Variant` has `type` `Unit` and the member's
+declaration index; its value is read with `enum_values_of`. An
 [expanded switch case](#per-variant-switch-cases) binds one.
 
 All three preserve source declaration order, after conditional `when` selection.
@@ -8457,8 +8465,8 @@ one.
 storage byte by byte, little-endian, so a constant of any shape the checks admit
 (a scalar of any width, an array, a SIMD vector, or a struct of them) converts.
 Padding between or after fields holds no value, and a result that would read it
-is a compile-time error. A union, though its [layout](#representation) is
-specified, and a record with an [`initialized`](#uninitialized-capacity) field,
+is a compile-time error. A union, whose [layout](#representation) is the
+compiler's, and a record with an [`initialized`](#uninitialized-capacity) field,
 whose capacity holds no value, have no compile-time meaning on either side. Neither does a
 source that is or contains a `typeid_of(T)` constant, which has no number until
 the program's types are numbered ([`type` and `typeid`](#type-and-typeid)); a
@@ -8573,8 +8581,9 @@ These types have invalid representations:
   a null address word. An `Option` of one, which stores the
   payload alone (see [Representation](#representation)), adds no invalid
   representation of its own: its null word is `.none`;
-- a union: a tag outside `0 ..< variant_count`, or a payload region that is not
-  a value of the variant the tag names;
+- a union: storage that records none of its variants, or a payload that is not
+  a value of the variant recorded. Which bytes record a variant is
+  [the compiler's choice](#representation);
 - `string` and `string_view`: bytes that are not valid UTF-8, or a pointer and
   length that do not describe that many readable bytes; `cstring_view`: an
   address with no zero terminator in readable storage; a slice, dynamic array,

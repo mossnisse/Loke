@@ -217,12 +217,15 @@ designated_variant :: proc(
 	return
 }
 
-// design.md "Unions": the payload region, then the tag, then padding. The
-// emitter builds storage matching these facts rather than asking LLVM.
+// design.md "Representation" leaves a union's storage to the compiler, and
+// compiler-architecture.md "Union layout" records what is chosen here: the
+// payload region, then the tag, then padding. The emitter builds storage
+// matching these facts rather than asking LLVM.
 //
-// A `niche` union stores no tag (design.md "Representation"): its payload's
-// first word is a non-null reference, so the null word is the payloadless
-// variant. `tag_bytes` is then the width of the tag the emitter computes.
+// A `niche` union stores no tag, which design.md "Representation" does
+// promise: its payload's first word is a non-null reference, so the null word
+// is the payloadless variant. `tag_bytes` is then the width of the tag the
+// emitter computes.
 Union_Layout :: struct {
 	payload_size:  u64,
 	align:         u64,
@@ -286,7 +289,8 @@ type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// The narrowest tag representing `0 ..< variant_count`, at least one byte.
+// compiler-architecture.md "Union layout": the narrowest tag representing
+// `0 ..< variant_count`, at least one byte.
 @(private = "file")
 union_tag_bytes :: proc(variants: int) -> u64 {
 	switch {

@@ -519,8 +519,9 @@ debug_pointer_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: st
 	debug_member_node(d, members, name, pointer, 64, offset * 8)
 }
 
-// design.md "Unions": the payload overlaps at offset zero, one member per
-// variant that carries one, and the tag, which is the variant's index, follows.
+// compiler-architecture.md "Union layout": the payload overlaps at offset zero,
+// one member per variant that carries one, and the tag, which is the variant's
+// index, follows.
 @(private = "file")
 debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 	c := d.c

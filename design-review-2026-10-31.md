@@ -104,6 +104,11 @@ proposal is removed from the text and listed under
 [Adopted proposals](#adopted-proposals), with the steps after it renumbered.
 The splat is what remains of step 3.
 
+The same day design.md stopped specifying a union's layout, which was what
+remained of step 1 ([6.2](#62-union-layout)). The change is listed under
+[Adopted proposals](#adopted-proposals), with the steps after it renumbered.
+Choosing further niches stays open as a measurement.
+
 ## Contents
 
 - [Summary](#summary)
@@ -141,10 +146,7 @@ removed to expressiveness lost first:
    attribute's four uses in the library already encode one with a one-element
    array.
 2. **Shrink** runtime reflection to shape ([3.1](#31-runtime-reflection)).
-3. **Make design.md and releasing.md agree about union layout**
-   ([6.2](#62-union-layout)): one specifies it and the other says it may
-   change. The niches can follow when measured, and their gain is modest.
-4. **Respell** mutable slicing as `a[mut lo:hi]`
+3. **Respell** mutable slicing as `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)).
 
 The splat of a typed scalar can be narrowed to lane-wise operators
@@ -898,48 +900,23 @@ is endorsed: `Result(Option(T), E)` and a `Result(Small, Enum)` should fit
 their niches, with `@(repr=...)` for a stable layout where foreign code or
 serialization needs one.
 
-**Third pass: reconcile the two documents first.** The proposal has a cheap
-half and a costly half. The cheap one is a disagreement that exists today.
-[Representation](design.md#representation) promises a payload region followed
-by a tag, and [Compile-time reflection](design.md#compile-time-reflection)
-says a variant's `index` "is also its tag".
-[releasing.md](releasing.md#version-policy) says that "non-C-ABI layout" may
-change between releases, and also that compatibility covers what design.md
-specifies. A union's layout is both. Checked code observes none of it but the
-size: a union is not [foreign-ABI-safe](design.md#foreign-abi-safe-types)
-apart from the `Option` of a non-null reference, and `unsafe.transmute`
-already gives a union no compile-time meaning.
+**Third pass: the two documents now agree.** The proposal had a cheap half and
+a costly half. The cheap one was a disagreement between design.md, which
+specified the layout, and releasing.md, which said it may change. It is
+settled: the layout is the compiler's, with three guarantees kept
+([Adopted proposals](#adopted-proposals)).
 
-The first step is therefore to make design.md say which it is. This review
-would mark the layout and the tag values as the compiler's, and keep three
-guarantees:
-
-- a union's size and alignment are constants of a build;
-- the null niche, which foreign bindings rely on;
-- a union's zero value is all-zero bytes. `@(zero=name)` must name the first
-  variant so that "the union's zero stays the all-zero representation every
-  other zero is"
-  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)), and zero
-  filling depends on it.
-
-That costs no compiler work and no `@(repr)`, which can wait for the first
-program that needs a stable layout.
-
-**What is lost.** A program can no longer rely on a union's size from one
-compiler release to the next, in a `static_assert` for instance, or on its
-bytes in a run-time `unsafe.transmute` or a memory dump. The other way to
-reconcile the documents, keeping the layout specified and saying so in
-releasing.md, keeps those and gives up the niches.
-
-**What is gained is modest.** The null niche already covers the large case:
-`Option` of a pointer, a `Box`, a `Shared`, a procedure value. What remains
+**What remains is modest.** The null niche already covers the large case:
+`Option` of a pointer, a `Box`, a `Shared`, a procedure value. What is left
 is `Option(bool)`, `Option` of an enum, and a nested `Result`, where padding
 often takes back the byte a niche saves. Choosing those niches is an
-optimization to measure, on the compiler review's terms, and nothing about it
-is urgent: releasing.md already excludes this layout from what a release
-promises. An earlier draft of this paragraph, the same day, claimed that each
-release made the layout harder to change and named the null niche as the only
-guarantee to keep. Both were wrong.
+optimization to measure, on the compiler review's terms, and it is no longer
+a language change: only `union_layout` and the emitter's tag reads move
+([Union layout](compiler-architecture.md#union-layout)). `@(repr=...)` waits
+for the first program that needs a stable layout. An earlier draft of this
+paragraph, the same day, claimed that each release made the layout harder to
+change and named the null niche as the only guarantee to keep. Both were
+wrong.
 
 The [small-value ABI observations](compiler-optimizations-2026-10-31.md#small-values-and-the-existing-abi)
 need no language change and are recorded in the compiler review.
@@ -981,27 +958,23 @@ The independent compiler work has its own [suggested order](compiler-optimizatio
 
 The order after the third pass, cheapest first:
 
-1. Specification only, with no urgency: make design.md and releasing.md agree
-   about union layout ([6.2](#62-union-layout)). The step's other half, the
-   conversion list for an unfixed constant and a distinct type, is done
-   ([Adopted proposals](#adopted-proposals)).
-2. A returned construction transfers an owned local operand
+1. A returned construction transfers an owned local operand
    ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
    clones the failure path and record results make today, and it is what
    deleting success returns would wait for.
-3. `Uninit(T)` in place of `@(initialized)`
+2. `Uninit(T)` in place of `@(initialized)`
    ([3.2](#32-initializedcount-and-uninitialized-storage)), moving the four
    library declarations with it, and shrink `Type_Info`
    ([3.1](#31-runtime-reflection)).
-4. `a[mut lo:hi]`
+3. `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise))
    and the reserved `static` and `thread_local`
    ([4.3](#43-parsing-decisions-worth-keeping)), together, since both need
    `lokec -migrate`.
-5. Predeclare the catalogue, then decide `some I`
+4. Predeclare the catalogue, then decide `some I`
    ([4.2](#42-verbosity-hotspots)); the first shortens every bound, so the
    second is judged on what remains.
-6. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+5. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
    The read effect is in place and no borrow-checker gap is known. After the
    compiler review's
    [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
@@ -1009,11 +982,11 @@ The order after the third pass, cheapest first:
    IR. If that pays, emit it for accesses through checked carriers under both
    panic strategies. No `noalias` parameters under `unwind`, and no capture
    attributes: LLVM infers them for internal procedures.
-7. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
+6. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
    late: it exchanges a conversion for an operator rule and removes nothing
    harmful. It first needs the scalar form of `Simd(T, N)(x)` stated as a
    rule of its own.
-8. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
+7. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
    last: it is the largest surface change, and it needs `lokec -migrate` able
    to rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
@@ -1026,6 +999,33 @@ CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md. Compiler-only changes are
 listed under [Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations).
 
+- **A union's layout is the compiler's** (2026-11-11;
+  [Representation](design.md#representation), rationale under
+  ["Union layout is the compiler's"](comments.md#union-layout-is-the-compilers)).
+  design.md specified a payload region followed by a tag and said a variant's
+  reflected `index` "is also its tag", while
+  [releasing.md](releasing.md#version-policy) said that "non-C-ABI layout" may
+  change between releases and that compatibility covers what design.md
+  specifies. A union's layout was both. design.md now marks the layout and the
+  tag values as the compiler's and keeps three guarantees: a union's size and
+  alignment are constants of a release and target; the null niche, which
+  foreign bindings rely on; and a designated zero is all-zero bytes, which
+  zero filling depends on. No compiler work and no `@(repr)` were needed, and
+  the layout the compiler chooses is described under
+  [Union layout](compiler-architecture.md#union-layout). What is lost: a
+  program can no longer rely on a union's size from one compiler release to
+  the next, in a `static_assert` for instance, or on its bytes in a run-time
+  `unsafe.transmute` or a memory dump. The other way to reconcile the
+  documents kept those. It did not give up the niches, as the third pass said
+  it would: each could have been specified as the null niche is, at the price
+  of a breaking release whose break is silent for the programs it reaches.
+  The step turned out wider than two documents. Four other places in
+  design.md leaned on the specified layout (anonymous-union identity, the
+  reflected `index`, `unsafe.transmute`, and invalid representations),
+  releasing.md's sentence was reworded for every layout design.md leaves
+  open, and the source comments that cited design.md for the tag now cite
+  compiler-architecture.md. `@(zero=name)` still must name the first variant;
+  with the layout free that rule could be relaxed, and nothing asks for it.
 - **A procedure value converts to a distinct procedure type as written**
   (2026-11-11; [Implicit type conversions](design.md#implicit-type-conversions),
   [Distinct types](design.md#distinct-types), rationale under
