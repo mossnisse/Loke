@@ -5620,12 +5620,16 @@ result is unfixed but not constant. Context gives it a type as it gives one to a
 constant, and each operand converts to that type; with no context it takes its
 default type. An operator applied to such a result is unfixed the same way: its
 operands take the type and the operator runs at that type, which it must apply
-to.
+to. A [conversion](#type-conversion) `T(...)` gives it `T` when an unfixed
+constant of its kind converts implicitly to `T`; otherwise it takes its default
+type and converts as a runtime value.
 
 ```loke
 y: u8 = (1 if flag else 2) + 1;   // adds two `u8`
 z: f64 = (1 if flag else 3) / 2;  // divides two `f64`
 w: f64 = (1 if flag else 3) % 2;  // ERROR: `%` does not apply to `f64`
+b := u8(1 if flag else 300);      // ERROR: 300 is not representable by `u8`
+n := int(1.5 if flag else 2.5);   // an `f64`, truncated at run time
 ```
 
 The result is a temporary that owns its value, whatever takes it. A place

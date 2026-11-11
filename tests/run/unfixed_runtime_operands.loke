@@ -45,4 +45,12 @@ main :: proc() {
 	as_rune: rune = 1 << count();
 	base := 1;
 	fmt.println(shifted, by_runtime, i32(as_rune), base << (1 if c() else 2));
+
+	// BUG: a conversion left its operand at `int`, so `u8(...)` emitted `zext i64
+	// to i8`. The target gives the type a constant of the kind would take, or the
+	// operand takes its default type and converts as a runtime value.
+	LIMIT :: 5;
+	fmt.println(u8(1 if c() else 2), i8(-LIMIT if c() else LIMIT), u64(1 << 63 if c() else 0));
+	fmt.println(u8((1 if c() else 2) + 254), f32(1 if c() else 2), int(1.5 if c() else 2.5), u32('a' if c() else 'b'));
+	fmt.println(Simd(f32, 4)(1 if c() else 2), f32(0.1 if c() else 0.2) == f32(0.1));
 }

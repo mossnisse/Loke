@@ -25,3 +25,11 @@ a rune does not convert implicitly to `f32`; write `f32(...)` to convert it
 L0318
 @16:27
 `+` does not apply to `D` and `D`
+
+L0352
+@17:10
+300 is not representable by `u8`
+
+L0373
+@18:11
+`bool` cannot be converted to `int`

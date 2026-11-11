@@ -1879,6 +1879,12 @@ checklist.
 
 ### Fixed
 
+- A conversion of a [conditional expression](design.md#conditional-expression) of unfixed
+  constants with a runtime condition, such as `u8(1 if solid else 2)` or
+  `i8(LIMIT if solid else -LIMIT)`, compiles: it emitted invalid IR that clang rejected (`L0403`).
+  The operand takes the target type when a constant of its kind would convert to it implicitly, so
+  `u8(300 if solid else 2)` is `L0352` as `u8(300)` is, and otherwise its default type, so
+  `int(1.5 if solid else 2.5)` truncates at run time.
 - A spread into a [variadic pack](design.md#variadic-parameters) whose parameter may keep values,
   as `keep(..lists)` or `keep(first, ..lists)` for `@(escape=static) lists: ..[]int`, keeps only
   what the spread's elements hold, which the pack copies in, not the spread slice's own storage.

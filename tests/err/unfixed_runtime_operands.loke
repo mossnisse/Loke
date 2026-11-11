@@ -14,5 +14,7 @@ main :: proc() {
 	f: u8 = (1 if c() else 300) + 1;
 	g: f32 = 'a' + (1 if c() else 2);
 	h: D = (1 if c() else 2) + 1;
-	_ = a; _ = b; _ = d; _ = e; _ = f; _ = g; _ = h;
+	i := u8(300 if c() else 2);
+	j := int(true if c() else false);
+	_ = a; _ = b; _ = d; _ = e; _ = f; _ = g; _ = h; _ = i; _ = j;
 }

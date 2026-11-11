@@ -1032,6 +1032,25 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	check_conversion_hook_call(k, v, target)
 }
 
+// design.md "Implicit type conversions", by kind alone: would an unfixed
+// constant of `from` convert implicitly to `to` if its value fit? `assignable`
+// leaves an unfixed float or bool meeting an integer to `materialize`.
+@(private = "file")
+unfixed_kind_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	if !assignable(c, from, to) {
+		return false
+	}
+	// design.md "SIMD vectors": a scalar meets the lane type.
+	lane := type_is_simd(c, to) ? underlying_info(c, to).element : to
+	#partial switch type_kind(c, from) {
+	case .Untyped_Float:
+		return underlying_kind(c, lane) == .Float
+	case .Untyped_Bool:
+		return underlying_kind(c, lane) == .Bool
+	}
+	return true
+}
+
 // The built-in half of `T(v)`, including pointer and `distinct` conversions.
 // Returns false, silently, when only a conversion hook could apply.
 @(private = "file")
@@ -1040,6 +1059,17 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	// Two distinct types meet only through a hook, even for a constant operand.
 	if type_kind(k.c, source) == .Distinct && type_kind(k.c, target) == .Distinct && source != target {
 		return false
+	}
+	// design.md "Conditional expression": an unfixed result that is not constant
+	// takes the target as a constant of its kind would, or else its default type,
+	// and then converts as a runtime value.
+	source := source
+	if !base_is_const(base) && type_is_untyped(k.c, source) {
+		fixed := unfixed_kind_converts(k.c, source, target) ? target : default_type(k.c, source)
+		if !materialize(k, v.args[0].value, fixed) {
+			return true
+		}
+		source = base.type
 	}
 	// A typed constant meets the same rules as a runtime value; only an untyped
 	// one converts by what its value fits.
