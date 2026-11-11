@@ -163,13 +163,13 @@ call on another processor. That behavior is explicitly documented under
 
 ## Implementation gap and audit follow-ups
 
-1. **P1 — remaining borrow-checker soundness gap.** Commits `43a148bf` and
+1. **P1 — borrow-checker soundness gap: resolved.** Commits `43a148bf` and
    `3b283d13` reject the stored and traversal view cases found during this
-   audit, and suspend a stored copy of an inner pointer. Two temporary copies
-   of the same inner pointer can still be passed as mutable arguments to one
-   call; one may invalidate a view held through the other. See the minimal
-   reproduction in
-   [known-gaps.md](known-gaps.md#two-mutable-arguments-copied-through-one-pointer-can-alias).
+   audit, and suspend a stored copy of an inner pointer. Passing two temporary
+   copies of the same inner pointer as mutable arguments to one call, as
+   `both(p^.list, p^.list)` or `both(h.list, h.list)` with `list: ^mut
+   [dynamic]int`, where one could invalidate a view held through the other, is
+   now `L0641` as well.
 2. **P2 — invalid representations and `---`: resolved.**
    [Invalid representations](design.md#invalid-representations) makes a value
    whose bits are not a representation of its type, and a read of storage

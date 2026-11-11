@@ -2109,12 +2109,10 @@ checklist.
   none, so an enum `switch` of 6000 `return` cases compiles in under a second where it crashed the
   compiler, and a union `switch` binding a payload in each of 3000 cases takes under a second rather
   than more than a minute.
-- A body too large to analyze stops with `error: out of memory` rather than an internal index error
-  ([known gap](known-gaps.md#a-body-of-thousands-of-borrows-is-slow-then-runs-out-of-memory)).
+- A body too large to analyze stops with `error: out of memory` rather than an internal index error.
 - A chain of procedure or map aliases that each name the previous one more than once compiles in time
   linear in its depth; every question about what a type holds took time exponential in it, at 5 to 6
-  s for 20 aliases and without end for 48. The printed name of such a type is still exponential in
-  its depth ([known-gaps.md](known-gaps.md#a-types-printed-name-doubles-with-each-alias-naming-the-previous-one-twice)).
+  s for 20 aliases and without end for 48.
 - A map named as a generic record's argument is checked where it is named, whether or not a field
   holds it ([Maps](design.md#maps)). `Shared(map[f64]int)` reported `L0586` inside
   `base/runtime/shared.loke`, with an `L0308` there as well; now it reports `L0586` at the argument.

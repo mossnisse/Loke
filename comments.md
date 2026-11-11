@@ -3999,9 +3999,9 @@ use would already hold it would let the hook read a global through a name while 
 a mutable pointer to the same one.
 
 A reordering assignment is also not a copy, recognized by the values naming the
-targets' own places; [a reordering written with a
-temporary](known-gaps.md#a-call-that-swaps-with-a-temporary-counts-as-copying) is
-not recognized.
+targets' own places. A reordering written with a temporary is not one either: a
+copy counts only if a slot still holds another's carrier at an end of the body,
+and the later store over the source ends the copy the temporary made.
 
 The same copy used through a later call is rejected. After `duplicate(v);`,
 another `touch(v)` uses what both elements hold while a copy taken before it may
