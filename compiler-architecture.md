@@ -890,7 +890,7 @@ failed, an `-opt=none` build, and a machine without lld-link link machine code
 as before. Linking bitcode does not inline the container operations into a
 program's loops: `dyn_append` and `map_find` stay out of line, and `map_find`
 still reaches `hash` and `==` through the operation table
-([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)).
+([Performance opportunities and actual semantic limits](design-review-2026-10-31.md#performance-opportunities-and-actual-semantic-limits)).
 
 The runtime entries that end the program (`loke_rt_v1_panic`, `panic_end`,
 `abort`, `alloc_failed`, `container_fault`) are declared `cold noreturn` in

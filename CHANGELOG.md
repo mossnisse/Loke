@@ -3874,7 +3874,7 @@ checklist.
   The ring algorithm and its validation moved to
   [The ring algorithm](standard-library.md#the-ring-algorithm), and the
   undecided extensions to
-  [Later concurrency extensions](open-questions.md#later-concurrency-extensions).
+  [Later concurrency extensions](design-review-2026-10-31.md#later-concurrency-extensions).
 
 - Narrowed concurrency milestone 10
   to start with procedure values using the existing task machinery, followed
@@ -5774,7 +5774,7 @@ checklist.
   signed `<<` stays modular rather than checked, and
   [design.md](design.md#integer-operators) now says `x<<1` equals `x*2` only
   when the product fits.
-- [open-questions.md](open-questions.md#language-design-review-2026-10-03)
+- [open-questions.md](design-review-2026-10-31.md#language-design-review-2026-10-03)
   records a language-design review with prioritized proposals, compiler probes,
   and tradeoffs for ownership, safety, expressiveness, performance, and syntax.
 - [design.md](design.md#distinct-types) states that a distinct type keeps its

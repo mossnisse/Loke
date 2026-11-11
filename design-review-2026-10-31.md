@@ -18,8 +18,9 @@ known-gaps.md, future-plans.md, and the design rules of standard-library.md in
 full, sampled the LLVM emitter, the runtime ABI header, and the benchmark
 baselines, and ran probe programs against the shipped `lokec.exe` (see
 [Probes](#probes)). It builds on the
-[language design review of 2026-10-03](open-questions.md#language-design-review-2026-10-03)
-and does not repeat what that review already settled.
+[language design review of 2026-10-03](#language-design-review-2026-10-03),
+kept at the end of this file, and does not repeat what that review already
+settled.
 
 A second pass the same day checked each proposal against the specification,
 known-gaps.md, and the runtime, looking for costs the first draft had not
@@ -82,6 +83,7 @@ counts in this review are those of the versions it examined.
 - [Adopted proposals](#adopted-proposals)
 - [Withdrawn proposals](#withdrawn-proposals)
 - [Probes](#probes)
+- [Language design review (2026-10-03)](#language-design-review-2026-10-03)
 
 ## Summary
 
@@ -213,7 +215,7 @@ call through a value takes the union over every procedure the value may hold,
 by one rule for locals, parameters, `dyn` witnesses, and procedure groups. Then
 each of the four is one sentence naming which facts it reads and where. This
 does not change what is checked; it halves the text that specifies it, and
-gives [Per-call effect precision](open-questions.md#per-call-effect-precision)
+gives [Per-call effect precision](#per-call-effect-precision)
 one place to improve instead of four. The consolidation must keep per-call
 region substitution and the difference between a pooled join's and a spawn's
 effects on the parent's thread-local storage
@@ -226,7 +228,7 @@ simpler than whole-program inference. comments.md
 ["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)
 chooses inference deliberately and names the price: a body change elsewhere
 can reject a block here. The open proposal
-[Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own)
+[Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own)
 is the right boundary: inferred inside a package, written at the public
 surface. This review endorses it and adds that the same written form should
 carry a procedure's effect summary, so that an `api.loki` tells a reader what
@@ -517,7 +519,7 @@ the `abort` panic strategy.
 The emitter writes `nonnull` on pointer parameters and nothing else
 (`param_nonnull` in `src/emit_llvm_abi.odin`); the IR for a `[]int` or
 `[]mut int` parameter is a two-word struct with no attribute at all
-([compiler review probes](compiler-optimizations-2026-10-31.md#probes)). [Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)
+([compiler review probes](compiler-optimizations-2026-10-31.md#probes)). [Performance opportunities and actual semantic limits](#performance-opportunities-and-actual-semantic-limits)
 lists alias attributes as open because "read-only capability alone does not
 promise that memory cannot change".
 
@@ -591,7 +593,7 @@ into undefined behavior that the optimizer exploits, so they come last:
   programmer's responsibility but says nothing about aliasing, and the
   standard library drops provenance through `rawptr` casts, as `Channel`'s
   `queue_of` does
-  ([Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own)).
+  ([Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own)).
   The rule would be that while a `^mut T` parameter is live nothing else
   accesses its pointee, and while a `^T` parameter is live nothing writes it,
   by any route; each such cast in the library is then checked against it.
@@ -612,7 +614,7 @@ into undefined behavior that the optimizer exploits, so they come last:
 - Give the global effects a read component, so that a call passing a mutable
   borrow of a global conflicts with a callee that reads that global. This is
   done: see the [read effect](design.md#global-write-effects). Thread-affine values in globals, under
-  [Later concurrency extensions](open-questions.md#later-concurrency-extensions),
+  [Later concurrency extensions](#later-concurrency-extensions),
   would need the same effect.
 - Measure before building. After
   [Checked arithmetic and bounds in loops](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops), add the attributes by hand
@@ -623,7 +625,7 @@ into undefined behavior that the optimizer exploits, so they come last:
 ### 6.2 Union layout
 
 The open item on compiler-chosen union layout
-([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits))
+([Performance opportunities and actual semantic limits](#performance-opportunities-and-actual-semantic-limits))
 is endorsed: `Result(Option(T), E)` and a `Result(Small, Enum)` should fit
 their niches, with `@(repr=...)` for a stable layout where foreign code or
 serialization needs one.
@@ -969,3 +971,253 @@ on internal procedures that the emitter wrote without them, inferred by LLVM.
 compiler; the [read effect](design.md#global-write-effects) now rejects it.
 With `noalias` added by hand it still printed `1` and `2` at `-O2`, so the
 probe shows a broken contract, not a miscompilation.
+
+## Language design review (2026-10-03)
+
+The earlier review this one builds on, moved here from open-questions.md.
+Proposals from a review of the specification, not amendments to it; backward
+compatibility was not a constraint. In the order the review suggested:
+compiler-selected union layout and written borrow contracts first, then unchecked
+operations at their use and checked thread transfer. Try each on a parser, a resource container, a partitioning
+algorithm, and a parallel numeric kernel before deciding.
+
+### Put unchecked obligations at their operation
+
+The current [unsafe boundary](design.md#the-unsafe-package) is a file import.
+Once a file imports `core:unsafe`, every unchecked pointer conversion and
+C-pointer access in it is permitted, not only the one that needed it. Most
+unchecked operations are already named at their use (`unsafe.raw_data`,
+`unsafe.take`); the syntax forms are the exception. `x: T = ---` and
+`@(initialized)` storage now need the import too.
+
+**Proposal:** add a lexical `unsafe { ... }` boundary for unchecked pointer
+use and unchecked calls. An unsafe procedure declaration should mean that its
+caller owes a stated precondition; an ordinary wrapper can establish it
+internally. The spelling is proposed syntax, not syntax accepted today. It
+pays once a library exposes a procedure with a caller-owed precondition; none
+outside `core:unsafe` does yet, and the files that import `core:unsafe` are
+mostly OS wrappers that would wrap nearly every procedure.
+
+Raw pointer constness is a separate idea: a C pointer currently loses both
+provenance and read-only capability. Consider `[^]T` for read-only foreign
+access and `[^]mut T` for writing, with an unchecked cast required to
+strengthen capability. It would change every foreign signature in `core`, and
+foreign pointer use would still require lifetime and bounds obligations;
+constness alone does not establish either.
+
+### Performance opportunities and actual semantic limits
+
+Fast programs are expressible: fixed arrays, slices, arena-backed owners,
+monomorphized generics, static iteration, explicit moves, and `Simd(T, N)`.
+What remains open is where the compiler could do more without changing a
+specified result:
+
+- **Union layout.** Null already encodes `.none` in an `Option` over a
+  non-null reference ([Representation](design.md#representation)); every
+  other union has a fixed payload-plus-tag layout. Making an ordinary union's
+  layout the compiler's choice would allow other niches and a compact nested
+  `Result(Option(T), E)`, keeping `size_of`, alignment, reflection, and the
+  ABI within a build accurate, with an explicit representation where a
+  stable tag and layout are needed for serialization or foreign code.
+- **Alias attributes.** The emitted IR spells no general `noalias` or
+  `readonly` parameter attributes. Read-only capability alone does not
+  promise that memory cannot change, since atomics write through read-only
+  receivers and foreign or unchecked aliases need their own contract, so each
+  attribute needs [LLVM's precise obligations](https://llvm.org/docs/LangRef.html#parameter-attributes)
+  shown to hold. `noalias` is unsound under the `unwind` strategy, whose
+  cleanup reads callers' locals while the callee is still executing, and LLVM
+  already infers the capture attributes; see
+  [design review 6.1](#61-alias-attributes-from-facts-the-checker-already-proves).
+- **Explicit reductions.** A floating-point sum is ordered, and the default
+  arithmetic stays strict. Separately named reassociating or tree reductions,
+  with their numerical differences documented, would let a kernel ask for the
+  faster order.
+- **Copy elision.** Which implicit copies of a type with a custom clone or
+  drop may be elided is unspecified, so none is.
+- **Container fast paths.** An optimized build links the runtime as bitcode
+  ([compiler review](compiler-optimizations-2026-10-31.md#container-operations-in-ir-not-through-an-operation-table),
+  [adopted bitcode linking](compiler-optimizations-2026-10-31.md#adopted-optimizations)),
+  but in `bench/collections.loke` LLVM still calls `dyn_append`,
+  `dyn_reserve`, and `map_find` out of line from the hot loops, and
+  `map_find` calls the key's `hash` and `==` through the operation table. The
+  review's remaining proposal, fast paths emitted in the module per element type,
+  remains the way to remove those calls; its cost is a second implementation
+  of the probe sequence.
+
+Some transformations are forbidden outright: reordering floating-point
+additions into another tree, fusing `a*b + c`, or hoisting a possible panic
+above an earlier observable write. Vectorizing independent iterations, proving
+checks cannot fail, and runtime alias checks stay available. A general purity
+or effect language is not to be added only to request faster code.
+
+### Public borrow contracts should stand on their own
+
+[Procedure result contracts](design.md#procedure-result-contracts) can capture
+precise dependencies, but `type_of(procedure)` ties a public callback contract
+to that procedure's inferred body. A handwritten procedure type loses details;
+`@(escape=none)` excludes whole arguments but cannot name a specific result
+field's source or every allocator dependency.
+
+**Proposal:** add a small written result-source contract, with syntax to be
+designed, that says a result borrows specified parameter paths or is backed by
+a named allocator parameter. Check the body against it. Keep inference as the
+default for local helpers and an IDE/documentation aid.
+
+This lets changing an implementation preserve its declared public contract,
+and permits callbacks without manufacturing a reference implementation solely
+to use its `type_of`. It can also reduce dependence on whole-program inference
+as separate compilation develops. It does not require lifetime variables on
+every local declaration.
+
+The [minimum provenance budgets](design.md#minimum-provenance-precision) are
+another source of surprises: four projection steps, eight distinguished fixed
+array elements, and four constant map keys. A harmless wrapper or extra entry
+can turn accepted code into a conservative rejection. Keep diagnostics naming
+the limit, add acceptance tests just beyond each boundary, and make written
+contracts/disjoint primitives reduce dependence on inferred shape. Raising
+numeric limits alone does not solve this architectural issue.
+
+A library getter whose result is rebuilt from untracked storage meets the same
+gap from the other side. The rebuilt pointer has unknown provenance, which
+proves nothing, so no declaration says that the result borrows its receiver.
+The compiler asserts it for `Shared(T).get` alone; `Monitor_Guard.read` calls
+through a plain procedure type instead, whose result derives from every
+borrowed argument, so the borrow ends with the guard. A channel meets the
+opposite case: an item taken out of its queue through a guard would look like a
+borrow of the guard, though items carry only process-lifetime borrows, so
+`Channel` reaches its queue through a `rawptr` cast (`queue_of`) to drop that
+provenance. `Deque.slots` goes through a plain procedure type for the same
+reason as `Monitor_Guard.read`. A written contract could say all three, and
+replace the `Shared` special case.
+
+### Thread transfer needs a visible contract
+
+[Structured concurrency](design.md#structured-concurrency) answers this for work
+joined before its caller continues
+([reasons](comments.md#tasks-that-borrow-joined-by-their-block)). Still open:
+
+- A thread `core:thread`'s `spawn` starts outlives any scope, so it still
+  takes only `@(escape=static)` arguments, and keeping a `thread_local` borrow
+  past the end of its thread is still unchecked; see
+  [What is not checked](design.md#what-is-not-checked).
+- The [later concurrency extensions](#later-concurrency-extensions).
+- Whether the [waiting design](standard-library.md#corethread), with paired
+  channel setup and explicit monitor termination, holds up in use. Measure the
+  monitor's wake-all cost and the join check's conservative rejections on real
+  pipelines; neither justifies a purity effect system or interprocedural
+  closed-state analysis without evidence. The join check tells two parameters
+  apart by the object types they reach, which is coarse at primitive fields: a
+  `[]mut int` parameter still conflicts with a kept sender, since a channel's
+  state holds `int` fields. Whether a finer rule, for example one using field
+  privacy, would accept enough real programs to pay for itself is unmeasured.
+
+### Later concurrency extensions
+
+None of these blocks what [Structured
+concurrency](design.md#structured-concurrency) and
+[`core:thread`](standard-library.md#corethread) already specify.
+
+1. **Erased callables at a spawn.** A spawned call may go through a procedure
+   value or a `dyn` view, and the effects follow the callbacks each call passes.
+   A view that arrives erased, as a parameter or stored local, is checked
+   through every type converted to its interface application (answered
+   2026-10-27; see [Sharing with tasks](design.md#sharing-with-tasks)), and a
+   call through it takes its slot's whole effect union. What remains is
+   precision: one conversion of a mutable or thread-affine type anywhere rejects
+   every erased view of that application, and one fill writing a global rejects
+   every call through it. Public callable-effect contracts, which would bound
+   both, need a separate demonstrated requirement.
+
+   The same union lets a task read through a `dyn` stored in a global, except
+   a `dyn fmt.Formattable`, which stays unknown since printing builds its
+   witnesses after the effects. Two more precise directions are open: keeping
+   the concrete type through a view stored in a local, which helps only
+   locals, and a view type that promises its target may be shared with a
+   task, a language extension with a public contract that needs a
+   demonstrated requirement.
+2. **Recoverable submission.** How to return arguments after failure to
+   start a task, without confusing submission failure with worker failure.
+3. **Richer result destinations.** Whether live replacement, fields, indices,
+   destructuring, or an implicit conversion on the worker justify their
+   evaluation, initialization, and cleanup rules. The initial form supports
+   only dead outer locals of the call's exact result type.
+4. **Channel items carrying borrows.** A later retention rule for the
+   read-only `send` receiver; process-duration retention remains the initial
+   contract. Also rendezvous channels and nondefault queue allocators.
+5. **Blocking-aware pools.** Whether to compensate for waits or provide a
+   separate executor. Fixed pools make only the limited progress guarantee
+   [Pools](standard-library.md#pools) gives. Scoped submission is compiler
+   lowering under the existing spawn borrow checks, not a public
+   `@(cross_thread)` submission API for borrowed arguments.
+6. **Provider and allocator thread contracts.** Whether a build-selected
+   allocator or logging provider must declare that it accepts concurrent use,
+   so the compiler checks it instead of trusting it. Whether an `Allocator`
+   parameter can promise a concurrent region, so a library can share a
+   caller's allocator among tasks.
+7. **Timed waits.** `lock_when`, `send`, and `receive` with a deadline from
+   `core:time`, reporting a timeout apart from closure. An audio loop that must
+   play silence when a decoder falls behind needs them.
+8. **Selective cancellation and choice.** A stop token that ends one waiter
+   among several on the same object or coordinates cancellation across several
+   objects, and a wait on whichever of several channels is ready first. The
+   library requires explicit shutdown protocols for those groups.
+9. **Unscoped channels.** Endpoints that own shared channel state instead of
+   borrowing a local, for a thread `core:thread`'s `spawn` starts or a
+   foreign audio callback, which only `@(escape=static)` values reach. The
+   [join check](design.md#releasing-before-the-join) cannot follow them, since
+   they borrow no root.
+10. **Targeted wakeups.** A hint that wakes fewer of a monitor's waiters,
+    where waking all of them costs more than their checks. It would narrow
+    which waiters wake, not which changes they see.
+11. **Blocking ring adapters.** Parking one endpoint and waking it from the
+    other requires a proven registration/recheck handshake, closure-race
+    handling, and an explicit account of kernel calls on the deadline-bound
+    side. It is outside the polling ring's API; see
+    [The ring algorithm](standard-library.md#the-ring-algorithm).
+12. **Thread-affine values in globals.** A task may borrow a
+    `@(thread_affine)` value stored in a plain global, as `window.handle` reads
+    one. [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
+    receivers, captures, and results, not globals, so this is not a divergence.
+    Closing it needs a task check over the
+    [read effect](design.md#global-write-effects), or a rule that rejects a
+    global of a type that is or reaches one. A `Lazy` cannot hold one.
+
+### Per-call effect precision
+
+The write, reach, and allocator-use effects the task checks read are per call:
+a call takes in the callbacks it passes, a local's possible values, and a
+converted view's concrete target, and a `dyn proc` parameter or local is
+followed as a procedure-typed one is. Three conservative limits remain:
+
+- **A body's own calls of its parameters keep the type union.** A wrapper
+  that spawns a callback it received, `spawn r = g(1)` with `g` a parameter,
+  is checked inside the wrapper, where any procedure of `g`'s type may be
+  passed, so it is rejected when any procedure of that type writes a global,
+  whatever its callers pass. Following the spawn to each caller would need
+  the task checks themselves to become a summary a call substitutes, as the
+  `thread_local` write-back is; nothing yet shows a program needing it.
+- **What a local may hold is flow-insensitive.** `f := tally; f = step;
+  spawn r = f(1);` takes `tally`'s effects, since every value stored into a
+  local counts wherever it is called. This is the existing resolution the
+  `thread_local` write-back shares, and is conservative.
+- **A held procedure binds its arguments as a union does.** A callable view
+  converted at the call from a named procedure takes that procedure's whole
+  effect, but its allocator use takes every argument's region for each
+  parameter-backed region, as any call through a value does, rather than the
+  argument at that parameter. A capture literal's `call` and a converted
+  slot are direct calls and bind by parameter.
+
+### Ring algorithm validation
+
+[The ring algorithm](standard-library.md#the-ring-algorithm) is built as
+written, and an exhaustive interleaving search under sequential consistency
+found no violation. Two checks remain:
+
+- **Weak-memory model checking.** The interleaving search treats every access
+  as sequentially consistent, so it cannot find a missing release or acquire.
+  A C11 model check with GenMC or a tool like it, over the same capacities,
+  laps, and drop placements, is still needed.
+- **Measurements.** Measure the closure check on every send, with the flags
+  separated from the indices, and latency and throughput on the intended
+  target. The spare slot is for simpler arithmetic, not demonstrated higher
+  speed.

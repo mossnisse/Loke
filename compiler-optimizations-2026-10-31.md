@@ -44,7 +44,7 @@ Linking the runtime as bitcode in optimized builds
 faster, but LLVM still calls `dyn_append`, `dyn_reserve`, and `map_find` out of
 line from its hot loops, and `map_find` still reaches the key's `hash` and `==`
 through the operation table
-([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)).
+([Performance opportunities and actual semantic limits](design-review-2026-10-31.md#performance-opportunities-and-actual-semantic-limits)).
 
 **Proposal.** Emit the fast paths in the module, specialized per element type
 as every generic procedure already is: `append` as "if `len < cap` store and

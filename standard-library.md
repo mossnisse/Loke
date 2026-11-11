@@ -1265,7 +1265,7 @@ Validation:
 3. **A concrete application.** The audio loop in `examples/mixer.loke`
    polls a ring for its commands. A foreign audio callback cannot hold an
    endpoint, since endpoints borrow the ring
-   ([unscoped channels](open-questions.md#later-concurrency-extensions)).
+   ([unscoped channels](design-review-2026-10-31.md#later-concurrency-extensions)).
 4. **Target validation and measurement.** In the emitted LLVM IR, the
    operations' loads and stores are `load atomic` acquire and `store atomic`
    release on naturally aligned fields, which x86-64 lowers to single
@@ -1279,7 +1279,7 @@ Validation:
    bound.
 
 The points this leaves for review are in
-[open-questions.md](open-questions.md#ring-algorithm-validation).
+[open-questions.md](design-review-2026-10-31.md#ring-algorithm-validation).
 
 The item checks, FIFO ordering, and result variants match the channel, but
 changing a channel to a ring also requires exclusive endpoint access and a

@@ -8,7 +8,9 @@ entry is removed once it is settled: the reasons go to
 [comments.md](comments.md), and a fix to its commit message.
 
 The current behavior inventory is in [Nondeterminism and undefined behavior
-audit](nondeterminism-audit.md).
+audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
+2026-10-31, and the proposals from them not yet decided, are in
+[design-review-2026-10-31.md](design-review-2026-10-31.md).
 
 ## Provenance architecture
 
@@ -181,7 +183,7 @@ against a model written apart from the compiler. Still open:
   body could reject its callers, as [global write
   effects](design.md#global-write-effects) already can. Decide it together
   with [written public borrow
-  contracts](#public-borrow-contracts-should-stand-on-their-own).
+  contracts](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own).
 - **Caller storage contents.** A store through a parameter's loan lands in the
   caller slots for the storage it names (`publish_into_caller`), and a later
   load reads them. The remaining imprecision: caller slots of different loans
@@ -194,7 +196,7 @@ against a model written apart from the compiler. Still open:
   through a view, is one slot.
 
 Language changes should be evaluated separately. The proposed [written public
-borrow contracts](#public-borrow-contracts-should-stand-on-their-own) could
+borrow contracts](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own) could
 simplify call boundaries and library exceptions, but cannot repair local
 reborrow construction. Explicit reborrow syntax or move-only mutable carriers
 would change ergonomics and compatibility while leaving nested place access and
@@ -280,7 +282,7 @@ A generic procedure's contract is per instantiation, and a declaration inside
 a `when` is checked for one target only, so neither gets the line. An inferred
 fact is not a compatibility promise: a release names a changed `inferred:`
 line of a bundled package as a possible break. A
-[written contract](#public-borrow-contracts-should-stand-on-their-own), once
+[written contract](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own), once
 it exists, would be shown in its place, without "inferred".
 
 **2. Examples are tests.** `@(example=split)` marks a
@@ -432,7 +434,7 @@ the callable, or hand a capture away when called and so be callable once. Both
 matter only for a callable that outlives its scope: a stored generator, a
 deferred job, a thread worker. Those wait on [Owning runtime
 polymorphism](#owning-runtime-polymorphism) and [Thread transfer needs a visible
-contract](#thread-transfer-needs-a-visible-contract). Revisit `inout` and `move`
+contract](design-review-2026-10-31.md#thread-transfer-needs-a-visible-contract). Revisit `inout` and `move`
 calls when the first API takes such a callable; the receiver mode is then
 written, for example on the clause.
 
@@ -446,7 +448,7 @@ first returned closure is needed. One answer then is an opaque result type,
 `-> some interfaces.Callable(proc(a, b: int) -> bool)`, as Rust's `-> impl Fn`
 is; it makes a caller depend on the body for the result's size, which works
 against [Public borrow contracts should stand on their
-own](#public-borrow-contracts-should-stand-on-their-own), and it overlaps an
+own](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own), and it overlaps an
 owning `dyn`. A literal that can be returned could also be a constant's value,
 which [compile-time evaluation](design.md#compile-time-procedure-evaluation)
 keeps out today; decide that with the returned closure.
@@ -502,7 +504,7 @@ treated separately under [Thread-affine strings](#thread-affine-strings).
 Higher-level constructs are a separate question: futures or a similar composable
 asynchronous result, and language help for reactivity, such as a procedure rerun
 when a variable it reads changes. Each needs a use of its own; [Thread transfer
-needs a visible contract](#thread-transfer-needs-a-visible-contract) already
+needs a visible contract](design-review-2026-10-31.md#thread-transfer-needs-a-visible-contract) already
 rules them out as the answer to borrowing across a join.
 
 ## Thread-affine strings
@@ -820,255 +822,6 @@ does not leave its neighbors misaligned; indenting a continued line inside
 brackets, which `core/` leaves at the bracket's level; and indenting the later
 values of a wrapped multi-value statement (`x, y :=` above `1,` and `2;`), whose
 commas read as a list's, since the tokens do not tell a block's `{` from a list's.
-
-## Language design review (2026-10-03)
-
-Proposals from a review of the specification, not amendments to it; backward
-compatibility was not a constraint. In the order the review suggested:
-compiler-selected union layout and written borrow contracts first, then unchecked
-operations at their use and checked thread transfer. Try each on a parser, a resource container, a partitioning
-algorithm, and a parallel numeric kernel before deciding.
-
-### Put unchecked obligations at their operation
-
-The current [unsafe boundary](design.md#the-unsafe-package) is a file import.
-Once a file imports `core:unsafe`, every unchecked pointer conversion and
-C-pointer access in it is permitted, not only the one that needed it. Most
-unchecked operations are already named at their use (`unsafe.raw_data`,
-`unsafe.take`); the syntax forms are the exception. `x: T = ---` and
-`@(initialized)` storage now need the import too.
-
-**Proposal:** add a lexical `unsafe { ... }` boundary for unchecked pointer
-use and unchecked calls. An unsafe procedure declaration should mean that its
-caller owes a stated precondition; an ordinary wrapper can establish it
-internally. The spelling is proposed syntax, not syntax accepted today. It
-pays once a library exposes a procedure with a caller-owed precondition; none
-outside `core:unsafe` does yet, and the files that import `core:unsafe` are
-mostly OS wrappers that would wrap nearly every procedure.
-
-Raw pointer constness is a separate idea: a C pointer currently loses both
-provenance and read-only capability. Consider `[^]T` for read-only foreign
-access and `[^]mut T` for writing, with an unchecked cast required to
-strengthen capability. It would change every foreign signature in `core`, and
-foreign pointer use would still require lifetime and bounds obligations;
-constness alone does not establish either.
-
-### Performance opportunities and actual semantic limits
-
-Fast programs are expressible: fixed arrays, slices, arena-backed owners,
-monomorphized generics, static iteration, explicit moves, and `Simd(T, N)`.
-What remains open is where the compiler could do more without changing a
-specified result:
-
-- **Union layout.** Null already encodes `.none` in an `Option` over a
-  non-null reference ([Representation](design.md#representation)); every
-  other union has a fixed payload-plus-tag layout. Making an ordinary union's
-  layout the compiler's choice would allow other niches and a compact nested
-  `Result(Option(T), E)`, keeping `size_of`, alignment, reflection, and the
-  ABI within a build accurate, with an explicit representation where a
-  stable tag and layout are needed for serialization or foreign code.
-- **Alias attributes.** The emitted IR spells no general `noalias` or
-  `readonly` parameter attributes. Read-only capability alone does not
-  promise that memory cannot change, since atomics write through read-only
-  receivers and foreign or unchecked aliases need their own contract, so each
-  attribute needs [LLVM's precise obligations](https://llvm.org/docs/LangRef.html#parameter-attributes)
-  shown to hold. `noalias` is unsound under the `unwind` strategy, whose
-  cleanup reads callers' locals while the callee is still executing, and LLVM
-  already infers the capture attributes; see
-  [design review 6.1](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves).
-- **Explicit reductions.** A floating-point sum is ordered, and the default
-  arithmetic stays strict. Separately named reassociating or tree reductions,
-  with their numerical differences documented, would let a kernel ask for the
-  faster order.
-- **Copy elision.** Which implicit copies of a type with a custom clone or
-  drop may be elided is unspecified, so none is.
-- **Container fast paths.** An optimized build links the runtime as bitcode
-  ([compiler review](compiler-optimizations-2026-10-31.md#container-operations-in-ir-not-through-an-operation-table),
-  [adopted bitcode linking](compiler-optimizations-2026-10-31.md#adopted-optimizations)),
-  but in `bench/collections.loke` LLVM still calls `dyn_append`,
-  `dyn_reserve`, and `map_find` out of line from the hot loops, and
-  `map_find` calls the key's `hash` and `==` through the operation table. The
-  review's remaining proposal, fast paths emitted in the module per element type,
-  remains the way to remove those calls; its cost is a second implementation
-  of the probe sequence.
-
-Some transformations are forbidden outright: reordering floating-point
-additions into another tree, fusing `a*b + c`, or hoisting a possible panic
-above an earlier observable write. Vectorizing independent iterations, proving
-checks cannot fail, and runtime alias checks stay available. A general purity
-or effect language is not to be added only to request faster code.
-
-### Public borrow contracts should stand on their own
-
-[Procedure result contracts](design.md#procedure-result-contracts) can capture
-precise dependencies, but `type_of(procedure)` ties a public callback contract
-to that procedure's inferred body. A handwritten procedure type loses details;
-`@(escape=none)` excludes whole arguments but cannot name a specific result
-field's source or every allocator dependency.
-
-**Proposal:** add a small written result-source contract, with syntax to be
-designed, that says a result borrows specified parameter paths or is backed by
-a named allocator parameter. Check the body against it. Keep inference as the
-default for local helpers and an IDE/documentation aid.
-
-This lets changing an implementation preserve its declared public contract,
-and permits callbacks without manufacturing a reference implementation solely
-to use its `type_of`. It can also reduce dependence on whole-program inference
-as separate compilation develops. It does not require lifetime variables on
-every local declaration.
-
-The [minimum provenance budgets](design.md#minimum-provenance-precision) are
-another source of surprises: four projection steps, eight distinguished fixed
-array elements, and four constant map keys. A harmless wrapper or extra entry
-can turn accepted code into a conservative rejection. Keep diagnostics naming
-the limit, add acceptance tests just beyond each boundary, and make written
-contracts/disjoint primitives reduce dependence on inferred shape. Raising
-numeric limits alone does not solve this architectural issue.
-
-A library getter whose result is rebuilt from untracked storage meets the same
-gap from the other side. The rebuilt pointer has unknown provenance, which
-proves nothing, so no declaration says that the result borrows its receiver.
-The compiler asserts it for `Shared(T).get` alone; `Monitor_Guard.read` calls
-through a plain procedure type instead, whose result derives from every
-borrowed argument, so the borrow ends with the guard. A channel meets the
-opposite case: an item taken out of its queue through a guard would look like a
-borrow of the guard, though items carry only process-lifetime borrows, so
-`Channel` reaches its queue through a `rawptr` cast (`queue_of`) to drop that
-provenance. `Deque.slots` goes through a plain procedure type for the same
-reason as `Monitor_Guard.read`. A written contract could say all three, and
-replace the `Shared` special case.
-
-### Thread transfer needs a visible contract
-
-[Structured concurrency](design.md#structured-concurrency) answers this for work
-joined before its caller continues
-([reasons](comments.md#tasks-that-borrow-joined-by-their-block)). Still open:
-
-- A thread `core:thread`'s `spawn` starts outlives any scope, so it still
-  takes only `@(escape=static)` arguments, and keeping a `thread_local` borrow
-  past the end of its thread is still unchecked; see
-  [What is not checked](design.md#what-is-not-checked).
-- The [later concurrency extensions](#later-concurrency-extensions).
-- Whether the [waiting design](standard-library.md#corethread), with paired
-  channel setup and explicit monitor termination, holds up in use. Measure the
-  monitor's wake-all cost and the join check's conservative rejections on real
-  pipelines; neither justifies a purity effect system or interprocedural
-  closed-state analysis without evidence. The join check tells two parameters
-  apart by the object types they reach, which is coarse at primitive fields: a
-  `[]mut int` parameter still conflicts with a kept sender, since a channel's
-  state holds `int` fields. Whether a finer rule, for example one using field
-  privacy, would accept enough real programs to pay for itself is unmeasured.
-
-### Later concurrency extensions
-
-None of these blocks what [Structured
-concurrency](design.md#structured-concurrency) and
-[`core:thread`](standard-library.md#corethread) already specify.
-
-1. **Erased callables at a spawn.** A spawned call may go through a procedure
-   value or a `dyn` view, and the effects follow the callbacks each call passes.
-   A view that arrives erased, as a parameter or stored local, is checked
-   through every type converted to its interface application (answered
-   2026-10-27; see [Sharing with tasks](design.md#sharing-with-tasks)), and a
-   call through it takes its slot's whole effect union. What remains is
-   precision: one conversion of a mutable or thread-affine type anywhere rejects
-   every erased view of that application, and one fill writing a global rejects
-   every call through it. Public callable-effect contracts, which would bound
-   both, need a separate demonstrated requirement.
-
-   The same union lets a task read through a `dyn` stored in a global, except
-   a `dyn fmt.Formattable`, which stays unknown since printing builds its
-   witnesses after the effects. Two more precise directions are open: keeping
-   the concrete type through a view stored in a local, which helps only
-   locals, and a view type that promises its target may be shared with a
-   task, a language extension with a public contract that needs a
-   demonstrated requirement.
-2. **Recoverable submission.** How to return arguments after failure to
-   start a task, without confusing submission failure with worker failure.
-3. **Richer result destinations.** Whether live replacement, fields, indices,
-   destructuring, or an implicit conversion on the worker justify their
-   evaluation, initialization, and cleanup rules. The initial form supports
-   only dead outer locals of the call's exact result type.
-4. **Channel items carrying borrows.** A later retention rule for the
-   read-only `send` receiver; process-duration retention remains the initial
-   contract. Also rendezvous channels and nondefault queue allocators.
-5. **Blocking-aware pools.** Whether to compensate for waits or provide a
-   separate executor. Fixed pools make only the limited progress guarantee
-   [Pools](standard-library.md#pools) gives. Scoped submission is compiler
-   lowering under the existing spawn borrow checks, not a public
-   `@(cross_thread)` submission API for borrowed arguments.
-6. **Provider and allocator thread contracts.** Whether a build-selected
-   allocator or logging provider must declare that it accepts concurrent use,
-   so the compiler checks it instead of trusting it. Whether an `Allocator`
-   parameter can promise a concurrent region, so a library can share a
-   caller's allocator among tasks.
-7. **Timed waits.** `lock_when`, `send`, and `receive` with a deadline from
-   `core:time`, reporting a timeout apart from closure. An audio loop that must
-   play silence when a decoder falls behind needs them.
-8. **Selective cancellation and choice.** A stop token that ends one waiter
-   among several on the same object or coordinates cancellation across several
-   objects, and a wait on whichever of several channels is ready first. The
-   library requires explicit shutdown protocols for those groups.
-9. **Unscoped channels.** Endpoints that own shared channel state instead of
-   borrowing a local, for a thread `core:thread`'s `spawn` starts or a
-   foreign audio callback, which only `@(escape=static)` values reach. The
-   [join check](design.md#releasing-before-the-join) cannot follow them, since
-   they borrow no root.
-10. **Targeted wakeups.** A hint that wakes fewer of a monitor's waiters,
-    where waking all of them costs more than their checks. It would narrow
-    which waiters wake, not which changes they see.
-11. **Blocking ring adapters.** Parking one endpoint and waking it from the
-    other requires a proven registration/recheck handshake, closure-race
-    handling, and an explicit account of kernel calls on the deadline-bound
-    side. It is outside the polling ring's API; see
-    [The ring algorithm](standard-library.md#the-ring-algorithm).
-12. **Thread-affine values in globals.** A task may borrow a
-    `@(thread_affine)` value stored in a plain global, as `window.handle` reads
-    one. [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
-    receivers, captures, and results, not globals, so this is not a divergence.
-    Closing it needs a task check over the
-    [read effect](design.md#global-write-effects), or a rule that rejects a
-    global of a type that is or reaches one. A `Lazy` cannot hold one.
-
-### Per-call effect precision
-
-The write, reach, and allocator-use effects the task checks read are per call:
-a call takes in the callbacks it passes, a local's possible values, and a
-converted view's concrete target, and a `dyn proc` parameter or local is
-followed as a procedure-typed one is. Three conservative limits remain:
-
-- **A body's own calls of its parameters keep the type union.** A wrapper
-  that spawns a callback it received, `spawn r = g(1)` with `g` a parameter,
-  is checked inside the wrapper, where any procedure of `g`'s type may be
-  passed, so it is rejected when any procedure of that type writes a global,
-  whatever its callers pass. Following the spawn to each caller would need
-  the task checks themselves to become a summary a call substitutes, as the
-  `thread_local` write-back is; nothing yet shows a program needing it.
-- **What a local may hold is flow-insensitive.** `f := tally; f = step;
-  spawn r = f(1);` takes `tally`'s effects, since every value stored into a
-  local counts wherever it is called. This is the existing resolution the
-  `thread_local` write-back shares, and is conservative.
-- **A held procedure binds its arguments as a union does.** A callable view
-  converted at the call from a named procedure takes that procedure's whole
-  effect, but its allocator use takes every argument's region for each
-  parameter-backed region, as any call through a value does, rather than the
-  argument at that parameter. A capture literal's `call` and a converted
-  slot are direct calls and bind by parameter.
-
-### Ring algorithm validation
-
-[The ring algorithm](standard-library.md#the-ring-algorithm) is built as
-written, and an exhaustive interleaving search under sequential consistency
-found no violation. Two checks remain:
-
-- **Weak-memory model checking.** The interleaving search treats every access
-  as sequentially consistent, so it cannot find a missing release or acquire.
-  A C11 model check with GenMC or a tool like it, over the same capacities,
-  laps, and drop placements, is still needed.
-- **Measurements.** Measure the closure check on every send, with the flags
-  separated from the indices, and latency and throughput on the intended
-  target. The spare slot is for simpler arithmetic, not demonstrated higher
-  speed.
 
 ## Error handling (2026-10-13)
 
