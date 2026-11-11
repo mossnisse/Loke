@@ -705,7 +705,7 @@ check_cross_thread_attribute :: proc(
 	case mode == .Move:
 		problem = "on a `move` parameter needs `@(escape=static)` too: nothing shorter than the process bounds another thread"
 	case:
-		problem = "marks a `move` parameter or one of procedure type"
+		problem = "marks a `move` parameter, or a parameter or `..` pack of procedure type"
 	}
 	errorf(k.c, span, "L0723", "`@(cross_thread)` %s", problem)
 	return false

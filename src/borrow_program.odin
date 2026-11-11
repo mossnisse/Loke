@@ -113,11 +113,11 @@ check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		// design.md "Variadic parameters": a pack, and a `..^T` pack's values, are
 		// temporaries of the call, so the result may hold only what they hold.
 		if lending, packs := param_symbol_pack_lending(k.c, bound); packs && result_borrows_lent(summary.dependencies, index, lending) {
-			lends, _ := pack_lent_phrases(lending)
+			lends, _, borrowed := pack_lent_phrases(lending)
 			errorf(
 				k.c, bound.span, "L0644",
 				"`%s` %s, but the result of `%s` may borrow %s",
-				identifier_text(k.c, bound.name), lends, identifier_text(k.c, sym.name), lending.depth > 0 ? "one" : "it",
+				identifier_text(k.c, bound.name), lends, identifier_text(k.c, sym.name), borrowed,
 			)
 			add_precision_notes(k.c, bound.span, summary.precision)
 			continue

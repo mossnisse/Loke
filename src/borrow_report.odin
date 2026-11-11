@@ -845,7 +845,7 @@ report_retention :: proc(
 		if root.kind == .Param {
 			sym := symbol_of(state.k.c, root.symbol)
 			if lending, packs := param_symbol_pack_lending(state.k.c, sym); packs && loan_names_lent_value(loan, lending) {
-				lends, reaches := pack_lent_phrases(lending)
+				lends, reaches, _ := pack_lent_phrases(lending)
 				errorf(
 					state.k.c, event.span, "L0646",
 					"`%s` %s, so %s %s%s",

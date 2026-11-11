@@ -1832,6 +1832,11 @@ checklist.
 
 ### Fixed
 
+- A spread into a [variadic pack](design.md#variadic-parameters) whose parameter may keep values,
+  as `keep(..lists)` or `keep(first, ..lists)` for `@(escape=static) lists: ..[]int`, keeps only
+  what the spread's elements hold, which the pack copies in, not the spread slice's own storage.
+  A spread of a local `[][]int` whose slices view process-lifetime storage was `L0647`, and the
+  result of such a call through a procedure value was `L0513` once the spread slice ended.
 - A named procedure passed in a `@(cross_thread)` `..proc()` pack gets the `L0707` race warning
   for the shared storage it writes, as it does through a single `@(cross_thread)` parameter
   ([`@(cross_thread)`](design.md#cross_thread)); the checks looked at the pack as one argument.

@@ -114,13 +114,19 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 	return out
 }
 
+// The operands of a built pack, by how they stand to it: `elements` as its
+// elements, and `spreads` at the pack's type, copied in, one load above them.
+Prov_Pack_Operands :: struct {
+	elements, spreads: []int,
+}
+
 // What a callee may hand back or keep of argument `index`, whose loans are `held`:
 // the argument and what it reaches, or of a pack only what lies below what it lends
-// for the call (design.md "Variadic parameters"). A pack's written operands are its
-// elements, a forwarded spread the pack itself, one load above them; a spread among
-// other operands is taken as an element, which keeps more than it may. Values that
-// hold no borrow leave nothing, where a load into storage with no carriers would
-// stand for the storage itself.
+// for the call (design.md "Variadic parameters"). Elements, and a spread a `..^T`
+// pack lends, stand as one element; a forwarded spread, and a spread copied into
+// a built pack, stand as the pack, one load above. Values that hold no borrow leave
+// nothing, where a load into storage with no carriers would stand for the storage
+// itself.
 @(private)
 prov_argument_kept :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Type_Id, index: int, held: []int) -> []int {
 	lending, packs := proc_param_pack_lending(graph.k.c, proc_type, index)
@@ -130,8 +136,23 @@ prov_argument_kept :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Type_Id
 	if !type_carries_borrow(graph.k.c, lending.held).any {
 		return nil
 	}
-	from := lending.depth + (call_packs(v, index) ? 0 : 1)
-	return from == 0 ? prov_with_content(graph, held, v.span) : prov_load_deep(graph, held, v.span, from = from)
+	if !call_packs(v, index) {
+		return prov_kept_below(graph, held, v.span, lending.depth + 1)
+	}
+	if operands, split := graph.pack_operands[v]; split {
+		return prov_join(
+			graph,
+			prov_kept_below(graph, operands.elements, v.span, lending.depth),
+			prov_kept_below(graph, operands.spreads, v.span, lending.depth + 1),
+		)
+	}
+	return prov_kept_below(graph, held, v.span, lending.depth)
+}
+
+// What `held` reaches `from` loads down and below, or at 0 also `held` itself.
+@(private = "file")
+prov_kept_below :: proc(graph: ^Flow_Graph, held: []int, span: Span, from: int) -> []int {
+	return from == 0 ? prov_with_content(graph, held, span) : prov_load_deep(graph, held, span, from = from)
 }
 
 // What is stored behind `carriers`, `from` loads down and at every depth below:

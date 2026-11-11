@@ -1,0 +1,8 @@
+L0647
+@22:2
+this slice borrows `local`, which does not outlive `lists`
+L0647
+@23:2
+this slice borrows `local`, which does not outlive `lists`
+!the slice literal
+!used after

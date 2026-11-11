@@ -6,7 +6,7 @@ L0723
 needs `@(escape=static)` too
 L0723
 @57:15
-marks a `move` parameter or one of procedure type
+marks a `move` parameter, or a parameter or `..` pack of procedure type
 L0723
 @62:27
 cannot mark a foreign procedure's parameter

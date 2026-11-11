@@ -80,11 +80,11 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 	// A procedure value carries no state, so only its writes are checked
 	// (`note_thread_spawn`).
-	cursor: Cross_Thread_Cursor
-	for argument, of_proc in call_cross_thread_next(c, v, &cursor) {
-		if of_proc {
+	for crossing in call_cross_thread_operands(c, v, graph.alloc) {
+		if crossing.of_proc {
 			continue
 		}
+		argument := crossing.operand
 		base := expr_base(argument)
 		if base == nil || base.type == INVALID_TYPE {
 			continue

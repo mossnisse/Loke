@@ -1,0 +1,32 @@
+// design.md "Variadic parameters": a pack is a temporary of the call, so a callee
+// may keep only what its elements hold. A spread, forwarded or copied in among
+// other operands, keeps what its elements hold and not the slice's own storage;
+// an element keeps what it holds. A call through a procedure value hands back no
+// more.
+package main;
+import "core:fmt";
+
+data := [3]int{1, 2, 3};
+kept: []int;
+keep :: proc(@(escape=static) lists: ..[]int) { kept = lists[0]; }
+Pick :: proc(lists: ..[]int) -> []int;
+head :: proc(lists: ..[]int) -> []int { return lists[0]; }
+
+main :: proc() {
+	g := data[:];
+	local := [2]int{4, 5};
+	arr := [][]int{g};
+	keep(..arr);
+	keep(g, ..arr);
+	keep(..arr, g);
+	keep(g, local[:]);
+	keep(g, ..[][]int{local[:]});
+	pick: Pick = head;
+	x, y: []int;
+	{
+		inner := [][]int{g};
+		x = pick(..inner);
+		y = pick(g, ..inner);
+	}
+	fmt.println(kept[0], x[0], y[0]);
+}

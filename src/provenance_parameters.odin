@@ -100,10 +100,8 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			// `..^T` pack's lent values have a loan apart from what they hold, which a
 			// call may keep, even where they hold no borrow (design.md "Variadic
 			// parameters").
-			least := 1
-			if lending, packs := param_symbol_pack_lending(graph.k.c, sym); packs {
-				least = lending.depth + 1
-			}
+			lending, _ := param_symbol_pack_lending(graph.k.c, sym)
+			least := lending.depth + 1
 			depths := make([]Loan_Id, max(least, load_depth(graph.k.c, sym.type)), graph.alloc)
 			for &loan, depth in depths {
 				loan = prov_new_content_loan(graph, root, nil, type_carries_borrow(graph.k.c, sym.type).mutable, sym.span, carrier_noun(graph.k.c, sym.type), depth + 1)

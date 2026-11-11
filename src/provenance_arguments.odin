@@ -114,11 +114,23 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		// Each operand lends as one argument of its type would: an element as the
 		// pack's element, a spread as the slice it views. A mutable carrier passed
 		// by name is reborrowed, so `fill(out, out)` uses `out` while it is lent.
+		// A spread at the pack's type is copied in, so what a callee may keep of it
+		// lies a load further down than of an element (`prov_argument_kept`).
 		element := slice_element(c, param_type)
+		operands: Prov_Pack_Operands
 		cursor: Call_Pack_Cursor
 		for operand, is_spread in call_pack_next(v, &cursor) {
 			type := is_spread ? prov_pack_spread_type(c, prov_type(graph, operand), param_type) : element
-			actual = prov_join(graph, actual, prov_lend_argument(graph, walk_flow_expr(graph, operand), type, borrowed, expr_span(operand)))
+			lent := prov_lend_argument(graph, walk_flow_expr(graph, operand), type, borrowed, expr_span(operand))
+			actual = prov_join(graph, actual, lent)
+			if type == param_type {
+				operands.spreads = prov_join(graph, operands.spreads, lent)
+			} else {
+				operands.elements = prov_join(graph, operands.elements, lent)
+			}
+		}
+		if len(operands.spreads) > 0 {
+			graph.pack_operands[v] = operands
 		}
 		return actual
 	case .Moved_Receiver:

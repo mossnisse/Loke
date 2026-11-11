@@ -90,8 +90,8 @@ prov_pack_spread_type :: proc(c: ^Compiler, spread, pack: Type_Id) -> Type_Id {
 // name values lent for the call, one load further. Only what `held` holds, below
 // that, is bounded by the parameter's escape level.
 Pack_Lending :: struct {
-	// The type whose borrows a call may keep: a `..T` pack's `T`, and a `..^T`
-	// pack's `T` too.
+	// The type whose borrows a call may keep: the element type, or a `..^T`
+	// pack's pointee.
 	held:  Type_Id,
 	// The deepest content loan of the parameter that names lent storage: 0 when
 	// only the pack's own storage is, its non-content loan, and 1 for `..^T`.
@@ -142,10 +142,11 @@ result_borrows_lent :: proc(dependencies: Result_Dependencies, index: int, lendi
 }
 
 // The phrases of a diagnostic about a pack reaching what outlives the call, for
-// `lending`: what the pack lends, then what may not reach there.
-pack_lent_phrases :: proc(lending: Pack_Lending) -> (lends, reaches: string) {
+// `lending`: what the pack lends, what may not reach there, and what the result
+// may not borrow.
+pack_lent_phrases :: proc(lending: Pack_Lending) -> (lends, reaches, borrowed: string) {
 	if lending.depth > 0 {
-		return "lends its values only for the call", "neither it nor a pointer in it can reach"
+		return "lends its values only for the call", "neither it nor a pointer in it can reach", "one"
 	}
-	return "is a pack that lives only for the call", "it cannot reach"
+	return "is a pack that lives only for the call", "it cannot reach", "it"
 }

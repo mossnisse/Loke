@@ -68,6 +68,9 @@ Prov_State :: struct {
 	// the call's actual joins with its borrow of that place: a load through the
 	// receiver reads these at its path rather than through them.
 	receiver_content: map[^Expr_Call][]int,
+	// Per call whose built pack copies in a spread, its operands' loans apart,
+	// which the call's actual for the pack joins (`prov_argument_kept`).
+	pack_operands: map[^Expr_Call]Prov_Pack_Operands,
 	// Per `parallel` block's hidden scope, the slot holding what its tasks
 	// lend (`prov_spawn`), and each task's reborrows of mutable carriers, one
 	// slot per spawn site, all registered as the block is entered
@@ -234,6 +237,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.owner_names = make(map[Symbol_Id]string, allocator)
 	state.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
 	state.receiver_content = make(map[^Expr_Call][]int, allocator)
+	state.pack_operands = make(map[^Expr_Call]Prov_Pack_Operands, allocator)
 	state.offset_reach = Prov_Reach {
 		places  = make(map[int][dynamic]Prov_Offset, allocator),
 		defined = make(map[Prov_Reach_Key]u128, allocator),

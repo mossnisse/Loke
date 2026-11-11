@@ -679,19 +679,58 @@ prov_scope_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 @(private = "file")
 note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
-	cursor: Cross_Thread_Cursor
-	for argument, of_proc in call_cross_thread_next(c, v, &cursor) {
-		if !of_proc {
+	for crossing in call_cross_thread_operands(c, v, graph.alloc) {
+		if !crossing.of_proc {
 			continue
 		}
-		if _, literal := argument.(^Expr_Proc); literal {
+		if _, literal := crossing.operand.(^Expr_Proc); literal {
 			continue
 		}
-		entry := named_value_symbol(argument)
+		entry := named_value_symbol(crossing.operand)
 		if entry_sym := symbol_of(c, entry); entry_sym != nil && entry_sym.kind == .Proc {
 			append(&graph.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
 		}
 	}
+}
+
+// One operand a call passes to a `@(cross_thread)` parameter, and whether it is a
+// procedure.
+Cross_Thread_Operand :: struct {
+	operand: Expr,
+	of_proc: bool,
+}
+
+// design.md "@(cross_thread)": the operands `call` passes to its `@(cross_thread)`
+// parameters, in parameter order. Each element written in a `..proc()` pack
+// crosses as the one argument of a `proc()` parameter would; a spread is a slice
+// of procedure values, none of them named, and a pack of any other type cannot
+// carry the attribute.
+call_cross_thread_operands :: proc(c: ^Compiler, call: ^Expr_Call, allocator: mem.Allocator) -> []Cross_Thread_Operand {
+	proc_type := call_proc_type(c, call)
+	info := underlying_info(c, proc_type)
+	if info == nil || len(info.param_cross_thread) == 0 {
+		return nil
+	}
+	out := make([dynamic]Cross_Thread_Operand, 0, len(call.bound), allocator)
+	for index in 0 ..< min(len(call.bound), len(info.parameters)) {
+		if !proc_param_crosses_thread(c, proc_type, index) {
+			continue
+		}
+		parameter := info.parameters[index]
+		if param_mode_at(info, index) != .Variadic {
+			if call.bound[index] != nil {
+				append(&out, Cross_Thread_Operand{call.bound[index], underlying_kind(c, parameter) == .Proc})
+			}
+		} else if call_packs(call, index) && underlying_kind(c, slice_element(c, parameter)) == .Proc {
+			cursor: Call_Pack_Cursor
+			for operand, spread in call_pack_next(call, &cursor) {
+				if !spread {
+					append(&out, Cross_Thread_Operand{operand, true})
+				}
+			}
+		}
+	}
+	return out[:]
 }
 
 // `regions_of` or `dropped_region` gives the regions the target's parameters
