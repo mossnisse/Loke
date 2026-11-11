@@ -109,6 +109,12 @@ remained of step 1 ([6.2](#62-union-layout)). The change is listed under
 [Adopted proposals](#adopted-proposals), with the steps after it renumbered.
 Choosing further niches stays open as a measurement.
 
+The same day a returned construction began to transfer its operands, the next
+step ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). Probes before
+the change found two programs it turns into errors and one case it must leave
+a copy ([Probes](#probes)). It is listed under
+[Adopted proposals](#adopted-proposals), with the steps after it renumbered.
+
 ## Contents
 
 - [Summary](#summary)
@@ -154,12 +160,12 @@ The splat of a typed scalar can be narrowed to lane-wise operators
 nothing harmful, so it is near the end of the
 [Suggested order](#8-suggested-order).
 
-Two findings are independent of any proposal: a returned construction clones a
-local that a plain `return` would transfer
-([4.4](#44-rules-whose-text-is-longer-than-what-they-save)), and the library
-attaches provenance to a rebuilt pointer by calling through a plain procedure
-type ([Public borrow contracts should stand on their
-own](#public-borrow-contracts-should-stand-on-their-own)).
+One finding is independent of any proposal: the library attaches provenance to
+a rebuilt pointer by calling through a plain procedure type
+([Public borrow contracts should stand on their
+own](#public-borrow-contracts-should-stand-on-their-own)). The other such
+finding, that a returned construction cloned a local a plain `return` would
+transfer, is fixed ([Adopted proposals](#adopted-proposals)).
 
 Except where a section's **What is lost** says otherwise, none of the deletion
 candidates changes what a Loke program can express.
@@ -689,30 +695,21 @@ makes it so (throws, error unions), not by a syntactic case analysis. This
 review would delete it; it is listed as a judgment call because it was adopted
 recently and deliberately.
 
-**Third pass: keep it until a returned construction transfers.** "Four
-characters per return" is wrong for any value that owns something. `return
+**Third pass: it waited for a returned construction to transfer.** "Four
+characters per return" was wrong for any value that owns something. `return
 list;` transfers an owned local, and a wrapped return inherits that. `return
-.ok(list);` is a variant construction, whose operand is copied like any
-aggregate element: it clones `list` with warning `L0507`, and for a move-only
-value it is error `L0503` until written `return .ok(move(value));`
-([Probes](#probes)). Deleting the rule as proposed would turn every return of
-an owner into that, or into a silent allocation.
+.ok(list);` was a variant construction whose operand was copied like any
+aggregate element: it cloned `list` with warning `L0507`, and for a move-only
+value it was error `L0503` until written `return .ok(move(value));`
+([Probes](#probes)). Deleting the rule as proposed would have turned every
+return of an owner into that, or into a silent allocation.
 
-The probe shows the asymmetry is there today, apart from success returns.
-`return .err(list);` and `return Pair{list, 1};` clone a local at its last
-use, where `return list;` moves it, because
-[Last-use transfer](design.md#last-use-transfer) covers a binding or an
-assignment and not an aggregate element. So the failure path and a record
-result already pay what the success path is spared. The smaller rule that
-fixes this is one sentence: an owned local or `move` parameter named as an
-operand of the construction a `return` returns transfers as it would if
-returned itself. That is worth adopting whatever happens to success returns.
-With it, deleting them does cost four characters, and the deletion can be
-judged on what is left: a rule that decides by syntactic form, and the fact
-that `return 5;` wraps where `x: Option(int) = 5;` is an error
-([Probes](#probes)), so the wrapping is a property of one statement and not of
-the type. This review would still delete it then; without the transfer rule
-it should stay.
+That is no longer so: a returned construction transfers its operands
+([Adopted proposals](#adopted-proposals)). Deleting success returns now does
+cost four characters, and the deletion can be judged on what is left: a rule
+that decides by syntactic form, and the fact that `return 5;` wraps where
+`x: Option(int) = 5;` is an error ([Probes](#probes)), so the wrapping is a
+property of one statement and not of the type. This review would delete it.
 
 ## 5. Deletion candidates
 
@@ -727,7 +724,7 @@ thing. Each row names the replacement and what is lost.
 | `Type_Info.members`, `Member_Info`, `Member_Kind`, `bits`, `signed` | `fields_of` and `variants_of` at compile time ([3.1](#31-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types; a member table reached from an id alone | Recommended |
 | `&mut a[lo:hi]` | `a[mut lo:hi]` ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)) | The resemblance to `&mut x` | Recommended; needs `-migrate` |
 | `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.5](#25-one-capability-axis)) | The marker on every mutated argument; carets on scalar and whole-value writes | Judgment call; leaning against |
-| Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Today the transfer of an owned local, so `.ok(move(x))`; four characters once a returned construction transfers | Keep until then |
+| Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Four characters per return, now that a returned construction transfers | Judgment call; this review would delete |
 | `Option.ok_or` | `or_return .Variant` and a `switch` | An eager form for stored absences | Keep: a library method that costs the language no rule |
 
 Not recommended for deletion, though a simplification pass might ask:
@@ -958,23 +955,19 @@ The independent compiler work has its own [suggested order](compiler-optimizatio
 
 The order after the third pass, cheapest first:
 
-1. A returned construction transfers an owned local operand
-   ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
-   clones the failure path and record results make today, and it is what
-   deleting success returns would wait for.
-2. `Uninit(T)` in place of `@(initialized)`
+1. `Uninit(T)` in place of `@(initialized)`
    ([3.2](#32-initializedcount-and-uninitialized-storage)), moving the four
    library declarations with it, and shrink `Type_Info`
    ([3.1](#31-runtime-reflection)).
-3. `a[mut lo:hi]`
+2. `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise))
    and the reserved `static` and `thread_local`
    ([4.3](#43-parsing-decisions-worth-keeping)), together, since both need
    `lokec -migrate`.
-4. Predeclare the catalogue, then decide `some I`
+3. Predeclare the catalogue, then decide `some I`
    ([4.2](#42-verbosity-hotspots)); the first shortens every bound, so the
    second is judged on what remains.
-5. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+4. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
    The read effect is in place and no borrow-checker gap is known. After the
    compiler review's
    [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
@@ -982,10 +975,14 @@ The order after the third pass, cheapest first:
    IR. If that pays, emit it for accesses through checked carriers under both
    panic strategies. No `noalias` parameters under `unwind`, and no capture
    attributes: LLVM infers them for internal procedures.
-6. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
+5. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
    late: it exchanges a conversion for an operator rule and removes nothing
    harmful. It first needs the scalar form of `Simd(T, N)(x)` stated as a
    rule of its own.
+6. If success returns are deleted
+   ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)), with
+   `lokec -migrate` writing the `.ok(...)` or `.some(...)` each wrapped return
+   stands for. Nothing else waits on it.
 7. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
    last: it is the largest surface change, and it needs `lokec -migrate` able
    to rewrite call sites and receivers mechanically. The explanation in
@@ -999,6 +996,34 @@ CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md. Compiler-only changes are
 listed under [Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations).
 
+- **A returned construction transfers its operands** (2026-11-11;
+  [Returned constructions](design.md#returned-constructions), rationale under
+  ["Returned constructions"](comments.md#returned-constructions)).
+  `return list;` moved an owned local while `return .ok(list);`,
+  `return .err(list);`, and `return Pair{list, 1};` cloned it, because
+  [Last-use transfer](design.md#last-use-transfer) covers a binding or an
+  assignment and not an aggregate element. The failure path and a record
+  result paid what the success path was spared. The payload of a returned
+  variant construction, an element of a returned composite literal, and an arm
+  of a returned conditional now transfer an owned local or `move` parameter,
+  nested to any depth, as the `move(x)` the programmer would have written.
+  The third pass called this one sentence. The implementation needed three
+  decisions it had not named ([Probes](#probes)). A deferred statement that
+  reads the local, and a local in a region that ends with the procedure,
+  compiled through the clone and are now the errors a plain `return list;`
+  gives; keeping the clone there would have left the two statements
+  different. A local the returned value names twice, as in
+  `Pair{list, list.len()}`, is copied as before, which needs no rule about
+  order inside an expression. And a conditional arm is an operand, since
+  `return a if flag else b;` cloned where two `return` statements moved. What
+  is lost is the silent copy in those two error cases, now written
+  `.clone()`. What it does not reach is a construction bound before it is
+  returned, `p := Pair{list, 1}; return p;`, which still clones at the
+  binding; extending last-use transfer to construction operands is recorded
+  under [Last-use transfer of construction
+  operands](open-questions.md#last-use-transfer-of-construction-operands).
+  Deleting success returns no longer waits on anything
+  ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)).
 - **A union's layout is the compiler's** (2026-11-11;
   [Representation](design.md#representation), rationale under
   ["Union layout is the compiler's"](comments.md#union-layout-is-the-compilers)).
@@ -1430,6 +1455,39 @@ at `267ab0f9`:
   With `Keeper :: distinct proc(destination: inout Holder, @(escape=stored)
   values: []int)` and an `ignore` that declares no escape level, `k: Keeper =
   ignore` and `run(ignore)` for a `Keeper` parameter are accepted.
+
+**The returned-construction change's probes**, with `lokec` built at
+`6669512c` before the change and from the modified tree after it:
+
+- *Before.* With `list := [dynamic]int{1, 2};` as an owned local,
+  `return .ok(list);`, `return .err(list);`, `return Pair{list, 1};`,
+  `return .ok(Pair{list, 1});`, and both arms of
+  `return .ok(a) if flag else .ok(b);` each drew `L0507`.
+  `p := Pair{list, 1}; return p;` drew it at the binding.
+- *A deferred read.* `defer fmt.println(list.len()); return list;` was
+  already `L0500` at the deferred statement, plain or wrapped as a success,
+  while the same with `return .ok(list);` compiled through the clone. After
+  the change it is `L0500` too, with a note at the `return`, and so is an
+  `errdefer` that reads the local returned in `.err(list)`. An `errdefer`
+  beside `return .ok(list);` compiles, since it does not run.
+- *A local arena.* With `list: [dynamic]int via arena.allocator() = {};`
+  over a local `mem.Arena`, `return list;` was already `L0592` and
+  `return .ok(list);` compiled, cloning into the default allocator. After the
+  change both are `L0592`.
+- *Named twice.* `return Two{list, list};` and
+  `return Pair{list, list.len()};` keep their `L0507` clones, and
+  `return Both{c, c};` of a move-only local keeps its `L0503`.
+- *Still borrowed.* With `view := list[:];`, `return Viewed{list, view};` is
+  `L0512`, "`list` cannot be moved into the returned value here". The
+  implicit move first reported "moved by its last use", the wording of
+  last-use transfer, and was given its own.
+- *After.* A record with printing copy and drop hooks shows no copy and one
+  drop for each of the forms above, for a `move` parameter, for a generic
+  `proc(value: move $T) -> Option(T) { return .some(value); }`, for an
+  anonymous record, an array, a dynamic array, and a map value, and for a
+  move-only local in `.ok(c)`. The arm a conditional does not select drops in
+  the procedure. A borrowed parameter, a field of a local, an argument of a
+  call, and the bound construction copy as before.
 
 **The distinct-procedure change's probes**, with `lokec` 0.9.0 built at
 `61b746a3` for the first two and from the changed tree for the rest:

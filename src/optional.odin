@@ -422,6 +422,7 @@ return_target :: proc(e: Expr) -> Return_Target {
 check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 	result := k.result_type
 	e := value.expr
+	mark_returned_value(e)
 	target := return_target(e)
 	shape, fallible := fallible_of(k.c, result)
 	payload := fallible ? shape.success_type : TYPE_VOID

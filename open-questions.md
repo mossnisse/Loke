@@ -975,6 +975,33 @@ none of which they wait on.
   values. Either bless this as the way to opt out of generated element handling, or
   give it its own spelling before `Small_Deque` is built.
 
+## Last-use transfer of construction operands
+
+[Last-use transfer](design.md#last-use-transfer) moves a whole local that a
+binding or an assignment would clone and nothing reads again. An operand inside
+a construction still clones, so `p := Pair{list, 1};` and
+`out.append(Pair{list, 1});` allocate at `list`'s last use.
+[Returned constructions](design.md#returned-constructions) covers the case where
+the construction is returned, by the rule of the `return` statement and not by
+liveness.
+
+Extending last-use transfer to construction operands would cover the rest.
+Open points:
+
+- **Order within an expression.** `Pair{list, list.len()}` reads `list` after
+  the operand that would transfer it. The analysis would have to order reads
+  inside one expression, which the returned rule avoids by counting names.
+- **Which operands.** Composite elements and variant payloads are the clear
+  ones. A [container insertion](design.md#container-insertion), `box`, and
+  `shared` take their element as an initialization does, and an argument of a
+  `move` parameter already needs a written `move`.
+- **The exclusions.** A `via` destination, a stored borrow, and an enclosing
+  `foreach` or `switch` keep a copy a clone today. Each would need restating for
+  an operand whose destination is a temporary.
+- **One rule or two.** If it lands, the returned rule could become a case of
+  it, except that a `return` rejects a deferred read where last-use transfer
+  would keep the clone.
+
 ## Reading a mutable argument in the call's later arguments
 
 A mutable loan that a call's argument takes starts when that argument is

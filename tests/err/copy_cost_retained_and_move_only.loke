@@ -16,9 +16,11 @@ retained :: proc() {
 	fmt.println(s.get()^, t.get()^, a, b);
 }
 
-move_only_literal :: proc() -> Carrier {
+// Bound, not returned: design.md "Returned constructions" would transfer `a`.
+move_only_literal :: proc() -> int {
 	a := Holding{};
-	return Carrier{held = a};
+	c := Carrier{held = a};
+	return c.held.data.len();
 }
 
 move_only_destructure :: proc() -> int {
@@ -35,6 +37,6 @@ move_only_binding :: proc() {
 
 main :: proc() {
 	retained();
-	fmt.println(move_only_literal().held.data.len(), move_only_destructure());
+	fmt.println(move_only_literal(), move_only_destructure());
 	move_only_binding();
 }

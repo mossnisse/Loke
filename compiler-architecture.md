@@ -364,7 +364,13 @@ cache encodings.
 ### Ownership, lifecycle, and provenance
 
 `hooks.odin` classifies managed types and lifecycle operations. Checking selects
-clone/move behavior and records copy costs. Before liveness analysis,
+clone/move behavior and records copy costs. A [returned
+construction](design.md#returned-constructions) is settled there too:
+`mark_returned_value` marks the value a `return` returns and the names it
+writes once, each construction passes the mark to its operands as it checks
+them, and `transfer_returned_operand` wraps an eligible one in the implicit
+move a wrapped success return uses, before the copy site is classified.
+Before liveness analysis,
 `settle_last_uses` rewrites eligible last-use clones as ordinary moves, outside
 probes. Allocating-copy diagnostics wait for that decision. `lifecycle.odin`
 then settles initialization, liveness, and cleanup slots. All locals have

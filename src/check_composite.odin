@@ -112,8 +112,18 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 @(private = "file")
 check_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) -> bool {
 	value := v.elements[index].value
+	// design.md "Returned constructions": an element of a returned literal is
+	// returned with it. A capture's entries state their own modes, and a
+	// designated array element may fill several slots.
+	returned := v.returned && v.capture == nil && v.slot_ends == nil
+	if returned {
+		mark_returned(value)
+	}
 	checked := v.capture != nil ? materialize_value_expr(k, value, type, "initialise") : check_value_expr(k, value, type, "initialise")
 	if checked {
+		if returned {
+			v.elements[index].value = transfer_returned_operand(k, &v.base, value, type)
+		}
 		// The storage owns its elements, so a borrowed one is cloned.
 		classify_composite_element(k, v, index, type)
 	}

@@ -1,0 +1,185 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Returned constructions": an owned local or `move` parameter that a
+// returned construction takes as an operand transfers, as it would if it were
+// returned itself, when the returned value names it nowhere else. The hooks
+// print, so the output shows which copies ran: a transferred value is never
+// copied and drops once, with whoever received the result.
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		fmt.println("  copy", self.id);
+		return .ok(Tracked{self.id});
+	}
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("  drop", self.id); }
+}
+
+E :: enum { Bad }
+Pair :: struct { item: Tracked, n: int }
+Two :: struct { a: Tracked, b: Tracked }
+Holder :: struct { held: Tracked }
+@(move_only) Connection :: struct { id: int }
+
+ok_form :: proc() -> Result(Tracked, E) {
+	t := Tracked{1};
+	return .ok(t);
+}
+err_form :: proc() -> Result(int, Tracked) {
+	t := Tracked{2};
+	return .err(t);
+}
+some_form :: proc() -> Option(Tracked) {
+	t := Tracked{3};
+	return .some(t);
+}
+record :: proc() -> Pair {
+	t := Tracked{4};
+	return Pair{t, 1};
+}
+named_field :: proc() -> Pair {
+	item := Tracked{5};
+	return Pair{item = item, n = 2};
+}
+anonymous :: proc() -> (item: Tracked, n: int) {
+	t := Tracked{6};
+	return {t, 3};
+}
+nested :: proc() -> Result(Pair, E) {
+	t := Tracked{7};
+	return .ok(Pair{t, 4});
+}
+wrapped_record :: proc() -> Result(Pair, E) {
+	t := Tracked{8};
+	return Pair{t, 5};          // the success payload, wrapped
+}
+array :: proc() -> [2]Tracked {
+	a := Tracked{9};
+	b := Tracked{10};
+	return [2]Tracked{a, b};
+}
+dynamic_array :: proc() -> [dynamic]Tracked {
+	t := Tracked{11};
+	return [dynamic]Tracked{t};
+}
+parameter :: proc(t: move Tracked) -> Option(Tracked) {
+	return .some(t);
+}
+arms :: proc(first: bool) -> Result(Tracked, E) {
+	a := Tracked{13};
+	b := Tracked{14};
+	return .ok(a) if first else .ok(b);   // the arm not taken drops here
+}
+plain_arms :: proc(first: bool) -> Tracked {
+	a := Tracked{15};
+	b := Tracked{16};
+	return a if first else b;
+}
+move_only :: proc() -> Result(Connection, E) {
+	c := Connection{17};
+	return .ok(c);              // no `move(c)` needed
+}
+
+// Named twice in the returned value: both are copies, as before.
+twice :: proc() -> Two {
+	t := Tracked{20};
+	return Two{t, t};
+}
+// Read again in the returned value: a copy.
+read_again :: proc() -> Pair {
+	t := Tracked{21};
+	return Pair{t, t.id};
+}
+// A borrowed parameter is not this procedure's to transfer.
+borrowed :: proc(t: Tracked) -> Option(Tracked) {
+	return .some(t);
+}
+// A field of a local is part of it, not the whole local.
+field :: proc() -> Option(Tracked) {
+	h := Holder{Tracked{23}};
+	return .some(h.held);
+}
+// An argument of a call is not an operand of a construction.
+wrap :: proc(t: Tracked) -> Pair { return Pair{t, 0}; }
+argument :: proc() -> Pair {
+	t := Tracked{24};
+	return wrap(t);
+}
+// A construction that is bound first is not returned.
+bound :: proc() -> Pair {
+	t := Tracked{25};
+	p := Pair{t, 6};
+	return p;
+}
+
+show :: proc(r: Result(Tracked, E)) {
+	switch (r) {
+	case .ok(t): fmt.println("ok", t.id);
+	case .err:   fmt.println("err");
+	}
+}
+show_option :: proc(r: Option(Tracked)) {
+	switch (r) {
+	case .some(t): fmt.println("some", t.id);
+	case .none:    fmt.println("none");
+	}
+}
+show_pair :: proc(r: Result(Pair, E)) {
+	switch (r) {
+	case .ok(p): fmt.println("ok", p.item.id, p.n);
+	case .err:   fmt.println("err");
+	}
+}
+
+main :: proc() {
+	fmt.println("ok");
+	{ r := ok_form(); show(r); }
+	fmt.println("err");
+	{ r := err_form(); switch (r) { case .ok: fmt.println("ok"); case .err(t): fmt.println("err", t.id); } }
+	fmt.println("some");
+	{ r := some_form(); show_option(r); }
+	fmt.println("record");
+	{ r := record(); fmt.println(r.item.id, r.n); }
+	fmt.println("named field");
+	{ r := named_field(); fmt.println(r.item.id, r.n); }
+	fmt.println("anonymous");
+	{ r := anonymous(); fmt.println(r.item.id, r.n); }
+	fmt.println("nested");
+	{ r := nested(); show_pair(r); }
+	fmt.println("wrapped record");
+	{ r := wrapped_record(); show_pair(r); }
+	fmt.println("array");
+	{ r := array(); fmt.println(r[0].id, r[1].id); }
+	fmt.println("dynamic array");
+	{ r := dynamic_array(); fmt.println(r.len()); }
+	fmt.println("parameter");
+	{ r := parameter(Tracked{12}); show_option(r); }
+	fmt.println("arms");
+	{ r := arms(true); show(r); }
+	{ r := arms(false); show(r); }
+	fmt.println("plain arms");
+	{ r := plain_arms(false); fmt.println(r.id); }
+	fmt.println("move-only");
+	{
+		switch (move_only()) {
+		case .ok(c): fmt.println(c.id);
+		case .err: fmt.println("failed");
+		}
+	}
+	fmt.println("twice");
+	{ r := twice(); fmt.println(r.a.id, r.b.id); }
+	fmt.println("read again");
+	{ r := read_again(); fmt.println(r.item.id, r.n); }
+	fmt.println("borrowed");
+	{ t := Tracked{22}; r := borrowed(t); show_option(r); }
+	fmt.println("field");
+	{ r := field(); show_option(r); }
+	fmt.println("argument");
+	{ r := argument(); fmt.println(r.item.id); }
+	fmt.println("bound");
+	{ r := bound(); fmt.println(r.item.id, r.n); }
+	fmt.println("end");
+}

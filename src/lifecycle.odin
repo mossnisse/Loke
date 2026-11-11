@@ -135,7 +135,7 @@ report_events :: proc(
 			}
 		case .Kill:
 			if state[event.slot] != .Live {
-				report_not_live(k, block, event, state[event.slot], graph.tracked[event.slot].ever_written)
+				report_not_live(k, block, event, state[event.slot], graph.tracked[event.slot])
 			}
 		case .Use:
 			// `x: T = ---` asserts that something else fills the storage, so an
@@ -143,7 +143,7 @@ report_events :: proc(
 			// "Built-in values"). `move` and `drop` still are not: they are `.Kill`.
 			local := graph.tracked[event.slot]
 			if state[event.slot] != .Live && !local.unchecked {
-				report_not_live(k, block, event, state[event.slot], local.ever_written)
+				report_not_live(k, block, event, state[event.slot], local)
 			}
 		case .Assign:
 			record_destination_state(graph, event, state[event.slot], assigned)
@@ -247,7 +247,8 @@ record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event
 }
 
 @(private = "file")
-report_not_live :: proc(k: ^Checker, block: ^Flow_Block, event: Flow_Event, state: Liveness, ever_written: bool) {
+report_not_live :: proc(k: ^Checker, block: ^Flow_Block, event: Flow_Event, state: Liveness, local: Tracked_Local) {
+	ever_written := local.ever_written
 	action := event.verb == "" ? "used" : event.verb
 	// design.md "Variable declarations": a local starts dead, so one nothing
 	// ever assigns holds no value rather than having lost one.
@@ -256,6 +257,15 @@ report_not_live :: proc(k: ^Checker, block: ^Flow_Block, event: Flow_Event, stat
 	errorf(k.c, event.span, "L0500", "`%s` cannot be %s here: %s", event.name, action, reason)
 	if block.unwind {
 		add_notef(k.c, block.unwind_at, "a panic in this statement runs the deferred statement")
+	}
+	// design.md "Returned constructions": a move the program did not write needs
+	// saying where it came from.
+	if sym := symbol_of(k.c, local.symbol); sym != nil && sym.returned_at != NO_SPAN && state == .Dead && ever_written {
+		add_notef(
+			k.c, sym.returned_at,
+			"this `return` transfers `%s` into its result before deferred statements run; write `%s.clone()` to return a copy",
+			event.name, event.name,
+		)
 	}
 }
 

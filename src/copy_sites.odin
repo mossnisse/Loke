@@ -53,7 +53,66 @@ transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 	moved.span, moved.type, moved.value_category = ident.span, ident.type, .Value
 	moved.value = ident
 	moved.implicit = true
+	moved.returned = true
+	symbol_of(k.c, ident.symbol).returned_at = ident.span
 	return moved
+}
+
+// design.md "Returned constructions": `e` is the value a `return` returns. Its
+// constructions pass the mark on to their operands as they check them, and each
+// name it writes once is noted, since only such an operand transfers.
+mark_returned_value :: proc(e: Expr) {
+	mark_returned(e)
+	names := make([dynamic]^Expr_Ident, context.temp_allocator)
+	collect_returned_names(e, &names)
+	counts := make(map[string]int, context.temp_allocator)
+	for name in names {
+		counts[name.name] += 1
+	}
+	for name in names {
+		name.sole_in_return = counts[name.name] == 1
+	}
+}
+
+mark_returned :: proc(e: Expr) {
+	if base := expr_base(e); base != nil {
+		base.returned = true
+	}
+}
+
+// Every name `e` writes that may be a local of the procedure it is in. A
+// procedure literal's body names none of them, and one with a capture clause
+// names what the clause lists (design.md "Capture literals").
+@(private = "file")
+collect_returned_names :: proc(e: Expr, names: ^[dynamic]^Expr_Ident) {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		append(names, v)
+		return
+	case ^Expr_Composite:
+		if v.capture != nil {
+			for entry in v.capture.entries {
+				collect_returned_names(entry.value, names)
+			}
+		}
+	}
+	expr_children(e, names, proc(data: rawptr, child: Expr) -> bool {
+		collect_returned_names(child, (^[dynamic]^Expr_Ident)(data))
+		return false
+	})
+}
+
+// design.md "Returned constructions": an owned local that a returned construction
+// or conditional expression, `parent`, takes as an operand of type `type`
+// transfers as `move(x)` would, when the returned value names it nowhere else. A
+// converted operand is not the local itself, and is copied as written.
+transfer_returned_operand :: proc(k: ^Checker, parent: ^Expr_Base, e: Expr, type: Type_Id) -> Expr {
+	ident, is_ident := e.(^Expr_Ident)
+	if !parent.returned || !is_ident || !ident.sole_in_return ||
+	   ident.type != type || conversion_source(&ident.base) != INVALID_TYPE {
+		return e
+	}
+	return transfer_returned_local(k, e)
 }
 
 // Places copy; values and explicit moves transfer.

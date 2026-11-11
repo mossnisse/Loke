@@ -606,8 +606,11 @@ report_borrow_conflict :: proc(state: ^Prov_Solve, event: Prov_Event, loan: Prov
 // A move the program did not write needs saying where it came from.
 @(private = "file")
 note_last_use_move :: proc(c: ^Compiler, verb: string) {
-	if verb == LAST_USE_VERB {
+	switch verb {
+	case LAST_USE_VERB:
 		add_notef(c, NO_SPAN, "a copy of a local that nothing reads afterwards moves it; write `.clone()` to copy it instead")
+	case RETURNED_VERB:
+		add_notef(c, NO_SPAN, "a `return` transfers a local its value is built from; write `.clone()` to return a copy")
 	}
 }
 

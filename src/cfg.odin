@@ -1647,7 +1647,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	case ^Expr_Move:
 		provider_move_end(graph, v)
 		if prov {
-			consumed := prov_consume(graph, v.value, v.span, v.implicit ? LAST_USE_VERB : "moved")
+			consumed := prov_consume(graph, v.value, v.span, !v.implicit ? "moved" : v.returned ? RETURNED_VERB : LAST_USE_VERB)
 			// design.md "Global write effects": a copy last-use transfer made a move
 			// still counts, as the program cannot tell which it gets.
 			if copied := expr_base(v.value).copied_as; v.implicit && copied != INVALID_TYPE {
@@ -2042,6 +2042,10 @@ note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 
 // The verb a borrow diagnostic uses for a move the program did not write.
 LAST_USE_VERB :: "moved by its last use"
+
+// And for the move a `return` makes of a local its value is built from
+// (design.md "Returned constructions").
+RETURNED_VERB :: "moved into the returned value"
 
 // design.md "Last-use transfer": a clone of a whole local that no path reads
 // again becomes a move of it, unless something may still borrow it. A read is

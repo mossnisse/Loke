@@ -38,6 +38,9 @@ Expr_Base :: struct {
 	extended:    bool,
 	// This node or any child is an error node.
 	has_error:   bool,
+	// The value a `return` returns, or an operand of a construction or
+	// conditional expression that is one (design.md "Returned constructions").
+	returned:    bool,
 }
 
 // Literals keep their spelling; the checker decides whether a value fits.
@@ -106,6 +109,9 @@ Expr_Ident :: struct {
 	name:       string,
 	name_id:    Identifier_Id,
 	symbol:     Symbol_Id,
+	// The one place the value a `return` returns writes this name
+	// (`mark_returned_value`).
+	sole_in_return: bool,
 }
 
 // `a.b`, and the implicit-selector primary `.Member` when `operand` is nil.

@@ -1798,6 +1798,12 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 	if cond != INVALID_TYPE && materialize(k, v.cond, TYPE_BOOL) && !type_is_boolean(k.c, expr_base(v.cond).type) {
 		errorf(k.c, expr_span(v.cond), "L0355", "a condition must be `bool`, found `%s`", type_name(k.c, cond))
 	}
+	// design.md "Returned constructions": a returned conditional returns the arm
+	// it selects.
+	if v.returned {
+		mark_returned(v.then)
+		mark_returned(v.otherwise)
+	}
 	then_type := check_single_expr(k, v.then, expected)
 	else_type := check_single_expr(k, v.otherwise, expected)
 	if cond == INVALID_TYPE || then_type == INVALID_TYPE || else_type == INVALID_TYPE {
@@ -1819,6 +1825,8 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 		return
 	}
 	v.type = result
+	v.then = transfer_returned_operand(k, &v.base, v.then, result)
+	v.otherwise = transfer_returned_operand(k, &v.base, v.otherwise, result)
 	// design.md "Conditional expression": the result owns its value, so a place
 	// operand is copied into it.
 	v.then_clone = classify_costed_copy(k, v.then, result, .Conditional)

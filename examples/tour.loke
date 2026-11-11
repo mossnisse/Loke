@@ -26,7 +26,7 @@ corners :: proc(width, height: int) -> Result([dynamic]Point, Grid_Error) {
 	points: [dynamic]Point = {};           // owns its storage; released at scope exit
 	points.append(checked(0, 0) or_return);
 	points.append(checked(width, height) or_return);
-	return .ok(move(points));              // ownership transfers to the caller
+	return .ok(points);                    // ownership transfers to the caller
 }
 
 main :: proc() {

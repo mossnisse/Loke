@@ -1,0 +1,53 @@
+// design.md "Returned constructions": a returned construction takes an owned
+// local as `return` itself does, so what a plain `return list;` rejects is
+// rejected here too, where the construction once cloned. The fix in each case is
+// the `.clone()` the copy stood for.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+E :: enum { Bad }
+Pair :: struct { items: [dynamic]int, n: int }
+@(move_only) Connection :: struct { id: int }
+Both :: struct { a: Connection, b: Connection }
+
+// A deferred statement runs after the result is taken.
+deferred_read :: proc() -> Result([dynamic]int, E) {
+	list := [dynamic]int{1, 2};
+	defer fmt.println(list.len());
+	return .ok(list);
+}
+deferred_read_record :: proc() -> Pair {
+	list := [dynamic]int{1, 2};
+	defer fmt.println(list.len());
+	return Pair{list, 1};
+}
+// An `errdefer` runs after a failure is taken.
+failure_read :: proc() -> Result(int, [dynamic]int) {
+	list := [dynamic]int{1, 2};
+	errdefer fmt.println(list.len());
+	return .err(list);
+}
+// The local's storage ends with the procedure, so it cannot leave.
+arena_backed :: proc() -> Result([dynamic]int, E) {
+	arena := mem.Arena.init();
+	list: [dynamic]int via arena.allocator() = {};
+	list.append(1);
+	return .ok(list);
+}
+// Named twice, a move-only local is still copied, which it cannot be.
+named_twice :: proc() -> Both {
+	c := Connection{1};
+	return Both{c, c};
+}
+
+// A borrow of the local that the returned value still uses.
+Viewed :: struct { items: [dynamic]int, view: []int }
+still_borrowed :: proc() -> Viewed {
+	list := [dynamic]int{1, 2};
+	view := list[:];
+	return Viewed{list, view};
+}
+
+main :: proc() {}

@@ -504,10 +504,17 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	}
 	// Aggregate construction: a place argument is cloned and must be copyable, a
 	// temporary or `move(x)` transfers.
+	// design.md "Returned constructions": the payload of a returned variant is
+	// returned with it.
+	if v.returned {
+		mark_returned(arg.value)
+	}
 	if !check_value_expr(k, arg.value, payload, "supply") {
 		return
 	}
-	finish_union_construct(k, v, subject, index, arg.value)
+	value := transfer_returned_operand(k, &v.base, arg.value, payload)
+	v.args[0].value = value
+	finish_union_construct(k, v, subject, index, value)
 }
 
 // Records a construction whose payload is already checked and materialised:

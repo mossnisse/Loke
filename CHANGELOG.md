@@ -10,6 +10,20 @@ checklist.
 
 ### Breaking changes
 
+- A returned construction transfers the owned locals it is built from
+  ([Returned constructions](design.md#returned-constructions), rationale under
+  ["Returned constructions"](comments.md#returned-constructions)). `return list;` moved a managed
+  local or `move` parameter, while `return .ok(list);`, `return .err(list);`,
+  `return Pair{list, 1};`, and `return a if flag else b;` cloned it with warning `L0507`, and were
+  `L0503` for a move-only value. The payload of a variant construction, an element of a composite
+  literal, and an arm of a conditional expression now transfer when the returned value names the
+  local once, nested to any depth, so `return .ok(move(list));` can drop its `move`. Two programs
+  that compiled through the clone are errors, as they are for a plain `return list;`. A deferred
+  statement that reads the local, an `errdefer` on a failure included, is `L0500`, with a note at
+  the `return`; a local whose storage ends with the procedure, such as one built `via` a local
+  arena, is `L0592`. Upgrade by writing `.clone()` on the operand where the copy was meant. A local
+  named twice in the returned value, a field of a local, a borrowed parameter, and an argument of a
+  call are copied as before.
 - A union's storage is the compiler's choice ([Representation](design.md#representation),
   rationale under ["Union layout is the compiler's"](comments.md#union-layout-is-the-compilers)).
   design.md specified the payload region, the tag's width and position, and its values, while

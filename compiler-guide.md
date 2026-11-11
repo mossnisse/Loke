@@ -144,8 +144,10 @@ inline bytes say nothing of what it duplicates. A copy that retains storage, of
 a [`string`](design.md#string-type) or [`Shared(T)`](design.md#shared-ownership),
 is not costly. Any other copy is measured by the inline bytes it duplicates. A
 copy that [last-use transfer](design.md#last-use-transfer) makes a move is not
-reported, and neither is a written `clone()`, which states the copy is
-intended.
+reported, an operand that a
+[returned construction](design.md#returned-constructions) transfers is not a
+copy, and a written `clone()` is not reported either, since it states that the
+copy is intended.
 
 Converting an operand to a destination type is not itself a copy:
 `fmt.print(count)` views an `int` as a borrowing `dyn fmt.Formattable`,

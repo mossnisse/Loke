@@ -103,7 +103,7 @@ corners :: proc(width, height: int) -> Result([dynamic]Point, Grid_Error) {
 	points: [dynamic]Point = {};           // owns its storage; released at scope exit
 	points.append(checked(0, 0) or_return);
 	points.append(checked(width, height) or_return);
-	return .ok(move(points));              // ownership transfers to the caller
+	return .ok(points);                    // ownership transfers to the caller
 }
 
 main :: proc() {
@@ -4917,7 +4917,7 @@ an eligible binding or assignment clone.
 | a [`self: ^`](#receiver-forms) receiver | aliases the caller's storage | borrowed for the full expression |
 | `inout T` parameter | exclusive mutable borrow | not accepted: `inout` names a caller's variable |
 | `move T` parameter | transferred, and written `move(x)` at the call | transferred, with no marker |
-| [result](#parameter-semantics-and-abi-lowering) | a borrowed parameter or place is cloned | a managed local, temporary, or `move` parameter is transferred |
+| [result](#parameter-semantics-and-abi-lowering) | a borrowed parameter or place is cloned | a managed local, temporary, or `move` parameter is transferred, itself or as an operand of a [returned construction](#returned-constructions) |
 | [`switch` subject](#switch-ownership) | payload borrowed; the binding is immutable, or the writable payload itself when written `&` | payload consumed |
 | [`or_else`](#or_else-expression) | success payload copied out, failure left alone | payload transferred, and a managed failure dropped before the fallback |
 | [`or_return`](#or_return-operator) | the selected payload copied out, source stays live | transferred |
@@ -4974,7 +4974,71 @@ stored by a callee through a pointer, produces an error at the copy; write
 `.clone()` to keep it a copy. A transfer runs no `hook(copy)`, allocates
 nothing, and cannot fail as a copy could. The destination takes responsibility
 for dropping the value. Other copying contexts, including arguments, aggregate
-elements, container insertion, and `or_else` operands, still clone.
+elements, container insertion, and `or_else` operands, still clone, apart from
+the operands of a [returned construction](#returned-constructions).
+
+#### Returned constructions
+
+**A `return` transfers the owned locals its value is built from.** `return
+list;` transfers a managed local or `move` parameter
+([Parameter semantics](#parameter-semantics-and-abi-lowering)), and so does a
+returned construction that takes one as an operand:
+
+```loke
+Scan :: struct { tokens: [dynamic]Token, errors: [dynamic]string }
+
+scan :: proc(text: string_view) -> Result(Scan, Scan_Error) {
+	tokens := [dynamic]Token{};
+	errors := [dynamic]string{};
+	// ...
+	if (errors.len() > 8) { return .err(Scan_Error{errors}); }   // `errors` transfers
+	return .ok(Scan{tokens, errors});                            // both transfer
+}
+```
+
+An operand is the payload of a variant construction, an element of a composite
+literal, or an arm of a conditional expression, when the construction or
+conditional is the returned value or is itself such an operand. A map literal's
+key is not one, and neither is an array element written with an index or a
+range, which may fill several slots.
+
+An operand transfers, as if written `move(x)`, when all of these hold:
+
+- it is the name of a managed local or `move` parameter of the procedure, not a
+  field or element of one;
+- it has the operand's type without a conversion: a `[dynamic]T` viewed as a
+  `[]T`, or an anonymous union [widened](#widening-by-label), is not the local
+  itself;
+- the returned value names it once. In `return Pair{list, list.len()};` and
+  `return Two{list, list};` every use of `list` is the copy it would be in any
+  construction.
+
+The transfer runs no `hook(copy)`, allocates nothing, and takes a move-only
+value. It follows the checks of an explicit `move`, as a plain `return list;`
+does, so two things a copy allowed are errors:
+
+```loke
+flush :: proc() -> Result([dynamic]int, Error) {
+	list := [dynamic]int{};
+	defer log(list.len());
+	return .ok(list);          // ERROR: the deferred statement reads `list` afterwards
+}
+
+build :: proc() -> Result([dynamic]int, Error) {
+	arena := mem.Arena.init();
+	list: [dynamic]int via arena.allocator() = {};
+	return .ok(list);          // ERROR: `list` is backed by `arena`, which ends here
+}
+```
+
+A deferred statement, an `errdefer` on a failure included, runs after the result
+is taken. Write `.clone()` on the operand to return a copy in either case. A
+borrow of the local that the returned value still uses, as `view` in `return
+Viewed{list, view};`, is an error at the operand, as it is for any move.
+
+Nothing else in a `return` changes. An argument of a call, as in `return
+wrap(list);` or `return .some(box(list));`, is passed as that call takes it, and
+a construction bound to a name first copies its operands at the binding.
 
 #### Values that outlive every scope
 
@@ -5575,6 +5639,9 @@ ys := [dynamic]int{2};
 a := xs if flag else ys;               // clones the one selected
 b := move(xs) if flag else ys.clone(); // one transferred, one written copy
 ```
+
+A [returned](#returned-constructions) conditional transfers an arm that names
+an owned local, so `return xs if flag else ys;` clones neither.
 
 ### Other operators
 
@@ -6622,7 +6689,9 @@ callee owns nothing to move out: a mutable owner clones into
 another allocator, while `string` and `Shared(T)` retain their shared
 allocation. Returning a borrowed value whose clone is disabled is a compile-time
 error. Returning a managed local, temporary, or `move` parameter instead
-transfers ownership without cloning. A procedure needing allocator-controlled
+transfers ownership without cloning, and so does returning a
+[construction](#returned-constructions) that takes one as an operand. A
+procedure needing allocator-controlled
 result storage takes an allocator parameter and constructs against it.
 
 An ordinary parameter borrows its argument:
@@ -9077,9 +9146,10 @@ never wrapped: `return nil;` in an `Option(rawptr)` would read as absence, so it
 is an error that asks for `.some(nil)` or `.none`. In an `Option(^Node)` it is
 an error because `nil` is not a `^Node`.
 
-A wrapped return takes its value as `return value;` does. An owned local or
-`move` parameter transfers into the success variant, and a borrowed place is
-copied, so a borrowed move-only value cannot be returned ([Parameter semantics
+A wrapped return takes its value as `return value;` does, and as the written
+`return .ok(value);` does ([Returned constructions](#returned-constructions)).
+An owned local or `move` parameter transfers into the success variant, and a
+borrowed place is copied, so a borrowed move-only value cannot be returned ([Parameter semantics
 and ABI lowering](#parameter-semantics-and-abi-lowering)). The
 [return-escape](#procedure-result-contracts) rules and
 [`errdefer`](#defer-statement) see the construction the return stands for, so a

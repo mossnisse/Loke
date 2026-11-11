@@ -94,7 +94,7 @@ parse :: proc(text: string_view) -> Result(Totals, Problem) {
 			totals.by_category[category.copy()] = category_total;
 		}
 	}
-	return .ok(move(totals));
+	return .ok(totals);
 }
 
 // The categories in alphabetical order.
@@ -220,8 +220,9 @@ during parsing, so an out-of-range sum reports the input line before any report
 is printed. `add_amount` returns an `Option`, and `or_return {...}` turns its
 missing sum into the parser's error in the same way.
 
-**Ownership.** `ledger.parse` builds `totals` and hands it back with
-`move(totals)`, and `main` takes it out of the `Result` with `move(parsed)`.
+**Ownership.** `ledger.parse` builds `totals` and hands it back:
+`return .ok(totals);` transfers a local, as `return totals;` would. `main` takes
+it out of the `Result` with `move(parsed)`.
 Neither copies the map. When `main` returns, `text`, `totals`, and the list of
 categories are released.
 

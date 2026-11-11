@@ -1,0 +1,28 @@
+L0500
+@18:20
+`list` cannot be used here: it has already been moved, dropped, or released
+returned_construction.loke:19:13: this `return` transfers `list` into its result before deferred statements run; write `list.clone()` to return a copy
+
+L0500
+@23:20
+returned_construction.loke:24:14: this `return` transfers `list` into its result
+
+L0500
+@29:23
+returned_construction.loke:30:14: this `return` transfers `list` into its result
+
+L0592
+@37:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+
+L0503
+@42:14
+`Connection` is move-only, so this aggregate literal cannot copy it
+
+L0503
+@42:17
+
+L0512
+@50:16
+`list` cannot be moved into the returned value here: a read-only slice of it is still in use
+a `return` transfers a local its value is built from; write `.clone()` to return a copy

@@ -1023,9 +1023,11 @@ address, not a failure. A checked reference cannot hold it, so in an
 wrapping would silently turn it from absence into `.some(nil)`.
 
 A wrapped return takes its value as the plain statement does, so an owned
-local transfers. A written `.ok(x)` copies a place, as any construction does;
-making a return copy where the same statement without a wrapper would move
-would be a difference nobody could see in the source.
+local transfers. Making a return copy where the same statement without a
+wrapper would move would be a difference nobody could see in the source. The
+written `return .ok(x);` once did copy, as a construction anywhere else does,
+until [returned constructions](#returned-constructions) removed that
+difference too.
 
 Generic bodies are monomorphized, so the choice between success and error
 could otherwise depend on the instance: in a body over `Result(T, E)`,
@@ -1034,6 +1036,46 @@ are the same type. Excluding results that name a generic argument keeps the
 meaning of the body the same in every instance. A result whose failure carries
 nothing, such as `Option(T)`, has only one payload to build, so it keeps the
 shorthand.
+
+### Returned constructions
+
+`return list;` moved a local, and `return .ok(list);`, `return .err(list);`, and
+`return Pair{list, 1};` cloned it, because a construction copies a place
+operand wherever it is written. A procedure that fills several locals and
+returns them in a record is an ordinary procedure, and it either allocated on
+its way out or wrote `move(...)` around every operand. For a move-only value
+the construction was an error until the `move` was written.
+[Returned constructions](design.md#returned-constructions) transfers such an
+operand.
+
+`return` is where this is safe to do without asking. Nothing follows it but
+scope-exit actions, so the local has no later reader that the transfer could
+surprise, apart from a deferred statement, which is reported. The rule is the
+`move` the programmer would have written, and so inherits `move`'s checks
+instead of adding its own.
+
+That choice makes two programs that compiled into errors: a deferred statement
+that reads the local, and a local in a region that ends with the procedure.
+Both compiled only because the construction cloned, and both already drew the
+copy-cost warning. Keeping the clone for those two cases would break nothing,
+but `return .ok(list);` and `return list;` would then still differ, in the
+cases hardest to see. The plain statement rejects both, so the construction
+does.
+
+A local the returned value names twice is copied as before. Transferring the
+last use and copying the earlier ones would need an evaluation-order rule
+inside one expression, and making it an error would reject
+`Pair{list, list.len()}`, which is clear as written. Counting names needs no
+flow analysis and is easy to predict. The cost is that
+`return .ok(list) if list.len() > 0 else .err(.Empty);` still clones.
+
+The rule stops at `return`. `p := Pair{list, 1};` still clones `list` when
+nothing reads it again, since
+[last-use transfer](design.md#last-use-transfer) covers a binding or an
+assignment of a whole local and not an operand inside one. Extending it is
+[an open question](open-questions.md#last-use-transfer-of-construction-operands).
+A call's argument is not an operand either: the callee decides how it takes
+its parameter, and `return wrap(list);` means what `wrap(list)` means anywhere.
 
 ### `errdefer`
 

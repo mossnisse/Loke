@@ -698,6 +698,10 @@ Symbol :: struct {
 	// have no owner here to transfer or release (design.md "Unions",
 	// "By-reference iteration").
 	borrowed_binding: Borrowed_Binding,
+	// Where a `return` took this local into its result with no `move` written
+	// (design.md "Success returns", "Returned constructions"), for the report
+	// of a deferred statement that reads it afterwards.
+	returned_at: Span,
 	// design.md "`@(allocator_reset)`": a successful call may end this
 	// parameter's region. Verified in the body, carried in the procedure type.
 	allocator_reset: bool,
