@@ -10,6 +10,16 @@ narrow :: proc(x: u8) -> u8 { return x; }
 result :: proc() -> u16 { return (1 if c() else 2) + 1; }
 count :: proc() -> int { return 2; }
 
+// Converted only by a hook, whose parameter gives an unfixed operand its type.
+Wide :: struct { v: f64 }
+impl Wide {
+	from_f64 :: hook(convert) proc(v: f64) -> Wide { return Wide{v}; }
+}
+Byte :: struct { v: u8 }
+impl Byte {
+	from_u8 :: hook(convert) proc(v: u8) -> Byte { return Byte{v}; }
+}
+
 main :: proc() {
 	byte: u8 = (1 if c() else 2) + 1;
 	wide: f64 = (1 if c() else 2) * 2;
@@ -53,4 +63,7 @@ main :: proc() {
 	fmt.println(u8(1 if c() else 2), i8(-LIMIT if c() else LIMIT), u64(1 << 63 if c() else 0));
 	fmt.println(u8((1 if c() else 2) + 254), f32(1 if c() else 2), int(1.5 if c() else 2.5), u32('a' if c() else 'b'));
 	fmt.println(Simd(f32, 4)(1 if c() else 2), f32(0.1 if c() else 0.2) == f32(0.1));
+
+	// BUG: the operand took `int` before a hook was tried, so neither applied.
+	fmt.println(Wide(1 if c() else 2).v, Byte((1 if c() else 2) + 254).v);
 }

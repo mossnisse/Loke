@@ -16,5 +16,8 @@ main :: proc() {
 	h: D = (1 if c() else 2) + 1;
 	i := u8(300 if c() else 2);
 	j := int(true if c() else false);
-	_ = a; _ = b; _ = d; _ = e; _ = f; _ = g; _ = h; _ = i; _ = j;
+	// BUG: an integer took `bool` by kind, and `nil` was given no type and no error.
+	l := bool(1 if c() else 0);
+	m := int(nil if c() else nil);
+	_ = a; _ = b; _ = d; _ = e; _ = f; _ = g; _ = h; _ = i; _ = j; _ = l; _ = m;
 }

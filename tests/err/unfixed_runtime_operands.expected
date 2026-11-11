@@ -32,4 +32,12 @@ L0352
 
 L0373
 @18:11
-`bool` cannot be converted to `int`
+`untyped bool` cannot be converted to `int`
+
+L0373
+@20:12
+`untyped int` cannot be converted to `bool`
+
+L0373
+@21:11
+`untyped nil` cannot be converted to `int`

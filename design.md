@@ -5622,7 +5622,9 @@ default type. An operator applied to such a result is unfixed the same way: its
 operands take the type and the operator runs at that type, which it must apply
 to. A [conversion](#type-conversion) `T(...)` gives it `T` when an unfixed
 constant of its kind converts implicitly to `T`; otherwise it takes its default
-type and converts as a runtime value.
+type and converts as a runtime value. When neither is a built-in conversion, it
+is an argument to `T`'s [conversion hooks](#resolving-t) and takes the chosen
+parameter's type.
 
 ```loke
 y: u8 = (1 if flag else 2) + 1;   // adds two `u8`

@@ -1034,7 +1034,8 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 
 // design.md "Implicit type conversions", by kind alone: would an unfixed
 // constant of `from` convert implicitly to `to` if its value fit? `assignable`
-// leaves an unfixed float or bool meeting an integer to `materialize`.
+// leaves a value that cannot fit, such as a float meeting an integer, to
+// `materialize`, so the kinds must match here.
 @(private = "file")
 unfixed_kind_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if !assignable(c, from, to) {
@@ -1042,11 +1043,14 @@ unfixed_kind_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	// design.md "SIMD vectors": a scalar meets the lane type.
 	lane := type_is_simd(c, to) ? underlying_info(c, to).element : to
+	is_bool := underlying_kind(c, lane) == .Bool
 	#partial switch type_kind(c, from) {
 	case .Untyped_Float:
 		return underlying_kind(c, lane) == .Float
 	case .Untyped_Bool:
-		return underlying_kind(c, lane) == .Bool
+		return is_bool
+	case .Untyped_Int, .Untyped_Rune:
+		return !is_bool
 	}
 	return true
 }
@@ -1062,10 +1066,14 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	}
 	// design.md "Conditional expression": an unfixed result that is not constant
 	// takes the target as a constant of its kind would, or else its default type,
-	// and then converts as a runtime value.
+	// and then converts as a runtime value. It stays unfixed when no built-in
+	// conversion applies, for a hook to give it a parameter's type.
 	source := source
 	if !base_is_const(base) && type_is_untyped(k.c, source) {
 		fixed := unfixed_kind_converts(k.c, source, target) ? target : default_type(k.c, source)
+		if fixed == INVALID_TYPE || !convertible(k.c, fixed, target) {
+			return false
+		}
 		if !materialize(k, v.args[0].value, fixed) {
 			return true
 		}
