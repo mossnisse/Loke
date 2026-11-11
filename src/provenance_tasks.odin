@@ -45,10 +45,13 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	// tasks run").
 	runs := spawn_runs(graph, s)
 	graph.has_window_event = true
-	append(&graph.task_sites, Task_Site{block = prov_window_bit(graph, task.scope), reserve = graph.task_reserve, span = s.span, call = call})
+	name := spawn_callee_name(graph.k.c, call)
+	append(&graph.task_sites, Task_Site {
+		block = prov_window_bit(graph, task.scope), reserve = graph.task_reserve, span = s.span, call = call, runs = runs, name = name,
+	})
 	prov_emit(graph, Prov_Event{
 		kind = .Task_Start, slot = len(graph.task_sites) - 1, symbol = runs, sources = held, span = s.span,
-		name = spawn_callee_name(graph.k.c, call),
+		name = name,
 	})
 	slot, found := graph.task_slots[task.scope]
 	hold, has_hold := graph.spawn_holds[s]
@@ -59,8 +62,24 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if scope := symbol_of(graph.k.c, task.scope); scope != nil {
 		join = scope.span
 	}
+	// The task may read what the storage it is lent holds, at any depth, for as
+	// long as it runs, so those borrows last until the join too. They are held
+	// apart from the arguments' own: the task waits on none of them, so the join
+	// check passes over them (design.md "Releasing before the join"). The load
+	// uses again what the call used, which is reported there, and comes before
+	// the task's own reborrows suspend what it reads through.
+	content, held_apart := graph.task_content[task.scope]
+	reached := -1
+	if held_apart && len(held) > 0 {
+		reached = prov_temp_slot(graph)
+		graph.has_content_load = true
+		prov_emit(graph, Prov_Event{kind = .Load, slot = reached, into = held, load = .Deep, span = s.span, repeats_inner = true})
+	}
 	prov_hold_until_join(graph, slot, held, s.span, join)
 	prov_spawn_reborrows(graph, hold, held, s.span, join)
+	if reached >= 0 {
+		prov_hold_until_join(graph, content, prov_one(graph, reached), s.span, join)
+	}
 }
 
 // The procedure a spawn's task runs: its `run` wrapper, or the declared
@@ -87,6 +106,7 @@ prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
 	}
 	prov_window_bit(graph, s.scope)
 	graph.task_slots[s.scope] = prov_temp_slot(graph)
+	graph.task_content[s.scope] = prov_temp_slot(graph)
 	holds := make([dynamic]int, 0, len(s.spawns), graph.alloc)
 	tasks: [dynamic]Pool_Task
 	for spawn in s.spawns {

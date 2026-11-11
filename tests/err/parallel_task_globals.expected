@@ -1,29 +1,34 @@
 L0731
-@36:13
+@47:13
 `record_hit` may write `hits`, which every task and the parent share
 L0731
-@37:13
+@48:13
 `increment` reaches through `view`, which every task and the parent share: `view` holds `[]mut int`, through which another thread may write as well
 L0731
-@38:13
+@49:13
 `through_helper` reaches through `view`, which every task and the parent share: `view` holds `[]mut int`, through which another thread may write as well
 through `increment`
 L0731
-@40:13
+@51:13
 `use_config` may write `config`, which every task and the parent share
 L0731
-@41:13
+@52:13
 this task is given what `view` stores, which every task and the parent share: `view` holds `[]mut int`, through which another thread may write as well
 L0731
-@47:3
-`hits` is written while this `parallel` block's tasks may be running, and every thread shares it
-a task runs from its `spawn` until this block ends
+@61:3
+`hits` is written while a task that may read it is running
+`read_hits` is started here and runs until this `parallel` block ends
 L0731
-@48:3
-`hits` is modified by `record_hit` while this `parallel` block's tasks may be running, and every thread shares it
+@62:3
+`hits` is modified by `record_hit` while a task that may read it is running
 L0731
-@49:15
+@63:15
 this reaches through `view` while this `parallel` block's tasks may be running: `view` holds `[]mut int`, through which another thread may write as well
 L0731
-@55:4
-`hits` is written while this `parallel` block's tasks may be running, and every thread shares it
+@69:4
+`hits` is written while a task that may read it is running
+`watch_hits` is started here and runs until this `parallel` block ends
+L0731
+@78:3
+`table` is written while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps
+a borrow of `table` outlasts its statement here, so a task may reach it without naming `table`

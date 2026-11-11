@@ -1,0 +1,94 @@
+// design.md "Globals while tasks run": what a task reserves against the
+// parent's writes. Its effects count the tasks it starts, every body a
+// procedure value may be, and the drops its thread's exit runs. A global whose
+// borrow is sent, stored through a parameter, or kept in a container is
+// reserved by every task, since one may read it without naming it. A global no
+// task reserves stays the parent's to write beside each case.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+counter: int;
+frames: int;
+released: int;
+sent: [1]int;
+filled: [1]int;
+listed: [1]int;
+registry: [dynamic][]int;
+
+Holder :: struct { view: []int }
+
+@(move_only) Cache :: struct { n: int }
+
+impl Cache {
+	release :: hook(drop) proc(self: inout) { self.n = released; }
+}
+
+cache: thread_local Cache;
+
+read_counter :: proc() -> int { return counter; }
+
+nested :: proc() -> int {
+	a: int;
+	parallel { spawn a = read_counter(); }
+	return a;
+}
+
+plain :: proc(n: u8) -> int { return int(n); }
+reads :: proc(n: u8) -> int { return counter + int(n); }
+
+fill :: proc(destination: ^mut Holder) { destination.view = filled[:]; }
+
+list :: proc() { registry.append(listed[:]); }
+
+sum :: proc(jobs: move thread.Receiver([]int)) -> int {
+	total := 0;
+	foreach (view in jobs) { total += view[0]; }
+	return total;
+}
+
+work :: proc(n: int) -> int { return n; }
+
+main :: proc() {
+	a, b, c, d, e: int;
+	parallel {
+		spawn a = nested();
+		frames = 1;
+		counter = 1;
+	}
+
+	f := plain;
+	if (frames > 1) { f = reads; }
+	parallel {
+		spawn b = f(1);
+		frames = 2;
+		counter = 2;
+	}
+
+	parallel {
+		spawn c = work(1);
+		frames = 3;
+		released = 1;
+	}
+
+	jobs := thread.Channel([]int).init(4);
+	parallel {
+		send, receive := jobs.split();
+		spawn d = sum(move(receive));
+		_ = send.send(sent[:]);
+		frames = 4;
+		sent[0] = 1;
+	}
+
+	holder: Holder = {};
+	fill(&mut holder);
+	list();
+	parallel {
+		spawn e = work(2);
+		frames = 5;
+		filled[0] = 1;
+		listed[0] = 1;
+	}
+	fmt.println(a, b, c, d, e, holder.view[0]);
+}

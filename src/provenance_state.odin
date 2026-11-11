@@ -78,6 +78,9 @@ Prov_State :: struct {
 	// collected into `spawn_held`.
 	task_slots:     map[Symbol_Id]int,
 	task_holds:     map[Symbol_Id][]int,
+	// What the storage a block's tasks are lent holds, at any depth, which the
+	// join uses as it uses `task_slots` (design.md "Task borrows and the join").
+	task_content:   map[Symbol_Id]int,
 	// design.md "Parallel blocks": a pooled block's tasks, by its hidden scope,
 	// which its join may run on the joining thread.
 	pool_tasks:     map[Symbol_Id][]Pool_Task,
@@ -278,6 +281,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.scope_drops = make(map[Span]bool, allocator)
 	state.task_slots = make(map[Symbol_Id]int, allocator)
 	state.task_holds = make(map[Symbol_Id][]int, allocator)
+	state.task_content = make(map[Symbol_Id]int, allocator)
 	state.pool_tasks = make(map[Symbol_Id][]Pool_Task, allocator)
 	state.spawn_holds = make(map[^Stmt_Spawn]int, allocator)
 	state.divisions = make([dynamic]Prov_Division, allocator)
@@ -359,6 +363,10 @@ Task_Site :: struct {
 	// The spawned call, whose procedure value diagnostics resolve to the
 	// bodies it may be.
 	call:    ^Expr_Call,
+	// The procedure the task runs, whose settled summaries say what it reads
+	// and writes, and how diagnostics name what it calls.
+	runs:    Symbol_Id,
+	name:    string,
 }
 
 // design.md "Capabilities and the one rule": a read is compatible with a

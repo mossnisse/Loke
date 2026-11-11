@@ -1,0 +1,23 @@
+L0731
+@58:3
+`counter` is written while a task that may read it is running
+`nested` is started here and runs until this `parallel` block ends
+L0731
+@66:3
+`counter` is written while a task that may read it is running
+`f` is started here and runs until this `parallel` block ends
+L0731
+@72:3
+`released` is written while this `parallel` block's tasks may be running, and each drops `cache` when its thread exits, whose hook `release` may read it
+L0731
+@81:3
+`sent` is written while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps
+a borrow of `sent` outlasts its statement here, so a task may reach it without naming `sent`
+L0731
+@90:3
+`filled` is written while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps
+a borrow of `filled` outlasts its statement here, so a task may reach it without naming `filled`
+L0731
+@91:3
+`listed` is written while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps
+a borrow of `listed` outlasts its statement here, so a task may reach it without naming `listed`

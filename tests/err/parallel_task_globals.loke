@@ -1,6 +1,8 @@
 // design.md "Globals while tasks run": from a block's first spawn to its join,
-// neither a task nor the parent writes a global every thread shares, or reaches
-// through one that stores a mutable or erased carrier.
+// a task does not write a global every thread shares, the parent does not write
+// one a running task reserves, and neither reaches through one that stores a
+// mutable or erased carrier. A task reserves what it may read or write, and
+// every task reserves a global whose borrow outlasts the statement taking it.
 package main;
 
 import "core:fmt";
@@ -11,10 +13,19 @@ values: [1]int;
 view: []mut int;
 config: [2]int;
 config_once: sync.Once;
+table: [2]int;
+table_view: []int;
 
-setup :: proc() { view = &mut values[:]; }
+setup :: proc() {
+	view = &mut values[:];
+	table_view = table[:];
+}
 
 record_hit :: proc() { hits += 1; }
+
+read_hits :: proc() -> int { return hits; }
+
+watch_hits :: proc(n: int) { _ = hits + n; }
 
 increment :: proc() { view[0] += 1; }
 
@@ -42,9 +53,12 @@ main :: proc() {
 
 	hits = 1;
 	local := [2]int{0, 0};
+	seen: int;
 	parallel {
 		spawn add(&mut local[:]);
-		hits = 2;
+		hits = 2;                    // no running task reserves `hits`
+		spawn seen = read_hits();
+		hits = 3;
 		record_hit();
 		fmt.println(view[0]);
 	}
@@ -53,8 +67,15 @@ main :: proc() {
 	parallel {
 		foreach (i in 0..<2) {
 			hits = i;
-			spawn square(i);
+			spawn watch_hits(i);
 		}
 	}
-	fmt.println(hits, answer, local[0]);
+
+	// `setup` left a view of `table` in `table_view`, where a task may find it.
+	squared: int;
+	parallel {
+		spawn squared = square(2);
+		table[0] = 1;
+	}
+	fmt.println(hits, answer, local[0], seen, squared);
 }

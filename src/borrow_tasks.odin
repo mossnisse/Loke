@@ -9,8 +9,9 @@ import "core:slice"
 
 // --------------------------------------------------------- task window --
 // design.md "Globals while tasks run": from a block's first spawn to its join,
-// neither a task nor the parent may write a global every thread shares, or
-// reach through one that stores mutable or erased state.
+// a task may not write a global every thread shares, the parent may not write
+// one a running task reserves, and neither may reach through one that stores
+// mutable or erased state.
 
 // The spawns whose tasks may be running on entry to each block, one bit per
 // spawn site (`task_sites`): a spawn sets its own, and a join clears those of
@@ -169,7 +170,7 @@ check_shared_event :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8, 
 		if event.access == .Read {
 			report_shared_reach(state, event.symbol, event.span, window, shared, event.name, event.precision)
 		} else {
-			report_parent_write(state, event, window, shared)
+			check_parent_write(state, event, window, shared)
 		}
 	case .Reach, .Escape, .Retain, .Publish:
 		if !window_is_open(window) {
@@ -557,21 +558,73 @@ first_report :: proc(shared: ^Shared_Reports, span: Span, global: Symbol_Id) -> 
 	return true
 }
 
+// design.md "Globals while tasks run": a task reserves the globals it may read
+// or write, by its procedure's settled effects and by the drops its thread's
+// exit runs, and the parent may not write a reserved one. A global lent beyond
+// the statement borrowing it is reserved by every task, since one may read it
+// through the borrow without naming it.
 @(private = "file")
-report_parent_write :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8, shared: ^Shared_Reports) {
+check_parent_write :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8, shared: ^Shared_Reports) {
+	graph := state.graph
 	c := state.k.c
-	if !first_report(shared, event.span, event.symbol) {
+	global := event.symbol
+	sym := symbol_of(c, global)
+	name := identifier_text(c, sym.name)
+	how := event.name if event.name != "" else "written"
+	advice := "declared here; write it before the first `spawn` or after the block, or make it an `Atomic` or a `thread.Mutex`"
+	if lent, found := c.lent_globals[global]; found {
+		if !first_report(shared, event.span, global) {
+			return
+		}
+		errorf(
+			c, event.span, "L0731",
+			"`%s` is %s while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps",
+			name, how,
+		)
+		add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
+		add_notef(c, lent, "a borrow of `%s` outlasts its statement here, so a task may reach it without naming `%s`", name, name)
+		add_notef(c, sym.span, advice)
 		return
 	}
-	sym := symbol_of(c, event.symbol)
-	how := event.name if event.name != "" else "written"
-	errorf(
-		c, event.span, "L0731",
-		"`%s` is %s while this `parallel` block's tasks may be running, and every thread shares it",
-		identifier_text(c, sym.name), how,
-	)
-	add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
-	add_notef(c, sym.span, "declared here; write it before the first `spawn` or after the block, or make it an `Atomic` or a `thread.Mutex`")
+	cursor := 0
+	for running in next_running_site(graph, window, &cursor) {
+		site := graph.task_sites[running]
+		summary := body_summary(c, site.runs)
+		writes := slice.contains(summary.writes, global)
+		if !writes && !slice.contains(summary.reads, global) {
+			continue
+		}
+		if !first_report(shared, event.span, global) {
+			return
+		}
+		errorf(
+			c, event.span, "L0731",
+			"`%s` is %s while a task that may %s it is running", name, how, writes ? "write" : "read",
+		)
+		add_notef(c, site.span, "`%s` is started here and runs until this `parallel` block ends", site.name)
+		add_notef(c, sym.span, advice)
+		return
+	}
+	for drop in c.thread_exit_drops {
+		writes := slice.contains(drop.writes, global)
+		if !writes && !slice.contains(drop.reads, global) {
+			continue
+		}
+		if !first_report(shared, event.span, global) {
+			return
+		}
+		owner := symbol_of(c, drop.variable)
+		hook := symbol_of(c, drop.hook)
+		errorf(
+			c, event.span, "L0731",
+			"`%s` is %s while this `parallel` block's tasks may be running, and each drops `%s` when its thread exits, whose hook `%s` may %s it",
+			name, how, identifier_text(c, owner.name), identifier_text(c, hook.name), writes ? "write" : "read",
+		)
+		add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
+		add_notef(c, owner.span, "`%s` is declared here", identifier_text(c, owner.name))
+		add_notef(c, sym.span, advice)
+		return
+	}
 }
 
 // A printed argument is reached where it is read and again by the call that

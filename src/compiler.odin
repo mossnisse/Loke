@@ -340,6 +340,10 @@ Compiler :: struct {
 	thread_summaries_wanted: bool,
 	thread_exit_drops:    []Thread_Exit_Drop,
 	thread_facts_pending: bool,
+	// design.md "Globals while tasks run": the file-scope and `static` variables
+	// some body lends beyond the statement borrowing them, each with the first
+	// place that does, so a task may read one without naming it.
+	lent_globals:         map[Symbol_Id]Span,
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker

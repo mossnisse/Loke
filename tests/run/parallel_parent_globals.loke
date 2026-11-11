@@ -1,0 +1,72 @@
+// design.md "Globals while tasks run": the parent may write a global no running
+// task reserves, directly or through a call, on a bare or a pooled block. A
+// task reserves what it may read or write from its spawn, so a write before
+// that spawn is free, and a spawn in a loop reserves on the next iteration.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+next_lifetime: u64 = 0;
+frames: int;
+limit: int = 3;
+
+take_lifetime :: proc() -> u64 { next_lifetime += 1; return next_lifetime; }
+
+worker :: proc(jobs: move thread.Receiver(u64)) -> u64 {
+	total: u64 = 0;
+	foreach (lifetime in jobs) { total += lifetime; }
+	return total;
+}
+
+under_limit :: proc(n: int) -> bool { return n < limit; }
+
+square :: proc(n: int) -> int { return n * n; }
+
+square_into :: proc(n: int, slot: []mut int) { slot[0] = n * n; }
+
+main :: proc() {
+	// A long-lived block owning a worker, with the loop that feeds it inside.
+	jobs := thread.Channel(u64).init(4);
+	total: u64;
+	parallel {
+		send, receive := jobs.split();
+		spawn total = worker(move(receive));
+		foreach (_ in 0 ..< 4) {
+			frames += 1;
+			lifetime := take_lifetime();
+			_ = send.send(move(lifetime));
+		}
+	}
+	fmt.println(total, frames, next_lifetime);
+
+	// `limit` is written before the task reading it starts, and `frames`,
+	// which that task never touches, after.
+	within: bool;
+	parallel {
+		limit = 5;
+		spawn within = under_limit(4);
+		frames += 1;
+	}
+	fmt.println(within, frames);
+
+	// A loop's earlier spawn is running at its next write.
+	squares := [3]int{0, 0, 0};
+	all := &mut squares[:];
+	parallel {
+		foreach (slot, i in all.chunks_mut(1).indexed()) {
+			frames = i;
+			spawn square_into(i + 1, slot);
+		}
+	}
+	fmt.println(squares[0] + squares[1] + squares[2], frames);
+
+	pool := thread.Pool.init(2);
+	pooled: int;
+	parallel (&pool) {
+		spawn pooled = square(6);
+		frames = 10;
+		_ = take_lifetime();
+	}
+	fmt.println(pooled, frames, next_lifetime);
+}

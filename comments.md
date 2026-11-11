@@ -283,6 +283,36 @@ until any later point, so a write to a global there is only a likely race. A
 task runs between its spawn and the join, which the compiler sees, so the same
 write while a task may be running is an error.
 
+**The parent writes what no task reserves.** The window first forbade the
+parent every write of a global, which was simple to state and held up the rule
+that lets a task read through a read-only carrier a global stores. It also made
+every plain global unwritable from the main thread of a program whose block
+lives in `main` around its loop, the shape "Lexical joins, not handles"
+recommends for a server. The way round was to declare main-thread state
+`thread_local`, which is weaker than the check it avoids: a worker that later
+touches that state gets a zeroed instance of its own and no diagnostic.
+[Globals while tasks run](design.md#globals-while-tasks-run) therefore has a
+task reserve what it may read or write, as it reserves the allocator regions
+it may use, and a worker that comes to read the parent's state is an error
+naming that worker. The read effect names a global only where it is read by
+name, so the rule needs a second half: a global whose borrow leaves the
+statement taking it, anywhere in the program, is reserved by every task. That
+half is coarse on purpose. Following where each such borrow goes would need
+the tracking of stores that "An erased view by its conversions" declines, and
+a returned borrow counts although its caller usually holds it as a loan,
+because a call through a procedure value answers with a borrow that names no
+global. A task's own write of a global stays an error; see [Concurrency
+refinements](open-questions.md#concurrency-refinements). Nothing the first rule
+accepted is rejected, and the price is the one "Inferred checks" already
+names: a read added in a procedure a worker calls can reject a write in `main`.
+
+**A task holds what its arguments' storage holds.** A spawn first held only the
+loans of its arguments, so a record lent by `&h` left the parent free to write
+what `h.view` borrowed while the task read it. A call uses what its arguments
+reach for as long as it runs, and a task's call runs until the join, so the
+borrows found through a lent or given value, at any depth, are held with the
+arguments' own ([Task borrows and the join](design.md#task-borrows-and-the-join)).
+
 **A copy from a temporary, a lend of a widened place.** A task cannot be lent a
 field of a temporary, which ends with its statement, and the whole temporary
 cannot go into the frame either: an element's index is evaluated on the parent

@@ -1,0 +1,48 @@
+// design.md "Task borrows and the join": a task may read what the storage it
+// is lent holds, at any depth, until the join, so the parent may not write what
+// a lent record's field or a lent container's element borrows, a local or a
+// global, whether the task is lent the storage or given it.
+package main;
+
+import "core:fmt";
+
+shared: [1]int;
+
+Holder :: struct { view: []int }
+
+read :: proc(h: ^Holder) -> int { return h.view[0]; }
+
+take :: proc(h: move Holder) -> int { return h.view[0]; }
+
+first :: proc(r: ^[dynamic][]int) -> int { return r[0][0]; }
+
+main :: proc() {
+	data := [1]int{1};
+	a, b, c, d: int;
+
+	local := Holder{view = data[:]};
+	parallel {
+		spawn a = read(&local);
+		data[0] = 2;
+	}
+
+	registry: [dynamic][]int = {};
+	registry.append(data[:]);
+	parallel {
+		spawn b = first(&registry);
+		data[0] = 3;
+	}
+
+	global := Holder{view = shared[:]};
+	parallel {
+		spawn c = read(&global);
+		shared[0] = 2;
+	}
+
+	moved := Holder{view = shared[:]};
+	parallel {
+		spawn d = take(move(moved));
+		shared[0] = 3;
+	}
+	fmt.println(a, b, c, d);
+}

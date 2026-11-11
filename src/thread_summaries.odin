@@ -45,6 +45,7 @@ Thread_Exit_Drop :: struct {
 	variable: Symbol_Id,
 	hook:     Symbol_Id,
 	writes:   []Symbol_Id,
+	reads:    []Symbol_Id,
 	reach:    []Global_Effect,
 	use:      Region_Set,
 }
@@ -93,6 +94,7 @@ unknown_as_receiver :: proc(set: ^Region_Set) {
 compute_thread_summaries :: proc(k: ^Checker) {
 	c := k.c
 	program := &c.effect_program
+	c.lent_globals = make(map[Symbol_Id]Span, c.semantic_allocator)
 	facts := collect_thread_facts(k)
 	settle_thread_facts(c, facts)
 	for body, index in facts {
@@ -173,9 +175,38 @@ body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^Effect_List) {
 			case .Reach, .Escape, .Retain, .Publish:
 				for slot in event.sources {
 					note_reached_globals(&state, slot, event.span, out)
+					if event.kind != .Reach {
+						note_lent_globals(&state, slot, event.span)
+					}
 				}
 			}
 			run_prov_event(&state, event, state.reach, state.ended)
+		}
+	}
+}
+
+// design.md "Globals while tasks run": a borrow of a global's own storage that
+// is returned, retained, or stored through a carrier outlasts the statement
+// taking it, and no loan in another body names it from then on. A task may find
+// it where it was left and read the global without naming it, so the read
+// effect does not vouch for such a global. A borrow that stays in its body is
+// a loan there, which a spawn holds until the join when the task is given it.
+@(private = "file")
+note_lent_globals :: proc(state: ^Prov_Solve, slot: int, span: Span) {
+	graph := state.graph
+	c := state.k.c
+	row := reach_row(state, state.reach, slot)
+	for index in 0 ..< state.loans {
+		if !bit_get(row, index) {
+			continue
+		}
+		root := graph.roots[int(graph.loans[index].root)]
+		if root.kind != .Static || root.symbol == INVALID_SYMBOL || root.symbol in c.lent_globals {
+			continue
+		}
+		sym := symbol_of(c, root.symbol)
+		if sym != nil && sym.kind == .Var && symbol_outlives_bodies(sym) && !sym.synchronized {
+			c.lent_globals[root.symbol] = span
 		}
 	}
 }
@@ -362,6 +393,7 @@ collect_thread_exit_drops :: proc(c: ^Compiler) {
 				variable = Symbol_Id(index),
 				hook     = hook,
 				writes   = summary.writes,
+				reads    = summary.reads,
 				reach    = reach,
 				use      = substituted_region(summary.use, owner),
 			})

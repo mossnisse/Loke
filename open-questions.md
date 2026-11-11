@@ -501,6 +501,23 @@ thread-affine owning type for code that wants non-atomic reference counts.
 The cost of keeping immutable `string` safe to copy and drop across threads is
 treated separately under [Thread-affine strings](#thread-affine-strings).
 
+Two refinements of [Globals while tasks run](design.md#globals-while-tasks-run)
+are open, each a relaxation that would reject nothing accepted now:
+
+- **A task's own write of a global.** A task may not write file-scope or
+  `static` storage even when no other task and not the parent touches it. The
+  parent's side became a reservation; the task's would need the parent's reads
+  across the window as well as its writes, each other task's effects, and the
+  same spawn's earlier iterations, as an allocator reservation has.
+- **Which borrows reserve a global for every task.** A global whose borrow is
+  returned, retained, sent, or stored through a carrier is reserved by every
+  task, wherever that happens and whether or not a task can find the borrow.
+  So a global behind an accessor such as `input :: proc() -> ^Input` stays
+  unwritable by the parent in a window. A returned borrow could stop counting
+  where every call of the procedure is direct, since its callers then hold a
+  loan that names the global; a stored one would need the destinations
+  followed.
+
 Higher-level constructs are a separate question: futures or a similar composable
 asynchronous result, and language help for reactivity, such as a procedure rerun
 when a variable it reads changes. Each needs a use of its own; [Thread transfer

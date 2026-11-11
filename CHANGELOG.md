@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A task holds, until the join, the borrows found through the storage it is lent or given, at any
+  depth ([Task borrows and the join](design.md#task-borrows-and-the-join), rationale under
+  ["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)). A spawn held only its arguments'
+  own loans, so with `h := Holder{view = data[:]}` the parent could write `data` after
+  `spawn read(&h)` while the task read it through `h.view`, a data race the compiler accepted; the
+  same held for an element of a lent container and a field of a moved record. Such a write is now
+  `L0511` or `L0512`, as it is when the view itself is the argument. Upgrade by writing before the
+  spawn or after the block, or by giving the task a copy of what it reads.
 - A returned construction transfers the owned locals it is built from
   ([Returned constructions](design.md#returned-constructions), rationale under
   ["Returned constructions"](comments.md#returned-constructions)). `return list;` moved a managed
@@ -1606,6 +1614,16 @@ checklist.
 
 ### Changed
 
+- The parent of a `parallel` block may write a file-scope or `static` variable that no running
+  task reserves ([Globals while tasks run](design.md#globals-while-tasks-run), rationale under
+  ["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)). Every such write between the
+  first `spawn` and the join was `L0731`, so a program whose block lives in `main` around its loop
+  could write no plain global from the main thread. A task reserves what its procedure may read or
+  write, and what the drops its thread's exit runs may; every task also reserves a variable whose
+  borrow is returned, retained, sent, or stored through a carrier anywhere in the program, since a
+  task may read it through that borrow. `L0731` on a parent's write now names the task that may
+  read the variable, the drop hook, or where the borrow is kept. A task's own write of such
+  storage is an error as before, and nothing that compiled is rejected by this change.
 - The diagnostic for a place passed unmarked to a `move` parameter names the copy as well as the
   transfer ([Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering)).
   `send.try_send(next)` reported only `move(...)`, which ends `next`, so a loop that still needed

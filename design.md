@@ -8267,7 +8267,7 @@ annotation; an effect is not part of a procedure's type.
 | Effect | Its facts | What reads it |
 | --- | --- | --- |
 | [write](#global-write-effects) | file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably | a borrow live across a call, the race warning, and [a task's window](#globals-while-tasks-run) |
-| [read](#global-write-effects) | the same storage it may read, or borrow read-only, by name | a mutable borrow live across a call |
+| [read](#global-write-effects) | the same storage it may read, or borrow read-only, by name | a mutable borrow live across a call, and what [a task reserves](#globals-while-tasks-run) |
 | [reach](#globals-while-tasks-run) | the globals whose stored carriers it goes through | a task's window |
 | [allocator use](#allocators-and-tasks) | the regions it may operate on, per parameter and captured region | a task's reservation |
 | [pooled join](#parallel-blocks) | the `thread_local` storage tasks spawned in pooled blocks below it may write | a borrow held across the join |
@@ -8398,8 +8398,9 @@ The warning excludes `thread_local` storage, atomic operations, storage reached
 through a `thread.Mutex` or `thread.Monitor` guard, and
 [`@(synchronized)`](#synchronized) variables, whose package vouches for every
 access. It cannot detect races outside the effect analysis, such as writes
-through pointers or views. In a `parallel` block, shared global writes are
-errors, and access through stored pointers and views is also checked; see
+through pointers or views. In a `parallel` block, a task's shared global
+writes are errors, as is the parent's write of a global a running task
+reserves, and access through stored pointers and views is also checked; see
 [Globals while tasks run](#globals-while-tasks-run).
 
 ### What is not checked
@@ -10119,6 +10120,10 @@ A spawn's call is checked as a call that lasts until the join:
   be. A fresh binding of a disjoint chunk on the next loop iteration may be lent
   to another task. An argument copied into the task lends nothing of its own
   storage; only the borrows it carries last until the join.
+- The task may read what the storage it is lent or given holds, at any depth,
+  so the borrows a lent record's fields or a lent container's elements carry
+  last until the join as well: with `h := Holder{view = data[:]}`, the parent
+  may not write `data` after `spawn read(&h)`.
 - A task borrows only storage that outlives the block. The join is a use of
   every task loan, so a local declared inside the block, which is dropped before
   the join, cannot be lent to a task: `spawn fill(&mut scratch)` of one is an
@@ -10308,14 +10313,15 @@ parallel {
 
 The **window** of a block runs from an executed `spawn` to the join, including
 every reachable point and cleanup. Statements before the first spawn on every
-path are outside it, allowing setup before tasks start. Within the window,
-neither a task nor the parent may:
+path are outside it, allowing setup before tasks start. Within the window:
 
-- write file-scope or `static` storage, as the [write
+- a task may not write file-scope or `static` storage, as the [write
   effect](#global-write-effects) counts writes: an error here, where a thread
   `core:thread`'s `spawn` starts only gets a warning;
-- reach through a carrier stored in file-scope, `static`, or `thread_local`
-  storage that reaches mutable, erased, or unknown state: a `^mut`, `[]mut`,
+- the parent may not write file-scope or `static` storage that a task which
+  may be running **reserves**;
+- neither may reach through a carrier stored in file-scope, `static`, or
+  `thread_local` storage that reaches mutable, erased, or unknown state: a `^mut`, `[]mut`,
   `dyn mut`, or `&mut` capture, or a `dyn fmt.Formattable`. Reading through a
   global carrier is allowed when everything it reaches is read-only in the sense
   of [Sharing with tasks](#sharing-with-tasks). A read-only `dyn` view reaches
@@ -10324,6 +10330,45 @@ neither a task nor the parent may:
   [callable view](#borrowed-callable-views) holds reaches nothing. A
   `dyn fmt.Formattable` stays unknown, since printing may convert any printed
   type to it.
+
+A task reserves, from its spawn to the join, each file-scope or `static`
+variable in its procedure's [read or write effect](#global-write-effects), and
+each one the drops its thread's exit runs may read or write. The parent's write
+counts as the write effect counts it, so a call made in the window writes what
+its callee may. A write on a path no spawn of a reserving task has run on is
+free, and a spawn in a loop reserves from its first iteration on:
+
+```loke
+frames: int;                               // file scope
+limit: int = 3;                            // file scope
+under_limit :: proc(n: int) -> bool { return n < limit; }
+// In the parent procedure:
+parallel {
+	limit = 5;                            // no task is running yet
+	spawn within = under_limit(4);
+	frames += 1;                          // no task reserves `frames`
+	limit = 6;                            // ERROR: a running task may read `limit`
+}
+```
+
+The read effect names a variable only where it is read by name. So every task
+also reserves a variable whose borrow, anywhere in the program, is returned,
+[retained](#retaining-a-borrow), sent, or stored through a carrier: a task may
+find that borrow where it was left and read the variable without naming it. A
+borrow that stays in the body taking it is a loan there instead, which a task
+given it holds until the join ([Task borrows and the
+join](#task-borrows-and-the-join)).
+
+```loke
+table: [2]int;                             // file scope
+table_view: []int;                         // file scope
+setup :: proc() { table_view = table[:]; }
+// In the parent procedure:
+parallel {
+	spawn work();
+	table[0] = 1;                         // ERROR: a task may read `table` through the view `setup` kept
+}
+```
 
 What a procedure reaches is its **reach [effect](#inferred-effects)**: the
 globals whose stored carriers it dereferences, indexes, slices, calls, or
@@ -10362,8 +10407,8 @@ These rules also cover initialization and teardown:
   itself is checked as crossing to another thread.
 - Every task drops managed `thread_local` owners at thread exit, so it carries
   all their drop effects. A single TLS owner's drop hook that writes a global,
-  in any package, rejects every block. The diagnostic names the declaration and
-  hook.
+  in any package, rejects every block, and one that reads a global reserves it
+  in every block. The diagnostic names the declaration and hook.
 
 Calls through the build-selected [providers](#build-selected-providers) are a
 trust boundary, not a global access. A provider is published before `main` and

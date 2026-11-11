@@ -776,6 +776,9 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 		if holds, reborrowed := graph.task_holds[id]; reborrowed {
 			sources = prov_join(graph, sources, holds)
 		}
+		if content, reached := graph.task_content[id]; reached {
+			sources = prov_join(graph, sources, prov_one(graph, content))
+		}
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = span})
 		bit := prov_window_bit(graph, id)
 		if tasks, pooled := graph.pool_tasks[id]; pooled && graph.current != NO_BLOCK {

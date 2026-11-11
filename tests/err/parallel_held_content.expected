@@ -1,0 +1,16 @@
+L0511
+@26:3
+this write of `data` is not compatible with the read-only slice of it that is still in use
+and a task holds it until this `parallel` block joins, which keeps it live
+L0511
+@33:3
+this write of `data` is not compatible with the read-only slice of it that is still in use
+and a task holds it until this `parallel` block joins, which keeps it live
+L0511
+@39:3
+this write of `shared` is not compatible with the read-only slice of it that is still in use
+and a task holds it until this `parallel` block joins, which keeps it live
+L0511
+@45:3
+this write of `shared` is not compatible with the read-only slice of it that is still in use
+and a task holds it until this `parallel` block joins, which keeps it live

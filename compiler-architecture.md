@@ -792,7 +792,10 @@ The checks run on the `Prov_Diagnose` graph:
   `task_slots`, which the hidden local's drop uses, so every task loan is live
   until the join. Each spawn adds to it, so a spawn in a loop keeps the
   earlier iterations' loans, and the join empties it for a block entered
-  again. A temporary the spawned call borrows is in the frame, so its loan
+  again. What the lent storage holds is loaded at every depth and held in a
+  slot of its own per block, `task_content`, which the join uses and the join
+  check does not read. A temporary
+  the spawned call borrows is in the frame, so its loan
   (`spawn_owned`) is left out of what the task holds; a result that borrows it
   still carries the loan. A spawn site that reborrows a mutable carrier also
   holds a slot of its own, `task_holds`, so the carrier stays suspended until
@@ -805,7 +808,13 @@ The checks run on the `Prov_Diagnose` graph:
   and a spawn in a loop holds it open around the back edge. Writes and reaches inside a block are
   `Shared_Effect` events in `provenance_global_effects.odin`, the parent's allocator use
   `Region_Use` events, and the solver reports both against the tasks that may
-  be running. The emission contract validates each recorded spawn.
+  be running. A parent's write is checked against what each running site's
+  task reserves (`check_parent_write`): its run procedure's settled reads and
+  writes, the thread-exit drops', and `Compiler.lent_globals`, the globals a
+  borrow of which some body returns, retains, or stores through a carrier,
+  which the thread summaries collect from each body's `Escape`, `Retain`, and
+  `Publish` events (`note_lent_globals`). The emission contract validates each
+  recorded spawn.
 - **`thread_local` effects depend on the executor.** A spawned call's effects
   are recorded with `task_effects` set, and none of its `thread_local` writes
   become accesses at the spawn (`prov_effect_call`). A bare block's call is
