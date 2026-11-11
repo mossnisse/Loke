@@ -122,8 +122,9 @@ removed to expressiveness lost first:
 4. **Narrow** two conversions instead of deleting them: the splat to lane-wise
    operators, and the distinct-procedure conversion to procedure constants
    ([2.4](#24-coercions)).
-5. **Leave union layout unspecified** before a release promises it
-   ([6.2](#62-union-layout)); the niches can follow when measured.
+5. **Make design.md and releasing.md agree about union layout**
+   ([6.2](#62-union-layout)): one specifies it and the other says it may
+   change. The niches can follow when measured, and their gain is modest.
 6. **Respell** mutable slicing as `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)).
 
@@ -891,22 +892,48 @@ is endorsed: `Result(Option(T), E)` and a `Result(Small, Enum)` should fit
 their niches, with `@(repr=...)` for a stable layout where foreign code or
 serialization needs one.
 
-**Third pass: unspecify first.** The proposal has a cheap half and a costly
-half, and only the cheap one is urgent. [Representation](design.md#representation)
-promises a payload region followed by a tag, and
-[Compile-time reflection](design.md#compile-time-reflection) says a variant's
-`index` "is also its tag". Every program that reads a union's bytes may come
-to depend on both, and each release under
-[releasing.md](releasing.md) makes them harder to take back. Yet checked code
-observes neither, only the size: a union is not
-[foreign-ABI-safe](design.md#foreign-abi-safe-types) apart from the `Option`
-of a non-null reference, whose null niche must stay promised, and
-`unsafe.transmute` already gives a union no compile-time meaning. So the first
-step is a deletion from the specification: a union's size and alignment are
-constants, its layout and tag values are the compiler's, and the null niche is
-the one guarantee. That costs no compiler work and no `@(repr)`, which can
-wait for the first program that needs a stable layout. Choosing better niches
-is then an optimization to measure, on the compiler review's terms.
+**Third pass: reconcile the two documents first.** The proposal has a cheap
+half and a costly half. The cheap one is a disagreement that exists today.
+[Representation](design.md#representation) promises a payload region followed
+by a tag, and [Compile-time reflection](design.md#compile-time-reflection)
+says a variant's `index` "is also its tag".
+[releasing.md](releasing.md#version-policy) says that "non-C-ABI layout" may
+change between releases, and also that compatibility covers what design.md
+specifies. A union's layout is both. Checked code observes none of it but the
+size: a union is not [foreign-ABI-safe](design.md#foreign-abi-safe-types)
+apart from the `Option` of a non-null reference, and `unsafe.transmute`
+already gives a union no compile-time meaning.
+
+The first step is therefore to make design.md say which it is. This review
+would mark the layout and the tag values as the compiler's, and keep three
+guarantees:
+
+- a union's size and alignment are constants of a build;
+- the null niche, which foreign bindings rely on;
+- a union's zero value is all-zero bytes. `@(zero=name)` must name the first
+  variant so that "the union's zero stays the all-zero representation every
+  other zero is"
+  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)), and zero
+  filling depends on it.
+
+That costs no compiler work and no `@(repr)`, which can wait for the first
+program that needs a stable layout.
+
+**What is lost.** A program can no longer rely on a union's size from one
+compiler release to the next, in a `static_assert` for instance, or on its
+bytes in a run-time `unsafe.transmute` or a memory dump. The other way to
+reconcile the documents, keeping the layout specified and saying so in
+releasing.md, keeps those and gives up the niches.
+
+**What is gained is modest.** The null niche already covers the large case:
+`Option` of a pointer, a `Box`, a `Shared`, a procedure value. What remains
+is `Option(bool)`, `Option` of an enum, and a nested `Result`, where padding
+often takes back the byte a niche saves. Choosing those niches is an
+optimization to measure, on the compiler review's terms, and nothing about it
+is urgent: releasing.md already excludes this layout from what a release
+promises. An earlier draft of this paragraph, the same day, claimed that each
+release made the layout harder to change and named the null niche as the only
+guarantee to keep. Both were wrong.
 
 The [small-value ABI observations](compiler-optimizations-2026-10-31.md#small-values-and-the-existing-abi)
 need no language change and are recorded in the compiler review.
@@ -946,13 +973,16 @@ compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
 The independent compiler work has its own [suggested order](compiler-optimizations-2026-10-31.md#suggested-order).
 
-The order after the third pass puts first what waiting makes harder to
-change, then the cheapest:
+The order after the third pass, cheapest first. The two halves of step 1 are
+unrelated and are separate commits:
 
-1. Specification only: leave union layout and tag values unspecified, keeping
-   the null niche ([6.2](#62-union-layout)), and complete the conversion list
-   for an unfixed constant and a distinct type
-   ([known-gaps.md](known-gaps.md#an-unfixed-constant-converts-to-a-distinct-type)).
+1. Specification only. First, complete the conversion list for an unfixed
+   constant and a distinct type
+   ([known-gaps.md](known-gaps.md#an-unfixed-constant-converts-to-a-distinct-type));
+   a listed gap blocks the
+   [release checklist](releasing.md#release-checklist). Then, with no
+   urgency, make design.md and releasing.md agree about union layout
+   ([6.2](#62-union-layout)).
 2. A returned construction transfers an owned local operand
    ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
    clones the failure path and record results make today, and it is what
@@ -1310,7 +1340,10 @@ loads `k` once and does two `<2 x i64>` adds.
   parameter, and `plain(h)` for a plain one are accepted.
 - *An unfixed constant initializes a distinct type.* `m: Meters = 3;` with
   `Meters :: distinct f64` and `i: Id = 7;` with `Id :: distinct int` are
-  accepted.
+  accepted. So are a literal as an argument, a returned value, an operand of
+  `<` or `==`, and an array literal's element; a named unfixed constant; and
+  a literal for a distinct `string` or `bool`. A typed variable is `L0310`,
+  and `s: Small = 300;` with `Small :: distinct u8` is `L0352`.
 - *Only `return` wraps.* `return 5;` in a procedure returning `Option(int)`
   is accepted; `x: Option(int) = 5;` is ``L0352: 5 is not representable by
   `Option(int)` ``.

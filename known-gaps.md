@@ -29,6 +29,12 @@ main :: proc() {
 }
 ```
 
+It accepts one wherever an unfixed constant converts: as an argument, a
+result, an operand of `<` or `==`, and an array literal's element, and for a
+distinct `string` or `bool` as for a number. A typed variable (`L0310`) and a
+constant out of the underlying type's range (`L0352`) are rejected, as they
+should be.
+
 `tests/err/declared_structs.loke` relies on it (`m: Meters = 1.0;`), so the
 intended fix is probably to the list: an unfixed constant converts to a
 distinct type as it does to that type's underlying built-in type. Found by the
