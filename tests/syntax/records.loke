@@ -17,7 +17,7 @@ Fields :: struct {
 	@(align = 8)
 	id: int,
 	name: string,
-	using base: Base,
+	base: Base,
 	_: [4]u8,
 	nested: (a: int),
 	trailing: int,

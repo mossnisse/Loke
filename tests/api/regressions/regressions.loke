@@ -66,7 +66,7 @@ Attributed :: struct {
 	@(required) @(public) w: int,
 	@(public, required) v: int,
 	@(required, private) hidden: int,
-	@(public) using base: Pub,
+	@(public) base: Pub,
 	plain: int,
 }
 

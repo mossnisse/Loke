@@ -666,7 +666,7 @@ unfixed_receiver_type :: proc(c: ^Compiler, operand: Type_Id) -> Type_Id {
 	return operand == TYPE_UNTYPED_STRING ? TYPE_STRING_VIEW : default_type(c, operand)
 }
 
-// A field, declared or promoted, then a method. The operand is an ordinary value.
+// A field, then a method. The operand is an ordinary value.
 @(private = "file")
 check_value_selector :: proc(k: ^Checker, v: ^Expr_Selector, checked: Type_Id, callee: bool) {
 	operand := checked
@@ -674,9 +674,7 @@ check_value_selector :: proc(k: ^Checker, v: ^Expr_Selector, checked: Type_Id, c
 	// a pointer does, after its own members such as `clone`. The hop is written
 	// into the typed AST as `b^`, which every later pass already understands.
 	if boxed := underlying_info(k.c, operand); boxed != nil && boxed.kind == .Box {
-		path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-		found, ambiguous := promoted_field_path(k.c, boxed.element, v.name.id, &path)
-		if !found && !ambiguous && select_method(k, v, operand, callee) {
+		if struct_field_named(k.c, boxed.element, v.name.id) == INVALID_SYMBOL && select_method(k, v, operand, callee) {
 			return
 		}
 		v.operand = implicit_box_deref(k, v.operand, boxed.element)
@@ -695,28 +693,8 @@ check_value_selector :: proc(k: ^Checker, v: ^Expr_Selector, checked: Type_Id, c
 		through_pointer = true
 		pointer_mutable = info.mutable
 	}
-	// design.md "Promoted struct fields": a declared field wins, then one reached
-	// through `using` fields. `e.x` becomes the checked chain `e.position.x`.
-	path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	found, ambiguous := promoted_field_path(k.c, base_type, v.name.id, &path)
-	if ambiguous {
-		errorf(k.c, v.span, "L0703", "`%s` is promoted into `%s` by more than one `using` field; select it explicitly", v.name.text, type_name(k.c, operand))
-		return
-	}
-	if found {
-		current_type, current_base := operand, expr_base(v.operand)
-		for link in path[:len(path) - 1] {
-			link_name := symbol_of(k.c, link).name
-			inner := synth_selector(k.c, v.operand, identifier_text(k.c, link_name), v.span)
-			inner.name.span = v.name.span
-			if !select_field(k, inner, current_type, current_base, through_pointer, pointer_mutable, link) {
-				return
-			}
-			v.operand = inner
-			current_type, current_base = inner.type, &inner.base
-			through_pointer, pointer_mutable = false, false
-		}
-		select_field(k, v, current_type, current_base, through_pointer, pointer_mutable, path[len(path) - 1])
+	if field := struct_field_named(k.c, base_type, v.name.id); field != INVALID_SYMBOL {
+		select_field(k, v, operand, expr_base(v.operand), through_pointer, pointer_mutable, field)
 		return
 	}
 	// A field always wins over method-call sugar with the same name
@@ -895,58 +873,14 @@ on_raw_address_chain :: proc(k: ^Checker, v: ^Expr_Selector) -> bool {
 	return false
 }
 
-// The `using` fields leading from `record` to a field named `name`, ending with
-// that field. A field declared on a struct hides those promoted into it; two
-// `using` fields that each lead to the name are ambiguous, whatever their
-// depths (design.md "Promoted struct fields"). Only a by-value struct field
-// promotes.
+// The field of struct `record` named `name`. An enum's members are `fields`
+// too, and a selector on a value does not reach them.
 @(private)
-promoted_field_path :: proc(
-	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id,
-) -> (found: bool, ambiguous: bool) {
-	empty: Type_Walk
-	defer delete(empty)
-	return promoted_field_walk(c, record, name, path, &empty)
-}
-
-// `empty` holds the records being walked and those known not to lead to the
-// name: a record containing itself by value is already an error, and one reached
-// again by another path has nothing new to find.
-@(private = "file")
-promoted_field_walk :: proc(
-	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id, empty: ^Type_Walk,
-) -> (found: bool, ambiguous: bool) {
-	info := underlying_info(c, record)
-	if info == nil || info.kind != .Struct {
-		return false, false
+struct_field_named :: proc(c: ^Compiler, record: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	if underlying_kind(c, record) != .Struct {
+		return INVALID_SYMBOL
 	}
-	if direct := field_named(c, record, name); direct != INVALID_SYMBOL {
-		append(path, direct)
-		return true, false
-	}
-	for field in info.fields {
-		sym := symbol_of(c, field)
-		if sym == nil || !sym.is_using {
-			continue
-		}
-		inner := underlying_info(c, sym.type)
-		if inner == nil || !type_walk_enter(empty, sym.type, inner) {
-			continue
-		}
-		start := len(path)
-		append(path, field)
-		sub_found, sub_ambiguous := promoted_field_walk(c, sym.type, name, path, empty)
-		if sub_ambiguous || (sub_found && found) {
-			return false, true
-		}
-		if sub_found {
-			found = true
-			delete_key(empty, sym.type)
-		} else {
-			resize(path, start)
-		}
-	}
-	return found, false
+	return field_named(c, record, name)
 }
 
 // An implicit `operand^`, written into the typed AST so later passes see the

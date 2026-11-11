@@ -973,20 +973,17 @@ completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
 	}
 }
 
-// A name two `using` fields promote cannot be selected, so it is not offered;
-// a package's enum is a type whose members have no visibility of their own, and
+// A package's enum is a type whose members have no visibility of their own, and
 // a record containing itself gets an answer.
 @(test)
 completion_follows_selector_lookup :: proc(t: ^testing.T) {
 	h: Harness
 	if !start(&h, t, "completion-lookup") { finish(&h); return }
 	defer finish(&h)
-	main_text := "package main;\nimport \"lib\";\nA :: struct { x: int, a_only: int }\nB :: struct { x: int }\nBoth :: struct { using a: A, using b: B }\nLoop :: struct { using l: Loop, using r: Loop, v: int }\nTint :: lib.Tint;\nmain :: proc() {\n\tboth := Both{};\n\tloop := Loop{};\n\t_ = both.a_only;\n\t_ = loop.v;\n\t_ = lib.Tint.red;\n\t_ = Tint.blue;\n}\n"
+	main_text := "package main;\nimport \"lib\";\nLoop :: struct { l: Loop, r: Loop, v: int }\nTint :: lib.Tint;\nmain :: proc() {\n\tloop := Loop{};\n\t_ = loop.v;\n\t_ = lib.Tint.red;\n\t_ = Tint.blue;\n}\n"
 	write_file(&h, "lib/lib.loke", "package lib;\n@(public) Tint :: enum { red, blue }\n")
 	open(&h, "main.loke", main_text)
-	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "both.a_only", 5))
-	testing.expect_value(t, completion_labels(reply), "a a_only b")
-	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "loop.v", 5))
+	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "loop.v", 5))
 	testing.expect_value(t, completion_labels(reply), "l r v")
 	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "lib.Tint.red", 9))
 	testing.expect_value(t, completion_labels(reply), "blue red")
@@ -1284,23 +1281,11 @@ rename_leaves_the_bundled_library_alone :: proc(t: ^testing.T) {
 rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 	Case :: struct { name, text, needle, new_name, expected: string }
 	cases := []Case {
-		// A promoted field loses to an outer one of the same name.
-		{"promoted", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.old; }\n", "old: int", "next", "would select the existing member `next`"},
-		{"promoted-free", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.old; }\n", "old: int", "renamed", "main.loke:2"},
 		// Parentheses around the operand do not hide what it selects.
-		{"promoted-paren", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = (outer).old; }\n", "old: int", "next", "would select the existing member `next`"},
-		{"promoted-paren-free", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = ((outer)).old; }\n", "old: int", "renamed", "main.loke:2"},
-		// A use of the new name could reach the renamed field once renamed.
-		{"promoted-new", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nmain :: proc() { o := Outer{A{1}, B{2}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
-		{"promoted-new-nearer", "package main;\nA :: struct { old: int }\nOuter :: struct { using a: A, next: int }\nmain :: proc() { o := Outer{A{1}, 2}; _ = o.next; _ = o.a.old; }\n", "old: int", "next", "main.loke:2"},
-		// Two `using` branches are ambiguous whatever their depths, in either order.
-		{"promoted-new-deeper-first", "package main;\nA :: struct { old: int }\nLeft :: struct { using a: A }\nB :: struct { next: int }\nOuter :: struct { using left: Left, using b: B }\nmain :: proc() { o := Outer{Left{A{1}}, B{2}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
-		{"promoted-new-deeper-last", "package main;\nA :: struct { old: int }\nLeft :: struct { using a: A }\nB :: struct { next: int }\nOuter :: struct { using b: B, using left: Left }\nmain :: proc() { o := Outer{B{2}, Left{A{1}}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
-		// Only a field declared on the same branch hides the renamed one.
-		{"promoted-new-hidden", "package main;\nA :: struct { old: int }\nLeft :: struct { using a: A, next: int }\nOuter :: struct { using left: Left }\nmain :: proc() { o := Outer{Left{A{1}, 2}}; _ = o.next; _ = o.a.old; }\n", "old: int", "next", "main.loke:2"},
-		// Through a pointer, and a distinct one.
-		{"promoted-new-pointer", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nmain :: proc() { o := Outer{A{1}, B{2}}; p := &o; _ = p.next; }\n", "old: int", "next", "could select the renamed `old`"},
-		{"promoted-new-distinct", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nP :: distinct ^Outer;\nmain :: proc() { o := Outer{A{1}, B{2}}; p := P(&o); _ = p.next; }\n", "old: int", "next", "could select the renamed `old`"},
+		{"paren", "package main;\nItem :: struct { n: int }\nimpl Item { old :: proc(self) -> int { return self.n; } }\nimpl ^Item { other :: proc(self) -> int { return self.n + 10; } }\nmain :: proc() { item := Item{1}; p := &item; assert((p).old() == 1); _ = p.other(); }\n", "old ::", "other", "would select the existing member `other`"},
+		{"paren-free", "package main;\nItem :: struct { n: int }\nimpl Item { old :: proc(self) -> int { return self.n; } }\nimpl ^Item { other :: proc(self) -> int { return self.n + 10; } }\nmain :: proc() { item := Item{1}; p := &item; assert(((p)).old() == 1); _ = p.other(); }\n", "old ::", "fresh", "main.loke:2"},
+		// A nested struct's fields are not the outer struct's, so they do not collide.
+		{"nested", "package main;\nInner :: struct { old: int }\nOuter :: struct { inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.inner.old; _ = outer.next; }\n", "old: int", "next", "main.loke:2"},
 		// A selector in a generic is checked in each instance.
 		{"generic", "package main;\nInner :: struct { old: int }\nread :: proc(value: $T) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}); }\n", "old: int", "renamed", "main.loke:2"},
 		{"generic-agree", "package main;\nInner :: struct { old: int }\nread :: proc(value: $T, extra: $U) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}, 1); _ = read(Inner{2}, true); }\n", "old: int", "renamed", "main.loke:2"},

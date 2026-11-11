@@ -1,0 +1,11 @@
+L0363
+`Entity` has no field or member `x`
+@13:6
+
+L0363
+`^Entity` has no field or member `y`
+@15:6
+
+L0363
+`Entity` has no field or member `x`
+@17:6

@@ -18,7 +18,7 @@ L0734
 `@(by_ptr)` cannot be written on a parameter of an `@(intrinsic)` procedure
 L0736
 @34:21
-an `@(intrinsic)` struct lists the public fields the compiler supplies to `Scratch`, so each is public and not `using`
+an `@(intrinsic)` struct lists the public fields the compiler supplies to `Scratch`, so each is public
 L0736
 @45:1
 the compiler supplies `try_arena` with the Loke calling convention

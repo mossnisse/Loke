@@ -967,8 +967,8 @@ compiler's, each written parameter name must be the compiler's name for that
 parameter, since a named argument binds by it, and a parameter has a default
 exactly when the compiler's does. A default's value is the compiler's, so it is
 written for readers. An enum's members must be the compiler's, in order, and a
-struct's fields its public fields, in order, with their types, each public and
-none `using`; the struct has no generic parameters or `where` clause. An
+struct's fields its public fields, in order, with their types, each public;
+the struct has no generic parameters or `where` clause. An
 operation the compiler types itself, such as `raw_data` with its five operand
 forms, has a signature written for readers and checked only for its name; its
 section of this specification defines its typing.
@@ -1436,13 +1436,13 @@ including after destroying and reinitializing a session.
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
 | `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. `bundled` marks a file of the `base:` or `core:` library shipped with the compiler. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member, and `promotes` marks a `using` field. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
 | `query_documentation` | A binding's doc comment, as `-doc` reads it; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. `type_value` marks a node that denotes its type rather than a value of it. |
-| `query_selector_operand` | The written operand of the selector whose name holds an offset, described as `query_at` describes a node. Parentheses are not part of an operand's span, and the links the checker adds for a promoted field are skipped, so `(outer).x` and a promoted `outer.x` both give `outer`. So is an implicit dereference: `p.m()` through a pointer gives `p`, whose own members come first. Instances merge as in `query_at`: an unchecked generic template adds nothing, and only instances that disagree hide a part. |
+| `query_selector_operand` | The written operand of the selector whose name holds an offset, described as `query_at` describes a node. Parentheses are not part of an operand's span, so `(outer).x` gives `outer`. An implicit dereference is skipped: `p.m()` through a pointer gives `p`, whose own members come first. Instances merge as in `query_at`: an unchecked generic template adds nothing, and only instances that disagree hide a part. |
 | `query_visible` | Bindings an unqualified name can reach at an offset, innermost first: locals whose `scope` holds the offset and whose name ends before it, then the file's package scope with its imports, then the predeclared names. Shadowed names are omitted. Caller-owned. |
 | `query_implicit_names` | Member names reached by name where no use spells them: those the compiler looks up itself (`call`, iteration and its associated types, `format`, `hash`, `len`) and the slot names and selected members of every interface the program uses, wherever a requirement spells them. |
-| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields, then the fields its `using` fields promote, and methods, through a pointer or box. A name two `using` fields promote is marked `ambiguous`: selecting it is an error, yet it is still a name a rename would collide with. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
+| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields and methods, through a pointer or box. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
 | `query_type` | Recorded name, kind, element type, and fields. Zero IDs mean unavailable. |
 | `query_definition` | Snapshot-scoped written location; false for builtins/synthetic bindings without definitions. |
 | `query_references` | Exact-binding named uses, deduplicated across generic/static-loop clones; excludes implicit operations. `include_definition` defaults to false. Caller owns the array and must `delete` it with the query allocator. |
@@ -1665,7 +1665,7 @@ sources must have a recorded binding, so an inactive `when` branch or an
 interface slot stops it. The new name may not capture or be captured, as
 `query_visible` and each binding's `scope` show, and a field or member rename
 is checked at every selector against the members `query_selector_operand`
-records, promoted fields included. [rename.odin](lsp/rename.odin) states each
+records. [rename.odin](lsp/rename.odin) states each
 refusal beside the check that makes it.
 
 Formatting and documentation call the procedures behind `-fmt` and `-api`

@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A struct field no longer promotes its own fields: `using` before a field's name is removed
+  ([Structs](design.md#structs), rationale under
+  ["Promoted struct fields"](comments.md#promoted-struct-fields)). With `using position: Vec3`,
+  `entity.x` selected `entity.position.x`. The field is now `L0241`, and once `using` is deleted a
+  selector that relied on it is `L0363`. Upgrade by deleting `using` and writing the field's name in
+  each selector the compiler reports, as `entity.position.x`; `lokec -migrate` does not rewrite
+  these. `using` is an ordinary identifier, so a field may still be named `using`.
 - No [variadic pack](design.md#variadic-parameters) outlives its call, as a `..^T` pack's lent
   values already did not. `give :: proc(values: ..int) -> []int { return values; }` compiled and
   left the caller a view of the ended pack; it is now `L0644` at the parameter, and keeping the

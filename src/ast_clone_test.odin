@@ -92,7 +92,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Capture_Entry, "span mode name value", ""},
 		{Parameter, "span attributes names mode type default", "symbols"},
 		{Result, "span is_inout type diverges", ""},
-		{Field, "span attributes is_using names type", "symbols"},
+		{Field, "span attributes names type", "symbols"},
 		{Variant, "span name type", ""},
 		{Enum_Field, "span name value", "symbol"},
 		{Generic_Param, "span names type", "symbols"},

@@ -1,0 +1,18 @@
+package main;
+
+// design.md "Structs": a selector reaches the fields its operand's type declares
+// and no others, so a field of a field is selected through it.
+
+Vec :: struct { x, y: int }
+Entity :: struct { position: Vec, id: int }
+
+main :: proc() {
+	e := Entity{};
+	_ = e.id;
+	_ = e.position.x;
+	_ = e.x;
+	p := &e;
+	_ = p.y;
+	b := box(Entity{});
+	_ = b.x;
+}

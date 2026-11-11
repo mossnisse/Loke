@@ -589,9 +589,7 @@ selects_field :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> bool {
 	if info := type_of(k.c, base); info != nil && (info.kind == .Pointer || info.kind == .Box) {
 		base = type_underlying(k.c, info.element)
 	}
-	path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	found, ambiguous := promoted_field_path(k.c, base, name, &path)
-	return found || ambiguous
+	return struct_field_named(k.c, base, name) != INVALID_SYMBOL
 }
 
 // The member `name` of `type`, or of a value's box or pointer target after the

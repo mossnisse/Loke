@@ -843,7 +843,6 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 				bound.type = field_type
 				bound.index = u32(len(members))
 				bound.public = public && !padding
-				bound.is_using = field.is_using
 				bound.required = has_attribute(field.attributes, "required")
 				bound.synchronized = has_attribute(field.attributes, "synchronized")
 			}
@@ -977,8 +976,8 @@ type_is_destructurable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return info != nil && info.kind == .Struct
 }
 
-// design.md "Destructuring": exactly as many directly declared fields as
-// bindings, all visible here. `using` fields are not flattened.
+// design.md "Destructuring": exactly as many fields as bindings, all visible
+// here.
 destructure_fields :: proc(
 	k: ^Checker,
 	record: Type_Id,

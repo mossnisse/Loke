@@ -701,7 +701,7 @@ dump_fields :: proc(b: ^strings.Builder, fields: []Field, depth: int) {
 	for field in fields {
 		fmt.sbprint(b, " (field")
 		dump_attributes(b, field.attributes)
-		fmt.sbprint(b, field.is_using ? " using " : " ")
+		fmt.sbprint(b, " ")
 		dump_names(b, field.names)
 		dump_child(b, field.type, depth)
 		fmt.sbprint(b, ")")

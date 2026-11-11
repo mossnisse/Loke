@@ -149,7 +149,6 @@
         { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:mut|inout|move)\\b" },
         { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:via|where)\\b(?=\\s+[\\w&(!])" },
         { "name": "storage.modifier.loke", "match": "(?<=:)\\s*\\b(?:static|thread_local)\\b" },
-        { "name": "storage.modifier.loke", "match": "\\busing\\b(?=\\s+[A-Za-z_])" },
         { "name": "variable.language.self.loke", "match": "\\bself\\b" }
       ]
     },

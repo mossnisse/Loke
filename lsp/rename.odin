@@ -336,8 +336,8 @@ rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot:
 					return fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
 				}
 			}
-			// design.md "Promoted struct fields": the operand's own fields,
-			// promoted fields, and methods share one lookup. The operand is the
+			// design.md "Methods and implementation blocks": the operand's fields
+			// and methods share one lookup. The operand is the
 			// selector's own, not whatever ends at the token before the `.`: in
 			// `(outer).old` that is a `)`. A `.Member` with no operand takes its
 			// type from context.
@@ -362,11 +362,7 @@ rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot:
 			path, range, _ := place(r.s, rs, snapshot, at.location, context.temp_allocator)
 			append(&r.edits, Edit{lokec.dir_key(path), path, token.lo, range})
 			append(&edited, token.lo)
-		} else if member {
-			if same && index >= 2 && ends_operand(tokens[index - 2].kind) && promotes_target(rs, snapshot, source_file, token.lo, target, new_name) {
-				return fmt.tprintf("At %s, `.%s` could select the renamed `%s`, which its operand reaches through a `using` field.", where_written, new_name, old)
-			}
-		} else if resolved && same {
+		} else if !member && resolved && same {
 			if conflict := local_conflict(rs, snapshot, source_file, at, handle, target); conflict != "" {
 				return fmt.tprintf("`%s` is declared at %s, %s.", new_name, where_written, conflict)
 			}
@@ -496,55 +492,6 @@ member_conflict :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Com
 		}
 	}
 	return ""
-}
-
-// Whether the `.new_name` selector at the offset would, once the renamed field
-// is spelled `new_name`, select it or become ambiguous. design.md "Promoted
-// struct fields": a field a struct declares hides those promoted into it, and
-// two `using` fields that each lead to the name are ambiguous whatever their
-// depths, so each branch is followed on its own, as the checker's
-// `promoted_field_path` does.
-@(private = "file")
-promotes_target :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32, target: Target, new_name: string) -> bool {
-	if target.symbol.kind != .Field { return false }
-	operand, typed := lokec.query_selector_operand(session, snapshot, file, offset)
-	if !typed || operand.type_value { return false }
-	// A selector reaches through one pointer or box, after distinct layers on
-	// either side of it.
-	type := operand.type
-	if outer, found := underlying(session, type); found && (outer.kind == .Pointer || outer.kind == .Box) { type = outer.element }
-	Lookup :: enum { None, Target, Other, Ambiguous }
-	lookup :: proc(session: ^lokec.Compilation_Session, type: lokec.Type_Handle, target: Target, new_name: string, depth: int) -> Lookup {
-		info, found := underlying(session, type)
-		if !found || info.kind != .Struct || depth > 64 { return .None }
-		direct := Lookup.None
-		for field in info.fields {
-			symbol, known := lokec.query_symbol(session, field)
-			if !known { continue }
-			if same_binding(session, field, target) { return .Target }
-			if symbol.name == new_name { direct = .Other }
-		}
-		if direct != .None { return direct }
-		result := Lookup.None
-		for field in info.fields {
-			symbol, known := lokec.query_symbol(session, field)
-			if !known || !symbol.promotes { continue }
-			reached := lookup(session, symbol.type, target, new_name, depth + 1)
-			if reached == .Ambiguous || (reached != .None && result != .None) { return .Ambiguous }
-			if reached != .None { result = reached }
-		}
-		return result
-	}
-	reached := lookup(session, type, target, new_name, 0)
-	return reached == .Target || reached == .Ambiguous
-}
-
-// The type under any distinct layers.
-@(private = "file")
-underlying :: proc(session: ^lokec.Compilation_Session, type: lokec.Type_Handle) -> (lokec.Query_Type, bool) {
-	info, found := lokec.query_type(session, type)
-	for steps := 0; found && info.kind == .Distinct && steps < 64; steps += 1 { info, found = lokec.query_type(session, info.element) }
-	return info, found
 }
 
 // "the local `count` declared at line 4", for a refusal.

@@ -586,11 +586,10 @@ Generic_Param :: struct {
 	symbols: []Symbol_Id,
 }
 
-// `Field`. A field named `_` is padding; `using` promotes it.
+// `Field`. A field named `_` is padding.
 Field :: struct {
 	span:       Span,
 	attributes: []Attribute,
-	is_using:   bool,
 	names:    []Name,
 	type:     Expr,
 	symbols:  []Symbol_Id,

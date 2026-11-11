@@ -1,9 +1,9 @@
 // design.md: a procedure returns at most one value, results are anonymous, and
-// a destructure projects a record's directly declared fields.
+// a destructure projects a record's fields.
 package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
-Promoted :: struct { using base: Point, z: int }
+Nested :: struct { base: Point, z: int }
 
 // A result is anonymous, so there is no local to fill and `return;` cannot
 // publish one.
@@ -47,12 +47,12 @@ impl Handle {
 open_handle :: proc() -> Handle { return Handle{valid = true, id = 1}; }
 
 main :: proc() {
-	// A destructure needs exactly as many directly declared fields as bindings.
+	// A destructure needs exactly as many fields as bindings.
 	p := Point{x = 1, y = 2};
 	a, b, c := p;
 
-	// A promoted field is not flattened: `Promoted` has two declared fields.
-	q := Promoted{base = p, z = 3};
+	// A field that is a record is one field: `Nested` has two.
+	q := Nested{base = p, z = 3};
 	m, n, o := q;
 
 	// A non-record right side is an arity error, not a destructure.

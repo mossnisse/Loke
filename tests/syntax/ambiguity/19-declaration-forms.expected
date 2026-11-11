@@ -1,6 +1,6 @@
 (file package="main"
   (const names=["Point"]
-    (struct (field ["x","y"] (ident "int")) (field using ["base"] (ident "Base")))
+    (struct (field ["x","y"] (ident "int")) (field ["base"] (ident "Base")))
   )
   (const names=["Pair"]
     (struct (generic ["K","V"] (type)) (where (call (ident "Additive") (ident "K"))) (field ["key"] (ident "K")))

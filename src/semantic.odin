@@ -733,9 +733,6 @@ Symbol :: struct {
 	// `declare`/`external global` under `link_name`. The source library isn't
 	// recorded — every foreign block links against the one image.
 	is_foreign:         bool,
-	// design.md "Promoted struct fields": a `using` field, whose own fields its
-	// record's selectors also reach.
-	is_using:           bool,
 	// design.md "@(export)": emit under `link_name` rather than the mangled
 	// `@loke.p...`, so a C consumer can link to it.
 	exported:           bool,

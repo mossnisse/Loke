@@ -66,7 +66,6 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 		members, listed := lokec.query_members(session, operand, file, context.temp_allocator)
 		if !listed { return EMPTY_COMPLETION }
 		for member in members {
-			if member.ambiguous { continue }
 			item := Completion_Item{label = member.name, kind = .Enum_Member}
 			if member.variant {
 				if type, typed := lokec.query_type(session, member.type); typed { item.detail = type.name }

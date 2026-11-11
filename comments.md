@@ -1608,6 +1608,21 @@ A switch case stops automatically. Multi-value cases cover shared choices;
 shared procedures cover shared work. `fallthrough` would add control-flow and
 cleanup exceptions to reintroduce an accidental behavior the switch avoids.
 
+### Promoted struct fields
+
+Odin's `using` on a struct field brings the inner struct's fields into the
+outer one's lookup and lets the outer struct stand where the inner one is
+expected. Loke kept only the lookup: methods were not promoted and nothing
+converted, so a `using` field differed from a plain one by a selector,
+`entity.x` for `entity.position.x`. For that it cost a contextual keyword, a
+rule for which name wins and when a selector is ambiguous, and an exception in
+destructuring and `foreach` bindings, which did not flatten it. A reader of
+`entity.x` also could not tell which struct declares `x`.
+
+What went with it is moving a field into a nested struct without editing the
+code that reads it. That is paid once per regrouping; the rules were paid by
+every program. Composition is written with the field named.
+
 ### Named-result initializers
 
 Results are values supplied by `return`, not implicit locals initialized on

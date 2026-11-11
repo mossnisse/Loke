@@ -205,20 +205,13 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 	}
 }
 
-// design.md "Promoted struct fields": a promoted selector's added links carry the
-// name's span, so the written operand is below them, and below any implicit `p^`,
-// since the pointer's own members come first (design.md "Methods and implementation
-// blocks").
+// The written operand is below any implicit `p^`, since the pointer's own members
+// come first (design.md "Methods and implementation blocks").
 @(private = "file")
 index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 	span := selector.name.span
 	if !query_span_spells(index.c, span, selector.name.text) { return }
 	operand := selector.operand
-	for {
-		link, added := operand.(^Expr_Selector)
-		if !added || link.name.span != span { break }
-		operand = link.operand
-	}
 	if is_implicit_deref(operand) { operand = operand.(^Expr_Postfix).operand }
 	base := expr_base(operand)
 	if base == nil { return }

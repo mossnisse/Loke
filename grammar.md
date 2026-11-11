@@ -81,7 +81,6 @@ Contextual keywords, reserved only in the positions given:
 | `static`, `thread_local` | in the storage-modifier position of a declaration, after its `:` |
 | `self` | the first parameter name of a procedure declared in an `impl` block, or of an interface `slot` |
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
-| `using` | before a promoted struct field |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
 | `capture` | directly after a procedure signature, followed by `(` |
 | `convert`, `copy`, `drop` | as the role inside `hook(...)` |
@@ -351,7 +350,7 @@ rejected.
 ```
 Struct_Type = "struct" Generic_Parameters? Where_Clause? "{" Field_List? "}"
 Field_List  = Field ("," Field)* ","?
-Field       = Attributes? "using"? Member_Name_List ":" Type
+Field       = Attributes? Member_Name_List ":" Type
 
 Enum_Type   = "enum" Type? "{" Enum_Field_List? "}"
 Enum_Field_List = Enum_Field ("," Enum_Field)* ","?

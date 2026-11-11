@@ -15,7 +15,7 @@ L0308
 `Point` has 2 fields, so it fills 2 bindings, not 3
 L0308
 @56:13
-`Promoted` has 2 fields, so it fills 2 bindings, not 3
+`Nested` has 2 fields, so it fills 2 bindings, not 3
 L0308
 @59:2
 2 names but 1 initialiser

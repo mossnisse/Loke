@@ -2,7 +2,7 @@ package main;
 
 Point :: struct {
 	x, y: int,
-	using base: Base,
+	base: Base,
 };
 
 Pair :: struct($K, $V: type) where Additive(K) {

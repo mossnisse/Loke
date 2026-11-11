@@ -1,0 +1,14 @@
+// `using` before a field's name once promoted that field's fields. It is one
+// diagnostic that names the removed form, and the fields after it are still read.
+// A field that is itself named `using` stays legal.
+package main;
+
+Vec :: struct { x: int }
+
+Entity :: struct {
+	using position: Vec,
+	using: int,
+	id: int,
+}
+
+sentinel :: proc() { }

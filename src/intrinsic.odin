@@ -455,9 +455,9 @@ check_intrinsic_struct :: proc(k: ^Checker, d: ^Decl, written: ^Type_Record, typ
 	}
 	index := 0
 	for &field in written.fields {
-		if field.is_using || !field_is_public(k, &field) {
+		if !field_is_public(k, &field) {
 			errorf(
-				c, field.span, "L0736", "an `@(intrinsic)` struct lists the public fields the compiler supplies to `%s`, so each is public and not `using`",
+				c, field.span, "L0736", "an `@(intrinsic)` struct lists the public fields the compiler supplies to `%s`, so each is public",
 				d.names[0].text,
 			)
 			return

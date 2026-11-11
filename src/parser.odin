@@ -3804,10 +3804,16 @@ parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 
 		field: Field
 		field.attributes = parse_attributes(p)
-		// `using` remains a valid field name when not followed by another member name.
+		// `using name: T` once promoted the field's own fields. `using` is an
+		// ordinary field name, so this is two names with nothing between them;
+		// the error names the removed form, and the field parses as a plain one.
 		if is_contextual(p, "using") && member_name_at(p, 1) {
+			parse_error(
+				p, span_of(p, current(p)), "L0241", "remove `using`",
+				"a field does not promote its own fields: declare `%s` as a plain field and select through it",
+				text_of(p, peek_token(p, 1)),
+			)
 			advance(p)
-			field.is_using = true
 		}
 
 		// One error is enough when no field can begin here.

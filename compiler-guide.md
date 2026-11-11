@@ -667,7 +667,7 @@ that produced the diagnostics:
     local with the new name is declared later where the binding is visible,
     so the meaning would change or a local would shadow another;
   - when the binding's type, or the type a selector reaches it through,
-    already has a member with the new name, including a promoted field;
+    already has a member with the new name;
   - when a method's old or new name is one the compiler or an interface looks
     up by name, such as `call`, `next`, or `format`, or when a parameter is
     renamed to or from `self`;

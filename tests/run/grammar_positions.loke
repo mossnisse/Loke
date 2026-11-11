@@ -1,5 +1,5 @@
-// Spellings grammar.md allows that the parser used to reject: `using` on a
-// field named `type`, a keyed literal naming that field, a storage modifier
+// Spellings grammar.md allows that the parser used to reject: a field named
+// `type`, a keyed literal naming that field, a storage modifier
 // before a record type, and a type-only type in a comparison once
 // parenthesised, a trailing comma after a plain receiver, and a call of a
 // procedure literal inside parentheses. `static(int)` still names a type.
@@ -8,7 +8,7 @@ package main;
 import "core:fmt";
 
 A :: struct { x: int }
-B :: struct { using type: A }
+B :: struct { type: A }
 
 static :: struct($T: type) { v: T }
 
@@ -25,9 +25,9 @@ pointer_only :: proc(x: $T) -> bool where T == (^int) { return true; }
 main :: proc() {
 	b := B{};
 	b.type.x = 7;
-	fmt.println(b.x);
+	fmt.println(b.type.x);
 	k := B{type = {x = 8}};
-	fmt.println(k.x);
+	fmt.println(k.type.x);
 
 	_ = count();
 	fmt.println(count());

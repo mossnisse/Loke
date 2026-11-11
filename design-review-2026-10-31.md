@@ -76,20 +76,26 @@ that offered only keeping or deleting whether a narrower change removes the
 problem. It found two costs the earlier passes had wrong: deleting success
 returns loses a transfer, not four characters
 ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)), and an `Uninit(T)`
-cannot be copyable as bytes ([3.3](#33-initializedcount-and-uninitialized-storage)).
+cannot be copyable as bytes ([3.2](#32-initializedcount-and-uninitialized-storage)).
 It found one way to keep most of the alias proposal under the default panic
 strategy ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
 Where it changed or added to a section, the paragraph begins **Third pass.**
 
 A review of step 3 of the [Suggested order](#8-suggested-order) the same day
 found that it joined three independent changes of unequal merit, and split it.
-Deleting `using` loses more than a selector ([3.2](#32-using)). The narrowed
+Deleting `using` loses more than a selector
+([Adopted proposals](#adopted-proposals)). The narrowed
 distinct-procedure conversion leaves the unwrapping direction, whose target
 type has no name, and narrowing the splat exchanges one rule for another
 rather than deleting one ([2.4](#24-coercions)); the splat moved to the end of
 the order. Probes settled what the two narrowed rules must keep
 ([Probes](#probes)). Where it added to a section, the paragraph begins
 **Review of step 3.**
+
+On 2026-11-11 `using` was deleted, the first of those three changes. Its
+proposal is removed from the text and listed under
+[Adopted proposals](#adopted-proposals), with the section and the steps after
+it renumbered.
 
 ## Contents
 
@@ -123,21 +129,20 @@ that matters, and `inout` and `^mut T` may ([2.5](#25-one-capability-axis)).
 The remaining recommendations, after the third pass, best ratio of concepts
 removed to expressiveness lost first:
 
-1. **Delete** `using` ([3.2](#32-using)).
-2. **Replace** `@(initialized)` with a storage type `Uninit(T)`
-   ([3.3](#33-initializedcount-and-uninitialized-storage)). Three of the
+1. **Replace** `@(initialized)` with a storage type `Uninit(T)`
+   ([3.2](#32-initializedcount-and-uninitialized-storage)). Three of the
    attribute's four uses in the library already encode one with a one-element
    array.
-3. **Shrink** runtime reflection to shape ([3.1](#31-runtime-reflection)).
-4. **Narrow** the distinct-procedure conversion to procedure constants
+2. **Shrink** runtime reflection to shape ([3.1](#31-runtime-reflection)).
+3. **Narrow** the distinct-procedure conversion to procedure constants
    instead of deleting it ([2.4](#24-coercions)). The splat can be narrowed to
    lane-wise operators in the same way, but that exchanges one rule for
    another and removes nothing harmful, so it is near the end of the
    [Suggested order](#8-suggested-order).
-5. **Make design.md and releasing.md agree about union layout**
+4. **Make design.md and releasing.md agree about union layout**
    ([6.2](#62-union-layout)): one specifies it and the other says it may
    change. The niches can follow when measured, and their gain is modest.
-6. **Respell** mutable slicing as `a[mut lo:hi]`
+5. **Respell** mutable slicing as `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)).
 
 Two findings are independent of any proposal: a returned construction clones a
@@ -551,34 +556,7 @@ the members, since `kind` and `size` say both for an integer. Going further
 and deleting `type_info_of` is not available: `fmt` prints a `typeid` by its
 name, which only a table by id supplies.
 
-### 3.2 `using`
-
-[Promoted struct fields](design.md#promoted-struct-fields) is Odin's `using`
-narrowed to field lookup. It adds a contextual keyword, an ambiguity rule, and
-a "not flattened" exception in destructuring, reflection, and `foreach`
-bindings, for the saving of one selector (`entity.x` for
-`entity.position.x`). A general-purpose language can live without it; the
-composition it serves is written as plainly with the field named.
-Recommended for deletion, low urgency.
-
-**Third pass.** The recommendation stands, and the reason is sharper than the
-saved selector. In Odin `using` earns its rules by making the outer struct
-usable where the inner one is expected. Loke kept the rules and dropped that:
-methods are not promoted and nothing converts, so a `using` field differs from
-a plain one only in lookup. No narrower form is left to fall back to.
-
-**Review of step 3.** The saved selector is not the whole loss. With `using`,
-a field can move into a nested struct, to share a group of fields between
-structs or to separate hot fields from cold ones, and the code that reads it
-does not change. Without it that move is an edit at every use, and a breaking
-change when the struct is public. The recommendation stands, since the
-rules `using` costs are paid by every program and this is paid once per
-regrouping, but [section 5](#5-deletion-candidates) now names the loss. The
-deletion also breaks every promoted selector. The rewrite to the full
-selector is mechanical, but it needs the checker's resolution of each
-selector, and `lokec -migrate` works from the parse alone today.
-
-### 3.3 `@(initialized=count)` and uninitialized storage
+### 3.2 `@(initialized=count)` and uninitialized storage
 
 [Uninitialized capacity](design.md#uninitialized-capacity) couples a fixed
 array field to a sibling `int` by attribute so that the generated copy, drop,
@@ -724,9 +702,9 @@ re-flows. Every alternative (Go's automatic semicolons, Rust's unparenthesized
 conditions with the literal restriction, Swift's layout) trades that for
 appearance. Keep them.
 
-The seventeen contextual keywords are a different matter. Each has a
+The sixteen contextual keywords are a different matter. Each has a
 disambiguation rule in [Resolved ambiguities](grammar.md#resolved-ambiguities)
-that every tool must follow. [3.2](#32-using) removes `using`. `static` and
+that every tool must follow. `static` and
 `thread_local`, whose rule has four cases, would be simpler as reserved words:
 no program needs a type named `static`, and a keyword may still name a field
 or member ([Predeclared names](design.md#predeclared-names)).
@@ -778,8 +756,7 @@ thing. Each row names the replacement and what is lost.
 | --- | --- | --- | --- |
 | The implicit splat of a typed scalar | Lane-wise operators take a scalar operand; `Simd(T, N)(x)` elsewhere; constant splats stay ([2.4](#24-coercions)) | A typed scalar as any vector argument, initializer, or result, so `take(scale)`, `simd.select(mask, v, scale)`, and `v: Simd(f32, 4) = scale`; `v * scale` stays. The lane-wise table gains a scalar operand in exchange | Low; an exchange of rules |
 | Distinct-procedure-type conversion of a value | Explicit conversion; a named procedure or literal still converts ([2.4](#24-coercions)) | Passing a variable of one procedure type as the other without a conversion; unwrapping writes the signature out, `(proc(n: int) -> int)(h)`, or needs an alias for it | Low |
-| `using` | Named selection ([3.2](#32-using)) | One selector per access; moving a field into a nested struct without editing its uses | Low |
-| `@(initialized=count)` | `Uninit(T)` and written hooks ([3.3](#33-initializedcount-and-uninitialized-storage)) | `Small_Array`'s generated prefix-aware copy, drop, `==`, `hash`, and `format` | Recommended |
+| `@(initialized=count)` | `Uninit(T)` and written hooks ([3.2](#32-initializedcount-and-uninitialized-storage)) | `Small_Array`'s generated prefix-aware copy, drop, `==`, `hash`, and `format` | Recommended |
 | `Type_Info.members`, `Member_Info`, `Member_Kind`, `bits`, `signed` | `fields_of` and `variants_of` at compile time ([3.1](#31-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types; a member table reached from an id alone | Recommended |
 | `&mut a[lo:hi]` | `a[mut lo:hi]` ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise)) | The resemblance to `&mut x` | Recommended; needs `-migrate` |
 | `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.5](#25-one-capability-axis)) | The marker on every mutated argument; carets on scalar and whole-value writes | Judgment call; leaning against |
@@ -1047,26 +1024,23 @@ The order after the third pass, cheapest first:
    ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)). It removes
    clones the failure path and record results make today, and it is what
    deleting success returns would wait for.
-3. Delete `using` ([3.2](#32-using)). Every promoted selector breaks, so the
-   upgrade note says to write the field's name; `lokec -migrate` could do it
-   only if it ran the checker.
-4. Narrow the distinct-procedure conversion to named procedures and procedure
+3. Narrow the distinct-procedure conversion to named procedures and procedure
    literals ([2.4](#24-coercions)), keeping the `dyn proc` view of a distinct
    procedure value and the one-step conversion to a signature that asks more
    of the caller.
-5. `Uninit(T)` in place of `@(initialized)`
-   ([3.3](#33-initializedcount-and-uninitialized-storage)), moving the four
+4. `Uninit(T)` in place of `@(initialized)`
+   ([3.2](#32-initializedcount-and-uninitialized-storage)), moving the four
    library declarations with it, and shrink `Type_Info`
    ([3.1](#31-runtime-reflection)).
-6. `a[mut lo:hi]`
+5. `a[mut lo:hi]`
    ([4.1](#41-forms-that-read-badly-and-fixes-that-keep-diagnostics-precise))
    and the reserved `static` and `thread_local`
    ([4.3](#43-parsing-decisions-worth-keeping)), together, since both need
    `lokec -migrate`.
-7. Predeclare the catalogue, then decide `some I`
+6. Predeclare the catalogue, then decide `some I`
    ([4.2](#42-verbosity-hotspots)); the first shortens every bound, so the
    second is judged on what remains.
-8. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
+7. Alias facts ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)).
    The read effect is in place and no borrow-checker gap is known. After the
    compiler review's
    [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
@@ -1074,15 +1048,15 @@ The order after the third pass, cheapest first:
    IR. If that pays, emit it for accesses through checked carriers under both
    panic strategies. No `noalias` parameters under `unwind`, and no capture
    attributes: LLVM infers them for internal procedures.
-9. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
+8. If the splat is narrowed at all ([2.4](#24-coercions)), on its own and
    late: it exchanges a conversion for an operator rule and removes nothing
    harmful. It first needs the scalar form of `Simd(T, N)(x)` stated as a
    rule of its own.
-10. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
-    last: it is the largest surface change, and it needs `lokec -migrate` able
-    to rewrite call sites and receivers mechanically. The explanation in
-    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
-    is written.
+9. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
+   last: it is the largest surface change, and it needs `lokec -migrate` able
+   to rewrite call sites and receivers mechanically. The explanation in
+   [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
+   is written.
 
 ## Adopted proposals
 
@@ -1091,6 +1065,20 @@ CHANGELOG.md describe the result. Reviews of the commits recorded their open
 findings in open-questions.md and known-gaps.md. Compiler-only changes are
 listed under [Adopted optimizations](compiler-optimizations-2026-10-31.md#adopted-optimizations).
 
+- **`using` is deleted** (2026-11-11; [Structs](design.md#structs), rationale
+  under ["Promoted struct fields"](comments.md#promoted-struct-fields)). A
+  field no longer promotes its own fields, so the contextual keyword, the
+  rule for which name wins and when a selector is ambiguous, and the "not
+  flattened" exception in destructuring and `foreach` bindings are gone. Odin's
+  `using` earns its rules by making the outer struct usable where the inner
+  one is expected; Loke had kept the rules without that, so no narrower form
+  was left to fall back to. What is lost is one selector per access, and
+  moving a field into a nested struct without editing the code that reads it.
+  `using name: T` is now `L0241`, naming the removed form, and a selector
+  that relied on it is `L0363`. `lokec -migrate` does not rewrite either,
+  since the rewrite needs the checker's resolution of each selector and
+  `-migrate` works from the parse alone. `tests/syntax_err/using_field.loke`
+  and `tests/err/nested_field_selector.loke` pin both diagnostics.
 - **An unfixed constant converts to a distinct type** (2026-11-11;
   [Implicit type conversions](design.md#implicit-type-conversions),
   [Distinct types](design.md#distinct-types), rationale under
@@ -1502,7 +1490,7 @@ has a smaller form.
   done now is to shrink the syntax that the import licenses.
   [The `unsafe` package](design.md#the-unsafe-package) lists five unchecked
   forms that are syntax rather than named members. `Uninit(T)`
-  ([3.3](#33-initializedcount-and-uninitialized-storage)) turns the
+  ([3.2](#32-initializedcount-and-uninitialized-storage)) turns the
   `@(initialized)` field into named operations on a type, leaving the three
   pointer forms and `x: T = ---`, each of which already shows a C pointer, a
   `rawptr`, or `---` at its use. A file-wide permission over four forms that

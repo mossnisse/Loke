@@ -1,0 +1,3 @@
+L0241
+@9:2
+a field does not promote its own fields: declare `position` as a plain field and select through it

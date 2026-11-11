@@ -1850,6 +1850,9 @@ fmt.println(v.x);
 
 For a pointer to a struct, `p.field` is equivalent to `p^.field`.
 
+A selector reaches the fields its operand's type declares and no others. The
+fields of a field are selected through it, as in `entity.position.x`.
+
 #### Anonymous records
 
 A parenthesized field list is a record type with no declaration site: the
@@ -1925,10 +1928,9 @@ low, high = minmax(a, b);
 foreach (key, value in table) { ... }
 ```
 
-The record must have exactly as many **directly declared** fields as there are
-bindings, and every one must be visible at the use site. Promoted (`using`)
-fields are not flattened, private fields are not filtered out, and `_` does not
-bypass visibility. Destructuring is flat: a binding takes a whole field,
+The record must have exactly as many fields as there are bindings, and every
+one must be visible at the use site. Private fields are not filtered out, and
+`_` does not bypass visibility. Destructuring is flat: a binding takes a whole field,
 whatever that field's own shape is. Only a `foreach` header
 [nests](#element-bindings), because an adapter such as `indexed()` wraps an
 element that is itself a record; a declaration destructures a nested field in a
@@ -2059,33 +2061,6 @@ w.size.width = 800;
 `@(packed)` and `@(align=N)` control a struct's layout; see [Layout and ABI
 attributes](#layout-and-abi-attributes).
 
-### Promoted struct fields
-
-A struct field declared with `using` promotes that field's fields for selector
-lookup on the containing value. Only fields are promoted: the field type's
-methods are not, so `value.position.length()` stays explicit.
-
-```loke
-Vector3 :: struct { x, y, z: f32 }
-Quaternion :: struct { x, y, z, w: f32 }
-
-Entity :: struct {
-	using position: Vector3,
-	orientation: Quaternion,
-}
-
-print_position :: proc(entity: ^Entity) {
-	fmt.println(entity.x, entity.y, entity.z); // entity.position.x, ...
-}
-```
-
-Promoted names are only field-lookup shorthand. An explicitly declared field on
-the outer struct wins over a promoted name; otherwise two promoted fields
-supplying the same name make that selector ambiguous. A `using` field does not
-make the containing struct a subtype of the field type and does not create an
-implicit conversion. Passing the embedded value requires explicit selection,
-such as `consume(value.position)`.
-
 ### Unions
 
 A union is a discriminated union, also known as a tagged union or sum type.
@@ -2177,7 +2152,7 @@ The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while
 each branch-local name has the payload type of the variant that introduced it.
 
 Field bindings follow [destructuring](#destructuring): the payload must have
-exactly as many directly declared, visible fields as bindings. A nominal record
+exactly as many fields as bindings, each visible. A nominal record
 can be destructured only in the package declaring its fields. `&mut` makes only
 its marked field writable. Under [Switch ownership](#switch-ownership), each
 binding over a place names the field itself without cloning. A borrow stored
@@ -3768,9 +3743,9 @@ foreach (key, &mut value in table) { value += 1; }   // the key stays read-only
 
 This is the general [destructuring](#destructuring) rule applied to the element,
 so a destructured element must be a record with exactly the same number of
-directly declared, visible fields. A header extends it with nesting, which `:=`
-and `=` do not have: a group descends into a field that is itself a record, to
-any depth; promoted fields are not flattened. Any binding may be `_`.
+fields, each visible. A header extends it with nesting, which `:=` and `=` do
+not have: a group descends into a field that is itself a record, to any depth.
+Any binding may be `_`.
 
 A leaf is a **binding**, and what it receives is decided by the traversal's
 [yield mode](#yield-modes):

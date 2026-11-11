@@ -531,9 +531,6 @@ public_struct :: proc(b: ^Api_Builder, record: ^Type_Record, lo: u32) -> string 
 			for attribute in shown_attributes(b, source, field.attributes) {
 				fmt.sbprintf(&out, "@(%s) ", attribute)
 			}
-			if field.is_using {
-				strings.write_string(&out, "using ")
-			}
 			fmt.sbprintfln(&out, "%s,", shown_text(b, source, field.names[0].span.lo, field.span.hi))
 		} else if len(field.names) != 1 || field.names[0].text != "_" {
 			hidden = true

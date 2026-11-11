@@ -2,7 +2,6 @@
 // no query resolves a name, checks syntax, or exposes a mutable semantic node.
 package lokec
 
-import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
 import "core:sync"
@@ -35,8 +34,6 @@ Query_Symbol :: struct {
 	// Where a local, parameter, or loop binding can be named: the innermost
 	// block, statement, or procedure holding its name. No span otherwise.
 	scope: Query_Location,
-	// A `using` field, whose fields design.md "Promoted struct fields" promotes.
-	promotes: bool,
 }
 Query_Type :: struct {
 	name: string,
@@ -61,10 +58,8 @@ Query_Diagnostic :: struct {
 // `Color.Red`, rather than a value of it.
 Query_Position :: struct { location: Query_Location, symbol: Symbol_Handle, type: Type_Handle, type_value: bool }
 // One name that may follow `operand.`. A union variant has no symbol; its type
-// is its payload's, or zero when it has none. `ambiguous` marks a name two
-// `using` fields promote, so selecting it is an error (design.md "Promoted struct
-// fields"), though it is still a name a rename would collide with.
-Query_Member :: struct { name: string, symbol: Symbol_Handle, type: Type_Handle, variant, ambiguous: bool }
+// is its payload's, or zero when it has none.
+Query_Member :: struct { name: string, symbol: Symbol_Handle, type: Type_Handle, variant: bool }
 
 @(private = "file")
 snapshot_counter: u64
@@ -293,10 +288,9 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 	if !valid_snapshot(s, operand.location.snapshot) || int(file) >= len(s.queries.packages) { return nil, false }
 	m := Member_List{
 		s = s, observer = s.queries.packages[file], out = make([dynamic]Query_Member, allocator),
-		seen = make(map[string]bool, allocator = allocator), walked = make(Type_Walk, allocator = allocator),
+		seen = make(map[string]bool, allocator = allocator),
 	}
 	defer delete(m.seen)
-	defer delete(m.walked)
 	c := &s.compiler
 	alias := symbol_of(c, operand.symbol.id)
 	switch {
@@ -325,9 +319,7 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 		}
 		for subject in subjects {
 			if subject == INVALID_TYPE { continue }
-			first := len(m.out)
 			list_fields(&m, subject)
-			mark_ambiguous_fields(&m, subject, first, allocator)
 			list_type_members(&m, subject, true)
 		}
 	}
@@ -336,7 +328,7 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 }
 
 @(private = "file")
-Member_List :: struct { s: ^Compilation_Session, observer: Package_Id, out: [dynamic]Query_Member, seen: map[string]bool, walked: Type_Walk }
+Member_List :: struct { s: ^Compilation_Session, observer: Package_Id, out: [dynamic]Query_Member, seen: map[string]bool }
 
 // design.md "Compile-time reflection": an enum's members have no visibility of
 // their own.
@@ -367,31 +359,11 @@ list_variants :: proc(m: ^Member_List, info: ^Type_Info) {
 	}
 }
 
-// design.md "Promoted struct fields": an outer field wins over a promoted one,
-// so a `using` field's own fields come after the record's. A record reached
-// again adds no new name.
 @(private = "file")
 list_fields :: proc(m: ^Member_List, type: Type_Id) {
-	c := &m.s.compiler
-	info := underlying_info(c, type)
-	if info == nil || info.kind != .Struct || !type_walk_enter(&m.walked, type, info) { return }
+	info := underlying_info(&m.s.compiler, type)
+	if info == nil || info.kind != .Struct { return }
 	for field in info.fields { list_member(m, field, false) }
-	for field in info.fields {
-		if symbol := symbol_of(c, field); symbol != nil && symbol.is_using { list_fields(m, symbol.type) }
-	}
-}
-
-// Marks the fields listed from `first` on that the checker's own lookup finds
-// ambiguous in `record`.
-@(private = "file")
-mark_ambiguous_fields :: proc(m: ^Member_List, record: Type_Id, first: int, allocator: mem.Allocator) {
-	c := &m.s.compiler
-	path := make([dynamic]Symbol_Id, allocator)
-	defer delete(path)
-	for &member in m.out[first:] {
-		clear(&path)
-		_, member.ambiguous = promoted_field_path(c, record, symbol_of(c, member.symbol.id).name, &path)
-	}
 }
 
 @(private = "file")
@@ -525,7 +497,6 @@ build_query_symbols :: proc(s: ^Compilation_Session) {
 			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, written ? symbol.span : NO_SPAN},
 			extent = Query_Location{s.snapshot, NO_SPAN}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
 			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, NO_SPAN},
-			promotes = symbol.kind == .Field && symbol.is_using,
 		}
 		if written {
 			if id == Symbol_Id(index) { append(&q.documents[source.span.file], Symbol_Handle{s.snapshot, id}) }

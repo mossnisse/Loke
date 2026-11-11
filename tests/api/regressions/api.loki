@@ -59,7 +59,7 @@ NAMED :: Named{FIELD = 2};
 Attributed :: struct {
 	@(required) w: int,
 	@(required) v: int,
-	using base: Pub,
+	base: Pub,
 	plain: int,
 	// and fields private to the package
 }
