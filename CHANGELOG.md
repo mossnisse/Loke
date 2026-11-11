@@ -5819,7 +5819,7 @@ checklist.
   signed `<<` stays modular rather than checked, and
   [design.md](design.md#integer-operators) now says `x<<1` equals `x*2` only
   when the product fits.
-- [open-questions.md](design-review-2026-10-31.md#language-design-review-2026-10-03)
+- [open-questions.md](design-review-2026-10-31.md#open-items-from-the-2026-10-03-review)
   records a language-design review with prioritized proposals, compiler probes,
   and tradeoffs for ownership, safety, expressiveness, performance, and syntax.
 - [design.md](design.md#distinct-types) states that a distinct type keeps its

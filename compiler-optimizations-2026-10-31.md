@@ -6,9 +6,9 @@ need no language-design change. This review is non-normative. Measurements and p
 the dates and compiler revisions of the original review; they have not been rerun
 for this split.
 
-Alias attributes remain in the [language review](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves)
+Alias facts remain in the [language review](design-review-2026-10-31.md#alias-facts-from-the-one-rule)
 because they require an unchecked-code aliasing contract. Compiler-chosen union
-layout is recorded [there](design-review-2026-10-31.md#62-union-layout) too:
+layout is recorded [there](design-review-2026-10-31.md#performance-opportunities-and-actual-semantic-limits) too:
 design.md has left the layout to the compiler since 2026-11-11, and choosing
 further niches waits on a measurement.
 
@@ -110,8 +110,9 @@ and so do `Result(Unit, ^T)` and `Status(^T)`, since a `Unit` payload counts as
 nothing there. There is no demonstrated small-value ABI change to recommend
 here. Any further change needs a measured case; exposing a slice's pointer for
 attributes under
-[the alias-attribute proposal](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves) is a separate
-reason to change its LLVM signature.
+[the alias proposal](design-review-2026-10-31.md#alias-facts-from-the-one-rule) is no longer
+a reason to change its LLVM signature, since that proposal now uses scoped
+metadata.
 
 ## Semantic constraints
 
@@ -132,7 +133,7 @@ reduction, a separately named operation says so, for example
    ([Container operations in IR, not through an operation table](#container-operations-in-ir-not-through-an-operation-table)).
    Measure `bench/collections.loke` with `perf.ps1` before and after.
 
-The language review's [alias-attribute proposal](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves)
+The language review's [alias proposal](design-review-2026-10-31.md#alias-facts-from-the-one-rule)
 would be measured after step 1, once its language and correctness prerequisites
 hold.
 

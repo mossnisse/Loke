@@ -1857,9 +1857,7 @@ keeps its static type. A behavior a caller needs from an unknown type is an
 interface slot, reached through `dyn`. Inspection on top of these would let a
 procedure behave differently for types its signature does not mention, and a
 type switch over an open set can never be exhaustive. Printing, the remaining
-use, needs only the `format` behavior every printable type has. See the
-[adopted proposals](design-review-2026-10-31.md#adopted-proposals) of the
-design review.
+use, needs only the `format` behavior every printable type has.
 
 ### A record's attributes are on its declaration
 
