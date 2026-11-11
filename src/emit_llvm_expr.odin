@@ -849,11 +849,10 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 
 @(private = "file")
 emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as_type: Type_Id) {
-	// Start from the zero value so an omitted field is not left undefined.
-	zero, ok := llvm_zero(e, as_type)
-	if ok {
-		store(e, as_type, zero, address)
-	}
+	// Start from all-zero bits so an omitted field holds its zero value
+	// (design.md "Struct literals", "Zero values"). The literal's own type may
+	// have no zero, as with a `Box` field: every part without one is supplied.
+	store(e, as_type, "zeroinitializer", address)
 	info := underlying_info(e.c, as_type)
 	if info == nil {
 		return

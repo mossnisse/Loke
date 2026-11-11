@@ -1,0 +1,86 @@
+// design.md "Struct literals": a field the literal omits takes its zero value,
+// also where another field's type has none ("Types with no zero value"), so the
+// struct itself has no zero to start from.
+package main;
+
+import "core:fmt";
+
+Priority :: enum{Low = 1, High = 2};
+Shape :: union{circle: f32, square: f32};
+
+Boxed :: struct { a: u64, b: u64, big: Box([4]u8) }
+Sharing :: struct { a: u64, held: Shared(int), b: u64 }
+Ranked :: struct { a: u64, priority: Priority, b: u64 }
+Shaped :: struct { a: u64, shape: Shape, b: u64 }
+Pointing :: struct { a: u64, target: ^int, b: u64 }
+Calling :: struct { a: u64, call: proc() -> int, b: u64 }
+Account :: struct { a: u64, @(required) id: u64, b: u64 }
+Outer :: struct { a: u64, inner: Boxed, b: u64 }
+// Large enough to be written with a memory fill rather than a store.
+Large :: struct { a: u64, pad: [4096]u8, big: Box(int), b: u64 }
+
+seven :: proc() -> int { return 7; }
+low :: proc() -> Priority { return .Low; }
+
+// Leaves non-zero bytes where the next call's locals will be.
+dirty :: proc() -> u64 {
+	bytes: [16384]u8 = {};
+	for (i := 0; i < bytes.len(); i += 1) {
+		bytes[i] = 0xAA;
+	}
+	total: u64 = 0;
+	for (i := 0; i < bytes.len(); i += 1) {
+		total += u64(bytes[i]);
+	}
+	return total;
+}
+
+RANKED :: Ranked{priority = .High};
+
+build :: proc() {
+	boxed := Boxed{big = box([4]u8{})};
+	fmt.println("boxed", boxed.a, boxed.b);
+	partial := Boxed{a = 1, big = box([4]u8{})};
+	fmt.println("partial", partial.a, partial.b);
+
+	sharing := Sharing{held = shared(3)};
+	fmt.println("sharing", sharing.a, sharing.held.get()^, sharing.b);
+
+	// A runtime element, so the literal is built in place rather than folded.
+	ranked := Ranked{priority = low()};
+	fmt.println("ranked", ranked.a, ranked.priority, ranked.b);
+	fmt.println("constant", RANKED.a, RANKED.priority, RANKED.b);
+
+	shaped := Shaped{shape = .circle(1.5)};
+	fmt.println("shaped", shaped.a, shaped.b);
+
+	number := 5;
+	pointing := Pointing{target = &number};
+	fmt.println("pointing", pointing.a, pointing.target^, pointing.b);
+
+	calling := Calling{call = seven};
+	fmt.println("calling", calling.a, calling.call(), calling.b);
+
+	account := Account{id = 9};
+	fmt.println("account", account.a, account.id, account.b);
+
+	outer := Outer{inner = Boxed{big = box([4]u8{1, 2, 3, 4})}};
+	fmt.println("outer", outer.a, outer.inner.a, outer.inner.b, outer.inner.big[3], outer.b);
+
+	pair := [2]Boxed{Boxed{big = box([4]u8{})}, Boxed{b = 2, big = box([4]u8{})}};
+	fmt.println("pair", pair[0].a, pair[0].b, pair[1].a, pair[1].b);
+
+	large := Large{big = box(6)};
+	fmt.println("large", large.a, large.pad[0], large.pad[4095], large.big^, large.b);
+
+	// An assignment builds the literal in a temporary of its own.
+	boxed = Boxed{b = 4, big = box([4]u8{})};
+	fmt.println("assigned", boxed.a, boxed.b);
+}
+
+main :: proc() {
+	if (dirty() == 0) {
+		return;
+	}
+	build();
+}

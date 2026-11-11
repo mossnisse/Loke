@@ -1888,6 +1888,12 @@ checklist.
 
 ### Fixed
 
+- A [struct literal](design.md#struct-literals) zero-fills the fields it omits when another field's
+  type has [no zero value](design.md#types-with-no-zero-value). With a `Box(T)` field, or a field
+  of an enum with no member represented by `0` set from a runtime value, the omitted fields were
+  left uninitialized: `Thing{big = box(...)}` for `Thing :: struct { a: u64, big: Box([4]u8) }`
+  read garbage from `a`. The same held for such a struct nested in another literal or built as a
+  fixed array's element.
 - A conversion of a [conditional expression](design.md#conditional-expression) of unfixed
   constants with a runtime condition, such as `u8(1 if solid else 2)` or
   `i8(LIMIT if solid else -LIMIT)`, compiles: it emitted invalid IR that clang rejected (`L0403`).
