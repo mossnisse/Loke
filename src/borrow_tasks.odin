@@ -558,73 +558,87 @@ first_report :: proc(shared: ^Shared_Reports, span: Span, global: Symbol_Id) -> 
 	return true
 }
 
+// What reserves a global against the parent's write: a running task's site, a
+// thread-exit drop, or a borrow the program keeps (`lent`).
+@(private = "file")
+Parent_Write_Reserver :: struct {
+	site:   int,
+	drop:   ^Thread_Exit_Drop,
+	lent:   Span,
+	writes: bool,
+}
+
 // design.md "Globals while tasks run": a task reserves the globals it may read
 // or write, by its procedure's settled effects and by the drops its thread's
-// exit runs, and the parent may not write a reserved one. A global lent beyond
-// the statement borrowing it is reserved by every task, since one may read it
-// through the borrow without naming it.
+// exit runs. A global lent beyond the statement borrowing it is reserved by
+// every task, since one may read it through the borrow without naming it. The
+// most specific reserver is found first, so a task that names the global is
+// reported as such even when a borrow of it is kept elsewhere.
 @(private = "file")
-check_parent_write :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8, shared: ^Shared_Reports) {
+find_parent_write_reserver :: proc(state: ^Prov_Solve, global: Symbol_Id, window: []u8) -> (Parent_Write_Reserver, bool) {
 	graph := state.graph
 	c := state.k.c
+	cursor := 0
+	for running in next_running_site(graph, window, &cursor) {
+		summary := body_summary(c, graph.task_sites[running].runs)
+		writes := slice.contains(summary.writes, global)
+		if writes || slice.contains(summary.reads, global) {
+			return {site = running, writes = writes}, true
+		}
+	}
+	for &drop in c.thread_exit_drops {
+		writes := slice.contains(drop.writes, global)
+		if writes || slice.contains(drop.reads, global) {
+			return {site = -1, drop = &drop, writes = writes}, true
+		}
+	}
+	if lent, found := c.lent_globals[global]; found {
+		return {site = -1, lent = lent}, true
+	}
+	return {}, false
+}
+
+// design.md "Globals while tasks run": the parent may not write a global a
+// running task reserves.
+@(private = "file")
+check_parent_write :: proc(state: ^Prov_Solve, event: Prov_Event, window: []u8, shared: ^Shared_Reports) {
+	c := state.k.c
 	global := event.symbol
+	reserver, reserved := find_parent_write_reserver(state, global, window)
+	if !reserved || !first_report(shared, event.span, global) {
+		return
+	}
 	sym := symbol_of(c, global)
 	name := identifier_text(c, sym.name)
 	how := event.name if event.name != "" else "written"
-	advice := "declared here; write it before the first `spawn` or after the block, or make it an `Atomic` or a `thread.Mutex`"
-	if lent, found := c.lent_globals[global]; found {
-		if !first_report(shared, event.span, global) {
-			return
-		}
+	access := "write" if reserver.writes else "read"
+	before := "the first `spawn`"
+	switch {
+	case reserver.site >= 0:
+		site := state.graph.task_sites[reserver.site]
+		errorf(c, event.span, "L0731", "`%s` is %s while a task that may %s it is running", name, how, access)
+		add_notef(c, site.span, "`%s` is started here and runs until this `parallel` block ends", site.name)
+		before = fmt.tprintf("`%s` is started", site.name)
+	case reserver.drop != nil:
+		owner := symbol_of(c, reserver.drop.variable)
+		hook := symbol_of(c, reserver.drop.hook)
+		errorf(
+			c, event.span, "L0731",
+			"`%s` is %s while this `parallel` block's tasks may be running, and each drops `%s` when its thread exits, whose hook `%s` may %s it",
+			name, how, identifier_text(c, owner.name), identifier_text(c, hook.name), access,
+		)
+		add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
+		add_notef(c, owner.span, "`%s` is declared here", identifier_text(c, owner.name))
+	case:
 		errorf(
 			c, event.span, "L0731",
 			"`%s` is %s while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps",
 			name, how,
 		)
 		add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
-		add_notef(c, lent, "a borrow of `%s` outlasts its statement here, so a task may reach it without naming `%s`", name, name)
-		add_notef(c, sym.span, advice)
-		return
+		add_notef(c, reserver.lent, "a borrow of `%s` outlasts its statement here, so a task may reach it without naming `%s`", name, name)
 	}
-	cursor := 0
-	for running in next_running_site(graph, window, &cursor) {
-		site := graph.task_sites[running]
-		summary := body_summary(c, site.runs)
-		writes := slice.contains(summary.writes, global)
-		if !writes && !slice.contains(summary.reads, global) {
-			continue
-		}
-		if !first_report(shared, event.span, global) {
-			return
-		}
-		errorf(
-			c, event.span, "L0731",
-			"`%s` is %s while a task that may %s it is running", name, how, writes ? "write" : "read",
-		)
-		add_notef(c, site.span, "`%s` is started here and runs until this `parallel` block ends", site.name)
-		add_notef(c, sym.span, advice)
-		return
-	}
-	for drop in c.thread_exit_drops {
-		writes := slice.contains(drop.writes, global)
-		if !writes && !slice.contains(drop.reads, global) {
-			continue
-		}
-		if !first_report(shared, event.span, global) {
-			return
-		}
-		owner := symbol_of(c, drop.variable)
-		hook := symbol_of(c, drop.hook)
-		errorf(
-			c, event.span, "L0731",
-			"`%s` is %s while this `parallel` block's tasks may be running, and each drops `%s` when its thread exits, whose hook `%s` may %s it",
-			name, how, identifier_text(c, owner.name), identifier_text(c, hook.name), writes ? "write" : "read",
-		)
-		add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
-		add_notef(c, owner.span, "`%s` is declared here", identifier_text(c, owner.name))
-		add_notef(c, sym.span, advice)
-		return
-	}
+	add_notef(c, sym.span, "declared here; write it before %s or after the block, or make it an `Atomic` or a `thread.Mutex`", before)
 }
 
 // A printed argument is reached where it is read and again by the call that

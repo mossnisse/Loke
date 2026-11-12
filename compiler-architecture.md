@@ -809,12 +809,12 @@ The checks run on the `Prov_Diagnose` graph:
   `Shared_Effect` events in `provenance_global_effects.odin`, the parent's allocator use
   `Region_Use` events, and the solver reports both against the tasks that may
   be running. A parent's write is checked against what each running site's
-  task reserves (`check_parent_write`): its run procedure's settled reads and
-  writes, the thread-exit drops', and `Compiler.lent_globals`, the globals a
-  borrow of which some body returns, retains, or stores through a carrier,
-  which the thread summaries collect from each body's `Escape`, `Retain`, and
-  `Publish` events (`note_lent_globals`). The emission contract validates each
-  recorded spawn.
+  task reserves (`find_parent_write_reserver`), most specific first: its run
+  procedure's settled reads and writes, the thread-exit drops', and
+  `Compiler.lent_globals`, the globals a borrow of which some body returns,
+  retains, or stores through a carrier, which the thread summaries collect
+  from each body's `Escape`, `Retain`, and `Publish` events
+  (`note_lent_global`). The emission contract validates each recorded spawn.
 - **`thread_local` effects depend on the executor.** A spawned call's effects
   are recorded with `task_effects` set, and none of its `thread_local` writes
   become accesses at the spawn (`prov_effect_call`). A bare block's call is

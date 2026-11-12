@@ -90,5 +90,33 @@ main :: proc() {
 		filled[0] = 1;
 		listed[0] = 1;
 	}
-	fmt.println(a, b, c, d, e, holder.view[0]);
+
+	// The task that names `peeked` is reported, not the borrow `keep_peeked`
+	// keeps; and a global behind an accessor returning a borrow of it stays
+	// reserved by every task (open-questions.md "Concurrency refinements").
+	keep_peeked();
+	p, q: int;
+	parallel {
+		spawn p = peek();
+		frames = 6;
+		peeked[0] = 1;
+	}
+	parallel {
+		spawn q = work(3);
+		frames = 7;
+		slots()[0] = 1;
+	}
+	fmt.println(a, b, c, d, e, holder.view[0], p, q);
+}
+
+peeked: [1]int;
+peeked_view: []int;
+
+keep_peeked :: proc() { peeked_view = peeked[:]; }
+
+peek :: proc() -> int { return peeked[0]; }
+
+slots :: proc() -> ^mut [1]int {
+	n: static [1]int;
+	return &mut n;
 }

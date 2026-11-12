@@ -174,10 +174,7 @@ body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^Effect_List) {
 			#partial switch event.kind {
 			case .Reach, .Escape, .Retain, .Publish:
 				for slot in event.sources {
-					note_reached_globals(&state, slot, event.span, out)
-					if event.kind != .Reach {
-						note_lent_globals(&state, slot, event.span)
-					}
+					note_reached_globals(&state, slot, event.span, out, lends = event.kind != .Reach)
 				}
 			}
 			run_prov_event(&state, event, state.reach, state.ended)
@@ -192,27 +189,21 @@ body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^Effect_List) {
 // effect does not vouch for such a global. A borrow that stays in its body is
 // a loan there, which a spawn holds until the join when the task is given it.
 @(private = "file")
-note_lent_globals :: proc(state: ^Prov_Solve, slot: int, span: Span) {
-	graph := state.graph
-	c := state.k.c
-	row := reach_row(state, state.reach, slot)
-	for index in 0 ..< state.loans {
-		if !bit_get(row, index) {
-			continue
-		}
-		root := graph.roots[int(graph.loans[index].root)]
-		if root.kind != .Static || root.symbol == INVALID_SYMBOL || root.symbol in c.lent_globals {
-			continue
-		}
-		sym := symbol_of(c, root.symbol)
-		if sym != nil && sym.kind == .Var && symbol_outlives_bodies(sym) && !sym.synchronized {
-			c.lent_globals[root.symbol] = span
-		}
+note_lent_global :: proc(c: ^Compiler, global: Symbol_Id, span: Span) {
+	if global == INVALID_SYMBOL || global in c.lent_globals {
+		return
+	}
+	sym := symbol_of(c, global)
+	if sym != nil && sym.kind == .Var && symbol_outlives_bodies(sym) && !sym.synchronized {
+		c.lent_globals[global] = span
 	}
 }
 
+// What `slot` reaches, into `out`; with `lends`, where the borrows it carries
+// leave the statement, also each global whose own storage they borrow
+// (`note_lent_global`).
 @(private)
-note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^Effect_List) {
+note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^Effect_List, lends := false) {
 	graph := state.graph
 	c := state.k.c
 	source := Effect_Source{span = span, precision = state.precision[slot]}
@@ -227,6 +218,9 @@ note_reached_globals :: proc(state: ^Prov_Solve, slot: int, span: Span, out: ^Ef
 			add_reached_global(c, out, root.origin, source)
 		} else if root.kind == .Static || root.kind == .Thread_Local {
 			add_reached_global(c, out, root.symbol, source)
+		}
+		if lends && root.kind == .Static {
+			note_lent_global(c, root.symbol, span)
 		}
 	}
 }

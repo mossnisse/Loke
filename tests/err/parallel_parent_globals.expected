@@ -21,3 +21,12 @@ L0731
 @91:3
 `listed` is written while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps
 a borrow of `listed` outlasts its statement here, so a task may reach it without naming `listed`
+L0731
+@102:3
+`peeked` is written while a task that may read it is running
+`peek` is started here and runs until this `parallel` block ends
+write it before `peek` is started or after the block
+L0731
+@107:3
+`n` is modified by `slots` while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps
+a borrow of `n` outlasts its statement here, so a task may reach it without naming `n`
