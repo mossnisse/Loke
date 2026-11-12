@@ -579,24 +579,27 @@ report_borrow_conflict :: proc(state: ^Prov_Solve, event: Prov_Event, loan: Prov
 		invalidated = "%s cannot be %s here: a %s %s of it may still be in use"
 		conflicting = "this %s of %s may overlap the %s %s of it that is still in use"
 	}
-	if event.access == .Invalidate {
+	// A read that reserves the place for a call conflicts as what the call does
+	// when it starts (`Prov_Event.starts`).
+	access_kind := event.starts != .Read ? event.starts : event.access
+	if access_kind == .Invalidate {
 		errorf(
 			k.c, event.span, "L0512", invalidated,
-			root_label(root), event.verb == "" ? "invalidated" : event.verb, loan.mutable ? "mutable" : "read-only", loan.what,
+			root_label(root), event.verb == "" ? "invalidated" : event.verb, capability_text(loan.mutable, loan.reserved), loan.what,
 		)
-	} else if event.access == .Read && event.verb != "" {
+	} else if access_kind == .Read && event.verb != "" {
 		// design.md "Global write effects": a call's read of a global.
 		errorf(k.c, event.span, "L0511", invalidated, root_label(root), event.verb, "mutable", loan.what)
 	} else {
 		// design.md "@(synchronized)": such an access counts as a write, and a
 		// borrow of the field as a mutable one, whatever was written.
-		access := event.access == .Write ? "write" : "read"
+		access := access_kind == .Write ? "write" : "read"
 		if path_is_synchronized(event.path) {
 			access = "access through a synchronized field"
 		}
 		errorf(
 			k.c, event.span, "L0511", conflicting,
-			access, root_label(root), path_is_synchronized(loan.path) ? "exclusive" : loan.mutable ? "mutable" : "read-only", loan.what,
+			access, root_label(root), path_is_synchronized(loan.path) ? "exclusive" : capability_text(loan.mutable, loan.reserved), loan.what,
 		)
 	}
 	add_borrow_notes(state, root, loan, later)
@@ -624,7 +627,7 @@ report_suspended_reborrow :: proc(
 	k := state.k
 	source := state.graph.prov_slots[reborrow.source]
 	derived := state.graph.prov_slots[reborrow.derived]
-	capability := reborrow.mutable ? "mutable" : "read-only"
+	capability := capability_text(reborrow.mutable, reborrow.reserved)
 	// A place, or a temporary, used through a binding that views it. A slice
 	// literal's element has a description rather than a name.
 	name := fmt.tprintf("`%s`", event.name if event.name != "" else source.name)
@@ -638,7 +641,7 @@ report_suspended_reborrow :: proc(
 	} else {
 		add_notef(k.c, reborrow.span, "the %s reborrow is taken here", capability)
 	}
-	add_use_note(state, later)
+	add_use_note(state, later, reborrow.reserved)
 }
 
 // A carrier used for a place a borrow through another carrier still holds,
@@ -647,12 +650,12 @@ report_suspended_reborrow :: proc(
 report_place_borrowed :: proc(state: ^Prov_Solve, event: Prov_Event, loan: Prov_Place_Loan, carrier: int, later: Span) {
 	k := state.k
 	name := event.name if event.name != "" else carrier_name(state, carrier)
-	capability := loan.mutable ? "mutable" : "read-only"
+	capability := capability_text(loan.mutable, loan.reserved)
 	// As in `report_borrow_conflict`.
 	covers := state.diagnostic_precision != {} ? " that may cover this place" : ""
 	errorf(k.c, event.span, "L0641", "`%s` cannot be used here: a %s reborrow of it%s is still in use", name, capability, covers)
 	add_notef(k.c, loan.span, "the %s reborrow of `%s` is taken here", capability, loan.place)
-	add_use_note(state, later)
+	add_use_note(state, later, loan.reserved)
 }
 
 // A carrier's name, or for a temporary reborrowed from one, as the read-only
@@ -763,14 +766,26 @@ add_borrow_notes :: proc(state: ^Prov_Solve, root: Prov_Root, loan: Prov_Loan, l
 		)
 	}
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
-	add_use_note(state, later)
+	add_use_note(state, later, loan.reserved)
+}
+
+// How a diagnostic names a borrow's capability. One reserved for a call is
+// read-only until the call starts (design.md "Weakening and reborrows").
+@(private = "file")
+capability_text :: proc(mutable, reserved: bool) -> string {
+	return reserved ? "reserved" : mutable ? "mutable" : "read-only"
 }
 
 // The later use keeping a borrow live. One at a declaration is that local's
 // `drop` hook, run when its scope ends.
 @(private = "file")
-add_use_note :: proc(state: ^Prov_Solve, later: Span) {
+add_use_note :: proc(state: ^Prov_Solve, later: Span, reserved := false) {
 	if later.file == NO_FILE {
+		return
+	}
+	// design.md "Weakening and reborrows": the use is the call it is reserved for.
+	if reserved {
+		add_notef(state.k.c, later, "and is reserved until this call starts: its place may be read until then, not written")
 		return
 	}
 	if later_is_task_hold(state, later) {

@@ -10,6 +10,11 @@
 // the compiler, never from its output, so a form the compiler handles
 // differently from the others shows up as a disagreement. Every case is one
 // procedure, and a compile checks a whole place form at once.
+//
+// A second matrix, `reserved_matrix`, is of calls: each lends the `List`, or its
+// `items`, mutably to a call through one of the same place forms, and does one
+// thing with the place in an argument evaluated after that. `reserved_expected`
+// is its model of the reserved loan (design.md "Weakening and reborrows").
 package tests
 
 import "core:fmt"
@@ -519,6 +524,224 @@ borrow_matrix :: proc(t: ^testing.T) {
 				"%s (lines %d-%d): %v of a carrier from %s, then %s (%v)%s: expected %s, got %s",
 				path, entry.first_line, entry.last_line, program.take, program.place.name, entry.use.name,
 				entry.shape, entry.later ? " and a later use" : "", expected if expected != "" else "no error",
+				code if code != "" else "no error",
+			)
+		}
+		// An error outside every case is a mistake in the generated program.
+		for e in errors {
+			inside := false
+			for entry in program.cases {
+				inside ||= e.line >= entry.first_line && e.line <= entry.last_line
+			}
+			testing.expectf(t, inside, "%s:%d: %s outside every case:\n%s", path, e.line, e.code, string(job.stderr))
+		}
+	}
+}
+
+// How a call takes its mutable loan of the place: as the `inout` receiver of a
+// method of the `List`, as an `inout` argument, as a mutable pointer to it,
+// which is `&mut place` or an existing carrier as the place form has it
+// (`Matrix_Place.pointer`), as an `inout` argument written after the other
+// arguments, or as the receiver of `append` on its `items` alone.
+@(private = "file")
+Reserved_Lend :: enum { Receiver, Inout, Pointer, Inout_Last, Items_Receiver }
+
+// What an argument evaluated after the lending one does. `count` is the `int`
+// the call is given and `seen` the `^int`, which stays borrowed through the
+// call; "" for `seen` borrows a local of the case's own. `$B` and `$P` stand
+// for the `List` and a pointer to it, and `$O` for another element of a view.
+@(private = "file")
+Reserved_Later :: struct {
+	name, count, seen: string,
+}
+
+@(private = "file")
+RESERVED_LATERS := [?]Reserved_Later {
+	{"nothing", "1", ""},
+	{"read_count", "$B.count", ""},
+	{"read_cells", "$B.cells[1]", ""},
+	{"read_len", "$B.items.len()", ""},
+	{"read_head", "$B.head^.value", ""},
+	{"read_by_call", "look($P)", ""},
+	{"read_other", "$O.count", ""},
+	{"write_count", "bump_get(&mut $B.count)", ""},
+	{"write_items", "grow_get(&mut $B.items)", ""},
+	{"write_whole", "touch_get($P)", ""},
+	{"hand_count", "1", "&$B.count"},
+	{"spread_items", "..$B.items[:]", ""},
+}
+
+// The rules, for a mutable loan an argument takes for its call (design.md
+// "Weakening and reborrows"): it is reserved while the arguments after it are
+// evaluated, when its place may be read but not written or borrowed mutably,
+// and becomes mutable when the call starts, when it conflicts with whatever is
+// still in use. So a read in a later argument is legal, however it is made; a
+// write of the place, or of what it is part of, is not; and neither is a
+// borrow of it that a later argument hands to the call, which is in use
+// through the call. A write beside the place is legal: `count` is beside
+// `items`. A loan taken by the last argument reserves nothing, so only a
+// borrow handed to the call conflicts with it.
+// The code the rejection is reported with, or "" when the case is legal: of a
+// local, a write while it is reserved is an access that conflicts with its
+// loan, and a receiver's start invalidates what is borrowed of it, where an
+// argument's writes it; through a pointer, a reborrow of the pointer is what
+// conflicts.
+@(private = "file")
+reserved_expected :: proc(place: Matrix_Place, lend: Reserved_Lend, later: Reserved_Later) -> string {
+	local := place.name == "local"
+	at_start := "L0641"
+	if local {
+		at_start = lend == .Receiver || lend == .Items_Receiver ? "L0512" : "L0511"
+	}
+	while_reserved := local ? "L0511" : "L0641"
+	switch later.name {
+	case "hand_count", "spread_items":
+		return at_start
+	case "write_count":
+		return lend == .Inout_Last || lend == .Items_Receiver ? "" : while_reserved
+	case "write_items", "write_whole":
+		return lend == .Inout_Last ? "" : while_reserved
+	}
+	return ""
+}
+
+// Only `append` takes a spread, and it takes no `seen`. A read-only place lends
+// nothing mutably, and only a view has another element.
+@(private = "file")
+reserved_applies :: proc(place: Matrix_Place, lend: Reserved_Lend, later: Reserved_Later) -> bool {
+	if place.read_only {
+		return false
+	}
+	switch later.name {
+	case "spread_items":
+		return lend == .Items_Receiver
+	case "hand_count":
+		return lend != .Items_Receiver
+	case "read_other":
+		return place.other != ""
+	}
+	return true
+}
+
+@(private = "file")
+Reserved_Case :: struct {
+	later:      Reserved_Later,
+	looped:     bool,
+	first_line: int,
+	last_line:  int,
+}
+
+// One program holding every case of one place form and way of lending, each in
+// its own procedure, once in straight-line code and once in a loop, where the
+// loan of one iteration must not reach the next.
+@(private = "file")
+reserved_program :: proc(place: Matrix_Place, lend: Reserved_Lend, cases: ^[dynamic]Reserved_Case) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	lines := 0
+	line :: proc(b: ^strings.Builder, lines: ^int, text: string) {
+		strings.write_string(b, text)
+		strings.write_byte(b, '\n')
+		lines^ += strings.count(text, "\n") + 1
+	}
+	line(&b, &lines, "package main;")
+	line(&b, &lines, "Node :: struct { value: int, next: Option(^mut Node) }")
+	line(&b, &lines, "List :: struct { head: ^mut Node, tail: ^mut Node, count: int, first: Option(^mut Node), cells: [2]int, items: [dynamic]int }")
+	line(&b, &lines, "impl List { add_count :: proc(self: inout, n: int, seen: ^int) { self.count += n + seen^; } }")
+	line(&b, &lines, "cond :: proc() -> bool { return true; }")
+	line(&b, &lines, "put_count :: proc(list: inout List, n: int, seen: ^int) { list.count += n + seen^; }")
+	line(&b, &lines, "poke_count :: proc(list: ^mut List, n: int, seen: ^int) { list^.count += n + seen^; }")
+	line(&b, &lines, "count_last :: proc(n: int, seen: ^int, list: inout List) { list.count += n + seen^; }")
+	line(&b, &lines, "look :: proc(list: ^List) -> int { return list^.head^.value; }")
+	line(&b, &lines, "bump_get :: proc(n: ^mut int) -> int { n^ += 1; return n^; }")
+	line(&b, &lines, "touch_get :: proc(list: ^mut List) -> int { list^.count += 1; return list^.count; }")
+	line(&b, &lines, "grow_get :: proc(items: ^mut [dynamic]int) -> int { items^.append(1); return items^.len(); }")
+	line(&b, &lines, "main :: proc() {}")
+
+	for later in RESERVED_LATERS {
+		if !reserved_applies(place, lend, later) {
+			continue
+		}
+		count := matrix_expand(later.count, place)
+		seen := later.seen != "" ? matrix_expand(later.seen, place) : "&spare"
+		call: string
+		switch lend {
+		case .Receiver:       call = fmt.tprintf("%s.add_count(%s, %s);", place.base, count, seen)
+		case .Inout:          call = fmt.tprintf("put_count(inout %s, %s, %s);", place.base, count, seen)
+		case .Pointer:        call = fmt.tprintf("poke_count(%s, %s, %s);", place.pointer, count, seen)
+		case .Inout_Last:     call = fmt.tprintf("count_last(%s, %s, inout %s);", count, seen, place.base)
+		case .Items_Receiver: call = fmt.tprintf("%s.items.append(%s);", place.base, count)
+		}
+		for looped in ([2]bool{false, true}) {
+			entry := Reserved_Case{later = later, looped = looped, first_line = lines + 1}
+			line(&b, &lines, fmt.tprintf("case_%d :: proc(%s) {{", len(cases), place.params))
+			if place.setup != "" {
+				line(&b, &lines, fmt.tprintf("\t%s", place.setup))
+			}
+			line(&b, &lines, "\tspare := 0;")
+			if looped {
+				line(&b, &lines, fmt.tprintf("\tfor (round := 0; round < 2; round += 1) {{ %s }}", call))
+			} else {
+				line(&b, &lines, fmt.tprintf("\t%s", call))
+			}
+			line(&b, &lines, "}")
+			entry.last_line = lines
+			append(cases, entry)
+		}
+	}
+	return strings.to_string(b)
+}
+
+@(test)
+reserved_matrix :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	os.make_directory(MATRIX_DIR)
+	Program :: struct {
+		place: Matrix_Place,
+		lend:  Reserved_Lend,
+		cases: [dynamic]Reserved_Case,
+	}
+	programs := make([dynamic]Program, context.temp_allocator)
+	jobs := make([dynamic]Exec, context.temp_allocator)
+	for place in MATRIX_PLACES {
+		for lend in Reserved_Lend {
+			program := Program{place = place, lend = lend, cases = make([dynamic]Reserved_Case, context.temp_allocator)}
+			source := reserved_program(place, lend, &program.cases)
+			if len(program.cases) == 0 {
+				continue
+			}
+			path := fmt.tprintf("%s/reserved_%s_%v.loke", MATRIX_DIR, place.name, lend)
+			if !testing.expectf(t, os.write_entire_file(path, transmute([]byte)source) == nil, "%s: cannot write", path) {
+				continue
+			}
+			append(&programs, program)
+			command := make([]string, 5, context.temp_allocator)
+			command[0], command[1], command[2] = compiler_path(), path, "-emit-ll"
+			command[3], command[4] = "-o", fmt.tprintf("%s/reserved_%s_%v.exe", MATRIX_DIR, place.name, lend)
+			append(&jobs, Exec{command = command})
+		}
+	}
+	exec_all(jobs[:])
+	for program, index in programs {
+		job := jobs[index]
+		path := job.command[1]
+		if !testing.expectf(t, job.err == nil, "%s: cannot run lokec: %v", path, job.err) {
+			continue
+		}
+		errors := matrix_errors(string(job.stderr))
+		for entry in program.cases {
+			expected := reserved_expected(program.place, program.lend, entry.later)
+			code := ""
+			for e in errors {
+				if e.line >= entry.first_line && e.line <= entry.last_line {
+					code = e.code
+					break
+				}
+			}
+			testing.expectf(
+				t, code == expected,
+				"%s (lines %d-%d): %v of %s, then %s%s: expected %s, got %s",
+				path, entry.first_line, entry.last_line, program.lend, program.place.name, entry.later.name,
+				entry.looped ? " in a loop" : "", expected if expected != "" else "no error",
 				code if code != "" else "no error",
 			)
 		}

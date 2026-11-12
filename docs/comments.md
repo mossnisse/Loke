@@ -2009,6 +2009,47 @@ another read. Permitting recognized read-only uses allows `slice.equal(xs, xs)`
 without weakening exclusivity. A mutable reborrow still excludes other reads,
 which could observe a partially updated value.
 
+### A call's mutable loan is reserved until the call starts
+
+A mutable loan used to start where its argument was evaluated, so
+`c.add(c.get())`, `xs.append(xs.len())`, and `put(inout c, c.n + 1)` were
+rejected, while `later(c.n, inout c)` was accepted because there the loan came
+last. The rejection came from when the loan started, not from an alias the
+callee could see: the callee runs after every argument is a finished value. A
+method call evaluates its receiver first, so it could never read its own `inout`
+receiver in its arguments, and the workaround was a local for each such read.
+[Reserving the loan](design.md#weakening-and-reborrows) moves its start to where
+the callee's exclusive access starts. Rust's two-phase borrows do the same for a
+method's receiver.
+
+- **Reads only.** While the loan is reserved the place may not be written, moved,
+  mutably borrowed, or invalidated. The argument already computed its place: a
+  later `xs.clear()` or a reassigned pointer would leave the call writing through
+  a place that is gone. A write that left the place valid, as `bump(&mut c)` in
+  `c.add(bump(&mut c))`, is rejected too, so that what the reserved state allows
+  is one rule, a read-only borrow's, and not a list of harmless writes.
+- **A borrow handed to the call still conflicts.** `c.rename(c.name)` and
+  `xs.append(..xs[:])` pass the callee a view of the place it writes, which is
+  the alias the one rule exists to prevent. The conflict is reported at the
+  call, as the receiver's modification with the view in use, since the argument
+  itself was a legal read.
+- **A lent carrier is reserved too.** `poke(p, p^.n)` forms no loan, but lending
+  `p` suspends it exactly as `&mut c` borrows `c`, and through a pointer
+  `p^.add(p^.n)` is the same call as `c.add(c.n)`. Reserving only loans formed in
+  the argument would make a call's legality depend on whether its place is a
+  local or reached through a parameter. A carrier in a record passed by value,
+  or one operand of a variadic pack, is lent the same way, so it is reserved the
+  same way.
+- **A computed carrier is not.** In `poke(pick(p), p^.n)` the reborrow of `p`
+  belongs to the result of `pick`, which exists from that call on, whatever the
+  outer call does with it. Deferring it would need the result of a call that has
+  already run to be read-only for a while, which no signature says.
+- **A transfer is not deferred.** `move(c).consume(c.n)` stays a use after the
+  move. A move is written where it happens and ends the place for every later
+  read. Deferring it would make `move(c)` mean "moved at the end of this call's
+  arguments" in one position only, and would let an argument read a value the
+  same expression gives away.
+
 ### A dynamic array's length conflicts with a mutable pointer to its element
 
 `n := d^.len();` beside a live `y := &mut d^[0]` is rejected, though the call reads only the header

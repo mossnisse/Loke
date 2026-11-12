@@ -177,6 +177,11 @@ Prov_State :: struct {
 	has_linked_store: bool,
 	// The parameter places the walk's assignments wrote, by block.
 	overwrites: Prov_Overwrites,
+	// How many loans are reserved for calls whose arguments are still being
+	// evaluated, and the places in lexical storage written or invalidated since
+	// the first of them (`Prov_Reserved.watched`).
+	reserving:       int,
+	reserved_writes: [dynamic]Prov_Reserved_Place,
 }
 
 // design.md "Allocator regions and region provenance": the flow-insensitive
@@ -288,6 +293,7 @@ new_prov_state :: proc(allocator: mem.Allocator, input: ^Prov_Input) -> ^Prov_St
 	state.division_of = make(map[int]int, allocator)
 	state.parallel_scopes = make([dynamic]Symbol_Id, allocator)
 	state.task_sites = make([dynamic]Task_Site, allocator)
+	state.reserved_writes = make([dynamic]Prov_Reserved_Place, allocator)
 	return state
 }
 
@@ -421,6 +427,10 @@ Prov_Event :: struct {
 	precision: Precision_Loss,
 	kind:    Prov_Kind,
 	access:  Access_Kind,
+	// `Access`: a read that reserves the place for a call, which makes this
+	// access when it starts (`prov_reserve_place`). A conflict with the read is
+	// reported as one with that access. `Read` reserves nothing.
+	starts:  Access_Kind,
 	// `Retain`: the destination's storage kind; `verb` names it.
 	retain: Retain_Kind,
 	span:    Span,

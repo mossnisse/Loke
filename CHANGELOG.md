@@ -1637,6 +1637,22 @@ checklist.
 
 ### Changed
 
+- A mutable loan that a call's receiver or argument takes is reserved until the call starts, so the
+  arguments after it and the defaults may read its place
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows), rationale under
+  ["A call's mutable loan is reserved until the call starts"](docs/comments.md#a-calls-mutable-loan-is-reserved-until-the-call-starts)).
+  `c.add(c.get())`, `xs.append(xs.len())`, `xs.append(xs[0])`, `put(inout c, c.n + 1)`,
+  `poke(&mut c, c.n + 1)`, and through a pointer `p^.add(p^.n)` and `poke(p, p^.n)`, were `L0511` or
+  `L0641` and needed a local for the value read. The loan is one an `inout` receiver or argument
+  takes, `&mut place` written as the argument, or a mutable carrier read from a place, by itself, in
+  a record passed by value, or in a variadic pack. While it is reserved the place may be read, not
+  written, moved, mutably borrowed, or invalidated, so `c.add(bump(&mut c))` is still `L0511`, whose
+  message now says "reserved borrow". A borrow of the place that a later argument hands to the
+  call, as in `c.rename(c.name)` and `xs.append(..xs[:])`, still conflicts, and is now reported at
+  the call as `L0512` for an `inout` receiver. A `move` is not deferred, and neither is a carrier an
+  argument computes, as in `poke(pick(p), p^.n)`. Nothing that compiled is rejected by this change.
+  [known-gaps.md](docs/known-gaps.md#a-reserved-loan-through-an-index-that-calls-or-through-a-map-element)
+  lists two forms the compiler does not reserve yet.
 - The documentation moved into [docs/](docs/): [design.md](docs/design.md),
   [grammar.md](docs/grammar.md), [compiler-guide.md](docs/compiler-guide.md),
   [standard-library.md](docs/standard-library.md), and the other reference documents. The release

@@ -299,6 +299,9 @@ prov_unbound_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: []int, spaw
 prov_bound_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, input: Prov_Call_Input) -> (actuals: [][]int, borrowed: []int) {
 	actuals = make([][]int, len(v.bound), graph.alloc)
 	split_receiver: []int
+	// design.md "Weakening and reborrows": the mutable loans the arguments take,
+	// which start once they are all evaluated.
+	reserved := make([dynamic]Prov_Reserved, 0, 0, graph.alloc)
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)
 		if index == 0 && input.capture != 0 {
@@ -306,9 +309,10 @@ prov_bound_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, input: Prov_Call
 			graph.captured_values[input.capture] = prov_snapshot(graph, split_receiver, expr_span(v.bound[0]))
 			continue
 		}
-		actuals[index] = prov_call_argument(graph, v, index, input, &borrowed)
+		actuals[index] = prov_call_argument(graph, v, index, input, &borrowed, &reserved)
 		prov_hold_owner(graph, v.bound[index])
 	}
+	prov_start_reserved(graph, v, reserved[:], actuals, &borrowed)
 	if input.capture != 0 {
 		actuals[0] = prov_lend_split_receiver(graph, split_receiver, graph.captured_values[input.capture], expr_span(v.bound[0]))
 		borrowed = prov_join(graph, borrowed, actuals[0])

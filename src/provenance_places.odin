@@ -9,6 +9,7 @@ package lokec
 @(private)
 prov_place_loan :: proc(
 	graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, mutable: bool, what: string, place: Expr, borrows := false,
+	reserved := false,
 ) -> []int {
 	if len(carriers) == 0 || graph.current == NO_BLOCK {
 		return nil
@@ -27,7 +28,8 @@ prov_place_loan :: proc(
 	slot := prov_temp_slot(graph)
 	graph.place_loan_of[slot] = len(graph.place_loans)
 	append(&graph.place_loans, Prov_Place_Loan {
-		slot = slot, paths = prov_offset_paths(graph, places), mutable = mutable, borrows = borrows, what = what, span = span,
+		slot = slot, paths = prov_offset_paths(graph, places), mutable = mutable, borrows = borrows, reserved = reserved,
+		what = what, span = span,
 		place = span_text(graph.k.c, span), element = element, in_element = in_element,
 	})
 	graph.prov_slots[slot].element_defs = len(in_element.slots) > 0
@@ -104,6 +106,14 @@ prov_write_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Ste
 @(private)
 prov_read_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, span: Span, place: Expr = nil) {
 	prov_access_through(graph, carriers, path, span, .Read, "read", prov_view_at(graph, place, carriers))
+}
+
+// A read through `carriers` at `path` below their pointee that reserves the place
+// for a call (design.md "Weakening and reborrows"). `verb` names what the call
+// does to the place when it starts, so a conflict reads as one with that.
+@(private)
+prov_reserve_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, span: Span, verb: string, place: Expr = nil) {
+	prov_access_through(graph, carriers, path, span, .Read, verb, prov_view_at(graph, place, carriers))
 }
 
 // Carriers pointing at different places, as a record holding `&mut h^.count`
@@ -233,16 +243,19 @@ prov_place_hops :: proc(graph: ^Flow_Graph, place: Expr) -> []Place_Hop {
 // the one whose pointee holds `place`, with the path below it. A `store`
 // leaves the subscripts below the last carrier to itself. False when `place`
 // is not reached through a carrier. `walk`, when given, collects the events
-// reading the carriers (`Prov_Through_Borrow.walk_reads`).
+// reading the carriers (`Prov_Through_Borrow.walk_reads`). `again` reads the
+// carriers of a place already evaluated, where a call starts
+// (`prov_place_reservable`): no index is evaluated a second time.
 @(private)
 prov_read_through_carrier :: proc(
 	graph: ^Flow_Graph, place: Expr, reads_only := false, store := false, walk: ^[dynamic]Prov_Event_At = nil, reads := true,
+	again := false,
 ) -> ([]int, []Proj_Step, bool) {
 	hops := prov_place_hops(graph, place)
 	if len(hops) == 0 {
 		return nil, nil, false
 	}
-	carriers := prov_reach_hop(graph, place, hops, 0, reads_only, store, walk)
+	carriers := prov_reach_hop(graph, place, hops, 0, reads_only, store, walk, again)
 	if !store && reads {
 		prov_read_through(graph, carriers, hops[0].path, expr_span(place), place)
 	}
@@ -278,13 +291,15 @@ prov_next_event :: proc(graph: ^Flow_Graph) -> int {
 // write, as `idx(q)` in `p^.cells[idx(q)]` does, so a subscript, or a carrier
 // whose own subscripts may, is walked without it.
 @(private = "file")
-prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: int, reads_only, store: bool, walk: ^[dynamic]Prov_Event_At) -> []int {
+prov_reach_hop :: proc(
+	graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: int, reads_only, store: bool, walk: ^[dynamic]Prov_Event_At, again := false,
+) -> []int {
 	carrier := prov_value(graph, hops[at].carrier).origin
 	inner := at == 0 ? place : prov_value(graph, hops[at - 1].carrier).origin
 	indices := make([dynamic]Expr, 0, 0, graph.alloc)
 	prov_segment_indices(inner, carrier, &indices)
 	// An index that may write the carrier, read after it, sees it as it was.
-	captures := prov_indices_may_write(graph.k.c, indices[:]) && !(store && at == 0)
+	captures := prov_indices_may_write(graph.k.c, indices[:]) && !(store && at == 0) && !again
 	only := reads_only && !captures
 	slots: []int
 	if at == len(hops) - 1 {
@@ -292,7 +307,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 			own := make([dynamic]Expr, 0, 0, graph.alloc)
 			prov_segment_indices(carrier, nil, &own)
 			from := prov_next_event(graph)
-			slots = prov_read_carrier(graph, carrier, only)
+			slots = again ? prov_reread_carrier(graph, carrier, only) : prov_read_carrier(graph, carrier, only)
 			if !prov_indices_may_write(graph.k.c, own[:]) {
 				prov_note_walk_reads(graph, walk, from)
 			}
@@ -301,7 +316,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 		}
 	} else {
 		loads := only || prov_read_is_reads_only(graph.k.c, prov_type(graph, carrier))
-		outer := prov_reach_hop(graph, place, hops, at + 1, loads, false, walk)
+		outer := prov_reach_hop(graph, place, hops, at + 1, loads, false, walk, again)
 		from := prov_next_event(graph)
 		slots = prov_load_content(
 			graph, outer, hops[at + 1].path, prov_type(graph, carrier), expr_span(carrier), reads_only = loads,
@@ -316,7 +331,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 	if captures {
 		slots = prov_capture(graph, slots, expr_span(inner))
 	}
-	if !(store && at == 0) {
+	if !(store && at == 0) && !again {
 		for index in indices {
 			walk_flow_expr(graph, index)
 		}
@@ -340,6 +355,48 @@ prov_name_loaded :: proc(graph: ^Flow_Graph, slots, outer: []int) {
 			entry.name = name
 		}
 	}
+}
+
+// Whether `place`, reached through carriers, can be found again through them
+// where a call starts without evaluating anything twice (`Prov_Reserved`): the
+// outermost carrier is read from a named place, and no index on the way may run a
+// program's code, which would have the carriers captured where it is evaluated
+// (`prov_reach_hop`).
+@(private)
+prov_place_reservable :: proc(graph: ^Flow_Graph, place: Expr) -> bool {
+	hops := prov_place_hops(graph, place)
+	if len(hops) == 0 {
+		return false
+	}
+	indices := make([dynamic]Expr, 0, 0, graph.alloc)
+	for hop, at in hops {
+		carrier := prov_value(graph, hop.carrier).origin
+		inner := at == 0 ? place : prov_value(graph, hops[at - 1].carrier).origin
+		prov_segment_indices(inner, carrier, &indices)
+	}
+	outermost := prov_value(graph, hops[len(hops) - 1].carrier).origin
+	if _, _, named := prov_place_of(graph, outermost); !named {
+		return false
+	}
+	prov_segment_indices(outermost, nil, &indices)
+	return !prov_indices_may_write(graph.k.c, indices[:])
+}
+
+// The places holding the named carriers `place` is reached through
+// (`Prov_Reserved.watched`).
+@(private)
+prov_reserved_carriers :: proc(graph: ^Flow_Graph, place: Expr) -> []Prov_Reserved_Place {
+	hops := prov_place_hops(graph, place)
+	if len(hops) == 0 {
+		return nil
+	}
+	root, path, named := prov_place_of(graph, prov_value(graph, hops[len(hops) - 1].carrier).origin)
+	if !named {
+		return nil
+	}
+	out := make([]Prov_Reserved_Place, 1, graph.alloc)
+	out[0] = Prov_Reserved_Place{root, path}
+	return out
 }
 
 // The index expressions from `from` down to the carrier `to`, or to the root

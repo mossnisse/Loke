@@ -100,8 +100,8 @@ argument_twice :: proc(h: ^mut Holder) {
 	add_from(&mut h^.count, &mut h^.count);
 }
 
-argument_read :: proc(h: ^mut Holder) {
-	add(&mut h^.count, h^.count);
+argument_written :: proc(h: ^mut Holder) {
+	add(&mut h^.count, bump_index(&mut h^.count));
 }
 
 // A weakened mutable borrow only reads the carriers it goes through, not what

@@ -3,8 +3,8 @@ package main;
 import "core:fmt";
 
 // design.md "Weakening and reborrows": an `inout` receiver reached through a carrier
-// is a borrow of that place, for the call's other arguments and for as long as what
-// it returns is in use.
+// is a borrow of that place, reserved while the call's other arguments are evaluated
+// and held for as long as what it returns is in use.
 
 clearing :: proc(m: inout map[int]int) -> int { m.clear(); return 0; }
 clearing_through :: proc(m: ^mut map[int]int) -> int { m^.clear(); return 0; }
@@ -79,8 +79,8 @@ an_argument_invalidating_the_receiver :: proc(d: ^mut [dynamic]map[int]int) {
 	d^[0].find_or_insert(grow(d), 7);
 }
 
-an_argument_reading_the_receiver :: proc(d: ^mut [dynamic]int) {
-	d^.append(d^.len());
+an_argument_viewing_the_receiver :: proc(d: ^mut [dynamic]int) {
+	d^.append(..d^[:]);
 }
 
 cleared_while_printed :: proc(p: ^mut map[int]int) {

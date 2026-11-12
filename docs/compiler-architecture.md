@@ -631,6 +631,21 @@ Keep these contracts:
   also counts what it reads itself as in use. A source found only through what was
   reborrowed from it does not count (`at_once_reaches`): a copy points where its
   source does, so that only says the copy's loan names storage holding the source.
+- **A call's mutable loans start after its arguments.** design.md "Weakening and
+  reborrows" reserves the loan an argument takes for its call. Where the argument
+  is evaluated the walk takes a read-only hold of its place (`prov_reserve_place`,
+  `prov_reserve_through`, `prov_reserve_carriers`) and runs the code that takes
+  the mutable loan there too, but lifts the events it emits out of the block
+  (`prov_begin_reserve`, `prov_end_reserve`). `prov_start_reserved` ends the holds
+  after the last argument and appends each lifted list in evaluation order, so
+  the solver sees the loan start at the call. A hold's access carries the access
+  the call makes (`Prov_Event.starts`), so a borrow in use where the argument is
+  evaluated is reported as it was, and `reserved` on a loan, reborrow, or place
+  loan words the diagnostic. The events go back in place, which is the old
+  behavior, when a later argument writes the named carrier the place was reached
+  through (`Prov_Reserved.watched`), since the place was computed before that
+  write, and when the lifted code recorded effect operations that cannot be
+  moved (`Prov_Reserved.kept`). `provenance_reserve.odin` owns this.
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further
@@ -1114,7 +1129,7 @@ be file-private. Paths below are relative to `src/`.
 | `provenance_regions.odin`, `provenance_thread_summaries.odin` | Which allocator regions a value, local, or path is in, and what a body's thread summaries collect of its reach and allocator use. |
 | `provenance_providers.odin`, `provenance_resets.odin` | The token of each provider position a local's type fixes and the providers moved into it; the reset check: what a reset may end that is still in use, handed to the caller, or promised. |
 | `provenance_overwrites.odin` | The parameter places assigned on every path to each read, from the walk's control flow, so a read there is not in what the caller supplied unless a write may have put that back. |
-| `provenance_arguments.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |
+| `provenance_arguments.odin`, `provenance_reserve.odin`, `provenance_builtins.odin`, `provenance_containers.odin`, `provenance_retention.odin`, `provenance_results.odin`, `provenance_tasks.odin` | Call effects: what an argument lends, the mutable loans a call reserves until it starts, builtins, container operations and text, what a call may leave behind, its result, and what a task holds until its join. |
 | `provenance_offsets.odin`, `provenance_aliases.odin` | Where a carrier may point below its storage, merged past the limits, with the definitions reaching a block; written aliases, what a local's carriers and a value with no transfer may reach. |
 | `provider_end.odin` | Where a provider's region ends, which both walks ask at the same `Reset_Key`. |
 | `panic_free.odin` | Which statements cannot panic, so they need no unwind path. |

@@ -168,6 +168,9 @@ Prov_Loan :: struct {
 	root:    Root_Id,
 	path:    []Proj_Step,
 	mutable: bool,
+	// Read-only until the call it is an argument of starts, which then takes the
+	// mutable loan (design.md "Weakening and reborrows").
+	reserved: bool,
 	span:    Span,
 	what:    string,
 	// A `Param` loan of what the parameter already held when the call began, as
@@ -349,6 +352,8 @@ Prov_Reborrow :: struct {
 	derived: int,
 	span:    Span,
 	mutable: bool,
+	// Read-only until the call it is an argument of starts (`Prov_Loan.reserved`).
+	reserved: bool,
 	// Only extends the reborrow `source` belongs to: its copies do not suspend it.
 	passes_on: bool,
 	// Taken from a read-only carrier that may come to hold a reborrow of a mutable one,
@@ -382,6 +387,8 @@ Prov_Place_Loan :: struct {
 	paths:   [][]Proj_Step,
 	mutable: bool,
 	borrows: bool,
+	// Read-only until the call it is an argument of starts (`Prov_Loan.reserved`).
+	reserved: bool,
 	what:    string,
 	span:    Span,
 	place:   string,

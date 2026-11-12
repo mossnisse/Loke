@@ -41,8 +41,8 @@ L0641
 @100:26
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@104:21
-`h` cannot be used here: a mutable reborrow of it is still in use
+@104:32
+`h` cannot be used here: a reserved reborrow of it is still in use
 L0641
 @113:41
 `q` cannot be used here: a read-only reborrow of it is still in use

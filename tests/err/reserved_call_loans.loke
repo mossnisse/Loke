@@ -1,0 +1,93 @@
+package main;
+
+// design.md "Weakening and reborrows": while a mutable loan is reserved for its
+// call the place may be read, not written, and when the call starts the loan
+// conflicts with whatever is still in use.
+
+Counter :: struct { n: int, name: string }
+Pair :: struct { a: ^mut Counter, b: ^mut Counter }
+
+impl Counter {
+	add :: proc(self: inout, n: int) { self.n += n; }
+	set_name :: proc(self: inout, name: string) { self.n = name.len(); }
+	watch :: proc(self: inout, seen: ^int) { self.n += seen^; }
+	consume :: proc(self: move, n: int) -> int { return self.n + n; }
+}
+
+put :: proc(c: inout Counter, n: int) { c.n = n; }
+put_seen :: proc(c: inout Counter, seen: ^int) { c.n = seen^; }
+poke :: proc(c: ^mut Counter, n: int) { c^.n = n; }
+poke_seen :: proc(c: ^mut Counter, seen: ^int) { c^.n = seen^; }
+bump :: proc(c: ^mut Counter) -> int { c^.n += 1; return c^.n; }
+pick :: proc(c: ^mut Counter) -> ^mut Counter { return c; }
+sum_pair :: proc(pair: Pair, n: int) { pair.a^.n += n; }
+add_all :: proc(n: int, cs: ..^mut Counter) { foreach (c in cs) { c^.n += n; } }
+retarget :: proc(p: inout ^mut Counter, @(escape=stored) other: ^mut Counter) -> int { p = other; return 10; }
+look :: proc(c: ^Counter) -> int { return c^.n; }
+
+// A write while the place is reserved.
+written_while_reserved :: proc() {
+	c := Counter{1, "a"};
+	c.add(bump(&mut c));
+	put(inout c, bump(&mut c));
+	poke(&mut c, bump(&mut c));
+}
+
+// A borrow a later argument hands to the call is in use when the call starts.
+handed_to_the_call :: proc() {
+	c := Counter{1, "a"};
+	xs := [dynamic]int{1};
+	defer drop(xs);
+	xs.append(..xs[:]);
+	c.set_name(c.name);
+	c.watch(&c.n);
+	put_seen(inout c, &c.n);
+	poke_seen(&mut c, &c.n);
+}
+
+// Through a pointer the same calls are rejected as a use of the pointer.
+through_a_pointer :: proc(p: ^mut Counter, xs: ^mut [dynamic]int) {
+	p^.add(bump(p));
+	put(inout p^, bump(p));
+	poke(&mut p^, bump(p));
+	poke(p, bump(p));
+	xs^.append(..xs^[:]);
+	p^.watch(&p^.n);
+	poke_seen(p, &p^.n);
+}
+
+// A mutable borrow still in use where the argument is evaluated conflicts there.
+borrowed_before :: proc() {
+	c := Counter{1, "a"};
+	q := &mut c;
+	c.add(q^.n);
+}
+
+// A carrier in a record or a pack is reserved as one passed by itself is.
+carriers :: proc(pair: Pair) {
+	sum_pair(pair, bump(pair.a));
+	add_all(1, pair.a, pick(pair.a));
+	add_all(1, pair.a, pair.a);
+}
+
+// A transfer happens where it is written.
+moved :: proc() {
+	c := Counter{1, "a"};
+	total := move(c).consume(c.n);
+}
+
+// A carrier an argument computes is in use from where it is made.
+computed :: proc(p: ^mut Counter) {
+	poke(pick(p), p^.n);
+}
+
+// An argument that writes the pointer the receiver was reached through: the
+// receiver's loan starts where it was evaluated, as an earlier view of it shows.
+rewritten_pointer :: proc(p: ^mut Counter, @(escape=stored) other: ^mut Counter) {
+	held := p;
+	view: ^Counter = held;
+	held^.add(retarget(inout held, other));
+	held^.add(look(view));
+}
+
+main :: proc() {}

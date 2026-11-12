@@ -5691,7 +5691,9 @@ conditional expressions, expression evaluation is deterministic:
   initialized. Each default otherwise uses the lexical scope of its procedure
   declaration. A [union argument expansion](#union-argument-expansion) evaluates
   its operand before the call it selects, receiver included, as the switch it
-  means evaluates its subject first.
+  means evaluates its subject first. A mutable loan that the receiver or an
+  argument takes for the call is [reserved](#weakening-and-reborrows) until all
+  of these are evaluated, so the later ones may read its place.
 - A binary expression evaluates its left operand and then its right operand. An
   operator overload receives those already evaluated values and does not change
   their order.
@@ -7765,8 +7767,9 @@ A borrow of a place reached through a carrier, as `&h^.count` or
 `h^.items[:]`, a traversal of one, as `foreach (item in h^.items)`, or an
 `inout` receiver, as in `h^.items.append(1)`, reborrows that carrier, and each
 carrier loaded on the way, as `p^` for `&p^^.count`, for that place only. A
-receiver's reborrow lasts through the call's other arguments and through what
-the call returns from it. While the borrow is in
+receiver's reborrow is reserved while the call's other arguments are evaluated,
+as described below, and lasts through the call and through what the call returns
+from it. While the borrow is in
 use, the carrier may still be used for a place that does not
 [overlap](#places-and-overlap) it, such as another field. Copying the carrier,
 or passing it to a procedure, by itself or in a record passed by value, uses all
@@ -7882,6 +7885,59 @@ after_a_copy :: proc() {
 	second^ = 2;
 }
 ```
+
+A mutable loan that an argument takes for its call is **reserved** while the
+arguments after it and the omitted defaults are [evaluated](#evaluation-order),
+and becomes mutable when the call starts. These arguments take such a loan:
+
+- an `inout` receiver, and an `inout` argument that names a place;
+- `&mut place` written as the argument, `&mut place[lo:hi]` included;
+- a mutable carrier read from a place, as `p`, `list^.head`, or the reslice
+  `&mut xs[1:]`, passed where a mutable carrier is wanted, by itself, in a record
+  passed by value, or as one operand of a [variadic pack](#variadic-parameters).
+
+While a loan is reserved its place may be read, as under a read-only borrow of
+it. It may not be written, moved, mutably borrowed, or invalidated, so the place
+the argument computed stays valid. A mutable borrow of the place that is still
+in use where the argument is evaluated conflicts there, as it does with any
+read. When the call starts, the reserved loans are taken in the order their
+arguments were evaluated, and each conflicts with what is still in use then. A
+borrow that a later argument hands to the call is in use through the call, so
+it conflicts:
+
+```loke
+Counter :: struct { n: int, name: string }
+
+impl Counter {
+	add :: proc(self: inout, n: int) { self.n += n; }
+	rename :: proc(self: inout, name: string) { self.name = name.clone(); }
+}
+
+put :: proc(c: inout Counter, n: int) { c.n = n; }
+poke :: proc(c: ^mut Counter, n: int) { c^.n = n; }
+bump :: proc(c: ^mut Counter) -> int { c^.n += 1; return c^.n; }
+
+reserved :: proc(xs: inout [dynamic]int) {
+	c := Counter{1, "a"};
+	c.add(c.n);              // OK: `c` is only read while it is reserved
+	put(inout c, c.n + 1);   // OK
+	poke(&mut c, c.n + 1);   // OK
+	xs.append(xs.len());     // OK
+
+	p := &mut c;
+	poke(p, p^.n);           // OK: `p` is only read until the call starts
+	p^.add(p^.n);            // OK
+
+	c.add(bump(&mut c));     // ERROR: a write while `c` is reserved
+	c.rename(c.name);        // ERROR: the argument shares `c.name` through the call
+	xs.append(..xs[:]);      // ERROR: the slice is in use through the call
+}
+```
+
+A `self: move` receiver and a `move` argument are not reserved: a transfer
+happens where it is written. Neither is a carrier that an argument computes, as
+the result of a call or an [`inout` result](#inout-results) passed on: it is in
+use from where it is made.
 
 #### Places and overlap
 

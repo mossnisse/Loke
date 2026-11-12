@@ -1,0 +1,72 @@
+L0511
+@31:13
+this write of `c` is not compatible with the reserved borrow of it that is still in use
+L0511
+@32:20
+this write of `c` is not compatible with the reserved borrow of it that is still in use
+L0511
+@33:20
+this write of `c` is not compatible with the reserved pointer of it that is still in use
+L0512
+@41:2
+`xs` cannot be modified here: a read-only slice of it is still in use
+L0512
+@42:2
+`c` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@43:2
+`c` cannot be modified here: a read-only pointer of it is still in use
+L0511
+@44:17
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@45:12
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0641
+@50:14
+`p` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@51:21
+`p` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@52:21
+`p` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@53:15
+`p` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@54:2
+`xs` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@55:2
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@56:12
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0512
+@63:2
+`c` cannot be modified here: a mutable pointer of it is still in use
+L0641
+@68:22
+`pair` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@69:13
+`pair` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@69:26
+`pair` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@70:21
+`pair` cannot be used here: a mutable reborrow of it is still in use
+L0500
+@76:27
+`c` cannot be used here: it has already been moved, dropped, or released
+L0641
+@81:16
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@89:2
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@89:12
+`held` cannot be used here: a read-only reborrow of it is still in use

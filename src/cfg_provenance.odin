@@ -1357,13 +1357,19 @@ prov_access :: proc(
 	span: Span,
 	verb := "",
 	reads_only := false,
+	starts := Access_Kind.Read,
 ) -> (block: Block_Id, index: int) {
 	if root == NO_ROOT {
 		return NO_BLOCK, -1
 	}
 	if kind != .Read {
 		prov_note_static_write(graph, root, span)
-	} else {
+		if graph.reserving > 0 {
+			append(&graph.reserved_writes, Prov_Reserved_Place{root, path})
+		}
+	} else if starts == .Read {
+		// A read that reserves the place is of nothing the call's own write, noted
+		// when it is recorded, does not cover.
 		prov_note_static_read(graph, root)
 	}
 	// design.md "@(synchronized)": a synchronizing operation may write the
@@ -1399,6 +1405,7 @@ prov_access :: proc(
 		root   = root,
 		path   = path,
 		access = access,
+		starts = starts,
 		span   = span,
 		verb   = verb,
 	})
@@ -1801,15 +1808,20 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 // what it borrows, which covers the read. A read-only destination weakens a
 // mutable one (`prov_through_marker`). A slice, given as `bounds`, has its
 // bounds evaluated after the carriers. False when `place` is reached through no
-// carrier.
+// carrier. `again` takes the borrow of a place already evaluated, where a call
+// starts (`prov_take_reserved_borrow`).
 @(private = "file")
-prov_borrow_through :: proc(graph: ^Flow_Graph, place: Expr, mutable: bool, span: Span, what: string, bounds: ^Expr_Slice = nil) -> (loans: []int, through: bool) {
+prov_borrow_through :: proc(
+	graph: ^Flow_Graph, place: Expr, mutable: bool, span: Span, what: string, bounds: ^Expr_Slice = nil, again := false,
+) -> (loans: []int, through: bool) {
 	walk := make([dynamic]Prov_Event_At, 0, 0, graph.alloc)
-	carriers, below, reached := prov_read_through_carrier(graph, place, reads_only = !mutable, walk = &walk, reads = !mutable)
+	carriers, below, reached := prov_read_through_carrier(
+		graph, place, reads_only = !mutable, walk = &walk, reads = !mutable, again = again,
+	)
 	if !reached {
 		return nil, false
 	}
-	if bounds != nil {
+	if bounds != nil && !again {
 		prov_walk_slice_bounds(graph, bounds)
 	}
 	at, end := -1, -1
@@ -1822,6 +1834,97 @@ prov_borrow_through :: proc(graph: ^Flow_Graph, place: Expr, mutable: bool, span
 	prov_note_walk_reads(graph, &walk, held)
 	marker := prov_through_marker(graph, at, end, walk[:])
 	return prov_join(graph, prov_place_loan(graph, carriers, below, mutable, what, place, borrows = true), marker), true
+}
+
+// Whether `e` is `&mut place` as written, a slice of a place included.
+@(private)
+prov_borrows_place :: proc(e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Unary:
+		return v.op == .Amp && v.mutable
+	case ^Expr_Slice:
+		return v.mutable && v.resolution.kind != .User_Operator
+	}
+	return false
+}
+
+// The place `&mut place` borrows, with the slice that gives its bounds, its span,
+// and what to call it, as `prov_borrow_place` and `prov_slice` take them. No place
+// for a reslice of a carrier, which borrows nothing new.
+@(private)
+prov_borrowed_place :: proc(graph: ^Flow_Graph, e: Expr) -> (place: Expr, bounds: ^Expr_Slice, span: Span, what: string) {
+	#partial switch v in e {
+	case ^Expr_Unary:
+		return v.operand, nil, v.span, "pointer"
+	case ^Expr_Slice:
+		kind := underlying_kind(graph.k.c, prov_type(graph, v.operand))
+		if kind == .Array || kind == .String || kind == .Dynamic_Array {
+			return v.operand, v, v.span, carrier_noun(graph.k.c, prov_type(graph, v))
+		}
+	}
+	return nil, nil, {}, ""
+}
+
+// design.md "Weakening and reborrows": `&mut place` written as an argument is
+// reserved until its call starts. This evaluates the place and borrows it
+// read-only, as `&place` would, which is what the argument holds until then;
+// `watched` are the places holding the carriers it was reached through
+// (`Prov_Reserved.watched`). False when the place cannot be found again where the
+// call starts (`prov_place_reservable`), or is none: a temporary, an `inout`
+// result, or a binding that views another owner's storage.
+@(private)
+prov_reserve_borrow :: proc(graph: ^Flow_Graph, argument: Expr) -> (hold: []int, watched: []Prov_Reserved_Place, reserves: bool) {
+	place, bounds, span, what := prov_borrowed_place(graph, argument)
+	if place == nil {
+		return
+	}
+	if ident, is_ident := place.(^Expr_Ident); is_ident {
+		if _, viewed := graph.view_loans[ident.symbol]; viewed && !graph.step_views[ident.symbol] {
+			return
+		}
+	}
+	if root, path, named := prov_place_of(graph, place); named {
+		prov_walk_subscripts(graph, place)
+		if bounds != nil {
+			prov_walk_slice_bounds(graph, bounds)
+			path = prov_extend(graph, path, prov_range_step(graph, bounds))
+		}
+		hold = prov_reserve_place(graph, root, path, .Write, span, "", span, what)
+		if held := prov_carrier_slots(graph, place); len(held) > 0 && bounds == nil {
+			prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span, reads_only = true})
+		}
+		return hold, nil, true
+	}
+	if !prov_place_reservable(graph, place) {
+		return
+	}
+	carriers, below, _ := prov_read_through_carrier(graph, place, reads_only = true, reads = false)
+	if bounds != nil {
+		prov_walk_slice_bounds(graph, bounds)
+	}
+	prov_reserve_through(graph, carriers, below, span, "mutable borrow", place)
+	prov_use_held(graph, carriers, below, prov_type(graph, place), span, true)
+	hold = prov_place_loan(graph, carriers, below, false, what, place, borrows = true, reserved = true)
+	return hold, prov_reserved_carriers(graph, place), true
+}
+
+// The mutable borrow `prov_reserve_borrow` reserved, taken where the call starts.
+@(private)
+prov_take_reserved_borrow :: proc(graph: ^Flow_Graph, argument: Expr) -> []int {
+	place, bounds, span, what := prov_borrowed_place(graph, argument)
+	root, path, named := prov_place_of(graph, place)
+	if !named {
+		loans, _ := prov_borrow_through(graph, place, true, span, what, bounds, again = true)
+		return loans
+	}
+	if bounds != nil {
+		path = prov_extend(graph, path, prov_range_step(graph, bounds))
+	}
+	access_block, access_index := prov_access(graph, root, path, .Write, span)
+	if held := prov_carrier_slots(graph, place); len(held) > 0 && bounds == nil {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span})
+	}
+	return prov_borrow(graph, root, path, true, span, what, access_block, access_index)
 }
 
 // A slot standing for a borrow through carriers (`Prov_Through_Borrow`):
@@ -1853,7 +1956,7 @@ prov_use_held :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, ty
 	prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = carriers, path = path, span = span, reads_only = reads_only})
 }
 
-@(private = "file")
+@(private)
 prov_walk_slice_bounds :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) {
 	if v.lo != nil {
 		walk_flow_expr(graph, v.lo)

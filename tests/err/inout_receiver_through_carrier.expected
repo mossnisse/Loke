@@ -27,10 +27,10 @@ L0641
 `r` cannot be used here: a mutable reborrow of it is still in use
 L0641
 @79:28
-`d` cannot be used here: a mutable reborrow of it is still in use
+`d` cannot be used here: a reserved reborrow of it is still in use
 L0641
-@83:12
-`d` cannot be used here: a mutable reborrow of it is still in use
+@83:2
+`d` cannot be used here: a read-only reborrow of it is still in use
 L0641
 @87:55
 `p` cannot be used here: a mutable reborrow of it is still in use

@@ -4,7 +4,7 @@ import "core:fmt";
 
 // design.md "Weakening and reborrows": a mutable carrier passed to a call, or
 // the storage `inout p^` reaches through one, is reborrowed for the call, so
-// another argument cannot use it at the same time.
+// another argument cannot hand the call a use of it.
 
 grow_and_read :: proc(a: inout [dynamic]int, b: []int) {
 	for (i := 0; i < 1000; i += 1) { a.append(i); }

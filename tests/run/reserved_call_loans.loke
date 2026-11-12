@@ -1,0 +1,137 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": a mutable loan an argument takes for its
+// call is reserved while the arguments after it are evaluated, so they may read
+// the place, and becomes mutable when the call starts.
+
+Counter :: struct { n: int, flag: bool }
+Pair :: struct { a: ^mut Counter, b: ^mut Counter }
+Row :: struct { cells: [dynamic]int, total: int }
+
+impl Counter {
+	set :: proc(self: inout, flag: bool) { self.flag = flag; }
+	add :: proc(self: inout, n: int) { self.n += n; }
+	get :: proc(self: ^) -> int { return self.n; }
+	scale :: proc(self: inout, by: int, again := by + 1) { self.n = self.n * by + again; }
+}
+
+put :: proc(c: inout Counter, n: int) { c.n = n; }
+poke :: proc(c: ^mut Counter, n: int) { c^.n = n; }
+later :: proc(n: int, c: inout Counter) { c.n = n; }
+bump :: proc(c: ^mut Counter) -> int { c^.n += 1; return c^.n; }
+fill :: proc(xs: []mut int, n: int) { foreach (&mut x in xs) { x = n; } }
+sum_pair :: proc(pair: Pair, n: int) { pair.a^.n += n; pair.b^.n += n; }
+add_all :: proc(n: int, cs: ..^mut Counter) { foreach (c in cs) { c^.n += n; } }
+retarget :: proc(p: inout ^mut Counter, @(escape=stored) other: ^mut Counter) -> int { p = other; return 10; }
+
+// The calls of the rule's own list.
+listed :: proc() {
+	c := Counter{1, false};
+	c.set(!c.flag);
+	c.add(c.get());
+	put(inout c, c.n + 1);
+	poke(&mut c, c.n + 1);
+	later(c.n * 2, inout c);
+	xs := [dynamic]int{5};
+	defer drop(xs);
+	xs.append(xs.len());
+	xs.append(xs[0]);
+	fmt.println(c.n, c.flag, xs);
+}
+
+// Through a pointer a call behaves as the same call on the place.
+through_a_pointer :: proc(p: ^mut Counter, row: ^mut Row, rows: []mut Row, pp: ^mut ^mut Counter) {
+	p^.set(!p^.flag);
+	p^.add(p^.get());
+	put(inout p^, p^.n + 1);
+	poke(&mut p^, p^.n + 1);
+	poke(p, p^.n * 2);
+	row^.cells.append(row^.cells.len());
+	row^.cells.append(row^.total);
+	rows[0].cells.append(rows[0].cells[0]);
+	rows[0].cells.append(rows[1].total);
+	pp^^.add(pp^^.n);
+	fmt.println(p^.n, p^.flag, row^.cells, rows[0].cells, pp^^.n);
+}
+
+// A read-only reborrow taken before the call is read in a later argument, and
+// done with when the call starts.
+an_earlier_view :: proc(p: ^mut Counter) {
+	view: ^Counter = p;
+	p^.add(view^.n);
+	again: ^Counter = p;
+	poke(p, again^.n + 1);
+	fmt.println(p^.n);
+}
+
+// A reslice, a record holding carriers, and a pack's operands lend the carriers
+// they are read from.
+carriers :: proc(xs: []mut int, pair: Pair, h: ^mut Pair) {
+	fill(&mut xs[1:], xs.len());
+	fill(&mut xs[:1], xs[2] + 1);
+	sum_pair(pair, pair.a^.n);
+	sum_pair(h^, h^.b^.n);
+	add_all(pair.a^.n, pair.a, pair.b);
+	poke(h^.a, h^.a^.n + 1);
+	fmt.println(xs, pair.a^.n, pair.b^.n);
+}
+
+// Defaults are evaluated after the supplied arguments, and a loop takes the
+// loan afresh each time round.
+defaults_and_loops :: proc() {
+	c := Counter{2, false};
+	c.scale(c.n);
+	total := [dynamic]int{};
+	defer drop(total);
+	for (i := 0; i < 3; i += 1) {
+		total.append(total.len() + c.n);
+		c.add(total[i]);
+	}
+	fmt.println(c.n, total);
+}
+
+// An argument that writes the pointer the receiver was reached through leaves
+// the receiver the place computed first.
+rewritten_pointer :: proc() {
+	first := Counter{1, false};
+	second := Counter{100, false};
+	p := &mut first;
+	p^.add(retarget(inout p, &mut second));
+	fmt.println(p^.n);
+	fmt.println(first.n, second.n);
+}
+
+// What the nested call wrote is what the outer call reads, in evaluation order.
+nested :: proc() {
+	c := Counter{1, false};
+	other := Counter{5, false};
+	c.add(bump(&mut other) + c.n);
+	fmt.println(c.n, other.n);
+}
+
+main :: proc() {
+	listed();
+	c := Counter{1, false};
+	d := Counter{7, false};
+	row := Row{[dynamic]int{4}, 9};
+	defer drop(row);
+	rows := [2]Row{Row{[dynamic]int{6}, 1}, Row{[dynamic]int{}, 2}};
+	defer drop(rows);
+	q := &mut d;
+	through_a_pointer(&mut c, &mut row, &mut rows[:], &mut q);
+	an_earlier_view(&mut c);
+	values := [3]int{1, 2, 3};
+	x := Counter{1, false};
+	y := Counter{2, false};
+	z := Counter{3, false};
+	w := Counter{4, false};
+	held := Pair{&mut x, &mut y};
+	other := Pair{&mut z, &mut w};
+	carriers(&mut values[:], held, &mut other);
+	fmt.println(z.n, w.n);
+	defaults_and_loops();
+	rewritten_pointer();
+	nested();
+}
