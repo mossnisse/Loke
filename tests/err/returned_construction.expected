@@ -26,3 +26,9 @@ L0512
 @50:16
 `list` cannot be moved into the returned value here: a read-only slice of it is still in use
 a `return` transfers a local its value is built from; write `.clone()` to return a copy
+
+L0500
+@58:9
+`kept` cannot be used here: it has already been moved, dropped, or released
+!transfers `kept`
+!runtime.loke

@@ -50,4 +50,12 @@ still_borrowed :: proc() -> Viewed {
 	return Viewed{list, view};
 }
 
+// A written `move` ended this local, so no `return` is blamed for it.
+moved_by_hand :: proc() -> int {
+	kept := [dynamic]int{1};
+	other := move(kept);
+	defer drop(other);
+	return kept.len();
+}
+
 main :: proc() {}
