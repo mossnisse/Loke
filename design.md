@@ -1299,6 +1299,7 @@ Along with `len` and `cap`, a dynamic array supports:
 - `x.resize(n)` sets the length to `n`, zero-filling new elements and growing
   the capacity if needed.
 - `x.reserve(n)` makes the capacity at least `n` without changing the length.
+  An array that has to grow gets a capacity of exactly `n`.
 - `x.shrink()` reduces the capacity to the current length, or to a specified
   minimum.
 - `x.pop()` removes and returns the last element as `Option(T)`; an empty array
@@ -1307,7 +1308,11 @@ Along with `len` and `cap`, a dynamic array supports:
   last element into its location.
 - `x.remove(i)` removes and returns an element while preserving order.
 
-The growth policy is implementation-defined.
+How far `append`, `insert`, and `resize` grow the capacity is
+implementation-defined, and is geometric, so that adding elements one at a time
+costs amortized constant time each. `reserve` does not round its request up to
+that step: code that reserves room for one more element on each pass reserves
+ahead instead, as in `x.reserve(x.cap() * 2 + 8)` when `x.len() == x.cap()`.
 
 #### Creating and releasing slices and dynamic arrays
 

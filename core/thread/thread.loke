@@ -223,8 +223,12 @@ impl Task_Scope {
 			return;
 		case .none:
 		}
-		wanted := self.threads.len() + 1;
-		self.threads.reserve(wanted);
+		// `reserve` takes its capacity exactly, so the list doubles here rather
+		// than move for every thread.
+		if (self.threads.len() == self.threads.cap()) {
+			wanted := self.threads.cap() * 2 + 4;
+			self.threads.reserve(wanted);
+		}
 		handle := rt_create_thread(nil, 0, thread_main, frame, 0, nil);
 		if (handle == 0) {
 			panic("thread creation failed");

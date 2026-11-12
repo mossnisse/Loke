@@ -62,7 +62,8 @@ static void *dyn_at(const loke_rt_dynamic_v1 *self, const loke_rt_container_ops_
 
 /* m6b-plan decision "Growth/table policy": geometric growth with a small
  * minimum. The exact sequence is pinned by the runtime tests and is deliberately
- * not a language guarantee. */
+ * not a language guarantee. This is the capacity an operation that adds elements
+ * grows to; a requested capacity is taken exactly, by `loke_rt_v1_dyn_reserve`. */
 static int32_t dyn_growth_target(int64_t cap, int64_t min_capacity, int64_t *out) {
 	int64_t want = min_capacity;
 	if (cap > 0) {
@@ -81,22 +82,12 @@ static int32_t dyn_growth_target(int64_t cap, int64_t min_capacity, int64_t *out
 	return 1;
 }
 
-int32_t loke_rt_v1_dyn_reserve(
-	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
-	int64_t target;
+/* Moves the storage to hold `target` elements, which is more than it holds now. */
+static int32_t dyn_grow_storage(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t target) {
 	uint64_t old_bytes, new_bytes;
 	void *storage;
 
-	if (min_capacity < 0) {
-		loke_rt_v1_container_fault("a container capacity cannot be negative");
-	}
-	loke_rt_v1_dyn_bind(self);
-	if (min_capacity <= self->cap) {
-		return 1;
-	}
-	if (!dyn_growth_target(self->cap, min_capacity, &target)) {
-		return 0;
-	}
 	if (!loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
 		return 0;
 	}
@@ -117,6 +108,22 @@ int32_t loke_rt_v1_dyn_reserve(
 	self->data = storage;
 	self->cap = target;
 	return 1;
+}
+
+/* design.md "Dynamic array container operations": a `reserve` that grows the
+ * array makes its capacity exactly the one asked for. The geometric step belongs
+ * to the operations that add elements; applied here it would hand a caller who
+ * sized an array that already has storage up to twice what it asked for. */
+int32_t loke_rt_v1_dyn_reserve(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
+	if (min_capacity < 0) {
+		loke_rt_v1_container_fault("a container capacity cannot be negative");
+	}
+	loke_rt_v1_dyn_bind(self);
+	if (min_capacity <= self->cap) {
+		return 1;
+	}
+	return dyn_grow_storage(self, ops, min_capacity);
 }
 
 /* design.md "What the unwind runs, and what it does not": the caller keeps the
@@ -460,8 +467,13 @@ int32_t loke_rt_v1_dyn_resize(
 		return 1;
 	}
 	loke_rt_v1_dyn_bind(self);
-	if (!loke_rt_v1_dyn_reserve(self, ops, new_len)) {
-		return 0;
+	/* A resize adds elements, so it grows as `append` does: lengthening an array
+	 * one element at a time stays linear. */
+	if (new_len > self->cap) {
+		int64_t target;
+		if (!dyn_growth_target(self->cap, new_len, &target) || !dyn_grow_storage(self, ops, target)) {
+			return 0;
+		}
 	}
 	/* Every Loke zero value is all-zero bits, so the new tail is one memset and
 	 * the drop of an untouched element is the no-op every hook already handles. */

@@ -5,7 +5,7 @@ import "core:sync";
 
 // design.md "Lifecycle hooks and resource types": a failed array clone drops
 // exactly its completed prefix in reverse and leaves the source alive.
-// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+// One element is 2^59 bytes, which no heap has.
 Huge :: struct { pad: [576460752303423488]u8 }
 rejected, original_drops, order: int;
 copies: sync.Atomic(int);

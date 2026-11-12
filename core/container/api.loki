@@ -278,8 +278,9 @@ impl Deque($T) {
 
 	/*
 		Makes room for at least `capacity` elements in all, following the allocator's
-		failure policy. The elements are moved across in order and the old ring
-		released. A negative `capacity` panics.
+		failure policy. A deque that has to grow gets room for exactly `capacity`. The
+		elements are moved across in order and the old ring released. A negative
+		`capacity` panics.
 	*/
 	reserve :: proc(self: inout, capacity: int) ---;
 

@@ -7,7 +7,7 @@ import "core:sync";
 // `filled` builds its slots in raw capacity, so a copy that fails partway
 // releases the slots already built, each once, and never touches the rest.
 
-// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+// One element is 2^59 bytes, which no heap has.
 Huge :: struct { pad: [576460752303423488]u8 }
 Tracked :: struct { id: int }
 impl Tracked {

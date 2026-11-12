@@ -1,0 +1,91 @@
+package main; import "core:fmt"; import "core:container"; import "core:strings";
+
+// design.md "Dynamic array container operations": a `reserve` that grows the
+// array gives it a capacity of exactly the one asked for, whatever storage it
+// already has. `append`, `insert`, and `resize` grow geometrically, so the
+// number of moves they make is counted here rather than their capacities,
+// which are the implementation's.
+
+Deque_Int :: container.Deque(int);
+
+// How many times `xs` moved to a larger capacity while `count` elements were
+// added to it one at a time.
+append_growths :: proc(xs: inout [dynamic]u32, count: int) -> int {
+	growths := 0;
+	foreach (_ in 0 ..< count) {
+		before := xs.cap();
+		xs.append(1);
+		if (xs.cap() != before) { growths += 1; }
+	}
+	return growths;
+}
+
+main :: proc() {
+	// A full array, as reported: 65536 elements, then room for half as many more.
+	xs: [dynamic]u32 = {};
+	fmt.println(xs.try_reserve(65536) == .ok, xs.cap());
+	foreach (_ in 0 ..< 65536) { xs.append(1); }
+	fmt.println(xs.len(), xs.cap());
+	fmt.println(xs.try_reserve(98304) == .ok, xs.len(), xs.cap());
+
+	// One that is not full, by the policy-following form, and a small request.
+	ys: [dynamic]u32 = {};
+	ys.reserve(16);
+	ys.append(7);
+	ys.reserve(17);
+	fmt.println(ys.len(), ys.cap(), ys[0]);
+	small: [dynamic]u32 = {};
+	small.reserve(3);
+	fmt.println(small.cap());
+
+	// A request the capacity already covers changes nothing.
+	ys.reserve(4);
+	fmt.println(ys.cap());
+
+	// `make`, a literal, and a clone are sized by the same request.
+	made := make([dynamic]u32, 2, 5);
+	literal: [dynamic]u32 = {1, 2, 3};
+	copied := literal.clone();
+	fmt.println(made.len(), made.cap(), literal.cap(), copied.cap());
+
+	// Adding elements still grows geometrically: a thousand of them move the
+	// array a handful of times, by `append` and by `resize` alike.
+	grown: [dynamic]u32 = {};
+	fmt.println(append_growths(inout grown, 1000) < 12, grown.len());
+	resized: [dynamic]u32 = {};
+	resizes := 0;
+	foreach (n in 1 ..= 1000) {
+		before := resized.cap();
+		resized.resize(n);
+		if (resized.cap() != before) { resizes += 1; }
+	}
+	fmt.println(resizes < 12, resized.len());
+
+	// An append past a reserved capacity takes the geometric step from there.
+	fmt.println(append_growths(inout small, 4) == 1, small.cap() >= 6);
+
+	// The growable containers follow the array.
+	d := Deque_Int.init(6);
+	fmt.println(d.cap());
+	foreach (i in 0 ..< 6) { d.append(i); }
+	d.reserve(9);
+	fmt.println(d.len(), d.cap(), d.try_reserve(11) == .ok, d.cap());
+	moves := 0;
+	foreach (i in 0 ..< 1000) {
+		before := d.cap();
+		d.append(i);
+		if (d.cap() != before) { moves += 1; }
+	}
+	fmt.println(moves < 12, d.len());
+
+	q: container.Min_Queue(int) = {};
+	q.reserve(5);
+	foreach (i in 0 ..< 5) { q.push(i); }
+	q.reserve(7);
+	fmt.println(q.len(), q.cap());
+
+	b := strings.init();
+	b.append("abcd");
+	b.reserve(6);
+	fmt.println(b.len(), b.cap());
+}

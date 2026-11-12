@@ -8,7 +8,7 @@ import "core:fmt";
 // already made are destroyed, nothing is published, and the caller drops the
 // temporary it built. Every value is still dropped exactly once.
 
-// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+// One element is 2^59 bytes, which no heap has.
 Huge :: struct { pad: [576460752303423488]u8 }
 
 drops: static int = 0;

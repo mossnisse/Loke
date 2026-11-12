@@ -174,7 +174,7 @@ failure :: proc() {
 	front, back := d.as_slices();
 	shown := d.clone();
 	fmt.println(back.len(), d.len() == capacity);
-	fmt.println(d.try_reserve(capacity + 1) != .ok, d == shown, d.cap() == capacity);
+	fmt.println(d.try_reserve(capacity * 2) != .ok, d == shown, d.cap() == capacity);
 	fmt.println(d.try_append(1) != .ok, d == shown);
 	fmt.println(d.try_append(1, 2, 3) != .ok, d == shown);
 	fmt.println(d.try_prepend(1) != .ok, d == shown);
@@ -201,7 +201,7 @@ failure :: proc() {
 	// A moved element is dropped.
 	spare: [256]u8 = {};
 	tight := mem.Arena.from_buffer(&mut spare[:]);
-	tokens := container.Deque(Token).try_init(1, tight.allocator()) or_else panic("small");
+	tokens := container.Deque(Token).try_init(8, tight.allocator()) or_else panic("small");
 	foreach (i in 0 ..< tokens.cap()) { tokens.append(Token{i + 1}); }
 	drops = 0;
 	refused := tokens.try_append(Token{50}) != .ok;

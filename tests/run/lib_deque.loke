@@ -205,9 +205,8 @@ main :: proc() {
 	fmt.println(d);
 
 	// Equality ignores where the ring starts. A copy is independent.
-	wrapped := Deque_Int.init();
+	wrapped := Deque_Int.init(8);
 	foreach (_ in 0 ..< 2) { wrapped.append(0); }
-	wrapped.shrink();
 	foreach (_ in 2 ..< wrapped.cap() - 2) { wrapped.append(0); }
 	foreach (_ in 2 ..< wrapped.cap() - 2) { _ = wrapped.pop_front(); }
 	_ = wrapped.pop_front();

@@ -86,14 +86,14 @@ impl Deque($T) {
 	@(private)
 	append_one_copied :: proc(self: inout, @(escape=stored) value: T) where is_copyable(T) {
 		wanted := self.count + 1;
-		self.reserve(wanted);
+		self.grow(wanted);
 		item := value.clone(self.allocator);
 		self.put_back(move(item));
 	}
 
 	append_copied :: proc(self: inout, @(escape=stored) values: ..T) where is_copyable(T) {
 		wanted := self.count + values.len();
-		self.reserve(wanted);
+		self.grow(wanted);
 		foreach (value in values) {
 			item := value.clone(self.allocator);
 			self.put_back(move(item));
@@ -102,7 +102,7 @@ impl Deque($T) {
 
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) {
 		wanted := self.count + 1;
-		self.reserve(wanted);
+		self.grow(wanted);
 		self.put_back(move(value));
 	}
 
@@ -112,7 +112,7 @@ impl Deque($T) {
 	try_append_one_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
 		item := value.try_clone(self.allocator) or_return;
 		wanted := self.count + 1;
-		self.try_reserve(wanted) or_return;
+		self.try_grow(wanted) or_return;
 		self.put_back(move(item));
 		return .ok;
 	}
@@ -139,21 +139,21 @@ impl Deque($T) {
 
 	try_append_moved :: proc(self: inout, @(escape=stored) value: move T) -> Status(Allocator_Error) {
 		wanted := self.count + 1;
-		self.try_reserve(wanted) or_return;
+		self.try_grow(wanted) or_return;
 		self.put_back(move(value));
 		return .ok;
 	}
 
 	prepend_copied :: proc(self: inout, @(escape=stored) value: T) where is_copyable(T) {
 		wanted := self.count + 1;
-		self.reserve(wanted);
+		self.grow(wanted);
 		item := value.clone(self.allocator);
 		self.put_front(move(item));
 	}
 
 	prepend_moved :: proc(self: inout, @(escape=stored) value: move T) {
 		wanted := self.count + 1;
-		self.reserve(wanted);
+		self.grow(wanted);
 		self.put_front(move(value));
 	}
 
@@ -161,14 +161,14 @@ impl Deque($T) {
 	try_prepend_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
 		item := value.try_clone(self.allocator) or_return;
 		wanted := self.count + 1;
-		self.try_reserve(wanted) or_return;
+		self.try_grow(wanted) or_return;
 		self.put_front(move(item));
 		return .ok;
 	}
 
 	try_prepend_moved :: proc(self: inout, @(escape=stored) value: move T) -> Status(Allocator_Error) {
 		wanted := self.count + 1;
-		self.try_reserve(wanted) or_return;
+		self.try_grow(wanted) or_return;
 		self.put_front(move(value));
 		return .ok;
 	}
@@ -264,7 +264,7 @@ impl Deque($T) {
 	insert_moved :: proc(self: inout, index: int, @(escape=stored) value: move T) {
 		if (index < 0 || index > self.count) { panic("Deque index is out of range"); }
 		wanted := self.count + 1;
-		self.reserve(wanted);
+		self.grow(wanted);
 		// Every slot is live before the first swap, so nothing reads raw capacity
 		// as a value.
 		if (index < self.count - index) {
@@ -314,19 +314,20 @@ impl Deque($T) {
 
 	/**
 		Makes room for at least `capacity` elements in all, following the allocator's
-		failure policy. The elements are moved across in order and the old ring
-		released. A negative `capacity` panics.
+		failure policy. A deque that has to grow gets room for exactly `capacity`. The
+		elements are moved across in order and the old ring released. A negative
+		`capacity` panics.
 	*/
 	reserve :: proc(self: inout, capacity: int) {
 		if (!self.must_grow(capacity)) { return; }
-		ring := make([dynamic]T, 0, self.grown_capacity(capacity), self.allocator);
+		ring := make([dynamic]T, 0, capacity, self.allocator);
 		_ = self.relocate(move(ring), 0);
 	}
 
 	/// As `reserve`, but a failure to allocate is returned and leaves the deque as it was.
 	try_reserve :: proc(self: inout, capacity: int) -> Status(Allocator_Error) {
 		if (!self.must_grow(capacity)) { return .ok; }
-		ring := try_make([dynamic]T, 0, self.grown_capacity(capacity), self.allocator) or_return;
+		ring := try_make([dynamic]T, 0, capacity, self.allocator) or_return;
 		_ = self.relocate(move(ring), 0);
 		return .ok;
 	}
@@ -527,11 +528,29 @@ impl Deque($T) {
 		return capacity > self.storage.cap();
 	}
 
+	// The capacity an operation that adds elements grows to: geometric, so that
+	// adding one at a time is amortized O(1). `reserve` takes its capacity exactly.
 	@(private)
 	grown_capacity :: proc(self: ^, capacity: int) -> int {
 		wanted := self.storage.cap() * 2;
 		if (wanted < capacity) { wanted = capacity; }
 		return 4 if wanted < 4 else wanted;
+	}
+
+	// Room for `wanted` elements in all, for an operation that adds them.
+	@(private)
+	grow :: proc(self: inout, wanted: int) {
+		if (!self.must_grow(wanted)) { return; }
+		ring := make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator);
+		_ = self.relocate(move(ring), 0);
+	}
+
+	@(private)
+	try_grow :: proc(self: inout, wanted: int) -> Status(Allocator_Error) {
+		if (!self.must_grow(wanted)) { return .ok; }
+		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator) or_return;
+		_ = self.relocate(move(ring), 0);
+		return .ok;
 	}
 
 	// Each requires a free slot.

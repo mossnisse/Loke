@@ -1906,6 +1906,17 @@ checklist.
 
 ### Fixed
 
+- `reserve(n)` and `try_reserve(n)` on a dynamic array that has to grow give it a capacity of
+  exactly `n` ([Dynamic array container operations](design.md#dynamic-array-container-operations),
+  rationale under ["`reserve` takes its capacity exactly"](comments.md#reserve-takes-its-capacity-exactly)).
+  They rounded the request up to `append`'s growth step whenever the array already had storage, so
+  `xs.try_reserve(98304)` on an array of capacity 65536 allocated 131072, and to 8 for a smaller
+  request. `make([dynamic]T, len, cap)`, a `[dynamic]T{...}` literal, and a clone are sized the
+  same way, and `Deque`, `Priority_Queue`, and `String_Builder` follow; a `Deque` also shrinks to
+  the capacity asked for where it kept 8. `append`, `insert`, and
+  `resize` still grow geometrically. A loop that calls `reserve(x.len() + 1)` before each
+  insertion now moves the array every time: reserve ahead instead, as in
+  `x.reserve(x.cap() * 2 + 8)` when `x.len() == x.cap()`.
 - A [struct literal](design.md#struct-literals) zero-fills the fields it omits when another field's
   type has [no zero value](design.md#types-with-no-zero-value). With a `Box(T)` field, or a field
   of an enum with no member represented by `0` in a literal with any runtime element, the omitted

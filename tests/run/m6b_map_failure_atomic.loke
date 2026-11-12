@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // Map insertion has two independent failure points: cloning the incoming value
 // and cloning a new key while the table grows. Neither may replace an existing
 // value or publish a rehash.
-// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+// One element is 2^59 bytes, which no heap has.
 Huge :: struct { pad: [576460752303423488]u8 }
 
 Key :: struct { id: int }

@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // design.md "Allocation failure": `try_make` hands the error back; `make`
 // follows the allocator's failure policy, which panics.
 
-// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+// One element is 2^59 bytes, which no heap has.
 Huge :: struct { pad: [576460752303423488]u8 }
 
 main :: proc() {

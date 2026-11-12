@@ -78,7 +78,7 @@ CAPACITY_ROUND_TRIP :: capacity_round_trip();
 
 No_Zero :: enum { One = 1, Two = 2 }
 
-// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+// One element is 2^59 bytes, which no heap has.
 Huge :: struct { pad: [576460752303423488]u8 }
 Fallible :: struct { id: int }
 impl Fallible {

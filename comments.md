@@ -2540,6 +2540,26 @@ the value on allocation failure can reserve capacity before moving it.
 where an out-of-memory container is not; a bounded queue, if one is added,
 meets the ring's case and should reconsider the rule for itself.
 
+### `reserve` takes its capacity exactly
+
+`x.reserve(n)` on an array that must grow gives it a capacity of `n`, as Odin's
+`reserve` and C++'s `vector::reserve` do in practice. Rust's `Vec::reserve` and
+Zig's `ensureTotalCapacity` round the request up to the growth step instead and
+offer a second, exact operation.
+
+Loke first shared `append`'s growth step with `reserve`, so that
+`reserve(98304)` on an array holding 65536 elements allocated 131072. A caller
+who names a capacity has usually counted what it will store, and the surplus
+could not be avoided: the exact capacity was reachable only by a `shrink`
+afterwards, at the cost of a second move and a peak of the larger size. The
+reverse costs nothing. Code that wants geometric steps from `reserve`, such as
+a loop that [reserves before each moved insertion](#container-insertion-takes-its-element-like-an-initialization),
+asks for them: `x.reserve(x.cap() * 2 + 8)` when the array is full. Exact is
+therefore the primitive, and one operation is enough.
+
+`resize` grows as `append` does, since it adds elements and is called in loops
+that lengthen an array by one. `Deque` and `Priority_Queue` follow the array.
+
 ### `string` borrows as `string_view`
 
 Implicit conversion lets a read-only text API accept owners, substrings, and
