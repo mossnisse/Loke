@@ -524,6 +524,65 @@ when a variable it reads changes. Each needs a use of its own; [Thread transfer
 needs a visible contract](design-review-2026-10-31.md#thread-transfer-needs-a-visible-contract) already
 rules them out as the answer to borrowing across a join.
 
+## Lent storage whose owners cross threads
+
+A [channel](standard-library.md#channels)'s `send` checks its item as an
+argument crossing to another thread: it may own nothing backed by an allocator
+the sending procedure received (`L0726`,
+[`@(cross_thread)`](design.md#cross_thread)). A helper that is lent a queue and
+sends what it holds is therefore rejected, since the queue's elements may be in
+any region its caller chose:
+
+```loke
+send_all :: proc(send: ^thread.Sender(Job), queue: inout [dynamic]Job) {
+	for (queue.len() > 0) {
+		job := queue.remove(0);
+		_ = send.send(move(job));   // L0726
+	}
+}
+```
+
+The rejection is right as the language stands, and so is the same loop over a
+queue in a record lent `inout`. Only a `move` parameter can carry the promise
+that its argument may cross: written
+`@(cross_thread, escape=static) queue: move [dynamic]Job`, the loop compiles,
+and each call checks the queue it hands over. On an `inout` or borrowed
+parameter the attribute is `L0723`. A program meeting this keeps the queue as a
+local of the procedure that sends, or gives the queue away. Raised on
+2026-11-12 by a worker library whose bursts each wanted a queue in a record
+that helpers are lent.
+
+What is open is whether a lent parameter may carry such a promise, and how it
+is spelled:
+
+- **`@(cross_thread)` on an `inout` or borrowed parameter.** It would mean that
+  what the argument owns may cross, and each call would check the argument's
+  regions and types as the `move` form does. It would not need
+  `@(escape=static)`: the container stays with its caller, and `send` still
+  checks each item's borrows. Like the `move` form it is part of the procedure
+  type and spreads up the call chain, every caller either owning the storage or
+  marking its own parameter. The attribute would then mean two things, an
+  argument that goes to another thread and one whose contents may.
+- **A bound on the argument's regions under its own name.** The promise is that
+  the argument is backed only by regions that accept concurrent use. Stated so,
+  it also answers two rejections under
+  [Allocators and tasks](design.md#allocators-and-tasks) that have no spelling
+  now: a received allocator used by two tasks, and tasks that each fill one
+  slot of a received slice (`L0732`). One attribute for the three would be
+  named for the regions, not for the crossing.
+- **A promise on a field.** A record field declared to hold only such storage
+  would let the record be lent with no mark on each helper. Every write to the
+  field would have to be checked, which is an invariant on storage where
+  [region provenance](design.md#allocator-regions-and-region-provenance) today
+  has only facts about values. It is the largest of the three.
+
+Not open: `send` taking its check on trust for a lent queue. An owner backed by
+a caller's arena would then be freed on another thread while the caller
+allocates from it.
+
+A second program that wants to lend a queue it sends from, or a helper that
+fans tasks out over storage it received, should decide between the first two.
+
 ## Thread-affine strings
 
 `string` is an owning value whose copies share immutable backing storage, and
