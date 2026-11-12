@@ -1768,12 +1768,8 @@ prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: strin
 // A borrow of `operand` as a place, for `&operand` and `return inout operand`.
 @(private)
 prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span: Span, what: string) -> []int {
-	// design.md "Capabilities and the one rule". A binding that views another
-	// owner's storage is not its own root: the pointer names the source.
-	if ident, is_ident := operand.(^Expr_Ident); is_ident {
-		if loans, viewed := graph.view_loans[ident.symbol]; viewed && !graph.step_views[ident.symbol] {
-			return loans
-		}
+	if loans, viewed := prov_viewed_binding(graph, operand); viewed {
+		return loans
 	}
 	root, path, ok := prov_place_of(graph, operand)
 	if !ok {
@@ -1793,11 +1789,34 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 		return prov_join(graph, loans, temporary)
 	}
 	prov_walk_subscripts(graph, operand)
-	access_block, access_index := prov_access(graph, root, path, mutable ? .Write : .Read, span)
-	if held := prov_carrier_slots(graph, operand); len(held) > 0 {
+	return prov_borrow_named(graph, root, path, operand, nil, mutable, span, what)
+}
+
+// design.md "Capabilities and the one rule": a binding that views another owner's
+// storage is not its own root, so a borrow of it names the source, `loans`.
+@(private = "file")
+prov_viewed_binding :: proc(graph: ^Flow_Graph, operand: Expr) -> (loans: []int, viewed: bool) {
+	ident, is_ident := operand.(^Expr_Ident)
+	if !is_ident || graph.step_views[ident.symbol] {
+		return nil, false
+	}
+	return graph.view_loans[ident.symbol]
+}
+
+// A borrow of `operand`, the named place `root` and `path`, whose subscripts and
+// any `bounds` were evaluated: the access it makes, a use of the carriers the
+// place holds, and the loan. A slice of the place, given as `bounds`, borrows its
+// range and uses none of the carriers.
+@(private = "file")
+prov_borrow_named :: proc(
+	graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, operand: Expr, bounds: ^Expr_Slice, mutable: bool, span: Span, what: string,
+) -> []int {
+	full := path if bounds == nil else prov_extend(graph, path, prov_range_step(graph, bounds))
+	access_block, access_index := prov_access(graph, root, full, mutable ? .Write : .Read, span)
+	if held := prov_carrier_slots(graph, operand); len(held) > 0 && bounds == nil {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span, reads_only = !mutable})
 	}
-	return prov_borrow(graph, root, path, mutable, span, what, access_block, access_index)
+	return prov_borrow(graph, root, full, mutable, span, what, access_block, access_index)
 }
 
 // design.md "Weakening and reborrows": a borrow of a place reached through
@@ -1878,10 +1897,8 @@ prov_reserve_borrow :: proc(graph: ^Flow_Graph, argument: Expr) -> (hold: []int,
 	if place == nil {
 		return
 	}
-	if ident, is_ident := place.(^Expr_Ident); is_ident {
-		if _, viewed := graph.view_loans[ident.symbol]; viewed && !graph.step_views[ident.symbol] {
-			return
-		}
+	if _, viewed := prov_viewed_binding(graph, place); viewed {
+		return
 	}
 	if root, path, named := prov_place_of(graph, place); named {
 		prov_walk_subscripts(graph, place)
@@ -1917,14 +1934,7 @@ prov_take_reserved_borrow :: proc(graph: ^Flow_Graph, argument: Expr) -> []int {
 		loans, _ := prov_borrow_through(graph, place, true, span, what, bounds, again = true)
 		return loans
 	}
-	if bounds != nil {
-		path = prov_extend(graph, path, prov_range_step(graph, bounds))
-	}
-	access_block, access_index := prov_access(graph, root, path, .Write, span)
-	if held := prov_carrier_slots(graph, place); len(held) > 0 && bounds == nil {
-		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span})
-	}
-	return prov_borrow(graph, root, path, true, span, what, access_block, access_index)
+	return prov_borrow_named(graph, root, path, place, bounds, true, span, what)
 }
 
 // A slot standing for a borrow through carriers (`Prov_Through_Borrow`):
@@ -1979,12 +1989,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if root, path, ok := prov_place_of(graph, v.operand); ok && array {
 		prov_walk_subscripts(graph, v.operand)
 		prov_walk_slice_bounds(graph, v)
-		full := prov_extend(graph, path, prov_range_step(graph, v))
-		access_block, access_index := prov_access(graph, root, full, mutable ? .Write : .Read, v.span)
-		return prov_borrow(
-			graph, root, full, mutable, v.span, carrier_noun(graph.k.c, prov_type(graph, v)),
-			access_block, access_index,
-		)
+		return prov_borrow_named(graph, root, path, v.operand, v, mutable, v.span, carrier_noun(graph.k.c, prov_type(graph, v)))
 	}
 	// Storage reached through a pointer or view borrows what that carrier names,
 	// as `&p.items` does.

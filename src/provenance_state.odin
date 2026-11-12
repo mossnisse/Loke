@@ -475,6 +475,11 @@ Prov_Event :: struct {
 	// Checks nothing when a diagnostic was reported inside its span: it uses again
 	// what an expression there used, and one report of that is enough.
 	repeats_inner: bool,
+	// The span of the call whose start runs this event of a reserved loan
+	// (`prov_start_reserved`), or zero, which no call's span is. Checks nothing
+	// when a diagnostic was reported inside the call, as for a later argument
+	// that conflicts with the reservation: one report covers the call.
+	reserved_call: Span,
 	// `Live`: what the storage a call's arguments lend holds, which stays live for
 	// the call, though it may read one element and is no use of the others
 	// (`with_held_content`, `Slot_Use`). Without `hands_on`, what a measured receiver

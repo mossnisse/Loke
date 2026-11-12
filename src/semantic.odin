@@ -1024,9 +1024,11 @@ new_symbol :: proc(c: ^Compiler, value: Symbol) -> Symbol_Id {
 	init_semantic_stores(c)
 	id := Symbol_Id(len(c.symbols))
 	symbol := new_clone(value, c.semantic_allocator)
-	// No `return` has taken it. The zero `Span` is a place: the start of the
-	// first file.
-	symbol.returned_at = NO_SPAN
+	// No `return` has taken it, unless `value` says one has. The zero `Span` is a
+	// place: the start of the first file.
+	if symbol.returned_at == {} {
+		symbol.returned_at = NO_SPAN
+	}
 	append(&c.symbols, symbol)
 	return id
 }

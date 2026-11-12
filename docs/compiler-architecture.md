@@ -645,7 +645,11 @@ Keep these contracts:
   behavior, when a later argument writes the named carrier the place was reached
   through (`Prov_Reserved.watched`), since the place was computed before that
   write, and when the lifted code recorded effect operations that cannot be
-  moved (`Prov_Reserved.kept`). `provenance_reserve.odin` owns this.
+  moved (`Prov_Reserved.kept`). A lifted event that runs after other code carries
+  the call's span (`Prov_Event.reserved_call`), so its diagnostic gets a note at
+  the call, and it reports nothing when a diagnostic was already reported inside
+  the call, as a later argument's conflict with the hold is.
+  `provenance_reserve.odin` owns this.
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further

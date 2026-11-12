@@ -83,7 +83,9 @@ prov_end_reserve :: proc(
 		events := graph.blocks[mark.block].prov[mark.first:]
 		entry.events = make([]Prov_Event, len(events), graph.alloc)
 		copy(entry.events, events)
-		// A use of nothing: the events after these keep their places in the block.
+		// A use of nothing, so the events after these keep their places: if a later
+		// argument writes a watched carrier, these go back where they were, and the
+		// borrows they made still name them there.
 		for &event in events {
 			event = Prov_Event{kind = .Live}
 		}
@@ -95,7 +97,8 @@ prov_end_reserve :: proc(
 // place was reached through.
 @(private = "file")
 prov_reserved_carrier_written :: proc(graph: ^Flow_Graph, entry: Prov_Reserved) -> bool {
-	for written in graph.reserved_writes[min(entry.writes, len(graph.reserved_writes)):] {
+	// Not cleared before every reserving call has started (`prov_start_reserved`).
+	for written in graph.reserved_writes[entry.writes:] {
 		for place in entry.watched {
 			if written.root == place.root && paths_overlap(written.path, place.path) {
 				return true
@@ -114,7 +117,10 @@ prov_start_reserved :: proc(graph: ^Flow_Graph, v: ^Expr_Call, reserved: []Prov_
 		return
 	}
 	held: []int
-	for &entry in reserved {
+	// Whether code ran after an entry's events: then they move past it, and a
+	// diagnostic of theirs says so.
+	moves := make([]bool, len(reserved), graph.alloc)
+	for &entry, index in reserved {
 		if entry.kept {
 			continue
 		}
@@ -128,14 +134,15 @@ prov_start_reserved :: proc(graph: ^Flow_Graph, v: ^Expr_Call, reserved: []Prov_
 			entry.kept = true
 			continue
 		}
+		moves[index] = graph.current != entry.block || prov_next_event(graph) != entry.first + len(entry.events)
 		held = prov_join(graph, held, entry.hold)
 	}
 	if len(held) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = v.span, reads_only = true})
 	}
-	for entry in reserved {
+	for entry, index in reserved {
 		if !entry.kept {
-			prov_run_reserved(graph, entry)
+			prov_run_reserved(graph, entry, v.span if moves[index] else {})
 		}
 		// A pack's operand: the pack's actual names what it lends already.
 		if entry.index >= 0 {
@@ -149,14 +156,18 @@ prov_start_reserved :: proc(graph: ^Flow_Graph, v: ^Expr_Call, reserved: []Prov_
 	}
 }
 
-// Runs the events of a reserved loan in the current block. A borrow among the
-// slots they made is revised through the events it names (`prov_reborrow`), so it
-// is told where they are now.
+// Runs the events of a reserved loan in the current block, where `call` starts,
+// which is zero when they run where they were recorded. A borrow among the slots
+// they made is revised through the events it names (`prov_reborrow`), so it is
+// told where they are now.
 @(private = "file")
-prov_run_reserved :: proc(graph: ^Flow_Graph, entry: Prov_Reserved) {
+prov_run_reserved :: proc(graph: ^Flow_Graph, entry: Prov_Reserved, call: Span) {
 	block := graph.blocks[graph.current]
 	base := len(block.prov)
 	append(&block.prov, ..entry.events)
+	for &event in block.prov[base:] {
+		event.reserved_call = call
+	}
 	moved :: proc(graph: ^Flow_Graph, entry: Prov_Reserved, base: int, at: Prov_Event_At) -> Prov_Event_At {
 		if at.block != entry.block || at.event < entry.first || at.event >= entry.first + len(entry.events) {
 			return at

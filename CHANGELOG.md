@@ -1651,6 +1651,8 @@ checklist.
   call, as in `c.rename(c.name)` and `xs.append(..xs[:])`, still conflicts, and is now reported at
   the call as `L0512` for an `inout` receiver. A `move` is not deferred, and neither is a carrier an
   argument computes, as in `poke(pick(p), p^.n)`. Nothing that compiled is rejected by this change.
+  A conflict found where a reserved loan starts has a note pointing at the call, and a call whose
+  later argument already conflicts with the reservation, as `both(p, pick(p))`, is reported once.
   [known-gaps.md](docs/known-gaps.md#a-reserved-loan-through-an-index-that-calls-or-through-a-map-element)
   lists two forms the compiler does not reserve yet.
 - The documentation moved into [docs/](docs/): [design.md](docs/design.md),

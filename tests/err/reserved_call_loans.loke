@@ -90,4 +90,11 @@ rewritten_pointer :: proc(p: ^mut Counter, @(escape=stored) other: ^mut Counter)
 	held^.add(look(view));
 }
 
+// A later argument that hands the call a carrier it reached through the reserved
+// one is reported there, and not again where the reserved loan starts.
+both :: proc(a: ^mut Counter, b: ^mut Counter) { a^.n += b^.n; }
+handed_back :: proc(p: ^mut Counter) {
+	both(p, pick(p));
+}
+
 main :: proc() {}

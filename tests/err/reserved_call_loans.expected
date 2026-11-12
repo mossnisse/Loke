@@ -19,6 +19,7 @@ L0512
 L0511
 @44:17
 this write of `c` is not compatible with the read-only pointer of it that is still in use
+reserved_call_loans.loke:44:2: the argument's loan is taken when this call starts, after its later arguments
 L0511
 @45:12
 this write of `c` is not compatible with the read-only pointer of it that is still in use
@@ -50,11 +51,9 @@ L0641
 @68:22
 `pair` cannot be used here: a reserved reborrow of it is still in use
 L0641
-@69:13
-`pair` cannot be used here: a mutable reborrow of it is still in use
-L0641
 @69:26
-`pair` cannot be used here: a read-only reborrow of it is still in use
+`pair` cannot be used here: a reserved reborrow of it is still in use
+!reserved_call_loans.loke:69:21: the argument's loan
 L0641
 @70:21
 `pair` cannot be used here: a mutable reborrow of it is still in use
@@ -70,3 +69,6 @@ L0641
 L0641
 @89:12
 `held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@97:15
+`p` cannot be used here: a reserved reborrow of it is still in use

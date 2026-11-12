@@ -162,13 +162,13 @@ prov_call_argument :: proc(
 		for operand, is_spread in call_pack_next(v, &cursor) {
 			type := is_spread ? prov_pack_spread_type(c, prov_type(graph, operand), param_type) : element
 			lent: []int
-			if hold, watched, reserves := prov_reserve_argument(graph, operand, type, false); reserves {
+			if reserving := prov_reserve_argument(graph, operand, type, false); reserving.form != .None {
 				// The pack's actual names what the operand lends, which is defined
 				// where the call starts.
 				mark := prov_begin_reserve(graph)
-				held := borrowed^
-				lent = prov_lend_argument(graph, prov_take_reserved_argument(graph, operand), type, &held, expr_span(operand))
-				prov_end_reserve(graph, reserved, mark, -1, hold, nil, lent, watched)
+				carried := prov_take_reserved_argument(graph, operand, reserving)
+				lent = prov_lend_reserved(graph, carried, type, borrowed^, expr_span(operand))
+				prov_end_reserve(graph, reserved, mark, -1, reserving.hold, nil, lent, reserving.watched)
 			} else {
 				lent = prov_lend_argument(graph, walk_flow_expr(graph, operand), type, borrowed, expr_span(operand))
 			}
@@ -302,17 +302,16 @@ prov_call_argument :: proc(
 		}
 		prov_read_through(graph, actual, nil, expr_span(argument))
 	case .Value:
-		if hold, watched, reserves := prov_reserve_argument(graph, argument, param_type, is_receiver); reserves {
-			mark := prov_begin_reserve(graph)
-			actual = prov_take_reserved_argument(graph, argument)
-			prov_use_mutable_argument(graph, actual, param_type, expr_span(argument))
-			prov_use_reached_in_record(graph, v, index, argument, actual, param_type)
-			held := borrowed^
-			actual = prov_lend_argument(graph, actual, param_type, &held, expr_span(argument))
-			prov_end_reserve(graph, reserved, mark, index, hold, actual, actual, watched)
-			return nil
+		// design.md "Weakening and reborrows": the events from `mark` on are the
+		// mutable loan, which starts with the call.
+		reserving := prov_reserve_argument(graph, argument, param_type, is_receiver)
+		mark: Prov_Reserve_Mark
+		if reserving.form == .None {
+			actual = walk_flow_expr(graph, argument)
+		} else {
+			mark = prov_begin_reserve(graph)
+			actual = prov_take_reserved_argument(graph, argument, reserving)
 		}
-		actual = walk_flow_expr(graph, argument)
 		reached := -1
 		if !is_receiver {
 			reached = prov_use_reached(graph, actual, param_type, expr_span(argument))
@@ -327,6 +326,12 @@ prov_call_argument :: proc(
 			}
 		} else if type_is_carrier(c, param_type) {
 			prov_read_through(graph, actual, nil, expr_span(argument))
+		}
+		if reserving.form != .None {
+			prov_use_reached_in_record(graph, v, index, argument, actual, param_type)
+			actual = prov_lend_reserved(graph, actual, param_type, borrowed^, expr_span(argument))
+			prov_end_reserve(graph, reserved, mark, index, reserving.hold, actual, actual, reserving.watched)
+			return nil
 		}
 	}
 	prov_use_reached_in_record(graph, v, index, argument, actual, param_type)
@@ -355,15 +360,13 @@ prov_lend_argument :: proc(graph: ^Flow_Graph, actual: []int, type: Type_Id, bor
 	return lent
 }
 
-// A callee given a mutable carrier may write what it names and what that holds
-// (`prov_call_argument`).
+// What a reserved argument lends, as `prov_lend_argument` has it. `borrowed` is
+// what the arguments before it lend, which takes this only when the call starts
+// (`Prov_Reserved.lent`), so it is left as it is.
 @(private = "file")
-prov_use_mutable_argument :: proc(graph: ^Flow_Graph, actual: []int, parameter: Type_Id, span: Span) {
-	reached := prov_use_reached(graph, actual, parameter, span)
-	prov_write_through(graph, actual, nil, span, "mutable argument")
-	if reached >= 0 {
-		prov_write_through(graph, prov_one(graph, reached), nil, span, "mutable argument")
-	}
+prov_lend_reserved :: proc(graph: ^Flow_Graph, actual: []int, type: Type_Id, borrowed: []int, span: Span) -> []int {
+	unchanged := borrowed
+	return prov_lend_argument(graph, actual, type, &unchanged, span)
 }
 
 // design.md "Weakening and reborrows": what `carriers` hold while the loan of them
@@ -373,10 +376,17 @@ prov_use_mutable_argument :: proc(graph: ^Flow_Graph, actual: []int, parameter: 
 prov_reserve_carriers :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
 	made := len(graph.reborrows)
 	hold := prov_reborrow_traversal(graph, carriers, span, false)
+	prov_mark_reserved(graph, made)
+	return hold
+}
+
+// The reborrows made since there were `made` hold a place for a call, so a
+// diagnostic calls them reserved (`Prov_Reborrow.reserved`).
+@(private = "file")
+prov_mark_reserved :: proc(graph: ^Flow_Graph, made: int) {
 	for &reborrow in graph.reborrows[made:] {
 		reborrow.reserved = true
 	}
-	return hold
 }
 
 // How an argument takes a mutable loan its call reserves (`prov_reserve_argument`).
@@ -447,60 +457,74 @@ prov_place_indexes_map :: proc(graph: ^Flow_Graph, place: Expr) -> bool {
 	return false
 }
 
+// An argument whose mutable loan its call reserves (`prov_reserve_argument`).
+Prov_Reserved_Argument :: struct {
+	form:    Prov_Reserved_Form,
+	// `Carrier`: the place its carriers are read from.
+	place:   Expr,
+	// What it holds until the call starts.
+	hold:    []int,
+	// The places holding the carriers it was reached through
+	// (`Prov_Reserved.watched`).
+	watched: []Prov_Reserved_Place,
+}
+
 // design.md "Weakening and reborrows": whether `argument`, given to a parameter
 // that takes a mutable carrier, takes a loan the call reserves: `&mut place`
 // written as the argument, or mutable carriers read from a place. If so it is
-// evaluated here, read-only, and `hold` is what it holds until the call starts;
-// `watched` are the places holding the carriers it was reached through
-// (`Prov_Reserved.watched`). A carrier the argument computes, as a call's result,
-// is in use from where it is made.
+// evaluated here, read-only, and `prov_take_reserved_argument` takes the loan
+// where the call starts. `None` for a carrier the argument computes, as a call's
+// result, which is in use from where it is made.
 @(private = "file")
-prov_reserve_argument :: proc(
-	graph: ^Flow_Graph, argument: Expr, parameter: Type_Id, is_receiver: bool,
-) -> (hold: []int, watched: []Prov_Reserved_Place, reserves: bool) {
+prov_reserve_argument :: proc(graph: ^Flow_Graph, argument: Expr, parameter: Type_Id, is_receiver: bool) -> (reserved: Prov_Reserved_Argument) {
 	if is_receiver {
 		return
 	}
-	form, place, bounds := prov_reserved_form(graph, argument, parameter)
-	switch form {
+	bounds: ^Expr_Slice
+	reserved.form, reserved.place, bounds = prov_reserved_form(graph, argument, parameter)
+	switch reserved.form {
 	case .None:
 		return
 	case .Borrow:
-		return prov_reserve_borrow(graph, argument)
+		ok: bool
+		if reserved.hold, reserved.watched, ok = prov_reserve_borrow(graph, argument); !ok {
+			return {}
+		}
+		return
 	case .Carrier:
 	}
+	place := reserved.place
 	span := expr_span(argument)
 	if root, path, named := prov_place_of(graph, place); named {
-		watched = make([]Prov_Reserved_Place, 1, graph.alloc)
-		watched[0] = Prov_Reserved_Place{root, path}
+		reserved.watched = make([]Prov_Reserved_Place, 1, graph.alloc)
+		reserved.watched[0] = Prov_Reserved_Place{root, path}
 	} else {
-		watched = prov_reserved_carriers(graph, place)
+		reserved.watched = prov_reserved_carriers(graph, place)
 	}
+	// A carrier read out of a record reborrows the record read-only, which holds it
+	// too.
+	made := len(graph.reborrows)
 	held := prov_read_carrier(graph, place, true)
+	prov_mark_reserved(graph, made)
 	if bounds != nil {
 		prov_walk_slice_bounds(graph, bounds)
 	}
 	prov_reserve_through(graph, held, nil, span, "mutable argument")
-	return prov_reserve_carriers(graph, held, span), watched, true
+	reserved.hold = prov_reserve_carriers(graph, held, span)
+	return
 }
 
 // The mutable loan of an argument `prov_reserve_argument` reserved, taken where
 // the call starts without evaluating the argument again: what walking it would
 // read.
 @(private = "file")
-prov_take_reserved_argument :: proc(graph: ^Flow_Graph, argument: Expr) -> (carried: []int) {
-	if prov_borrows_place(argument) {
-		if borrowed, _, _, _ := prov_borrowed_place(graph, argument); borrowed != nil {
-			return prov_take_reserved_borrow(graph, argument)
-		}
+prov_take_reserved_argument :: proc(graph: ^Flow_Graph, argument: Expr, reserved: Prov_Reserved_Argument) -> (carried: []int) {
+	if reserved.form == .Borrow {
+		return prov_take_reserved_borrow(graph, argument)
 	}
-	place := argument
-	if slice, is_slice := argument.(^Expr_Slice); is_slice {
-		place = slice.operand
-	}
-	if ident, is_ident := place.(^Expr_Ident); is_ident {
-		carried = prov_read_ident(graph, ident)
-	} else if _, _, named := prov_place_of(graph, place); named {
+	place := reserved.place
+	_, is_ident := place.(^Expr_Ident)
+	if _, _, named := prov_place_of(graph, place); named || is_ident {
 		carried = prov_reread_carrier(graph, place)
 	} else {
 		carried = prov_reread_through(graph, place)

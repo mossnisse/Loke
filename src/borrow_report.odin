@@ -55,9 +55,16 @@ report_provenance :: proc(state: ^Prov_Solve) {
 			placed := event.span != Span{}
 			if !placed || !reported^[at] {
 				before := len(state.k.c.diagnostics)
-				already := event.repeats_inner && reported_within(reported^, event.span)
+				starts_call := event.reserved_call != Span{}
+				already := event.repeats_inner && reported_within(reported^, event.span) ||
+				           starts_call && reported_within(reported^, event.reserved_call)
 				if !already {
 					check_prov_event(state, event, state.live, state.uses)
+					// design.md "Weakening and reborrows": the event is at its argument,
+					// but the loan it takes starts after the later arguments.
+					if starts_call && len(state.k.c.diagnostics) > before {
+						add_notef(state.k.c, event.reserved_call, "the argument's loan is taken when this call starts, after its later arguments")
+					}
 				}
 				if placed && (already || len(state.k.c.diagnostics) > before) {
 					reported^[at] = true
