@@ -49,6 +49,9 @@ build :: proc() {
 	// A runtime element, so the literal is built in place rather than folded.
 	ranked := Ranked{priority = low()};
 	fmt.println("ranked", ranked.a, ranked.priority, ranked.b);
+	// The enum field constant, another element runtime: still built in place.
+	mixed := Ranked{a = u64(seven()), priority = .High};
+	fmt.println("mixed", mixed.a, mixed.priority, mixed.b);
 	fmt.println("constant", RANKED.a, RANKED.priority, RANKED.b);
 
 	shaped := Shaped{shape = .circle(1.5)};
