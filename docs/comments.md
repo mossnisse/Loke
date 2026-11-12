@@ -2476,6 +2476,28 @@ policy. Their `try_` counterparts return a failure value. Keeping that conventio
 across built-ins and libraries makes error handling visible in the name without
 forcing every allocation into a separate panic wrapper.
 
+### `clone` and `try_clone` stay a pair
+
+The compiler-generated
+[`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types) has the
+shape of a container's `op`/`try_op` pair, and whether a container keeps both
+spellings is [open](open-questions.md#the-optry_op-pair). Two reasons for
+keeping the generated pair do not apply to a container.
+
+The pair costs a type author nothing. Both names are generated from the single
+`hook(copy)` role, so a record supplies one implementation and receives both
+spellings; a container supplies two implementations, two doc entries, and two
+test paths per operation. Duplication in the generated pair is two names, not
+two bodies.
+
+And the policy-following half is load-bearing rather than convenient. Copy
+assignment of a copyable type is *defined* as `try_clone` plus the [allocation
+failure policy](design.md#allocation-failure), and
+[`Cloneable`](standard-library.md#standard-interface-catalogue) names the
+fallible slot, so both halves already have language-level jobs. Deleting
+`clone` would not remove the policy call, only move it to every call site that
+copies. A container `try_op` carries no equivalent obligation.
+
 ### `main` may return an `i32` status
 
 Returning a status from `main` allows normal scope cleanup before the process

@@ -36,10 +36,13 @@ the compiler, is the oracle for any of them.
   resolve a place loan to loans of the roots its carriers reach, as
   `resolve_content_reads` already materializes loaded reborrows after the
   forward pass, leaving one check.
-- **An index's syntax as evidence (P3).** `prov_indices_may_write` reads an
-  index's syntax where the global effects already say what a call writes. Asking
-  them would accept more rather than simplify, and a call may also write through
-  an argument, which those effects do not cover.
+- **An index's syntax as evidence (P3).** `prov_indices_may_write` takes any
+  index that may run a program's code to write the carrier being indexed, where
+  the [global write effects](design.md#global-write-effects) already say what a
+  call writes. Asking them would accept more programs, not remove a special
+  case, and a call may also write through an argument, which those effects do
+  not cover. Whether that precision is worth an effect for writes through
+  arguments is open.
 
 ### Carrier and region tracking as principles
 
@@ -58,24 +61,127 @@ normative, so this is a careful restatement, not a cut; the
 [borrow matrix](../tests/borrow_matrix_test.odin) and the
 [store matrix](../tests/carrier_store_matrix_test.odin) are the checks for it.
 
+## Normalized input for provenance analysis
+
+Provenance analysis reads a
+[normalized body](compiler-architecture.md#normalized-provenance-input) that it
+rebuilds once per analysis invocation, consuming settled lifecycle
+annotations. Bodies are not retained across visits; a visit whose summaries
+are unchanged is skipped instead
+([rationale](comments.md#provenance-replay-and-precise-publication)). Two
+decisions remain open:
+
+- **Lifecycle analysis on the same input.** Lifecycle analysis still walks the
+  checked AST, and provenance consumes its settled decisions. Moving it onto the
+  normalized input needs its own design for unresolved cleanup and last-use
+  decisions.
+- **The cost of normalization.** Normalization is still the largest provenance
+  phase: about 40% of checking time on `bench/workspace` and
+  `examples/corpus_runner.loke`, even with skipped visits and lock-free scratch
+  arenas ([Skipped summary visits and lock-free scratch
+  arenas](../bench/baselines/README.md#skipped-summary-visits-and-lock-free-scratch-arenas)).
+  A sampling profile of the builds left interning as the largest single cost:
+  the key is hashed byte by byte on every value and call lookup
+  (`prov_intern_value`, `prov_input_call`, about 7% of build time). The keys
+  have since shrunk, to `Prov_Value_Key` and, for a call, `Prov_Call_Key`, and
+  the share has not been measured again.
+  The three remaining builds per body differ in callee summaries, in whether
+  global writes have settled, or in reporting diagnostics; sharing one would
+  need the walk's output to stop depending on them. Whether either reduction
+  pays for its complexity is open.
+
+## Compositional loan construction
+
+Every access to a place reached through carriers goes through one walk of the
+normalized place, and a borrow, slice, traversal, or switch of one takes a
+**place loan** ([Ownership, lifecycle, and
+provenance](compiler-architecture.md#ownership-lifecycle-and-provenance));
+[borrow_matrix_test.odin](../tests/borrow_matrix_test.odin) checks the rules
+against a model written apart from the compiler. Still open:
+
+- **Calls.** A carrier handed to a call uses every mutable carrier it reaches
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A
+  per-parameter summary of what a body uses through each parameter could
+  narrow that, as written-argument regions already do for stores. That is a
+  change to the language, not only to the analysis: whether a caller is
+  accepted would then depend on what the callee's body touches, so editing a
+  body could reject its callers, as [global write
+  effects](design.md#global-write-effects) already can. Decide it together
+  with [written public borrow
+  contracts](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own).
+- **Caller storage contents.** A store through a parameter's loan lands in the
+  caller slots for the storage it names (`publish_into_caller`), and a later
+  load reads them. The remaining imprecision: caller slots of different loans
+  are taken to name different storage, so a store through one is not seen
+  through another that a cyclic structure makes the same (a mutable cycle
+  such as `l.next = .some(&mut l)` keeps `l` suspended, so this cannot be
+  exploited); a view's slots stand for all its elements, apart from an element
+  at a constant index; a record whose carriers have no one type on each path,
+  stored into a view parameter's element, joins into the parameter itself; and
+  storage below the second load, or through a view, is one slot.
+
+Language changes should be evaluated separately. The proposed [written public
+borrow contracts](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own) could
+simplify call boundaries and library exceptions, but cannot repair local
+reborrow construction. Explicit reborrow syntax or move-only mutable carriers
+would change ergonomics and compatibility while leaving nested place access and
+implicit call reborrows to analyze. Do not adopt those changes solely to work
+around the current implementation. Revisit them only with concrete examples and
+a demonstrably smaller set of semantic rules.
+
+## Compiler review findings not yet acted on (2026-11-09)
+
+The 2026-11-09 compiler code review found these (its report,
+`compiler-code-review-2026-11-09.md`, is now only in git history), and none has
+a probe program that shows a wrong result. Each needs a decision or a
+reproduction before a change.
+
+- **Which reborrow's capability a loaded copy takes** (bug 12).
+  `prov_reborrow_loaded` takes the capability of the last reborrow whose source
+  is the loaded slot, so with several the result follows list order. Taking the
+  most recent store may be the intent; mutable if any is mutable would be the
+  conservative choice, and could report conflicts that are accepted today.
+- **Which type a slot holds** (group 4). Four places fall back differently
+  when a carrier slot records no content type: `slot_carrier_type` in
+  `borrow.odin` takes the symbol's type only for the bare slot of a
+  symbol, `prov_define_one_content` for any slot of an unshaped symbol,
+  `prov_slot_is_mutable_carrier` for any named slot, and the link filter in
+  `prov_link_retained` for one at the symbol's root. The two link filters in
+  `provenance_retention.odin` also differ for a named slot of unknown type:
+  `prov_link_copied_carriers` keeps it and `prov_link_retained` skips it. One
+  rule would remove the differences, but each is a precision choice that needs
+  a probe program before it changes.
+
 ## Literal elements that lend a temporary to a call
 
-A container literal's element that hands an address to a call keeps its large
-temporaries' slots until the literal is built (`note_lent_arguments` in
-[emit_llvm_cleanup.odin](../src/emit_llvm_cleanup.odin)), since the callee may keep the
-address by `unsafe` means for the rest of the full expression
+A `[dynamic]T` or map literal hands each element to the container as soon as
+it is evaluated, and the element's large temporaries' slots then serve the
+next one. An element that hands an address to a call keeps them until the
+literal is built (`note_lent_arguments` in
+[emit_llvm_cleanup.odin](../src/emit_llvm_cleanup.odin)), since the callee may
+keep the address by `unsafe` means for the rest of the full expression
 ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
-Every `self: ^` method call on a temporary counts, though only a callee that reaches
-`unsafe` can keep its receiver past the call. So a literal of 40 elements
-`large(i).first()`, with a 5000-byte `Large`, takes 83 `Large` slots in the frame, where it
-took 5 before `05e2b195`; one of `first_of(large(i))` by value still takes 4. A long literal
-of such calls can now exhaust the stack.
+Every `self: ^` method call on a temporary counts, though only a callee that
+reaches `unsafe` can keep its receiver past the call. So a `[dynamic]u8`
+literal of 40 elements `large(i).first()`, with a 5000-byte `Large`, takes 80
+`Large` slots in the frame, two an element, where its slots were reused before
+`05e2b195`; one of `first_of(large(i))` by value still takes 1 (counted in the
+emitted IR on 2026-11-12). A long literal of such calls can now exhaust the
+stack.
 
-A procedure summary saying whether a call may keep an argument's address past its
-return, true for any body that reaches `unsafe` or calls through a procedure value,
-would keep the reuse for every other call. Whether that fact pays for itself, or a
-literal of large method calls is rare enough, is open. Found on 2026-11-07 in a review
-of `05e2b195` (P3).
+A procedure summary saying whether a call may keep an argument's address past
+its return, true for any body that reaches `unsafe` or calls through a
+procedure value, would keep the reuse for every other call. Whether that fact
+pays for itself, or a literal of large method calls is rare enough, is open.
+Found on 2026-11-07 in a review of `05e2b195` (P3).
+
+A fixed-array or slice literal reuses no slot in either form, since only the
+`[dynamic]T` and map literals end an element's temporaries
+(`end_operand_temporaries` in
+[emit_llvm_containers.odin](../src/emit_llvm_containers.odin)): `[40]u8{...}`
+and `[]u8{...}` take 40 `Large` slots for the by-value calls and 80 for the
+method calls. Whether they should reuse slots as the growable literals do is
+open with the summary. Found on 2026-11-12.
 
 ## A public type's private `format`
 
@@ -137,72 +243,6 @@ design questions stay open until a caller or a measurement settles them:
   pays only if repeated random access outweighs its build time and memory, and
   `validate_unique_keys` waits for a protocol that requires globally unique
   keys.
-
-## Normalized input for provenance analysis
-
-Provenance analysis reads a
-[normalized body](compiler-architecture.md#normalized-provenance-input) that it
-rebuilds once per analysis invocation, consuming settled lifecycle
-annotations. Bodies are not retained across visits; a visit whose summaries
-are unchanged is skipped instead
-([rationale](comments.md#provenance-replay-and-precise-publication)). Two
-decisions remain open:
-
-- **Lifecycle analysis on the same input.** Lifecycle analysis still walks the
-  checked AST, and provenance consumes its settled decisions. Moving it onto the
-  normalized input needs its own design for unresolved cleanup and last-use
-  decisions.
-- **The cost of normalization.** Normalization is still the largest provenance
-  phase: about 40% of checking time on `bench/workspace` and
-  `examples/corpus_runner.loke`, even with skipped visits and lock-free scratch
-  arenas (under "Skipped summary visits and lock-free scratch arenas" in the
-  repository's `bench/baselines/README.md`).
-  A sampling profile of the builds left interning as the largest single cost:
-  `Prov_Input_Key`, about 72 bytes, is hashed byte by byte on every value and
-  call lookup (`prov_intern_value`, `prov_input_call`, about 7% of build time).
-  The three remaining builds per body differ in callee summaries, in whether
-  global writes have settled, or in reporting diagnostics; sharing one would
-  need the walk's output to stop depending on them. Whether either reduction
-  pays for its complexity is open.
-
-## Compositional loan construction
-
-Every access to a place reached through carriers goes through one walk of the
-normalized place, and a borrow, slice, traversal, or switch of one takes a
-**place loan** ([Ownership, lifecycle, and
-provenance](compiler-architecture.md#ownership-lifecycle-and-provenance));
-[borrow_matrix_test.odin](../tests/borrow_matrix_test.odin) checks the rules
-against a model written apart from the compiler. Still open:
-
-- **Calls.** A carrier handed to a call uses every mutable carrier it reaches
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A
-  per-parameter summary of what a body uses through each parameter could
-  narrow that, as written-argument regions already do for stores. That is a
-  change to the language, not only to the analysis: whether a caller is
-  accepted would then depend on what the callee's body touches, so editing a
-  body could reject its callers, as [global write
-  effects](design.md#global-write-effects) already can. Decide it together
-  with [written public borrow
-  contracts](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own).
-- **Caller storage contents.** A store through a parameter's loan lands in the
-  caller slots for the storage it names (`publish_into_caller`), and a later
-  load reads them. The remaining imprecision: caller slots of different loans
-  are taken to name different storage, so a store through one is not seen
-  through another that a cyclic structure makes the same (a mutable cycle
-  such as `l.next = .some(&mut l)` keeps `l` suspended, so this cannot be
-  exploited); a view's slots stand for all its elements, apart from an element
-  at a constant index; a record whose carriers have no one type on each path,
-  stored into a view parameter's element, joins into the parameter itself; and storage below the second load, or
-  through a view, is one slot.
-
-Language changes should be evaluated separately. The proposed [written public
-borrow contracts](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own) could
-simplify call boundaries and library exceptions, but cannot repair local
-reborrow construction. Explicit reborrow syntax or move-only mutable carriers
-would change ergonomics and compatibility while leaving nested place access and
-implicit call reborrows to analyze. Do not adopt those changes solely to work
-around the current implementation. Revisit them only with concrete examples and
-a demonstrably smaller set of semantic rules.
 
 ## Package and import versioning
 
@@ -343,8 +383,7 @@ The steps are in priority order, and each is usable without the next.
   name. Checking more needs a signature form that states such typing, or a
   rule for which written forms an operation's typing must accept.
 - **Interface files outside the repository.** Whether a project's own
-  packages get `api.loki` by default. Which packages `-api-check` covers is
-  settled: a [tree](compiler-guide.md#trees) names them.
+  packages get `api.loki` by default.
 
 ## The `op`/`try_op` pair
 
@@ -357,31 +396,15 @@ compiler-known error type. That is what makes keeping both spellings need
 re-justifying. Every shipped container keeps its pair today; collapsing them is
 a separate decision with its own migration.
 
-The language pairs a fallible operation with a policy-following one in a second
-place: the compiler-generated
-[`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types). The shape
-is identical, so the two are one question asked twice, but they are not one
-answer, for two reasons that the container pair does not share.
-
-The pair costs a type author nothing. Both names are generated from the single
-`hook(copy)` role, so a record supplies one implementation and receives both
-spellings; a container supplies two implementations, two doc entries, and two
-test paths per operation. Duplication in the generated pair is two names, not
-two bodies.
-
-And the policy-following half is load-bearing rather than convenient. Copy
-assignment of a copyable type is *defined* as `try_clone` plus the [allocation
-failure policy](design.md#allocation-failure), and
-[`Cloneable`](standard-library.md#standard-interface-catalogue) names the fallible slot,
-so both halves already have language-level jobs. Deleting `clone` would not
-remove the policy call, only move it to every call site that copies. A container
-`try_op` carries no equivalent obligation, which is what leaves the container
-pair the live half of the question.
-
-The allocation built-ins are a third instance, and they keep the pair:
-`box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The
-allocation built-ins follow the `try_`
+The language pairs a fallible operation with a policy-following one in two
+more places, and both keep the pair: the compiler-generated
+[`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types), for
+reasons a container does not share ([`clone` and `try_clone` stay a
+pair](comments.md#clone-and-try_clone-stay-a-pair)), and the allocation
+built-ins `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new`
+([The allocation built-ins follow the `try_`
 convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
+The container pair is the live half of the question.
 
 One alternative is a single fallible operation per container, with the policy
 chosen at the call site. In this sketch `append` has today's `try_append`
@@ -414,7 +437,7 @@ outweighs the smaller API.
 A record with a `call` method is the callable convention: `x(args)` calls it
 ([Calling a value](design.md#calling-a-value)),
 [`interfaces.Callable`](standard-library.md#standard-interface-catalogue) lets one generic
-signature accept a procedure or such a record, and a
+signature accept a procedure or such a record, a
 [capture literal](design.md#capture-literals) declares the record from a
 clause, and a [`dyn proc` view](design.md#borrowed-callable-views) erases
 either. Their rationale is in [comments.md](comments.md#capture-literals) and
@@ -456,11 +479,10 @@ keeps out today; decide that with the returned closure.
 ### A mutable callable view
 
 A [`dyn proc` view](design.md#borrowed-callable-views) is read-only, since a
-`call` takes a plain `self`: it reads its captures and writes through a `&mut`
-one. Revisit `dyn mut proc` with the `inout` call in [What a capture literal's
-`call` cannot do](#what-a-capture-literals-call-cannot-do): a callable that
-keeps mutable state inside itself would need a mutable view to be called through
-one.
+`call` takes a plain `self`. Revisit `dyn mut proc` with the `inout` call in
+[What a capture literal's `call` cannot
+do](#what-a-capture-literals-call-cannot-do): a callable that keeps mutable
+state inside itself would need a mutable view to be called through one.
 
 ## Owning runtime polymorphism
 
@@ -520,9 +542,10 @@ are open, each a relaxation that would reject nothing accepted now:
 
 Higher-level constructs are a separate question: futures or a similar composable
 asynchronous result, and language help for reactivity, such as a procedure rerun
-when a variable it reads changes. Each needs a use of its own; [Thread transfer
-needs a visible contract](design-review-2026-10-31.md#thread-transfer-needs-a-visible-contract) already
-rules them out as the answer to borrowing across a join.
+when a variable it reads changes. Each needs a use of its own: borrowing across
+a join is not one, since [structured
+concurrency](design.md#structured-concurrency) already answers it
+([reasons](comments.md#tasks-that-borrow-joined-by-their-block)).
 
 ## Lent storage whose owners cross threads
 
@@ -587,7 +610,8 @@ fans tasks out over storage it received, should decide between the first two.
 
 `string` is an owning value whose copies share immutable backing storage, and
 a string may be dropped on any thread that received it, so the shared handle
-count is atomic: `runtime/text.c` retains with a relaxed atomic add and
+count is atomic: [`runtime/text.c`](../runtime/text.c) retains with a relaxed
+atomic add and
 releases with an acquire-release atomic subtract, each behind an out-of-line
 runtime call. Nothing turns a `string` copy into a move, since copying it
 cannot allocate, so this is the most frequent hidden cost in ordinary code.
@@ -651,8 +675,8 @@ reintroducing general exceptions. The appeal is server code that wants to fail
 one request rather than the process; the cost is a second control-flow path that
 every `drop` hook and `defer` would have to be correct under, and the temptation
 to use it as ordinary error handling in place of
-[`or_return`](design.md#or_return-operator). Not required by anything in this
-document.
+[`or_return`](design.md#or_return-operator). Nothing in
+[design.md](design.md) requires it.
 
 ## Intrinsics and inline assembly
 
@@ -672,9 +696,9 @@ a model can work on one part of a program without reading the rest.
 ## Open questions in `core:strconv`
 
 - `parse_f64` rounds through the C library's `strtod`, as `fmt` already does to
-  find its shortest spellings. That makes it foreign code, which design.md
-  "Compile-time procedure evaluation" keeps out of constants for good. Both
-  now run in a fixed "C" numeric locale, so `setlocale` through a foreign
+  find its shortest spellings. That makes it foreign code, which
+  [Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
+  keeps out of constants for good. Both now run in a fixed "C" numeric locale, so `setlocale` through a foreign
   binding no longer changes them. A correctly rounded parser in Loke
   (Eisel-Lemire with a big-decimal fallback) would make the parser usable in
   constants. Is that worth that much code?
@@ -710,7 +734,21 @@ kept and a decision on the default after measurement
   search covers two `f64` arguments, and no proof is known to rule it out.
   Their results are the same everywhere either way.
 
-### Targeting x86-64 levels
+### Integer bit operations not yet provided
+
+[Integer bit operations](standard-library.md#integer-bit-operations) has the
+counts, the bit width, the rotations, the reversal, and the power-of-two
+operations. Left out until a caller settles their contracts:
+
+- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, `bitreverse`, and
+  funnel shifts take vectors, so a `Simd(T, N)` operand could count lane by
+  lane. The result type is the question: a `Simd(int, N)` widens every lane
+  past the operand's, and a `Simd(T, N)` is not an `int` as the scalar forms
+  are. The checker refuses a vector today, so either choice can be added.
+- **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
+  `x86-64-v3` and would need a portable fallback with the same result.
+
+## Targeting x86-64 levels
 
 Programs target baseline x86-64 (SSE2), which every 64-bit x86 processor runs,
 unless built with [`-cpu`](compiler-guide.md#cpu-levels), which offers v2 and
@@ -735,24 +773,10 @@ dispatch is added only where measured, as
 - Should v4 and `native` follow? v4 needs AVX-512 hardware to test on, and
   `native` resolves to a feature set of its own rather than a level.
 
-### Integer bit operations not yet provided
-
-[Integer bit operations](standard-library.md#integer-bit-operations) has the
-counts, the bit width, the rotations, the reversal, and the power-of-two
-operations. Left out until a caller settles their contracts:
-
-- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, `bitreverse`, and
-  funnel shifts take vectors, so a `Simd(T, N)` operand could count lane by lane. The result type
-  is the question: a `Simd(int, N)` widens every lane past the operand's,
-  and a `Simd(T, N)` is not an `int` as the scalar forms are. The checker
-  refuses a vector today, so either choice can be added.
-- **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
-  `x86-64-v3` and would need a portable fallback with the same result.
-
 ## Open questions from the linear algebra spike
 
 A spike tried `linalg`'s `Real` interface and generic matrix shapes against
-the compiler (`tests/pkg/real_interface`) before
+the compiler ([tests/pkg/real_interface](../tests/pkg/real_interface)) before
 [`core:math/linalg`](standard-library.md#coremathlinalg) and then
 [`core:math/dense`](standard-library.md#coremathdense) were built on them.
 These language questions came out of that work, and the libraries cannot
@@ -1130,26 +1154,3 @@ Still to decide:
   be reserved too, or only a loan the argument forms itself?
 
 Found on 2026-11-07.
-
-## Compiler review findings not yet acted on (2026-11-09)
-
-The 2026-11-09 compiler code review found these (its report,
-`compiler-code-review-2026-11-09.md`, is now only in git history), and none has
-a probe program that shows a wrong result. Each needs a decision or a
-reproduction before a change.
-
-- **Which reborrow's capability a loaded copy takes** (bug 12).
-  `prov_reborrow_loaded` takes the capability of the last reborrow whose source
-  is the loaded slot, so with several the result follows list order. Taking the
-  most recent store may be the intent; mutable if any is mutable would be the
-  conservative choice, and could report conflicts that are accepted today.
-- **Which type a slot holds** (group 4). Four places fall back differently
-  when a carrier slot records no content type: `slot_carrier_type` in
-  `borrow.odin` takes the symbol's type only for the bare slot of a
-  symbol, `prov_define_one_content` for any slot of an unshaped symbol,
-  `prov_slot_is_mutable_carrier` for any named slot, and the link filter in
-  `prov_link_retained` for one at the symbol's root. The two link filters in
-  `provenance_retention.odin` also differ for a named slot of unknown type:
-  `prov_link_copied_carriers` keeps it and `prov_link_retained` skips it. One
-  rule would remove the differences, but each is a precision choice that needs
-  a probe program before it changes.
